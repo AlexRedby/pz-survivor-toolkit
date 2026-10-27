@@ -38,6 +38,22 @@ for _, language in ipairs({'EN', 'RU'}) do
         return (text:gsub('%%(%d+)', function(index) return tostring(args[tonumber(index)] or '%' .. index) end))
     end
     local e = expected[language]
+    local blocker = {Type = 'MyModAction'}
+    local details = labels.decisionDetails({reason = 'edit_unknown', blocker = blocker})
+    assert(details == getText('UI_PZSurvivorToolkit_queue_blocked_by', e.unknown),
+        language .. ': an unsupported action must retain its recognizable fallback title')
+    blocker.toolkitQueueOperation = {presentation = {title = 'Exact operation'}}
+    assert(labels.decisionDetails({reason = 'edit_required_cleanup', blocker = blocker})
+        == getText('UI_PZSurvivorToolkit_queue_blocked_by', 'Exact operation'),
+        language .. ': cleanup diagnostics must identify their owning operation')
+    assert(labels.decisionDetails({allowed = true, blocker = blocker}) == nil)
+    for _, reason in ipairs({'edit_unknown', 'edit_in_flight', 'edit_required_cleanup',
+        'edit_required_state', 'edit_resource_amount', 'container_capacity'}) do
+        local key = 'UI_PZSurvivorToolkit_queue_' .. reason
+        local text = getText(key)
+        assert(text ~= key and not text:find('%%[1-9]'), language .. ': unresolved denial explanation: ' .. reason)
+        assert(labels.priorityWaiting(reason):find(text, 1, true), language .. ': priority hint lost precise reason')
+    end
     assert(labels.label({Type = 'ISToggleStoveAction', object = {class = 'IsoObject', name = 'Oven'}}) == e.power .. ': Oven')
     assert(labels.label({Type = 'ISQueueActionsAction', toolkitWorldOperation = 'appliance',
         toolkitWorldTarget = {class = 'IsoObject'}}) == e.power)

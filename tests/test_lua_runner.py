@@ -19,7 +19,7 @@ class LuaRunner(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.names = set(run_tests.TAG_TESTS) | set(run_tests.ACTION_TESTS) | set(run_tests.EXTRA_TESTS)
+        self.names = set(run_tests.discover_tests(run_tests.ROOT))
         self.names.add("test_wishlist_model.lua")
         for name in self.names:
             path = self.root / "tests" / name
@@ -33,6 +33,7 @@ class LuaRunner(unittest.TestCase):
             path = self.root / "PZSurvivorToolkit/42/media/lua/shared/Translate" / language
             path.mkdir(parents=True)
             (path / "UI.json").write_text("{}")
+        self.owned_root = str(self.root / "PZSurvivorToolkit/42/media/lua")
         self.executions = []
         self.output = io.StringIO()
 
@@ -68,17 +69,38 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual([name for name, _ in self.executions],
                          ["test_tv_controls.lua", "test_wishlist_model.lua"])
 
-    def test_new_extra_registration_is_executed_without_a_second_dispatch_entry(self):
+    def test_new_top_level_check_is_discovered_and_executed_without_registration(self):
         name = "test_new_extra.lua"
         (self.root / "tests" / name).write_text(name)
-        with patch.object(run_tests, "EXTRA_TESTS", (*run_tests.EXTRA_TESTS, name)):
-            self.invoke("--test", name)
-        self.assertEqual(self.executions, [(name, {"ProjectRoot": str(self.root)})])
+        self.invoke("--test", name)
+        self.assertEqual(self.executions, [(name, {"ProjectRoot": str(self.root), "NativeQuartermasterLuaRoot": self.owned_root})])
 
-    def test_default_keeps_all_groups_and_reconnect_variants(self):
+    def test_bc_class_check_requires_both_integrations_and_binds_actual_hooks(self):
+        clean = self.root / 'clean/media/lua/client'
+        bc = self.root / 'bc/media/lua/client/BetterContainers'
+        for base, names in ((clean, ('ISUI/ISInventoryPane.lua', 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua')),
+                            (bc, ('Categorize/CategoryFilters.lua', 'Proximity/Proximity_ISInventoryPane.lua',
+                                  'Proximity/Proximity_ISInventoryPage.lua'))):
+            for name in names:
+                path = base / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(name)
+        arguments = ['--cleanui-inventory-pane', str(clean / 'ISUI/ISInventoryPane.lua'),
+                     '--bc-filter-source', str(bc / 'Categorize/CategoryFilters.lua')]
+        for missing in ([], arguments[:2], arguments[2:]):
+            with self.assertRaises(SystemExit):
+                self.invoke('--test', 'test_bc_inventory_classes', *missing)
+        self.invoke('--test', 'test_bc_inventory_classes', *arguments)
+        self.assertEqual(len(self.executions), 1)
+        bound = self.executions[0][1]
+        self.assertEqual(bound['CleanUIVanillaInventoryPaneSource'], 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua')
+        self.assertEqual(bound['NativeBCProximityPaneSource'], 'Proximity/Proximity_ISInventoryPane.lua')
+        self.assertEqual(bound['NativeBCProximityPageSource'], 'Proximity/Proximity_ISInventoryPage.lua')
+
+    def test_default_keeps_all_checks_and_reconnect_variants(self):
         self.invoke()
         names = [name for name, _ in self.executions]
-        conditional = {"test_quartermaster_craft_ui.lua", "native_tags/check_transfer_source.lua",
+        conditional = {"test_torch_refill.lua", "test_quartermaster_craft_ui.lua", "native_tags/check_transfer_source.lua",
                        "native_tags/check_placement.lua"}
         self.assertEqual(set(names) - {"assert(loadstring(...))"}, self.names - conditional)
         self.assertEqual(names.count("assert(loadstring(...))"), 1)
@@ -92,7 +114,8 @@ class LuaRunner(unittest.TestCase):
         self.invoke("--test", "test_tv_controls", "--tv-source", str(source),
                     "--native-mod-options", "/nonexistent/unrelated-options.lua")
         self.assertEqual(self.executions, [("test_tv_controls.lua",
-                         {"ProjectRoot": str(self.root), "TVSource": "upstream TV",
+                         {"ProjectRoot": str(self.root), "NativeQuartermasterLuaRoot": self.owned_root,
+                          "TVSource": "upstream TV",
                           "NativeTVWindowSource": "native window"})])
 
     def test_unrelated_source_paths_do_not_block_any_test_group(self):
@@ -111,7 +134,10 @@ class LuaRunner(unittest.TestCase):
         inputs = {
             "pane.lua": "inventory pane", "clean.lua": "CleanUI pane", "context.lua": "native transfers",
             "ISTextBox.lua": "text box", "client/ISUI/ISTextBox.lua": "native text box",
-            "client/ISUI/ISModalDialog.lua": "native modal", "medicine.lua": "moodles", "bc.lua": "BC filters",
+            "client/ISUI/ISModalDialog.lua": "native modal", "medicine.lua": "moodles",
+            "Categorize/CategoryFilters.lua": "BC filters", "Categorize/InventoryCategory.lua": "BC categories",
+            "Categorize/CategoryStore.lua": "BC category store", "_IO/IniWriter.lua": "BC INI writer",
+            "_IO/_IO.lua": "BC IO",
             "shared/MPFastForward_Config.lua": "MPFF config", "server/MPFastForward_Server.lua": "MPFF server",
             "MonitorConfig.lua": "navigator config", "MonitorRender.lua": "navigator render",
             "NavigatorMonitorDrag.lua": "navigator drag",
@@ -132,7 +158,10 @@ class LuaRunner(unittest.TestCase):
             (("test_tag_filter_presets_menu",), "--native-action-root", source,
              {"NativeTextBoxSource": "native text box", "NativeModalDialogSource": "native modal"}),
             (("test_medicine_moodles",), "--medicine-framework-source", source / "medicine.lua", {"NativeMedicineFrameworkSource": "moodles"}),
-            (("test_bc_filter_compat",), "--bc-filter-source", source / "bc.lua", {"NativeBCFilterSource": "BC filters"}),
+            (("test_bc_filter_compat",), "--bc-filter-source", source / "Categorize/CategoryFilters.lua",
+             {"NativeBCFilterSource": "BC filters", "NativeBCInventoryCategorySource": "BC categories",
+              "NativeBCCategoryStoreSource": "BC category store", "NativeBCIniWriterSource": "BC INI writer",
+              "NativeBCIOSource": "BC IO"}),
             (("test_mpff_compat",), "--mpff-source", source,
              {"NativeMPFFConfigSource": "MPFF config", "NativeMPFFServerSource": "MPFF server"}),
             (("test_navigator",), "--navigator-source", source,
@@ -162,7 +191,7 @@ class LuaRunner(unittest.TestCase):
         self.executions.clear()
         self.invoke("--test", "test_quartermaster_craft_ui", "--native-action-root", "/native")
         self.assertEqual(self.executions, [("test_quartermaster_craft_ui.lua",
-                         {"ProjectRoot": str(self.root), "NativePZLuaRoot": "/native",
+                         {"ProjectRoot": str(self.root), "NativePZLuaRoot": "/native", "NativeActionRoot": "/native",
                           "NativeQuartermasterLuaRoot": str(self.root / "PZSurvivorToolkit/42/media/lua")})])
 
     def test_quartermaster_checks_use_owned_sources_without_external_options(self):
@@ -261,6 +290,104 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual('MonitorConfig.lua', variables['NativeNavigatorConfig'])
         self.assertEqual('MonitorRender.lua', variables['NativeNavigatorRender'])
         self.assertEqual('NavigatorMonitorDrag.lua', variables['NativeNavigatorDrag'])
+
+    def test_explicit_deposit_paths_read_only_the_consumed_files(self):
+        # The option names an anchor; this test needs neither its filter file nor
+        # the container customizer. The anchor directory need not even exist.
+        bc = self.root / 'bc'
+        clean = self.root / 'clean'
+        sources = {
+            bc / 'Proximity/Proximity_SmartDeposit.lua': 'actual BC deposit',
+            clean / 'ISUI/ISInventoryPage.lua': 'enhanced page',
+            clean / 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPage.lua': 'vanilla page',
+        }
+        for path, content in sources.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        self.invoke('--test', 'test_smart_deposit',
+                    '--bc-filter-source', str(bc / 'Categorize/CategoryFilters.lua'),
+                    '--cleanui-inventory-pane', str(clean / 'ISUI/ISInventoryPane.lua'))
+        self.assertEqual([name for name, _ in self.executions], ['test_smart_deposit.lua'])
+        variables = self.executions[0][1]
+        self.assertEqual(variables['NativeBCSmartDepositSource'], 'actual BC deposit')
+        self.assertEqual(variables['CleanUIInventoryPageSource'], 'enhanced page')
+        self.assertEqual(variables['CleanUIVanillaInventoryPageSource'], 'vanilla page')
+        self.assertNotIn('NativeBCFilterSource', variables)
+        self.assertNotIn('NativeBCPageCustomizerSource', variables)
+
+    def test_locked_deposit_combines_effective_files_from_both_mods(self):
+        game = self.root / 'game'
+        game.mkdir()
+        (game / 'projectzomboid.jar').write_bytes(b'game')
+        (self.root / 'SurvivorQoL-selected.ini').write_text('Mods=CleanUI;EURY_CONTAINERS\n')
+        sources = {
+            'CleanUI/common/mod.info': 'id=CleanUI\n',
+            'CleanUI/common/media/lua/client/ISUI/ISInventoryPage.lua': 'old enhanced page',
+            'CleanUI/42.21/media/lua/client/ISUI/ISInventoryPage.lua': 'active enhanced page',
+            'CleanUI/common/media/lua/client/CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPage.lua': 'common vanilla page',
+            'BetterContainers/42.20/mod.info': 'id=EURY_CONTAINERS\n',
+            'BetterContainers/42.20/media/lua/client/BetterContainers/Proximity/Proximity_SmartDeposit.lua': 'active BC deposit',
+            'game/media/lua/client/ISUI/ISInventoryPage.lua': 'native page',
+        }
+        for relative, content in sources.items():
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        lock = (self.root / 'pack.json').resolve()
+        pack.create(self.root.resolve(), lock, game)
+        arguments = ('--test', 'test_smart_deposit', '--pack-lock', str(lock), '--game', str(game))
+        self.invoke(*arguments)
+        self.assertEqual([name for name, _ in self.executions], ['test_smart_deposit.lua'])
+        variables = self.executions[0][1]
+        self.assertEqual(variables['NativeBCSmartDepositSource'], 'active BC deposit')
+        self.assertEqual(variables['CleanUIInventoryPageSource'], 'active enhanced page')
+        self.assertEqual(variables['CleanUIVanillaInventoryPageSource'], 'common vanilla page')
+        self.assertEqual(variables['NativeInventoryPageSource'], 'native page')
+        self.executions.clear()
+        with self.assertRaises(SystemExit):
+            self.invoke(*arguments, '--native-action-root', str(self.root / 'other-game/media/lua'))
+        self.assertEqual(self.executions, [])
+
+    def test_discovery_does_not_admit_nested_native_scenarios_or_helper_files(self):
+        for name in ("helper.lua", "native_queue/test_scenario.lua", "native_tags/check_unregistered.lua"):
+            path = self.root / "tests" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("must not execute")
+        (self.root / "tests/test_directory.lua").mkdir()
+        self.invoke("--list")
+        self.assertEqual(set(self.output.getvalue().splitlines()), self.names)
+        self.assertEqual(self.executions, [])
+
+    def test_fire_variants_are_isolated_and_keep_the_same_source_paths(self):
+        self.invoke("--test", "test_action_queue_fire", "--native-action-root", "/native",
+                    "--wishlist-workshop-root", "/workshop", "--saucedcarts-source", "/carts")
+        flags = ["FireTestBCPreinstalled", "FireTestBCForeignPredecessor", "FireTestQMBeforeBC",
+                 "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMForeignGather"]
+        self.assertEqual(len(self.executions), 7)
+        for index, (name, variables) in enumerate(self.executions):
+            with self.subTest(index=index):
+                self.assertEqual(name, "test_action_queue_fire.lua")
+                self.assertEqual(variables["NativeActionRoot"], "/native")
+                self.assertEqual(variables["NativeWishlistWorkshopRoot"], "/workshop")
+                self.assertEqual(variables["SaucedCartsSource"], "/carts")
+                self.assertEqual(variables["NativeQuartermasterLuaRoot"], self.owned_root)
+                self.assertEqual({flag for flag in flags if variables.get(flag)},
+                                 set() if index == 0 else {flags[index - 1]})
+        self.executions.clear()
+        self.invoke("--test", "test_action_queue_fire", "--native-action-root", "/native")
+        self.assertEqual(len(self.executions), 1)
+
+    def test_common_source_paths_are_available_to_new_checks_without_new_dispatch(self):
+        name = "test_new_paths.lua"
+        (self.root / "tests" / name).write_text(name)
+        self.invoke("--test", name, "--native-action-root", "/native",
+                    "--wishlist-game-root", "/game", "--wishlist-workshop-root", "/workshop",
+                    "--saucedcarts-source", "/carts")
+        self.assertEqual(self.executions, [(name, {
+            "ProjectRoot": str(self.root), "NativeQuartermasterLuaRoot": self.owned_root,
+            "NativeActionRoot": "/native", "NativeWishlistGameRoot": "/game",
+            "NativeWishlistWorkshopRoot": "/workshop", "SaucedCartsSource": "/carts",
+        })])
 
     def test_profile_listing_needs_no_lua_execution(self):
         self.invoke('--list-integrations')

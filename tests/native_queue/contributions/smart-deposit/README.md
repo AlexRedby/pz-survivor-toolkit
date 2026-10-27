@@ -38,7 +38,9 @@ BC's collection helper. All items, containers and renderers remain native.
 
 Four native Nails from the player's root inventory exercise each CleanUI mode.
 The fixture supplies native drag state programmatically, then calls installed
-pane/page `canPutIn` and `draggedItems:update`. It requires exactly three
+pane/page `canPutIn` and `draggedItems:update`. Repeated native hover updates must
+reuse the advisory plan until its 200 ms expiry; the real container-button drop
+resets and recomputes feedback before selecting its transfer batch. It requires exactly three
 accepted item identities and one `itemNotOK` overflow. The public planner adds
 exact routing checks: full type before category before fallback, independently
 of the earlier container order. All four groups are expanded, with the physical
@@ -51,7 +53,7 @@ The programmatic drag initializes the same pane-local `draggingX`/`draggingY`
 fields as native `onMouseDown` and holds their offset at zero during capture,
 keeping native dragged rows within the visible source pane.
 
-The installed `transferItemsByWeight` must enqueue exactly three real
+The installed container-button drop and `transferItemsByWeight` must enqueue exactly three real
 `ISInventoryTransferAction` instances with the expected item identities and
 source/destination endpoints. The duration control uses the same native
 `ISInventoryTransferUtil` factory as upstream BC. Each queued item's raw time

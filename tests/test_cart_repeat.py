@@ -124,12 +124,14 @@ class RepeatChecks(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError,'Unsupported captured'):
             analyzer.tracks(frame,'Unrelated_Pickup')
 
-    def test_full_metal_repeat_cannot_claim_wooden_wheel_proof(self):
-        values=edit_log(self.values,lambda row: row.update(cartType='SaucedWheelbarrow.WheelbarrowMetal'))
-        self.assert_rejected(values,'wooden wheel calibration')
+    def test_nonwood_repeat_cannot_claim_wooden_wheel_proof(self):
+        for cart_type in ('SaucedWheelbarrow.WheelbarrowMetal', 'SaucedCarts.ShoppingCart'):
+            with self.subTest(cart_type=cart_type):
+                values=edit_log(self.values,lambda row: row.update(cartType=cart_type))
+                self.assert_rejected(values,'wooden wheel calibration')
 
     def test_captured_cart_type_must_be_supported_and_stable(self):
-        values=edit_log(self.values,lambda row: row.update(cartType='SaucedCarts.ShoppingCart'))
+        values=edit_log(self.values,lambda row: row.update(cartType='Unsupported.Cart'))
         self.assert_rejected(values,'Unsupported captured')
         def corrupt(row):
             if row['case']==analyzer.CASES[0] and row['elapsed']==1000:

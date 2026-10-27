@@ -19,6 +19,9 @@ local function itemInspector()
     return capacityAdapters
 end
 require = function(module)
+    if module == 'PZSurvivorToolkit/ActionQueueSettlement' then
+        return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
+    end
     if module == 'PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua') end
     if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
     if module == 'PZSurvivorToolkit/ActionQueueWeights' then
@@ -30,6 +33,13 @@ require = function(module)
     end
 end
 local function derive(self, name)
+    if NativeKahluaTableLookup then
+        -- Match ISBaseObject.derive: only the parent gets __index here.
+        -- Native new assigns the child's own __index on first construction.
+        local class = {Type=name, SuperType=self}
+        self.__index=self
+        return setmetatable(class,self)
+    end
     local class = {Type=name, derive=derive}; class.__index=class
     return setmetatable(class,{__index=self})
 end
@@ -48,10 +58,10 @@ native=function(path)
     if NativeReadText then source=NativeReadText(NativeActionRoot..'/'..path)
     else local f=assert(io.open(NativeActionRoot..'/'..path));source=f:read('*a');f:close() end
     -- Stock Kahlua accepts this native suffix; Lua 5.1 used by the fixture does not.
-    assert(loadstring((source:gsub('(%d+%.%d+)f','%1')), '@'..path))()
+    assert(loadstring((source:gsub('(%d+%.%d+)f','%1')), '@'..NativeActionRoot..'/'..path))()
 end
 project=function(name)
-    if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+    if name == 'ActionQueue' then project('ActionQueueSettlement'); project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
     local savedRequire=require
     if name=='ActionQueuePolicy' then
         require=function(module)
@@ -65,7 +75,13 @@ project=function(name)
             return savedRequire(module)
         end
     end
-    local result=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/'..name..'.lua'))()
+    local root=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/'
+    local path=root..'client/PZSurvivorToolkit/'..name..'.lua'
+    local exists
+    if NativeFileExists then exists=NativeFileExists(path)
+    else local file=io.open(path,'r');exists=file~=nil;if file then file:close()end end
+    if not exists then path=root..'shared/PZSurvivorToolkit/'..name..'.lua'end
+    local result=assert(loadfile(path))()
     require=savedRequire
     return result
 end
@@ -91,6 +107,8 @@ local function action(class,fields)
     return value
 end
 local function queue(...)
+    -- This fixture constructs directly; mirror the native queue constructor.
+    if NativeKahluaTableLookup then ISTimedActionQueue.__index=ISTimedActionQueue end
     local values={...};local q=setmetatable({character=player,queue=values,current=values[1]},ISTimedActionQueue)
     ISTimedActionQueue.queues[player]=q;return q
 end

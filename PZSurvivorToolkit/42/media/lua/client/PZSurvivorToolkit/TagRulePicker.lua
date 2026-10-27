@@ -3,6 +3,7 @@ require "ISUI/ISScrollingListBox"
 require "ISUI/ISComboBox"
 require "ISUI/ISTextEntryBox"
 require "ISUI/ISButton"
+require "ISUI/ISLabel"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Schema = require "PZSurvivorToolkit/ItemTagSchema"
 local Visuals = require "PZSurvivorToolkit/TagVisuals"
@@ -12,6 +13,7 @@ PZSurvivorToolkit.TagRulePicker = Picker
 
 local function text(key) return getText("UI_PZST_TagRule" .. key) end
 local fit = UIStyle.fit
+local buildEntries
 local function categoryName(category) return getTextOrNull("IGUI_ItemCat_" .. category) or category end
 local function closed(owner)
     return owner and (owner.removed or (owner.isReallyVisible and not owner:isReallyVisible())
@@ -152,7 +154,8 @@ function Picker:createChildren()
     local width, height = self.width, self.height
     local fontHeight = getTextManager():getFontHeight(UIFont.Small)
     local controlHeight = math.max(26, fontHeight + 8)
-    local searchY = math.max(34, self:titleBarHeight() + 8)
+    local searchLabelY = math.max(34, self:titleBarHeight() + 8)
+    local searchY = searchLabelY + fontHeight + 8
     local groupY, modeY = searchY + controlHeight + 6, searchY + (controlHeight + 6) * 2
     local footerY = height - controlHeight - 16
     self.hintY = footerY - fontHeight - 26
@@ -161,6 +164,8 @@ function Picker:createChildren()
         result:initialise(); result:instantiate(); UIStyle.button(result); self:addChild(result)
         return result
     end
+    self.searchLabel = ISLabel:new(12, searchLabelY, fontHeight + 4, text("Search"), 0.9, 0.9, 0.9, 1, UIFont.Small, true)
+    self.searchLabel:initialise(); self.searchLabel:instantiate(); self:addChild(self.searchLabel)
     self.search = ISTextEntryBox:new("", 12, searchY, width - 24, controlHeight)
     self.search:setFont(UIFont.Small)
     self.search:initialise(); self.search:instantiate(); self.search:setTooltip(text("Search")); self:addChild(self.search)
@@ -271,6 +276,18 @@ function Picker:prerender()
         self:close(); return
     end
     if self.reassertTop then self.reassertTop = false; self:bringToTop() end
+    local revision = Tags.revision and Tags.revision() or 0
+    if self.tagRevision ~= revision then
+        local family = self.group:getOptionData(self.group.selected)
+        self.entries, self.families, self.categories = buildEntries(self.sourceOptions, self.rule)
+        self.group:clear(); self.group:addOptionWithData(text("AllGroups"), false); self.group.selected = 1
+        for _, id in ipairs(self.families) do
+            self.group:addOptionWithData(Tags.label(id), id)
+            if id == family then self.group.selected = #self.group.options end
+        end
+        self.tagRevision = revision
+        self:reload(); self:refreshPreview()
+    end
     if self.search:getText():lower() ~= self.lastQuery or self.group.selected ~= self.lastGroup then self:reload() end
     ISCollapsableWindowJoypad.prerender(self)
     self:drawText(text(self.sourceScriptItems and "PreviewTypes" or "Preview") .. " (" .. self.matchCount .. ")", self.preview.x, self.preview.y - getTextManager():getFontHeight(UIFont.Small) - 5,
@@ -279,11 +296,7 @@ function Picker:prerender()
     self:drawText(fit(self.validationMessage or text("Hint"), self.width - 24), 12, y, 0.8, 0.8, 0.8, 1, UIFont.Small)
 end
 
-function Picker.open(options)
-    if not Tags.enabled() then return end
-    local rule, error = Tags.normalizeRule(options.rule)
-    if not rule then return nil, error end
-    if options.owner and options.owner.toolkitRulePicker then options.owner.toolkitRulePicker:close() end
+buildEntries = function(options, rule)
     local entries, families, roots, seen = {}, {}, {}, {}
     for _, definition in pairs(Schema.categories) do roots[definition[1]] = true end
     local categories = {}
@@ -310,6 +323,12 @@ function Picker.open(options)
             for _, family in ipairs(sourceFamilies) do row.families[family] = true end
         end
     end
+    for _, id in ipairs(Tags.allIds and Tags.allIds() or {}) do
+        if id:sub(1, 7) == 'custom:' and not byId[id] then
+            local row = {id=id,label=Tags.label(id),families={},bucket=2}
+            byId[id],entries[#entries+1]=row,row
+        end
+    end
     -- Keep saved selections editable even if their last matching item disappeared.
     for _, values in ipairs({rule.include, rule.exclude}) do
         for _, id in ipairs(values) do
@@ -318,14 +337,26 @@ function Picker.open(options)
     end
     table.sort(entries, function(a, b) return a.label < b.label end)
     table.sort(families, function(a, b) return Tags.label(a) < Tags.label(b) end)
+    return entries, families, categories
+end
+
+function Picker.open(options)
+    if not Tags.enabled() then return end
+    local rule, error = Tags.normalizeRule(options.rule)
+    if not rule then return nil, error end
+    if options.owner and options.owner.toolkitRulePicker then options.owner.toolkitRulePicker:close() end
+    local entries, families, categories = buildEntries(options, rule)
     local width, height = math.min(760, getCore():getScreenWidth() - 24), math.min(650, getCore():getScreenHeight() - 24)
     local picker = Picker:new((getCore():getScreenWidth() - width) / 2, (getCore():getScreenHeight() - height) / 2, width, height)
+    picker.sourceOptions, picker.tagRevision = options, Tags.revision and Tags.revision() or 0
     picker.rule, picker.categories, picker.sourceItems = rule, categories, options.items
     picker.selectionOrder = options.selectedTag and {options.selectedTag} or {}
     picker.sourceScriptItems = options.scriptItems
     picker.entries, picker.families = entries, families
     picker.owner, picker.onApply, picker.player = options.owner, options.onApply, options.player
     picker.title, picker.resizable = options.title or text(""), false
+    picker.background = true
+    picker.backgroundColor = {r = 0.04, g = 0.04, b = 0.04, a = 1}
     picker:initialise(); picker:instantiate(); picker:addToUIManager()
     picker:bringToTop()
     -- The opening mouse event can still raise the owner after its button callback.

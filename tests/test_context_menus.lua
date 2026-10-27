@@ -1,5 +1,8 @@
 local client = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
 local loaded, files, writes, enabled = {}, {}, 0, true
+local tagData,tagReads={},0
+isClient=function() return false end
+ModData={getOrCreate=function() tagReads=tagReads+1;return tagData end}
 PZSurvivorToolkit = { Settings = { contextMenus = function() return enabled end } }
 local gameStart, worldFill
 Events = { OnGameExit = { Add = function() end },
@@ -65,6 +68,9 @@ require = function(name)
 end
 local nativeMethods = {prerender=ISContextMenu.prerender, clear=ISContextMenu.clear, addOption=ISContextMenu.addOption, addOptionOnTop=ISContextMenu.addOptionOnTop}
 local Organizer = require 'PZSurvivorToolkit/ContextMenus'
+assert(tagReads==0,'requiring context menus read world ModData before world startup')
+assert(not Organizer.isCapturing(), 'loading the organizer must not enable editor capture')
+Organizer.beginCapture()
 local function build()
     root = ISContextMenu:new(nil)
     local actions = {}
@@ -127,6 +133,7 @@ loaded['PZSurvivorToolkit/ContextMenus'] = nil
 PZSurvivorToolkit.ContextMenus = nil
 for name, callback in pairs(nativeMethods) do ISContextMenu[name] = callback end
 Organizer = require 'PZSurvivorToolkit/ContextMenus'
+Organizer.beginCapture()
 assert(Organizer.overrides['label:with|pipe\nand%text'] == 'medical')
 assert(Organizer.overrides['callback:ISInventoryPaneContextMenu.onDropItems'] == 'hidden')
 Organizer.reset(); assert(next(Organizer.overrides) == nil)
@@ -707,6 +714,53 @@ assert(#Organizer.getLayout(stateProfile,'root','Base.Pot')==0,'nonmatching mixe
 Organizer.reset()
 print('PASS same-type mixed-state sample preserves all-match selection semantics')
 
+-- An already captured physical selection must follow exact-instance overrides,
+-- even when the type's first representative still matches a saved profile.
+do
+ Organizer.reset()
+ local custom=require 'PZSurvivorToolkit/TagCustomization'
+ local kitchen=assert(Organizer.createTagProfile('Live instances',{include={'cooking'}}))
+ Organizer.setOverride(dropKey,'hidden',kitchen)
+ local probeKey='label:Exact-instance preview probe'
+ Organizer.setOverride(probeKey,'hidden',kitchen)
+ local function physical()
+  local data={}
+  return {getFullType=function() return 'Base.LiveTag' end,getDisplayCategory=function() return 'Cooking' end,
+   hasModData=function() return next(data)~=nil end,getModData=function() return data end}
+ end
+ local first,second=physical(),physical()
+ menu,actions=taggedMenu({first,second})
+ menu:addOption('Exact-instance preview probe',nil,function() end)
+ menu:prerender()
+ assert(not previewHasDrop(Organizer.getLayout('Base.LiveTag','root','Base.LiveTag')))
+ assert(Organizer.previewMatches(kitchen,'Base.LiveTag'))
+ second:getModData()[custom.FIELD]={cooking='remove',tool='add'}
+ tagData.revision=tagData.revision+1
+ local current=Organizer.getLayout('Base.LiveTag','root','Base.LiveTag')
+ assert(previewHasDrop(current),'cached preview ignored exact assignment world revision')
+ assert(not Organizer.previewMatches(kitchen,'Base.LiveTag')
+  and #Organizer.getLayout(kitchen,'root','Base.LiveTag')==0,'mixed exact samples widened a profile match')
+ for _,entry in ipairs(Organizer.getEntries(kitchen)) do
+  assert(entry.key~=probeKey,'profile discovery used one matching representative of a mixed selection')
+ end
+ menu:prerender()
+ assert(contains(menu,actions) and #menu.toolkitContextTagScopes==0,'open native menu retained old exact tag scopes')
+ local either=assert(Organizer.createTagProfile('Either family',{mode='any',include={'cooking','tool'}}))
+ assert(Organizer.previewMatches(either,'Base.LiveTag'),'all-item any-rule match was narrowed to tag intersection')
+ second:getModData()[custom.FIELD]=nil;tagData.revision=tagData.revision+1
+ assert(Organizer.previewMatches(kitchen,'Base.LiveTag')
+  and not previewHasDrop(Organizer.getLayout('Base.LiveTag','root','Base.LiveTag')),'reset assignment did not refresh captured preview')
+ local wrong={getFullType=function() return 'Base.WrongRepresentative' end,getDisplayCategory=function() return 'Tool' end}
+ local stacked=wrapper(0,true,{{items={wrong,first,second}}})
+ assert(stacked.toolkitContextItemType=='Base.LiveTag' and #stacked.toolkitContextTagItems==2,
+  'native representative widened the physical tag selection')
+ stacked=wrapper(0,true,{{items={first,second},cleanUILargeStackOptimized=true}})
+ assert(#stacked.toolkitContextTagItems==2,'CleanUI compact stack skipped an actual item')
+ stacked:clear();assert(stacked.toolkitContextTagItems==nil,'pooled menu kept physical tag references')
+ Organizer.reset()
+end
+print('PASS captured exact-instance tag revisions, all-item profile matching, type preview refresh and physical stack identity')
+
 
 -- Native selectors stay root, while their portion/variant/quantity choices retain exact objects and order.
 Organizer.reset()
@@ -938,3 +992,142 @@ do
  Organizer.restore(menu)
 end
 print('PASS real same-caption rebuild comparison growth')
+
+-- Lua weak observations prove ownership of raw samples; this does not measure Java heap use.
+do
+ Organizer.reset()
+ Organizer.endCapture()
+ local sampleType='Base.CaptureLifetimeProbe'
+ local sampleKey='label:Captured selected item'
+ local function sample()
+  local selected={getFullType=function() return sampleType end,getDisplayCategory=function() return 'Tool' end}
+  local observed=setmetatable({selected},{__mode='v'})
+  local native=ISInventoryPaneContextMenu.createMenu(0,true,{selected});root=native
+  native:addOption('Captured selected item',nil,function() end,selected)
+  native:prerender()
+  local rendered=#native.options
+  Organizer.restore(native)
+  native:clear()
+  -- Drop native options and pools too: they legitimately retain callback parameters.
+  native.optionPool={};native.options={};root=nil
+  return observed,rendered
+ end
+ local function collect() collectgarbage('collect');collectgarbage('collect') end
+ local revision=Organizer.captureRevision
+ assert(Organizer.setOverride(sampleKey,'hidden',sampleType))
+ local rules=require 'PZSurvivorToolkit/ContextMenuRules'
+ local classify,calls=rules.classify,0
+ rules.classify=function(option) calls=calls+1;return classify(option) end
+ local closed,rendered=sample();collect()
+ rules.classify=classify
+ assert(rendered==0,'saved item rules must apply with the editor closed')
+ assert(calls==1,'closed customized menus must organize once without an automatic discovery pass')
+ assert(not closed[1] and Organizer.captureRevision==revision and Organizer.lastItemType==nil,
+  'closed editor retained a raw item sample or updated capture state')
+ assert(Organizer.items[sampleType]==nil and Organizer.entries[sampleKey]==nil
+  and Organizer.renderPreview(sampleType,sampleType)==nil,
+  'closed editor discovered a sample or created a preview')
+ Organizer.beginCapture()
+ local open=sample();collect()
+ assert(open[1] and Organizer.lastItemType==sampleType and Organizer.captureRevision>revision,
+  'open editor did not retain the captured raw item sample')
+ assert(Organizer.items[sampleType] and Organizer.renderPreview(sampleType,sampleType),
+  'open editor did not discover its preview example')
+ Organizer.endCapture();collect()
+ assert(not Organizer.isCapturing() and not open[1] and Organizer.lastItemType==nil,
+  'closing capture retained the raw selected item')
+ assert(Organizer.renderPreview(sampleType,sampleType)==nil and next(Organizer.layouts)==nil,
+  'closing capture retained preview/layout state')
+ assert(Organizer.items[sampleType] and Organizer.getOverride(sampleKey,sampleType)=='hidden',
+  'closing capture discarded the item catalog or saved preferences')
+ Organizer.beginCapture()
+ assert(Organizer.renderPreview(sampleType,sampleType)==nil,'reopening resurrected a previous raw sample')
+ revision=Organizer.captureRevision
+ local reopened=sample();collect()
+ assert(reopened[1] and Organizer.captureRevision>revision,'reopened capture did not accept a fresh sample')
+ Organizer.endCapture();collect()
+ assert(not reopened[1],'reopened capture retained its raw sample after closing')
+ Organizer.reset()
+end
+print('PASS editor-only capture, closed-menu rules, raw Lua sample release, preserved catalog/preferences and fresh reopening')
+
+-- VRO filters native fixing entries after their parent has already been added.
+-- The source menu must lose that empty shell even with organization disabled.
+do
+ Organizer.reset();Organizer.endCapture()
+ local originalText=getText
+ getText=function(key) return key=='ContextMenu_Repair' and 'Починить' or originalText(key) end
+ local repairLabel=getText('ContextMenu_Repair')
+ local function repairMenu(inventory,content)
+  local menu=ISContextMenu:new(nil);root=menu
+  menu.toolkitContextKind=inventory and 'inventory' or 'vehicle'
+  local before=menu:addOption('Before',nil,function() end)
+  local repair=menu:addOption(repairLabel..(inventory and ' Капот' or ''),nil,nil)
+  local child=menu:getNew(menu);menu:addSubMenu(repair,child)
+  if content then content(child) end
+  local after=menu:addOption('After',nil,function() end)
+  menu.mouseOver=after.id
+  return menu,repair,child,before,after
+ end
+ for _,organization in ipairs({false,true}) do
+  enabled=organization
+  for _,inventory in ipairs({false,true}) do
+   local menu,repair,child,before,after=repairMenu(inventory,function(child)
+    local ancestor=child:addOption('Back',child,ISContextMenu.displayAncestor)
+    ancestor.isDefaultOption=true
+    child:addOption('Repair requirements').isTitle=true
+   end)
+   menu.subMenu=child
+   menu:prerender()
+   assert(#menu.options==2 and menu.options[1]==before and menu.options[2]==after,
+    'empty installed/inventory repair parent survived final presentation')
+   assert(menu.numOptions==3 and before.id==1 and after.id==2 and menu.mouseOver==2,
+    'removing repair must retain selected row identity and native indices')
+   assert(child.hidden and not menu.subMenu,'removed repair submenu stayed open')
+   menu:prerender();Organizer.restore(menu)
+   assert(#menu.options==2,'restoration resurrected a removed repair parent')
+   local pooled=0
+   for _,option in ipairs(menu.optionPool) do if option==repair then pooled=pooled+1 end end
+   assert(pooled==1,'removed repair parent must be pooled once in its owning menu')
+   -- A pooled repair option can become a live action on the next native rebuild.
+   menu:clear()
+   local rebuilt=menu:addOption(repairLabel,nil,function() return 'repair' end)
+   menu:prerender()
+   assert(menu.options[1]==rebuilt and rebuilt.onSelect()=='repair','rebuild lost a real repair action')
+  end
+  local menu,repair,child=repairMenu(false,function(child)
+   local choice=child:addOption('1 SheetMetal',nil,nil)
+   choice.notAvailable=true;choice.toolTip={description='Mechanics 2 required'}
+  end)
+  menu:prerender()
+  assert(menu.options[2]==repair and child.options[1].notAvailable
+   and child.options[1].toolTip.description=='Mechanics 2 required',
+   'unavailable repair choices must retain their requirements')
+  local menu,repair,child=repairMenu(true,function(child)
+   child:addOption('1 SheetMetal',nil,function() return 'fix' end)
+  end)
+  menu:prerender()
+  assert(menu.options[2]==repair and child.options[1].onSelect()=='fix','available repair changed')
+  Organizer.restore(menu)
+ end
+ enabled=false
+ local menu,repair,child=repairMenu(false)
+ repair.onSelect=function() return 'direct repair' end
+ menu:prerender();assert(menu.options[2]==repair,'callback-bearing repair parent was removed')
+ repair.onSelect=nil;repair.subOption=-100
+ menu:prerender();assert(menu.options[2]==repair,'missing submenu was treated as known empty')
+ menu,repair,child=repairMenu(false);repair.name='Unrelated menu'
+ menu:prerender();assert(menu.options[2]==repair,'unrelated empty submenu was removed')
+ menu,repair,child=repairMenu(false);menu.mouseOver=repair.id
+ menu:prerender();assert(menu.mouseOver==-1,'removed selected repair moved selection to another action')
+ -- A user profile hiding a child is different from a mod providing no choices.
+ enabled=true
+ menu,repair,child=repairMenu(false,function(child) child:addOption('Hidden repair material',nil,function() end) end)
+ Organizer.setOverride('label:Hidden repair material','hidden')
+ menu:prerender();assert(menu.options[2]==repair and #child.options==0)
+ menu:prerender();assert(menu.options[2]==repair,'presentation pruned the organized rather than source tree')
+ enabled=false;menu:prerender()
+ assert(menu.options[2]==repair and #child.options==1,'disabling organization failed to restore a real choice')
+ getText=originalText;enabled=true;Organizer.reset()
+end
+print('PASS empty installed/inventory repairs, localized names, disabled requirements, native navigation, pooling/rebuild and profile restoration')

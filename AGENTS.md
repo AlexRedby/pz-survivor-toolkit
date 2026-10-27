@@ -1,42 +1,34 @@
 # Project rules
 
-## Purpose and sources
+## Purpose
 
 PZ Survivor Toolkit is a quality-of-life project for the user's personal gameplay requests, fixes for bugs they have encountered, and integration of third-party mods they like. The repository includes Toolkit (including Survivor Wishlist), Java patches and supporting tools.
 
-The local project sources and its GitHub repository are the source of truth. Unpushed local changes may be newer than GitHub. The copy installed in the game is an installation result, not an independent source of code.
+## Fixes
 
-Identify the actual Git repository and current working copy. If the enclosing directory contains several worktrees and an old source copy, do not assume a copy is current just because its directory name matches. Follow the general change-isolation rules.
+- Find and fix the root cause instead of masking a failure with monkey patches
+  or scenario-specific workarounds.
+- Check related scenarios for the same cause and fix all affected paths, not
+  only the scenario that exposed the bug.
+- When replacing an implementation, migrate its consumers and remove the
+  superseded code in the same change. If a migration period is necessary, record
+  in [TODO.md](TODO.md) what legacy remains, why it is still needed and the
+  concrete condition for removing it.
 
-Check versions, paths, build commands and verification commands against the current project files. Use the existing tools; read the relevant sections of `README.md`, `MOD_INSTALL.md` and `docs/DEVELOPMENT.md` for the task.
+## Checks
 
-## Changes and installation
+Run tests related to the change and affected consumers; do not run the full suite by default. A broader set of fast, inexpensive checks is fine. Run expensive checks, including full builds and native game/integration runs, only when the affected behavior or specific risks require them.
 
-Do not add features or change gameplay behavior that the user has not requested without discussion, even if you consider them improvements. A bug fix must restore clear, already established expected behavior; agree on an ambiguous outcome first.
+Use the [development guide](docs/DEVELOPMENT.md#checks-and-packaging) for test selection and coverage limits, and the [native runner guide](tests/native_queue/README.md) for in-game scenarios.
 
-Do not automatically install completed changes into the user's local game. Code changes and checks do not authorize overwriting their installed mod. Installation requires a separate request.
+## macOS native-test launch
 
-Before pushing changes to main, compare each changed component with the latest main. Changes to shipped code, assets or runtime metadata, including behavior-preserving refactors, require a version newer than main for that component: Toolkit uses `PZSurvivorToolkit/42/mod.info`; Java Patches uses the generated metadata in `JavaPatches/build.py`. One bump can cover the complete set of changes delivered together; individual implementation commits do not each need a bump. Record the delivered changes in `CHANGELOG.md` and recheck versions after merging concurrent work. Changes confined to tests, development tools, documentation or agent instructions do not require a mod version bump.
+Use the common runner's default `auto` desktop policy; do not select a strategy based on screen lock or ask the user to wake the screen. Run the GUI command outside the sandbox in the logged-in macOS session. An unavailable CoreGraphics probe means GUI access is unknown, not that the display needs waking. Automatic routing isolates owned windows through AeroSpace, permits the guarded fallback only with confirmed physical-display sleep, and recovers discoverable fallback windows into the test workspace. Explicit `--desktop-mode aerospace` requires placement; legacy `current` retains the guarded automatic policy. Never change the user's display state, workspace or focus to enable a test. Prepare a fresh snapshot when the runner requests one; do not bypass its input or PID/window guards. See [desktop launch](tests/native_queue/README.md#desktop-launch) for the command and validation limits.
 
-## Supported environment
+## Process friction
 
-- Only the current Build 42 version the user plays is supported; older versions do not need support. Moving to another major game branch has not been separately agreed.
-- Modes: single-player and Host from the game menu. A separate dedicated server is not a required target environment.
-- Players use Windows and macOS, but agent verification on macOS is sufficient for this project. Do not pursue Windows test environments or maintain an active Windows verification requirement; whoever runs the project on Windows checks it there. State the platform actually tested; do not present verification on one platform as verification on the other.
-- Run in-game checks with separate test settings and saves, without changing the user's current settings or saves.
-- On macOS, AeroSpace placement is the primary native-test launch policy. `desktop_mode=current` is only a fallback when CoreGraphics confirms that all online displays are asleep and AeroSpace cannot discover the launched client's window. Use the runner's default `auto` policy, or `aerospace` to require placement without fallback. Never select `current` as a persistent awake-desktop bypass, infer sleep from lock status or an empty display list, or mask missing/malformed AeroSpace, foreign windows, routing/identity failures or an escaped window. An unknown probe, including a sandbox-restricted zero-online result, must not trigger fallback. Keep the owned PID/GLFW gate and focus/fullscreen suppression; never change the user's display, workspace or focus to enable testing.
+Record process friction encountered during the current task in the root `TODO.md` as soon as it appears. This includes tool failures, unexpected errors in logs, awkward or slow setup, repetitive manual work, missing diagnostics, and a need for supporting scripts or tools outside the task's scope.
 
-## Proportionate checks
+Before adding an item, check `TODO.md` for the same underlying problem, including differently worded entries. Add useful new context to an existing item instead of creating a duplicate. Keep the item concise and actionable: describe the observed problem, its impact, available evidence (such as a command, error, log or file path), and the next step or completion condition. Distinguish observations from suspected causes; a full investigation is not required before recording the issue.
 
-Choose the smallest useful check for the change and its risks. Check the affected behavior and related consequences. A build, full test run and game launch are not required after every edit.
-
-- For documentation, check the edited text and affected links; no game launch is needed.
-- For local logic, use the related tests. Add a small regression test when it reliably catches a significant error and protects against recurrence. Do not write tests for quantity or to repeat the implementation.
-- Check a changed gameplay function in the game with the full mod set if automated checks do not confirm the required behavior. Check network interaction with the corresponding Host scenario.
-- Expand coverage when changing a shared mechanism or related integrations, or when a specific error remains unresolved. After sufficient successful verification, do not repeat it without new changes or reasons.
-
-Briefly report the checks performed and significant limitations. Do not claim the entire project has been verified based on a partial run.
-
-## Roles
-
-Carry out your task; each agent is not responsible for a separate search for infrastructure problems. The infrastructure maintainer's duties are described in the project's `pz-infrastructure` skill, which is used only when the user explicitly invokes it.
+After recording it, continue the current task. A TODO entry does not expand the task's scope or authorize unrelated tooling work. If the problem blocks progress, report the blocker and handle what is necessary to proceed within the existing authorization.

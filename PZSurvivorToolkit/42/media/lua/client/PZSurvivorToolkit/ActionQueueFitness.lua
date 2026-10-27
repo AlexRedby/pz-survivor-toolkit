@@ -8,13 +8,45 @@ local Toolkit=PZSurvivorToolkit
 local Fitness={}
 Toolkit.ActionQueueFitness=Fitness
 local Ops,Definitions=Toolkit.ActionQueueOperations,Toolkit.ActionQueueDefinitions
+local Settlement=require 'PZSurvivorToolkit/ActionQueueSettlement'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
-local records={}
+local Equipment=require 'PZSurvivorToolkit/FitnessEquipment'
+Equipment.install(ISFitnessUI)
+local records,nativeRecords={},{}
+local nativePanelScope,naturalStopScope
+local Lifecycle=Toolkit.ActionQueueLifecycle
+local function pack(...) return {n=select("#",...),...} end
 local native,classes,exercises={},{},{}
 local class=ISFitnessAction
 local ui=ISFitnessUI
 local click=ui.onClick
 local activate=ISInventoryPaneContextMenu.onActivateItem
+local continuationOwner=Toolkit.ActionQueueNativeContinuation
+local continuationCallback=continuationOwner and continuationOwner.isCallback
+local function approvedContinuation(name,callback)
+ return Toolkit.ActionQueueNativeContinuation==continuationOwner and continuationOwner
+  and continuationOwner.isCallback==continuationCallback and type(continuationCallback)=='function'
+  and continuationCallback(name,callback)==true
+end
+local cartDropOwner=Toolkit.ActionQueueCarts
+local cartDropCallback=cartDropOwner and cartDropOwner.isDropCallback
+local cartDropMatch=cartDropOwner and cartDropOwner.isNonCartDrop
+local cartUnequipConstructor=cartDropOwner and cartDropOwner.isUnequipConstructor
+local cartUnequipMatch=cartDropOwner and cartDropOwner.isNonCartUnequip
+local function approvedUnequipConstructor(callback)
+ return Toolkit.ActionQueueCarts==cartDropOwner and cartDropOwner
+  and cartDropOwner.isUnequipConstructor==cartUnequipConstructor and cartDropOwner.isNonCartUnequip==cartUnequipMatch
+  and type(cartUnequipConstructor)=='function' and cartUnequipConstructor(callback)
+end
+local function approvedUnequip(action)
+ return approvedUnequipConstructor(ISUnequipAction.new) and type(cartUnequipMatch)=='function'
+  and cartUnequipMatch(action)==true
+end
+local function approvedDrop(name,callback)
+ return Toolkit.ActionQueueCarts==cartDropOwner and cartDropOwner
+  and cartDropOwner.isDropCallback==cartDropCallback and cartDropOwner.isNonCartDrop==cartDropMatch
+  and type(cartDropCallback)=='function' and cartDropCallback(name,callback)
+end
 local trusted=Proof.matches('media/lua/shared/TimedActions/ISFitnessAction.lua',1524582630)
  and Proof.matches('media/lua/client/ISUI/ISFitnessUI.lua',219506148)
  and Proof.matches('media/lua/shared/Definitions/FitnessExercises.lua',4259913378)
@@ -27,17 +59,27 @@ for name,callback in pairs(class) do
  end
 end
 local childSources={ISEquipWeaponAction=1814269902,ISUnequipAction=229487418,ISWearClothing=762204314,
- ISInventoryTransferAction=3843678860,ISWaitWhileGettingUp=1725489935}
+ ISInventoryTransferAction=3843678860,ISWaitWhileGettingUp=1725489935,ISDropWorldItemAction=2862163534}
 local function approvedChange(kind,name)
  local carts=Toolkit.ActionQueueCarts
+ if kind=='ISWaitWhileGettingUp' and name=='perform' then
+  return approvedContinuation(name,classes[kind].methods[name]) and approvedContinuation(name,ISWaitWhileGettingUp[name])
+ end
+ if kind=='ISDropWorldItemAction' then
+  return approvedDrop(name,classes[kind].methods[name]) and approvedDrop(name,ISDropWorldItemAction[name])
+ end
+ if kind=='ISInventoryTransferAction' and name=='checkQueueList' then
+  local intent=Toolkit.ActionQueueTidyIntent
+  return intent and intent.isQueueObserver(classes[kind].methods[name],ISInventoryTransferAction[name])
+ end
  if kind=='ISInventoryTransferAction' and (name=='new' or name=='perform' or name=='transferItem') then
   return carts and carts.isTransferConstructor(classes[kind].methods.new) and carts.isTransferConstructor(ISInventoryTransferAction.new)
  elseif kind=='ISUnequipAction' and (name=='new' or name=='complete') then
-  return carts and carts.isUnequipConstructor(classes[kind].methods.new) and carts.isUnequipConstructor(ISUnequipAction.new)
+  return approvedUnequipConstructor(classes[kind].methods.new) and approvedUnequipConstructor(ISUnequipAction.new)
  end
  return false
 end
-for _,kind in ipairs({'ISFitnessAction','ISEquipWeaponAction','ISUnequipAction','ISWearClothing','ISInventoryTransferAction','ISWaitWhileGettingUp'}) do
+for _,kind in ipairs({'ISFitnessAction','ISEquipWeaponAction','ISUnequipAction','ISWearClothing','ISInventoryTransferAction','ISWaitWhileGettingUp','ISDropWorldItemAction'}) do
  local owner=_G[kind];local methods={}
  if childSources[kind] then
   trusted=trusted and Proof.matches('media/lua/'..(kind=='ISInventoryTransferAction' and 'client' or 'shared')..'/TimedActions/'..kind..'.lua',childSources[kind])
@@ -47,8 +89,9 @@ for _,kind in ipairs({'ISFitnessAction','ISEquipWeaponAction','ISUnequipAction',
    methods[name]=callback
    -- Transfers already have source-approved Better Containers, P4 and Manifest hooks in Policy.
    if kind~='ISFitnessAction' and kind~='ISInventoryTransferAction' and name~='derive' and not Proof.closure(callback,kind..'.lua') then
-    local carts=Toolkit.ActionQueueCarts
-    local approved=kind=='ISUnequipAction' and (name=='new' or name=='complete') and carts and carts.isUnequipConstructor(owner.new)
+    local approved=kind=='ISUnequipAction' and (name=='new' or name=='complete') and approvedUnequipConstructor(owner.new)
+     or kind=='ISDropWorldItemAction' and approvedDrop(name,callback)
+     or kind=='ISWaitWhileGettingUp' and approvedContinuation(name,callback)
     trusted=trusted and approved==true
    end
   end
@@ -62,6 +105,27 @@ for kind,data in pairs(FitnessExercises.exercisesType) do
 end
 local function enabled() return Toolkit.Settings.actionQueue() end
 local function now() return getGameTime():getCalender():getTimeInMillis() end
+local function workoutClock()
+ local time=getGameTime();local hour=time:getTimeOfDay()
+ -- Match native world age, retaining double precision even in old saves.
+ return (time:getNightsSurvived()*24+(hour>=7 and hour-7 or hour+17))*3600000
+end
+-- SyncClock replaces timeOfDay on clients. Earn duration from the native
+-- frame delta instead: IsoWorld increments frameNo before character updates.
+-- A start/confirmation anchors the current frame; it never earns that frame.
+local function startClock(record)
+ record.elapsedMS=0;record.clockStartMS=workoutClock()
+ record.clockWorld=getWorld();record.clockFrame=record.clockWorld:getFrameNo()
+end
+local function advanceClock(record)
+ if record.stopRequested then return end
+ local world=getWorld();local frame=world:getFrameNo()
+ if world~=record.clockWorld then record.clockWorld=world;record.clockFrame=frame;return end
+ if frame==record.clockFrame then return end
+ record.clockFrame=frame
+ local delta=getGameTime():getGameWorldSecondsSinceLastUpdate()*1000
+ if delta>=0 and delta<math.huge then record.elapsedMS=record.elapsedMS+delta end
+end
 local function identity(item)
  if not item then return false end
  return {id=item:getID(),kind=item:getFullType(),active=item:canBeActivated() and item:isActivated() or false}
@@ -89,6 +153,13 @@ local function root(player,ref)
  return item and item:getContainer()==player:getInventory() and item or nil
 end
 local function unchanged()
+ if continuationOwner and not approvedContinuation('perform',ISWaitWhileGettingUp.perform) then return false end
+ if (not Proof.closure(ISUnequipAction.new,'ISUnequipAction.lua') or not Proof.closure(ISUnequipAction.complete,'ISUnequipAction.lua'))
+  and not approvedUnequipConstructor(ISUnequipAction.new) then return false end
+ for _,name in ipairs({'new','isValid','complete'}) do
+  if not Proof.closure(ISDropWorldItemAction[name],'ISDropWorldItemAction.lua')
+   and not approvedDrop(name,ISDropWorldItemAction[name]) then return false end
+ end
  if not trusted or ISFitnessAction~=class or ISFitnessUI~=ui or ui.onClick~=Fitness.onClick
   or ISInventoryPaneContextMenu.onActivateItem~=activate then return false end
  for kind,snapshot in pairs(classes) do
@@ -104,6 +175,23 @@ local function unchanged()
  end
  return true
 end
+local function validNative(action)
+ local record=nativeRecords[action]
+ if not record or enabled() or not unchanged() or action.character~=record.saved.player
+  or getmetatable(action)~=class or action.Type~=class.Type or action.exercise~=record.saved.exercise
+  or action.timeToExe~=record.saved.minutes or action.exeData~=record.saved.data
+  or action.exeDataType~=record.saved.exercise or action.fitness~=action.character:getFitness()
+  or action.fitnessUI~=record.panel or action.onStartFunc or action.onCancelFunc or action.onCompleteFunc then return end
+ for name,callback in pairs(classes.ISFitnessAction.methods) do if action[name]~=callback then return end end
+ return record
+end
+local function nativeCanEnd(player)
+ return not player:isDead() and not player:isAsleep() and not player:getVehicle()
+  and not player:isClimbing() and not player:isAiming() and not player:isSittingOnFurniture()
+  and not player:isPlayerMoving() and not player:pressedMovement(true) and not player:pressedMovement(false)
+  and not player:pressedCancelAction()
+end
+
 local function validRecord(action)
  local record=records[action]
  if not record or action.character~=record.saved.player or not unchanged()
@@ -113,11 +201,19 @@ local function validRecord(action)
   if not Ops.isCommand(action) then return end
  elseif not classes[action.Type] or getmetatable(action)~=classes[action.Type].owner then return
  else
+  local bulk=Toolkit.BulkActions
+  local guarded=action.Type=='ISInventoryTransferAction' and bulk and bulk.isGuardedTransfer
+   and bulk.isGuardedTransfer(action,classes[action.Type].methods.stop)
   for name,callback in pairs(classes[action.Type].methods) do
-   if action[name]~=callback and (action[name]~=classes[action.Type].owner[name]
+   if action[name]~=callback and not (name=='stop' and guarded) and (action[name]~=classes[action.Type].owner[name]
     or not approvedChange(action.Type,name)) then return end
   end
-  if action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.retriggerLastAction or action.onFailFunc or action.additionalTest then return end
+  if action.onStartFunc or action.onCancelFunc or action.retriggerLastAction or action.onFailFunc or action.additionalTest
+   or action.onCompleteFunc and not (guarded and action.onCompleteFunc==action.toolkitQueueSafeOnComplete) then return end
+  if action.Type=='ISUnequipAction' and (not Proof.closure(ISUnequipAction.new,'ISUnequipAction.lua')
+   or not Proof.closure(ISUnequipAction.complete,'ISUnequipAction.lua')) and not approvedUnequip(action) then return end
+  if action.Type=='ISDropWorldItemAction' and not Proof.closure(ISDropWorldItemAction.new,'ISDropWorldItemAction.lua')
+   and (not cartDropMatch or not cartDropMatch(action)) then return end
   if record.item and not same(action.item,record.item) then return end
   if action.Type=='ISInventoryTransferAction' and not Toolkit.ActionQueuePolicy.matchesNative(action) then return end
   if action.Type=='ISFitnessAction' and (action.exercise~=record.saved.exercise or action.timeToExe~=record.saved.minutes
@@ -131,7 +227,14 @@ local function tag(action,saved,stage)
  records[action]={saved=saved,stage=stage,item=action.item and identity(action.item)}
  return action
 end
-local function add(action,saved,stage) return ISTimedActionQueue.add(tag(action,saved,stage)) end
+local function add(action,saved,stage)
+ local queue=ISTimedActionQueue.queues[saved.player]
+ local parent=queue and queue.current
+ ISTimedActionQueue.add(tag(action,saved,stage))
+ Settlement.track(action,stage=='preparation' and 'prepare' or stage=='cleanup' and 'cleanup' or 'body')
+ if stage=='cleanup' and parent then Settlement.inheritCleanup(action,parent) end
+ return action
+end
 local function command(player,callback,saved,stage)
  return tag(Ops.command(player,callback,saved),saved,stage)
 end
@@ -151,17 +254,17 @@ local function equipmentReady(saved)
  return true
 end
 local function startExercise(player,saved)
- if not enabled() or not unchanged() or saved.unavailable or not available(player) or not equipmentReady(saved) then return end
+ if not enabled() or not unchanged() or saved.unavailable or not available(player) or not equipmentReady(saved)
+  or not Equipment.stowed(player,saved.storage or {}) then return end
  local action=class:new(player,saved.exercise,saved.minutes,saved.data,saved.exercise)
  saved.action=action
- tag(action,saved,'exercise')
+ add(action,saved,'exercise')
  records[action].fitnessState=action.fitness:getCurrentExe()
- ISTimedActionQueue.add(action)
 end
 local function activation(player,saved)
  if not unchanged() then return end
  local seen={}
- for _,ref in pairs(saved.before and saved.before.hands or {}) do
+ for _,ref in pairs(saved.restoreHands or {}) do
   local item=root(player,ref)
   if item and not seen[item] and item:canBeActivated() then
    seen[item]=true
@@ -169,36 +272,119 @@ local function activation(player,saved)
   end
  end
 end
-local function cleanup(player,saved)
+-- A captured preparation is intent until its exact native effect earns the handle.
+local function preparation(action,saved,kind,storage)
+ add(action,saved,'preparation')
+ if storage then records[action].storage=storage end
+ local ref=identity(action.item)
+ local mode={primary=action.primary,twoHands=action.twoHands,source=action.srcContainer,destination=action.destContainer,
+  square=action.sq,x=action.xoffset,y=action.yoffset,z=action.zoffset,rotation=action.rotation,
+  place=action.isPlaceItem,multiple=action.isMultiple}
+ local entry={kind=kind,ref=ref,storage=storage}
+ entry.handle=Settlement.observePreparation(action,{
+  guard=function(value)
+   return validRecord(value)~=nil and same(value.item,ref) and value.primary==mode.primary
+    and value.twoHands==mode.twoHands and value.srcContainer==mode.source and value.destContainer==mode.destination
+    and value.sq==mode.square and value.xoffset==mode.x and value.yoffset==mode.y and value.zoffset==mode.z
+    and value.rotation==mode.rotation and value.isPlaceItem==mode.place and value.isMultiple==mode.multiple
+  end,
+  capture=function(value)
+   local player=value.character;local item=root(player,ref)
+   if kind=='pickup' then
+    item=find(player:getInventory(),ref)
+    return item and item:getContainer()==mode.source and {source=mode.source} or nil
+   end
+   if not item then return end
+   if kind=='drop' then
+    return player:getCurrentSquare()==mode.square and {square=mode.square} or nil
+   end
+   if kind=='unequip' then
+    local before={primary=player:getPrimaryHandItem()==item,secondary=player:getSecondaryHandItem()==item,
+     worn=player:getWornItems():contains(item)}
+    local expectedPrimary=saved.before.hands.primary and same(item,saved.before.hands.primary) or false
+    local expectedSecondary=saved.before.hands.secondary and same(item,saved.before.hands.secondary) or false
+    local expectedWorn=false
+    for _,bag in ipairs(saved.before.bags) do if same(item,bag) then expectedWorn=true end end
+    if before.primary~=expectedPrimary or before.secondary~=expectedSecondary or before.worn~=expectedWorn then return end
+    return (before.primary or before.secondary or before.worn) and before or nil
+   end
+   if mode.twoHands and player:getPrimaryHandItem()==item and player:getSecondaryHandItem()==item
+    or not mode.twoHands and (mode.primary and player:getPrimaryHandItem() or player:getSecondaryHandItem())==item then return end
+   if player:getPrimaryHandItem() or player:getSecondaryHandItem() then return end
+   return {primary=mode.primary,twoHands=mode.twoHands}
+  end,
+  observed=function(value,before)
+   local player=value.character;local item=root(player,ref)
+   if kind=='drop' then
+    return not item and Equipment.placed(ref,before.square)~=nil
+   end
+   if not item then return false end
+   if kind=='pickup' then return item:getContainer()==mode.destination end
+   if kind=='unequip' then
+    return (not before.primary or player:getPrimaryHandItem()~=item)
+     and (not before.secondary or player:getSecondaryHandItem()~=item)
+     and (not before.worn or not player:getWornItems():contains(item))
+   end
+   return mode.twoHands and player:getPrimaryHandItem()==item and player:getSecondaryHandItem()==item
+    or not mode.twoHands and (mode.primary and player:getPrimaryHandItem() or player:getSecondaryHandItem())==item
+  end,
+ })
+ saved.preparations[#saved.preparations+1]=entry
+ if entry.handle then saved.handles[#saved.handles+1]=entry.handle end
+ return entry
+end
+local function restore(player,saved)
  if not saved.before or saved.restored or not unchanged() or player:isDead() then return end
  saved.restored=true
- local primary,secondary=root(player,saved.before.hands.primary),root(player,saved.before.hands.secondary)
- local held={player:getPrimaryHandItem(),player:getSecondaryHandItem()};local seen={}
- for _,item in pairs(held) do
-  if item and not seen[item] then
-   seen[item]=true
-   -- Clear mismatched and originally empty slots, deduplicating two-handed objects.
-   if item~=primary and item~=secondary or (player:getPrimaryHandItem()==item and not primary)
-    or (player:getSecondaryHandItem()==item and not secondary) then add(ISUnequipAction:new(player,item,50),saved,'cleanup') end
+ local hands,bags,prop={}, {}, false
+ for _,entry in ipairs(saved.preparations) do
+  if Settlement.earned(entry.handle) then
+   if entry.kind=='unequip' then
+    for slot,ref in pairs(saved.before.hands) do if ref and entry.ref.id==ref.id and entry.ref.kind==ref.kind then hands[slot]=ref end end
+    for _,ref in ipairs(saved.before.bags) do if entry.ref.id==ref.id and entry.ref.kind==ref.kind then bags[#bags+1]=ref end end
+   elseif entry.kind=='equip' then prop=true end
+  end
+ end
+ saved.restoreHands=hands
+ local primary,secondary=root(player,hands.primary),root(player,hands.secondary)
+ if prop then
+  local item=root(player,saved.item)
+  if item and player:isHandItem(item) and (item~=primary and item~=secondary
+   or player:getPrimaryHandItem()==item and not primary or player:getSecondaryHandItem()==item and not secondary) then
+   add(ISUnequipAction:new(player,item,50),saved,'cleanup')
   end
  end
  if primary then add(ISEquipWeaponAction:new(player,primary,50,true,primary==secondary),saved,'cleanup') end
  if secondary and secondary~=primary then add(ISEquipWeaponAction:new(player,secondary,50,false,false),saved,'cleanup') end
- for _,ref in ipairs(saved.before.bags) do
+ for _,ref in ipairs(bags) do
   local item=root(player,ref)
-  if item and not player:getWornItems():contains(item) then add(ISWearClothing:new(player,item),saved,'cleanup') end
+  if item and Equipment.canWear(player,ref) and not player:getWornItems():contains(item) then add(ISWearClothing:new(player,item),saved,'cleanup') end
  end
- ISTimedActionQueue.add(command(player,activation,saved,'cleanup'))
- local item=root(player,saved.item)
- local destination=saved.source
- if item and destination and destination~=player:getInventory() and destination:isExistYet()
-  and Toolkit.ActionQueuePolicy.isCarriedContainer(destination,player) then
-  local transfer=ISInventoryTransferUtil.newInventoryTransferAction(player,item,player:getInventory(),destination)
-  if transfer.Type=='ISInventoryTransferAction' then
-   transfer:setAllowMissingItems(true)
-   add(transfer,saved,'cleanup')
+ -- Native re-equipping may autoactivate an originally off item.
+ if primary or secondary then add(command(player,activation,saved,'cleanup'),saved,'cleanup') end
+ for _,entry in ipairs(saved.preparations) do
+  if entry.kind=='pickup' and Settlement.earned(entry.handle) then
+   local action=Settlement.enqueueBorrowedReturn(entry.handle)
+   if action then tag(action,saved,'cleanup');Settlement.track(action,'cleanup') end
   end
  end
+end
+local function cleanup(player,saved)
+ if not saved.before or saved.cleanupQueued or not unchanged() or player:isDead() then return end
+ saved.cleanupQueued=true
+ local storage={}
+ for _,entry in ipairs(saved.preparations) do
+  if entry.kind=='drop' and Settlement.earned(entry.handle) then storage[#storage+1]=entry.storage end
+ end
+ local parent=ISTimedActionQueue.queues[player].current
+ Equipment.pickups(player,storage,function(action,ref)
+  tag(action,saved,'cleanup');records[action].storage=ref
+  action.toolkitQueueOperation=parent.toolkitQueueOperation
+  -- Bind the earned native pickup before enqueue; unsupported cleanup may not
+  -- run without its authoritative continuation gate.
+  if Settlement.observeCleanupTransfer(action,parent) then ISTimedActionQueue.add(action) end
+ end)
+ add(command(player,restore,saved,'cleanup'),saved,'cleanup')
 end
 local function prepare(player,saved)
  if not enabled() or not unchanged() or not available(player) then return end
@@ -206,32 +392,58 @@ local function prepare(player,saved)
  if saved.item and not item then return end
  local primary,secondary=player:getPrimaryHandItem(),player:getSecondaryHandItem()
  if primary and primary:isForceDropHeavyItem() or secondary and secondary:isForceDropHeavyItem() then return end
+ saved.storage=Equipment.capture(player)
+ local drops=Equipment.drops(player,saved.storage)
+ if not drops then return end
+ for _,drop in ipairs(drops) do
+  if not Proof.closure(ISDropWorldItemAction.new,'ISDropWorldItemAction.lua')
+   and (not cartDropMatch or not cartDropMatch(drop)) then return end
+ end
  if player:isSitting() then add(ISWaitWhileGettingUp:new(player),saved,'preparation') end
  saved.before={hands={primary=identity(primary),secondary=identity(secondary)},bags={}}
- if item then saved.source=item:getContainer() end
+ saved.preparations,saved.handles={},{}
+ if item and item:getContainer()~=player:getInventory() then
+  -- Fetch the prop before removing its carrier's weight reduction or grounding it.
+  preparation(ISInventoryTransferUtil.newInventoryTransferAction(player,item,item:getContainer(),player:getInventory()),saved,'pickup')
+ end
  local seen={}
  local function unequip(value)
-  if value and not seen[value] then seen[value]=true;add(ISUnequipAction:new(player,value,50),saved,'preparation') end
+  if value and not seen[value] then seen[value]=true;preparation(ISUnequipAction:new(player,value,50),saved,'unequip') end
  end
  unequip(primary);unequip(secondary)
  local worn=player:getWornItems()
  for i=0,worn:size()-1 do
   local value=worn:get(i):getItem()
   if instanceof(value,'InventoryContainer') then
-   saved.before.bags[#saved.before.bags+1]=identity(value);unequip(value)
+   local ref=identity(value);ref.slot=worn:get(i):getLocation()
+   saved.before.bags[#saved.before.bags+1]=ref;unequip(value)
   end
  end
+ for i,drop in ipairs(drops) do preparation(drop,saved,'drop',saved.storage[i]) end
  if item then
-  if item:getContainer()~=player:getInventory() then
-   add(ISInventoryTransferUtil.newInventoryTransferAction(player,item,item:getContainer(),player:getInventory()),saved,'preparation')
-  end
-  add(ISEquipWeaponAction:new(player,item,50,true,saved.data.prop=='twohands'),saved,'preparation')
+  preparation(ISEquipWeaponAction:new(player,item,50,true,saved.data.prop=='twohands'),saved,'equip')
  end
- ISTimedActionQueue.add(command(player,startExercise,saved,'preparation'))
- ISTimedActionQueue.add(command(player,cleanup,saved,'cleanup'))
+ add(command(player,startExercise,saved,'preparation'),saved,'preparation')
+ local restoration=add(command(player,cleanup,saved,'cleanup'),saved,'cleanup')
+ Settlement.cleanupAfter(restoration,saved.handles)
 end
 function Fitness.onClick(panel,button,...)
- if not enabled() or not unchanged() then return click(panel,button,...) end
+ if not enabled() or not unchanged() or not Settlement.preparationAvailable() then
+  if button.internal=='CANCEL' then
+   local queue=ISTimedActionQueue.queues[panel.player]
+   local action=queue and queue.current
+   local record=action and validNative(action)
+   if record then Lifecycle.invalidateStop(queue,action) end
+  end
+  local previous=nativePanelScope
+  if not enabled() and unchanged() and button.internal=='OK' then
+   nativePanelScope={panel=panel,exercise=panel.selectedExe,minutes=tonumber(panel.exeTime:getInternalText()),data=panel.exeData}
+  else nativePanelScope=nil end
+  local result=pack(pcall(click,panel,button,...))
+  nativePanelScope=previous
+  if not result[1] then error(result[2],0) end
+  return unpack(result,2,result.n)
+ end
  if button.internal=='OK' then
   local data=exercises[panel.selectedExe]
   local minutes=tonumber(panel.exeTime:getInternalText())
@@ -240,7 +452,7 @@ function Fitness.onClick(panel,button,...)
   if data.data.item and not item then return end
   local saved={player=panel.player,exercise=panel.selectedExe,minutes=minutes,data=data.data,item=identity(item)}
   -- Leave the window out of the operation: its update/close must not own required cleanup.
-  return Ops.run(function() return ISTimedActionQueue.add(command(panel.player,prepare,saved,'request')) end)
+  return Ops.run(function() return add(command(panel.player,prepare,saved,'request'),saved,'request') end)
  elseif button.internal=='CANCEL' then
   local queue=ISTimedActionQueue.getTimedActionQueue(panel.player)
   if Fitness.isManaged(queue.current) then return Toolkit.ActionQueue.cancelOperation(queue,queue.current) end
@@ -248,39 +460,112 @@ function Fitness.onClick(panel,button,...)
  return click(panel,button,...)
 end
 ui.onClick=Fitness.onClick
-local function preserve(action)
+local function preserve(action,pendingStart)
  local record=validRecord(action)
  if not record or action.Type~='ISFitnessAction' or not enabled() then return false end
  local player=action.character;local queue=ISTimedActionQueue.queues[player]
  if not queue or queue.current~=action or queue.queue[1]~=action or player:isDead()
   or player:isPlayerMoving() or player:pressedMovement(false) then return false end
  if queue.toolkitCancel==action then return true end
- local receipt=Toolkit.ActionQueueAcknowledgements.capture(action)
- if isClient() and not receipt then return false end
- queue.toolkitCancel=action
- queue.toolkitStopIntent={reason='fitness-ended',scope='action'}
- if receipt then queue.toolkitOutcomeWait={acknowledgement=receipt,generic=true,deadline=getTimestampMs()+30000} end
- return true
+ if isClient() and not pendingStart and not Toolkit.ActionQueueAcknowledgements.capture(action) then return false end
+ return Lifecycle.prepareStop(queue,action,'fitness-ended','action',{pendingStart=pendingStart})
 end
 function Fitness.canPreserveStop(action) return preserve(action) end
+-- NetTimedAction uses the constructor parameter names as wire field keys.
+class.new=function(self,character,exercise,timeToExe,exeData,exeDataType)
+ local action=native.new(self,character,exercise,timeToExe,exeData,exeDataType)
+ local owner,player,minutes,data,kind=self,character,timeToExe,exeData,exeDataType
+ for _,record in pairs(nativeRecords) do if record.saved.player==player then record.ownerLost=true end end
+ local context=nativePanelScope
+ if context and owner==class and player==context.panel.player and exercise==context.exercise
+  and minutes==context.minutes and data==context.data and kind==exercise
+  and exercises[exercise] and exercises[exercise].data==data and unchanged()
+  and type(minutes)=='number' and minutes>=10 and minutes<=60 then
+  nativeRecords[action]={saved={player=player,exercise=exercise,minutes=minutes,data=data},panel=context.panel,
+   fitnessState=action.fitness:getCurrentExe()}
+ end
+ return action
+end
+-- Unknown constructors keep their own parameter-name wire schema untouched.
+if not trusted then class.new=native.new end
+
+class.stop=function(action,...)
+ return Lifecycle.runStop(action,native.stop,...)
+end
 class.start=function(action)
- if validRecord(action) then
+ local record=validRecord(action) or validNative(action)
+ if record then
   action.startMS=now();action.endMS=action.startMS+action.timeToExe*60000
-  records[action].started=true
+  record.started=true;startClock(record);record.confirmed=not isClient()
  end
  return native.start(action)
 end
 class.forceStop=function(action)
- local record=validRecord(action)
- if record and enabled() and isClient() and not action.character:isDead() and not preserve(action) and not action.character:isPlayerMoving()
-  and not action.character:pressedMovement(false) then
-  -- Do not advance to another workout while the server may still apply repetitions.
-  record.stopDeadline=record.stopDeadline or getTimestampMs()+30000
-  if getTimestampMs()<record.stopDeadline then return end
+ local managed=validRecord(action)
+ local record=managed or validNative(action)
+ if record and not managed and naturalStopScope==action and not record.stopRequested
+  and nativeCanEnd(action.character)
+  and action.character:getMoodles():getMoodleLevel(MoodleType.ENDURANCE)<=ISFitnessUI.enduranceLevelThreshold then
+  local queue=ISTimedActionQueue.queues[action.character]
+  local cleanup,release,restorationValid=Equipment.deferRestoration(action,record.panel)
+  if cleanup then
+   local accepted=Lifecycle.prepareStop(queue,action,'native-fitness-ended','action',{pendingStart=true,guarded=true,
+    cleanup=cleanup,release=release,validate=function()
+     return validNative(action)==record and nativeCanEnd(action.character) and restorationValid()
+    end})
+   if not accepted then release() end
+  end
  end
- preserve(action)
+ if record then
+  record.stopRequested=true
+  if record.started and not record.stopClockMS then
+   record.stopClockMS=record.clockStartMS+record.elapsedMS;record.stopTimestampMS=getTimestampMs()
+  end
+ end
+ -- Stop native repetitions immediately. A late started/terminal receipt gates
+ -- continuation, never the outgoing native stop request.
+ if managed and preserve(action,true) then managed.stopping=isClient() end
  return native.forceStop(action)
 end
+class.update=function(action)
+ local record=validRecord(action) or validNative(action)
+ if record and record.started then advanceClock(record) end
+ if record and record.started and not record.confirmed and not record.stopRequested
+  and record.elapsedMS<record.saved.minutes*60000 then
+  local receipt=Toolkit.ActionQueueAcknowledgements.capture(action)
+  if receipt and Toolkit.ActionQueueAcknowledgements.state(action,receipt)=='started' then
+   -- Client Lua start precedes the server request. Count a full workout from
+   -- the exact confirmed start, once; late stop receipts must never restart it.
+   record.confirmed=true;startClock(record)
+   action.startMS=now();action.endMS=action.startMS+action.timeToExe*60000
+  end
+ end
+ local result
+ if record and record.started then
+  -- Keep native input/endurance/metabolic checks, but let the continuous timer
+  -- below own duration. A stale calendar sample must not preempt it either.
+  local deadline=action.endMS;action.endMS=math.huge
+  local ok,value=pcall(native.update,action)
+  action.endMS=deadline
+  if not ok then error(value,0) end
+  result=value
+ else result=native.update(action) end
+ record=validRecord(action) or validNative(action)
+ -- Only actual active frame deltas can reach the selected duration. Reads
+ -- and synchronized world-clock corrections never advance this accumulator.
+ if record and record.started and not record.stopRequested
+  and record.elapsedMS>=record.saved.minutes*60000 then
+  action.character:setVariable('ExerciseStarted',false)
+  action.character:setVariable('ExerciseEnded',true)
+  local previous=naturalStopScope
+  naturalStopScope=action
+  local ok,value=pcall(action.forceStop,action)
+  naturalStopScope=previous
+  if not ok then error(value,0) end
+ end
+ return result
+end
+
 local forceCancel=class.forceCancel
 class.forceCancel=function(action)
  local record=validRecord(action)
@@ -288,17 +573,23 @@ class.forceCancel=function(action)
   and action.fitness:getCurrentExe()==record.fitnessState then action.fitness:setCurrentExercise(nil) end
  return forceCancel(action)
 end
+classes.ISFitnessAction.methods.new=class.new
+classes.ISFitnessAction.methods.stop=class.stop
 classes.ISFitnessAction.methods.forceCancel=class.forceCancel
 classes.ISFitnessAction.methods.start=class.start
 classes.ISFitnessAction.methods.forceStop=class.forceStop
-function Fitness.retainCleanup(action) local record=validRecord(action);return record and record.stage=='cleanup' end
-function Fitness.ownsPickupCleanup(action,id)
- local record=validRecord(action)
- return record and record.saved.before and record.saved.item and record.saved.item.id==id
-end
+classes.ISFitnessAction.methods.update=class.update
 function Fitness.canSkip(action)
  local record=validRecord(action)
  if not record or record.started or (action.action and action:isStarted()) then return false end
+ if record.storage then
+  if action.Type=='ISDropWorldItemAction' then
+   if not Equipment.canDrop(action.character,record.storage,action.sq) then record.saved.unavailable=true;return true end
+  elseif action.Type=='ISInventoryTransferAction' then
+   return not Equipment.canWear(action.character,record.storage)
+    or Equipment.ground(action.character,record.storage)~=action.item
+  end
+ end
  if record.item and not find(action.character:getInventory(),record.item) then
   if record.stage~='cleanup' then record.saved.unavailable=true end
   return true
@@ -330,28 +621,65 @@ local function contract(action)
  end
  return result
 end
-Definitions.registerBehavior('toolkit.fitness',{types={'ISQueueActionsAction','ISFitnessAction','ISWaitWhileGettingUp','ISWearClothing'},matches=Fitness.isManaged,inspect=contract})
+Definitions.registerBehavior('toolkit.fitness',{types={'ISQueueActionsAction','ISFitnessAction','ISWaitWhileGettingUp','ISWearClothing','ISDropWorldItemAction'},matches=Fitness.isManaged,inspect=contract})
+-- The native matcher owns ordinary callbacks. Only this operation's exact
+-- reviewed non-cart wrapper branch needs its own preparation/cleanup contract.
+Definitions.registerBehavior('toolkit.fitness-cart-unequip',{types={'ISUnequipAction'},matches=function(action)
+ return Fitness.isManaged(action) and approvedUnequip(action) and not Toolkit.ActionQueuePolicy.matchesNative(action)
+end,inspect=contract})
 local keys={squats='IGUI_Squats',pushups='IGUI_PushUps',situp='IGUI_SitUps',burpees='IGUI_Burpees',
  barbellcurl='IGUI_BarbellCurl',dumbbellpress='IGUI_DumbbellPress',bicepscurl='IGUI_BicepsCurl'}
-function Fitness.progress(action)
- local record=validRecord(action)
+local function timing(action,record)
  if not record or action.Type~='ISFitnessAction' or not record.started then return end
- local elapsed=math.max(0,math.min(record.saved.minutes,(now()-action.startMS)/60000))
- return {elapsed=elapsed,total=record.saved.minutes,fraction=elapsed/record.saved.minutes}
+ local clock=record.clockStartMS+record.elapsedMS
+ local elapsed=(record.confirmed or record.stopRequested) and math.max(0,math.min(record.saved.minutes,(clock-record.clockStartMS)/60000)) or 0
+ return {elapsed=elapsed,total=record.saved.minutes,fraction=elapsed/record.saved.minutes,stopping=record.stopping==true,
+  startMS=record.clockStartMS,endMS=record.clockStartMS+record.saved.minutes*60000,sampleMS=clock,confirmed=record.confirmed,
+  stopMS=record.stopClockMS,stopTimestampMS=record.stopTimestampMS,source='active-native-frames',
+  activeMS=record.elapsedMS,worldSampleMS=workoutClock()}
 end
+-- Timing observation does not imply managed ownership or edit permissions.
+function Fitness.timing(action) return timing(action,validRecord(action) or validNative(action)) end
+function Fitness.progress(action) return timing(action,validRecord(action)) end
 function Fitness.describe(action)
  local record=validRecord(action)
  if not record or (action.Type~='ISQueueActionsAction' and action.Type~='ISFitnessAction') then return end
  local saved=record.saved;local progress=Fitness.progress(action)
- local text=progress and getText('UI_PZSurvivorToolkit_queue_fitness_progress',string.format('%.1f',progress.elapsed),saved.minutes)
-  or getText('UI_PZSurvivorToolkit_queue_fitness_duration',saved.minutes)
- return {id='toolkit.fitness',title=getText(keys[saved.exercise]),signature='fitness:'..saved.exercise,
-  target=text,role=record.stage=='cleanup' and 'return' or record.stage=='preparation' and 'preparation' or nil,
+ local role=record.stage=='cleanup' and 'return' or record.stage=='preparation' and 'preparation' or nil
+ local title=role and getText('UI_PZSurvivorToolkit_queue_fitness_'..record.stage) or getText(keys[saved.exercise])
+ local text
+ if not role then
+  text=progress and progress.stopping and getText('UI_PZSurvivorToolkit_queue_fitness_stopping')
+   or progress and getText('UI_PZSurvivorToolkit_queue_fitness_progress',string.format('%.1f',progress.elapsed),saved.minutes)
+   or getText('UI_PZSurvivorToolkit_queue_fitness_duration',saved.minutes)
+ end
+ return {id='toolkit.fitness',title=title,signature='fitness:'..saved.exercise,
+  target=text,role=role,
   icon=function() return getItemTex(saved.data.item or 'Base.DumbBell') or getTexture('media/ui/Entity/Icon_Tools_48x48.png') end}
+end
+local function retireNative(action,record)
+ -- The original constructor changes Fitness.currentExe before queuing get-up.
+ -- If that exact unstarted request is discarded, release only its still-owned
+ -- constructor state so native UI cleanup can run. A later constructor wins.
+ if not record.started and not record.ownerLost and unchanged() and action.character==record.saved.player
+  and getSpecificPlayer(record.saved.player:getPlayerNum())==record.saved.player
+  and action.fitnessUI==record.panel and record.panel.currentExercice==record.saved.data.type
+  and action.fitness:getCurrentExe()==record.fitnessState then action.fitness:setCurrentExercise(nil) end
+ nativeRecords[action]=nil
 end
 Events.OnTick.Add(function()
  -- Kahlua ignores weak tables; retain proofs through receipt waits and cleanup while queued.
  local queues
+ for action,record in pairs(nativeRecords) do
+  local queue=ISTimedActionQueue.queues[record.saved.player]
+  if not queue then retireNative(action,record)
+  else
+   queues=queues or {}
+   local group=queues[queue]
+   if not group then group={pending={},remaining=0};queues[queue]=group end
+   group.pending[action],group.remaining=true,group.remaining+1
+  end
+ end
  for action,record in pairs(records) do
   local queue=ISTimedActionQueue.queues[record.saved.player]
   if not queue then records[action]=nil
@@ -366,14 +694,22 @@ Events.OnTick.Add(function()
   for queue,group in pairs(queues) do
    -- Stop after the last tracked member, rather than scanning an unrelated tail.
    for _,action in ipairs(queue.queue) do
+    local deferred=action.Type=='ISWaitWhileGettingUp' and action.onCompleteArgs and action.onCompleteArgs.p1
+    if nativeRecords[deferred] and group.pending[deferred] then
+     group.pending[deferred],group.remaining=nil,group.remaining-1
+     if group.remaining==0 then break end
+    end
     if group.pending[action] then
      group.pending[action],group.remaining=nil,group.remaining-1
      if group.remaining==0 then break end
     end
    end
-   for action in pairs(group.pending) do records[action]=nil end
+   for action in pairs(group.pending) do
+    records[action]=nil
+    if nativeRecords[action] then retireNative(action,nativeRecords[action]) end
+   end
   end
  end
 end)
-if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records={} end) end
+if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records,nativeRecords={},{} end) end
 return Fitness

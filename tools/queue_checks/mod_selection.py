@@ -37,22 +37,34 @@ def matching_roots(infos, identifier):
     return roots
 
 
+def _version_int(name):
+    parts = name.split(".")
+    minor = int(parts[1]) if len(parts) > 1 else 0
+    return int(parts[0]) * 1000 + min(minor, 999)
+
+
+def selected_mod_version(folder, version=(42, 21)):
+    """Mirror B42 ZomboidFileSystem.getModVersionDirName, including its default."""
+    selected, minimum = folder / "42.0", 42000
+    maximum = _version_int(".".join(map(str, version)))
+    for child in folder.iterdir():
+        if child.is_dir() and VERSION.fullmatch(child.name):
+            value = _version_int(child.name)
+            # The engine ignores patch components and keeps the last equal
+            # major/minor alias in filesystem enumeration order.
+            if minimum <= value <= maximum:
+                selected, minimum = child, value
+    return selected
+
+
 def mod_layers(folder, version=(42, 21)):
-    """Content layers in overlay order; B42 content never falls back to legacy root Lua."""
-    versions = [(tuple(map(int, child.name.split("."))), child) for child in folder.iterdir()
-                if child.is_dir() and VERSION.fullmatch(child.name)]
-    compatible = [(v, path) for v, path in versions if (42,) <= v <= version]
-    if versions:
-        if not compatible:
-            return []
-        return [path for path in (folder / "common", max(compatible)[1]) if path.is_dir()]
-    return [folder / "common"] if (folder / "common").is_dir() else [folder]
+    """B42 content overlays common with the selected version, never legacy root Lua."""
+    selected = selected_mod_version(folder, version)
+    return [path for path in (folder / "common", selected) if path.is_dir()]
 
 
 def mod_info(folder, version=(42, 21)):
-    layers = mod_layers(folder, version)
-    if not layers:
-        return None
-    # Root metadata is a fallback, unlike legacy root content in a B42 mod.
-    return next((layer / "mod.info" for layer in [*reversed(layers), folder]
+    # ChooseGameInfo probes the selected version, then common; root metadata
+    # belongs to the legacy loader and cannot make a B42 mod discoverable.
+    return next((layer / "mod.info" for layer in reversed(mod_layers(folder, version))
                  if (layer / "mod.info").is_file()), None)

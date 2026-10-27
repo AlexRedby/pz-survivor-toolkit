@@ -3,9 +3,50 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 
 HERE = Path(__file__).resolve().parent
+
+
+def check_host_adapter():
+    project = HERE.parents[3]
+    sys.path.insert(0, str(project / "tools"))
+    from queue_checks.adapters import craft_wishlist as adapter
+    startup = project / "tests/native_queue/startup/client/ZZStartup.lua"
+    base = {"suite": "shared-wishlist", "kind": "mp", "mode": "toolkit", "clients": 2,
+            "mods": ["PZSurvivorToolkit"], "ports": [18061, 18062], "languages": ["EN", "RU"]}
+    for cases in (["standalone"], ["visual", "standalone"]):
+        selection = dict(base, cases=cases, options={"mp_host": True})
+        adapter.validate(selection)
+        assert startup in adapter.sources(project, selection), "Host bootstrap must be frozen input"
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            runtime = {"roles": {role: {} for role in ("server", "client1", "client2")}}
+            for role in runtime["roles"]:
+                cache = output / role
+                lua = cache / "mods/ActionQueueTest/42/media/lua"
+                (lua / "client").mkdir(parents=True)
+                (lua / "shared").mkdir()
+                (lua / "shared/QueueTestSelection.lua").write_text("runner-owned selection\n")
+                (cache / "Lua").mkdir()
+                (cache / "Lua/smoke-user.txt").write_text(role + "\n")
+            adapter.stage(project, output, None, None, selection, {}, runtime)
+            for role in runtime["roles"]:
+                cache = output / role
+                lua = cache / "mods/ActionQueueTest/42/media/lua"
+                assert (lua / "client/ZZStartup.lua").read_bytes() == startup.read_bytes()
+                assert (lua / "shared/QueueTestSelection.lua").read_text() == "runner-owned selection\n"
+                assert (cache / "Lua/smoke-user.txt").read_text() == role + "\n"
+    assert startup not in adapter.sources(project, dict(base, cases=["standalone"])), "Legacy route must not gain startup callbacks"
+    for changes in ({"cases": ["reload"]}, {"languages": ["RU", "EN"]}):
+        try:
+            adapter.validate(dict(dict(base, cases=["standalone"], options={"mp_host": True}), **changes))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Unsupported Host lifecycle or actor languages accepted")
+    print("PASS wishlist menu Host: frozen bootstrap, runner-owned role inputs and reload rejection")
 
 
 def main():
@@ -48,7 +89,11 @@ def main():
         else:
             print(line)
     assert names == json.loads((HERE / "stage-names.json").read_text()), "Preserved stage names changed"
-    subprocess.run([lua, str(HERE / "protocol.lua"), str(HERE), str(HERE.parents[3])], check=True)
+    with tempfile.TemporaryDirectory() as directory:
+        session = Path(directory) / "WishlistSession.lua"
+        session.write_text(module["session_source"](["visual", "standalone"], "client"))
+        subprocess.run([lua, str(HERE / "protocol.lua"), str(HERE), str(HERE.parents[3]), str(session)], check=True)
+    check_host_adapter()
     print("PASS helper preparation, collision protection and runtime parameter validation")
     print("NOT RUN: PZ, SP/MP, rendered UI, network or restart persistence")
 

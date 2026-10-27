@@ -5,7 +5,10 @@ import java.lang.constant.ClassDesc;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.ProtectionDomain;
 import java.util.HashMap;
@@ -20,10 +23,12 @@ public final class ToolkitWindowBootstrap {
     private static final String DISPLAY_SHA256 = "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578";
     private static final Map<String, Integer> EXPECTED = Map.of(
         "glfwDefaultWindowHints", 1, "glfwShowWindow", 2, "glfwFocusWindow", 1,
-        "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2);
+        "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2,
+        "glfwPollEvents", 1);
     private static boolean agentInstalled;
     private static volatile boolean displayTransformed;
     private static long routedWindow;
+    private static long pendingVisibleWindow;
 
     private static String sha256(byte[] bytes) throws Exception {
         return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
@@ -90,7 +95,10 @@ public final class ToolkitWindowBootstrap {
         if (!enabled()) return;
         if (!agentInstalled) throw new IllegalStateException("Native window isolation agent is missing");
         var gate = gatePath();
-        if (Files.exists(gate)) throw new IllegalStateException("Window routing acknowledgement already exists: " + gate);
+        if (Files.exists(gate, LinkOption.NOFOLLOW_LINKS)
+                || Files.exists(visibleGatePath(), LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalStateException("Window routing acknowledgement already exists: " + gate);
+        }
         Class.forName("org.lwjglx.opengl.Display", false, ToolkitWindowBootstrap.class.getClassLoader());
         if (!displayTransformed) throw new IllegalStateException("Native Display isolation hooks are missing");
         // AeroSpace discovers regular UI applications; focus is independently suppressed below.
@@ -109,6 +117,25 @@ public final class ToolkitWindowBootstrap {
         return gate;
     }
 
+    private static Path visibleGatePath() {
+        return gatePath().resolveSibling("test-window-visible.txt");
+    }
+
+    /** Complete recovery tokens are published atomically; malformed input never reveals a window. */
+    static boolean visibleAcknowledged(Path gate, String token) throws Exception {
+        if (!Files.exists(gate, LinkOption.NOFOLLOW_LINKS)) return false;
+        if (!Files.isRegularFile(gate, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalStateException("Window visibility acknowledgement must be a regular file: " + gate);
+        }
+        try (var stream = Files.newInputStream(gate, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] bytes = stream.readNBytes(257);
+            if (!new String(bytes, StandardCharsets.US_ASCII).equals(token + "\n")) {
+                throw new IllegalStateException("Invalid owned window visibility acknowledgement: " + gate);
+            }
+        }
+        return true;
+    }
+
     public static void glfwDefaultWindowHints() {
         GLFW.glfwDefaultWindowHints();
         if (enabled()) {
@@ -122,6 +149,9 @@ public final class ToolkitWindowBootstrap {
         if (window == routedWindow) { GLFW.glfwShowWindow(window); return; }
         try {
             Path gate = gatePath();
+            if (Files.exists(visibleGatePath(), LinkOption.NOFOLLOW_LINKS)) {
+                throw new IllegalStateException("Window visibility acknowledgement already exists");
+            }
             Files.deleteIfExists(gate);
             GLFW.glfwSetWindowAttrib(window, GLFW.GLFW_FOCUS_ON_SHOW, GLFW.GLFW_FALSE);
             GLFW.glfwSetWindowOpacity(window, 0.0f);
@@ -129,15 +159,28 @@ public final class ToolkitWindowBootstrap {
             String token = ProcessHandle.current().pid() + ":" + window;
             System.out.println("[QUEUE_TEST] WINDOW_ROUTING_READY pid=" + ProcessHandle.current().pid() + " glfw=" + window);
             System.out.flush();
-            long deadline = System.nanoTime() + 60_000_000_000L;
-            while (!Files.isRegularFile(gate) || !Files.readString(gate).strip().equals(token)) {
+            // Normal discovery30s plus one wake-transition grace and owned routing.
+            long deadline = System.nanoTime() + 90_000_000_000L;
+            String acknowledgement = "";
+            while (true) {
+                if (Files.exists(gate, LinkOption.NOFOLLOW_LINKS)
+                        && !Files.isRegularFile(gate, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IllegalStateException("Window routing acknowledgement must be a regular file");
+                }
+                if (Files.isRegularFile(gate, LinkOption.NOFOLLOW_LINKS)) {
+                    acknowledgement = Files.readString(gate).strip();
+                    if (acknowledgement.equals(token) || acknowledgement.equals(token + ":current")) break;
+                }
                 if (System.nanoTime() >= deadline) throw new IllegalStateException("Timed out waiting for owned window routing: " + token);
                 // A waiting Cocoa event pump also services accessibility requests from AeroSpace.
                 GLFW.glfwWaitEventsTimeout(0.025);
             }
             routedWindow = window;
-            GLFW.glfwSetWindowOpacity(window, 1.0f);
-            System.out.println("[QUEUE_TEST] WINDOW_ROUTED pid=" + ProcessHandle.current().pid() + " glfw=" + window);
+            boolean current = acknowledgement.equals(token + ":current");
+            pendingVisibleWindow = current ? window : 0;
+            if (!current) GLFW.glfwSetWindowOpacity(window, 1.0f);
+            System.out.println("[QUEUE_TEST] WINDOW_ROUTED pid=" + ProcessHandle.current().pid() + " glfw=" + window
+                + " mode=" + (current ? "current transparent=true" : "aerospace"));
         } catch (Exception error) {
             // Never reveal a window when routing fails, even if the engine catches this exception.
             System.err.println("[QUEUE_TEST] FAIL native window routing " + error);
@@ -147,7 +190,25 @@ public final class ToolkitWindowBootstrap {
 
     public static void glfwDestroyWindow(long window) {
         if (enabled() && window == routedWindow) routedWindow = 0;
+        if (enabled() && window == pendingVisibleWindow) pendingVisibleWindow = 0;
         GLFW.glfwDestroyWindow(window);
+    }
+
+    public static void glfwPollEvents() {
+        GLFW.glfwPollEvents();
+        if (!enabled() || pendingVisibleWindow == 0) return;
+        try {
+            long window = pendingVisibleWindow;
+            String token = ProcessHandle.current().pid() + ":" + window;
+            if (visibleAcknowledged(visibleGatePath(), token)) {
+                GLFW.glfwSetWindowOpacity(window, 1.0f);
+                pendingVisibleWindow = 0;
+                System.out.println("[QUEUE_TEST] WINDOW_VISIBLE pid=" + ProcessHandle.current().pid() + " glfw=" + window);
+            }
+        } catch (Exception error) {
+            System.err.println("[QUEUE_TEST] FAIL native window visibility " + error);
+            Runtime.getRuntime().halt(71);
+        }
     }
 
     public static void glfwFocusWindow(long window) {

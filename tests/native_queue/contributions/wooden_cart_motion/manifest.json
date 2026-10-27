@@ -6,7 +6,9 @@
   "runner_adapter": null,
   "exclusive_native_process": true,
   "sources": {
-    "java": "Main.java",
+    "clip_names": "clip_names.py",
+    "kotlin": "Main.kt",
+    "java_advice": "MainAdvice.java",
     "impact_watch_checks": "ImpactWatchChecks.java",
     "test_area": "test-area.lua",
     "bootstrap": "bootstrap.lua",
@@ -45,7 +47,10 @@
     "motion_matrix_scenario": "scenario-motion-matrix.lua",
     "motion_matrix_analyzer": "analyze-motion-matrix.py",
     "obstacle_matrix_scenario": "scenario-obstacle-matrix.lua",
-    "obstacle_matrix_analyzer": "analyze-obstacle-matrix.py"
+    "obstacle_matrix_analyzer": "analyze-obstacle-matrix.py",
+    "approach_scenario": "scenario-approach.lua",
+    "approach_analyzer": "analyze-approach.py",
+    "showcase_scenario": "scenario-showcase.lua"
   },
   "origin": {
     "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
@@ -56,7 +61,7 @@
     "game": "Project Zomboid B42.21 only",
     "zombie_buddy_minimum": "2.3.4",
     "compile_jdk_minimum": 25,
-    "compile_release": 17,
+    "compile_release": 25,
     "compile_jars": [
       "projectzomboid.jar",
       "ZombieBuddy.jar"
@@ -95,7 +100,10 @@
       "SaucedWheelbarrow.WheelbarrowMetal"
     ],
     "video": "FFmpeg executable plus Toolkit toolkitVideoStart/Status/Stop Lua bridge",
-    "evidence_probes": "Source in evidence/: pre-IK grip, post-render body/cart palettes, native hip/leg/arm probes and mesh analyzers. Requires candidate JavaPatches classes and Python NumPy; runner attachment/analysis adapter pending"
+    "evidence_probes": "Source in evidence/: pre-IK grip, post-render body/cart palettes, native hip/leg/arm probes and mesh analyzers. Requires candidate JavaPatches classes and Python NumPy; runner attachment/analysis adapter pending",
+    "kotlin_version": "2.4.21",
+    "jvm_target": 25,
+    "kotlin_runtime_package": "net.alexredby.pztoolkitruntime.kotlin"
   },
   "required_environment": [
     "PZ_CART_RUNTIME_FILE",

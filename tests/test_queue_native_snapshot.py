@@ -13,13 +13,16 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-from queue_checks import native, worlds, pack, runner, admission, report
+from queue_checks import native, worlds, pack, runner, admission, report, snapshot_copy
 
 
 class NativeSnapshotTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        private_glfw = patch.object(native.glfw, 'prepare', side_effect=self.prepare_glfw)
+        private_glfw.start()
+        self.addCleanup(private_glfw.stop)
         disk = patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3))
         disk.start()
         self.addCleanup(disk.stop)
@@ -63,6 +66,14 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(path / layer / "mod.info", "name=Test\nid = " + identifier + "\n")
         self.write(path / layer / "media/lua/shared/test.lua", "return 'unchanged mod source'\n")
         return path
+
+    @staticmethod
+    def prepare_glfw(game, directory, java):
+        directory.mkdir()
+        library = directory / 'libglfw.dylib'
+        library.write_bytes(b'prepared private GLFW input')
+        return {'library': str(library), 'sha256': native.sha256(library),
+                'compatibility': 'retain-online-displays-during-sleep'}
 
     @staticmethod
     def compile(command, **kwargs):
@@ -187,6 +198,32 @@ class NativeSnapshotTests(unittest.TestCase):
         actual.write_text(actual.read_text().replace('VoiceEnable=false', 'VoiceEnable=true'))
         with self.assertRaisesRegex(ValueError, 'changed before launch'):
             runner._verify_initial_settings(root, selected, runtime)
+
+    def test_host_saved_template_restores_authority_and_authentication_in_original_owned_cache(self):
+        shutil.copytree(ROOT / 'tests/native_queue/startup', self.project / 'tests/native_queue/startup')
+        seed = self.prepare('host-seed', suite='startup', kind='mp', clients=1, cases=['loaded'], options={'mp_host': True})
+        self.write(seed / 'client1/Saves/Multiplayer/queue-smoke/map.bin', 'native world IDs')
+        self.write(seed / 'client1/Saves/Multiplayer/queue-smoke/global_mod_data.bin', 'authoritative manifest snapshots')
+        self.write(seed / 'client1/db/queue-smoke.db', 'native authentication rows')
+        self.write(seed / 'execution.json', json.dumps({'status': 'completed',
+            'processes': {'client1': {'pid': 999999, 'exit_code': -15},
+                'server': {'pid': 999998, 'exit_code': 0, 'parent_role': 'client1', 'cache': str(seed / 'client1')}},
+            'host_save': {'pid': 999998, 'exit_code': 0}, 'host_cleanup': {'remaining_pids': []}}))
+        template = self.root / 'host-world'
+        with patch.object(worlds.os, 'kill', side_effect=ProcessLookupError):
+            worlds.export(seed, template)
+        original = native.hashes(template)
+        output = self.prepare('host-restart', suite='startup', kind='mp', clients=1, cases=['loaded'],
+                              ports_auto=True, options={'mp_host': True, 'world_template': str(template)})
+        selected, runtime = report.read_json(output / 'selection.json'), report.read_json(output / 'runtime.json')
+        self.assertEqual('native authentication rows', (output / 'client1/db/queue-smoke.db').read_text())
+        self.assertEqual('authoritative manifest snapshots', (output / 'client1/Saves/Multiplayer/queue-smoke/global_mod_data.bin').read_text())
+        self.assertFalse((output / 'server/Saves').exists())
+        self.assertEqual(str(output / 'client1'), runtime['host_cache'])
+        self.assertEqual(self.selection['ports'], selected['ports'])
+        self.assertTrue(runtime['world_template']['mp_host'])
+        runner._verify_live_inputs(output, selected, runtime)
+        self.assertEqual(original, native.hashes(template))
 
     def test_host_rejects_suites_without_the_common_coop_bootstrap(self):
         with self.assertRaisesRegex(ValueError, 'common startup bootstrap'):
@@ -316,6 +353,49 @@ class NativeSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'manifest'):
             native.font_preload(cache, selection, game_argument)
 
+    def test_selected_adapter_helpers_are_sealed_without_unrelated_adapters(self):
+        from queue_checks.adapters import (craft_ui, inventory_grab, inventory_transfer,
+                                           fluid, food, quartermaster_crafting, queue_recovery, approach_queue)
+        dependencies = (
+            (craft_ui, ('craft.py',)),
+            (inventory_grab, ('craft.py',)),
+            (inventory_transfer, ('craft.py',)),
+            (fluid, ('craft.py',)),
+            (food, ('craft.py', 'fluid.py')),
+            (quartermaster_crafting, ('craft.py', 'quartermaster_supply_units.py')),
+            (queue_recovery, ('tv_controls.py',)),
+            (approach_queue, ('tv_controls.py',)),
+        )
+        # Keep helper mutations private; exercise the real source declarations
+        # through snapshot preparation, without compiling/staging each fixture.
+        python = self.project / 'tools/queue_checks/adapters'
+        unrelated = python / 'unrelated.py'
+        self.write(unrelated, '# unrelated adapter\n')
+        for module, helpers in dependencies:
+            with self.subTest(adapter=module.__name__):
+                selected = python / Path(module.__file__).name
+                self.write(selected, '# selected adapter\n')
+                for name in helpers:
+                    self.write(python / name, '# original helper\n')
+                adapter = self.fixture_adapter(lambda *_: None)
+                adapter.__file__ = str(selected)
+                adapter.sources = lambda project, selection: module.sources(ROOT, selection)
+                with patch.object(module, '__file__', str(selected)), \
+                        patch.object(native.adapters, 'get', return_value=adapter):
+                    output = self.prepare('helper-' + selected.stem)
+                manifest = report.read_json(output / 'source-manifest.json')
+                for name in helpers:
+                    self.assertIn(str(python / name), manifest)
+                self.assertNotIn(str(unrelated), manifest)
+                self.write(unrelated, unrelated.read_text() + '# changed\n')
+                self.assertEqual([], report.verify_manifest(output, 'source-manifest.json', True))
+                for name in helpers:
+                    helper = python / name
+                    before = helper.read_text()
+                    self.write(helper, before + '# changed helper\n')
+                    self.assertTrue(report.verify_manifest(output, 'source-manifest.json', True), name)
+                    self.write(helper, before)
+
     def test_fresh_snapshot_pins_sources_configs_mods_and_compiler_output(self):
         output = self.prepare()
         self.assertEqual(self.compile_mock.call_args.args[0][0], str(self.jdk / "bin/javac"))
@@ -341,6 +421,38 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(original, "changed after preparation")
         self.assertNotEqual(source[str(original)], native.sha256(original))
         self.assertNotEqual(copied.read_bytes(), original.read_bytes())
+
+    def test_mod_snapshot_copies_are_sealed_and_isolated_between_source_and_peers(self):
+        cloned = []
+
+        def clone(source, target, flags):
+            source, target = Path(os.fsdecode(source)), Path(os.fsdecode(target))
+            cloned.append((source, target))
+            shutil.copyfile(source, target)
+            return 0
+
+        with patch.object(snapshot_copy, '_CLONEFILE', side_effect=clone):
+            output = self.prepare(kind='mp', clients=2, languages=['EN', 'RU'])
+        original = self.project / 'Toolkit/42/media/lua/shared/test.lua'
+        relative = 'mods/PZSurvivorToolkit/42/media/lua/shared/test.lua'
+        copies = [output / role / relative for role in ('server', 'client1', 'client2')]
+        payload = original.read_bytes()
+        for copied in copies:
+            self.assertIn((original, copied), cloned)
+            self.assertEqual(payload, copied.read_bytes())
+            self.assertFalse(os.path.samefile(original, copied))
+        self.assertEqual(len(copies), len({(path.stat().st_dev, path.stat().st_ino) for path in copies}))
+        self.assertEqual([], report.verify_manifest(output, 'snapshot-hashes.json'))
+        self.assertEqual([], report.verify_manifest(output, 'source-manifest.json', True))
+        copies[0].write_bytes(b'changed server snapshot')
+        self.assertEqual(payload, original.read_bytes())
+        self.assertEqual(payload, copies[1].read_bytes())
+        self.assertEqual(payload, copies[2].read_bytes())
+        self.assertTrue(any(str(copies[0].relative_to(output)) in issue for issue in
+                            report.verify_manifest(output, 'snapshot-hashes.json')))
+        original.write_bytes(b'changed source after preparation')
+        self.assertEqual(payload, copies[1].read_bytes())
+        self.assertEqual(payload, copies[2].read_bytes())
 
     def test_live_game_tree_membership_and_contents_are_checked(self):
         output = self.prepare()
@@ -440,6 +552,20 @@ class NativeSnapshotTests(unittest.TestCase):
             target = output / role / 'mods/PZSurvivorToolkit'
             self.assertFalse((target / '42.0').exists())
             self.assertEqual('PZSurvivorToolkit', native._metadata(target / '42/mod.info')['id'])
+
+    def test_common_with_future_branch_gets_only_empty_default_layer_in_snapshot(self):
+        source = self.project / 'Toolkit'
+        (source / '42').rename(source / '42.22')
+        self.mod(source, 'PZSurvivorToolkit', layer='common')
+        initial = native.hashes(source)
+        output = self.prepare()
+        target = output / 'client1/mods/PZSurvivorToolkit'
+        self.assertEqual(initial, native.hashes(source))
+        self.assertEqual(initial, native.hashes(target), 'No content or metadata may be added')
+        self.assertFalse((source / '42.0').exists())
+        self.assertEqual({}, native.hashes(target / '42.0'))
+        for sub in ('AnimSets', 'actiongroups'):
+            self.assertTrue((target / '42.0/media' / sub).is_dir())
 
     def test_saved_world_is_copied_into_fresh_profile_with_silent_settings_and_pinned_source(self):
         seed = self.prepare('seed')

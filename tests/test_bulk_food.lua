@@ -1,5 +1,13 @@
 -- Exact food selection and native eating chains; Java animation/network state is represented explicitly.
 require = function(name)
+    if name == "PZSurvivorToolkit/ActionQueueLifecycle" then
+        return PZSurvivorToolkit.ActionQueueLifecycle
+            or assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
+    end
+    if name == "PZSurvivorToolkit/ActionQueueSettlement" then
+        return PZSurvivorToolkit.ActionQueueSettlement
+            or assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
+    end
     if name == "PZSurvivorToolkit/ActionQueueWeights" then
         return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua"))()
     end
@@ -119,7 +127,7 @@ local function list(values)
         contains = function(_, value) for _, candidate in ipairs(values) do if candidate == value then return true end end return false end}
 end
 local function container()
-    return {items = {}, getItems = function(self)
+    return {items = {}, setDrawDirty = function() end, getItems = function(self)
             local values = {}; for _, item in pairs(self.items) do values[#values + 1] = item end
             return list(values)
         end, contains = function(self, item) return self.items[item:getID()] == item end,
@@ -132,6 +140,7 @@ local available = {inventory, bag}
 local eaten, calls, portions = {}, {}, {}
 local mask
 local player = {getInventory = function() return inventory end, getPlayerNum = function() return 0 end,
+    getCharacterActions = function() return list({}) end,
     isDead = function() return dead end, isAsleep = function() return false end,
     getMoodles = function() return {getMoodleLevel = function() return fullness end} end,
     isEquippedClothing = function(_, item) return item == mask end, getPrimaryHandItem = function() end, getSecondaryHandItem = function() end,
@@ -262,7 +271,22 @@ local function finish()
                 current.item.container = current.destContainer
             end
         elseif current.Type == 'ISEatFoodAction' then current:complete(); Batch.completed(current)
-        elseif NativeActionRoot and (current.Type == 'ISUnequipAction' or current.Type == 'ISWearClothing') then current:complete() end
+        elseif NativeActionRoot and (current.Type == 'ISUnequipAction' or current.Type == 'ISWearClothing') then
+            local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+            if PZSurvivorToolkit.ActionQueue and lifecycle then
+                -- These are the actual shared Java callback boundaries. Native
+                -- perform requests completion before SP complete applies equipment.
+                lifecycle.begin(current, 'perform')
+                current:perform()
+                lifecycle.finish(current, 'perform', true)
+                lifecycle.begin(current, 'complete')
+                local completed = current:complete()
+                lifecycle.finish(current, 'complete', completed ~= false)
+                assert(lifecycle.flush(q) == 'completed')
+                return
+            end
+            current:complete()
+        end
         q:onCompleted(current)
     end
 end
@@ -477,7 +501,7 @@ if NativeActionRoot then
     project('ActionQueueLabels')
     local Policy = project('ActionQueuePolicy'); Policy.installContracts()
     for _, callback in ipairs(onGameStart) do callback() end
-    project('ActionQueueLifecycle')
+    require('PZSurvivorToolkit/ActionQueueLifecycle')
     project('ActionQueueAcknowledgements')
     local Controller = project('ActionQueue')
     local function book()
@@ -504,6 +528,106 @@ if NativeActionRoot then
     current.complete = function() end
     assert(not Policy.inspect(current), 'foreign food completion removes audited cancellation permission')
 
+    -- A vanished queue row is not evidence that native removal ran. The
+    -- independent meal may finish, but it must not acquire a wear obligation.
+    reset(); a = food(); mask = food({category = 'Clothing'})
+    local unchangedMask = mask
+    Bulk.queue(player, {a}); executeCommand(q.current)
+    local vanishedRemoval = q.current
+    q:onCompleted(vanishedRemoval); Bulk.prune()
+    tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
+    assert(Controller.cancelOperation(q, q.current))
+    finish()
+    assert(q.current == tail and mask == unchangedMask,
+        'queue disappearance without native removal must not earn or schedule mask restoration')
+
+    -- Host receipts and replicated worn state may arrive in either order.
+    -- The shared prerequisite survives removal-registry pruning but earns only
+    -- after the exact native callback, original worn state and both observations.
+    do
+        local clientBefore, timestampBefore = isClient, getTimestampMs
+        local onlineBefore = player.getOnlineID
+        local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+        local settlement = PZSurvivorToolkit.ActionQueueSettlement
+        local function prepareState(action)
+            local state = assert(settlement.operationState(action))
+            for _, step in ipairs(state.steps) do if step.phase == 'prepare' then return step.state end end
+        end
+        player.getOnlineID = function() return 17 end
+        getTimestampMs = function() return 1000 end
+        for _, cancelPhase in ipairs({'eating', 'removal'}) do
+        for _, order in ipairs({'effect-first', 'receipt-first'}) do
+            isClient = function() return false end
+            reset(); a = food(); mask = food({category = 'Clothing'})
+            local originalMask = mask
+            Bulk.queue(player, {a}); executeCommand(q.current)
+            local removal = q.current
+            tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
+            isClient = function() return true end
+            removal.toolkitNativeTransaction, removal.toolkitNativeKind = 21, 'ISUnequipAction'
+            local token = (cancelPhase == 'eating' and (order == 'effect-first' and '1' or '2')
+                or (order == 'effect-first' and '3' or '4')):rep(8) .. '-1111-1111-1111-111111111111'
+            local function receipt(state)
+                for _, callback in ipairs(serverCommands) do
+                    callback('PZSurvivorToolkitActions', 'State', {protocol = 1, player = 17,
+                        transaction = 21, kind = 'ISUnequipAction', token = token, state = state})
+                end
+            end
+            receipt('started')
+            if cancelPhase == 'removal' then assert(Controller.cancelOperation(q, removal)) end
+            if order == 'effect-first' then mask = nil else receipt('completed') end
+            lifecycle.begin(removal, 'perform')
+            removal:perform()
+            lifecycle.finish(removal, 'perform', true)
+            assert(lifecycle.flush(q) == (cancelPhase == 'removal' and 'waiting' or 'completed'))
+            Bulk.prune()
+            assert((cancelPhase == 'removal' or not Bulk.isMaskRemoval(removal)) and prepareState(removal) ~= 'earned',
+                order .. ': one observation or queue pruning must not earn native removal')
+            if cancelPhase == 'removal' then
+                assert(q.current == removal and q:indexOf(tail) > 1 and (mask == nil) == (order == 'effect-first'),
+                    order .. ': pending cancellation must not release the independent tail or apply equipment')
+            end
+            if order == 'effect-first' then receipt('completed') else mask = nil end
+            Bulk.prune()
+            assert(prepareState(removal) == 'earned', order .. ': exact late mask outcome was lost after pruning')
+            if cancelPhase == 'removal' then assert(lifecycle.flush(q) == 'completed')
+            else assert(Controller.cancelOperation(q, q.current)); finish() end
+            assert(Bulk.isCleanup(q.current) and settlement.isCleanup(q.current) and q.queue[2] == tail,
+                order .. ': earned mask cleanup must precede its independent tail')
+            isClient = function() return false end
+            finish()
+            assert(mask == originalMask and q.current == tail and #eaten == (cancelPhase == 'eating' and 1 or 0),
+                order .. ': native mask restoration/eating must execute once without effect replay')
+        end
+        end
+
+        for _, rejected in ipairs({'unmarked', 'failed-callback'}) do
+            isClient = function() return false end
+            reset(); a = food(); mask = food({category = 'Clothing'})
+            Bulk.queue(player, {a}); executeCommand(q.current)
+            local removal = q.current
+            isClient = function() return true end
+            if rejected ~= 'unmarked' then
+                removal.toolkitNativeTransaction, removal.toolkitNativeKind = 22, 'ISUnequipAction'
+                for _, status in ipairs({'started', 'completed'}) do
+                    for _, callback in ipairs(serverCommands) do
+                        callback('PZSurvivorToolkitActions', 'State', {protocol = 1, player = 17,
+                            transaction = 22, kind = 'ISUnequipAction',
+                            token = '55555555-1111-1111-1111-111111111111', state = status})
+                    end
+                end
+            end
+            mask = nil -- Observed equipment alone cannot prove this operation paid its preparation.
+            lifecycle.begin(removal, 'perform')
+            removal:perform()
+            lifecycle.finish(removal, 'perform', rejected ~= 'failed-callback')
+            Bulk.prune()
+            assert(prepareState(removal) ~= 'earned', rejected .. ': mask restoration requires a successful marked native effect')
+            assert(lifecycle.flush(q) == (rejected == 'failed-callback' and 'failed' or 'completed'))
+        end
+        isClient, getTimestampMs, player.getOnlineID = clientBefore, timestampBefore, onlineBefore
+    end
+
     for _, phase in ipairs({'removal', 'eating'}) do
         reset(); a, b = food(), food(); mask = food({category = 'Clothing'})
         local originalMask = mask
@@ -529,7 +653,11 @@ if NativeActionRoot then
         local active, restore = q.current
         for _, candidate in ipairs(q.queue) do if Bulk.isCleanup(candidate) then restore = candidate end end
         tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
-        assert(restore and Policy.inspect(restore), 'only the native owned mask restoration gets a cleanup contract')
+        assert(restore,'owned mask restoration was not queued')
+        local restoreContract,restoreAdapter=Policy.inspect(restore)
+        assert(restoreContract and restoreAdapter=='native.ISWearClothing', 'only the native owned mask restoration gets its native cleanup contract')
+        local foreignWear=ISWearClothing:new(player,restore.item,50)
+        assert(not Policy.inspect(foreignWear), 'an identical unowned Wear cannot borrow the food cleanup registration')
         local complete = restore.complete; restore.complete = function() end
         assert(not Controller.cancelOperation(q, active), 'changed mask effects cannot inherit group cancellation permission')
         restore.complete = complete
@@ -595,7 +723,7 @@ if NativeActionRoot then
     local unequip, fullMeal, cleanup = q.current, q.queue[2], q.queue[3]
     assert(unequip.Type == 'ISUnequipAction' and Bulk.isEat(fullMeal) and not fullMeal.action)
     fullness = 3
-    q:onCompleted(unequip)
+    finish()
     assert(q:indexOf(fullMeal) == -1 and q.current == cleanup and cleanup.Type == 'ISWearClothing',
         'satiety reached during mask preparation skips unstarted food and still restores the mask')
     while q.current ~= tail do finish() end
@@ -603,7 +731,7 @@ if NativeActionRoot then
         'satiety during preparation preserves unrelated tail and prevents future food dispatch')
 
     reset(); a = food(); mask = food({category = 'Clothing'})
-    Bulk.queue(player, {a}); executeCommand(q.current); q:onCompleted(q.current)
+    Bulk.queue(player, {a}); executeCommand(q.current); finish()
     local activeMeal = q.current; cleanup = q.queue[2]
     tail = book(); tail.item = food(); ISTimedActionQueue.add(tail)
     assert(Bulk.isEat(activeMeal) and activeMeal.action and cleanup.Type == 'ISWearClothing')

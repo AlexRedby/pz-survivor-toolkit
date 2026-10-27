@@ -6,7 +6,7 @@
     "build": "42.21.0",
     "revision": "4a0e9546ec",
     "jdk_min": 25,
-    "bytecode_target": 17,
+    "bytecode_target": 25,
     "python_min": "3.10",
     "zombiebuddy_min": "2.3.4"
   },

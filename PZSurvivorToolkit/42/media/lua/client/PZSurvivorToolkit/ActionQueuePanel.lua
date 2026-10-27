@@ -26,6 +26,20 @@ local function cancelDecision(queue, action, whole)
     return {allowed = reason == nil, reason = reason}
 end
 
+local function cancelsOperation(row)
+    return row.header or Toolkit.ActionQueue.isCraftPlanAction(row.item)
+        or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item)
+end
+
+local function cancelRejected(list, row, reason, decision)
+    list.cancelFeedback = {item = row.item, operation = row.operation, header = row.header,
+        text = getText("UI_PZSurvivorToolkit_queue_" .. (reason or "unavailable")),
+        at = getTimestampMs and getTimestampMs()}
+    local details = decision and Toolkit.ActionQueueLabels.decisionDetails(decision)
+    if details then list.cancelFeedback.text = list.cancelFeedback.text .. " <LINE> " .. details end
+    list.previewText = nil
+end
+
 -- Keep only short-lived display text, never a permission, resource or snapshot.
 -- The clock refreshes hints for external state changes without repeating their
 -- dependency analysis at render frequency. Press/release always evaluate live.
@@ -55,10 +69,18 @@ function List:cancelX()
     return self.width - 40
 end
 
+-- Native completion can run after update and before rendering or mouse input.
+-- A projected row is usable only while its anchor still occupies that queue slot.
+local function liveRow(queue, row)
+    return row and row.item and queue.queue[row.first] == row.item
+        and row.operation == row.item.toolkitQueueOperation
+end
+
 function List:rowUnderMouse(x, y)
     if x < 0 or x >= self.width - 14 or y + self:getYScroll() < 0
         or y + self:getYScroll() >= self.height or self:isMouseOverScrollBar() then return end
-    return self.items[self:rowAt(x, y)]
+    local row = self.items[self:rowAt(x, y)]
+    if liveRow(self.parent.queue, row) then return row end
 end
 
 function List:clearGesture()
@@ -71,21 +93,28 @@ end
 
 function List:onMouseDown(x, y)
     self:clearGesture()
+    self.cancelFeedback = nil
     local row = self:rowUnderMouse(x, y)
     if not row then return end
     if row.header and x < 22 then
         self.pressedToggle = row.operation
     elseif x >= self:cancelX() then
-        if row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item)) then
-            local reason, first, last = Toolkit.ActionQueue.cancelOperationReason(self.parent.queue, row.item)
+        if cancelsOperation(row) then
+            local decision = Toolkit.ActionQueuePolicy.evaluateCancel(self.parent.queue, row.item, true)
+            local reason, first, last = decision.reason, decision.first, decision.last
             if not reason then
                 self.pressedOperation = {item = row.item, operation = row.operation, members = {}}
                 for i = first, last do
                     table.insert(self.pressedOperation.members, self.parent.queue.queue[i])
                 end
+            else
+                cancelRejected(self, row, reason, decision)
             end
-        elseif not Toolkit.ActionQueue.cancelReason(self.parent.queue, row.item) then
-            self.pressedCancel = row.item
+        else
+            local decision = Toolkit.ActionQueuePolicy.evaluateCancel(self.parent.queue, row.item)
+            local reason = decision.reason
+            if not reason then self.pressedCancel = row.item
+            else cancelRejected(self, row, reason, decision) end
         end
     else
         ISScrollingListBox.onMouseDown(self, x, y)
@@ -113,12 +142,14 @@ function List:onMouseUp(x, y)
     if row and row.header and self.pressedToggle == row.operation and x < 22 then
         self.parent.expanded[row.operation] = not self.parent.expanded[row.operation] or nil
         self.parent:update()
-    elseif row and (row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item)))
+    elseif row and cancelsOperation(row)
         and self.pressedOperation and self.pressedOperation.item == row.item
         and self.pressedOperation.operation == row.operation and x >= self:cancelX() then
-        Toolkit.ActionQueue.cancelOperation(self.parent.queue, row.item, self.pressedOperation.members)
+        local accepted, reason, decision = Toolkit.ActionQueue.cancelOperation(self.parent.queue, row.item, self.pressedOperation.members)
+        if not accepted then cancelRejected(self, row, reason, decision) end
     elseif row and not row.header and self.pressedCancel == row.item and x >= self:cancelX() then
-        Toolkit.ActionQueue.cancel(self.parent.queue, row.item)
+        local accepted, reason, decision = Toolkit.ActionQueue.cancel(self.parent.queue, row.item)
+        if not accepted then cancelRejected(self, row, reason, decision) end
     elseif row and self.dragging then
         Toolkit.ActionQueue.move(self.parent.queue, self.dragAction, row.item,
             y > self:topOfItem(row.index) + row.height / 2)
@@ -154,15 +185,78 @@ function Panel:createChildren()
     self.list.dragTexture = getTexture("media/ui/dragModIcon.png")
     self.list.cancelTexture = self.closeButtonTexture
     self:addChild(self.list)
+    if Toolkit.ActionQueueRecovery then
+        self.restoreButton = ISButton:new(8, self.height - 34, self.width - 50, 24, "", self, Panel.restoreCancelled)
+        self.restoreButton:initialise(); self.restoreButton:instantiate(); self:addChild(self.restoreButton)
+        self.forgetButton = ISButton:new(self.width - 34, self.height - 34, 24, 24, "x", self, Panel.forgetCancelled)
+        self.forgetButton:initialise(); self.forgetButton:instantiate(); self:addChild(self.forgetButton)
+        self.forgetButton:setTooltip(getText("UI_PZSurvivorToolkit_queue_recovery_forget"))
+        for _, button in ipairs({self.restoreButton, self.forgetButton}) do
+            local down = button.onMouseDown
+            button.onMouseDown = function(control, x, y)
+                control.recoveryId = self.recoveryView and self.recoveryView.id
+                return down(control, x, y)
+            end
+            button:setVisible(false)
+        end
+    end
+end
+
+function Panel:restoreCancelled(button)
+    local view = self.recoveryView
+    local expected = button.recoveryId or view and view.id
+    if not expected then return end
+    Toolkit.ActionQueueRecovery.restore(self.queue.character, expected)
+    button.recoveryId = nil; self.recoveryAt = nil; self:update()
+end
+
+function Panel:forgetCancelled(button)
+    local expected = button.recoveryId or self.recoveryView and self.recoveryView.id
+    if expected then Toolkit.ActionQueueRecovery.forget(self.queue.character, expected) end
+    button.recoveryId = nil; self.recoveryAt = nil; self:update()
+end
+
+function Panel:updateRecovery()
+    if not self.restoreButton then return end
+    local recovery, player = Toolkit.ActionQueueRecovery, self.queue.character
+    local info = recovery.info(player)
+    local visible = info ~= nil
+    if self.recoveryVisible ~= visible then
+        self.recoveryVisible = visible
+        self:onResize()
+    end
+    self.restoreButton:setVisible(visible); self.forgetButton:setVisible(visible)
+    if not info then self.recoveryView, self.recoveryAt = nil, nil; return end
+    local now = getTimestampMs()
+    if not self.recoveryAt or now < self.recoveryAt or now - self.recoveryAt >= 250
+        or not self.recoveryView or self.recoveryView.id ~= info.id then
+        self.recoveryView, self.recoveryAt = recovery.preview(player), now
+    end
+    local view = self.recoveryView
+    self.restoreButton:setTitle(getText("UI_PZSurvivorToolkit_queue_recovery_restore", info.count))
+    self.restoreButton:setEnable(view and view.available == true)
+    local tooltip = getText("UI_PZSurvivorToolkit_queue_recovery_tip")
+    if info.skipped > 0 then tooltip = tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_recovery_skipped", info.skipped) end
+    if view and view.blocked then
+        local reason = view.blocked
+        if reason ~= "busy" and reason ~= "moving" and reason ~= "settling" then reason = "unavailable" end
+        tooltip = tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_recovery_" .. reason)
+    end
+    self.restoreButton:setTooltip(tooltip)
 end
 
 function Panel.drawRow(list, y, row, alt)
+    if not liveRow(list.parent.queue, row) then
+        row.tooltip = nil
+        return y + row.height
+    end
     if y + list:getYScroll() + row.height < 0 or y + list:getYScroll() >= list.height then
         return y + row.height
     end
     local action, queue = row.item, list.parent.queue
-    if row.header and list.parent.currentIndex and list.parent.currentIndex >= row.first
-        and list.parent.currentIndex <= row.last then
+    -- currentIndex belongs to the last projection, while current can already
+    -- have completed. The live operation identity selects the active header step.
+    if row.header and queue.current and queue.current.toolkitQueueOperation == row.operation then
         action = queue.current
     end
     local current = queue.current == action
@@ -194,7 +288,7 @@ function Panel.drawRow(list, y, row, alt)
     if current and action.action then
         local fitness = Toolkit.ActionQueueFitness and Toolkit.ActionQueueFitness.progress(action)
         local fraction = fitness and fitness.fraction or action:getJobDelta()
-        prefix = "[" .. tostring(math.floor(fraction * 100)) .. "%] "
+        prefix = fitness and fitness.stopping and "[...] " or "[" .. tostring(math.floor(fraction * 100)) .. "%] "
     end
     local top = math.max(0, y + list:getYScroll())
     local label = prefix .. description.title .. (description.target and ": " .. description.target or "")
@@ -227,12 +321,12 @@ function Panel.drawRow(list, y, row, alt)
     list:clearStencilRect()
     list:repaintStencilRect(textX, top, right - textX, clipHeight)
     local reason
-    local operationCancel = row.header or (Toolkit.ActionQueue.isCraftPlanAction(row.item) or Toolkit.ActionQueue.isDeferredWorldAction(row.item) or Toolkit.ActionQueue.isCraftAction(row.item))
+    local operationCancel = cancelsOperation(row)
     local cancelResult = hover and not list.dragging and preview(list, "cancel", operationCancel and row.item or action, nil, nil, operationCancel)
     reason = cancelResult and cancelResult.reason
     list:drawRect(cancelX, y + 3, 24, row.height - 6, hover and 0.4 or 0.15, 0.7, 0.3, 0.3)
     list:drawTextureScaledAspect(list.cancelTexture, cancelX + 4, y + (row.height - 16) / 2, 16, 16,
-        reason and 0.2 or 1, 1, 1, 1)
+        cancelResult and (reason and 0.2 or 1) or 0.55, 1, 1, 1)
     local hint = toggleHover and (list.parent.expanded[row.operation] and (batch and "collapse_batch_tip" or "collapse_tip")
         or (batch and "expand_batch_tip" or "expand_tip"))
         or (hover and (reason or (operationCancel and "cancel_operation_tip" or "cancel_tip")) or (moveReason or "drag_tip"))
@@ -242,6 +336,15 @@ function Panel.drawRow(list, y, row, alt)
     local hintResult = hovered and (hover and cancelResult or moveResult)
     local decisionDetails = hintResult and hintResult.details
     if decisionDetails then row.tooltip = row.tooltip .. " <LINE> " .. decisionDetails end
+    local feedback = list.cancelFeedback
+    local now = getTimestampMs and getTimestampMs()
+    if feedback and feedback.at and now and (now < feedback.at or now - feedback.at >= 2500) then
+        list.cancelFeedback = nil
+        feedback = nil
+    end
+    if feedback and feedback.item == row.item and feedback.operation == row.operation and feedback.header == row.header then
+        row.tooltip = row.tooltip .. " <LINE> " .. feedback.text
+    end
     local token = row.operation or action.toolkitQueueOperation
     if token and token.toolkitPriorityReason then
         row.tooltip = row.tooltip .. " <LINE> " .. Toolkit.ActionQueueLabels.priorityWaiting(token.toolkitPriorityReason)
@@ -344,10 +447,12 @@ function Panel:update()
         self.list:setYScroll(scroll)
     end
     self.title = getText("UI_PZSurvivorToolkit_queue_title", tasks)
+    self:updateRecovery()
 end
 
 function Panel:clearSnapshots()
     self.list:clearGesture()
+    self.list.cancelFeedback = nil
     self.list:clear()
     self.expanded = {}
 end
@@ -356,7 +461,11 @@ function Panel:onResize()
     ISCollapsableWindow.onResize(self)
     if not self.list then return end
     self.list:setWidth(self.width - 16)
-    self.list:setHeight(self.height - self.list.y - 12)
+    self.list:setHeight(self.height - self.list.y - 12 - (self.recoveryVisible and 30 or 0))
+    if self.restoreButton then
+        self.restoreButton:setY(self.height - 34); self.restoreButton:setWidth(self.width - 50)
+        self.forgetButton:setY(self.height - 34); self.forgetButton:setX(self.width - 34)
+    end
     self.list:clearGesture()
 end
 
@@ -364,6 +473,9 @@ function Panel.refresh()
     for playerNum = 0, getNumActivePlayers() - 1 do
         local player = getSpecificPlayer(playerNum)
         local queue = player and ISTimedActionQueue.queues[player]
+        local recovery = Toolkit.ActionQueueRecovery
+        local saved = recovery and player and recovery.info(player)
+        if saved and not queue then queue = ISTimedActionQueue.getTimedActionQueue(player) end
         local panel = panels[playerNum]
         if panel and panel.queue ~= queue then
             positions[playerNum] = {x = panel:getX(), y = panel:getY()}
@@ -372,7 +484,7 @@ function Panel.refresh()
             panels[playerNum], panel = nil, nil
         end
         local visible = Toolkit.Settings.actionQueue() and player and not player:isDead()
-            and queue and #queue.queue > 0
+            and queue and (#queue.queue > 0 or saved ~= nil)
         if visible and not panel then
             local position = positions[playerNum]
             local x = position and position.x or getPlayerScreenLeft(playerNum) + math.max(80, getPlayerScreenWidth(playerNum) - 440)

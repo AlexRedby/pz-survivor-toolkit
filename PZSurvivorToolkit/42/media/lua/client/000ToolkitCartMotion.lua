@@ -66,7 +66,8 @@ local function heldCart(player, finishingAction, stopped)
     if not item or player:getSecondaryHandItem() ~= item or not instanceof(item, "InventoryContainer")
         or not SaucedCarts.safeIsCart(item) or item:getWorldItem() or item:getContainer() ~= player:getInventory()
         or player:isDead() or player:isAiming() or player:isSneaking() or player:getVehicle()
-        or math.abs(player:getVariableFloat("WalkInjury", 0)) >= 0.15 then return end
+        or math.abs(player:getVariableFloat("WalkInjury", 0)) >= 0.15
+            and not (toolkitCartInjurySupported and toolkitCartInjurySupported(player)) then return end
     local actions = player:getCharacterActions()
     -- Native complete/stop callbacks run before removing their exact action from the stack.
     if actions:size() > 0 and not (actions:size() == 1 and player:isLocalPlayer()

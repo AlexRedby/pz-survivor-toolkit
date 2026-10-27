@@ -1,3 +1,6 @@
+local worldTags = {}
+isClient = function() return false end
+ModData = {getOrCreate=function() return worldTags end}
 package.path = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/?.lua;' .. package.path
 ItemType = {LITERATURE='literature', MAP='map', CONTAINER='container'}
 ItemTag = {PICTURE='picture', UNINTERESTING='uninteresting'}
@@ -37,10 +40,7 @@ local function item(definition)
         hasModData=function(self) return self.md~=nil end,
         getModData=function(self) assert(self.md,'read allocated ModData');return self.md end}
 end
-OrganizedCategories={getScriptInventoryDisplayCategory=function(definition)
-    return definition.uiCategory or definition.category
-end}
--- Native B42 definitions: effects, tags and type matter independently of OC labels.
+-- Native B42 capabilities are independent of Toolkit's owned inventory taxonomy.
 local cases={
     {script('Book','Literature','literature',{boredom=-50,stress=-40,unhappy=-40}),true,true,false},
     {script('ComicBook','Literature','literature',{boredom=-30,tags={picturebook=true}}),true,true,false},
@@ -63,10 +63,19 @@ local cases={
     {script('PhotoAlbum','Container','container'),false,false,false,'container'},
     {script('Pen','Tool','normal'),false,false,false},
 }
+local ownedCategories={
+    Book='literatureReadable', ComicBook='literatureReadable', ChildsPictureBook='literatureReadable',
+    MagazineCrossword='literatureReadable', BookCarpentry1='literatureExperience', KeyMag1='literatureRecipe',
+    RecipeClipping='literatureRecipe', Photo='literatureReadable', Doodle='literatureWriteable',
+    Brochure='literatureReadable', Newspaper_Recent='literatureReadable', Newspaper='literatureReadable',
+    Receipt='literatureReadable', IDcard='collectableMemento', Notebook='literatureWriteable',
+    SheetPaper2='literatureWriteable', Map='literatureCartography', HollowBook='literatureReadable',
+    PhotoAlbum='literatureReadable', Pen='toolLiterature',
+}
 local readableRule=assert(Tags.normalizeRule({include={'readable'},exclude={'literature'}}))
 for _,case in ipairs(cases) do
     local definition=case[1]
-    -- OC changes some script categories as well as physical inventory labels.
+    -- Existing saves may retain native or imported labels; script previews use owned type mappings.
     for _,mode in ipairs({'native','inventory','script'}) do
         local oc=mode~='native'
         definition.category=definition.nativeCategory
@@ -77,14 +86,16 @@ for _,case in ipairs(cases) do
         if oc and definition.kind=='map' then definition.uiCategory='literatureCartography' end
         if oc and (definition.writeable or definition.id=='Base.Doodle') then definition.uiCategory='literatureWriteable' end
         if mode=='script' then definition.category=definition.uiCategory end
-        for _,ids in ipairs({Tags.forScriptItem(definition),Tags.forItem(item(definition))}) do
+        local ownedCategory=assert(ownedCategories[definition.id:sub(6)])
+        for _,projection in ipairs({{Tags.forScriptItem(definition),ownedCategory},
+            {Tags.forItem(item(definition)),definition.uiCategory or definition.category}}) do
+            local ids,category=projection[1],projection[2]
             for index,id in ipairs({'readable','literature','writeable'}) do
                 assert(Tags.matches(ids,{id})==case[index+1],definition.id..' incorrect '..id)
             end
             if case[5] then assert(Tags.matches(ids,{case[5]}),definition.id..' lost '..case[5]) end
             if oc and definition.nativeCategory=='RecipeResource' then assert(Tags.matches(ids,{'recipe'})) end
             assert(Tags.matchesRule(ids,readableRule)==(case[2] and not case[3]),'filter disagreed')
-            local category=definition.uiCategory or definition.category
             assert(Tags.category(ids)==category and Tags.matches(ids,{'category:'..category}),
                 definition.id..' lost exact category compatibility')
             assert(#ids>0,'unreadable item fell back to the old misleading category text')
@@ -125,4 +136,4 @@ toolkitScriptCanBeWrite=nil
 assert(Tags.matches(Tags.forItem(item(cases[1][1])),{'readable','literature'}),'live item requires optional Java bridge')
 assert(Tags.matches(Tags.forScriptItem(cases[15][1]),{'writeable'}),'missing bridge erased the imported fallback')
 assert(not Tags.matches(Tags.forScriptItem(cases[15][1]),{'readable'}),'missing bridge invented notebook content')
-print('Reading tags passed: native roles, OC mappings, blank/written pages, print content, recipes/skills, maps, exact categories and filters.')
+print('Reading tags passed: native roles, owned/imported mappings, blank/written pages, print content, recipes/skills, maps, exact categories and filters.')

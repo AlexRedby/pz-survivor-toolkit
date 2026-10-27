@@ -238,7 +238,8 @@ public final class WoodenWheelNativeProbe {
     private static synchronized void roll(String source, long itemId, float x, float y, float angle, Matrix4f cart, double phase) throws Exception {
         if(rollOutput==null || !Double.isFinite(phase)) return;
         var row=new StringBuilder(512).append("{\"source\":\"").append(source)
-            .append("\",\"wall\":").append(System.currentTimeMillis()).append(",\"itemId\":").append(itemId)
+            .append("\",\"nanoTime\":").append(System.nanoTime())
+            .append(",\"wall\":").append(System.currentTimeMillis()).append(",\"itemId\":").append(itemId)
             .append(",\"x\":").append(x).append(",\"y\":").append(y).append(",\"angle\":").append(angle)
             .append(",\"phase\":").append(phase).append(",\"cart\":[");
         var values=cart.get(new float[16]);

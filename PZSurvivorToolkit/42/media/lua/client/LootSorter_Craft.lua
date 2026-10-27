@@ -15,6 +15,7 @@ require "TimedActions/ISTimedActionQueue"
 require "TimedActions/ISInventoryTransferAction"
 local Containers = require "PZSurvivorToolkit/QuartermasterCraftContainers"
 local CraftState = require "PZSurvivorToolkit/QuartermasterCraftState"
+local CraftUnits = require "PZSurvivorToolkit/QuartermasterCraftUnits"
 local inventoryContainers, withoutCraftContainers = Containers.inventory, Containers.withoutContext
 
 LootSorter = LootSorter or {}
@@ -50,9 +51,12 @@ local function itemInputs(recipe)
                 local keep = false
                 pcall(function() keep = inp:isKeep() == true end)
                 local tool = keep or inp:hasFlag(InputFlag.ToolLeft) or inp:hasFlag(InputFlag.ToolRight)
-                local per = inp:getIntAmount(); if not per or per < 1 then per = 1 end
                 local io; pcall(function() io = recipe:getIndexForIO(inp) end)   -- stable numeric id (robust match)
-                out[#out + 1] = { input = inp, per = per, tool = tool, io = io }
+                local entry = CraftUnits.input(inp)
+                if entry then
+                    entry.tool, entry.io = tool, io
+                    out[#out + 1] = entry
+                end
             end
         end
     end)
@@ -88,15 +92,16 @@ local function skipItem(it)
     return skip
 end
 
--- Ordinary crafting containers and designated storage overlap. Build both the
--- quantity limit and fetch plan from the same physical-item partition: ordinary
+-- Ordinary crafting containers and designated storage overlap. Build the
+-- fetch plan from a physical-item partition: ordinary
 -- sources first, then previously unseen storage items in nearest-box order.
 local function collectSources(recipe, myInputs, player, boxes)
-    local access, available, seen = {}, {}, {}
+    local access, seen = {}, {}
     local boxItems, boxMatch = {}, {}
     local needsOrigin = false
-    local function count(counts, idx)
-        if idx then counts[idx] = (counts[idx] or 0) + 1 end
+    local function candidate(item)
+        local idx = inputIndexFor(recipe, myInputs, item, player)
+        return idx and CraftUnits.item(myInputs[idx], idx, item)
     end
     pcall(function()
         local containers = inventoryContainers(player)
@@ -105,10 +110,9 @@ local function collectSources(recipe, myInputs, player, boxes)
             local item = list:get(i)
             if not seen[item] then
                 seen[item] = true
-                local idx = inputIndexFor(recipe, myInputs, item, player)
-                count(access, idx)
-                count(available, idx)
-                if idx then
+                local units = candidate(item)
+                if units then
+                    access[#access + 1] = units
                     local source = item:getContainer()
                     if source and not source:isInCharacterInventory(player) then needsOrigin = true end
                 end
@@ -123,30 +127,17 @@ local function collectSources(recipe, myInputs, player, boxes)
                 local item = list:get(i)
                 if not seen[item] then
                     seen[item] = true
-                    local idx = not skipItem(item) and inputIndexFor(recipe, myInputs, item, player)
-                    if idx then
+                    local units = not skipItem(item) and candidate(item)
+                    if units then
                         items[#items + 1] = item
-                        matches[#matches + 1] = idx
-                        count(available, idx)
+                        matches[#matches + 1] = units
                     end
                 end
             end
         end)
         boxItems[#boxItems + 1], boxMatch[#boxMatch + 1] = items, matches
     end
-    return access, available, boxItems, boxMatch, needsOrigin
-end
-
--- Max crafts the recipe supports given (accessible items + the given designated boxes).
--- boxes come from LootSorter.gatherBoxes (range/floor-filtered, nearest-first). Drives the UI slider cap.
-function LootSorter.craft.maxCraftable(recipe, player, boxes)
-    if not (recipe and player) then return 0 end
-    local myInputs = itemInputs(recipe)
-    if #myInputs == 0 then return 0 end
-
-    local _, avail = collectSources(recipe, myInputs, player, boxes)
-
-    return LootSorter.craftPlan.maxCraftable(myInputs, avail)   -- pure math (unit-tested)
+    return access, boxItems, boxMatch, needsOrigin
 end
 
 -- The craft trigger: queued AFTER the fetch transfers and any return walk, so hauled ingredients
@@ -260,7 +251,7 @@ function LootSorter.craft.gatherAndCraft(player, recipe, logic, qty, craftFn, su
         local boxes = LootSorter.gatherBoxesOrWarn(player)
         if not boxes then return end
 
-        local access, _, boxItems, boxMatch, needsOrigin = collectSources(recipe, myInputs, player, boxes)
+        local access, boxItems, boxMatch, needsOrigin = collectSources(recipe, myInputs, player, boxes)
         local returnSquare = surface and craftSquare or needsOrigin and player:getCurrentSquare()
 
         local result = LootSorter.craftPlan.plan(myInputs, qty, access, boxMatch)   -- pure (unit-tested)

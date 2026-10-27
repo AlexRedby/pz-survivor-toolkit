@@ -3,6 +3,7 @@ local originalRequire = require
 local function setup(server, active, client)
     local w = {events = {}, dt = 1 / 60, online = {}, client = client == true, synced = {}, repaints = 0, sends = 0}
     ToolkitCartRefreshVisual = nil
+    toolkitCartInjurySupported = nil
     isServer = function() return server end
     isClient = function() return w.client end
     addVariableToSyncList = function(key) w.synced[key] = true end
@@ -362,4 +363,31 @@ for _, condition in ipairs({"local", "server", "disconnected", "disabled", "acti
     assert(w.repaints == 0 and w.sends == 0 and cart.model == "ShoppingCartModel", condition .. " bypassed remote model guards")
 end
 print("PASS cart motion: remote model refresh preserves local/server/action/ownership/registration/finite guards")
+local injuryCases = 0
+for _, kind in ipairs({"SaucedWheelbarrow.WheelbarrowWood", "SaucedWheelbarrow.WheelbarrowMetal", "SaucedCarts.ShoppingCart"}) do
+    for _, owner in ipairs({true, false}) do
+        for _, support in ipairs({"missing", "disabled", "enabled"}) do
+            for _, injury in ipairs({-.8, -.15, -.149, 0, .149, .15, .8}) do
+                local trial = setup(false, true, true)
+                toolkitCartInjurySupported = support ~= "missing" and function(actor)
+                    assert(actor and actor.getPrimaryHandItem, "injury capability must validate the exact actor")
+                    return support == "enabled"
+                end or nil
+                local actor = trial.player(); actor.localPlayer = owner
+                local held = actor:equip(); held.fullType = kind
+                actor.vars.WalkInjury = injury; trial.tick(actor, 60)
+                local expected = math.abs(injury) < .15 or support == "enabled"
+                assert(actor.vars.ToolkitCartMotion == expected, "injury gate " .. kind .. "/" .. support .. "/" .. injury)
+                assert(actor.item == held and actor.secondary == held, "injury changed exact held cart")
+                actor.vars.WalkInjury = 0; trial.tick(actor, 60)
+                assert(actor.vars.ToolkitCartMotion, "healing failed to reactivate cart")
+                actor.aim = true; trial.tick(actor)
+                assert(not actor.vars.ToolkitCartMotion, "injury support bypassed native aim ownership")
+                injuryCases = injuryCases + 1
+            end
+        end
+    end
+end
+print("PASS cart motion: " .. injuryCases .. " signed injury/type/owner/capability cases preserve identity, healing and native ownership")
+toolkitCartInjurySupported = nil
 require = originalRequire

@@ -18,7 +18,7 @@ def run(command, **kwargs):
 def check(jdk, game, output, classpath):
     classes = output / "checkclasses"
     classes.mkdir()
-    run([jdk / "bin/javac", "--release", "17", "-cp", classpath, "-d", classes, SOURCE / "NativeChecks.java"])
+    run([jdk / "bin/javac", "--release", "25", "-cp", classpath, "-d", classes, SOURCE / "NativeChecks.java"])
     command = [jdk / "bin/java", f"-javaagent:{game / 'ZombieBuddy.jar'}=config_dir={output / 'check-cache'},policy=deny-new,verbosity=1",
                "-Djava.awt.headless=true", "-Dzomboid.steam=0", "-Djava.library.path=.", "-cp",
                os.pathsep.join([str(classes), classpath]), "NativeChecks"]
@@ -68,7 +68,7 @@ def main():
     classes = output / "classes"
     classes.mkdir()
     classpath = os.pathsep.join(str(game / name) for name in ["projectzomboid.jar", "ZombieBuddy.jar"])
-    run([jdk / "bin/javac", "--release", "17", "-cp", classpath, "-d", classes, SOURCE / "src/net/alexredby/visualtrace/Main.java"])
+    run([jdk / "bin/javac", "--release", "25", "-cp", classpath, "-d", classes, SOURCE / "src/net/alexredby/visualtrace/Main.java"])
     mod = output / "SyncVisualsTraceFixture"
     jar = mod / "42/media/java/SyncVisualsTraceFixture.jar"
     jar.parent.mkdir(parents=True)

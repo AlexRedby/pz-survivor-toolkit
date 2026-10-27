@@ -90,11 +90,12 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
             if (c.space or 0) >= it.weight and accepts(c.ref, it.ref) then choices[#choices + 1] = ci end
         end
         carrierChoices[it] = choices
-        local dest = nil
+        local dest, matched = nil, false
         if #choices > 0 then
             -- pass 1: a box that names THIS item (by display name) wins over any category box
             if it.name then
                 for _, b in ipairs(boxesForItemName(namedBoxes, boxes, it.name)) do
+                    matched = true
                     if (boxUsed[b] + it.weight) <= b.capacity
                         and acceptsDestination(b, it) then
                         dest = b; break
@@ -104,9 +105,11 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
             -- pass 2: otherwise fall back to a same-category box (cascading to further same-cat boxes)
             if not dest then
                 for _, b in ipairs(boxes) do
-                    if matches(b, it) and (boxUsed[b] + it.weight) <= b.capacity
-                        and acceptsDestination(b, it) then
-                        dest = b; break
+                    if matches(b, it) then
+                        matched = true
+                        if (boxUsed[b] + it.weight) <= b.capacity and acceptsDestination(b, it) then
+                            dest = b; break
+                        end
                     end
                 end
             end
@@ -118,13 +121,8 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
         elseif #choices == 0 then
             addLeftover(it, "carry")
         else
-            -- carryable but unplaced: distinguish "matching box(es) full" from "no matching box at all"
-            local matched = false
-            for _, b in ipairs(boxes) do
-                if (it.name and b.items and b.items[it.name]) or matches(b, it) then
-                    matched = true; break
-                end
-            end
+            -- The completed search already distinguished unavailable designations
+            -- from no match; do not repeat every rule evaluation for the reason.
             addLeftover(it, matched and "full" or "nomatch")
         end
     end

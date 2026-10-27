@@ -11,6 +11,7 @@ _spec=importlib.util.spec_from_file_location('vehicle_footprint',Path(__file__).
 footprint=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(footprint)
 collision=footprint.collision
 fields,wrap=collision.fields,collision.wrap
+native_clip=collision.native_clip
 SPECS=('front','slide-left','slide-right')
 EXPECTED={f'male-{cargo}-vehicle-yaw{yaw}-{spec}' for cargo in ('empty','full') for yaw in (0,45) for spec in SPECS}
 CONTROLS={f'yaw{yaw}-slide-{side}' for yaw in (0,45) for side in ('left','right')}
@@ -176,7 +177,7 @@ def parse(text):
             assert boolean(raw,'bare')==bare and not boolean(raw,'run') and not boolean(raw,'sprint'),'Vehicle bank requires native Walk'
             tracks=raw['tracks'];parsed=re.findall(r'([^=;]+)=([^@;]+)@([^;]+);',tracks)
             assert parsed and all(math.isfinite(float(a)+float(b)) for _,a,b in parsed),'Missing/nonfinite native vehicle tracks'
-            row['walking']=any(n=='Bob_Walk' and float(a)>0 and float(b)>.1 for n,a,b in parsed)
+            row['walking']=any(native_clip(n)=='Bob_Walk' and float(a)>0 and float(b)>.1 for n,a,b in parsed)
             collection[name].append(row)
         if '[WOOD_BANK_SAMPLE] ' in line:
             row=collision.sample(line);assert row['case']==active and active in motion,'Vehicle motion outside its scene';motion[active].append(row)

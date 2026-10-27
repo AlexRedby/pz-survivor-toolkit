@@ -157,7 +157,13 @@ local function install(class)
             return result
         end
         pane.toolkitTagRows = {}
-        local savedText, savedRight = rawget(pane, "drawText"), rawget(pane, "drawTextRight")
+        -- Kahlua rawget searches metatables too. One own-field pass preserves
+        -- genuine instance overrides without pinning inherited render methods.
+        local savedText, savedRight
+        for name, callback in pairs(pane) do
+            if name == "drawText" then savedText = callback
+            elseif name == "drawTextRight" then savedRight = callback end
+        end
         local draw, drawRight = pane.drawText, pane.drawTextRight
         pane.drawText = function(self, text, x, y, r, g, b, a, font)
             if not drawTags(self, draw, text, x, y, font or self.font, false) then

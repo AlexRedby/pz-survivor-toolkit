@@ -18,17 +18,6 @@ local function notifyHighlightChanged()
     end
 end
 
-local function notifySettingsChanged()
-    notifyHighlightChanged()
-    if Toolkit.TVRadio then
-        Toolkit.TVRadio.settingsChanged()
-    end
-    if Toolkit.InventoryFilter then
-        Toolkit.InventoryFilter.settingsChanged()
-    end
-    if Toolkit.ContextMenus then Toolkit.ContextMenus.settingsChanged() end
-end
-
 local options = PZAPI.ModOptions:create(
     "PZSurvivorToolkit",
     getText("UI_options_PZSurvivorToolkit_name")
@@ -188,8 +177,31 @@ if getActivatedMods():contains("TVRadio_ReInvented") then
     )
 end
 
+-- Native controls call onChangeApply only for changed values, before storing them.
+-- Record affected consumers here; notify only after every control has committed.
+local highlightChanged, inventoryChanged, mediaChanged, menusChanged = false, false, false, false
+local function markHighlightChanged() highlightChanged = true end
+enabledOption.onChangeApply = markHighlightChanged
+colorOption.onChangeApply = markHighlightChanged
+radiusOption.onChangeApply = markHighlightChanged
+inventoryFilterOption.onChangeApply = function() inventoryChanged = true end
+itemTagsOption.onChangeApply = function()
+    inventoryChanged, menusChanged = true, true
+end
+if mediaWindowOption then
+    mediaWindowOption.onChangeApply = function() mediaChanged = true end
+end
+if contextMenusOption then
+    contextMenusOption.onChangeApply = function() menusChanged = true end
+end
+
 options.apply = function()
-    notifySettingsChanged()
+    local highlight, inventory, media, menus = highlightChanged, inventoryChanged, mediaChanged, menusChanged
+    highlightChanged, inventoryChanged, mediaChanged, menusChanged = false, false, false, false
+    if highlight then notifyHighlightChanged() end
+    if inventory and Toolkit.InventoryFilter then Toolkit.InventoryFilter.settingsChanged() end
+    if media and Toolkit.TVRadio then Toolkit.TVRadio.settingsChanged() end
+    if menus and Toolkit.ContextMenus then Toolkit.ContextMenus.settingsChanged() end
 end
 
 function Settings.showHighlightButton()

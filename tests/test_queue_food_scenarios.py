@@ -93,7 +93,7 @@ class FoodScenarioTests(unittest.TestCase):
         self.assertEqual({'success-queued', 'move-independent', 'move-dependent'}, set(binding['checks']))
         for mode in ('native', 'toolkit'):
             self.assertEqual(list(food.WORLD_BAG_CASES), scenarios.select(self.suite, 'success-queued', action, 'sp', mode)[0])
-            self.assertEqual([food.WORLD_BAG_CASE], scenarios.select(self.suite, 'move-independent', action, 'sp', mode)[0])
+            self.assertEqual([food.WORLD_BAG_CASE, food.WORLD_BAG_COOKED_CASE], scenarios.select(self.suite, 'move-independent', action, 'sp', mode)[0])
             with self.assertRaisesRegex(ValueError, 'kind/mode'):
                 scenarios.select(self.suite, 'success-queued', action, 'mp', mode)
             with self.assertRaisesRegex(ValueError, 'not implemented'):
@@ -120,7 +120,7 @@ class FoodScenarioTests(unittest.TestCase):
             for mode in ('native', 'toolkit'):
                 self.assertEqual(list(food.WORLD_CASES),
                                  scenarios.select(self.suite, 'success-queued', action, kind, mode)[0])
-                self.assertEqual([food.WORLD_CASE],
+                self.assertEqual([food.WORLD_CASE, food.WORLD_COOKED_CASE, food.WORLD_REPLACEMENT_CASE],
                                  scenarios.select(self.suite, 'move-independent', action, kind, mode)[0])
                 for scenario in ('move-dependent', 'server-authority') if kind == 'mp' else ('move-dependent',):
                     self.assertEqual(list(food.WORLD_CASES),

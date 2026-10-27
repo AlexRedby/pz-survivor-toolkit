@@ -27,12 +27,34 @@ local function emit(kind,row)print('[CART_MATRIX] '..kind..' '..encode(row))end
 local function wrap(a)return math.atan2(math.sin(a),math.cos(a))end
 local index,phaseIndex,attempt=0,0,0
 local c,item,itemID,cargoIDs,cargoWeight,phases,phase,mode,since,recordStart,phaseStart,lastSample,lastHeading,yaw
+local pants,pantsModel
 local function cargo(cart)
  local ids={};local items=cart:getInventory():getItems()
  for i=0,items:size()-1 do ids[#ids+1]=tostring(items:get(i):getID()) end
  table.sort(ids);return #ids==0 and 'empty' or table.concat(ids,',')
 end
+local outfit={}
+local function dress()
+ p:clearWornItems();p:getHumanVisual():setHairModel('CrewCut');p:getHumanVisual():setBeardModel('')
+ for _,name in ipairs({'Base.Tshirt_DefaultTEXTURE_TINT','Base.Trousers_JeanBaggy','Base.Shoes_TrainerTINT'}) do
+  local clothing=outfit[name]
+  if not clothing then clothing=assert(p:getInventory():AddItem(name),name);outfit[name]=clothing end
+  assert(clothing:getContainer()==p:getInventory() and clothing:getFullType()==name,'Fixture clothing identity/owner changed')
+  p:setWornItem(clothing:getBodyLocation(),clothing)
+  assert(p:getWornItem(clothing:getBodyLocation())==clothing,'Fixture clothing was not worn')
+  if name=='Base.Trousers_JeanBaggy' then pants=clothing end
+ end
+ assert(p:getWornItems():size()==3,'Fixture outfit is not deterministic')
+ local visual=assert(pants:getVisual(),'Baggy jeans visual missing')
+ assert(visual:getItemType()=='Base.Trousers_JeanBaggy','Wrong worn-jeans visual')
+ local definition=assert(visual:getClothingItem(),'Baggy jeans clothing definition missing')
+ pantsModel=assert(definition:getModel(c.female),'Baggy jeans model missing')
+ local expected='skinned/clothes/'..(c.female and 'kate' or 'bob')..'_trousers'
+ assert(pantsModel:lower():gsub('\\','/'):gsub('%.x$','')==expected,'Baggy jeans no longer use calibrated native trousers')
+ p:resetModel()
+end
 local function owned()
+ assert(p:isFemale()==c.female and p:getWornItem(pants:getBodyLocation())==pants and p:getWornItems():size()==3,'Motion changed actor/baggy-jeans outfit')
  assert(p:getPrimaryHandItem()==item and p:getSecondaryHandItem()==item and item:getID()==itemID and item:getContainer()==p:getInventory() and not item:getWorldItem(),'Motion changed exact cart ownership')
  assert(cargo(item)==cargoIDs and math.abs(item:getInventory():getCapacityWeight()-cargoWeight)<.001,'Motion changed exact cargo')
  assert(#ISTimedActionQueue.getTimedActionQueue(p).queue==0 and p:getCharacterActions():isEmpty() and not p:hasPath(),'Motion created native actions/path')
@@ -73,6 +95,7 @@ local function setup()
  disableOverlay()
  cartLabDrive(0);cartLabGait(0)
  if p:isFemale()~=c.female then p:setFemale(c.female);p:getDescriptor():setFemale(c.female);p:resetModel() end
+ dress()
  for _=1,3 do
   if p:getPrimaryHandItem() and p:getPrimaryHandItem():getFullType()=='SaucedWheelbarrow.WheelbarrowWood' then break end
   CartLabKey(Keyboard.KEY_F5)
@@ -105,6 +128,7 @@ local function sample(now)
   forward=isKeyDown(getCore():getKey('Forward')),backward=isKeyDown(getCore():getKey('Backward')),
   left=isKeyDown(getCore():getKey('Left')),right=isKeyDown(getCore():getKey('Right')),
   runKey=isKeyDown(getCore():getKey('Run')),sprintKey=isKeyDown(getCore():getKey('Sprint')),
+  female=p:isFemale(),wornCount=p:getWornItems():size(),pantsType=pants:getFullType(),pantsID=pants:getID(),pantsModel=pantsModel,
   root=cartLabStationary(),id=itemID,cargoIDs=cargoIDs,cargoWeight=cargoWeight})
 end
 local function nextPhase(now)

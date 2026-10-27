@@ -61,6 +61,18 @@ class StationaryAnalyzerTests(unittest.TestCase):
     def setUpClass(cls):
         cls.log, cls.wheel = evidence()
 
+    def test_canonical_and_historical_lateral_names_keep_direction_and_raw_identity(self):
+        for prefix, left, right in (('Toolkit_CartPivot_', 'WoodLeft', 'WoodRight'),
+                                    ('Toolkit_CartPivot_', 'StrafeLeft', 'StrafeRight'),
+                                    ('Toolkit_WoodCartPivot_', 'Left', 'Right')):
+            log = self.log.replace('Bob_StrafeNoAim_Left', prefix + left).replace('Bob_StrafeNoAim_Right', prefix + right)
+            self.assertTrue(analyzer.analyze(log, self.wheel)['motionPass'])
+            sample = next(line for line in log.splitlines() if ',rootTracks:' + prefix + left in line)
+            self.assertEqual(analyzer.sample(sample)['clips'][0]['name'], prefix + left)
+            for bad in (prefix + 'Unknown', prefix + right):
+                report = analyzer.analyze(log.replace(prefix + left, bad), self.wheel)
+                self.assertFalse(report['motionPass'])
+
     def test_complete_protocol(self):
         report = analyzer.analyze(self.log, self.wheel)
         self.assertTrue(report['motionPass'], report['failures'])

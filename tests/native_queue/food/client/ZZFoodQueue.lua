@@ -5,8 +5,10 @@ require 'TimedActions/ISWearClothing'
 require 'TimedActions/ISUnequipAction'
 require 'TimedActions/ISInventoryTransferAction'
 local Fixture=require 'QueueFoodFixture'
+local Full=require 'QueueFoodFullClient'
 local Checks=require 'QueueScenarioChecks'
 local Progress=require 'QueueFoodProgress'
+local Receipt=require 'QueueFoodReceipt'
 local Queue=require 'PZSurvivorToolkit/ActionQueue'
 local Policy=require 'PZSurvivorToolkit/ActionQueuePolicy'
 local Weights=require 'PZSurvivorToolkit/ActionQueueWeights'
@@ -14,7 +16,7 @@ local Operations=require 'PZSurvivorToolkit/ActionQueueOperations'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local started,done=false,false
-local step,failed,phase,since,idle,preparationLogged=1,0,'prepare',0,0,false
+local step,failed,phase,since,idle,preparationLogged,receiptLogged=1,0,'prepare',0,0,false,false
 local ids,state,authority,receipt,previous,previousBag,spec,anchor
 local commands,observed,evidence,observer={},{},nil,nil
 local function case()return config.cases[step]end
@@ -34,7 +36,9 @@ Events.OnServerCommand.Add(function(module,command,value)
  assert(command~='Failed',value.error)
  if command=='Prepared'then
   ids=value;print('[FOOD_TEST] PREPARATION_RECEIVED '..JSON.encode({case=case(),phase=phase,ids=value}))
- elseif command=='Verified'then receipt=value end
+ elseif command=='Verified'then
+  receipt=value;print('[FOOD_TEST] RECEIPT_RECEIVED '..JSON.encode({case=case(),phase=phase,receipt=value}))
+ end
 end)
 Events.OnGameStart.Add(function()
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
@@ -117,7 +121,7 @@ local function eat(portion,menu,smartGoal)
   command.useUtensil,command.utensilId=true,second:getID()
   command.forkId,command.spoonId=action.fork and action.fork:getID()or -1,action.spoon and action.spoon:getID()or -1
  end
- command.nativeDuration=action.maxTime;assert(action.maxTime==action:getDuration()and action.maxTime==(portion==1 and 464 or 232),'native eat duration differs')
+ command.nativeDuration=action.maxTime;assert(action.maxTime==action:getDuration()and action.maxTime==(spec.full and 232 or portion==1 and 464 or 232),'native eat duration differs')
  commands[#commands+1]=command;observed[#observed+1]={eat=action,actions=actions}
  return action
 end
@@ -172,7 +176,9 @@ local function dispatch()
   end
   evidence.weightBounds=values
  end
- if spec.bag or spec.world then
+ if spec.full then
+  observer=Full.dispatch(player,ids,case(),config.mode,queue(),anchor,eat,commands,observed,evidence)
+ elseif spec.bag or spec.world then
   local actions=capture(function()Operations.run(ISInventoryPaneContextMenu.onGrabItems,{food},player:getPlayerNum())end)
   assert(#actions==1,'manual food pickup count differs')
   local pickup=actions[1];assert(pickup.Type=='ISInventoryTransferAction'and pickup.item:getID()==ids.foodId
@@ -222,42 +228,46 @@ local function dispatch()
  local fresh=items();assert(fresh.food:getHungChange()==ids.remaining and fresh.food:getBaseHunger()==ids.baseHunger
   and fresh.food:getContainer()==(fresh.foodStorage or spec.bag and fresh.bag:getItemContainer()or player:getInventory()),'edit touched pending food')
  for index,value in ipairs(observed)do
-  local action,command=value.eat,commands[index]
-  assert(action.maxTime==command.nativeDuration and action.percentage==command.portion
-   and action.useUtensil==spec.utensil,'edit changed native eating duration, portion or utensil flag')
-  if spec.utensil then
-   local selected=action:getSecondItem()
-   assert(selected and selected:getID()==command.utensilId
-    and (action.fork and action.fork:getID()or -1)==command.forkId
-    and (action.spoon and action.spoon:getID()or -1)==command.spoonId,'edit changed captured native cutlery')
-  end
-  if spec.cookable then
-   assert(action.item:isCooked()==command.cooked and action.item:getHeat()>=0 and action.item:getHeat()<=1.6,
-    'edit changed stable cooking state')
-  end
-  if spec.replacement then
-   local outputs=action.item:getReplaceOnCooked()
-   assert(outputs and outputs:size()==1 and outputs:get(0)==ids.replacementType and action.item:getCookingTime()==ids.cookingTime,
-    'edit changed native cooking replacement')
-  end
-  if spec.consumption then
-   assert(action.item:getReplaceOnUseFullType()==ids.consumptionReplacementType
-    and action.item:getActualWeight()==ids.foodWeight,'edit changed pending can replacement or weight')
-  end
+  if not value.tail then
+   local action,command=value.eat,commands[index]
+   assert(action.maxTime==command.nativeDuration and action.percentage==command.portion
+    and action.useUtensil==spec.utensil,'edit changed native eating duration, portion or utensil flag')
+   if spec.utensil then
+    local selected=action:getSecondItem()
+    assert(selected and selected:getID()==command.utensilId
+     and (action.fork and action.fork:getID()or -1)==command.forkId
+     and (action.spoon and action.spoon:getID()or -1)==command.spoonId,'edit changed captured native cutlery')
+   end
+   if spec.cookable then
+    assert(action.item:isCooked()==command.cooked and action.item:getHeat()>=0 and action.item:getHeat()<=1.6,
+     'edit changed stable cooking state')
+    if spec.world then assert(action.item:getCookingTime()==ids.cookingTime,'edit changed world food cooking time')end
+   end
+   if spec.replacement then
+    local outputs=action.item:getReplaceOnCooked()
+    assert(outputs and outputs:size()==1 and outputs:get(0)==ids.replacementType and action.item:getCookingTime()==ids.cookingTime,
+     'edit changed native cooking replacement')
+   end
+   if spec.consumption then
+    assert(action.item:getReplaceOnUseFullType()==ids.consumptionReplacementType
+     and action.item:getActualWeight()==ids.foodWeight,'edit changed pending can replacement or weight')
+   end
+  else assert(value.eat.maxTime==commands[index].nativeDuration and value.eat.percentage==.5,'independent drink changed')end
  end
  evidence.untouchedBefore=true;evidence.nativeDurationsUnchanged=true
 end
 local function clientReady()
  local current=Fixture.snapshot(getPlayer(),ids);if not current then return end
- for field,value in pairs(receipt)do
-  if type(value)=='number'then
-   local tolerance=(field=='hunger'or field=='thirst')and .01 or .0001
-   if type(current[field])~='number'or math.abs(current[field]-value)>tolerance then return end
-  elseif type(value)=='table'then
-   if type(current[field])~='table'or JSON.encode(current[field])~=JSON.encode(value)then return end
-  elseif current[field]~=value then return end
- end
+ if #Receipt.differences(current,receipt,JSON.encode)>0 then return end
  return current
+end
+local function receiptDiagnostic(player,final)
+ local current=ids and Fixture.snapshot(player,ids)
+ local value={case=case(),final=final,elapsedMs=getTimestampMs()-since,
+  receiptReceived=receipt~=nil,snapshotAvailable=current~=nil,expected=receipt,snapshot=current}
+ if receipt and current then value.differences=Receipt.differences(current,receipt,JSON.encode)end
+ print('[FOOD_TEST] RECEIPT_WAIT '..JSON.encode(value))
+ if ids and not current then preparationDiagnostic(player,final)end
 end
 local function finish(localReceipt)
  -- Resolve Host Java proxies afresh, compare the authoritative item endpoints and counts.
@@ -267,7 +277,9 @@ local function finish(localReceipt)
  for _,field in ipairs({'baseHunger','remaining','anchorAmount','hunger','thirst'})do
   assert(math.abs(localReceipt[field]-receipt[field])<=((field=='hunger'or field=='thirst')and .01 or .0001),'client authority numerical mismatch: '..field)
  end
- if observer then
+ if observer and observer.full then
+  Full.finish(observer,evidence);observer=nil
+ elseif observer then
   local returning=observer.returning;evidence.returning.started=returning.started;evidence.returning.transactionId=returning.transactionId
   evidence.returning.dontAdd=returning.dontAdd
   assert(observer.queue.onCompleted==observer.callback,'food return observer replaced')
@@ -290,8 +302,12 @@ Events.OnTick.Add(function()
   if phase=='prepared'and not preparationLogged and getTimestampMs()-since>10000 then
    preparationLogged=true;preparationDiagnostic(player,false)
   end
+  if phase=='receipt'and not receiptLogged and getTimestampMs()-since>10000 then
+   receiptLogged=true;receiptDiagnostic(player,false)
+  end
   if getTimestampMs()-since>120000 then
-   if phase=='prepared'then preparationDiagnostic(player,true)end
+   if phase=='prepared'then preparationDiagnostic(player,true)
+   elseif phase=='receipt'then receiptDiagnostic(player,true)end
    error('food phase timeout '..phase)
   end
   idle=not player:hasTimedActions()and #queue().queue==0 and idle+1 or 0
@@ -319,6 +335,7 @@ Events.OnTick.Add(function()
    anchor=ISDrinkFluidAction:new(player,items().anchor,.5);assert(anchor.maxTime==460,'anchor duration differs')
    ISTimedActionQueue.add(anchor);phase='running';since=getTimestampMs();return
   elseif phase=='running'then
+   if observer and observer.full then Full.poll(observer,evidence)end
    local current=queue().queue[1]
    if Progress.running(current,anchor) then
     evidence.anchorProgress=true;if not evidence.anchorRunning then dispatch()end
@@ -326,11 +343,13 @@ Events.OnTick.Add(function()
    for index,value in ipairs(observed)do
     if Progress.running(current,value.pickup) then commands[index].pickupObserved=true end
     if Progress.running(current,value.eat) and not commands[index].progress then
-     local fresh=items();assert(fresh.food:getContainer()==player:getInventory(),'food started outside root')
+     local item=value.tail and player:getInventory():getItemById(ids.tailId)or items().food
+     assert(item and item:getContainer()==player:getInventory(),'food/drink started outside root')
      commands[index].progress=true;evidence.order[#evidence.order+1]=index
+     if spec.full then Full.started(observer,value.eat);evidence.startOrder[#evidence.startOrder+1]=value.label end
     end
    end
-   if idle>=10 then assert(evidence.anchorRunning,'anchor ended before dispatch');phase='receipt';request('Verify')end
+   if idle>=10 then assert(evidence.anchorRunning,'anchor ended before dispatch');phase='receipt';receiptLogged=false;request('Verify')end
   elseif phase=='receipt'and receipt then
    -- Host inventory/stat replication may trail the command receipt; resolve fresh IDs until aligned.
    local current=clientReady();if current then finish(current)end

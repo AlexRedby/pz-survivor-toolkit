@@ -10,7 +10,8 @@ assert(config.mode=='full'or config.mode=='standalone'or config.mode=='reload'or
 -- The legacy scenario name now means Toolkit without the optional UI integrations.
 local standalone=config.mode~='full'
 local reload=config.mode=='reload'
-if not Session then
+local host=QueueTestSelection and QueueTestSelection.kind=='mp' and QueueTestSelection.options and QueueTestSelection.options.mp_host
+if not Session and not host then
 Events.OnConnected.Add(function()connecting=true end)
 Events.OnMainMenuEnter.Add(function()
  if connecting or isClient()then return end;connecting=true

@@ -3,11 +3,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
 
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/"tools"))
+from cart_jvm import compile_sources, clean_environment
 GAME=Path(os.environ.get('PZ_GAME',str(Path.home()/'Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java')))
 PATCH=Path(os.environ.get('PZ_PATCH_JAR',str(ROOT/'JavaPatches/build/PZToolkitJavaPatches/42/media/java/PZToolkitJavaPatches.jar')))
 
@@ -32,18 +35,24 @@ class CaptureUIAdviceChecks(unittest.TestCase):
         jars=[GAME/'projectzomboid.jar',GAME/'ZombieBuddy.jar',PATCH]
         with tempfile.TemporaryDirectory(prefix='cart-ui-advice-') as temporary:
             output=Path(temporary)
-            compile_result=subprocess.run([str(JDK/'bin'/('javac'+suffix)),'--release','17','-cp',os.pathsep.join(map(str,jars)),
-                '-d',str(output),str(ROOT/'tests/native_queue/contributions/wooden_cart_motion/Main.java'),
-                str(ROOT/'tests/java/CartCaptureUIAdviceChecks.java')],text=True,capture_output=True)
-            self.assertEqual(compile_result.returncode,0,compile_result.stdout+compile_result.stderr)
+            classes=output/'classes'
+            try:
+                compile_sources(JDK,os.pathsep.join(map(str,jars)),classes,
+                    [ROOT/'tests/native_queue/contributions/wooden_cart_motion/Main.kt',
+                     ROOT/'tests/native_queue/contributions/wooden_cart_motion/MainAdvice.java',
+                     ROOT/'tests/java/CartCaptureUIAdviceChecks.java'])
+            except subprocess.CalledProcessError as error:
+                self.fail((error.stdout or '')+(error.stderr or ''))
+            self.assertTrue((classes/'net/alexredby/pztoolkitruntime/kotlin/jvm/internal/Intrinsics.class').is_file())
+            self.assertFalse((classes/'kotlin').exists())
             agent=output/'offline-check-agent.jar'
             with zipfile.ZipFile(agent,'w') as jar:
                 jar.writestr('META-INF/MANIFEST.MF','Manifest-Version: 1.0\nPremain-Class: net.alexredby.cartlabchecks.CartCaptureUIAdviceChecks\nCan-Redefine-Classes: true\n\n')
-                jar.write(output/'net/alexredby/cartlabchecks/CartCaptureUIAdviceChecks.class','net/alexredby/cartlabchecks/CartCaptureUIAdviceChecks.class')
+                jar.write(classes/'net/alexredby/cartlabchecks/CartCaptureUIAdviceChecks.class','net/alexredby/cartlabchecks/CartCaptureUIAdviceChecks.class')
             result=subprocess.run([str(JDK/'bin'/('java'+suffix)),'-javaagent:'+str(agent),
-                '-Djava.awt.headless=true','-cp',os.pathsep.join([str(output),*map(str,jars)]),
+                '-Djava.awt.headless=true','-cp',os.pathsep.join([str(classes),*map(str,jars)]),
                 'net.alexredby.cartlabchecks.CartCaptureUIAdviceChecks'],cwd=GAME,text=True,capture_output=True,
-                env=dict(os.environ,PZ_CART_TEST_PAD='false',PZ_CART_RUNTIME_FILE=str(output/'runtime.lua'),
+                env=dict(clean_environment(),PZ_CART_TEST_PAD='false',PZ_CART_RUNTIME_FILE=str(output/'runtime.lua'),
                          PZ_CART_COMMAND_FILE=str(output/'commands.txt')),timeout=30)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
             self.assertIn('CART_CAPTURE_UI_ADVICE_PASS',result.stdout)

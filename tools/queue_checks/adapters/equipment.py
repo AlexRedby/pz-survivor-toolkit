@@ -2,16 +2,30 @@
 from pathlib import Path
 import os
 import re
+import math
 import shutil
 import subprocess
 import zipfile
 
-CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands']
+CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-replace', 'tidy-headwear-hat-exclusive', 'tidy-headwear-full-hat-exclusive', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-clothing-overlap-primary', 'tidy-clothing-overlap-both', 'tidy-clothing-held-primary', 'tidy-clothing-held-secondary', 'tidy-clothing-held-both', 'tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove', 'tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore', 'tidy-headwear-mohawk-hat-restore', 'tidy-headwear-mohawk-hat-remove', 'tidy-headwear-mohawk-full-hat-restore', 'tidy-headwear-mohawk-full-hat-remove', 'tidy-watch-digital-restore', 'tidy-watch-digital-remove', 'tidy-watch-classic-restore', 'tidy-watch-classic-remove', 'tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both', 'tidy-watch-ringing-restore', 'tidy-watch-ringing-remove', 'tidy-watch-ringing-overlap-both', 'tidy-watch-ringing-held-both', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right', 'tidy-hotbar-normal-left', 'tidy-hotbar-normal-right', 'tidy-hotbar-radio-off', 'tidy-hotbar-radio-on', 'tidy-hotbar-flashlight-charged', 'tidy-hotbar-flashlight-empty', 'tidy-hotbar-flashlight-deplete']
+HOTBAR_CASES = {
+    'tidy-hotbar-flashlight-charged': dict(fullType='Base.FlashLight_AngleHead', slotType='WebbingLeft', model='Webbing Left Walkie', twoHands=False, flashlight='charged'),
+    'tidy-hotbar-flashlight-empty': dict(fullType='Base.FlashLight_AngleHead', slotType='WebbingLeft', model='Webbing Left Walkie', twoHands=False, flashlight='empty'),
+    'tidy-hotbar-flashlight-deplete': dict(fullType='Base.FlashLight_AngleHead', slotType='WebbingLeft', model='Webbing Left Walkie', twoHands=False, flashlight='deplete'),
+    'tidy-hotbar-radio-off': dict(fullType='Base.WalkieTalkie2', slotType='SmallBeltLeft', model='Walkie Belt Left', twoHands=False, radio=True, on=False),
+    'tidy-hotbar-radio-on': dict(fullType='Base.WalkieTalkie2', slotType='SmallBeltRight', model='Walkie Belt Right', twoHands=False, radio=True, on=True),
+    'tidy-hotbar': dict(fullType='Base.Shotgun', slotType='Back', model='Rifle On Back with Bag', twoHands=True),
+    'tidy-hotbar-holster-left': dict(fullType='Base.Pistol', slotType='HolsterLeft', model='Holster Left', twoHands=False),
+    'tidy-hotbar-holster-right': dict(fullType='Base.Pistol', slotType='HolsterRight', model='Holster Right', twoHands=False),
+    'tidy-hotbar-normal-left': dict(fullType='Base.ScissorsBluntMedical', slotType='SmallBeltLeft', model='Belt Left Screwdriver', twoHands=False, ordinary=True),
+    'tidy-hotbar-normal-right': dict(fullType='Base.ScissorsBluntMedical', slotType='SmallBeltRight', model='Belt Right Screwdriver', twoHands=False, ordinary=True, priorSecondary=True),
+}
 CART_CASE = 'cart-pickup'
 CART_TYPES = ['SaucedCarts.ShoppingCart', 'SaucedWheelbarrow.WheelbarrowWood', 'SaucedWheelbarrow.WheelbarrowMetal']
 CART_PHASES = ['pickup-first', 'drop', 'pickup-repeat']
-RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1}
-TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands'}
+RECEIPTS = {'hands-chain': 3, 'waiting-cancel': 1, 'bag-capacity': 1, 'clothing-chain': 2, 'hotbar-chain': 1, 'belt-knife': 1, 'belt-hammer': 1, 'floor-pickup': 0, 'bulk-pickup': 0, 'bulk-waiting-cancel': 0, 'bulk-mixed': 0, 'tidy-hands': 1, 'tidy-floor': 1, 'tidy-empty-hands': 1, 'tidy-group': 1, 'tidy-multigroup': 1, 'tidy-clothing': 0, 'tidy-clothing-replace': 1, 'tidy-headwear-hat-exclusive': 1, 'tidy-headwear-full-hat-exclusive': 1, 'tidy-clothing-remove': 1, 'tidy-clothing-overlap': 2, 'tidy-clothing-overlap-primary': 2, 'tidy-clothing-overlap-both': 2, 'tidy-clothing-held-primary': 0, 'tidy-clothing-held-secondary': 0, 'tidy-clothing-held-both': 0, 'tidy-headwear-hat-remove': 1, 'tidy-headwear-full-hat-remove': 1, 'tidy-headwear-hat-restore': 0, 'tidy-headwear-full-hat-restore': 0, 'tidy-headwear-mohawk-hat-restore': 0, 'tidy-headwear-mohawk-hat-remove': 1, 'tidy-headwear-mohawk-full-hat-restore': 0, 'tidy-headwear-mohawk-full-hat-remove': 1, 'tidy-watch-digital-restore': 0, 'tidy-watch-digital-remove': 1, 'tidy-watch-classic-restore': 0, 'tidy-watch-classic-remove': 1, 'tidy-watch-overlap-primary': 2, 'tidy-watch-overlap-secondary': 2, 'tidy-watch-overlap-both': 2, 'tidy-watch-held-primary': 0, 'tidy-watch-held-secondary': 0, 'tidy-watch-held-both': 0, 'tidy-watch-ringing-restore': 0, 'tidy-watch-ringing-remove': 1, 'tidy-watch-ringing-overlap-both': 2, 'tidy-watch-ringing-held-both': 0, 'tidy-hotbar': 1, 'tidy-hotbar-holster-left': 1, 'tidy-hotbar-holster-right': 1, 'tidy-hotbar-normal-left': 1, 'tidy-hotbar-normal-right': 1, 'tidy-hotbar-radio-off': 1, 'tidy-hotbar-radio-on': 1, 'tidy-hotbar-flashlight-charged': 1, 'tidy-hotbar-flashlight-empty': 1, 'tidy-hotbar-flashlight-deplete': 1}
+TIDY_RETURN_CASES = {'hands-chain', 'clothing-chain', 'bulk-mixed', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
+TIDY_RETURN_EXACT_CASES = {'hands-chain', 'tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'}
 
 
 # Each binding names concrete native cases and their required observed outcomes.
@@ -38,15 +52,121 @@ SCENARIO_ACTIONS = {
         },
     },
     'tidy-hands': {
-        'scope': 'P4 borrowed empty pistol rack and restoration of occupied or empty hands; exact containers and activation.',
+        'scope': 'P4 borrowed empty pistol rack, occupied/empty hands, and two-item lightweight and four-item light/heavy native return groups; exact containers, repeated native executor attempts and activation.',
         'mods': ['P4TidyUpMeister'],
-        'toolkit_only': ['restore-hands', 'return-items'],
+        'toolkit_only': ['restore-hands', 'return-items', 'move-independent'],
         'checks': {
             'success-queued': {'tidy-hands': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
+            'move-independent': {'tidy-hands': {'rackWholeOperationMoveVerified': True, 'rackCancellationProtected': True},
+                                 'tidy-empty-hands': {'rackWholeOperationMoveVerified': True, 'rackCancellationProtected': True}},
             'restore-hands': {'tidy-hands': {'restoreVerified': True}, 'tidy-empty-hands': {'restoreVerified': True}},
             'return-items': {'tidy-hands': {'restoreVerified': True, 'postprocessingVerified': True},
-                             'tidy-empty-hands': {'restoreVerified': True, 'postprocessingVerified': True}},
-            'server-authority': {'tidy-hands': {'authoritative': True}, 'tidy-empty-hands': {'authoritative': True}},
+                             'tidy-empty-hands': {'restoreVerified': True, 'postprocessingVerified': True},
+                             'tidy-group': {'postprocessingVerified': True},
+                             'tidy-multigroup': {'postprocessingVerified': True}},
+            'server-authority': {'tidy-hands': {'authoritative': True}, 'tidy-empty-hands': {'authoritative': True},
+                                 'tidy-group': {'authoritative': True}, 'tidy-multigroup': {'authoritative': True}},
+        },
+    },
+    'tidy-hotbar': {
+        'scope': 'Native onRackGun on empty Shotgun/Pistol or native hotbar equip plus plain CutHair on ordinary belt tools; P4 generates one fromHotbar Unequip back to its exact native slot. Ordinary tools cover secondary selection from empty hands and primary selection preserving a prior secondary. Portable radio cases seed the installed off-radio UI volume default (0.1) or on-radio volume0.25, and use the native hotbar equip and separate native scissors/plain haircut, preserving DeviceData settings/ownership, natural power consumption and client UI power-off after return with equipped-radio pointer cleanup. Host authority must independently observe the same final off state through the repaired native unheld selector0/state0/off receive path; device activation is never normalized between roles. Native flashlight cases use FlashLight_AngleHead on SCBA_notank WebbingLeft with charged, empty and one-use natural-depletion baselines; native equip/start cleanup owns activation and SyncItemActivated, with separate unchanged scissors/hair. Depletion uses an explicit longer native CutHair constructor, with no clock/Use/power setters after setup. Native attachConnect/model, UI icon, root/worn/hands conservation and independent reading tail.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-hotbar': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in HOTBAR_CASES},
+            'server-authority': {case: {'authoritative': True} for case in HOTBAR_CASES},
+        },
+    },
+    'tidy-clothing': {
+        'scope': 'Explicit native Unequip-socks + unchanged plain-style CutHair constructors arm real P4 worn restoration; exact socks slot/root identity and unrelated hands/tail. This is not a natural menu socks-removal flow.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {'tidy-clothing': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
+            'server-authority': {'tidy-clothing': {'authoritative': True}},
+        },
+    },
+    'tidy-clothing-remove': {
+        'scope': 'Explicit native Wear-socks + unchanged plain-style CutHair constructors capture an initially empty socks slot and arm real P4 worn removal; exact absent slot/root identity and unrelated hands/tail. This bypasses UI explicit-equip intent deliberately.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {'tidy-clothing-remove': {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}},
+            'server-authority': {'tidy-clothing-remove': {'authoritative': True}},
+        },
+    },
+    'tidy-clothing-overlap': {
+        'scope': 'Bounded native primary, secondary or both-hand Equip socks, ordinary Wear and unchanged CutHair constructors produce exact held/worn socks; real P4 restores original hands before worn removal. Exact intermediate/final hands, root, native cleanup flags/order, completed receipts and independent tail; no UI explicit-intent coverage implied.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in ('tidy-clothing-overlap', 'tidy-clothing-overlap-primary', 'tidy-clothing-overlap-both')},
+            'restore-hands': {case: {'equipmentMatches': True, 'postprocessingVerified': True} for case in ('tidy-clothing-overlap', 'tidy-clothing-overlap-primary', 'tidy-clothing-overlap-both')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-clothing-overlap', 'tidy-clothing-overlap-primary', 'tidy-clothing-overlap-both')},
+        },
+    },
+    'tidy-clothing-held': {
+        'scope': 'Authority prepares exact socks initially held and worn in primary, secondary or both hands after root delivery. Native Unequip and unchanged CutHair arm P4 Equip/activation/Wear cleanup; exact cleared checkpoint, restored baseline, native flags/order and five completed Host receipts. Constructor/P4 observer coverage, not UI explicit intent.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in ('tidy-clothing-held-primary', 'tidy-clothing-held-secondary', 'tidy-clothing-held-both')},
+            'restore-hands': {case: {'equipmentMatches': True, 'postprocessingVerified': True} for case in ('tidy-clothing-held-primary', 'tidy-clothing-held-secondary', 'tidy-clothing-held-both')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-clothing-held-primary', 'tidy-clothing-held-secondary', 'tidy-clothing-held-both')},
+        },
+    },
+    'tidy-wristwatch-overlap': {
+        'scope': 'Exact nonringing digital wristwatch temporarily or initially desired held+worn in primary/secondary/both hands. Native P4 hand-before-worn cleanup, unchanged alarm configuration, native processing settlement, full ordered Host receipts and independent tail; no ringing or side conversion coverage.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in ('tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both')},
+            'restore-hands': {case: {'equipmentMatches': True, 'postprocessingVerified': True} for case in ('tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both')},
+        },
+    },
+    'tidy-clothing-displacement': {
+        'scope': 'Exact root ordinary same-slot socks replacement and Beany/BoxingRed exclusive-slot replacements. Native temporary Wear and unchanged CutHair arm real P4 same-slot Wear or exclusive Unequip-before-Wear cleanup. Preserve both identities/root/hands, exact worn slots, ordered Host receipts and independent tail; no world-drop or multi-item slot coverage.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in ('tidy-clothing-replace', 'tidy-headwear-hat-exclusive', 'tidy-headwear-full-hat-exclusive')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-clothing-replace', 'tidy-headwear-hat-exclusive', 'tidy-headwear-full-hat-exclusive')},
+        },
+    },
+    'tidy-wristwatch-ringing': {
+        'scope': 'Exact digital-left watch starts ringing through native alarm update after authoritative root/worn/hand readiness. Restore/remove and temporary/desired both-hand cleanup preserve native ring/configuration within half a game hour; logical stop occurs only in fixture cleanup. Nosound runs do not prove audible output or timeout after process removal.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in ('tidy-watch-ringing-restore', 'tidy-watch-ringing-remove', 'tidy-watch-ringing-overlap-both', 'tidy-watch-ringing-held-both')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-watch-ringing-restore', 'tidy-watch-ringing-remove', 'tidy-watch-ringing-overlap-both', 'tidy-watch-ringing-held-both')},
+        },
+    },
+    'tidy-wristwatch': {
+        'scope': 'Native P4 restore/removal of exact digital-left and classic-right AlarmClockClothing. Authority seeds deterministic alarm configuration; preserve root/worn/hands and compare authoritative processing with queue-disabled controls. No alarm firing or side-conversion coverage.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in ('tidy-watch-digital-restore', 'tidy-watch-digital-remove', 'tidy-watch-classic-restore', 'tidy-watch-classic-remove')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-watch-digital-restore', 'tidy-watch-digital-remove', 'tidy-watch-classic-restore', 'tidy-watch-classic-remove')},
+        },
+    },
+    'tidy-headwear-mohawk': {
+        'scope': 'Native upright MohawkFan haircut consumes exactly one of 20 root Hairgel uses before P4 hat/full-hat restore or removal. Exact role-local appearance phases and native receipts preserve color/attachment/gel; private hair-growth timer is unavailable. SP cleanup flattens; normal Host server Wear flattens while Unequip and the MP client retain Fan. No visual repair.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True} for case in ('tidy-headwear-mohawk-hat-restore', 'tidy-headwear-mohawk-hat-remove', 'tidy-headwear-mohawk-full-hat-restore', 'tidy-headwear-mohawk-full-hat-remove')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-headwear-mohawk-hat-restore', 'tidy-headwear-mohawk-hat-remove', 'tidy-headwear-mohawk-full-hat-restore', 'tidy-headwear-mohawk-full-hat-remove')},
+        },
+    },
+    'tidy-headwear-restore': {
+        'scope': 'Authority seeds exact vanilla Beany/HAT or BoxingRed/FULL_HAT after once-only starter headwear normalization. Native Unequip and unchanged plain CutHair then arm real P4 Wear cleanup; exact root/slot/hair/hands, native completion and independent tail.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}
+                                 for case in ('tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore')},
+        },
+    },
+    'tidy-headwear-remove': {
+        'scope': 'One authority-owned disposable scene preparation removes conflicting starter headwear to root before the baseline. Native Wear and unchanged plain CutHair constructors then temporarily wear vanilla Beany/HAT and BoxingRed/FULL_HAT in that declared scene; real P4 generates removal. Exact item/root/slot/hair/hands and independent tail; conservative capacity excludes native drop. Mohawk is outside this gate.',
+        'mods': ['P4TidyUpMeister'],
+        'checks': {
+            'restore-clothing': {case: {'equipmentMatches': True, 'postprocessingVerified': True, 'tailCompleted': True}
+                                 for case in ('tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove')},
+            'server-authority': {case: {'authoritative': True} for case in ('tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove')},
         },
     },
 }
@@ -100,7 +220,7 @@ def _transfer_probe(project, output, game, jdk, locations):
     classes.mkdir(parents=True)
     classpath = os.pathsep.join(map(str, [Path(game) / 'projectzomboid.jar', Path(game) / 'ZombieBuddy.jar',
                                         Path(locations['PZToolkitJavaPatches']) / '42/media/java/PZToolkitJavaPatches.jar']))
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '17', '-cp', classpath, '-d', str(classes),
+    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
                     str(Path(project) / 'tests/native_queue/equipment/java/Main.java')],
                    check=True, capture_output=True, text=True, timeout=60)
     compiled = sorted(classes.rglob('*.class'))
@@ -113,8 +233,33 @@ def _transfer_probe(project, output, game, jdk, locations):
     return jar
 
 
+def _item_shape_probe(project, output, game, jdk):
+    target = Path(output) / 'equipment-item-shape'
+    classes, cache = target / 'classes', target / 'cache'
+    classes.mkdir(parents=True)
+    cache.mkdir()
+    log = target / 'native-shape.log'
+    game = Path(game)
+    try:
+        with log.open('w') as stream:
+            subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', str(game / 'projectzomboid.jar'),
+                            '-d', str(classes), str(Path(project) / 'tests/native_queue/equipment/java/HotbarItemShapeCheck.java')],
+                           check=True, stdout=stream, stderr=subprocess.STDOUT, text=True, timeout=60)
+            subprocess.run([str(Path(jdk) / 'bin/java'), '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.',
+                            '-cp', os.pathsep.join([str(classes), str(game / 'projectzomboid.jar')]),
+                            'net.alexredby.equipmentprobe.HotbarItemShapeCheck', str(cache)],
+                           cwd=game, check=True, stdout=stream, stderr=subprocess.STDOUT, text=True, timeout=35)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise ValueError(f'Native ordinary hotbar item-shape preflight failed; see {log}') from error
+    if 'HOTBAR_ITEM_SHAPE_CHECK_PASS' not in log.read_text(errors='replace').splitlines():
+        raise ValueError(f'Native ordinary hotbar item-shape preflight marker missing; see {log}')
+    return log
+
+
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
+    if any((HOTBAR_CASES.get(case, {}).get('ordinary') or HOTBAR_CASES.get(case, {}).get('radio') or HOTBAR_CASES.get(case, {}).get('flashlight')) for case in selection['cases']):
+        _item_shape_probe(project, output, game, jdk)
     probe = _transfer_probe(project, output, game, jdk, locations) if selection['kind'] == 'mp' or selection.get('options', {}).get('belt_walk') else None
     if probe:
         runtime.setdefault('fixture', {})['mods'] = ['EquipmentTransferProbe']
@@ -184,7 +329,9 @@ def verify(root, selection, catalog):
         if row.get('id') in ('clothing-chain', 'hotbar-chain'):
             required['slotsVerified'] = True
             required['clothing' if row['id'] == 'clothing-chain' else 'hotbar'] = True
-        if row.get('id') in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands'):
+        if row.get('id') in ('tidy-hands', 'tidy-empty-hands') and selection['mode'] == 'toolkit':
+            required.update(rackWholeOperationMoveVerified=True, rackCancellationProtected=True, independentMoveVerified=True)
+        if row.get('id') in ('tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
             required.update(restoreVerified=True, floorRestoreVerified=row['id'] == 'tidy-floor' and 'P4TidyUpMeister' in selection['mods'])
             count = int(selection['mode'] == 'toolkit' and 'P4TidyUpMeister' in selection['mods'])
             empty = row['id'] == 'tidy-empty-hands'
@@ -218,16 +365,39 @@ def verify(root, selection, catalog):
             issues.append('Equipment effects/guards not verified: ' + str(row.get('id')))
         if 'P4TidyUpMeister' in selection['mods']:
             completion = result.get('tidyCompletion')
-            valid = (isinstance(completion, dict) and set(completion) == {'perform', 'complete', 'flush', 'legacy'}
+            valid = (isinstance(completion, dict) and set(completion) == {
+                         'perform', 'complete', 'flush', 'legacy', 'explicitConfirmed', 'authoritativeIntent',
+                         'cleanupConfirmed', 'authoritativeCleanup'}
                      and all(type(value) is int and value >= 0 for value in completion.values()))
             if valid:
                 count = completion['perform']
-                valid = (completion['flush'] == count and completion['legacy'] == 0
+                valid = (completion['flush'] == (int(selection['mode'] == 'toolkit') if row.get('id') == 'tidy-multigroup' else count) and completion['legacy'] == 0
                          and completion['complete'] == (count if selection['kind'] == 'sp' else 0)
                          and (selection['mode'] != 'native' or count == 0)
-                         and (selection['mode'] != 'toolkit' or row.get('id') not in TIDY_RETURN_CASES or count > 0))
+                         and completion['authoritativeIntent'] <= completion['explicitConfirmed']
+                         and completion['authoritativeCleanup'] <= completion['cleanupConfirmed'])
+                if row.get('id') in TIDY_RETURN_EXACT_CASES:
+                    cleanup = (4 if row.get('id') == 'tidy-multigroup' else 2 if row.get('id') == 'tidy-group' else count) if selection['mode'] == 'toolkit' else 0
+                    valid = (valid and completion['cleanupConfirmed'] == cleanup
+                             and completion['authoritativeCleanup'] == (cleanup if selection['kind'] == 'mp' else 0))
+                if row.get('id') == 'hands-chain':
+                    valid = (valid and completion['explicitConfirmed'] == 3
+                             and completion['authoritativeIntent'] == (3 if selection['kind'] == 'mp' else 0))
+                elif row.get('id') in ('tidy-hands', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup'):
+                    valid = valid and completion['explicitConfirmed'] == completion['authoritativeIntent'] == 0
+            if row.get('id') in ('tidy-group', 'tidy-multigroup') and valid:
+                cleanup = (4 if row['id'] == 'tidy-multigroup' else 2) if selection['mode'] == 'toolkit' else 0
+                valid = (completion['perform'] == (3 if row['id'] == 'tidy-multigroup' else 1)*int(selection['mode'] == 'toolkit')
+                         and completion['cleanupConfirmed'] == cleanup
+                         and completion['authoritativeCleanup'] == (cleanup if selection['kind'] == 'mp' else 0))
             if not valid:
                 issues.append('Tidy native completion evidence missing or inconsistent: ' + str(row.get('id')))
+        if row.get('id') in ('tidy-group', 'tidy-multigroup'):
+            issues.extend(_verify_tidy_group(result, selection, multi=row['id'] == 'tidy-multigroup'))
+        if row.get('id') in HOTBAR_CASES:
+            issues.extend(_verify_tidy_hotbar(result, selection, row['id']))
+        if row.get('id') in CLOTHING_CASES:
+            issues.extend(_verify_tidy_clothing(result, selection, remove=CLOTHING_SPECS[row['id']].get('remove', False), overlap=bool(CLOTHING_SPECS[row['id']].get('overlapHand')), case=row['id']))
         outcomes.append({'actor': 'client1', 'case': row.get('id'), 'status': row.get('status'),
                          'reason': row.get('reason'), 'outcome': result})
     ends = [row for row in records if row['event'] == 'complete']
@@ -237,8 +407,10 @@ def verify(root, selection, catalog):
         issues.append('Equipment completion counters differ')
     if not complete(selection, 'client1', text) or '[QUEUE_TEST] FAIL ' in text:
         issues.append('Equipment fixture failed or did not finish')
+    issues.extend(_verify_ring_cleanup(text, selection['cases'], cases))
     if selection['kind'] == 'mp':
         server = (Path(root) / 'server-launch.log').read_text(errors='replace')
+        issues.extend(_verify_ring_cleanup(server, selection['cases'], cases))
         if server.count('[EQUIPMENT_TEST] TRANSFER_PROBE active=true') != 1:
             issues.append('Read-only native transfer probe was not active')
         if 'tidy-floor' in selection['cases'] and 'P4TidyUpMeister' in selection['mods']:
@@ -246,6 +418,111 @@ def verify(root, selection, catalog):
             restores = re.findall(r'\[EQUIPMENT_TEST\] FLOOR_RESTORE id=(-?\d+) result=(true|false)(?:\s|$)', server)
             if type(item) is not int or restores != [(str(item), 'true')]:
                 issues.append('Exact borrowed floor item did not complete native server placement once')
+        group_cases = [case for case in selection['cases'] if case in ('tidy-group', 'tidy-multigroup')]
+        clothing_cases = [case for case in selection['cases'] if case in CLOTHING_CASES]
+        if any(case in HOTBAR_CASES for case in selection['cases']):
+            import json
+            markers = [line.split('[EQUIPMENT_TEST] HOTBAR_AUTHORITY ', 1)[1].strip()
+                       for line in server.splitlines() if '[EQUIPMENT_TEST] HOTBAR_AUTHORITY ' in line]
+            expected = []
+            for case in selection['cases']:
+                if case not in HOTBAR_CASES:
+                    continue
+                value = next((row.get('outcome', {}).get('tidyHotbar') for row in cases if row.get('id') == case), {})
+                value = value if isinstance(value, dict) else {}
+                expected.append({key: value.get(key) for key in hotbar_authority_keys(case)})
+            try:
+                authority = [json.loads(marker) for marker in markers]
+            except (ValueError, TypeError):
+                authority = []
+            if not _hotbar_authority_equal(authority, expected):
+                issues.append('Exact P4 hotbar server attachment/root/worn/hands receipt missing or inconsistent')
+        if clothing_cases:
+            import json
+            markers = [line.split('[EQUIPMENT_TEST] CLOTHING_AUTHORITY ', 1)[1].strip()
+                       for line in server.splitlines() if '[EQUIPMENT_TEST] CLOTHING_AUTHORITY ' in line]
+            expected = []
+            for case in clothing_cases:
+                value = next((row.get('outcome', {}).get('tidyClothing') for row in cases if row.get('id') == case), {})
+                value = value if isinstance(value, dict) else {}
+                expected.append({key: value.get(key) for key in clothing_effect_keys(case)})
+            try:
+                authority = [json.loads(marker) for marker in markers]
+            except (ValueError, TypeError):
+                authority = []
+            valid = len(authority) == len(expected)
+            for index, row in enumerate(authority if valid else []):
+                case = clothing_cases[index]
+                watch = CLOTHING_SPECS[case].get('watch')
+                mohawk = CLOTHING_SPECS[case].get('mohawk')
+                client_value = next((item.get('outcome', {}).get('tidyClothing', {}) for item in cases if item.get('id') == case), {})
+                keys = set(expected[index]) | ({'watchProcessing'} if watch else set()) | ({'appearanceBaseline', 'appearanceCheckpoint'} if mohawk else set())
+                independent = {'watchTiming'} | ({'appearance', 'hairStyle', 'hairUnchanged'} if mohawk else set())
+                server_model = 'MohawkFlat' if 'P4TidyUpMeister' in selection['mods'] and not CLOTHING_SPECS[case].get('remove') else 'MohawkFan'
+                if (not isinstance(row, dict) or set(row) != keys
+                        or not _strict_equal({key: row.get(key) for key in expected[index] if key not in independent},
+                                             {key: value for key, value in expected[index].items() if key not in independent})
+                        or (CLOTHING_SPECS[case].get('ringing') and not _watch_timing_valid(row.get('watchTiming'), _watch_started(expected[index].get('watchTiming'))))
+                        or (mohawk and (row.get('hairStyle') != server_model
+                            or row.get('hairUnchanged') is not (server_model == 'MohawkFan')
+                            or not _appearance_proof_valid(row, row.get('appearanceCheckpoint'), row.get('hairStyle'))
+                            or not _strict_equal(row.get('appearanceBaseline'), client_value.get('appearanceBaseline'))
+                            or not _strict_equal(row.get('appearanceCheckpoint'), client_value.get('appearanceCheckpoint'))))
+                        or (watch and not _watch_processing_valid(row.get('watchProcessing'), CLOTHING_SPECS[case]['alarm'] and expected[index].get('worn')))):
+                    valid = False
+            if not valid:
+                issues.append('Exact P4 clothing server worn/root receipt missing or inconsistent')
+            final_clothing = {case: row for case, row in zip(clothing_cases, authority) if isinstance(row, dict)}
+            appearance_cases = [case for case in clothing_cases if CLOTHING_SPECS[case].get('mohawk')]
+            appearance_markers = [line.split('[EQUIPMENT_TEST] APPEARANCE_CHECKPOINT ', 1)[1].strip() for line in server.splitlines() if '[EQUIPMENT_TEST] APPEARANCE_CHECKPOINT ' in line]
+            try:
+                appearance_rows = [json.loads(marker) for marker in appearance_markers]
+            except (ValueError, TypeError):
+                appearance_rows = []
+            appearance_expected = [dict(id=final_clothing[case].get('id'), appearance=final_clothing[case].get('appearanceCheckpoint')) for case in appearance_cases if case in final_clothing]
+            if not _strict_equal(appearance_rows, appearance_expected) or len(appearance_expected) != len(appearance_cases):
+                issues.append('Exact P4 Mohawk authority appearance checkpoint missing or inconsistent')
+            watch_cases = [case for case in clothing_cases if CLOTHING_SPECS[case].get('watch')]
+            markers = [line.split('[EQUIPMENT_TEST] WATCH_CHECKPOINT ', 1)[1].strip()
+                       for line in server.splitlines() if '[EQUIPMENT_TEST] WATCH_CHECKPOINT ' in line]
+            try:
+                checkpoints = [json.loads(marker) for marker in markers]
+            except (ValueError, TypeError):
+                checkpoints = []
+            valid = len(checkpoints) == len(watch_cases)
+            for case, row in zip(watch_cases, checkpoints):
+                client = next((event.get('outcome', {}).get('clothingCheckpoint') for event in cases if event.get('id') == case), {})
+                client = client if isinstance(client, dict) else {}
+                if (not isinstance(row, dict) or set(row) != {'id', 'watch', 'watchProcessing'} | ({'watchTiming'} if CLOTHING_SPECS[case].get('ringing') else set())
+                        or not _strict_equal(row.get('id'), client.get('id'))
+                        or not _strict_equal(row.get('watch'), client.get('watch'))
+                        or (CLOTHING_SPECS[case].get('ringing') and not _watch_timing_valid(row.get('watchTiming'), _watch_started(client.get('watchTiming'))))
+                        or not _watch_processing_valid(row.get('watchProcessing'), CLOTHING_SPECS[case]['alarm'] and client.get('worn'))):
+                    valid = False
+            if valid:
+                for case, row in zip(watch_cases, checkpoints):
+                    if CLOTHING_SPECS[case].get('ringing'):
+                        final_timing = final_clothing.get(case, {}).get('watchTiming')
+                        if (not _watch_timing_valid(final_timing, _watch_started(row.get('watchTiming')))
+                                or final_timing['observedAgeHours'] < row['watchTiming']['observedAgeHours']):
+                            valid = False
+            if not valid:
+                issues.append('Exact P4 wristwatch server checkpoint/processing receipt missing or inconsistent')
+        if group_cases:
+            import json
+            markers = [line.split('[EQUIPMENT_TEST] GROUP_AUTHORITY ', 1)[1].strip()
+                       for line in server.splitlines() if '[EQUIPMENT_TEST] GROUP_AUTHORITY ' in line]
+            expected_groups = []
+            for case in group_cases:
+                group = next((row.get('outcome', {}).get('tidyGroup') for row in cases if row.get('id') == case), {})
+                group = group if isinstance(group, dict) else {}
+                expected_groups.append(dict(case=case, items=group.get('items'), tailCompleted=True))
+            try:
+                authority = [json.loads(marker) for marker in markers]
+            except (ValueError, TypeError):
+                authority = []
+            if authority != expected_groups:
+                issues.append('Exact P4 group server inventory receipt missing or inconsistent')
         checkpoints = re.findall(r'\[EQUIPMENT_TEST\] CHECKPOINT case=([a-z-]+)(?:\s|$)', server)
         if checkpoints != selection['cases']:
             issues.append('Authoritative equipment checkpoints missing, duplicated or out of order')
@@ -257,8 +534,616 @@ def verify(root, selection, catalog):
         expected_counts = {case: 0 if case == 'waiting-cancel' and selection['mode'] == 'toolkit' else RECEIPTS[case] for case in selection['cases']}
         if any(sum(case == entry[0] for entry in captures) != count for case, count in expected_counts.items()) or len({entry[2] for entry in captures}) != len(captures) or any(entry[0] not in expected_counts for entry in captures):
             issues.append('Equipment acknowledgement captures missing or duplicated')
+    scene_issues, scene = _verify_scene(server if selection['kind'] == 'mp' else text, selection)
+    issues.extend(scene_issues)
     return {'issues': issues, 'outcomes': outcomes,
-            'evidence': {'limits': ['Fresh world, one actual client, inventory callbacks invoked programmatically; WAN and physical input unverified.']}}
+            'evidence': {'sceneSetup': scene, 'limits': ['Fresh world, one actual client, inventory callbacks invoked programmatically; WAN and physical input unverified.']}}
+
+
+def _verify_scene(text, selection):
+    import json
+    markers = [line.split('[EQUIPMENT_TEST] SCENE_HEADWEAR ', 1)[1].strip()
+               for line in text.splitlines() if '[EQUIPMENT_TEST] SCENE_HEADWEAR ' in line]
+    watch = any(CLOTHING_SPECS.get(case, {}).get('watch') for case in selection['cases'])
+    headwear = any(CLOTHING_SPECS.get(case, {}).get('headwear') for case in selection['cases'])
+    needed = watch or headwear
+    locations = sorted(({'base:hat', 'base:fullhat'} if headwear else set()) | {CLOTHING_SPECS[case]['location'] for case in selection['cases'] if CLOTHING_SPECS.get(case, {}).get('watch')})
+    if not needed:
+        return (['Unexpected headwear scene preparation'] if markers else []), None
+    try:
+        proof = json.loads(markers[0]) if len(markers) == 1 else None
+    except (ValueError, TypeError):
+        proof = None
+    valid = (isinstance(proof, dict) and set(proof) == {'prepared', 'authority', 'rootRetained', 'normalizedItems'} | ({'targetLocations'} if watch else set())
+             and proof['prepared'] is True and proof['rootRetained'] is True
+             and proof['authority'] == ('server' if selection['kind'] == 'mp' else 'sp')
+             and isinstance(proof['normalizedItems'], list)
+             and (not watch or proof.get('targetLocations') == locations))
+    previous = None
+    for item in proof['normalizedItems'] if valid else []:
+        if (not isinstance(item, dict) or set(item) != {'id', 'fullType', 'location'}
+                or type(item['id']) is not int or item['id'] == -1
+                or (previous is not None and item['id'] <= previous)
+                or any(type(item[key]) is not str or not item[key] for key in ('fullType', 'location'))):
+            valid = False
+            break
+        previous = item['id']
+    return ([] if valid else ['Authority-owned headwear scene preparation/root retention proof missing or inconsistent']), proof
+
+
+HOTBAR_EFFECT_KEYS = {'case', 'providerItem', 'providerType', 'providerLocation', 'providerWorn', 'id', 'fullType', 'container', 'slotIndex', 'slotType', 'model', 'attached', 'primary', 'secondary',
+                      'worn', 'producer', 'producerCompleted', 'ammoUnchanged', 'unrelatedAttachmentsPreserved'}
+
+
+def hotbar_effect_keys(case):
+    spec = HOTBAR_CASES[case]
+    return (HOTBAR_EFFECT_KEYS - {'ammoUnchanged'} | {'flashlight'} if spec.get('flashlight') else
+            HOTBAR_EFFECT_KEYS - {'ammoUnchanged'} | {'radio'} if spec.get('radio') else
+            HOTBAR_EFFECT_KEYS - {'ammoUnchanged'} | {'ordinary'} if spec.get('ordinary') else HOTBAR_EFFECT_KEYS)
+
+
+def _ordinary_hotbar_valid(value, prior):
+    if not isinstance(value, dict) or set(value) != {'condition', 'sharpness', 'hairStyle', 'hairColor', 'nonAttachedHair', 'secondary'}:
+        return False
+    secondary = value['secondary']
+    return (type(value['condition']) is int and value['condition'] == 10
+            and type(value['sharpness']) in (int, float) and math.isfinite(value['sharpness']) and value['sharpness'] == 1
+            and isinstance(value['hairColor'], dict) and set(value['hairColor']) == {'r', 'g', 'b'}
+            and all(type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 1 for v in value['hairColor'].values())
+            and value['hairStyle'] in ('CrewCut', 'Bob') and value['nonAttachedHair'] is False
+            and (isinstance(secondary, dict) and set(secondary) == {'id', 'fullType', 'container'}
+                 and type(secondary.get('id')) is int and secondary['id'] != -1 and secondary.get('fullType') == 'Base.Screwdriver'
+                 and secondary.get('container') == 'root' if prior else secondary is False))
+
+
+# Java DeviceData stores the source-proven off-UI default as IEEE-754 float32.
+RADIO_OFF_VOLUME = 0.10000000149011612
+
+RADIO_KEYS = {'class', 'deviceClass', 'parent', 'canonical', 'portable', 'batteryPowered', 'television', 'hasBattery', 'turnedOn',
+              'power', 'channel', 'volume', 'micMuted', 'headphones', 'hasMedia', 'playingMedia', 'activated', 'equippedRadio', 'emitter', 'scissors', 'producer'}
+
+
+def _radio_hotbar_valid(value, on, equipped, baseline, powered=None):
+    powered = on and equipped if powered is None else powered
+    expected = dict(class_='Radio', deviceClass='DeviceData', parent=True, canonical=True, portable=True, batteryPowered=True,
+                    television=False, hasBattery=True, turnedOn=powered, channel=88000, volume=0.25 if on else RADIO_OFF_VOLUME, micMuted=True, headphones=-1,
+                    hasMedia=False, playingMedia=False, activated=False, equippedRadio=equipped, emitter=on and equipped)
+    expected['class'] = expected.pop('class_')
+    if not isinstance(value, dict) or set(value) != RADIO_KEYS or not isinstance(baseline, dict) or set(baseline) != RADIO_KEYS:
+        return False
+    if any(type(value.get(key)) is not type(wanted) or value[key] != wanted for key, wanted in expected.items()):
+        return False
+    scissors = value['scissors']
+    if (not isinstance(scissors, dict) or set(scissors) != {'id', 'fullType', 'container'} or type(scissors.get('id')) is not int
+            or scissors['id'] == -1 or scissors.get('fullType') != 'Base.ScissorsBluntMedical' or scissors.get('container') != 'root'
+            or not _ordinary_hotbar_valid(value['producer'], False)):
+        return False
+    if (type(value['power']) not in (int, float) or not math.isfinite(value['power']) or not 0 <= value['power'] <= 1
+            or type(baseline.get('power')) not in (int, float) or baseline['power'] != 1 or baseline['equippedRadio'] is not False or baseline['turnedOn'] is not on):
+        return False
+    stable = RADIO_KEYS - {'power', 'turnedOn', 'equippedRadio', 'emitter'}
+    return all(_strict_equal(value[key], baseline[key]) for key in stable)
+
+
+FLASHLIGHT_USE_DELTA = 0.006000000052154064
+FLASHLIGHT_KEYS = {'class', 'canonical', 'flashlight', 'canActivate', 'keepOnDeplete', 'useWhileEquipped', 'useWhileUnequipped',
+                   'replaceOnDeplete', 'cookable', 'onCooked', 'onEat', 'lightStrength', 'lightDistance', 'torchCone', 'useDelta',
+                   'maxUses', 'uses', 'activated', 'emitting', 'scissors', 'producer'}
+
+
+def _flashlight_hotbar_valid(value, mode, restored, baseline):
+    initial_uses = 166 if mode == 'charged' else 1 if mode == 'deplete' else 0
+    activated = mode != 'empty' and not restored
+    if not isinstance(value, dict) or set(value) != FLASHLIGHT_KEYS or not isinstance(baseline, dict) or set(baseline) != FLASHLIGHT_KEYS:
+        return False
+    expected = dict(canonical=True, flashlight=True, canActivate=True, keepOnDeplete=True, useWhileEquipped=True, useWhileUnequipped=False,
+                    replaceOnDeplete=False, cookable=False, onCooked=False, onEat=False, lightStrength=1.5, lightDistance=15,
+                    torchCone=True, useDelta=FLASHLIGHT_USE_DELTA, maxUses=166, activated=activated)
+    expected['class'] = 'DrainableComboItem'
+    if any(type(value.get(key)) is not type(wanted) or value[key] != wanted for key, wanted in expected.items()):
+        return False
+    uses = value['uses']
+    if (type(uses) is not int or not 0 <= uses <= initial_uses or (uses <= 0 if mode == 'charged' else uses != 0)
+            or type(value['emitting']) is not bool or value['emitting'] != (activated and uses > 0)
+            or type(baseline['uses']) is not int or baseline['uses'] != initial_uses or baseline['activated'] is not False or baseline['emitting'] is not False):
+        return False
+    scissors = value['scissors']
+    if (not isinstance(scissors, dict) or set(scissors) != {'id', 'fullType', 'container'} or type(scissors.get('id')) is not int
+            or scissors['id'] == -1 or scissors.get('fullType') != 'Base.ScissorsBluntMedical' or scissors.get('container') != 'root'
+            or not _ordinary_hotbar_valid(value['producer'], False)):
+        return False
+    stable = FLASHLIGHT_KEYS - {'uses', 'activated', 'emitting'}
+    return all(_strict_equal(value[key], baseline[key]) for key in stable)
+
+
+def hotbar_authority_keys(case):
+    return hotbar_effect_keys(case) | ({'ordinaryBaseline'} if HOTBAR_CASES[case].get('ordinary') else {'radioBaseline'} if HOTBAR_CASES[case].get('radio') else {'flashlightBaseline'} if HOTBAR_CASES[case].get('flashlight') else set())
+
+
+def _hotbar_authority_equal(authority, expected):
+    if not isinstance(authority, list) or len(authority) != len(expected):
+        return False
+    import copy
+    for actual, wanted in zip(authority, expected):
+        if not isinstance(actual, dict):
+            return False
+        if HOTBAR_CASES.get(wanted.get('case'), {}).get('radio'):
+            baseline = actual.get('radioBaseline')
+            spec = HOTBAR_CASES[wanted['case']]
+            if not _radio_hotbar_valid(wanted.get('radio'), spec['on'], not wanted.get('attached'), wanted.get('radioBaseline')):
+                return False
+            if not _radio_hotbar_valid(actual.get('radio'), spec['on'], False, baseline, powered=spec['on'] and not wanted.get('attached')):
+                return False
+            actual, wanted = copy.deepcopy(actual), copy.deepcopy(wanted)
+            # Validate the exact phase's on/off state independently on both
+            # roles. Only native battery consumption may differ while packets
+            # lag; never hide a retained authoritative on bit after return.
+            actual['radio']['power'] = wanted['radio']['power']
+            wanted['radio']['equippedRadio'] = False
+            wanted['radio']['emitter'] = False
+        if HOTBAR_CASES.get(wanted.get('case'), {}).get('flashlight'):
+            mode = HOTBAR_CASES[wanted['case']]['flashlight']
+            restored = wanted.get('attached')
+            if (not _flashlight_hotbar_valid(actual.get('flashlight'), mode, restored, actual.get('flashlightBaseline'))
+                    or not _flashlight_hotbar_valid(wanted.get('flashlight'), mode, restored, wanted.get('flashlightBaseline'))):
+                return False
+            # Native SyncItemActivated addresses the exact root ID and carries
+            # both activation and uses. Require exact final role agreement.
+        if not _strict_equal(actual, wanted):
+            return False
+    return True
+
+
+def _verify_tidy_hotbar(result, selection, case):
+    value, checkpoint = result.get('tidyHotbar'), result.get('hotbarCheckpoint')
+    tidy = 'P4TidyUpMeister' in selection['mods']
+    spec = HOTBAR_CASES[case]
+    ordinary, prior, radio = bool(spec.get('ordinary')), bool(spec.get('priorSecondary')), bool(spec.get('radio'))
+    flashlight = spec.get('flashlight')
+    passive = ordinary or radio or bool(flashlight)
+    effect_keys = hotbar_effect_keys(case)
+    keys = effect_keys | ({'ordinaryBaseline', 'acknowledgements'} if ordinary else {'radioBaseline', 'radioLifecycle', 'acknowledgements'} if radio else {'flashlightBaseline', 'flashlightLifecycle', 'acknowledgements'} if flashlight else set()) | {'nativeGenerated', 'authoritativeRestore', 'sourceSession', 'sourceCompleted',
+                                'attachConnectObserved', 'uiHotbarIdentity', 'sharedCompletion', 'unrelatedTailPreserved'}
+    if (not isinstance(value, dict) or set(value) != keys
+            or not isinstance(checkpoint, dict) or set(checkpoint) != effect_keys):
+        return ['P4 hotbar exact effect/checkpoint evidence missing']
+    provider = not spec['twoHands']
+    normal = value.get('ordinary') if isinstance(value.get('ordinary'), dict) else {}
+    baseline_secondary = normal.get('secondary', {}).get('id') if ordinary and prior and isinstance(normal.get('secondary'), dict) else False
+    temporary_primary = value.get('id') if not passive or prior else False
+    temporary_secondary = value.get('id') if spec['twoHands'] or passive and not prior else baseline_secondary
+    expected = dict(case=case, fullType=spec['fullType'], container='root', slotType=spec['slotType'], model=spec['model'],
+                    providerType=('Base.SCBA_notank' if flashlight else 'Base.Belt2' if ordinary or radio else 'Base.HolsterDouble') if provider else False, providerLocation=('base:scbanotank' if flashlight else 'base:belt' if ordinary or radio else 'base:beltextra') if provider else False,
+                    providerWorn=provider,
+                    attached=tidy, primary=False if tidy else temporary_primary, secondary=baseline_secondary if tidy else temporary_secondary, worn=False,
+                    producer='ISCutHair' if passive else 'onRackGun', producerCompleted=True, unrelatedAttachmentsPreserved=True,
+                    nativeGenerated=int(tidy), authoritativeRestore=tidy and selection['kind'] == 'mp', sourceCompleted=tidy,
+                    attachConnectObserved=tidy, uiHotbarIdentity=True, unrelatedTailPreserved=True)
+    if not passive:
+        expected['ammoUnchanged'] = True
+    if (type(value.get('id')) is not int or value['id'] == -1 or type(result.get('hotbarItem')) is not int
+            or result['hotbarItem'] != value['id']
+            or any(type(value.get(key)) is not type(wanted) or value.get(key) != wanted for key, wanted in expected.items())):
+        return ['P4 hotbar exact native slot/model/root/hands effect differs']
+    index, provider_id = value.get('slotIndex'), value.get('providerItem')
+    if (type(index) is not int or index < 1 or (not provider and index != 1) or (provider and index == 1)
+            or (provider and (type(provider_id) is not int or provider_id == -1 or provider_id == value['id']))
+            or (not provider and provider_id is not False)):
+        return ['P4 hotbar native dynamic slot index or exact worn provider differs']
+    session = value.get('sourceSession')
+    if (tidy and (type(session) is not int or session <= 0)) or (not tidy and session is not False):
+        return ['P4 hotbar source-owned native producer session missing']
+    if ordinary:
+        if (not _ordinary_hotbar_valid(normal, prior) or not _strict_equal(normal, value.get('ordinaryBaseline'))
+                or prior and (baseline_secondary in (value['id'], provider_id))):
+            return ['P4 ordinary hotbar condition/sharpness/hair or exact prior secondary changed']
+        actions = [dict(kind='ISEquipWeaponAction', id=value['id']), dict(kind='ISCutHair', id=value['id'])]
+        if tidy:
+            actions.append(dict(kind='ISUnequipAction', id=value['id']))
+        receipts = [dict(action, state='completed') for action in actions] if selection['kind'] == 'mp' else []
+        if not _strict_equal(value['acknowledgements'], receipts):
+            return ['P4 ordinary hotbar exact native receipts differ']
+    if radio:
+        if not _strict_equal(value.get('radioLifecycle'), dict(heldPointer=True, emitterCreated=spec['on'], emitterCleaned=spec['on'] and tidy)):
+            return ['P4 radio native pointer/emitter lifecycle evidence missing']
+        if not _radio_hotbar_valid(value.get('radio'), spec['on'], not tidy, value.get('radioBaseline')):
+            return ['P4 radio native device ownership/settings/power/producer differ']
+        if value['radio']['scissors']['id'] in (value['id'], provider_id):
+            return ['P4 radio haircut requires a distinct exact scissors identity']
+        if not _radio_hotbar_valid(checkpoint.get('radio'), spec['on'], True, value.get('radioBaseline')):
+            return ['P4 radio checkpoint device ownership/settings/power/producer differ']
+        if value['radio']['power'] > checkpoint['radio']['power']:
+            return ['P4 radio battery power increased during native cleanup']
+        actions = [dict(kind='ISEquipWeaponAction', id=value['id']), dict(kind='ISCutHair', id=value['radio']['scissors']['id'])]
+        if tidy:
+            actions.append(dict(kind='ISUnequipAction', id=value['id']))
+        receipts = [dict(action, state='completed') for action in actions] if selection['kind'] == 'mp' else []
+        if not _strict_equal(value['acknowledgements'], receipts):
+            return ['P4 radio exact separate-scissors native receipts differ']
+    if flashlight:
+        if not _strict_equal(value.get('flashlightLifecycle'), dict(held=True, activated=flashlight != 'empty', emitted=flashlight != 'empty', depleted=flashlight == 'deplete', deactivated=tidy and flashlight != 'empty')):
+            return ['P4 flashlight native activation/depletion lifecycle evidence missing']
+        if (not _flashlight_hotbar_valid(value.get('flashlight'), flashlight, tidy, value.get('flashlightBaseline'))
+                or not _flashlight_hotbar_valid(checkpoint.get('flashlight'), flashlight, False, value.get('flashlightBaseline'))):
+            return ['P4 flashlight native shape/uses/activation/emission/producer differs']
+        scissors_id = value['flashlight']['scissors']['id']
+        if scissors_id in (value['id'], provider_id) or value['flashlight']['uses'] > checkpoint['flashlight']['uses']:
+            return ['P4 flashlight identity/uses conservation differs']
+        actions = [dict(kind='ISEquipWeaponAction', id=value['id']), dict(kind='ISCutHair', id=scissors_id)]
+        if tidy:
+            actions.append(dict(kind='ISUnequipAction', id=value['id']))
+        receipts = [dict(action, state='completed') for action in actions] if selection['kind'] == 'mp' else []
+        if not _strict_equal(value['acknowledgements'], receipts):
+            return ['P4 flashlight exact separate-scissors native receipts differ']
+    before = {key: value[key] for key in effect_keys}
+    before.update(attached=False, primary=temporary_primary, secondary=temporary_secondary)
+    if flashlight:
+        before['flashlight'] = checkpoint['flashlight']
+    if radio:
+        before['radio'] = checkpoint['radio']
+    if not _strict_equal(checkpoint, before):
+        return ['P4 hotbar detached/held checkpoint differs from exact restored identity']
+    count = int(tidy and selection['mode'] == 'toolkit')
+    expected_completion = dict(perform=count, complete=count if selection['kind'] == 'sp' else 0, flush=count, legacy=0)
+    completion = value.get('sharedCompletion')
+    if (not isinstance(completion, dict) or completion != expected_completion
+            or any(type(item) is not int for item in completion.values())):
+        return ['P4 hotbar shared completion evidence differs']
+    return []
+
+
+CLOTHING_SPECS = {
+    'tidy-headwear-mohawk-hat-restore': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True, mohawk=True),
+    'tidy-headwear-mohawk-hat-remove': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True, mohawk=True, remove=True),
+    'tidy-headwear-mohawk-full-hat-restore': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True, mohawk=True),
+    'tidy-headwear-mohawk-full-hat-remove': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True, mohawk=True, remove=True),
+    'tidy-clothing-replace': dict(fullType='Base.Socks_Ankle', location='base:socks', temporaryType='Base.Socks_Long', temporaryLocation='base:socks'),
+    'tidy-headwear-hat-exclusive': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True, temporaryType='Base.Hat_BoxingRed', temporaryLocation='base:fullhat'),
+    'tidy-headwear-full-hat-exclusive': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True, temporaryType='Base.Hat_Beany', temporaryLocation='base:hat'),
+    'tidy-clothing': dict(fullType='Base.Socks_Ankle', location='base:socks'),
+    'tidy-clothing-remove': dict(fullType='Base.Socks_Ankle', location='base:socks', remove=True),
+    'tidy-clothing-overlap': dict(fullType='Base.Socks_Ankle', location='base:socks', remove=True, overlapHand='secondary'),
+    'tidy-clothing-overlap-primary': dict(fullType='Base.Socks_Ankle', location='base:socks', remove=True, overlapHand='primary'),
+    'tidy-clothing-overlap-both': dict(fullType='Base.Socks_Ankle', location='base:socks', remove=True, overlapHand='both'),
+    'tidy-clothing-held-primary': dict(fullType='Base.Socks_Ankle', location='base:socks', overlapHand='primary'),
+    'tidy-clothing-held-secondary': dict(fullType='Base.Socks_Ankle', location='base:socks', overlapHand='secondary'),
+    'tidy-clothing-held-both': dict(fullType='Base.Socks_Ankle', location='base:socks', overlapHand='both'),
+    'tidy-headwear-hat-restore': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True),
+    'tidy-headwear-full-hat-restore': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True),
+    'tidy-headwear-hat-remove': dict(fullType='Base.Hat_Beany', location='base:hat', headwear=True, remove=True),
+    'tidy-headwear-full-hat-remove': dict(fullType='Base.Hat_BoxingRed', location='base:fullhat', headwear=True, remove=True),
+    'tidy-watch-digital-restore': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True),
+    'tidy-watch-digital-remove': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, remove=True),
+    'tidy-watch-classic-restore': dict(fullType='Base.WristWatch_Right_ClassicBlack', location='base:rightwrist', watch=True, alarm=False),
+    'tidy-watch-classic-remove': dict(fullType='Base.WristWatch_Right_ClassicBlack', location='base:rightwrist', watch=True, alarm=False, remove=True),
+    'tidy-watch-overlap-primary': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, overlapHand='primary', remove=True),
+    'tidy-watch-overlap-secondary': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, overlapHand='secondary', remove=True),
+    'tidy-watch-overlap-both': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, overlapHand='both', remove=True),
+    'tidy-watch-held-primary': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, overlapHand='primary'),
+    'tidy-watch-held-secondary': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, overlapHand='secondary'),
+    'tidy-watch-held-both': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, overlapHand='both'),
+    'tidy-watch-ringing-restore': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, ringing=True, ),
+    'tidy-watch-ringing-remove': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, ringing=True, remove=True,),
+    'tidy-watch-ringing-overlap-both': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, ringing=True, remove=True, overlapHand='both',),
+    'tidy-watch-ringing-held-both': dict(fullType='Base.WristWatch_Left_DigitalBlack', location='base:leftwrist', watch=True, alarm=True, ringing=True, overlapHand='both',),
+}
+CLOTHING_CASES = tuple(CLOTHING_SPECS)
+CLOTHING_OVERLAP_EFFECT_KEYS = {'primary', 'secondary', 'originalPrimary', 'originalSecondary'}
+
+
+def _strict_equal(actual, wanted):
+    if type(actual) is not type(wanted):
+        return False
+    if isinstance(wanted, dict):
+        return actual.keys() == wanted.keys() and all(_strict_equal(actual[key], item) for key, item in wanted.items())
+    if isinstance(wanted, list):
+        return len(actual) == len(wanted) and all(_strict_equal(a, b) for a, b in zip(actual, wanted))
+    return actual == wanted
+
+
+def _watch_processing_valid(value, active):
+    return (isinstance(value, dict) and set(value) == {'active', 'pendingRemoval'}
+            and value.get('active') is active and type(active) is bool and value.get('pendingRemoval') is False)
+
+
+def _watch_started(value):
+    return value.get('startedAgeHours') if isinstance(value, dict) else None
+
+
+def _watch_timing_valid(value, started=None):
+    if not isinstance(value, dict) or set(value) != {'startedAgeHours', 'observedAgeHours'}:
+        return False
+    begin, observed = value['startedAgeHours'], value['observedAgeHours']
+    return (all(type(age) in (int, float) and math.isfinite(age) for age in (begin, observed))
+            and 0 <= observed - begin < 0.5 and (started is None or begin == started))
+
+
+def _verify_ring_cleanup(text, cases, events):
+    import json
+    wanted = []
+    for case in cases:
+        if not CLOTHING_SPECS.get(case, {}).get('ringing'):
+            continue
+        value = next((row.get('outcome', {}).get('tidyClothing') for row in events if row.get('id') == case), {})
+        if not isinstance(value, dict) or not isinstance(value.get('watch'), dict):
+            return ['Native ring cleanup lacks exact completed watch baseline']
+        wanted.append(dict(id=value.get('id'), watch=dict(value['watch'], ringing=False)))
+    try:
+        actual = [json.loads(line.split('[EQUIPMENT_TEST] WATCH_CLEANUP ', 1)[1]) for line in text.splitlines()
+                  if '[EQUIPMENT_TEST] WATCH_CLEANUP ' in line]
+    except (ValueError, TypeError):
+        actual = None
+    return [] if _strict_equal(actual, wanted) else ['Exact native ring cleanup stop/configuration evidence missing or inconsistent']
+
+
+def clothing_effect_keys(case):
+    return CLOTHING_EFFECT_KEYS | (CLOTHING_OVERLAP_EFFECT_KEYS if CLOTHING_SPECS[case].get('overlapHand') else set()) | ({'watch'} if CLOTHING_SPECS[case].get('watch') else set()) | ({'watchTiming'} if CLOTHING_SPECS[case].get('ringing') else set()) | ({'temporary'} if CLOTHING_SPECS[case].get('temporaryType') else set()) | ({'appearance'} if CLOTHING_SPECS[case].get('mohawk') else set())
+
+
+CLOTHING_EFFECT_KEYS = {'id', 'fullType', 'bodyLocation', 'container', 'worn', 'producer', 'producerCompleted',
+                        'hairUnchanged', 'hairStyle', 'unrelatedHandsPreserved'}
+
+
+def _appearance_valid(value, model, uses):
+    if not isinstance(value, dict) or set(value) != {'hairModel', 'nonAttachedHair', 'hairColor', 'hairGrowthTime', 'gel'}:
+        return False
+    color, gel = value.get('hairColor'), value.get('gel')
+    return (value.get('hairModel') == model and value.get('nonAttachedHair') is False and value.get('hairGrowthTime') is False
+            and isinstance(color, dict) and set(color) == {'r', 'g', 'b'}
+            and all(type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 1 for v in color.values())
+            and isinstance(gel, dict) and set(gel) == {'id', 'fullType', 'container', 'uses'}
+            and type(gel.get('id')) is int and gel['id'] != -1 and gel.get('fullType') == 'Base.Hairgel'
+            and gel.get('container') == 'root' and type(gel.get('uses')) is int and gel['uses'] == uses)
+
+
+def _appearance_proof_valid(value, checkpoint, model):
+    baseline, before, current = value.get('appearanceBaseline'), value.get('appearanceCheckpoint'), value.get('appearance')
+    if not (_appearance_valid(baseline, 'MohawkFan', 20) and _appearance_valid(before, 'MohawkFan', 19)
+            and _appearance_valid(current, model, 19) and _strict_equal(before, checkpoint)):
+        return False
+    return (baseline['gel']['id'] == before['gel']['id'] == current['gel']['id'] != value.get('id')
+            and _strict_equal(baseline['hairColor'], before['hairColor']) and _strict_equal(before['hairColor'], current['hairColor']))
+
+
+def _verify_tidy_clothing(result, selection, remove=False, overlap=False, case='tidy-clothing'):
+    spec = CLOTHING_SPECS[case]
+    headwear = spec.get('headwear', False)
+    value, checkpoint = result.get('tidyClothing'), result.get('clothingCheckpoint')
+    tidy = 'P4TidyUpMeister' in selection['mods']
+    effect_keys = clothing_effect_keys(case)
+    processing_keys = {'watchProcessing'} if spec.get('watch') and selection['kind'] == 'sp' else set()
+    expected_keys = effect_keys | processing_keys | (({'watchBaseline', 'watchSetup'} | ({'watchAcknowledgements'} if not overlap else set())) if spec.get('watch') else set()) | ({'headwearSetup'} if headwear else set()) | ({'overlap'} if overlap else set()) | ({'displacement'} if spec.get('temporaryType') else set()) | ({'appearanceBaseline', 'appearanceCheckpoint', 'appearanceAcknowledgements'} if spec.get('mohawk') else set()) | {'nativeGenerated', 'authoritativeRestore', 'sharedCompletion', 'unrelatedTailPreserved',
+                                           'sourceSession', 'sourceCompleted'}
+    if (not isinstance(value, dict) or set(value) != expected_keys
+            or not isinstance(checkpoint, dict) or set(checkpoint) != effect_keys | processing_keys):
+        return ['P4 clothing exact effect/checkpoint evidence missing']
+    mohawk = spec.get('mohawk', False)
+    model = 'MohawkFlat' if tidy and selection['kind'] == 'sp' else 'MohawkFan'
+    expected = dict(fullType=spec['fullType'], container='root', worn=(not tidy if remove else tidy), producer='ISCutHair', producerCompleted=True,
+                    hairUnchanged=(not mohawk or model == 'MohawkFan'), unrelatedHandsPreserved=True, nativeGenerated=int(tidy),
+                    authoritativeRestore=tidy and selection['kind'] == 'mp', unrelatedTailPreserved=True, sourceCompleted=tidy)
+    if (any(type(value.get(key)) is not type(wanted) or value.get(key) != wanted for key, wanted in expected.items())
+            or type(value.get('id')) is not int or value['id'] == -1
+            or type(result.get('clothingItem')) is not int or result.get('clothingItem') != value['id']
+            or value.get('bodyLocation') != spec['location'] or not isinstance(value.get('hairStyle'), str) or not value['hairStyle']
+            or (value['hairStyle'] != model if mohawk else any(name in value['hairStyle'] for name in ('Bald', 'Mohawk', 'Spike', 'Greased', 'Buffont')))):
+        return ['P4 clothing exact socks/producer/hands evidence differs']
+    session = value.get('sourceSession')
+    if (tidy and (type(session) is not int or session <= 0)) or (not tidy and session is not False):
+        return ['P4 clothing source-owned restore session evidence missing']
+    correlation_keys = effect_keys - {'watchTiming', 'temporary'} - ({'appearance', 'hairStyle', 'hairUnchanged'} if mohawk else set())
+    before = {key: value[key] for key in correlation_keys}
+    before['worn'] = remove
+    if overlap:
+        hand = spec['overlapHand']
+        before['primary'] = (value['id'] if remove else False) if hand in ('primary', 'both') else value['originalPrimary']
+        before['secondary'] = (value['id'] if remove else False) if hand in ('secondary', 'both') else value['originalSecondary']
+    if {key: checkpoint[key] for key in correlation_keys} != before or any(type(checkpoint.get(key)) is not type(value) for key, value in before.items()):
+        return ['P4 clothing checkpoint differs from the exact restored socks identity']
+    count = int(tidy and selection['mode'] == 'toolkit')
+    clothing_count = count * (2 if spec.get('temporaryType') and spec['temporaryLocation'] != spec['location'] else 1)
+    expected_completion = dict(perform=clothing_count, complete=clothing_count if selection['kind'] == 'sp' else 0, flush=clothing_count, legacy=0)
+    completion = value.get('sharedCompletion')
+    if (not isinstance(completion, dict) or completion != expected_completion
+            or any(type(item) is not int for item in completion.values())):
+        return ['P4 clothing shared completion evidence differs']
+    if spec.get('temporaryType'):
+        temporary = value['temporary']
+        wanted = dict(fullType=spec['temporaryType'], bodyLocation=spec['temporaryLocation'], container='root', worn=not tidy)
+        if (not isinstance(temporary, dict) or set(temporary) != set(wanted) | {'id'}
+                or any(not _strict_equal(temporary.get(key), field) for key, field in wanted.items())
+                or type(temporary.get('id')) is not int or temporary['id'] in (-1, value['id'])
+                or not _strict_equal(checkpoint['temporary'], dict(temporary, worn=True))):
+            return ['P4 displaced temporary clothing exact identity/root/slots differ']
+        cleanup = ([dict(kind='ISUnequipAction', id=temporary['id'])] if spec['temporaryLocation'] != spec['location'] else []) + [dict(kind='ISWearClothing', id=value['id'])]
+        producers = [dict(kind='ISWearClothing', id=temporary['id']), dict(kind='ISCutHair', id=False)]
+        expected_proof = dict(cleanup=cleanup if tidy else [], acknowledgements=[dict(row, state='completed') for row in producers + (cleanup if tidy else [])] if selection['kind'] == 'mp' else [])
+        if not _strict_equal(value['displacement'], expected_proof):
+            return ['P4 displaced clothing cleanup order/native receipts differ']
+    if spec.get('watch'):
+        if not _strict_equal(value['watchSetup'], dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)):
+            return ['P4 wristwatch exclusive-slot/capacity setup evidence missing']
+        baseline = value['watchBaseline']
+        if (not isinstance(baseline, dict) or set(baseline) != {'alarmHour', 'alarmMinute', 'alarmSet', 'ringing'}
+                or type(baseline.get('alarmHour')) is not int or not 0 <= baseline['alarmHour'] <= 23
+                or type(baseline.get('alarmMinute')) is not int or not 0 <= baseline['alarmMinute'] < 60
+                or (not spec.get('ringing') and baseline['alarmMinute'] != 40)
+                or baseline.get('alarmSet') is not spec['alarm'] or baseline.get('ringing') is not bool(spec.get('ringing'))
+                or not _strict_equal(value['watch'], baseline) or not _strict_equal(checkpoint['watch'], baseline)):
+            return ['P4 wristwatch exact alarm baseline/configuration changed']
+        if spec.get('ringing'):
+            timing, before_timing = value['watchTiming'], checkpoint['watchTiming']
+            if (not _watch_timing_valid(timing) or not _watch_timing_valid(before_timing, timing['startedAgeHours'])
+                    or timing['observedAgeHours'] < before_timing['observedAgeHours']):
+                return ['P4 ringing wristwatch native lifetime/clock evidence differs']
+        if selection['kind'] == 'sp' and any(not _watch_processing_valid(row.get('watchProcessing'), spec['alarm'] and row['worn']) for row in (value, checkpoint)):
+            return ['P4 wristwatch authoritative processing evidence missing or unsettled']
+        if not overlap:
+            actions = [dict(kind='ISWearClothing' if remove else 'ISUnequipAction', id=value['id']), dict(kind='ISCutHair', id=False)]
+            if tidy:
+                actions.append(dict(kind='ISUnequipAction' if remove else 'ISWearClothing', id=value['id']))
+            receipts = [dict(action, state='completed') for action in actions] if selection['kind'] == 'mp' else []
+            if not _strict_equal(value['watchAcknowledgements'], receipts):
+                return ['P4 wristwatch native producer/cleanup receipts differ']
+    if mohawk:
+        if (checkpoint.get('hairStyle') != 'MohawkFan' or checkpoint.get('hairUnchanged') is not True
+                or not _appearance_proof_valid(value, checkpoint.get('appearance'), model)):
+            return ['P4 Mohawk exact appearance/one-use Hairgel evidence differs']
+        actions = [dict(kind='ISWearClothing' if remove else 'ISUnequipAction', id=value['id']), dict(kind='ISCutHair', id=False)]
+        if tidy:
+            actions.append(dict(kind='ISUnequipAction' if remove else 'ISWearClothing', id=value['id']))
+        receipts = [dict(action, state='completed') for action in actions] if selection['kind'] == 'mp' else []
+        if not _strict_equal(value['appearanceAcknowledgements'], receipts):
+            return ['P4 Mohawk native producer/cleanup receipts differ']
+    if headwear:
+        if not mohawk and value['hairStyle'] not in ('CrewCut', 'Bob'):
+            return ['P4 headwear plain haircut style differs']
+        setup = value.get('headwearSetup')
+        if (not isinstance(setup, dict) or setup != dict(emptyExclusiveSlots=True, capacityBeforeRemoval=True)
+                or any(type(item) is not bool for item in setup.values())):
+            return ['P4 headwear empty slots/native capacity setup evidence missing']
+    if overlap:
+        primary, secondary = value.get('originalPrimary'), value.get('originalSecondary')
+        if any(type(item) is not int or item == -1 for item in (primary, secondary)):
+            return ['P4 overlap exact original/final hands differ']
+        baseline_ok = (len({primary, secondary, value['id']}) == 3 if remove else
+                       (primary == value['id'] if hand in ('primary', 'both') else primary != value['id'])
+                       and (secondary == value['id'] if hand in ('secondary', 'both') else secondary != value['id']))
+        final_primary, final_secondary = (primary, secondary) if tidy else (before['primary'], before['secondary'])
+        if (not baseline_ok
+                or type(value.get('primary')) is not type(final_primary) or value.get('primary') != final_primary
+                or type(value.get('secondary')) is not type(final_secondary) or value.get('secondary') != final_secondary):
+            return ['P4 overlap exact original/final hands differ']
+        proof = value.get('overlap')
+        cleanup = []
+        if tidy:
+            if remove:
+                for restored_id, is_primary in ((primary, True), (secondary, False)):
+                    if hand == 'both' or hand == ('primary' if is_primary else 'secondary'):
+                        cleanup.extend([dict(kind='ISEquipWeaponAction', id=restored_id, primary=is_primary, twoHands=False),
+                                        dict(kind='P4RestoreAction', id=restored_id, activated=False)])
+                cleanup.append(dict(kind='ISUnequipAction', id=value['id']))
+            else:
+                cleanup = [dict(kind='ISEquipWeaponAction', id=value['id'], primary=hand != 'secondary', twoHands=hand == 'both'),
+                           dict(kind='P4RestoreAction', id=value['id'], activated=False), dict(kind='ISWearClothing', id=value['id'])]
+        producers = ([dict(kind='ISEquipWeaponAction', id=value['id']), dict(kind='ISWearClothing', id=value['id'])] if remove
+                     else [dict(kind='ISUnequipAction', id=value['id'])]) + [dict(kind='ISCutHair', id=False)]
+        acknowledgements = producers + [dict(kind=row['kind'], id=row['id']) for row in cleanup]
+        acknowledgements = [dict(item, state='completed') for item in acknowledgements] if selection['kind'] == 'mp' else []
+        hand_count = (2 if remove and hand == 'both' else 1) * count
+        hands = dict(perform=2*hand_count, complete=2*hand_count if selection['kind'] == 'sp' else 0, flush=2*hand_count,
+                     legacy=0, equip=hand_count, activation=hand_count, unequip=0)
+        expected_proof = dict(intermediate=dict(primary=before['primary'], secondary=before['secondary'], worn=value['id'] if remove else False, container='root'),
+                              cleanup=cleanup, acknowledgements=acknowledgements, sharedHands=hands)
+        def strict_equal(actual, wanted):
+            if type(actual) is not type(wanted):
+                return False
+            if isinstance(wanted, dict):
+                return actual.keys() == wanted.keys() and all(strict_equal(actual[key], item) for key, item in wanted.items())
+            if isinstance(wanted, list):
+                return len(actual) == len(wanted) and all(strict_equal(a, b) for a, b in zip(actual, wanted))
+            return actual == wanted
+        if not strict_equal(proof, expected_proof):
+            return ['P4 overlap transition/cleanup order/native receipts/shared hands evidence differs']
+    return []
+
+
+def _verify_tidy_group(result, selection, multi=False):
+    group = result.get('tidyGroup')
+    tidy = 'P4TidyUpMeister' in selection['mods']
+    enabled = selection['mode'] == 'toolkit'
+    keys = {'nativeGroups', 'nativeItems', 'groupSizes', 'obligationGroups', 'completedItems', 'items', 'unrelatedTailPreserved',
+            'pickupOperations', 'pickupItems', 'ownershipAtBegin', 'ownershipCompleted'}
+    if multi:
+        keys |= {'executorCount', 'attempts', 'sameNativeExecutor'}
+    total = 4 if multi else 2
+    if not isinstance(group, dict) or set(group) != keys:
+        return ['Bounded P4 native group evidence missing']
+    expected = dict(nativeGroups=(3 if multi else 1) if tidy else 0, nativeItems=total if tidy else 0,
+                    obligationGroups=int(tidy and enabled), unrelatedTailPreserved=True)
+    if any(type(group.get(k)) is not type(v) or group.get(k) != v for k, v in expected.items()):
+        return ['Bounded P4 native group counts or unrelated tail differ']
+    sizes = group.get('groupSizes')
+    expected_sizes = ([1, 1, 2] if multi else [2]) if tidy else []
+    if sizes != expected_sizes:
+        return ['P4 native group layout differs from observed mode']
+    if not isinstance(sizes, list) or any(type(size) is not int for size in sizes):
+        return ['P4 native group layout is malformed']
+    items, completed = group.get('items'), group.get('completedItems')
+    if (not isinstance(items, list) or len(items) != total
+            or any(not isinstance(item, dict) or set(item) != {'id', 'fullType', 'container'}
+                   or type(item.get('id')) is not int or item['id'] == -1
+                   or item.get('fullType') not in (('Base.Nails', 'Base.Hammer') if multi else ('Base.Nails',)) or item.get('container') != ('worn-bag' if tidy else 'root') for item in items)
+            or len({item['id'] for item in items}) != total or items != sorted(items, key=lambda item: item['id'])):
+        return ['P4 group exact item identities or final containers differ']
+    expected_completed = [dict(id=item['id'], fullType=item['fullType'], state='completed') for item in items] if tidy and enabled else []
+    if completed != expected_completed or any(type(item.get('id')) is not int for item in completed):
+        return ['P4 group per-item completion snapshots missing or inconsistent']
+    pickups = group.get('pickupItems')
+    ownership_count = total if tidy and enabled else 0
+    if (type(group.get('pickupOperations')) is not int or group['pickupOperations'] != int(bool(ownership_count))
+            or not isinstance(pickups, list) or len(pickups) != ownership_count):
+        return ['P4 confirmed pickup ownership evidence missing or active with queue disabled']
+    pickup_keys = {'id', 'fullType', 'owner', 'shared', 'pickupAttempt', 'pickupTransaction', 'pickupAuthority'}
+    for pickup in pickups:
+        if (not isinstance(pickup, dict) or set(pickup) != pickup_keys
+                or type(pickup.get('id')) is not int or type(pickup.get('owner')) is not int or pickup['owner'] != 1
+                or type(pickup.get('shared')) is not bool or pickup['shared']
+                or type(pickup.get('pickupAttempt')) is not int or pickup['pickupAttempt'] < 1
+                or type(pickup.get('pickupTransaction')) is not int
+                or pickup.get('pickupAuthority') != ('completed' if selection['kind'] == 'mp' else 'native')):
+            return ['P4 original pickup operation or native authority differs']
+        transaction = pickup['pickupTransaction']
+        if ((selection['kind'] == 'mp' and (transaction == 0 or not -128 <= transaction <= 127))
+                or (selection['kind'] == 'sp' and transaction != 0)):
+            return ['P4 original pickup inventory transaction differs']
+    if ([dict(id=item['id'], fullType=item['fullType'], state='completed') for item in pickups] != expected_completed):
+        return ['P4 confirmed pickups omitted, duplicated or changed exact members']
+    for field, phase in (('ownershipAtBegin', 'active'), ('ownershipCompleted', 'completed')):
+        values = group.get(field)
+        expected_ownership = [dict(item, state=phase) for item in pickups]
+        if (not isinstance(values, list) or values != expected_ownership
+                or any(not isinstance(item, dict) or set(item) != pickup_keys | {'state'}
+                       or type(item.get('id')) is not int or type(item.get('owner')) is not int
+                       or type(item.get('pickupAttempt')) is not int or type(item.get('pickupTransaction')) is not int
+                       or type(item.get('shared')) is not bool for item in values)):
+            return ['P4 exact return ownership snapshot missing, partial or foreign: ' + field]
+    if multi:
+        if (sum(item['fullType'] == 'Base.Nails' for item in items) != 2
+                or sum(item['fullType'] == 'Base.Hammer' for item in items) != 2
+                or type(group.get('executorCount')) is not int
+                or group['executorCount'] != (1 if tidy else 0)
+                or group.get('sameNativeExecutor') is not True):
+            return ['P4 multi-group executor or exact light/heavy members differ']
+        attempts = group.get('attempts')
+        if not isinstance(attempts, list) or len(attempts) != (3 if tidy and enabled else 0):
+            return ['P4 multi-group attempt ledger missing or incomplete']
+        observed, attempt_sizes = [], []
+        for ordinal, attempt in enumerate(attempts, 1):
+            if (not isinstance(attempt, dict) or set(attempt) != {'ordinal', 'phase', 'state', 'transaction', 'authority', 'items'}
+                    or type(attempt.get('ordinal')) is not int or attempt['ordinal'] != ordinal
+                    or attempt.get('phase') != 'perform' or attempt.get('state') != 'completed'
+                    or attempt.get('authority') != ('completed' if selection['kind'] == 'mp' else 'native')
+                    or type(attempt.get('transaction')) is not int):
+                return ['P4 multi-group attempt provenance differs']
+            transaction = attempt['transaction']
+            if ((selection['kind'] == 'mp' and (transaction == 0 or not -128 <= transaction <= 127))
+                    or (selection['kind'] == 'sp' and transaction != 0)):
+                return ['P4 multi-group native transaction attempts differ']
+            members = attempt.get('items')
+            if (not isinstance(members, list) or len(members) not in (1, 2)
+                    or any(not isinstance(item, dict) or set(item) != {'id', 'fullType', 'state'}
+                           or type(item.get('id')) is not int or item.get('state') != 'completed' for item in members)):
+                return ['P4 multi-group attempt items differ']
+            if len(members) == 2 and any(item['fullType'] != 'Base.Nails' for item in members):
+                return ['P4 multi-group merged a heavy native item']
+            if len(members) == 1 and members[0]['fullType'] != 'Base.Hammer':
+                return ['P4 multi-group lightweight native group was split']
+            attempt_sizes.append(len(members));observed.extend(members)
+        if attempts and (sorted(attempt_sizes) != [1, 1, 2]
+                         or sorted(observed, key=lambda item: item['id']) != expected_completed):
+            return ['P4 multi-group ledger omitted or repeated exact IDs']
+    return []
 
 
 def _verify_cart(root, selection):

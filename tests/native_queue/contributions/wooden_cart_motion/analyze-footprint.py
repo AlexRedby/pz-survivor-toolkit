@@ -14,6 +14,7 @@ _spec = importlib.util.spec_from_file_location('cart_footprint_collision', Path(
 collision = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(collision)
 wrap, fields = collision.wrap, collision.fields
+native_clip = collision.native_clip
 MESH_SHA = '0f99448cda120bad9f324f38bdbf994f8788ab6731473533475fb6eaf3f4c948'
 CENTER = np.array([-6.642862e-6, -.0041269097, -.0010569958])
 RADIUS, HALF_AXLE = .001062454, .00024333253
@@ -215,7 +216,7 @@ def world_bounds(frame, vertices):
 
 
 def progressing(rows, names):
-    tracks = [(r['elapsed'], c) for r in rows for c in r['clips'] if c['name'] in names and c['weight'] > .1 and c['speed'] > 0]
+    tracks = [(r['elapsed'], c) for r in rows for c in r['clips'] if native_clip(c['name']) in names and c['weight'] > .1 and c['speed'] > 0]
     return any(t1 > t0 and a['name'] == b['name'] and abs(a['time']-b['time']) > .001
                for (t0, a), (t1, b) in zip(tracks, tracks[1:]))
 
@@ -431,7 +432,7 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
                 fail('wall slide contact never reports normal rejection')
             actual_contact = ([r for r in contact if r['run'] == (desired_gait == 'Run')
                                and r['sprint'] == (desired_gait == 'Sprint') and r['actualDistance'] > 1e-6
-                               and any(c['name'] == 'Bob_'+desired_gait and c['weight'] > .1 and c['speed'] > 0 for c in r['clips'])]
+                               and any(native_clip(c['name']) == 'Bob_'+desired_gait and c['weight'] > .1 and c['speed'] > 0 for c in r['clips'])]
                               if fast_slide or wall_exit else contact)
             if (not progressing(actual_contact, {'Bob_'+desired_gait}) or (fast_slide or wall_exit) and
                 (collision.slide_metrics(actual_contact, direction)['durationMs'] < 500
@@ -461,7 +462,7 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
                     fail('wall exit freezes instead of continuing outward')
             actual_exit = [r for r in departure if r['direction'] > 0 and r['actualDistance'] > 1e-6
                            and r['run'] == (departure_gait == 'Run') and r['sprint'] == (departure_gait == 'Sprint')
-                           and any(c['name'] == 'Bob_'+departure_gait and c['weight'] > .1 and c['speed'] > 0 for c in r['clips'])]
+                           and any(native_clip(c['name']) == 'Bob_'+departure_gait and c['weight'] > .1 and c['speed'] > 0 for c in r['clips'])]
             if (not progressing(actual_exit, {'Bob_'+departure_gait}) or len(actual_exit) < 2
                 or actual_exit[0]['wall']-departure[0]['wall'] > 500 or departure[-1]['wall']-actual_exit[-1]['wall'] > 500
                 or any(b['wall']-a['wall'] > 500 for a,b in zip(actual_exit,actual_exit[1:]))):
@@ -486,7 +487,7 @@ def analyze(text, profile, fast_slide=False, wall_exit=False, wall_manual_exit=F
             for selected_reverse in (straight,arc):
                 actual_reverse=[r for r in selected_reverse if r['direction'] < 0 and r['requested'] < 0 and r['actualDistance'] > 1e-6
                                 and not r['run'] and not r['sprint'] and not r['stationaryRoot']
-                                and any(c['name']=='Bob_WalkBwdNoAim1Hand' and c['weight']>.1 and c['speed']>0 for c in r['clips'])]
+                                and any(native_clip(c['name'])=='Bob_WalkBwdNoAim1Hand' and c['weight']>.1 and c['speed']>0 for c in r['clips'])]
                 if (not progressing(actual_reverse,{'Bob_WalkBwdNoAim1Hand'}) or len(actual_reverse)<2
                     or actual_reverse[0]['wall']-selected_reverse[0]['wall']>500 or selected_reverse[-1]['wall']-actual_reverse[-1]['wall']>500
                     or any(b['wall']-a['wall']>500 for a,b in zip(actual_reverse,actual_reverse[1:]))):

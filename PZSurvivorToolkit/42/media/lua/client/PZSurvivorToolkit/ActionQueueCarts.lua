@@ -1,5 +1,6 @@
 if not getActivatedMods or not getActivatedMods():contains("SaucedCarts") then return end
 require "SaucedCarts/TimedActions/ISCartTransferAction"
+require "TimedActions/ISDropWorldItemAction"
 
 local Toolkit = PZSurvivorToolkit
 local Carts = {}
@@ -7,7 +8,7 @@ Toolkit.ActionQueueCarts = Carts
 local Policy, Operations = Toolkit.ActionQueuePolicy, Toolkit.ActionQueueOperations
 local class, core, network = ISCartTransferAction, SaucedCarts, SaucedCarts.Network
 local constructors, methods, coreMethods = {}, {}, {}
-local latestConstructor, latestPerform, latestTransferItem, installed, trusted
+local latestConstructor, latestPerform, latestTransferItem, installed, trusted, trustFailure
 local compat, approvedPerform, approvePerform = Toolkit.ActionQueueCompat
 local sendToServer
 local involvesCart, isTransfer, capacitySafe
@@ -22,18 +23,28 @@ local function filename(callback)
 end
 
 local function unchanged()
-    if not trusted or Toolkit.ActionQueueCarts ~= Carts or Carts.involvesCart ~= involvesCart
+    if not trusted then return false, trustFailure or "not_installed" end
+    if Toolkit.ActionQueueCarts ~= Carts or Carts.involvesCart ~= involvesCart
         or Carts.isTransfer ~= isTransfer or Carts.capacitySafe ~= capacitySafe
-        or ISCartTransferAction ~= class or SaucedCarts ~= core or core.Network ~= network then return false end
+        or ISCartTransferAction ~= class or SaucedCarts ~= core or core.Network ~= network then return false,"owner_changed" end
     if approvedPerform and (Toolkit.ActionQueueCompat ~= compat or compat.isTransferPerform ~= approvePerform
-        or not approvePerform(approvedPerform)) then return false end
-    for name, value in pairs(methods) do if class[name] ~= value then return false end end
-    for name, value in pairs(coreMethods) do if (core[name] or false) ~= value then return false end end
-    return network.sendToServer == sendToServer
+        or not approvePerform(approvedPerform)) then return false,"container_delegate_changed" end
+    for name, value in pairs(methods) do if class[name] ~= value then return false,"cart_method_changed:"..name end end
+    for name, value in pairs(coreMethods) do if (core[name] or false) ~= value then return false,"cart_helper_changed:"..name end end
+    if network.sendToServer ~= sendToServer then return false,"network_helper_changed" end
+    return true
 end
 local function transferUnchanged()
     return ISInventoryTransferAction.new == latestConstructor and ISInventoryTransferAction.perform == latestPerform
         and ISInventoryTransferAction.transferItem == latestTransferItem
+end
+
+-- Read-only provenance diagnostics; callers still need their action contract.
+function Carts.status()
+    local available,reason=unchanged()
+    if not available then return false,reason end
+    if not transferUnchanged() then return false,"transfer_methods_changed" end
+    return true
 end
 
 function Carts.isTransferConstructor(callback)
@@ -136,6 +147,14 @@ local function installCapacity()
     end)
 end
 
+local function adoptHooks(previous,replacement)
+    local accepted,reason=Policy.adoptTransferHooks(previous,replacement,unchanged)
+    if not accepted then return false,"policy:"..tostring(reason) end
+    accepted,reason=Operations.adoptReturnHooks(previous,replacement,unchanged)
+    if not accepted then return false,"returns:"..tostring(reason) end
+    return true
+end
+
 local function loadHooks(module)
     local event, captured = Events.OnGameStart, false
     local add = event.Add
@@ -145,11 +164,11 @@ local function loadHooks(module)
             local previous = transferMethods()
             callback(...)
             local replacement = transferMethods()
-            if Policy.adoptTransferHooks(previous, replacement, unchanged)
-                and Operations.adoptReturnHooks(previous, replacement, unchanged) then
+            local adopted,reason=adoptHooks(previous,replacement)
+            if adopted then
                 constructors[replacement.new], latestConstructor, latestPerform, latestTransferItem =
                     true, replacement.new, replacement.perform, replacement.transferItem
-            else trusted = false end
+            else trusted=false;trustFailure=trustFailure or "late_hook_rejected:"..module..":"..tostring(reason) end
         end)
     end
     local ok, result = pcall(require, module)
@@ -179,7 +198,62 @@ function Carts.equipmentSafe(character)
     return isUnequipConstructor(ISUnequipAction.new) and character
         and ordinaryEquipment(character:getPrimaryHandItem()) and ordinaryEquipment(character:getSecondaryHandItem()) or false
 end
-local function installFoodMaskRemoval()
+-- Fitness uses the ordinary-bag branches of the pinned global cart drop hooks.
+-- Capture native predecessors before OnGameStart, then retain exact replacements.
+local dropGuard, dropPrevious, dropReplacement
+local dropMethods = {new = true, isValid = true, complete = true}
+local function dropCallbacksSafe()
+    if not dropGuard or not dropGuard() then return false end
+    for name, callback in pairs(dropReplacement or dropPrevious) do
+        if ISDropWorldItemAction[name] ~= callback then return false end
+    end
+    return true
+end
+function Carts.isDropCallback(name, callback)
+    return dropMethods[name] and dropCallbacksSafe()
+        and (callback == dropPrevious[name] or dropReplacement and callback == dropReplacement[name]) or false
+end
+function Carts.isNonCartDrop(action)
+    if not dropCallbacksSafe() or getmetatable(action) ~= ISDropWorldItemAction or action.Type ~= "ISDropWorldItemAction"
+        or not instanceof(action.item, "InventoryContainer") or not ordinaryEquipment(action.item)
+        or action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.retriggerLastAction
+        or action.onFailFunc or action.additionalTest then return false end
+    for name, callback in pairs(dropReplacement or dropPrevious) do if action[name] ~= callback then return false end end
+    return true
+end
+local function installFitnessStorageDrop()
+    local sourceQuery = compat and compat.isCartMaskSource
+    local owner = ISDropWorldItemAction
+    if type(sourceQuery) ~= "function" or not sourceQuery() or not owner then return end
+    local previous, lifecycle = {}, {}
+    for name, callback in pairs(owner) do
+        if type(callback) == "function" then
+            if name ~= "derive" and filename(callback) ~= "ISDropWorldItemAction.lua" then return end
+            if dropMethods[name] then previous[name] = callback else lifecycle[name] = callback end
+        end
+    end
+    for name in pairs(dropMethods) do if type(previous[name]) ~= "function" then return end end
+    local cartTypes, classifier = core.CartTypes, core.safeIsCart
+    if type(cartTypes) ~= "table" or getmetatable(cartTypes) ~= nil or filename(classifier) ~= "Core.lua" then return end
+    dropPrevious = previous
+    dropGuard = function()
+        if not unchanged() or ISDropWorldItemAction ~= owner or Toolkit.ActionQueueCompat ~= compat
+            or compat.isCartMaskSource ~= sourceQuery or core.CartTypes ~= cartTypes
+            or core.safeIsCart ~= classifier or getmetatable(cartTypes) ~= nil then return false end
+        for name, callback in pairs(lifecycle) do if owner[name] ~= callback then return false end end
+        return true
+    end
+    Events.OnGameStart.Add(function()
+        local replacement = {}
+        for name in pairs(dropMethods) do
+            if filename(owner[name]) ~= "ContainerRestrictions.lua" then dropGuard = nil; return end
+            replacement[name] = owner[name]
+        end
+        dropReplacement = replacement
+    end)
+end
+
+local function installEquipmentBinding()
     local sourceQuery = compat and compat.isCartMaskSource
     if type(sourceQuery) ~= "function" or not sourceQuery() or not ISUnequipAction
         or filename(ISUnequipAction.new) ~= "ISUnequipAction.lua"
@@ -201,6 +275,7 @@ local function installFoodMaskRemoval()
             and compat.isCartMaskSource == sourceQuery and core.CartTypes == cartTypes
             and core.debug == debugHelper and getmetatable(cartTypes) == nil
     end
+    local function ordinaryUnequip(action) return ordinaryEquipment(action.item) end
     equipmentGuard, equipmentPrevious = helpersSafe, previous
     Events.OnGameStart.Add(function()
         local replacement = {new = ISUnequipAction.new, complete = ISUnequipAction.complete}
@@ -209,19 +284,9 @@ local function installFoodMaskRemoval()
         local nativeMatches = Policy.nativeUnequipVariant(previous, replacement, helpersSafe)
         if not nativeMatches then equipmentGuard = nil; return end
         equipmentReplacement, equipmentMatch = replacement, nativeMatches
-        local food = Toolkit.BulkFood
-        local isRemoval = food and food.isMaskRemoval
-        if type(isRemoval) ~= "function" then return end
-        Toolkit.ActionQueueDefinitions.registerBehavior("compat.food-mask-unequip", {
-            types = {"ISUnequipAction"}, matches = function(action)
-                return nativeMatches(action) and ordinaryEquipment(action.item) and Toolkit.BulkFood == food and food.isMaskRemoval == isRemoval
-                    and isRemoval(action) and action.item:getCategory() == "Clothing"
-            end, inspect = function(action)
-                return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true},
-                    targets = {}, hands = action.character, preparation = true, preparationFinish = true,
-                    cancelWaiting = false, interrupt = "finish-step"}
-            end,
-        })
+        if not Policy.adoptNativeUnequipVariant(previous, replacement, helpersSafe, ordinaryUnequip) then
+            equipmentGuard, equipmentMatch = nil, nil
+        end
     end)
 end
 
@@ -250,7 +315,8 @@ function Carts.install()
     if filename(network.sendToServer) ~= "Network.lua" then return false end
     local merge = class.canMergeAction
     class.canMergeAction = function(action, other)
-        if other and action.toolkitQueueOperation ~= other.toolkitQueueOperation then return false end
+        if Toolkit.Settings.actionQueue() and other
+            and action.toolkitQueueOperation ~= other.toolkitQueueOperation then return false end
         return merge(action, other)
     end
     for name, value in pairs(class) do methods[name] = value end
@@ -264,20 +330,28 @@ function Carts.install()
         -- Shared interception can wait for OnGameStart until the native client class exists.
         Events.OnGameStart.Add(function()
             local replacement = transferMethods()
-            if filename(replacement.new) == "CartTransferInterceptor.lua"
+            local valid=filename(replacement.new) == "CartTransferInterceptor.lua"
                 and replacement.perform == previous.perform and type(replacement.transferItem) == "function"
                 and (replacement.transferItem == previous.transferItem
                     or (isClient() and filename(replacement.transferItem) == "CartTransferInterceptor.lua"))
-                and Policy.adoptTransferHooks(previous, replacement, unchanged)
-                and Operations.adoptReturnHooks(previous, replacement, unchanged) then
+            local adopted,reason
+            if valid then adopted,reason=adoptHooks(previous,replacement) end
+            if adopted then
                 constructors[replacement.new], latestConstructor, latestPerform, latestTransferItem =
                     true, replacement.new, replacement.perform, replacement.transferItem
-            else trusted = false end
+            else
+                trusted=false
+                trustFailure=trustFailure or "shared_hook_rejected:"..tostring(reason or
+                    "source_changed:new="..tostring(filename(replacement.new))
+                    ..",perform="..tostring(filename(replacement.perform))..",samePerform="..tostring(replacement.perform==previous.perform)
+                    ..",transferItem="..tostring(filename(replacement.transferItem))..",sameTransferItem="..tostring(replacement.transferItem==previous.transferItem))
+            end
         end)
     end
     if not loadHooks("SaucedCarts/Restrictions/TransferRestrictions")
-        or not loadHooks("SaucedCarts/CartState/VisualUpdateQueue") then trusted = false end
-    installFoodMaskRemoval()
+        or not loadHooks("SaucedCarts/CartState/VisualUpdateQueue") then trusted=false;trustFailure=trustFailure or "hook_registration_missing" end
+    installEquipmentBinding()
+    installFitnessStorageDrop()
     installCapacity()
     Toolkit.ActionQueueDefinitions.registerBehavior("compat.cart-transfer", {
         types = {"ISCartTransferAction"}, matches = Carts.isTransfer, inspect = inspect,

@@ -44,7 +44,7 @@ def build(game, jdk, patch_jar, output, scenario, cases=None):
             probe = manifest['probes'][key]
             classes = temporary / key
             classes.mkdir()
-            subprocess.run([javac, '--release', '17', '-cp', classpath, '-d', str(classes), str(HERE / probe['source'])], check=True)
+            subprocess.run([javac, '--release', '25', '-cp', classpath, '-d', str(classes), str(HERE / probe['source'])], check=True)
             mod = output / 'mods' / probe['mod_id']
             jar = mod / ('42/media/java/' + probe['mod_id'] + '.jar')
             jar.parent.mkdir(parents=True)
@@ -73,14 +73,14 @@ def build(game, jdk, patch_jar, output, scenario, cases=None):
                     (mod / media / directory).mkdir(parents=True, exist_ok=True)
         check_classes = temporary / 'lua-parser'
         check_classes.mkdir()
-        subprocess.run([javac, '--release', '17', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/ParseLua.java')], check=True)
+        subprocess.run([javac, '--release', '25', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/ParseLua.java')], check=True)
         subprocess.run([java, '-Djava.awt.headless=true', '-cp', str(check_classes) + os.pathsep + classpath, 'ParseLua', *map(str, sorted(fixture.rglob('*.lua')))], check=True)
         if cases and 'equipment' in keys and 'timer' in keys:
             checks_path = os.pathsep.join([classpath, *map(str, sorted((output / 'mods').rglob('*.jar')))])
-            subprocess.run([javac, '--release', '17', '-cp', checks_path, '-d', str(check_classes), str(HERE / 'checks/SessionProbeChecks.java')], check=True)
+            subprocess.run([javac, '--release', '25', '-cp', checks_path, '-d', str(check_classes), str(HERE / 'checks/SessionProbeChecks.java')], check=True)
             subprocess.run([java, '-Djava.awt.headless=true', '-cp', str(check_classes) + os.pathsep + checks_path, 'SessionProbeChecks'], check=True)
         if 'ghost' in keys:
-            subprocess.run([javac, '--release', '17', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/GhostDecoderChecks.java')], check=True)
+            subprocess.run([javac, '--release', '25', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/GhostDecoderChecks.java')], check=True)
             for mode in ('original', 'patched'):
                 with tempfile.TemporaryDirectory(prefix='animal-ghost-decoder-') as config:
                     result = subprocess.run([java, '-javaagent:' + str(game / 'ZombieBuddy.jar') + '=config_dir=' + config + ',policy=deny-new,verbosity=0',

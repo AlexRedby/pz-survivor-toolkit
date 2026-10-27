@@ -2,6 +2,8 @@
 import copy
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -19,6 +21,114 @@ class CraftUIAdapterTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.selection = dict(suite='craft-ui', cases=list(craft_ui.SUCCESS_CASES), kind='sp', mode='toolkit',
                               languages=['EN'], mods=list(craft_ui.MODS), clients=1, options={})
+
+    def joined_selection(self):
+        return dict(self.selection, cases=list(craft_ui.JOINED_CASES), kind='mp', clients=2,
+                    languages=['EN', 'RU'], actor='client2', options={'mp_host': True})
+
+    def test_joined_cases_declare_an_opt_in_menu_host_topology(self):
+        cases = {entry['id']: entry for entry in craft_ui.definitions()['craft-ui']['cases']}
+        for case in craft_ui.JOINED_CASES:
+            self.assertEqual((2, 'client2', ['mp'], ['EN', 'RU']),
+                             tuple(cases[case][key] for key in ('clients', 'actor', 'kinds', 'languages')))
+        self.assertNotIn('clients', cases['context'])
+        craft_ui.validate(self.joined_selection())
+        for change in ({'kind': 'sp'}, {'clients': 1}, {'clients': True}, {'actor': 'client1'},
+                       {'actor': None}, {'languages': ['EN']}, {'languages': ['RU', 'EN']},
+                       {'options': {}}, {'options': {'mp_host': False}},
+                       {'cases': ['context', *craft_ui.JOINED_CASES]}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                craft_ui.validate(dict(self.joined_selection(), **change))
+
+    def test_joined_completion_requires_each_owned_role_and_its_exact_marker(self):
+        selection = self.joined_selection()
+        for role in ('client1', 'client2'):
+            marker = '[CRAFT_UI_TEST] COMPLETE actor=' + role + '\n'
+            self.assertTrue(craft_ui.complete(selection, role, marker))
+            for wrong in ('[CRAFT_UI_TEST] COMPLETE\n', marker + marker,
+                          '[CRAFT_UI_TEST] COMPLETE actor=' + ('client2' if role == 'client1' else 'client1')):
+                with self.subTest(role=role, marker=wrong):
+                    self.assertFalse(craft_ui.complete(selection, role, wrong))
+        self.assertFalse(craft_ui.complete(selection, 'server', '[CRAFT_UI_TEST] COMPLETE actor=server\n'))
+
+    def test_joined_evidence_uses_its_dedicated_verifier_and_sealed_source(self):
+        expected = {'issues': [], 'outcomes': [{'actor': 'client2'}]}
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        verify = Mock(return_value=expected)
+        module = SimpleNamespace(verify=verify)
+        selection = self.joined_selection()
+        with patch.object(craft_ui, 'import_module', return_value=module) as load:
+            self.assertIs(expected, craft_ui.verify(self.root, selection, {'suites': {}}))
+            load.assert_called_once_with('.craft_ui_sandwich', craft_ui.__package__)
+            verify.assert_called_once_with(self.root, selection, {'suites': {}})
+        sources = craft_ui.sources(ROOT, selection)
+        self.assertIn(Path(craft_ui.__file__).with_name('craft_ui_sandwich.py'), sources)
+        self.assertNotIn(Path(craft_ui.__file__).with_name('craft_ui_sandwich.py'), craft_ui.sources(ROOT, self.selection))
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is required for the native server protocol check')
+    def test_joined_server_waits_for_independent_host_receipts_before_start_and_completion(self):
+        script = r'''
+local joined = arg[2] == 'joined'
+local cases = {'first', 'second'}
+local requests, checkpoints, previousSeen = {}, {}, nil
+local callback, tick
+Events = {OnClientCommand={Add=function(fn) callback=fn end}, OnTick={Add=function(fn) tick=fn end}}
+function isServer() return true end
+function getTimestampMs() return 100 end
+function sendServerCommand(player,module,command,value)
+ requests[#requests+1]={player=player.name,command=command,value=value}
+end
+local function player(name,id)
+ return {name=name,getUsername=function(self)return self.name end,getOnlineID=function()return id end,
+  setGhostMode=function()end}
+end
+local host, actor=player('client1',1),player(joined and 'client2' or 'client1',2)
+package.loaded.QueueTestSelection={cases=cases,actor=joined and 'client2' or nil}
+package.loaded.QueueHealthEvents={encode=function()return '{}'end}
+package.loaded.QueueCraftUIFixture={
+ prepare=function(p,case,previous)previousSeen=previous;return {player=p,case=case}end,
+ descriptor=function(state)return {case=state.case,source={ownerToken='shared-crate'}}end,
+ verify=function(state)return {case=state.case,authoritative=true}end}
+package.loaded.QueueCookSandwichFixture={checkpoint=function(state,stage,args)
+ checkpoints[#checkpoints+1]={state=state,stage=stage,args=args};return {stage=stage,actual=true}
+end}
+assert(loadfile(arg[1]))()
+local function call(p,command,case,snapshot,stage)
+ callback('CraftUITest',command,p,{case=case or 'first',snapshot=snapshot,stage=stage})
+end
+local function count(command)
+ local n=0;for _,request in ipairs(requests)do if request.command==command then n=n+1 end end;return n
+end
+call(actor,'Prepare')
+assert(count('Prepared')==1 and count('Start')==0 and count('Verified')==0)
+if joined then
+ call(actor,'Verify');assert(count('Failed')==1)
+ call(host,'ObserverReady');assert(count('ObservePrepared')==1)
+ call(actor,'ObservedBefore',nil,{case='first'});assert(count('Failed')==2 and count('Start')==0)
+ call(host,'ObservedBefore',nil,{case='first',items={{id=77,hunger=-.12}}})
+ assert(count('Start')==1 and requests[#requests].player=='client2')
+ call(actor,'ActorCheckpoint',nil,nil,'BreadAdded')
+ assert(#checkpoints==1 and checkpoints[1].stage=='BreadAdded')
+ assert(requests[#requests].value.snapshot.actual and requests[#requests].player=='client2')
+end
+call(actor,'Verify');tick()
+if joined then
+ assert(count('Verified')==0 and count('Observe')==1 and requests[#requests].player=='client1')
+ call(host,'Observed',nil,{case='first',items={{id=77,hunger=-.06}}})
+ assert(count('Verified')==1 and count('Done')==1)
+ assert(requests[#requests-1].player=='client2' and requests[#requests].player=='client1')
+else assert(count('Verified')==1 and count('Observe')==0)end
+call(actor,'Prepare','second')
+assert(count('Prepared')==2 and previousSeen.case=='first' and previousSeen.player==actor)
+print('server role barrier passed')
+'''
+        for mode in ('joined', 'existing'):
+            with self.subTest(mode=mode):
+                result = subprocess.run([shutil.which('luajit'), '-', str(ROOT / 'tests/native_queue/craft-ui/server/ZZCraftUIServer.lua'), mode],
+                                        input=script, text=True, capture_output=True)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertIn('server role barrier passed', result.stdout)
 
     def evidence(self):
         enabled, cases = self.selection['mode'] == 'toolkit', self.selection['cases']
@@ -230,7 +340,8 @@ class CraftUIAdapterTests(unittest.TestCase):
             path = project / 'tests/native_queue' / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture')
-        self.assertCountEqual([project / 'tests/native_queue' / name for name in paths],
+        expected = [Path(craft_ui.craft.__file__), Path(craft_ui.__file__).with_name('craft_ui_water.py'), *(project / 'tests/native_queue' / name for name in paths)]
+        self.assertCountEqual(expected,
                               craft_ui.sources(project, self.selection))
         runtime = {'roles': {'client1': {'cache': str(self.root / 'client1')}}}
         with patch.object(craft_ui.craft, 'stage_common', create=True) as common:

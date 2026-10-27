@@ -6,12 +6,18 @@ local Fixture=require 'QueueCraftUIFixture'
 local Evolved=require 'QueueCookEvolved'
 local config=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
+local actor=config.actor or 'client1'
+local joined=actor=='client2'
+local Sandwich=joined and require 'QueueCookSandwich'or nil
+local SandwichFixture=joined and require 'QueueCookSandwichFixture'or nil
 local Toolkit=PZSurvivorToolkit
 local enabled=config.mode=='toolkit'
 local step,failed,phase,since,idle=1,0,'prepare',0,0
 local started,done=false,false
 local ids,state,authorityState,authority,previousAuthority,window,owner,logic,tail,actions
 local evolvedRun
+local sandwichRun,actorStarted
+local observerIds,observerBefore,observerAfter,observerReadySent,observerInstruction
 local progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
 local callbacks,callbackClass,returnsBeforeRead,localDeferrals
 local interrupted,interruptionProgress
@@ -20,7 +26,8 @@ local previousCleanupIds,previousBagIds={},{}
 local secondAllocated,secondStarted=false,false
 local outcomeTrace={};local tailProgress=false
 local function case()return config.cases[step]end
-local function evolved()return case()=='cook-evolved-return'end
+local function evolved()return require('QueueCookEvolvedFixture').isCase(case())end
+local function sandwich()return case()=='cook-sandwich-plain-joined'or case()=='cook-sandwich-enriched-joined'end
 local function automatic()return case():sub(-5)=='-auto'end
 local function context()return case():match('^context')~=nil end
 local function pool()return case():find('missing-batch-pool',1,true)~=nil end
@@ -38,7 +45,32 @@ local function refreshSources(player)
  state.containers=containers
 end
 local function emit(value)
- value.suite='craft-ui';value.kind=config.kind;value.mode=config.mode;value.actor='client1';JSON.emit(value)
+ value.suite='craft-ui';value.kind=config.kind;value.mode=config.mode
+ value.actor=joined and assert(getPlayer()):getUsername()or 'client1'
+ if value.event=='observer'then print('[CRAFT_UI_OBSERVER] '..JSON.encode(value))else JSON.emit(value)end
+end
+local function observerTick(player)
+ assert(player:getUsername()=='client1','joined fixture observer identity differs')
+ assert(#queue().queue==0 and not player:hasTimedActions(),'host observer performed unexpected timed actions')
+ if not observerReadySent then
+  if step==1 then emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=enabled,
+   nativeDurations=true,participation='observer',producerActor=actor})end
+  sendClientCommand('CraftUITest','ObserverReady',{case=case()});observerReadySent=true;phase='observer-awaiting-prepare'
+ end
+ if not observerIds or not observerInstruction then return end
+ local snapshot=SandwichFixture.observerSnapshot(player,observerIds,observerInstruction)
+ if not snapshot then return end
+ if observerInstruction=='before'then
+  assert(not observerBefore,'duplicate independent observer before snapshot');observerBefore=snapshot
+  emit({event='observer',id=case(),stage='before',snapshot=snapshot})
+  sendClientCommand('CraftUITest','ObservedBefore',{case=case(),snapshot=snapshot})
+  observerInstruction=nil;phase='observer-awaiting-effects'
+ elseif observerInstruction=='after'then
+  assert(observerBefore and not observerAfter,'invalid independent observer after snapshot');observerAfter=snapshot
+  emit({event='observer',id=case(),stage='after',snapshot=snapshot})
+  sendClientCommand('CraftUITest','Observed',{case=case(),snapshot=snapshot})
+  observerInstruction=nil;phase='observer-awaiting-done'
+ end
 end
 local function request(command)
  if isClient()then sendClientCommand('CraftUITest',command,{case=case()})
@@ -61,6 +93,28 @@ Events.OnServerCommand.Add(function(module,command,value)
  end
  if module~='CraftUITest'then return end
  assert(command~='Failed',value.error)
+ if joined and getPlayer()and getPlayer():getUsername()=='client1'then
+  assert(value.case==case(),'observer server case differs')
+  if command=='ObservePrepared'then
+   assert(not observerIds,'duplicate observer preparation');observerIds=value;observerInstruction='before'
+  elseif command=='Observe'then
+   assert(observerBefore and not observerAfter and not observerInstruction,'observer effect request differs')
+   observerInstruction='after'
+  elseif command=='Done'then
+   assert(observerBefore and observerAfter and not observerInstruction,'observer completed before independent snapshots')
+   emit({event='case',id=case(),status='observed',participation='observer',producerActor=actor,
+    before=observerBefore,after=observerAfter})
+   if step==#config.cases then
+    emit({event='complete',cases=config.cases,expected=#config.cases,performed=0,observed=#config.cases,failed=0,skipped=0})
+    print('[CRAFT_UI_TEST] COMPLETE actor=client1');done=true
+   else
+    step=step+1;since=getTimestampMs();phase='observer-ready'
+    observerIds,observerBefore,observerAfter,observerReadySent=nil,nil,nil,nil
+   end
+  else error('unexpected observer server command '..tostring(command))end
+  return
+ end
+ if command=='Start'then assert(joined and value.case==case()and not actorStarted,'actor start barrier differs');actorStarted=true;return end
  if command=='Prepared'then ids=value elseif command=='Verified'then authority=value elseif command=='Removed'then removal=value end
 end)
 local begin=Toolkit.ActionQueueLifecycle.begin
@@ -137,7 +191,17 @@ local function captureMaterialIds()
  return result
 end
 local function enqueue(player)
- if evolved()then evolvedRun=Evolved.start(player,state,ids,enabled);return true end
+ if sandwich()then
+  sandwichRun=sandwichRun or Sandwich.start(player,state,ids,enabled)
+  if not sandwichRun.dispatched then Sandwich.continueStart(sandwichRun)end
+  Sandwich.observe(sandwichRun)
+  return sandwichRun.dispatched==true
+ end
+ if evolved()then
+  evolvedRun=evolvedRun or Evolved.start(player,state,ids,enabled)
+  if not evolvedRun.dispatched then Evolved.continueStart(evolvedRun)end
+  return evolvedRun.dispatched==true
+ end
  local recipe=assert(getScriptManager():getCraftRecipe('QueueBorrowedTools'))
  if context()then
   callbackClass='context'
@@ -181,6 +245,7 @@ local function enqueue(player)
  return true
 end
 local function observe()
+ if sandwich()then Sandwich.observe(sandwichRun);return end
  if evolved()then Evolved.observe(evolvedRun);return end
  local current=queue().current
  if pool()then
@@ -232,11 +297,47 @@ local function intervene()
   end
  end
 end
+local function advance(retain)
+ previousCleanupIds=retain and {} or {authority.bookId}
+ if not retain then for _,id in ipairs(authority.outputIds)do previousCleanupIds[#previousCleanupIds+1]=id end end
+ previousBagIds=ids.bags
+ local bags={}
+ for _,id in ipairs(previousBagIds)do
+  if not retain then previousCleanupIds[#previousCleanupIds+1]=id end;bags[#bags+1]=assert(state.root:getItemById(id))
+ end
+ ISInventoryPaneContextMenu.onUnEquip(bags,getPlayer():getPlayerNum())
+ for _,id in ipairs(not retain and authority.materialIds or {})do previousCleanupIds[#previousCleanupIds+1]=id end
+ if authority.introducedSpare then previousCleanupIds[#previousCleanupIds+1]=authority.introducedSpare.id end
+ for _,resource in ipairs(not retain and authority.resources or {})do
+  previousCleanupIds[#previousCleanupIds+1]=resource.id
+ end
+ previousAuthority=authorityState
+ step=step+1;phase='unequip';since=getTimestampMs()
+ ids,state,authorityState,authority,window,owner,logic,tail,actions=nil,nil,nil,nil,nil,nil,nil,nil,nil
+ progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
+ returnsBeforeRead,localDeferrals,idle=nil,0,0
+ interrupted,interruptionProgress=nil,nil
+ removal,poolPhaseProof,manualMaterialIds,manualMaterialIdsAfterRemoval=nil,nil,nil,nil
+ secondAllocated,secondStarted=false,false
+ outcomeTrace={};tailProgress=false;evolvedRun=nil
+end
 local function finish()
+ if sandwich()then
+  local value,reason=Sandwich.finish(sandwichRun,authority)
+  if reason then failed=failed+1 end;emit(value)
+  if step==#config.cases then
+   emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failed,skipped=0})
+   print('[CRAFT_UI_TEST] COMPLETE actor=client2');done=true
+  else
+   step=step+1;since=getTimestampMs();phase='prepare';idle=0
+   ids,state,authorityState,authority,sandwichRun,actorStarted=nil,nil,nil,nil,nil,nil
+  end
+  return
+ end
  if evolved()then
   local value,reason=Evolved.finish(evolvedRun,authority)
   if reason then failed=failed+1 end;emit(value)
-  assert(step==#config.cases,'evolved return must be the final grouped case')
+  if step<#config.cases then advance(true);return end
   emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failed,skipped=0})
   print('[CRAFT_UI_TEST] COMPLETE');done=true;return
  end
@@ -290,28 +391,7 @@ local function finish()
   emit({event='complete',cases=config.cases,expected=#config.cases,performed=#config.cases,failed=failed,skipped=0})
   print('[CRAFT_UI_TEST] COMPLETE');done=true;return
  end
- previousCleanupIds={authority.bookId}
- for _,id in ipairs(authority.outputIds)do previousCleanupIds[#previousCleanupIds+1]=id end
- previousBagIds=ids.bags
- local bags={}
- for _,id in ipairs(previousBagIds)do
-  previousCleanupIds[#previousCleanupIds+1]=id;bags[#bags+1]=assert(state.root:getItemById(id))
- end
- ISInventoryPaneContextMenu.onUnEquip(bags,getPlayer():getPlayerNum())
- for _,id in ipairs(authority.materialIds)do previousCleanupIds[#previousCleanupIds+1]=id end
- if authority.introducedSpare then previousCleanupIds[#previousCleanupIds+1]=authority.introducedSpare.id end
- for _,resource in ipairs(authority.resources)do
-  previousCleanupIds[#previousCleanupIds+1]=resource.id
- end
- previousAuthority=authorityState
- step=step+1;phase='unequip';since=getTimestampMs()
- ids,state,authorityState,authority,window,owner,logic,tail,actions=nil,nil,nil,nil,nil,nil,nil,nil,nil
- progress,picked,returned,boundaries={},{},{},{perform=0,complete=0}
- returnsBeforeRead,localDeferrals,idle=nil,0,0
- interrupted,interruptionProgress=nil,nil
- removal,poolPhaseProof,manualMaterialIds,manualMaterialIdsAfterRemoval=nil,nil,nil,nil
- secondAllocated,secondStarted=false,false
- outcomeTrace={};tailProgress=false
+ advance(false)
 end
 Events.OnPlayerUpdate.Add(function(player)
  if started and player==getPlayer()then idle=#queue().queue==0 and not player:hasTimedActions()and idle+1 or 0 end
@@ -324,10 +404,14 @@ end)
 Events.OnTick.Add(function()
  if not started or done or not isIngameState()then return end
  local ok,problem=pcall(function()
-  assert(getTimestampMs()-since<180000,'UI craft deadline: '..phase)
+  assert(getTimestampMs()-since<(joined and 360000 or 180000),'UI craft deadline: '..phase)
   local player=getPlayer()
   if not player or player:isDead()or not player:getSquare()then return end
   if config.kind=='mp'and(not isClient()or player:getOnlineID()<0)then return end
+  if joined then
+   assert(player:getUsername()==actor or player:getUsername()=='client1','joined fixture local identity differs')
+   if player:getUsername()~=actor then observerTick(player);return end
+  end
   if phase=='unequip'then
    if #queue().queue>0 or player:hasTimedActions()or idle<10 then return end
    for _,id in ipairs(previousBagIds)do
@@ -347,6 +431,7 @@ Events.OnTick.Add(function()
    previousCleanupIds={}
    state=state or Fixture.resolve(player,ids)
    if not state or not state.containers then return end
+   if sandwich()then phase='ui';return end
    ISInventoryPaneContextMenu.onWearItems({state.root:getItemById(ids.bags[1])},player:getPlayerNum())
    ISInventoryPaneContextMenu.OnSecondWeapon({state.root:getItemById(ids.bags[2])},player:getPlayerNum())
    phase='equip';return
@@ -356,6 +441,7 @@ Events.OnTick.Add(function()
    refreshSources(player);phase='ui';return
   end
   if phase=='ui'then
+   if joined and not actorStarted then return end
    if not enqueue(player)then return end
    phase='running';since=getTimestampMs();return
   end

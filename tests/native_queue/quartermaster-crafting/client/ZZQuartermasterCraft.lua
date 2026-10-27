@@ -3,6 +3,7 @@ require 'ISUI/Crafting/ISHandcraftWindow'
 require 'Neat_Crafting/NC_CraftActionPanel'
 local Fixture=require 'QueueQuartermasterCraftFixture'
 local config=require 'QueueTestSelection'
+if config.cases[1]=='uses'then return end
 local JSON=require 'QueueHealthEvents'
 local step,phase,since,idle=1,'prepare',0,0
 local started,done=false,false

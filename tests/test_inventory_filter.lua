@@ -1,3 +1,5 @@
+isClient=function()return false end
+ModData={getOrCreate=function()return {} end}
 local pickerOptions, presetMenuOptions
 local tagReads = 0
 require = function(name)
@@ -11,8 +13,8 @@ require = function(name)
         return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
     end
     if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags"
-        or name == "PZSurvivorToolkit/PlantingTags" or name == "PZSurvivorToolkit/InventoryMembership"
-        or name == "PZSurvivorToolkit/ItemTagProperties" then
+        or name == "PZSurvivorToolkit/TagCustomization" or name == "PZSurvivorToolkit/PlantingTags"
+        or name == "PZSurvivorToolkit/InventoryMembership" or name == "PZSurvivorToolkit/ItemTagProperties" then
         local module = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
         if name == "PZSurvivorToolkit/ItemTags" then
             local forItem = module.forItem
@@ -418,7 +420,9 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
             if name=='PZSurvivorToolkit/InventoryPlantingTooltip' or name=='PZSurvivorToolkit/InventoryMediaTooltip'
                 or name=='PZSurvivorToolkit/InventoryClothingTooltip' then return {install=function() end} end
             if name=='ISUI/ISInventoryPane' or name=='ISUI/ISInventoryPage' then return end
-            if name=='PZSurvivorWishlist/Inventory' then return {draw=function() end,invalidate=function() end} end
+            if name=='PZSurvivorWishlist/Inventory' or name=='PZSurvivorToolkit/InventoryRetention' then
+                return {draw=function() end,invalidate=function() end}
+            end
             return require(name)
         end
         for _,name in ipairs({'saveSelection','restoreSelection','refreshContainer'}) do
@@ -707,6 +711,101 @@ if OCDisplayOverrideSource then
     class.refreshContainer=originalRefresh
     groups=originalGroups
     print('Actual OC category split retains full choices/picker universe and current split projection.')
+end
+
+-- Workload regression: refreshing/restoring an inactive filter must not copy the
+-- full stock merely to support a menu which was never opened. Keep upstream
+-- selection hooks, and prove the lazy universe survives a later row projection.
+do
+    local counts = {physical=0, upstream=0, projected=0}
+    local watched, stock, groups = {}, {}, {}
+    local originalIpairs = ipairs
+    for groupIndex=1,3 do
+        local values = {}
+        for index=1,1600 do
+            local item = {category='Category'..groupIndex}
+            function item:getDisplayCategory() return self.category end
+            item.getCategory = item.getDisplayCategory
+            values[#values+1], stock[#stock+1] = item, item
+        end
+        table.insert(values, 1, values[1]) -- native dummy header
+        watched[values] = true
+        groups[#groups+1] = {name='stock'..groupIndex,items=values}
+    end
+    local rows, callbacks = groups, {}
+    local paneClass = {prerender=function() end}
+    local upstreamMarker = {}
+    function paneClass:restoreSelection(saved)
+        counts.upstream = counts.upstream + 1
+        self.selected[1] = upstreamMarker
+    end
+    function paneClass:refreshContainer()
+        self.itemslist = rows
+        self:restoreSelection({})
+    end
+    local env = setmetatable({PZSurvivorToolkit={Settings={inventoryFilters=function() return true end}},
+        ISInventoryPane=paneClass,CleanUI_Clean_ISInventoryPane=false,CleanUI_Vanilla_ISInventoryPane=false,
+        CleanUI_RegisterInventoryUiToggleCallback=false,ISInventoryPageTransferHandler=false,
+        ISInventoryCommonHandler_SortMenu=false,
+        Events={OnGameStart={Add=function(callback) callbacks[#callbacks+1]=callback end}}}, {__index=_G})
+    env.ipairs = function(value)
+        local iterator, state, index = originalIpairs(value)
+        if not watched[value] then return iterator, state, index end
+        return function(current, previous)
+            local key, item = iterator(current, previous)
+            if key then counts.physical = counts.physical + 1 end
+            return key, item
+        end, state, index
+    end
+    env.require = function(name)
+        if name=='PZSurvivorToolkit/InventoryClasses' then
+            return {panes=function(install) install(paneClass) end,onToggle=function() end}
+        end
+        if name=='PZSurvivorToolkit/InventoryRows' then
+            local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))
+            setfenv(chunk,env)
+            local result=chunk()
+            local restore=result.restoreSelection
+            result.restoreSelection=function(...)
+                counts.projected=counts.projected+1
+                return restore(...)
+            end
+            return result
+        end
+        if name=='PZSurvivorToolkit/InventorySearch' then return {forPane=function() end} end
+        if name=='PZSurvivorToolkit/ItemTags' then return {enabled=function() return false end} end
+        return {}
+    end
+    local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryFilter.lua'))
+    setfenv(chunk,env);chunk();callbacks[1]()
+    local pane=setmetatable({mode='details',items={},selected={},collapsed={},player=0}, {__index=paneClass})
+    for pass=1,20 do
+        pane:refreshContainer()
+        pane:restoreSelection({})
+        pane:restoreSelection({_cleanUISelectedGroups={}}) -- actual CleanUI saveSelection shape
+    end
+    assert(counts.physical==0, 'inactive filter eagerly enumerated the 4800-item stock')
+    assert(counts.upstream==60 and counts.projected==0 and #pane.selected==0,
+        'empty selection optimization discarded an upstream hook or still projected all rows')
+    pane:restoreSelection({[stock[1]]=true})
+    assert(counts.projected==1 and pane.selected[2]==stock[1], 'nonempty physical selection lost the final row mapping')
+    pane:restoreSelection({_cleanUISelectedGroups={stock1=true}})
+    assert(counts.projected==2 and pane.selected[1]==groups[1], 'CleanUI group-only selection lost the final row mapping')
+    pane.mode='icons';pane:restoreSelection({})
+    assert(counts.projected==2 and pane.selected[1]==upstreamMarker, 'icon mode lost its native restore result')
+    pane.mode='details'
+    pane.itemslist={groups[1]};pane:restoreSelection({}) -- late pin/split projection, before opening any menu
+    local choices=env.PZSurvivorToolkit.InventoryFilter.choices(pane, false)
+    assert(#choices==3 and #pane.toolkitFilterItems==4800 and counts.physical==4803,
+        'lazy menu lost excluded source rows or copied duplicate dummy headers')
+    stock[1].category='Live category'
+    choices=env.PZSurvivorToolkit.InventoryFilter.choices(pane, false)
+    assert(#choices==4 and counts.physical==4803, 'reopened menu rescanned groups or cached stale instance categories')
+    rows={groups[2]};pane:refreshContainer()
+    choices=env.PZSurvivorToolkit.InventoryFilter.choices(pane, false)
+    assert(#choices==1 and choices[1].id=='Category2' and #pane.toolkitFilterItems==1600,
+        'real refresh retained old-container menu references')
+    print('Inactive filter workload: 20 refreshes/60 upstream restores, zero physical snapshot visits/empty row projections; lazy live menu passed.')
 end
 
 -- Transfer eligibility may visit every physical item in an aggregate. Its

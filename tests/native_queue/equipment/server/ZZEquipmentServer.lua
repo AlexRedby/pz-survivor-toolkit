@@ -2,8 +2,12 @@ local cartSelection=require 'QueueTestSelection'
 if cartSelection.cases[1]=='cart-pickup' then return end
 if not isServer() then return end
 local Fixture=require 'QueueEquipmentFixture'
+local Scene=require 'QueueEquipmentScene'
+local Clothing=require 'QueueEquipmentClothing'
+local Hotbar=require 'QueueEquipmentHotbar'
 local Selection=require 'QueueTestSelection'
 local Postprocess=require 'QueueEquipmentPostprocess'
+local JSON=require 'QueueHealthEvents'
 local session,pending,waiting,cleanup,verified=nil,nil,nil,nil,0
 local function reply(player,command,args) sendServerCommand(player,'EquipmentQueueTest',command,args) end
 Events.OnServerStarted.Add(function() print('[EQUIPMENT_TEST] SERVER_READY') end)
@@ -13,21 +17,49 @@ local function execute(module,command,player,args)
   if command=='Prepare' then
    assert(not session and not pending and Selection.cases[verified+1]==args.case,'out-of-order equipment prepare')
    player:setGhostMode(true)
-   if verified==0 then Fixture.position(player) end
+   if verified==0 then
+    Fixture.position(player)
+    local proof=Scene.prepare(player,Selection.cases)
+    if proof then print('[EQUIPMENT_TEST] SCENE_HEADWEAR '..JSON.encode(proof))end
+   end
    session=Fixture.prepare(player,args.case,nil,Selection.options)
    local ids=Fixture.descriptor(session)
+   ids.sceneSetup=Scene.proof(player)
    ids.spawn={x=player:getX(),y=player:getY(),z=player:getZ()}
    for _,item in ipairs(session.owned) do
     if item:getContainer()==player:getInventory() then sendAddItemToContainer(player:getInventory(),item) end
    end
    sendClothing(player,session.location,player:getWornItem(session.location));sendEquip(player)
+   if Clothing.isCase(session.id)then sendClothing(player,session.clothingLocation,player:getWornItem(session.clothingLocation))end
    if session.id=='hotbar-chain' then sendAttachedItem(player,session.hotbarLocation,session.hotbarInitial) end
+   if Hotbar.isCase(session.id)then
+    local provider=Hotbar.provider(session)
+    if provider then sendClothing(player,Hotbar.providerLocation(session),provider)end
+    if session.hotbarIndex then sendAttachedItem(player,session.hotbarLocation,session.pickup)end
+   end
    reply(player,'Prepared',ids)
    print('[EQUIPMENT_TEST] PREPARED case='..args.case)
+  elseif command=='ConfigureClothing'then
+   assert(session and session.id==args.case and not pending and not cleanup,'invalid authoritative clothing setup session')
+   Clothing.configure(session,args.item)
+   reply(player,'ClothingConfigured',{case=session.id,item=session.clothingItem:getID(),ok=true})
+   print('[EQUIPMENT_TEST] CLOTHING_SETUP_CONFIGURED case='..session.id..' id='..session.clothingItem:getID())
+  elseif command=='ConfigureRing'then
+   assert(session and session.id==args.case and not pending and not cleanup,'invalid authoritative ring setup session')
+   Clothing.armRing(session,args.item)
+   reply(player,'RingConfigured',{case=session.id,item=session.clothingItem:getID(),ok=true,watch=session.clothingWatch,
+    startedAgeHours=session.clothingWatchStartedAge})
+  elseif command=='ConfigureHotbar'then
+   assert(session and session.id==args.case and Hotbar.isCase(session.id)and Hotbar.provider(session)and not session.hotbarConfigured and not pending
+    and args.item==session.pickup:getID(),'invalid native provider setup request')
+   Hotbar.configure(session,args.slotIndex);session.hotbarConfigured=true
+   sendAttachedItem(player,session.hotbarLocation,session.pickup)
+   reply(player,'HotbarConfigured',{case=session.id,item=session.pickup:getID(),slotIndex=session.hotbarIndex,ok=true})
   elseif command=='Checkpoint' or command=='Verify' then
    assert(session and session.id==args.case and not pending,'out-of-order equipment verify')
    assert(command=='Checkpoint' or session.checkpointed,'missing equipment checkpoint')
-   pending={player=player,since=getTimestampMs(),checkpoint=command=='Checkpoint'}
+   pending={player=player,since=getTimestampMs(),checkpoint=command=='Checkpoint',
+    tidy=getActivatedMods():contains('P4TidyUpMeister')}
   elseif command=='Cleanup' then
    assert(session and session.id==args.case and session.verified and not cleanup,'unverified equipment cleanup')
    cleanup={player=player,since=getTimestampMs()}
@@ -64,7 +96,18 @@ Events.OnTick.Add(function()
   assert(getTimestampMs()-pending.since<20000,'authoritative equipment state did not converge')
   local idle=Fixture.transactionsSettled()
   local settled=not pending.checkpoint or Fixture.settled(session,Selection.mode,true)
+  -- Equip acknowledgement can precede the native unheld radio off packet.
+  -- Keep this request pending until the repaired native receiver applies it;
+  -- never copy client values into the independently seeded server device.
+  if Hotbar.radio(session)and not pending.checkpoint then settled=settled and Hotbar.radioReady(session,pending.tidy)end
+  if Hotbar.flashlight(session)then settled=settled and Hotbar.flashlightReady(session,not pending.checkpoint and pending.tidy)end
+  if Clothing.wristwatch(session)then
+   local worn=Clothing.removes(session)
+   if not pending.checkpoint then worn=Clothing.finalWorn(session,pending.tidy)end
+   settled=settled and Clothing.watchProcessingReady(session,worn)
+  end
   if not idle or not settled then
+   if (Hotbar.radio(session)and not pending.checkpoint or Hotbar.flashlight(session))and getTimestampMs()-pending.since>=1000 then Hotbar.diagnoseAuthority(session,not pending.checkpoint and pending.tidy)end
    if not pending.diagnostic or getTimestampMs()-pending.diagnostic>=5000 then
     pending.diagnostic=getTimestampMs()
     local player=session.player
@@ -77,13 +120,26 @@ Events.OnTick.Add(function()
   end
   if pending.checkpoint then
    local outcome=Fixture.verify(session,Selection.mode,true)
+   if Clothing.wristwatch(session)then
+    local clothing=assert(outcome.clothingCheckpoint)
+    print('[EQUIPMENT_TEST] WATCH_CHECKPOINT '..JSON.encode({id=clothing.id,watch=clothing.watch,watchProcessing=clothing.watchProcessing,watchTiming=clothing.watchTiming}))
+   end
    session.checkpointed=true
    print('[EQUIPMENT_TEST] CHECKPOINT case='..session.id)
    reply(pending.player,'Checkpointed',{case=session.id,ok=true,outcome=outcome})
   else
    Fixture.refresh(session)
-   local passed,problem=pcall(Postprocess.verify,session,Selection.mode,getActivatedMods():contains('P4TidyUpMeister'))
+   local passed,problem=pcall(Postprocess.verify,session,Selection.mode,pending.tidy)
    session.verified=true
+   if passed and (session.id=='tidy-group' or session.id=='tidy-multigroup') then
+    print('[EQUIPMENT_TEST] GROUP_AUTHORITY '..JSON.encode({case=session.id,items=problem.groupItems,tailCompleted=true}))
+   end
+   if passed and Hotbar.isCase(session.id)then
+    print('[EQUIPMENT_TEST] HOTBAR_AUTHORITY '..JSON.encode(problem.hotbar))
+   end
+   if passed and Clothing.isCase(session.id)then
+    print('[EQUIPMENT_TEST] CLOTHING_AUTHORITY '..JSON.encode(problem.clothing))
+   end
    if passed then
     print('[EQUIPMENT_TEST] AUTHORITY case='..session.id..' inventoryPreserved=true equipmentMatches=true tailCompleted=true')
    else print('[EQUIPMENT_TEST] POSTPROCESS_FAILED case='..session.id..' '..tostring(problem)) end

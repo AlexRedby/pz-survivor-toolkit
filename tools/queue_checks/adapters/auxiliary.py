@@ -18,8 +18,7 @@ ANIMAL_CASES = {
     'combined-shared': ('combined', 'shared', 'held'),
     'combined-starved': ('combined', 'starved', 'held'),
 }
-ITEM_MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS',
-             'organizedCategories_core']
+ITEM_MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS']
 INVENTORY_MODS = list(ITEM_MODS)
 PNG = b'\x89PNG\r\n\x1a\n'
 
@@ -31,6 +30,7 @@ def definitions():
         ('item-tags', ['scenes'], 'sp', ['RU'], ITEM_MODS),
         ('inventory-presentation', ['scenes'], 'sp', ['EN'], INVENTORY_MODS),
         ('smart-deposit', ['partial'], 'sp', ['EN'], INVENTORY_MODS),
+        ('storage-profile', ['walk'], 'sp', ['EN'], INVENTORY_MODS),
         ('inventory-tooltips', ['scenes'], 'sp', ['EN'], INVENTORY_MODS + ['VHSSkillNameInTooltip', 'EURY_CLOTHINGINFO']),
         ('animal-trailer', list(ANIMAL_CASES), 'mp', ['EN'], ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']),
     ):
@@ -41,6 +41,8 @@ def definitions():
     result['item-tags']['window_size'] = [1280, 900]
     result['inventory-presentation']['window_size'] = [1280, 900]
     result['smart-deposit']['window_size'] = [1280, 900]
+    result['storage-profile']['window_size'] = [1280, 900]
+    result['storage-profile']['cases'][0]['capability'] = 'capture'
     result['inventory-tooltips']['window_size'] = [1280, 900]
     return result
 
@@ -78,7 +80,7 @@ def validate(selection):
     if selection['kind'] not in case['kinds'] or len(selection['languages']) != 1 or selection['languages'][0] not in case['languages']:
         raise ValueError('Unsupported kind/language for ' + suite)
     required = set(ITEM_MODS if suite == 'item-tags' else ['ZombieBuddy', 'PZSurvivorToolkit'])
-    if suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
+    if suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
         required = set(INVENTORY_MODS)
         if suite == 'inventory-tooltips':
             required.update(('VHSSkillNameInTooltip', 'EURY_CLOTHINGINFO'))
@@ -148,7 +150,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             shutil.copy2(intake / 'VideoFixture.lua', client / 'ZZVideoFixture.lua')
             config = {'output': str(cache / 'videos'), 'ffmpeg': str(_path(selection, 'ffmpeg', True))}
             _write(client / 'ToolkitVideoConfig.lua', 'return {' + ','.join(key + '=' + json.dumps(value, ensure_ascii=False) for key, value in config.items()) + '}\n')
-    elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
+    elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
         manifest = json.loads((intake / 'manifest.json').read_text())
         identifier = manifest['helper_mod_id']
         fixture['mods'] = [identifier]
@@ -212,6 +214,7 @@ def complete(selection, role, text):
     marker = {'video-recording': '[VIDEO_TEST] PASSED', 'item-tags': '[QM_SCREEN] COMPLETE',
               'inventory-presentation': '[INVENTORY_SCREEN] COMPLETE',
               'smart-deposit': '[SMART_DEPOSIT] COMPLETE',
+              'storage-profile': '[STORAGE_PROFILE] COMPLETE',
               'inventory-tooltips': '[INVENTORY_TOOLTIP] COMPLETE',
               'animal-trailer': '[ANIMAL_TRAILER] CLIENT COMPLETE'}[selection['suite']]
     return marker in text
@@ -302,7 +305,7 @@ def verify(root, selection, catalog):
             raise ValueError('Missing fixture completion marker')
         if suite == 'video-recording':
             evidence['clips'] = _load(intake / 'verify.py').verify(root / 'client1', _path(selection, 'ffmpeg', True), _path(selection, 'ffprobe', True))
-        elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
+        elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
             evidence.update(_load(intake / 'verify.py').verify(root, text))
         elif suite == 'item-tags':
             manifest = json.loads((intake / 'manifest.json').read_text())
@@ -329,5 +332,5 @@ def verify(root, selection, catalog):
     except (ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
         issues.append(str(error))
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': selection['cases'][0],
-            'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues),
+            'status': 'failed' if issues else 'captured' if suite == 'storage-profile' else 'passed', 'reason': '; '.join(issues),
             'outcome': {'fixture': suite}}], 'evidence': evidence}

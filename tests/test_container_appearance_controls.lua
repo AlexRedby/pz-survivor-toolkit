@@ -2,8 +2,14 @@ local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/'
 PZSurvivorToolkit = {}
 UIFont = {Small=1, Medium=2}
 Joypad = {AButton=1, BButton=2}
-getText = function(key) return key end
-getTextManager = function() return {getFontHeight=function() return 12 end, MeasureStringX=function(_, _, text) return #text end} end
+getText = function(key) return ({UI_PZST_ContainerTarget='Container', UI_PZST_ContainerDefault='Container',
+    UI_PZST_ContainerName='Name', UI_PZST_ContainerNameHint='Optional name', UI_PZST_ContainerIcon='Choose icon',
+    UI_PZST_ContainerIconLabel='Icon', UI_PZST_ContainerColor='Color', UI_PZST_ContainerResetAppearance='Reset'})[key] or key end
+getTextOrNull = function(key) return key == 'IGUI_ContainerTitle_crate' and 'Wooden crate' end
+getTexture = function(path) return 'texture:' .. path end
+ContainerButtonIcons = {crate='native-crate-icon'}
+getTextManager = function() return {MeasureStringX=function(_, _, text) return #text end,
+    getFontHeight=function() return 18 end} end
 local player = {getJoypadBind=function() return 0 end}
 getSpecificPlayer = function() return player end
 local focus
@@ -25,6 +31,7 @@ function Widget:setY(value) self.y=value end
 function Widget:setWidth(value) self.width=value end
 function Widget:setHeight(value) self.height=value end
 function Widget:setFont(value) self.font=value end
+function Widget:setName(value) self.value=value end
 function Widget:getAbsoluteX() return self.x or 10 end
 function Widget:getAbsoluteY() return self.y or 20 end
 function Widget:getHeight() return 26 end
@@ -64,8 +71,9 @@ require=function(name)
     if name:sub(1,5)=='ISUI/' then return end
     if name=='PZSurvivorToolkit/ContainerAppearance' then return {
         available=function() return enabled end,
-        read=function(obj,ci,who) assert(obj=='crate' and ci==2 and who==player);reads=reads+1;return copy(saved) end}
+        read=function(obj,ci,who) assert(obj and obj:getContainerByIndex(ci):getType()=='crate' and ci==2 and who==player);reads=reads+1;return copy(saved) end}
     end
+    if name=='PZSurvivorToolkit/UIStyle' then return {fit=function(value) return value end} end
     if name=='BetterContainers/Helpers' then return {getIconTexture=function(icon) return icon.value end} end
     if name=='PZSurvivorToolkit/ContainerIconPicker' then return {open=function(_,fn) iconCallback=fn end} end
     if name=='PZSurvivorToolkit/ContainerTagIcons' then return {install=function() end} end
@@ -75,15 +83,24 @@ require=function(name)
 end
 local Controls=dofile(root..'client/PZSurvivorToolkit/ContainerAppearanceControls.lua')
 local function picker(kind)
-    local p={targetKind=kind or 'box',targetObj='crate',targetCI=2,playerNum=0}
+    local p={targetKind=kind or 'box',targetObj={getContainerByIndex=function(_,ci)
+        assert(ci==2);return {getType=function() return 'crate' end}
+    end},targetCI=2,playerNum=0}
     function p:addChild() end
-    function p:getWidth() return 396 end
+    function p:getWidth() return self.width or 420 end
     Controls.create(p)
     return p
 end
 local p=picker()
 assert(p.appearanceName.value=='Old' and p.appearanceIcon.image=='Base.Plank')
-assert(Controls.value(p)==nil and Controls.layout(p,28)==92)
+assert(Controls.value(p)==nil and Controls.layout(p,28)==148)
+assert(p.appearanceHeading.value=='Container: Wooden crate' and p.appearanceIcon.image=='Base.Plank')
+assert(p.appearanceIcon.imageSize[1]==44 and p.appearanceIcon.width==64
+    and p.appearanceIcon.x + p.appearanceIcon.width < p.appearanceName.x
+    and p.appearanceColor.y == p.appearanceName.y + p.appearanceName.height + 6
+    and p.appearanceColor.x + p.appearanceColor.width <= 410
+    and p.appearanceReset.x + p.appearanceReset.width <= 410,
+    'minimum-width appearance controls overlap or exceed the window')
 Controls.select(p,'tag','food')
 assert(Controls.value(p)==nil,'selection overwrote an existing appearance')
 p.appearanceName:setText('New')
@@ -104,6 +121,7 @@ Controls.chooseColor(p);p.toolkitTagClosed=true;popup=p.toolkitColorPicker;popup
 assert(not p.toolkitAppearance.color,'late color callback changed closed draft')
 Controls.close(p);assert(not popup.visible and not p.toolkitColorPicker)
 saved={};p=picker()
+assert(p.appearanceIcon.image=='native-crate-icon','blank appearance hid the native container icon')
 assert(Controls.value(p)==nil,'opening a blank editor suggested an appearance')
 Controls.select(p,'presets','Pantry')
 assert(Controls.value(p)==nil,'unordered preset guessed a first tag')

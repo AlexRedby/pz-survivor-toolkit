@@ -1,5 +1,7 @@
 if not NativeActionRoot then print('Device dispatch native checks skipped (pass --native-action-root media/lua).'); return end
-require = function() end
+require = function(name)
+    if name == 'PZSurvivorToolkit/SourceProof' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua') end
+end
 local enabled, paused = true, false
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
 local function derive(self, name)

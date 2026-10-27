@@ -1,19 +1,16 @@
-# Crafting-plan native fixture intake
+# Crafting-plan native fixture
 
 [Development](../../../../docs/DEVELOPMENT.md#native-scenarios) · [Native runner](../../README.md)
 
 The common `crafting-plans` adapter stages the B42.21 client/server scenarios and verifies exact stage labels and authority receipts. Dependencies are supplied locally; no game/Workshop files, binaries, worlds or generated outputs are distributed. Per-run reports record current verification separately from registration.
 
-| Scenario | Required stages per EN/RU client | Purpose |
-| --- | ---: | --- |
-| `crafting` | 20 | Real chain, waiting cancellation, shared-log competition and classic/NC controls |
-| `ui` | 28 | Layout, icons/counts, scroll/resize, quantity review, cleanup and cancellation |
-| `alternatives` | 23 | Native picker, Auto recovery, quantities, choices and selected-source crafting |
+`crafting` covers real chains, waiting cancellation, shared-log competition and
+classic/NC controls. `ui` covers layout, icons/counts, scrolling, resizing,
+quantity review, cleanup and cancellation. `alternatives` checks the native
+picker, Auto recovery, quantities, choices and selected-source crafting.
 
 `manifest.json` records source fingerprints, scenario files, dependencies,
-parameters, output markers and evidence limits. The alternatives fixture comes
-from the final fixed implementation, not the earlier fixture that deliberately
-asserted the auto-fill bug as current behavior.
+parameters, output markers and evidence limits. The alternatives fixture checks the current Auto/material-picker behavior.
 
 ## No-game validation
 
@@ -28,20 +25,12 @@ have identical mod bytes, verifies configuration/collision guards, compiles Lua
 and counts registered stages. It does not execute game callbacks or stage bodies.
 Registration success is not recipe, UI or multiplayer verification.
 
-## Preparation for a later native run
+## Fixture preparation
 
-The checkout must contain Toolkit's `CraftPlanner`, `CraftChainRecipes`,
-`CraftChains` and operation-aware `ActionQueue`, plus Wishlist and the UI
-integrations in the manifest. This contribution alone does not supply those
-features. Use the current selected INI and resolve dependencies through the
-common native tooling; the current selected INI defines the mod set.
-Do not merge this helper with another active fixture: both claim the test actors,
-modify their inventories and install native action hooks.
-
-Use three disposable caches and a fresh world for **each** scenario. The common
-runner must own the matching game/product/Workshop snapshots, port checks,
-launcher, process lifecycle and evidence collection. With `TEST_CACHE`,
-`TEST_HOST`, `TEST_PORT` and `CRAFT_TEST_PASSWORD` already supplied at runtime:
+The shared adapter invokes `prepare.py` for each role to stage the selected case
+and its private runtime parameters. The helper can also be run directly to inspect
+staging; it creates no game profile and launches no process. Keep its generated
+helper/cache and credentials outside Git. For example:
 
 ```sh
 python3 tests/native_queue/contributions/crafting-plans/prepare.py "$TEST_CACHE/client1" \
@@ -49,32 +38,18 @@ python3 tests/native_queue/contributions/crafting-plans/prepare.py "$TEST_CACHE/
   --password-env CRAFT_TEST_PASSWORD
 ```
 
-Repeat for `client2` and `server`, changing only cache/actor. `prepare.py` installs
-one scenario's client and server files as the `CraftPlanTest` helper and writes
-five data lines to `<cache>/Lua/craft-fixture.txt` with private permissions. It
-refuses an existing helper/config and never copies game/product mods, alters a
-server INI, downloads, launches or compiles Java. The password stays out of argv
-and Git. Per-role parameters live outside the mod tree to preserve Lua checksums.
+The helper rejects existing fixture/config files and keeps per-role parameters
+outside the mod tree to preserve Lua checksums. The adapter applies the manifest
+settings and inserts the helper into disposable role caches.
 
-Enable `CraftPlanTest` after the product mods in all three caches' selection and
-in server `Mods=`. Apply the server/sandbox settings in the manifest; use the
-supplied game port and the adjacent UDP port. Run only an isolated local server,
-with voice disabled and client `-novoip`. Fixed accounts `client1` and `client2`
-use the runtime password, languages EN and RU respectively. The setup adds items,
-Carving XP and a native surface/container; it must never run in a real save.
+The shared runner owns the launcher, preflight, process handling and evidence
+collection.
 
-Reuse the common `tests/native_queue/support/ToolkitSmokeLauncher.java` and
-preflight; keep installation paths and process ownership in the
-common runner. An awake desktop and working native libraries
-are required; changing an INI alone does not prove that the renderer adopted the
-requested size. On macOS, a tiling window manager may resize test windows.
-
-The common runner dispatches exactly one selected case (`crafting`, `ui` or
-`alternatives`) in each fresh two-client MP snapshot. The adapter calls this
-preserved preparation helper, writes its private parameters and interprets its
-original markers. Native mode is unsupported because these stages require the
-Toolkit operation API. Run reports and the matrix carry actual native evidence;
-catalog readiness describes the installed adapter.
+Choose one case or an ordered subset with `--cases ui,crafting,alternatives` in
+a fresh two-client MP lifecycle. The adapter runs selected cases in that order
+with joint cleanup between them. The fixture requires the Toolkit operation API, so `--mode native` is
+unsupported. See the [runner guide](../../README.md) for current launch commands
+and report interpretation.
 
 ## Acceptance and limits
 

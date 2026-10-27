@@ -48,19 +48,20 @@ function Rules.forBox(obj, ci, links, presets)
     return rules
 end
 
+local toolRule = {mode = "all", include = {"tool"}, exclude = {}}
+
+local function itemMatcher(state)
+    if not state.matchRule then state.matchRule = Tags.ruleMatcher(Tags.forItem(state.ref)) end
+    return state.matchRule
+end
+
 local function itemState(item)
     local ref = item.ref
     local state = {ref = ref}
     if ref and ref.isBroken and ref:isBroken() then
-        state.tags = Tags.forItem(ref)
-        state.blocked = Tags.matches(state.tags, {"tool"})
+        state.blocked = itemMatcher(state)(toolRule)
     end
     return state
-end
-
-local function itemTags(state)
-    if not state.tags then state.tags = Tags.forItem(state.ref) end
-    return state.tags
 end
 
 local function matches(box, item, enabled, state)
@@ -69,9 +70,9 @@ local function matches(box, item, enabled, state)
     if enabled and state.blocked then return false end
     if item.cat and box.cats and box.cats[item.cat] then return true end
     if not enabled or not box.rules or #box.rules == 0 then return false end
-    local tags = itemTags(state)
+    local matchRule = itemMatcher(state)
     for _, rule in ipairs(box.rules) do
-        if Tags.matchesRule(tags, rule) then return true end
+        if matchRule(rule) then return true end
     end
     return false
 end

@@ -73,6 +73,67 @@ class WorldTemplateTests(unittest.TestCase):
         frozen.update({name: native.sha256(self.run / name) for name in names})
         report.write_json(self.run / 'snapshot-hashes.json', frozen)
 
+    def host_source(self):
+        self.mp_source()
+        self.selection['options'] = {'mp_host': True}
+        self.runtime['host_cache'] = str(self.run / 'client1')
+        server = self.execution['processes']['server']
+        server.update(parent_role='client1', cache=str(self.run / 'client1'))
+        self.execution['host_save'] = {'pid': server['pid'], 'exit_code': 0}
+        self.execution['host_cleanup'] = {'remaining_pids': []}
+        shutil.move(str(self.run / 'server/Saves/Multiplayer'), str(self.run / 'client1/Saves/Multiplayer'))
+        ledger = self.run / 'client1/Saves/Multiplayer/queue-smoke/global_mod_data.bin'
+        ledger.write_bytes(b'original authoritative ledger and item identities')
+        (self.run / 'client1/db/queue-smoke.db').write_bytes(b'original native user authentication rows')
+        for name, value in [('selection', self.selection), ('runtime', self.runtime), ('execution', self.execution)]:
+            report.write_json(self.run / (name + '.json'), value)
+        self.refreeze('selection.json', 'runtime.json')
+        return ledger
+
+    def test_host_export_restore_preserves_native_owner_world_and_auth_db_without_mirroring(self):
+        ledger = self.host_source()
+        original = native.hashes(self.run)
+        value = self.export()
+        self.assertTrue(value['mp_host'])
+        self.assertIn('client1/Saves/Multiplayer/queue-smoke/global_mod_data.bin', value['files'])
+        self.assertIn('client1/db/players.db', value['files'])
+        self.assertFalse(any(name.startswith('server/Saves/') for name in value['files']))
+        worlds.validate(self.template, self.selection, self.game)
+        output = self.root / 'host-restart'
+        worlds.restore(self.template, value, output, {'server_name': 'queue-smoke'})
+        self.assertEqual(ledger.read_bytes(), (output / ledger.relative_to(self.run)).read_bytes())
+        self.assertEqual((self.run / 'client1/db/players.db').read_bytes(), (output / 'client1/db/players.db').read_bytes())
+        self.assertFalse((output / 'server/Saves').exists())
+        self.assertEqual(original, native.hashes(self.run))
+        with self.assertRaisesRegex(ValueError, 'Host mode differs'):
+            worlds.validate(self.template, dict(self.selection, options={}), self.game)
+
+    def test_host_manifest_requires_original_auth_database_and_preserves_file_seal(self):
+        self.host_source()
+        value = self.export()
+        self.assertIn('client1/db/queue-smoke.db', value['files'])
+        value['files'].pop('client1/db/queue-smoke.db')
+        with self.assertRaisesRegex(ValueError, 'authentication database'):
+            worlds._manifest(value)
+        auth = self.template / 'state/client1/db/queue-smoke.db'
+        auth.write_bytes(b'recreated user accounts')
+        with self.assertRaisesRegex(ValueError, 'changed'):
+            worlds.validate(self.template, self.selection, self.game)
+
+    def test_host_export_refuses_missing_save_ack_wrong_cache_or_live_child(self):
+        self.host_source()
+        for key, value in [('host_save', None), ('host_cleanup', {'remaining_pids': [999998]})]:
+            execution = dict(self.execution, **{key: value})
+            report.write_json(self.run / 'execution.json', execution)
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'successful save/quit'):
+                self.export()
+        report.write_json(self.run / 'execution.json', self.execution)
+        self.runtime['host_cache'] = str(self.run / 'server')
+        report.write_json(self.run / 'runtime.json', self.runtime)
+        self.refreeze('runtime.json')
+        with self.assertRaisesRegex(ValueError, 'owned cache'):
+            self.export()
+
     def test_export_restore_copies_only_owned_state_and_preserves_template_and_source(self):
         initial = native.hashes(self.run)
         value = self.export()

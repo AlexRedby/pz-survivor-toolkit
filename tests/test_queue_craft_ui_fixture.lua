@@ -293,6 +293,16 @@ do
  evolvedRoot:getItemById(prepared.book).pages=100
  local value=assert(Evolved.verify(prepared))
  assert(value.base.totalCount==0 and value.spice.totalCount==0 and value.outputs==1 and value.tailRead)
+ local frozen=prepared.frozenReceipt
+ local nextCase=Fixture.prepare(evolvedPlayer,'cook-evolved-return',prepared)
+ assert(#nextCase.baselineDishIds==2 and nextCase.baselineDishIds[1]==baseline.id
+  and nextCase.baselineDishIds[2]==dish.id and evolvedRoot:getItemById(dish.id)==dish,
+  'grouped evolved cases must preserve the previous exact output as an unrelated baseline')
+ tomato.hunger=-0.05
+ assert(not pcall(Fixture.prepare,evolvedPlayer,'cook-evolved-return',prepared),
+  'changed previous paid effects must fail before a new case can be created')
+ assert(prepared.frozenReceipt==frozen,'failed conservation check must retain the frozen receipt')
+ tomato.hunger=-0.06
  assert(value.dishes[1].id==dish.id and value.dishes[1].sourceCount==1 and value.dishes[1].totalCount==1)
  assert(value.ingredient.id==tomato.id and value.ingredient.sourceCount==1 and value.ingredient.hunger==-0.06)
  assert(value.dishes[1].extras[1]=='Base.Tomato'and value.dishes[1].spices[1]=='Base.Pepper')

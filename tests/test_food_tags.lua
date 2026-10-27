@@ -1,3 +1,6 @@
+local worldTags = {}
+isClient = function() return false end
+ModData = {getOrCreate=function() return worldTags end}
 package.path = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/?.lua;' .. package.path
 ItemType = {FOOD='food', NORMAL='normal', CONTAINER='container', LITERATURE='literature', MAP='map'}
 ItemTag = {CANT_COMPOST='cantcompost', IS_COMPOSTABLE='iscompostable'}
@@ -10,7 +13,7 @@ local NEVER = 1000000000
 local states = {'fresh','stale','rotten'}
 
 local function script(name, category, fresh, rotten, kind)
-    return {name='Base.'..name,category=category,fresh=fresh,rotten=rotten,kind=kind or ItemType.FOOD,tags={},
+    return {name='Fixture.'..name,category=category,fresh=fresh,rotten=rotten,kind=kind or ItemType.FOOD,tags={},
         getFullName=function(self) return self.name end,
         getDisplayCategory=function(self) return self.category end,
         isItemType=function(self, expected) return self.kind==expected end,
@@ -198,7 +201,7 @@ for _,definition in ipairs({apple,canned,zero,equal}) do
     local plain=rule({'food'},{'meat'})
     assert(Tags.matchesScriptRule(definition,plain)==Tags.matchesRule(Tags.forScriptItem(definition),plain),
         'possible states changed a plain saved rule')
-    assert(Tags.matchesScriptRule(definition,rule({'category:'..definition.category})),
+    assert(Tags.matchesScriptRule(definition,rule({'category:'..Tags.forScriptItem(definition).legacyCategory})),
         'preview lost exact category matching')
 end
 
@@ -226,9 +229,17 @@ for _,definition in ipairs({apple,worm,dung}) do
     for _,values in ipairs({Tags.forScriptItem(definition),Tags.forItem(food(definition))}) do
         assert(not has(values,'compost') and not has(Tags.choices(values),'compost'),
             'removed Compost tag remains on items or in choices')
-        assert(Tags.category(values)==definition.category,'freshness lost exact legacy category')
+        assert(Tags.category(values)==values.legacyCategory,'freshness lost exact legacy category')
     end
 end
 -- Compost was removed before release; unknown rule IDs remain invalid, not an empty rule.
 assert(Tags.normalizeRule({include={'compost'},exclude={}})==nil)
+-- Apply the same saved manual type corrections to actual and possible age states.
+worldTags.types['fixture.apple']={rotten='remove'}
+local corrected=food(apple);corrected.age=5
+assert(not Tags.matchesRule(Tags.forItem(corrected),rule({'rotten'})))
+assert(not Tags.matchesScriptRule(apple,rule({'rotten'})), 'preview restored a manually removed age tag')
+worldTags.types['fixture.apple'].recipe='add'
+assert(Tags.matchesScriptRule(apple,rule({'recipe','stale'})), 'preview lost a manual type addition')
+worldTags.types={}
 print('food freshness tags: OK')

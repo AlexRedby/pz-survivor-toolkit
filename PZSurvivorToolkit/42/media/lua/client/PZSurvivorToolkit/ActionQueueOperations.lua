@@ -7,6 +7,7 @@ require "ISUI/ISContextMenu"
 require "ISUI/ISButton"
 require "ISUI/ISInventoryPaneContextMenu"
 require "ISUI/ISInventoryPane"
+require "RadioCom/RadioWindowModules/RWMVolume"
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 
 local Operations = {}
@@ -46,10 +47,14 @@ function Operations.isTransfer(action)
 end
 
 function Operations.adoptReturnHooks(previous, replacement, guard)
-    if type(guard) ~= "function" or not guard() or ISInventoryTransferAction ~= returnClass then return false end
+    if type(guard) ~= "function" then return false,"missing_guard" end
+    local available,reason=guard()
+    if not available then return false,reason or "guard_changed" end
+    if ISInventoryTransferAction ~= returnClass then return false,"return_class_changed" end
     for _, name in ipairs({"new", "perform"}) do
-        if returnMethods[name] ~= previous[name] or returnClass[name] ~= replacement[name]
-            or type(replacement[name]) ~= "function" then return false end
+        if returnMethods[name] ~= previous[name] then return false,"previous_"..name end
+        if returnClass[name] ~= replacement[name] then return false,"current_"..name end
+        if type(replacement[name]) ~= "function" then return false,"invalid_"..name end
     end
     for _, name in ipairs({"new", "perform"}) do returnMethods[name] = replacement[name] end
     returnHelperGuards[#returnHelperGuards + 1] = guard
@@ -153,12 +158,23 @@ local function waitForCompletion(action)
     return record and record.ready and not record.ready(action.character, record.snapshot) or false
 end
 
-local function startCommand(action)
+-- One insertion boundary for native, owned and source-reviewed commands.
+-- Producers retain their own token, validity and callback/cleanup contracts.
+local function expandCommand(action, callback, ...)
     action:beginAddingActions()
-    Operations.runWith(action.toolkitQueueOperation, action.addActionsFunction, action.character, unpack(action.args))
+    local results = pack(pcall(callback, ...))
     action:endAddingActions()
-    -- An invalid future target skips its command without clearing unrelated native actions.
+    -- Native update() clears isAddingActions, but insertion uses _isAddingActions.
+    -- Close through the native method before propagating a producer error.
+    if not results[1] then error(results[2], 0) end
+    -- A successful empty expansion must not discard independent queued work.
     action:forceComplete()
+end
+Operations.expandCommand = expandCommand
+
+local function startCommand(action)
+    return expandCommand(action, Operations.runWith, action.toolkitQueueOperation,
+        action.addActionsFunction, action.character, unpack(action.args))
 end
 
 function Operations.command(character, callback, snapshot, options)
@@ -169,10 +185,21 @@ function Operations.command(character, callback, snapshot, options)
         snapshot = snapshot, ready = options and options.ready}
     return action
 end
+local commandFactory = Operations.command
 
 function Operations.adoptCommandLifecycle(name, previous, replacement)
     if commandMethods[name] ~= previous then return false end
     commandMethods[name] = replacement
+    return true
+end
+
+-- Validation can prove the command constructor's resulting lifecycle without
+-- allocating a native action. start/waitToStart are installed by command().
+function Operations.commandConstructionTrusted()
+    if ISQueueActionsAction ~= commandClass or Operations.command ~= commandFactory then return false end
+    for _, name in ipairs(commandLifecycle) do
+        if name ~= "start" and name ~= "waitToStart" and commandClass[name] ~= commandMethods[name] then return false end
+    end
     return true
 end
 
@@ -197,10 +224,67 @@ function Operations.enqueue(character, callback, snapshot, options)
     end)
 end
 
+-- A native callback may call base.perform before it adds its continuation.
+-- Keep its exact queue head alive until that synchronous callback has returned.
+local function nativeCompletionValid(pending)
+    local action, queue = pending.action, pending.ownerQueue
+    return action.character == pending.character and queue.character == pending.character
+        and ISTimedActionQueue.queues[pending.character] == queue
+        and queue.queue == pending.list and queue.current == action and queue.queue[1] == action
+        and action.action == pending.native and action.toolkitQueueOperation == pending.token
+        and queue.toolkitOperationGeneration == pending.generation
+        and queue.toolkitOperationsInvalid == pending.invalid
+        and (type(pending.token) ~= "table" or pending.token.toolkitCancelled == pending.cancelled)
+end
+
+local function nativeAdditionAllowed(action)
+    local pending = completionScope
+    while pending do
+        if pending.ownerQueue and pending.character == action.character
+            and not nativeCompletionValid(pending) then return false end
+        pending = pending.previous
+    end
+    return true
+end
+
+function Operations.performNativeContinuation(action, callback, ...)
+    local queue = ISTimedActionQueue.queues[action.character]
+    if not queue or queue.current ~= action or queue.queue[1] ~= action or not action.action then
+        return callback(action, ...)
+    end
+    local previous = completionScope
+    local token = action.toolkitQueueOperation
+    local pending = {action = action, character = action.character, ownerQueue = queue, list = queue.queue, native = action.action,
+        token = token, generation = queue.toolkitOperationGeneration, invalid = queue.toolkitOperationsInvalid,
+        previous = previous}
+    if type(token) == "table" then pending.cancelled = token.toolkitCancelled end
+    local adding, count = action._isAddingActions, action._numAddedActions
+    completionScope = pending
+    -- Do not open a global operation scope: another actor's callback is independent.
+    -- The native begin/endAddingActions pair supplies child order and membership.
+    local results = pack(pcall(callback, action, ...))
+    completionScope = previous
+    action._isAddingActions, action._numAddedActions = adding, count
+    if not results[1] then error(results[2], 0) end
+    if pending.queue == queue and nativeCompletionValid(pending) then queue:onCompleted(action) end
+    return unpack(results, 2, results.n)
+end
+
 function Operations.deferCompletion(queue, action)
-    if completionScope and completionScope.action == action and queue.queue[1] == action then
-        completionScope.queue = queue
-        return true
+    local pending = completionScope
+    while pending do
+        if pending.action == action then
+            if pending.ownerQueue then
+                -- A reset revokes advancement, not the callback's ownership of
+                -- this old completion attempt. Never advance a replacement head.
+                if pending.ownerQueue == queue and nativeCompletionValid(pending) then pending.queue = queue end
+                return true
+            elseif queue.queue[1] == action then
+                pending.queue = queue
+                return true
+            end
+        end
+        pending = pending.previous
     end
 end
 
@@ -230,7 +314,7 @@ function Operations.perform(action, callback, ...)
         return callback(action, ...)
     end
     local previous = completionScope
-    local pending = {action = action, acceptsChild = producer and producer.acceptsChild}
+    local pending = {action = action, acceptsChild = producer and producer.acceptsChild, previous = previous}
     completionScope = pending
     local results = pack(pcall(Operations.runWith, action.toolkitQueueOperation, callback, action, ...))
     completionScope = previous
@@ -240,6 +324,16 @@ function Operations.perform(action, callback, ...)
         pending.queue:onCompleted(action)
     end
     return unpack(results, 2, results.n)
+end
+
+-- Only synchronous producer dispatch can enqueue future preparation. Native
+-- completion, asynchronous continuations and nested expansion already run at
+-- their execution boundary and must retain the native boolean result.
+function Operations.preparationScope(character)
+    if completionScope or continuationScope then return end
+    local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+    if lifecycle and lifecycle.current(character) then return end
+    return scope
 end
 
 local function stamp(action, token)
@@ -258,6 +352,8 @@ local function stamp(action, token)
     if not action.ignoreAction and PZSurvivorToolkit.ActionQueueBatch then
         PZSurvivorToolkit.ActionQueueBatch.attach(action)
     end
+    local settlement = PZSurvivorToolkit.ActionQueueSettlement
+    if settlement then settlement.track(action, "body") end
     -- Keep original pickup locations after native transfers merge or leave the queue.
     local operation = action.toolkitQueueOperation
     if type(operation) == "table" and action.toolkitQueuePriority == "urgent" then operation.toolkitPriority = "urgent" end
@@ -300,6 +396,7 @@ end
 
 local add = ISTimedActionQueue.add
 ISTimedActionQueue.add = function(action)
+    if not nativeAdditionAllowed(action) then return end
     if continuationScope and not continuationValid(continuationScope) then return end
     stamp(action)
     local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
@@ -353,6 +450,7 @@ end
 
 local addToQueue = ISTimedActionQueue.addToQueue
 ISTimedActionQueue.addToQueue = function(queue, action)
+    if not nativeAdditionAllowed(action) then return end
     if continuationScope and not continuationValid(continuationScope) then return end
     stamp(action)
     local previousCount = #queue.queue
@@ -363,6 +461,7 @@ end
 
 local addAfter = ISTimedActionQueue.addAfter
 ISTimedActionQueue.addAfter = function(previous, action)
+    if not nativeAdditionAllowed(action) then return end
     if continuationScope and not continuationValid(continuationScope) then return end
     if not previous then return addAfter(previous, action) end
     stamp(previous)
@@ -393,7 +492,8 @@ end
 
 local canMerge = ISInventoryTransferAction.canMergeAction
 local function operationCanMerge(action, following)
-    if following and action.toolkitQueueOperation ~= following.toolkitQueueOperation then return false end
+    if PZSurvivorToolkit.Settings.actionQueue() and following
+        and action.toolkitQueueOperation ~= following.toolkitQueueOperation then return false end
     return canMerge(action, following)
 end
 ISInventoryTransferAction.canMergeAction = operationCanMerge
@@ -425,6 +525,32 @@ wrap(ISInventoryPane, "onMouseUp")
 wrap(ISInventoryPane, "onMouseDoubleClick")
 wrap(ISInventoryPaneContextMenu, "readItem", true)
 
+-- The native volume bar commits directly, or later from update() after a
+-- joypad/+/- change. Scope the real producer rather than the earlier UI click.
+local volumeProducer
+function Operations.installVolumeProducer()
+    local class, panel = RWMVolume, RWMPanel
+    if volumeProducer then
+        return class == volumeProducer.class and panel == volumeProducer.panel
+            and class.onVolumeChange == volumeProducer.wrapper
+    end
+    local callback, walk = class and class.onVolumeChange, panel and panel.doWalkTo
+    local proof = require "PZSurvivorToolkit/SourceProof"
+    if not proof or not proof.closure(callback, "RWMVolume.lua") or not proof.closure(walk, "RWMPanel.lua")
+        or not proof.matches("media/lua/client/RadioCom/RadioWindowModules/RWMVolume.lua", 1122481123, nil, true)
+        or not proof.matches("media/lua/client/RadioCom/RadioWindowModules/RWMPanel.lua", 4229885986, nil, true) then return false end
+    local wrapper
+    wrapper = function(self, ...)
+        if RWMVolume ~= class or RWMPanel ~= panel or class.onVolumeChange ~= wrapper
+            or panel.doWalkTo ~= walk or self.doWalkTo ~= walk then return callback(self, ...) end
+        return Operations.run(callback, self, ...)
+    end
+    volumeProducer = {class = class, panel = panel, wrapper = wrapper}
+    class.onVolumeChange = wrapper
+    return true
+end
+Operations.installVolumeProducer()
+
 local transferPanes = {}
 local function installTransferPane(class)
     if not class or transferPanes[class] or type(class.transferItemsByWeight) ~= "function" then return end
@@ -453,8 +579,15 @@ local function installTransferPanes()
     InventoryClasses.panes(installTransferPane)
 end
 Events.OnGameStart.Add(function()
+    Operations.installVolumeProducer()
     installTransferPanes()
     InventoryClasses.onToggle(installTransferPanes)
 end)
+
+local approach = require "PZSurvivorToolkit/ActionQueueApproach"
+if approach then
+    approach.install()
+    Events.OnGameStart.Add(approach.install)
+end
 
 return Operations

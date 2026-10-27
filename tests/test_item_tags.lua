@@ -1,9 +1,12 @@
+isClient=function()return false end
+local customizationWorld={}
+ModData={getOrCreate=function()return customizationWorld end}
 local shared = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
 package.path = shared .. '?.lua;' .. package.path
 local enabled = true
 PZSurvivorToolkit = {Settings = {itemTags = function() return enabled end}}
 local resetPlanting
-Events={OnGameBoot={Add=function(fn) resetPlanting=fn end}}
+Events={OnGameBoot={Add=function(fn) local prior=resetPlanting;resetPlanting=function()if prior then prior()end;fn()end end}}
 getTextOrNull = function(key) if key == 'UI_PZST_Tag_food' then return 'Еда' end end
 local Tags = require 'PZSurvivorToolkit/ItemTags'
 local schema = require 'PZSurvivorToolkit/ItemTagSchema'
@@ -87,6 +90,9 @@ assert(not Tags.matchesRule('FurnitureDoor',assert(Tags.normalizeRule({include={
 assert(Tags.matches('FurnitureDoor',{'category:FurnitureDoor'}),'single exact tag filter stopped working')
 
 -- Retired General chips disappear, but saved includes/excludes retain their exact scope.
+local selectableIds={}
+for _,id in ipairs(Tags.allIds()) do selectableIds[id]=true end
+assert(selectableIds.container and not selectableIds.general,'retired General returned to customization choices')
 local oldGeneral=assert(Tags.normalizeRule({include={'general'}}))
 for _,category in ipairs({'Bag','Bear','containerGeneral'}) do
  local ids=Tags.forCategory(category)
@@ -116,6 +122,41 @@ do
  assert(not Tags.matchesRule(tags,rule),'rule matching retained an earlier tag-set cache')
 end
 
+-- Prepared matchers reuse a private membership snapshot across destination rules.
+do
+ local values=Tags.forCategory('FurnitureDoor')
+ local matcher=Tags.ruleMatcher(values)
+ for _,case in ipairs({
+  {{include={'furniture','door'}},true},
+  {{include={'furniture','food'}},false},
+  {{include={'furniture','food'},mode='any'},true},
+  {{include={},mode='any'},true},
+  {{include={'furniture'},exclude={'door'}},false},
+  {{exclude={'food'}},true},
+  {{include={'category:FurnitureDoor'}},true},
+  {{include={'category:furnitureDoor'}},false},
+  {{include={'door'},exclude={'category:FurnitureDoor'}},false},
+ }) do
+  local rule=assert(Tags.normalizeRule(case[1]))
+  assert(matcher(rule)==case[2],'prepared matcher changed rule semantics')
+  assert(matcher(rule)==Tags.matchesRule(values,rule),'prepared and live matchers disagree')
+  assert(Tags.ruleMatcher('FurnitureDoor')(rule)==case[2],'category-string preparation differs from tags')
+ end
+ local exact=assert(Tags.normalizeRule({include={'furniture','category:FurnitureDoor'}}))
+ values[1]='food'
+ values.legacyCategory='Food'
+ assert(matcher(exact),'caller mutation changed prepared membership')
+ assert(not Tags.matchesRule(values,exact),'standalone matcher stopped reading live tags')
+ local refreshed=Tags.ruleMatcher(values)
+ assert(not refreshed(exact),'new matcher reused a stale membership snapshot')
+ assert(refreshed(assert(Tags.normalizeRule({include={'food','category:Food'}}))),
+  'new matcher ignored current tags or exact-category alias')
+ assert(Tags.ruleMatcher('Mod.Unknown')(assert(Tags.normalizeRule({include={'category:Mod.Unknown'}}))),
+  'prepared matcher lost unknown exact categories')
+ assert(not matcher(nil) and not matcher(false) and not matcher({}) and not matcher({mode='ALL',include={},exclude={}}),
+  'prepared matcher accepted an invalid rule')
+end
+
 local function scriptItem(fullType, category, doubleClick)
  return {fullType=fullType,category=category,
   getFullName=function(self) return self.fullType end,
@@ -132,11 +173,13 @@ for _,case in ipairs({{'Base.Revolver_CapGun','weaponRanged'}, {'Base.Rifle_CapG
  {'base.revolver_capgun','Memento'}}) do
  local script=scriptItem(case[1],case[2])
  local item=inventoryItem(script)
- for _,ids in ipairs({Tags.forItem(item),Tags.forScriptItem(script)}) do
+ local ownedCategory=case[1]:lower():find('capguncap',1,true) and 'ammunitionRanged' or 'weaponRanged'
+ for _,projection in ipairs({{Tags.forItem(item),case[2]},{Tags.forScriptItem(script),ownedCategory}}) do
+  local ids,category=projection[1],projection[2]
   assert(#ids==1 and ids[1]=='toy','cap gun or cap kept weapon/ammunition tags')
   assert(Tags.matchesRule(ids,assert(Tags.normalizeRule({include={'toy'},exclude={'weapon','ammunition'}}))))
   assert(not Tags.matches(ids,{'ranged'}))
-  assert(Tags.category(ids)==case[2] and Tags.matches(ids,{'category:'..case[2]}),
+  assert(Tags.category(ids)==category and Tags.matches(ids,{'category:'..category}),
    'toy refinement broke exact legacy selections')
  end
  assert(item.category==case[2] and script.category==case[2],'toy tags wrote native categories')
@@ -178,7 +221,7 @@ enriched[1]='medical'
 assert(Tags.matches(Tags.forScriptItem(sunflower),{'food'}),'caller mutated classification cache')
 assert(not Tags.matches(Tags.forCategory(sunflower.category),{'seed'}),'item role contaminated its category')
 for _,case in ipairs({{'Base.Potato','foodPerishable_vegetable','food'},
- {'Base.LemonGrass','medicalTreatment','medical'},{'Base.BarleySeed','Gardening','farming'}}) do
+ {'Base.LemonGrass','medicalTreatment','medical'},{'Base.BarleySeed','farmingSeed','farming'}}) do
  local script=scriptItem(case[1],case[2]);local values=Tags.forScriptItem(script)
  assert(Tags.matches(values,{case[3],'farming','seed'}),case[1]..' lost native planting role')
  assert(Tags.category(values)==case[2],'planting tags changed legacy category')
@@ -209,7 +252,7 @@ assert(Tags.matches(emptyTags,{'farming'}) and not Tags.matches(emptyTags,{'seed
 assert(Tags.category(emptyTags)=='farmingSeed','seed removal lost exact legacy origin')
 assert(Tags.matches(emptyTags,{'category:farmingSeed'}),'exact saved category lost on empty packet')
 empty.category='RecipeResource'
-assert(Tags.matches(Tags.forScriptItem(empty),{'crafting','farming'}),'vanilla empty packet lost farming role')
+assert(Tags.matches(Tags.forScriptItem(empty),{'farming'}),'owned empty packet lost farming role')
 assert(not Tags.matches(Tags.forScriptItem(empty),{'seed'}))
 local book=scriptItem('Base.BookFarming1','Literature')
 local food=scriptItem('Base.UnconfiguredSeed_Empty','Food')
@@ -222,54 +265,30 @@ assert(Tags.matches(Tags.forScriptItem(scriptItem('Mod.LateCrop','Food')),{'food
  'preboot planting cache ignored definitions loaded later')
 next = luaNext
 
--- Script loot buckets must not leak into inventory tag/catalog choices. The
--- optional provider may load after this module; live instance overrides win.
+-- Owned classification must not leak into native loot buckets. No provider is
+-- loaded; even a stale global must not affect classification or preparation.
 local Categories = require 'PZSurvivorToolkit/ItemCategories'
 local thread = scriptItem('Base.Thread', 'Material')
 thread.getDisplayName = function() return 'Thread' end
 local stone = scriptItem('Base.LargeStone', 'Material')
 stone.getDisplayName = function() return 'Stone' end
-assert(Categories.forScript(thread) == 'Material' and Categories.forScript(nil) == nil)
+assert(Categories.forScript(thread) == 'craftingTailoring_material' and Categories.forScript(nil) == nil)
+OrganizedCategories = {getScriptInventoryDisplayCategory=function() error('removed provider was called') end}
 local liveThread = inventoryItem(thread)
-Categories.prepareItem(liveThread)
-assert(liveThread.category == 'Material', 'provider-free preparation changed item')
-local providerCategory = 'craftingTailoring_material'
-local prepared = {}
-OrganizedCategories = {
- getScriptInventoryDisplayCategory = function(script)
-  if script == thread then return providerCategory end
- end,
- autoSortLiquid = function(item) prepared[#prepared+1] = 'fluid';item.category = 'mechanicsFuel' end,
- applyItemDisplayOverride = function(item)
-  prepared[#prepared+1] = 'override'
-  if item == liveThread then item.category = 'medicalTreatment' end
- end,
-}
+liveThread.setDisplayCategory = function(self, value) self.category = value end
+Categories.prepareContainer({getItems=function() return javaList({liveThread}) end})
+assert(liveThread.category == 'craftingTailoring_material', 'owned preparation did not classify item')
 assert(Tags.matches(Tags.forScriptItem(thread), {'tailoring', 'material'}), 'script tags used loot bucket')
-assert(Categories.forScript(stone) == 'Material', 'missing provider value lost raw fallback')
-providerCategory = ''
-assert(Categories.forScript(thread) == 'Material', 'empty provider value lost raw fallback')
-providerCategory = 'craftingTailoring_material'
-local liquid = inventoryItem(scriptItem('Base.Bottle', 'Container'))
-liquid.isFluidContainer = function() return true end
-Categories.prepareContainer({getItems=function() return javaList({liveThread, liquid}) end})
-assert(table.concat(prepared, ',') == 'override,fluid,override', 'fluid preparation must precede instance overrides')
-assert(Tags.matches(Tags.forItem(liveThread), {'medical'}) and not Tags.matches(Tags.forItem(liveThread), {'tailoring'}),
- 'live instance override replaced by script/type category')
-assert(Tags.matches(Tags.forItem(liquid), {'fuel'}), 'fluid result lost')
 assert(thread.category == 'Material', 'inventory preparation rewrote loot-safe ScriptItem')
-
--- Exercise the owned catalog without organizedCategories replacing its functions.
+local providerCategory = 'craftingTailoring_material'
 getScriptManager = function() return {getAllItems=function() return javaList({thread, stone}) end} end
 dofile(shared .. 'LootSorter_Categories.lua')
 local cats = LootSorter.getCategories()
-assert(#cats == 2 and cats[1] == 'Material' and cats[2] == providerCategory, 'owned catalog ignored inventory categories')
+assert(#cats == 2, 'owned catalog ignored inventory categories')
 local entries = LootSorter.getItemsInCategory(providerCategory)
 assert(#entries == 1 and entries[1].fullType == 'Base.Thread', 'owned catalog grouped by loot bucket')
-assert(#LootSorter.getItemsInCategory('Material') == 1 and thread.category == 'Material', 'catalog changed script data')
+assert(thread.category == 'Material', 'catalog changed script data')
 OrganizedCategories = nil
-dofile(shared .. 'LootSorter_Categories.lua')
-assert(#LootSorter.getCategories() == 1 and #LootSorter.getItemsInCategory('Material') == 2, 'provider-free catalog failed')
 local hidden = scriptItem('Base.Hidden', 'HiddenCategory')
 hidden.isHidden = function() return true end
 hidden.getObsolete = function() return false end
@@ -282,6 +301,53 @@ dofile(shared .. 'LootSorter_Categories.lua')
 local ruleScripts = LootSorter.getTagScriptItems()
 assert(#ruleScripts == 2 and ruleScripts[1] == thread and ruleScripts[2] == hidden,
  'rule catalog must include hidden items but exclude obsolete scripts')
-assert(#LootSorter.getCategories() == 1 and LootSorter.getCategories()[1] == 'Material',
+assert(#LootSorter.getCategories() == 1 and LootSorter.getCategories()[1] == 'craftingTailoring_material',
  'visible category picker inherited rule-preview inclusion policy')
 print('ItemTags: '..count..' exact legacy projections, independent tags, aliases, unknown/ambiguous keys and live fluid changes passed.')
+
+local C=require 'PZSurvivorToolkit/TagCustomization'
+local customId='custom:12345678-1234-1234-1234-123456789abc'
+customizationWorld.definitions[customId]={name='My supplies'}
+customizationWorld.definitions.food={name='Edited food'}
+customizationWorld.types['base.fixture']={food='remove',[customId]='add'}
+local delta={}
+local exact={getFullType=function()return 'Base.Fixture' end,
+ getDisplayCategory=function()return 'foodPerishable_fruit' end,
+ hasModData=function()return true end,getModData=function()return {[C.FIELD]=delta}end}
+assert(Tags.label('food')=='Edited food' and Tags.defaultLabel('food')=='Еда')
+assert(Tags.matches(Tags.forItem(exact),{customId,'perishable','fruit'})
+ and not Tags.matches(Tags.forItem(exact),{'food'}),'type override replaced dynamic base tags')
+delta.food='add';delta[customId]='remove'
+assert(Tags.matches(Tags.forItem(exact),{'food'}) and not Tags.matches(Tags.forItem(exact),{customId}),
+ 'exact instance did not override type delta')
+delta.food=nil;delta[customId]=nil
+customizationWorld.definitions[customId]={deleted=true}
+local retired=assert(Tags.normalizeRule({include={customId}}))
+assert(not Tags.matchesRule(Tags.forItem(exact),retired),'deleted tag widened a saved rule')
+print('Tag consumer: sparse world/type/instance deltas, default label and retired rules passed.')
+
+-- Loaded fallback categories and instance-only automatic categories remain
+-- available for definition editing and explicit assignment removal.
+local function hasId(ids,wanted) for _,id in ipairs(ids) do if id==wanted then return true end end;return false end
+local oldManager=getScriptManager
+getScriptManager=nil
+Tags.allIds() -- Unavailable scripts must not permanently cache an empty set.
+local unknownScript=scriptItem('Mod.UnknownLoaded','Mod.LoadedUnknown')
+local manager={getAllItems=function() return javaList({unknownScript}) end}
+getScriptManager=function() return manager end
+assert(hasId(Tags.allIds(),'category:Mod.LoadedUnknown'),'loaded fallback tag missing from editable catalog')
+local exactUnknown=inventoryItem(unknownScript);exactUnknown.category='Mod.InstanceOnly'
+local exactDelta={}
+exactUnknown.hasModData=function() return true end
+exactUnknown.getModData=function() return {[C.FIELD]=exactDelta} end
+assert(hasId(Tags.allIds({exactUnknown}),'category:Mod.InstanceOnly'),'instance-only automatic tag missing')
+customizationWorld.definitions['category:Mod.InstanceOnly']={name='Instance label'}
+assert(Tags.label('category:Mod.InstanceOnly')=='Instance label','fallback definition cannot be customized')
+exactDelta['category:Mod.InstanceOnly']='remove'
+assert(not Tags.matches(Tags.forItem(exactUnknown),{'category:Mod.InstanceOnly'}),'fallback tag cannot be explicitly removed')
+customizationWorld.definitions[customId]={name='World one'}
+assert(hasId(Tags.allIds(),customId))
+customizationWorld=C.empty()
+assert(not hasId(Tags.allIds(),customId),'automatic script tag cache retained a prior world custom identity')
+getScriptManager=oldManager
+print('Tag catalog: loaded/instance fallback tags editable and removable, custom identities remain world-local')

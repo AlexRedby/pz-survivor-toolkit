@@ -2,6 +2,7 @@
 from pathlib import Path
 import re
 import shutil
+import time
 
 
 def enabled(selection):
@@ -11,8 +12,8 @@ def enabled(selection):
     value = options.get('mp_host', False)
     if type(value) is not bool or value and selection.get('kind') != 'mp':
         raise ValueError('mp_host must be boolean and requires MP')
-    if value and any(selection.get('options', {}).get(key) for key in ('world_template', 'seed_run', 'startup_connection')):
-        raise ValueError('Host requires a fresh world and the fixture client identities')
+    if value and any(selection.get('options', {}).get(key) for key in ('seed_run', 'startup_connection')):
+        raise ValueError('Host requires sealed world templates and the fixture client identities')
     return value
 
 
@@ -46,3 +47,27 @@ def child(text, parent):
     if len(matches) != 1 or int(matches[0][1]) != parent or int(matches[0][0]) <= 0 or int(matches[0][0]) == parent:
         raise RuntimeError('Host did not prove one native child of the owned client')
     return int(matches[0][0])
+
+
+def save_host(process, child_pid, read_text, timeout=35):
+    """Ask the existing owner launcher to save/quit its proven native CoopMaster child."""
+    if type(child_pid) is not int or child_pid <= 0 or child_pid == process.pid or process.poll() is not None:
+        raise RuntimeError('Host save requires its live owner and proven child PID')
+    try:
+        process.stdin.write('QUEUE_HOST_SAVE_QUIT\n')
+        process.stdin.flush()
+    except (AttributeError, BrokenPipeError, OSError) as error:
+        raise RuntimeError('Host save request failed: ' + str(error)) from error
+    deadline = time.monotonic() + timeout
+    while True:
+        text = read_text()
+        if '[QUEUE_TEST] FAIL host save' in text:
+            raise RuntimeError('Host launcher refused or failed its save/quit request')
+        matches = re.findall(r'\[QUEUE_TEST\] HOST_SAVED_EXIT pid=(\d+) exit=(-?\d+)(?:\s|$)', text)
+        if matches:
+            if len(matches) != 1 or int(matches[0][0]) != child_pid or int(matches[0][1]) != 0:
+                raise RuntimeError('Host save did not prove its original child exited successfully')
+            return {'pid': child_pid, 'exit_code': 0}
+        if process.poll() is not None or time.monotonic() >= deadline:
+            raise RuntimeError('Host save/quit acknowledgement timed out or owner exited')
+        time.sleep(0.1)

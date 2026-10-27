@@ -1,3 +1,4 @@
+package.path = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/?.lua;' .. package.path
 local enabled, starts, creates = true, {}, {}
 local openedRulePicker, adapter
 local scriptCatalog = {}
@@ -21,6 +22,9 @@ require = function(name)
             end}
     end
     if name == 'PZSurvivorToolkit/ItemCategories' then return itemCategories end
+    if name == 'PZSurvivorToolkit/ItemRetention' or name == 'PZSurvivorToolkit/ItemAccess' then
+        return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
+    end
     if name == 'PZSurvivorToolkit/InventoryTransferProtection' then
         return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
     end
@@ -49,11 +53,19 @@ require = function(name)
 end
 Events = {OnGameStart = {Add = function(fn) starts[#starts + 1] = fn end},
     OnCreatePlayer = {Add = function(fn) creates[#creates + 1] = fn end}}
-getText, getTextOrNull = function(key) return key end, function() return nil end
-UIFont = {Medium = 1}
+local uiText = {UI_PZST_ContainerSorting='What belongs here',
+    UI_PZST_ContainerSortingHint='Select what this box accepts.',
+    UI_PZST_ContainerSearch='Search the list', UI_PZST_ContainerSearchHint='Search visible entries',
+    UI_PZST_ContainerOnlyChecked='Only checked', UI_PZST_ContainerOnlyContents='Only in contents',
+    UI_PZST_ContainerPriority='Priority', UI_PZST_ContainerCategories='Categories',
+    UI_PZST_ContainerTags='Tags', UI_PZST_ContainerItems='Items', UI_PZST_ContainerPresets='Presets',
+    UI_PZST_ContainerAddRule='Add rule', UI_PZST_ContainerEditRule='Edit rule',
+    UI_PZST_ContainerSave='Save'}
+getText, getTextOrNull = function(key) return uiText[key] or key end, function() return nil end
+UIFont = {Small = 0, Medium = 1}
 Joypad = {AButton = 1, YButton = 2, BButton = 3, RBumper = 4, LBumper = 5}
 getTexture = function() return {} end
-getTextManager = function() return {getFontHeight = function() return 12 end} end
+getTextManager = function() return {getFontHeight = function(_, font) return font == UIFont.Medium and 22 or 14 end} end
 getCore = function() return {getGoodHighlitedColor = function()
     return {getR = function() return 1 end, getG = function() return 1 end, getB = function() return 1 end}
 end} end
@@ -117,16 +129,33 @@ assert(p.minimumHeight > 380 and p.height >= p.minimumHeight
 getTextManager().getFontHeight = originalFontHeight
 p:setHeight(580);p:layout()
 
-assert(p.joypadButtonsY[4][1] == p.toolkitTagSwitch and p.joypadButtonsY[5][1] == p.toolkitTagRuleButton
-    and p.listbox.y == 192)
+assert(p.joypadButtonsY[4][1] == p.toolkitTagSwitch and p.joypadButtonsY[5][1] == p.toolkitTagRuleButton)
+local function assertLayout(picker)
+    assert(picker.sortingHeading.y + picker.sortingHeading.height <= picker.sortingHint.y
+        and picker.sortingHint.y + picker.sortingHint.height < picker.filterLabel.y
+        and picker.filterLabel.y == picker.filter.y and picker.filterLabel.x < picker.filter.x
+        and picker.filter.x + picker.filter.width <= picker:getWidth() - 10
+        and picker.filter.y + picker.filter.height < picker.btnModeCat.y
+        and picker.btnModeCat.y + picker.btnModeCat.height <= picker.chkChecked.y
+        and picker.chkChecked.y < picker.chkContents.y
+        and picker.listbox.y + picker.listbox.height <= picker.btnSave.y,
+        'window layout overlaps headings, search, filters, list, or Save')
+end
+assert(p.joypadButtonsY[4][1] == p.toolkitTagSwitch and p.joypadButtonsY[5][1] == p.toolkitTagRuleButton)
+assertLayout(p)
+assert(p.btnSave.title == uiText.UI_PZST_ContainerSave, 'Save button is not using the localized Toolkit label')
 p:setWidth(520); p:setHeight(700); p:prerender()
 assert(p.toolkitTagSwitch.width == 500 and p.toolkitTagRuleButton.width == 500
-    and p.listbox.width == 500 and p.listbox.y == 192 and p.listbox.height == 464
-    and p.listbox.vscroll.x == 484 and p.listbox.vscroll.height == 464
+    and p.listbox.width == 500
     and p.dimmer.width == 520 and p.dimmer.height == 700, 'owned resize lost tag controls or list clipping')
+assertLayout(p)
 p:layout(); p:layout()
-assert(p.listbox.y == 192 and p.listbox.height == 464, 'repeated layout shifted the tag view')
-p:setWidth(396); p:setHeight(580); p:prerender()
+assertLayout(p)
+p:setWidth(420); p:setHeight(600); p:prerender()
+assert(p.minimumWidth == 420 and p.minimumHeight == 600, 'minimum picker bounds changed')
+assertLayout(p)
+p:setMode('items'); p:prerender(); assertLayout(p)
+p:setMode('cats'); p:prerender(); assertLayout(p)
 local function stencilWidth(list)
     -- ISScrollingListBox.prerender uses these exact native geometry fields.
     if list.vscroll:getHeight() < list:getScrollHeight() then return list.vscroll.x + 3 end
@@ -139,7 +168,13 @@ assert(stencilWidth(p.listbox) > 300, 'scrollable tag rows are clipped before th
 p.filter:setText('electr'); p.needRebuild = true; p:prerender()
 p.listbox:setScrollHeight(22)
 assert(stencilWidth(p.listbox) > 300, 'single filtered tag row is clipped')
+p.filter:setText('no-matching-fixture-tag'); p:prerender()
+assert(p.listbox.count == 0 and p.emptyListKey == 'NoMatches', 'empty search has no recovery guidance')
+assert(p.listbox.doRepaintStencil, 'list did not restore the window stencil for empty-state text')
+p.listbox:prerender()
+assert(p.listbox.drawnText == 'UI_PZST_ContainerNoMatchesHint', 'list did not draw empty-search guidance')
 p.filter:setText(''); p.needRebuild = true; p:prerender()
+assert(not p.emptyListKey, 'empty-list guidance covers restored rows')
 assert(find(p, 'food') and find(p, 'electrical') and find(p, 'perishable'))
 assert(find(p, 'MissingModCategory') and find(p, 'OtherMod'), 'unknown categories lost')
 local food, fi = find(p, 'food')
@@ -149,76 +184,77 @@ p.listbox.onRightMouseUp(p.listbox)
 assert(fixture.contextMenu() == nil, 'tag row opened an exact-category context menu')
 p.listbox.doDrawItem(p.listbox, 0, p.listbox.items[fi])
 assert(p.listbox.semanticIcon and p.listbox.semanticIcon.id=='food','tag association icon missing')
-assert(p.listbox.drawnText == 'food (1/3)' and not p.listbox.ticks, 'partial selection not displayed')
+assert(p.listbox.drawnText == 'food (UI_PZST_QMTagRule)' and not p.listbox.ticks,
+ 'semantic checkbox incorrectly represents saved exact-category assignments')
 local dash = false
 for _, size in ipairs(p.listbox.draws) do if size[1] == 10 and size[2] == 2 then dash = true end end
-assert(dash, 'partial checkbox has no dash')
-click(p, 'food')
-assert(p.selectedCats.OC_Food and p.selectedCats.OC_FoodPerishable and p.selectedCats.OC_FoodElectrical)
-assert(not p.selectedCats.food, 'tag ID escaped into serialized category set')
-p.toolkitTagSwitch.onclick(p); p:prerender()
-assert(not p.toolkitTagView and find(p, 'OC_FoodPerishable') and find(p, 'MissingModCategory'))
+assert(not dash, 'semantic rule checkbox inherited partial exact-category state')
+local beforeCats=p.selectedCats
+click(p,'food')
+assert(not openedRulePicker and p.toolkitTagRule.include[1]=='food' and p.selectedCats==beforeCats
+ and not p.selectedCats.OC_FoodPerishable,'semantic tag click opened an editor or expanded static categories')
+assert(p.toolkitTagRule.include[1]=='food' and not p.selectedCats.food)
+click(p,'food')
+local checked,total=adapter.state(p.selectedCats,assert(find(p,'food')),p.toolkitTagRule)
+assert(checked==0 and total==1 and #p.toolkitTagRule.include==0
+    and p.selectedCats==beforeCats and p.selectedCats.OC_Food,
+    'unchecking a live tag stayed checked or removed saved exact assignments')
+click(p,'food')
+-- Exact-category refinement and existing saved keys keep their literal meaning.
+p.toolkitTagSwitch.onclick(p);p:prerender()
+assert(not p.toolkitTagView and find(p,'OC_FoodPerishable'))
 assert(p.listbox.vscroll.x == p.listbox.width - 16 and p.listbox.vscroll.height == p.listbox.height
     and stencilWidth(p.listbox) > 300, 'exact-category refinement retained clipped scrollbar geometry')
-click(p, 'OC_FoodPerishable')
-assert(not p.selectedCats.OC_FoodPerishable and p.selectedCats.OC_Food, 'exact refinement lost')
-p.toolkitTagSwitch.onclick(p); p:prerender()
-food, fi = find(p, 'food')
-p.listbox.doDrawItem(p.listbox, 0, p.listbox.items[fi])
-assert(p.listbox.drawnText == 'food (2/3)')
-p.onlyChecked, p.needRebuild = true, true; p:prerender()
-assert(find(p, 'food') and not find(p, 'perishable'), 'Only Checked omitted partial tags or kept unchecked tag')
-p.onlyChecked, p.onlyContents, p.needRebuild = false, true, true; p:prerender()
-assert(find(p, 'food') and find(p, 'perishable') and not find(p, 'electrical'), 'Only Contents did not map exact categories')
-p.onlyContents = false; p.filter:setText('electr'); p.needRebuild = true; p:prerender()
-assert(#p.listbox.items == 1 and find(p, 'electrical'))
-p.btnAll.onclick(p); p:prerender()
-assert(p.selectedCats.OC_Electrical and p.selectedCats.OC_FoodElectrical)
-p.filter:setText(''); p.needRebuild = true; p:prerender()
-local _, ei = find(p, 'electrical'); p.listbox.selected = ei
-p.listbox.onJoypadDown(p.listbox, Joypad.AButton); p:prerender()
-assert(not p.selectedCats.OC_Electrical and not p.selectedCats.OC_FoodElectrical, 'controller A did not toggle tag batch')
-p.listbox.onJoypadDown(p.listbox, Joypad.BButton, fixture.joypad)
-assert(fixture.joypad.focus == p, 'controller did not leave the tag list')
-p:setMode('items'); p:prerender()
-assert(not p.toolkitTagSwitch.visible and p.listbox.y == 136 and find(p, 'Beans'))
-assert(p.listbox.vscroll.height == 400 and stencilWidth(p.listbox) > 300, 'native Items layout clipped rows')
-click(p, 'Hammer'); assert(p.selectedItems.Hammer and p.selectedItems.Beans)
-p:setMode('presets'); p:prerender(); click(p, 'Pantry')
-assert(not p.selectedPresets.Pantry and find(p, 'Pantry'), 'preset mode intercepted')
-p:setMode('cats'); p:prerender()
--- View changes preserve exact keys; actual owned Save is checked below.
-storedCats, storedItems = p.selectedCats, p.selectedItems
-fixture.object.md.LSBox['0'], fixture.object.md.LSBoxItems['0'] = storedCats, storedItems
-assert(storedCats.OC_Food and storedCats.MissingModCategory and not storedCats.food and storedItems.Hammer)
-categoryTags.OC_FoodNew = {'food'}; availableCats[#availableCats + 1] = 'OC_FoodNew'
-open(); local reopened = LootSorter._picker
-assert(reopened ~= p and reopened.selectedCats.OC_Food and reopened.selectedCats.MissingModCategory)
-assert(not reopened.selectedCats.OC_FoodPerishable and reopened.toolkitTagView, 'reopen rebuilt broad tag selections')
-assert(not reopened.selectedCats.OC_FoodNew, 'saved tags automatically selected a later-added category')
-local _, unknownIndex = find(reopened, 'MissingModCategory')
-reopened.listbox.mouseoverselected = unknownIndex
-reopened.listbox.onRightMouseUp(reopened.listbox)
-assert(fixture.contextMenu().options[1].key == 'MissingModCategory', 'unknown category inspector lost')
-reopened.listbox.selected = unknownIndex
-reopened.listbox.onJoypadDown(reopened.listbox, Joypad.YButton)
-assert(fixture.contextMenu().options[1].key == 'MissingModCategory', 'controller lost the unknown-category inspector')
-edit(); local editor = LootSorter._presetEditor
-click(editor, 'perishable')
-assert(editor.selectedCats.OC_FoodPerishable and not editor.selectedCats.perishable)
-reopened.btnClear.onclick(reopened); reopened:prerender()
-assert(next(reopened.selectedCats) == nil and reopened.selection == reopened.selectedCats, 'native Uncheck all did not clear category batches')
-click(reopened, 'food')
-assert(reopened.selectedCats.OC_Food and reopened.selectedCats.OC_FoodNew, 'batch used a stale selectedCats table after Uncheck all')
+click(p,'OC_FoodPerishable');assert(p.selectedCats.OC_FoodPerishable)
+click(p,'OC_FoodPerishable');assert(not p.selectedCats.OC_FoodPerishable and p.selectedCats.OC_Food)
+p.toolkitTagSwitch.onclick(p);p:prerender()
+p.onlyChecked,p.needRebuild=true,true;p:prerender()
+assert(find(p,'food') and not find(p,'perishable'), 'Only Checked omitted partial tags or kept unchecked tag')
+p.onlyChecked,p.onlyContents,p.needRebuild=false,true,true;p:prerender()
+assert(find(p,'food') and find(p,'perishable') and not find(p,'electrical'), 'Only Contents did not map exact categories')
+p.onlyContents=false;p.filter:setText('electr');p.needRebuild=true;p:prerender()
+assert(#p.listbox.items==1 and find(p,'electrical'))
+local _,ei=find(p,'electrical');p.listbox.selected=ei
+p.listbox.onJoypadDown(p.listbox,Joypad.AButton);p:prerender()
+assert(p.toolkitTagRule.include[2]=='electrical' and not p.selectedCats.OC_Electrical
+    and not p.selectedCats.OC_FoodElectrical and not openedRulePicker, 'controller did not select a live tag directly')
+p.listbox.onJoypadDown(p.listbox,Joypad.BButton,fixture.joypad)
+assert(fixture.joypad.focus==p, 'controller did not leave the tag list')
+p.filter:setText('');p.needRebuild=true;p:prerender()
+p:setMode('items');p:prerender();click(p,'Hammer')
+assert(p.selectedItems.Hammer and p.selectedItems.Beans)
+assert(not p.toolkitTagSwitch.visible and stencilWidth(p.listbox)>300, 'native Items layout clipped rows')
+p:setMode('presets');p:prerender();click(p,'Pantry')
+assert(not p.selectedPresets.Pantry and find(p,'Pantry'), 'preset mode intercepted')
+p:setMode('cats');p:prerender()
+storedCats,storedItems=p.selectedCats,p.selectedItems
+fixture.object.md.LSBox['0'],fixture.object.md.LSBoxItems['0']=storedCats,storedItems
+categoryTags.OC_FoodNew={'food'};availableCats[#availableCats+1]='OC_FoodNew'
+open();local reopened=LootSorter._picker
+assert(reopened.selectedCats.OC_Food and reopened.selectedCats.MissingModCategory
+ and not reopened.selectedCats.OC_FoodNew,'reopen widened saved exact category selections')
+local _,unknownIndex=find(reopened,'MissingModCategory')
+reopened.listbox.mouseoverselected=unknownIndex;reopened.listbox.onRightMouseUp(reopened.listbox)
+assert(fixture.contextMenu().options[1].key=='MissingModCategory')
+reopened.listbox.selected=unknownIndex
+reopened.listbox.onJoypadDown(reopened.listbox,Joypad.YButton)
+assert(fixture.contextMenu().options[1].key=='MissingModCategory', 'controller lost the unknown-category inspector')
+edit();local editor=LootSorter._presetEditor
+click(editor,'perishable');assert(editor.toolkitTagRule.include[1]=='perishable' and not openedRulePicker)
+assert(not editor.selectedCats.perishable)
+reopened.btnClear.onclick(reopened);reopened:prerender()
+assert(next(reopened.selectedCats)==nil and reopened.selection==reopened.selectedCats)
+click(reopened,'food');assert(reopened.toolkitTagRule.include[1]=='food' and next(reopened.selectedCats)==nil,
+ 'tag selection after clear was expanded into static categories')
 enabled = false
 reopened:prerender()
-assert(not reopened.toolkitTagSwitch.visible and reopened.listbox.y == 136 and find(reopened, 'OC_Food'))
+assert(not reopened.toolkitTagSwitch.visible and find(reopened, 'OC_Food'))
 open(); local openedDisabled = LootSorter._picker
 assert(openedDisabled.toolkitTagSwitch and not openedDisabled.toolkitTagSwitch.visible
-    and openedDisabled.listbox.y == 136 and find(openedDisabled, 'OC_Food'), 'disabled picker did not retain native view')
+    and find(openedDisabled, 'OC_Food'), 'disabled picker did not retain native view')
 enabled = true; openedDisabled:prerender()
-assert(openedDisabled.toolkitTagSwitch.visible and openedDisabled.listbox.y == 192
-    and find(openedDisabled, 'food'), 'picker opened while disabled did not enable tags without reopening')
+assert(openedDisabled.toolkitTagSwitch.visible and find(openedDisabled, 'food'),
+    'picker opened while disabled did not enable tags without reopening')
 assert(openedDisabled.joypadButtonsY[4][1] == openedDisabled.toolkitTagSwitch
     and openedDisabled.joypadButtonsY[5][1] == openedDisabled.toolkitTagRuleButton, 'live enable did not add controller navigation')
 reopened:prerender()
@@ -238,7 +274,8 @@ payload = adapter.presetArgs(editor,{cats=editor.selectedCats})
 assert(payload.pzstTagRule.include[1] == 'food' and payload.pzstTagRule.exclude[1] == 'perishable'
     and payload.pzstTagRule ~= dynamicRule, 'explicit rule edit was not detached for native preset conflict request')
 local function script(name, category, tags)
-    return {tags=tags,uiCategory=category,getDisplayCategory=function() return 'Material' end,getDisplayName=function() return name end}
+    return {tags=tags,getFullName=function() return 'Fixture.'..name end,
+        getDisplayCategory=function() return category end,getDisplayName=function() return name end}
 end
 for category, ids in pairs({OC_Snack={'food','snack'},OC_Seeds={'farming','seed'},
     OC_SeedOnly={'farming','seed'}}) do
@@ -251,7 +288,6 @@ local function unchanged(set,before,message)
     for key,value in pairs(before) do assert(set[key]==value,message) end
     for key,value in pairs(set) do assert(before[key]==value,message) end
 end
-OrganizedCategories = {getScriptInventoryDisplayCategory = function(script) return script.uiCategory end}
 for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','Pure seed'},
     {'Конфеты','Семечки подсолнуха','Пакет семян','Пустой пакет семян','Семена'}}) do
     scriptCatalog={script(names[1],'OC_Snack',{'food','snack'}),
@@ -305,7 +341,7 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
         'direct selection replaced advanced conditions or retained a contradictory exclusion')
     itemPicker.selectedCats={};itemPicker.selection=itemPicker.selectedCats
     local foodRow=assert(find(itemPicker,'food'))
-    assert(not foodRow.requiresRule, 'whole-category exclusion fixture changed')
+    assert(foodRow.requiresRule, 'semantic whole-category tag lost its live rule')
     adapter.select(itemPicker,foodRow,true)
     assert(#itemPicker.toolkitTagRule.exclude==0 and #itemPicker.toolkitTagRule.include==3
         and itemPicker.toolkitTagRule.mode=='all' and next(itemPicker.selectedCats)==nil,
@@ -326,7 +362,9 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     assert(find(itemPicker,'seed'),'Only Contents hid a partial category planting input')
     itemPicker.onlyContents,itemPicker.needRebuild=false,true;itemPicker:prerender()
     click(itemPicker,'snack')
-    assert(itemPicker.selectedCats.OC_Snack,'whole-category tag stopped selecting exact category IDs')
+    assert(openedRulePicker==previousEditor and itemPicker.toolkitTagRule.include[2]=='snack',
+        'whole-category semantic tag did not select a live rule directly')
+    assert(next(itemPicker.selectedCats)==nil,'semantic tag expanded into static categories')
     unchanged(itemPicker.selectedItems,itemsBefore,'whole-category batch changed manual items')
     itemPicker.btnClear.onclick(itemPicker);itemPicker:prerender()
     assert(next(itemPicker.selectedCats)==nil and #itemPicker.toolkitTagRule.include==0
@@ -415,19 +453,16 @@ local function checkSaveContract()
     obj.md.PZSTQuartermasterTagRules, obj.md.ruleRevision = nil, nil
     local p = open()
     do
-        local item = {category = 'Material', getDisplayCategory = function(self) return self.category end}
+        local item = {category = 'Material', getDisplayCategory = function(self) return self.category end,
+            setDisplayCategory=function(self,category) self.category=category end,
+            getModData=function() return {OC_DisplayCategory='OC_FoodPerishable'} end}
         local contents = {getItems = function()
             return {size = function() return 1 end, get = function() return item end}
         end}
         obj.getContainerByIndex = function() return contents end
-        OrganizedCategories = {applyItemDisplayOverride = function(current)
-            assert(current == item, 'picker replaced the real contents item')
-            current.category = 'OC_FoodPerishable'
-        end}
         local visible = p:contentsSet()
         assert(item.category == 'OC_FoodPerishable' and visible.OC_FoodPerishable and not visible.Material,
-            'owned picker contents required an external category preparation wrapper')
-        OrganizedCategories = nil
+            'owned picker must prepare preserved instance overrides without an external wrapper')
     end
     assert(p.btnSave.cachedOnclick == p.btnSave.onclick and p.btnSave.onclick == p.onSave,
         'owned Save callback was replaced')
@@ -457,12 +492,12 @@ local function checkSaveContract()
     p.toolkitTagRule = nil
     local _, foodIndex = find(p, 'food')
     p.listbox.doDrawItem(p.listbox, 0, p.listbox.items[foodIndex])
-    assert(p.listbox.drawnText == 'food (1/2)' and p.listbox.semanticIcon.id == 'food',
-        'actual picker lost partial tag row rendering')
+    assert(p.listbox.drawnText == 'food (UI_PZST_QMTagRule)' and p.listbox.semanticIcon.id == 'food',
+        'actual picker lost semantic rule row rendering')
     click(p, 'food')
-    assert(p.selectedCats.OC_FoodPerishable and not p.selectedCats.food)
+    assert(p.toolkitTagRule.include[1]=='food' and not p.selectedCats.OC_FoodPerishable and not p.selectedCats.food)
     p.toolkitTagSwitch.onclick(p); p:prerender()
-    click(p, 'OC_FoodPerishable')
+    click(p, 'OC_FoodPerishable');click(p, 'OC_FoodPerishable')
     assert(p.selectedCats.OC_Food and not p.selectedCats.OC_FoodPerishable)
     p.btnModeItem.onclick(p); p:prerender()
     assert(p.mode == 'items' and not p.toolkitTagSwitch.visible and find(p, 'Hammer'))
@@ -536,7 +571,7 @@ local function checkSaveContract()
     local editor = assert(LootSorter._presetEditor)
     editor:prerender()
     assert(p.dimmer.visible and not editor.btnModePreset.visible and find(editor, 'food'))
-    click(editor, 'perishable')
+    editor.toolkitTagRuleButton.onclick(editor)
     rules.presetsSynced = function() return false end
     save(editor)
     assert(fixture.presetPayload().pzstTagRule == nil and fixture.presetPayload().baseRev == 7

@@ -51,6 +51,14 @@ local function hash(reader, adler, limit)
     return adler and sum * 65536 + value or value
 end
 
+-- Kahlua rawget follows metatables, unlike Lua 5.1. pairs inspects only the
+-- table's own delegate, without invoking inherited callbacks or __index.
+function Proof.own(owner, key)
+    if type(owner) ~= "table" then return nil end
+    for name, value in pairs(owner) do if name == key then return value end end
+    return nil
+end
+
 function Proof.checksum(reader, adler, limit)
     return hash(reader, adler, limit or 2000000)
 end

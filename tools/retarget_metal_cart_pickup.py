@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate the metal pickup from editable wood poses using the current Java grip solver.
+"""Generate the metal pickup from editable wood poses using the current mixed JVM grip solver.
 
-Run from any directory, after building the current Java patches:
+Run from any directory, after building the current Java/Kotlin patches:
   python3 tools/retarget_metal_cart_pickup.py --game GAME_JAVA --jdk JDK25
 Use --check to reproduce both committed outputs without writing them. This is an
 MP-independent offline asset operation; it does not start or install the game.
@@ -14,11 +14,15 @@ import os
 from pathlib import Path
 import struct
 import subprocess
+import sys
 import tempfile
 
 import cart_clip_bake as baker
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from JavaPatches.build import require_current_patch_jar
+
 CLIP = 'Toolkit_MetalCart_Pickup'
 HINGE_DEGREES = 65
 EXTRA_CROUCH = .05
@@ -93,14 +97,13 @@ def torso_poses(samples, parents):
 
 
 def solve(samples, parents, game, jdk, patch_jar):
+    require_current_patch_jar(patch_jar, ROOT / 'JavaPatches')
     names = list(parents)
     classpath = os.pathsep.join(str(p) for p in (patch_jar, game / 'projectzomboid.jar', game / 'ZombieBuddy.jar'))
     with tempfile.TemporaryDirectory(prefix='cart-metal-retarget-') as directory:
         work = Path(directory)
-        subprocess.run([str(jdk / 'bin/javac'), '--release', '17', '-cp', classpath,
-                        '-d', str(work), str(ROOT / 'tools/CartMetalPickupRetarget.java'),
-                        str(ROOT / 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartWheelbarrow.java'),
-                        str(ROOT / 'JavaPatches/src/net/alexredby/pztoolkitjavapatches/CartWorldSupport.java')], check=True)
+        subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', classpath,
+                        '-d', str(work), str(ROOT / 'tools/CartMetalPickupRetarget.java')], check=True)
         with (work / 'input.bin').open('wb') as stream:
             stream.write(struct.pack('>ii', 0x434d5052, len(names)))
             for name in names:
@@ -137,16 +140,14 @@ def solve(samples, parents, game, jdk, patch_jar):
 
 def verify_native(clip, game, jdk, patch_jar):
     """Catch double acquisition and restart overreach between native animation keys."""
+    require_current_patch_jar(patch_jar, ROOT / 'JavaPatches')
     classpath = os.pathsep.join(str(p) for p in (patch_jar, game / 'projectzomboid.jar', game / 'ZombieBuddy.jar'))
     with tempfile.TemporaryDirectory(prefix='cart-metal-replay-') as directory:
         work = Path(directory)
         candidate = work / f'{CLIP}.x'
         candidate.write_text(clip)
-        sources = [ROOT / 'tools/CartMetalPickupReplay.java'] + [
-            ROOT / f'JavaPatches/src/net/alexredby/pztoolkitjavapatches/{name}.java'
-            for name in ('CartTransition', 'CartWheelbarrow', 'CartWorldSupport')]
-        subprocess.run([str(jdk / 'bin/javac'), '--release', '17', '-cp', classpath,
-                        '-d', str(work), *map(str, sources)], check=True)
+        subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', classpath,
+                        '-d', str(work), str(ROOT / 'tools/CartMetalPickupReplay.java')], check=True)
         subprocess.run([str(jdk / 'bin/java'), '-Djava.awt.headless=true',
                         f'-Djava.library.path={game}', '-cp', os.pathsep.join((str(work), classpath)),
                         'net.alexredby.pztoolkitjavapatches.CartMetalPickupReplay', str(candidate)], check=True)

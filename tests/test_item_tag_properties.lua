@@ -1,3 +1,6 @@
+local worldTags = {}
+isClient = function() return false end
+ModData = {getOrCreate=function() return worldTags end}
 package.path = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/?.lua;' .. package.path
 ItemType = {CONTAINER='container'}
 ItemTag = {WEARABLE='wearable'}
@@ -50,16 +53,23 @@ local cases={
     {script('Mod.CupboardPart','Mod.Category','moveable',nil,nil,'part'),false,true,true},
     {script('Base.Mov_FancyChestnutDrawers','furnitureSurface','moveable',nil,nil,'dresser'),false,true,true},
 }
+local ownedCategories={
+    ['Base.Bag_Schoolbag_Travel']='containerWearable',
+    ['Base.Plasticbag']='containerGeneral',
+    ['Base.Mov_MilitaryCrate']='furnitureStorage',
+}
 local notWornContainers=assert(Tags.normalizeRule({include={'container'},exclude={'wearable'}}))
 for _,case in ipairs(cases) do
     local definition=case[1]
-    for _,ids in ipairs({Tags.forItem(item(definition)),Tags.forScriptItem(definition)}) do
+    for _,projection in ipairs({{Tags.forItem(item(definition)),definition.category},
+        {Tags.forScriptItem(definition),ownedCategories[definition.id] or definition.category}}) do
+        local ids,category=projection[1],projection[2]
         for i,id in ipairs({'wearable','container','furniture'}) do
             assert(Tags.matches(ids,{id})==case[i+1],definition.id..' incorrect '..id)
         end
         assert(Tags.matchesRule(ids,notWornContainers)==(case[3] and not case[2]),definition.id..' filter mismatch')
-        assert(Tags.category(ids)==definition.category,'capability refinement lost exact category')
-        assert(Tags.matches(ids,{'category:'..definition.category}),'saved exact-category rule no longer matches')
+        assert(Tags.category(ids)==category,'capability refinement lost projected exact category')
+        assert(Tags.matches(ids,{'category:'..category}),'saved exact-category rule no longer matches')
     end
 end
 for _,ids in ipairs({Tags.forScriptItem(cases[#cases][1]),Tags.forItem(item(cases[#cases][1]))}) do
