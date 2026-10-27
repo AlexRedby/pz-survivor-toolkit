@@ -86,6 +86,43 @@ local function fluid(name, category)
     return {getFluidTypeString=function() return name end,isCategory=function(_,value) return value==category end}
 end
 local fuel, water, medical = fluid('Petrol','Fuel'), fluid('Water','Water'), fluid('RubbingAlcohol','Medical')
+-- Preview fixed/ranged defaults without sampling a starting amount. Missing
+-- native metadata retains the script category rather than assuming it is empty.
+local previousAmounts = toolkitScriptFluidInitialAmounts
+toolkitScriptFluidInitialAmounts = function(component) return component.amounts end
+local preview = script('Example.FluidPreview', 'Junk')
+preview.fluidScript = {
+    amounts={min=1,max=1}, name='Bottle',
+    choices=list({{getFluid=function() return fuel end}}),
+    getInitialFluids=function(self) return self.choices end,
+    getContainerName=function(self) return self.name end,
+    getInitialAmount=function() error('category preview consumed game RNG') end,
+}
+for _, vector in ipairs({
+    {{min=1,max=1}, 'mechanicsFuel'}, -- Default-full or fixed positive amount.
+    {{min=0.2,max=0.2}, 'mechanicsFuel'},
+    {{min=0.1,max=0.9}, 'mechanicsFuel'},
+    {{min=0,max=1}, 'mechanicsFuel'},
+    {{min=0,max=0}, 'containerLiquid'},
+}) do
+    preview.fluidScript.amounts=vector[1]
+    for _=1,20 do
+        assert(Categories.forScript(preview)==vector[2], 'fluid default category changed')
+    end
+end
+preview.fluidScript.name='CookingPot'
+assert(Categories.forScript(preview)=='containerCooking', 'explicitly empty cooking container changed')
+preview.fluidScript.amounts=nil
+assert(Categories.forScript(preview)=='Junk', 'unknown amount was treated as empty or full')
+toolkitScriptFluidInitialAmounts=nil
+assert(Categories.forScript(preview)=='Junk', 'missing bridge did not retain native category')
+preview.fluidScript.choices=list({})
+assert(Categories.forScript(preview)=='containerCooking', 'empty fluid list required amount metadata')
+preview.fluidScript.choices=nil
+assert(Categories.forScript(preview)=='containerCooking', 'absent fluid list required amount metadata')
+preview.category='Water'
+assert(Categories.forScript(preview)=='foodBeverage', 'native Water-category exception changed')
+toolkitScriptFluidInitialAmounts=previousAmounts
 local container={entries={{fluid=fuel,amount=1}}, amount=1}
 function container:getAmount() return self.amount end
 function container:isEmpty() return self.amount<=0 end

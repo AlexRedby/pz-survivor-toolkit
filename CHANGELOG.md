@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.299
+
+- Keep fluid category previews from consuming game random numbers. Read configured starting amounts without sampling them; explicit empty containers stay empty and ranged defaults have stable preview categories. Existing items continue to use their current contents.
+
 ### 0.1.298
 
 - Add Bandaging, Disinfection and Dirty tags from native medical properties. Dirty bandages and ripped sheets remain usable for bandaging; fluid disinfection follows the current alcohol concentration and remaining amount.
@@ -1368,6 +1372,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.70
+
+- Expose read-only initial fluid amount bounds for category previews, including default-full, fixed, empty and ranged definitions. Unsupported native metadata remains unknown without creating items or drawing random values.
 
 ### 0.1.69
 

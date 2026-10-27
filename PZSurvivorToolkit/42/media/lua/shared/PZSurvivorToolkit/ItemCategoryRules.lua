@@ -338,9 +338,15 @@ local function resolveScriptFluidCategory(item)
 
     local initialFluids = fluidScript:getInitialFluids()
     local hasInitial = initialFluids and initialFluids:size() > 0
-    local initialAmount = fluidScript:getInitialAmount()
-
-    local treatedAsFilled = hasInitial and (not initialAmount or initialAmount > 0)
+    local treatedAsFilled = false
+    if hasInitial then
+        -- getInitialAmount() rolls a new value for ranged defaults. A script
+        -- preview describes possible starting contents, never a sampled item.
+        if not toolkitScriptFluidInitialAmounts then return nil end
+        local amounts = toolkitScriptFluidInitialAmounts(fluidScript)
+        if not amounts then return nil end
+        treatedAsFilled = amounts.max > 0
+    end
 
     if treatedAsFilled then
 
