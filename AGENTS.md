@@ -36,4 +36,6 @@ Classify by the component that needs work, not just its filesystem location: gam
 
 Before adding an item, check the appropriate TODO for the same underlying problem, including differently worded entries. Add useful new context to an existing item instead of creating a duplicate. Keep the item concise and actionable: describe the observed problem, its impact, evidence suitable for that TODO's visibility, and the next step or completion condition. Distinguish observations from suspected causes; a full investigation is not required before recording the issue.
 
+Repository documentation and both TODO files must remain useful after local temporary files are deleted. Describe the symptom, relevant conditions, affected component and completion criterion directly; reference tracked sources or reproducible steps instead of temporary reports, ignored investigation files or unexplained capture IDs. Rewrite a project problem in place rather than moving it to the private TODO just to retain a stale artifact path. Command examples may create fresh outputs, but must not assume an old local capture already exists.
+
 After recording it, continue the current task. A TODO entry does not expand the task's scope or authorize unrelated tooling work. If the problem blocks progress, report the blocker and handle what is necessary to proceed within the existing authorization.

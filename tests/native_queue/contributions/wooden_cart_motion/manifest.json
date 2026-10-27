@@ -53,8 +53,6 @@
     "showcase_scenario": "scenario-showcase.lua"
   },
   "origin": {
-    "java_and_scenario": ".codex/investigations/wood-sprint-smoothing-final-20261016",
-    "bootstrap": ".codex/investigations/wood-grip-reference-20261015/bootstrap.lua",
     "test_area": "tools/cart_test_area.lua"
   },
   "dependencies": {
