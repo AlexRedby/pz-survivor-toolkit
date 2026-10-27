@@ -114,6 +114,7 @@ INTEGRATIONS = {
     'EURY_CONTAINERS': {
         'owners': ['client/000ToolkitBCCompatibility.lua', 'client/000ToolkitBCSmartDepositCompatibility.lua',
                    'client/000ToolkitBCInventoryCompatibility.lua', 'client/PZSurvivorToolkit/BCInventoryCompatibility.lua',
+                   'client/000ToolkitBCFreshnessCompatibility.lua', 'client/PZSurvivorToolkit/InventoryFreshness.lua',
                    'client/PZSurvivorToolkit/ContainerConfigurationMenus.lua'],
         'option': 'bc_filter_source', 'root': 'media/lua/client/BetterContainers',
         'argument': 'Categorize/CategoryFilters.lua',
@@ -123,6 +124,7 @@ INTEGRATIONS = {
                       Source('NativeBCCategoryStoreSource', 'Categorize/CategoryStore.lua'),
                       Source('NativeBCIniWriterSource', '_IO/IniWriter.lua'),
                       Source('NativeBCIOSource', '_IO/_IO.lua')),
+                  'test_inventory_freshness.lua': (Source('NativeBCFreshnessSource', 'Upgrades/FoodFreshness.lua'),),
                   'test_smart_deposit.lua': (Source('NativeBCSmartDepositSource', 'Proximity/Proximity_SmartDeposit.lua'),),
                   'test_inventory_refresh.lua': (Source('NativeBCProximitySource', 'Proximity.lua'),
                                                  Source('NativeBCProximityPaneSource', 'Proximity/Proximity_ISInventoryPane.lua')),

@@ -122,6 +122,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks': 'WASH_WATER_RULE_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks': 'QUEUE_OWNERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueMembershipChecks': 'QUEUE_MEMBERSHIP_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.QueueViewChecks': 'QUEUE_VIEW_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.InventoryMembershipChecks': 'INVENTORY_MEMBERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ContextMenuDuplicateChecks': 'CONTEXT_MENU_DUPLICATE_CHECKS_PASS',
           'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',

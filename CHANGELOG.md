@@ -41,8 +41,15 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - Rename the Surface tag to Table with the native whole-table icon. Keep Table alongside Storage and Container on the chestnut drawers, which also support native surface crafting; preserve exact legacy-category selections.
 - Derive Wearable tags from native body slots and wearable metadata across clothing, medical items and bags. Combine Furniture and Container for storage furniture using native sprite properties; hand-carried containers stay outside Wearable. Java Patches provides exact script-preview equipment metadata without creating items.
 - Use Readable for native reading and content-view actions, including photographs, newspapers, maps, learning materials and written notes. Reserve Literature for recreational books, magazines and comics; exclude blank writing materials, disabled reading and hollow-book containers. Reading filters remain item rules as content changes.
-- Add live Fresh, Stale and Rotten food tags for inventory filters and container sorting. Use native expiry boundaries for all spoiled food, expose future state choices without assigning an age to script types, and preserve per-item routing within mixed stacks. Replace empty-jar nonperishable/preserved icons with labelled food cans.
+- Add live Fresh, Stale and Rotten food tags for inventory filters and container sorting. Use native expiry boundaries for all spoiled food, expose future state choices without assigning an age to script types, honor manual tag corrections in previews, and preserve per-item routing within mixed stacks. Replace empty-jar nonperishable/preserved icons with labelled food cans.
 - Allow rotten worms to become compost while preserving native fresh-worm breeding, compost yield and other items' compost restrictions.
+- **Development:** Add an isolated item catalogue with category crates and an exportable item index for manual classification review.
+
+### 0.1.289
+
+- **Performance:** Better Containers freshness indicators read only visible inventory rows and skip hidden panels and dragged rows. Visible stacks still use their least-fresh member with current values; bar/percentage options and the original inventory-mode scope are preserved. Partial rows are clipped to the inventory contents.
+
+- **Performance:** Reuse unchanged action-queue rows and groups with matching Toolkit Java Patches, including expanded batches. Direct queue edits remain visible immediately; current action, progress, titles and controls stay live. Unsupported action tables and installations without the helper retain exact Lua scanning. Hidden panels no longer rebuild cleared snapshots and rows.
 
 ### 0.1.288
 
@@ -1321,6 +1328,10 @@ The older README associates medicine indicators with this label, but no separate
 ### 0.1.66
 
 - Expose native script wear slots and writing capability through read-only Lua helpers, so item-tag previews distinguish wearable bags and blank writing materials without creating inventory items or requiring debug mode.
+
+### 0.1.65
+
+- Provide a read-only, ordered action/token identity snapshot for the queue panel. Unchanged queues avoid repeated Lua traversal without relying on mutation hooks; snapshots belong to their panel and are released when it is hidden or removed.
 
 ### 0.1.64
 

@@ -7,6 +7,7 @@ local config=require 'QueueTestSelection'
 local T=PZSurvivorToolkit
 local R=T.ActionQueueRecovery
 local WishlistGate=require 'RecoveryWishlistUI'
+local ProjectionUI=require 'QueueProjectionUI'
 local wishlistGate,wishlistReceipt,previewWatch,previewWorkload
 local native=config.mode=='native'
 local started,ready,done=false,false,false
@@ -195,16 +196,18 @@ local function queueEvidence(restored)
   local group=name=='front'and 1 or name=='tail'and 3 or 2
   assert(queue().queue[index].toolkitQueueOperation==tokens[group],'remainder operation order differs')
  end
- return names,steps,tokens
+ local projectionUI
+ if not native then projectionUI=ProjectionUI.capture(queue(),tokens,tokenId)end
+ return names,steps,tokens,projectionUI
 end
 local function cancel()
  oldActions={state.frontAction,volume(.25),read(state.tail)};oldNatives={};oldTokens={}
- local names,steps,tokens=queueEvidence(false);oldTokens=tokens
+ local names,steps,tokens,projectionUI=queueEvidence(false);oldTokens=tokens
  for _,a in ipairs(oldActions)do
   if a.action then oldNatives[#oldNatives+1]=a.action end
  end
  local before=F.snapshot(state);assert(before.books.front.pages>ids.front.initial and before.books.front.pages<ids.front.pages)
- cancelled={entrypoint=case()=='movement-cancel'and'IsoGameCharacter.StopAllActionQueueWalking'or'ISTimedActionQueue.clear',before=before,initialQueue=names,steps=steps}
+ cancelled={entrypoint=case()=='movement-cancel'and'IsoGameCharacter.StopAllActionQueueWalking'or'ISTimedActionQueue.clear',before=before,initialQueue=names,steps=steps,projectionUI=projectionUI}
  if case()=='movement-cancel'then getPlayer():StopAllActionQueueWalking()else ISTimedActionQueue.clear(getPlayer())end
  for _,a in ipairs(oldActions)do tracks[a].cancelled=true end
  phase='draining'
@@ -251,8 +254,8 @@ local function restore()
  assert(R.restore(player,info.id),'public recovery failed');restoration.restored=true
  restoration.duplicateRejected=not R.restore(player,info.id);restoration.historyAbsent=not R.info(player)
  assert(restoration.duplicateRejected and restoration.historyAbsent)
- local steps,tokens
- restoredQueue,steps,tokens=queueEvidence(true);restoration.steps=steps;restoration.tokens={}
+ local steps,tokens,projectionUI
+ restoredQueue,steps,tokens,projectionUI=queueEvidence(true);restoration.steps=steps;restoration.tokens={};restoration.projectionUI=projectionUI
  for _,token in ipairs(tokens)do restoration.tokens[#restoration.tokens+1]=tokenId(token)end
  phase='running'
 end

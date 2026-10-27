@@ -13,7 +13,7 @@ require = function(name)
     if name == 'PZSurvivorToolkit/SourceProof' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua')
     end
-    if name == 'PZSurvivorToolkit/InventoryClasses' then
+    if name == 'PZSurvivorToolkit/InventoryClasses' or name == 'PZSurvivorToolkit/ActionQueueProjection' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
     end
 end
@@ -665,6 +665,7 @@ function widget:addChild(child) child.parent=self end
 function widget:addToUIManager() ui[#ui+1]=self end
 function widget:removeFromUIManager() self.removed=true end
 function widget:setVisible(v) self.visible=v end
+function widget:getIsVisible() return self.visible==true end
 function widget:setEnable(v) self.enabled=v end
 function widget:setTooltip(v) self.tooltip=v end
 function widget:update() end
@@ -1180,6 +1181,8 @@ end
 print('Queue UI performance: idle rows skip permissions/bounds, real hovered controls use snapshot-free previews, and clicks revalidate live changes.')
 -- Fresh structural checks must not allocate a replacement projection every frame.
 do
+    local savedCapture,savedCurrent=toolkitQueueViewSnapshot,toolkitQueueViewCurrentIndex
+    toolkitQueueViewSnapshot,toolkitQueueViewCurrentIndex=nil,nil
     local function projection(size)
         local owner=player()
         local queued=ISTimedActionQueue.getTimedActionQueue(owner)
@@ -1232,8 +1235,150 @@ do
     queued.queue={}
     view:update()
     assert(#view.list.items==0 and not next(view.expanded),'empty projection retained rows or expansion state')
+    toolkitQueueViewSnapshot,toolkitQueueViewCurrentIndex=savedCapture,savedCurrent
 end
 print('Queue projection: unchanged updates retain rows with bounded garbage; raw edits and live grouping remain fresh.')
+-- Exercise the native fast-path contract in offline Lua with an explicit API
+-- test double. The standalone projection test also runs with the real bridge.
+do
+    local savedCapture,savedCurrent=toolkitQueueViewSnapshot,toolkitQueueViewCurrentIndex
+    local calls=0
+    toolkitQueueViewSnapshot=function(values,previous,current)
+        calls=calls+1
+        local same=previous and previous.values==values and #previous.actions==#values
+        for index=1,#values do
+            if not previous or previous.actions[index]~=values[index]
+                or previous.tokens[index]~=values[index].toolkitQueueOperation then same=false end
+        end
+        local result=same and previous or {values=values,actions={},tokens={}}
+        result.current=nil
+        for index=1,#values do
+            result.actions[index],result.tokens[index]=values[index],values[index].toolkitQueueOperation
+            if values[index]==current then result.current=index end
+        end
+        return result
+    end
+    toolkitQueueViewCurrentIndex=function(snapshot) return snapshot.current end
+    local owner=player()
+    local queued=ISTimedActionQueue.getTimedActionQueue(owner)
+    local operation={presentation={rank=3,title='Live task'},toolkitBatch={total=1,completed=0,unit='action'}}
+    local first={Type='ProjectionFixture',toolkitQueueOperation=operation}
+    local middle={Type='ProjectionFixture',toolkitQueueOperation={}}
+    local tail={Type='ProjectionFixture',toolkitQueueOperation={}}
+    queued.queue,queued.current={first,middle,tail},first
+    refresh()
+    local view=ui[#ui]
+    view:update();view:update()
+    assert(calls>0 and view.projection.stable,'the fast-path regression must actually receive a stable native snapshot')
+    local rows=view.list.items
+    view.list.selected=2;view.list.pressedCancel=middle
+    queued.current=tail
+    view:update()
+    assert(view.currentIndex==3 and view.list.items==rows and view.list.selected==2 and view.list.pressedCancel==middle,
+        'stable singleton rows retain selection and gestures on current-only changes')
+    queued.current={};view:update()
+    assert(view.currentIndex==nil and view.list.items==rows and view.list.pressedCancel==middle)
+    queued.queue[2],queued.queue[3]=tail,middle
+    view:update()
+    assert(not view.projection.stable and view.list.items[2].item==tail
+        and view.list.items[view.list.selected].item==middle and not view.list.pressedCancel,
+        'foreign interior reorder must rebuild rows and release a stale gesture')
+    local replacement={Type='ProjectionFixture',toolkitQueueOperation={}}
+    queued.queue[2]=replacement;view:update()
+    assert(view.list.items[2].item==replacement,'same-size foreign replacement must replace the visible row')
+    replacement.toolkitQueueOperation=operation;view:update()
+    assert(#view.list.items==2 and view.list.items[1].header and view.list.items[1].last==2,
+        'foreign retokening must merge the visible operation')
+    replacement.toolkitQueueOperation={};view:update()
+    assert(#view.list.items==3 and not view.list.items[1].header,'splitting a token must remove the former header')
+
+    operation.toolkitBatch.lazy=true;view:update()
+    assert(view.projection.stable and view.list.items[1].header,'live lazy metadata groups a stable singleton')
+    local header=view.list.items[1]
+    rows=view.list.items;view.list.pressedToggle=operation
+    operation.toolkitBatch.completed=2;view:update()
+    assert(view.list.items==rows and view.list.items[1]==header and view.list.pressedToggle==operation,
+        'live completed counts must preserve stable collapsed rows and gestures')
+    view.list.doDrawItem(view.list,0,header,false)
+    assert(view.list.rightText.text=='UI_PZSurvivorToolkit_queue_action_progress(2,1)',
+        'stable headers must draw the current completed count')
+    view.expanded[operation]=true;view:update()
+    assert(#view.list.items==4 and view.list.items[1].header and view.list.items[2].item==first)
+    rows=view.list.items;view.list.pressedCancel=first
+    queued.current=first;view:update()
+    assert(view.projection.stable and view.list.items==rows and view.list.pressedCancel==first,
+        'stable expanded rows preserve their gesture identities')
+    operation.presentation.title='Changed live task';view:update()
+    assert(view.projection.stable and view.list.items[1].task=='Changed live task' and not view.list.pressedCancel,
+        'live title changes must update an otherwise stable expanded header')
+    operation.toolkitBatch.lazy=false;operation.toolkitBatch.total=3;view:update()
+    assert(view.list.items[1].header,'a live total keeps the singleton grouped after lazy work ends')
+    operation.toolkitBatch.total=1;operation.toolkitBatch.completed=0;view:update()
+    assert(#view.list.items==3 and not view.list.items[1].header,'a one-off batch must become a normal row')
+    operation.toolkitBatch.completed=1;view:update()
+    assert(view.list.items[1].header,'completed history keeps a live singleton batch grouped')
+    local appended={Type='ProjectionFixture',toolkitQueueOperation={}}
+    queued.queue[4]=appended;view:update()
+    assert(view.list.items[#view.list.items].item==appended,'raw append must extend projected rows')
+    queued.queue[4]=nil;view:update()
+    assert(view.list.items[#view.list.items].item==middle,'raw tail removal must remove its projected row')
+    queued.queue={tail};queued.current=tail;view:update()
+    assert(#view.list.items==1 and view.list.items[1].item==tail and not hasEntry(view.expanded),
+        'array replacement must release removed rows and expansion tokens')
+    -- A late view change must advance across every skipped prefix row, including
+    -- expanded children, before comparing/rebuilding the changed suffix.
+    local prefixToken={presentation={rank=3,title='Prefix task'}}
+    local lateToken={presentation={rank=3,title='Late task'}}
+    local prefixFirst={Type='ProjectionFixture',toolkitQueueOperation=prefixToken}
+    local prefixLast={Type='ProjectionFixture',toolkitQueueOperation=prefixToken}
+    local separator={Type='ProjectionFixture',toolkitQueueOperation={}}
+    local lateFirst={Type='ProjectionFixture',toolkitQueueOperation=lateToken}
+    local lateLast={Type='ProjectionFixture',toolkitQueueOperation=lateToken}
+    queued.queue={prefixFirst,prefixLast,separator,lateFirst,lateLast,tail};queued.current=tail
+    view.expanded[prefixToken]=true
+    view:update();view:update()
+    assert(view.projection.stable and #view.list.items==6 and view.currentIndex==6
+        and view.list.items[4].item==separator and view.list.items[5].task=='Late task'
+        and view.list.items[6].item==tail)
+    view.list.selected=6;view.list.pressedCancel=tail
+    lateToken.presentation.title='Changed late task';view:update()
+    assert(view.projection.stable and #view.list.items==6 and view.currentIndex==6
+        and view.list.items[1].header and view.list.items[2].item==prefixFirst
+        and view.list.items[3].item==prefixLast and view.list.items[4].item==separator
+        and view.list.items[5].task=='Changed late task' and view.list.items[6].item==tail
+        and view.list.selected==6 and not view.list.pressedCancel,
+        'late title changes must preserve the skipped expanded prefix and trailing selection/current')
+    view.expanded[lateToken]=true;view:update()
+    assert(view.projection.stable and #view.list.items==8 and view.currentIndex==6
+        and view.list.items[4].item==separator and view.list.items[5].header
+        and view.list.items[6].item==lateFirst and view.list.items[7].item==lateLast
+        and view.list.items[8].item==tail and view.list.selected==8,
+        'late expansion must append at the proven prefix row count and retain the trailing row')
+    rows=view.list.items;view.list.pressedCancel=tail;view:update()
+    assert(view.list.items==rows and view.list.pressedCancel==tail,'stable expanded suffix must retain rows and gestures')
+    view.expanded[lateToken]=nil;view:update()
+    assert(view.projection.stable and #view.list.items==6 and view.list.items[5].header
+        and view.list.items[6].item==tail and view.list.selected==6 and view.currentIndex==6,
+        'late collapse must remove only its child rows and keep the native current index')
+    view.list.previewText={};view.list.cancelFeedback={};view.list.pressedCancel=tail
+    view:clearSnapshots()
+    assert(not view.projection and not view.projectedRows and not view.projectedRowCount and not view.currentIndex
+        and #view.list.items==0 and not hasEntry(view.expanded) and not view.list.pressedCancel
+        and not view.list.previewText and not view.list.cancelFeedback,
+        'snapshot cleanup releases native state, rows, expansions and gesture references')
+    view:setVisible(false)
+    local hiddenCalls=calls
+    for frame=1,3 do view:update()end
+    assert(calls==hiddenCalls and not view.projection and not view.projectedRows and not view.projectedRowCount and not view.currentIndex
+        and #view.list.items==0 and not hasEntry(view.expanded),
+        'native updates of a hidden root must not recreate released queue snapshots or rows')
+    view:setVisible(true);view:update();view:update()
+    assert(calls>hiddenCalls and view.projection.native and view.projection.stable
+        and view.currentIndex==6 and view.list.items[#view.list.items].item==tail,
+        'showing a previously hidden panel must rebuild the current live projection')
+    toolkitQueueViewSnapshot,toolkitQueueViewCurrentIndex=savedCapture,savedCurrent
+end
+print('Queue projection fast path: foreign writes, live batch/title/expansion, stable gestures and cleanup passed with an API test double.')
 -- Audited world work uses the native build stop/transaction path and resumes after urgent work.
 load('client/BuildingObjects/TimedActions/ISBuildAction.lua')
 local oldWorld = PZSurvivorToolkit.ActionQueueWorld
