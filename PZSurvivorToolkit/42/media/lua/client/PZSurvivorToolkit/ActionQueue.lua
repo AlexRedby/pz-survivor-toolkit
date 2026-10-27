@@ -359,6 +359,9 @@ ISBaseTimedAction.stop = function(action)
     return stop(action)
 end
 Toolkit.ActionQueueLifecycle.bindStopBridge(stop, ISBaseTimedAction.stop)
+if Toolkit.ActionQueueGrooming and Toolkit.ActionQueueGrooming.bindInterruption then
+    Toolkit.ActionQueueGrooming.bindInterruption(Queue)
+end
 Policy.replaceStop(stop, ISBaseTimedAction.stop)
 if Toolkit.ActionQueueCompat then Toolkit.ActionQueueCompat.adoptStop(stop, ISBaseTimedAction.stop) end
 if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop", stop, ISBaseTimedAction.stop) end

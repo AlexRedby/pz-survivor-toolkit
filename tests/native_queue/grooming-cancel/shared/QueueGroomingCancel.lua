@@ -1,6 +1,8 @@
 -- Disposable setup ends at baseline. All later helpers only observe native state.
 local F={cases={'borrowed-scissors','style-no-tool','styled-scissors','beard-trim','dye-hair','dye-beard'}}
-function F.haircut(caseID)return caseID=='borrowed-scissors'or caseID=='style-no-tool'or caseID=='styled-scissors'end
+function F.baseCase(caseID)return (caseID:gsub('^active%-',''))end
+function F.active(caseID)return caseID:sub(1,7)=='active-'end
+function F.haircut(caseID)caseID=F.baseCase(caseID);return caseID=='borrowed-scissors'or caseID=='style-no-tool'or caseID=='styled-scissors'end
 function F.borrowed(state)return state.scissors or state.razor or state.dye end
 local function id(item)return item and item:getID()or false end
 local function find(container,wanted)
@@ -112,6 +114,7 @@ local function equipment(state)
  p:setPerkLevelDebug(Perks.Woodwork,0);p:setPerkLevelDebug(Perks.Doctor,0)
 end
 function F.prepare(player,caseID,previous)
+ local selectedCase=caseID;caseID=F.baseCase(caseID)
  assert(not isClient(),'grooming prepare requires authority')
  assert(not player:isFemale(),'grooming fixture requires native male character creation')
  if previous then
@@ -140,7 +143,7 @@ function F.prepare(player,caseID,previous)
    assert(beardTargetLevel<beardInitialLevel,'beard transition is not offered by actual native menu')
   else actionKind,producer,borrowed='ISDyeHair','ISInventoryPaneContextMenu.onDyeHair','dye'end
  end
- local ids={case=caseID,actor=player:getOnlineID(),male=true,items={},types={},initialStyle=initial,targetStyle=target,
+ local ids={case=selectedCase,actor=player:getOnlineID(),male=true,items={},types={},initialStyle=initial,targetStyle=target,
   initialLevel=initialLevel,targetLevel=targetLevel,targetAttached=targetAttached,duration=actionKind=='ISDyeHair'and 120 or(targetAttached and 100 or 300),
   actionKind=actionKind,producer=producer,borrowed=borrowed,initialBeard=initialBeard,targetBeard=targetBeard,
   beardInitialLevel=beardInitialLevel,beardTargetLevel=beardTargetLevel}
@@ -217,7 +220,7 @@ function F.expectedAppearance(state,baseline,native,remote,authority)
  if not native then return result end
  if ids.actionKind=='ISCutHair'then result.model=ids.targetStyle;result.nonAttached=ids.targetAttached and ids.initialStyle or false
  elseif ids.actionKind=='ISTrimBeard'then result.beardModel=ids.targetBeard
- elseif ids.case=='dye-hair'then result.color=visualColor((remote and authority or baseline).dye.color,remote)
+ elseif F.baseCase(ids.case)=='dye-hair'then result.color=visualColor((remote and authority or baseline).dye.color,remote)
  else result.beardColor=visualColor((remote and authority or baseline).dye.color,remote)end
  return result
 end

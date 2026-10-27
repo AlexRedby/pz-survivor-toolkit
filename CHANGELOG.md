@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.293
+
+- Allow canceling an already-started native haircut, beard trim or hair/beard dye without discarding subsequent queued work. Preserve borrowed-tool and equipment cleanup, cosmetic state and unspent styling/dye resources; Host requires the exact still-started server receipt.
+
 ### 0.1.292
 
 - Derive Experience and Recipe tags independently from each recording. Combined lessons retain both tags, recipe-only recordings are supported, and container previews use real combinations without inventing content. Keep manual tag corrections and saved exact categories.
