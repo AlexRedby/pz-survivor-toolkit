@@ -10,6 +10,7 @@ from queue_checks.adapters import grooming_cancel as g
 
 class GroomingCancellationTests(unittest.TestCase):
     def evidence(self,case='borrowed-scissors',mode='toolkit',kind='sp'):
+        selected=case;active=case in g.ACTIVE_CASES;case=g.base_case(case)
         native=mode=='native';mp=kind=='mp';borrowed=g.BORROWED[case]
         selection=dict(suite='grooming-cancel',cases=[case],mode=mode,kind=kind,clients=1,languages=['EN'],mods=list(g.MODS),options={'mp_host':True} if mp else {})
         names=['bag','content','front','tail','torch','secondary']+([borrowed] if borrowed else [])+(['hat'] if case in ('borrowed-scissors','dye-hair') else [])+(['mask'] if case=='dye-beard' else [])+(['gel'] if case=='styled-scissors' else [])
@@ -62,7 +63,26 @@ class GroomingCancellationTests(unittest.TestCase):
                      bodyCompletes=False if mp else int(native),bodyRecords=[] if mp else records,
                      completeCountProof='unavailable-remote-callback' if mp else 'shared-native-complete')
         if mp:receipt['completeCountLimit']='remote callback count unavailable without replacing native effects'
-        row=dict(event='case',id=case,status='passed',ids=ids,baseline=baseline,command=command,receipt=receipt,clientFinal=final,nativeMethodsUnchanged=True)
+        if active:
+            def selected_ids(value):
+                if isinstance(value,dict):
+                    if value.get('case')==case:value['case']=selected
+                    for child in value.values():selected_ids(child)
+                elif isinstance(value,list):
+                    for child in value:selected_ids(child)
+            selected_ids(ids);selected_ids(baseline);selected_ids(boundary);selected_ids(command);selected_ids(receipt);selected_ids(final)
+            selection['cases']=[selected]
+            body.update(started=True,starts=1,nativeRef='body-native',startedAt=5)
+            if not native:body.update(finishes=[],stoppedRemoval=dict(at=12,nativeRef='body-native',queueAbsent=True,nativeAbsent=True,finished=False,forceComplete=False))
+            command['bodyStarts']=1
+            boundary.update(stage='active',bodyUnallocated=False,kind=g.BODY[case],item=items.get(borrowed,False),startedReceipt=False)
+            command['outcomes']=[]
+            if mp:
+                body.update(transaction=3,token='00000000-0000-0000-0000-000000000001',terminal='completed' if native else 'canceled')
+                started=dict(transaction=body['transaction'],kind=g.BODY[case],token=body['token'],state='started')
+                boundary['startedReceipt']=started
+                command['outcomes']=[dict(protocol=1,player=ids['actor'],**started),dict(protocol=1,player=ids['actor'],**dict(started,state=body['terminal']))]
+        row=dict(event='case',id=selected,status='passed',ids=ids,baseline=baseline,command=command,receipt=receipt,clientFinal=final,nativeMethodsUnchanged=True)
         return selection,row
 
     def check(self,selection,row):return g.check_case(row,selection,copy.deepcopy(row['ids']),copy.deepcopy(row['receipt']))
@@ -113,7 +133,10 @@ class GroomingCancellationTests(unittest.TestCase):
         lines=['[QUEUE_CHECK] '+json.dumps(dict(event='setup',cases=selection['cases'],nativeDurations=True,queueEnabled=selection['mode']=='toolkit',**context))]
         authority=['[GROOMING_TEST] '+marker+' '+json.dumps(value) for marker,value in [('PREPARED',row['ids']),('BASELINED',row['receipt']['baseline']),('VERIFIED',row['receipt'])]]
         markers=[(marker,row['command'][key]) for marker,key in [('CANCEL','boundary'),('BEFORE_TAIL','beforeTail'),('IDLE','idle')]]
+        outcomes=row['command'].get('outcomes',[])
+        if outcomes:markers.insert(2,('OUTCOME',dict(case=row['id'],receipt=outcomes[1])))
         if reverse:markers=markers[::-1]
+        lines.extend('[GROOMING_TEST] OUTCOME '+json.dumps(dict(case=row['id'],receipt=value)) for value in row['command'].get('outcomes',[])[:1])
         lines.extend('[GROOMING_TEST] '+marker+' '+json.dumps(value) for marker,value in markers)
         lines.append('[QUEUE_CHECK] '+json.dumps(dict(row,**context)))
         lines.append('[QUEUE_CHECK] '+json.dumps(dict(event='complete',cases=selection['cases'],performed=1,skipped=0,failed=0,**context)))
@@ -173,7 +196,10 @@ class GroomingCancellationTests(unittest.TestCase):
 
     def test_actual_shared_fixture_preserves_unpaid_effects_and_native_protocol(self):
         # Execute the shipped fixture helpers; mock only native numeric value objects.
-        from lupa.lua51 import LuaRuntime
+        try:
+            from lupa.lua51 import LuaRuntime
+        except ImportError:
+            self.skipTest('Lupa Lua5.1 is required for the source-backed grooming fixture check')
         lua=LuaRuntime(unpack_returned_tuples=True)
         lua.globals().f32=lambda value:g.struct.unpack('f',g.struct.pack('f',value))[0]
         lua.execute("""
@@ -193,24 +219,60 @@ class GroomingCancellationTests(unittest.TestCase):
         fixture=Path(__file__).parent/'native_queue/grooming-cancel/shared/QueueGroomingCancel.lua'
         shared=lua.execute(fixture.read_text())
         table=lambda value:lua.table_from(copy.deepcopy(value),recursive=True)
-        for case in g.CASES:
+        for case in g.ALL_CASES:
             for mode in ('native','toolkit'):
                 for kind in ('sp','mp'):
                     selection,row=self.evidence(case,mode,kind)
-                    native=mode=='native';remote=kind=='mp'
-                    state=table(dict(ids=row['ids'],gel=True if case=='styled-scissors' else None,dye=True if case.startswith('dye-') else None))
+                    native=mode=='native';remote=kind=='mp';base_case=g.base_case(case)
+                    state=table(dict(ids=row['ids'],gel=True if base_case=='styled-scissors' else None,dye=True if base_case.startswith('dye-') else None))
                     base,final,authority=table(row['baseline']),table(row['clientFinal']),table(row['receipt']['baseline'])
                     with self.subTest(case=case,mode=mode,kind=kind):
                         self.assertTrue(shared.effectsMatch(state,final,base,native,remote,authority))
                         altered=copy.deepcopy(row['clientFinal']);altered['appearance']['beardModel']='unexpected'
                         self.assertFalse(shared.effectsMatch(state,table(altered),base,native,remote,authority))
-                        if case.startswith('dye-'):
+                        if base_case.startswith('dye-'):
                             altered=copy.deepcopy(row['clientFinal']);altered['dye']['amount']=.75
                             self.assertFalse(shared.effectsMatch(state,table(altered),base,native,remote,authority))
                             if remote:
                                 self.assertTrue(shared.sameSetup(base,table(row['ids']['baseline'])))
                                 altered=copy.deepcopy(row['baseline']);altered['dye']['color']['r']+=.01
                                 self.assertFalse(shared.sameSetup(table(altered),table(row['ids']['baseline'])))
+
+    def test_active_case_family_and_registration_are_distinct_from_waiting(self):
+        from queue_checks import scenarios
+        definition=g.definitions()['grooming-cancel']
+        self.assertEqual(scenarios.select(definition,'cancel-active',None,'mp','toolkit')[0],g.ACTIVE_CASES)
+        self.assertEqual(scenarios.select(definition,'cancel-waiting',None,'mp','toolkit')[0],g.CASES)
+        for case in g.ACTIVE_CASES:
+            for mode in ('native','toolkit'):
+                for kind in ('sp','mp'):
+                    selection,row=self.evidence(case,mode,kind);g.validate(selection)
+                    with self.subTest(case=case,mode=mode,kind=kind):
+                        self.assertEqual(self.check(selection,row)['activeCancelVerified'],mode=='toolkit')
+                        self.assertEqual(self.report(selection,row)['issues'],[])
+
+    def test_active_rejects_unstarted_effect_replay_or_unsealed_host_outcome(self):
+        changes={
+            'waiting-stage':lambda r:r['command']['boundary'].update(stage='waiting'),
+            'unallocated':lambda r:r['command']['boundary'].update(bodyUnallocated=True),
+            'zero-progress':lambda r:r['command']['boundary'].update(progress=0),
+            'never-started':lambda r:r['command'].update(bodyStarts=0),
+            'native-still-present':lambda r:r['command']['records'][1]['stoppedRemoval'].update(nativeAbsent=False),
+            'foreign-native':lambda r:r['command']['records'][1]['stoppedRemoval'].update(nativeRef='foreign'),
+            'finished-native':lambda r:r['command']['records'][1]['stoppedRemoval'].update(finished=True),
+            'completed-effect':lambda r:r['command']['records'][1]['finishes'].append(dict(phase='complete',succeeded=True,at=12)),
+            'late-start':lambda r:r['command']['records'][1].update(startedAt=12),
+            'wrong-terminal':lambda r:r['command']['records'][1].update(terminal='completed'),
+            'wrong-token':lambda r:r['command']['boundary']['startedReceipt'].update(token='foreign'),
+            'completed-receipt':lambda r:r['command']['outcomes'][1].update(state='completed'),
+            'replayed-receipt':lambda r:r['command']['outcomes'].append(r['command']['outcomes'][1]),
+            'unsealed-start':lambda r:r['command']['boundary'].update(startedReceipt=False),
+            'effects':lambda r:r['receipt']['final']['appearance'].update(model='CrewCut'),
+        }
+        for case in g.ACTIVE_CASES:
+            for label,change in changes.items():
+                selection,row=self.evidence(case,kind='mp');change(row)
+                with self.subTest(case=case,change=label),self.assertRaises((AssertionError,KeyError,TypeError)):self.check(selection,row)
 
     def test_requires_exact_full_pack_and_fresh_single_actor_host(self):
         for changes in ({'mods':g.MODS[:-1]},{'clients':True},{'cases':g.CASES[::-1]},{'options':{'world_template':'saved-world'}},{'kind':'mp','options':{}}):

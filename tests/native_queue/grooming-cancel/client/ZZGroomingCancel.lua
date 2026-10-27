@@ -25,8 +25,11 @@ local phase,index,since='prepare',1,0
 local state,ids,previous,baseline,authorityBaseline,checkpoint,authorityFinal,baselineRequested
 local front,tail,body,pickup,boundary,beforeTail,idle,quiet,records,actions,classes,ackRecords,observedTerminal
 local bodyStarts,bodyCompletes=0,0
+local outcomes,startedReceipt,nativeEpisodes={}
 local serial=0
 local function case()return config.cases[index]end
+local function baseCase()return F.baseCase(case())end
+local function active()return F.active(case())end
 local function now()return getTimestampMs()end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
@@ -73,7 +76,7 @@ local function intact()
  assert(body and getmetatable(body)==producer.class and body.complete==producer.class.complete,'native body class changed')
  if ids.actionKind=='ISCutHair'then assert(body.hairStyle==ids.targetStyle,'native hair target changed')
  elseif ids.actionKind=='ISTrimBeard'then assert(body.beardStyle==ids.targetBeard,'native beard target changed')
- else assert(body.beard==(case()=='dye-beard')and itemID(body)==ids.items.dye,'native dye target/identity changed')end
+ else assert(body.beard==(baseCase()=='dye-beard')and itemID(body)==ids.items.dye,'native dye target/identity changed')end
  local contract,adapter=T.ActionQueuePolicy.inspect(body)
  assert(contract and adapter=='native.'..ids.actionKind and contract.knownInputs==false,'source-pinned native haircut inspector unavailable')
 end
@@ -111,8 +114,16 @@ local function observe()
  for _,action in ipairs(queue().queue)do register(action)end
  for action,row in pairs(actions)do
   if action.action and action:isStarted()and not row.started then
-   row.started=true;row.starts=row.starts+1;row.startedAt=now();row.nativeRef=tostring(action.action)
-   if action==body then bodyStarts=bodyStarts+1;assert(native,'canceled waiting haircut started')end
+   row.started=true;row.starts=row.starts+1;row.startedAt=now();row.nativeRef=tostring(action.action);nativeEpisodes[action]=action.action
+   if action==body then bodyStarts=bodyStarts+1;assert(native or active(),'canceled waiting haircut started')end
+  end
+  if active()and not native and action==body and boundary and not row.stoppedRemoval then
+   local episode=nativeEpisodes[action]
+   if episode and queue():indexOf(action)==-1 and not state.player:getCharacterActions():contains(episode)then
+    assert(action.action==episode and not episode:finished()and not episode:isForceComplete(),'canceled grooming native identity/completion changed')
+    row.stoppedRemoval={at=now(),nativeRef=tostring(episode),queueAbsent=true,nativeAbsent=true,
+     finished=episode:finished(),forceComplete=episode:isForceComplete()}
+   end
   end
   if isClient()and action==queue().current then
    local receipt=T.ActionQueueAcknowledgements.capture(action)
@@ -139,6 +150,11 @@ local function request(name)
   bodyCompletes=bodyCompletes,bodyRecords=records,completeCountProof='shared-native-complete'};raw('VERIFIED',authorityFinal)end
 end
 Events.OnServerCommand.Add(function(module,name,args)
+ if module=='PZSurvivorToolkitActions'and name=='State'and body and active()
+  and args.player==ids.actor and args.transaction==body.toolkitNativeTransaction and args.kind==body.toolkitNativeKind then
+  local row={protocol=args.protocol,player=args.player,transaction=args.transaction,kind=args.kind,token=args.token,state=args.state}
+  outcomes[#outcomes+1]=row;raw('OUTCOME',{case=case(),receipt=row});return
+ end
  if module~='GroomingCancelTest'or done then return end
  if name=='Prepared'then ids=args
  elseif name=='Baselined'then authorityBaseline=args
@@ -149,16 +165,16 @@ end)
 local function enqueue()
  assert(F.sameSetup(snapshot(),ids.baseline),'local grooming baseline differs from exact authority setup')
  baseline=snapshot();records,actions,classes,ackRecords,observedTerminal={},{},{},{},{};serial=0
- bodyStarts,bodyCompletes=0,0
+ bodyStarts,bodyCompletes=0,0;outcomes,startedReceipt,nativeEpisodes={},nil,{}
  assert(not state.player:isTimedActionInstant()and not getDebug(),'native haircut producer requires ordinary non-debug durations/equip')
- if case()=='style-no-tool'then front=ISReadABook:new(state.player,state.front);ISTimedActionQueue.add(front)end
+ if baseCase()=='style-no-tool'then front=ISReadABook:new(state.player,state.front);ISTimedActionQueue.add(front)end
  local producer=assert(producers[ids.actionKind])
  assert(producer.owner[producer.key]==producer.callback and Proof.closure(producer.callback,producer.source),'actual native grooming UI producer unavailable')
  if state.gel then assert(state.player:getInventory():getItemFromType('Hairgel',true,true)==state.gel,'native styling selector chose foreign Hairgel')end
  local function produce()
   if ids.actionKind=='ISCutHair'then producer.callback(state.player,ids.targetStyle,ids.duration)
   elseif ids.actionKind=='ISTrimBeard'then producer.callback(state.player,ids.targetBeard)
-  else producer.callback(state.dye,state.player,case()=='dye-beard')end
+  else producer.callback(state.dye,state.player,baseCase()=='dye-beard')end
  end
  -- The ordinary context-menu entrypoint scopes enqueueing in both queue modes.
  T.ActionQueueOperations.run(produce)
@@ -175,12 +191,25 @@ end
 local function cancelAtBoundary()
  if boundary then return end
  local current=queue().current
- local eligible=case()=='style-no-tool'and current==front and current.action and current:isStarted()and current:getJobDelta()>0
-  or case()~='style-no-tool'and current==pickup and current and current.action and current:isStarted()and current:getJobDelta()>0
- if not eligible then return end
- assert(body.action==nil and bodyStarts==0 and bodyCompletes==0,'haircut body started before cancellation checkpoint')
- local selected=case()=='style-no-tool'and body or current
- local before=snapshot();local progress=current:getJobDelta()
+ local eligible
+ if active()then
+  eligible=current==body and body.action and body:isStarted()and body:getJobDelta()>0
+  if not eligible then return end
+  assert(bodyStarts==1 and bodyCompletes==0,'active grooming body start/effect witness differs')
+  if isClient()then
+   local receipt=ackRecords[body]
+   if not receipt or T.ActionQueueAcknowledgements.state(body,receipt)~='started'then return end
+   assert(#outcomes==1 and outcomes[1].state=='started'and outcomes[1].token==receipt.token,'active grooming started receipt differs')
+   startedReceipt={transaction=receipt.transaction,kind=receipt.kind,token=receipt.token,state='started'}
+  end
+ else
+  eligible=baseCase()=='style-no-tool'and current==front and current.action and current:isStarted()and current:getJobDelta()>0
+   or baseCase()~='style-no-tool'and current==pickup and current and current.action and current:isStarted()and current:getJobDelta()>0
+  if not eligible then return end
+  assert(body.action==nil and bodyStarts==0 and bodyCompletes==0,'haircut body started before cancellation checkpoint')
+ end
+ local selected=active()and body or baseCase()=='style-no-tool'and body or current
+ local before=snapshot();local progress=current:getJobDelta();local at=now();local unallocated=body.action==nil
  local accepted,reason=false,false
  if not native then
   accepted,reason=T.ActionQueue.cancelOperation(queue(),selected)
@@ -188,19 +217,19 @@ local function cancelAtBoundary()
    local bindings={}
    for _,member in ipairs(queue().queue)do
     local contract,adapter=T.ActionQueuePolicy.inspect(member)
-    bindings[#bindings+1]=member.Type..'='..tostring(adapter or 'unknown')..':'..tostring(contract and contract.preparation)
+    bindings[#bindings+1]=member.Type..'='..tostring(adapter or 'unknown')..':'..tostring(contract and contract.preparation)..':'..tostring(contract and contract.interrupt)..':'..tostring(contract and contract.interruptBlocker)
    end
-   error('waiting '..ids.actionKind..' cancellation rejected: '..tostring(reason)..' ['..table.concat(bindings,', ')..']')
+   error((active()and'active 'or'waiting ')..ids.actionKind..' cancellation rejected: '..tostring(reason)..' ['..table.concat(bindings,', ')..']')
   end
  end
- boundary={case=case(),at=now(),mode=config.mode,kind=current.Type,item=itemID(current),progress=progress,started=true,
-  bodyUnallocated=body.action==nil,tailRetained=queue():indexOf(tail)~=-1,snapshot=before,accepted=accepted,reason=reason or false}
+ boundary={case=case(),at=at,mode=config.mode,kind=current.Type,item=itemID(current),progress=progress,started=true,
+  bodyUnallocated=unallocated,stage=active()and'active'or'waiting',startedReceipt=startedReceipt or false,tailRetained=queue():indexOf(tail)~=-1,snapshot=before,accepted=accepted,reason=reason or false}
  assert(boundary.tailRetained,'grooming cancellation discarded independent reader')
  raw('CANCEL',boundary);phase='checkpoint';request('Checkpoint')
 end
 local function finish()
  local actual=snapshot();local expected=native and 1 or 0
- assert(bodyStarts==expected and bodyCompletes==expected,'native haircut start/complete count differs')
+ assert(bodyStarts==(active()and 1 or expected)and bodyCompletes==expected,'native haircut start/complete count differs')
  assert(beforeTail and boundary and F.restored(state,actual)and F.restored(state,authorityFinal.final),'grooming cleanup/restoration proof missing')
  assert(actual.tailPages==ids.tailTotal and authorityFinal.final.tailPages==ids.tailTotal,'independent reader did not complete on both roles')
  for role,value in ipairs({actual,authorityFinal.final})do
@@ -208,7 +237,7 @@ local function finish()
  end
  local command={producer=ids.producer,duration=ids.duration,cancelled=not native,boundary=boundary,beforeTail=beforeTail,
   records=records,bodyStarts=bodyStarts,bodyCompletes=bodyCompletes,idle=idle,frontQueued=front~=nil,
-  completeCountProof=isClient()and'sealed-native-transaction'or'shared-native-complete'}
+  completeCountProof=isClient()and'sealed-native-transaction'or'shared-native-complete',outcomes=outcomes}
  emit({event='case',id=case(),status='passed',ids=ids,baseline=baseline,command=command,receipt=authorityFinal,clientFinal=actual,nativeMethodsUnchanged=true})
  previous=ids;index=index+1;state,ids,baseline,authorityBaseline,checkpoint,authorityFinal=nil,nil,nil,nil,nil,nil
  front,tail,body,pickup,boundary,beforeTail,idle,quiet,records,actions,classes,ackRecords,observedTerminal=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil

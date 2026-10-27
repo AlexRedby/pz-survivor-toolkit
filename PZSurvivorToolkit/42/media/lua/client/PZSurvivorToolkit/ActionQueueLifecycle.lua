@@ -27,6 +27,8 @@ local function nativeStopBridge()
     return stopBridge and Toolkit.ActionQueue == stopBridge.owner and ISBaseTimedAction == stopBridge.base
         and ISBaseTimedAction.stop == stopBridge.wrapped
 end
+-- Read-only provenance for contracts that suppress the native reset on an explicit stop.
+Lifecycle.hasNativeStopBridge = nativeStopBridge
 local function pack(...) return {n = select("#", ...), ...} end
 -- Observation at the common native boundary does not grant edit permissions.
 -- Failed observers are quarantined: observation must never abort a paid native
