@@ -227,10 +227,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen. The isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text. Seven selected Workshop mods remain outside coverage; five startup font errors also remain unclassified.
 
-# Loot distribution without duplicates
-
-- [ ] Coordinate simultaneous Host distribution to the same no-duplicates compartment or group with an authoritative per-transfer claim. Client admission and separate native transactions protect one haul, but two clients can both see an empty slot; the shared native acceptance callback cannot distinguish manual transfers or pending transactions. Cover group membership changes during a haul, preserve ordinary manual transfers and check competing clients before claiming a server-wide uniqueness guarantee.
-
 # Preview tooling
 
 - [ ] Clarify the visualization helper's render/serve examples: `render.py fragment destination --serve` fails with `destination cannot be used with --serve`. Serving works with `render.py fragment --serve`; distinguish that invocation from standalone export to avoid a failed preview attempt.
