@@ -183,8 +183,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Reconnect the cumulative-agent-memory MCP after its runtime update: `memory.read` rejects requests with `Memory MCP is from an older release; reconnect the server`. The bundled CLI remains the fallback but needs access to its external state directory. Complete when normal MCP reads and capture writes work again.
-
 - [ ] Resolve the common startup diagnostics that keep the food-age SP run at `needs-review` despite all four functional phases passing: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical startup fingerprints/counts; qualify or fix each source/caller before changing audit rules; do not treat functional success as a clean runtime.
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
@@ -221,7 +219,3 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Item catalogue test world
 
 - [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen. The isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text. Seven selected Workshop mods remain outside coverage; five startup font errors also remain unclassified.
-
-# Preview tooling
-
-- [ ] Clarify the visualization helper's render/serve examples: `render.py fragment destination --serve` fails with `destination cannot be used with --serve`. Serving works with `render.py fragment --serve`; distinguish that invocation from standalone export to avoid a failed preview attempt.
