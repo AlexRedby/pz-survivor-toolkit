@@ -1,6 +1,5 @@
 # Final remote-main refresh
 
-- [ ] Rebase the qualified research result on the newly advanced remote main, reconcile component versions and test affected integrations.
 - [ ] Rebuild and verify the final Windows archive, recheck remote refs and publish the refreshed research head.
 
 # Windows capture reliability
@@ -294,6 +293,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 - [ ] Align the no-game shared-wishlist fixture in `tests/native_queue/contributions/shared-wishlist/protocol.lua` with the `InventoryRows` contract used by `InventoryPresentation`. Running `python3 tests/native_queue/contributions/shared-wishlist/check.py` reaches highlight rendering and fails because the fixture's generic module stub lacks `captureAnchor`. Update the fixture dependencies without bypassing native row/anchor behavior; require the full protocol check, including highlight and cleanup assertions, to pass.
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
+
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.
 
