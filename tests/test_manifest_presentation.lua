@@ -111,7 +111,7 @@ Tags.forSnapshot=function(actual,fullType,category,recording,delta,ingredient,co
     assert(usageState==expectedUsage, 'presentation lost captured medical/fuel roles or inferred an old snapshot')
     return usageState and {usageState} or {}
 end
-for _,state in ipairs({{'0101'},{'0000'},{'1?1?'},{'???0'},{}})do
+for _,state in ipairs({{'0101'},{'0000'},{'1?1?'},{'???0'},{'??????1???'},{'????10?101'},{}})do
     expectedUsage=state[1]
     for _,loaded in ipairs({true,false})do
         local _,rendered,tags=Presentation.describe({ft='Base.MilkBottle',cat='Food',

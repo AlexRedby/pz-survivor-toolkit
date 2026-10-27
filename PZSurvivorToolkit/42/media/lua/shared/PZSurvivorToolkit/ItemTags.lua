@@ -12,7 +12,7 @@ PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
 PZSurvivorToolkit.ItemTags = Tags
 local function canonical(id) return (schema.aliases or {})[id] or id end
-local usageIds = {"bandage", "disinfectant", "dirty", "fuel"}
+local usageIds = {"bandage", "disinfectant", "dirty", "fuel", "ignite", "treatment", "repair"}
 
 local function signature(tags)
     local result, seen = {}, {}
@@ -43,7 +43,10 @@ function Tags.requiresItemRule(id)
         or id == "experience" or id == "recipe" or id == "ingredient"
         or id == "raw" or id == "cooked" or id == "burnt"
         or id == "beverage" or id == "alcoholic" or id == "seasoning"
-        or id == "bandage" or id == "disinfectant" or id == "dirty" or id == "fuel" then return true end
+        or id == "bandage" or id == "disinfectant" or id == "dirty" or id == "fuel"
+        or id == "ignite" or id == "treatment" or id == "repair" or id == "junk"
+        or id == "bait" or id == "fishing" or id == "trapping" or id == "electrical"
+        or id == "crafting" or id == "maintenance" or id == "medical" or id == "firstaid" then return true end
     return id == "readable" or id == "literature" or id == "writeable"
 end
 
@@ -75,6 +78,48 @@ local function setTag(tags, id, value)
     return false
 end
 
+local function usageBase(tags, roles, states)
+    local base = {managed = {}}
+    for _, id in ipairs(tags) do base[id] = true end
+    for _, id in ipairs(usageIds) do
+        if roles[id] ~= nil then base.managed[id] = true end
+        for _, state in ipairs(states or {}) do
+            if state[id] ~= nil then base.managed[id] = true end
+        end
+    end
+    return base
+end
+
+local function applyUsage(tags, roles, base, snapshot)
+    local changed = false
+    local function put(id, value) changed = setTag(tags, id, value) or changed end
+    for _, id in ipairs(usageIds) do
+        local value = roles[id]
+        if value == nil then
+            local original = id == "bandage" or id == "disinfectant" or id == "dirty" or id == "fuel"
+            value = not base.managed[id] and not (snapshot and original) and base[id] == true
+        end
+        put(id, value)
+    end
+    put("medical", base.medical or roles.bandage == true or roles.disinfectant == true)
+    put("firstaid", base.firstaid or roles.bandage == true or roles.disinfectant == true)
+    put("maintenance", base.maintenance or roles.repair == true)
+    local fish, trap = roles.fishBait, roles.trapBait
+    if fish ~= nil or trap ~= nil or snapshot then
+        local oldFish = base.fishing == true and (not base.bait or fish == nil and not snapshot)
+        local oldTrap = base.trapping == true and (not base.bait or trap == nil and not snapshot)
+        put("fishing", oldFish or fish == true)
+        put("trapping", oldTrap or trap == true)
+        put("bait", fish == true or trap == true or base.bait == true and (oldFish or oldTrap))
+    end
+    if roles.spentBattery ~= nil then
+        put("junk", roles.spentBattery)
+        put("crafting", not roles.spentBattery and base.crafting == true)
+        put("electrical", not roles.spentBattery and base.electrical == true)
+    end
+    return changed
+end
+
 local function itemTags(category, fullType, script, item, recording, snapshot, snapshotIngredient, snapshotCookingState, snapshotFluidState, snapshotUsageState)
     local tags = Tags.forCategory(category)
     local override = fullType and schema.items[string.lower(tostring(fullType))]
@@ -96,6 +141,7 @@ local function itemTags(category, fullType, script, item, recording, snapshot, s
     if furniture then refined = setTag(tags, "furniture", true) or refined end
     if fluid then refined = setTag(tags, "liquid", true) or refined end
     local roles, usageStates, isFluid = usage.read(script, item)
+    local base = usageBase(tags, roles, usageStates)
     if snapshot then
         roles, usageStates = usage.decode(snapshotUsageState), nil
         roles.beverage = snapshotFluidState == "beverage" or snapshotFluidState == "alcoholic"
@@ -106,16 +152,9 @@ local function itemTags(category, fullType, script, item, recording, snapshot, s
         refined = setTag(tags, "beverage", roles.beverage == true) or refined
         refined = setTag(tags, "alcoholic", roles.alcoholic == true) or refined
     end
-    for _, id in ipairs(usageIds) do
-        local value = roles[id]
-        if snapshot or id == "fuel" and (isFluid or #usageStates > 0) then value = value == true end
-        refined = setTag(tags, id, value) or refined
-    end
-    if roles.bandage or roles.disinfectant then
-        refined = setTag(tags, "medical", true) or refined
-        refined = setTag(tags, "firstaid", true) or refined
-    end
+    refined = applyUsage(tags, roles, base, snapshot) or refined
     tags.usageStates = usageStates
+    if not item and not snapshot then tags.usageBase = base end
     refined = setTag(tags, "edible", properties.edible(script, item)) or refined
     local seasoning = properties.seasoning(script, item)
     refined = setTag(tags, "seasoning", seasoning) or refined
@@ -190,6 +229,11 @@ function Tags.choices(tags)
         if state.bandage or state.disinfectant then
             setTag(result, "medical", true); setTag(result, "firstaid", true)
         end
+        if state.fishBait or state.trapBait then setTag(result, "bait", true) end
+        if state.fishBait then setTag(result, "fishing", true) end
+        if state.trapBait then setTag(result, "trapping", true) end
+        if state.repair then setTag(result, "maintenance", true) end
+        if state.spentBattery then setTag(result, "junk", true) end
     end
     for _, state in ipairs(tags.mediaStates or {}) do
         if state.experience then setTag(result, "experience", true) end
@@ -227,7 +271,7 @@ local function loadedAutomaticIds()
     local ids = {}
     for index = 0, count - 1 do
         local script = scripts:get(index)
-        for _, id in ipairs(Tags.automaticForScriptItem(script)) do ids[id] = true end
+        for _, id in ipairs(Tags.choices(Tags.automaticForScriptItem(script))) do ids[id] = true end
     end
     automaticIds, automaticManager, automaticCount = ids, manager, count
     return ids
@@ -244,7 +288,7 @@ function Tags.allIds(items)
     for _, id in ipairs(Custom.allIds()) do add(id) end
     for id in pairs(loadedAutomaticIds()) do add(id) end
     for _, item in ipairs(items or {}) do
-        for _, id in ipairs(Tags.automaticForItem(item)) do add(id) end
+        for _, id in ipairs(Tags.choices(Tags.automaticForItem(item))) do add(id) end
     end
     table.sort(ids)
     return ids
@@ -400,23 +444,23 @@ function Tags.matchesScriptRule(script, rule)
         if tags.foodStates and #tags.foodStates > 0 then return false end
         return Tags.matchesRule(Custom.project(tags, script:getFullName()), rule)
     end
-    local function matchesCookingStates()
+    local function matchesCookingStates(requiredCooked)
         for _, state in ipairs(tags.cookingStates or {}) do
-            for _, id in ipairs({"raw", "cooked", "burnt"}) do setTag(tags, id, state == id) end
-            if matchesFoodStates(state == "burnt") then return true end
+            if requiredCooked == nil or state == "burnt" or (state == "cooked") == requiredCooked then
+                for _, id in ipairs({"raw", "cooked", "burnt"}) do setTag(tags, id, state == id) end
+                if matchesFoodStates(state == "burnt") then return true end
+            end
         end
         if tags.cookingStates and #tags.cookingStates > 0 then return false end
+        if requiredCooked == true then return false end
         return matchesFoodStates(false)
     end
-    local baseMedical, baseFirstAid = Tags.matches(tags, {"medical"}), Tags.matches(tags, {"firstaid"})
     local function matchesUsageStates()
         for _, state in ipairs(tags.usageStates or {}) do
-            for _, id in ipairs(usageIds) do setTag(tags, id, state[id] == true) end
+            applyUsage(tags, state, tags.usageBase)
             setTag(tags, "beverage", state.beverage)
             setTag(tags, "alcoholic", state.alcoholic)
-            setTag(tags, "medical", baseMedical or state.bandage == true or state.disinfectant == true)
-            setTag(tags, "firstaid", baseFirstAid or state.bandage == true or state.disinfectant == true)
-            if matchesCookingStates() then return true end
+            if matchesCookingStates(state.cooked) then return true end
         end
         if tags.usageStates and #tags.usageStates > 0 then return false end
         return matchesCookingStates()

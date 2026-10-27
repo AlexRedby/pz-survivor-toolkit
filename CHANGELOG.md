@@ -32,6 +32,13 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.300
+
+- Derive fishing and trapping bait roles from native definitions and current food eligibility. Preserve food uses and distinguish cooked bait, trap-incompatible additions and usable supplies in filters and warehouse snapshots.
+- Include genuine adhesive-repair supplies such as glue, adhesive tape and recipe-specific cloth in Repair, while keeping unrelated uses. Add Ignition for usable matches, lighters and firestarters; empty garden sprayers no longer count as plant treatments.
+- Classify fully depleted ordinary batteries as Junk instead of crafting/electrical supplies. Fractional remaining charge and rechargeable vehicle batteries keep their roles; manual corrections still take precedence.
+- Keep dynamic choices visible before those item states occur, use coherent preview combinations, and read older four-role warehouse snapshots alongside the expanded capability format.
+
 ### 0.1.299
 
 - Keep fluid category previews from consuming game random numbers. Read configured starting amounts without sampling them; explicit empty containers stay empty and ranged defaults have stable preview categories. Existing items continue to use their current contents.

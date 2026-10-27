@@ -393,6 +393,7 @@ return {
         ["bandage"] = "Bandaging",
         ["disinfectant"] = "Disinfection",
         ["dirty"] = "Dirty",
+        ["ignite"] = "Ignition",
         ["edible"] = "Can Eat",
         ["dismantle"] = "Disassembly",
         ["fresh"] = "Fresh",

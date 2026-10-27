@@ -57,6 +57,9 @@ require = function(name)
         end
         return usage
     end
+    if name == 'PZSurvivorToolkit/ItemBaitTags' or name == 'PZSurvivorToolkit/ItemRepairTags' then
+        return dofile(shared .. name .. '.lua')
+    end
     error(name)
 end
 local capture = dofile(shared .. 'PZSurvivorToolkit/ManifestModel.lua')
@@ -99,6 +102,9 @@ for _, state in ipairs({
     {roles={bandage=false,disinfectant=false,dirty=false,fuel=false},encoded='0000'},
     {roles={bandage=true,dirty=true},encoded='1?1?'},
     {roles={fuel=false},encoded='???0'},
+    {roles={spentBattery=true},encoded='??????1???'},
+    {roles={spentBattery=false},encoded='??????0???'},
+    {roles={ignite=true,treatment=false,fishBait=true,trapBait=false,repair=true},encoded='????10?101'},
     {roles={}},
 }) do
     value.usage = state.roles

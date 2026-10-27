@@ -45,6 +45,8 @@ require = function(name)
             assert(script == (value.getScriptItem and value:getScriptItem()), 'usage capture omitted the physical script')
             return value.usage or {}, {{disinfectant=true,fuel=true}}, true
         end
+    elseif name=='PZSurvivorToolkit/ItemBaitTags' or name=='PZSurvivorToolkit/ItemRepairTags' then
+        module=dofile(shared..name..'.lua')
     elseif name=='PZSurvivorToolkit/QuartermasterPresets' then
         module={native=function()return presets end,rules=function()return {}end}
     elseif name=='PZSurvivorToolkit/ContainerAppearance' then
@@ -519,7 +521,7 @@ Model.PAGE_ROWS=oldRows
 local allOrder,allBytes=store.order,Model.PAGE_BYTES
 store.order={fluidRecord.id}
 local firstFluid=fluidRecord.entries[fluidRecord.itemOrder[1]]
-Model.PAGE_BYTES=1800+#firstFluid.key+#firstFluid.ft+#firstFluid.cat+208
+Model.PAGE_BYTES=1800+#firstFluid.key+#firstFluid.ft+#firstFluid.cat+216
 local budgetPlayer={}
 local _,budgetPage=Authority.requestPage(budgetPlayer,{})
 local budgetRows=0
@@ -559,8 +561,8 @@ do
         value.usage=roles
         return value
     end
-    local good=usageBottle({bandage=false,disinfectant=true,dirty=false,fuel=true})
-    local diluted=usageBottle({bandage=false,disinfectant=false,dirty=false,fuel=false})
+    local good=usageBottle({bandage=false,disinfectant=true,dirty=false,fuel=true,fishBait=true,trapBait=true})
+    local diluted=usageBottle({bandage=false,disinfectant=false,dirty=false,fuel=false,fishBait=false,trapBait=false})
     local unknown=usageBottle({})
     local usageItems={good,usageBottle(good.usage),diluted,unknown}
     square(5,{object({container(usageItems)},{PZSTQuartermasterTagRules={['0']={include={'tool'},exclude={}}}})})
@@ -574,7 +576,7 @@ do
         'unchanged medical/fuel roles rebuilt the immutable sample')
     record.entries[Model.item(good).key].usageState=nil
     settle(100)
-    assert(store.revision>revision and store.containers[record.id].entries[Model.item(good).key].usageState=='0101',
+    assert(store.revision>revision and store.containers[record.id].entries[Model.item(good).key].usageState=='0101???11?',
         'entry comparison ignored the captured usage roles')
     record=store.containers[record.id]
     revision=store.revision
@@ -596,7 +598,7 @@ do
         if page.cursor then _,page=Authority.requestPage(player,{cursor=page.cursor})
         else page=nil end
     end
-    assert(states['0101']==2 and states['0000']==1 and states.unknown==1,
+    assert(states['0101???11?']==2 and states['0000???00?']==1 and states.unknown==1,
         'pagination lost known-false usage roles or inferred unknown contents')
     Model.PAGE_ROWS=oldRows
     good.usage=diluted.usage
