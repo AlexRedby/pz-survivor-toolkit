@@ -1,10 +1,20 @@
 -- Disposable setup ends at baseline. All later helpers only observe native state.
-local F={cases={'borrowed-scissors','style-no-tool','styled-scissors','beard-trim','dye-hair','dye-beard'}}
+local F={cases={'borrowed-scissors','style-no-tool','styled-scissors','beard-trim','dye-hair','dye-beard','sprayed-scissors','greased-scissors'}}
 function F.baseCase(caseID)return (caseID:gsub('^active%-',''):gsub('^move%-',''))end
 function F.moving(caseID)return caseID:sub(1,5)=='move-'end
-function F.moveAllowed(caseID)local base=F.baseCase(caseID);return base=='borrowed-scissors'or base=='style-no-tool'or base=='beard-trim'end
+function F.moveAllowed(caseID)
+ local base=F.baseCase(caseID);for _,known in ipairs(F.cases)do if base==known then return true end end;return false
+end
+-- Native generated drainable definitions: Hairgel UseDelta=.05; Hairspray2=.1.
+-- GreasedBack runs the general selector and then a fresh Hairgel selector.
+local styling={
+ ['styled-scissors']={kind='Base.Hairgel',initial=20,uses=1,target='MohawkFan'},
+ ['sprayed-scissors']={kind='Base.Hairspray2',initial=10,uses=1,target='MohawkFan'},
+ ['greased-scissors']={kind='Base.Hairgel',initial=20,uses=2,target='GreasedBack'},
+}
+function F.stylingCost(caseID)return styling[F.baseCase(caseID)]end
 function F.active(caseID)return caseID:sub(1,7)=='active-'end
-function F.haircut(caseID)caseID=F.baseCase(caseID);return caseID=='borrowed-scissors'or caseID=='style-no-tool'or caseID=='styled-scissors'end
+function F.haircut(caseID)caseID=F.baseCase(caseID);return caseID=='borrowed-scissors'or caseID=='style-no-tool'or F.stylingCost(caseID)~=nil end
 function F.borrowed(state)return state.scissors or state.razor or state.dye end
 local function id(item)return item and item:getID()or false end
 local function find(container,wanted)
@@ -75,7 +85,8 @@ local function styles(player,caseID)
  if caseID=='style-no-tool'then
   for _,style in ipairs(list)do if style:isAttachedHair()and style:getName()~=''and not style:isNoChoose()then target=style;break end end
  else
-  local name=caseID=='styled-scissors'and'MohawkFan'or(player:isFemale()and'Bob'or'CrewCut')
+  local cost=F.stylingCost(caseID)
+  local name=cost and cost.target or(player:isFemale()and'Bob'or'CrewCut')
   target=player:isFemale()and owner:FindFemaleStyle(name)or owner:FindMaleStyle(name)
  end
  assert(target and target:getName()~='','required actual actor-native hairstyle unavailable')
@@ -169,8 +180,10 @@ function F.prepare(player,caseID,previous)
  end
  if caseID=='borrowed-scissors'or caseID=='dye-hair'then seed('hat','Base.Hat_BaseballCap')end
  if caseID=='dye-beard'then seed('mask','Base.Hat_DustMask')end
- if caseID=='styled-scissors'then
-  seed('gel','Base.Hairgel');state.gel:setCurrentUses(state.gel:getMaxUses());assert(state.gel:getCurrentUses()==20,'native Hairgel must start at20uses')
+ local cost=F.stylingCost(caseID)
+ if cost then
+  seed('gel',cost.kind);state.gel:setCurrentUses(state.gel:getMaxUses())
+  assert(state.gel:getCurrentUses()==cost.initial,'native styling item full uses changed')
  end
  for _,name in ipairs({'front','tail'})do ids[name..'Total']=state[name]:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and 3 or 1)end
  equipment(state)
@@ -232,7 +245,11 @@ function F.expectedAppearance(state,baseline,native,remote,authority)
 end
 function F.effectsMatch(state,value,baseline,native,remote,authority)
  if not F.same(value.appearance,F.expectedAppearance(state,baseline,native,remote,authority))then return false end
- if state.gel and value.gel.uses~=(native and 19 or 20)then return false end
+ if state.gel then
+  local expected=clone(baseline.gel);local cost=assert(F.stylingCost(state.ids.case),'unknown fixture styling cost')
+  if native then expected.uses=expected.uses-cost.uses end
+  if not F.same(value.gel,expected)then return false end
+ end
  if state.dye then
   local expected=clone(baseline.dye);if native then expected.amount=math.max(0,expected.amount-.5)end
   if not F.same(value.dye,expected)then return false end

@@ -172,7 +172,12 @@ local function enqueue()
  if moving()then tail=ISReadABook:new(state.player,state.tail);ISTimedActionQueue.add(tail)end
  local producer=assert(producers[ids.actionKind])
  assert(producer.owner[producer.key]==producer.callback and Proof.closure(producer.callback,producer.source),'actual native grooming UI producer unavailable')
- if state.gel then assert(state.player:getInventory():getItemFromType('Hairgel',true,true)==state.gel,'native styling selector chose foreign Hairgel')end
+ if state.gel then
+  local inventory=state.player:getInventory()
+  local selected=inventory:getItemFromType('Hairgel',true,true)or inventory:getItemFromType('Hairspray2',true,true)or inventory:getFirstTagRecurse(ItemTag.DO_HAIRDO)
+  assert(selected==state.gel,'native styling selector chose foreign styling item')
+  if baseCase()=='greased-scissors'then assert(inventory:getItemFromType('Hairgel',true,true)==state.gel,'native GreasedBack second selector chose foreign Hairgel')end
+ end
  local function produce()
   if ids.actionKind=='ISCutHair'then producer.callback(state.player,ids.targetStyle,ids.duration)
   elseif ids.actionKind=='ISTrimBeard'then producer.callback(state.player,ids.targetBeard)

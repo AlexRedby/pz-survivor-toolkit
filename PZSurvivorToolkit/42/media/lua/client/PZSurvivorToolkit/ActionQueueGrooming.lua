@@ -105,7 +105,7 @@ function Grooming.adoptBase(name,previous,replacement)
  return adoptPending(name,previous,replacement)
 end
 local function inspector(profile,snapshot,resources,policy)
- return function(action)
+ return function(action,context)
   if not unchanged(profile,snapshot,action)then return end
   local result=resources({item=action[profile.field]})
   if type(result)~='table'or type(result.targets)~='table'then return end
@@ -122,7 +122,7 @@ local function inspector(profile,snapshot,resources,policy)
   if running then result.interrupt='audited-stop'end
   if waiting and lifecycle and stopBridge and stopBridge()and applyPending and Pending.apply==applyPending
    and Pending.adoptBase==adoptPending and toolkit.ActionQueueGroomingPending==Pending
-   and Proof.closure(applyPending,'ActionQueueGroomingPending.lua')then applyPending(profile,snapshot,action,result,policy)end
+   and Proof.closure(applyPending,'ActionQueueGroomingPending.lua')then applyPending(profile,snapshot,action,result,policy,context)end
   return result
  end
 end

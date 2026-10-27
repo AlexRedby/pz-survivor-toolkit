@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.307
+
+- Allow moving unstarted hair/beard dye and supported gel/spray hairstyles around independent queued work. Preserve exact dye identity, native late styling selectors and costs, including GreasedBack double use; keep shared materials, unsupported replacements and active bodies protected.
+
 ### 0.1.306
 
 - Add Broken from the current native item state, independent of partial wear, empty supplies and food spoilage. Show healthy/broken preview alternatives for native wear classes and tools degraded by crafting inputs without creating items or running callbacks.

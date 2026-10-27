@@ -15,12 +15,13 @@ class GroomingCancellationTests(unittest.TestCase):
         selected=case;active=case in g.ACTIVE_CASES;moving=case in g.MOVE_CASES;case=g.base_case(case)
         native=mode=='native';completed=native or moving;mp=kind=='mp';borrowed=g.BORROWED[case]
         selection=dict(suite='grooming-cancel',cases=[case],mode=mode,kind=kind,clients=1,languages=['EN'],mods=list(g.MODS),options={'mp_host':True} if mp else {})
-        names=['bag','content','front','tail','torch','secondary']+([borrowed] if borrowed else [])+(['hat'] if case in ('borrowed-scissors','dye-hair') else [])+(['mask'] if case=='dye-beard' else [])+(['gel'] if case=='styled-scissors' else [])
+        names=['bag','content','front','tail','torch','secondary']+([borrowed] if borrowed else [])+(['hat'] if case in ('borrowed-scissors','dye-hair') else [])+(['mask'] if case=='dye-beard' else [])+(['gel'] if case in g.STYLING_COSTS else [])
         types=dict(bag='Base.Bag_Schoolbag',content='Base.Paperclip',front='Base.BookCarpentry1',tail='Base.BookFirstAid1',torch='Base.Torch',secondary='Base.Screwdriver',scissors='Base.Scissors',hat='Base.Hat_BaseballCap',gel='Base.Hairgel',razor='Base.Razor',dye='Base.HairDyeCommon',mask='Base.Hat_DustMask')
+        if case in g.STYLING_COSTS:types['gel']=g.STYLING_COSTS[case]['kind']
         items={name:i+1 for i,name in enumerate(names)}
         ids=dict(case=case,actor=1,male=True,items=items,types={name:types[name] for name in names},initialStyle='Fabian',
-                 targetStyle='PonyTail' if case=='style-no-tool' else 'MohawkFan' if case=='styled-scissors' else 'CrewCut' if case=='borrowed-scissors' else 'Fabian',
-                 duration=g.duration(case),initialLevel=3,targetLevel=3 if case=='style-no-tool' or case not in g.HAIRCUT else 2 if case=='styled-scissors' else 1,targetAttached=case=='style-no-tool',
+                 targetStyle='PonyTail' if case=='style-no-tool' else g.STYLING_COSTS[case]['target'] if case in g.STYLING_COSTS else 'CrewCut' if case=='borrowed-scissors' else 'Fabian',
+                 duration=g.duration(case),initialLevel=3,targetLevel=3 if case=='style-no-tool' or case not in g.HAIRCUT else 2 if case in ('styled-scissors','sprayed-scissors') else 1,targetAttached=case=='style-no-tool',
                  actionKind=g.BODY[case],producer=g.PRODUCER[g.BODY[case]],borrowed=borrowed,
                  initialBeard='LongScruffy' if case not in g.HAIRCUT else False,targetBeard='Moustache' if case=='beard-trim' else False,
                  beardInitialLevel=3 if case not in g.HAIRCUT else False,beardTargetLevel=1 if case=='beard-trim' else False,
@@ -28,13 +29,13 @@ class GroomingCancellationTests(unittest.TestCase):
         baseline=dict(case=case,male=True,items=[dict(id=value,kind=types[name],container=items['bag'] if name in ('content','scissors','razor','dye') else 'root',favorite=name in ('bag','scissors','razor','dye')) for name,value in items.items()],
                       primary=items['torch'],secondary=items['secondary'],worn=[dict(id=items['bag'],location='base:back')]+([dict(id=items['hat'],location='base:hat')] if 'hat'in items else [])+([dict(id=items['mask'],location='base:mask')] if 'mask'in items else []),
                       torchActive=True,frontPages=97,tailPages=99,appearance=dict(model='Fabian',nonAttached=False,color=dict(r=.2,g=.4,b=.6),beardModel='LongScruffy' if case not in g.HAIRCUT else '',beardColor=dict(r=.3,g=.25,b=.2)),
-                      gel=dict(id=items['gel'],uses=20) if 'gel'in items else False,dye=dict(id=items['dye'],amount=1,color=dict(r=.1,g=.5,b=.9)) if 'dye'in items else False)
+                      gel=dict(id=items['gel'],uses=g.STYLING_COSTS[case]['initial']) if 'gel'in items else False,dye=dict(id=items['dye'],amount=1,color=dict(r=.1,g=.5,b=.9)) if 'dye'in items else False)
         authority_base=copy.deepcopy(baseline);ids['baseline']=copy.deepcopy(authority_base)
         if mp and borrowed=='dye':baseline['dye']['color']=g.fluid_wire_color(authority_base['dye']['color'])
         def final_state(initial,remote=False):
             value=copy.deepcopy(initial);value.update(frontPages=100 if moving or case=='style-no-tool' else 97,tailPages=100)
             value['appearance']=g.expected_appearance(initial,ids,completed,remote,authority_base)
-            if 'gel'in items:value['gel']['uses']=19 if completed else 20
+            if 'gel'in items:value['gel']['uses']=g.STYLING_COSTS[case]['initial']-(g.STYLING_COSTS[case]['uses'] if completed else 0)
             if 'dye'in items:value['dye']['amount']=.5 if completed else 1
             return value
         final=final_state(baseline,mp);authority_final=final_state(authority_base)
@@ -334,7 +335,7 @@ class GroomingCancellationTests(unittest.TestCase):
                 for kind in ('sp','mp'):
                     selection,row=self.evidence(case,mode,kind)
                     native=mode=='native'or case in g.MOVE_CASES;remote=kind=='mp';base_case=g.base_case(case)
-                    state=table(dict(ids=row['ids'],gel=True if base_case=='styled-scissors' else None,dye=True if base_case.startswith('dye-') else None))
+                    state=table(dict(ids=row['ids'],gel=True if base_case in g.STYLING_COSTS else None,dye=True if base_case.startswith('dye-') else None))
                     base,final,authority=table(row['baseline']),table(row['clientFinal']),table(row['receipt']['baseline'])
                     with self.subTest(case=case,mode=mode,kind=kind):
                         self.assertTrue(shared.effectsMatch(state,final,base,native,remote,authority))
@@ -379,7 +380,7 @@ class GroomingCancellationTests(unittest.TestCase):
             for mode in ('native','toolkit'):
                 for kind in ('sp','mp'):
                     _,row=self.evidence(case,mode,kind);base=g.base_case(case)
-                    state=dict(ids=row['ids'],gel=base=='styled-scissors',dye=base.startswith('dye-'))
+                    state=dict(ids=row['ids'],gel=base in g.STYLING_COSTS,dye=base.startswith('dye-'))
                     values=[state,row['clientFinal'],row['baseline'],mode=='native' or case in g.MOVE_CASES,kind=='mp',row['receipt']['baseline']]
                     script.append('assert(F.effectsMatch('+','.join(literal(v) for v in values)+'),'+literal(case+'/'+mode+'/'+kind)+')')
                     changed=copy.deepcopy(row['clientFinal']);changed['appearance']['beardModel']='unexpected';values[1]=changed
@@ -427,9 +428,11 @@ class GroomingCancellationTests(unittest.TestCase):
     def test_move_scenarios_preserve_all_cancel_ids_and_complete_original_effects(self):
         from queue_checks import scenarios
         definition=g.definitions()['grooming-cancel']
-        self.assertEqual(g.ALL_CASES[:12],g.CASES+g.ACTIVE_CASES)
+        self.assertEqual(g.ALL_CASES[:2*len(g.CASES)],g.CASES+g.ACTIVE_CASES)
         self.assertEqual(scenarios.select(definition,'move-independent',None,'mp','toolkit')[0],g.INDEPENDENT_CASES)
-        self.assertEqual(scenarios.select(definition,'move-dependent',None,'mp','toolkit')[0],g.DEPENDENT_CASES)
+        self.assertEqual(g.INDEPENDENT_CASES,g.MOVE_CASES)
+        with self.assertRaisesRegex(ValueError,'shared/unknown material conflicts'):
+            scenarios.select(definition,'move-dependent',None,'mp','toolkit')
         for case in g.MOVE_CASES:
             for mode in ('native','toolkit'):
                 for kind in ('sp','mp'):
@@ -441,7 +444,7 @@ class GroomingCancellationTests(unittest.TestCase):
                         self.assertEqual(self.report(selection,row)['issues'],[])
                         self.assertTrue(self.report(selection,row,True)['issues'])
 
-    def test_all_six_moves_share_one_sp_host_on_off_selection_and_report(self):
+    def test_all_moves_share_one_sp_host_on_off_selection_and_report(self):
         for mode in ('native','toolkit'):
             for kind in ('sp','mp'):
                 rows=[self.evidence(case,mode,kind)[1] for case in g.MOVE_CASES]
@@ -478,9 +481,9 @@ class GroomingCancellationTests(unittest.TestCase):
             for label,change in changes.items():
                 selection,row=self.evidence(case,kind='mp');change(row)
                 with self.subTest(case=case,change=label),self.assertRaises((AssertionError,KeyError,TypeError)):self.check(selection,row)
-        for case in ('move-styled-scissors','move-dye-hair','move-dye-beard'):
+        for case in ('move-styled-scissors','move-sprayed-scissors','move-greased-scissors','move-dye-hair','move-dye-beard'):
             selection,row=self.evidence(case)
-            if case=='move-styled-scissors':row['clientFinal']['gel']['uses']=20
+            if g.base_case(case) in g.STYLING_COSTS:row['clientFinal']['gel']['uses']=g.STYLING_COSTS[g.base_case(case)]['initial']
             else:row['clientFinal']['dye']['amount']=1
             with self.subTest(case=case),self.assertRaises(AssertionError):self.check(selection,row)
 
@@ -500,15 +503,19 @@ class GroomingCancellationTests(unittest.TestCase):
               if name==key then return value end end
             error('missing fixture upvalue '..key)
           end
-          for _,case in ipairs({'move-borrowed-scissors','move-style-no-tool','move-styled-scissors','move-beard-trim','move-dye-hair','move-dye-beard'})do
+          for _,baseCase in ipairs(assert(loadfile(shared))().cases)do
+           local case='move-'..baseCase
            for _,mode in ipairs({'native','toolkit'})do
             local F=assert(loadfile(shared))()
             local config={mode=mode,cases={case},kind='sp'}
             Events=setmetatable({},{__index=function(t,k)local v={Add=function()end};t[k]=v;return v end})
             local q={queue={}};function q:indexOf(action)for i,v in ipairs(self.queue)do if v==action then return i end end;return -1 end
             local sequence,produced,edited,checkpoint=0,0,0,0
-            local player={isTimedActionInstant=function()return false end,getInventory=function()return {getItemFromType=function()return nil end}end}
-            local item={getID=function()return 7 end};local token={}
+            local item={getID=function()return 7 end};local stylingItem={getID=function()return 8 end};local token={}
+            local cost=F.stylingCost(case)
+            local selectors={}
+            local inventory={getItemFromType=function(_,name)selectors[#selectors+1]=name;if cost and 'Base.'..name==cost.kind then return stylingItem end end}
+            local player={isTimedActionInstant=function()return false end,getInventory=function()return inventory end}
             local base=F.baseCase(case);local kind=base=='beard-trim'and'ISTrimBeard'or(base:find('dye-',1,true)and'ISDyeHair'or'ISCutHair')
             local borrowed=base~='style-no-tool'
             function getDebug()return false end
@@ -539,9 +546,9 @@ class GroomingCancellationTests(unittest.TestCase):
               elseif name=='QueueTestSelection'then return config elseif name=='PZSurvivorToolkit/SourceProof'then return proof end end
             local file=assert(io.open(source));local contents=file:read('*a');file:close()
             local client=assert(loadstring(contents..'\nreturn {enqueue=enqueue,move=moveAtBoundary}'))()
-            local state={player=player,front={getID=function()return 1 end},tail={getID=function()return 2 end}}
+            local state={player=player,gel=cost and stylingItem or nil,front={getID=function()return 1 end},tail={getID=function()return 2 end}}
             if borrowed then state[kind=='ISDyeHair'and'dye'or(kind=='ISTrimBeard'and'razor'or'scissors')]=item end
-            set(client.enqueue,'state',state);set(client.enqueue,'ids',{baseline={},actionKind=kind,targetStyle='CrewCut',targetBeard='Moustache',duration=kind=='ISDyeHair'and 120 or(base=='style-no-tool'and 100 or 300)})
+            set(client.enqueue,'state',state);set(client.enqueue,'ids',{case=case,baseline={},actionKind=kind,targetStyle=cost and cost.target or 'CrewCut',targetBeard='Moustache',duration=kind=='ISDyeHair'and 120 or(base=='style-no-tool'and 100 or 300)})
             set(client.enqueue,'queue',function()return q end);set(client.enqueue,'snapshot',function()return {}end)
             set(client.enqueue,'register',function(action)
               local actions=get(client.enqueue,'actions');if actions[action]then return actions[action]end
@@ -549,6 +556,10 @@ class GroomingCancellationTests(unittest.TestCase):
             end)
             F.sameSetup=function()return true end
             client.enqueue();assert(produced==1 and q:indexOf(get(client.enqueue,'body'))>2)
+            if cost then
+              local expected=cost.kind=='Base.Hairspray2'and'Hairgel,Hairspray2'or(base=='greased-scissors'and'Hairgel,Hairgel'or'Hairgel')
+              assert(table.concat(selectors,',')==expected,'fixture skipped actual native styling selector path')
+            end
             set(client.move,'nativeEpisodes',{[q.current]=q.current.action})
             set(client.move,'request',function(name)assert(name=='Checkpoint');checkpoint=checkpoint+1 end)
             set(client.move,'raw',function(marker,boundary)
@@ -561,6 +572,116 @@ class GroomingCancellationTests(unittest.TestCase):
         """
         result=subprocess.run([luajit,'-',str(root/'client/ZZGroomingCancel.lua'),str(root/'shared/QueueGroomingCancel.lua')],input=script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    def test_expanded_styling_fixture_prepares_exact_native_resources_and_costs(self):
+        luajit=shutil.which('luajit')
+        if not luajit:self.skipTest('LuaJIT required for actual fixture preparation check')
+        fixture=Path(__file__).parent/'native_queue/grooming-cancel/shared/QueueGroomingCancel.lua'
+        script=r"""
+          function isClient()return false end
+          function isServer()return false end
+          require=function(name)assert(name=='QueueEnergyPlacement');return function()end end
+          local F=assert(loadfile(arg[1]))()
+          -- Execute actual preparation/target selection; equipment color/wire setup
+          -- has its own source-backed test, so stub only that separate helper.
+          for i=1,100 do local name=debug.getupvalue(F.prepare,i);if not name then break end
+            if name=='equipment'then debug.setupvalue(F.prepare,i,function()end);break end end
+          local function list(values)return {size=function()return #values end,get=function(_,i)return values[i+1]end}end
+          local function style(name,level)
+            return {getName=function()return name end,getLevel=function()return level end,
+              isAttachedHair=function()return false end,isNoChoose=function()return false end,getTrimChoices=function()return list({})end}
+          end
+          local styles={Fabian=style('Fabian',3),MohawkFan=style('MohawkFan',2),GreasedBack=style('GreasedBack',1)}
+          function getHairStylesInstance()return {getAllMaleStyles=function()return list({styles.GreasedBack,styles.Fabian,styles.MohawkFan})end,
+            FindMaleStyle=function(_,name)return styles[name]end}end
+          local expected={['styled-scissors']={'Base.Hairgel',20,1,'MohawkFan'},
+            ['sprayed-scissors']={'Base.Hairspray2',10,1,'MohawkFan'},['greased-scissors']={'Base.Hairgel',20,2,'GreasedBack'}}
+          for base,cost in pairs(expected)do
+            for _,prefix in ipairs({'','active-','move-'})do
+              local serial=0;local root
+              local function container()
+                local box={items={}}
+                function box:AddItem(kind)
+                  serial=serial+1;local item={kind=kind,id=serial,container=self}
+                  function item:getID()return self.id end
+                  function item:getFullType()return self.kind end
+                  function item:getContainer()return self.container end
+                  function item:setFavorite(value)self.favorite=value end
+                  function item:getMaxUses()return self.kind=='Base.Hairspray2'and 10 or 20 end
+                  function item:setCurrentUses(value)self.uses=value end
+                  function item:getCurrentUses()return self.uses end
+                  function item:getNumberOfPages()return 100 end
+                  if kind=='Base.Bag_Schoolbag'then local nested=container();function item:getItemContainer()return nested end end
+                  self.items[#self.items+1]=item;return item
+                end
+                return box
+              end
+              root=container()
+              local player={isFemale=function()return false end,getInventory=function()return root end,getOnlineID=function()return 7 end}
+              for _,name in ipairs({'setGodMod','setGhostMode','setAutoDrink'})do player[name]=function()end end
+              F.snapshot=function(state)return {case=state.ids.case,appearance={model=state.ids.initialStyle,nonAttached=false},
+                gel={id=state.gel:getID(),uses=state.gel:getCurrentUses()},dye=false}end
+              local state=F.prepare(player,prefix..base)
+              assert(state.ids.case==prefix..base and state.ids.actionKind=='ISCutHair'and state.ids.producer=='ISCharacterScreen.onCutHair')
+              assert(state.ids.targetStyle==cost[4]and state.ids.duration==300 and state.ids.initialStyle=='Fabian')
+              assert(state.ids.borrowed=='scissors'and state.ids.types.gel==cost[1])
+              assert(state.gel.kind==cost[1]and state.gel.uses==cost[2]and state.gel.container==root)
+              assert(state.scissors.container==state.bag:getItemContainer()and state.scissors.favorite)
+              local baseSnapshot=state.ids.baseline
+              local final={appearance=F.expectedAppearance(state,baseSnapshot,true),gel={id=baseSnapshot.gel.id,uses=cost[2]-cost[3]}}
+              assert(F.effectsMatch(state,final,baseSnapshot,true))
+              final.gel.uses=cost[2]-cost[3]+1;assert(not F.effectsMatch(state,final,baseSnapshot,true),'missing styling use accepted')
+              assert(F.effectsMatch(state,baseSnapshot,baseSnapshot,false),'canceled preparation consumed styling material')
+            end
+          end
+        """
+        result=subprocess.run([luajit,'-',str(fixture)],input=script,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    def test_expanded_cost_evidence_rejects_corruption_in_each_role(self):
+        for case,cost in g.STYLING_COSTS.items():
+            for mode in ('native','toolkit'):
+                for kind in ('sp','mp'):
+                    for prefix in ('','active-','move-'):
+                        selected=prefix+case
+                        for field in ('clientFinal','authorityFinal','beforeTail'):
+                            for bad in (True,1.25,-1,cost['initial']+1):
+                                selection,row=self.evidence(selected,mode,kind)
+                                value=(row['clientFinal'] if field=='clientFinal' else row['receipt']['final'] if field=='authorityFinal' else row['command']['beforeTail']['snapshot'])
+                                value['gel']['uses']=bad
+                                with self.subTest(case=selected,mode=mode,kind=kind,field=field,bad=bad),self.assertRaises(AssertionError):self.check(selection,row)
+                        for bad_cost in (0,cost['uses']+1):
+                            selection,row=self.evidence(selected,mode,kind)
+                            completed=mode=='native' or prefix=='move-'
+                            row['receipt']['final']['gel']['uses']=cost['initial']-bad_cost if completed else cost['initial']-1
+                            with self.subTest(case=selected,mode=mode,kind=kind,cost=bad_cost),self.assertRaises(AssertionError):self.check(selection,row)
+                        selection,row=self.evidence(selected,mode,kind)
+                        row['command']['beforeTail']['snapshot']['gel']['id']=row['ids']['items']['scissors']
+                        with self.assertRaises(AssertionError):self.check(selection,row)
+                        selection,row=self.evidence(selected,mode,kind)
+                        row['receipt']['baseline']['gel']['uses']=cost['initial']-1
+                        with self.assertRaises(AssertionError):self.check(selection,row)
+
+    def test_two_use_host_replication_is_transient_and_final_cost_stays_exact(self):
+        for mode in ('native','toolkit'):
+            for kind in ('sp','mp'):
+                selection,row=self.evidence('move-greased-scissors',mode,kind)
+                row['command']['beforeTail']['snapshot']['gel']['uses']=19
+                with self.subTest(mode=mode,kind=kind):
+                    if kind=='mp' and mode=='toolkit':self.assertTrue(self.check(selection,row)['cleanupVerified'])
+                    else:
+                        with self.assertRaises(AssertionError):self.check(selection,row)
+                selection,row=self.evidence('greased-scissors',mode,kind)
+                row['command']['beforeTail']['snapshot']['gel']['uses']=19
+                if kind=='mp' and mode=='native':self.assertTrue(self.check(selection,row)['cleanupVerified'])
+                else:
+                    with self.assertRaises(AssertionError):self.check(selection,row)
+                selection,row=self.evidence('move-greased-scissors',mode,kind)
+                row['clientFinal']['gel']['uses']=19
+                with self.assertRaises(AssertionError):self.check(selection,row)
+                selection,row=self.evidence('move-greased-scissors',mode,kind)
+                row['receipt']['checkpoint']['gel']['uses']=19
+                with self.assertRaises(AssertionError):self.check(selection,row)
 
     def test_requires_exact_full_pack_and_fresh_single_actor_host(self):
         for changes in ({'mods':g.MODS[:-1]},{'clients':True},{'options':{'world_template':'saved-world'}},{'kind':'mp','options':{}}):

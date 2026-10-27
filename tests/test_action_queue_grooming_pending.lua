@@ -54,8 +54,45 @@ for _,kind in ipairs({'ISCutHair','ISTrimBeard'})do
   assert(not s.api.move(s.queue,s.body,s.tail,false),'unknown/started pending move admitted: '..kind..' '..mutation)
  end
 end
-local dye=pending('ISDyeHair')
-assert(not dye.policy.inspect(dye.body).knownInputs and not dye.api.move(dye.queue,dye.body,dye.tail,false),'unproved dye-fluid effects gained move permission')
+for _,beard in ipairs({false,true})do
+ for _,amount in ipairs({1,.25})do
+  local dye=pending('ISDyeHair',{effects=true,amount=amount});dye.body.beard=beard
+  assert(dye.policy.inspect(dye.body).knownInputs,'exact live dye-fluid footprint missing')
+  assert(dye.api.move(dye.queue,dye.body,dye.tail,false),'independent dye move rejected')
+  assert(dye.api.move(dye.queue,dye.body,dye.tail,true),'reverse independent dye move rejected')
+  assert(not dye.player.fluidChanges and not dye.player.visualSync and not dye.player.itemSync and not dye.player.events,'dye inspection ran effects')
+  local use=dye.f.action(ISReadABook,{item=dye.tool})
+  dye.queue=dye.f.queue(dye.front,use,dye.body)
+  assert(not dye.api.move(dye.queue,dye.body,use,false),'shared dye resource crossed')
+  dye.queue=dye.f.queue(dye.front,dye.body,use)
+  assert(not dye.api.move(dye.queue,dye.body,use,true),'shared dye resource crossed in reverse')
+  assert(dye.body:complete(),'actual native dye completion failed')
+  local visual=dye.player:getHumanVisual()
+  assert((beard and visual.beardColor or visual.hairColor).r==.2 and (beard and not visual.hairColor or not beard and not visual.beardColor),'dye changed wrong cosmetic field')
+  assert(dye.tool:getFluidContainer():getAmount()==math.max(0,amount-.5)and dye.player.fluidChanges==1
+   and dye.player.itemSync==1 and dye.player.visualSync==1 and dye.player.modelResets==1 and dye.player.events==1,'native dye cost/result synchronization changed')
+ end
+end
+for _,mutation in ipairs({'empty','negative','nan','infinite','overfull','foreign-fluid','stats','constructor','color-owner','debug','beard-target','missing-dye','wrong-slot'})do
+ local s=pending('ISDyeHair');local fluid=s.tool:getFluidContainer()
+ if mutation=='empty'then fluid.amount=0
+ elseif mutation=='negative'then fluid.amount=-1
+ elseif mutation=='nan'then fluid.amount=0/0
+ elseif mutation=='infinite'then fluid.capacity=math.huge
+ elseif mutation=='overfull'then fluid.amount=2
+ elseif mutation=='foreign-fluid'then fluid.kind='Unknown'
+ elseif mutation=='stats'then sendItemStats=function()error('foreign stats executed')end
+ elseif mutation=='constructor'then ImmutableColor.new=function()error('foreign color executed')end
+ elseif mutation=='color-owner'then ImmutableColor={new=ImmutableColor.new}
+ elseif mutation=='debug'then s.body.maxTime=1
+ elseif mutation=='beard-target'then s.body.beard='foreign'
+ elseif mutation=='missing-dye'then s.body.hairDye=nil
+ elseif mutation=='wrong-slot'then s.body.hairDye=nil;s.body.item=s.tool end
+ local c=s.policy.inspect(s.body)
+ assert(not c or not c.knownInputs,'unproved dye gained footprint: '..mutation)
+ assert(not s.api.move(s.queue,s.body,s.tail,false),'unproved dye moved: '..mutation)
+end
+print('PASS exact pending dye resources move in both directions; native full/partial hair/beard costs and synchronization unchanged, unknown inputs remain protected')
 local tie=pending('ISCutHair',{style='PonyTail',duration=100});tie.body.item=nil
 assert(tie.policy.inspect(tie.body).knownInputs and tie.api.move(tie.queue,tie.body,tie.tail,false),'native no-tool tie was not independent')
 local untie=pending('ISCutHair',{style='CrewCut',duration=100,untie='CrewCut'});untie.body.item=nil
@@ -89,3 +126,39 @@ local appearance=completedUntie.player:getHumanVisual()
 assert(appearance.model=='CrewCut'and appearance.nonAttached==nil and completedUntie.player.modelResets==1
  and completedUntie.player.growthResets==1 and completedUntie.player.visualSync==1,'native untie lost captured style, attachment cleanup or growth/model synchronization')
 print('PASS actual native untie completion retains captured target, clears attachment and resets/synchronizes once; inspection executes no effects')
+
+for _,style in ipairs({'MohawkFan','GreasedBack','Buffont','GreasedSide'})do
+ local s=pending('ISCutHair',{style=style,styling=true})
+ local context={contracts={},items={}}
+ local c=assert(s.policy.inspect(s.body,context))
+ assert(c.knownInputs and c.dynamicInputsByType,'complete styling selector footprint missing: '..style..' '..tostring(c.pendingMoveBlocker))
+ if style=='MohawkFan'or style=='GreasedBack'then
+  local reads=s.player.catalogReads
+  local second=ISCutHair:new(s.player,style,s.tool,300);second.toolkitQueueOperation={}
+  assert(s.policy.inspect(second,context).knownInputs and s.player.catalogReads==reads,'Definitions discarded shared evaluation context or cached live material incorrectly')
+  assert(s.policy.inspect(second,{contracts={},items={}}).knownInputs and s.player.catalogReads==reads+1,'new evaluation reused stale script metadata')
+ end
+ assert(s.api.move(s.queue,s.body,s.tail,false),'independent paid style did not move: '..style)
+ assert(s.api.move(s.queue,s.body,s.tail,true),'reverse paid style did not move: '..style)
+ local gel=s.f.item(style=='Buffont'and'Base.Hairspray2'or'Base.Hairgel');local other=s.f.action(ISReadABook,{item=gel})
+ s.queue=s.f.queue(s.front,other,s.body);assert(not s.api.move(s.queue,s.body,other,false),'late styling input crossed')
+ s.queue=s.f.queue(s.front,s.body,other);assert(not s.api.move(s.queue,s.body,other,true),'late styling input crossed in reverse')
+ if style=='MohawkFan'or style=='GreasedBack'then
+  local wax=s.f.item('Mod.StyleWax');other=s.f.action(ISReadABook,{item=wax})
+  s.queue=s.f.queue(s.front,other,s.body);assert(not s.api.move(s.queue,s.body,other,false),'future tagged input absent at admission was ignored')
+  s.queue=s.f.queue(s.front,s.body,other);assert(not s.api.move(s.queue,s.body,other,true),'future tagged input crossed in reverse')
+ end
+end
+for _,mutation in ipairs({'owner','apply'})do
+ local s=pending('ISCutHair',{style='MohawkFan',styling=true})
+ if mutation=='owner'then PZSurvivorToolkit.ActionQueueGroomingCosts={}
+ else PZSurvivorToolkit.ActionQueueGroomingCosts.apply=function()error('foreign cost proof executed')end end
+ assert(not s.policy.inspect(s.body).knownInputs and not s.api.move(s.queue,s.body,s.tail,false),'changed styling proof retained move permission')
+end
+print('PASS actual styling helper integration and late full-type/tag selector dependencies in both directions; foreign proof APIs never execute')
+
+local female=pending('ISCutHair',{female=true,maleOnlyStyle=true})
+assert(not female.policy.inspect(female.body).knownInputs and not female.api.move(female.queue,female.body,female.tail,false),'unavailable female style fell back to male catalog')
+local validFemale=pending('ISCutHair',{female=true})
+assert(validFemale.policy.inspect(validFemale.body).knownInputs and validFemale.api.move(validFemale.queue,validFemale.body,validFemale.tail,false),'valid female style lost native eligibility')
+print('PASS unavailable female style cannot borrow a male target; valid female metadata retains pending support')

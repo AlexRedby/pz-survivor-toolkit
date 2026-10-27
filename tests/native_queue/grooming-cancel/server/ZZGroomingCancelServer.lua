@@ -31,7 +31,7 @@ Events.OnClientCommand.Add(function(module,name,player,args)
    local effectsMatch=F.effectsMatch(state,final,baseline,completed)
    if not effectsMatch then
     local expected={appearance=F.expectedAppearance(state,baseline,completed),gel=false,dye=false}
-    if state.gel then expected.gel={id=baseline.gel.id,uses=completed and 19 or 20}end
+    if state.gel then expected.gel={id=baseline.gel.id,uses=baseline.gel.uses-(completed and F.stylingCost(state.ids.case).uses or 0)}end
     if state.dye then
      expected.dye={id=baseline.dye.id,amount=completed and math.max(0,baseline.dye.amount-.5)or baseline.dye.amount,color=baseline.dye.color}
     end

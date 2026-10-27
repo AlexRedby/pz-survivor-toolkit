@@ -1016,7 +1016,7 @@ inspect = function(action, context)
         if context then context.contracts[action] = {inFlight = true} end
         return
     end
-    local result = {Definitions.inspect(action)}
+    local result = {Definitions.inspect(action, context)}
     local settlement = Toolkit.ActionQueueSettlement
     if result[1] and settlement and settlement.requiredStep(action) then
         local contract = {}

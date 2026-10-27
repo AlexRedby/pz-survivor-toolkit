@@ -45,18 +45,63 @@ local function setup(kind,client,options)
   appearance.getNonAttachedHair=function()return appearance.nonAttached end
   appearance.setNonAttachedHair=function(_,value)appearance.nonAttached=value end
   appearance.setHairModel=function(_,value)appearance.model=value end
-  player.isFemale=function()return false end;player.getHumanVisual=function()return appearance end
+  player.isFemale=function()return options.female==true end;player.getHumanVisual=function()return appearance end
+  appearance.setHairColor=function(_,value)appearance.hairColor=value end
+  appearance.setBeardColor=function(_,value)appearance.beardColor=value end
+  local color={getR=function()return .2 end,getG=function()return .4 end,getB=function()return .6 end}
+  local fluid={kind='FluidContainer',amount=options.amount or 1,capacity=1}
+  fluid.getAmount=function()return fluid.amount end;fluid.getCapacity=function()return fluid.capacity end
+  fluid.getColor=function()return color end
+  fluid.adjustAmount=function(_,value)fluid.amount=value;player.fluidChanges=(player.fluidChanges or 0)+1 end
+  tool.getFluidContainer=function()return fluid end
+  ImmutableColor={new=function(r,g,b)return {r=r,g=g,b=b}end}
+  sendItemStats=function(item)assert(item==tool);if options.effects then player.itemSync=(player.itemSync or 0)+1 else error('inspection executed item effects')end end
   player.resetModel=function()player.modelResets=(player.modelResets or 0)+1 end
   player.resetHairGrowingTime=function()player.growthResets=(player.growthResets or 0)+1 end
   local function style(name,kind)return {kind=kind,getName=function()return name end,isAttachedHair=function()return name=='PonyTail'end}end
   local hair={kind='HairStyles',FindMaleStyle=function(_,name)return name~='Missing'and style(name,'HairStyle')or nil end}
-  hair.FindFemaleStyle=hair.FindMaleStyle
+  hair.FindFemaleStyle=function(_,name)if not options.maleOnlyStyle then return hair:FindMaleStyle(name)end end
   local beard={kind='BeardStyles',FindStyle=function(_,name)return name~='Missing'and style(name,'BeardStyle')or nil end}
   getHairStylesInstance=function()return hair end;getBeardStylesInstance=function()return beard end
   getCore=function()return {}end;sendHumanVisual=function()if options.effects then player.visualSync=(player.visualSync or 0)+1 else error('inspection executed visual effects')end end
-  triggerEvent=function()error('inspection executed event effects')end
+  triggerEvent=function()if options.effects then player.events=(player.events or 0)+1 else error('inspection executed event effects')end end
   getClassSimpleName=function(value)return javaGlobals[value]and 'LuaJavaInvoker'or type(value)=='table'and value.kind or 'LuaClosure'end
   for _,name in ipairs({'getClassSimpleName','getHairStylesInstance','getBeardStylesInstance','sendHumanVisual','triggerEvent','getText','getCore','isClient','isServer'})do javaGlobals[_G[name]]=true end
+  javaGlobals[sendItemStats],javaGlobals[ImmutableColor.new]=true,true
+  if options.styling then
+   local originalInstance=instanceof
+   instanceof=function(value,name)return originalInstance(value,name)or name=='InventoryItem'and type(value)=='table'and value.kind=='DrainableComboItem'end
+   javaGlobals[instanceof]=true
+   local function list(values)return {kind='ArrayList',size=function()return #values end,get=function(_,i)return values[i+1]end}end
+   local scripts={}
+   ItemTag={DO_HAIRDO={}}
+   local function script(kind)
+    if not scripts[kind]then scripts[kind]={kind='Item',getFullName=function()return kind end,hasTag=function()return kind=='Base.Hairgel'or kind=='Base.Hairspray2'or kind=='Mod.StyleWax'end}end
+    return scripts[kind]
+   end
+   local function decorate(item)
+    local kind=item:getFullType();item.getType=function()return kind:match('[^.]+$')end
+    item.getScriptItem=function()return script(kind)end;item.hasTag=function()return script(kind):hasTag(ItemTag.DO_HAIRDO)end
+    if item:hasTag(ItemTag.DO_HAIRDO)then item.kind='DrainableComboItem'end
+    item.isBroken=function()return false end
+    item.getWorldItem=function()end;item.getReplaceOnDeplete=function()return item.replacement end
+    item.getWeightEmpty=function()return 0 end;item.getActualWeight=function()return .5 end
+    script(kind);return item
+   end
+   local factory=f.item;f.item=function(kind)return decorate(factory(kind))end;decorate(tool)
+   local manager={kind='ScriptManager',getAllItems=function()
+    player.catalogReads=(player.catalogReads or 0)+1
+    local values={};for _,value in pairs(scripts)do values[#values+1]=value end;return list(values)
+   end}
+   getScriptManager=function()return manager end;javaGlobals[getScriptManager]=true
+   root.kind='ItemContainer'
+   root.getItems=function()
+    local values={};for _,item in pairs(byID)do if item.present~=false then values[#values+1]=item end end
+    local items=list(values);items.contains=function(_,item)return item.present~=false and byID[item:getID()]==item end;return items
+   end
+   player.getPrimaryHandItem=function()return nil end;player.getSecondaryHandItem=function()return nil end
+   f.item('Base.Hairgel');script('Mod.StyleWax')
+  end
   if options.bcText then
    local bcSource=text(NativeWishlistWorkshopRoot..'/3586216562/mods/BetterContainers/42.21/media/lua/client/BetterContainers/Categorize/CategoryStore.lua')
    local installer=assert(bcSource:match('(function Store%.installTextResolver.-)\nfunction Store%.getAllCategoryIDs'))
@@ -78,6 +123,7 @@ local function setup(kind,client,options)
   if name=='PZSurvivorToolkit/TextResolverProof'and options.pending then return f.project('TextResolverProof')end
   if name=='BetterContainers/Categorize/CategoryStore'and bcStore then return bcStore end
   if name=='PZSurvivorToolkit/ActionQueueGroomingPending'and options.pending then return f.project('ActionQueueGroomingPending')end
+  if name=='PZSurvivorToolkit/ActionQueueGroomingCosts'then return f.project('ActionQueueGroomingCosts')end
   if name=='PZSurvivorToolkit/ActionQueueGrooming'then grooming=grooming or f.project('ActionQueueGrooming');return grooming end
   if name=='PZSurvivorToolkit/ActionQueuePolicy'then return f.project('ActionQueuePolicy')end
   return savedRequire(name)

@@ -76,10 +76,10 @@ function Definitions.behavior(action)
     return found, foundId
 end
 
-function Definitions.inspect(action)
+function Definitions.inspect(action,context)
     local behavior, id = Definitions.behavior(action)
     if not behavior then return nil end
-    local ok, contract = pcall(behavior.inspect, action)
+    local ok, contract = pcall(behavior.inspect, action, context)
     if not ok then return nil end
     return contract, id, behavior
 end
