@@ -194,6 +194,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.javapatchfixture.CartBootstrapCheck': 'CART_BOOTSTRAP_PASS'}
 CHECKS['net.alexredby.pztoolkitjavapatches.OptimizerCompatibilityChecks'] = 'OPTIMIZER_COMPATIBILITY_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CutawaySouthEdgeChecks'] = 'CUTAWAY_SOUTH_EDGE_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.TranslucentUnionChecks'] = 'TRANSLUCENT_UNION_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryTest'] = 'CART_INJURY_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CleanUIFoodAgeChecks'] = 'CLEANUI_FOOD_AGE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.NativeIgnitionSourceChecks'] = 'NATIVE_IGNITION_SOURCE_CHECKS_PASS'

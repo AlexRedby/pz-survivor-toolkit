@@ -381,6 +381,8 @@ internal object MainSupport {
                 Main.BUILD_SUPPORTED +
                 ", cutawaySouthEdge=" +
                 cutawaySouthEdge +
+                ", translucentSquareUnion=" +
+                translucentSquareUnion +
                 ", video=" +
                 Main.VIDEO_SUPPORTED +
                 ", animal=" +
