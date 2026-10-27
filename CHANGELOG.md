@@ -32,6 +32,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.294
+
+- Replace the visible broad Food tag with concrete, overlapping roles: Can Eat, Cooking Ingredient, existing meat/vegetable/fruit/beverage/alcohol tags, and Feed for pet food. Saved Food rules and manual assignments retain their previous membership without reappearing as new tag choices.
+- Derive Cooking Ingredient from native meal additions, food bases and consumed cooking-recipe inputs. Include meat, vegetables, bread, flour, seasonings, peanuts and native milk powder; exclude utensils, fuel, mere can-opening steps and fishing chum. Unknown callback-only recipes stay unclassified.
+- Classify liquid ingredients from their current contents, preserving empty and unsuitable-fluid negatives. Capture ingredient state in warehouse rows so filtering and grouping do not substitute a bottle's default contents; older snapshots keep unknown fluid state conservative.
+
 ### 0.1.293
 
 - Allow canceling an already-started native haircut, beard trim or hair/beard dye without discarding subsequent queued work. Preserve borrowed-tool and equipment cleanup, cosmetic state and unspent styling/dye resources; Host requires the exact still-started server receipt.
@@ -1340,6 +1346,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.68
+
+- Expose read-only recipe creation-handler metadata so cooking tags recognize native milk-powder recipes without executing them or accepting a replaced handler.
 
 ### 0.1.67
 
