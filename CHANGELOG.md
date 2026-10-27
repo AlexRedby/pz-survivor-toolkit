@@ -32,6 +32,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.291
+
+- Fixed: a native successful petting animation no longer clears unrelated queued work. The original animal effect and stop cleanup are retained; continuation waits for the exact native action to leave and for Host stop acknowledgement. Manual cancellation, invalid targets and unsupported handlers retain native behavior.
+- Fixed: natural-stop preservation verifies the original base stop handler before suppressing its queue reset, including the existing Fitness path. Preinstalled foreign stop effects and replaced native action ownership remain protected.
+
 ### 0.1.290
 
 - Fix Configure container filter fonts and control sizing. Select refined tags with one checkbox click, reflect active rules in checked rows and clear them with category selections; preserve explicit advanced conditions.

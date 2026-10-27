@@ -1489,6 +1489,8 @@ end
 do
  local savedCompleted=ISTimedActionQueue.onCompleted
  ISTimedActionQueue.onCompleted=coreCompleted
+ -- The extracted production bridge has the same owning Queue table as a full install.
+ PZSurvivorToolkit.ActionQueue=core
  local beginAt=assert(coreSource:find('local function clearStop(queue)',1,true))
  local endAt=assert(coreSource:find('Queue.label =',beginAt,true))
  assert(loadstring('local Queue,Toolkit,Policy,Operations,Settlement = ...\n'..
