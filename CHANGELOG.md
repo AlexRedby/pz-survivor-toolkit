@@ -32,6 +32,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.298
+
+- Add Bandaging, Disinfection and Dirty tags from native medical properties. Dirty bandages and ripped sheets remain usable for bandaging; fluid disinfection follows the current alcohol concentration and remaining amount.
+- Extend Fuel to propane and native fire fuels, including charcoal. Current contents and remaining uses distinguish usable fuel from empty containers, with coherent filter previews and captured warehouse states.
+- Clarify Musical, For Liquids and Russian Feed labels while preserving saved tag identifiers and manual corrections.
+
 ### 0.1.297
 
 - Rename the visible Experience tag to Learning while preserving saved rules and assignments; books and recordings retain their common training role without skill subdivisions.
@@ -1362,6 +1368,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.69
+
+- Expose read-only native script bandage and alcohol power for medical tag previews. Missing or unsupported metadata remains unknown; the helpers do not create items or modify game state.
 
 ### 0.1.68
 

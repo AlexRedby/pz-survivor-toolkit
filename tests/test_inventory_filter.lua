@@ -17,6 +17,7 @@ require = function(name)
         or name == "PZSurvivorToolkit/ItemCookingTags" or name == "PZSurvivorToolkit/ItemDisassemblyTags"
         or name == "PZSurvivorToolkit/ItemCookingStates"
         or name == "PZSurvivorToolkit/ItemFluidTags"
+        or name == "PZSurvivorToolkit/ItemUsageTags"
         or name == "PZSurvivorToolkit/ItemMediaTags" or name == "PZSurvivorToolkit/ItemCategories"
         or name == "PZSurvivorToolkit/ItemCategoryRules" or name == "PZSurvivorToolkit/ItemCategoryData"
         or name == "PZSurvivorToolkit/LegacyItemCategories"

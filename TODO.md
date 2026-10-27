@@ -192,6 +192,8 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
+- [ ] Verify the selected that DAMN Library Plastic Welding Gun battery recipe against its callbacks: `42.20/media/scripts/damnCraft/recipes_damnCraft.txt:239-254` references functions that appear commented out in `media/lua/server/Crafting/DAMN_damnCraft.lua:570-598`. The battery audit could not recommend this as a working reuse path. Reproduce the recipe in an isolated selected-pack scenario and confirm callback resolution before changing or reporting the upstream behavior.
+
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
 
 - [ ] Repair the isolated fixture in `test_queue_native_snapshot.py::test_selected_adapter_helpers_are_sealed_without_unrelated_adapters`: its temporary craft UI project omits the required `craft_ui_water.py`, causing `FileNotFoundError` while the recovery subcase passes. Copy the declared helper and rerun the focused snapshot tests; do not relax source sealing.

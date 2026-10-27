@@ -39,6 +39,12 @@ require = function(name)
     if name=='PZSurvivorToolkit/ItemTags' then module=Tags
     elseif name=='PZSurvivorToolkit/ItemCookingTags' then module=Cooking
     elseif name=='PZSurvivorToolkit/ItemFluidTags' then module=Fluids
+    elseif name=='PZSurvivorToolkit/ItemUsageTags' then
+        module=dofile(shared..name..'.lua')
+        module.read=function(script,value)
+            assert(script == (value.getScriptItem and value:getScriptItem()), 'usage capture omitted the physical script')
+            return value.usage or {}, {{disinfectant=true,fuel=true}}, true
+        end
     elseif name=='PZSurvivorToolkit/QuartermasterPresets' then
         module={native=function()return presets end,rules=function()return {}end}
     elseif name=='PZSurvivorToolkit/ContainerAppearance' then
@@ -113,6 +119,8 @@ assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].co
     'legacy row invented a current cooking state')
 assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].fluidState==nil,
     'legacy row invented current fluid contents')
+assert(legacy.entries[Model.identity('Base.A','Old translated label','Food')].usageState==nil,
+    'legacy row invented current medical/fuel capability')
 -- Stable identity separates types with identical labels, preserves custom names, ignores locale.
 assert(Model.item(item('Base.A','Translated A')).key==Model.item(item('Base.A','Other locale')).key)
 assert(Model.item(item('Base.A','Same')).key~=Model.item(item('Base.B','Same')).key)
@@ -507,16 +515,16 @@ end
 assert(contents.beverage==2 and contents.alcoholic==1 and contents.none==1 and contents.unknown==1,
     'pagination lost captured contents or inferred old/unknown fluid state')
 Model.PAGE_ROWS=oldRows
--- The per-row payload estimate reserves space for the added contents field.
+-- The per-row payload estimate reserves space for captured contents and usage fields.
 local allOrder,allBytes=store.order,Model.PAGE_BYTES
 store.order={fluidRecord.id}
 local firstFluid=fluidRecord.entries[fluidRecord.itemOrder[1]]
-Model.PAGE_BYTES=1800+#firstFluid.key+#firstFluid.ft+#firstFluid.cat+168
+Model.PAGE_BYTES=1800+#firstFluid.key+#firstFluid.ft+#firstFluid.cat+208
 local budgetPlayer={}
 local _,budgetPage=Authority.requestPage(budgetPlayer,{})
 local budgetRows=0
 for _ in pairs(budgetPage.containers[1].entries)do budgetRows=budgetRows+1 end
-assert(budgetRows==1 and budgetPage.cursor, 'page estimate omitted the fluid contents field allowance')
+assert(budgetRows==1 and budgetPage.cursor, 'page estimate omitted captured contents/usage field allowances')
 store.order,Model.PAGE_BYTES=allOrder,allBytes
 water.fluid='alcohol'
 settle(100)
@@ -541,5 +549,64 @@ store.liveCount=store.liveCount+1
 Authority.resetRuntime()
 settle(100)
 assert(Authority.getStore()==store and store.schema==2 and store.containers[oldId]==oldSample
-    and oldSample.entries[oldKey].fluidState==nil,
-    'additive fluid capture invalidated schema-2 samples or inferred unloaded bottle contents')
+    and oldSample.entries[oldKey].fluidState==nil and oldSample.entries[oldKey].usageState==nil,
+    'additive capture invalidated schema-2 samples or inferred unloaded bottle contents/usage')
+
+-- An equally alcoholic diluted mixture can lose treatment/fuel capability without changing type or beverage role.
+do
+    local function usageBottle(roles)
+        local value=bottle('alcohol')
+        value.usage=roles
+        return value
+    end
+    local good=usageBottle({bandage=false,disinfectant=true,dirty=false,fuel=true})
+    local diluted=usageBottle({bandage=false,disinfectant=false,dirty=false,fuel=false})
+    local unknown=usageBottle({})
+    local usageItems={good,usageBottle(good.usage),diluted,unknown}
+    square(5,{object({container(usageItems)},{PZSTQuartermasterTagRules={['0']={include={'tool'},exclude={}}}})})
+    settle(100)
+    local record=assert(store.containers['5,0,0/0/0'])
+    assert(#record.itemOrder==3 and record.entries[Model.item(good).key].n==2,
+        'same-type medical/fuel contents were merged or identical roles failed to aggregate')
+    local revision=store.revision
+    settle(100)
+    assert(store.revision==revision and store.containers[record.id].entries==record.entries,
+        'unchanged medical/fuel roles rebuilt the immutable sample')
+    record.entries[Model.item(good).key].usageState=nil
+    settle(100)
+    assert(store.revision>revision and store.containers[record.id].entries[Model.item(good).key].usageState=='0101',
+        'entry comparison ignored the captured usage roles')
+    record=store.containers[record.id]
+    revision=store.revision
+    local strongKey=Model.item(good).key
+    Model.PAGE_ROWS=1
+    local player,states={},{}
+    local _,page=Authority.requestPage(player,{})
+    while page do
+        for _,sample in ipairs(page.containers)do
+            if sample.id==record.id then
+                for _,row in pairs(sample.entries)do
+                    assert(row.fluidState=='alcoholic', 'usage capture changed the independent beverage state')
+                    states[row.usageState or 'unknown']=row.n
+                end
+            elseif sample.id==oldId or sample.legacy then
+                for _,row in pairs(sample.entries)do assert(row.usageState==nil)end
+            end
+        end
+        if page.cursor then _,page=Authority.requestPage(player,{cursor=page.cursor})
+        else page=nil end
+    end
+    assert(states['0101']==2 and states['0000']==1 and states.unknown==1,
+        'pagination lost known-false usage roles or inferred unknown contents')
+    Model.PAGE_ROWS=oldRows
+    good.usage=diluted.usage
+    settle(100)
+    local changedUsage=store.containers[record.id]
+    assert(store.revision>revision and changedUsage.entries[Model.item(good).key].n==2
+        and changedUsage.entries[strongKey].n==1,
+        'in-place dilution did not repartition medical/fuel roles')
+    squares['5,0,0']=nil
+    settle(10)
+    assert(not store.containers[record.id].loaded and store.containers[record.id].entries==changedUsage.entries,
+        'unloading lost last-known medical/fuel roles')
+end

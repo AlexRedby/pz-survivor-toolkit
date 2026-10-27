@@ -49,6 +49,14 @@ require = function(name)
         assert(script == item.script, 'capture omitted the physical fluid item script')
         return item.fluidState, {'beverage','alcoholic'}, true
     end} end
+    if name == 'PZSurvivorToolkit/ItemUsageTags' then
+        local usage = dofile(shared .. name .. '.lua')
+        usage.read = function(script,item)
+            assert(script == item.script, 'capture omitted the physical usage item script')
+            return item.usage or {}, {{disinfectant=true,fuel=true}}, true
+        end
+        return usage
+    end
     error(name)
 end
 local capture = dofile(shared .. 'PZSurvivorToolkit/ManifestModel.lua')
@@ -83,3 +91,22 @@ for _, invalid in ipairs({{}, {false}, {'unknown'}, {true}}) do
     assert(row.fluidState == nil and row.key == unknown.key,
         'snapshot inferred contents from script possibilities or accepted an invalid fluid state')
 end
+
+value.fluidState = 'alcoholic'
+local usageKeys = {}
+for _, state in ipairs({
+    {roles={bandage=false,disinfectant=true,dirty=false,fuel=true},encoded='0101'},
+    {roles={bandage=false,disinfectant=false,dirty=false,fuel=false},encoded='0000'},
+    {roles={bandage=true,dirty=true},encoded='1?1?'},
+    {roles={fuel=false},encoded='???0'},
+    {roles={}},
+}) do
+    value.usage = state.roles
+    local row = capture.item(value)
+    assert(row.usageState == state.encoded, 'snapshot lost true/false/unknown native usage roles')
+    assert(not usageKeys[row.key], 'same-type contents merged different medical/fuel roles')
+    usageKeys[row.key] = true
+end
+value.usage = nil
+assert(capture.item(value).usageState == nil,
+    'snapshot inferred current usage from possible factory-filled contents')

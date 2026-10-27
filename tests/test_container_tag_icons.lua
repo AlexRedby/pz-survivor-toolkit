@@ -29,8 +29,8 @@ local function setup(active, ready)
         end
         if name=='PZSurvivorToolkit/TagCustomization' then return {getRevision=function()return 0 end,cacheRevision=function()return "0:0" end,definition=function()end} end
         if loaded[name] then return loaded[name] end
-        local path = name == 'PZSurvivorToolkit/ContainerAppearance' and 'shared/'
-            or name == 'PZSurvivorToolkit/TagVisuals' and 'client/'
+        local path = name == 'PZSurvivorToolkit/TagVisuals' and 'client/'
+            or name:match('^PZSurvivorToolkit/') and 'shared/'
         assert(path, 'unexpected require: ' .. name)
         loaded[name] = dofile(root .. path .. name .. '.lua')
         return loaded[name]

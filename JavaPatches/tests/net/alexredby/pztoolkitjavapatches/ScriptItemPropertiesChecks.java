@@ -38,6 +38,9 @@ public final class ScriptItemPropertiesChecks {
         require(writableFunction != null, "ZombieBuddy did not register the writable Lua global");
         Object eatMenuFunction = LuaManager.env.rawget("toolkitScriptHasEatMenu");
         require(eatMenuFunction != null, "ZombieBuddy did not register the Eat-menu Lua global");
+        Object bandageFunction = LuaManager.env.rawget("toolkitScriptBandagePower");
+        Object alcoholFunction = LuaManager.env.rawget("toolkitScriptAlcoholPower");
+        require(bandageFunction != null && alcoholFunction != null, "medical script globals were not registered");
         var thread = new KahluaThread(LuaManager.platform, LuaManager.env);
         thread.debugOwnerThread = Thread.currentThread();
         LuaManager.thread = thread;
@@ -47,9 +50,28 @@ public final class ScriptItemPropertiesChecks {
         require(Boolean.FALSE.equals(thread.call(function, new Object[]{null})), "nil script was not false");
         require(thread.call(writableFunction, new Object[]{null}) == null, "nil script writable property was not nil");
         require(thread.call(eatMenuFunction, new Object[]{null}) == null, "nil script Eat menu was not unknown");
+        require(thread.call(bandageFunction, new Object[]{null}) == null, "nil bandage script was not unknown");
+        require(thread.call(alcoholFunction, new Object[]{null}) == null, "nil alcohol script was not unknown");
+        var bandageField = Item.class.getDeclaredField("bandagePower");
+        var alcoholField = Item.class.getDeclaredField("alcoholPower");
+        bandageField.setAccessible(true);
+        alcoholField.setAccessible(true);
         for (boolean client : new boolean[]{false, true}) {
             GameClient.client = client;
             GameServer.server = !client;
+            for (float power : new float[]{0.0f, 0.5f, 2.0f, 4.0f}) {
+                bandageField.setFloat(script, power);
+                alcoholField.setFloat(script, power);
+                require(((Number)thread.call(bandageFunction, new Object[]{script})).floatValue() == power,
+                    "native bandage power was not exposed through Kahlua");
+                require(((Number)thread.call(alcoholFunction, new Object[]{script})).floatValue() == power,
+                    "native alcohol power was not exposed through Kahlua");
+                require(bandageField.getFloat(script) == power && alcoholField.getFloat(script) == power,
+                    "medical bridge changed native fields");
+                require(ScriptItemProperties.readBandagePower(script, false) == null
+                    && ScriptItemProperties.readAlcoholPower(script, false) == null,
+                    "unsupported bytecode exposed medical metadata");
+            }
             for (ItemBodyLocation slot : new ItemBodyLocation[]{null, ItemBodyLocation.BACK, ItemBodyLocation.SATCHEL, null}) {
                 script.canBeEquipped = slot;
                 require(Boolean.valueOf(slot != null).equals(thread.call(function, new Object[]{script})),
@@ -82,7 +104,7 @@ public final class ScriptItemPropertiesChecks {
         }
         GameClient.client = false;
         GameServer.server = false;
-        System.out.println("SCRIPT_ITEM_PROPERTIES_CHECKS_PASS (live native slot, writable and Eat-menu properties, no writes, non-debug client/server, nil/unsupported, ZombieBuddy scan and Kahlua)");
+        System.out.println("SCRIPT_ITEM_PROPERTIES_CHECKS_PASS (live native slot, writable, Eat-menu and medical properties, no writes, non-debug client/server, nil/unsupported, ZombieBuddy scan and Kahlua)");
         System.exit(0);
     }
 }

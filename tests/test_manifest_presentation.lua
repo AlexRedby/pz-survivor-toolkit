@@ -12,12 +12,13 @@ local providerCalls = 0
 local Categories = {forScript = function(actual)
     assert(actual == script); providerCalls = providerCalls + 1; return 'craftingMaterial'
 end}
-local Tags = {forSnapshot = function(actual,fullType,category,recording,delta,ingredient,cookingState,fluidState)
+local Tags = {forSnapshot = function(actual,fullType,category,recording,delta,ingredient,cookingState,fluidState,usageState)
     assert(actual==script and fullType=='Base.Nails')
     assert(recording==nil and delta==nil,'ordinary manifest entry invented recorded content or changes')
     assert(ingredient==nil,'old snapshot invented a captured ingredient value')
     assert(cookingState==nil,'old snapshot invented a captured cooking state')
     assert(fluidState==nil,'old snapshot invented captured fluid contents')
+    assert(usageState==nil,'old snapshot invented captured medical/fuel roles')
     return {'tag:' .. category}
 end, forItem=function() error('manifest passed a Lua proxy to native item classification') end,
 label = function(id) return 'Label ' .. id end}
@@ -100,5 +101,21 @@ for _,state in ipairs({{'none'},{'beverage'},{'alcoholic'},{}})do
             ingredient=false,cookingState=false,fluidState=expectedFluid,loaded=loaded})
         assert(rendered==(expectedFluid and 'Label '..expectedFluid or ''))
         assert(#renderedTags==(expectedFluid and 1 or 0))
+    end
+end
+
+local expectedUsage
+Tags.forSnapshot=function(actual,fullType,category,recording,delta,ingredient,cookingState,fluidState,usageState)
+    assert(actual==script and fullType=='Base.MilkBottle' and ingredient==false
+        and cookingState==false and fluidState=='alcoholic')
+    assert(usageState==expectedUsage, 'presentation lost captured medical/fuel roles or inferred an old snapshot')
+    return usageState and {usageState} or {}
+end
+for _,state in ipairs({{'0101'},{'0000'},{'1?1?'},{'???0'},{}})do
+    expectedUsage=state[1]
+    for _,loaded in ipairs({true,false})do
+        local _,rendered,tags=Presentation.describe({ft='Base.MilkBottle',cat='Food',
+            ingredient=false,cookingState=false,fluidState='alcoholic',usageState=expectedUsage,loaded=loaded})
+        assert(rendered==(expectedUsage and 'Label '..expectedUsage or '') and #tags==(expectedUsage and 1 or 0))
     end
 end
