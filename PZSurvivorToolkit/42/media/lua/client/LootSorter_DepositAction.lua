@@ -12,6 +12,7 @@
 -- still belongs at the effect boundary: every actual SP transfer is checked, including items merged
 -- after start(). Host uses native transactions; only an explicit rejection can be skipped locally.
 require "TimedActions/ISInventoryTransferAction"
+local Duplicates = require "PZSurvivorToolkit/QuartermasterDuplicates"
 
 LootSorter = LootSorter or {}
 -- DBG / isDebug / describeContainer live in shared/LootSorter_Debug.lua; safeCall in LootSorter_Util.lua
@@ -34,8 +35,24 @@ end
 
 -- The real vanilla check (item exists, container reachable, box has room, item allowed, ...).
 function LootSorter.DepositAction:lsCanDeposit()
-    local ok, valid = pcall(function() return ISInventoryTransferAction.isValid(self) end)
+    local ok, valid = pcall(function()
+        local box = self.lsDestinationBox
+        if box and Duplicates.enabled(box.obj, box.ci)
+            and not Duplicates.accepts(self.destContainer, self.item) then return false end
+        return ISInventoryTransferAction.isValid(self)
+    end)
     return ok and valid == true
+end
+
+function LootSorter.DepositAction:canMergeAction(action)
+    -- Host creates native transactions for merged groups without calling start again.
+    -- Keep constrained deposits separate so every item gets a fresh admission check.
+    local function constrained(value)
+        local box = value and value.lsDestinationBox
+        return box and (box.noDuplicates or Duplicates.enabled(box.obj, box.ci))
+    end
+    if constrained(self) or constrained(action) then return false end
+    return ISInventoryTransferAction.canMergeAction(self, action)
 end
 
 -- Vanilla's isValid() bundles many conditions into one true/false, so a skip only ever told us "(full?)"

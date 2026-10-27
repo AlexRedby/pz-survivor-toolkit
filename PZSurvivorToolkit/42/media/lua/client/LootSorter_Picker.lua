@@ -174,6 +174,8 @@ function Picker:createChildren()
     self.chkContents = self:makeCheckbox("onlyContents", ui("OnlyContents"))
     self.chkChecked:setTooltip(ui("OnlyCheckedHint"))
     self.chkContents:setTooltip(ui("OnlyContentsHint"))
+    self.chkNoDuplicates = self:makeCheckbox("noDuplicates", ui("NoDuplicates"))
+    self.chkNoDuplicates:setTooltip(ui("NoDuplicatesHint"))
 
     self.toolkitTagSwitch = ISButton:new(pad, 0, 10, 22, "", self, Picker.onTagView)
     self.toolkitTagRuleButton = ISButton:new(pad, 0, 10, 22, "", self, Picker.onTagRule)
@@ -290,7 +292,7 @@ function Picker:createChildren()
 
     -- priorityEntry is absent on purpose: like self.filter it is a text box, already initialised and
     -- added where it was created.
-    for _, b in ipairs({ self.btnModeCat, self.btnModeItem, self.btnModePreset, self.chkChecked, self.chkContents,
+    for _, b in ipairs({ self.btnModeCat, self.btnModeItem, self.btnModePreset, self.chkChecked, self.chkContents, self.chkNoDuplicates,
                          self.toolkitTagSwitch, self.toolkitTagRuleButton,
                          self.btnPriorityDown, self.btnPriorityUp,
                          self.listbox, self.btnAll, self.btnClear, self.btnSave }) do
@@ -356,9 +358,8 @@ function Picker:layout()
         self.btnModePreset:setX(pad + (thirdW + gap) * 2); self.btnModePreset:setY(modeY); self.btnModePreset:setWidth(thirdW); self.btnModePreset:setHeight(rowH)
     end
 
-    -- filter block: the two checkboxes stack down the left, the priority control sits to their right
-    -- under its own label. Two rows tall, so the list starts below both. A preset has no box to
-    -- prioritise, so the editor hides the right side and the checkboxes take the full width.
+    -- Filter checkboxes share two rows with priority. The per-container duplicate policy gets
+    -- a separate row below them so translated labels remain readable at the minimum width.
     local viewY = modeY + rowH + gap
     local stack = 2                                  -- breathing room between the stacked checkboxes
     local secondRowY = viewY + rowH + stack
@@ -392,9 +393,14 @@ function Picker:layout()
     self.chkChecked:setWidth(checkboxWidth(self.chkChecked)); self.chkChecked:setHeight(rowH)
     self.chkContents:setX(pad); self.chkContents:setY(secondRowY)
     self.chkContents:setWidth(checkboxWidth(self.chkContents)); self.chkContents:setHeight(rowH)
+    self.chkNoDuplicates:setVisible(showPriority)
+    local thirdRowY = secondRowY + rowH + stack
+    self.chkNoDuplicates:setX(pad); self.chkNoDuplicates:setY(thirdRowY)
+    available = innerW
+    self.chkNoDuplicates:setWidth(checkboxWidth(self.chkNoDuplicates)); self.chkNoDuplicates:setHeight(rowH)
 
     local showTags = Tags.enabled() and self.mode == "cats"
-    local listY = secondRowY + rowH + gap
+    local listY = (showPriority and thirdRowY or secondRowY) + rowH + gap
     local visibleListY = listY + (showTags and (rowH + gap) * 2 or 0)
     self.minimumHeight = math.max(600, visibleListY + math.max(40, self.listbox.itemheight * 2) + gap + btnH + 12)
     if h < self.minimumHeight then h = self.minimumHeight; self:setHeight(h) end
@@ -880,6 +886,7 @@ function Picker:configJoypad()
         filterRow[#filterRow + 1] = self.priorityEntry
     end
     self:insertNewLineOfButtons(unpack(filterRow))
+    if self.targetKind ~= "preset" then self:insertNewLineOfButtons(self.chkNoDuplicates) end
     if Tags.enabled() and self.mode == "cats" then
         self:insertNewLineOfButtons(self.toolkitTagSwitch)
         self:insertNewLineOfButtons(self.toolkitTagRuleButton)
@@ -1012,7 +1019,8 @@ function Picker:onSave()
     self:resolvePresetSelection()
     local obj, ci = self.targetObj, self.targetCI
     local snapshot = LootSorter.snapshotDesignation({cats = self.selectedCats, items = self.selectedItems,
-        presets = self.selectedPresets, priority = self.priority, pzstTagRule = self.toolkitTagRule})
+        presets = self.selectedPresets, priority = self.priority, noDuplicates = self.noDuplicates,
+        pzstTagRule = self.toolkitTagRule})
     snapshot.appearance = AppearanceControls.value(self)
     self.toolkitTagSaving = true
     TagRules.saveBox(obj, ci, snapshot.pzstTagRule, getSpecificPlayer(self.playerNum or 0),
@@ -1025,6 +1033,7 @@ function Picker:onSave()
                 self.selection = self.mode == "items" and self.selectedItems
                     or self.mode == "presets" and self.selectedPresets or self.selectedCats
                 self.priority, self.toolkitTagRule, self.toolkitTagRuleRevision = snapshot.priority, snapshot.pzstTagRule, revision
+                self.noDuplicates = snapshot.noDuplicates
                 self:closePicker()
             elseif LootSorter.notify then
                 LootSorter.notify(getSpecificPlayer(self.playerNum or 0), getText(verdict == "stale"
@@ -1045,6 +1054,7 @@ function Picker:new(x, y, w, h)
     o.targetKind = "box"
     o.onlyChecked = false
     o.priority = 0
+    o.noDuplicates = false
     o.onlyContents = false
     o._modeState = { cats = {}, items = {}, presets = {} }
     o.title = getText("UI_PZST_ConfigureContainer")
@@ -1072,6 +1082,7 @@ function LootSorter.openPicker(obj, ci, playerNum)
     local curItems = LootSorter.getBoxItems(obj, ci)
     if curItems then for k, v in pairs(curItems) do if v then p.selectedItems[k] = true end end end
     p.priority = LootSorter.getBoxPriority(obj, ci)
+    p.noDuplicates = LootSorter.getBoxNoDuplicates(obj, ci)
     local curPresets = LootSorter.getBoxPresets(obj, ci)
     -- keep the stored value: it carries the generation the link was made against
     if curPresets then for k, v in pairs(curPresets) do if v then p.selectedPresets[k] = v end end end

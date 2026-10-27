@@ -78,6 +78,8 @@
   "UI_PZST_ContainerOnlyContentsHint": "Показать строки по текущему содержимому. Работает вместе с поиском и фильтром выбранного.",
   "UI_PZST_ContainerPriority": "Приоритет",
   "UI_PZST_ContainerPriorityHint": "Сначала заполняются контейнеры с большим числом. 0 - обычный приоритет. При равном числе выбирается ближайший.",
+  "UI_PZST_ContainerNoDuplicates": "Без дубликатов",
+  "UI_PZST_ContainerNoDuplicatesHint": "Класть в этот контейнер не более одного экземпляра каждого вида предметов. Учебники различаются по навыку и тому. Лишние экземпляры идут в следующий подходящий контейнер.",
   "UI_PZST_ContainerCheckFiltered": "Выбрать видимые",
   "UI_PZST_ContainerUncheckAll": "Снять выбор",
   "UI_PZST_ContainerTags": "Теги",

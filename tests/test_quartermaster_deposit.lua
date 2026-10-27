@@ -3,7 +3,10 @@ if not NativeActionRoot then
     print('Quartermaster deposit checks skipped (pass --game or --native-action-root).')
     return
 end
-require = function() end
+local duplicates = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/QuartermasterDuplicates.lua')
+require = function(name)
+    if name == 'PZSurvivorToolkit/QuartermasterDuplicates' then return duplicates end
+end
 next = nil -- native Kahlua has no next() global
 local clientMode = false
 isClient, isServer = function() return clientMode end, function() return false end
@@ -69,6 +72,9 @@ local actor = {getInventory = function(self) return self.inventory end, getPlaye
 local function container(capacity)
     local c = {items = {}, capacity = capacity, denied = {}, roomReads = 0}
     function c:getType() return 'crate' end
+    function c:getItems()
+        return {size = function() return #self.items end, get = function(_, i) return self.items[i + 1] end}
+    end
     function c:getParent() return nil end
     function c:isVehicleSeat() return false end
     function c:isExistYet() return true end
@@ -213,6 +219,46 @@ local function serverAccept(tx)
         ISTransferAction:transferItem(actor, value, tx.source, tx.destination, nil)
     end
     tx.done = true
+end
+-- Duplicate protection rechecks actual contents and keeps Host transactions separate.
+for _, host in ipairs({false, true}) do
+    clientMode = host
+    actor.inventory = container(10)
+    local source, destination, other = container(10), container(10), container(10)
+    local one, two, last = item(701, source), item(702, source), item(703, source)
+    local md = {LSBoxNoDuplicates = {['0'] = true}}
+    local box = {obj = {getModData = function() return md end}, ci = 0, noDuplicates = true}
+    local first, second, tail = action(LootSorter.DepositAction, one, source, destination),
+        action(LootSorter.DepositAction, two, source, destination), action(LootSorter.DepositAction, last, source, other)
+    first.lsDestinationBox, second.lsDestinationBox = box, box
+    local queue = ISTimedActionQueue.getTimedActionQueue(actor)
+    queue.queue, queue.current = {first, second, tail}, first
+    assert(not first:canMergeAction(second) and not second:canMergeAction(first),
+        'constrained actions merged past fresh admission')
+    first:start()
+    if host then serverAccept(transactions[first.transactionId]) end
+    first:perform()
+    assert(destination:contains(one) and queue.current == second)
+    local beforeTransactions = #created
+    second:start(); second:perform()
+    assert(second._lsSkip and source:contains(two) and queue.current == tail and #destination.items == 1,
+        'late duplicate must be skipped without dropping the independent tail')
+    assert(not host or #created == beforeTransactions, 'duplicate started a Host transaction')
+    tail:start()
+    if host then serverAccept(transactions[tail.transactionId]) end
+    tail:perform()
+    assert(other:contains(last) and #queue.queue == 0)
+    if not host then
+        -- A duplicate arriving after start is also rejected at the SP effect boundary.
+        destination:DoRemoveItem(one)
+        local late = action(LootSorter.DepositAction, two, source, destination)
+        late.lsDestinationBox = box
+        queue.queue, queue.current = {late}, late
+        late:start(); destination:AddItem(one); late:perform()
+        assert(source:contains(two) and #destination.items == 1 and #queue.queue == 0)
+        md.LSBoxNoDuplicates['0'] = nil
+        assert(late:lsCanDeposit(), 'disabling restriction did not restore ordinary transfer admission')
+    end
 end
 local function hostSetup()
     clientMode, transactions, created, removals, serial = true, {}, {}, {}, 0

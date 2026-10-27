@@ -1,6 +1,8 @@
 if not isServer()then return end
 local Fixture=require 'QuartermasterDistributionFixture'
 local JSON=require 'QueueHealthEvents'
+local Books=require 'QuartermasterBooksFixture'
+local bookPacket,bookPending
 local state,pending,preparing
 Events.OnClientCommand.Add(function(module,command,player,args)
  if module~='QuartermasterDistributionTest'then return end
@@ -14,9 +16,16 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    local result=Fixture.pasteReceipt(state.boxes)
    print('[QM_DISTRIBUTION] PASTE_AUTHORITY '..JSON.encode(result))
    sendServerCommand(player,module,'PasteVerified',result)
+  elseif command=='PrepareBooks'then
+   assert(state and state.verified,'book preparation before original sort verification')
+   bookPacket=Books.prepare(state)
+   print('[QM_DISTRIBUTION] BOOKS_PREPARED_AUTHORITY '..JSON.encode(bookPacket))
+   sendServerCommand(player,module,'BooksPrepared',bookPacket)
+  elseif command=='VerifyBooks'then
+   assert(bookPacket and not bookPending,'invalid book verification');bookPending=getTimestampMs()
   elseif command=='Verify'then assert(state and not pending,'invalid distribution verification');pending=getTimestampMs()
   else
-   assert(command=='Cleanup'and state.verified,'cleanup before verified effects')
+   assert(command=='Cleanup'and state.verified and state.booksVerified,'cleanup before verified effects')
    Fixture.cleanup(state);sendServerCommand(player,module,'Cleaned',{})
   end
  end)
@@ -34,6 +43,15 @@ Events.OnTick.Add(function()
    if not ok then print('[QUEUE_TEST] FAIL distribution preparation '..tostring(problem))end
   elseif getTimestampMs()-request.since>20000 then
    print('[QUEUE_TEST] FAIL distribution positioning timeout');preparing=nil
+  end
+ end
+ if bookPending then
+  local ok,result=pcall(Books.receipt,state.player,state.boxes,bookPacket)
+  if ok and result then
+   print('[QM_DISTRIBUTION] BOOKS_AUTHORITY '..JSON.encode(result))
+   state.booksVerified=true;sendServerCommand(state.player,'QuartermasterDistributionTest','BooksVerified',result);bookPending=nil
+  elseif not ok or getTimestampMs()-bookPending>20000 then
+   print('[QUEUE_TEST] FAIL book authority '..tostring(result));bookPending=nil
   end
  end
  if not pending then return end

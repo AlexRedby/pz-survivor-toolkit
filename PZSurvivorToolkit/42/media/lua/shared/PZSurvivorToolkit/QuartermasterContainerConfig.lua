@@ -32,6 +32,8 @@ function Config.normalize(value)
     local priority = value.priority == nil and 0 or tonumber(value.priority)
     if not priority or priority ~= priority or math.abs(priority) == math.huge then return nil end
     out.priority = priority
+    if value.noDuplicates ~= nil and type(value.noDuplicates) ~= "boolean" then return nil end
+    out.noDuplicates = value.noDuplicates == true
     if value.appearance ~= nil then
         out.appearance = Appearance.normalize(value.appearance)
         if not out.appearance then return nil end
@@ -42,7 +44,8 @@ end
 function Config.read(obj, ci, player)
     local md, key = obj:getModData(), tostring(ci)
     local out = Config.normalize({cats = md.LSBox and md.LSBox[key], items = md.LSBoxItems and md.LSBoxItems[key],
-        presets = md.LSBoxPresets and md.LSBoxPresets[key], priority = md.LSBoxPriority and md.LSBoxPriority[key]})
+        presets = md.LSBoxPresets and md.LSBoxPresets[key], priority = md.LSBoxPriority and md.LSBoxPriority[key],
+        noDuplicates = md.LSBoxNoDuplicates and md.LSBoxNoDuplicates[key]})
     if out then out.appearance = Appearance.read(obj, ci, player) end
     return out
 end
@@ -58,6 +61,10 @@ function Config.apply(obj, ci, player, value)
         if type(md.LSBoxPriority) ~= "table" then md.LSBoxPriority = {} end
         md.LSBoxPriority[key] = value.priority
     elseif type(md.LSBoxPriority) == "table" then md.LSBoxPriority[key] = nil end
+    if value.noDuplicates then
+        if type(md.LSBoxNoDuplicates) ~= "table" then md.LSBoxNoDuplicates = {} end
+        md.LSBoxNoDuplicates[key] = true
+    elseif type(md.LSBoxNoDuplicates) == "table" then md.LSBoxNoDuplicates[key] = nil end
     if value.appearance ~= nil then Appearance.apply(obj, ci, player, value.appearance) end
 end
 

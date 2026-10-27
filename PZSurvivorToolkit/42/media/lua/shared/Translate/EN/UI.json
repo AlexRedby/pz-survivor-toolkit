@@ -78,6 +78,8 @@
   "UI_PZST_ContainerOnlyContentsHint": "Show entries matching the current contents. Combines with the search and selected filter.",
   "UI_PZST_ContainerPriority": "Fill priority",
   "UI_PZST_ContainerPriorityHint": "Higher numbers fill first; 0 is normal. Equal priority uses the nearer container.",
+  "UI_PZST_ContainerNoDuplicates": "No duplicates",
+  "UI_PZST_ContainerNoDuplicatesHint": "Distribute at most one copy of each item type into this container. Skill books differ by skill and volume. Extra copies go to the next matching container.",
   "UI_PZST_ContainerCheckFiltered": "Select shown",
   "UI_PZST_ContainerUncheckAll": "Clear selection",
   "UI_PZST_ContainerTags": "Tags",

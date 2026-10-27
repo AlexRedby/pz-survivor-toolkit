@@ -32,6 +32,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.292
+
+- **Added:** Container sorting has an optional **No duplicates** setting. Distribution skips containers already holding the same item type and reserves only one copy per destination across the whole batch. Skill-book volumes remain distinct. Extra copies continue to the next matching container in the existing priority order, so a high-priority bookshelf can send duplicates to lower-priority storage. The setting is saved per compartment and included in copy/paste. Concurrent Host transfers by different players are not coordinated and can still add duplicate copies.
+
 ### 0.1.291
 
 - Fixed: a native successful petting animation no longer clears unrelated queued work. The original animal effect and stop cleanup are retained; continuation waits for the exact native action to leave and for Host stop acknowledgement. Manual cancellation, invalid targets and unsupported handlers retain native behavior.

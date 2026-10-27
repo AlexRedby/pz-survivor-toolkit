@@ -295,7 +295,7 @@ def verify(root, selection, catalog):
         return _deposit(root, selection)
     if selection.get('cases') == ['backpack']:
         return _backpack(root, selection)
-    issues, receipt = [], None
+    issues, receipt, book_result = [], None, None
     try:
         root = Path(root)
         text = (root / 'client1-launch.log').read_text(errors='replace')
@@ -309,6 +309,28 @@ def verify(root, selection, catalog):
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
         if receipt != expected or _one(authority, 'AUTHORITY') != expected:
             raise ValueError('Client/server distribution effects differ from exact designated destinations')
+        books = _one(text, 'BOOKS_PREPARED')
+        book_ids = books['ids']
+        types = ['Base.BookCarpentry1', 'Base.BookCarpentry1', 'Base.BookCarpentry2',
+                 'Base.BookCarpentry2', 'Base.BookCarpentry1']
+        if (not _exact(books, dict(ids=book_ids, types=types)) or type(book_ids) is not list
+                or len(book_ids) != 5 or any(type(value) is not int for value in book_ids)
+                or len(set(book_ids)) != 5 or set(book_ids) & set(ids)):
+            raise ValueError('Skill-book exact preparation identities differ')
+        if selection['kind'] == 'mp' and not _exact(_one(authority, 'BOOKS_PREPARED_AUTHORITY'), books):
+            raise ValueError('Skill-book preparation differs from Host authority')
+        book_result = _one(text, 'BOOKS_LOCAL')
+        destinations = [row['container'] for row in book_result['items']]
+        if destinations not in ([2, 2, 2, 3, 3], [2, 2, 3, 2, 3]):
+            raise ValueError('Skill-book direct destination uniqueness/fallback differs')
+        expected_books = dict(ids=book_ids,
+                              items=[dict(id=value, fullType=kind, container=dest)
+                                     for value, kind, dest in zip(book_ids, types, destinations)],
+                              noDuplicates=True, fallbackNoDuplicates=False, priorities=[7, 5],
+                              existingCopy=True, sameBatch=True, differentVolume=True, moved=4, conserved=5)
+        if (not _exact(book_result, expected_books)
+                or not _exact(_one(authority, 'BOOKS_AUTHORITY'), expected_books)):
+            raise ValueError('Skill-book authoritative configuration/transfer effects differ')
         marker = '[QM_DISTRIBUTION] COMPLETE moved=2 retained=2 walking=true pickup=true destinations=2 favorite=true'
         if not complete(selection, 'client1', text) or text.count(marker) != 1:
             raise ValueError('Distribution movement/transfer/cleanup gate missing')
@@ -316,4 +338,5 @@ def verify(root, selection, catalog):
         issues.append(str(error))
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'sort',
             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
-            'evidence': {'receipt': receipt, 'limits': ['Programmatic native button callback; no physical input or second client.']}}
+            'evidence': {'receipt': receipt, 'books': book_result,
+                         'limits': ['Programmatic native button callback; no physical input or second client.']}}

@@ -25,7 +25,7 @@ require = function(name)
     if name == 'PZSurvivorToolkit/ItemRetention' or name == 'PZSurvivorToolkit/ItemAccess' then
         return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
     end
-    if name == 'PZSurvivorToolkit/InventoryTransferProtection' then
+    if name == 'PZSurvivorToolkit/InventoryTransferProtection' or name == 'PZSurvivorToolkit/QuartermasterDuplicates' then
         return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua')
     end
     if name == 'PZSurvivorToolkit/TagVisuals' then
@@ -57,7 +57,8 @@ local uiText = {UI_PZST_ContainerSorting='What belongs here',
     UI_PZST_ContainerSortingHint='Select what this box accepts.',
     UI_PZST_ContainerSearch='Search the list', UI_PZST_ContainerSearchHint='Search visible entries',
     UI_PZST_ContainerOnlyChecked='Only checked', UI_PZST_ContainerOnlyContents='Only in contents',
-    UI_PZST_ContainerPriority='Priority', UI_PZST_ContainerCategories='Categories',
+    UI_PZST_ContainerPriority='Priority', UI_PZST_ContainerNoDuplicates='No duplicates',
+    UI_PZST_ContainerNoDuplicatesHint='One item of each full type per container.', UI_PZST_ContainerCategories='Categories',
     UI_PZST_ContainerTags='Tags', UI_PZST_ContainerItems='Items', UI_PZST_ContainerPresets='Presets',
     UI_PZST_ContainerAddRule='Add rule', UI_PZST_ContainerEditRule='Edit rule',
     UI_PZST_ContainerSave='Save'}
@@ -129,7 +130,8 @@ assert(p.minimumHeight > 380 and p.height >= p.minimumHeight
 getTextManager().getFontHeight = originalFontHeight
 p:setHeight(580);p:layout()
 
-assert(p.joypadButtonsY[4][1] == p.toolkitTagSwitch and p.joypadButtonsY[5][1] == p.toolkitTagRuleButton)
+assert(p.joypadButtonsY[4][1] == p.chkNoDuplicates and p.joypadButtonsY[5][1] == p.toolkitTagSwitch
+    and p.joypadButtonsY[6][1] == p.toolkitTagRuleButton, 'container policy has no controller row')
 local function assertLayout(picker)
     assert(picker.sortingHeading.y + picker.sortingHeading.height <= picker.sortingHint.y
         and picker.sortingHint.y + picker.sortingHint.height < picker.filterLabel.y
@@ -138,10 +140,15 @@ local function assertLayout(picker)
         and picker.filter.y + picker.filter.height < picker.btnModeCat.y
         and picker.btnModeCat.y + picker.btnModeCat.height <= picker.chkChecked.y
         and picker.chkChecked.y < picker.chkContents.y
+        and picker.chkContents.y + picker.chkContents.height <= picker.chkNoDuplicates.y
+        and picker.chkNoDuplicates.y + picker.chkNoDuplicates.height <= picker.listbox.y
+        and picker.chkNoDuplicates.x + picker.chkNoDuplicates.width <= picker:getWidth() - 10
         and picker.listbox.y + picker.listbox.height <= picker.btnSave.y,
         'window layout overlaps headings, search, filters, list, or Save')
 end
-assert(p.joypadButtonsY[4][1] == p.toolkitTagSwitch and p.joypadButtonsY[5][1] == p.toolkitTagRuleButton)
+assert(p.chkNoDuplicates.visible and not p.noDuplicates
+    and p.chkNoDuplicates.qmLabel == uiText.UI_PZST_ContainerNoDuplicates
+    and p.chkNoDuplicates.tooltip == uiText.UI_PZST_ContainerNoDuplicatesHint)
 assertLayout(p)
 assert(p.btnSave.title == uiText.UI_PZST_ContainerSave, 'Save button is not using the localized Toolkit label')
 p:setWidth(520); p:setHeight(700); p:prerender()
@@ -255,8 +262,9 @@ assert(openedDisabled.toolkitTagSwitch and not openedDisabled.toolkitTagSwitch.v
 enabled = true; openedDisabled:prerender()
 assert(openedDisabled.toolkitTagSwitch.visible and find(openedDisabled, 'food'),
     'picker opened while disabled did not enable tags without reopening')
-assert(openedDisabled.joypadButtonsY[4][1] == openedDisabled.toolkitTagSwitch
-    and openedDisabled.joypadButtonsY[5][1] == openedDisabled.toolkitTagRuleButton, 'live enable did not add controller navigation')
+assert(openedDisabled.joypadButtonsY[4][1] == openedDisabled.chkNoDuplicates
+    and openedDisabled.joypadButtonsY[5][1] == openedDisabled.toolkitTagSwitch
+    and openedDisabled.joypadButtonsY[6][1] == openedDisabled.toolkitTagRuleButton, 'live enable did not add controller navigation')
 reopened:prerender()
 assert(reopened.toolkitTagSwitch.visible and find(reopened, 'food'), 'setting toggle left a stale list')
 openedDisabled.toolkitTagRuleButton.onclick(openedDisabled)
@@ -477,8 +485,8 @@ local function checkSaveContract()
         and p.toolkitTagRuleButton.cachedOnclick == p.onTagRule, 'owned tag dispatch was replaced')
     assert(p.children[#p.children] == p.dimmer and not p.dimmer.visible)
     local rows = p.joypadButtonsY
-    assert(rows[4][1] == p.toolkitTagSwitch and rows[5][1] == p.toolkitTagRuleButton
-        and rows[6][1] == p.listbox, 'native controller rows omitted tag controls')
+    assert(rows[4][1] == p.chkNoDuplicates and rows[5][1] == p.toolkitTagSwitch and rows[6][1] == p.toolkitTagRuleButton
+        and rows[7][1] == p.listbox, 'native controller rows omitted container/tag controls')
     assert(p.listbox.vscroll.x == p.listbox.width - 16 and p.listbox.vscroll.height == p.listbox.height)
     assert(find(p, 'food') and find(p, 'MissingModCategory'), 'actual picker did not build tag/saved-category rows')
     local createRule = {mode = 'all', include = {'food'}, exclude = {'perishable'}}
@@ -510,9 +518,11 @@ local function checkSaveContract()
     local draft = rulePicker()
     assert(draft.owner == p and draft.player and #draft.categories == 4)
     draft.onApply({mode = 'all', include = {'food'}, exclude = {}})
+    p.chkNoDuplicates.onclick(p)
+    assert(p.noDuplicates and p.priority == 4, 'duplicate policy changed fill priority')
     save(p); save(p)
     assert(fixture.pendingRule() and not p.removed and #publications == 0, 'native Save bypassed asynchronous rule verdict')
-    p.selectedCats.Later, p.selectedItems.Later, p.priority = true, true, 99
+    p.selectedCats.Later, p.selectedItems.Later, p.priority, p.noDuplicates = true, true, 99, false
     p.selectedPresets.Later = 42
     p.toolkitTagRule.include[1] = 'electrical'
     p.toolkitTagRule, p.toolkitTagRuleTouched = nil, nil
@@ -524,7 +534,7 @@ local function checkSaveContract()
         'designation Save did not publish exactly once')
     local saved = publications[1]
     assert(saved.cats.OC_Food and saved.cats.MissingModCategory and not saved.cats.Later and not saved.cats.food
-        and saved.items.Hammer and not saved.items.Later and saved.priority == 4
+        and saved.items.Hammer and not saved.items.Later and saved.priority == 4 and saved.noDuplicates == true
         and saved.presets.Pantry == 'generation' and not saved.presets.Later
         and saved.pzstTagRule.include[1] == 'food', 'actual native save mixed snapshot and later edits')
 
@@ -536,13 +546,19 @@ local function checkSaveContract()
     end
     for _, verdict in ipairs({'stale', 'denied', 'timeout'}) do
         p = startPending()
+        assert(p.noDuplicates, 'reopened picker lost saved duplicate policy')
+        p.chkNoDuplicates.onclick(p)
         reply(verdict)
         assert(not p.removed and LootSorter._picker == p and #publications == 1 and fixture.coordinates() == 1,
             'rule ' .. verdict .. ' closed actual picker or wrote exact selections')
+        assert(p.noDuplicates == false and obj.md.LSBoxNoDuplicates['0'] == true,
+            'refused save lost duplicate policy draft or changed live policy')
     end
     assert(#failures == 3)
     save(p); reply('ok')
     assert(p.removed and #publications == 2 and fixture.coordinates() == 2, 'rule refusal prevented retry')
+    assert(obj.md.LSBoxNoDuplicates['0'] == nil and publications[2].noDuplicates == false,
+        'disabling duplicate policy did not clear persisted field')
     for _, closeVia in ipairs({'close', 'replace', 'retarget'}) do
         p = startPending()
         local writes = #publications
@@ -570,7 +586,11 @@ local function checkSaveContract()
     LootSorter.openPresetEditor('Pantry', 0, p)
     local editor = assert(LootSorter._presetEditor)
     editor:prerender()
-    assert(p.dimmer.visible and not editor.btnModePreset.visible and find(editor, 'food'))
+    assert(p.dimmer.visible and not editor.btnModePreset.visible and not editor.chkNoDuplicates.visible and find(editor, 'food'))
+    editor:configJoypad()
+    for _, row in ipairs(editor.joypadButtonsY) do
+        for _, button in ipairs(row) do assert(button ~= editor.chkNoDuplicates, 'preset navigation exposes container policy') end
+    end
     editor.toolkitTagRuleButton.onclick(editor)
     rules.presetsSynced = function() return false end
     save(editor)

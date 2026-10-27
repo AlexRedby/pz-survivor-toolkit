@@ -343,14 +343,38 @@ class QuartermasterBackpack(unittest.TestCase):
         prepared = {'ids': [11, 12, 13, 14]}
         result = {'items': [{'id': value, 'container': dest} for value, dest in zip(prepared['ids'], [2, 3, 1, 1])],
                   'moved': 2, 'retained': 2, 'favorite': True}
+        books = dict(ids=[21, 22, 23, 24, 25], types=['Base.BookCarpentry1', 'Base.BookCarpentry1',
+                     'Base.BookCarpentry2', 'Base.BookCarpentry2', 'Base.BookCarpentry1'])
+        book_result = dict(ids=books['ids'], items=[dict(id=value, fullType=kind, container=dest)
+                           for value, kind, dest in zip(books['ids'], books['types'], [2, 2, 3, 2, 3])],
+                           noDuplicates=True, fallbackNoDuplicates=False, priorities=[7, 5],
+                           existingCopy=True, sameBatch=True, differentVolume=True, moved=4, conserved=5)
         text = ('[QM_DISTRIBUTION] PREPARED ' + json.dumps(prepared) + '\n'
                 '[QM_DISTRIBUTION] LOCAL ' + json.dumps(result) + '\n'
                 '[QM_DISTRIBUTION] AUTHORITY ' + json.dumps(result) + '\n'
+                '[QM_DISTRIBUTION] BOOKS_PREPARED ' + json.dumps(books) + '\n'
+                '[QM_DISTRIBUTION] BOOKS_LOCAL ' + json.dumps(book_result) + '\n'
+                '[QM_DISTRIBUTION] BOOKS_AUTHORITY ' + json.dumps(book_result) + '\n'
                 '[QM_DISTRIBUTION] COMPLETE moved=2 retained=2 walking=true pickup=true destinations=2 favorite=true\n')
         (self.root / 'client1-launch.log').write_text(text)
         self.assertEqual(distribution.verify(self.root, selection, {})['issues'], [])
         self.assertTrue(distribution.complete(selection, 'client1', text))
         self.assertFalse(distribution.complete(self.selection, 'client1', text))
+        server = ('[QM_DISTRIBUTION] AUTHORITY ' + json.dumps(result) + '\n'
+                  '[QM_DISTRIBUTION] BOOKS_PREPARED_AUTHORITY ' + json.dumps(books) + '\n'
+                  '[QM_DISTRIBUTION] BOOKS_AUTHORITY ' + json.dumps(book_result) + '\n')
+        (self.root / 'server-launch.log').write_text(server)
+        host = dict(selection, kind='mp')
+        self.assertEqual(distribution.verify(self.root, host, {})['issues'], [])
+        for invalid in (server.replace('"noDuplicates": true', '"noDuplicates": false'),
+                        server.replace('"priorities": [7, 5]', '"priorities": [5, 7]'),
+                        server.replace('"container": 3', '"container": 2'),
+                        server.replace('Base.BookCarpentry2', 'Base.BookCarpentry1'),
+                        server.replace('BOOKS_AUTHORITY ', 'BOOKS_MISSING '),
+                        server + '[QM_DISTRIBUTION] BOOKS_AUTHORITY ' + json.dumps(book_result) + '\n'):
+            with self.subTest(server=invalid):
+                (self.root / 'server-launch.log').write_text(invalid)
+                self.assertTrue(distribution.verify(self.root, host, {})['issues'])
 
 
 class QuartermasterBatch(unittest.TestCase):
