@@ -58,7 +58,8 @@ require = function(name)
         return usage
     end
     if name == 'PZSurvivorToolkit/ItemBaitTags' or name == 'PZSurvivorToolkit/ItemRepairTags'
-        or name == 'PZSurvivorToolkit/ItemLaundryTags' or name == 'PZSurvivorToolkit/ItemSmeltingTags' then
+        or name == 'PZSurvivorToolkit/ItemLaundryTags' or name == 'PZSurvivorToolkit/ItemSmeltingTags'
+        or name == 'PZSurvivorToolkit/ItemSharpeningTags' then
         return dofile(shared .. name .. '.lua')
     end
     error(name)
@@ -108,6 +109,8 @@ for _, state in ipairs({
     {roles={ignite=true,treatment=false,fishBait=true,trapBait=false,repair=true},encoded='????10?101'},
     {roles={dirty=true,smelting=true},encoded="??1???????1"},
     {roles={dirty=false,smelting=false},encoded="??0???????0"},
+    {roles={smelting=true,sharpen=true},encoded="??????????11"},
+    {roles={smelting=true,sharpen=false},encoded="??????????10"},
     {roles={}},
 }) do
     value.usage = state.roles

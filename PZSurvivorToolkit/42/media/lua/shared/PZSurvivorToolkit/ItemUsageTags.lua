@@ -4,10 +4,11 @@ local bait = require "PZSurvivorToolkit/ItemBaitTags"
 local repair = require "PZSurvivorToolkit/ItemRepairTags"
 local laundry = require "PZSurvivorToolkit/ItemLaundryTags"
 local smelting = require "PZSurvivorToolkit/ItemSmeltingTags"
+local sharpening = require "PZSurvivorToolkit/ItemSharpeningTags"
 local Usage = {}
 -- The first four positions are the original snapshot format.
 local fields = {"bandage", "disinfectant", "dirty", "fuel", "ignite", "treatment",
-    "spentBattery", "fishBait", "trapBait", "repair", "smelting"}
+    "spentBattery", "fishBait", "trapBait", "repair", "smelting", "sharpen"}
 
 local function tagged(source, id)
     if not source or not source.hasTag or not ItemTag or not ItemTag[id] then return nil end
@@ -33,7 +34,7 @@ local function solidFuel(script, item, isDrainable)
     local fullType
     if item and item.getFullType then fullType = item:getFullType()
     elseif not item and script.getFullName then fullType = script:getFullName() end
-    local propane = fullType == "Base.PropaneTank"
+    local propane = fullType == "Base.PropaneTank" or fullType == "Base.Propane_Refill"
     local tag = tagged(source, "IS_FIRE_FUEL")
     local ratio = source.getFireFuelRatio and source:getFireFuelRatio()
     local candidate = propane or tag == true or type(ratio) == "number" and ratio > 0
@@ -42,7 +43,8 @@ local function solidFuel(script, item, isDrainable)
         return nil
     end
     if propane then
-        -- BBQ checks fractional remaining uses; a partly used tank still fuels it.
+        -- BBQ reads remaining propane; lantern refills inherit the bottle's
+        -- remaining uses. Neither requires a full bottle to provide fuel.
         if item and item.getCurrentUsesFloat then return item:getCurrentUsesFloat() > 0 end
         return nil, "fractional"
     end
@@ -76,10 +78,11 @@ local function stateKey(state)
     return table.concat(key, ":")
 end
 
-local function previews(roles, fluidStates, baitStates, varying, laundryStates)
+local function previews(roles, fluidStates, baitStates, varying, laundryStates, sharpeningStates)
     local hasVarying = false
     for _ in pairs(varying) do hasVarying = true; break end
-    if #fluidStates == 0 and #baitStates == 0 and not hasVarying and not laundryStates then return {} end
+    if #fluidStates == 0 and #baitStates == 0 and not hasVarying
+        and not laundryStates and not sharpeningStates then return {} end
     local result, seen = {}, {}
     -- Native fractional getters normalize the same integer remaining uses.
     -- A small positive fraction still has a use; do not invent half a use.
@@ -94,12 +97,15 @@ local function previews(roles, fluidStates, baitStates, varying, laundryStates)
                     elseif mode == "fractional" then state[id] = level > 0
                     else state[id] = level >= 1 end
                 end
-                -- Stains are independent of remaining material/uses.
+                -- Stains and sharpness are independent of remaining material/uses.
                 for _, dirty in ipairs(laundryStates or {"unchanged"}) do
-                    local variant = copy(state)
-                    if type(dirty) == "boolean" then variant.dirty = dirty end
-                    local key = stateKey(variant)
-                    if not seen[key] then result[#result + 1], seen[key] = variant, true end
+                    for _, sharpen in ipairs(sharpeningStates or {"unchanged"}) do
+                        local variant = copy(state)
+                        if type(dirty) == "boolean" then variant.dirty = dirty end
+                        if type(sharpen) == "boolean" then variant.sharpen = sharpen end
+                        local key = stateKey(variant)
+                        if not seen[key] then result[#result + 1], seen[key] = variant, true end
+                    end
                 end
             end
         end
@@ -159,9 +165,11 @@ function Usage.read(script, item)
     local smeltingRole, smeltingStates = smelting.read(script, item)
     roles.smelting = smeltingRole
     if not item and smeltingStates and #smeltingStates > 0 then varying.smelting = "whole" end
+    local sharpeningRole, sharpeningStates = sharpening.read(script, item)
+    roles.sharpen = sharpeningRole
     local baitRoles, baitStates = bait.read(script, item)
     merge(roles, baitRoles)
-    possible = not item and previews(roles, possible, baitStates or {}, varying, laundryStates) or {}
+    possible = not item and previews(roles, possible, baitStates or {}, varying, laundryStates, sharpeningStates) or {}
     return roles, possible, isFluid
 end
 
@@ -179,7 +187,7 @@ function Usage.encode(roles)
 end
 
 function Usage.decode(value)
-    if type(value) ~= "string" or (#value ~= 4 and #value ~= 10 and #value ~= #fields)
+    if type(value) ~= "string" or (#value ~= 4 and #value ~= 10 and #value ~= 11 and #value ~= #fields)
         or value:find("[^10?]") then return {} end
     local result = {}
     for i, field in ipairs(fields) do

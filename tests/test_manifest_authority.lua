@@ -46,7 +46,8 @@ require = function(name)
             return value.usage or {}, {{disinfectant=true,fuel=true}}, true
         end
     elseif name=='PZSurvivorToolkit/ItemBaitTags' or name=='PZSurvivorToolkit/ItemRepairTags'
-        or name=='PZSurvivorToolkit/ItemLaundryTags' or name=='PZSurvivorToolkit/ItemSmeltingTags' then
+        or name=='PZSurvivorToolkit/ItemLaundryTags' or name=='PZSurvivorToolkit/ItemSmeltingTags'
+        or name=='PZSurvivorToolkit/ItemSharpeningTags' then
         module=dofile(shared..name..'.lua')
     elseif name=='PZSurvivorToolkit/QuartermasterPresets' then
         module={native=function()return presets end,rules=function()return {}end}
@@ -522,7 +523,7 @@ Model.PAGE_ROWS=oldRows
 local allOrder,allBytes=store.order,Model.PAGE_BYTES
 store.order={fluidRecord.id}
 local firstFluid=fluidRecord.entries[fluidRecord.itemOrder[1]]
-Model.PAGE_BYTES=1800+#firstFluid.key+#firstFluid.ft+#firstFluid.cat+218
+Model.PAGE_BYTES=1800+#firstFluid.key+#firstFluid.ft+#firstFluid.cat+220
 local budgetPlayer={}
 local _,budgetPage=Authority.requestPage(budgetPlayer,{})
 local budgetRows=0

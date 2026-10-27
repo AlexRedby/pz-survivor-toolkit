@@ -315,7 +315,7 @@ function Authority.requestPage(player, args)
                     tagKey = entry.tagKey, tagDelta = entry.tagDelta, ingredient = entry.ingredient,
                     cookingState = entry.cookingState, fluidState = entry.fluidState, usageState = entry.usageState}
                 rows, bytes, session.item = rows + 1, bytes + #key + #(entry.ft or "")
-                    + #(entry.name or "") + #(entry.cat or "") + #(entry.mediaId or "") + #(entry.tagKey or "") + 218, session.item + 1
+                    + #(entry.name or "") + #(entry.cat or "") + #(entry.mediaId or "") + #(entry.tagKey or "") + 220, session.item + 1
             end
             if session.item > #record.itemOrder then session.index, session.item, session.record = session.index + 1, 1, nil end
         end

@@ -12,7 +12,7 @@ PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
 PZSurvivorToolkit.ItemTags = Tags
 local function canonical(id) return (schema.aliases or {})[id] or id end
-local usageIds = {"bandage", "disinfectant", "dirty", "fuel", "ignite", "treatment", "repair", "smelting"}
+local usageIds = {"bandage", "disinfectant", "dirty", "fuel", "ignite", "treatment", "repair", "smelting", "sharpen"}
 
 local function signature(tags)
     local result, seen = {}, {}
@@ -45,7 +45,8 @@ function Tags.requiresItemRule(id)
         or id == "beverage" or id == "alcoholic" or id == "seasoning"
         or id == "bandage" or id == "disinfectant" or id == "dirty" or id == "fuel"
         or id == "ignite" or id == "treatment" or id == "repair" or id == "junk"
-        or id == "smelting" or id == "fitness" or id == "hygiene"
+        or id == "smelting" or id == "fitness" or id == "hygiene" or id == "sharpen"
+        or id == "lighting" or id == "tailoring" or id == "material"
         or id == "bait" or id == "fishing" or id == "trapping" or id == "electrical"
         or id == "crafting" or id == "maintenance" or id == "medical" or id == "firstaid" then return true end
     return id == "readable" or id == "literature" or id == "writeable"
@@ -141,6 +142,11 @@ local function itemTags(category, fullType, script, item, recording, snapshot, s
     if container then refined = setTag(tags, "container", true) or refined end
     if furniture then refined = setTag(tags, "furniture", true) or refined end
     if fluid then refined = setTag(tags, "liquid", true) or refined end
+    if properties.tailoringMaterial(script, item) then
+        for _, id in ipairs({"crafting", "tailoring", "material"}) do
+            refined = setTag(tags, id, true) or refined
+        end
+    end
     if properties.fitness(script, item) then
         refined = setTag(tags, "fitness", true) or refined
         if category == "characterHygieneFitness" then refined = setTag(tags, "hygiene", false) or refined end

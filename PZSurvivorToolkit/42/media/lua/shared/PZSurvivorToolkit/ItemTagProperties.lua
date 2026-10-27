@@ -1,6 +1,15 @@
 -- Read physical capabilities without creating items or changing native definitions.
 local Properties = {}
 
+-- Native clothing patching accepts the shared THREAD tag, including sinew and
+-- modded thread. Keep material origin and unrelated uses alongside tailoring.
+function Properties.tailoringMaterial(script, item)
+    local source = item or script
+    if source and source.hasTag and ItemTag and ItemTag.THREAD then
+        return source:hasTag(ItemTag.THREAD)
+    end
+end
+
 -- Fitness definitions also admit equipment added by mods. Read the declarations
 -- only; do not load the fitness UI or run exercise callbacks during filtering.
 function Properties.fitness(script, item)

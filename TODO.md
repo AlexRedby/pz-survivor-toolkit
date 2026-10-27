@@ -226,3 +226,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Preview tooling
 
 - [ ] Clarify the visualization helper's render/serve examples: `render.py fragment destination --serve` fails with `destination cannot be used with --serve`. Serving works with `render.py fragment --serve`; distinguish that invocation from standalone export to avoid a failed preview attempt.
+
+# Supply roles and sharpening tags
+
+- [ ] Integrate current main, update Toolkit release metadata/changelog and push the checked supply/sharpening changes; do not install into the game.

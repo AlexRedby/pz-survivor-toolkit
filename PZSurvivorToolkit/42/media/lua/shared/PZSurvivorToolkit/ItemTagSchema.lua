@@ -379,6 +379,8 @@ return {
     },
     -- User-facing taxonomy corrections; native item properties remain untouched.
     items = {
+        -- A removable fuel supply for the propane lantern, not a light source.
+        ["base.propane_refill"] = {"survival"},
         -- The imported mixed hygiene/fitness category loses this equipment role.
         ["base.barbell"] = {"character", "fitness"},
         ["base.barbell_forged"] = {"character", "fitness"},
@@ -400,6 +402,7 @@ return {
         ["dirty"] = "Dirty",
         ["ignite"] = "Ignition",
         ["smelting"] = "Smelting",
+        ["sharpen"] = "Sharpen",
         ["edible"] = "Can Eat",
         ["dismantle"] = "Disassembly",
         ["fresh"] = "Fresh",

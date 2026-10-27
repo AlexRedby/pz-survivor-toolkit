@@ -299,3 +299,103 @@ if NativeActionRoot then
     local content=f:read('*a');f:close()
     assert(content:find('item = "Base.BarBell"',1,true) and content:find('item = "Base.DumbBell"',1,true))
 end
+
+-- A refill is a fuel supply, including partial contents, rather than a lamp.
+local refill=script('Base.Propane_Refill','survivalLighting',ItemType.DRAINABLE)
+local refillItem=item(refill)
+assert(Tags.matches(Tags.forItem(refillItem),{'fuel','survival'}))
+assert(not Tags.matches(Tags.forItem(refillItem),{'lighting'}))
+refillItem.fraction=0.00001
+assert(Tags.matches(Tags.forItem(refillItem),{'fuel'}))
+local fullMask=Usage.encode(Usage.read(refill,refillItem))
+assert(Tags.matches(snapshot(refill,fullMask),{'fuel'}) and not Tags.matches(snapshot(refill,fullMask),{'lighting'}))
+refillItem.fraction,refillItem.uses=0,0
+assert(not Tags.matches(Tags.forItem(refillItem),{'fuel','lighting'},'any'))
+assert(Tags.matchesScriptRule(refill,rule({'fuel'},{'lighting'})))
+assert(Tags.matchesScriptRule(refill,rule({}, {'fuel'})))
+assert(not Tags.matches(snapshot(refill,nil),{'fuel'}),'old refill snapshot invented usable fuel')
+assert(Tags.matches(Tags.forItem(item(script('Base.Lantern_Propane','survivalLighting',ItemType.DRAINABLE))),{'lighting'}))
+
+ItemTag.THREAD='thread'
+for _, spec in ipairs({{'Base.Thread','craftingTailoring_material'}, {'Base.Thread_Aramid','craftingTailoring_material'},
+    {'Base.Thread_Sinew','husbandryAnimalPart'}, {'Fixture.NewThread','husbandryAnimalPart'}})do
+    local thread=script(spec[1],spec[2],ItemType.DRAINABLE);thread.thread=true
+    assert(Tags.matches(Tags.forItem(item(thread)),{'crafting','tailoring','material'}))
+    assert(Tags.matchesScriptRule(thread,rule({'tailoring','material'})))
+    assert(Tags.matches(snapshot(thread,nil),{'tailoring','material'}))
+    if spec[2]=='husbandryAnimalPart' then
+        assert(Tags.matches(Tags.forScriptItem(thread),{'husbandry','animalpart'}),'thread lost animal origin')
+    end
+end
+local adapter=script('Base.ThreadAdapter','weaponPart_firearm')
+assert(not Tags.matches(Tags.forItem(item(adapter)),{'tailoring'}),'thread name was confused with native sewing tag')
+world.types['base.thread_sinew']={tailoring='remove'}
+local sinew=script('Base.Thread_Sinew','husbandryAnimalPart',ItemType.DRAINABLE);sinew.thread=true
+assert(not Tags.matchesScriptRule(sinew,rule({'tailoring'})))
+world.types={}
+
+-- Current sharpening state flows through common rules and snapshot codecs.
+ItemTag.SHARPENABLE='sharp';Attribute={Sharpness='sharpness'};ComponentType.Attributes='attributes'
+local function attributes(value)return {getAttribute=function()return {getFloatValue=function()return value end}end}end
+local knife=script('Base.KitchenKnife','toolCooking');knife.sharp=true
+knife.getComponentScriptFor=function(_,id)
+    if id==ComponentType.Attributes then return {getTemplateContainer=function()return attributes(1)end}end
+end
+local blade=item(knife);blade.sharpness=0.8
+blade.getAttributes=function(i)return attributes(i.sharpness)end
+blade.getMaxSharpness=function()return 1 end
+blade.isBroken=function(i)return i.broken==true end
+blade.getSharpness=function()error('classification mutated native sharpness')end
+assert(Tags.matches(Tags.forItem(blade),{'sharpen','tool','cooking'}))
+assert(Tags.matchesScriptRule(knife,rule({'sharpen'})) and Tags.matchesScriptRule(knife,rule({}, {'sharpen'})))
+assert(not Tags.matches(Tags.forScriptItem(knife),{'sharpen'}))
+assert(Tags.matches(Tags.choices(Tags.forScriptItem(knife)),{'sharpen'}))
+local bluntMask=Usage.encode(Usage.read(knife,blade))
+assert(#bluntMask==12 and Tags.matches(snapshot(knife,bluntMask),{'sharpen'}))
+for _, length in ipairs({4,10,11})do
+    assert(not Tags.matches(snapshot(knife,bluntMask:sub(1,length)),{'sharpen'}),'legacy snapshot fabricated sharpness')
+end
+blade.sharpness=1
+local sharpMask=Usage.encode(Usage.read(knife,blade))
+assert(sharpMask~=bluntMask and not Tags.matches(snapshot(knife,sharpMask),{'sharpen'}))
+assert(not Tags.matches(Tags.forItem(blade),{'sharpen'}))
+blade.sharpness,blade.broken=0.1,true
+assert(not Tags.matches(Tags.forItem(blade),{'sharpen'}),'broken blade treated as sharpenable')
+world.types['base.kitchenknife']={sharpen='remove'}
+assert(not Tags.matchesScriptRule(knife,rule({'sharpen'})))
+world.types={}
+assert(Tags.matches(snapshot(knife,sharpMask,{sharpen='add'}),{'sharpen'}),'manual snapshot correction lost')
+for _, id in ipairs({'sharpen','lighting','tailoring','material'})do assert(Tags.requiresItemRule(id))end
+
+-- Unusual mod items can combine independent stains, uses and sharpening.
+shirt.sharp=true;shirt.getComponentScriptFor=knife.getComponentScriptFor
+Smelting.read=function(s,i)
+    if s==shirt then
+        if i then return i.uses>0 end
+        return nil,{false,true}
+    end
+    return readSmelting(s,i)
+end
+for _, dirty in ipairs({false,true})do
+    for _, sharpen in ipairs({false,true})do
+        for _, smelting in ipairs({false,true})do
+            local included,excluded={},{}
+            for id,value in pairs({dirty=dirty,sharpen=sharpen,smelting=smelting})do
+                local target=value and included or excluded;target[#target+1]=id
+            end
+            assert(Tags.matchesScriptRule(shirt,rule(included,excluded)),'independent sharpening state was coupled to stains/uses')
+        end
+    end
+end
+Smelting.read=readSmelting
+
+if NativeActionRoot then
+    local f=assert(io.open(NativeActionRoot..'/../scripts/generated/items/drainable.txt','r'))
+    local content=f:read('*a');f:close()
+    local sinewBlock=assert(content:match('item Thread_Sinew%s*(%b{})'))
+    assert(sinewBlock:find('base:thread',1,true),'native sinew lost sewing role')
+    f=assert(io.open(NativeActionRoot..'/../scripts/generated/recipes/recipes_lightsources.txt','r'))
+    content=f:read('*a');f:close()
+    local insert=assert(content:match('craftRecipe InsertPropaneBottleIntoLantern%s*(%b{})'))
+    assert(insert:find('[Base.Propane_Refill] flags[ItemCount;InheritUses]',1,true),'refill no longer transfers fuel to a lantern')
+end

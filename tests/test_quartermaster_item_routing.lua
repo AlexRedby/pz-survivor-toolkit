@@ -608,3 +608,31 @@ destinations=checkPlan({candy},{customDestination});assert(not destinations[cand
 delta[customId]=nil;worldTags.definitions[customId]={deleted=true}
 destinations=checkPlan({candy},{customDestination});assert(not destinations[candy],
  'deleted tag routed an item through a saved include')
+
+-- Sharpening is a current usable-item role, including partial sharpness loss.
+do
+    ItemTag=ItemTag or {};ItemTag.SHARPENABLE='base:sharpenable'
+    Attribute={Sharpness='Sharpness'}
+    local function blade(name,sharpness,broken)
+        local record,definition=item(name,'toolCooking',name)
+        record.ref.hasTag=function(_,id)return id==ItemTag.SHARPENABLE end
+        record.ref.sharpness=sharpness
+        record.ref.isBroken=function()return broken==true end
+        record.ref.getMaxSharpness=function()return 1 end
+        record.ref.getAttributes=function(ref)return {getAttribute=function(_,id)
+            assert(id==Attribute.Sharpness)
+            return {getFloatValue=function()return ref.sharpness end}
+        end}end
+        record.ref.getSharpness=function()error('planner read mutating native sharpness')end
+        return record
+    end
+    local dull=blade('Base.KitchenKnife',0.8)
+    local sharp=blade('Base.KitchenKnifeForged',1)
+    local broken=blade('Base.Scissors',0.1,true)
+    local station=box({mode='all',include={'sharpen'},exclude={}})
+    local destinations=checkPlan({dull,sharp,broken},{station})
+    assert(destinations[dull]==station and not destinations[sharp] and not destinations[broken],
+        'sharpening box accepted fully sharpened/broken tools or lost partial sharpness')
+    dull.ref.sharpness=1
+    assert(not checkPlan({dull},{station})[dull],'new plan retained the old sharpening state')
+end
