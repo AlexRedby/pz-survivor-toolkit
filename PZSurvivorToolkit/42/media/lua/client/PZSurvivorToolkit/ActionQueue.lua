@@ -358,6 +358,7 @@ ISBaseTimedAction.stop = function(action)
     end
     return stop(action)
 end
+Toolkit.ActionQueueLifecycle.bindStopBridge(stop, ISBaseTimedAction.stop)
 Policy.replaceStop(stop, ISBaseTimedAction.stop)
 if Toolkit.ActionQueueCompat then Toolkit.ActionQueueCompat.adoptStop(stop, ISBaseTimedAction.stop) end
 if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop", stop, ISBaseTimedAction.stop) end
@@ -521,6 +522,7 @@ require "PZSurvivorToolkit/ActionQueueFire"
 require "PZSurvivorToolkit/ActionQueueWorld"
 require "PZSurvivorToolkit/ActionQueueHealth"
 require "PZSurvivorToolkit/ActionQueueFitness"
+require "PZSurvivorToolkit/ActionQueueAnimalStops"
 require "PZSurvivorToolkit/ActionQueueReading"
 require "PZSurvivorToolkit/ActionQueueMedia"
 if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.install() end

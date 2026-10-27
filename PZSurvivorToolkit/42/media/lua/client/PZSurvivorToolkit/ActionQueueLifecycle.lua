@@ -10,6 +10,23 @@ local phaseEntries = {} -- Live native callback frames only; removed by their ma
 local finishStepCancellations = {} -- At most one current capability per queue; explicitly revoked below.
 local observers, observerIds = {}, {}
 local guardedStops, stopScope = {}, nil
+local stopBridge, stopBridgeBound
+-- Bind the predecessor when Queue installs its bridge, rather than trusting the
+-- wrapper filename to prove which callback a terminal stop would suppress.
+function Lifecycle.bindStopBridge(original, wrapped)
+    if stopBridgeBound then return false end
+    stopBridgeBound = true
+    local proof = require 'PZSurvivorToolkit/SourceProof'
+    if not proof or not Toolkit.ActionQueue or ISBaseTimedAction.stop ~= wrapped
+        or not proof.closure(original, 'ISBaseTimedAction.lua') or not proof.closure(wrapped, 'ActionQueue.lua')
+        or not proof.matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua', 3104185167, nil, true) then return false end
+    stopBridge = {owner = Toolkit.ActionQueue, base = ISBaseTimedAction, wrapped = wrapped}
+    return true
+end
+local function nativeStopBridge()
+    return stopBridge and Toolkit.ActionQueue == stopBridge.owner and ISBaseTimedAction == stopBridge.base
+        and ISBaseTimedAction.stop == stopBridge.wrapped
+end
 local function pack(...) return {n = select("#", ...), ...} end
 -- Observation at the common native boundary does not grant edit permissions.
 -- Failed observers are quarantined: observation must never abort a paid native
@@ -177,7 +194,7 @@ local function guardedValid(queue, action, state)
     local cancelled
     if type(token) == "table" then cancelled = rawget(token, "toolkitCancelled") end
     local settings = Toolkit.Settings and Toolkit.Settings.actionQueue()
-    if guardedStops[queue] ~= state or state.failed or state.action ~= action or state.queue ~= queue or actor ~= action.character
+    if not nativeStopBridge() or guardedStops[queue] ~= state or state.failed or state.action ~= action or state.queue ~= queue or actor ~= action.character
         or queue.character ~= actor or ISTimedActionQueue.queues[actor] ~= queue
         or queue.queue ~= state.list or queue.current ~= action or state.list[1] ~= action
         or action.action ~= state.native or action.toolkitQueueOperation ~= token
@@ -208,8 +225,9 @@ end
 -- Policy grants permission before reaching this shared native stop boundary.
 function Lifecycle.prepareStop(queue, action, reason, scope, options)
     if not owned(queue, action) or not action.action then return false end
-    if queue.toolkitCancel == action then return true end
     options = options or {}
+    if options.guarded and not nativeStopBridge() then return false end
+    if queue.toolkitCancel == action then return true end
     if options.guarded and (guardedStops[queue] or queue.toolkitCancel or queue.toolkitStopIntent
         or queue.toolkitOutcomeWait or queue.toolkitGroupCancel or queue.toolkitResume) then return false end
     finishStepCancellations[queue] = nil

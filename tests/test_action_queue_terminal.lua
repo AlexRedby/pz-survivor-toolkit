@@ -1,6 +1,19 @@
 local tickCallbacks={}
 Events={OnTick={Add=function(callback)tickCallbacks[#tickCallbacks+1]=callback end}}
-require = function() end
+-- Isolated lifecycle vectors model bridge provenance; the animal-stop suite
+-- separately executes the actual native source, wrapper and replacement proofs.
+local originalStop, wrappedStop = function() end, function() end
+local proof = {
+    closure = function(callback, name)
+        return callback == originalStop and name == 'ISBaseTimedAction.lua'
+            or callback == wrappedStop and name == 'ActionQueue.lua'
+    end,
+    matches = function(path, pin, mod, adler)
+        return path == 'media/lua/shared/TimedActions/ISBaseTimedAction.lua' and pin == 3104185167 and mod == nil and adler == true
+    end,
+}
+require = function(name) if name == 'PZSurvivorToolkit/SourceProof' then return proof end end
+ISBaseTimedAction = {stop = wrappedStop}
 ISQueueActionsAction = {start = function() end}
 getFilenameOfClosure = function() return 'TimedActions/ISQueueActionsAction.lua' end
 local settings, client, specific = false, false, {}
@@ -11,6 +24,9 @@ getSpecificPlayer = function(slot) return specific[slot] end
 getTimestampMs = function() return 100 end
 local root = ProjectRoot or '.'
 local Lifecycle = assert(loadfile(root .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
+PZSurvivorToolkit.ActionQueue = {}
+assert(Lifecycle.bindStopBridge(originalStop, wrappedStop))
+assert(not Lifecycle.bindStopBridge(originalStop, wrappedStop), 'bridge installation cannot be replaced')
 local function pack(...) return {n = select('#', ...), ...} end
 local serial = 0
 local function fixture()
