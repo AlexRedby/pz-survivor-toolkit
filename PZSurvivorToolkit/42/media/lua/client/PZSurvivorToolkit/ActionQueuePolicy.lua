@@ -18,6 +18,7 @@ local Toolkit = PZSurvivorToolkit
 local Grooming = require 'PZSurvivorToolkit/ActionQueueGrooming'
 Toolkit.ActionQueueGrooming = Grooming
 local adoptGroomingBase = Grooming and Grooming.adoptBase
+local Makeup = require 'PZSurvivorToolkit/ActionQueueMakeup'
 local Policy = {}
 Toolkit.ActionQueuePolicy = Policy
 local Operations = Toolkit.ActionQueueOperations
@@ -948,6 +949,7 @@ function Policy.installContracts()
         registerNative("ISWashClothing", hygieneResources, {"setOverrideHandModels", "setActionAnim"})
     end
     if Grooming then Grooming.install(Policy, resources) end
+    if Makeup then Makeup.install(Policy, resources) end
 end
 Policy.installContracts()
 if Events.OnGameStart then Events.OnGameStart.Add(Policy.installContracts) end

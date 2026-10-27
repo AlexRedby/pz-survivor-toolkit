@@ -125,6 +125,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.pztoolkitjavapatches.DrinkFluidCompletionChecks': 'DRINK_FLUID_COMPLETION_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks': 'WASH_WATER_RULE_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks': 'QUEUE_OWNERSHIP_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.MakeupAvatarPreviewChecks': 'MAKEUP_AVATAR_PREVIEW_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueMembershipChecks': 'QUEUE_MEMBERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QueueViewChecks': 'QUEUE_VIEW_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.InventoryMembershipChecks': 'INVENTORY_MEMBERSHIP_CHECKS_PASS',
@@ -341,7 +342,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.71',
+    'version': '0.1.72',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

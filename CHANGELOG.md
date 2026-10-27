@@ -34,6 +34,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.309
+
+- Keep supported makeup previews on an isolated avatar instead of changing real clothing before Apply. Preserve SP instant application and native Host execution, prevent stale preview restoration, and allow cancellation only for owned unstarted Host actions.
+- Send the exact paid makeup output before clothing synchronization in Host, fixing the native notification of the kit instead of its result without changing creation or consumption.
+
 ### 0.1.308
 
 - Include jewelry accepted by the native gold, silver and gemstone scrapping recipes in Disassembly filters and container rules. Preserve recipe state checks and manual tag corrections; decorative pieces and kept tools remain excluded, and jewelry scrapping does not imply Smelting or skill experience.
@@ -1421,6 +1426,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.72
+
+- Add a guarded makeup-avatar overlay that copies visual fields without changing inventory, clothing, gameplay visuals, random state or network packets. Unsupported native layouts keep the existing preview path protected.
 
 ### 0.1.71
 
