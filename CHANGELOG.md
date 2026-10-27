@@ -32,6 +32,13 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.305
+
+- Add Sharpen for usable items with missing sharpness, including partly dulled blades. Read native attributes without modifying sharpness; fully sharpened and broken items are excluded, while favorite items remain eligible.
+- Classify nonempty propane lantern refill bottles as Fuel instead of Lighting. Empty refill bottles lose Fuel, while actual refillable lanterns keep their lighting role.
+- Include native sewing thread, including sinew and modded thread, in crafting/tailoring materials while preserving animal-origin and other roles.
+- Carry sharpening state through filters, container rules and warehouse snapshots, preserving older formats and manual corrections. Script previews keep sharpness independent of stains and remaining supplies.
+
 ### 0.1.304
 
 - Skip Smart Deposit's nearby storage scan when the selection contains no movable items. Preserve mixed-selection routing, favorite and retained-item rules, and fresh checks when dropping items.
