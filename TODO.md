@@ -1,11 +1,6 @@
 # Base walking stutter investigation
 
-- [ ] Integrate current main before publication, preserve the two-owned-mod delivery policy, select the next Toolkit version, and rerun affected packaging/runtime regressions before a fast-forward push.
 - [ ] Verify walking responsiveness with Toolkit's NewMusic conversion control on the weaker gameplay client with its actual settings and Wishlist. The matched Toolkit 0.1.306 / Java Patches 0.1.71 Mac Host control identified a full-container scan after movement: removing only that callback reduced mean discovery cost from 3.198 to 1.114 ms across 142 calls. This establishes a contributor, not the complete severity or networking behavior on the remote client; Better Containers nested settings remain unknown. Evidence is in `.codex/investigations/base-walking-stutter/`.
-
-# Investigation tooling
-
-- [ ] Reconnect the cumulative-memory MCP after a release mismatch: `memory.search` and `memory.complete_capture` returned `Memory MCP is from an older release; reconnect the server` during the NewMusic loot follow-up. Verify both calls work; the current CLI fallback can persist findings and recover captures with access to its state database.
 
 # Batch action-queue audit and shared fixes
 
@@ -18,6 +13,10 @@
 # Sandwich ingredient consumption on a joining client
 
 - [ ] Reproduce the reported Project Cook “+” then Cook ingredient-consumption issue with the original bread add-ins and sandwich toppings, which are not yet identified. Compare actual raw hunger/nutrition deductions and the joining-client, host and server container states. If reproduced, fix the demonstrated shared cause while preserving native portions, completed costs and unrelated actions; require a failing regression and full-pack Host qualification with the queue enabled and disabled.
+
+# Workshop dependency corrections
+
+- [ ] Migrate the reviewed DAMN Library obsolete Plastic Welding Gun battery recipe correction into Toolkit or Java Patches. Installation now ships only owned mods, so the standalone `tools/damnlib_source.py` experiment does not deliver this correction. Preserve the native standard recipes and battery-charge transfer; require focused and native qualification with unmodified Workshop sources before claiming it is delivered.
 
 # Welding torch refill
 
@@ -70,10 +69,6 @@
 # Selected QoL additions
 
 - [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.
-
-# Auto-drink after multiplayer respawn
-
-- [ ] Verify death and new-character creation as a client in an isolated full-pack Host session on macOS B42.21, with auto-drink disabled and enabled. Pick up a water bottle and compare the menu preference, character flag and server water/thirst effects after the connection reply. Native reply ordering and the one-shot repair are covered by source inspection and focused Lua regressions; this live network scenario remains unverified.
 
 # Sport headlight push-button cycle
 
@@ -129,7 +124,7 @@ These operations can execute normally while some queue controls remain disabled.
 - [ ] Medical world pickups and unknown treatment producers: add exact item/patient/wound contracts for specific unsupported entry points before allowing edits. Preserve native wound checks, supplies and clothing effects; do not mark all medicine unsupported.
 - [ ] Carried-container capacity: MP does not credit space that a previous pending pickup may free; synthetic proximity endpoints and unknown capacity callbacks also remain protected. Prove exact source/destination/ancestor capacity and authoritative transfer effects before relaxing a concrete blocked case.
 - [ ] Grooming: prove replacement/creation effects, nonzero empty weights, held supplies and custom selector candidates or ancestry before expanding their move permissions. Prove finer appearance/equipment independence before crossing cosmetic operations, and checkpoint/resume before moving started bodies; retain native callback and paid-effect guards.
-- [ ] Makeup: describe and restore the actual UI preview before granting waiting cancellation. `ISMakeUpUI.onSelectMakeUp` immediately wears a preview and remembers the displaced item; MP `onApplyMakeUp` clears that restoration state while enqueueing, whereas SP applies directly. An unallocated `ISApplyMakeUp` alone does not prove zero prior effects.
+- [ ] Extend makeup reordering beyond the verified owned, nondepleting root/carried-bag subset: model projected kit consumption/replacements, world-source access and movement, appearance writers and transient output capacity before allowing those dependencies to move. Preserve native instant SP application, finish-step protection for allocated Host bodies and existing pending cancellation.
 - [ ] Unknown mod actions and asynchronous continuations: capture the concrete action type, producer, continuation and cleanup when an operation is split into separate rows or becomes an edit barrier. Add scoped grouping/edit contracts for reviewed entry points; unknown or modified callbacks must retain a clear denial reason.
 
 ## Shared game sessions and build regression
@@ -185,8 +180,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Defer Smart Deposit actor-identity cache hardening until a real consumer replaces the actor within a slot while retaining its pane, drag object and selection without normal lifecycle events. Current game respawn and CleanUI mode switching recreate the inventory UI. Eight current-source probe cases (`.codex/investigations/smart-deposit-actor-current/`) show an artificially retained hint can be stale below 200 ms, while fresh admission/execution and recreated UI use the current actor. If an actual retained-UI consumer is found, add actor identity to the cache key and qualify that path; do not treat ordinary respawn as a demonstrated bug.
 
-- [ ] Complete the exclusive full-pack freshness on/off renderer comparison using fresh sealed `/tmp/pz-freshness-attribution-current` (67 mods, current Toolkit/Java, 14 phases and refresh counters), or prepare fresh if inputs changed. Admission expired behind other desktop work without launching a game. Native Kahlua with real Food and unchanged BC source independently measured about 21.5 ms for a 10,000-item aggregate, both visible and fully clipped; UI drawing/base render were doubles. Keep that result separate from the earlier inclusive 26-28 ms game-render baseline.
-
 - [ ] Migrate the reviewed CleanUI collapsed-food-age correction into Toolkit or Java Patches if still needed with Workshop CleanUI. The user requires shipping only the two owned mods; the standalone source-preparation experiment is no longer part of installation. Establish a safe runtime integration and focused/native checks before claiming that correction is delivered.
   - [ ] Extend the passing 199/200-item SP natural-expiry/regroup/reopen case in both UI modes to expiry while clipped/hidden, later expand/refresh, repeated group rebuilds and Host/server replication. Record item identities, age/lastAged, boundary events and actual regrouping without observer age writes; the separate old `inventory-freshness` case still has `naturalAgeing=false`.
   - [ ] Qualify live refrigeration/freezing, power changes and transfers between environments. Native `Food.updateAge` owns elapsed-time/freezing calculations and events; container transitions and generator toggles call it, while `finishupdate` can retire inert food and client cell processing is skipped. The new headless cooling controls use configured native states, not real appliance transitions. Preserve those calls and avoid a global age-result cache.
@@ -200,10 +193,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Resolve the common startup diagnostics that keep the food-age SP run at `needs-review` despite all four functional phases passing: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical startup fingerprints/counts; qualify or fix each source/caller before changing audit rules; do not treat functional success as a clean runtime.
 
-- [ ] Resolve the complete selected-pack inputs before the next full-pack native check: `lock-pack` with the installed Workshop root and corrected CleanUI failed with `Mod ID must resolve exactly once: damnlib: []`. Locate the missing selected source or supply its complete local root explicitly, then create a fresh lock; keep reduced inventory-pack coverage distinct.
-
-- [ ] Verify the selected that DAMN Library Plastic Welding Gun battery recipe against its callbacks: `42.20/media/scripts/damnCraft/recipes_damnCraft.txt:239-254` references functions that appear commented out in `media/lua/server/Crafting/DAMN_damnCraft.lua:570-598`. The battery audit could not recommend this as a working reuse path. Reproduce the recipe in an isolated selected-pack scenario and confirm callback resolution before changing or reporting the upstream behavior.
-
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
 
 - [ ] Repair the isolated fixture in `test_queue_native_snapshot.py::test_selected_adapter_helpers_are_sealed_without_unrelated_adapters`: its temporary craft UI project omits the required `craft_ui_water.py`, causing `FileNotFoundError` while the recovery subcase passes. Copy the declared helper and rerun the focused snapshot tests; do not relax source sealing.
@@ -212,13 +201,13 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Report the exact rejected suite-selection constraint: running `queue-recovery` without explicit `--language EN` produces only a blanket list of requirements. Include actual and expected language/cases/mod selection in the validation error; explicit EN with both ordered cases succeeds.
 
-- [ ] Expose bounded preparation/admission progress in the native runner output. Full-pack inventory profiling was silent while preparing and then reported only a generic desktop wait (`/tmp/pz-native-work-baseline4.log`); separate status/selection probes were needed to discover that the active interactive catalogue had a four-hour bound. Even read-only `status --json` and `prepare` require host access outside the sandbox because `sysctl hw.memsize hw.logicalcpu` is denied inside it (reproduced during imported-base walking setup); retain the clear failure and document this diagnostic requirement. The imported-base frame profile also waited behind concurrent storage freshness and makeup runs after preparation; its generic wait message did not identify them. The default 300-second resource wait expired before launch; retry needed explicit `resume --resource-wait 1800` despite a valid snapshot. Report the preparation phase, queue position and active suite/deadline without changing exclusive timing isolation or input guards.
+- [ ] Expose bounded preparation/admission progress in the native runner output. Full-pack profiling was silent during preparation and then reported only a generic desktop wait; separate status probes were needed to identify other suites and their deadlines. The imported-base profile's default 300-second resource wait expired before launch and needed explicit `resume --resource-wait 1800` despite a valid snapshot. The full-pack `inventory-work` run also spent about 80 seconds in unreported 10,000-food fill/setup between phases 6 and 7. Even read-only `status --json` and `prepare` need host access because the sandbox denies `sysctl hw.memsize hw.logicalcpu`; document this diagnostic requirement. Report preparation phases, bounded fixture-stage/item-count progress, queue position and active suite/deadline without changing exclusive timing isolation or input guards.
 
 - [ ] Give native fixtures a shared role-aware asynchronous placement contract. `QueueEnergyPlacement` returns the chosen square before arrival, and calling `teleportTo` on a server's remote actor did not move the Host client. Require one local-client placement, exact settled tile confirmation on both roles, corner/centre tolerance and bounded wait diagnostics so each suite does not rediscover these constraints.
 
 - [ ] Add an explicit batch policy for fatal fixture/control failures. The animal-terminal preparation assertion failed, but the batch still prepared and queued the dependent candidate; repeating that broken setup adds no evidence. Keep independent gameplay-failure collection available, but allow a setup-failure stop with a partial combined report and no further launches. Current work uses the common single-run CLI sequentially with checked exit codes.
 
-- [ ] Make the Lua test interpreter available consistently in isolated worktrees. The system Python lacks `lupa`, and current queue checks rely on another worktree's virtual environment; ad-hoc checks can select the wrong interpreter and fail before assertions. Complete when the project bootstrap or runner selects a local declared Lua runtime without machine-specific paths.
+- [ ] Make Lua-dependent test entrypoints select and report the project interpreter consistently. System `python3 -m unittest` fails with `ModuleNotFoundError: lupa` in the inventory-work/freshness/food-age fixture tests, while the same checks pass through the local `.venv/bin/python`; earlier worktrees also borrowed another checkout's environment. Complete when bootstrap/runner paths reliably select the declared local runtime without machine-specific paths.
 
 - [ ] Make optional inventory-refresh source coverage explicit: `tools/run_tests.py --game ... --test test_inventory_refresh` does not bind CleanUI/Better Containers, so those source-backed sections are silently omitted. Report missing integrations or provide a required-source mode; use explicit current 42.19/42.21 source paths for this change.
 
@@ -238,7 +227,3 @@ For each migrated family, add an independent positive example and a dangerous ex
 # Item catalogue test world
 
 - [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen. The isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text. Seven selected Workshop mods remain outside coverage; five startup font errors also remain unclassified.
-
-# Preview tooling
-
-- [ ] Clarify the visualization helper's render/serve examples: `render.py fragment destination --serve` fails with `destination cannot be used with --serve`. Serving works with `render.py fragment --serve`; distinguish that invocation from standalone export to avoid a failed preview attempt.

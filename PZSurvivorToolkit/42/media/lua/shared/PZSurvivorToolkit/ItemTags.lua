@@ -12,7 +12,7 @@ PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
 PZSurvivorToolkit.ItemTags = Tags
 local function canonical(id) return (schema.aliases or {})[id] or id end
-local usageIds = {"bandage", "disinfectant", "dirty", "fuel", "ignite", "treatment", "repair", "smelting", "sharpen", "broken"}
+local usageIds = {"bandage", "disinfectant", "dirty", "fuel", "ignite", "treatment", "repair", "smelting", "sharpen", "broken", "empty"}
 
 local function signature(tags)
     local result, seen = {}, {}
@@ -46,7 +46,7 @@ function Tags.requiresItemRule(id)
         or id == "bandage" or id == "disinfectant" or id == "dirty" or id == "fuel"
         or id == "ignite" or id == "treatment" or id == "repair" or id == "junk"
         or id == "smelting" or id == "fitness" or id == "hygiene" or id == "sharpen" or id == "broken"
-        or id == "lighting" or id == "tailoring" or id == "material"
+        or id == "lighting" or id == "tailoring" or id == "material" or id == "empty"
         or id == "bait" or id == "fishing" or id == "trapping" or id == "electrical"
         or id == "crafting" or id == "maintenance" or id == "medical" or id == "firstaid" then return true end
     return id == "readable" or id == "literature" or id == "writeable"

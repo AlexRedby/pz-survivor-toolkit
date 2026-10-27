@@ -34,6 +34,7 @@ REQUIRED_INPUTS = {
     "test_kahlua_own_fields.lua": ("native_action_root", "--game or --native-action-root"),
     "test_wash_water_rule.lua": ("native_action_root", "--game or --native-action-root, and --wishlist-workshop-root"),
     "test_wash_makeup_sync.lua": ("native_action_root", "--game or --native-action-root"),
+    "test_action_queue_makeup_sync.lua": ("native_action_root", "--game or --native-action-root"),
     "test_torch_refill.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_fridge_compat.lua": ("fridge_source", "--fridge-source"),
     "test_quartermaster_craft_ui.lua": ("native_action_root", "--game or --native-action-root"),
@@ -176,7 +177,7 @@ def test_variants(name, args):
                   "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMForeignGather"]
     if name == "test_action_queue_ownership.lua" and args.native_action_root:
         flags += ["OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
-                  "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipTextBinding", "OwnershipAnimalStops"]
+                  "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops"]
     return flags
 
 

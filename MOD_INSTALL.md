@@ -10,7 +10,7 @@ For the Steam edition of **Project Zomboid B42.21**, in single-player or **Host*
 | I already use an older version | [Update the set](#update-the-set) |
 | The loader or a vehicle fix seems inactive | [Activation checks](JavaPatches/README.md#verify-activation) and [vehicle logs](JavaPatches/README.md#vehicle-authority-recovery-and-diagnostic-logs) |
 
-The [server INI](SurvivorQoL-selected.ini) defines the selection. Toolkit and Java Patches have no Workshop download. All third-party mods, including CleanUI and NewMusic, come from Workshop. Toolkit controls the NewMusic compatibility changes without a separate NewMusic copy. [Current versions and changes](CHANGELOG.md) come from the component metadata linked in the [overview](README.md#components). Options are per player; see [features and controls](docs/FEATURES.md).
+The [server INI](SurvivorQoL-selected.ini) defines the selection. Toolkit and Java Patches have no Workshop download. All third-party mods, including CleanUI, NewMusic and that DAMN Library, come from Workshop. Toolkit controls the NewMusic compatibility changes without a separate NewMusic copy. [Current versions and changes](CHANGELOG.md) come from the component metadata linked in the [overview](README.md#components). Options are per player; see [features and controls](docs/FEATURES.md).
 
 **Back up an existing world before changing its mods.** The Java patch gives one stock corridor a distinct persistent room key. Saving with this correction requires the matching patch afterward; disabling it or loading an unsupported game build loses that corridor's saved explored, lighting, spawning and roof flags. See [the save dependency](JavaPatches/README.md#included-fixes).
 
@@ -33,7 +33,7 @@ With the game/server stopped, copy **both complete folders inside the prepared `
 | macOS / Linux | `~/Zomboid` |
 | Dedicated server | `Zomboid` in the home directory of the account running the server; use the specified directory when launching with `-cachedir` |
 
-The prepared folders **do not download when joining**. Distribute the same two local mod folders to everyone. Download every third-party dependency, including CleanUI and NewMusic, from Workshop; do not install separate patched copies of those dependencies.
+The prepared folders **do not download when joining**. Distribute the same two local mod folders to everyone. Download every third-party dependency, including CleanUI, NewMusic and that DAMN Library, from Workshop; do not install separate patched copies of those dependencies.
 
 ## ZombieBuddy loader
 
@@ -78,7 +78,7 @@ Recording continues until manually stopped or the process exits. Files rotate at
 
 1. Stop the server and all clients. Back up the world and `Zomboid/Lua/`, including Wishlist data, `QuartermasterPresets.txt`, `PZSTQuartermasterPresets_a.txt`, `PZSTQuartermasterPresets_b.txt` and `PZSTQuartermasterTagRules.txt` when present. Keep these files and both mods' existing settings; they preserve lists, sorting presets and preferences. Container designations stay in the world save.
 2. Delete the old installed `Zomboid/mods/PZSurvivorWishlist` folder from every client, Host and dedicated-server installation. In the game's Mods menu, remove the old `PZSurvivorWishlist` Mod ID from each saved single-player profile's mod list; leave `PZSurvivorToolkit` enabled. Never load the old Wishlist folder and integrated Toolkit version together. Do not delete `Zomboid/Lua/PZSurvivorWishlist/` or the Wishlist Mod Options.
-3. Update the repository and repeat preparation. Replace both owned local mod folders on the server and clients with this matching prepared version; do not merge old and new files. If an earlier prepared set supplied local CleanUI or NewMusic overrides, remove those overrides so the Workshop copies load.
+3. Update the repository and repeat preparation. Replace both owned local mod folders on the server and clients with this matching prepared version; do not merge old and new files. If an earlier prepared set supplied local CleanUI, NewMusic or `damnlib` overrides, remove those overrides so the Workshop copies load.
 4. Copy only `Mods=` and `WorkshopItems=` from the prepared INI into an existing server profile. Disable the separate mods listed below in server and single-player profiles; Toolkit now includes their features. Keep saved preferences and data.
 5. Keep third-party mods subscribed through Workshop. The prepared set updates only Toolkit and Java Patches. Reapprove changed Java JARs when prompted on clients and the server.
 6. Start and join, checking the server Java loader as above. For version mismatches, compare both owned local folders and Workshop updates. Keep `DoLuaChecksum=true`.

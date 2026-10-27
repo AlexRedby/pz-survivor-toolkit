@@ -1,9 +1,9 @@
 -- Live food values and the owner's published rows are the freshness boundary.
 local root=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'
-local options, checks, getters, upstreamCalls
+local options, checks, getters, upstreamCalls, reads
 local function setup(active, installed)
     options={showFoodFreshnessBar=true,showFoodFreshnessPercentage=true}
-    checks,getters,upstreamCalls=0,0,0
+    checks,getters,upstreamCalls,reads=0,0,0,{}
     getActivatedMods=function() return {contains=function(_,id) return active and id=='EURY_CONTAINERS' end} end
     instanceof=function(item,kind) checks=checks+1;return kind=='Food' and type(item)=='table' and item.food end
     UIFont={Medium='medium'}
@@ -29,9 +29,18 @@ local function setup(active, installed)
 end
 local function food(age,max,off)
     local value={food=true,age=age,max=max,off=off or 4}
-    function value:getOffAgeMax() getters=getters+1;return self.max end
-    function value:getAge() getters=getters+1;return self.age end
-    function value:getOffAge() getters=getters+1;return self.off end
+    local function read(item,field)
+        getters=getters+1
+        reads[item]=reads[item] or {age=0,max=0,off=0}
+        reads[item][field]=reads[item][field]+1
+        return item[field]
+    end
+    function value:getOffAgeMax() return read(self,'max') end
+    function value:getAge() return read(self,'age') end
+    function value:getOffAge() return read(self,'off') end
+    function value:setAge(age) self.age=age end
+    function value:setOffAgeMax(max) self.max=max end
+    function value:setOffAge(off) self.off=off end
     return value
 end
 local function pane(rows)
@@ -53,7 +62,12 @@ local function texts(p)
     for _,call in ipairs(p.draws) do if call[1]=='text' then result[#result+1]=call[2] end end
     return result
 end
-local function clear(p) p.draws={};checks,getters=0,0 end
+local function clear(p) p.draws={};checks,getters,reads=0,0,{} end
+local function expectReads(item,age,max,off,label)
+    local actual=reads[item] or {age=0,max=0,off=0}
+    assert(actual.age==age and actual.max==max and actual.off==off,
+        label..': age/max/off reads '..actual.age..'/'..actual.max..'/'..actual.off)
+end
 local function equal(a,b,label)
     assert(#a==#b,label..': draw count '..#a..' vs '..#b)
     for i=1,#a do
@@ -75,7 +89,9 @@ huge.items[10000]=food(9.9,10)
 local p=pane({huge})
 draw(p)
 assert(texts(p)[1]=='1%','collapsed stack ignored its worst tail beyond the render cap')
-assert(getters>=30000,'visible group failed to read all current food values')
+assert(checks==10000 and getters==20001,'visible group did not examine every member exactly once')
+expectReads(ordinary,9999,9999,0,'all nonwinning members')
+expectReads(huge.items[10000],1,1,1,'worst tail winner')
 assert(p.draws[1][2]==58 and p.draws[1][3]==36 and p.draws[1][4]==234,
     'header bar geometry differs from upstream')
 -- No cross-frame cache: age and thresholds may change without a refresh.
@@ -156,6 +172,126 @@ ISInventoryPane=class;clear(p);draw(p);assert(#p.draws>0,'switching back lost th
 options.showFoodFreshnessPercentage=false;assert(not Freshness.layout(class,p,first))
 options.showFoodFreshnessPercentage=true;assert(not Freshness.layout(class,p,infinite))
 
+-- Selection compares each member's normalized, clamped value. Equal minima
+-- retain the first item's own stale marker, even if age/max differ.
+local tieA,tieB=food(2,10,4),food(4,20,16)
+local rottenA,rottenB=food(12,10,4),food(25,20,16)
+local negativeA,negativeB=food(-2,10,4),food(-8,20,16)
+local mixedA,mixedB=food(5,10,3),food(8,20,16)
+local invalid={food(0,0),food(0,-1),food(0,1000000000),food(0,nil)}
+local nonfood={getAge=function() error('nonfood age read') end,
+    getOffAgeMax=function() error('nonfood threshold read') end,
+    getOffAge=function() error('nonfood stale read') end}
+local fixtures={
+    {items={tieA,tieB},winner=tieA}, {items={tieB,tieA},winner=tieB},
+    {items={rottenA,rottenB},winner=rottenA}, {items={rottenB,rottenA},winner=rottenB},
+    {items={negativeA,negativeB},winner=negativeA}, {items={negativeB,negativeA},winner=negativeB},
+    {items={mixedA,mixedB},winner=mixedA},
+    {items={nonfood,invalid[1],invalid[2],invalid[3],invalid[4],tieB},winner=tieB},
+    {items={nonfood,invalid[1],invalid[2],invalid[3],invalid[4]}},
+    {items={}},
+}
+local streams=0
+for _,fixture in ipairs(fixtures) do
+    for _,duplicate in ipairs({false,true}) do
+        local members={}
+        for _,item in ipairs(fixture.items) do members[#members+1]=item end
+        if duplicate and #members>0 then table.insert(members,1,members[1]) end
+        -- Both a duplicate physical header and a virtual header must use all
+        -- published members; cleanUIFirstActualIndex is not a freshness boundary.
+        local header={items=members,cleanUIFirstActualIndex=duplicate and 2 or 1}
+        for _,flags in ipairs({{true,true},{true,false},{false,true},{false,false}}) do
+            options.showFoodFreshnessBar=flags[1];options.showFoodFreshnessPercentage=flags[2]
+            for _,hover in ipairs({0,1,2}) do
+                for _,column3 in ipairs({300,114,113,80}) do
+                    local actual=pane({header,second,{type='separator'},{_bcEquippedAttachedSeparator=true}})
+                    actual.mouseOverOption=hover;actual.column3=column3
+                    local expected=pane({{items=fixture.winner and {fixture.winner} or {}},second,
+                        {type='separator'},{_bcEquippedAttachedSeparator=true}})
+                    expected.mouseOverOption=hover;expected.column3=column3
+                    draw(expected);draw(actual)
+                    equal(actual.draws,expected.draws,'group selection and child draw stream')
+                    streams=streams+1
+                end
+            end
+        end
+    end
+end
+options.showFoodFreshnessBar=true;options.showFoodFreshnessPercentage=true
+p=pane({{items={tieA,tieB}}});clear(p);draw(p)
+equal(p.draws,{
+    {'rect',58,36,234,3,0.62,0.08,0.08,0.08},
+    {'rect',58,36,187,3,0.88,0.30,0.62,0.34},
+    {'rect',196,34,4,7,0.80,0.08,0.08,0.08},
+    {'rect',197,35,2,5,0.92,0.88,0.66,0.38},
+    {'rect',280,20,20,20,1.0,0.0,0.0,0.0},
+    {'text','80%',282,24,0.7,0.7,0.7,1.0,'medium'},
+},'first tie exact bar/marker/percentage stream')
+expectReads(tieA,1,1,1,'first tie winner')
+expectReads(tieB,1,1,0,'later tie')
+p=pane({{items={tieB,tieA}}});clear(p);draw(p)
+assert(p.draws[3][2]==103,'equal freshness selected a later stale marker')
+expectReads(tieB,1,1,1,'reversed tie winner')
+expectReads(tieA,1,1,0,'reversed later tie')
+
+-- Every valid member is read once even after reaching a clamped minimum of 0.
+-- Invalid maxima stop before age/stale, and non-food never reaches a getter.
+p=pane({{items={rottenA,rottenB,negativeA,mixedA,nonfood,
+    invalid[1],invalid[2],invalid[3],invalid[4]}}});clear(p);draw(p)
+assert(checks==9 and getters==13,'mixed group read accounting changed')
+expectReads(rottenA,1,1,1,'first clamped minimum')
+for _,item in ipairs({rottenB,negativeA,mixedA}) do expectReads(item,1,1,0,'remaining valid member') end
+for _,item in ipairs(invalid) do expectReads(item,0,1,0,'invalid maximum') end
+expectReads(nonfood,0,0,0,'nonfood member')
+
+-- Setter changes take effect on the next draw without a row refresh, including
+-- changing the winner, its normalization threshold and its own stale marker.
+local liveA,liveB=food(2,10,4),food(4,20,16)
+p=pane({{items={liveA,liveB}}})
+local function expectLiveWinner(winner,label)
+    local expected=pane({{items={winner}}});draw(expected)
+    clear(p);draw(p);equal(p.draws,expected.draws,label)
+    expectReads(liveA,1,1,winner==liveA and 1 or 0,label..' first member')
+    expectReads(liveB,1,1,winner==liveB and 1 or 0,label..' second member')
+end
+expectLiveWinner(liveA,'initial first tie')
+liveB:setAge(10);expectLiveWinner(liveB,'immediate age setter')
+liveB:setOffAgeMax(40);expectLiveWinner(liveB,'immediate maximum setter')
+local previousMarker=p.draws[3][2]
+liveB:setOffAge(30);expectLiveWinner(liveB,'immediate stale setter')
+assert(p.draws[3][2]~=previousMarker,'offAge setter retained an old marker')
+liveA:setAge(9);expectLiveWinner(liveA,'immediate winner replacement')
+
+-- An invisible output needs no Food inspection. The 48px boundary applies to
+-- the group bar; children keep their own permanent percentages and geometry.
+for _,case in ipairs({
+    {bar=false,percentage=true,hover=0,column3=300},
+    {bar=false,percentage=true,hover=2,column3=300},
+    {bar=true,percentage=false,hover=1,column3=113},
+    {bar=true,percentage=true,hover=0,column3=113},
+    {bar=true,percentage=true,hover=0,column3=80},
+}) do
+    options.showFoodFreshnessBar=case.bar;options.showFoodFreshnessPercentage=case.percentage
+    p=pane({huge});p.mouseOverOption=case.hover;p.column3=case.column3
+    clear(p);draw(p)
+    assert(#p.draws==0 and checks==0 and getters==0,'no-output group touched Food/native getters')
+end
+options.showFoodFreshnessBar=true;options.showFoodFreshnessPercentage=false
+p=pane({{items={tieA,tieB}}});p.column3=114;p.mouseOverOption=0
+clear(p);draw(p)
+assert(#p.draws==4 and p.draws[1][4]==48,'48px group bar was gated out')
+expectReads(tieA,1,1,1,'48px bar winner');expectReads(tieB,1,1,0,'48px bar other')
+options.showFoodFreshnessPercentage=true
+p.column3=113;p.mouseOverOption=1;clear(p);draw(p)
+assert(#p.draws==2 and texts(p)[1]=='80%','narrow hovered group lost percentage')
+expectReads(tieA,1,1,1,'narrow percentage winner');expectReads(tieB,1,1,0,'narrow percentage other')
+options.showFoodFreshnessBar=false
+p=pane({huge,second});p.mouseOverOption=0;clear(p);draw(p)
+assert(checks==1 and getters==3 and #p.draws==2 and texts(p)[1]=='30%',
+    'percentage-only child caused its unhovered header to scan or lost its own output')
+options.showFoodFreshnessBar=true
+print('inventory freshness: '..streams..' edge group/child draw-stream comparisons passed')
+
 -- When another owner already installed, keep its renderer and class reservation.
 local fallback,late,original=setup(true,true)
 assert(original.renderdetails()== 'native')
@@ -181,7 +317,12 @@ if NativeBCFreshnessSource then
     for _,flags in ipairs({{true,true},{true,false},{false,true}}) do
         originalOptions.showFoodFreshnessBar=flags[1];originalOptions.showFoodFreshnessPercentage=flags[2]
         for _,hover in ipairs({0,1,2}) do
-            for _,fixture in ipairs({{items={first,second}}, {items={first,rotten}}, {items={infinite,first}}}) do
+            for _,fixture in ipairs({{items={first,second}}, {items={first,rotten}}, {items={infinite,first}},
+                {items={tieA,tieB}}, {items={tieB,tieA}},
+                {items={rottenA,rottenB}}, {items={rottenB,rottenA}},
+                {items={negativeA,negativeB}}, {items={negativeB,negativeA}},
+                {items={mixedA,mixedB}}, {items={nonfood,tieB}},
+                {items={invalid[1],tieB}}, {items={invalid[3],invalid[4]}}}) do
                 for _,column3 in ipairs({300,114,113}) do
                 local expected=pane({fixture,fixture.items[2]});expected.column3=column3
                 expected.itemslist={fixture};expected.collapsed={};expected.mouseOverOption=hover

@@ -404,6 +404,7 @@ return {
         ["smelting"] = "Smelting",
         ["sharpen"] = "Sharpen",
         ["broken"] = "Broken",
+        ["empty"] = "Empty",
         ["edible"] = "Can Eat",
         ["dismantle"] = "Disassembly",
         ["fresh"] = "Fresh",

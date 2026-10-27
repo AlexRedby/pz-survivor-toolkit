@@ -604,6 +604,30 @@ do
 end
 print('Freshness routing passed: same-type states, fridge exclusion, universal rotten state and new-plan refresh.')
 
+-- Equal-type fluid vessels route by current contents and refresh after filling.
+do
+    local function vessel(amount)
+        local record=item('Base.EmptyPetrolCan','containerLiquid','Can')
+        record.ref.amount=amount
+        record.ref.getFluidContainer=function(value)
+            return {isEmpty=function()return value.amount==0 end,getAmount=function()return value.amount end}
+        end
+        return record
+    end
+    local empty,filled=vessel(0),vessel(0.000001)
+    local emptyBox=box({mode='all',include={'liquid','empty'},exclude={}})
+    local supplyBox=box({mode='all',include={'liquid'},exclude={'empty'}})
+    local destinations=checkPlan({empty,filled},{emptyBox,supplyBox})
+    assert(destinations[empty]==emptyBox and destinations[filled]==supplyBox,
+        'same-type fluid vessels ignored current Empty state')
+    empty.ref.amount=0.5
+    destinations=checkPlan({empty},{emptyBox,supplyBox})
+    assert(destinations[empty]==supplyBox,'new plan retained Empty after a refill')
+    empty.ref.amount=0
+    destinations=checkPlan({empty},{emptyBox,supplyBox})
+    assert(destinations[empty]==emptyBox,'new plan retained filled state after emptying')
+end
+
 -- Routing consumes effective exact tags instead of a cached category projection.
 local customId='custom:12345678-1234-1234-1234-123456789abc'
 local C=require 'PZSurvivorToolkit/TagCustomization'

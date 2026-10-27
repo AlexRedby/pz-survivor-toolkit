@@ -399,7 +399,7 @@ class PrepareInstall(unittest.TestCase):
 
     def test_full_workshop_selection_publishes_only_owned_mods_without_external_inputs(self):
         shutil.copyfile(ROOT / prepare_install.INI_NAME, self.root / prepare_install.INI_NAME)
-        for name in ('CleanUI', 'NewMusic'):
+        for name in ('CleanUI', 'NewMusic', 'damnlib'):
             stale = self.output / 'mods' / name / 'old-override.lua'
             stale.parent.mkdir(parents=True)
             stale.write_text('stale private third-party copy')
@@ -415,7 +415,7 @@ class PrepareInstall(unittest.TestCase):
 
     def test_full_workshop_selection_failure_keeps_previous_publication(self):
         shutil.copyfile(ROOT / prepare_install.INI_NAME, self.root / prepare_install.INI_NAME)
-        for name in ('CleanUI', 'NewMusic'):
+        for name in ('CleanUI', 'NewMusic', 'damnlib'):
             stale = self.output / 'mods' / name / 'old-override.lua'
             stale.parent.mkdir(parents=True)
             stale.write_text('previous published bytes')

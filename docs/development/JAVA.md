@@ -18,7 +18,6 @@ For a local macOS/Linux setup, set these paths once in the shell, replacing the 
 export JAVA_HOME="/path/to/jdk-25"
 export KOTLIN_HOME="/path/to/kotlin-distribution"
 export PZ_GAME="/path/to/game/Java"
-export PZ_CLEANUI_SOURCE="/path/to/mods/CleanUI"
 export PATH="$JAVA_HOME/bin:$PATH"
 python3 tools/prepare_install.py --game "$PZ_GAME" --jdk "$JAVA_HOME" --check
 ```

@@ -52,9 +52,11 @@ Action queue and native Wishlist menu checks use `--game`. Add `--wishlist-works
 
 `python3 tools/package_mod.py --check` validates the Toolkit mod structure without creating an archive. To create a developer-only archive, run `python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip`; Wishlist Lua sources are included automatically.
 
-Use `tools/prepare_install.py` to prepare only the two owned mods, `PZSurvivorToolkit` and `PZToolkitJavaPatches`; it creates no archive and requires no third-party source directories. All third-party mods, including CleanUI and NewMusic, come from Workshop. Their downloaded files are not copied, patched or repackaged by preparation.
+Use `tools/prepare_install.py` to prepare only the two owned mods, `PZSurvivorToolkit` and `PZToolkitJavaPatches`; it creates no archive and requires no third-party source directories. All third-party mods, including CleanUI, NewMusic and that DAMN Library, come from Workshop. Their downloaded files are not copied, patched or repackaged by preparation.
 
 Toolkit owns the runtime NewMusic compatibility that disables vanilla CD/player conversion and its associated inventory observer, while preserving normal music loot. Run `python3 -m unittest discover -s tests -p 'test_prepare_install.py'` for the two-folder preparation contract and `PZ_NEWMUSIC_SOURCE="/path/to/mods/NewMusic" .venv/bin/python -m unittest tests.test_newmusic_runtime` for the source-backed Lua compatibility checks with Lupa installed. These checks do not establish live multiplayer performance.
+
+The earlier CleanUI food-age and DAMN Library duplicate battery-recipe source-preparation experiments are no longer shipped. Their standalone source tools and checks remain available for investigation; delivering either correction through Toolkit or Java Patches requires a separate runtime integration and validation.
 
 To run the same checks against your installed game's native Mod Options implementation:
 

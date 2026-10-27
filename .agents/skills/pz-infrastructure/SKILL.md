@@ -13,7 +13,7 @@ Agents develop and maintain the project. This role aims for a coherent, reliable
 
 Check the purpose, justification and boundaries of existing mechanisms. Freely reconsider architecture, allocation of responsibilities, dependencies and technical approaches to game integration. Choose the appropriate level of solution and consider changes of any size, including replacing and removing existing components. Code or components do not have to be retained merely because they exist. Prefer solutions that reduce overall complexity and eliminate recurring difficulties at their source; a smaller diff is not an advantage by itself if it preserves a poor structure and adds workarounds. Justify the chosen scope with evidence, comparing the benefits, migration cost, risks and future maintenance with smaller changes to the existing solution.
 
-Start a separate infrastructure pass at the user's request. While working in this role, note related problems and record concrete unfinished work in the existing root `TODO.md`. General requirements for all agents remain in `AGENTS.md`; do not add this role's duties there. Other agents carry out their tasks without an obligation to look for infrastructure problems. Scheduled checks are neither configured nor implied.
+Start a separate infrastructure pass at the user's request. While working in this role, note related problems and record concrete unfinished work using the [project's public/private TODO rules](../../../AGENTS.md#process-friction). General requirements for all agents remain in `AGENTS.md`; do not add this role's duties there. Other agents carry out their tasks without an obligation to look for infrastructure problems. Scheduled checks are neither configured nor implied.
 
 Use the [development guide](../../../docs/DEVELOPMENT.md) for component versioning, verification platforms and test commands, and the [installation guide](../../../MOD_INSTALL.md) for setup.
 
@@ -50,6 +50,6 @@ Keep this skill current independently: add missing rules, fix rules that impede 
 
 ## Tasks and results
 
-Keep concrete next actions and required completion gates in `TODO.md`, preserving other agents' unfinished work. Record useful work left outside the current pass with a clear expected result. Remove completed and verified items; do not turn TODO into a log.
+Keep concrete next actions and required completion gates in the appropriate TODO under the [project's public/private TODO rules](../../../AGENTS.md#process-friction), preserving other agents' unfinished work. Record useful work left outside the current pass with a clear expected result. Remove completed and verified items; do not turn either TODO into a log.
 
 Lead the result with what made maintenance difficult, why the chosen level of change was appropriate and what is now simpler to understand or extend. If the design was retained, explain the evidence for that decision. Then briefly report relevant checks, concrete unfinished work and significant limitations. Test counts and a clean run do not substitute for the engineering conclusion. Distinguish confirmed problems, assumptions and untested scenarios; do not claim the entire project has been verified based on a partial run.
