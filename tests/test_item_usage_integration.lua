@@ -294,6 +294,42 @@ assert(current~=exhausted and not Tags.matches(snapshot(shirt,exhausted),{'smelt
 assert(Tags.matches(snapshot(shirt,exhausted,{smelting='add'}),{'smelting'}))
 Smelting.read=readSmelting
 
+-- Jewelry scrapping reaches effective tags and rules through the real reader.
+do
+    local ring=script('Base.Ring_Left_RingFinger_Gold','clothingAccessory_wearable',ItemType.CLOTHING)
+    local pearl=script('Base.Necklace_Pearl','clothingAccessory_neck',ItemType.CLOTHING)
+    local pliers=script('Base.Pliers','toolMetalworking')
+    local subject=input(false,false,{ring})
+    subject.getIntAmount=function()return 1 end
+    subject.isUsesPartialItem=function()return false end
+    subject.doesItemPassRoutineStatusTests=function(_,i)return not i.favorite end
+    local jewelry={getName=function()return 'Scrap_Gold_Jewellery'end,
+        getInputs=function()return list({subject,input(true,false,{pliers})})end,
+        getXPAwardCount=function()return 0 end}
+    local previousRecipes=recipes
+    recipes=list({jewelry})
+    local worn=item(ring)
+    local effective=Tags.forItem(worn)
+    assert(Tags.matches(effective,{'accessory','dismantle'}))
+    assert(not Tags.matches(effective,{'smelting','metalworking','experience'},'any'),
+        'jewelry scrapping fabricated furnace eligibility or a learning role')
+    assert(Tags.matchesScriptRule(ring,rule({'accessory','dismantle'},{'smelting'})))
+    assert(Tags.matches(snapshot(ring,nil),{'dismantle'}))
+    for _,s in ipairs({pearl,pliers}) do
+        assert(not Tags.matches(Tags.forItem(item(s)),{'dismantle'}),
+            'decorative jewelry or a kept tool became the dismantled subject')
+        assert(not Tags.matchesScriptRule(s,rule({'dismantle'})))
+    end
+    worn.favorite=true
+    assert(not Tags.matches(Tags.forItem(worn),{'dismantle'}),'live recipe status was ignored')
+    worn.favorite=false
+    world.types['base.ring_left_ringfinger_gold']={dismantle='remove'}
+    assert(not Tags.matches(Tags.forItem(worn),{'dismantle'}))
+    assert(not Tags.matchesScriptRule(ring,rule({'dismantle'})),'manual removal was ignored in previews')
+    world.types={}
+    recipes=previousRecipes
+end
+
 if NativeActionRoot then
     local f=assert(io.open(NativeActionRoot..'/shared/Definitions/FitnessExercises.lua','r'))
     local content=f:read('*a');f:close()
@@ -448,3 +484,50 @@ assert(Tags.matches(Tags.forItem(blade),{'broken','smelting'}))
 assert(Tags.matchesScriptRule(knife,rule({'broken','smelting'},{'sharpen'})))
 assert(not Tags.matchesScriptRule(knife,rule({'broken','smelting','sharpen'})))
 Smelting.read=readSmelting
+
+-- Empty is the vessel's current amount, not its name or a missing content role.
+do
+    local vessel=script('Base.EmptyPetrolCan','containerLiquid')
+    vessel.component={getCapacity=function()return 1 end,getInitialFluids=function()return list({})end,
+        isInitialFluidsIsRandom=function()return false end,
+        getInitialAmount=function()error('Empty preview drew factory amount RNG')end}
+    local can=item(vessel)
+    local amount=0
+    can.container={isEmpty=function()return amount==0 end,getAmount=function()return amount end}
+    local emptyTags=Tags.forItem(can)
+    assert(Tags.matches(emptyTags,{'container','liquid','empty'}))
+    local emptyMask=Usage.encode(Usage.read(vessel,can))
+    assert(#emptyMask==14 and Tags.matches(snapshot(vessel,emptyMask),{'empty'}))
+    for _,width in ipairs({4,10,11,12,13}) do
+        assert(not Tags.matches(snapshot(vessel,emptyMask:sub(1,width),nil,'none'),{'empty'}),
+            'legacy nonbeverage snapshot was assumed empty')
+    end
+    assert(not Tags.matches(Tags.forScriptItem(vessel),{'empty'}),'script invented current empty contents')
+    assert(Tags.requiresItemRule('empty') and Tags.matches(Tags.allIds(),{'empty'}))
+    assert(Tags.matchesScriptRule(vessel,rule({'liquid','empty'})))
+    assert(Tags.matchesScriptRule(vessel,rule({'liquid'},{'empty'})),
+        'factory-empty vessel could not preview a later fill')
+    for _,content in ipairs({'beverage','alcoholic','fuel','disinfectant'}) do
+        assert(not Tags.matchesScriptRule(bottle,rule({'empty',content})),
+            'automatic preview combined Empty and '..content)
+    end
+    amount=0.000001
+    local filledMask=Usage.encode(Usage.read(vessel,can))
+    assert(not Tags.matches(Tags.forItem(can),{'empty'}) and filledMask~=emptyMask)
+    assert(Tags.signature(emptyTags)~=Tags.signature(Tags.forItem(can)),'empty and filled stacks merged')
+    assert(not Tags.matches(snapshot(vessel,filledMask),{'empty'}))
+    amount=0
+    assert(Tags.matches(Tags.forItem(can),{'empty'}),'pouring out did not restore Empty')
+    can.container=nil
+    assert(not Tags.matches(Tags.forItem(can),{'empty'}),'removed fluid component retained Empty')
+    can.container={}
+    assert(not Tags.matches(Tags.forItem(can),{'empty'}),'unknown amount became Empty')
+    world.types['base.emptypetrolcan']={empty='add'}
+    assert(Tags.matches(Tags.forItem(can),{'empty'}),'manual Empty addition lost')
+    world.types['base.emptypetrolcan']={empty='remove'}
+    can.container={isEmpty=function()return true end}
+    assert(not Tags.matches(Tags.forItem(can),{'empty'}))
+    assert(not Tags.matchesScriptRule(vessel,rule({'empty'})),'manual Empty removal lost in preview')
+    world.types={}
+    assert(Tags.matches(snapshot(vessel,filledMask,{empty='add'}),{'empty'}))
+end

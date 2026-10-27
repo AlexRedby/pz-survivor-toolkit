@@ -112,6 +112,11 @@ expect({contents = {[bleach] = 1}, drainable = true, alcohol = 4}, {disinfectant
 expect({contents = {}, drainable = true, alcohol = 4}, {disinfectant = false, fuel = false})
 expect({contents = {[petrol] = 0.0001}}, {fuel = true})
 expect({name = "Base.EmptyPetrolCan", contents = {}}, {fuel = false})
+expect({name = "Base.WaterBottle", contents = {}}, {empty = true, beverage = false, fuel = false})
+expect({name = "Base.EmptyPetrolCan", contents = {[petrol] = 0.000001}}, {empty = false, fuel = true})
+expect({contents = {[bleach] = 1}}, {empty = false, beverage = false, fuel = false})
+assert(Usage.read(nil,live({name='Base.Battery',drainable=true,uses=0})).empty == nil,
+    'spent battery was mistaken for an empty fluid vessel')
 expect({name = "Base.EmptyPetrolCan", contents = {[water] = 1}}, {fuel = false})
 expect({name = "Base.EmptyPetrol"}, {fuel = false})
 expect({name = "Base.PropaneTankEmpty"}, {fuel = false})
@@ -190,6 +195,15 @@ local decoded = Usage.decode("10?1")
 assert(decoded.bandage == true and decoded.disinfectant == false and decoded.dirty == nil and decoded.fuel == true)
 for _, invalid in ipairs({false, 1010, "", "111", "11111", "10x1"}) do assert(next(Usage.decode(invalid)) == nil) end
 assert(next(Usage.decode(nil)) == nil)
+for _, empty in ipairs({true,false}) do
+    local encoded=Usage.encode({empty=empty,broken=true})
+    assert(#encoded==14 and Usage.decode(encoded).empty==empty and Usage.decode(encoded).broken==true)
+    for _, width in ipairs({4,10,11,12,13}) do
+        local old=Usage.decode(encoded:sub(1,width))
+        assert(old.empty==nil,'legacy usage state fabricated Empty')
+        assert(old.broken==(width==13 and true or nil),'legacy Broken decoding changed')
+    end
+end
 
 -- Source-backed fixtures keep medical thresholds, dirty cloth and native solid
 -- fuel declarations aligned with the installed game without creating objects.

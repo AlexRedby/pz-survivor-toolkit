@@ -36,10 +36,32 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.1.308
+### 0.1.313
 
 - Reduce native item reads when drawing a collapsed food stack's freshness indicator. Read every member's current freshness, then calculate the stale marker only for the least-fresh member; preserve ties, live changes and native food ageing.
 - Skip freshness scans for stack headers that draw neither a bar nor a percentage, including unhovered percentage-only headers and bars below the minimum width. Preserve child percentages and existing pane ownership.
+
+### 0.1.312
+
+- Allow moving owned, unstarted Host makeup around independent queued work and before resumable reading. Track the exact root kit, current plain cosmetics and declared output type; keep prior resource changes, shared writers, capacity-sensitive transfers, depletion and unsupported producers protected.
+
+### 0.1.311
+
+- Extend Disassembly to native copper, gold, silver and aluminum salvage, plus clothing, sheets and belts that can be recovered into materials. Follow native item-state and equipment restrictions without adding XP or furnace roles.
+- Add Empty for liquid vessels with no current contents. Update filters and container rules after filling or emptying, preserve coherent previews and manual corrections, and carry the state through warehouse snapshots without inferring it for older records.
+
+### 0.1.310
+
+- Synchronize paid makeup results when the kit remains in an accessible worn or nested bag, nearby container or ground bag. Reuse exact shared item access with bounded ancestor membership checks, preserving native creation, consumption and unsupported callbacks.
+
+### 0.1.309
+
+- Keep supported makeup previews on an isolated avatar instead of changing real clothing before Apply. Preserve SP instant application and native Host execution, prevent stale preview restoration, and allow cancellation only for owned unstarted Host actions.
+- Send the exact paid makeup output before clothing synchronization in Host, fixing the native notification of the kit instead of its result without changing creation or consumption.
+
+### 0.1.308
+
+- Include jewelry accepted by the native gold, silver and gemstone scrapping recipes in Disassembly filters and container rules. Preserve recipe state checks and manual tag corrections; decorative pieces and kept tools remain excluded, and jewelry scrapping does not imply Smelting or skill experience.
 
 ### 0.1.307
 
@@ -1428,6 +1450,10 @@ The older README associates medicine indicators with this label, but no separate
 ### 0.1.73
 
 - Preserve exact drainable charge during multiplayer item-stat synchronization, including native rounded-full values. Batteries and other drainable items no longer lose charge through the receiver's float conversion; invalid payloads and unsupported game versions retain native handling.
+
+### 0.1.72
+
+- Add a guarded makeup-avatar overlay that copies visual fields without changing inventory, clothing, gameplay visuals, random state or network packets. Unsupported native layouts keep the existing preview path protected.
 
 ### 0.1.71
 

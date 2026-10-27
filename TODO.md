@@ -1,9 +1,3 @@
-# Publish completed freshness and battery fixes
-
-- [ ] Merge current `origin/main` into this worktree, preserving concurrent changes and reconciling Toolkit/Java release versions and changelog entries.
-- [ ] Run focused merged freshness, dependency preparation, packet and makeup regressions; confirm packaging and remove this completed plan before committing the integration.
-- [ ] Push the integrated commit to `main` with an ordinary fast-forward push and verify the remote tip.
-
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
@@ -122,7 +116,7 @@ These operations can execute normally while some queue controls remain disabled.
 - [ ] Medical world pickups and unknown treatment producers: add exact item/patient/wound contracts for specific unsupported entry points before allowing edits. Preserve native wound checks, supplies and clothing effects; do not mark all medicine unsupported.
 - [ ] Carried-container capacity: MP does not credit space that a previous pending pickup may free; synthetic proximity endpoints and unknown capacity callbacks also remain protected. Prove exact source/destination/ancestor capacity and authoritative transfer effects before relaxing a concrete blocked case.
 - [ ] Grooming: prove replacement/creation effects, nonzero empty weights, held supplies and custom selector candidates or ancestry before expanding their move permissions. Prove finer appearance/equipment independence before crossing cosmetic operations, and checkpoint/resume before moving started bodies; retain native callback and paid-effect guards.
-- [ ] Makeup: describe and restore the actual UI preview before granting waiting cancellation. `ISMakeUpUI.onSelectMakeUp` immediately wears a preview and remembers the displaced item; MP `onApplyMakeUp` clears that restoration state while enqueueing, whereas SP applies directly. An unallocated `ISApplyMakeUp` alone does not prove zero prior effects.
+- [ ] Extend makeup reordering beyond the verified owned, nondepleting root-kit subset: model projected kit consumption/replacements, ancestor storage, appearance writers and transient output capacity before allowing those dependencies to move. Preserve native instant SP application, finish-step protection for allocated Host bodies and existing pending cancellation.
 - [ ] Unknown mod actions and asynchronous continuations: capture the concrete action type, producer, continuation and cleanup when an operation is split into separate rows or becomes an edit barrier. Add scoped grouping/edit contracts for reviewed entry points; unknown or modified callbacks must retain a clear denial reason.
 
 ## Shared game sessions and build regression
