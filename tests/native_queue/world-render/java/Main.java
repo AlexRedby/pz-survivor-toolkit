@@ -14,6 +14,8 @@ import zombie.iso.IsoCamera;
 import zombie.iso.IsoChunk;
 import zombie.iso.IsoWorld;
 import zombie.iso.fboRenderChunk.FBORenderCutaways;
+import zombie.iso.fboRenderChunk.FBORenderObjectOutline;
+import zombie.core.textures.ColorInfo;
 import zombie.core.textures.Texture;
 import zombie.core.opengl.ShaderProgram;
 import zombie.core.opengl.RenderThread;
@@ -34,6 +36,43 @@ public final class Main {
     private static Texture decalTexture;
     private static int pendingWidth, pendingHeight;
     private static ShaderProgram[] outlinePrograms;
+    private static IsoPlayer outlinePlayer;
+    private static boolean oldOutline, outlineRestored;
+    private static int oldOutlineColor, outlineFrames;
+    private static long oldOutlineRenderTime, oldOutlineUpdateTime;
+
+    @LuaMethod(name="worldRenderOutline", global=true)
+    public static void outline(IsoPlayer player, boolean active) {
+        disposable(player);
+        require(Thread.currentThread() == zombie.GameWindow.gameThread, "Game-thread outline fixture required");
+        int index = player.getPlayerNum();
+        var bookkeeping = FBORenderObjectOutline.getInstance();
+        if (active) {
+            if (outlinePlayer == null) {
+                require(!outlineRestored, "Outline fixture already restored");
+                outlinePlayer = player;
+                oldOutline = player.isOutlineHighlight(index);
+                oldOutlineColor = player.getOutlineHighlightCol(index);
+                oldOutlineRenderTime = bookkeeping.getDuringUIRenderTime(index, player);
+                oldOutlineUpdateTime = bookkeeping.getDuringUIUpdateTime(index, player);
+            }
+            require(player == outlinePlayer, "Outline fixture actor changed");
+            // ModelSlotRenderData snapshots this native character flag into ModelOutlines.
+            player.setOutlineHighlightCol(index, 0f, 1f, 1f, 1f);
+            player.setOutlineHighlight(index, true);
+            outlineFrames++;
+        } else {
+            require(player == outlinePlayer && outlineFrames >= 2, "Outline fixture did not span frames");
+            player.setOutlineHighlightCol(index, new ColorInfo().setABGR(oldOutlineColor));
+            player.setOutlineHighlight(index, oldOutline);
+            bookkeeping.setDuringUIRenderTime(index, player, oldOutlineRenderTime);
+            bookkeeping.setDuringUIUpdateTime(index, player, oldOutlineUpdateTime);
+            require(player.getOutlineHighlightCol(index) == oldOutlineColor
+                    && player.isOutlineHighlight(index) == oldOutline, "Outline fixture restore failed");
+            outlineRestored = true;
+            outlinePlayer = null;
+        }
+    }
 
     @LuaMethod(name="worldRenderResourcesBegin", global=true)
     public static void resourcesBegin(IsoPlayer player) throws Exception {
@@ -93,7 +132,8 @@ public final class Main {
     @LuaMethod(name="worldRenderResourcesFinish", global=true)
     public static void resourcesFinish(IsoPlayer player) {
         disposable(player);
-        require(outlinePrograms != null && decalTexture != null && decalTexture.isReady(), "Resource scenario incomplete");
+        require(outlinePrograms != null && decalTexture != null && decalTexture.isReady()
+                && outlineRestored, "Resource scenario incomplete");
         RenderThread.invokeOnRenderContext(() -> {
             try {
                 ShaderProgram[] current = outlinePrograms();
