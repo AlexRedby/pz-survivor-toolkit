@@ -123,7 +123,9 @@ local function setup(options)
     end
     function player:getWornItems()
         local values={};for _,value in pairs(self.worn)do values[#values+1]={getItem=function()return value end}end
-        return list(values)
+        local worn=list(values);worn.class='WornItems'
+        function worn:contains(item)for _,entry in ipairs(values)do if entry:getItem()==item then return true end end;return false end
+        return worn
     end
     local nativeInstanceof=instanceof
     instanceof=function(value,name)
@@ -208,6 +210,8 @@ local function setup(options)
     function kit:getEquipParent()return self.equipParent end
     function kit:isActivated()return self.activated==true end
     function kit:getIsCraftingConsumed()return self.craftingConsumed==true end
+    function kit:isUseWhileEquiped()return self.useWhileEquipped==true end
+    function kit:isUseWhileUnequiped()return self.useWhileUnequipped==true end
     function player:isEquipped(item)
         if self.primary==item or self.secondary==item then return true end
         for _,worn in pairs(self.worn)do if worn==item then return true end end
@@ -250,18 +254,18 @@ local function setup(options)
         'toolkitMakeupAvatarPreviewSupported','toolkitMakeupAvatarPreview'})do javaGlobals[_G[name]]=true end
     javaGlobals[SafeHouse.isSafehouseAllowLoot]=true
     f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
-    local makeup,policy,move,access,finalUse
+    local makeup,policy,move,access,supplyUse
     if not options.unpatched then
         access=f.project('ItemAccess')
         require=function(module)
             if module=='PZSurvivorToolkit/ActionQueueMakeup'then return makeup end
             if module=='PZSurvivorToolkit/ActionQueueMakeupMove'then return move end
             if module=='PZSurvivorToolkit/ItemAccess'then return access end
-            if module=='PZSurvivorToolkit/MakeupFinalUse'then return finalUse end
+            if module=='PZSurvivorToolkit/MakeupSupplyUse'then return supplyUse end
             if module=='PZSurvivorToolkit/ActionQueueOperations'then return PZSurvivorToolkit.ActionQueueOperations end
             return savedRequire(module)
         end
-        finalUse=f.project('MakeupFinalUse')
+        supplyUse=f.project('MakeupSupplyUse')
         move=f.project('ActionQueueMakeupMove')
         makeup=f.project('ActionQueueMakeup')
         policy=f.project('ActionQueuePolicy')
@@ -374,7 +378,7 @@ local function setup(options)
         return source,object,owner,door
     end
     return{f=f,player=player,inventory=inventory,kit=kit,ui=ui,select=select,worn=worn,bag=bag,waiting=waiting,
-        makeup=makeup,policy=policy,move=move,access=access,finalUse=finalUse,worldSource=worldSource,square=square,squares=squares,
+        makeup=makeup,policy=policy,move=move,access=access,supplyUse=supplyUse,worldSource=worldSource,square=square,squares=squares,
         scripts=scripts,packets=packets,events=events,views=views,options=options,
         nativeSelect=nativeSelect,nativeApply=nativeApply,visuals=function()return visuals end,factories=function()return made end,
         bridge=function(value)bridgeOK=value end,mode=function(value)client=value end}
@@ -745,6 +749,115 @@ for _,topology in ipairs({'nested-world-crate','nested-world-bag'})do
         topology..' admitted a final-use source without native removal sender routing')
     assert(value.policy.evaluateCancel(queue,body).allowed,topology..' blocked zero-effect pending deletion')
 end
+local function holdKit(s,hand)
+    local other=s.f.item('Base.Pencil');other.container=s.inventory;other.equipParent=hand~='both'and s.player or nil
+    function other:getContainer()return self.container end
+    function other:getWorldItem()return self.world end
+    function other:getEquipParent()return self.equipParent end
+    s.inventory.values[#s.inventory.values+1]=other
+    s.player.primary=hand=='secondary'and other or s.kit
+    s.player.secondary=hand=='primary'and other or s.kit
+    s.kit.equipParent=s.player
+    return other
+end
+-- Native root depletion clears only matching hand references. Inspection must
+-- preserve both exact hands and every existing resource/capacity dependency.
+for _,uses in ipairs({1,5})do for _,hand in ipairs({'primary','secondary','both'})do
+    value,queue,body=finalMove('root');value.kit.uses=uses
+    local other=holdKit(value,hand)
+    local primary,secondary=value.player.primary,value.player.secondary
+    beforeFactories,beforeVisuals=value.factories(),value.visuals()
+    writes,inventoryWrites=value.player.writes,value.inventory.writes
+    allowed,footprint=inspectMove(value,body)
+    assert(allowed and footprint.knownInputs and not footprint.unknownOutputs and footprint.items[value.kit:getID()]
+        and footprint.hands==value.player and footprint.equipment==value.player and not footprint.capacityNonIncreasing,
+        hand..' held root kit '..uses..' lost complete actor/input ordering or spent capacity release')
+    assert(value.player.primary==primary and value.player.secondary==secondary and value.kit.equipParent==value.player
+        and value.kit:getContainer()==value.inventory and value.kit.uses==uses and value.inventory:contains(other)
+        and value.factories()==beforeFactories and value.visuals()==beforeVisuals and value.player.writes==writes
+        and value.inventory.writes==inventoryWrites and #value.packets==0,
+        hand..' held kit inspection mutated a hand, paid a cost or changed physical inventory')
+    local head,tail=queue.queue[1],queue.queue[3]
+    assert(value.policy.evaluateMove(queue,body,tail,true).allowed,'held root makeup cannot move later')
+    queue.queue[2],queue.queue[3]=tail,body
+    assert(value.policy.evaluateMove(queue,body,tail,false).allowed,'held root makeup cannot move earlier')
+    head.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+    local decision=value.policy.evaluateMove(queue,body,head,false)
+    assert(decision.allowed and decision.preempt,'held root makeup cannot promote before active reader')
+    local transfer=value.f.action(ISInventoryTransferAction,{item=other,srcContainer=value.inventory,destContainer=value.inventory})
+    queue.queue[2],queue.queue[3]=body,transfer
+    decision=value.policy.evaluateMove(queue,body,transfer,true)
+    assert(not decision.allowed and decision.reason=='container_capacity','held makeup spent removal capacity on transfer')
+    queue.queue[3]=tail
+    assert(value.policy.evaluateCancel(queue,body).allowed,'held root makeup lost unpaid cancellation')
+    body.action={}
+    assert(not value.policy.evaluateMove(queue,body,tail,false).allowed,'allocated held makeup became movable')
+end end
+-- EquipPacket carries both hands and resolves their IDs directly in actor
+-- root. Even an untouched other hand must survive that exact native lookup.
+for _,uses in ipairs({1,5})do for _,hand in ipairs({'primary','secondary'})do
+for _,change in ipairs({'nested','world','world-alias','missing-root','duplicate-id','root-proxy','stale-equip-parent'})do
+    value,queue,body=finalMove('root');value.kit.uses=uses
+    local other=holdKit(value,hand)
+    local function removeOther()
+        for i,item in ipairs(value.inventory.values)do if item==other then table.remove(value.inventory.values,i);return end end
+    end
+    if change=='nested'then
+        local bag,contents=value.bag();removeOther();other.container=contents;contents.values[#contents.values+1]=other
+    elseif change=='world'then removeOther();other.container=nil;other.world={}
+    elseif change=='world-alias'then other.world={}
+    elseif change=='missing-root'then removeOther()
+    elseif change=='duplicate-id'or change=='root-proxy'then
+        if change=='root-proxy'then removeOther()end
+        local duplicate=value.f.item('Base.Pencil');duplicate.id=other:getID()
+        value.inventory.values[#value.inventory.values+1]=duplicate
+    elseif change=='stale-equip-parent'then other.equipParent={}end
+    local primary,secondary=value.player.primary,value.player.secondary
+    allowed,footprint=inspectMove(value,body)
+    assert(not allowed and footprint.knownInputs==false and footprint.unknownOutputs and footprint.cancelWaiting and footprint.cancelOperation,
+        change..' other hand admitted held '..hand..' kit '..uses)
+    for _ in pairs(footprint.items)do error(change..' other hand leaked staged held-kit resources')end
+    assert(value.kit.uses==uses and value.player.primary==primary and value.player.secondary==secondary and #value.packets==0,
+        change..' other-hand rejection consumed or changed equipment')
+    assert(value.policy.evaluateCancel(queue,body).allowed,change..' other hand disabled unpaid waiting cancellation')
+end end end
+for _,uses in ipairs({1,5})do
+for _,change in ipairs({'missing-equip-parent','foreign-equip-parent','worn','attached-slot','attached-model','attached-type',
+    'activated','crafting','auto-equipped','auto-unequipped','components','replacement','script-components','script-create',
+    'root-callback','root-category','duplicate','foreign-class','held-helper','depletion-helper',
+    'worn-bag','nested-bag','crate','world-bag'})do
+    local topology=(change=='worn-bag'or change=='nested-bag'or change=='crate'or change=='world-bag')and change or'root'
+    value,queue,body=finalMove(topology);value.kit.uses=uses
+    holdKit(value,'primary')
+    local script=value.kit:getScriptItem()
+    if change=='missing-equip-parent'then value.kit.equipParent=nil
+    elseif change=='foreign-equip-parent'then value.kit.equipParent={}
+    elseif change=='worn'then value.player.worn[ItemBodyLocation.MAKE_UP_EYES]=value.kit
+    elseif change=='attached-slot'then value.kit.attachedSlot=0
+    elseif change=='attached-model'then value.kit.attachedToModel='Back'
+    elseif change=='attached-type'then value.kit.attachedSlotType='BeltLeft'
+    elseif change=='activated'then value.kit.activated=true
+    elseif change=='crafting'then value.kit.craftingConsumed=true
+    elseif change=='auto-equipped'then value.kit.useWhileEquipped=true
+    elseif change=='auto-unequipped'then value.kit.useWhileUnequipped=true
+    elseif change=='components'then value.kit.components=true
+    elseif change=='replacement'then value.kit.replacement='Base.Unknown'
+    elseif change=='script-components'then script.components=true
+    elseif change=='script-create'then script.luaCreate='Unknown.Callback'
+    elseif change=='root-callback'then value.inventory.getAcceptItemFunction=function()return'Unknown.Callback'end
+    elseif change=='root-category'then value.inventory.getOnlyAcceptCategory=function()return'Appearance'end
+    elseif change=='duplicate'then value.inventory.values[#value.inventory.values+1]=value.kit
+    elseif change=='foreign-class'then value.kit.class='ForeignKit'
+    elseif change=='held-helper'then value.supplyUse.supportsHeld=function()error('foreign held helper executed')end
+    elseif change=='depletion-helper'then value.supplyUse.supportsDepletion=function()error('foreign depletion helper executed')end end
+    allowed,footprint=inspectMove(value,body)
+    assert(not allowed and footprint.knownInputs==false and footprint.unknownOutputs and footprint.cancelWaiting and footprint.cancelOperation,
+        change..' admitted held kit '..uses..' or changed its cancellation contract')
+    for _ in pairs(footprint.items)do error(change..' leaked staged held-kit inputs')end
+    assert(value.kit.uses==uses and value.player.primary==value.kit and #value.packets==0,
+        change..' denied inspection consumed or unequipped the held kit')
+    assert(value.policy.evaluateCancel(queue,body).allowed,change..' blocked unpaid held-kit cancellation')
+end end
 for _,change in ipairs({'zero','negative','fractional','keep-zero','live-replacement','script-replacement','script-use-replacement',
     'lua-create','config','config-key','components','script-components','script-type','script-owner','script-obsolete',
     'attached-slot','attached-model','attached-type','equip-parent','held','equipped','activated','crafting','final-helper'})do
@@ -774,7 +887,7 @@ for _,change in ipairs({'zero','negative','fractional','keep-zero','live-replace
     elseif change=='equipped'then value.player.worn.back=value.kit
     elseif change=='activated'then value.kit.activated=true
     elseif change=='crafting'then value.kit.craftingConsumed=true
-    elseif change=='final-helper'then value.finalUse.supports=function()error('foreign final-use helper executed')end end
+    elseif change=='final-helper'then value.supplyUse.supportsDepletion=function()error('foreign final-use helper executed')end end
     allowed,footprint=inspectMove(value,body)
     assert(not allowed and footprint.knownInputs==false and footprint.cancelWaiting and footprint.cancelOperation,
         change..' admitted an unproven final-use input or changed pending cancellation')

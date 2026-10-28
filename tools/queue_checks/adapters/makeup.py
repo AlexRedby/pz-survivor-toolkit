@@ -17,23 +17,33 @@ MOVE_CASES=['move-earlier','move-later','move-promote','move-deny-writer']
 CARRIED_MOVE_CASES=['move-worn-earlier','move-nested-later','move-nested-promote','move-nested-deny-writer']
 WORLD_MOVE_CASES=['move-world-container-earlier','move-world-bag-later','move-world-container-promote','move-world-bag-deny-walk']
 DEPLETION_MOVE_CASES=['deplete-root-earlier','deplete-nested-later','deplete-world-container-promote','deplete-world-bag-later','deplete-root-deny-writer']
+HELD_MOVE_CASES=['held-primary-earlier','held-secondary-later','held-both-promote','held-primary-other-secondary','held-primary-deny-equip']
+HELD_SPECS={
+    'held-primary-earlier':dict(uses=1,initial=dict(primary='kit',secondary=False),post=dict(primary=False,secondary=False)),
+    'held-secondary-later':dict(uses=5,initial=dict(primary=False,secondary='kit'),post=dict(primary=False,secondary='kit')),
+    'held-both-promote':dict(uses=1,initial=dict(primary='kit',secondary='kit'),post=dict(primary=False,secondary=False)),
+    'held-primary-other-secondary':dict(uses=1,initial=dict(primary='kit',secondary='hammer'),post=dict(primary=False,secondary='hammer')),
+    'held-primary-deny-equip':dict(uses=1,initial=dict(primary='kit',secondary=False),post=dict(primary='hammer',secondary=False))}
+FINAL_USE_CASES=set(DEPLETION_MOVE_CASES)|{case for case,spec in HELD_SPECS.items() if spec['uses']==1}
 MOVE_KINDS=dict(zip(MOVE_CASES,['earlier','later','promote','deny-writer']))
 MOVE_KINDS.update(zip(CARRIED_MOVE_CASES,['earlier','later','promote','deny-writer']))
 MOVE_KINDS.update(zip(WORLD_MOVE_CASES,['earlier','later','promote','deny-walk']))
 MOVE_KINDS.update(zip(DEPLETION_MOVE_CASES,['earlier','later','promote','later','deny-writer']))
+MOVE_KINDS.update(zip(HELD_MOVE_CASES,['earlier','later','promote','earlier','deny-equip']))
 MOVE_SUPPLIES=dict(zip(CARRIED_MOVE_CASES,['worn-bag','nested-bag','nested-bag','nested-bag']))
 MOVE_SUPPLIES.update(zip(WORLD_MOVE_CASES,['world-container','world-bag','world-container','world-bag']))
 MOVE_SUPPLIES.update({'deplete-nested-later':'nested-bag','deplete-world-container-promote':'world-container','deplete-world-bag-later':'world-bag'})
 
 
 def moving(selection):
-    return any(selection.get('options',{}).get(option) is True for option in ('makeup_moves','makeup_carried_moves','makeup_world_moves','makeup_depletion_moves'))
+    return any(selection.get('options',{}).get(option) is True for option in ('makeup_moves','makeup_carried_moves','makeup_world_moves','makeup_depletion_moves','makeup_held_moves'))
 
 
 def cancelling(case):return case.startswith('cancel-')
 
 
 def cases(selection):
+    if selection.get('options',{}).get('makeup_held_moves') is True:return HELD_MOVE_CASES
     if selection.get('options',{}).get('makeup_depletion_moves') is True:return DEPLETION_MOVE_CASES
     if selection.get('options',{}).get('makeup_world_moves') is True:return WORLD_MOVE_CASES
     if selection.get('options',{}).get('makeup_carried_moves') is True:return CARRIED_MOVE_CASES
@@ -62,21 +72,22 @@ def definitions():
     checks['cancel-waiting']={case:dict(cancelled=True,unallocated=True,tailCompleted=True) for case in ['cancel-waiting',*SUPPLY_MP_CASES[4:]]}
     checks['move-independent']={case:dict(moveVerified=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in MOVE_KINDS if MOVE_KINDS[case] in ('earlier','later')}
     checks['priority-preempt']={case:dict(moveVerified=True,readerResumed=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in MOVE_KINDS if MOVE_KINDS[case]=='promote'}
-    checks['move-dependent']={case:dict(moveProtected=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in MOVE_KINDS if MOVE_KINDS[case] in ('deny-writer','deny-walk')}
+    checks['move-dependent']={case:dict(moveProtected=True,identityVerified=True,authoritative=True,tailCompleted=True) for case in MOVE_KINDS if MOVE_KINDS[case] in ('deny-writer','deny-walk','deny-equip')}
     for scenario in ('move-independent','priority-preempt','move-dependent'):
         for case,fields in checks[scenario].items():
-            if case in DEPLETION_MOVE_CASES:fields['depletionVerified']=True
+            if case in FINAL_USE_CASES:fields['depletionVerified']=True
+            if case in HELD_MOVE_CASES:fields['handsVerified']=True
     return {'makeup':dict(status='ready',clients=1,default_mods=list(MODS),
         scenario_actions={'native-makeup-ui':dict(checks=checks,toolkit_only=['cancel-waiting'],
-            scope='Current full selected pack, fresh macOS SP/menu Host, one EN actor. Real native makeup window/combo/apply/close and avatar model; detached preview rendering and exact root/worn/supply identity checkpoints independently read on Host. SP immediate application; Host native duration-one body behind ordinary front reader in the preview bank; optional makeup_supplies bank covers worn/nested bags and adjacent native crate/world bag with empty application queues and front-reader pending group deletion and a second preview spanning paid completion. Optional Host-only makeup_moves exercises earlier/later pending-reader moves, promotion before a real active reader with page-preserving resume, actor-equipment writer denial. Optional mutually exclusive makeup_carried_moves repeats these edits for exact worn/nested bag kit ancestry and rejects the actor writer; optional makeup_world_moves uses adjacent exact crate/ground-bag sources and naturally walks out of source reach and back to prove unsafe reordering is denied; makeup_depletion_moves covers one-use root/nested/direct-world kits with exact physical deletion and one paid cosmetic; controls retain original execution order. Queue-disabled controls explicitly allow the source-bounded initial ready-gated preview send, exact unattached preview reference retention during location/close, displaced old root items and stale close restoration. Paid Host output must exist physically in root on both roles; the native sendAddItemToContainer(kit) defect is not waived. Programmatic native UI calls and bridge return witness; no physical input or screenshot pixel assertion implied.')},
+            scope='Current full selected pack, fresh macOS SP/menu Host, one EN actor. Real native makeup window/combo/apply/close and avatar model; detached preview rendering and exact root/worn/supply identity checkpoints independently read on Host. SP immediate application; Host native duration-one body behind ordinary front reader in the preview bank; optional makeup_supplies bank covers worn/nested bags and adjacent native crate/world bag with empty application queues and front-reader pending group deletion and a second preview spanning paid completion. Optional Host-only makeup_moves exercises earlier/later pending-reader moves, promotion before a real active reader with page-preserving resume, actor-equipment writer denial. Optional mutually exclusive makeup_carried_moves repeats these edits for exact worn/nested bag kit ancestry and rejects the actor writer; optional makeup_world_moves uses adjacent exact crate/ground-bag sources and naturally walks out of source reach and back to prove unsafe reordering is denied; makeup_depletion_moves covers one-use root/nested/direct-world kits with exact physical deletion and one paid cosmetic; makeup_held_moves covers exact primary/secondary/both root kit references, preserved secondary Hammer and native primary Hammer equip conflict; controls retain original execution order. Queue-disabled controls explicitly allow the source-bounded initial ready-gated preview send, exact unattached preview reference retention during location/close, displaced old root items and stale close restoration. Paid Host output must exist physically in root on both roles; the native sendAddItemToContainer(kit) defect is not waived. Programmatic native UI calls and bridge return witness; no physical input or screenshot pixel assertion implied.')},
         cases=[dict(id=case,producer='native-makeup-ui',capability='effect',kinds=['sp','mp'] if case in SP_CASES+SUPPLY_SP_CASES else ['mp'],
-                    modes=['native','toolkit'],languages=['EN']) for case in MP_CASES+SUPPLY_MP_CASES+MOVE_CASES+CARRIED_MOVE_CASES+WORLD_MOVE_CASES+DEPLETION_MOVE_CASES])}
+                    modes=['native','toolkit'],languages=['EN']) for case in MP_CASES+SUPPLY_MP_CASES+MOVE_CASES+CARRIED_MOVE_CASES+WORLD_MOVE_CASES+DEPLETION_MOVE_CASES+HELD_MOVE_CASES])}
 
 
 def validate(selection):
     if (selection.get('kind') not in ('sp','mp') or selection.get('cases')!=cases(selection)
-            or any(option in selection.get('options',{}) and type(selection['options'][option]) is not bool for option in ('makeup_moves','makeup_carried_moves','makeup_world_moves','makeup_depletion_moves','makeup_supplies'))
-            or sum(selection.get('options',{}).get(option) is True for option in ('makeup_moves','makeup_carried_moves','makeup_world_moves','makeup_depletion_moves','makeup_supplies'))>1
+            or any(option in selection.get('options',{}) and type(selection['options'][option]) is not bool for option in ('makeup_moves','makeup_carried_moves','makeup_world_moves','makeup_depletion_moves','makeup_held_moves','makeup_supplies'))
+            or sum(selection.get('options',{}).get(option) is True for option in ('makeup_moves','makeup_carried_moves','makeup_world_moves','makeup_depletion_moves','makeup_held_moves','makeup_supplies'))>1
             or moving(selection) and selection.get('kind')!='mp'
             or selection.get('mode') not in ('native','toolkit') or selection.get('mods')!=MODS
             or selection.get('languages')!=['EN'] or type(selection.get('clients')) is not int or selection['clients']!=1
@@ -125,7 +136,7 @@ def complete(selection,role,text):
 
 
 def snapshot(value,ids,transition=False):
-    assert type(value) is dict and set(value)=={'case','actor','root','worn','kit','frontPages','tailPages'}|({'supply','placement'} if 'supply'in ids else set())|({'middlePages','placement'} if ids.get('move') is True else set()),'snapshot shape differs'
+    assert type(value) is dict and set(value)=={'case','actor','root','worn','kit','frontPages','tailPages'}|({'supply','placement'} if 'supply'in ids else set())|({'middlePages','placement'} if ids.get('move') is True else set())|({'hands'} if ids.get('held') is True else set()),'snapshot shape differs'
     assert value['case']==ids['case'] and value['actor']==ids['actor'],'snapshot actor/case differs'
     root=value['root'];assert type(root) is list and root,'physical root identities absent'
     assert all(type(row) is dict and set(row)=={'id','kind'} and type(row['id']) is int and type(row['kind']) is str and row['kind'] for row in root)
@@ -138,6 +149,15 @@ def snapshot(value,ids,transition=False):
                and row['root']==(row['id'] in found) and (not row['root'] or found[row['id']]==row['kind'])
                and (not row['sameReference'] or row['root'] and row['container']=='root') for row in worn),'worn/root identity differs'
     assert [row['slot'] for row in worn]==sorted({row['slot'] for row in worn}) and len({row['id'] for row in worn})==len(worn),'duplicate worn identity/slot'
+    if ids.get('held') is True:
+        hands=value['hands'];assert type(hands) is dict and set(hands)=={'primary','secondary'}
+        for hand in hands.values():
+            if hand is False:continue
+            assert type(hand) is dict and set(hand)=={'id','kind','root','sameReference','container','equipParent'}
+            assert type(hand['id']) is int and type(hand['kind']) is str and type(hand['root']) is bool and type(hand['sameReference']) is bool and type(hand['equipParent']) is bool
+            assert hand['container'] is False or hand['container']=='root'
+            assert hand['root']==(hand['id'] in found) and(not hand['root'] or found[hand['id']]==hand['kind'])
+            assert not hand['sameReference'] or hand['root'] and hand['container']=='root','held reference has no exact physical root member'
     kit=value['kit'];removed=kit is False;kit_id=ids['items']['kit']
     if removed:
         assert ids.get('depletion') is True,'non-depletion kit disappeared'
@@ -411,9 +431,9 @@ def check_case(row,selection,prepared,receipt):
 
 def move_orders(case,toolkit):
     kind=MOVE_KINDS[case]
-    before=['front','body','middle','tail'] if kind=='later' else ['front','writer','body','middle','tail'] if kind=='deny-writer' else ['front','middle','body','tail']
+    before=['front','body','middle','tail'] if kind=='later' else ['front','writer','body','middle','tail'] if kind in ('deny-writer','deny-equip') else ['front','middle','body','tail']
     if kind=='deny-walk':before=['front','body','walk-out','walk-back','middle','tail']
-    accepted=toolkit and kind not in ('deny-writer','deny-walk')
+    accepted=toolkit and kind not in ('deny-writer','deny-walk','deny-equip')
     after=(['front','body','middle','tail'] if kind in ('earlier','promote') else ['front','middle','body','tail']) if accepted else before
     starts=['front','body','front','middle','tail'] if accepted and kind=='promote' else after
     return before,after,starts,accepted
@@ -462,16 +482,49 @@ def check_walk(row,ids,edit,points):
     assert walk['out']['finishes'][0]['at']<=walk['back']['finishes'][0]['at'] and walk['outEndpoint']['at']<=walk['returnedOrigin']['at'],'native out/return completion order differs'
 
 
-def check_depletion_effect(row,selection,receipt):
-    """One final native use: inspect actual membership, never a consumed proxy."""
-    ids=row['ids'];case=row['id'];native=selection['mode']=='native';kind=MOVE_KINDS[case]
-    assert selection['kind']=='mp' and row['status']=='passed' and ids['depletion'] is True
+def expected_hands(ids,phase):
+    result={}
+    for slot,name in HELD_SPECS[ids['case']][phase].items():
+        result[slot]=False if name is False else dict(id=ids['items'][name],kind=ids['types'][name],root=True,sameReference=True,container='root',equipParent=True)
+    return result
+
+
+def check_pending_hands(value,ids):
+    spec=HELD_SPECS[ids['case']];expected=expected_hands(ids,'post')
+    for slot,hand in value['hands'].items():
+        if spec['initial'][slot]=='kit' and spec['post'][slot] is False:
+            if hand is False:continue
+            assert hand['id']==ids['items']['kit'] and hand['kind']==ids['types']['kit'],'pending hand has an unknown item'
+            if hand['root']:assert hand['sameReference'] is True and hand['container']=='root' and hand['equipParent'] is True,'pending held kit lost exact root ownership'
+            else:assert hand['sameReference'] is False and hand['container'] is False,'pending detached kit has fabricated root ownership'
+        else:assert hand==expected[slot],'pending hand lost an unrelated/retained native item'
+
+
+def check_equip_writer(row,ids,kind):
+    if kind!='deny-equip':
+        assert not row.get('equipWriter'),'unexpected native equipment writer'
+        return
+    writer=row['equipWriter']
+    assert type(writer) is dict and set(writer)=={'item','primary','twoHands','duration','starts','nativeRef','finishes'}
+    assert writer['item']==ids['items']['hammer'] and writer['primary'] is True and writer['twoHands'] is False
+    assert type(writer['duration']) is int and writer['duration']==50 and type(writer['starts']) is int and writer['starts']==1
+    assert isinstance(writer['nativeRef'],str) and writer['nativeRef'] not in ('','nil','false',row['body']['nativeRef'],row['edit']['frontNativeBefore'])
+    finishes=writer['finishes'];assert type(finishes) is list and len(finishes)==1
+    assert set(finishes[0])=={'phase','succeeded','at'} and finishes[0]['phase']=='perform' and finishes[0]['succeeded'] is True
+    assert type(finishes[0]['at']) is int and finishes[0]['at']<=row['body']['finishes'][0]['at']
+
+
+def check_owned_effect(row,selection,receipt):
+    """Inspect owned paid effects directly, including final use and exact hands."""
+    ids=row['ids'];case=row['id'];native=selection['mode']=='native';kind=MOVE_KINDS[case];depleted=case in FINAL_USE_CASES
+    initial_uses=1 if depleted else 5
+    assert selection['kind']=='mp' and row['status']=='passed' and (ids.get('depletion') is True)==depleted
     assert ids['target']==TARGET and ids['oldType']==OLD and ids['alternate']==ALTERNATE and ids['different']==DIFFERENT
     assert ids['slot']==SLOT and ids['otherSlot']==OTHER_SLOT and ids['producer']=='ISMakeUpUI.onApplyMakeUp' and ids['duration']==1
-    assert type(ids['actor']) is int and type(ids['kitUses']) is int and ids['kitUses']==1 and ids['kitType']=='Eyes'
+    assert type(ids['actor']) is int and type(ids['kitUses']) is int and ids['kitUses']==initial_uses and ids['kitType']=='Eyes'
     assert row['nativeMethodsUnchanged'] is True and row['second'] is False
     base=ids['baseline'];base_root=snapshot(base,ids);kit_id=ids['items']['kit']
-    assert base['kit']['uses']==1 and base['frontPages']==ids['frontInitial'] and base['middlePages']==ids['middleInitial'] and base['tailPages']==ids['tailInitial']
+    assert base['kit']['uses']==initial_uses and base['frontPages']==ids['frontInitial'] and base['middlePages']==ids['middleInitial'] and base['tailPages']==ids['tailInitial']
     assert not any(w['slot'] in (SLOT,OTHER_SLOT,'base:makeup_fullface','base:makeup_lips') for w in base['worn'])
     reserved=set(base_root)|set(ids['items'].values())
     if 'supply' in ids:
@@ -482,7 +535,9 @@ def check_depletion_effect(row,selection,receipt):
     submitted=row['submitted'];assert type(submitted) is dict and set(submitted)=={'id','kind','slot','root','previous'}
     assert type(submitted['id']) is int and submitted['id'] not in reserved and submitted['kind']==TARGET and submitted['slot']==SLOT and submitted['root'] is False and submitted['previous'] is False
     output=row['output'];assert type(output) is int and output not in reserved|{submitted['id']},'final use did not create one distinct native paid output'
-    expected_root=dict(base_root);expected_root.pop(kit_id,None);expected_root[output]=TARGET
+    expected_root=dict(base_root)
+    if depleted:expected_root.pop(kit_id,None)
+    expected_root[output]=TARGET
     points=row['checkpoints'];assert [point['authority']['label'] for point in points]==['baseline','preview','after-body','final']
     for sequence,point in enumerate(points,1):
         client,authority=point['client'],point['authority'];label=client['label'];paid=label in ('after-body','final')
@@ -498,14 +553,15 @@ def check_depletion_effect(row,selection,receipt):
         for role,value in (('client',client['snapshot']),('authority',authority['snapshot'])):
             found=snapshot(value,ids)
             assert found==(expected_root if paid else base_root),'final-use physical root conservation differs at '+label+'/'+role
-            if paid:assert value['kit'] is False,'final-use kit still physically present at '+label+'/'+role
-            else:assert value['kit']['uses']==1,'last kit use changed before paid completion'
+            if paid and depleted:assert value['kit'] is False,'final-use kit still physically present at '+label+'/'+role
+            else:assert value['kit']['uses']==initial_uses-int(paid),'owned kit cost differs at '+label+'/'+role
             worn=worn_identity(base)
             if label=='preview' and native:worn=desired_worn(base,ids,submitted['id'],TARGET,SLOT)
             if paid:
                 worn=desired_worn(base,ids,output,TARGET,SLOT,True)
                 if kind=='deny-writer':worn=sorted([w for w in worn if w['slot']!='base:socks']+[dict(id=ids['items']['writer'],kind=ids['types']['writer'],slot='base:socks',root=True)],key=lambda w:w['slot'])
-            assert worn_identity(value)==worn,'final-use worn identities differ at '+label+'/'+role
+            assert worn_identity(value)==worn,'owned effect worn identities differ at '+label+'/'+role
+            if ids.get('held'):assert value['hands']==expected_hands(ids,'post' if paid else 'initial'),'owned effect exact hands differ at '+label+'/'+role
             if label in ('baseline','preview'):assert value['tailPages']==ids['tailInitial']
             if label=='baseline':assert client['bodyUnallocated'] is True
             if label=='final':assert value['tailPages']==ids['tailTotal']
@@ -516,7 +572,7 @@ def check_depletion_effect(row,selection,receipt):
     assert actual['tailPages']==ids['tailInitial'],'tail was consumed before its real native start'
     expected_before=dict(base_root)
     if actual['kit'] is False:expected_before.pop(kit_id,None)
-    else:assert actual['kit']['uses']==1,'before-tail retained kit is not the exact physical one-use input'
+    else:assert actual['kit']['uses'] in ((1,) if depleted else (4,5)),'before-tail retained kit cost differs'
     if output in found:expected_before[output]=TARGET
     assert found==expected_before,'before-tail physical root identities changed beyond native output/removal packets'
     # Only the paid cosmetic slot can still be converging across packets. The
@@ -531,8 +587,9 @@ def check_depletion_effect(row,selection,receipt):
         paid_transition=worn['id']==output and worn['kind']==TARGET
         preview_transition=native and worn==dict(id=submitted['id'],kind=TARGET,slot=SLOT,root=False,sameReference=False,container=False)
         assert paid_transition or preview_transition,'before-tail cosmetic slot has an unknown item/reference'
+    if ids.get('held'):check_pending_hands(actual,ids)
     check_native_paid(row['body'],row['outcomes'],ids)
-    return dict(avatarVerified=True,identityVerified=True,authoritative=True,tailCompleted=True,paid=True,depletionVerified=True,nativePreviewControl=native)
+    return dict(avatarVerified=True,identityVerified=True,authoritative=True,tailCompleted=True,paid=True,depletionVerified=depleted,handsVerified=ids.get('held') is True,nativePreviewControl=native)
 
 
 def check_move_case(row,selection,prepared,receipt):
@@ -543,19 +600,24 @@ def check_move_case(row,selection,prepared,receipt):
     """
     ids=row['ids'];case=row['id'];toolkit=selection['mode']=='toolkit';kind=MOVE_KINDS[case]
     assert case in MOVE_KINDS and ids.get('move') is True and ids==prepared and row['receipt']==receipt
-    assert (ids.get('depletion') is True)==(case in DEPLETION_MOVE_CASES),'unexpected depletion contract'
+    assert (ids.get('depletion') is True)==(case in FINAL_USE_CASES),'unexpected depletion contract'
+    assert (ids.get('held') is True)==(case in HELD_MOVE_CASES),'unexpected held contract'
+    held=HELD_SPECS.get(case)
+    if held:assert ids.get('handSpec')==dict(initial=held['initial'],post=held['post']) and ids['kitUses']==held['uses']
+    else:assert 'handSpec' not in ids
     assert ('supply' in ids)==(case in MOVE_SUPPLIES) and 'wearPending' not in ids
     if case in MOVE_SUPPLIES:assert ids['supply']['kind']==MOVE_SUPPLIES[case],'makeup source topology differs from case'
-    names={'kit','front','middle','tail'}|({'old'} if case=='move-earlier' else set())|({'writer'} if kind=='deny-writer' else set())
+    has_hammer=held and any(v=='hammer' for phase in ('initial','post') for v in held[phase].values())
+    names={'kit','front','middle','tail'}|({'hammer'} if has_hammer else set())|({'old'} if case=='move-earlier' else set())|({'writer'} if kind=='deny-writer' else set())
     assert set(ids['items'])==set(ids['types'])==names and len(set(ids['items'].values()))==len(names)
     assert ids['types']==dict(kit='Base.MakeupEyeshadow',front='Base.BookCarpentry1',middle='Base.BookCooking1',tail='Base.BookFirstAid1',
-        **({'old':OLD} if 'old' in names else {}),**({'writer':'Base.Socks_Ankle'} if 'writer' in names else {}))
-    assert ids['frontInitial']==ids['frontTotal']-(3 if case in MOVE_SUPPLIES or case in DEPLETION_MOVE_CASES else 8) and ids['middleInitial']==ids['middleTotal']-1
+        **({'old':OLD} if 'old' in names else {}),**({'writer':'Base.Socks_Ankle'} if 'writer' in names else {}),**({'hammer':'Base.Hammer'} if has_hammer else {}))
+    assert ids['frontInitial']==ids['frontTotal']-(3 if case in MOVE_SUPPLIES or case in DEPLETION_MOVE_CASES or case in HELD_MOVE_CASES else 8) and ids['middleInitial']==ids['middleTotal']-1
     assert type(ids['placement']) is dict and set(ids['placement'])=={'x','y','z'} and all(type(v) is int for v in ids['placement'].values())
     points=row['checkpoints'];assert [p['client']['label'] for p in points]==['baseline','preview','after-body','final']
     values=[ids['baseline'],row['clientFinal'],receipt['snapshot'],*[p[role]['snapshot'] for p in points for role in ('client','authority')]]
     for value in values:snapshot(value,ids)
-    snapshot(row['beforeTail']['snapshot'],ids,transition=case in DEPLETION_MOVE_CASES)
+    snapshot(row['beforeTail']['snapshot'],ids,transition=case in FINAL_USE_CASES)
     for point in points:
         for role in ('client','authority'):
             value=point[role]['snapshot'];label=point[role]['label']
@@ -567,7 +629,8 @@ def check_move_case(row,selection,prepared,receipt):
     before_tail=row['beforeTail']['snapshot']
     assert before_tail['frontPages']==ids['frontTotal'] and before_tail['middlePages']==ids['middleTotal'],'independent readers did not finish before tail'
     before,after,starts,accepted=move_orders(case,toolkit);edit=row['edit']
-    assert set(edit)=={'at','accepted','reason','before','after','bodyUnallocated','ownershipPreserved','frontPages','frontDelta','frontNativeBefore','frontNativeAfter','frontRetained','tailRetained'}
+    assert set(edit)=={'at','accepted','reason','before','after','bodyUnallocated','ownershipPreserved','frontPages','frontDelta','frontNativeBefore','frontNativeAfter','frontRetained','tailRetained'}|({'hands'} if held else set())
+    if held:assert edit['hands']==expected_hands(ids,'initial'),'held kit was not the exact live input at move admission'
     assert type(edit['at']) is int and edit['accepted'] is accepted and edit['before']==before and edit['after']==after,'move admission/queue order differs'
     assert edit['bodyUnallocated'] is True and edit['ownershipPreserved'] is True and edit['frontRetained'] is True and edit['tailRetained'] is True,'move changed operation ownership or independent readers'
     assert type(edit['frontPages']) is int and ids['frontInitial']<edit['frontPages']<ids['frontTotal']
@@ -601,8 +664,9 @@ def check_move_case(row,selection,prepared,receipt):
         for value in (row['beforeTail']['snapshot'],row['clientFinal'],receipt['snapshot']):
             assert [w for w in value['worn'] if w['slot']=='base:socks']==writer_socks,'actor writer did not retain exact physical worn output'
     check_walk(row,ids,edit,points)
-    if case in DEPLETION_MOVE_CASES:
-        result=check_depletion_effect(row,selection,receipt)
+    check_equip_writer(row,ids,kind)
+    if case in DEPLETION_MOVE_CASES or case in HELD_MOVE_CASES:
+        result=check_owned_effect(row,selection,receipt)
         result.update(moveVerified=accepted,moveProtected=toolkit and not accepted,readerResumed=resumed)
         return result
     # Preserve the old proof's renderer, callback, authoritative body receipt,

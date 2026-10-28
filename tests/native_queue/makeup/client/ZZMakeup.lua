@@ -3,9 +3,10 @@ require 'ISUI/ISMakeUpUI'
 require 'TimedActions/ISReadABook'
 require 'TimedActions/ISApplyMakeUp'
 require 'TimedActions/ISWearClothing'
+require 'TimedActions/ISEquipWeaponAction'
 require 'TimedActions/WalkToTimedAction'
 local F=require 'QueueMakeup';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
-local moves=config.options and(config.options.makeup_moves==true or config.options.makeup_carried_moves==true or config.options.makeup_world_moves==true or config.options.makeup_depletion_moves==true)
+local moves=config.options and(config.options.makeup_moves==true or config.options.makeup_carried_moves==true or config.options.makeup_world_moves==true or config.options.makeup_depletion_moves==true or config.options.makeup_held_moves==true)
 local Proof=require 'PZSurvivorToolkit/SourceProof';local T=PZSurvivorToolkit;local native=config.mode=='native'
 local entered,ready,done=false,false,false
 local phase,index,since='prepare',1,0
@@ -13,6 +14,14 @@ local state,ids,previous,ui,front,tail,body,submitted,second,beforeTail,edit,ver
 local checkpoints,sequence,outcomes,renderWitness,renderLabel,renderNext,bodyQuiet,finalQuiet
 local bodyRecord,applyQueues,transferStarts,submitting,placement
 local M={}
+if config.options and config.options.makeup_held_moves==true then
+ M.dropBinding=require 'QueueMakeupDropBinding';M.dropMatches=M.dropBinding.matches
+ assert(M.dropBinding.start(),'reviewed force-drop factory was unavailable before installation')
+end
+function M.forceDropMatches(callback)
+ if M.dropBinding then return M.dropBinding.matches==M.dropMatches and M.dropMatches(callback)end
+ return Proof.closure(callback,'ISEquipWeaponAction.lua')
+end
 function M.kind()return F.moveKind(config.cases[index])end
 function M.name(action)
  if M.walkActions then for name,walk in pairs(M.walkActions)do if action==walk then return 'walk-'..name end end end
@@ -51,6 +60,69 @@ function M.observeWalks()
   end
  end
 end
+-- Independent fixture seal: Policy's installed snapshots are useful instance
+-- bindings, but do not establish native provenance for a preexisting replacement.
+function M.captureEquip()
+ assert(Proof.matches('media/lua/shared/TimedActions/ISEquipWeaponAction.lua',4117952124,nil,true)
+  and Proof.matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)
+  and Proof.matches('media/lua/shared/ISBaseObject.lua',3350606722,nil,true),'native Hammer writer source changed')
+ local saved={owner=ISEquipWeaponAction,base=ISBaseTimedAction,object=ISBaseObject,queue=T.ActionQueue,dispatch={},globals={}}
+ assert(type(saved.queue)=='table','native Hammer writer queue owner missing')
+ local ownNames={'new','isValid','update','start','animEvent','stop','isAlreadyEquipped','perform','complete'}
+ local baseNames={'isValidStart','isValid','isUsingTimeout','update','forceComplete','forceStop','forceCancel','getJobDelta','setJobDelta',
+  'resetJobDelta','waitToStart','interruptWaitToStart','start','isStarted','stop','perform','getDuration','create','begin','setCurrentTime','setTime',
+  'adjustMaxTime','setActionAnim','setOverrideHandModels','setOverrideHandModelsString','overrideWeaponType','restoreWeaponType','setAnimVariable',
+  'addAfter','beginAddingActions','endAddingActions','getDeltaModifiers','new'}
+ local objectNames={'initialise','derive','new','instanceof','addEventListener','removeEventListener','triggerEvent','clearEventListeners'}
+ local function capture(owner,names,filename,queueHooks)
+  assert(type(owner)=='table','native Hammer writer owner missing');local out={}
+  for _,name in ipairs(names)do
+   local callback=Proof.own(owner,name)
+   assert(type(callback)=='function'and(Proof.closure(callback,filename)
+    or queueHooks and(name=='begin'or name=='stop')and Proof.closure(callback,'ActionQueue.lua')),'native Hammer writer method source changed '..name)
+   out[name]=callback;saved.dispatch[name]=saved.owner[name]
+  end;return out
+ end
+ saved.objectMethods=capture(saved.object,objectNames,'ISBaseObject.lua',false)
+ saved.baseMethods=capture(saved.base,baseNames,'ISBaseTimedAction.lua',true)
+ saved.ownMethods=capture(saved.owner,ownNames,'ISEquipWeaponAction.lua',false)
+ for _,name in ipairs({'forceDropHeavyItems','isForceDropHeavyItem'})do
+  assert(type(_G[name])=='function'and(name=='forceDropHeavyItems'and M.forceDropMatches(_G[name])or name~='forceDropHeavyItems'and Proof.closure(_G[name],'ISEquipWeaponAction.lua')),'native Hammer writer helper source changed '..name)
+  saved.globals[name]=_G[name]
+ end
+ M.equipSeal=saved;M.assertEquip()
+end
+function M.assertEquip(action)
+ local saved=assert(M.equipSeal,'native Hammer writer seal missing')
+ assert(ISEquipWeaponAction==saved.owner and ISBaseTimedAction==saved.base and ISBaseObject==saved.object and T.ActionQueue==saved.queue
+  and saved.owner.Type=='ISEquipWeaponAction'and getmetatable(saved.owner)==saved.base and Proof.own(saved.owner,'SuperType')==saved.base
+  and getmetatable(saved.base)==saved.object,'native Hammer writer class changed')
+ local function unchanged(owner,methods,filename,queueHooks)
+  for name,callback in pairs(methods)do
+   assert(Proof.own(owner,name)==callback and(Proof.closure(callback,filename)
+    or queueHooks and(name=='begin'or name=='stop')and Proof.closure(callback,'ActionQueue.lua')),'native Hammer writer method changed '..name)
+  end
+  for name,callback in pairs(owner)do
+   if type(callback)=='function'then assert(methods[name]==callback,'native Hammer writer extra method '..name)end
+  end
+ end
+ unchanged(saved.object,saved.objectMethods,'ISBaseObject.lua',false)
+ unchanged(saved.base,saved.baseMethods,'ISBaseTimedAction.lua',true)
+ unchanged(saved.owner,saved.ownMethods,'ISEquipWeaponAction.lua',false)
+ for name,callback in pairs(saved.globals)do assert(_G[name]==callback and(name=='forceDropHeavyItems'and M.forceDropMatches(callback)or name~='forceDropHeavyItems'and Proof.closure(callback,'ISEquipWeaponAction.lua')),'native Hammer writer helper changed '..name)end
+ for name,callback in pairs(saved.dispatch)do assert(saved.owner[name]==callback,'native Hammer writer dispatch changed '..name)end
+ if not action then return end
+ assert(getmetatable(action)==saved.owner and action.Type==saved.owner.Type and Proof.own(saved.owner,'__index')==saved.owner
+  and action.character==state.player and action.item==state.player:getInventory():getItemById(ids.items.hammer)
+  and action.primary==true and action.twoHands==false,'native Hammer writer instance changed')
+ for name,callback in pairs(saved.dispatch)do assert(action[name]==callback,'native Hammer writer instance dispatch changed '..name)end
+ for name,callback in pairs(action)do
+  if type(callback)=='function'then assert(saved.dispatch[name]==callback,'native Hammer writer injected function '..name)end
+ end
+ for _,name in ipairs({'onStartFunc','onCancelFunc','onCompleteFunc','onFailFunc','retriggerLastAction','additionalTest','additionalContext'})do
+  assert(action[name]==nil or action[name]==false,'native Hammer writer injected callback '..name)
+ end
+end
 local previewShotFrames,previewShotSince,previewShotTaken=0,nil,false
 local uiMethods,bodyMethods={},{}
 local observerFailure
@@ -67,6 +139,7 @@ local function preview()
   previous=ui.previousMakeUp and ui.previousMakeUp:getID()or false}or false
 end
 local function intact()
+ if M.equipSeal then M.assertEquip(M.equipWriter and M.writer or nil)end
  if M.walkMethods then
   for name,callback in pairs(M.walkMethods)do assert(ISWalkToTimedAction[name]==callback,'native walk callback replaced '..name)end
   assert(Proof.closure(ISWalkToTimedAction.new,'WalkToTimedAction.lua'),'native walk constructor source changed')
@@ -148,8 +221,17 @@ local function apply()
  end
  if moves then
   M.middle=ISReadABook:new(state.player,state.player:getInventory():getItemById(ids.items.middle))
-  if M.kind()~='later'and M.kind()~='deny-writer'and M.kind()~='deny-walk'then ISTimedActionQueue.add(M.middle)end
+  if M.kind()~='later'and M.kind()~='deny-writer'and M.kind()~='deny-walk'and M.kind()~='deny-equip'then ISTimedActionQueue.add(M.middle)end
   if M.kind()=='deny-writer'then M.writer=ISWearClothing:new(state.player,state.player:getInventory():getItemById(ids.items.writer));ISTimedActionQueue.add(M.writer)end
+  if M.kind()=='deny-equip'then
+   local hammer=assert(state.player:getInventory():getItemById(ids.items.hammer))
+   M.assertEquip()
+   M.writer=ISEquipWeaponAction:new(state.player,hammer,50,true,false)
+   M.assertEquip(M.writer)
+   assert(M.writer.item==hammer and M.writer.primary==true and M.writer.twoHands==false,'native Hammer equip constructor changed')
+   M.equipWriter={item=hammer:getID(),primary=true,twoHands=false,duration=M.writer.maxTime,starts=0,nativeRef=false,finishes={}}
+   ISTimedActionQueue.add(M.writer)
+  end
  end
  if isClient()then bodyRecord={duration=1,starts=0,finishes={},nativeRef=false}end
  submitting=true;ui:onApplyMakeUp();submitting=false
@@ -174,7 +256,7 @@ local function apply()
    end
    assert(M.walkActions.out.toolkitQueueOperation~=M.walkActions.back.toolkitQueueOperation,'native walk directions share an operation token')
   end
-  if moves and(M.kind()=='later'or M.kind()=='deny-writer'or M.kind()=='deny-walk')then ISTimedActionQueue.add(M.middle)end
+  if moves and(M.kind()=='later'or M.kind()=='deny-writer'or M.kind()=='deny-walk'or M.kind()=='deny-equip')then ISTimedActionQueue.add(M.middle)end
   addTail()
   if moves then close();phase='move-front';return end
   if case()=='apply-while-preview'then second=choose(ids.alternate);rendered('overlap-preview','wait-body')
@@ -198,7 +280,7 @@ local function afterBody()
  if not cancelled then
   if not completed()then return end
   if ids.depletion then if not F.depletionReady(state)then return end
-  elseif snapshot().kit.uses~=ids.kitUses-1 then return end
+  elseif snapshot().kit.uses~=ids.kitUses-1 or not F.handsReady(state,true)then return end
  end
  bodyQuiet=bodyQuiet or now();if now()-bodyQuiet<750 then return end
  checkpoint('after-body',case()=='apply-while-preview'and'close-overlap'or'final-drain')
@@ -262,6 +344,7 @@ Events.OnTick.Add(function()
     and type(makeupAvatarRendered)=='function','test-only native avatar capture probe unavailable')
    for _,name in ipairs({'onSelectMakeUp','onSelectLocation','onApplyMakeUp','prerender','reinit','close'})do uiMethods[name]=ISMakeUpUI[name]end
    for _,name in ipairs({'new','isValid','start','update','stop','perform','complete','getDuration'})do bodyMethods[name]=ISApplyMakeUp[name]end
+   if config.options and config.options.makeup_held_moves==true then M.captureEquip()end
    if config.options and config.options.makeup_world_moves==true then
     M.walkMethods={};for _,name in ipairs({'new','isValid','start','update','stop','perform'})do M.walkMethods[name]=ISWalkToTimedAction[name]end
    end
@@ -287,6 +370,7 @@ Events.OnTick.Add(function()
       assert(not body and action.item==F.kit(state)and action.type==ids.target,'unexpected native supply body began');body=action
      end
      if ids and(ids.supply or moves)and action.Type=='ISInventoryTransferAction'then transferStarts=transferStarts+1 end
+     if action==M.writer and M.equipWriter then M.equipWriter.starts=M.equipWriter.starts+1;assert(M.equipWriter.starts==1,'native Hammer writer started twice')end
      if action==body then bodyRecord.starts=bodyRecord.starts+1;assert(bodyRecord.starts==1,'native makeup started twice')end
      if action==tail then assert(not beforeTail,'tail began twice');beforeTail={at=now(),snapshot=snapshot(ids.depletion==true)};raw('BEFORE_TAIL',{case=case(),evidence=beforeTail})end
     end),
@@ -294,11 +378,13 @@ Events.OnTick.Add(function()
      local walk=M.walkPart(action);if walk then
       assert(action.action,'native walk completion has no allocated action');M.walkNatives[action]=action.action;walk.nativeRef=tostring(action.action);return step=='perform'
      end
+     if action==M.writer and M.equipWriter then M.equipWriter.nativeRef=tostring(action.action);return step=='perform'end
      if action~=body then return false end
      bodyRecord.nativeRef=tostring(action.action);return step=='perform'or step=='complete'
     end),
     finish=observe(function(action,step,succeeded)
      local walk=M.walkPart(action);if walk then walk.finishes[#walk.finishes+1]={phase=step,succeeded=succeeded==true,at=now()}end
+     if action==M.writer and M.equipWriter then M.equipWriter.finishes[#M.equipWriter.finishes+1]={phase=step,succeeded=succeeded==true,at=now()}end
      if action==body then bodyRecord.finishes[#bodyRecord.finishes+1]={phase=step,succeeded=succeeded==true,at=now()}end
     end)}),'native makeup lifecycle observer unavailable')
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
@@ -351,14 +437,15 @@ Events.OnTick.Add(function()
     or state.player:getAlreadyReadPages(ids.types.front)<=ids.frontInitial then return end
    assert(not body.action and bodyRecord.starts==0,'move test body allocated before edit')
    local before=M.order();local physical=snapshot();local token=body.toolkitQueueOperation
+   if ids.held then assert(F.handsReady(state,false),'held makeup input was stowed or replaced before move admission')end
    assert(token and token~=front.toolkitQueueOperation and token~=M.middle.toolkitQueueOperation and token~=tail.toolkitQueueOperation
     and(not M.writer or token~=M.writer.toolkitQueueOperation)
     and(not M.walkActions or token~=M.walkActions.out.toolkitQueueOperation and token~=M.walkActions.back.toolkitQueueOperation),'native makeup shares an unrelated operation token')
    local frontNative=tostring(front.action);local pages=physical.frontPages;local delta=front:getJobDelta()
-   local target=M.kind()=='promote'and front or M.kind()=='deny-writer'and M.writer or M.kind()=='deny-walk'and M.walkActions.out or M.middle
+   local target=M.kind()=='promote'and front or (M.kind()=='deny-writer'or M.kind()=='deny-equip')and M.writer or M.kind()=='deny-walk'and M.walkActions.out or M.middle
    local accepted,reason=false,false
    if not native then accepted,reason=T.ActionQueue.move(queue(),body,target,M.kind()=='later'or M.kind()=='deny-walk')end
-   local expected=not native and M.kind()~='deny-writer'and M.kind()~='deny-walk'
+   local expected=not native and M.kind()~='deny-writer'and M.kind()~='deny-walk'and M.kind()~='deny-equip'
    if accepted~=expected then
     local kit,source=F.kit(state);local bag=source and source:getContainingItem()
     local view=bag and bag:getContainer();local world=bag and bag:getWorldItem()
@@ -377,7 +464,7 @@ Events.OnTick.Add(function()
    assert(F.same(physical,snapshot())and token==body.toolkitQueueOperation and not body.action,'move mutated paid state or operation ownership')
    edit={at=now(),accepted=accepted,reason=reason or false,before=before,after=M.order(),bodyUnallocated=true,
     ownershipPreserved=true,frontPages=pages,frontDelta=delta,frontNativeBefore=frontNative,
-    frontNativeAfter=tostring(front.action),frontRetained=queue():indexOf(front)~=-1,tailRetained=queue():indexOf(tail)~=-1}
+    frontNativeAfter=tostring(front.action),frontRetained=queue():indexOf(front)~=-1,tailRetained=queue():indexOf(tail)~=-1,hands=ids.held and physical.hands or nil}
    if expected and M.kind()=='promote'then M.readerResume={pages=pages}end
    raw('EDIT',{case=case(),evidence=edit});phase='wait-body'
   elseif phase=='wait-front'then
@@ -402,10 +489,10 @@ Events.OnTick.Add(function()
    local final=snapshot();local output=F.output(verified.snapshot,ids)
    emit({event='case',id=case(),status='passed',ids=ids,checkpoints=checkpoints,receipt=verified,clientFinal=final,
     submitted=submitted,second=second or false,output=output,body=bodyRecord or false,outcomes=outcomes,
-    edit=edit or false,beforeTail=beforeTail,nativeMethodsUnchanged=true,applyQueues=applyQueues,supplyTransferStarts=(ids.supply or moves)and transferStarts or nil,startOrder=moves and M.startOrder or nil,readerResume=M.readerResume or nil,walk=M.walkRecord or nil})
+    edit=edit or false,beforeTail=beforeTail,nativeMethodsUnchanged=true,applyQueues=applyQueues,supplyTransferStarts=(ids.supply or moves)and transferStarts or nil,startOrder=moves and M.startOrder or nil,readerResume=M.readerResume or nil,walk=M.walkRecord or nil,equipWriter=M.equipWriter or nil})
    previous=ids;index=index+1
    state,ids,ui,front,tail,body,submitted,second,beforeTail,edit,verified,pending,authority=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
-   bodyQuiet,finalQuiet,renderWitness,renderLabel,renderNext,bodyRecord,applyQueues=nil,nil,nil,nil,nil,nil,nil;M.middle,M.writer,M.readerResume,M.wearReady,M.resumedAction,M.walkActions,M.walkRecord,M.walkNatives=nil,nil,nil,nil,nil,nil,nil,nil;since=now();phase='prepare'
+   bodyQuiet,finalQuiet,renderWitness,renderLabel,renderNext,bodyRecord,applyQueues=nil,nil,nil,nil,nil,nil,nil;M.middle,M.writer,M.readerResume,M.wearReady,M.resumedAction,M.walkActions,M.walkRecord,M.walkNatives,M.equipWriter=nil,nil,nil,nil,nil,nil,nil,nil,nil;since=now();phase='prepare'
    if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
   end
  end)

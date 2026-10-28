@@ -6,8 +6,8 @@ require 'TimedActions/ISApplyMakeUp'
 require 'Definitions/MakeUpDefinitions'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Access=require 'PZSurvivorToolkit/ItemAccess'
-local FinalUse=require 'PZSurvivorToolkit/MakeupFinalUse'
-local finalSupports=FinalUse and FinalUse.supports
+local SupplyUse=require 'PZSurvivorToolkit/MakeupSupplyUse'
+local finalSupports=SupplyUse and SupplyUse.supportsDepletion
 local matches,closure=Proof.matches,Proof.closure
 local owner,locations=ISApplyMakeUp,ItemBodyLocation
 local globals={}
@@ -132,8 +132,8 @@ local function notifyDepletion(action)
  -- Recheck immediately before Use: factory/wear events may have changed the
  -- item, source or callbacks since entry. The native third flag sends removal
  -- before detaching the item; sendItemStats afterwards cannot find that source.
- if type(FinalUse)~='table'or getmetatable(FinalUse)or FinalUse.supports~=finalSupports
-  or type(finalSupports)~='function'or not closure(finalSupports,'MakeupFinalUse.lua')then return false end
+ if type(SupplyUse)~='table'or getmetatable(SupplyUse)or SupplyUse.supportsDepletion~=finalSupports
+  or type(finalSupports)~='function'or not closure(finalSupports,'MakeupSupplyUse.lua')then return false end
  local ok,allowed=pcall(function()return eligible(action)and finalSupports(action.character,action.item)end)
  return ok and allowed==true
 end

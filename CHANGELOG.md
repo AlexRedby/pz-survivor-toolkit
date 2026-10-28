@@ -40,6 +40,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.319
+
+- **Changed:** Pending Host makeup can move around independent work with a reviewed kit held in either or both hands in the character's main inventory. Remaining charges keep the grip; the final charge uses native matching-hand cleanup and preserves other held items. Attached, worn, automatically draining and non-root held supplies retain protection.
+
 ### 0.1.318
 
 - Reduce ground-highlight Lua/Java calls through the Java Patches visibility and ownership helpers, retaining the single shared Toolkit/Wishlist scan, live visibility, discovery budgets and foreign highlights. Keep the Lua path when helpers are absent or unsupported.

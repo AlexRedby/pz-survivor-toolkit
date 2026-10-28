@@ -2,8 +2,9 @@
 -- kit, bag ancestry or worn cosmetics. Read native facts, never prototypes.
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Access=require 'PZSurvivorToolkit/ItemAccess'
-local FinalUse=require 'PZSurvivorToolkit/MakeupFinalUse'
-local finalSupports=FinalUse and FinalUse.supports
+local SupplyUse=require 'PZSurvivorToolkit/MakeupSupplyUse'
+local depletionSupports=SupplyUse and SupplyUse.supportsDepletion
+local heldSupports=SupplyUse and SupplyUse.supportsHeld
 local closure=Proof.closure
 local own=Proof.own
 local Move={}
@@ -23,6 +24,11 @@ local floorPage
 local function finite(n)return type(n)=='number'and n==n and n>-math.huge and n<math.huge end
 local function integer(n)return finite(n)and n%1==0 end
 local function plain(t)return type(t)=='table'and getmetatable(t)==nil end
+local function supplyProof()
+ return plain(SupplyUse)and SupplyUse.supportsDepletion==depletionSupports and SupplyUse.supportsHeld==heldSupports
+  and type(depletionSupports)=='function'and closure(depletionSupports,'MakeupSupplyUse.lua')
+  and type(heldSupports)=='function'and closure(heldSupports,'MakeupSupplyUse.lua')
+end
 local function invoker(f)
  if type(f)~='function'then return false end
  local ok,kind=pcall(classifier,f)
@@ -200,9 +206,10 @@ local function inspect(action,result,policy,context)
   local kind=container:getType()
   return kind~='floor'and kind~='proximityInv'and kind~='twistInv_corpses'and kind~='TradeUI'
  end
- local function leaf(item,container,world)
+ local function leaf(item,container,world,heldKit)
   if (not world and not containerClean(container))or item:getContainer()~=container or item:getWorldItem()~=world or item:hasComponents()
-   or actor:getPrimaryHandItem()==item or actor:getSecondaryHandItem()==item then return false end
+   or (actor:getPrimaryHandItem()==item or actor:getSecondaryHandItem()==item)
+    and(not heldKit or item~=kit or container~=root or not supplyProof()or not heldSupports(actor,item))then return false end
   local id,kind=item:getID(),item:getFullType()
   if not integer(id)or id<1 or id>2147483647 or type(kind)~='string'or not kind:match('^[^.]+%.[^.]+$')
    or staged.items[id]then return false end
@@ -226,7 +233,7 @@ local function inspect(action,result,policy,context)
  end
  local source=kit:getContainer()
  local uses=kit:getCurrentUses()
- if not leaf(kit,source)or not integer(uses)or uses<1
+ if not leaf(kit,source,nil,true)or not integer(uses)or uses<1
   or kit:getReplaceOnDeplete()~=nil or kit:getWeightEmpty()~=0
   or not finite(kit:getActualWeight())or kit:getActualWeight()<0 then return nil end
  local manager=managerOf()
@@ -258,9 +265,7 @@ local function inspect(action,result,policy,context)
  if not reached then return nil end
  -- B42 getUses aliases this charge counter; there is no separate stack split.
  -- The last charge additionally needs the shared native removal/sender proof.
- if uses==1 and(not plain(FinalUse)or FinalUse.supports~=finalSupports
-  or type(finalSupports)~='function'or not closure(finalSupports,'MakeupFinalUse.lua')
-  or not finalSupports(actor,kit))then return nil end
+ if uses==1 and(not supplyProof()or not depletionSupports(actor,kit))then return nil end
  addContainers(staged,source)
  if staged.knownInputs~=true then return nil end
  local output=manager:FindItem(action.type)

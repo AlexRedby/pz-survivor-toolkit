@@ -1,4 +1,5 @@
 import copy
+import os
 import json
 from pathlib import Path
 import sys
@@ -15,7 +16,7 @@ from queue_checks.adapters import makeup as m
 
 
 class MakeupEvidenceTests(unittest.TestCase):
-    def selection(self,mode='toolkit',kind='sp',supplies=False,moves=False,carried_moves=False,world_moves=False,depletion_moves=False):
+    def selection(self,mode='toolkit',kind='sp',supplies=False,moves=False,carried_moves=False,world_moves=False,depletion_moves=False,held_moves=False):
         value= dict(suite='makeup',cases=list(m.SP_CASES if kind=='sp' else m.MP_CASES),mode=mode,kind=kind,
                     clients=1,languages=['EN'],mods=list(m.MODS),options={'mp_host':True} if kind=='mp' else {})
         if supplies:value['options']['makeup_supplies']=True;value['cases']=list(m.cases(value))
@@ -23,6 +24,7 @@ class MakeupEvidenceTests(unittest.TestCase):
         if carried_moves:value['options']['makeup_carried_moves']=True;value['cases']=list(m.cases(value))
         if world_moves:value['options']['makeup_world_moves']=True;value['cases']=list(m.cases(value))
         if depletion_moves:value['options']['makeup_depletion_moves']=True;value['cases']=list(m.cases(value))
+        if held_moves:value['options']['makeup_held_moves']=True;value['cases']=list(m.cases(value))
         return value
 
     def evidence(self,case,selection):
@@ -126,15 +128,19 @@ class MakeupEvidenceTests(unittest.TestCase):
         return row
 
     def move_evidence(self,case,selection):
-        base=copy.deepcopy(selection);base['options'].pop('makeup_moves',None);base['options'].pop('makeup_carried_moves',None);base['options'].pop('makeup_world_moves',None);base['options'].pop('makeup_depletion_moves',None)
+        base=copy.deepcopy(selection);base['options'].pop('makeup_moves',None);base['options'].pop('makeup_carried_moves',None);base['options'].pop('makeup_world_moves',None);base['options'].pop('makeup_depletion_moves',None);base['options'].pop('makeup_held_moves',None)
         if case in m.MOVE_SUPPLIES:
             base['options']['makeup_supplies']=True;row=self.supply_evidence('apply-'+m.MOVE_SUPPLIES[case],base)
         else:row=self.evidence('apply-replace' if case=='move-earlier' else 'apply-empty',base)
         kind=m.MOVE_KINDS[case]
         ids=row['ids'];row['id']=ids['case']=case;ids['move']=True;ids['placement']=dict(x=10,y=20,z=0)
-        ids['items']['middle']=5;ids['types']['middle']='Base.BookCooking1';ids['middleTotal']=100;ids['middleInitial']=99;ids['frontInitial']=97 if case in m.MOVE_SUPPLIES or case in m.DEPLETION_MOVE_CASES else 92
+        ids['items']['middle']=5;ids['types']['middle']='Base.BookCooking1';ids['middleTotal']=100;ids['middleInitial']=99;ids['frontInitial']=97 if case in m.MOVE_SUPPLIES or case in m.DEPLETION_MOVE_CASES or case in m.HELD_MOVE_CASES else 92
         if case in m.MOVE_SUPPLIES:ids['items'].pop('old');ids['types'].pop('old');row['submitted']['previous']=False;row.pop('applyQueues')
-        if case in m.DEPLETION_MOVE_CASES:ids['depletion']=True;ids['kitUses']=1
+        if case in m.FINAL_USE_CASES:ids['depletion']=True;ids['kitUses']=1
+        held=m.HELD_SPECS.get(case)
+        if held:
+            ids['held']=True;ids['handSpec']=dict(initial=copy.deepcopy(held['initial']),post=copy.deepcopy(held['post']))
+            if any(v=='hammer' for phase in ('initial','post') for v in held[phase].values()):ids['items']['hammer']=6;ids['types']['hammer']='Base.Hammer'
         if kind=='deny-writer':ids['items']['writer']=6;ids['types']['writer']='Base.Socks_Ankle'
         values=[ids['baseline'],row['clientFinal'],row['receipt']['snapshot'],row['beforeTail']['snapshot']]
         for point in row['checkpoints']:
@@ -152,18 +158,22 @@ class MakeupEvidenceTests(unittest.TestCase):
                 # its slot while preserving both physical items in root.
                 value['root'].extend([dict(id=6,kind='Base.Socks_Ankle'),dict(id=7,kind='Base.Socks_Ankle')])
                 value['worn'].append(dict(id=6 if late else 7,kind='Base.Socks_Ankle',slot='base:socks',root=True,sameReference=True,container='root'))
-            if case in m.DEPLETION_MOVE_CASES:
+            if held and 'hammer' in ids['items']:value['root'].append(dict(id=6,kind='Base.Hammer'))
+            if case in m.FINAL_USE_CASES:
                 if late:
                     value['kit']=False;value['root']=[v for v in value['root'] if v['id']!=1]
                     if 'supply' in value:
                         value['supply']['items']=[v for v in value['supply']['items'] if v['id']!=1]
                         for ancestor in value['supply']['ancestors']:ancestor['items']=[v for v in ancestor['items'] if v['id']!=1]
                 else:value['kit']['uses']=1
+            if held:value['hands']=m.expected_hands(ids,'post' if late else 'initial')
             value['root'].sort(key=lambda v:v['id']);value['worn'].sort(key=lambda v:v['slot'])
         before,after,starts,accepted=m.move_orders(case,selection['mode']=='toolkit')
         edit=dict(at=25,accepted=accepted,reason=False if accepted or selection['mode']=='native' else 'dependent',before=before,after=after,
             bodyUnallocated=True,ownershipPreserved=True,frontPages=ids['frontInitial']+1,frontDelta=1/(ids['frontTotal']-ids['frontInitial']),frontNativeBefore='native-front',frontNativeAfter='native-front',frontRetained=True,tailRetained=True)
+        if held:edit['hands']=copy.deepcopy(m.expected_hands(ids,'initial'))
         row['edit']=edit;row['startOrder']=starts;row['supplyTransferStarts']=0
+        if kind=='deny-equip':row['equipWriter']=dict(item=ids['items']['hammer'],primary=True,twoHands=False,duration=50,starts=1,nativeRef='native-equip-writer',finishes=[dict(phase='perform',succeeded=True,at=80)])
         if kind=='deny-walk':
             origin=copy.deepcopy(ids['placement']);out=dict(x=8,y=20,z=0)
             ids['walk']=dict(origin=origin,via=dict(x=9,y=20,z=0),out=out,source=copy.deepcopy(ids['supply']['world']))
@@ -462,7 +472,7 @@ class MakeupEvidenceTests(unittest.TestCase):
         self.assertEqual(list(checks['success-queued']),m.MP_CASES)
         self.assertEqual(list(checks['success-empty']),m.SUPPLY_SP_CASES)
         self.assertEqual(list(checks['cancel-waiting']),['cancel-waiting',*m.SUPPLY_MP_CASES[4:]])
-        self.assertEqual([case['id'] for case in suite['cases']],m.MP_CASES+m.SUPPLY_MP_CASES+m.MOVE_CASES+m.CARRIED_MOVE_CASES+m.WORLD_MOVE_CASES+m.DEPLETION_MOVE_CASES)
+        self.assertEqual([case['id'] for case in suite['cases']],m.MP_CASES+m.SUPPLY_MP_CASES+m.MOVE_CASES+m.CARRIED_MOVE_CASES+m.WORLD_MOVE_CASES+m.DEPLETION_MOVE_CASES+m.HELD_MOVE_CASES)
 
     def test_supply_option_cannot_silently_replace_or_mix_default_bank(self):
         for mutation in ('false','non-bool','missing','mixed'):
@@ -804,6 +814,136 @@ class MakeupEvidenceTests(unittest.TestCase):
                     continue
                 with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
 
+    def test_held_root_moves_preserve_exact_hands_and_one_paid_effect_in_both_modes(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',held_moves=True)
+            rows=[self.evidence(case,selection) for case in selection['cases']]
+            result=self.verify(selection,rows)
+            with self.subTest(mode=mode):
+                self.assertEqual(result['issues'],[])
+                self.assertTrue(all(v['outcome']['handsVerified'] for v in result['outcomes']))
+                self.assertIs(rows[1]['clientFinal']['hands']['primary'],False)
+                self.assertEqual(rows[1]['clientFinal']['kit']['uses'],4)
+
+    def test_held_move_bank_is_explicit_exclusive_and_host_only(self):
+        for mutation in ('sp','missing','false','string','root','carried','world','depletion','supplies','order','subset','host','mods','language'):
+            selection=self.selection(kind='mp',held_moves=True)
+            if mutation=='sp':selection['kind']='sp'
+            elif mutation=='missing':selection['options'].pop('makeup_held_moves')
+            elif mutation=='false':selection['options']['makeup_held_moves']=False
+            elif mutation=='string':selection['options']['makeup_held_moves']='true'
+            elif mutation in ('root','carried','world','depletion','supplies'):
+                option={'root':'makeup_moves','carried':'makeup_carried_moves','world':'makeup_world_moves','depletion':'makeup_depletion_moves','supplies':'makeup_supplies'}[mutation]
+                selection['options'][option]=True
+            elif mutation=='order':selection['cases'].reverse()
+            elif mutation=='subset':selection['cases'].pop()
+            elif mutation=='host':selection['options']['mp_host']=False
+            elif mutation=='mods':selection['mods'].pop()
+            else:selection['languages']=['RU']
+            with self.subTest(mutation=mutation),self.assertRaises(ValueError):m.validate(selection)
+
+    def test_held_snapshots_reject_wrong_lost_stale_extra_hands_and_references(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',held_moves=True)
+            for mutation in ('flag','hand-spec','missing-hands','wrong-initial-slot','initial-proxy','initial-owner','extra-slot',
+                             'ghost-primary','ghost-secondary','lost-retained','retained-wrong-slot','retained-proxy','retained-owner','retained-cost','retained-deleted',
+                             'lost-sentinel','wrong-sentinel','sentinel-proxy','equip-hammer-lost','equip-hammer-proxy','paid-cosmetic-hand',
+                             'before-tail-extra','before-tail-sentinel-lost','before-tail-retained-proxy','root-kit-returned','ordinary-extra-hands'):
+                rows=[self.evidence(case,selection) for case in selection['cases']]
+                if mutation=='flag':rows[0]['ids'].pop('held')
+                elif mutation=='hand-spec':rows[0]['ids']['handSpec']['post']['primary']='kit'
+                elif mutation=='missing-hands':rows[0]['checkpoints'][1]['client']['snapshot'].pop('hands')
+                elif mutation=='wrong-initial-slot':rows[1]['checkpoints'][0]['client']['snapshot']['hands']=dict(primary=copy.deepcopy(rows[1]['ids']['baseline']['hands']['secondary']),secondary=False)
+                elif mutation in ('initial-proxy','initial-owner'):
+                    hand=rows[0]['checkpoints'][0]['authority']['snapshot']['hands']['primary']
+                    if mutation=='initial-owner':hand['equipParent']=False
+                    else:hand['sameReference']=False;hand['container']=False
+                elif mutation=='extra-slot':rows[0]['clientFinal']['hands']['third']=False
+                elif mutation in ('ghost-primary','ghost-secondary'):
+                    row=rows[0] if mutation=='ghost-primary' else rows[2];slot='primary' if mutation=='ghost-primary' else 'secondary'
+                    hand=copy.deepcopy(row['ids']['baseline']['hands'][slot]);hand.update(root=False,sameReference=False,container=False,equipParent=False)
+                    row['checkpoints'][2]['authority']['snapshot']['hands'][slot]=hand
+                elif mutation in ('lost-retained','retained-wrong-slot','retained-proxy','retained-owner','retained-cost','retained-deleted'):
+                    value=rows[1]['checkpoints'][2]['client']['snapshot']
+                    if mutation=='lost-retained':value['hands']['secondary']=False
+                    elif mutation=='retained-wrong-slot':value['hands']=dict(primary=value['hands']['secondary'],secondary=False)
+                    elif mutation=='retained-proxy':value['hands']['secondary']['sameReference']=False;value['hands']['secondary']['container']=False
+                    elif mutation=='retained-owner':value['hands']['secondary']['equipParent']=False
+                    elif mutation=='retained-cost':value['kit']['uses']=3
+                    else:value['kit']=False
+                elif mutation in ('lost-sentinel','wrong-sentinel','sentinel-proxy'):
+                    hand=rows[3]['checkpoints'][2]['client']['snapshot']['hands']['secondary']
+                    if mutation=='lost-sentinel':rows[3]['checkpoints'][2]['client']['snapshot']['hands']['secondary']=False
+                    elif mutation=='wrong-sentinel':hand.update(id=999,root=False,sameReference=False,container=False)
+                    else:hand['sameReference']=False;hand['container']=False
+                elif mutation=='equip-hammer-lost':rows[4]['checkpoints'][2]['authority']['snapshot']['hands']['primary']=False
+                elif mutation=='equip-hammer-proxy':rows[4]['clientFinal']['hands']['primary']['sameReference']=False
+                elif mutation=='paid-cosmetic-hand':rows[0]['checkpoints'][2]['client']['snapshot']['hands']['primary']=dict(id=rows[0]['output'],kind=m.TARGET,root=True,sameReference=True,container='root',equipParent=True)
+                elif mutation=='before-tail-extra':rows[0]['beforeTail']['snapshot']['hands']['secondary']=copy.deepcopy(rows[0]['ids']['baseline']['hands']['primary'])
+                elif mutation=='before-tail-sentinel-lost':rows[3]['beforeTail']['snapshot']['hands']['secondary']=False
+                elif mutation=='before-tail-retained-proxy':rows[1]['beforeTail']['snapshot']['hands']['secondary']['sameReference']=False
+                elif mutation=='root-kit-returned':rows[0]['checkpoints'][2]['client']['snapshot']['root'].insert(0,dict(id=1,kind='Base.MakeupEyeshadow'))
+                else:
+                    ordinary=self.selection(mode,'mp',moves=True);rows=[self.evidence(case,ordinary) for case in ordinary['cases']]
+                    rows[0]['checkpoints'][2]['client']['snapshot']['hands']=dict(primary=False,secondary=False)
+                    with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(ordinary,rows)['issues'])
+                    continue
+                with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_held_move_admission_requires_live_initial_hand_refs(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',held_moves=True)
+            for mutation in ('missing','cleared','wrong-id','proxy','owner','extra'):
+                rows=[self.evidence(case,selection) for case in selection['cases']];edit=rows[0]['edit']
+                if mutation=='missing':edit.pop('hands')
+                elif mutation=='cleared':edit['hands']['primary']=False
+                elif mutation=='wrong-id':edit['hands']['primary']['id']=999
+                elif mutation=='proxy':edit['hands']['primary']['sameReference']=False
+                elif mutation=='owner':edit['hands']['primary']['equipParent']=False
+                else:edit['hands']['secondary']=copy.deepcopy(edit['hands']['primary'])
+                with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_held_before_tail_allows_only_matching_kit_clears_and_preserves_other_hands(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',held_moves=True)
+            for index in (0,2,3):
+                for pending in ('retained-before-removal','detached-before-equip-packet','one-side-cleared'):
+                    rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[index];actual=row['beforeTail']['snapshot'];ids=row['ids']
+                    initial=copy.deepcopy(ids['baseline']['hands'])
+                    if pending=='retained-before-removal':
+                        actual['kit']=copy.deepcopy(ids['baseline']['kit']);actual['root'].append(dict(id=1,kind='Base.MakeupEyeshadow'));actual['root'].sort(key=lambda v:v['id'])
+                    else:
+                        for slot,hand in initial.items():
+                            if hand and hand['id']==1:hand.update(root=False,sameReference=False,container=False,equipParent=False)
+                        if pending=='one-side-cleared':initial['primary']=False
+                    actual['hands']=initial
+                    with self.subTest(mode=mode,index=index,pending=pending):self.assertEqual(self.verify(selection,rows)['issues'],[])
+
+    def test_held_equip_writer_and_move_lifecycle_proof_are_required(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',held_moves=True)
+            for mutation in ('admitted','order','writer-missing','writer-item','writer-primary','writer-twohands','writer-duration','writer-starts','writer-ref','writer-ref-alias','writer-failed','writer-duplicate','writer-late','promotion-resume','body-duplicate','receipt-duplicate'):
+                rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[4];writer=row['equipWriter']
+                if mutation=='admitted':row['edit']['accepted']=True
+                elif mutation=='order':row['startOrder'].reverse()
+                elif mutation=='writer-missing':row.pop('equipWriter')
+                elif mutation=='writer-item':writer['item']=999
+                elif mutation=='writer-primary':writer['primary']=False
+                elif mutation=='writer-twohands':writer['twoHands']=True
+                elif mutation=='writer-duration':writer['duration']=1
+                elif mutation=='writer-starts':writer['starts']=2
+                elif mutation=='writer-ref':writer['nativeRef']=False
+                elif mutation=='writer-ref-alias':writer['nativeRef']=row['body']['nativeRef']
+                elif mutation=='writer-failed':writer['finishes'][0]['succeeded']=False
+                elif mutation=='writer-duplicate':writer['finishes'].append(copy.deepcopy(writer['finishes'][0]))
+                elif mutation=='writer-late':writer['finishes'][0]['at']=row['body']['finishes'][0]['at']+1
+                elif mutation=='promotion-resume':
+                    if mode=='toolkit':rows[2]['readerResume']['resumedPages']=97
+                    else:rows[2]['readerResume']=dict(pages=98,resumedPages=98,native='manufactured')
+                elif mutation=='body-duplicate':row['body']['starts']=2
+                else:row['outcomes'].append(copy.deepcopy(row['outcomes'][-1]))
+                with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
     def test_moves_selection_is_host_only_explicit_and_exclusive(self):
         for mutation in ('sp','missing','string','supply','order','subset','mods','host'):
             selection=self.selection(kind='mp',moves=True)
@@ -882,6 +1022,338 @@ class MakeupEvidenceTests(unittest.TestCase):
             elif mutation=='wrong-sequence':row['startOrder']=['front','middle','body','front','tail']
             else:row['body']['starts']=2
             with self.subTest(mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_selected_cart_guard_factory_observation_preserves_behavior_and_exact_binding(self):
+        from cart_blender import game_default
+        selected=os.environ.get('PZ_TEST_SAUCED_CARTS_SOURCE')
+        if not selected:self.skipTest('Set PZ_TEST_SAUCED_CARTS_SOURCE to the locked selected mod source')
+        sauce=Path(selected);sauce=sauce/'42' if (sauce/'42').is_dir() else sauce
+        self.assertTrue((sauce/'media/lua/shared/SaucedCarts/ForceDropGuard.lua').is_file(),'Selected guard source is missing')
+        game=Path(os.environ['PZ_GAME_DIR']) if os.environ.get('PZ_GAME_DIR') else game_default()
+        if not game or not (game/'media/lua/shared/TimedActions/ISEquipWeaponAction.lua').is_file():self.skipTest('Native game Lua unavailable')
+        project=Path(__file__).resolve().parents[1];text=(project/'tests/native_queue/makeup/client/ZZMakeup.lua').read_text()
+        seal=text[text.index('function M.forceDropMatches(callback)'):text.index('function M.kind()')]+text[text.index('function M.captureEquip()'):text.index('local previewShotFrames')]
+        prefix="""
+local game,project,sauce,scenario=arg[1],arg[2],arg[3],arg[4]
+local function reader(path)
+ local file=assert(io.open(path,'r'));return {readLine=function()local s=file:read('*l');if s then s=s:gsub('\\r$','')end;return s end,close=function()file:close()end}
+end
+getFilenameOfClosure=function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
+getGameFilesInput=function(path)
+ if scenario=='native-source-mismatch'and path=='media/lua/shared/TimedActions/ISEquipWeaponAction.lua'then
+  local sent=false;return {readLine=function()if not sent then sent=true;return 'unsupported native version'end end,close=function()end}
+ end
+ return reader(game..'/'..path)
+end
+getModFileReader=function(mod,path,create)
+ assert(mod=='SaucedCarts'and create==false)
+ if scenario=='source-mismatch'and path:find('ForceDropGuard.lua',1,true)then
+  local sent=false;return {readLine=function()if not sent then sent=true;return 'unsupported guard version'end end,close=function()end}
+ end
+ return reader(sauce..'/'..path)
+end
+local Proof=assert(loadfile(project..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
+package.loaded['PZSurvivorToolkit/SourceProof']=Proof
+assert(loadfile(game..'/media/lua/shared/ISBaseObject.lua'))()
+package.preload['ISBaseObject']=function()return ISBaseObject end
+package.preload['TimedActions/ISBaseTimedAction']=function()assert(loadfile(game..'/media/lua/shared/TimedActions/ISBaseTimedAction.lua'))();return ISBaseTimedAction end
+assert(loadfile(game..'/media/lua/shared/TimedActions/ISEquipWeaponAction.lua'))()
+local native=forceDropHeavyItems
+local callbacks={};Events={OnGameStart={Add=function(fn)callbacks[#callbacks+1]=fn end},OnServerStarted={Add=function()end}}
+getDebug=function()return false end;SandboxVars={SaucedCarts={}};getPlayer=function()return nil end;getScriptManager=function()return nil end
+getActivatedMods=function()return {contains=function(_,id)return id=='SaucedCarts'end}end
+local core=assert(loadfile(sauce..'/media/lua/shared/SaucedCarts/Core.lua'))();core.CartTypes={['Fixture.Cart']={}}
+package.loaded['SaucedCarts/Core']=core
+local guard=assert(loadfile(sauce..'/media/lua/shared/SaucedCarts/ForceDropGuard.lua'))();package.loaded['SaucedCarts/ForceDropGuard']=guard
+local factory,predicate=guard.makeGuardedForceDrop,core.isCart
+local Binding=assert(loadfile(project..'/tests/native_queue/makeup/shared/QueueMakeupDropBinding.lua'))()
+local T={ActionQueue={}};local M={dropBinding=Binding,dropMatches=Binding.matches}
+local function pack(...)return {n=select('#',...),...}end
+local function foreign(callback,filename)return assert(loadstring('local before=...;return function(...)return before(...)end',filename or '@ForeignDropGuard.lua'))(callback)end
+local foreignCalls,predicateCalls=0,0
+local function foreignOriginal(...)foreignCalls=foreignCalls+1;return 'foreign-result',nil,73 end
+local function foreignPredicate(item)predicateCalls=predicateCalls+1;return predicate(item)end
+local function startEvents()for _,fn in ipairs(callbacks)do fn()end end
+local kit,hammer,cart;local primary,secondary;local cartWorld;local cartPresent=false
+local heavy,clears,spawns,persistentCalls=0,0,0,0
+local world={setIgnoreRemoveSandbox=function(_,value)assert(value==true);persistentCalls=persistentCalls+1 end}
+local square={AddWorldInventoryItem=function(_,item)assert(item==cart);spawns=spawns+1;cartWorld=world end}
+local root={getItemById=function(_,id)if id==6 then return hammer end end,
+ contains=function(_,item)return item==kit or item==hammer or item==cart and cartPresent end,
+ Remove=function(_,item)assert(item==cart);cartPresent=false end}
+local player={getCurrentSquare=function()return square end,getInventory=function()return root end,
+ getPrimaryHandItem=function()return primary end,getSecondaryHandItem=function()return secondary end,
+ removeFromHands=function(_,item)clears=clears+1;if primary==item then primary=nil end;if secondary==item then secondary=nil end end,
+ setSecondaryHandItem=function(_,item)clears=clears+1;secondary=item end,
+ getPlayerNum=function()return 0 end,isTimedActionInstant=function()return false end}
+local function item(id,kind,isCart)
+ local value=newproxy(true);local methods={getID=function()return id end,getFullType=function()return kind end,
+  isForceDropHeavyItem=function()heavy=heavy+1;return isCart end,getWorldItem=function()return isCart and cartWorld or nil end,
+  isTwoHandWeapon=function()return false end,isRequiresEquippedBothHands=function()return false end,getName=function()return kind end}
+ getmetatable(value).__index=methods;return value
+end
+kit=item(1,'Base.MakeupEyeshadow',false);hammer=item(6,'Base.Hammer',false);cart=item(7,'Fixture.Cart',true)
+instanceof=function(item,kind)return type(item)=='userdata'and(kind=='InventoryItem'or item==hammer and kind=='HandWeapon')end
+isServer=function()return false end;ISInventoryPage={};ISTransferAction={GetDropItemOffset=function()return .5,.5,0 end}
+sendRemoveItemFromContainer=function(container,item)assert(container==root and item==cart)end
+getPlayerHotbar=function()return nil end;getText=function(key)return key end
+local state={player=player};local ids={items={hammer=6}}
+"""
+        suffix="""
+assert(guard.makeGuardedForceDrop==factory and forceDropHeavyItems==native and not Binding.matches(native),'passive module modified installation')
+if scenario=='passive'then return end
+if scenario=='opaque-before-start'then
+ startEvents();local opaque=forceDropHeavyItems;assert(opaque~=native)
+ assert(not Binding.start()and forceDropHeavyItems==opaque and guard.makeGuardedForceDrop==factory and not Binding.matches(opaque));return
+end
+if scenario=='foreign-factory-before'then guard.makeGuardedForceDrop=foreign(factory)
+elseif scenario=='foreign-predicate-before'then core.isCart=foreignPredicate
+elseif scenario=='foreign-original-before'then forceDropHeavyItems=foreignOriginal end
+local allowed=Binding.start()
+if scenario=='foreign-factory-before'or scenario=='foreign-predicate-before'or scenario=='foreign-original-before'or scenario=='source-mismatch'or scenario=='native-source-mismatch'then
+ assert(not allowed and not Binding.matches(forceDropHeavyItems));startEvents();assert(not Binding.matches(forceDropHeavyItems));assert(not pcall(M.captureEquip));return
+end
+assert(allowed and guard.install==callbacks[#callbacks]and Binding.matches(native),'observer changed installer or lost unwrapped native binding')
+if scenario=='factory-error'then
+ local sentinel={};local count=0
+ local function invoke(callback)
+  debug.sethook(function()if debug.getinfo(2,'f').func==factory then count=count+1;error(sentinel,0)end end,'c')
+  local result=pack(pcall(callback,native,predicate));debug.sethook();return result
+ end
+ local direct,observed=invoke(factory),invoke(guard.makeGuardedForceDrop)
+ assert(direct.n==2 and observed.n==2 and direct[1]==false and observed[1]==false and direct[2]==sentinel and observed[2]==sentinel and count==2,'factory error identity/arity or delegation count changed')
+ return
+end
+if scenario=='factory-args-results'then
+ local direct=pack(factory(foreignOriginal,foreignPredicate,'extra',nil))
+ local observed=pack(guard.makeGuardedForceDrop(foreignOriginal,foreignPredicate,'extra',nil))
+ assert(direct.n==1 and observed.n==1 and type(observed[1])=='function','factory result arity changed')
+ local result=pack(observed[1](nil));assert(result.n==3 and result[1]=='foreign-result'and result[2]==nil and result[3]==73 and foreignCalls==1,'factory rewrote predecessor arguments/results')
+ assert(not Binding.matches(observed[1]));return
+end
+if scenario=='foreign-original-install'then forceDropHeavyItems=foreignOriginal
+elseif scenario=='foreign-predicate-install'then core.isCart=foreignPredicate
+elseif scenario=='foreign-factory-install'then guard.makeGuardedForceDrop=foreign(guard.makeGuardedForceDrop)end
+local factoryCalls=0
+debug.sethook(function()if debug.getinfo(2,'f').func==factory then factoryCalls=factoryCalls+1 end end,'c')
+startEvents();debug.sethook();assert(factoryCalls==1,'observer did not call original factory exactly once')
+local installed=forceDropHeavyItems;assert(installed~=native and guard.install==callbacks[#callbacks])
+if scenario=='foreign-original-install'then
+ local result=pack(installed(nil));assert(result.n==3 and result[1]=='foreign-result'and result[3]==73 and foreignCalls==1,'foreign predecessor was rewritten')
+ assert(not Binding.matches(installed));assert(not pcall(M.captureEquip));return
+elseif scenario=='foreign-predicate-install'then
+ primary,secondary=kit,hammer;installed(player);assert(predicateCalls>0,'predicate argument was rewritten')
+ assert(not Binding.matches(installed));assert(not pcall(M.captureEquip));return
+elseif scenario=='foreign-factory-install'then assert(not Binding.matches(installed));assert(not pcall(M.captureEquip));return end
+assert(Binding.matches(installed),'reviewed actual returned wrapper was not witnessed')
+assert(Binding.start()and guard.makeGuardedForceDrop~=factory,'observation was not idempotent')
+guard.install();assert(forceDropHeavyItems==installed and Binding.matches(installed),'native installation idempotence changed')
+if scenario=='post-global'then forceDropHeavyItems=foreign(installed,'@ForceDropGuard.lua')
+elseif scenario=='post-factory'then guard.makeGuardedForceDrop=foreign(guard.makeGuardedForceDrop,'@ForceDropGuard.lua')
+elseif scenario=='post-predicate'then core.isCart=foreign(predicate,'@Core.lua')
+elseif scenario=='post-installer'then guard.install=foreign(guard.install,'@ForceDropGuard.lua')
+elseif scenario=='post-persistent'then core.markDropPersistent=foreign(core.markDropPersistent,'@Core.lua')
+elseif scenario=='post-debug'then core.debug=foreign(core.debug,'@Core.lua')
+elseif scenario=='post-registry'then core.CartTypes={['Fixture.Cart']={}}
+elseif scenario=='held-type-registered'then core.CartTypes['Base.Hammer']={}
+elseif scenario=='post-owner'then SaucedCarts={}end
+if scenario~='normal'then assert(not Binding.matches(forceDropHeavyItems));assert(not pcall(M.captureEquip));return end
+primary,secondary=kit,hammer;installed(player)
+assert(primary==kit and secondary==hammer and heavy==2 and clears==0 and spawns==0,'reviewed guard changed ordinary held kit/Hammer or double-delegated')
+primary,secondary=cart,hammer;cartWorld=world;cartPresent=false;heavy,clears,spawns,persistentCalls=0,0,0,0
+installed(player)
+assert(primary==nil and secondary==hammer and heavy==1 and clears==1 and spawns==0 and persistentCalls==1,'stale-cart guard/persistence behavior was bypassed')
+primary,secondary=cart,hammer;cartWorld=nil;cartPresent=true;heavy,clears,spawns,persistentCalls=0,0,0,0
+installed(player)
+assert(primary==nil and secondary==hammer and heavy==2 and clears==1 and spawns==1 and persistentCalls==1,'native cart drop/persistence behavior was changed')
+M.captureEquip();M.writer=ISEquipWeaponAction:new(player,hammer,50,true,false);M.assertEquip(M.writer)
+assert(forceDropHeavyItems==installed and Binding.matches(installed),'fixture replaced or unwrapped the gameplay guard')
+"""
+        scenarios=('normal','passive','opaque-before-start','foreign-factory-before','foreign-predicate-before','foreign-original-before','source-mismatch','native-source-mismatch',
+                   'factory-error','factory-args-results','foreign-original-install','foreign-predicate-install','foreign-factory-install','post-global','post-factory',
+                   'post-predicate','post-installer','post-persistent','post-debug','post-registry','held-type-registered','post-owner')
+        for scenario in scenarios:
+            result=subprocess.run([shutil.which('luajit'),'-',str(game),str(project),str(sauce),scenario],input=prefix+seal+suffix,capture_output=True,text=True)
+            with self.subTest(scenario=scenario):self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_real_native_hammer_writer_provenance_and_post_capture_identity_are_sealed(self):
+        from cart_blender import game_default
+        game=Path(os.environ['PZ_GAME_DIR']) if os.environ.get('PZ_GAME_DIR') else game_default()
+        if not game or not (game/'media/lua/shared/TimedActions/ISEquipWeaponAction.lua').is_file():self.skipTest('Native game Lua unavailable')
+        project=Path(__file__).resolve().parents[1];source=project/'tests/native_queue/makeup/client/ZZMakeup.lua';text=source.read_text()
+        seal=text[text.index('function M.forceDropMatches(callback)'):text.index('function M.kind()')]+text[text.index('function M.captureEquip()'):text.index('local previewShotFrames')]
+        start=text.index('   local hammer=assert(');last=text.index('   ISTimedActionQueue.add(M.writer)',start)
+        constructor=text[start:text.index('\n',last)+1]
+        intact=text[text.index('local function intact()'):text.index('local function observe(callback)')]
+        self.assertIn('M.assertEquip(M.equipWriter and M.writer or nil)',intact)
+        self.assertEqual(constructor.count('M.assertEquip('),2)
+        prefix="""
+local game,project,scenario=arg[1],arg[2],arg[3]
+getFilenameOfClosure=function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
+getGameFilesInput=function(path)
+ if scenario=='source-mismatch'and path=='media/lua/shared/TimedActions/ISEquipWeaponAction.lua'then
+  local sent=false;return {readLine=function()if not sent then sent=true;return 'foreign source'end end,close=function()end}
+ end
+ local file=assert(io.open(game..'/'..path,'r'));return {readLine=function()local line=file:read('*l');if line then line=line:gsub('\\r$','')end;return line end,close=function()file:close()end}
+end
+local Proof=assert(loadfile(project..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
+assert(loadfile(game..'/media/lua/shared/ISBaseObject.lua'))()
+package.preload['ISBaseObject']=function()return ISBaseObject end
+package.preload['TimedActions/ISBaseTimedAction']=function()
+ assert(loadfile(game..'/media/lua/shared/TimedActions/ISBaseTimedAction.lua'))();return ISBaseTimedAction
+end
+assert(loadfile(game..'/media/lua/shared/TimedActions/ISEquipWeaponAction.lua'))()
+local hammer={getID=function()return 6 end,isTwoHandWeapon=function()return false end,isRequiresEquippedBothHands=function()return false end,getName=function()return 'Hammer'end}
+local root={getItemById=function(_,id)assert(id==6);return hammer end}
+local player={getInventory=function()return root end,getPlayerNum=function()return 0 end,getSecondaryHandItem=function()return nil end,isTimedActionInstant=function()return false end}
+isServer=function()return false end;getPlayerHotbar=function()return nil end
+instanceof=function(item,kind)return item==hammer and kind=='HandWeapon'end
+getText=function(key)return key end
+local state={player=player};local ids={items={hammer=6}};local T={ActionQueue={}};local M={};local queued
+ISTimedActionQueue={add=function(action)assert(not queued);queued=action end}
+local function foreign(callback,filename)
+ return assert(loadstring('local before=...;return function(...)return before(...)end',filename or '@ForeignEquip.lua'))(callback)
+end
+if scenario=='foreign-constructor'then ISEquipWeaponAction.new=foreign(ISEquipWeaponAction.new)
+elseif scenario=='foreign-executor'then ISEquipWeaponAction.complete=foreign(ISEquipWeaponAction.complete)
+elseif scenario=='foreign-base'then ISBaseTimedAction.new=foreign(ISBaseTimedAction.new)
+elseif scenario=='foreign-helper'then forceDropHeavyItems=foreign(forceDropHeavyItems)
+elseif scenario=='missing-own-executor'then ISEquipWeaponAction.complete=nil
+elseif scenario=='extra-class-function'then ISEquipWeaponAction.foreignHook=function()end
+elseif scenario=='foreign-inherited-hook'then ISBaseTimedAction.begin=foreign(ISBaseTimedAction.begin)
+elseif scenario=='approved-queue-hook'then ISBaseTimedAction.begin=foreign(ISBaseTimedAction.begin,'@ActionQueue.lua')end
+"""
+        after_capture="""
+M.captureEquip()
+if scenario=='replaced-constructor'then ISEquipWeaponAction.new=foreign(ISEquipWeaponAction.new,'@ISEquipWeaponAction.lua')
+elseif scenario=='replaced-executor'then ISEquipWeaponAction.complete=foreign(ISEquipWeaponAction.complete,'@ISEquipWeaponAction.lua')
+elseif scenario=='replaced-base'then ISBaseTimedAction.new=foreign(ISBaseTimedAction.new,'@ISBaseTimedAction.lua')
+elseif scenario=='replaced-helper'then forceDropHeavyItems=foreign(forceDropHeavyItems,'@ISEquipWeaponAction.lua')
+elseif scenario=='replaced-owner'then ISEquipWeaponAction={}
+elseif scenario=='replaced-queue'then T.ActionQueue={}
+elseif scenario=='extra-base-function'then ISBaseTimedAction.foreignHook=function()end end
+M.assertEquip()
+"""
+        after_constructor="""
+if scenario=='instance-executor'then M.writer.complete=foreign(M.writer.complete)
+elseif scenario=='instance-callback'then M.writer.onCompleteFunc=function()end
+elseif scenario=='instance-extra-function'then M.writer.foreignHook=function()end
+elseif scenario=='instance-inherited-hook'then M.writer.begin=foreign(M.writer.begin)end
+M.assertEquip(M.writer)
+assert(queued==M.writer and M.equipWriter.starts==0 and M.writer.item==hammer and M.writer.maxTime==50,'native constructor did not preserve the exact ordinary writer')
+"""
+        scenarios=('native','approved-queue-hook','foreign-constructor','foreign-executor','foreign-base','foreign-helper','missing-own-executor','extra-class-function','foreign-inherited-hook',
+                   'source-mismatch','replaced-constructor','replaced-executor','replaced-base','replaced-helper','replaced-owner','replaced-queue','extra-base-function',
+                   'instance-executor','instance-callback','instance-extra-function','instance-inherited-hook')
+        for scenario in scenarios:
+            result=subprocess.run([shutil.which('luajit'),'-',str(game),str(project),scenario],input=prefix+seal+after_capture+constructor+after_constructor,capture_output=True,text=True)
+            with self.subTest(scenario=scenario):
+                if scenario in ('native','approved-queue-hook'):self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode,0);self.assertIn('native Hammer writer',result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_held_native_specs_match_expected_initial_cost_and_posthands(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/shared/QueueMakeup.lua'
+        script="""
+package.preload['Definitions/MakeUpDefinitions']=function()end
+ItemBodyLocation={MAKE_UP_FULL_FACE='face',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
+local F=assert(loadfile(arg[1]))();assert(#F.heldMoves==5)
+for i=2,#arg,6 do
+ local case,uses=arg[i],tonumber(arg[i+1]);local spec=assert(F.spec(case))
+ assert(F.heldCase(case)and spec.uses==uses and F.depletionCase(case)==(uses==1))
+ assert((spec.initialHands.primary or 'empty')==arg[i+2]and(spec.initialHands.secondary or 'empty')==arg[i+3])
+ assert((spec.postHands.primary or 'empty')==arg[i+4]and(spec.postHands.secondary or 'empty')==arg[i+5])
+end
+"""
+        arguments=[value for case,spec in m.HELD_SPECS.items() for value in (case,str(spec['uses']),spec['initial']['primary'] or 'empty',spec['initial']['secondary'] or 'empty',spec['post']['primary'] or 'empty',spec['post']['secondary'] or 'empty')]
+        result=subprocess.run([shutil.which('luajit'),'-',str(source),*arguments],input=script,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_held_snapshot_and_readiness_use_actual_hands_without_repair_or_detached_cost(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/shared/QueueMakeup.lua'
+        script="""
+package.preload['Definitions/MakeUpDefinitions']=function()end
+ItemBodyLocation={MAKE_UP_FULL_FACE='face',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
+local F=assert(loadfile(arg[1]))();local case=arg[2];local spec=F.spec(case)
+local root,player={},{};local live={};local primary,secondary,worn;local uses=spec.uses
+local function member(id)for _,v in ipairs(live)do if v:getID()==id then return v end end end
+local function item(id,kind)
+ local value={getID=function()return id end,getFullType=function()return kind end}
+ value.getContainer=function()return member(id)==value and root or nil end
+ value.getEquipParent=function()return (primary==value or secondary==value)and player or nil end
+ return value
+end
+local kit,hammer,front,tail,output=item(1,'Base.MakeupEyeshadow'),item(6,'Base.Hammer'),item(2,'Base.BookCarpentry1'),item(4,'Base.BookFirstAid1'),item(3,'Base.MakeUp_Crow')
+kit.getCurrentUses=function()assert(member(1)==kit,'detached kit uses were read');return uses end;kit.getMaxUses=function()return 5 end
+local function choose(name)if name=='kit'then return kit elseif name=='hammer'then return hammer end end
+local hasHammer=spec.initialHands.secondary=='hammer'or spec.postHands.primary=='hammer'
+local function inventory(withKit,withOutput)
+ live={front,tail};if withKit then live[#live+1]=kit end;if hasHammer then live[#live+1]=hammer end;if withOutput then live[#live+1]=output end
+end
+root.getItems=function()return {size=function()return #live end,get=function(_,i)return live[i+1]end}end
+root.getItemById=function(_,id)return member(id)end
+player.getInventory=function()return root end;player.getOnlineID=function()return 7 end;player.getAlreadyReadPages=function()return 99 end
+player.getPrimaryHandItem=function()return primary end;player.getSecondaryHandItem=function()return secondary end
+player.getWornItem=function(_,slot)assert(slot=='eyes');return worn end
+player.getWornItems=function()return {size=function()return worn and 1 or 0 end,get=function()return {getItem=function()return worn end,getLocation=function()return 'eyes'end}end}end
+local ids={case=case,held=true,actor=7,target='Base.MakeUp_Crow',slot='eyes',items={kit=1,hammer=6},
+ types={kit='Base.MakeupEyeshadow',hammer='Base.Hammer',front='Base.BookCarpentry1',tail='Base.BookFirstAid1'}}
+if spec.depletion then ids.depletion=true end
+local state={player=player,ids=ids};inventory(true,false);primary=choose(spec.initialHands.primary);secondary=choose(spec.initialHands.secondary)
+assert(F.handsReady(state,false),'exact initial native hands not recognized')
+local baseline=F.snapshot(state);ids.baseline=baseline
+for _,slot in ipairs({'primary','secondary'})do
+ local hand=baseline.hands[slot]
+ if not spec.initialHands[slot]then assert(hand==false,'empty primary was aliased to secondary')else assert(hand.sameReference and hand.equipParent and hand.container=='root')end
+end
+local slot=spec.initialHands.primary=='kit'and'primary'or'secondary';local proxy=item(1,'Base.MakeupEyeshadow')
+if slot=='primary'then primary=proxy else secondary=proxy end
+assert(not F.handsReady(state,false),'same-ID foreign hand reference was accepted')
+assert((slot=='primary'and primary or secondary)==proxy,'readiness repaired client hands')
+primary=choose(spec.postHands.primary);secondary=choose(spec.postHands.secondary);worn=output
+inventory(not spec.depletion,true);if not spec.depletion then uses=4 end
+assert(F.handsReady(state,true),'exact posthands not recognized')
+if spec.depletion then assert(F.depletionReady(state),'paid deletion did not include exact posthands')end
+local paid=F.snapshot(state)
+if spec.depletion then assert(paid.kit==false)else assert(paid.kit.uses==4 and paid.hands.primary==false and paid.hands.secondary.sameReference)end
+if spec.postHands.primary then primary=nil else primary=kit end
+assert(not F.handsReady(state,true),'lost native item or extra ghost kit was accepted')
+if spec.depletion then
+ assert(not F.depletionReady(state),'ghost/lost hand passed paid readiness')
+ local pending=F.snapshot(state,true);assert(pending.hands.primary~=nil,'actual transition hands were not captured')
+end
+"""
+        for case in m.HELD_MOVE_CASES:
+            with self.subTest(case=case):
+                result=subprocess.run([shutil.which('luajit'),'-',str(source),case],input=script,capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_controller_hammer_writer_uses_native_equip_argument_order(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/client/ZZMakeup.lua'
+        text=source.read_text();start=text.index('   local hammer=assert(');last=text.index('   ISTimedActionQueue.add(M.writer)',start)
+        block=text[start:text.index('\n',last)+1]
+        prefix="""
+local hammer={getID=function()return 6 end};local player={getInventory=function()return {getItemById=function(_,id)assert(id==6);return hammer end}end}
+local state={player=player};local ids={items={hammer=6}};local M={assertEquip=function()end};local queued
+ISEquipWeaponAction={new=function(_,actor,item,maxTimeInit,primary,twoHands,alwaysTurnOn)
+ assert(actor==player and item==hammer and maxTimeInit==50 and primary==true and twoHands==false and alwaysTurnOn==nil,'NATIVE_EQUIP_ARGUMENT_ORDER')
+ return {item=item,primary=primary,twoHands=twoHands,maxTime=maxTimeInit}
+end}
+ISTimedActionQueue={add=function(action)assert(not queued);queued=action end}
+"""
+        suffix="""
+assert(queued==M.writer and M.equipWriter.item==6 and M.equipWriter.starts==0 and M.equipWriter.nativeRef==false,'constructor manufactured native execution')
+"""
+        def run(actual):return subprocess.run([shutil.which('luajit'),'-'],input=prefix+actual+suffix,capture_output=True,text=True)
+        result=run(block);self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        wrong=block.replace('ISEquipWeaponAction:new(state.player,hammer,50,true,false)','ISEquipWeaponAction:new(state.player,hammer,true,false)')
+        self.assertNotEqual(wrong,block);result=run(wrong)
+        self.assertNotEqual(result.returncode,0);self.assertIn('NATIVE_EQUIP_ARGUMENT_ORDER',result.stderr)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
     def test_depletion_snapshot_reads_physical_membership_without_detached_uses(self):
@@ -1025,7 +1497,7 @@ blocked=false;free=false;assert(not pcall(F.walkRoute,player,source),'occupied n
 package.preload['Definitions/MakeUpDefinitions']=function()end
 ItemBodyLocation={MAKE_UP_FULL_FACE='face',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
 local F=assert(loadfile(arg[1]))()
-assert(#F.moves==4 and #F.carriedMoves==4 and #F.worldMoves==4 and #F.depletionMoves==5)
+assert(#F.moves==4 and #F.carriedMoves==4 and #F.worldMoves==4 and #F.depletionMoves==5 and #F.heldMoves==5)
 for i=2,#arg,3 do
  local case,kind,source=arg[i],arg[i+1],arg[i+2]
  assert(F.moveCase(case)and F.moveKind(case)==kind,'native move kind mapping differs')
@@ -1181,7 +1653,7 @@ handlers.OnTick();assert(calls==1,'authority setup repeated after acknowledgemen
             self.assertIn('[QUEUE_TEST] FAIL makeup',runtime['fixture']['failure_markers'])
         sources=m.sources(project,selection)
         self.assertTrue(all(path.is_file()for path in sources))
-        self.assertEqual(len([path for path in sources if '/makeup/'in str(path)]),4)
+        self.assertEqual(len([path for path in sources if '/makeup/'in str(path)]),5)
 
 
 if __name__=='__main__':unittest.main()

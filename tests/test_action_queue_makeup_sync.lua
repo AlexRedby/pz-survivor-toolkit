@@ -180,6 +180,19 @@ local function setup(options)
  function kit:getEquipParent()return self.equipParent end
  function kit:isActivated()return self.activated==true end
  function kit:getIsCraftingConsumed()return self.craftingConsumed==true end
+ function kit:isUseWhileEquiped()return self.autoEquipped==true end
+ function kit:isUseWhileUnequiped()return self.autoUnequipped==true end
+ function actor:getWornItems()
+  return {class='WornItems',contains=function(_,value)
+   for _,worn in pairs(actor.worn)do if worn==value then return true end end
+   return false
+  end}
+ end
+ function actor:removeFromHands(value)
+  self.handCleanup=(self.handCleanup or 0)+1
+  if self.primary==value then self.primary=nil;value.equipParent=nil;self.equipmentDirty=true end
+  if self.secondary==value then self.secondary=nil;value.equipParent=nil;self.equipmentDirty=true end
+ end
  function actor:getPrimaryHandItem()return self.primary end
  function actor:getSecondaryHandItem()return self.secondary end
  function actor:isEquipped(value)
@@ -197,9 +210,11 @@ local function setup(options)
   self.uses=self.uses-1
   if self.uses<=0 and self:isDisappearOnUse()and self.container then
    local source=self.container
-   if notify then sendRemoveItemFromContainer(source,self)end
-   -- DrainableComboItem removes directly, rather than ItemContainer.Remove.
+   if source:getParent()==actor then actor:removeFromHands(self)end
+   -- Native Use clears matching hands, removes from the list, then notifies
+   -- with the still-attached exact source. Detachment follows that packet.
    for i,value in ipairs(source.values)do if value==self then table.remove(source.values,i);break end end
+   if notify then sendRemoveItemFromContainer(source,self)end
    self.container=nil
   end
  end
@@ -243,8 +258,8 @@ local function setup(options)
   packets.order[#packets.order+1]={kind='add',item=value}
  end
  sendRemoveItemFromContainer=function(source,value)
-  if value==kit then assert(source==kit:getContainer()and source:getItemById(kit:getID())==kit,
-   'native final-use packet lost its exact source before removal')end
+  if value==kit then assert(source==kit:getContainer()and source:getItemById(kit:getID())==nil,
+   'native final-use packet must retain its exact source after list removal and before detach')end
   packets.remove[#packets.remove+1]=value;packets.order[#packets.order+1]={kind='remove',item=value,source=source}
  end
  sendClothing=function(_,_,value)
@@ -261,11 +276,11 @@ local function setup(options)
  for _,name in ipairs({'isServer','isClient','instanceof','getClassSimpleName','getScriptManager','instanceItem',
   'sendAddItemToContainer','sendRemoveItemFromContainer','sendClothing','sendItemStats','getCell','getVehicleById'})do java[_G[name]]=true end
  local access=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemAccess.lua'))()
- local finalUse=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/MakeupFinalUse.lua'))()
+ local finalUse=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/MakeupSupplyUse.lua'))()
  local nativeRequire=require
  require=function(module)
   if module=='PZSurvivorToolkit/ItemAccess'then return access end
-  if module=='PZSurvivorToolkit/MakeupFinalUse'then return finalUse end
+  if module=='PZSurvivorToolkit/MakeupSupplyUse'then return finalUse end
   return nativeRequire(module)
  end
  if options.foreignAccess then access[options.foreignAccess]=function()return kit end end
@@ -426,7 +441,7 @@ for _,placement in ipairs({'root','worn bag','nested carried bag','world object'
  elseif placement=='world object'then source=s.worldContainer()
  elseif placement=='world bag'then source=s.worldBag()end
  s.move(source)
- assert(s.finalUse.supports(s.actor,s.kit),'fixture lacks final native route: '..placement)
+ assert(s.finalUse.supportsDepletion(s.actor,s.kit),'fixture lacks final native route: '..placement)
  assert(s.invoke()==true)
  local cosmetic=s.actor:getWornItem(ItemBodyLocation.MAKE_UP_LIPS)
  assert(s.kit.useCalls==1 and s.kit.useArgs.force==false and s.kit.useArgs.unused==false
@@ -466,14 +481,85 @@ for _,change in ipairs({'keep','replacement','use-replacement','create','config'
  elseif change=='script-type'then script.kind=ItemType.CLOTHING
  elseif change=='script-owner'then s.kit.script={}
  elseif change=='obsolete'then script.obsolete=true
- elseif change=='helper'then s.finalUse.supports=function()error('foreign helper executed')end
+ elseif change=='helper'then s.finalUse.supportsDepletion=function()error('foreign helper executed')end
  elseif change=='nested-world'then local outer=s.worldContainer();local inner=s.bag(outer);s.move(inner)
  elseif change=='world-floor-parent'then local source,holder=s.worldBag();s.move(source);holder.container={}
  elseif change=='late-held'then s.options.onClothing=function()s.actor.primary=s.kit end
- elseif change=='late-helper'then s.options.onClothing=function()s.finalUse.supports=function()error('late helper executed')end end
+ elseif change=='late-helper'then s.options.onClothing=function()s.finalUse.supportsDepletion=function()error('late helper executed')end end
  elseif change=='late-access'then s.options.onClothing=function()s.access.admit=function()error('late access executed')end end end
  local ok=pcall(s.invoke)
  assert(ok and s.kit.useCalls==1 and s.kit.useArgs.notify==nil and s.kit.uses==0
   and #s.packets.remove==0,'unproven final-use or intervening change gained native removal notification: '..change)
 end
-print('Native makeup output sync: native output correction and exact final-use removal, current source admission, unchanged ordinary/unsupported costs and no replay passed.')
+-- Native root-held cost preserves unmatched hands and clears only consumed
+-- kit references. No setter/packet is introduced in the production wrapper.
+for _,uses in ipairs({1,5})do for _,hands in ipairs({'primary','secondary','both','primary-other-secondary'})do
+ local s=setup({kitUses=uses})
+ local other={class='InventoryItem',id=900,getID=function(self)return self.id end,
+  getFullType=function()return'Base.Hammer'end,getContainer=function()return s.root end,
+  getWorldItem=function()end,getEquipParent=function()return s.actor end}
+ s.root.values[#s.root.values+1]=other
+ s.actor.primary=(hands~='secondary')and s.kit or nil
+ s.actor.secondary=(hands=='secondary'or hands=='both')and s.kit or hands=='primary-other-secondary'and other or nil
+ s.kit.equipParent=s.actor
+ local primary,secondary=s.actor.primary,s.actor.secondary
+ assert(s.finalUse.supportsHeld(s.actor,s.kit),'exact root hand state not admitted: '..hands)
+ assert(s.invoke()==true)
+ local cosmetic=s.actor:getWornItem(ItemBodyLocation.MAKE_UP_LIPS)
+ assert(s.kit.useCalls==1 and s.kit.uses==uses-1 and s.made()==1 and s.attempts()==1
+  and s.root:contains(cosmetic)and #s.packets.add==1 and s.packets.add[1]==cosmetic)
+ if uses==1 then
+  assert(s.kit:getContainer()==nil and s.root:getItemById(s.kit:getID())==nil
+   and s.actor.primary==nil and s.actor.secondary==(hands=='primary-other-secondary'and other or nil)
+   and s.kit:getEquipParent()==nil and s.actor.equipmentDirty and s.actor.handCleanup==1
+   and s.kit.useArgs.notify==true and #s.packets.remove==1 and #s.packets.stats==0,
+   'final native held cleanup changed unrelated hands, cost or notifications: '..hands)
+ else
+  assert(s.kit:getContainer()==s.root and s.actor.primary==primary and s.actor.secondary==secondary
+   and s.kit:getEquipParent()==s.actor and not s.actor.handCleanup and not s.actor.equipmentDirty
+   and s.kit.useArgs.notify==nil and #s.packets.remove==0 and #s.packets.stats==1,
+   'remaining native held charge changed hands or final-use path: '..hands)
+ end
+ assert(s.root:getItemById(other:getID())==other,'native kit use removed unrelated held sentinel')
+end end
+for _,shape in ipairs({'nested','world','missing','alias','stale-parent'})do
+ local s=setup({kitUses=1});s.actor.primary=s.kit;s.kit.equipParent=s.actor
+ local source=s.root;local other={class='InventoryItem',id=902,getID=function(self)return self.id end,
+  getFullType=function()return'Base.Hammer'end,getContainer=function()return source end,
+  getWorldItem=function()return shape=='world'and{}or nil end,
+  getEquipParent=function()return shape~='stale-parent'and s.actor or nil end}
+ if shape=='nested'then source=s.bag(s.root)end
+ if shape~='missing'and shape~='alias'then source.values[#source.values+1]=other end
+ if shape=='alias'then
+  local physical={class='InventoryItem',getID=function()return 902 end};s.root.values[#s.root.values+1]=physical
+ end
+ s.actor.secondary=other
+ assert(not s.finalUse.supportsHeld(s.actor,s.kit)and not s.finalUse.supportsDepletion(s.actor,s.kit),
+  'unrelated hand without exact native Equip root binding admitted: '..shape)
+ assert(s.invoke()==true and s.kit.useCalls==1 and s.kit.useArgs.notify==nil and #s.packets.remove==0,
+  'unproved full equipment packet state acquired final native removal notification: '..shape)
+end
+for _,change in ipairs({'nested','world','worn','auto-equipped','auto-unequipped','stale-parent','late-unrelated-primary'})do
+ local s=setup({kitUses=1});s.actor.primary=s.kit;s.kit.equipParent=s.actor
+ if change=='nested'then s.move(s.bag(s.root))
+ elseif change=='world'then s.move(s.worldContainer())
+ elseif change=='worn'then s.actor.worn.extra=s.kit
+ elseif change=='auto-equipped'then s.kit.autoEquipped=true
+ elseif change=='auto-unequipped'then s.kit.autoUnequipped=true
+ elseif change=='stale-parent'then s.kit.equipParent=nil
+ elseif change=='late-unrelated-primary'then
+  local other={class='InventoryItem',id=901,getID=function(self)return self.id end,
+   getContainer=function()return s.root end,getFullType=function()return'Base.Hammer'end,
+   getWorldItem=function()end,getEquipParent=function()return s.actor end}
+  s.root.values[#s.root.values+1]=other
+  s.options.onClothing=function()s.actor.primary=other;s.kit.equipParent=nil end
+ end
+ assert(s.invoke()==true and s.kit.useCalls==1 and s.kit.uses==0)
+ if change=='late-unrelated-primary'then
+  assert(s.actor.primary and s.actor.primary:getID()==901 and s.kit.useArgs.notify==true and #s.packets.remove==1,
+   'native final use cleared a hand no longer containing its kit')
+ else
+  assert(s.kit.useArgs.notify==nil and #s.packets.remove==0,'unproved held state gained final native notification: '..change)
+ end
+end
+print('Native makeup output sync: native output correction and exact final-use removal, exact root-held hand cleanup, current source admission, unchanged ordinary/unsupported costs and no replay passed.')
