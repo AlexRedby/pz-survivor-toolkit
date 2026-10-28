@@ -44,6 +44,12 @@ def validate(selection):
     profile = options.get('stage_profile', False)
     if type(profile) is not bool or profile and selection['cases'] != ['drive']:
         raise ValueError('stage_profile must be an explicit boolean and is only supported for a drive')
+    callbacks = options.get('callback_profile', False)
+    if type(callbacks) is not bool or callbacks and not profile:
+        raise ValueError('callback_profile must be an explicit boolean and requires stage_profile')
+    details = options.get('callback_detail_profile', False)
+    if type(details) is not bool or details and not callbacks:
+        raise ValueError('callback_detail_profile must be an explicit boolean and requires callback_profile')
     perf = options.get('driving_perf', {})
     if perf.get('scenario', 'highway') not in ('highway', 'west-point-extinction', 'muldraugh-extinction'):
         raise ValueError('Unknown driving scenario')
@@ -62,6 +68,7 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project)
     return [*sorted((root / 'tests/native_queue/optimizer-benchmark/java').glob('*')),
+            root / 'tests/native_queue/optimizer-benchmark/CallbackDetails.lua',
             *sorted((root / 'tests/driving_benchmark/mods').rglob('*.lua')),
             root / 'tests/optimizer_trial/java/Main.java', root / 'tests/optimizer_trial/java/mod.info.template',
             root / 'tests/optimizer_trial/candidate-manifest.json', root / 'tools/prepare_optimizer_trial.py',
@@ -69,6 +76,59 @@ def sources(project, selection):
             root / 'tests/native_queue/support/viewport/Main.java',
             root / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua',
             Path(selection['options']['optimizer_archive'])]
+
+
+def stage_callback_details(project, cache, mod):
+    """Instrument only the owned snapshot; atomic replacement cannot write through a hard link."""
+    project, cache, mod = map(Path, (project, cache, mod))
+    target = cache / 'mods/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleLightDashboard.lua'
+    if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(cache.resolve()):
+        raise ValueError('Callback details require the owned Toolkit dashboard snapshot')
+    if not mod.resolve().is_relative_to(cache.resolve()):
+        raise ValueError('Callback details require the owned probe mod')
+    before = hashlib.sha256(target.read_bytes()).hexdigest()
+    text = target.read_text()
+    anchor = '        original(self, ...)\n        D.bind(self)'
+    if text.count(anchor) != 1:
+        raise ValueError('Callback details Toolkit dashboard boundary changed')
+    replacement = '        PZDrivingCallbackCall(original, self, ...)\n        D.bind(self)'
+    temporary = target.with_name(target.name + '.callback-details.tmp')
+    if temporary.exists():
+        raise ValueError('Callback details temporary file already exists')
+    temporary.write_text(text.replace(anchor, replacement))
+    temporary.replace(target)
+    destination = mod / 'media/lua/client/ZZZDrivingCallbackDetails.lua'
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(project / 'tests/native_queue/optimizer-benchmark/CallbackDetails.lua', destination)
+    receipt = dict(format=1, replacements=1, source=target.relative_to(cache).as_posix(),
+                   before_sha256=before, after_sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
+                   helper=destination.relative_to(cache).as_posix(),
+                   helper_sha256=hashlib.sha256(destination.read_bytes()).hexdigest())
+    (cache / 'callback-details-staging.json').write_text(json.dumps(receipt, sort_keys=True) + '\n')
+    return receipt
+
+
+def verify_callback_details(cache):
+    cache = Path(cache)
+    receipt = json.loads((cache / 'callback-details-staging.json').read_text())
+    expected = {'format', 'replacements', 'source', 'before_sha256', 'after_sha256', 'helper', 'helper_sha256'}
+    if (not isinstance(receipt, dict) or set(receipt) != expected or receipt['format'] != 1
+            or receipt['replacements'] != 1 or any(not isinstance(receipt[key], str)
+            or re.fullmatch('[0-9a-f]{64}', receipt[key]) is None
+            for key in ('before_sha256', 'after_sha256', 'helper_sha256'))):
+        raise ValueError('Invalid callback detail staging receipt')
+    paths = dict(source='mods/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleLightDashboard.lua',
+                 helper='mods/PZDrivingPerfProbe/42/media/lua/client/ZZZDrivingCallbackDetails.lua')
+    for key, expected_path in paths.items():
+        path = cache / expected_path
+        if (receipt[key] != expected_path or path.is_symlink() or not path.is_file()
+                or not path.resolve().is_relative_to(cache.resolve())
+                or hashlib.sha256(path.read_bytes()).hexdigest() != receipt['after_sha256' if key == 'source' else 'helper_sha256']):
+            raise ValueError('Callback detail staged source changed: ' + key)
+    source = (cache / paths['source']).read_text()
+    if source.count('        PZDrivingCallbackCall(original, self, ...)\n        D.bind(self)') != 1:
+        raise ValueError('Callback detail staged source boundary changed')
+    return receipt
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
@@ -83,6 +143,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         raise ValueError('Official archive differs from pinned input')
     guards = dict(manifest['native_guards'])
     if selection['options'].get('stage_profile', False): guards.update(STAGE_PROFILE_INPUTS)
+    if selection['options'].get('callback_profile', False):
+        guards['se/krka/kahlua/integration/LuaCaller.class'] = '0443930027e8f312ae9cb192c628f4b6c10743204597c508f8693cfd7bd79d0b'
     with zipfile.ZipFile(game / 'projectzomboid.jar') as z:
         for name, expected in guards.items():
             if hashlib.sha256(z.read(name)).hexdigest() != expected:
@@ -111,6 +173,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         with zipfile.ZipFile(mod / 'media/java/PZDrivingPerfProbe.jar', 'w', zipfile.ZIP_DEFLATED) as jar:
             jar.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\n\n')
             for path in sorted(build.rglob('*.class')): jar.write(path, path.relative_to(build).as_posix())
+    if selection['options'].get('callback_detail_profile', False):
+        runtime['fixture']['callback_details'] = stage_callback_details(project, cache, mod)
     runtime['fixture']['mods'].append('PZDrivingPerfProbe')
     # Only the copied test starter changes: the fixture owns native create/load below.
     (cache / 'mods/PZDrivingBench/42/media/lua/client/DrivingBenchStart.lua').write_text('-- World lifecycle owned by isolated benchmark fixture.\n')
@@ -154,6 +218,10 @@ end
     props = {'pz.drivingPerf.cachedir': str(cache)}
     if selection['options'].get('stage_profile', False):
         props['pz.drivingPerf.stageProfile'] = 'true'
+    if selection['options'].get('callback_profile', False):
+        props['pz.drivingPerf.callbackProfile'] = 'true'
+    if selection['options'].get('callback_detail_profile', False):
+        props['pz.drivingPerf.callbackDetailProfile'] = 'true'
     if enabled:
         props.update({'pz.optimizerTrial.prewarm': 'true', 'pz.optimizerTrial.sourceZip': str(archive),
              'pz.optimizerTrial.cachedir': str(cache), 'pz.optimizerTrial.profile': manifest['profile']['id'],
@@ -345,6 +413,11 @@ def verify(root, selection, catalog):
     if not complete(selection, 'client1', text): issues.append('Missing seed or measured-route completion')
     if re.search(r'\[(?:DRIVING_PERF(?:_WORLD)?|PZDrivingBench)\] FAIL ', text): issues.append('Fixture failed')
     if '[PZToolkitJavaPatches] Experimental B42.21 patch:' not in text: issues.append('Toolkit Java patches did not activate')
+    if selection['options'].get('callback_detail_profile') is True:
+        if text.count('[DRIVING_PERF] CALLBACK_DETAILS_INSTALLED functions=6') != 1:
+            issues.append('Missing/duplicate diagnostic callback detail installation')
+        try: evidence['callback_detail_staging'] = verify_callback_details(root / 'client1')
+        except (OSError, ValueError, KeyError): issues.append('Missing/invalid callback detail staging receipt')
     if selection['options']['optimizer_enabled']:
         for marker in ('[OptimizerTrial] official cache and preload active', 'anim sets preloaded in ', 'action groups handed to the game'):
             if marker not in text: issues.append('Missing optimizer activation: ' + marker)
@@ -356,6 +429,14 @@ def verify(root, selection, catalog):
         if selection['options'].get('stage_profile') is True:
             try: evidence['stage_timings'] = stage_metrics(root / 'client1')
             except (OSError, ValueError, KeyError, csv.Error) as error: issues.append('Stage profile: ' + str(error))
+        if selection['options'].get('callback_profile') is True:
+            from queue_checks.callback_metrics import callback_metrics
+            try:
+                evidence['callback_timings'] = callback_metrics(root / 'client1')
+                expected_details = 'enabled' if selection['options'].get('callback_detail_profile') is True else 'disabled'
+                if evidence['callback_timings']['detail_spans'] != expected_details:
+                    raise ValueError('Callback detail status differs from requested profile')
+            except (OSError, ValueError, KeyError, csv.Error) as error: issues.append('Callback profile: ' + str(error))
         for marker in ('[DRIVING_PERF] BEGIN ', '[DRIVING_PERF] MEASURE ', '[DRIVING_PERF] END ', '[DRIVING_PERF] COMPLETE '):
             if text.count(marker) != 1: issues.append('Missing/duplicate actual route marker: ' + marker)
     evidence['limits']=['macOS swap-completion cadence, not compositor presentation or Windows FPS.',
