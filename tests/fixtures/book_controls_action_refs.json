@@ -1,0 +1,12 @@
+{
+  "source": {
+    "case": "root.header-cancel",
+    "kind": "sp",
+    "mode": "native",
+    "rawLogSha256": "00cbe16bf8d4d0648b5baa05ec2df0f7ef7a7b382e3d0d6d917bce9ae0ab223f",
+    "sourceManifestSha256": "9adb49408b7d2fd05343c018f67767af797d84f4c1d387d3636c0b2f2fc7c66f"
+  },
+  "registered": "ISReadABook 0x740724844{ character=IsoPlayer{  Name:null,  ID:3 }, stopOnWalk=true, stopOnRun=true, stopOnAim=true, caloriesModifier=0.5, maxTime=79200, playerNum=0, item=Base.BookCarpentry1:zombie.inventory.types.Literature@26a19ad3, minutesPerPage=2, maxMultiplier=3, ignoreHandsWounds=true, startPage=218, pageTimer=0, forceProgressBar=true, toolkitQueueOperation=table 0x1185664297 }",
+  "boundary": "ISReadABook 0x740724844{ character=IsoPlayer{  Name:null,  ID:3 }, stopOnWalk=true, stopOnRun=true, stopOnAim=true, caloriesModifier=0.5, maxTime=79200, playerNum=0, item=Base.BookCarpentry1:zombie.inventory.types.Literature@26a19ad3, minutesPerPage=2, maxMultiplier=3, ignoreHandsWounds=true, startPage=218, pageTimer=361.8155360817909, forceProgressBar=true, toolkitQueueOperation=table 0x1185664297, action=zombie.characters.CharacterTimedActions.LuaTimedActionNew@66c82a69 }",
+  "native": "zombie.characters.CharacterTimedActions.LuaTimedActionNew@66c82a69"
+}

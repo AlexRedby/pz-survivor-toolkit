@@ -43,6 +43,8 @@ local nativeTransferItem = ISTransferAction and ISTransferAction.transferItem
 local nativeDropItemOffset = ISTransferAction and ISTransferAction.GetDropItemOffset
 local transferItemGuard
 local inspect
+-- Private, synchronous decision lifetime; never stored on an action or descriptor.
+local activeDecision
 local ordinaryTransfer
 -- Record evidence only at an existing rejecting gate. Raw reason APIs and their
 -- tuple layout stay compatible; public decisions can explain the same denial.
@@ -264,7 +266,9 @@ local function sharedWorldTarget(a, b, context)
     local left, right = inspect and inspect(a, context), inspect and inspect(b, context)
     if left and right then
         if sharedEditResource and sharedEditResource(left, right) then return true end
-        for actor in pairs(left.positions or {}) do if right.positions and right.positions[actor] then return actor end end
+        if not context or (a ~= context.failurePositionPrerequisite and b ~= context.failurePositionPrerequisite) then
+            for actor in pairs(left.positions or {}) do if right.positions and right.positions[actor] then return actor end end
+        end
         for target in pairs(left.targets or {}) do
             if right.targets and right.targets[target] and not mediaSetterIndependent(a, b, context) then return target end
         end
@@ -532,7 +536,11 @@ local function registerNative(name, inspector, helpers, applies)
     Definitions.registerBehavior("native." .. name, {
         types = {name},
         -- Family-owned native cleanup must not claim unrelated uses of the same class.
-        matches = function(action) return nativeMatches(action, snapshot) and (not applies or applies(action)) end,
+        matches = function(action)
+            local scope = activeDecision
+            local proven = scope and scope.native[action] == snapshot
+            return (proven or nativeMatches(action, snapshot)) and (not applies or applies(action))
+        end,
         inspect = inspector,
     })
 end
@@ -724,10 +732,6 @@ local function transferResources(action, context)
         if result.edit and (not carriedContainers(action.srcContainer,action.character)
             or not carriedContainers(action.destContainer,action.character)) then result.positions={[action.character]=true} end
     end
-    local execution = Toolkit.ActionQueueExecution
-    if result.knownInputs ~= false and execution and not (context and context.executionProbe) then
-        result.execution = execution.inspect(action)
-    end
     return result
 end
 Policy.transferResources = transferResources
@@ -771,13 +775,13 @@ local function fluidResources(action)
     end
     return result
 end
-local function radioResources(action)
+local function radioResources(action, projectionIndependent)
     if not radioModes[action.mode] then return end
     for name, method in pairs(radioMethods) do if (action[name] or false) ~= method then return end end
     local result = resources(action)
     local target = action.device or action.deviceData
     if target and not instanceof(target, "InventoryItem") then result.targets[target] = true end
-    if EditAdapters then result.edit = EditAdapters.radio(action) end
+    if EditAdapters and projectionIndependent ~= true then result.edit = EditAdapters.radio(action) end
     return result
 end
 local function dryItem(item)
@@ -1016,6 +1020,8 @@ end, inspect = function(action)
 end})
 
 inspect = function(action, context)
+    local override = context and context.failureOverrides and context.failureOverrides[action]
+    if override then return unpack(override, 1, 3) end
     local cached = context and context.contracts[action]
     if cached then return unpack(cached, 1, 3) end
     if action._isAddingActions or (Operations.isContinuationPending and Operations.isContinuationPending(action.toolkitQueueOperation)) then
@@ -1296,6 +1302,20 @@ local function fixedWorldContainer(container)
     end
 end
 
+local function returnCapacityCapability(action, contract, context)
+    if not contract or contract.knownInputs == false then return end
+    local execution = Toolkit.ActionQueueExecution
+    if not execution or type(execution.inspect) ~= "function" then return end
+    local scope = activeDecision
+    local cached = scope and scope.context == context and scope.executions[action]
+    if cached and cached.owner == execution and cached.inspect == execution.inspect then return cached[1], execution end
+    local capability = execution.inspect(action)
+    if scope and scope.context == context then
+        scope.executions[action] = {capability, owner = execution, inspect = execution.inspect}
+    end
+    return capability, execution
+end
+
 local function transferCapacityConflict(queue, a, b, last, check, context)
     local carts = Toolkit.ActionQueueCarts
     local function transfer(action)
@@ -1309,10 +1329,9 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
         if equipment and equipment.hands == queue.character then
             local transferAction = aTransfer and a or b
             local contract = inspect(transferAction, context)
-            local capability = contract and contract.execution
+            local capability, execution = returnCapacityCapability(transferAction, contract, context)
             -- Native live admission and exact outcome handling own this earned
             -- single return. No equipment-neutrality or future-space claim.
-            local execution = Toolkit.ActionQueueExecution
             if not capability or not execution or not execution.capacityDeferred
                 or not execution.capacityDeferred(transferAction, capability) then return queue.character:getInventory() end
         end
@@ -1784,6 +1803,23 @@ local MAX_RETURN_EXECUTION_MEMBERS = 32
 local returnFailureSuffix = {ISReadABook = true, ISWalkToTimedAction = true,
     ISWalkToTimedActionF = true, ISPathFindAction = true, ISEquipWeaponAction = true, ISUnequipAction = true,
     ISRadioAction = true}
+local returnRadioInspector = EditAdapters and EditAdapters.radio
+local returnRadioClosure = Proof and Proof.closure
+local function returnRadioProjectionIndependent(own)
+    if not EditAdapters or Toolkit.ActionQueueEditAdapters ~= EditAdapters
+        or EditAdapters.radio ~= returnRadioInspector or type(returnRadioInspector) ~= "function"
+        or not Proof or Proof.closure ~= returnRadioClosure
+        or not returnRadioClosure(returnRadioInspector, "ActionQueueEditAdapters.lua") then return false end
+    -- The owned radio adapter adds only domain=device. The exact return has
+    -- item/container edits; its plain resource footprint is otherwise unchanged.
+    local edit = own.edit
+    if edit ~= nil and (type(edit) ~= "table" or getmetatable(edit)
+        or type(edit.resources) ~= "table" or getmetatable(edit.resources)) then return false end
+    for _, resource in pairs(edit and edit.resources or {}) do
+        if type(resource) ~= "table" or getmetatable(resource) or resource.domain == "device" then return false end
+    end
+    return true
+end
 local returnApproachBinding
 local returnApproachClosure = Proof and Proof.closure
 local function returnFailureApproach(action)
@@ -1794,19 +1830,22 @@ local function returnFailureApproach(action)
     if not returnApproachBinding then returnApproachBinding = {owner = owner, checker = checker} end
     return owner == returnApproachBinding.owner and checker == returnApproachBinding.checker and checker(action) == true
 end
-function Policy.returnFailureIndependent(queue, action)
+local function returnFailureIndependent(queue, action, scope)
     -- Unsupported is a closed result, never permission on budget exhaustion.
     -- The first slice intentionally has no large-queue or recipe-input forecast.
     if not queue or #queue.queue > MAX_RETURN_EXECUTION_MEMBERS then return false, "unsupported_queue_size" end
     if not targetCheckersUnchanged() then return false, "unsupported_target_checker" end
     local index = queue and queue:indexOf(action)
     if not index or index < 1 then return false end
-    local context = {contracts = {}, items = {}, executionProbe = true}
+    local outer = scope and scope.context
+    local context = {contracts = outer and outer.contracts or {}, items = outer and outer.items or {},
+        executionProbe = true, failurePositionPrerequisite = action}
     local own = inspect(action, context)
     if not own or own.knownInputs == false or own.unknownOutputs then return false end
+    local radioProjectionIndependent = returnRadioProjectionIndependent(own)
+    context.failureOverrides = {}
     -- Transfer reachability is a position prerequisite, not a position effect.
     -- A later walk remains independent of its terminal no-effect rejection.
-    own.positions = nil
     for i = index + 1, #queue.queue do
         local other = queue.queue[i]
         local approach = other.Type == "ISQueueActionsAction" and returnFailureApproach(other)
@@ -1817,6 +1856,15 @@ function Policy.returnFailureIndependent(queue, action)
         if other._isAddingActions or other.action then return false end
         local snapshot = snapshots[getmetatable(other)]
         if not approach and (not snapshot or not nativeMatches(other, snapshot)) then return false, "unsupported_tail_binding" end
+        if scope and not approach then scope.native[other] = snapshot end
+        if other.Type == "ISRadioAction" and radioProjectionIndependent and not context.contracts[other] then
+            local behavior, source = Definitions.behavior(other)
+            if behavior and source == "native.ISRadioAction" and behavior.inspect == radioResources then
+                -- Tail-only override: never publish a partial device edit into
+                -- the outer decision's full planner contract cache.
+                context.failureOverrides[other] = {radioResources(other, true), source, behavior}
+            end
+        end
         local contract, source = inspect(other, context)
         if approach and (source ~= "toolkit.approach" or not contract or not contract.deferred
             or not contract.preparation or contract.capacityNonIncreasing ~= true) then
@@ -1827,6 +1875,20 @@ function Policy.returnFailureIndependent(queue, action)
             or dynamicConflict(action, other, context) or dynamicConflict(other, action, context) then return false end
     end
     return true
+end
+
+function Policy.returnFailureIndependent(queue, action)
+    local scope = activeDecision
+    if scope and scope.queue == queue then
+        -- Reuse only inside the current synchronous source-owned decision. A new
+        -- decision, admission, rejection or click always starts with fresh facts.
+        local cached = scope.failures[action]
+        if cached then return cached[1], cached[2] end
+        local result, reason = returnFailureIndependent(queue, action, scope)
+        scope.failures[action] = {result, reason}
+        return result, reason
+    end
+    return returnFailureIndependent(queue, action)
 end
 
 function Policy.replaceStop(previous, replacement)
@@ -1903,8 +1965,8 @@ function Policy.previewMove(queue, action, target, after, context)
         to = to, first = first, last = last, preempt = preempt}
 end
 
-function Policy.previewCancel(queue, action, whole)
-    local context = {contracts = {}, items = {}}
+function Policy.previewCancel(queue, action, whole, context)
+    context = context or {contracts = {}, items = {}}
     local reason, first, last, blocker, resource
     if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
     else reason, first, last, blocker, resource = Policy.cancelReason(queue, action, context) end
@@ -1923,8 +1985,8 @@ function Policy.evaluateMove(queue, action, target, after, context)
         blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
-function Policy.evaluateCancel(queue, action, whole)
-    local context = {contracts = {}, items = {}}
+function Policy.evaluateCancel(queue, action, whole, context)
+    context = context or {contracts = {}, items = {}}
     local snapshot = editSnapshot(queue)
     local reason, first, last, blocker, resource
     if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
@@ -1939,6 +2001,33 @@ function Policy.evaluateCancel(queue, action, whole)
     return {allowed = reason == nil, reason = reason, first = first, last = last,
         mode = returnWaiver and "pending-return" or queue and action == queue.current and "active" or "pending",
         returnWaiver = returnWaiver, blocker = blocker, resource = resource, snapshot = snapshot}
+end
+
+local function inDecision(queue, context, callback, ...)
+    local previous = activeDecision
+    activeDecision = {queue = queue, context = context, failures = {}, executions = {}, native = {}}
+    local result = {pcall(callback, ...)}
+    activeDecision = previous
+    if not result[1] then error(result[2], 0) end
+    return result[2]
+end
+local previewMove, previewCancel = Policy.previewMove, Policy.previewCancel
+local evaluateMove, evaluateCancel = Policy.evaluateMove, Policy.evaluateCancel
+function Policy.previewMove(queue, action, target, after, context)
+    context = context or {contracts = {}, items = {}}
+    return inDecision(queue, context, previewMove, queue, action, target, after, context)
+end
+function Policy.evaluateMove(queue, action, target, after, context)
+    context = context or {contracts = {}, items = {}}
+    return inDecision(queue, context, evaluateMove, queue, action, target, after, context)
+end
+function Policy.previewCancel(queue, action, whole)
+    local context = {contracts = {}, items = {}}
+    return inDecision(queue, context, previewCancel, queue, action, whole, context)
+end
+function Policy.evaluateCancel(queue, action, whole)
+    local context = {contracts = {}, items = {}}
+    return inDecision(queue, context, evaluateCancel, queue, action, whole, context)
 end
 
 local function priorityDecision(queue, action, preempt, decide)

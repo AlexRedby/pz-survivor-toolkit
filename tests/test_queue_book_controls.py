@@ -505,6 +505,110 @@ os.exit(0)
             self.assertTrue(a.verify(root,selection,{})['issues'])
 
 
+    def test_real_kahlua_dump_keeps_identity_while_reader_fields_change(self):
+        raw = json.loads((ROOT / 'tests/fixtures/book_controls_action_refs.json').read_text())
+        self.assertNotEqual(raw['registered'], raw['boundary'])
+        evidence = self.evidence('root.header-cancel', 'sp', 'native')
+        row = evidence[0]; original = next(record for record in row['records'] if record['role'] == 'front')
+        original['actionRef'] = raw['registered']; original['nativeRef'] = raw['native']
+        row['boundary']['reader'] = raw['boundary']; row['boundary']['native'] = raw['native']
+        evidence[6][0]['native'] = raw['native']; evidence[6][0]['reader'] = raw['boundary']
+        evidence[5][0]['reader'] = raw['boundary']; evidence[5][0]['native'] = raw['native']
+        self.assertEqual(self.check(evidence, 'sp', 'native'), [])
+        for field, value in [('reader', raw['boundary'].replace('ISReadABook 0x', 'ISReadABook 0xf', 1)), ('reader', raw['boundary'].replace('ISReadABook', 'OtherAction', 1)), ('native', 'java:wrong')]:
+            with self.subTest(field=field, value=value[:40]):
+                changed = copy.deepcopy(evidence); changed[0]['boundary'][field] = value
+                self.assertTrue(self.check(changed, 'sp', 'native'))
+        self.assertFalse(a._same_action(None, None))
+        self.assertFalse(a._same_action('ISReadABook 0x123{truncated', 'ISReadABook 0x123{truncated'))
+        self.assertFalse(a._same_action('ISReadABook 0x123{pages=1}extra', 'ISReadABook 0x123{pages=2}'))
+
+    def test_cross_snapshot_refs_and_fresh_reader_use_stable_table_identity(self):
+        evidence = self.evidence(); row = evidence[0]
+        original, resumed = [record for record in row['records'] if record['role'] == 'front']
+        original['actionRef'] = 'ISReadABook 0x111{pageTimer=0}'
+        row['boundary']['reader'] = 'ISReadABook 0x111{pageTimer=15, action=java:1}'
+        row['resume']['oldAction'] = 'ISReadABook 0x111{pageTimer=99}'
+        resumed['actionRef'] = 'ISReadABook 0x222{pageTimer=0}'
+        row['resume']['newAction'] = 'ISReadABook 0x222{pageTimer=12}'
+        equip = next(record for record in row['records'] if record['role'] == 'equip')
+        equip['actionRef'] = 'ISEquipWeaponAction 0x333{maxTime=50}'
+        row['boundary']['ui']['movingAction'] = 'ISEquipWeaponAction 0x333{maxTime=50, action=java:2}'
+        evidence[5][0] = dict({k:v for k,v in row['boundary'].items() if k not in ('drained', 'drainedAt')}, drained=False)
+        evidence[6][0]['reader'] = row['boundary']['reader']
+        self.assertEqual(self.check(evidence), [])
+        changed = copy.deepcopy(evidence)
+        fresh = next(record for record in changed[0]['records'] if record['role'] == 'front' and record is not changed[0]['records'][0])
+        fresh['actionRef'] = 'ISReadABook 0x111{pageTimer=0, action=java:new}'
+        changed[0]['resume']['newAction'] = 'ISReadABook 0x111{pageTimer=12}'
+        self.assertTrue(self.check(changed), 'same Lua table must not pass as a fresh reader when fields change')
+        kept = self.evidence('worn-bag.return-child-cancel')
+        returned = next(record for record in kept[0]['records'] if record['role'] == 'return')
+        returned['actionRef'] = 'ISInventoryTransferAction 0x444{started=false}'
+        kept[0]['boundary']['ui']['target'] = 'ISInventoryTransferAction 0x444{started=false, queueList={}}'
+        kept[5][0] = dict({k:v for k,v in kept[0]['boundary'].items() if k not in ('drained', 'drainedAt')}, drained=False)
+        self.assertEqual(self.check(kept), [])
+
+    def test_shared_codec_encodes_nonfinite_numbers_without_finite_substitution(self):
+        lua=shutil.which('luajit')
+        if not lua:self.skipTest('LuaJIT not installed')
+        source=r"""
+local J=assert(loadfile(arg[1]))()
+print(J.encode({nan=0/0,pos=math.huge,neg=-math.huge,finite=1.25,flag=false,text='nan'}))
+local ok=pcall(J.encode,function()end);assert(not ok,'unknown Lua value accepted')
+ok=pcall(J.encode,{[1]='mixed',unknown=true});assert(not ok,'malformed mixed table accepted')
+os.exit(0)
+"""
+        value=json.loads(subprocess.check_output([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/health/shared/QueueHealthEvents.lua')],text=True))
+        self.assertEqual(value,dict(nan={'__queueNonfiniteNumber':'nan'},pos={'__queueNonfiniteNumber':'+inf'},neg={'__queueNonfiniteNumber':'-inf'},finite=1.25,flag=False,text='nan'))
+
+    def test_actual_case15_unstarted_nan_is_diagnostic_only_with_exact_admission_evidence(self):
+        saved=json.loads((ROOT/'tests/fixtures/book_controls_nonfinite_return.json').read_text())
+        record,row,ids=saved['record'],saved['row'],saved['ids']
+        self.assertTrue(a._unstarted_admission_diagnostic(record,row,ids,True))
+        row=copy.deepcopy(row);row['records']=[record]
+        self.assertEqual(a._nonfinite_case_errors(row,ids,True),[])
+        for mutate in (
+            lambda r:r.update(started=True), lambda r:r.update(progress=True),
+            lambda r:r.update(item=999), lambda r:r.update(role='pickup'),lambda r:r.update(type='ISReadABook'),
+            lambda r:r.update(performedAt=1),lambda r:r.update(startedAt=1),lambda r:r.update(transaction=1),
+            lambda r:r.update(finishes=[dict(phase='perform',succeeded=True)]),lambda r:r.update(receipts=[{}]),
+            lambda r:r.update(duration={'__queueNonfiniteNumber':'unknown'}),
+            lambda r:r.update(duration={'__queueNonfiniteNumber':'nan','other':True}),
+            lambda r:r.update(duration='nan'),lambda r:r.update(duration=None),
+        ):
+            changed=copy.deepcopy(row);mutate(changed['records'][0]);self.assertTrue(a._nonfinite_case_errors(changed,ids,True))
+        for field,value in [('reason','server'),('itemId',999),('state','revoked')]:
+            changed=copy.deepcopy(row);changed['blockedReturn'][field]=value;self.assertTrue(a._nonfinite_case_errors(changed,ids,True))
+        changed=copy.deepcopy(row);changed['failureUI']['cleared']=False;self.assertTrue(a._nonfinite_case_errors(changed,ids,True))
+        changed=copy.deepcopy(row);changed['starts'].append(record['sequence']);self.assertTrue(a._nonfinite_case_errors(changed,ids,True))
+        self.assertTrue(a._nonfinite_case_errors(row,ids,False),'queue-off cannot acquire diagnostic admission authority')
+        changed=copy.deepcopy(row);changed['records'][0]['allocatedAt']=changed['capacity']['at']-1;self.assertTrue(a._nonfinite_case_errors(changed,ids,True))
+        changed=copy.deepcopy(row);changed['boundary']['queue'].append({'sequence':record['sequence']});self.assertTrue(a._nonfinite_case_errors(changed,ids,True))
+        changed=copy.deepcopy(row);changed['records'][0]['token']=changed['boundary']['token'];self.assertTrue(a._nonfinite_case_errors(changed,ids,True))
+        for field in ('startedAt','transactionDuration'):
+            changed=copy.deepcopy(row);changed['records'][0][field]={'__queueNonfiniteNumber':'nan'};self.assertTrue(a._nonfinite_case_errors(changed,ids,True))
+        changed=copy.deepcopy(row);changed['unrelatedCritical']={'__queueNonfiniteNumber':'nan'};self.assertTrue(a._nonfinite_case_errors(changed,ids,True))
+        for token in ('nan','+inf','-inf'):
+            changed=copy.deepcopy(row)
+            for field in ('duration','durationAfter','effectiveDuration'):changed['records'][0][field]={'__queueNonfiniteNumber':token}
+            self.assertEqual(a._nonfinite_case_errors(changed,ids,True),[])
+
+    def test_tagged_duration_never_qualifies_started_transfer_or_performance(self):
+        evidence=self.evidence('worn-bag.header-cancel-capacity-lost','sp')
+        row=evidence[0];returned=copy.deepcopy(next(record for record in row['records']if record['role']=='return'))
+        returned.update(sequence=800,token=60,actionRef='ISInventoryTransferAction 0x800{maxTime=nan}',nativeRef='java:800',allocatedAt=row['capacity']['at']+1)
+        row['records'].append(returned)
+        returned.update(duration={'__queueNonfiniteNumber':'nan'},durationAfter={'__queueNonfiniteNumber':'nan'},effectiveDuration={'__queueNonfiniteNumber':'nan'})
+        self.assertEqual(self.check(evidence,'sp'),[])
+        for field in ('started','progress'):
+            changed=copy.deepcopy(evidence);next(record for record in changed[0]['records']if record['sequence']==800)[field]=True
+            self.assertTrue(self.check(changed,'sp'))
+        changed=copy.deepcopy(evidence);changed[0]['performance']['metrics'][0]['rawMs'][0]={'__queueNonfiniteNumber':'nan'}
+        self.assertTrue(self.check(changed,'sp'))
+        changed=copy.deepcopy(evidence);changed[0]['boundary']['at']={'__queueNonfiniteNumber':'nan'}
+        self.assertTrue(self.check(changed,'sp'))
+
     def test_selection_is_opt_in_exact_ordered_bank(self):
         a.validate(self.selection())
         self.assertEqual(adapters.get('book-controls'), a)

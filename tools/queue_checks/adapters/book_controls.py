@@ -16,6 +16,22 @@ FAVORITE_CASES = ('world.header-cancel-favorite', 'world.move-volume-favorite')
 CASES += CAPACITY_CASES + FAVORITE_CASES
 PREFIX = '[BOOK_CONTROLS] '
 
+
+def _action_identity(value):
+    """Kahlua table dumps contain mutable fields after the stable class/address."""
+    if not isinstance(value, str) or not value:
+        return None
+    if re.match(r'^[A-Za-z_][A-Za-z0-9_]* 0x', value):
+        match = re.fullmatch(r'([A-Za-z_][A-Za-z0-9_]* 0x[0-9a-fA-F]+)(?:\{.*\})?', value, re.DOTALL)
+        return match.group(1) if match else None
+    return value
+
+
+def _same_action(left, right):
+    identity = _action_identity(left)
+    return identity is not None and identity == _action_identity(right)
+
+
 def base_control(control):
     return control.removesuffix('-capacity-lost') if control.endswith('-capacity-lost') else control.removesuffix('-favorite')
 
@@ -116,6 +132,81 @@ def expected(ids, enabled, boundary, kind='mp'):
     value['volume'] = ids['initialVolume'] if lost and not enabled else ids['targetVolume']
     value['hands']['primary'] = False if lost and not enabled else ids['pen']['id']
     return value
+
+
+
+_NONFINITE_TAG = '__queueNonfiniteNumber'
+_DIAGNOSTIC_DURATIONS = frozenset(('duration', 'durationBefore', 'durationAfter', 'effectiveDuration'))
+
+
+def _nonfinite_tag(value):
+    return (isinstance(value, dict) and set(value) == {_NONFINITE_TAG}
+            and value[_NONFINITE_TAG] in ('nan', '+inf', '-inf'))
+
+
+def _nonfinite_locations(value, path=()):
+    if isinstance(value, dict):
+        if _NONFINITE_TAG in value:
+            yield path, value
+        else:
+            for key, entry in value.items():
+                yield from _nonfinite_locations(entry, path + (key,))
+    elif isinstance(value, list):
+        for index, entry in enumerate(value):
+            yield from _nonfinite_locations(entry, path + (index,))
+
+
+def _unstarted_admission_diagnostic(record, row, ids, enabled):
+    """A duration observation grants no execution or timing authority."""
+    debt, ui = row.get('blockedReturn'), row.get('failureUI')
+    capacity, boundary = row.get('capacity'), row.get('boundary')
+    if not enabled or not all(isinstance(value, dict) for value in (debt, ui, capacity, boundary)):
+        return False
+    if (record.get('type') != 'ISInventoryTransferAction' or record.get('role') != 'return'
+            or record.get('item') != ids['front']['id'] or record.get('nativeSource') is not True
+            or record.get('started') is not False or record.get('progress') is not False
+            or record.get('sequence') in row.get('starts', [])
+            or record.get('finishes') != [] or record.get('receipts') != []
+            or any(record.get(key) is not None for key in ('startedAt', 'performedAt', 'transactionDuration'))
+            or record.get('transaction') not in (None, False, 0)
+            or record.get('transactionDone') not in (None, False) or record.get('transactionRejected') not in (None, False)
+            or debt.get('reason') != 'admission' or debt.get('state') != 'blocked' or not debt.get('id')
+            or debt.get('itemId') != ids['front']['id'] or debt.get('itemType') != ids['front']['type']
+            or row.get('returnSucceeded') is not False or ui.get('id') != debt.get('id')
+            or ui.get('itemId') != ids['front']['id']
+            or any(ui.get(key) is not True for key in ('visible', 'idle', 'bookRoot', 'pressCaptured', 'cleared', 'bookRetained'))):
+        return False
+    if (not isinstance(record.get('nativeRef'), str) or not record['nativeRef']
+            or not _number(record.get('allocatedAt')) or not _number(capacity.get('at')) or not _number(boundary.get('at'))
+            or not boundary['at'] <= capacity['at'] <= record['allocatedAt']
+            or capacity.get('itemId') != ids['front']['id'] or capacity.get('itemType') != ids['front']['type']
+            or capacity.get('after') != 0 or capacity.get('roomAfter') is not False
+            or record.get('sequence') in [member.get('sequence') for member in boundary.get('queue', [])]
+            or record.get('token') == boundary.get('token')):
+        return False
+    for where in ('client', 'server'):
+        book = row.get(where, {}).get('books', {}).get('front', {})
+        if book.get('id') != ids['front']['id'] or book.get('type') != ids['front']['type'] or book.get('container') != 'root':
+            return False
+    return True
+
+
+def _nonfinite_case_errors(row, ids, enabled):
+    errors, allowed = [], set()
+    for index, record in enumerate(row.get('records', [])):
+        eligible = _unstarted_admission_diagnostic(record, row, ids, enabled)
+        for field in _DIAGNOSTIC_DURATIONS | {'transactionDuration'}:
+            if field not in record:
+                continue
+            value = record[field]
+            if _nonfinite_tag(value) and eligible and field in _DIAGNOSTIC_DURATIONS:
+                allowed.add(('records', index, field))
+            elif not _number(value):
+                errors.append('Nonfinite/malformed native timing outside exact unstarted admission failure: ' + str(index) + '/' + field)
+    for path, value in _nonfinite_locations(row):
+        if path not in allowed or not _nonfinite_tag(value):
+            errors.append('Nonfinite/malformed diagnostic outside allowed unstarted transfer duration: ' + '/'.join(map(str, path)))
+    return errors
 
 
 def _record_errors(record, kind, case, actor, acks, capacity_lost=False):
@@ -239,6 +330,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         control = base_control(original_control); lost = capacity_case(original_control); favorite_unmoved = favorite_case(original_control) and selection['kind'] == 'sp'
         keep = enabled and control == 'return-child-cancel'
         ids, boundary, records = row['ids'], row['boundary'], row['records']
+        errors.extend(_nonfinite_case_errors(row, ids, enabled))
         errors.extend(performance_errors(row.get('performance'), case, enabled))
         if isinstance(row.get('performance'), dict) and row['performance'].get('queueCount') != len(boundary.get('queue', [])):
             errors.append('Timing queue shape differs from the real edit boundary')
@@ -340,7 +432,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         if len(front) != (2 if moving else 1) or any(len(v) != 1 for v in others.values()):
             return errors + ['Duplicate/missing exact native reader, Pen equip, volume or unrelated tail']
         original = front[0]; tail, equip, volume = (others[n][0] for n in ('tail', 'equip', 'volume'))
-        if (original.get('actionRef') != boundary.get('reader') or original.get('nativeRef') != boundary.get('native')
+        if (not _same_action(original.get('actionRef'), boundary.get('reader')) or original.get('nativeRef') != boundary.get('native')
                 or original.get('item') != ids['front']['id'] or original.get('started') is not True or original.get('progress') is not True
                 or tail.get('item') != ids['tail']['id'] or equip.get('item') != ids['pen']['id']
                 or equip.get('type') != 'ISEquipWeaponAction' or volume.get('type') != 'ISRadioAction'):
@@ -358,7 +450,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
                 errors.append('Real Panel operation identity missing')
             if keep:
                 retired = [r for r in records if r.get('role') == 'return' and r.get('token') == original.get('token')]
-                if (len(retired) != 1 or ui.get('target') != retired[0].get('actionRef')
+                if (len(retired) != 1 or not _same_action(ui.get('target'), retired[0].get('actionRef'))
                         or any(ui.get(k) is not True for k in ('bodyContinues', 'returnAbsent', 'bookRoot'))
                         or ui.get('operationCancelled') is not False
                         or retired[0].get('started') is not False or retired[0].get('progress') is not False
@@ -366,7 +458,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
                         or any(retired[0].get(k) is not None for k in ('nativeRef', 'performedAt', 'startedAt', 'allocatedAt'))
                         or retired[0].get('transaction') not in (None, False)):
                     errors.append('Optional return cross stopped the reader, ran the retired return or lost exact keep intent')
-            if moving and (ui.get('dragging') is not True or ui.get('movingAction') != (equip if control == 'move-equip' else volume).get('actionRef')
+            if moving and (ui.get('dragging') is not True or not _same_action(ui.get('movingAction'), (equip if control == 'move-equip' else volume).get('actionRef'))
                     or ui.get('movingToken') != (equip if control == 'move-equip' else volume).get('token') or not ui.get('movingAnchor')):
                 errors.append('Move gesture never crossed the drag threshold')
         elif ui is not False or row.get('reset') is not False:
@@ -383,9 +475,9 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
             errors.append('Native started flags and exact start sequence disagree')
         if moving:
             resumed, receipt = front[1], row.get('resume', {})
-            if (not isinstance(receipt, dict) or receipt.get('oldAction') != original.get('actionRef') or receipt.get('newAction') != resumed.get('actionRef')
+            if (not isinstance(receipt, dict) or not _same_action(receipt.get('oldAction'), original.get('actionRef')) or not _same_action(receipt.get('newAction'), resumed.get('actionRef'))
                     or receipt.get('oldNative') != original.get('nativeRef') or receipt.get('newNative') != resumed.get('nativeRef')
-                    or receipt.get('newAction') == receipt.get('oldAction') or receipt.get('newNative') == receipt.get('oldNative')
+                    or _same_action(receipt.get('newAction'), receipt.get('oldAction')) or receipt.get('newNative') == receipt.get('oldNative')
                     or receipt.get('oldNativeAbsent') is not True or receipt.get('item') != ids['front']['id']
                     or receipt.get('token') != original.get('token') or resumed.get('token') != original.get('token')
                     or receipt.get('startPage') != boundary['before']['books']['front']['pages']
