@@ -1,6 +1,7 @@
-Consolidated Windows optimizer comparison candidate v4.3
+Consolidated Windows optimizer comparison candidate v4.4
 Game: B42.21 revision 4a0e9546ec. Toolkit 0.1.299; Java Patches 0.1.70.
-Recorder format 3 / revision 3.4. Results collector revision 3.4.1.
+Recorder format 3 / revision 3.4. Results collector revision 3.4.2.
+Collector v4.4 preserves a finalized watchdog-stopped ETL beyond 2 GiB only after matching ownership, saved/wrapper receipt, header-validation flag, size and actual SHA256 checks. Incomplete remains Incomplete, captureCoverage remains Unknown, and unverified partial files retain the 2 GiB bound. The WPR recording budget/profile is unchanged; this recovers existing evidence, not a full-length recording.
 Collector-only v4.3 repair: Auto accepts one closed available mode; explicit RunMode can select Optimized/Control or require Comparison. Existing malformed/open/live-run, path, hash and artifact checks remain active. SingleRun scope and missingModes describe missing bundled evidence, and settingsComparison is NotApplicable for a single run. Complete describes collected evidence, not a measured performance improvement. The collector records its own revision/hash so an in-place repair preserves the original recording package provenance. No game rerun is needed to collect an existing recording.
 
 Scope and provenance
