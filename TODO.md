@@ -1,3 +1,7 @@
+# WPR ADK help compatibility
+
+- [ ] Verify recorder/self-test and package provenance checks, then deliver a diagnostics-only replacement retaining the qualified gameplay payload.
+
 # Windows capture reliability
 
 - [ ] Diagnose exceptional presentation stalls separately from gameplay chunk/FBO work. Use diagnostics 3.3 with a supported installed WPR after its standalone save check, and only when a further recording answers a concrete unresolved question; no rerun is requested now. Preserve clock uncertainty and distinguish native SwapBuffers waiting from GPU, driver, scheduler and capture interference; never infer CPU saturation from PresentMon CpuActive equalling whole-frame duration.
