@@ -65,6 +65,7 @@ function Page:refreshBackpacks(...)
     local values = {nested.OnButtonsAdded(self)}
     assert(values[1] == nil and values[2] == 'nested' and values[3] == nil)
     options.getEffectivePermissions()
+    self.controlsUI:arrange()
     time = time + 5
     if self.fail then error(failure) end
     if self.failClockAfter then failClock=true end
@@ -74,7 +75,10 @@ local own = setmetatable({onCharacter=true,player=0,backpacks={{}},
     inventoryPane=setmetatable({},Pane)},Page)
 local loot = setmetatable({onCharacter=false,player=0,backpacks={{},{}},
     inventoryPane=setmetatable({},Pane),toolkitRefreshState={rowsPending=true}},Page)
+local Controls = {}; Controls.__index = Controls
+function Controls:arrange() time = time + 2 end
 for _, page in ipairs({own,loot}) do
+    page.controlsUI = setmetatable({},Controls)
     page.inventoryPane.refreshContainer = function() end
     page.savedGate = page.inventoryPane.refreshContainer
 end
@@ -106,14 +110,20 @@ assert(scopeDepth == 0 and sampled == 1, 'scope/cardinality mismatch')
 profile.finishPhase()
 assert(Page.refreshBackpacks == originalRefresh and nested.OnButtonsAdded == originalNested
     and options.getEffectivePermissions == originalOptions, 'original dispatch not restored')
+for _, page in ipairs({own,loot}) do
+    assert(page.controlsUI.arrange == Controls.arrange, 'controls dispatch not restored')
+    for key in pairs(page.controlsUI) do assert(key ~= 'arrange', 'inherited controls method became an own field') end
+end
 local parent, child
 for _, row in ipairs(logs) do
     if row.kind == 'timing' and row.name == 'page.refreshBackpacks.loot' then
-        assert(row.calls == 1 and row.inclusive_ms == 10 and row.exclusive_ms == 7 and row.max_ms == 10)
+        assert(row.calls == 1 and row.inclusive_ms == 12 and row.exclusive_ms == 7 and row.max_ms == 12)
         parent = true
     elseif row.kind == 'timing' and row.name == 'bc.Nested.OnButtonsAdded.loot' then
         assert(row.calls == 1 and row.inclusive_ms == 3 and row.exclusive_ms == 3)
         child = true
+    elseif row.kind == 'timing' and row.name == 'controls.arrange.loot' then
+        assert(row.calls == 1 and row.inclusive_ms == 2 and row.exclusive_ms == 2)
     elseif row.kind == 'end' then
         assert(row.restore_conflicts == 0 and row.samples.observer_errors == 0
             and row.samples.loot.floor_items_last == 11 and row.samples.loot.rows_pending == 1)

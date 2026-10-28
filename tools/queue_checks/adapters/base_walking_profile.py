@@ -73,6 +73,11 @@ def validate(selection):
     if (options.get('base_walking', {}).get('inventory_refresh_checks')
             and not options.get('base_walking', {}).get('inventory_discovery_profile')):
         raise ValueError('Inventory refresh checks require discovery profiling')
+    if type(options.get('base_walking', {}).get('inventory_button_checks', False)) is not bool:
+        raise ValueError('Inventory button checks must be boolean')
+    if (options.get('base_walking', {}).get('inventory_button_checks')
+            and not options.get('base_walking', {}).get('inventory_discovery_profile')):
+        raise ValueError('Inventory button checks require discovery profiling')
     if (options.get('base_walking', {}).get('verify_toolkit_newmusic_control')
             and options.get('base_walking', {}).get('disable_newmusic_inventory_probe')):
         raise ValueError('Toolkit verification must not remove callbacks through the fixture')
@@ -446,6 +451,73 @@ def _refresh_checks(text):
                        'UI correctness checks do not simulate physical input or remote inventory mutation.']}
 
 
+def _button_checks(text):
+    records = _raw(text, 'INVENTORY_BUTTON_CHECKS')
+    if len(records) != 1:
+        raise ValueError('Missing unique inventory button experiment')
+    row = records[0]
+    expected = dict(kind='inventory-button-checks', playerNum=0, clock='baseWalkingExperimentClockMs',
+                    callsPerBatch=256, rounds=5, warmupPerMode=8, totalCalls=2560, restoreConflicts=0, sourceLimit=128)
+    if any(type(row.get(key)) is not type(value) or row[key] != value for key, value in expected.items()):
+        raise ValueError('Inventory button experiment workload differs')
+    if (row.get('timingMethod') != 'sum of complete refreshBackpacks callback intervals; guard branch/counters included; assertions outside timing'
+            or row.get('itemIdentityCheck') != 'before probe, after each warmup/mode batch, and cleanup; geometry/UI identities before and after every callback'):
+        raise ValueError('Inventory button timing boundary differs')
+    if any(row.get('checks', {}).get(key) is not True for key in
+           ('orderedIdentities', 'geometry', 'parentsAndChildren', 'selection', 'restored')):
+        raise ValueError('Inventory button model or restoration failed')
+    limits = row.get('limits', {})
+    if (any(limits.get(key) is not True for key in
+            ('testOnly', 'assumesGeometryMirror', 'discoveryAndEventsUnchanged'))
+            or any(limits.get(key) is not False for key in
+                   ('movement', 'resize', 'nestedReentry', 'remoteMutation', 'classHooks', 'paneHooks',
+                    'inventoryMutation', 'worldMutation'))):
+        raise ValueError('Inventory button experiment scope differs')
+    workload = row.get('workload', {})
+    buttons, pooled, guarded = (workload.get('buttons'), workload.get('pooledButtons'), row.get('guardedButtons'))
+    if (any(type(value) is not int for value in (buttons, pooled, guarded))
+            or buttons <= 0 or pooled < 0 or not 0 < guarded <= buttons + pooled <= 128):
+        raise ValueError('Inventory button sources missing')
+    for name in ('setX', 'setY', 'getKeepOnScreen', 'onResize'):
+        source = row.get('defaultSources', {}).get(name)
+        if (not isinstance(source, str) or not source.endswith('/media/lua/client/ISUI/ISUIElement.lua')
+                or '/mods/' in source.lower()):
+            raise ValueError('Inventory button default source differs')
+    sources = workload.get('sources', {})
+    if not isinstance(sources, dict) or set(sources) != {str(i) for i in range(1, buttons + pooled + 1)}:
+        raise ValueError('Inventory button source identities missing')
+    for source in sources.values():
+        if (any(not isinstance(source.get(key), str) or not source[key] for key in
+                ('button', 'container', 'kind', 'luaParent', 'nativeParent'))
+                or type(source.get('items')) is not int or source['items'] < 0
+                or any(not _number(source.get('geometry', {}).get(key)) for key in ('x', 'y', 'width', 'height'))):
+            raise ValueError('Invalid inventory button source witness')
+    batches = row.get('batches', {})
+    if not isinstance(batches, dict) or set(batches) != {str(i) for i in range(1, 11)}:
+        raise ValueError('Inventory button batches missing')
+    times = {'candidate': [], 'control': []}
+    totals = {}
+    for index, mode in enumerate(('candidate', 'control', 'control', 'candidate', 'candidate',
+                                 'control', 'control', 'candidate', 'candidate', 'control'), 1):
+        batch = batches[str(index)]
+        called, skipped = (batch.get('calledSetters'), batch.get('skippedSetters'))
+        if (batch.get('mode') != mode or type(batch.get('round')) is not int
+                or batch['round'] != (index + 1) // 2 or batch.get('calls') != 256
+                or not _number(batch.get('elapsedMs')) or batch['elapsedMs'] < 0
+                or batch.get('modelUnchanged') is not True or batch.get('geometryMatched') is not True
+                or any(type(value) is not int or value < 0 for value in (called, skipped))
+                or called + skipped <= 0 or (skipped <= 0 if mode == 'candidate' else skipped != 0)):
+            raise ValueError('Inventory button batch timing, behavior or counters differ')
+        totals.setdefault(batch['round'], []).append(called + skipped)
+        times[mode].append(batch['elapsedMs'])
+    if any(pair[0] != pair[1] for pair in totals.values()):
+        raise ValueError('Inventory button setter workloads differ')
+    return {'receipt': row, 'median_batch_ms': {key: sorted(value)[2] for key, value in times.items()},
+            'limits': ['Test-only geometry-mirror ablation; passing is not approval of a production cache.',
+                       'Complete callback timings include identical guard/counter overhead in both modes.',
+                       'No movement, resize, reentrant refresh, remote mutation or FPS qualification.']}
+
+
 def verify(root, selection, catalog):
     root = Path(root)
     text = (root / 'client1-launch.log').read_text(errors='replace')
@@ -466,6 +538,8 @@ def verify(root, selection, catalog):
             evidence['inventory_discovery'] = _discovery(root, text)
         if selection['options'].get('base_walking', {}).get('inventory_refresh_checks'):
             evidence['inventory_refresh_checks'] = _refresh_checks(text)
+        if selection['options'].get('base_walking', {}).get('inventory_button_checks'):
+            evidence['inventory_button_checks'] = _button_checks(text)
         highlight_bridge = selection['options'].get('base_walking', {}).get('ground_highlight_bridge')
         if highlight_bridge:
             proofs = _raw(text, 'HIGHLIGHT_BRIDGE')

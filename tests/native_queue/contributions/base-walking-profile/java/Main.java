@@ -66,6 +66,15 @@ public final class Main {
         return (System.nanoTime()-clockOrigin)/1_000_000.0;
     }
 
+    @LuaMethod(name="baseWalkingExperimentClockMs", global=true)
+    public static double experimentClockMs() {
+        // Post-profile experiments must not add work to the frame capture.
+        // Keep discovery's active-only clock/scope guard separate and unchanged.
+        if (!finished || active || Thread.currentThread()!=owner || !Boolean.getBoolean("pz.baseWalking.enabled"))
+            throw new IllegalStateException("Completed owned MainThread profile required");
+        return (System.nanoTime()-clockOrigin)/1_000_000.0;
+    }
+
     @LuaMethod(name="baseWalkingInventoryScope", global=true)
     public static void inventoryScope(boolean entering, ItemContainer floor) {
         clockMs(); // Same explicit active owned-client/MainThread guard.

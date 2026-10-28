@@ -259,6 +259,10 @@ Events.OnTick.Add(function()
                     local checks=require 'InventoryRefreshChecks'
                     log('INVENTORY_REFRESH_CHECKS',checks.run(player:getPlayerNum(),json,log))
                 end
+                if selection.options.base_walking.inventory_button_checks then
+                    local checks=require 'InventoryButtonChecks'
+                    log('INVENTORY_BUTTON_CHECKS',checks.run(player:getPlayerNum(),json,log))
+                end
                 done=true
                 log('COMPLETE',{case='walk',profile=path,phases=3,legs=legs})
             end

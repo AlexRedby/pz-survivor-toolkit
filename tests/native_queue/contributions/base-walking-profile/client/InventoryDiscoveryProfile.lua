@@ -43,7 +43,7 @@ local function observe(page)
     local state = page.toolkitRefreshState
     if state and state.rowsPending then record.rows_pending = record.rows_pending + 1 end
 end
-local function wrap(object, key, label, isPage, observeRefresh)
+local function wrap(object, key, label, isPage, observeRefresh, owner)
     if not object or type(object[key]) ~= 'function' then return end
     for _, patch in ipairs(patches) do
         if patch.object == object and patch.key == key then return end
@@ -59,7 +59,7 @@ local function wrap(object, key, label, isPage, observeRefresh)
     local wrapper = function(...)
         if not patch.enabled then return original(...) end
         local first = ...
-        local page = isPage and first
+        local page = owner or isPage and first
         local parent = stack[#stack]
         local side = page and (page.onCharacter and 'player' or 'loot') or parent and parent.side or 'shared'
         local name = label..'.'..side
@@ -149,6 +149,7 @@ function Profile.begin(number, playerNum, json, log)
                 wrap(class, name, 'page.'..name, true, name == 'refreshBackpacks')
             end
             assert(page.inventoryPane, 'Inventory pane missing')
+            wrap(page.controlsUI, 'arrange', 'controls.arrange', false, false, page)
         end
         wrap(require 'BetterContainers/Nested', 'OnButtonsAdded', 'bc.Nested.OnButtonsAdded', true)
         local proximity = require 'BetterContainers/Proximity'
