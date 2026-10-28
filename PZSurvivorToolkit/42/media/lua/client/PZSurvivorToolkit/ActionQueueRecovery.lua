@@ -51,6 +51,9 @@ function Recovery.capture(queue)
     for j=i,last do
      local record,reason=Adapters.capture(queue.queue[j],active)
      if not record then entry.reason=reason or 'unsupported';break end
+     -- Some pure constructors are proven only as complete untouched commands.
+     -- Never peel them out of a group with preparation or required cleanup.
+     if record.singleton and entry.steps~=1 then entry.reason='compound_operation';break end
      entry.records[#entry.records+1]=record
     end
    end

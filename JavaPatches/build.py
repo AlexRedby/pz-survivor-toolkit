@@ -205,7 +205,7 @@ CHECKS['zombie.pathfind.nativeCode.BarricadedDoorPathChecks'] = 'BARRICADED_DOOR
 EXPLICIT_ONLY_CHECKS = {'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
                         'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks'}
 TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}
-# This umbrella runs 18 isolated Kahlua environments in one JVM invocation.
+# This umbrella runs all isolated Kahlua ownership variants in one JVM invocation.
 CHECK_TIMEOUTS = {'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks': 240}
 
 def positive_timeout(value):

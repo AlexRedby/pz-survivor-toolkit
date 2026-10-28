@@ -27,6 +27,7 @@ local cases={
     OwnershipTextBinding="test_action_queue_text_binding.lua",
     OwnershipGroomingPending="test_action_queue_grooming_pending.lua",
     OwnershipGroomingCosts="test_action_queue_grooming_costs.lua",
+    OwnershipGroomingRecovery="test_action_queue_grooming_recovery.lua",
     OwnershipMakeup="test_action_queue_makeup.lua",
     OwnershipMakeupSync="test_action_queue_makeup_sync.lua",
     OwnershipGroomingActive="test_action_queue_grooming_active.lua",

@@ -108,8 +108,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 # Extend cancelled queue recovery
 
-- [ ] Add reconstruction for untouched singleton native beard trims with an already-held root tool, reusing the sealed grooming contract. Keep equipment preparation and started/receipt-bearing bodies excluded. Require pure constructor-free preview, fresh ID/style/callback validation, one-shot recovery regressions and selected-pack SP/Host queue-on/off conservation checks before granting support.
-- [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
+- [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer and singleton beard-trim adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
 
 # Further action queue migration
 

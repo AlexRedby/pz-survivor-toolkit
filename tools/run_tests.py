@@ -177,7 +177,7 @@ def test_variants(name, args):
                   "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMForeignGather"]
     if name == "test_action_queue_ownership.lua" and args.native_action_root:
         flags += ["OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
-                  "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops"]
+                  "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops"]
     return flags
 
 

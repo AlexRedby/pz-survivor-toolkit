@@ -40,6 +40,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.322
+
+- **Added:** Restore an untouched native beard trim after cancelling the queue, when its exact tool is still held in the main inventory. Recovery revalidates the style, tool and action bindings and creates fresh actions once; started trims and operations with equipment preparation remain protected.
+
 ### 0.1.321
 
 - Update Toolkit sidebar button geometry, visibility and availability only when their live values change, including screen-edge clamping, owner replacement, paused settings and tooltip cleanup.

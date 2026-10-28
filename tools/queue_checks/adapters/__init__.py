@@ -13,7 +13,7 @@ MODULES = {'base-walking-profile': 'base_walking_profile', 'makeup': 'makeup', '
            'inventory-tooltips': 'auxiliary',
            'video-recording': 'auxiliary', 'item-tags': 'auxiliary', 'inventory-presentation': 'auxiliary', 'quartermaster-presets': 'quartermaster', 'quartermaster-transfers': 'quartermaster', 'quartermaster-distribution': 'quartermaster_distribution', 'quartermaster-crafting': 'quartermaster_crafting', 'animal-trailer': 'auxiliary',
            'wooden_cart_motion': 'carts', 'wooden_cart_multiplayer': 'carts',
-           'animal-terminal': 'animal_terminal', 'grooming-cancel': 'grooming_cancel', 'cleanup-cancel': 'cleanup_cancel', 'approach-queue': 'approach_queue', 'queue-recovery': 'queue_recovery', 'tv-controls': 'tv_controls', 'shelf-book-tv': 'shelf_book_tv', 'bulk-reading': 'bulk_reading', 'radio-settings': 'radio_settings'}
+           'animal-terminal': 'animal_terminal', 'grooming-cancel': 'grooming_cancel', 'grooming-recovery': 'grooming_recovery', 'cleanup-cancel': 'cleanup_cancel', 'approach-queue': 'approach_queue', 'queue-recovery': 'queue_recovery', 'tv-controls': 'tv_controls', 'shelf-book-tv': 'shelf_book_tv', 'bulk-reading': 'bulk_reading', 'radio-settings': 'radio_settings'}
 
 
 def get(suite):
