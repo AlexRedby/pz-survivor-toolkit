@@ -3,7 +3,7 @@ param([string]$ControlCapture, [string]$OptimizedCapture, [string]$PackageRoot,
       [ValidateSet('Auto','Comparison','Control','Optimized')][string]$RunMode = 'Auto')
 
 $script:TrialCollectorPath = $PSCommandPath
-$script:TrialCollectorRevision = '3.4.1'
+$script:TrialCollectorRevision = '3.4.2'
 
 # This collector reads receipts only. It never starts or stops a game process.
 function Assert-TrialResultPath([string]$Path) {
@@ -373,7 +373,14 @@ function Get-TrialWprResult($Run, $Capture) {
         }
         $bytes=(Get-Item -LiteralPath $path -Force).Length
         $expected=[string](Get-TrialResultProperty $receipt 'traceSha256')
-        if ($result.status -eq 'Complete' -and $expected) {
+        # A watchdog can save a valid finalized trace with incomplete coverage.
+        # Verify its bytes separately; the status and coverage stay Incomplete.
+        $savedPartial = $result.status -eq 'Incomplete' -and
+            (Get-TrialResultProperty $receipt 'headerValidated') -is [bool] -and
+            (Get-TrialResultProperty $receipt 'headerValidated') -eq $true -and
+            (Get-TrialResultProperty $receipt 'stoppedUtc') -and
+            -not (Get-TrialResultProperty $receipt 'saveFailure')
+        if ($expected -and ($result.status -eq 'Complete' -or $savedPartial)) {
             if ($expected -cnotmatch '^[a-f0-9]{64}$' -or
                 (Get-TrialResultProperty $receipt 'headerValidated') -isnot [bool] -or
                 (Get-TrialResultProperty $receipt 'headerValidated') -ne $true -or
@@ -381,13 +388,14 @@ function Get-TrialWprResult($Run, $Capture) {
                 -not (Get-TrialResultProperty $receipt 'stoppedUtc')) { throw 'Invalid completed WPR header/hash/bytes/stop receipt' }
             $null=ConvertTo-TrialResultUtc (Get-TrialResultProperty $receipt 'stoppedUtc')
             if (-not $saved) { throw 'Completed WPR lacks its saved status receipt' }
-            foreach ($field in @('status','traceFile','traceSha256','traceBytes','headerValidated','startedUtc','stopRequestedUtc','stoppedUtc','profileSha256','cleanupState','profileState')) {
+            foreach ($field in @('status','traceFile','traceSha256','traceBytes','headerValidated','startedUtc','stopRequestedUtc','stoppedUtc','profileSha256','cleanupState','profileState','saveFailure','stopCause')) {
                 if ((Get-TrialResultProperty $saved $field) -cne (Get-TrialResultProperty $receipt $field)) { throw ('WPR wrapper/status mismatch: '+$field) }
             }
             $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($hash -cne $expected) { throw 'WPR SHA256 mismatch' }
             $result.path=$path; $result.sha256=$hash; $result.bytes=$bytes; $result.verified=$true
-            if ($Capture.Automatic -and $Capture.Path -and $Capture.CsvPath -and -not $Capture.Issues.Count) {
+            if ($result.status -ne 'Complete') { $result.issues += 'WPR trace integrity verified, but the recording ended early or is incomplete; coverage is not complete.' }
+            if ($result.status -eq 'Complete' -and $Capture.Automatic -and $Capture.Path -and $Capture.CsvPath -and -not $Capture.Issues.Count) {
                 # A final ETL can be valid yet end before the frame recording, e.g.
                 # a helper watchdog stop. Bind coverage to the validated CX receipt.
                 try {

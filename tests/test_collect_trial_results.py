@@ -367,6 +367,9 @@ class TrialResultsTests(unittest.TestCase):
     def test_wpr_partial_is_bounded_and_copy_hash_is_rechecked(self):
         run, wrapper, directory = self.extended_fixture("Control", status="Incomplete")
         self.extended_fixture("Optimized")
+        wrapper["receipt"].update(traceSha256=None, traceBytes=None, stoppedUtc=None, headerValidated=False)
+        (run / "wpr-capture.json").write_text(json.dumps(wrapper))
+        (directory / "wpr-status.json").write_text(json.dumps(wrapper["receipt"]))
         with (directory / "drive.etl").open("wb") as trace:
             trace.truncate(2147483649)
         result = self.collect()
@@ -386,6 +389,115 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
         self.assertFalse(summary["wpr"]["verified"])
         self.assertIsNone(summary["wpr"]["file"])
         self.assertTrue(any("changed during collection" in issue for issue in summary["issues"]))
+
+    def test_finalized_watchdog_trace_keeps_integrity_and_incomplete_coverage_separate(self):
+        shutil.rmtree(self.runs / "control-run")
+        run, wrapper, directory = self.extended_fixture("Optimized", status="Incomplete")
+        wrapper["receipt"].update(stopCause="SizeWatchdog", stopRequestedUtc="2026-10-20T12:01:10Z",
+                                  stoppedUtc="2026-10-20T12:01:54Z", saveFailure=None)
+        def save():
+            (run / "wpr-capture.json").write_text(json.dumps(wrapper))
+            (directory / "wpr-status.json").write_text(json.dumps(wrapper["receipt"]))
+        save()
+        result = self.collect(automatic=True)
+        item = result["Summary"]["runs"][0]
+        self.assertEqual(item["status"], "Incomplete")
+        self.assertTrue(item["wpr"]["verified"])
+        self.assertEqual(item["wpr"]["status"], "Incomplete")
+        self.assertEqual(item["wpr"]["captureCoverage"], "Unknown")
+        self.assertTrue(any("coverage" in issue for issue in item["issues"]))
+        with zipfile.ZipFile(result["Path"]) as archive:
+            self.assertEqual(archive.read(item["wpr"]["file"]), (directory / "drive.etl").read_bytes())
+        # Matching receipts alone must not admit tampered data.
+        wrapper["receipt"]["traceSha256"] = "0" * 64
+        save()
+        item = self.collect(automatic=True)["Summary"]["runs"][0]
+        self.assertFalse(item["wpr"]["verified"])
+        self.assertIsNone(item["wpr"]["file"])
+        self.assertTrue(any("SHA256 mismatch" in issue for issue in item["issues"]))
+
+    def test_finalized_partial_rejects_conflicting_saved_failure_or_stop_cause(self):
+        shutil.rmtree(self.runs / "control-run")
+        for field, conflict in (("saveFailure", "OwnedSessionSaveFailed"), ("stopCause", "ForeignStop")):
+            with self.subTest(field=field):
+                run, wrapper, directory = self.extended_fixture("Optimized", status="Incomplete")
+                wrapper["receipt"].update(saveFailure=None, stopCause="SizeWatchdog")
+                (run / "wpr-capture.json").write_text(json.dumps(wrapper))
+                saved = dict(wrapper["receipt"], **{field: conflict})
+                (directory / "wpr-status.json").write_text(json.dumps(saved))
+                result = self.collect(automatic=True)
+                evidence = result["Summary"]["runs"][0]["wpr"]
+                self.assertEqual(result["Summary"]["status"], "Incomplete")
+                self.assertFalse(evidence["verified"])
+                self.assertIsNone(evidence["file"])
+                self.assertTrue(any("WPR wrapper/status mismatch: " + field in issue
+                                    for issue in result["Summary"]["runs"][0]["issues"]))
+                with zipfile.ZipFile(result["Path"]) as archive:
+                    self.assertFalse(any(name.endswith("drive.etl") for name in archive.namelist()))
+
+    def test_finalized_incomplete_trace_never_claims_complete_capture_coverage(self):
+        shutil.rmtree(self.runs / "control-run")
+        self.automatic_fixture("Optimized")
+        run, wrapper, directory = self.extended_fixture("Optimized", status="Incomplete")
+        # These timestamps fully cover the valid CX request through ack + 90 s.
+        # An explicit Incomplete result still cannot claim complete coverage.
+        wrapper["receipt"].update(saveFailure=None, stopCause="SizeWatchdog")
+        (run / "wpr-capture.json").write_text(json.dumps(wrapper))
+        (directory / "wpr-status.json").write_text(json.dumps(wrapper["receipt"]))
+        result = self.collect(automatic=True)
+        item = result["Summary"]["runs"][0]
+        self.assertEqual(item["capFrameX"]["assignment"], "Automatic run receipt")
+        self.assertIsNotNone(item["capFrameX"]["file"])
+        self.assertIsNotNone(item["capFrameX"]["csvFile"])
+        self.assertEqual(item["status"], "Incomplete")
+        self.assertTrue(item["wpr"]["verified"])
+        self.assertEqual(item["wpr"]["status"], "Incomplete")
+        self.assertEqual(item["wpr"]["captureCoverage"], "Unknown")
+        self.assertTrue(any("coverage is not complete" in issue for issue in item["issues"]))
+        with zipfile.ZipFile(result["Path"]) as archive:
+            self.assertEqual(archive.read(item["wpr"]["file"]), (directory / "drive.etl").read_bytes())
+
+    def test_finalized_watchdog_trace_above_two_gib_is_verified_without_archive_copy(self):
+        run, wrapper, directory = self.extended_fixture("Optimized", status="Incomplete")
+        trace = directory / "drive.etl"
+        size = 2 * 1024**3 + 1
+        # Real sparse-file length exercises the preservation boundary. Stream the
+        # actual bytes for SHA256; never allocate or ZIP-copy a 2 GiB fixture.
+        with trace.open("wb") as stream:
+            stream.write(b"finalized watchdog ETL fixture")
+            stream.truncate(size)
+            stream.seek(size - 1)
+            stream.write(b"!")
+        digest = hashlib.sha256()
+        with trace.open("rb") as stream:
+            while block := stream.read(1024 * 1024):
+                digest.update(block)
+        wrapper["receipt"].update(traceBytes=size, traceSha256=digest.hexdigest(),
+                                  stopCause="SizeWatchdog", stopRequestedUtc="2026-10-20T12:01:10Z",
+                                  stoppedUtc="2026-10-20T12:01:54Z", saveFailure=None)
+        (run / "wpr-capture.json").write_text(json.dumps(wrapper))
+        (directory / "wpr-status.json").write_text(json.dumps(wrapper["receipt"]))
+        env = dict(os.environ, PZ_COLLECT_SCRIPT=str(SCRIPT), PZ_RUNS_ROOT=str(self.runs))
+        command = r"""
+. $env:PZ_COLLECT_SCRIPT
+$run=Get-LatestTrialResult $env:PZ_RUNS_ROOT 'Optimized'
+$capture=[pscustomobject]@{Automatic=$false;Path=$null;CsvPath=$null;Issues=@()}
+Get-TrialWprResult $run $capture | ConvertTo-Json -Depth 12 -Compress
+"""
+        result = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+                                env=env, text=True, capture_output=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        evidence = json.loads(result.stdout)
+        self.assertEqual(evidence["status"], "Incomplete")
+        self.assertTrue(evidence["verified"])
+        self.assertEqual(evidence["path"], str(trace))
+        self.assertEqual(evidence["bytes"], size)
+        self.assertEqual(evidence["sha256"], digest.hexdigest())
+        self.assertEqual(evidence["captureCoverage"], "Unknown")
+        self.assertTrue(any("integrity verified" in issue for issue in evidence["issues"]))
+        self.assertFalse(any("2 GiB" in issue for issue in evidence["issues"]))
+        self.assertEqual(trace.stat().st_size, size)
+        self.assertFalse((self.root / "Diagnostics").exists())
 
     def test_saved_settings_mismatch_and_unknown_are_comparison_warnings(self):
         self.extended_fixture("Control")
@@ -680,7 +792,7 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
         self.assertEqual([run["mode"] for run in summary["runs"]], [mode])
         self.assertEqual(summary["settingsComparison"]["status"], "NotApplicable")
         self.assertTrue(summary["settingsComparison"]["reason"])
-        self.assertEqual(summary["collector"]["revision"], "3.4.1")
+        self.assertEqual(summary["collector"]["revision"], "3.4.2")
         self.assertEqual(summary["collector"]["scriptFile"], SCRIPT.name)
         self.assertEqual(summary["collector"]["sha256"], hashlib.sha256(script.read_bytes()).hexdigest())
 
