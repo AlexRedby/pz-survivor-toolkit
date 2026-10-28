@@ -1,7 +1,3 @@
-# Finish diagnostic launcher delivery
-
-- [ ] Finish collector regressions and verify the diagnostics-only package: new helper hashes and provenance must match source; all gameplay/mod/profile payload bytes must match the previous package. Preserve prior packages and recordings.
-
 # Follow up the recorded Optimized run
 
 - [ ] Add launch-time physical-storage resolution for the actual game and Workshop paths, including pinned paths and junctions. The existing ETL proves game assets on an HDD and a 95 ms image-backed DLL read blocking MainThread; do not assume a nominal Steam folder or drive letter means NVMe. Preserve privacy in collected metadata and do not automatically relocate the user's game.
