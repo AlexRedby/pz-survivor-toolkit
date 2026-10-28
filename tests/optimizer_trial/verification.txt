@@ -1,11 +1,11 @@
-Consolidated Windows optimizer comparison candidate v4.1
+Consolidated Windows optimizer comparison candidate v4.2
 Game: B42.21 revision 4a0e9546ec. Toolkit 0.1.299; Java Patches 0.1.70.
 Recorder format 3 / revision 3.4.
 
 Scope and provenance
 This is the combined research candidate, rebased on remote main before packaging. It is not a main release. pack-manifest.json and build-receipt.json identify the exact committed source, common main base, component versions and file hashes. main_revision is a legacy alias for source_revision, not a claim that the candidate is published main. The optimizer's upstream source pin is recorded separately.
 
-The selected pack has 67 gameplay Mod IDs / 62 Workshop items. Toolkit and Java Patches are bundled; Steam supplies third-party Workshop bytes, whose actual installed paths and hashes are recorded on Windows. Missing mods stop launch. Control and Optimized contain the same updated Toolkit/Java fixes; only Optimized adds the pinned external optimizer profile. Consequently this pair isolates that profile on the updated pack, not each Toolkit fix.
+The diagnostic pack has 64 gameplay Mod IDs / 59 Workshop items. The user approved excluding only NMBJABBA/3784065691, NMBJQ/3777937059 and NMBJFM/3751236222 after their Workshop pages became unavailable. Base NewMusic remains selected. Exact applied exclusions are recorded in both manifests and collected with results; the repository gameplay selection is unchanged. Runtime payload and optimizer profile are unchanged from v4.1. Earlier full-67-mod native observations below retain their original scope and do not qualify the new subset in-game. Toolkit and Java Patches are bundled; Steam supplies third-party Workshop bytes, whose actual installed paths and hashes are recorded on Windows. Missing mods stop launch. Control and Optimized contain the same updated Toolkit/Java fixes; only Optimized adds the pinned external optimizer profile. Consequently this pair isolates that profile on the updated pack, not each Toolkit fix.
 
 The default is sequential SinglePlayer on one PC: one rendered game process, separate settings/save and a ready car. The same runtime optimizations support menu Host and clients. Explicit Multiplayer uses the normal Host/Join flow and disables the SP starter. A separate extracted copy is needed when changing session type. Automatic capture expects exactly one java.exe, so a same-PC Host is not the default measurement topology. Normal installed mods/settings/saves are not overwritten. Start a new JVM before changing worlds or reconnecting: upstream animation preload supports one world session per process.
 
