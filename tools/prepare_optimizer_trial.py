@@ -306,7 +306,7 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
         pack = include_pack(stage, pack_source, revision, game, jdk, kotlin_home, root, java_identity, provenance)
         receipt = {'format': 1, 'scope': 'experimental one-PC sequential single-player comparison with shared multiplayer-compatible optimizations; explicit multiplayer mode; one world session per process',
                    'default_session': 'SinglePlayer',
-                   'diagnostics_format': 3, 'diagnostics_revision': '3.3',
+                   'diagnostics_format': 3, 'diagnostics_revision': '3.4',
                    'source_only_upstream': True, **provenance, 'selected_mod_count': len(pack['mod_ids']),
                    'repository_versions': {id: row['version'] for id, row in pack['repository_mods'].items()},
                    'bridge_jar_sha256': hashlib.sha256(

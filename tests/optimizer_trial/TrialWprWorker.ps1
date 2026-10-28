@@ -102,11 +102,12 @@ function Get-TrialWprTempBytes([string]$Root) {
     return $total
 }
 function Test-TrialWprNamedInstanceHelp($Result) {
-    # Only a completed, successful help query can advertise the option. Match
-    # an option declaration, not an error sentence mentioning "instancename".
+    # Match declarations from both general help and ADK26100 advanced help.
     # Descriptions may be localized; command tokens and their syntax are not.
-    return ($null -ne $Result -and -not $Result.timedOut -and $null -ne $Result.exitCode -and
-        $Result.exitCode -eq 0 -and $Result.output -match '(?im)^[\t ]*-instancename(?:[\t ]+(?:[-:]|<[^>\r\n]+>)(?:[\t ]|$)|[\t ]*\r?$)')
+    if ($null -eq $Result -or $Result.timedOut -or $null -eq $Result.exitCode -or $Result.exitCode -ne 0) { return $false }
+    $option='(?im)^[\t ]*-instancename(?:[\t ]+(?:[-:]|<[^>\r\n]+>)(?:[\t ]|$)|[\t ]*\r?$)'
+    $command='(?im)^[\t ]*wpr[\t ]+\[command\][\t ]+-instancename[\t ]+\.\.\.(?:[\t ]|\r?$)'
+    return ($Result.output -match $option -or $Result.output -match $command)
 }
 function Get-TrialWprOwnedCollectors($Result,[string]$Instance) {
     if ($Instance -notmatch '^PZTrial_[a-f0-9]{32}$' -or $null -eq $Result -or $Result.timedOut -or $Result.outputTruncated -or $null -eq $Result.exitCode -or $Result.exitCode -ne 0) { return @() }

@@ -1,6 +1,6 @@
-Consolidated Windows optimizer comparison candidate v4
+Consolidated Windows optimizer comparison candidate v4.1
 Game: B42.21 revision 4a0e9546ec. Toolkit 0.1.299; Java Patches 0.1.70.
-Recorder format 3 / revision 3.3.
+Recorder format 3 / revision 3.4.
 
 Scope and provenance
 This is the combined research candidate, rebased on remote main before packaging. It is not a main release. pack-manifest.json and build-receipt.json identify the exact committed source, common main base, component versions and file hashes. main_revision is a legacy alias for source_revision, not a claim that the candidate is published main. The optimizer's upstream source pin is recorded separately.
@@ -44,8 +44,13 @@ Five paired telemetry forks did not reproduce the prior 30.22% single-thread out
 Earlier full-pack extended Host checks established native child isolation and client preload/grant consumption, including all 21 animal groups. Earlier one-PC starter checks established driver/key/fuel/battery/engine readiness, but their longer walking scenarios failed after actor death. A native driving attempt reached over 600 tiles and about 121km/h before its sustained-speed gate failed after contacts. Failed attempts remain failed evidence; neither startup nor local walking establishes sustained high-speed qualification.
 
 Diagnostics and remaining limits
-Recorder 3.3 retains one-key JFR/CapFrameX coordination, Portable/API-port discovery, bounded download progress/timeouts, sensor/context receipts, robust collection and an owned bounded WPR session. Abrupt exits and missing sensors/ETL remain explicitly incomplete. Saved FPS caps are descriptive and do not explain below-cap stalls. Clock uncertainty, lost events and trace coverage remain separate from file integrity.
+Recorder 3.4 retains one-key JFR/CapFrameX coordination, Portable/API-port discovery, bounded download progress/timeouts, sensor/context receipts, robust collection and an owned bounded WPR session. Abrupt exits and missing sensors/ETL remain explicitly incomplete. Saved FPS caps are descriptive and do not explain below-cap stalls. Clock uncertainty, lost events and trace coverage remain separate from file integrity.
 
 WPR selection addresses the observed old-system-binary stop error 0x80010106: a supported installed Microsoft-signed WPT/System binary is selected from standard locations and its path/hash is checked again through elevation. Test-WPR.cmd checks the same ten-second owned profile/start/stop/header/cleanup path without launching the game or capture tools. Microsoft documents the WPT >=19650 remedy at https://devblogs.microsoft.com/performance-diagnostics/wpr-start-and-stop-commands/ . Actual ETL saving on the user's Windows remains unverified until that standalone check succeeds. No global WPR cancellation is used.
 
 PowerShell/Win32 fixtures run on macOS; they do not establish native Windows PowerShell 5.1, CapFrameX, UAC, ETW or GPU-counter behavior. The supplied Windows fog/clear recordings also differ in zoom/speed, so their FPS averages are not a causal comparison. Their stalls remain useful diagnostic evidence. The extended macOS asleep-display Display/Core cache mismatch remains unresolved; no viewport/ownership guard was relaxed. Full high-speed visual/arrival qualification, actual Windows WPR completion and a measured driving-FPS improvement remain open. The archive is ready for controlled evaluation, not a claim that all stutter is fixed.
+
+WPR ADK26100 help compatibility
+The Windows standalone report selected the valid Microsoft-signed installed ADK WPR10.0.26100.9457 but stopped before any start/stop command with NamedInstancesUnsupported. Its successful advanced help declares `wpr [command] -instancename ...`; the old parser accepted only declarations beginning `-instancename`. Diagnostics3.4 accepts both bounded forms while retaining successful-query checks, the19041 plain-help fallback, exact option tokens and owned-session operations. The captured help is a sanitized protocol fixture. Gameplay mod sources, bootstrap, selected67-mod pack, optimizer settings and WPR event profile are unchanged from v4. The submitted report contains no ETL; actual Windows recording/saving remains to be established by Test-WPR.cmd, without a new driving run.
+
+Repair verification: the captured26100 advanced-help regression failed before the change and passed afterward. All39 recorder protocol tests and10 standalone-self-test/package-provenance tests passed on macOS PowerShell, including negative declaration lookalikes, failed/time-limited help,19041 fallback and exact named-instance start/stop/cleanup. This does not establish Windows ETW save success.
