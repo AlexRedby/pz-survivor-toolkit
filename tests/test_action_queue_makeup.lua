@@ -144,7 +144,7 @@ local function setup(options)
     luautils={stringStarts=function(text,prefix)return text:sub(1,#prefix)==prefix end}
     local scriptText=read(NativeActionRoot:gsub('/media/lua/?$','')..'/media/scripts/generated/items/clothing.txt')
     local locations,scripts={},{}
-    ItemType={CLOTHING={},CONTAINER={}}
+    ItemType={CLOTHING={},CONTAINER={},DRAINABLE={}}
     for name,body in scriptText:gmatch('item%s+(MakeUp_[%w_]+)%s*{(.-)}')do
         local slot=assert(body:match('BodyLocation%s*=%s*([%w_:]+)'))
         if not locations[slot]then
@@ -187,8 +187,32 @@ local function setup(options)
         end
         return item
     end
-    local kit=f.item('Base.MakeupEyes');kit.uses=5;kit.container=inventory;kit.class='DrainableComboItem'
-    function kit:getMakeUpType()return'All'end
+    local kitKind=options.kitKind or'Base.MakeupEyes'
+    local kitScript={class='Item',getFullName=function()return kitKind end,getItemType=function()return ItemType.DRAINABLE end,
+        hasComponents=function(self)return self.components==true end,getObsolete=function(self)return self.obsolete==true end,
+        getLuaCreate=function(self)return self.luaCreate end,getItemConfigKey=function(self)return self.configKey end,
+        getItemConfig=function(self)return self.config end,getReplaceOnUse=function(self)return self.replaceOnUse end,
+        getReplaceOnDeplete=function(self)return self.replaceOnDeplete end,getActualWeight=function()return 0.1 end,
+        isDisappearOnUse=function(self)return self.disappear~=false end}
+    scripts[kitKind]=kitScript
+    local kit=f.item(kitKind);kit.uses=options.kitUses or 5;kit.container=inventory;kit.class='DrainableComboItem'
+    function kit:getMakeUpType()return options.kitMakeupType or'All'end
+    function kit:getScriptItem()return self.script or kitScript end
+    function kit:getReplaceOnUse()return self.replaceOnUse end
+    function kit:getLuaCreate()return self:getScriptItem():getLuaCreate()end
+    function kit:isDisappearOnUse()return self:getScriptItem():isDisappearOnUse()end
+    function kit:isKeepOnDeplete()return not self:isDisappearOnUse()end
+    function kit:getAttachedSlot()return self.attachedSlot or -1 end
+    function kit:getAttachedToModel()return self.attachedToModel end
+    function kit:getAttachedSlotType()return self.attachedSlotType end
+    function kit:getEquipParent()return self.equipParent end
+    function kit:isActivated()return self.activated==true end
+    function kit:getIsCraftingConsumed()return self.craftingConsumed==true end
+    function player:isEquipped(item)
+        if self.primary==item or self.secondary==item then return true end
+        for _,worn in pairs(self.worn)do if worn==item then return true end end
+        return false
+    end
     function kit:getContainer()return self.container end
     function kit:getOutermostContainer()
         local c=self.container
@@ -203,6 +227,7 @@ local function setup(options)
     end
     function kit:Use()self.uses=self.uses-1 end
     function kit:getCurrentUses()return self.uses end
+    function kit:getUses()return self.uses end
     function kit:getUseDelta()return self.uses end
     function kit:getWorldItem()return self.world end
     function kit:hasComponents()return self.components==true end
@@ -225,16 +250,18 @@ local function setup(options)
         'toolkitMakeupAvatarPreviewSupported','toolkitMakeupAvatarPreview'})do javaGlobals[_G[name]]=true end
     javaGlobals[SafeHouse.isSafehouseAllowLoot]=true
     f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
-    local makeup,policy,move,access
+    local makeup,policy,move,access,finalUse
     if not options.unpatched then
         access=f.project('ItemAccess')
         require=function(module)
             if module=='PZSurvivorToolkit/ActionQueueMakeup'then return makeup end
             if module=='PZSurvivorToolkit/ActionQueueMakeupMove'then return move end
             if module=='PZSurvivorToolkit/ItemAccess'then return access end
+            if module=='PZSurvivorToolkit/MakeupFinalUse'then return finalUse end
             if module=='PZSurvivorToolkit/ActionQueueOperations'then return PZSurvivorToolkit.ActionQueueOperations end
             return savedRequire(module)
         end
+        finalUse=f.project('MakeupFinalUse')
         move=f.project('ActionQueueMakeupMove')
         makeup=f.project('ActionQueueMakeup')
         policy=f.project('ActionQueuePolicy')
@@ -305,7 +332,7 @@ local function setup(options)
     end
     local function waiting()
         local head=f.action(ISBaseTimedAction,{Type='IndependentHead'});head.action={}
-        local queue=f.queue(head);local window=ui();select(window,'Base.MakeUp_LipsRed');window:prerender();window:onApplyMakeUp()
+        local queue=f.queue(head);local window=ui();select(window,options.outputKind or'Base.MakeUp_LipsRed');window:prerender();window:onApplyMakeUp()
         assert(#queue.queue==2,'native multiplayer callback did not append exactly one body')
         return queue,queue.queue[2],window
     end
@@ -347,7 +374,7 @@ local function setup(options)
         return source,object,owner,door
     end
     return{f=f,player=player,inventory=inventory,kit=kit,ui=ui,select=select,worn=worn,bag=bag,waiting=waiting,
-        makeup=makeup,policy=policy,move=move,access=access,worldSource=worldSource,square=square,squares=squares,
+        makeup=makeup,policy=policy,move=move,access=access,finalUse=finalUse,worldSource=worldSource,square=square,squares=squares,
         scripts=scripts,packets=packets,events=events,views=views,options=options,
         nativeSelect=nativeSelect,nativeApply=nativeApply,visuals=function()return visuals end,factories=function()return made end,
         bridge=function(value)bridgeOK=value end,mode=function(value)client=value end}
@@ -560,9 +587,9 @@ for _,change in ipairs({'run-with','operations-module','instanceof','slot','brid
 end
 -- The current snapshot can support moves only when every earlier declarative
 -- footprint preserves it. These checks execute the shipped helper and policy.
-local function movable()
-    local s=setup({client=true})
-    local old=s.worn('Base.MakeUp_LipsBlue')
+local function movable(options)
+    local s=setup(options or{client=true})
+    local old=s.worn(options and options.oldKind or'Base.MakeUp_LipsBlue')
     local q,a=s.waiting()
     local head=s.f.action(ISReadABook,{item=s.f.item('Base.BookCarpentry1')})
     q.queue[1],q.current=head,head
@@ -665,6 +692,93 @@ local function floorAlias(s,owner)
     ISInventoryPage.floorContainer={[s.player:getPlayerNum()+1]=floor}
     ISInventoryPage.GetFloorContainer=function()error('inspection allocated/read floor via UI callback')end
     return floor
+end
+local function finalMove(topology)
+    local s,q,a,old=movable({client=true,kitKind='Base.MakeupEyeshadow',kitMakeupType='Eyes',kitUses=1,
+        outputKind='Base.MakeUp_Crow',oldKind='Base.MakeUp_RedStripes1'})
+    local source,outer=s.inventory,nil
+    if topology=='worn-bag'or topology=='nested-bag'then
+        outer,_,source=carried(s,topology=='nested-bag')
+    elseif topology=='crate'or topology=='world-bag'or topology=='nested-world-crate'or topology=='nested-world-bag'then
+        local object
+        source,object,outer=s.worldSource(topology:find('bag',1,true)and'bag'or'crate')
+        if outer then floorAlias(s,outer)end
+        if topology:find('nested',1,true)then
+            local inner,contents=s.bag(source)
+            for i,item in ipairs(source.values)do if item==s.kit then table.remove(source.values,i);break end end
+            contents.values[1]=s.kit;s.kit.container=contents;source=contents
+        end
+    end
+    return s,q,a,old,source,outer
+end
+for _,topology in ipairs({'root','worn-bag','nested-bag','crate','world-bag'})do
+    value,queue,body,original=finalMove(topology)
+    beforeFactories,beforeVisuals=value.factories(),value.visuals()
+    writes,inventoryWrites=value.player.writes,value.inventory.writes
+    allowed,footprint=inspectMove(value,body)
+    assert(allowed and footprint.knownInputs and not footprint.unknownOutputs and footprint.items[value.kit:getID()]
+        and not footprint.capacityNonIncreasing and value.kit:getUses()==1 and value.kit:getCurrentUses()==1,
+        topology..' exact native final-use input was rejected or incorrectly credited capacity release')
+    assert(value.factories()==beforeFactories and value.visuals()==beforeVisuals and value.player.writes==writes
+        and value.inventory.writes==inventoryWrites and value.kit.uses==1 and #value.packets==0,
+        topology..' final-use inspection paid, allocated or changed state')
+    local head,tail=queue.queue[1],queue.queue[3]
+    assert(value.policy.evaluateMove(queue,body,tail,true).allowed,topology..' final-use body cannot move later')
+    queue.queue[2],queue.queue[3]=tail,body
+    assert(value.policy.evaluateMove(queue,body,tail,false).allowed,topology..' final-use body cannot move earlier')
+    head.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+    local decision=value.policy.evaluateMove(queue,body,head,false)
+    assert(decision.allowed and decision.preempt,topology..' final-use body cannot promote before active reader')
+    local transfer=value.f.action(ISInventoryTransferAction,{item=value.f.item('Base.Bandage'),
+        srcContainer=value.inventory,destContainer=value.inventory})
+    queue.queue[2],queue.queue[3]=body,transfer
+    decision=value.policy.evaluateMove(queue,body,transfer,true)
+    assert(not decision.allowed and decision.reason=='container_capacity',topology..' spent final-use weight release on a transfer')
+    queue.queue[3]=tail
+    body.action={}
+    assert(not value.policy.evaluateMove(queue,body,tail,false).allowed,topology..' allocated final-use body became movable')
+end
+for _,topology in ipairs({'nested-world-crate','nested-world-bag'})do
+    value,queue,body=finalMove(topology)
+    allowed,footprint=inspectMove(value,body)
+    assert(not allowed and footprint.cancelWaiting and footprint.cancelOperation and footprint.items[value.kit:getID()]==nil,
+        topology..' admitted a final-use source without native removal sender routing')
+    assert(value.policy.evaluateCancel(queue,body).allowed,topology..' blocked zero-effect pending deletion')
+end
+for _,change in ipairs({'zero','negative','fractional','keep-zero','live-replacement','script-replacement','script-use-replacement',
+    'lua-create','config','config-key','components','script-components','script-type','script-owner','script-obsolete',
+    'attached-slot','attached-model','attached-type','equip-parent','held','equipped','activated','crafting','final-helper'})do
+    value,queue,body=finalMove('root')
+    assert(inspectMove(value,body))
+    local script=value.kit:getScriptItem()
+    if change=='zero'then value.kit.uses=0
+    elseif change=='negative'then value.kit.uses=-1
+    elseif change=='fractional'then value.kit.uses=0.5
+    elseif change=='keep-zero'then script.disappear=false
+    elseif change=='live-replacement'then value.kit.replacement='Base.Unknown'
+    elseif change=='script-replacement'then script.replaceOnDeplete='Base.Unknown'
+    elseif change=='script-use-replacement'then script.replaceOnUse='Base.Unknown'
+    elseif change=='lua-create'then script.luaCreate='Unknown.Callback'
+    elseif change=='config'then script.config={}
+    elseif change=='config-key'then script.configKey='Unknown.Config'
+    elseif change=='components'then value.kit.components=true
+    elseif change=='script-components'then script.components=true
+    elseif change=='script-type'then script.getItemType=function()return ItemType.CLOTHING end
+    elseif change=='script-owner'then value.kit.script={}
+    elseif change=='script-obsolete'then script.obsolete=true
+    elseif change=='attached-slot'then value.kit.attachedSlot=0
+    elseif change=='attached-model'then value.kit.attachedToModel='Back'
+    elseif change=='attached-type'then value.kit.attachedSlotType='BeltLeft'
+    elseif change=='equip-parent'then value.kit.equipParent=value.player
+    elseif change=='held'then value.player.primary=value.kit
+    elseif change=='equipped'then value.player.worn.back=value.kit
+    elseif change=='activated'then value.kit.activated=true
+    elseif change=='crafting'then value.kit.craftingConsumed=true
+    elseif change=='final-helper'then value.finalUse.supports=function()error('foreign final-use helper executed')end end
+    allowed,footprint=inspectMove(value,body)
+    assert(not allowed and footprint.knownInputs==false and footprint.cancelWaiting and footprint.cancelOperation,
+        change..' admitted an unproven final-use input or changed pending cancellation')
+    assert(value.policy.evaluateCancel(queue,body).allowed,change..' blocked owned unpaid waiting cancellation')
 end
 value,queue,body=movable()
 local floorSource,floorObject,floorOwner=value.worldSource('bag')
@@ -919,7 +1033,7 @@ for _,where in ipairs({'prefix','crossed'})do
     end
 end end
 
-for _,change in ipairs({'one-use','replacement','weight-empty','nan-weight','held-kit','secondary-kit','kit-components','kit-class',
+for _,change in ipairs({'zero-use','replacement','weight-empty','nan-weight','held-kit','secondary-kit','kit-components','kit-class',
     'kit-world','kit-nested','kit-duplicate','kit-id','output-components','output-type','obsolete','output-replacement',
     'output-weight','lua-create','config-key','config','old-held','old-components','old-script-components','old-class',
     'old-location','old-duplicate','other-slot-held','root-callback','root-category','definitions','item-type-binding',
@@ -927,7 +1041,7 @@ for _,change in ipairs({'one-use','replacement','weight-empty','nan-weight','hel
     value,queue,body,original=movable()
     -- Bind the policy once before replacing an entry point.
     assert(inspectMove(value,body))
-    if change=='one-use'then value.kit.uses=1
+    if change=='zero-use'then value.kit.uses=0
     elseif change=='replacement'then value.kit.replacement='Base.Unknown'
     elseif change=='weight-empty'then value.kit.emptyWeight=0.01
     elseif change=='nan-weight'then value.kit.weight=0/0
@@ -967,13 +1081,13 @@ for _,change in ipairs({'one-use','replacement','weight-empty','nan-weight','hel
         and footprint.knownInputs==false and footprint.unknownOutputs==true,
         change..' granted move proof or changed cancellation policy')
     for _ in pairs(footprint.items)do error(change..' leaked staged input resources')end
-    assert(value.kit.uses==(change=='one-use'and 1 or 5)and #value.packets==0,'denied inspection consumed or sent state')
-    if change=='one-use'or change=='replacement'or change=='held-kit'or change=='output-components'or change=='old-held'then
+    assert(value.kit.uses==(change=='zero-use'and 0 or 5)and #value.packets==0,'denied inspection consumed or sent state')
+    if change=='zero-use'or change=='replacement'or change=='held-kit'or change=='output-components'or change=='old-held'then
         assert(value.policy.evaluateCancel(queue,body).allowed,change..' disabled owned zero-effect waiting deletion')
     end
 end
 
-value,queue,body=movable();value.kit.uses=1
+value,queue,body=movable();value.kit.uses=0
 local legacy={items={[876]=true},itemTypes={['Base.Legacy']=true},outputTypes={['Base.LegacyOutput']=true},
     cancelWaiting=true,cancelOperation=true,knownInputs=false,unknownOutputs=true}
 assert(not value.move.apply(body,legacy,value.policy,{contracts={},items={}})

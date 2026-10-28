@@ -40,10 +40,15 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.1.317
+### 0.1.318
 
 - Reduce ground-highlight Lua/Java calls through the Java Patches visibility and ownership helpers, retaining the single shared Toolkit/Wishlist scan, live visibility, discovery budgets and foreign highlights. Keep the Lua path when helpers are absent or unsupported.
 - Skip native eligibility work for unwanted item types when only Wishlist ground highlighting is active.
+
+### 0.1.317
+
+- **Fixed:** In Host, consuming the final use of a reviewed makeup kit now sends its native removal to the client before detaching it from its container. Ordinary uses retain their native cost and packet path.
+- **Changed:** Pending final-use makeup actions can move around independent work when the exact unheld kit is in the character's inventory or carried bags, or directly in a supported adjacent crate or ground bag. Shared supplies, appearance changes, allocated actions and uncertain replacement/removal paths remain protected; consumed space is not credited in advance.
 
 ### 0.1.316
 

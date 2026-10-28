@@ -24,7 +24,17 @@ local newArgument='sendAddItemToContainer(self.character:getInventory(), makeUpS
 local first,last=assert(nativeBody:find(oldArgument,1,true))
 assert(not nativeBody:find(oldArgument,last+1,true),'native packet argument is no longer unique')
 local expected=nativeBody:sub(1,first-1)..newArgument..nativeBody:sub(last+1)
-assert(correctedBody:gsub('%s+',' ')==expected:gsub('%s+',' '),'corrected body differs from native beyond its one packet argument')
+local nativeUse='    self.item:Use()'
+local notifiedUse=[[    if notifyDepletion(self) then
+        self.item:Use(false, false, true)
+    else
+        self.item:Use()
+    end]]
+local useStart,useEnd=assert(expected:find(nativeUse,1,true))
+assert(not expected:find(nativeUse,useEnd+1,true),'native cost is no longer unique')
+expected=expected:sub(1,useStart-1)..notifiedUse..expected:sub(useEnd+1)
+assert(correctedBody:gsub('%s+',' ')==expected:gsub('%s+',' '),
+ 'corrected body differs from native beyond output argument and reviewed native removal flag')
 local function setup(options)
  options=options or{}
  local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
@@ -116,7 +126,11 @@ local function setup(options)
  function actor:getWornItem(slot)return self.worn[slot]end
  function actor:setWornItem(slot,item)self.writes=self.writes+1;self.worn[slot]=item end
  local nativeInstanceof=instanceof
- instanceof=function(value,name)return type(value)=='table'and value.class=='Clothing'and name=='InventoryItem'or nativeInstanceof(value,name)end
+ instanceof=function(value,name)
+  return type(value)=='table'and name=='InventoryItem'and(value.class=='Clothing'or value.class=='DrainableComboItem'
+   or value.class=='InventoryContainer')or nativeInstanceof(value,name)
+ end
+ ItemType={DRAINABLE={},CLOTHING={}}
  local scriptText=read(NativeActionRoot:gsub('/media/lua/?$','')..'/media/scripts/generated/items/clothing.txt')
  local locations,scripts={},{}
  for name,body in scriptText:gmatch('item%s+(MakeUp_[%w_]+)%s*{(.-)}')do
@@ -142,10 +156,53 @@ local function setup(options)
   if options.factoryError then error('native factory failed')end
   made=made+1;return item(kind,1000+made)
  end
- local kit=f.item('Base.MakeupEyes');kit.uses=5;kit.container=root
+ local kitScript={class='Item',getFullName=function()return'Base.MakeupEyes'end,
+  getItemType=function(self)return self.kind or ItemType.DRAINABLE end,
+  hasComponents=function(self)return self.components==true end,getObsolete=function(self)return self.obsolete==true end,
+  getLuaCreate=function(self)return self.luaCreate end,getItemConfigKey=function(self)return self.configKey end,
+  getItemConfig=function(self)return self.config end,getReplaceOnUse=function(self)return self.replaceOnUse end,
+  getReplaceOnDeplete=function(self)return self.replaceOnDeplete end,getActualWeight=function()return 0.1 end,
+  isDisappearOnUse=function(self)return self.disappear~=false end}
+ scripts['Base.MakeupEyes']=kitScript
+ local kit=f.item('Base.MakeupEyes');kit.class='DrainableComboItem';kit.uses=options.kitUses or 5;kit.container=root
+ function kit:getScriptItem()return self.script or kitScript end
+ function kit:hasComponents()return self.components==true end
+ function kit:getReplaceOnUse()return self.replaceOnUse end
+ function kit:getReplaceOnDeplete()return self.replacement end
+ function kit:getLuaCreate()return self:getScriptItem():getLuaCreate()end
+ function kit:isDisappearOnUse()return kitScript:isDisappearOnUse()end
+ function kit:isKeepOnDeplete()return not self:isDisappearOnUse()end
+ function kit:getWeightEmpty()return 0 end
+ function kit:getActualWeight()return 0.1 end
+ function kit:getAttachedSlot()return self.attachedSlot or -1 end
+ function kit:getAttachedToModel()return self.attachedToModel end
+ function kit:getAttachedSlotType()return self.attachedSlotType end
+ function kit:getEquipParent()return self.equipParent end
+ function kit:isActivated()return self.activated==true end
+ function kit:getIsCraftingConsumed()return self.craftingConsumed==true end
+ function actor:getPrimaryHandItem()return self.primary end
+ function actor:getSecondaryHandItem()return self.secondary end
+ function actor:isEquipped(value)
+  if self.primary==value or self.secondary==value then return true end
+  for _,worn in pairs(self.worn)do if worn==value then return true end end
+  return false
+ end
  function kit:getOutermostContainer()return outer(self)end;function kit:getWorldItem()end
  function kit:getContainer()return self.container end;function kit:getMakeUpType()return'All'end
- function kit:getCurrentUses()return self.uses end;function kit:Use()self.uses=self.uses-1 end
+ function kit:getCurrentUses()return self.uses end
+ function kit:getUses()return self.uses end
+ function kit:Use(force,unused,notify)
+  self.useCalls=(self.useCalls or 0)+1
+  self.useArgs={force=force,unused=unused,notify=notify}
+  self.uses=self.uses-1
+  if self.uses<=0 and self:isDisappearOnUse()and self.container then
+   local source=self.container
+   if notify then sendRemoveItemFromContainer(source,self)end
+   -- DrainableComboItem removes directly, rather than ItemContainer.Remove.
+   for i,value in ipairs(source.values)do if value==self then table.remove(source.values,i);break end end
+   self.container=nil
+  end
+ end
  root.values[1]=kit
  local function move(destination)
   local source=kit.container
@@ -185,20 +242,32 @@ local function setup(options)
   packets.add[#packets.add+1]=value
   packets.order[#packets.order+1]={kind='add',item=value}
  end
- sendRemoveItemFromContainer=function(_,value)packets.remove[#packets.remove+1]=value;packets.order[#packets.order+1]={kind='remove',item=value}end
+ sendRemoveItemFromContainer=function(source,value)
+  if value==kit then assert(source==kit:getContainer()and source:getItemById(kit:getID())==kit,
+   'native final-use packet lost its exact source before removal')end
+  packets.remove[#packets.remove+1]=value;packets.order[#packets.order+1]={kind='remove',item=value,source=source}
+ end
  sendClothing=function(_,_,value)
   packets.clothing[#packets.clothing+1]=value;packets.order[#packets.order+1]={kind='clothing',item=value}
   assert(actor:getWornItem(value:getBodyLocation())==value,'clothing packet preceded actual wear')
   if options.clothingError then error('native clothing send failed')end
+  if options.onClothing then options.onClothing()end
  end
- sendItemStats=function(value)packets.stats[#packets.stats+1]=value;packets.order[#packets.order+1]={kind='stats',item=value}end
+ sendItemStats=function(value)
+  if value:getContainer()then packets.stats[#packets.stats+1]=value;packets.order[#packets.order+1]={kind='stats',item=value}end
+ end
  local java={}
  getClassSimpleName=function(value)return java[value]and'LuaJavaInvoker'or type(value)=='table'and value.class or'LuaClosure'end
  for _,name in ipairs({'isServer','isClient','instanceof','getClassSimpleName','getScriptManager','instanceItem',
   'sendAddItemToContainer','sendRemoveItemFromContainer','sendClothing','sendItemStats','getCell','getVehicleById'})do java[_G[name]]=true end
  local access=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemAccess.lua'))()
+ local finalUse=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/MakeupFinalUse.lua'))()
  local nativeRequire=require
- require=function(module)if module=='PZSurvivorToolkit/ItemAccess'then return access end;return nativeRequire(module)end
+ require=function(module)
+  if module=='PZSurvivorToolkit/ItemAccess'then return access end
+  if module=='PZSurvivorToolkit/MakeupFinalUse'then return finalUse end
+  return nativeRequire(module)
+ end
  if options.foreignAccess then access[options.foreignAccess]=function()return kit end end
  java[SafeHouse.isSafehouseAllowLoot]=true
  local native=ISApplyMakeUp.complete
@@ -211,7 +280,7 @@ local function setup(options)
   local value=item('Base.MakeUp_LipsBlue',500);value.container=root;root.values[#root.values+1]=value;actor.worn[value.slot]=value;return value
  end
  return {actor=actor,root=root,kit=kit,action=action,packets=packets,options=options,old=old,item=item,
-  native=native,before=before,wrapped=wrapped,access=access,move=move,bag=bag,worldContainer=worldContainer,worldBag=worldBag,
+  native=native,before=before,wrapped=wrapped,access=access,finalUse=finalUse,move=move,bag=bag,worldContainer=worldContainer,worldBag=worldBag,
   worldSquare=worldSquare,current=current,recursiveCalls=function()return recursiveCalls end,invoke=function()return wrapped(action)end,
   made=function()return made end,attempts=function()return attempts end,mode=function(s,c)server,client=s,c end}
 end
@@ -343,4 +412,68 @@ for _,stage in ipairs({'factory','clothing'})do
   and s.attempts()==1 and s.kit.uses==5 and #s.packets.add==(stage=='factory'and 0 or 1),
   'native failure was replayed, suppressed or received an output correction')
 end
-print('Native makeup output sync: exact one-argument correction, carried/world ancestry admission, output-before-clothing, native costs and closed unsupported paths passed.')
+-- Native zero-argument Use drops the final kit before sendItemStats can find a
+-- source. The reviewed flag repairs the same native deletion, exactly once.
+local depletedBaseline=setup({unpatched=true,kitUses=1})
+assert(depletedBaseline.invoke()==true and depletedBaseline.kit:getContainer()==nil
+ and depletedBaseline.root:getItemById(depletedBaseline.kit:getID())==nil
+ and #depletedBaseline.packets.remove==0 and #depletedBaseline.packets.stats==0,
+ 'native source no longer demonstrates missing final-use removal notification')
+for _,placement in ipairs({'root','worn bag','nested carried bag','world object','world bag'})do
+ local s=setup({kitUses=1});local source=s.root
+ if placement=='worn bag'then local holder;source,holder=s.bag(s.root);s.actor.worn.Bag=holder
+ elseif placement=='nested carried bag'then local outer=s.bag(s.root);source=s.bag(outer)
+ elseif placement=='world object'then source=s.worldContainer()
+ elseif placement=='world bag'then source=s.worldBag()end
+ s.move(source)
+ assert(s.finalUse.supports(s.actor,s.kit),'fixture lacks final native route: '..placement)
+ assert(s.invoke()==true)
+ local cosmetic=s.actor:getWornItem(ItemBodyLocation.MAKE_UP_LIPS)
+ assert(s.kit.useCalls==1 and s.kit.useArgs.force==false and s.kit.useArgs.unused==false
+  and s.kit.useArgs.notify==true and s.kit.uses==0 and s.kit:getContainer()==nil
+  and source:getItemById(s.kit:getID())==nil and #s.packets.remove==1 and s.packets.remove[1]==s.kit
+  and #s.packets.stats==0 and s.made()==1 and s.attempts()==1 and s.root:contains(cosmetic)
+  and #s.packets.add==1 and s.packets.add[1]==cosmetic,
+  'final native cost/removal/output was replayed or source notification lost: '..placement)
+ assert(s.packets.order[1].kind=='add'and s.packets.order[2].kind=='clothing'
+  and s.packets.order[3].kind=='remove'and s.packets.order[3].source==source,
+  'final native notification escaped its exact pre-removal source or packet order')
+end
+-- Ordinary uses retain the original call. Changed fields, hooks, native sender
+-- endpoints and state changed during clothing keep that original path too.
+local ordinary=setup();ordinary.invoke()
+assert(ordinary.kit.useCalls==1 and ordinary.kit.useArgs.force==nil and ordinary.kit.useArgs.notify==nil
+ and ordinary.kit.uses==4 and #ordinary.packets.remove==0,'ordinary native use acquired removal flag')
+for _,change in ipairs({'keep','replacement','use-replacement','create','config','attached','model','slot-type','held',
+ 'equipped','equip-parent','activated','crafting','components','script-components','script-type','script-owner',
+ 'obsolete','helper','nested-world','world-floor-parent','late-held','late-helper','late-access'})do
+ local s=setup({kitUses=1});local script=s.kit:getScriptItem()
+ if change=='keep'then script.disappear=false
+ elseif change=='replacement'then s.kit.replacement='Base.Unknown'
+ elseif change=='use-replacement'then s.kit.replaceOnUse='Base.Unknown'
+ elseif change=='create'then script.luaCreate='Unknown.Callback'
+ elseif change=='config'then script.configKey='Unknown.Config'
+ elseif change=='attached'then s.kit.attachedSlot=0
+ elseif change=='model'then s.kit.attachedToModel='Back'
+ elseif change=='slot-type'then s.kit.attachedSlotType='BeltLeft'
+ elseif change=='held'then s.actor.primary=s.kit
+ elseif change=='equipped'then s.actor.worn.extra=s.kit
+ elseif change=='equip-parent'then s.kit.equipParent=s.actor
+ elseif change=='activated'then s.kit.activated=true
+ elseif change=='crafting'then s.kit.craftingConsumed=true
+ elseif change=='components'then s.kit.components=true
+ elseif change=='script-components'then script.components=true
+ elseif change=='script-type'then script.kind=ItemType.CLOTHING
+ elseif change=='script-owner'then s.kit.script={}
+ elseif change=='obsolete'then script.obsolete=true
+ elseif change=='helper'then s.finalUse.supports=function()error('foreign helper executed')end
+ elseif change=='nested-world'then local outer=s.worldContainer();local inner=s.bag(outer);s.move(inner)
+ elseif change=='world-floor-parent'then local source,holder=s.worldBag();s.move(source);holder.container={}
+ elseif change=='late-held'then s.options.onClothing=function()s.actor.primary=s.kit end
+ elseif change=='late-helper'then s.options.onClothing=function()s.finalUse.supports=function()error('late helper executed')end end
+ elseif change=='late-access'then s.options.onClothing=function()s.access.admit=function()error('late access executed')end end end
+ local ok=pcall(s.invoke)
+ assert(ok and s.kit.useCalls==1 and s.kit.useArgs.notify==nil and s.kit.uses==0
+  and #s.packets.remove==0,'unproven final-use or intervening change gained native removal notification: '..change)
+end
+print('Native makeup output sync: native output correction and exact final-use removal, current source admission, unchanged ordinary/unsupported costs and no replay passed.')

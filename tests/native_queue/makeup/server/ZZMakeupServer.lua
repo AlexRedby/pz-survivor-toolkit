@@ -12,7 +12,7 @@ Events.OnClientCommand.Add(function(module,name,player,args)
   assert(player:getUsername()=='client1'and args.case==config.cases[index],'makeup authority actor/case/order differs')
   if name=='Prepare'then
    assert(not state and not pending,'previous makeup case unsettled')
-   if config.options and (config.options.makeup_supplies==true or config.options.makeup_moves==true or config.options.makeup_carried_moves==true or config.options.makeup_world_moves==true) then
+   if config.options and (config.options.makeup_supplies==true or config.options.makeup_moves==true or config.options.makeup_carried_moves==true or config.options.makeup_world_moves==true or config.options.makeup_depletion_moves==true) then
     assert(F.validPlacement(args.placement)and(not placement or F.same(placement,args.placement)),'makeup authority placement target differs')
     pending={prepare=true,since=getTimestampMs(),player=player,placement=args.placement,case=args.case}
    else
@@ -44,6 +44,7 @@ Events.OnTick.Add(function()
    placement=pending.placement;state=F.prepare(player,pending.case,previous,placement);sequence=0;if not state.ids.wearPending then raw('PREPARED',state.ids)end
    sendServerCommand(player,'MakeupTest','Prepared',state.ids);pending=nil;return
   end
+  if state.ids.depletion and(pending.label=='after-body'or pending.label=='final')and not F.depletionReady(state)then pending.snapshot=nil;pending.quiet=nil;return end
   local value=F.snapshot(state)
   if not pending.snapshot or not F.same(value,pending.snapshot)then pending.snapshot=value;pending.quiet=time;return end
   if time-pending.quiet<500 then return end
