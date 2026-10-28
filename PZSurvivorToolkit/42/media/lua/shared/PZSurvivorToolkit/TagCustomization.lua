@@ -223,12 +223,15 @@ function C.itemDelta(item)
     if not item or not item.hasModData or not item.getModData or not item:hasModData() then return {} end
     return C.normalizeChanges(item:getModData()[C.FIELD] or {}, true) or {}
 end
-function C.projectSnapshot(baseTags, fullType, delta)
+local function project(baseTags, fullType, delta, metadata)
     local result, present = {}, {}
     -- Preserve classification provenance used by lossless legacy projections.
-    for key, value in pairs(baseTags or {}) do if type(key) ~= "number" then result[key] = copy(value) end end
+    if metadata then
+        for key, value in pairs(baseTags or {}) do if type(key) ~= "number" then result[key] = copy(value) end end
+    end
     local retired = schema.retiredTags or {}
     local function legacy(id, value)
+        if not metadata then return end
         result.legacyTags = result.legacyTags or {}
         result.legacyTags[id] = value or nil
     end
@@ -239,7 +242,9 @@ function C.projectSnapshot(baseTags, fullType, delta)
             else result[#result + 1], present[id] = id, true end
         end
     end
-    for _, delta in ipairs({C.typeDelta(fullType), C.normalizeChanges(delta or {}, true) or {}}) do
+    local changes = {C.typeDelta(fullType)}
+    if delta ~= nil then changes[#changes + 1] = C.normalizeChanges(delta, true) or {} end
+    for _, delta in ipairs(changes) do
         for index = #result, 1, -1 do
             local id = result[index]
             if delta[id] == "remove" then table.remove(result, index); present[id] = nil end
@@ -254,6 +259,12 @@ function C.projectSnapshot(baseTags, fullType, delta)
     end
     return result
 end
+function C.projectSnapshot(baseTags, fullType, delta)
+    return project(baseTags, fullType, delta, true)
+end
+-- Choice catalogs consume numeric IDs immediately, so copying state/provenance
+-- tables would allocate an owned snapshot that no caller can use.
+function C.projectIds(baseTags, fullType) return project(baseTags, fullType, nil, false) end
 function C.project(baseTags, fullType, item)
     return C.projectSnapshot(baseTags, fullType, C.itemDelta(item))
 end

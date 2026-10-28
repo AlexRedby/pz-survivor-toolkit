@@ -212,8 +212,8 @@ function Picker:catalogEntries()
             if not familySet[family] then familySet[family], families[#families + 1] = true, family end
         end
     end
-    local function addSource(ids)
-        ids = Tags.choices and Tags.choices(ids) or ids
+    local function addSource(ids, prepared)
+        if not prepared then ids = Tags.choices and Tags.choices(ids) or ids end
         local sourceFamilies = {}
         for _, id in ipairs(ids) do if roots[id] then sourceFamilies[#sourceFamilies + 1] = id end end
         if #sourceFamilies == 0 and ids[1] then sourceFamilies[1] = ids[1] end
@@ -223,14 +223,14 @@ function Picker:catalogEntries()
     if options.tagSources then
         for _, ids in ipairs(options.tagSources()) do addSource(ids) end
     else
+        local context = options.scriptItems and Tags.newScriptProjectionContext()
+        local prepared = not options.items and options.scriptItems ~= nil
         for _, source in ipairs(options.items or options.scriptItems or options.categories or {}) do
             addSource(options.items and Tags.forItem(source)
-                or options.scriptItems and Tags.forScriptItem(source) or Tags.forCategory(source))
+                or options.scriptItems and Tags.choicesForScriptItem(source, context) or Tags.forCategory(source), prepared)
         end
     end
-    for _, id in ipairs(Tags.allIds and Tags.allIds() or {}) do
-        if id:sub(1, 7) == "custom:" then add(id, {}) end
-    end
+    for _, id in ipairs(Tags.customIds()) do add(id, {}) end
     for _, conditions in ipairs(self.conditions) do
         for _, condition in ipairs(conditions) do add(condition.id, {}) end
     end

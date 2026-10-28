@@ -42,6 +42,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.325
+
+- Open container configuration and tag management immediately, preparing their tag catalogues in small steps between frames with a loading indicator. Reduce the remaining work by sharing recipe reads within each step, avoiding redundant script scans, and collecting chooser IDs without copying unused state metadata. Fresh windows and ordinary live item classification retain current data and tag order.
+- Extend the native container scenario to create a real custom tag and verify its grouped rule through save/reopen/cancel and Host owner/server/observer agreement; require exclusive admission for opening measurements.
+
 ### 0.1.324
 
 - Replace the tag-rule catalogue and match preview with visible condition rows, explicit Has/Not controls, AND conditions and OR groups. Add or replace tags through a searchable chooser without a duplicate expression header.

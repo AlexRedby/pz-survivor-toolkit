@@ -5,10 +5,12 @@ local Tags = require 'PZSurvivorToolkit/ItemTags'
 local Categories = require 'PZSurvivorToolkit/ItemCategories'
 local Adapter = require 'PZSurvivorToolkit/QuartermasterTags'
 local Rules = require 'PZSurvivorToolkit/TagRulePicker'
+local TagEditor = require 'PZSurvivorToolkit/TagEditor'
 local Visuals = require 'PZSurvivorToolkit/TagVisuals'
 local Appearance = require 'PZSurvivorToolkit/ContainerAppearanceControls'
+local selection = require 'QueueTestSelection'
 local restores, results, active, lastDraw, drawStart, stage, untilAt = {}, {}, nil, nil, nil, 0, 0
-local owner, targetWindow
+local owner, catalogWindow, targetWindow
 local function wrap(object, key, label, countOnly)
  local original = object[key]
  if type(original) ~= 'function' then return end
@@ -24,6 +26,9 @@ local function wrap(object, key, label, countOnly)
    record.totalMs=record.totalMs+elapsed;record.maxMs=math.max(record.maxMs,elapsed)
    if object==targetWindow and key=='render' and not active.firstTargetRenderMs then
     active.firstTargetRenderMs=getTimestampMs()-active.started
+   end
+   if object==targetWindow and key=='render' and not object.toolkitTagCatalogPending and not active.readyRenderMs then
+    active.readyRenderMs=getTimestampMs()-active.started
    end
    return ...
   end
@@ -53,8 +58,24 @@ function Timing.begin()
  end
  for _,key in ipairs({'catalog','rows'})do wrap(Adapter,key,'tags.'..key)end
  wrap(Rules,'catalogEntries','rules.catalogEntries')
- wrap(Tags,'forScriptItem','Tags.forScriptItem',true)
- wrap(Categories,'forScript','Categories.forScript',true)
+ local details = selection.options.profile_tag_projection_details == true
+ wrap(Tags,'forScriptItem','Tags.forScriptItem',not details)
+ wrap(Tags,'choicesForScriptItem','Tags.choicesForScriptItem',not details)
+ wrap(Categories,'forScript','Categories.forScript',not details)
+ if details then
+  wrap(Tags,'automaticForScriptItem','Tags.automaticForScriptItem')
+  wrap(Tags,'choices','Tags.choices')
+  for _,name in ipairs({'ItemUsageTags','ItemCookingTags','ItemCookingStates','ItemDisassemblyTags',
+    'ItemRepairTags','ItemSmeltingTags','ItemBrokenTags','ItemMediaTags'})do
+   wrap(require('PZSurvivorToolkit/'..name),'read',name..'.read')
+  end
+  wrap(require('PZSurvivorToolkit/TagCustomization'),'projectSnapshot','Custom.projectSnapshot')
+  local properties=require 'PZSurvivorToolkit/ItemTagProperties'
+  for _,name in ipairs({'tailoringMaterial','fitness','read','edible','reading','seasoning','food'})do
+   wrap(properties,name,'properties.'..name)
+  end
+  wrap(require('PZSurvivorToolkit/ItemFluidTags'),'usage','fluids.usage')
+ end
  wrap(Visuals,'get','Visuals.get')
  wrap(Appearance,'create','appearance.create')
  Events.OnPreUIDraw.Add(preDraw);Events.OnPostUIDraw.Add(postDraw)
@@ -67,6 +88,7 @@ local function sample(name,action)
 end
 function Timing.step(obj)
  if getTimestampMs()<untilAt then return false end
+ if active and active.name~='idle' and not active.readyRenderMs then return false end
  if active then
   assert(#active.frameGaps>=5,'Opening profile did not observe UI frames')
   assert(active.name=='idle' or active.firstTargetRenderMs,'Opening profile did not observe the target window render')
@@ -94,8 +116,18 @@ function Timing.step(obj)
   sample('containerWarm',function()
    LootSorter.openPicker(obj,0,0);owner=assert(LootSorter._picker);watch(owner,'container')
   end)
- else
+ elseif stage==8 then
   owner:closePicker()
+  sample('tagCatalogCold',function()
+   catalogWindow=assert(TagEditor.open({playerNum=0}));watch(catalogWindow,'tagCatalog')
+  end)
+ elseif stage==9 then
+  catalogWindow:close()
+  sample('tagCatalogWarm',function()
+   catalogWindow=assert(TagEditor.open({playerNum=0}));watch(catalogWindow,'tagCatalog')
+  end)
+ else
+  catalogWindow:close()
   Events.OnPreUIDraw.Remove(preDraw);Events.OnPostUIDraw.Remove(postDraw)
   for i=#restores,1,-1 do restores[i]()end
   print('[CONTAINER_CONFIG] PERF '..JSON.encode({samples=results}))

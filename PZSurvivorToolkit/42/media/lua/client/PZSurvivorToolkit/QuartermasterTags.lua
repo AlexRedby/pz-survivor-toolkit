@@ -102,10 +102,12 @@ function Adapter.select(picker, row, selected)
 end
 
 function Adapter.openRule(picker, rule, onApply, selectedTag)
+    local catalog = Adapter.catalog(picker)
+    if not catalog then return end
     RulePicker.open({player = getSpecificPlayer(picker.playerNum or 0), owner = picker,
         selectedTag = selectedTag,
         rule = rule, categories = picker:activeList(),
-        tagSources = function() return Adapter.catalog(picker).tagSources end,
+        tagSources = function() return (Adapter.catalog(picker) or catalog).tagSources end,
         title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(value, firstSelectedTag)
             picker.toolkitTagRule = Tags.normalizeRule(value)
             picker.toolkitTagRuleTouched = true
@@ -115,58 +117,117 @@ function Adapter.openRule(picker, rule, onApply, selectedTag)
         end})
 end
 
--- Loaded scripts and their tag projection are a snapshot for this window. Text/selection filters
--- consume it, and the tag chooser reuses the projection. No session-wide cache survives a reopen.
-function Adapter.catalog(picker)
-    local revision = Tags.revision and Tags.revision() or 0
-    if picker.toolkitTagCatalog and picker.toolkitTagCatalog.revision == revision then return picker.toolkitTagCatalog end
+-- Each window owns a fresh raw script snapshot. Only completed projections are
+-- published; text filters and rule choosers never observe the private worklist.
+local CATALOG_BUDGET_MS, CATALOG_STEP_LIMIT = 5, 48
+local function newCatalogScan(revision)
     local catalog = {tagSources = {}, groups = {}, visibleCategories = {}, revision = revision}
-    local categorySet, sourceSet = {}, {}
+    local categorySet, sourceSet, snapshot = {}, {}, {}
     local scripts = getAllItems and getAllItems()
     for index = 0, (scripts and scripts:size() or 0) - 1 do
         local script = scripts:get(index)
-        if script then
-            local visible = LootSorter.isListableScriptItem(script)
-            local routable = not script.getObsolete or not script:getObsolete()
-            local tags, category
-            if routable then
-                tags = Tags.forScriptItem(script)
-                category = tags.legacyCategory
-            elseif visible then
-                pcall(function() category = Categories.forScript(script) end)
+        if script then snapshot[#snapshot + 1] = script end
+    end
+    local scan = {index = 1, total = #snapshot, revision = revision}
+    local function project(script, context)
+        local visible = LootSorter.isListableScriptItem(script)
+        local routable = not script.getObsolete or not script:getObsolete()
+        local tags, category
+        if routable then
+            tags = Tags.choicesForScriptItem(script, context)
+            category = tags.legacyCategory
+        elseif visible then
+            pcall(function() category = Categories.forScript(script) end)
+        end
+        if visible and category and category ~= "" and not categorySet[category] then
+            categorySet[category] = true
+            catalog.visibleCategories[#catalog.visibleCategories + 1] = category
+        end
+        if tags then
+            -- Ordered choices preserve fallback families for unknown tag roots.
+            local choices = tags
+            local sourceKey = table.concat(choices, "\0")
+            if not sourceSet[sourceKey] then
+                sourceSet[sourceKey] = true
+                catalog.tagSources[#catalog.tagSources + 1] = choices
             end
-            if visible and category and category ~= "" and not categorySet[category] then
-                categorySet[category] = true
-                catalog.visibleCategories[#catalog.visibleCategories + 1] = category
-            end
-            if tags then
-                -- Choices expand state metadata before duplicate projections are collapsed.
-                -- Their order also preserves the fallback family for unknown tag roots.
-                local choices = Tags.choices and Tags.choices(tags) or tags
-                local sourceKey = table.concat(choices, "\0")
-                if not sourceSet[sourceKey] then
-                    sourceSet[sourceKey] = true
-                    catalog.tagSources[#catalog.tagSources + 1] = choices
+            if category then
+                local group = catalog.groups[category]
+                if not group then
+                    group = {count = 0, tags = {}, categoryTags = {}}
+                    for _, id in ipairs(Tags.forCategory(category)) do group.categoryTags[id] = true end
+                    catalog.groups[category] = group
                 end
-                if category then
-                    local group = catalog.groups[category]
-                    if not group then
-                        group = {count = 0, tags = {}, categoryTags = {}}
-                        for _, id in ipairs(Tags.forCategory(category)) do group.categoryTags[id] = true end
-                        catalog.groups[category] = group
-                    end
-                    group.count = group.count + 1
-                    local seen = {}
-                    for _, id in ipairs(choices) do
-                        if not seen[id] then group.tags[id] = (group.tags[id] or 0) + 1; seen[id] = true end
-                    end
+                group.count = group.count + 1
+                local seen = {}
+                for _, id in ipairs(choices) do
+                    if not seen[id] then group.tags[id] = (group.tags[id] or 0) + 1; seen[id] = true end
                 end
             end
         end
     end
-    table.sort(catalog.visibleCategories)
-    picker.toolkitTagCatalog = catalog
-    return catalog
+    function scan:cancel()
+        self.cancelled, self.done = true, true
+        snapshot, catalog = nil, nil
+    end
+    function scan:step(budgetMs)
+        if self.done then return self.result end
+        local clock = getTimestampMs
+        local started = clock and clock() or 0
+        local context, processed = Tags.newScriptProjectionContext(), 0
+        local limit = budgetMs and CATALOG_STEP_LIMIT or math.huge
+        while self.index <= #snapshot and processed < limit do
+            project(snapshot[self.index], context)
+            self.index, processed = self.index + 1, processed + 1
+            if budgetMs and clock and clock() - started >= budgetMs then break end
+        end
+        if self.index > #snapshot then
+            table.sort(catalog.visibleCategories)
+            self.done, self.result = true, catalog
+            snapshot, catalog = nil, nil
+        end
+        return self.result
+    end
+    return scan
+end
+
+function Adapter.cancelCatalog(picker)
+    if picker.toolkitTagCatalogScan then picker.toolkitTagCatalogScan:cancel() end
+    picker.toolkitTagCatalogScan, picker.toolkitTagCatalogPending = nil, false
+end
+
+function Adapter.catalog(picker)
+    local revision = Tags.revision and Tags.revision() or 0
+    if picker.toolkitTagCatalog and picker.toolkitTagCatalog.revision == revision then return picker.toolkitTagCatalog end
+    if picker.toolkitTagClosed then return end
+    local scan = picker.toolkitTagCatalogScan
+    if not scan or scan.revision ~= revision then
+        Adapter.cancelCatalog(picker)
+        picker.toolkitTagCatalog = nil
+        scan = newCatalogScan(revision)
+        picker.toolkitTagCatalogScan, picker.toolkitTagCatalogPending = scan, true
+    end
+    if picker.toolkitTagCatalogAsync then return end
+    picker.toolkitTagCatalog = scan:step()
+    picker.toolkitTagCatalogScan, picker.toolkitTagCatalogPending = nil, false
+    return picker.toolkitTagCatalog
+end
+
+function Adapter.catalogReady(picker) return Adapter.catalog(picker) ~= nil end
+
+function Adapter.stepCatalog(picker, budgetMs)
+    if picker.toolkitTagClosed then Adapter.cancelCatalog(picker); return false end
+    if Adapter.catalogReady(picker) then return true end
+    local catalog = picker.toolkitTagCatalogScan:step(budgetMs or CATALOG_BUDGET_MS)
+    if not catalog then return false end
+    picker.toolkitTagCatalog, picker.toolkitTagCatalogScan = catalog, nil
+    picker.toolkitTagCatalogPending, picker.needRebuild = false, true
+    local editor = picker.toolkitRulePicker
+    if editor then
+        editor.entries = nil
+        if editor.tagChoice then editor.tagChoice.tagRevision = nil end
+    end
+    return true
 end
 
 Adapter.ruleSummary = RulePicker.summary
@@ -179,6 +240,7 @@ end
 
 function Adapter.rows(picker, categoryList)
     local catalog = Adapter.catalog(picker)
+    if not catalog then return {} end
     if sameCategories(catalog.categories, categoryList) then return catalog.rows end
     local rows, byTag = {}, {}
     for _, category in ipairs(categoryList) do
@@ -211,8 +273,8 @@ function Adapter.rows(picker, categoryList)
     -- Semantic tag selections remain live when an individual instance gains or
     -- loses a tag. Exact category assignments keep their existing saved meaning.
     for _, row in ipairs(rows) do if row.tag then row.requiresRule = true end end
-    for _, id in ipairs(Tags.allIds and Tags.allIds() or {}) do
-        if id:sub(1, 7) == "custom:" and not byTag[id] then
+    for _, id in ipairs(Tags.customIds()) do
+        if not byTag[id] then
             local row = {tag=id, label=Tags.label(id), categories={}, sourceCategories=categoryList,
                 toolkitTagRow=true, requiresRule=true}
             byTag[id], rows[#rows + 1] = row, row

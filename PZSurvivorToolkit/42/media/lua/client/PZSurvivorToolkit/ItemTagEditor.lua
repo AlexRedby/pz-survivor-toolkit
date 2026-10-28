@@ -112,12 +112,17 @@ end
 
 function Editor:reloadList()
     local query=(self.search:getInternalText() or ""):lower()
+    local selected=self.list.items[self.list.selected or 0]
+    local selectedId=selected and selected.item.id
     self.list:clear()
     local entries={}
-    for _,id in ipairs(Tags.allIds(self.items)) do entries[#entries+1]={id=id,label=Tags.label(id)} end
+    for _,id in ipairs(Tags.cachedIds(self.items)) do entries[#entries+1]={id=id,label=Tags.label(id)} end
     table.sort(entries,function(a,b) return a.label < b.label end)
     for _,row in ipairs(entries) do
-        if row.label:lower():find(query,1,true) then self.list:addItem(row.label,row) end
+        if row.label:lower():find(query,1,true) then
+            self.list:addItem(row.label,row)
+            if row.id==selectedId then self.list.selected=#self.list.items end
+        end
     end
     self.lastQuery=query
 end
@@ -217,11 +222,12 @@ function Editor:prerender()
     if self.lastRevision ~= Tags.revision() then
         self.lastRevision=Tags.revision(); self:reloadList(); self:refreshPreview()
     end
+    Catalog.advanceCatalogDiscovery(self)
     ISCollapsableWindowJoypad.prerender(self)
     self:drawText(UIStyle.fit(text(self:scope() == "item" and "ScopeHintItem" or "ScopeHintType"),self.width-24),12,68,
         0.9,0.8,0.6,1,UIFont.Small)
     self:drawText(text("Preview"),12,self.preview.y-23,0.9,0.9,0.9,1,UIFont.Small)
-    self:drawText(UIStyle.fit(self.status or text("AssignmentHint"),self.width-24),12,self.height-96,0.9,0.8,0.6,1,UIFont.Small)
+    self:drawText(UIStyle.fit(self.status or text(self.toolkitTagCatalogPending and "LoadingCatalog" or "AssignmentHint"),self.width-24),12,self.height-96,0.9,0.8,0.6,1,UIFont.Small)
     self:drawText(UIStyle.fit(text("Shared"),self.width-248),12,self.height-32,0.8,0.8,0.8,1,UIFont.Small)
 end
 
@@ -252,6 +258,7 @@ function Editor.open(options)
     window.items,window.title=items,text("Assign")
     window.drafts={item={changes={}},type={changes={}}}
     window.baseRevision,window.lastRevision=Custom.getRevision(),Tags.revision()
+    Catalog.beginCatalogDiscovery(window)
     return Catalog.attach(window,options,"toolkitItemTagEditor")
 end
 

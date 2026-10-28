@@ -16,11 +16,13 @@ local function wearsInput(input)
     return false
 end
 
-local function indexRecipes()
+local function indexRecipes(context)
     if not ResourceType or not ResourceType.Item then return nil end
     local manager = getScriptManager and getScriptManager()
     if not manager or not manager.getAllCraftRecipes then return nil end
-    local recipes = manager:getAllCraftRecipes()
+    local recipes
+    if context then recipes = context:recipes(manager, "getAllCraftRecipes")
+    else recipes = manager:getAllCraftRecipes() end
     if not recipes then return nil end
     local count = recipes:size()
     if catalog and catalog.manager == manager and catalog.recipes == recipes and catalog.count == count then
@@ -54,7 +56,7 @@ local function indexRecipes()
     return byType
 end
 
-local function supportsWear(script)
+local function supportsWear(script, context)
     -- These native classes have condition-degradation paths. ConditionMax and
     -- ConditionLowerChance alone cannot prove that: both default to 10 even on
     -- ordinary food, drainables and materials. Other classes need more evidence.
@@ -67,7 +69,7 @@ local function supportsWear(script)
     -- SHOW_CONDITION by itself only requests a tooltip and proves no wear.
     local name = script.getFullName and script:getFullName()
     if not name then return false end
-    local index = indexRecipes()
+    local index = indexRecipes(context)
     return index and index[name] == true
 end
 
@@ -75,7 +77,7 @@ end
 -- Scripts have no current flag. Known wear classes or native recipe wear flags
 -- with a usable condition range expose healthy/broken alternatives. No item is
 -- instantiated and no factory, RNG, OnCreate or OnBreak callback is executed.
-function Broken.read(script, item)
+function Broken.read(script, item, context)
     if item then
         if not item.isBroken then return nil end
         local broken = item:isBroken()
@@ -84,7 +86,7 @@ function Broken.read(script, item)
     end
     if not script or not script.getConditionMax then return nil end
     local maximum = script:getConditionMax()
-    if type(maximum) == "number" and maximum > 0 and maximum < math.huge and supportsWear(script) then
+    if type(maximum) == "number" and maximum > 0 and maximum < math.huge and supportsWear(script, context) then
         return nil, {false, true}
     end
     return nil

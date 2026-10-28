@@ -5,6 +5,7 @@ return function(control, rules, options)
     local function rect(x, y, w, h)
         local c = control()
         c.x, c.y, c.width, c.height = x, y, w, h
+        function c:setEnable(value) self.enable = value end
         return c
     end
     local base = {}
@@ -174,12 +175,12 @@ return function(control, rules, options)
     -- Record the native failure callback outcome without constructing an unrelated modal UI.
     LootSorter.notifyPresetFailure = function(_, outcome) failures[#failures + 1] = outcome end
     assert(LootSorter.toolkitTagPicker, 'owned picker did not declare tag UI setup')
-    local function open()
+    local function open(waitForCatalog)
         getAllItems = fixtureGetAllItems
         LootSorter.openPicker(obj, 0, 0)
         local p = assert(LootSorter._picker)
         p:configJoypad()
-        p:prerender()
+        if waitForCatalog ~= false then repeat p:prerender() until not p.toolkitTagCatalogPending end
         return p
     end
     local function save(p) p.btnSave.onclick(p.btnSave.target, p.btnSave) end
@@ -193,7 +194,8 @@ return function(control, rules, options)
         end
         request.callback(verdict, 1)
     end
-    return {open = open, object = obj, joypad = joypad, failures = failures, publications = publications,
+    return {open = open, openRaw = function() return open(false) end,
+        object = obj, joypad = joypad, failures = failures, publications = publications,
         save = save, reply = reply, coordinates = function() return coordinates end,
         pendingRule = function() return pendingRule end, presetPayload = function() return presetPayload end,
         presetReply = function(...) return assert(pendingPreset)(...) end,
@@ -202,7 +204,7 @@ return function(control, rules, options)
         edit = function(parent)
             LootSorter.openPresetEditor('Pantry', 0, parent)
             local editor = assert(LootSorter._presetEditor)
-            editor:prerender()
+            repeat editor:prerender() until not editor.toolkitTagCatalogPending
             return editor
         end}
 end

@@ -127,7 +127,7 @@ end
 -- Current roles, coherent preview states, and whether this has a fluid component.
 -- nil fields mean missing metadata or no physical contents to observe. Declared
 -- initial contents are returned only in the second result, never as current data.
-function Usage.read(script, item)
+function Usage.read(script, item, context)
     script = script or item and item.getScriptItem and item:getScriptItem()
     local roles, possible, isFluid = fluids.usage(script, item)
     local source, isDrainable = item or script, drainable(script, item)
@@ -170,15 +170,15 @@ function Usage.read(script, item)
         if item then roles.spentBattery = item.getCurrentUsesFloat and item:getCurrentUsesFloat() <= 0
         else varying.spentBattery = "empty" end
     end
-    local repairRole, repairStates = repair.read(script, item)
+    local repairRole, repairStates = repair.read(script, item, context)
     roles.repair = repairRole
     if not item and repairStates and #repairStates > 0 then varying.repair = "whole" end
-    local smeltingRole, smeltingStates = smelting.read(script, item)
+    local smeltingRole, smeltingStates = smelting.read(script, item, context)
     roles.smelting = smeltingRole
     if not item and smeltingStates and #smeltingStates > 0 then varying.smelting = "whole" end
     local sharpeningRole, sharpeningStates = sharpening.read(script, item)
     roles.sharpen = sharpeningRole
-    local brokenRole, brokenStates = broken.read(script, item)
+    local brokenRole, brokenStates = broken.read(script, item, context)
     roles.broken = brokenRole
     local baitRoles, baitStates = bait.read(script, item)
     merge(roles, baitRoles)

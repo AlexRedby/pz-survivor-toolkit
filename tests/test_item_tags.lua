@@ -416,5 +416,24 @@ customizationWorld.definitions[customId]={name='World one'}
 assert(hasId(Tags.allIds(),customId))
 customizationWorld=C.empty()
 assert(not hasId(Tags.allIds(),customId),'automatic script tag cache retained a prior world custom identity')
+-- Source selection views must add unassigned custom definitions without a
+-- second automatic projection of every loaded script.
+getScriptManager=function() error('custom-only catalog requested script enumeration') end
+local oldAutomatic=Tags.automaticForScriptItem
+Tags.automaticForScriptItem=function() error('custom-only catalog projected automatic tags') end
+local secondCustom='custom:aaaaaaaa-1234-1234-1234-123456789abc'
+customizationWorld.definitions[customId]={name='Unassigned'}
+customizationWorld.definitions[secondCustom]={name='Removed',deleted=true}
+customizationWorld.definitions.food={name='Builtin label'}
+local customOnly=Tags.customIds()
+assert(#customOnly==1 and customOnly[1]==customId,'custom-only catalog lost unassigned or retained deleted/builtin tags')
+customOnly[1]='changed by caller'
+assert(Tags.customIds()[1]==customId,'caller changed custom-only catalog')
+customizationWorld.definitions[customId].deleted=true
+customizationWorld.definitions[secondCustom]={name='Replacement'}
+assert(#Tags.customIds()==1 and Tags.customIds()[1]==secondCustom,'custom-only catalog ignored live definition changes')
+customizationWorld=C.empty()
+assert(#Tags.customIds()==0,'custom-only catalog retained a previous world')
+Tags.automaticForScriptItem=oldAutomatic
 getScriptManager=oldManager
 print('Tag catalog: loaded/instance fallback tags editable and removable, custom identities remain world-local')

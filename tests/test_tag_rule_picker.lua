@@ -75,8 +75,17 @@ require=function(name)
     return cache[name]
 end
 local Tags=require 'PZSurvivorToolkit/ItemTags'
-local forScript=Tags.forScriptItem
-Tags.forScriptItem=function(script) projections=projections+1;return forScript(script) end
+local forScript=Tags.choicesForScriptItem
+local newContext, contexts, projectionContext = Tags.newScriptProjectionContext, 0
+Tags.newScriptProjectionContext=function()
+    contexts=contexts+1;projectionContext=newContext();return projectionContext
+end
+Tags.choicesForScriptItem=function(script,context)
+    assert(context==projectionContext and context,'script chooser lost its projection context')
+    projections=projections+1;return forScript(script,context)
+end
+Tags.forScriptItem=function() error('script chooser copied owned script metadata') end
+Tags.allIds=function() error('chooser scanned the automatic script tag catalog') end
 local Picker=dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TagRulePicker.lua')
 local original={mode='all',include={'mechanics'},exclude={'vehiclepart'}}
 local owner={getIsVisible=function() return true end,dimmer=Base:new(0,0,1,1)}
@@ -133,6 +142,7 @@ picker:addGroup('food');picker:toggleCondition(1,1);picker:prerender()
 assert(projections==before,'ordinary rule edits reprojected the script catalogue')
 local entries=picker:catalogEntries()
 assert(projections==before+#scripts,'chooser did not prepare script tags exactly once')
+assert(contexts==1,'script chooser did not share one projection context')
 local byId={};for _,entry in ipairs(entries) do byId[entry.id]=entry end
 assert(byId.food and byId.perishable and byId.tool and byId.vehiclepart,'tag catalogue incomplete')
 assert(byId.vehiclepart.families.mechanics,'property family missing')
@@ -155,6 +165,7 @@ chooser.group.popup={parentCombo=chooser.group,visible=true}
 picker:close()
 assert(not chooser.added and not chooser.search.focused and not chooser.group.popup.visible,'owner close leaked chooser focus/popup')
 picker=open({scriptItems=scripts});picker:catalogEntries();assert(projections==before+2*#scripts,'reopen reused a stale script projection');picker:close()
+assert(contexts==2,'script chooser reused the previous opening projection context')
 local item={category='Tool',getDisplayCategory=function(self) return self.category end}
 picker=open({items={item}});entries=picker:catalogEntries();assert(entries[1])
 item.category='medicalTreatment';entries=picker:catalogEntries()
@@ -164,10 +175,10 @@ picker=open({scriptItems={},rule=original});entries=picker:catalogEntries()
 assert(#entries==2,'saved missing tags cannot be edited');picker:close()
 
 -- User-defined tags remain available with no matching script, and revisions refresh an open chooser.
-local originalRevision, originalAllIds = Tags.revision, Tags.allIds
+local originalRevision, originalCustomIds = Tags.revision, Tags.customIds
 local revision, customIds = 1, {'custom:first'}
 Tags.revision = function() return revision end
-Tags.allIds = function() return customIds end
+Tags.customIds = function() return customIds end
 picker = open({scriptItems = {}})
 picker:chooseTag(function() end)
 chooser = picker.tagChoice
@@ -179,7 +190,7 @@ customIds, revision = {'custom:second'}, 2
 chooser:prerender()
 assert(hasChoice('custom:second') and not hasChoice('custom:first'), 'open chooser ignored custom-tag revision')
 picker:close()
-Tags.revision, Tags.allIds = originalRevision, originalAllIds
+Tags.revision, Tags.customIds = originalRevision, originalCustomIds
 
 fontHeight = 32
 picker = open({categories = {'Tool'}})

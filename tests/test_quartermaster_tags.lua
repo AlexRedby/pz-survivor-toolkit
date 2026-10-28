@@ -3,6 +3,7 @@ local enabled, starts, creates = true, {}, {}
 local openedRulePicker, adapter
 local scriptCatalog = {}
 local catalogReads, tagReads = 0, 0
+local projectionContexts = 0
 local tagRevision, customIds = 0, {}
 local normalizations = 0
 local appearanceSelections={}
@@ -62,7 +63,12 @@ require = function(name)
     if name == 'PZSurvivorToolkit/UIStyle' then return {fit=function(value) return value end} end
     assert(name == 'PZSurvivorToolkit/ItemTags')
     return {enabled = function() return enabled end,
-        revision = function() return tagRevision end, allIds = function() return customIds end,
+        revision = function() return tagRevision end, customIds = function() return customIds end,
+        allIds = function() error('selection view scanned the automatic script tag catalog') end,
+        newScriptProjectionContext = function()
+            projectionContexts = projectionContexts + 1
+            return {id = projectionContexts}
+        end,
         requiresItemRule = function(id) return id=='readable' or id=='literature' or id=='writeable'
             or id=='fresh' or id=='stale' or id=='rotten' end,
         choices = function(tags) return tags.menuChoices or tags end,
@@ -86,11 +92,15 @@ require = function(name)
             return false
         end,
         forCategory = function(category) return categoryTags[category] or {'category:' .. category} end,
-        forScriptItem = function(script)
+        forScriptItem = function() error('choice catalog copied owned script metadata') end,
+        choicesForScriptItem = function(script, context)
+            assert(context and context.id == projectionContexts, 'script projection did not receive its catalog context')
             tagReads = tagReads + 1
             local tags = {legacyCategory = itemCategories.forScript(script), menuChoices = script.tags.menuChoices}
             for index, id in ipairs(script.tags) do tags[index] = id end
-            return tags
+            local choices = {legacyCategory = tags.legacyCategory}
+            for index, id in ipairs(tags.menuChoices or tags) do choices[index] = id end
+            return choices
         end,
         label = function(id) return id end}
 end
@@ -174,6 +184,7 @@ end
 local function click(p, id) local row = assert(find(p, id), 'missing ' .. id); p.listbox.onmousedown(p, row); p:prerender() end
 LootSorter.openPicker(fixture.object, 0, 0)
 local p = LootSorter._picker
+repeat p:prerender() until not p.toolkitTagCatalogPending
 local initialRows, initialLayout, firstLayouts = p.listbox.items, p.layout, 0
 p.layout = function(self) firstLayouts = firstLayouts + 1; initialLayout(self) end
 p:configJoypad(); p:prerender()
@@ -330,8 +341,9 @@ assert(openedDisabled.toolkitTagSwitch.visible and find(openedDisabled, 'food'),
 assert(openedDisabled.joypadButtonsY[5][1] == openedDisabled.chkNoDuplicates
     and openedDisabled.joypadButtonsY[6][1] == openedDisabled.toolkitTagSwitch
     and openedDisabled.joypadButtonsY[7][1] == openedDisabled.toolkitTagRuleButton, 'live enable did not add controller navigation')
+local closedReads = tagReads
 reopened:prerender()
-assert(reopened.toolkitTagSwitch.visible and find(reopened, 'food'), 'setting toggle left a stale list')
+assert(reopened.toolkitTagClosed and tagReads == closedReads, 'closed picker restarted tag discovery')
 openedDisabled.toolkitTagRuleButton.onclick(openedDisabled)
 assert(openedRulePicker and openedRulePicker.owner == openedDisabled and #openedRulePicker.categories == #availableCats + 1)
 local exactCats = openedDisabled.selectedCats
@@ -368,9 +380,10 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
         script(names[3],'OC_Seeds',{'farming','seed'}),script(names[4],'OC_Seeds',{'farming'}),
         script(names[5],'OC_SeedOnly',{'farming','seed'})}
     fixture.setContents({'OC_Snack'})
-    local readsBefore = catalogReads
+    local readsBefore, contextsBefore = catalogReads, projectionContexts
     open();local itemPicker=LootSorter._picker
     assert(catalogReads == readsBefore + 1, 'reopened picker did not read a fresh catalog')
+    assert(projectionContexts == contextsBefore + 1, 'reopened picker did not use one fresh projection context')
     local projectionReads = tagReads
     itemPicker.selectedItems['Sunflower seeds']=true
     local seed,seedIndex=assert(find(itemPicker,'seed'))
@@ -457,6 +470,68 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     assert(not find(itemPicker,'seed'), 'advanced Apply failed to refresh checked rows')
     assert(catalogReads == readsBefore + 1 and tagReads == projectionReads,
         'search, selection, saved-category changes or rule opening re-enumerated the item/tag catalog')
+end
+do
+    local items, reads = {}, 0
+    for index = 1, 150 do items[index] = script('Async '..index, 'AsyncCategory', {'snack'}) end
+    local test = createFixture(control, ruleApi, {
+        categories = function() error('loading tags forced a synchronous category scan') end,
+        scriptItems = function() reads = reads + 1; return items end})
+    local clock, now = getTimestampMs, 0
+    getTimestampMs = function() now = now + 1; return now end
+    local projections, contexts = tagReads, projectionContexts
+    local picker = test.openRaw()
+    assert(picker.toolkitTagCatalogPending and not picker.toolkitTagCatalog and reads == 1 and tagReads == projections,
+        'opening projected scripts synchronously or exposed a partial catalog')
+    assert(picker.emptyListKey == 'LoadingTags' and picker.listbox.count == 0)
+    items[1] = script('Changed after snapshot', 'LaterCategory', {'electrical'})
+    local editorBefore = openedRulePicker
+    picker.toolkitTagRuleButton.onclick(picker)
+    picker.btnAll.onclick(picker)
+    picker.listbox.onmousedown(picker, {tag='snack',categories={},toolkitTagRow=true,requiresRule=true})
+    assert(openedRulePicker == editorBefore and not picker.toolkitTagRuleTouched,
+        'partial catalog authorized a chooser or selection')
+    picker:prerender()
+    assert(tagReads == projections + 5 and projectionContexts == contexts + 1
+        and picker.toolkitTagCatalogPending and not picker.toolkitTagCatalog,
+        'one frame did not respect its time budget and fresh recipe context')
+    assert(picker.toolkitTagRuleButton.enable == false and picker.btnAll.enable == false)
+    picker:setPriority(7)
+    assert(picker.priorityEntry:getInternalText() == '7', 'loading blocked an independent draft control')
+    local frames = 1
+    while picker.toolkitTagCatalogPending do
+        local before = tagReads
+        picker:prerender(); frames = frames + 1
+        assert(tagReads - before <= 5, 'later frame exceeded the projection budget')
+        assert(frames < 100, 'bounded catalog did not finish')
+    end
+    assert(adapter.catalogReady(picker) and projectionContexts == contexts + frames and reads == 1
+        and picker.toolkitTagCatalog.groups.AsyncCategory.count == 150
+        and not picker.toolkitTagCatalog.groups.LaterCategory,
+        'completion did not atomically publish the captured raw script snapshot')
+    assert(picker.toolkitTagRuleButton.enable and picker.btnAll.enable and find(picker,'snack'))
+
+    picker = test.openRaw()
+    local pending = picker.toolkitTagCatalogScan
+    picker:prerender()
+    local before = tagReads
+    picker:closePicker(); picker:prerender()
+    assert(pending.cancelled and not picker.toolkitTagCatalogPending and tagReads == before
+        and not adapter.stepCatalog(picker), 'close did not cancel owned work')
+    picker = test.openRaw()
+    pending = picker.toolkitTagCatalogScan
+    items = {script('Fresh revision', 'FreshCategory', {'electrical'})}
+    tagRevision = tagRevision + 1
+    picker:prerender()
+    assert(pending.cancelled and adapter.catalogReady(picker)
+        and picker.toolkitTagCatalog.visibleCategories[1] == 'FreshCategory'
+        and not picker.toolkitTagCatalog.groups.AsyncCategory,
+        'revision change published old partial work instead of restarting')
+    items = {script('Fresh reopen', 'ReopenedCategory', {'readable'})}
+    picker = test.open()
+    assert(picker.toolkitTagCatalog.visibleCategories[1] == 'ReopenedCategory',
+        'reopen reused a previous window catalog')
+    getTimestampMs = clock
 end
 do
     local visible = script('Visible', 'OC_Snack', {'food', 'snack'})

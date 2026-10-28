@@ -1,8 +1,3 @@
-# Grouped container rule editor
-
-- [ ] Complete the native before/after comparison of cold/warm container and tag chooser opening with the current selected pack. Run the optional opening profile before menu probes, compare callback time and UI frame gaps, and verify the target window renders with source/snapshot checks intact.
-- [ ] Qualify grouped conditions, custom/semantic tag choices and save/reopen/cancel through the full selected-pack SP/menu Host container scenario after main integration, including owner/server/observer agreement. Join compatible verification campaign sessions while keeping performance measurements isolated.
-
 # Shared queue resources and container capacity
 
 Implementation and migration are conditional on the performance gate in [the design plan](docs/design/QUEUE_RESOURCE_CAPACITY.md). Keep the native executor and existing protections until each replacement is qualified.

@@ -34,11 +34,13 @@ local function supplies(recipe)
     if subject then return result end
 end
 
-local function indexRecipes()
+local function indexRecipes(context)
     local manager = getScriptManager and getScriptManager()
     if not manager or not manager.getAllCraftRecipes
         or not toolkitRecipeOnCreate or not toolkitRecipeHasItemTest then return end
-    local recipes = manager:getAllCraftRecipes()
+    local recipes
+    if context then recipes = context:recipes(manager, "getAllCraftRecipes")
+    else recipes = manager:getAllCraftRecipes() end
     if not recipes then return end
     local count = recipes:size()
     if catalog and catalog.manager == manager and catalog.recipes == recipes and catalog.count == count
@@ -63,10 +65,10 @@ end
 -- not promise enough material, tools or player skills for a particular repair.
 -- Script-only drainables have no current quantity; the second result gives the
 -- coherent empty/nonempty preview alternatives, using whole remaining uses.
-function Repair.read(script, item)
+function Repair.read(script, item, context)
     script = script or item and item.getScriptItem and item:getScriptItem()
     if not script or not script.getFullName then return nil end
-    local index = indexRecipes()
+    local index = indexRecipes(context)
     if not index or not index[script:getFullName()] then return nil end
     local drainable
     if item and item.IsDrainable then drainable = item:IsDrainable()

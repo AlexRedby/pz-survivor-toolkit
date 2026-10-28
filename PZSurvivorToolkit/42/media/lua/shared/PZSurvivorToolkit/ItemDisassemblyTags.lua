@@ -92,11 +92,17 @@ local function legacyEntry(recipe)
     if subject then return {source = subject, skills = awards(recipe)} end
 end
 
-local function indexRecipes()
+local function indexRecipes(context)
     local manager = getScriptManager and getScriptManager()
     if not manager then return {} end
-    local craft = manager.getAllCraftRecipes and manager:getAllCraftRecipes()
-    local legacy = manager.getAllRecipes and manager:getAllRecipes()
+    local craft, legacy
+    if context then
+        craft = context:recipes(manager, "getAllCraftRecipes")
+        legacy = context:recipes(manager, "getAllRecipes")
+    else
+        craft = manager.getAllCraftRecipes and manager:getAllCraftRecipes()
+        legacy = manager.getAllRecipes and manager:getAllRecipes()
+    end
     local craftCount, legacyCount = craft and craft:size() or 0, legacy and legacy:size() or 0
     if catalog and catalog.manager == manager and catalog.bridge == toolkitRecipeHasItemTest
         and catalog.craft == craft and catalog.legacy == legacy
@@ -179,11 +185,11 @@ end
 
 -- The boolean means that this item is the dismantled subject. Skill tags come
 -- only from awarded XP, never the recipe's category, tools or skill requirements.
-function Disassembly.read(script, item)
+function Disassembly.read(script, item, context)
     script = script or item and item.getScriptItem and item:getScriptItem()
     if not script or not script.getFullName then return false, {} end
     local found, skills = false, {}
-    for _, entry in ipairs(indexRecipes()[script:getFullName()] or {}) do
+    for _, entry in ipairs(indexRecipes(context)[script:getFullName()] or {}) do
         if allowed(entry, item) then
             found = true
             for id in pairs(entry.skills) do skills[id] = true end

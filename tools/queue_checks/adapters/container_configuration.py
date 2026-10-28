@@ -11,6 +11,8 @@ SUITE = 'container-configuration'
 MARKER = '[CONTAINER_CONFIG] '
 MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS']
 PNG = b'\x89PNG\r\n\x1a\n'
+CUSTOM_NAME = 'Fixture custom supplies'
+CUSTOM_ID = re.compile(r'custom:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 
 
 def definitions():
@@ -34,6 +36,10 @@ def validate(selection):
             or kind == 'mp' and options.get('mp_host') is not True
             or kind == 'sp' and options.get('mp_host')):
         raise ValueError('Container configuration requires edit, fresh SP or two-client Host, Toolkit/BC/CleanUI and EN/RU')
+    if options.get('profile_container_open') and (
+            not isinstance(selection.get('resources'), dict)
+            or selection['resources'].get('exclusive') is not True):
+        raise ValueError('Container opening profiles require exclusive resource admission')
 
 
 def sources(project, selection):
@@ -75,13 +81,15 @@ def _one(text, event):
     return rows[0]
 
 
-def _expected(category):
+def _expected(category, custom_id):
     return dict(name='QM supplies', iconKind='pzst-tag', iconValue='edible',
+                customId=custom_id, customName=CUSTOM_NAME,
                 r=.25, g=.5, b=.75, a=1, category=category, categorySelected=True,
                 categoryCount=1, itemCount=0, presetCount=0, priority=6, ruleMode='',
                 include=[], exclude=[], groups=[
                     {'include': ['edible', 'perishable'], 'exclude': ['meat']},
                     {'include': ['mechanics'], 'exclude': ['vehiclepart']},
+                    {'include': [custom_id], 'exclude': []},
                 ], revision=1)
 
 
@@ -106,7 +114,8 @@ def _shot(root, role, name):
 
 def _opening_profile(text):
     samples = _one(text, 'PERF').get('samples')
-    names = ['idle', 'containerCold', 'ruleCold', 'chooserCold', 'chooserWarm', 'ruleWarm', 'containerWarm']
+    names = ['idle', 'containerCold', 'ruleCold', 'chooserCold', 'chooserWarm', 'ruleWarm', 'containerWarm',
+             'tagCatalogCold', 'tagCatalogWarm']
     if not isinstance(samples, list) or [row.get('name') for row in samples if isinstance(row, dict)] != names:
         raise ValueError('Opening profile stages missing, duplicated or reordered')
 
@@ -119,6 +128,9 @@ def _opening_profile(text):
                 raise ValueError('Invalid opening profile duration: ' + key)
         if row['name'] != 'idle' and not duration(row.get('firstTargetRenderMs')):
             raise ValueError('Opening profile lacks target window render')
+        if row['name'] != 'idle' and (not duration(row.get('readyRenderMs'))
+                                     or row['readyRenderMs'] < row['firstTargetRenderMs']):
+            raise ValueError('Opening profile lacks completed catalogue render')
         for key in ('frameGaps', 'uiMs'):
             values = row.get(key)
             if not isinstance(values, list) or len(values) < 5 or not all(duration(value) for value in values):
@@ -138,20 +150,22 @@ def _opening_profile(text):
 def verify(root, selection, catalog):
     root = Path(root)
     roles = ['client1', 'client2'] if selection['kind'] == 'mp' else ['client1']
-    issues, receipts, screenshots, opening = [], {}, [], []
+    issues, receipts, screenshots, opening, parity = [], {}, [], [], {}
     try:
         logs = {role: (root / (role + '-launch.log')).read_text(errors='replace') for role in roles}
         authority_role = 'server' if selection['kind'] == 'mp' else 'client1'
         authority = (root / (authority_role + '-launch.log')).read_text(errors='replace')
         prepared = _one(authority, 'PREPARED')
-        if (set(prepared) != {'x', 'y', 'z', 'index', 'category'}
+        if (set(prepared) != {'x', 'y', 'z', 'index', 'category', 'customId', 'customName'}
                 or any(type(prepared[key]) is not int for key in ('x', 'y', 'z', 'index'))
-                or prepared['index'] < 0 or type(prepared['category']) is not str or not prepared['category']):
+                or prepared['index'] < 0 or type(prepared['category']) is not str or not prepared['category']
+                or type(prepared['customId']) is not str or not CUSTOM_ID.fullmatch(prepared['customId'])
+                or prepared['customName'] != CUSTOM_NAME):
             raise ValueError('Invalid owned crate descriptor')
         category = prepared['category']
         if selection['kind'] == 'mp' and len(re.findall(re.escape('[STARTUP_TEST] SERVER_READY') + r'(?:\s|$)', authority)) != 1:
             raise ValueError('Missing/duplicate Host server readiness')
-        owner_events = ['SHOT'] * 11 + ['TAGUI', 'SHOT', 'SHOT', 'SHOT', 'DEFAULTS', 'SHOT', 'SHOT', 'SAVE', 'LOCAL']
+        owner_events = ['SHOT'] * 11 + ['TAGUI', 'SHOT', 'SHOT', 'SHOT', 'SHOT', 'DEFAULTS', 'SHOT', 'SHOT', 'SAVE', 'LOCAL']
         sequences = {'client1': owner_events + ['COMPLETE']}
         if selection['kind'] == 'sp':
             sequences['client1'] = ['PREPARED', *owner_events, 'AUTHORITY', 'COMPLETE']
@@ -161,6 +175,12 @@ def verify(root, selection, catalog):
         if selection.get('options', {}).get('profile_container_open'):
             sequences['client1'].insert(1 if selection['kind'] == 'sp' else 0, 'PERF')
             opening = _opening_profile(logs['client1'])
+        if selection.get('options', {}).get('check_script_choice_parity'):
+            position = (1 if selection['kind'] == 'sp' else 0) + bool(opening)
+            sequences['client1'].insert(position, 'CHOICEPARITY')
+            parity = _one(logs['client1'], 'CHOICEPARITY')
+            if set(parity) != {'scripts'} or type(parity['scripts']) is not int or parity['scripts'] <= 0:
+                raise ValueError('Script choice parity requires a positive native script count')
         for role, expected_events in sequences.items():
             text = authority if role == 'server' else logs[role]
             events = re.findall(re.escape(MARKER) + r'([A-Z]+) ', text)
@@ -168,7 +188,7 @@ def verify(root, selection, catalog):
                 raise ValueError(role + ' native lifecycle missing, duplicated or reordered')
         if _one(logs['client1'], 'TAGUI') != dict(oneClick=True, checked=True, advancedApplied=True, foreground=True):
             raise ValueError('Direct tag selection, Apply or foreground evidence absent')
-        expected = _expected(category)
+        expected = _expected(category, prepared['customId'])
         defaults = _one(logs['client1'], 'DEFAULTS')
         if (set(defaults) != {'tag', 'item', 'role', 'menuClasses'} or defaults['tag'] != 'edible'
                 or defaults['item'] != 'Base.Hammer' or defaults['role'] != 'client1'
@@ -186,12 +206,12 @@ def verify(root, selection, catalog):
                 raise ValueError('Observer global BC appearance or routing differs')
         for role, text in logs.items():
             names = (['empty', 'search', 'no-results', 'checked', 'items', 'presets', 'rule', 'color', 'tag-checked', 'tag-scroll', 'tag-dropdown',
-                      'icon', 'tags', 'rules', 'edit', 'minimum'] if role == 'client1' else ['observer'])
+                      'icon', 'tags', 'custom-tags', 'rules', 'edit', 'minimum'] if role == 'client1' else ['observer'])
             dimensions = {'empty': (480, 700), 'search': (480, 700), 'no-results': (480, 700),
                           'checked': (480, 700), 'items': (480, 700), 'presets': (480, 700),
                           'rule': (480, 700), 'color': (480, 700),
                           'tag-checked': (480, 700), 'tag-scroll': (480, 700), 'tag-dropdown': (480, 700),
-                          'icon': (480, 700), 'tags': (480, 700), 'rules': (480, 700),
+                          'icon': (480, 700), 'tags': (480, 700), 'custom-tags': (480, 700), 'rules': (480, 700),
                           'edit': (480, 700), 'minimum': (420, 600), 'observer': (480, 700)}
             expected_shots = [{'name': name, 'role': role, 'width': dimensions[name][0],
                                'height': dimensions[name][1]} for name in names]
@@ -208,6 +228,7 @@ def verify(root, selection, catalog):
             'outcomes': [{'actor': role, 'case': 'edit', 'status': 'failed' if issues else 'passed',
                           'reason': '; '.join(issues)} for role in roles],
             'evidence': {'receipts': receipts, 'screenshots': screenshots, 'openingProfile': opening,
+                         'scriptChoiceParity': parity,
                          'limits': ['Native callback-driven checks; no physical input claims.',
                                     'Screenshots require visual inspection; presence does not certify layout.',
                                     'Opening profiles measure Lua callbacks and UI frame intervals, not GPU presentation timestamps.']}}
