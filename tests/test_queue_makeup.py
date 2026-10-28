@@ -15,13 +15,14 @@ from queue_checks.adapters import makeup as m
 
 
 class MakeupEvidenceTests(unittest.TestCase):
-    def selection(self,mode='toolkit',kind='sp',supplies=False,moves=False,carried_moves=False,world_moves=False):
+    def selection(self,mode='toolkit',kind='sp',supplies=False,moves=False,carried_moves=False,world_moves=False,depletion_moves=False):
         value= dict(suite='makeup',cases=list(m.SP_CASES if kind=='sp' else m.MP_CASES),mode=mode,kind=kind,
                     clients=1,languages=['EN'],mods=list(m.MODS),options={'mp_host':True} if kind=='mp' else {})
         if supplies:value['options']['makeup_supplies']=True;value['cases']=list(m.cases(value))
         if moves:value['options']['makeup_moves']=True;value['cases']=list(m.cases(value))
         if carried_moves:value['options']['makeup_carried_moves']=True;value['cases']=list(m.cases(value))
         if world_moves:value['options']['makeup_world_moves']=True;value['cases']=list(m.cases(value))
+        if depletion_moves:value['options']['makeup_depletion_moves']=True;value['cases']=list(m.cases(value))
         return value
 
     def evidence(self,case,selection):
@@ -125,14 +126,15 @@ class MakeupEvidenceTests(unittest.TestCase):
         return row
 
     def move_evidence(self,case,selection):
-        base=copy.deepcopy(selection);base['options'].pop('makeup_moves',None);base['options'].pop('makeup_carried_moves',None);base['options'].pop('makeup_world_moves',None)
+        base=copy.deepcopy(selection);base['options'].pop('makeup_moves',None);base['options'].pop('makeup_carried_moves',None);base['options'].pop('makeup_world_moves',None);base['options'].pop('makeup_depletion_moves',None)
         if case in m.MOVE_SUPPLIES:
             base['options']['makeup_supplies']=True;row=self.supply_evidence('apply-'+m.MOVE_SUPPLIES[case],base)
         else:row=self.evidence('apply-replace' if case=='move-earlier' else 'apply-empty',base)
         kind=m.MOVE_KINDS[case]
         ids=row['ids'];row['id']=ids['case']=case;ids['move']=True;ids['placement']=dict(x=10,y=20,z=0)
-        ids['items']['middle']=5;ids['types']['middle']='Base.BookCooking1';ids['middleTotal']=100;ids['middleInitial']=99;ids['frontInitial']=97 if case in m.MOVE_SUPPLIES else 92
+        ids['items']['middle']=5;ids['types']['middle']='Base.BookCooking1';ids['middleTotal']=100;ids['middleInitial']=99;ids['frontInitial']=97 if case in m.MOVE_SUPPLIES or case in m.DEPLETION_MOVE_CASES else 92
         if case in m.MOVE_SUPPLIES:ids['items'].pop('old');ids['types'].pop('old');row['submitted']['previous']=False;row.pop('applyQueues')
+        if case in m.DEPLETION_MOVE_CASES:ids['depletion']=True;ids['kitUses']=1
         if kind=='deny-writer':ids['items']['writer']=6;ids['types']['writer']='Base.Socks_Ankle'
         values=[ids['baseline'],row['clientFinal'],row['receipt']['snapshot'],row['beforeTail']['snapshot']]
         for point in row['checkpoints']:
@@ -150,6 +152,13 @@ class MakeupEvidenceTests(unittest.TestCase):
                 # its slot while preserving both physical items in root.
                 value['root'].extend([dict(id=6,kind='Base.Socks_Ankle'),dict(id=7,kind='Base.Socks_Ankle')])
                 value['worn'].append(dict(id=6 if late else 7,kind='Base.Socks_Ankle',slot='base:socks',root=True,sameReference=True,container='root'))
+            if case in m.DEPLETION_MOVE_CASES:
+                if late:
+                    value['kit']=False;value['root']=[v for v in value['root'] if v['id']!=1]
+                    if 'supply' in value:
+                        value['supply']['items']=[v for v in value['supply']['items'] if v['id']!=1]
+                        for ancestor in value['supply']['ancestors']:ancestor['items']=[v for v in ancestor['items'] if v['id']!=1]
+                else:value['kit']['uses']=1
             value['root'].sort(key=lambda v:v['id']);value['worn'].sort(key=lambda v:v['slot'])
         before,after,starts,accepted=m.move_orders(case,selection['mode']=='toolkit')
         edit=dict(at=25,accepted=accepted,reason=False if accepted or selection['mode']=='native' else 'dependent',before=before,after=after,
@@ -453,7 +462,7 @@ class MakeupEvidenceTests(unittest.TestCase):
         self.assertEqual(list(checks['success-queued']),m.MP_CASES)
         self.assertEqual(list(checks['success-empty']),m.SUPPLY_SP_CASES)
         self.assertEqual(list(checks['cancel-waiting']),['cancel-waiting',*m.SUPPLY_MP_CASES[4:]])
-        self.assertEqual([case['id'] for case in suite['cases']],m.MP_CASES+m.SUPPLY_MP_CASES+m.MOVE_CASES+m.CARRIED_MOVE_CASES+m.WORLD_MOVE_CASES)
+        self.assertEqual([case['id'] for case in suite['cases']],m.MP_CASES+m.SUPPLY_MP_CASES+m.MOVE_CASES+m.CARRIED_MOVE_CASES+m.WORLD_MOVE_CASES+m.DEPLETION_MOVE_CASES)
 
     def test_supply_option_cannot_silently_replace_or_mix_default_bank(self):
         for mutation in ('false','non-bool','missing','mixed'):
@@ -644,6 +653,157 @@ class MakeupEvidenceTests(unittest.TestCase):
                 else:
                     with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
 
+    def test_final_use_moves_require_exact_physical_deletion_for_all_five_sources(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',depletion_moves=True)
+            rows=[self.evidence(case,selection) for case in selection['cases']]
+            result=self.verify(selection,rows)
+            with self.subTest(mode=mode):
+                self.assertEqual(result['issues'],[])
+                self.assertTrue(all(v['outcome']['depletionVerified'] for v in result['outcomes']))
+
+    def test_final_use_bank_requires_explicit_exclusive_host_selection(self):
+        for mutation in ('sp','missing','false','string','root','carried','world-moves','supplies','order','subset','host','mods','language'):
+            selection=self.selection(kind='mp',depletion_moves=True)
+            if mutation=='sp':selection['kind']='sp'
+            elif mutation=='missing':selection['options'].pop('makeup_depletion_moves')
+            elif mutation=='false':selection['options']['makeup_depletion_moves']=False
+            elif mutation=='string':selection['options']['makeup_depletion_moves']='true'
+            elif mutation=='root':selection['options']['makeup_moves']=True
+            elif mutation=='carried':selection['options']['makeup_carried_moves']=True
+            elif mutation=='world-moves':selection['options']['makeup_world_moves']=True
+            elif mutation=='supplies':selection['options']['makeup_supplies']=True
+            elif mutation=='order':selection['cases'].reverse()
+            elif mutation=='subset':selection['cases'].pop()
+            elif mutation=='host':selection['options']['mp_host']=False
+            elif mutation=='mods':selection['mods'].pop()
+            else:selection['languages']=['RU']
+            with self.subTest(mutation=mutation),self.assertRaises(ValueError):m.validate(selection)
+
+    def test_final_use_rejects_placeholders_remaining_ids_and_non_kit_source_changes(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',depletion_moves=True)
+            for mutation in ('flag-missing','initial-uses','early-absent','zero-placeholder','root-retained','supply-retained','ancestor-retained',
+                             'client-root-kit','authority-root-kit','moved-root','replacement-kit','sentinel-lost','ancestor-lost','world-owner','world-id',
+                             'output-lost','output-proxy','output-reuses-kit','extra-output','receipt-kit','tail-early','transfer','duplicate-body','duplicate-receipt'):
+                rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[1]
+                value=row['checkpoints'][2]['client']['snapshot']
+                if mutation=='flag-missing':row['ids'].pop('depletion')
+                elif mutation=='initial-uses':row['ids']['baseline']['kit']['uses']=5
+                elif mutation=='early-absent':row['checkpoints'][1]['authority']['snapshot']['kit']=False
+                elif mutation=='zero-placeholder':value['kit']=dict(row['ids']['baseline']['kit'],uses=0)
+                elif mutation=='root-retained':rows[0]['checkpoints'][2]['client']['snapshot']['kit']=dict(rows[0]['ids']['baseline']['kit'])
+                elif mutation=='supply-retained':value['supply']['items'].insert(0,dict(id=1,kind='Base.MakeupEyeshadow'))
+                elif mutation=='ancestor-retained':value['supply']['ancestors'][0]['items'].insert(0,dict(id=1,kind='Base.MakeupEyeshadow'))
+                elif mutation in ('client-root-kit','authority-root-kit','moved-root'):
+                    actual=rows[0]['checkpoints'][2]['authority' if mutation=='authority-root-kit' else 'client']['snapshot'] if mutation!='moved-root' else value
+                    actual['root'].append(dict(id=1,kind='Base.MakeupEyeshadow'));actual['root'].sort(key=lambda v:v['id'])
+                elif mutation=='replacement-kit':value['supply']['items'].append(dict(id=999,kind='Base.MakeupEyeshadow'))
+                elif mutation=='sentinel-lost':value['supply']['items'].clear()
+                elif mutation=='ancestor-lost':value['supply']['ancestors'].pop()
+                elif mutation=='world-owner':rows[2]['checkpoints'][2]['authority']['snapshot']['supply']['world']['owner']='foreign-source'
+                elif mutation=='world-id':rows[3]['checkpoints'][2]['client']['snapshot']['supply']['world']['id']=999
+                elif mutation=='output-lost':value['root']=[v for v in value['root'] if v['id']!=row['output']]
+                elif mutation=='output-proxy':next(v for v in value['worn'] if v['id']==row['output'])['sameReference']=False
+                elif mutation=='output-reuses-kit':row['output']=1
+                elif mutation=='extra-output':value['root'].append(dict(id=999,kind=m.TARGET))
+                elif mutation=='receipt-kit':row['receipt']['snapshot']['kit']=dict(row['ids']['baseline']['kit'])
+                elif mutation=='tail-early':row['beforeTail']['snapshot']['tailPages']=100
+                elif mutation=='transfer':row['supplyTransferStarts']=1
+                elif mutation=='duplicate-body':row['body']['starts']=2
+                else:row['outcomes'].append(copy.deepcopy(row['outcomes'][-1]))
+                with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_final_use_before_tail_records_real_packet_order_without_paid_projection(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',depletion_moves=True)
+            for index in (0,1,3):
+                for timing in ('pending-both','removed-before-output','output-before-removal','output-before-wear'):
+                    rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[index];ids=row['ids']
+                    actual=copy.deepcopy(ids['baseline']);actual['frontPages']=ids['frontTotal'];actual['middlePages']=ids['middleTotal']
+                    if timing in ('removed-before-output','output-before-wear'):
+                        actual['kit']=False;actual['root']=[v for v in actual['root'] if v['id']!=1]
+                        if 'supply' in actual:
+                            actual['supply']['items']=[v for v in actual['supply']['items'] if v['id']!=1]
+                            for ancestor in actual['supply']['ancestors']:ancestor['items']=[v for v in ancestor['items'] if v['id']!=1]
+                    if timing in ('output-before-removal','output-before-wear'):
+                        actual['root'].append(dict(id=row['output'],kind=m.TARGET));actual['root'].sort(key=lambda v:v['id'])
+                    if timing=='output-before-removal':actual['worn'].append(dict(id=row['output'],kind=m.TARGET,slot=m.SLOT,root=True,sameReference=True,container='root'));actual['worn'].sort(key=lambda v:v['slot'])
+                    row['beforeTail']['snapshot']=actual
+                    with self.subTest(mode=mode,index=index,timing=timing):self.assertEqual(self.verify(selection,rows)['issues'],[])
+
+    def test_final_use_before_tail_preserves_full_unrelated_worn_records(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',depletion_moves=True)
+            for index in (0,4):
+                for mutation in ('foreign-detached','lost-baseline','spoofed-reference'):
+                    rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[index]
+                    values=[row['ids']['baseline'],row['clientFinal'],row['receipt']['snapshot'],row['beforeTail']['snapshot'],
+                            *[point[role]['snapshot'] for point in row['checkpoints'] for role in ('client','authority')]]
+                    for value in values:
+                        value['root'].append(dict(id=8,kind='Base.Hat_Beany'));value['root'].sort(key=lambda v:v['id'])
+                        value['worn'].append(dict(id=8,kind='Base.Hat_Beany',slot='base:hat',root=True,sameReference=True,container='root'))
+                        value['worn'].sort(key=lambda v:v['slot'])
+                    actual=row['beforeTail']['snapshot']
+                    if mutation=='foreign-detached':actual['worn'].append(dict(id=999,kind='Base.Socks_Ankle',slot='zz:foreign',root=False,sameReference=False,container=False))
+                    elif mutation=='lost-baseline':actual['worn']=[w for w in actual['worn'] if w['id']!=8]
+                    else:
+                        worn=next(w for w in actual['worn'] if w['id']==8);worn['sameReference']=False;worn['container']=False
+                    with self.subTest(mode=mode,index=index,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_final_use_before_tail_allows_only_known_pending_cosmetic_transitions(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',depletion_moves=True)
+            for index in (0,1,2,3,4):
+                for transition in ('baseline','paid','paid-proxy','wear-before-root','native-preview'):
+                    rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[index]
+                    actual=row['beforeTail']['snapshot'];actual['worn']=[w for w in actual['worn'] if w['slot']!=m.SLOT]
+                    if transition!='baseline':
+                        preview=transition=='native-preview';root=transition!='wear-before-root' and not preview
+                        actual['worn'].append(dict(id=row['submitted']['id'] if preview else row['output'],kind=m.TARGET,slot=m.SLOT,
+                            root=root,sameReference=root and transition!='paid-proxy',container='root' if root and transition!='paid-proxy' else False))
+                        actual['worn'].sort(key=lambda w:w['slot'])
+                    if transition=='wear-before-root':actual['root']=[v for v in actual['root'] if v['id']!=row['output']]
+                    result=self.verify(selection,rows)
+                    with self.subTest(mode=mode,index=index,transition=transition):
+                        if transition=='native-preview' and mode=='toolkit':self.assertTrue(result['issues'])
+                        else:self.assertEqual(result['issues'],[])
+
+    def test_final_use_before_tail_rejects_unknown_cosmetic_transition_identity(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',depletion_moves=True)
+            for mutation in ('foreign-id','wrong-kind','preview-root-reference'):
+                rows=[self.evidence(case,selection) for case in selection['cases']];row=rows[0]
+                actual=row['beforeTail']['snapshot'];worn=next(w for w in actual['worn'] if w['slot']==m.SLOT)
+                if mutation=='foreign-id':worn.update(id=999,root=False,sameReference=False,container=False)
+                elif mutation=='wrong-kind':worn['kind']='Base.MakeUp_EyesShadowWhite'
+                else:worn.update(id=row['submitted']['id'],root=False,sameReference=False,container='root')
+                with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
+    def test_final_use_move_resume_writer_and_ordinary_bank_absence_remain_strict(self):
+        for mode in ('native','toolkit'):
+            selection=self.selection(mode,'mp',depletion_moves=True)
+            for mutation in ('move-order','native-order','ownership','promotion','resume','writer-admitted','writer-original','writer-proxy','ordinary-kit-false'):
+                rows=[self.evidence(case,selection) for case in selection['cases']]
+                if mutation=='move-order':rows[0]['edit']['after'].reverse()
+                elif mutation=='native-order':rows[1]['startOrder'].reverse()
+                elif mutation=='ownership':rows[0]['edit']['ownershipPreserved']=False
+                elif mutation=='promotion':rows[2]['edit']['accepted']=not rows[2]['edit']['accepted']
+                elif mutation=='resume':
+                    if mode=='toolkit':rows[2]['readerResume']['resumedPages']=97
+                    else:rows[2]['readerResume']=dict(pages=98,resumedPages=98,native='manufactured')
+                elif mutation=='writer-admitted':rows[4]['edit']['accepted']=True
+                elif mutation in ('writer-original','writer-proxy'):
+                    sock=next(v for v in rows[4]['checkpoints'][2]['client']['snapshot']['worn'] if v['slot']=='base:socks')
+                    if mutation=='writer-original':sock['id']=7
+                    else:sock['sameReference']=False
+                else:
+                    ordinary=self.selection(mode,'mp',moves=True);rows=[self.evidence(case,ordinary) for case in ordinary['cases']]
+                    rows[0]['checkpoints'][2]['client']['snapshot']['kit']=False
+                    with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(ordinary,rows)['issues'])
+                    continue
+                with self.subTest(mode=mode,mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
+
     def test_moves_selection_is_host_only_explicit_and_exclusive(self):
         for mutation in ('sp','missing','string','supply','order','subset','mods','host'):
             selection=self.selection(kind='mp',moves=True)
@@ -724,6 +884,71 @@ class MakeupEvidenceTests(unittest.TestCase):
             with self.subTest(mutation=mutation):self.assertTrue(self.verify(selection,rows)['issues'])
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_depletion_snapshot_reads_physical_membership_without_detached_uses(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/shared/QueueMakeup.lua'
+        script="""
+package.preload['Definitions/MakeUpDefinitions']=function()end
+ItemBodyLocation={MAKE_UP_FULL_FACE='face',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
+local F=assert(loadfile(arg[1]))();local live={};local root={};local worn
+local function item(id,kind)return {getID=function()return id end,getFullType=function()return kind end,getContainer=function()return root end}end
+local front,tail,output=item(2,'Base.BookCarpentry1'),item(4,'Base.BookFirstAid1'),item(3,'Base.MakeUp_Crow')
+local detached=item(1,'Base.MakeupEyeshadow');detached.getCurrentUses=function()error('detached uses must not be read')end
+local values={size=function()return #live end,get=function(_,i)return live[i+1]end}
+root.getItems=function()return values end
+root.getItemById=function(_,id)for _,value in ipairs(live)do if value:getID()==id then return value end end end
+local player={getInventory=function()return root end,getOnlineID=function()return 7 end,getAlreadyReadPages=function()return 99 end,
+ getWornItem=function(_,slot)assert(slot=='eyes');return worn end,
+ getWornItems=function()return {size=function()return worn and 1 or 0 end,get=function(_,i)
+  assert(i==0 and worn);return {getItem=function()return worn end,getLocation=function()return 'eyes'end}
+ end}end}
+local ids={case='deplete-root-earlier',actor=7,depletion=true,target='Base.MakeUp_Crow',slot='eyes',items={kit=1},
+ types={kit='Base.MakeupEyeshadow',front='Base.BookCarpentry1',tail='Base.BookFirstAid1'},
+ baseline={root={{id=1,kind='Base.MakeupEyeshadow'},{id=2,kind='Base.BookCarpentry1'},{id=4,kind='Base.BookFirstAid1'}}}}
+local state={player=player,ids=ids};live={front,output,tail};worn=output
+assert(F.depletionReady(state),'exact physical deletion and paid root/worn output were not recognized')
+local paid=F.snapshot(state);assert(paid.kit==false and #paid.root==3 and paid.worn[1].sameReference)
+live={front,tail};worn=nil
+assert(not F.depletionReady(state),'missing paid output was accepted')
+assert(not pcall(F.snapshot,state),'ordinary paid snapshot accepted missing physical output')
+local pending=F.snapshot(state,true);assert(pending.kit==false and #pending.root==2 and #pending.worn==0,'transition snapshot fabricated a consumed item/output')
+live={detached,front,output,tail};worn=output
+assert(not F.depletionReady(state),'physically retained kit was treated as deleted')
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=script,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_authority_depletion_checkpoint_waits_for_real_deletion_and_paid_output(self):
+        source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/server/ZZMakeupServer.lua'
+        script="""
+isServer=function()return true end
+local handlers={};Events={}
+for _,name in ipairs({'OnServerStarted','OnClientCommand','OnTick'})do Events[name]={Add=function(fn)handlers[name]=fn end}end
+local tile={x=10,y=20,z=0};local player={getUsername=function()return 'client1'end}
+local clock,reads,replies,prepared=0,0,0,0;local ready=false
+local paid={kit=false};getTimestampMs=function()return clock end
+sendServerCommand=function(actor,module,name,args)
+ assert(actor==player and module=='MakeupTest')
+ if name=='Prepared'then prepared=prepared+1 else assert(name=='Snapshot'and ready and args.snapshot==paid);replies=replies+1 end
+end
+package.loaded.QueueHealthEvents={encode=function()return '{}'end}
+package.loaded.QueueTestSelection={cases={'deplete-root-earlier'},options={makeup_depletion_moves=true}}
+package.loaded.QueueMakeup={validPlacement=function(v)return v==tile end,same=function(a,b)return a==b end,
+ atPlacement=function(actor,value)return actor==player and value==tile end,
+ prepare=function()return {ids={case='deplete-root-earlier',depletion=true}}end,
+ depletionReady=function()return ready end,snapshot=function()assert(ready,'authority read before exact paid proof');reads=reads+1;return paid end}
+assert(loadfile(arg[1]))()
+handlers.OnClientCommand('MakeupTest','Prepare',player,{case='deplete-root-earlier',placement=tile});handlers.OnTick()
+assert(prepared==1)
+handlers.OnClientCommand('MakeupTest','Snapshot',player,{case='deplete-root-earlier',label='after-body',sequence=1})
+handlers.OnTick();clock=500;handlers.OnTick();assert(reads==0 and replies==0,'authority predicted native removal/output')
+ready=true;clock=1000;handlers.OnTick();assert(reads==1 and replies==0)
+clock=1600;handlers.OnTick();assert(reads==2 and replies==1,'authority did not publish converged real paid state')
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=script,capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
     def test_controller_walk_constructor_does_not_expand_resolver_message_into_callback(self):
         source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/client/ZZMakeup.lua'
         text=source.read_text();start=text.index('   local function square(tile)')
@@ -800,7 +1025,7 @@ blocked=false;free=false;assert(not pcall(F.walkRoute,player,source),'occupied n
 package.preload['Definitions/MakeUpDefinitions']=function()end
 ItemBodyLocation={MAKE_UP_FULL_FACE='face',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
 local F=assert(loadfile(arg[1]))()
-assert(#F.moves==4 and #F.carriedMoves==4 and #F.worldMoves==4)
+assert(#F.moves==4 and #F.carriedMoves==4 and #F.worldMoves==4 and #F.depletionMoves==5)
 for i=2,#arg,3 do
  local case,kind,source=arg[i],arg[i+1],arg[i+2]
  assert(F.moveCase(case)and F.moveKind(case)==kind,'native move kind mapping differs')

@@ -2,6 +2,8 @@
 -- kit, bag ancestry or worn cosmetics. Read native facts, never prototypes.
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Access=require 'PZSurvivorToolkit/ItemAccess'
+local FinalUse=require 'PZSurvivorToolkit/MakeupFinalUse'
+local finalSupports=FinalUse and FinalUse.supports
 local closure=Proof.closure
 local own=Proof.own
 local Move={}
@@ -223,7 +225,8 @@ local function inspect(action,result,policy,context)
   return true
  end
  local source=kit:getContainer()
- if not leaf(kit,source)or not integer(kit:getCurrentUses())or kit:getCurrentUses()<2
+ local uses=kit:getCurrentUses()
+ if not leaf(kit,source)or not integer(uses)or uses<1
   or kit:getReplaceOnDeplete()~=nil or kit:getWeightEmpty()~=0
   or not finite(kit:getActualWeight())or kit:getActualWeight()<0 then return nil end
  local manager=managerOf()
@@ -253,6 +256,11 @@ local function inspect(action,result,policy,context)
   container=bag:getContainer()
  end
  if not reached then return nil end
+ -- B42 getUses aliases this charge counter; there is no separate stack split.
+ -- The last charge additionally needs the shared native removal/sender proof.
+ if uses==1 and(not plain(FinalUse)or FinalUse.supports~=finalSupports
+  or type(finalSupports)~='function'or not closure(finalSupports,'MakeupFinalUse.lua')
+  or not finalSupports(actor,kit))then return nil end
  addContainers(staged,source)
  if staged.knownInputs~=true then return nil end
  local output=manager:FindItem(action.type)

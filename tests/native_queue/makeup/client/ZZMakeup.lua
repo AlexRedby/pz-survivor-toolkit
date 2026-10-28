@@ -5,7 +5,7 @@ require 'TimedActions/ISApplyMakeUp'
 require 'TimedActions/ISWearClothing'
 require 'TimedActions/WalkToTimedAction'
 local F=require 'QueueMakeup';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
-local moves=config.options and(config.options.makeup_moves==true or config.options.makeup_carried_moves==true or config.options.makeup_world_moves==true)
+local moves=config.options and(config.options.makeup_moves==true or config.options.makeup_carried_moves==true or config.options.makeup_world_moves==true or config.options.makeup_depletion_moves==true)
 local Proof=require 'PZSurvivorToolkit/SourceProof';local T=PZSurvivorToolkit;local native=config.mode=='native'
 local entered,ready,done=false,false,false
 local phase,index,since='prepare',1,0
@@ -58,7 +58,7 @@ local function now()return getTimestampMs()end
 local function case()return config.cases[index]end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
-local function snapshot()return F.snapshot(state)end
+local function snapshot(transition)return F.snapshot(state,transition)end
 local function raw(marker,row)print('[MAKEUP_TEST] '..marker..' '..JSON.encode(row))end
 local function emit(row)row.suite,row.kind,row.mode,row.actor='makeup',config.kind,config.mode,'client1';JSON.emit(row)end
 local function preview()
@@ -195,7 +195,11 @@ local function afterBody()
   or not F.atPlacement(state.player,ids.walk.origin))then bodyQuiet=nil;return end
  if not empty()and queue():indexOf(body)~=-1 then bodyQuiet=nil;return end
  local cancelled=F.cancel(case())and not native
- if not cancelled and (not completed()or snapshot().kit.uses~=ids.kitUses-1)then return end
+ if not cancelled then
+  if not completed()then return end
+  if ids.depletion then if not F.depletionReady(state)then return end
+  elseif snapshot().kit.uses~=ids.kitUses-1 then return end
+ end
  bodyQuiet=bodyQuiet or now();if now()-bodyQuiet<750 then return end
  checkpoint('after-body',case()=='apply-while-preview'and'close-overlap'or'final-drain')
 end
@@ -284,7 +288,7 @@ Events.OnTick.Add(function()
      end
      if ids and(ids.supply or moves)and action.Type=='ISInventoryTransferAction'then transferStarts=transferStarts+1 end
      if action==body then bodyRecord.starts=bodyRecord.starts+1;assert(bodyRecord.starts==1,'native makeup started twice')end
-     if action==tail then assert(not beforeTail,'tail began twice');beforeTail={at=now(),snapshot=snapshot()};raw('BEFORE_TAIL',{case=case(),evidence=beforeTail})end
+     if action==tail then assert(not beforeTail,'tail began twice');beforeTail={at=now(),snapshot=snapshot(ids.depletion==true)};raw('BEFORE_TAIL',{case=case(),evidence=beforeTail})end
     end),
     begin=observe(function(action,step)
      local walk=M.walkPart(action);if walk then

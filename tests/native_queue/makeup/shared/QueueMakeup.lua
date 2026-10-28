@@ -13,15 +13,20 @@ end
 F.moves={'move-earlier','move-later','move-promote','move-deny-writer'}
 F.carriedMoves={'move-worn-earlier','move-nested-later','move-nested-promote','move-nested-deny-writer'}
 F.worldMoves={'move-world-container-earlier','move-world-bag-later','move-world-container-promote','move-world-bag-deny-walk'}
+F.depletionMoves={'deplete-root-earlier','deplete-nested-later','deplete-world-container-promote','deplete-world-bag-later','deplete-root-deny-writer'}
 local moveSpecs={
  ['move-earlier']={kind='earlier'},['move-later']={kind='later'},['move-promote']={kind='promote'},['move-deny-writer']={kind='deny-writer'},
  ['move-worn-earlier']={kind='earlier',supply='worn-bag'},['move-nested-later']={kind='later',supply='nested-bag'},
  ['move-nested-promote']={kind='promote',supply='nested-bag'},['move-nested-deny-writer']={kind='deny-writer',supply='nested-bag'},
  ['move-world-container-earlier']={kind='earlier',supply='world-container'},['move-world-bag-later']={kind='later',supply='world-bag'},
- ['move-world-container-promote']={kind='promote',supply='world-container'},['move-world-bag-deny-walk']={kind='deny-walk',supply='world-bag'}}
+ ['move-world-container-promote']={kind='promote',supply='world-container'},['move-world-bag-deny-walk']={kind='deny-walk',supply='world-bag'},
+ ['deplete-root-earlier']={kind='earlier',depletion=true},['deplete-nested-later']={kind='later',supply='nested-bag',depletion=true},
+ ['deplete-world-container-promote']={kind='promote',supply='world-container',depletion=true},['deplete-world-bag-later']={kind='later',supply='world-bag',depletion=true},
+ ['deplete-root-deny-writer']={kind='deny-writer',depletion=true}}
 function F.moveCase(case)return moveSpecs[case]~=nil end
 function F.moveKind(case)return moveSpecs[case]and moveSpecs[case].kind end
 function F.moveSupply(case)return moveSpecs[case]and moveSpecs[case].supply end
+function F.depletionCase(case)return moveSpecs[case]and moveSpecs[case].depletion==true or false end
 function F.placed(case)return F.supplyCase(case)or F.moveCase(case)end
 F.supplySP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag'}
 F.supplyMP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag','cancel-nested-bag','cancel-world-container'}
@@ -161,7 +166,27 @@ function F.definition(kind)
  for _,v in ipairs(MakeUpDefinitions.makeup)do if v.item==kind then return v end end
  error('native makeup definition missing '..tostring(kind))
 end
-function F.snapshot(s)
+-- Read physical membership and the newly paid root/worn object. A detached
+-- client kit reference can retain stale uses, so it is never queried here.
+function F.depletionReady(s)
+ if not s.ids.depletion or not s.ids.baseline then return false end
+ local kit,source=F.kit(s);if kit or not source then return false end
+ local root=s.player:getInventory();if direct(root,s.ids.items.kit)then return false end
+ if s.ids.supply then
+  local _,actual=F.supplyState(s.player,s.ids.supply);if not actual then return false end
+  for _,row in ipairs(actual.items)do if row.id==s.ids.items.kit then return false end end
+  for _,ancestor in ipairs(actual.ancestors)do for _,row in ipairs(ancestor.items)do if row.id==s.ids.items.kit then return false end end end
+ end
+ local initial={};for _,row in ipairs(s.ids.baseline.root)do initial[row.id]=true end
+ local output
+ for i=0,root:getItems():size()-1 do local item=root:getItems():get(i)
+  if not initial[item:getID()]then
+   if output or item:getFullType()~=s.ids.target then return false end;output=item
+  end
+ end
+ return output~=nil and output:getContainer()==root and s.player:getWornItem(ItemBodyLocation.MAKE_UP_EYES)==output
+end
+function F.snapshot(s,transition)
  local p,root=s.player,s.player:getInventory();local items,worn={},{}
  local values=root:getItems()
  for i=0,values:size()-1 do local item=values:get(i);items[#items+1]={id=item:getID(),kind=item:getFullType()}end
@@ -173,12 +198,13 @@ function F.snapshot(s)
    sameReference=found==item,container=item:getContainer()==root and'root'or false}
  end
  table.sort(worn,function(a,b)return a.slot<b.slot end)
- local kit,source=F.kit(s);assert(kit,'exact native makeup kit disappeared')
- assert(kit:getFullType()==s.ids.types.kit and kit:getContainer()==source,'makeup kit identity/topology changed')
+ local kit,source=F.kit(s);assert(source,'exact native makeup source disappeared')
+ if kit then assert(kit:getFullType()==s.ids.types.kit and kit:getContainer()==source,'makeup kit identity/topology changed')
+ else assert(s.ids.depletion and(transition==true or F.depletionReady(s)),'exact native makeup kit disappeared without paid depletion proof')end
  local supplyState
  if s.ids.supply then local ignored;ignored,supplyState=F.supplyState(p,s.ids.supply);assert(ignored==source,'supply identity changed')end
  local value= {case=s.ids.case,actor=p:getOnlineID(),root=items,worn=worn,
-  kit={id=kit:getID(),kind=kit:getFullType(),uses=kit:getCurrentUses(),maxUses=kit:getMaxUses(),root=source==root},
+  kit=kit and {id=kit:getID(),kind=kit:getFullType(),uses=kit:getCurrentUses(),maxUses=kit:getMaxUses(),root=source==root}or false,
   frontPages=p:getAlreadyReadPages(s.ids.types.front),tailPages=p:getAlreadyReadPages(s.ids.types.tail)}
  if supplyState then value.supply=supplyState end
  if s.ids.move then value.middlePages=p:getAlreadyReadPages(s.ids.types.middle)end
@@ -235,6 +261,7 @@ function F.prepare(player,case,previous,placement)
  local ids={case=case,actor=player:getOnlineID(),items={},types={},target='Base.MakeUp_Crow',alternate='Base.MakeUp_RedStripes2',
   different='Base.MakeUp_EyesShadowWhite',oldType='Base.MakeUp_RedStripes1',slot=tostring(ItemBodyLocation.MAKE_UP_EYES),
   otherSlot=tostring(ItemBodyLocation.MAKE_UP_EYES_SHADOW),producer='ISMakeUpUI.onApplyMakeUp',duration=1}
+ if F.depletionCase(case)then ids.depletion=true end
  if F.moveCase(case)then ids.move=true;ids.placement={x=placement.x,y=placement.y,z=placement.z}end
  local function seed(name,kind,destination)
   local item=assert((destination or root):AddItem(kind),'native fixture item absent '..kind);ids.items[name]=item:getID();ids.types[name]=kind;return item
@@ -248,7 +275,7 @@ function F.prepare(player,case,previous,placement)
  local kit=seed('kit','Base.MakeupEyeshadow',source)
  if ids.supply then assert(source:AddItem('Base.Pencil'),'native source sentinel missing')end
  assert(kit:getMakeUpType()=='Eyes'and kit:getMaxUses()==5,'native Eyes supply definition changed')
- kit:setCurrentUses(kit:getMaxUses());ids.kitUses=kit:getCurrentUses();ids.kitType=kit:getMakeUpType()
+ kit:setCurrentUses(ids.depletion and 1 or kit:getMaxUses());ids.kitUses=kit:getCurrentUses();ids.kitType=kit:getMakeUpType()
  for _,kind in ipairs({ids.target,ids.alternate,ids.different,ids.oldType})do
   local def=F.definition(kind);local script=assert(getScriptManager():FindItem(kind))
   assert(def.makeuptypes[ids.kitType]and script:getLuaCreate()==nil and script:getItemConfig()==nil,'unreviewed native cosmetic producer')
@@ -259,7 +286,7 @@ function F.prepare(player,case,previous,placement)
   and getScriptManager():FindItem(ids.different):getBodyLocation()==ItemBodyLocation.MAKE_UP_EYES_SHADOW,'native cosmetic slots changed')
  for _,name in ipairs(ids.move and {'front','middle','tail'}or {'front','tail'})do
   local book=seed(name,name=='front'and'Base.BookCarpentry1'or name=='middle'and'Base.BookCooking1'or'Base.BookFirstAid1')
-  ids[name..'Total']=book:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and(ids.move and not F.moveSupply(case)and 8 or 3)or 1)
+  ids[name..'Total']=book:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and(ids.move and not ids.depletion and not F.moveSupply(case)and 8 or 3)or 1)
   book:setAlreadyReadPages(ids[name..'Initial']);player:setAlreadyReadPages(book:getFullType(),ids[name..'Initial'])
  end
  if F.moveKind(case)=='deny-writer'then seed('writer','Base.Socks_Ankle')end

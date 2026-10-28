@@ -38,6 +38,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.317
+
+- **Fixed:** In Host, consuming the final use of a reviewed makeup kit now sends its native removal to the client before detaching it from its container. Ordinary uses retain their native cost and packet path.
+- **Changed:** Pending final-use makeup actions can move around independent work when the exact unheld kit is in the character's inventory or carried bags, or directly in a supported adjacent crate or ground bag. Shared supplies, appearance changes, allocated actions and uncertain replacement/removal paths remain protected; consumed space is not credited in advance.
+
 ### 0.1.316
 
 - Allow moving supported unstarted Host makeup with a kit in adjacent ordinary storage or a ground bag. Track exact world ownership, access, position and nearby blockers; preserve native consumption and protect movement or access-changing dependencies.

@@ -1,10 +1,13 @@
 -- B42 complete sends the kit in place of the newly added cosmetic. Preserve
--- its body and packet order, correcting only that argument for reviewed inputs.
+-- its body and packet order, correcting that argument and enabling the native
+-- final-use removal notification for reviewed sources.
 if not isServer() or isClient() then return end
 require 'TimedActions/ISApplyMakeUp'
 require 'Definitions/MakeUpDefinitions'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Access=require 'PZSurvivorToolkit/ItemAccess'
+local FinalUse=require 'PZSurvivorToolkit/MakeupFinalUse'
+local finalSupports=FinalUse and FinalUse.supports
 local matches,closure=Proof.matches,Proof.closure
 local owner,locations=ISApplyMakeUp,ItemBodyLocation
 local globals={}
@@ -125,7 +128,16 @@ local function eligible(action)
   and script:getLuaCreate()==nil and script:getItemConfigKey()==nil and script:getItemConfig()==nil
   and supported(script:getBodyLocation())
 end
--- Corrected native body: only the sendAddItemToContainer item argument differs.
+local function notifyDepletion(action)
+ -- Recheck immediately before Use: factory/wear events may have changed the
+ -- item, source or callbacks since entry. The native third flag sends removal
+ -- before detaching the item; sendItemStats afterwards cannot find that source.
+ if type(FinalUse)~='table'or getmetatable(FinalUse)or FinalUse.supports~=finalSupports
+  or type(finalSupports)~='function'or not closure(finalSupports,'MakeupFinalUse.lua')then return false end
+ local ok,allowed=pcall(function()return eligible(action)and finalSupports(action.character,action.item)end)
+ return ok and allowed==true
+end
+-- Native body with the reviewed output argument and final-use notification.
 local function correctedComplete(self)
     -- checking
     local canUse = false
@@ -155,7 +167,11 @@ local function correctedComplete(self)
     self.character:setWornItem(makeUpSelected:getBodyLocation(), makeUpSelected);
     sendClothing(self.character,makeUpSelected:getBodyLocation(), makeUpSelected);
 
-    self.item:Use()
+    if notifyDepletion(self) then
+        self.item:Use(false, false, true)
+    else
+        self.item:Use()
+    end
     sendItemStats(self.item)
     return true
 end
