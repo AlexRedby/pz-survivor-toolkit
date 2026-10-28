@@ -1,9 +1,3 @@
-# Base walking stutter investigation
-
-- [ ] Establish a supported discovery/presentation boundary before a broader incremental container-list implementation. CleanUI detaches/pools before `begin`, private helpers bind buttons, and BC can synchronously reenter during `OnButtonsAdded`; dirty flags, counts and IDs cannot replace live discovery. Require an explicit integration contract or separately qualified owned window, with matching reach/access, exploration, locks, ground/nested bags, vehicle access, callback order and selection. Do not pursue setter-only caching: the opt-in `inventory_button_checks` native experiment removes repeated coordinate writes without a complete-callback speedup. Require a demonstrated native benefit before delivery, including movement, reentry, layout and reopen qualification.
-
-- [ ] Verify walking responsiveness with Toolkit's NewMusic conversion control on the weaker gameplay client with ordinary Highlight disabled and its actual Wishlist settings. Use `tests/native_queue/contributions/base-walking-profile` to compare discovery cost and full-container scans after movement against matching controls. Establish the client's Better Containers nested settings and distinguish local callback cost, Host networking and perceived stutter; a reduction in discovery cost alone does not establish the complete cause or a fix on the remote client.
-
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
