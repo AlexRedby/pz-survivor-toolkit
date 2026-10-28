@@ -149,8 +149,11 @@ function Execution.matches(action,reference)
 end
 executionMatches=Execution.matches
 function Execution.inspect(action)
-    if not returnShape(action)or not enabled()or not Execution.matches(action)or not guarded(action)
-        or not accepted(dependencies.methods.returnExecutionSupported,action,Execution.matches)then return end
+    -- Private earned-loan eligibility rejects ordinary/ineligible returns before
+    -- endpoint and native source proofs; no preview can create that eligibility.
+    if not returnShape(action)or not enabled()or not guarded(action)
+        or not accepted(dependencies.methods.returnExecutionSupported,action,Execution.matches)
+        or not Execution.matches(action)then return end
     local actor=action.character
     local queue=ISTimedActionQueue.queues[actor]
     if not live(queue,actor)then return end

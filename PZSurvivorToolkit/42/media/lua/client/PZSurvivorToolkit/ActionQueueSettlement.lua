@@ -6,6 +6,7 @@ local providers, byId = {}, {}
 local executionProof = require "PZSurvivorToolkit/SourceProof"
 local returnFailures, failureSerial = {}, 0
 local MAX_RETURN_FAILURES = 32
+local MAX_EXECUTION_MEMBERS, MAX_EXECUTION_BORROWING_WORK = 32, 128
 local cleanupMarker = {}
 
 local operationMarker, stepMarker = {}, {}
@@ -890,15 +891,24 @@ end
 -- The exact native pickup proves its original owner without relying on the
 -- older enqueue-only pickup map. Competing task claims still prevent exclusive
 -- cleanup; this classification grants no operation edit permission.
-local function restoringBorrowing(scope, task, candidate)
+-- Execution probes have a small private-ledger work budget. Legacy explicit
+-- waiver/cancellation proofs retain their existing path when no budget is passed.
+local function takeExecutionWork(budget)
+    if not budget then return true end
+    budget.remaining = budget.remaining - 1
+    return budget.remaining >= 0
+end
+local function restoringBorrowing(scope, task, candidate, budget)
     local present = false
     for action in pairs(task.actions or {}) do
+        if not takeExecutionWork(budget) then return false end
         present = true
         local record = operation(scope.character, action.toolkitQueueOperation)
         local step = record and record.actions[action]
         if not step or not step.required or step.phase ~= "cleanup" then return false end
         local owned = false
         for _, previous in ipairs(step.prerequisites or {}) do
+            if not takeExecutionWork(budget) then return false end
             if previous == candidate.step and previous.state == "earned" then owned = true; break end
         end
         if not owned then return false end
@@ -906,14 +916,15 @@ local function restoringBorrowing(scope, task, candidate)
     return present
 end
 
-sharedBorrowing = function(scope, candidate)
+sharedBorrowing = function(scope, candidate, budget)
     if not scope.tasks[candidate.owner] then return true end
     for token, task in pairs(scope.tasks) do
+        if not takeExecutionWork(budget) then return true end
         local pickup = task.pickups[candidate.id]
         if pickup and (pickup.ambiguous or pickup.fullType ~= candidate.fullType
             or pickup.container ~= candidate.source or token ~= candidate.owner) then return true end
         if token ~= candidate.owner and claimedInput(scope, task, candidate.id)
-            and not restoringBorrowing(scope, task, candidate) then return true end
+            and not restoringBorrowing(scope, task, candidate, budget) then return true end
     end
     return false
 end
@@ -1038,7 +1049,7 @@ function Settlement.poll(scope) pollPickups(scope) end
 -- the body that still uses it. A sealed, revalidated capability retires only the
 -- exact earned loan; its historical ID still fences enqueue-only return hints.
 local returnWaiverMarker = {}
-local function returnWaiverCandidate(action, guard, allowCurrent)
+local function returnWaiverCandidate(action, guard, allowCurrent, budget)
     local record = action and operation(action.character, action.toolkitQueueOperation)
     local queue, token = record and record.queue, action and action.toolkitQueueOperation
     local step = record and record.actions[action]
@@ -1050,16 +1061,17 @@ local function returnWaiverCandidate(action, guard, allowCurrent)
         or action.action or action.started or step.started or step.state ~= "pending" or step.required
         or Settlement.isCleanup(action) or requiredCleanup(action) or step.returning
         or action.Type ~= "ISInventoryTransferAction" or not action.allowMissingItems
-        or not policy or type(policy.matchesNative) ~= "function" or not policy.matchesNative(action)
-        or type(guard) ~= "function" or not queued(queue, action)
+        or not policy or type(policy.matchesNative) ~= "function"
+        or type(guard) ~= "function"
         or getSpecificPlayer(record.character:getPlayerNum()) ~= record.character then return nil, "operation" end
     local inventory = record.character:getInventory()
     local item = action.item
-    if not item or action.srcContainer ~= inventory or action.destContainer == inventory
-        or item:getContainer() ~= inventory or inventory:getItemById(item:getID()) ~= item
-        or item:getIsCraftingConsumed() then return nil, "item_identity" end
+    if not instanceof(item, "InventoryItem") or action.srcContainer ~= inventory or action.destContainer == inventory then
+        return nil, "item_identity"
+    end
     local found, foundScope
     for _, binding in ipairs(record.borrowings) do
+        if not takeExecutionWork(budget) then return nil, "work_limit" end
         local candidate, scope = binding.candidate, binding.scope
         if sameMember(item, candidate) then
             -- Even another unresolved episode for this ID prevents choosing by
@@ -1068,13 +1080,17 @@ local function returnWaiverCandidate(action, guard, allowCurrent)
                 if found or candidate.owner ~= token or not borrowingLive(scope)
                     or candidate.phase ~= "active" or candidate.ambiguous or not candidate.step
                     or candidate.step.state ~= "earned" or candidate.returning or candidate.plannedReturn
-                    or sharedBorrowing(scope, candidate) or candidate.source ~= action.destContainer
+                    or sharedBorrowing(scope, candidate, budget) or candidate.source ~= action.destContainer
                     or candidate.destination ~= inventory then return nil, "borrowing_state" end
                 found, foundScope = candidate, scope
             end
         end
     end
     if not found then return nil, "borrowing_missing" end
+    if not policy.matchesNative(action) then return nil, "operation" end
+    if item:getContainer() ~= inventory or inventory:getItemById(item:getID()) ~= item
+        or item:getIsCraftingConsumed() then return nil, "item_identity" end
+    if not queued(queue, action) then return nil, "operation" end
     local ok, valid = pcall(guard, action, {id = found.id, fullType = found.fullType})
     if not ok or valid ~= true then return nil, "native_guard" end
     return found, foundScope, record
@@ -1609,27 +1625,41 @@ local function executionCandidate(action, guard)
     local record = operation(action.character, action.toolkitQueueOperation)
     local queue = record and record.queue
     local step = record and record.actions[action]
-    if not step or not queue or not queued(queue, action) or not queue.current
+    -- This first slice is explicitly unsupported above 32 queue members. Deny
+    -- before membership scans, user contracts or private-ledger traversal.
+    if not step or not queue then return end
+    if #queue.queue > MAX_EXECUTION_MEMBERS then return nil, "unsupported_queue_size" end
+    if not queue.current
         or queue.queue[1] ~= queue.current or queue.toolkitCancel or queue.toolkitGroupCancel
-        or getSpecificPlayer(action.character:getPlayerNum()) ~= action.character
-        or not guard(action) or not independentReturnTail(queue, action) then return end
+        or getSpecificPlayer(action.character:getPlayerNum()) ~= action.character then return end
     local bucket = returnFailures[action.character]
     if bucket and bucket.count >= MAX_RETURN_FAILURES and not (step.returning and step.returning.failure) then return end
-    local planned = step.returning
+    local candidate, scope, owner
+    local planned, budget = step.returning, {remaining = MAX_EXECUTION_BORROWING_WORK}
     if planned then
-        local candidate, scope = planned.candidate, planned.scope
+        candidate, scope = planned.candidate, planned.scope
         if planned.direction == "pickup" or not candidate or not scope or not planned.waivable
             or candidate.phase ~= "active" or candidate.plannedReturn ~= action or candidate.ambiguous
             or not candidate.step or candidate.step.state ~= "earned" or not borrowingLive(scope)
-            or sharedBorrowing(scope, candidate) or not sameMember(action.item, planned.item)
+            or not sameMember(action.item, planned.item)
             or action.srcContainer ~= planned.source or action.destContainer ~= planned.destination then return end
-        return candidate, scope, record, step
+        if sharedBorrowing(scope, candidate, budget) then
+            return nil, budget.remaining < 0 and "unsupported_borrowing_work" or nil
+        end
+        if not queued(queue, action) then return end
+        owner = record
+    else
+        if #record.borrowings == 0 then return end
+        candidate, scope, owner = returnWaiverCandidate(action, guard, true, budget)
+        if not candidate then return nil, budget.remaining < 0 and "unsupported_borrowing_work" or nil end
     end
-    local candidate, scope, owner = returnWaiverCandidate(action, guard, true)
-    return candidate, scope, owner, candidate and step or nil
+    -- Only a private earned candidate may pay for suffix contract inspection.
+    if not guard(action) or not independentReturnTail(queue, action) then return end
+    return candidate, scope, owner, step
 end
 function Settlement.returnExecutionSupported(action, guard)
-    return executionCandidate(action, guard) ~= nil
+    local candidate, detail = executionCandidate(action, guard)
+    return candidate ~= nil, not candidate and detail or nil
 end
 function Settlement.authorizeReturnRetention(action, guard)
     local candidate = executionCandidate(action, guard)

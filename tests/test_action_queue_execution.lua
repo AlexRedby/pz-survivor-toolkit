@@ -401,3 +401,15 @@ for _,event in ipairs({'start','death'})do
     assert(not s.resets,'world/death bookkeeping must not mutate Settlement receipts')
 end
 print('Action execution: source-only descriptors, earned single returns, exact episodes, admission/reject/unmoved settlement, UI debts and independent reset passed.')
+
+-- A failed private eligibility proof must precede endpoint/native proof work.
+do
+    local s=setup();assert(s.execution.enqueued(s.action))
+    s.earned=false
+    local callbacks=0
+    s.action.destContainer.getAcceptItemFunction=function()
+        callbacks=callbacks+1;error('ineligible preview must not inspect endpoint callbacks')
+    end
+    assert(not s.execution.inspect(s.action)and callbacks==0,
+        'private earned-loan eligibility must precede endpoint/source inspection')
+end

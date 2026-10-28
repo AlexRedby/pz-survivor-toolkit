@@ -74,7 +74,7 @@ end
 function F.prepare(player,case,previous)
  assert(not isClient(),'book controls scene requires authority')
  if previous then F.dispose(previous)end
- local source,control=case:match('^(.-)/(.+)$');local base=control and control:gsub('%-capacity%-lost$','');assert(source and(base=='header-cancel'or base=='reader-child-cancel'or base=='move-volume'or base=='move-equip'or base=='return-child-cancel'),'unknown book controls case')
+ local source,control=case:match('^(.-)%.(.+)$');local base=control and control:gsub('%-capacity%-lost$','');assert(source and(base=='header-cancel'or base=='reader-child-cancel'or base=='move-volume'or base=='move-equip'or base=='return-child-cancel'),'unknown book controls case')
  assert((base~='return-child-cancel'and control==base)or source~='root','a root book has no native borrowed return')
  assert(control==base or control==base..'-capacity-lost'and(base=='header-cancel'or base=='move-volume'),'unknown capacity control')
  player:setPrimaryHandItem(nil);player:setSecondaryHandItem(nil)

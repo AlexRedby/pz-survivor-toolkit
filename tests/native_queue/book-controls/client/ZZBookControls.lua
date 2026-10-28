@@ -235,13 +235,15 @@ end
 -- millisecond clock is deliberately reported as coarse; no render/Host-contention
 -- or full-queue regression claim follows from these tiny scenario timings.
 local function performanceAtBoundary()
- local q=queue();local before=F.snapshot(state);local actions={}
- for i,action in ipairs(q.queue)do actions[i]={action=action,native=action.action,token=action.toolkitQueueOperation}end
+ local q=queue();local list=q.queue;local before=F.snapshot(state);local actions,originalSet={},{}
+ local radioClass,radioConstructor=ISRadioAction,ISRadioAction.new
+ for i,action in ipairs(list)do actions[i]={action=action,native=action.action,token=action.toolkitQueueOperation};originalSet[action]=true end
  local current,generation,cancel,groupCancel=q.current,q.toolkitOperationGeneration,q.toolkitCancel,q.toolkitGroupCancel
+ local resumeIntent,outcomeWait,stopIntent=q.toolkitResume,q.toolkitOutcomeWait,q.toolkitStopIntent
  local panel=T.ActionQueuePanel:new(-1000,-1000,460,640)
  panel.queue,panel.playerNum=q,state.player:getPlayerNum();panel:initialise();panel:addToUIManager()
  local keep=control()=='return-child-cancel';local target=front
- if keep then for _,action in ipairs(q.queue)do if role(action)=='return'and action.toolkitQueueOperation==front.toolkitQueueOperation then target=action;break end end end
+ if keep then for _,action in ipairs(list)do if role(action)=='return'and action.toolkitQueueOperation==front.toolkitQueueOperation then target=action;break end end end
  local whole=not keep and control()~='reader-child-cancel'and ids.source~='root'
  local moving=control()=='move-equip'and equip or volume
  local entries={
@@ -251,23 +253,60 @@ local function performanceAtBoundary()
   {name='previewCancel',kind='advisory',call=function()T.ActionQueuePolicy.previewCancel(q,target,whole)end},
   {name='panelUpdate',kind='advisory',call=function()panel:update()end},
  }
- performance={case=case(),timer='getTimestampMs',units='ms',coarse=true,queueEnabled=not native,queueCount=#q.queue,warmup=3,samples=20,
-  limits='First-use is first fixture call, not process-cold. Tiny real producer queue only; policy preview cost excludes hover cache/rendering; no baseline regression, 200-step, weaker-client or Host contention qualification.',metrics={}}
- for _,entry in ipairs(entries)do
-  local function sample()local started=now();entry.call();local elapsed=now()-started;assert(elapsed>=0,'benchmark wall clock moved backwards');return elapsed end
-  local row={name=entry.name,kind=entry.kind,firstUseMs=sample(),rawMs={}}
-  for i=1,performance.warmup do entry.call()end
-  for i=1,performance.samples do row.rawMs[i]=sample()end
-  local sorted={};for i,value in ipairs(row.rawMs)do sorted[i]=value end;table.sort(sorted)
-  row.p95Ms=sorted[math.ceil(#sorted*.95)];row.p99Ms=sorted[math.ceil(#sorted*.99)]
-  row.p95BudgetMs=entry.kind=='authoritative'and 2 or 1;row.p99BudgetMs=entry.kind=='authoritative'and 4 or 2
-  row.passed=row.p95Ms<=row.p95BudgetMs and row.p99Ms<=row.p99BudgetMs
-  performance.metrics[#performance.metrics+1]=row
+ local function input(count,limits)
+  return{case=case(),timer='getTimestampMs',units='ms',coarse=true,queueEnabled=not native,queueCount=count,warmup=3,samples=20,limits=limits,metrics={}}
  end
+ local function measure(result)
+  for _,entry in ipairs(entries)do
+   local function sample()local started=now();entry.call();local elapsed=now()-started;assert(elapsed>=0,'benchmark wall clock moved backwards');return elapsed end
+   local row={name=entry.name,kind=entry.kind,firstUseMs=sample(),rawMs={}}
+   for i=1,result.warmup do entry.call()end
+   for i=1,result.samples do row.rawMs[i]=sample()end
+   local sorted={};for i,value in ipairs(row.rawMs)do sorted[i]=value end;table.sort(sorted)
+   row.p95Ms=sorted[math.ceil(#sorted*.95)];row.p99Ms=sorted[math.ceil(#sorted*.99)]
+   row.p95BudgetMs=entry.kind=='authoritative'and 2 or 1;row.p99BudgetMs=entry.kind=='authoritative'and 4 or 2
+   row.passed=row.p95Ms<=row.p95BudgetMs and row.p99Ms<=row.p99BudgetMs
+   result.metrics[#result.metrics+1]=row
+  end
+ end
+ local private,privateSet={},{}
+ local ok,problem=pcall(function()
+  assert(#actions<=32,'fixture exceeds the supported32-member probe')
+  performance=input(#actions,'First-use is first fixture call, not process-cold. Tiny real producer queue only; preview excludes hover cache/rendering; no baseline regression, weaker-client or Host contention qualification.')
+  measure(performance)
+  local probe=input(32,'Synchronous temporary constructor-input probe only, not32-step gameplay. No native enqueue, validity/start/effects or retention-intent publication; not128-borrowing or Host-contention qualification.')
+  probe.source='fixture-temporary-native-constructors';probe.originalQueueCount=#actions
+  probe.constructor='ISRadioAction.new';probe.nativeDuration=30;probe.nativeConstructorProof=Proof.closure(radioConstructor,'ISRadioAction.lua');probe.temporary={}
+  assert(probe.nativeConstructorProof,'temporary constructor source changed')
+  for index=#actions+1,32 do
+   assert(ISRadioAction==radioClass and radioClass.new==radioConstructor,'native constructor binding changed')
+   local action=radioConstructor(radioClass,'SetVolume',state.player,state.tv,.25)
+   assert(not originalSet[action]and not privateSet[action],'constructor reused an existing action table');privateSet[action]=true
+   assert(action.Type=='ISRadioAction'and action.character==state.player and action.device==state.tv and action.deviceData==state.data
+    and action.mode=='SetVolume'and action.secondaryItem==.25 and action.maxTime==30 and not action.action and not action.started,'temporary native constructor changed')
+   -- These private grouping tokens are diagnostic metadata only. Do not call
+   -- Operations.run/add/enqueued or publish an execution/retention capability.
+   action.toolkitQueueOperation={};private[#private+1]=action;list[index]=action
+   probe.temporary[#probe.temporary+1]={actionRef=ref(action),type=action.Type,mode=action.mode,duration=action.maxTime,
+    nativeRef=false,started=false,unexecuted=true,intentPublished=false}
+  end
+  measure(probe);performance.probe32=probe
+ end)
+ -- This suffix is never handed to a native queue tick: restore synchronously,
+ -- even if construction/inspection/projection failed, without replacing tables.
+ local unexecuted=true
+ for _,action in ipairs(private)do if action.action or action.started then unexecuted=false end end
+ for index=#actions+1,32 do list[index]=nil end
  panel:removeFromUIManager()
- assert(q.current==current and q.toolkitOperationGeneration==generation and q.toolkitCancel==cancel and q.toolkitGroupCancel==groupCancel and #q.queue==#actions,'profiling changed queue ownership')
- for i,entry in ipairs(actions)do assert(q.queue[i]==entry.action and entry.action.action==entry.native and entry.action.toolkitQueueOperation==entry.token,'profiling changed an action/native/operation')end
- assert(F.same(before,F.snapshot(state)),'profiling changed item/equipment/page effects');performance.readOnly=true
+ assert(q.queue==list and q.current==current and q.toolkitOperationGeneration==generation and q.toolkitCancel==cancel and q.toolkitGroupCancel==groupCancel
+  and q.toolkitResume==resumeIntent and q.toolkitOutcomeWait==outcomeWait and q.toolkitStopIntent==stopIntent and #list==#actions,'profiling changed queue ownership/intent')
+ for i,entry in ipairs(actions)do assert(list[i]==entry.action and entry.action.action==entry.native and entry.action.toolkitQueueOperation==entry.token,'profiling changed an original action/native/operation')end
+ assert(unexecuted,'temporary constructor acquired a native execution')
+ assert(ISRadioAction==radioClass and radioClass.new==radioConstructor,'profiling changed native constructor identity')
+ assert(F.same(before,F.snapshot(state)),'profiling changed item/equipment/page effects')
+ assert(ok,tostring(problem))
+ performance.readOnly=true;performance.probe32.readOnly=true
+ performance.probe32.restored=true;performance.probe32.queueIdentityUnchanged=true;performance.probe32.originalStateUnchanged=true
  raw('PERFORMANCE',performance)
 end
 local function atBoundary()
@@ -332,7 +371,9 @@ local function keepBlocked()
 end
 local function finish()
  local actual=F.snapshot(state)
- if not failure and performance then for _,metric in ipairs(performance.metrics)do if not metric.passed then failure='frozen timing budget exceeded: '..metric.name;break end end end
+ if not failure and performance then
+  for _,result in ipairs({performance,performance.probe32})do for _,metric in ipairs(result.metrics)do if not metric.passed then failure='frozen timing budget exceeded: '..result.queueCount..'/'..metric.name;break end end end
+ end
  if not failure then
   local expected=F.expected(state,boundary,native)
   if not F.same(actual,expected)or not F.same(authorityFinal,expected)then failure='native final effect/inventory/Pen intent differs from exact requested result' end

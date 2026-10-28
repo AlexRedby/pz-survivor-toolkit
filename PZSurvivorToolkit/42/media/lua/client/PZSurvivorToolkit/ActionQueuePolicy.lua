@@ -1780,7 +1780,15 @@ Policy.operationItems = operationItems
 -- Failure isolation never guesses that an unknown or resource-dependent suffix
 -- is independent. Capacity-sharing future transfers remain on their native path
 -- until their own admission/outcome contracts are migrated. No inventory scan.
+local MAX_RETURN_EXECUTION_MEMBERS = 32
+local returnFailureSuffix = {ISReadABook = true, ISWalkToTimedAction = true,
+    ISWalkToTimedActionF = true, ISPathFindAction = true, ISEquipWeaponAction = true, ISUnequipAction = true,
+    ISRadioAction = true}
 function Policy.returnFailureIndependent(queue, action)
+    -- Unsupported is a closed result, never permission on budget exhaustion.
+    -- The first slice intentionally has no large-queue or recipe-input forecast.
+    if not queue or #queue.queue > MAX_RETURN_EXECUTION_MEMBERS then return false, "unsupported_queue_size" end
+    if not targetCheckersUnchanged() then return false, "unsupported_target_checker" end
     local index = queue and queue:indexOf(action)
     if not index or index < 1 then return false end
     local context = {contracts = {}, items = {}, executionProbe = true}
@@ -1791,8 +1799,13 @@ function Policy.returnFailureIndependent(queue, action)
     own.positions = nil
     for i = index + 1, #queue.queue do
         local other = queue.queue[i]
-        if other.Type == "ISInventoryTransferAction" or other.Type == "ISCartTransferAction"
-            or other._isAddingActions or other.action then return false end
+        if not returnFailureSuffix[other.Type]
+            or other.Type == "ISRadioAction" and not mediaSetterModes[other.mode] then
+            return false, "unsupported_tail_kind"
+        end
+        if other._isAddingActions or other.action then return false end
+        local snapshot = snapshots[getmetatable(other)]
+        if not snapshot or not nativeMatches(other, snapshot) then return false, "unsupported_tail_binding" end
         local contract = inspect(other, context)
         if not contract or contract.knownInputs == false or contract.unknownOutputs
             or sharedItem(action, other, context) or sharedWorldTarget(action, other, context)

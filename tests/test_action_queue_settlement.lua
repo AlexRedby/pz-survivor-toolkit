@@ -2459,8 +2459,8 @@ print('Shared settlement: persistent phases, earned-only cleanup, late isolation
 
 -- Exact earned return execution uses the same private borrowing and outcome
 -- records as cancellation, including no-effect admission/server/SP results.
-local function returnExecutionFixture(client)
-    local s=pendingReturnFixture(client)
+local function returnExecutionFixture(client,unearned)
+    local s=pendingReturnFixture(client,unearned)
     local action=s.pendingReturn
     s.player.isPlayerMoving=function()return false end
     s.player.pressedMovement=function()return false end
@@ -2481,6 +2481,41 @@ local function returnExecutionFixture(client)
         return not QueueReturnExecutionFixture.unsafeTail
     end]],'@fixture/ActionQueuePolicy.lua'))()
     return s
+end
+-- Candidate-shaped work without a private earned loan must not inspect the
+-- suffix or invoke an action guard, even for large queues. Queue bounds also
+-- reject earned candidates before membership or inventory lookup.
+for _,size in ipairs({1,32,33,200,1000})do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn
+    local values={}
+    for i=1,size do values[i]={character=s.player,Type='ISInventoryTransferAction',allowMissingItems=true,
+        toolkitQueueOperation={},item=action.item,srcContainer=s.root,destContainer=s.source}end
+    s.queue.queue=values;s.queue.current=values[1]
+    for _,member in ipairs(values)do s.settlement.track(member,'body')end
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent=assert(loadstring([[return function()
+        error('ineligible candidates must not inspect the suffix')
+    end]],'@fixture/ActionQueuePolicy.lua'))()
+    s.root.getItemById=function()error('ineligible candidates must not inspect inventory')end
+    for _,member in ipairs(values)do
+        local supported,reason=s.settlement.returnExecutionSupported(member,s.executionGuard)
+        assert(not supported and (size<=32 or reason=='unsupported_queue_size'))
+    end
+end
+do
+    local s=returnExecutionFixture(false,true)
+    PZSurvivorToolkit.ActionQueuePolicy.matchesNative=function()error('unearned loan must not inspect source binding')end
+    s.root.getItemById=function()error('unearned loan must not inspect inventory')end
+    assert(not s.settlement.returnExecutionSupported(s.pendingReturn,s.executionGuard),
+        'an existing unearned private borrowing must be rejected before source/endpoint proof')
+end
+do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn
+    for i=1,129 do s.scope.tasks[{}]={pickups={},actions={},items={}}end
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent=assert(loadstring([[return function()
+        error('exhausted borrowing budget must not inspect the suffix')
+    end]],'@fixture/ActionQueuePolicy.lua'))()
+    local supported,reason=s.settlement.returnExecutionSupported(action,s.executionGuard)
+    assert(not supported and reason=='unsupported_borrowing_work','private ledger work must be bounded and fail closed')
 end
 for _,client in ipairs({false,true})do
     local s=returnExecutionFixture(client);local action=s.pendingReturn;local guard=s.executionGuard

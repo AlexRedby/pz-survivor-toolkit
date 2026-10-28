@@ -10,8 +10,8 @@ from .tv_controls import MODS, _number
 
 SOURCES = ('root', 'worn-bag', 'world')
 CONTROLS = ('header-cancel', 'reader-child-cancel', 'move-equip', 'move-volume')
-CASES = tuple(source + '/' + control for source in SOURCES for control in CONTROLS) + tuple(source + '/return-child-cancel' for source in SOURCES if source != 'root')
-CAPACITY_CASES = tuple(source + '/' + control + '-capacity-lost' for source in SOURCES if source != 'root' for control in ('header-cancel', 'move-volume'))
+CASES = tuple(source + '.' + control for source in SOURCES for control in CONTROLS) + tuple(source + '.return-child-cancel' for source in SOURCES if source != 'root')
+CAPACITY_CASES = tuple(source + '.' + control + '-capacity-lost' for source in SOURCES if source != 'root' for control in ('header-cancel', 'move-volume'))
 CASES += CAPACITY_CASES
 PREFIX = '[BOOK_CONTROLS] '
 
@@ -155,11 +155,11 @@ def _record_errors(record, kind, case, actor, acks, capacity_lost=False):
     return errors
 
 
-def performance_errors(value, case, enabled):
+def performance_errors(value, case, enabled, probe=False):
     errors = []
     if (not isinstance(value, dict) or value.get('case') != case or value.get('timer') != 'getTimestampMs'
             or value.get('units') != 'ms' or value.get('coarse') is not True or value.get('readOnly') is not True
-            or value.get('queueEnabled') is not enabled or type(value.get('queueCount')) is not int or not 1 <= value['queueCount'] <= 30
+            or value.get('queueEnabled') is not enabled or type(value.get('queueCount')) is not int or not 1 <= value['queueCount'] <= 32
             or value.get('warmup') != 3 or value.get('samples') != 20 or not isinstance(value.get('limits'), str)):
         return ['Missing bounded read-only coarse-clock performance evidence']
     metrics = value.get('metrics', [])
@@ -179,6 +179,23 @@ def performance_errors(value, case, enabled):
             errors.append('Timing quantile or pass claim differs from raw samples: ' + expected_names[index])
         if p95 > budgets[0] or p99 > budgets[1]:
             errors.append('Frozen performance budget exceeded: ' + expected_names[index])
+    if not probe:
+        bounded = value.get('probe32')
+        errors.extend('32-member probe: ' + reason for reason in performance_errors(bounded, case, enabled, True))
+        if isinstance(bounded, dict):
+            temporary = bounded.get('temporary')
+            if (bounded.get('queueCount') != 32 or bounded.get('originalQueueCount') != value.get('queueCount')
+                    or bounded.get('source') != 'fixture-temporary-native-constructors'
+                    or bounded.get('constructor') != 'ISRadioAction.new' or bounded.get('nativeDuration') != 30
+                    or any(bounded.get(k) is not True for k in ('nativeConstructorProof', 'restored', 'queueIdentityUnchanged', 'originalStateUnchanged'))
+                    or not isinstance(temporary, list) or len(temporary) != 32 - value['queueCount']):
+                errors.append('Missing exact32 private constructor-input/restoration evidence')
+            elif (any(not isinstance(row, dict) or not isinstance(row.get('actionRef'), str)
+                      or row.get('type') != 'ISRadioAction' or row.get('mode') != 'SetVolume' or row.get('duration') != 30
+                      or row.get('nativeRef') is not False or row.get('started') is not False
+                      or row.get('unexecuted') is not True or row.get('intentPublished') is not False for row in temporary)
+                  or len({row.get('actionRef') for row in temporary}) != len(temporary)):
+                errors.append('Temporary32 probe action executed, reused identity or published intent')
     return errors
 
 
@@ -186,7 +203,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
     errors = []
     try:
         enabled = selection['mode'] == 'toolkit'
-        source, original_control = case.split('/')
+        source, original_control = case.split('.', 1)
         control = base_control(original_control); lost = original_control != control
         keep = enabled and control == 'return-child-cancel'
         ids, boundary, records = row['ids'], row['boundary'], row['records']
