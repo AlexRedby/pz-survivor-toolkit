@@ -225,10 +225,21 @@ public final class LootLookupCheck {
         String[] labels = {"fulltype-cache", "module-fallback", "alias-fallback", "import-fallback"};
         int iterations = Integer.getInteger("loot.iterations", 200_000);
         require(iterations > 0, "loot.iterations must be positive");
+        Vector[][] groups = new Vector[names.length][];
         for (int kind = 0; kind < names.length; kind++) {
             String name = names[kind];
-            Vector[] group = vectors.stream().filter(v -> v.picker.itemName.equals(name))
+            groups[kind] = vectors.stream().filter(v -> v.picker.itemName.equals(name))
                 .toArray(Vector[]::new);
+            require(groups[kind].length > 0, "Missing measurement input: " + name);
+        }
+        // Exercise all lookup shapes before timing any one shape. Sequential first-use
+        // warmup otherwise specializes shared lookup methods and later shapes deopt them
+        // inside measured windows. The runner still rejects any observed JIT overlap.
+        for (int warmup = 0; warmup < 8; warmup++) {
+            for (Vector[] group : groups) loop(group, iterations);
+        }
+        for (int kind = 0; kind < names.length; kind++) {
+            Vector[] group = groups[kind];
             for (int warmup = 0; warmup < 5; warmup++) loop(group, iterations);
             for (int round = 0; round < 7; round++) {
                 long beganAt = runtime.getUptime();

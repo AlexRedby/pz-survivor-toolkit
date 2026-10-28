@@ -483,8 +483,11 @@ def execution_issues(root, selection, execution):
     return issues
 
 
-def _optimizer_viewports(root, role, text, expected, actuals, required):
-    """Admit framebuffer pixels only with fresh measurements of the owned logical window."""
+def _optimizer_viewports(root, role, text, expected, actuals, required, native_benchmark=False):
+    """Admit the exact selected Display contract using fresh owned-window measurements."""
+    contract = 'logical' if native_benchmark else 'framebuffer'
+    display_sha256 = ('15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578'
+                      if native_benchmark else 'da78691b554a0341827f841abc73a34b776ecf0fde845b15703cb855a8847d57')
     pattern = (r'\[QUEUE_TEST\] WINDOW_VIEWPORT pid=(\d+) glfw=(\d+) contract=(\w+) '
                r'display_sha256=([0-9a-f]{64}) window=(\d+)x(\d+) framebuffer=(\d+)x(\d+) '
                r'display=(\d+)x(\d+) core=(\d+)x(\d+)(?:\s|$)')
@@ -503,11 +506,12 @@ def _optimizer_viewports(root, role, text, expected, actuals, required):
         values = list(map(int, row[4:]))
         logical, framebuffer, display, core = (values[i:i+2] for i in range(0, 8, 2))
         if (owner != pid or handle <= 0 or (owner, handle) not in routes
-                or row[2] != 'framebuffer'
-                or row[3] != 'da78691b554a0341827f841abc73a34b776ecf0fde845b15703cb855a8847d57'
+                or row[2] != contract
+                or row[3] != display_sha256
                 or min(values) <= 0 or logical != expected or core != actual
-                or core != framebuffer or display != framebuffer):
-            raise ValueError('optimizer viewport does not match its owned window/framebuffer contract')
+                or core != (logical if native_benchmark else framebuffer)
+                or display != (logical if native_benchmark else framebuffer)):
+            raise ValueError('optimizer viewport does not match its owned window/' + contract + ' contract')
         result.append({'logical': logical, 'framebuffer': framebuffer, 'display': display, 'core': core,
                        'pid': owner, 'glfw': handle, 'contract': row[2], 'display_sha256': row[3]})
     return result
@@ -529,6 +533,8 @@ def window_size_evidence(root, selection):
         return evidence
     if counts:
         evidence['startup_observations'] = {}
+    if selection.get('suite') == 'optimizer-benchmark' and selection.get('options', {}).get('optimizer_archive'):
+        evidence['limits'] = ['Accepted individual viewport contracts do not establish a performance comparison. Native/optimized runs with differing measured logical, framebuffer, Display or Core pixel dimensions cannot be accepted as a performance comparison.']
     for role in roles:
         path = Path(root) / (role + '-launch.log')
         text = path.read_text(errors='replace') if path.is_file() else ''
@@ -544,7 +550,9 @@ def window_size_evidence(root, selection):
         evidence['observed'][role] = actuals[0]
         if selection.get('options', {}).get('optimizer_archive'):
             try:
-                observed = _optimizer_viewports(root, role, text, expected, actuals, required)
+                native_benchmark = (selection.get('suite') == 'optimizer-benchmark'
+                                    and selection.get('options', {}).get('optimizer_enabled') is False)
+                observed = _optimizer_viewports(root, role, text, expected, actuals, required, native_benchmark)
                 evidence.setdefault('geometry', {})[role] = observed
             except (OSError, ValueError, KeyError, TypeError) as error:
                 evidence['issues'].append(role + ': ' + str(error))

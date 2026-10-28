@@ -3,11 +3,13 @@ from pathlib import Path
 import csv
 import hashlib
 import json
+import math
 import re
 import shutil
 import subprocess
 import tempfile
 import zipfile
+import optimizer_profile
 
 
 # Reviewed native B42.21 inputs for disposable stage-timing hooks only.
@@ -63,6 +65,8 @@ def sources(project, selection):
             *sorted((root / 'tests/driving_benchmark/mods').rglob('*.lua')),
             root / 'tests/optimizer_trial/java/Main.java', root / 'tests/optimizer_trial/java/mod.info.template',
             root / 'tests/optimizer_trial/candidate-manifest.json', root / 'tools/prepare_optimizer_trial.py',
+            root / 'tools/optimizer_profile.py', root / 'tools/check_optimizer_compatibility.py',
+            root / 'tests/native_queue/support/viewport/Main.java',
             root / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua',
             Path(selection['options']['optimizer_archive'])]
 
@@ -83,6 +87,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         for name, expected in guards.items():
             if hashlib.sha256(z.read(name)).hexdigest() != expected:
                 raise ValueError('Unsupported native input: ' + name)
+    optimizer_profile.stage_viewport(project, output / 'optimizer-benchmark-inputs', game, jdk, runtime,
+                                     manifest['native_guards'])
     build_bridge(cache / 'mods', game, jdk, project)
     runtime['fixture']['mods'].append('PZDrivingOptimizerBridge')
     if enabled:
@@ -191,6 +197,149 @@ def metrics(path):
     return result
 
 
+
+STAGES = ('logic', 'render', 'chunk', 'loot', 'lua', 'tiles', 'ui')
+DETAILS = ('fog', 'translucent_total', 'translucent_merge', 'translucent_sort')
+STAGE_COLUMNS = ('frame_id', 'phase', 'contacts', 'speed_kmh', 'nano_start', 'nano_end', 'wall_ns', 'cpu_ns') + tuple(
+    stage + suffix for stage in STAGES for suffix in ('_inclusive_ns', '_exclusive_ns', '_calls')) + (
+    'other_exclusive_ns',) + tuple(stage + suffix for stage in DETAILS
+                                 for suffix in ('_inclusive_ns', '_exclusive_ns', '_calls'))
+STAGE_CAPACITY = 120000
+
+
+def _stage_integer(value, label, minimum=None, maximum=(1 << 63) - 1):
+    if not isinstance(value, str) or not re.fullmatch(r'-?(?:0|[1-9][0-9]*)', value):
+        raise ValueError('Invalid stage integer: ' + label)
+    parsed = int(value)
+    if parsed < (-(1 << 63) if minimum is None else minimum) or parsed > maximum:
+        raise ValueError('Out-of-range stage integer: ' + label)
+    return parsed
+
+
+def _stage_jfr_chunks(path):
+    # Validate complete JFR chunk bounds without loading the recording or depending on
+    # a locally configured JDK CLI. Event payloads/counts are not decoded here.
+    size = path.stat().st_size
+    chunks, offset = 0, 0
+    with path.open('rb') as stream:
+        while offset < size:
+            stream.seek(offset)
+            header = stream.read(68)
+            if len(header) != 68 or header[:4] != b'FLR\0' or int.from_bytes(header[4:6], 'big') != 2:
+                raise ValueError('Invalid stage JFR chunk header')
+            length = int.from_bytes(header[8:16], 'big')
+            if length <= 68 or length > size - offset:
+                raise ValueError('Incomplete stage JFR chunk')
+            offset += length
+            chunks += 1
+    if not chunks:
+        raise ValueError('Empty stage JFR recording')
+    return chunks
+
+
+def stage_metrics(cache):
+    """Validate bounded completed-frame diagnostics; these are wall attribution, not an A/B result."""
+    cache = Path(cache)
+    paths = {name: cache / ('driving-stages.' + name) for name in ('csv', 'jfr')}
+    status_path = cache / 'driving-stages-status.txt'
+    for path in (*paths.values(), status_path):
+        if not path.is_file():
+            raise ValueError('Missing stage profile artifact: ' + path.name)
+    status_text = status_path.read_text()
+    status = {}
+    if len(status_text.splitlines()) != 1:
+        raise ValueError('Invalid stage status record')
+    for token in status_text.split():
+        if token.count('=') != 1:
+            raise ValueError('Invalid stage status field')
+        key, value = token.split('=')
+        if not key or not value or key in status:
+            raise ValueError('Duplicate/empty stage status field')
+        status[key] = value
+    required_status = {
+        'diagnostic': 'none', 'phase_contacts_speed': 'snapshot-at-frame-begin',
+        'exclusive_plus_other': 'wall', 'inclusive': 'category-union-nonadditive',
+        'detail': 'independent-nonadditive', 'fog': 'renderFog-whole',
+        'translucent_total': 'whole-method',
+        'translucent_merge': 'after-tempSquares-clear-to-doSort-including-profiler-and-sort-arguments',
+        'translucent_sort': 'TimSort.doSort-call', 'partial-details-on-throwable': 'included'}
+    if any(status.get(key) != value for key, value in required_status.items()):
+        raise ValueError('Incomplete/invalid stage profile status or detail boundaries')
+    if status.get('cpu_supported_and_enabled') not in ('true', 'false'):
+        raise ValueError('Invalid stage CPU availability status')
+    completed = _stage_integer(status.get('complete_frames'), 'complete_frames', 1, STAGE_CAPACITY)
+    omitted = _stage_integer(status.get('omitted_incomplete_frames'), 'omitted_incomplete_frames', 0)
+    jfr_chunks = _stage_jfr_chunks(paths['jfr'])
+
+    def empty_group():
+        return {'frames': 0, 'frame_wall_ms': 0, 'detail_wall': {
+            stage: {'inclusive_ms': 0, 'exclusive_ms': 0, 'calls': 0, 'max_frame_inclusive_ms': 0}
+            for stage in DETAILS}}
+
+    groups = {name: empty_group() for name in ('overall', 'phase1', 'phase2', 'phase3')}
+    previous = None
+    with paths['csv'].open(newline='') as source:
+        reader = csv.DictReader(source, strict=True)
+        if reader.fieldnames != list(STAGE_COLUMNS):
+            raise ValueError('Invalid stage CSV columns/order')
+        for index, raw in enumerate(reader, 1):
+            if index > STAGE_CAPACITY or set(raw) != set(STAGE_COLUMNS) or any(value is None for value in raw.values()):
+                raise ValueError('Stage CSV row shape/capacity mismatch')
+            row = {key: _stage_integer(value, key) for key, value in raw.items() if key != 'speed_kmh'}
+            try:
+                speed = float(raw['speed_kmh'])
+            except (ValueError, TypeError) as error:
+                raise ValueError('Invalid stage speed') from error
+            if not math.isfinite(speed) or speed < 0:
+                raise ValueError('Nonfinite/negative stage speed')
+            if not 1 <= row['frame_id'] <= STAGE_CAPACITY or row['phase'] not in (1, 2, 3) or not 0 <= row['contacts'] <= (1 << 31) - 1:
+                raise ValueError('Invalid stage frame identity/phase/contacts')
+            if row['wall_ns'] <= 0 or row['nano_end'] - row['nano_start'] != row['wall_ns'] or row['cpu_ns'] < -1:
+                raise ValueError('Invalid stage frame wall/CPU timing')
+            if status['cpu_supported_and_enabled'] == 'false' and row['cpu_ns'] != -1:
+                raise ValueError('Stage CPU timing contradicts unavailable status')
+            if previous and (row['frame_id'] <= previous['frame_id'] or row['nano_start'] < previous['nano_end']
+                             or row['phase'] < previous['phase'] or row['contacts'] < previous['contacts']):
+                raise ValueError('Unordered stage frames/timestamps/phase/contacts')
+            for stage in (*STAGES, *DETAILS):
+                inclusive, exclusive, calls = (row[stage + suffix] for suffix in ('_inclusive_ns', '_exclusive_ns', '_calls'))
+                if not 0 <= exclusive <= inclusive <= row['wall_ns'] or not 0 <= calls <= (1 << 31) - 1:
+                    raise ValueError('Invalid stage timing/call bounds: ' + stage)
+                if calls == 0 and (inclusive or exclusive):
+                    raise ValueError('Stage timing without a call: ' + stage)
+            if row['other_exclusive_ns'] < 0 or sum(row[stage + '_exclusive_ns'] for stage in STAGES) + row['other_exclusive_ns'] != row['wall_ns']:
+                raise ValueError('Stage exclusive partition does not equal frame wall')
+            total = row['translucent_total_inclusive_ns']
+            if (total != row['translucent_total_exclusive_ns'] + row['translucent_merge_inclusive_ns'] + row['translucent_sort_inclusive_ns']
+                    or row['translucent_merge_exclusive_ns'] != row['translucent_merge_inclusive_ns']
+                    or row['translucent_sort_exclusive_ns'] != row['translucent_sort_inclusive_ns']
+                    or row['translucent_sort_calls'] > row['translucent_merge_calls']
+                    or row['translucent_merge_calls'] > row['translucent_total_calls']):
+                raise ValueError('Invalid translucent detail nesting/counts')
+            for name in ('overall', 'phase' + str(row['phase'])):
+                group = groups[name]
+                group['frames'] += 1
+                group['frame_wall_ms'] += row['wall_ns'] / 1e6
+                for stage, values in group['detail_wall'].items():
+                    values['inclusive_ms'] += row[stage + '_inclusive_ns'] / 1e6
+                    values['exclusive_ms'] += row[stage + '_exclusive_ns'] / 1e6
+                    values['calls'] += row[stage + '_calls']
+                    values['max_frame_inclusive_ms'] = max(values['max_frame_inclusive_ms'], row[stage + '_inclusive_ns'] / 1e6)
+            previous = row
+    if groups['overall']['frames'] != completed:
+        raise ValueError('Stage CSV/status complete frame count mismatch')
+    for group in groups.values():
+        for values in group['detail_wall'].values():
+            values['mean_per_frame_inclusive_ms'] = values['inclusive_ms'] / group['frames'] if group['frames'] else None
+    return {'complete_frames': completed, 'omitted_incomplete_frames': omitted, 'jfr_chunks': jfr_chunks,
+            'attribution': 'Owner-thread elapsed wall time. Detail timers use an independent stack; inclusive totals are nonadditive.',
+            'groups': groups,
+            'limits': ['Fog is the whole renderFog method, including its early exits; timing does not establish visible fog.',
+                       'Translucent total includes preparation and drawing. Merge includes native profiler and sort argument preparation; sort is the exact doSort call.',
+                       'Instrumentation/JFR add overhead. These timings do not establish per-stage CPU cost or optimization gain.',
+                       'JFR chunk bounds are validated; JFR event payloads/counts are not decoded. CSV counts agree with the completed-frame status.']}
+
+
 def verify(root, selection, catalog):
     root = Path(root); text = (root / 'client1-launch.log').read_text(errors='replace'); issues=[]; evidence={}
     if not complete(selection, 'client1', text): issues.append('Missing seed or measured-route completion')
@@ -204,6 +353,9 @@ def verify(root, selection, catalog):
     if selection['cases'] == ['drive']:
         try: evidence['timings'] = metrics(root / 'client1/driving-perf.csv')
         except (OSError,ValueError,KeyError) as error: issues.append(str(error))
+        if selection['options'].get('stage_profile') is True:
+            try: evidence['stage_timings'] = stage_metrics(root / 'client1')
+            except (OSError, ValueError, KeyError, csv.Error) as error: issues.append('Stage profile: ' + str(error))
         for marker in ('[DRIVING_PERF] BEGIN ', '[DRIVING_PERF] MEASURE ', '[DRIVING_PERF] END ', '[DRIVING_PERF] COMPLETE '):
             if text.count(marker) != 1: issues.append('Missing/duplicate actual route marker: ' + marker)
     evidence['limits']=['macOS swap-completion cadence, not compositor presentation or Windows FPS.',

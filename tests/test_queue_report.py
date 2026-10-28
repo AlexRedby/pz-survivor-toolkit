@@ -49,6 +49,51 @@ class ViewportEvidenceTests(unittest.TestCase):
             (root / 'execution.json').unlink()
             self.assertTrue(report.window_size_evidence(root, selection)['issues'], 'missing process proof accepted')
 
+    def test_only_explicit_native_benchmark_accepts_exact_native_logical_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selection = {'suite': 'optimizer-benchmark', 'kind': 'sp', 'window_size': [1600, 900],
+                         'options': {'optimizer_archive': '/explicit/reviewed.zip', 'optimizer_enabled': False}}
+            (root / 'execution.json').write_text(json.dumps({'processes': {'client1': {'pid': 123}}}))
+            path = root / 'client1-launch.log'
+            sha = '15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578'
+            prefix = '[QUEUE_TEST] WINDOW_ROUTED pid=123 glfw=456 mode=aerospace\n'
+            size = '[QUEUE_TEST] WINDOW_SIZE width=1600 height=900\n'
+            receipt = ('[QUEUE_TEST] WINDOW_VIEWPORT pid=123 glfw=456 contract=logical '
+                       f'display_sha256={sha} window=1600x900 framebuffer=1600x900 '
+                       'display=1600x900 core=1600x900\n')
+            path.write_text(prefix + size + receipt)
+            result = report.window_size_evidence(root, selection)
+            self.assertFalse(result['issues'])
+            self.assertEqual(result['geometry']['client1'][0]['contract'], 'logical')
+            self.assertIn('cannot be accepted as a performance comparison', result['limits'][0])
+            # Preserve measured physical pixels even when native Display/Core use logical pixels.
+            path.write_text(prefix + size + receipt.replace('framebuffer=1600x900', 'framebuffer=3200x1800'))
+            result = report.window_size_evidence(root, selection)
+            self.assertFalse(result['issues'])
+            self.assertEqual(result['geometry']['client1'][0]['framebuffer'], [3200, 1800])
+            for changed in ('', receipt + receipt, receipt.replace('pid=123', 'pid=999'),
+                            receipt.replace('glfw=456', 'glfw=999'), receipt.replace('window=1600', 'window=800'),
+                            receipt.replace('framebuffer=1600x900', 'framebuffer=0x900'),
+                            receipt.replace('display=1600', 'display=3200'), receipt.replace('core=1600', 'core=3200'),
+                            receipt.replace(sha, '0'*64), receipt.replace('contract=logical', 'contract=framebuffer')):
+                with self.subTest(receipt=changed):
+                    path.write_text(prefix + size + changed)
+                    self.assertTrue(report.window_size_evidence(root, selection)['issues'])
+            path.write_text(size + receipt)
+            self.assertTrue(report.window_size_evidence(root, selection)['issues'])
+            path.write_text(prefix + size + receipt)
+            for flag in (True, None, 'false', 0):
+                changed = copy.deepcopy(selection)
+                changed['options']['optimizer_enabled'] = flag
+                with self.subTest(flag=flag):
+                    self.assertTrue(report.window_size_evidence(root, changed)['issues'])
+            changed = copy.deepcopy(selection)
+            changed['suite'] = 'health'
+            self.assertTrue(report.window_size_evidence(root, changed)['issues'])
+            (root / 'execution.json').unlink()
+            self.assertTrue(report.window_size_evidence(root, selection)['issues'])
+
     def test_all_clients_need_one_matching_startup_size(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
