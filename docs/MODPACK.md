@@ -384,7 +384,7 @@ The author says the mod adds no items, recipes or tiles and does not modify the 
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3739256725) · Workshop `3739256725` · Mod `NewMusic`
 
-Plays audible cassette, CD and vinyl recordings through portable and world devices, with headphones, covers and multiplayer playback tracking. The base mod includes a Zomboid OST media item; additional artists and songs come from separate music packs. The selected period packs are listed below; load NewMusic before all three. The author links B42-compatible packs from the Workshop page; older True Music packs can require conversion and are not automatic dependencies.
+Plays audible cassette, CD and vinyl recordings through portable and world devices, with headphones, covers and multiplayer playback tracking. The base mod includes a Zomboid OST media item; no additional song packs are selected. The author links B42-compatible packs from the Workshop page; older True Music packs can require conversion and are not automatic dependencies.
 
 The author declares Build 42, single-player and hosted multiplayer support, and permits adding the mod mid-save. No required framework or Java loader is listed. Install the Workshop item on Host and every client and enable `NewMusic` as supplied in the INI. Keep existing sandbox settings; the INI supplies neither media-spawn settings nor player volume preferences. The author describes a separate playback system rather than vanilla radio internals; coexistence with TV & Radio ReInvented still requires a full-pack check.
 
@@ -392,17 +392,7 @@ Toolkit 0.1.315 disables NewMusic's conversion of vanilla CDs and CD players thr
 
 Full-pack macOS B42.21 SP/Host audio output, device/battery controls, ground-to-hand continuity, save/reload and second-player synchronization remain unverified. Recent Workshop reports mention performance costs with large music collections and inventory/loot-panel problems on controllers; these reports do not establish a cause or resolution in this set. Check audible playback and responsiveness in a disposable profile before using a gameplay world. Do not remove a content mod from an existing save without checking its removal instructions and preserving backups.
 
-### Selected songs released before 1993
-
-These New Music Builder packs by Ben Jelkin contain the following published album lists. Workshop supplies the audio directly; it is not copied into either repository mod. Enable each pack on Host and every client after `NewMusic`.
-
-| Pack | Workshop ID | Mod ID | Published album dates | Workshop size |
-|---|---|---|---|---|
-| [ABBA Gold: Greatest Hits](https://steamcommunity.com/sharedfiles/filedetails/?id=3784065691) | `3784065691` | `NMBJABBA` | Gold (1992 compilation) | 87.678 MB |
-| [Queen](https://steamcommunity.com/sharedfiles/filedetails/?id=3777937059) | `3777937059` | `NMBJQ` | A Night at the Opera (1975), News of the World (1977), Jazz (1978), The Game (1980), Innuendo (1991) | 254.933 MB |
-| [Fleetwood Mac](https://steamcommunity.com/sharedfiles/filedetails/?id=3751236222) | `3751236222` | `NMBJFM` | Fleetwood Mac (1975), Rumours (1977), Tusk (1979), Mirage (1982), Tango in the Night (1987) | 290.121 MB |
-
-The combined reported download size is approximately 633 MB, excluding the New Music base. Dates and contents were checked against the published Workshop track/album lists on 25 October 2026; later Workshop updates can change the selection or size. The pages identify these as B42 New Music content packs and list no additional framework. This is not a full-pack B42.21 SP/Host playback test. Keep existing media-spawn settings and check new loot, actual audio, cassette sides, save/reload, responsiveness and synchronized listening in a disposable profile.
+The unavailable ABBA Gold, Queen and Fleetwood Mac packs are no longer selected. Keep the base `NewMusic` enabled; see [update instructions](../MOD_INSTALL.md#third-party-setup-and-troubleshooting) for the three Mod ID/Workshop ID pairs to remove from existing profiles. Back up saves before changing the selection; media supplied by the removed packs will no longer be available.
 
 
 ## 57 Immersive Snow

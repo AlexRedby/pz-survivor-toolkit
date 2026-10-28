@@ -91,7 +91,7 @@ Prepare fixtures before launch where possible; add them to compatible inventory/
 
 ### New Music selection
 
-- [ ] After installation is requested, check new ABBA/Queen/Fleetwood Mac media loot and audible playback on both cassette sides, device controls/batteries, ground-to-hand transitions, reload, UI performance and TV & Radio ReInvented coexistence in isolated full-pack macOS B42.21 SP/Host saves; verify a second player hears synchronized playback. Author claims do not establish full-pack compatibility.
+- [ ] After installation is requested, check base New Music OST loot and audible playback on both cassette sides, device controls/batteries, ground-to-hand transitions, reload, UI performance and TV & Radio ReInvented coexistence in isolated full-pack macOS B42.21 SP/Host saves; verify a second player hears synchronized playback. Author claims do not establish full-pack compatibility.
 
 ### Open Jackets and Climb Ladders selection
 
