@@ -7,13 +7,16 @@ local phase,index,since='prepare',1,0;local entered,ready,done=false,false,false
 local state,previous,ids,authorityBaseline,authorityFinal,baseline,tracks,records,starts,boundary,front,tail,volume,equip,window
 local oldNative,resume,quiet,failure,draining,tailSnapshot,volumeSnapshot,equipSnapshot
 local capacityReceipt,capacityRequestedAt,blockedEvidence,failureUI,nativeDebtAbsent
-local performance,tickSpacing,lastTick
+local performance,tickSpacing,lastTick,transferEpisode,replicaGaps
 local failures=0;local serial,tokenSerial=0,0;local tokens={};local classes={}
 local producer,readProducer,volumeProducer,equipProducer
 local function now()return getTimestampMs()end
 local function case()return config.cases[index]end
-local function control()return ids and ids.control:gsub('%-capacity%-lost$','')end
-local function capacityLost()return ids and ids.control~=control()end
+local function control()return ids and F.parseControl(ids.control)end
+local function capacityLost()if not ids then return false end;local _,lost=F.parseControl(ids.control);return lost end
+local function favoriteWorld()if not ids then return false end;local _,_,favorite=F.parseControl(ids.control);return favorite end
+local function favoriteUnmoved()return favoriteWorld()and not isClient()end
+local function failedReturnExpected()return capacityLost()or favoriteUnmoved()end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()and getPlayer():getCharacterActions():isEmpty()end
 local function raw(marker,value)print('[BOOK_CONTROLS] '..marker..' '..JSON.encode(value))end
@@ -61,8 +64,34 @@ local function intact()
  assert(Proof.closure(ISReadABook.new,'ISReadABook.lua')and Proof.closure(ISReadABook.getDuration,'ISReadABook.lua')and Proof.closure(ISRadioAction.new,'ISRadioAction.lua'),'native constructors/timers replaced')
  for class,saved in pairs(classes)do for method,callback in pairs(saved)do assert(class[method]==callback,'native lifecycle changed '..tostring(class.Type)..'.'..method)end end
 end
+local function updateTransferEpisode(action,row)
+ if not isClient()or row.type~='ISInventoryTransferAction'or(row.role~='pickup'and row.role~='return')then return end
+ if transferEpisode and transferEpisode.action==action then transferEpisode.live=false end
+ local tx=action.transactionId
+ local root=state.player:getInventory();local from=row.role=='pickup'and state.source or root;local to=row.role=='pickup'and root or state.source
+ if type(tx)=='number'and tx>0 and row.started and row.nativeRef and action.character==state.player and action.item
+  and action.item:getID()==ids.front.id and action.item:getFullType()==ids.front.type and action.srcContainer==from and action.destContainer==to
+  and action.action and ref(action.action)==row.nativeRef and queue().current==action then
+  if transferEpisode and transferEpisode.action==action then assert(transferEpisode.transaction==tx,'live exact transfer transaction changed')else
+   transferEpisode={case=case(),actor=ids.actor,itemId=ids.front.id,itemType=ids.front.type,source=ids.source,role=row.role,
+    from=row.role=='pickup'and ids.source or'root',to=row.role=='pickup'and'root'or ids.source,
+    sequence=row.sequence,transaction=tx,actionRef=row.actionRef,nativeRef=row.nativeRef,action=action,positive=true}
+  end
+  transferEpisode.live=true;transferEpisode.observedAt=now();transferEpisode.done=isItemTransactionDone(tx)==true;transferEpisode.rejected=isItemTransactionRejected(tx)==true
+ end
+end
 local function observe()
- assert(F.refresh(state),'admitted fixture lost exact item/scene identity')
+ local refreshed,diagnostic=F.refresh(state)
+ if transferEpisode then
+  local ep=transferEpisode;local row=tracks[ep.action]
+  if row then updateTransferEpisode(ep.action,row)end
+ end
+ local status,gap=F.replicaBarrier(state,refreshed and nil or diagnostic,transferEpisode,now())
+ if not status then raw('IDENTITY_FAILURE',{case=case(),diagnostic=diagnostic or false,reason=gap});error(gap)end
+ if status=='wait'then
+  for action,row in pairs(tracks)do if row.role~='pickup'and row.role~='return'and not row.started and(action.action or row.performedAt)then error('native start crossed replica gap without observed timing')end end
+  if not gap.emitted then gap.emitted=true;raw('REPLICA_GAP',gap)end;return false end
+ if status=='resolved'then gap.emitted=nil;replicaGaps[#replicaGaps+1]=gap;raw('REPLICA_CONVERGED',gap)end
  for _,action in ipairs(queue().queue)do register(action)end
  for action,row in pairs(tracks)do
   if not row.started and not action.action and row.duration and row.duration>0 then row.durationBefore=action:adjustMaxTime(row.duration)end
@@ -94,8 +123,9 @@ local function observe()
    row.transactionRejected=isClient()and isItemTransactionRejected(action.transactionId)==true or false
   end
  end
+ for action,row in pairs(tracks)do updateTransferEpisode(action,row)end
  if boundary and oldNative and not state.player:getCharacterActions():contains(oldNative)then if not boundary.drained then boundary.drained=true;boundary.drainedAt=now();raw('DRAIN',{case=case(),reader=boundary.reader,native=boundary.native,at=boundary.drainedAt,oldNativeAbsent=true})end end
- intact()
+ intact();return true
 end
 local function lifecycleBegin(action,step)
  local row=register(action)
@@ -106,6 +136,7 @@ local function lifecycleBegin(action,step)
  return row~=nil
 end
 local function lifecycleFinish(action,step,succeeded)
+ if transferEpisode and transferEpisode.action==action and(step=='perform'or step=='stop')then transferEpisode.live=false;transferEpisode.terminalAt=now();transferEpisode.observedAt=now();transferEpisode.done=isItemTransactionDone(transferEpisode.transaction)==true;transferEpisode.rejected=isItemTransactionRejected(transferEpisode.transaction)==true end
  local row=register(action);if row then row.finishes[#row.finishes+1]={phase=step,succeeded=succeeded,at=now()};if step=='perform'and succeeded then row.performedAt=now()end end
 end
 local function request(command)
@@ -145,7 +176,7 @@ end
 local function enqueue()
  tracks,records,starts={},{},{};boundary,resume,quiet,failure,draining,tailSnapshot,volumeSnapshot,equipSnapshot=nil,nil,nil,nil,nil,nil,nil,nil
  capacityReceipt,capacityRequestedAt,blockedEvidence,failureUI,nativeDebtAbsent=nil,nil,nil,nil,nil
- performance,tickSpacing,lastTick=nil,{},now()
+ performance,tickSpacing,lastTick,transferEpisode,replicaGaps=nil,{},now(),nil,{}
  baseline=F.snapshot(state);assert(F.same(baseline,ids.baseline)and F.same(authorityBaseline,baseline),'exact native baseline differs')
  assert(not state.player:hasTrait(CharacterTrait.DISORGANIZED),'native producer requires its normal return contract')
  assert(not state.player:isTimedActionInstant()and not state.player:hasTrait(CharacterTrait.ILLITERATE),'native reading actor unavailable')
@@ -247,10 +278,10 @@ local function performanceAtBoundary()
  local whole=not keep and control()~='reader-child-cancel'and ids.source~='root'
  local moving=control()=='move-equip'and equip or volume
  local entries={
-  {name='evaluateMove',kind='authoritative',call=function()T.ActionQueuePolicy.evaluateMove(q,moving,front,false)end},
-  {name='evaluateCancel',kind='authoritative',call=function()T.ActionQueuePolicy.evaluateCancel(q,target,whole)end},
-  {name='previewMove',kind='advisory',call=function()T.ActionQueuePolicy.previewMove(q,moving,front,false)end},
-  {name='previewCancel',kind='advisory',call=function()T.ActionQueuePolicy.previewCancel(q,target,whole)end},
+  {name='evaluateMove',kind='authoritative',call=function()return T.ActionQueuePolicy.evaluateMove(q,moving,front,false)end},
+  {name='evaluateCancel',kind='authoritative',call=function()return T.ActionQueuePolicy.evaluateCancel(q,target,whole)end},
+  {name='previewMove',kind='advisory',call=function()return T.ActionQueuePolicy.previewMove(q,moving,front,false)end},
+  {name='previewCancel',kind='advisory',call=function()return T.ActionQueuePolicy.previewCancel(q,target,whole)end},
   {name='panelUpdate',kind='advisory',call=function()panel:update()end},
  }
  local function input(count,limits)
@@ -258,16 +289,52 @@ local function performanceAtBoundary()
  end
  local function measure(result)
   for _,entry in ipairs(entries)do
-   local function sample()local started=now();entry.call();local elapsed=now()-started;assert(elapsed>=0,'benchmark wall clock moved backwards');return elapsed end
+   local decisionSamples,firstAllowed,firstReason,firstMode,lastAllowed,lastReason,lastMode=0,nil,nil,nil,nil,nil,nil
+   local stable=true;local isDecision=entry.name~='panelUpdate'
+   local function observe(decision)
+    if not isDecision then return end
+    assert(type(decision)=='table','read-only decision missing')
+    local reason,mode=decision.reason,decision.mode
+    assert(reason==nil or type(reason)=='string','nonscalar decision reason')
+    assert(mode==nil or type(mode)=='string','nonscalar decision mode')
+    local allowed
+    if entry.kind=='authoritative'then allowed=decision.allowed;assert(type(allowed)=='boolean','authoritative allowed missing')
+    else allowed=reason==nil end
+    assert(allowed==(reason==nil),'decision permission/reason inconsistent')
+    reason,mode=reason or false,mode or false
+    if decisionSamples==0 then firstAllowed,firstReason,firstMode=allowed,reason,mode
+    elseif firstAllowed~=allowed or firstReason~=reason or firstMode~=mode then stable=false end
+    decisionSamples=decisionSamples+1;lastAllowed,lastReason,lastMode=allowed,reason,mode
+   end
+   local function sample()
+    local started=now();local decision=entry.call();local elapsed=now()-started
+    assert(elapsed>=0,'benchmark wall clock moved backwards')
+    -- Scalar comparison is outside the timed call; authority snapshots and
+    -- execution descriptors never survive this local observation.
+    observe(decision);return elapsed
+   end
    local row={name=entry.name,kind=entry.kind,firstUseMs=sample(),rawMs={}}
-   for i=1,result.warmup do entry.call()end
+   for i=1,result.warmup do observe(entry.call())end
    for i=1,result.samples do row.rawMs[i]=sample()end
+   row.decisionSamples=decisionSamples;row.decisionStable=stable
+   if isDecision then
+    row.firstDecision={allowed=firstAllowed,reason=firstReason,mode=firstMode}
+    row.lastDecision={allowed=lastAllowed,reason=lastReason,mode=lastMode}
+    row.decisionClass=not stable and'unstable'or firstAllowed and'allowed'or'denied'
+   else row.firstDecision=false;row.lastDecision=false;row.decisionClass='not-decision'end
    local sorted={};for i,value in ipairs(row.rawMs)do sorted[i]=value end;table.sort(sorted)
    row.p95Ms=sorted[math.ceil(#sorted*.95)];row.p99Ms=sorted[math.ceil(#sorted*.99)]
    row.p95BudgetMs=entry.kind=='authoritative'and 2 or 1;row.p99BudgetMs=entry.kind=='authoritative'and 4 or 2
    row.passed=row.p95Ms<=row.p95BudgetMs and row.p99Ms<=row.p99BudgetMs
    result.metrics[#result.metrics+1]=row
   end
+  result.pathClass=native and'nativeoff-denial-baseline'or'toolkit-observed-decisions'
+  result.authorityAllowed=true;local timingPassed=true
+  for index,metric in ipairs(result.metrics)do
+   if index<=2 and(metric.decisionClass~='allowed'or not metric.decisionStable)then result.authorityAllowed=false end
+   if not metric.passed or not metric.decisionStable then timingPassed=false end
+  end
+  result.positiveTimingClaim=not native and result.authorityAllowed and timingPassed
  end
  local private,privateSet={},{}
  local ok,problem=pcall(function()
@@ -338,6 +405,7 @@ local function keepBlocked()
  for _,value in ipairs(entries)do if value.itemId==ids.front.id and value.itemType==ids.front.type then assert(not entry,'duplicate exact failed return');entry=value end end
  if not entry then return false end
  blockedEvidence=entry
+ if favoriteUnmoved()then assert(entry.reason=='unmoved','favorite refusal must be actual native no-effect, not an unrelated admission failure')end
  assert(entry.state=='blocked'and(entry.reason=='admission'or entry.reason=='server'or entry.reason=='unmoved'),'failed return has no live blocked state')
  T.ActionQueuePanel.refresh()
  local windows=UIManager.getUI();local panel
@@ -371,18 +439,21 @@ local function keepBlocked()
 end
 local function finish()
  local actual=F.snapshot(state)
+ assert(not state.replicaGap,'unresolved exact transfer replica gap at final verification')
  if not failure and performance then
-  for _,result in ipairs({performance,performance.probe32})do for _,metric in ipairs(result.metrics)do if not metric.passed then failure='frozen timing budget exceeded: '..result.queueCount..'/'..metric.name;break end end end
+  for _,result in ipairs({performance,performance.probe32})do for _,metric in ipairs(result.metrics)do if not metric.passed then failure='frozen timing budget exceeded: '..result.queueCount..'/'..metric.name;break end
+   if not metric.decisionStable then failure='unstable read-only decision: '..result.queueCount..'/'..metric.name;break end end end
  end
  if not failure then
   local expected=F.expected(state,boundary,native)
   if not F.same(actual,expected)or not F.same(authorityFinal,expected)then failure='native final effect/inventory/Pen intent differs from exact requested result' end
  end
+ if not failure and not native and performance and not performance.probe32.authorityAllowed then failure='Toolkit32 intended edit denied; no positive performance claim'end
  local passed=not failure
  local row={event='case',id=case(),status=passed and'passed'or'failed',reason=failure or false,ids=ids,baseline=baseline,authorityBaseline=authorityBaseline,
   boundary=boundary,records=records,starts=starts,resume=resume or false,tailSnapshot=tailSnapshot or false,volumeSnapshot=volumeSnapshot or false,equipSnapshot=equipSnapshot or false,
-  client=actual,server=authorityFinal,performance=performance or false,tickSpacingMs=tickSpacing or {},capacity=capacityReceipt or false,nativeDebtAbsent=nativeDebtAbsent,blockedReturn=blockedEvidence or false,failureUI=failureUI or false,nativeMethodsUnchanged=true,reset=draining and{entrypoint='ISTimedActionQueue.clear',drained=true,at=draining.at}or false}
- if capacityLost()then row.returnSucceeded=false end
+  client=actual,server=authorityFinal,performance=performance or false,replicaGaps=replicaGaps or{},tickSpacingMs=tickSpacing or {},capacity=capacityReceipt or false,nativeDebtAbsent=nativeDebtAbsent,blockedReturn=blockedEvidence or false,failureUI=failureUI or false,nativeMethodsUnchanged=true,reset=draining and{entrypoint='ISTimedActionQueue.clear',drained=true,at=draining.at}or false}
+ if failedReturnExpected()then row.returnSucceeded=false end
  emit(row);if not passed then failures=failures+1 end
  if not isClient()then previous=state end
  local completedPlayer,completedPen=state.player,state.pen
@@ -417,7 +488,7 @@ Events.OnTick.Add(function()
   else assert(elapsed<200000,'book controls setup/identity/drain timeout '..tostring(case())..' '..phase)end
   if state and tracks then
    local tick=now();if lastTick and #tickSpacing<60 then assert(tick>=lastTick,"fixture tick clock moved backwards");tickSpacing[#tickSpacing+1]=tick-lastTick end;lastTick=tick
-   observe()
+   if not observe()then return end
   end
   if phase=='between-cases'then if empty()then phase='prepare'end
   elseif phase=='prepare'then assert(empty(),'fresh case requires drained native queue');tracks=nil;phase='prepared';request('Prepare')
@@ -434,8 +505,8 @@ Events.OnTick.Add(function()
   elseif phase=='drain'then
    if not empty()then quiet=nil;return end
    quiet=quiet or now();if now()-quiet<1500 then return end
-   if capacityLost()then
-    if not capacityReceipt then return end
+   if failedReturnExpected()then
+    if capacityLost()and not capacityReceipt then return end
     if not native and not failureUI and not keepBlocked()then return end
     if native then
      local execution=T.ActionQueueExecution;local info=execution and execution.blockedReturnInfo(state.player)

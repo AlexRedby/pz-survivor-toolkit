@@ -142,3 +142,61 @@ do
     assert(not policy.returnFailureIndependent(q,returning),'future capacity-sharing transfers need their own contracts')
 end
 print('Book controls: root/shelf/carried-bag, skill/generic literature, body/group and unknown/filter guards passed.')
+
+-- Real native TV setter produces a source-owned lazy approach before SetVolume.
+-- Keep that preparation in the exact borrowed-return/Pen/tail footprint.
+do
+    getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
+    local fresh=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+    fresh.native('shared/RadioCom/ISRadioAction.lua');fresh.native('shared/TimedActions/ISEquipWeaponAction.lua')
+    isServer=function()return false end;isClient=function()return false end
+    fresh.project('ActionQueueOperations');fresh.project('ActionQueueDefinitions')
+    local policy=fresh.project('ActionQueuePolicy')
+    local player=fresh.player;player.class='IsoPlayer';player.isLocalPlayer=function()return true end
+    player.isDraggingCorpse=function()return false end
+    local function read(path)
+        if NativeReadText then return NativeReadText(NativeActionRoot..'/'..path):gsub('\r','')end
+        local file=assert(io.open(NativeActionRoot..'/'..path));local text=file:read('*a');file:close();return text:gsub('\r','')
+    end
+    luautils={}
+    local nativeUtilities=read('shared/luautils.lua')
+    local helpers={assert(nativeUtilities:match('(function luautils.walkAdj%(.-\nend)')),
+        assert(nativeUtilities:match('(luautils.getCorrectSquareForWall = function.-\nend)'))}
+    assert(loadstring(table.concat(helpers,'\n'),'@'..NativeActionRoot..'/shared/luautils.lua'))()
+    local approach=fresh.project('ActionQueueApproach');assert(approach.install())
+    RWMPanel,RWMVolume={},{}
+    local panelSource=assert(read('client/RadioCom/RadioWindowModules/RWMPanel.lua'):match('(function RWMPanel:doWalkTo%(.-\nend)'))
+    local volumeSource=assert(read('client/RadioCom/RadioWindowModules/RWMVolume.lua'):match('(function RWMVolume:onVolumeChange%(.-\nend)'))
+    assert(loadstring(panelSource,'@'..NativeActionRoot..'/client/RadioCom/RadioWindowModules/RWMPanel.lua'))()
+    assert(loadstring(volumeSource,'@'..NativeActionRoot..'/client/RadioCom/RadioWindowModules/RWMVolume.lua'))()
+    local root={class='ItemContainer',getType=function()return'none'end,getParent=function()return player end,
+        getContainingItem=function()end,getAcceptItemFunction=function()end}
+    local bagOwner=fresh.item('Base.Bag_Schoolbag');bagOwner.class='InventoryContainer'
+    local bag={class='ItemContainer',getType=function()return'bag'end,getParent=function()end,
+        getContainingItem=function()return bagOwner end,getAcceptItemFunction=function()end}
+    player.inventory=root
+    local book,pen,tailBook=fresh.item('Base.BookCarpentry1'),fresh.item('Base.Pen'),fresh.item('Base.BookCooking1')
+    local reader=fresh.action(ISReadABook,{item=book,action={}})
+    local returning=fresh.action(ISInventoryTransferAction,{item=book,srcContainer=root,destContainer=bag,allowMissingItems=true})
+    returning.toolkitQueueOperation=reader.toolkitQueueOperation
+    local equip=fresh.action(ISEquipWeaponAction,{item=pen,primary=true,twoHands=false})
+    local queue=fresh.queue(reader,returning,equip)
+    local data={canPlayerRemoteInteract=function()return false end}
+    local tv={class='IsoTelevision',getDeviceData=function()return data end,getSquare=function()return{}end}
+    local widget={player=player,device=tv,deviceData=data,deviceType='IsoObject',volumeBar={getVolumeSteps=function()return 4 end},doWalkTo=RWMPanel.doWalkTo}
+    PZSurvivorToolkit.ActionQueueOperations.run(function()RWMVolume.onVolumeChange(widget,1)end)
+    local prepared,volume=queue.queue[4],queue.queue[5]
+    local tail=fresh.action(ISReadABook,{item=tailBook});queue.queue[6]=tail
+    assert(approach.isAction(prepared)and prepared.Type=='ISQueueActionsAction')
+    assert(volume.Type=='ISRadioAction'and volume.mode=='SetVolume'and volume.secondaryItem==.25)
+    local contract,source=policy.inspect(prepared)
+    assert(source=='toolkit.approach'and contract.preparation and contract.deferred and contract.capacityNonIncreasing)
+    assert(policy.returnFailureIndependent(queue,returning),'real owned TV approach must preserve return-failure isolation')
+    local callback=prepared.addActionsFunction;prepared.addActionsFunction=function()error('foreign deferred callback must never run')end
+    assert(not policy.returnFailureIndependent(queue,returning),'foreign deferred callback borrowed the approach contract')
+    prepared.addActionsFunction=callback
+    local checker=approach.isAction;approach.isAction=function()error('changed source checker must never run')end
+    assert(not policy.returnFailureIndependent(queue,returning),'changed owned approach checker was invoked')
+    approach.isAction=checker
+end
+print('Real native TV producer: owned approach/volume beside borrowed return/Pen/tail and foreign callback guards passed.')

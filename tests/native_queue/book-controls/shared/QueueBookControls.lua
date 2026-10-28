@@ -22,15 +22,78 @@ local function object(spec,kind)
   if value:getObjectIndex()==spec.index and instanceof(value,kind)then return value end
  end
 end
-local function identity(value)local s=value:getSquare();return{x=s:getX(),y=s:getY(),z=s:getZ(),index=value:getObjectIndex()}end
+local function identity(value)local s=value:getSquare();if not s then return false end;return{x=s:getX(),y=s:getY(),z=s:getZ(),index=value:getObjectIndex()}end
+-- Resolve into locals: a transient replica gap must never overwrite the last
+-- earned identities. Diagnostics do not substitute another item or scene.
 function F.refresh(s)
- local root=s.player:getInventory();s.bag=s.ids.bag and F.find(root,s.ids.bag.id)or nil
- s.tv=object(s.ids.tv,'IsoTelevision');s.shelf=object(s.ids.shelf,'IsoThumpable')
- if not s.tv or not s.shelf or s.ids.bag and not s.bag then return false end
- s.data=s.tv:getDeviceData();s.source=s.ids.source=='root'and root or s.ids.source=='worn-bag'and s.bag:getItemContainer()or s.shelf:getContainer()
- s.front=F.find(root,s.ids.front.id)or F.find(s.shelf:getContainer(),s.ids.front.id)
- s.tail=F.find(root,s.ids.tail.id);s.pen=F.find(root,s.ids.pen.id)
- return s.pen~=nil and s.pen:getFullType()==s.ids.pen.type and s.front~=nil and s.tail~=nil and s.front:getFullType()==s.ids.front.type and s.tail:getFullType()==s.ids.tail.type
+ local root=s.player:getInventory();local tv=object(s.ids.tv,'IsoTelevision');local shelf=object(s.ids.shelf,'IsoThumpable')
+ local diag={case=s.ids.case,actor=s.player:getOnlineID(),missing={},counts={},mismatch={},scene={tv=s.tv and identity(s.tv)or false,shelf=s.shelf and identity(s.shelf)or false}}
+ local function locate(container,wanted)
+  local found,count=nil,0
+  local function scan(owner)
+   local values=owner:getItems()
+   for i=0,values:size()-1 do local item=values:get(i)
+    if item:getID()==wanted then count=count+1;found=item end
+    if instanceof(item,'InventoryContainer')then scan(item:getItemContainer())end
+   end
+  end
+  scan(container);return found,count
+ end
+ diag.missing.tv=not tv;diag.missing.shelf=not shelf
+ diag.mismatch.tv=s.tv~=nil and tv~=s.tv;diag.mismatch.shelf=s.shelf~=nil and shelf~=s.shelf
+ local values={}
+ for _,name in ipairs({'front','tail','pen','bag'})do local spec=s.ids[name]
+  if spec then
+   local item,count=locate(root,spec.id);local world,worldCount=nil,0
+   if shelf then world,worldCount=locate(shelf:getContainer(),spec.id)end
+   diag.counts[name]={root=count,world=worldCount};diag.missing[name]=count+worldCount==0
+   diag.mismatch[name]=count+worldCount>1 or item~=nil and item:getFullType()~=spec.type or world~=nil and world:getFullType()~=spec.type
+   if name~='front'and worldCount>0 then diag.mismatch[name]=true end
+   values[name]=item or world
+  end
+ end
+ local bad=false
+ for _,value in pairs(diag.missing)do if value then bad=true end end
+ for _,value in pairs(diag.mismatch)do if value then bad=true end end
+ if diag.actor~=s.ids.actor then diag.mismatch.actor=true;bad=true end
+ if bad then return false,diag end
+ s.tv,s.shelf,s.bag,s.front,s.tail,s.pen=tv,shelf,values.bag,values.front,values.tail,values.pen
+ s.data=tv:getDeviceData();s.source=s.ids.source=='root'and root or s.ids.source=='worn-bag'and s.bag:getItemContainer()or shelf:getContainer()
+ return true
+end
+-- This only gates fixture observation, never native action execution. A gap is
+-- tolerated for one positively observed exact transfer episode, at most 2s.
+function F.replicaBarrier(s,diagnostic,episode,at)
+ local gap=s.replicaGap
+ local function correlated()
+  if not episode or episode.case~=s.ids.case or episode.actor~=s.ids.actor or episode.itemId~=s.ids.front.id
+   or episode.itemType~=s.ids.front.type or s.ids.source=='root'or episode.source~=s.ids.source
+   or not episode.actionRef or not episode.nativeRef or type(episode.sequence)~='number'
+   or type(episode.transaction)~='number'or episode.transaction<=0 or episode.transaction%1~=0
+   or not episode.positive or episode.rejected or type(episode.observedAt)~='number'or at<episode.observedAt or at-episode.observedAt>2000
+   or not(episode.live or episode.terminalAt and at>=episode.terminalAt and at-episode.terminalAt<=2000)
+   or not(episode.role=='pickup'and episode.from==s.ids.source and episode.to=='root'or episode.role=='return'and episode.from=='root'and episode.to==s.ids.source)then return false end
+  return not gap or gap.transaction==episode.transaction and gap.sequence==episode.sequence and gap.actionRef==episode.actionRef and gap.nativeRef==episode.nativeRef
+ end
+ if diagnostic then
+  local onlyFront=diagnostic.case==s.ids.case and diagnostic.actor==s.ids.actor and diagnostic.missing.front==true
+   and diagnostic.counts.front and diagnostic.counts.front.root==0 and diagnostic.counts.front.world==0
+  for name,value in pairs(diagnostic.missing)do if name~='front'and value then onlyFront=false end end
+  for _,value in pairs(diagnostic.mismatch)do if value then onlyFront=false end end
+  if not onlyFront or not correlated()then return nil,'unrelated or uncorrelated exact replica identity failure'end
+  if gap and at-gap.startedAt>2000 then return nil,'exact front replica gap deadline'end
+  if not gap then
+   gap={case=s.ids.case,actor=s.ids.actor,itemId=s.ids.front.id,itemType=s.ids.front.type,source=s.ids.source,
+    sequence=episode.sequence,transaction=episode.transaction,actionRef=episode.actionRef,nativeRef=episode.nativeRef,role=episode.role,
+    startedAt=at,deadlineAt=at+2000,diagnostic=diagnostic};s.replicaGap=gap
+  end
+  return 'wait',gap
+ end
+ if gap then
+  if at>gap.deadlineAt or not correlated()then return nil,'exact front replica convergence expired or changed episode'end
+  gap.resolvedAt=at;gap.resolved=true;s.replicaGap=nil;return 'resolved',gap
+ end
+ return 'ready'
 end
 function F.snapshot(s)
  assert(F.refresh(s),'exact book/scene replica identity missing')
@@ -71,12 +134,19 @@ function F.dispose(s)
  for _,value in ipairs({s.shelf,s.tv,s.generator})do value:getSquare():transmitRemoveItemFromSquare(value)end
  if isServer()then sendEquip(p)end
 end
+function F.parseControl(control)
+ if type(control)~='string'then return end
+ local base,lost,favorite=control,false,false
+ if control:sub(-14)=='-capacity-lost'then base=control:sub(1,-15);lost=true
+ elseif control:sub(-9)=='-favorite'then base=control:sub(1,-10);favorite=true end
+ return base,lost,favorite
+end
 function F.prepare(player,case,previous)
  assert(not isClient(),'book controls scene requires authority')
  if previous then F.dispose(previous)end
- local source,control=case:match('^(.-)%.(.+)$');local base=control and control:gsub('%-capacity%-lost$','');assert(source and(base=='header-cancel'or base=='reader-child-cancel'or base=='move-volume'or base=='move-equip'or base=='return-child-cancel'),'unknown book controls case')
- assert((base~='return-child-cancel'and control==base)or source~='root','a root book has no native borrowed return')
- assert(control==base or control==base..'-capacity-lost'and(base=='header-cancel'or base=='move-volume'),'unknown capacity control')
+ local source,control=case:match('^(.-)%.(.+)$');local base,lost,favorite=F.parseControl(control);assert(source and(base=='header-cancel'or base=='reader-child-cancel'or base=='move-volume'or base=='move-equip'or base=='return-child-cancel'),'unknown book controls case')
+ assert((base~='return-child-cancel'and not lost)or source~='root','a root book has no native borrowed return')
+ assert(not lost or source~='root'and(base=='header-cancel'or base=='move-volume'),'unknown capacity control');assert(not favorite or source=='world'and(base=='header-cancel'or base=='move-volume'),'unknown favorite control')
  player:setPrimaryHandItem(nil);player:setSecondaryHandItem(nil)
  player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
  local origin=require('QueueEnergyPlacement')(player);local x,y,z=origin:getX(),origin:getY(),origin:getZ()
@@ -101,7 +171,7 @@ function F.prepare(player,case,previous)
   origin={x=x,y=y,z=z},targetVolume=.25,initialVolume=.5,bag=bag and{id=id(bag),type=bag:getFullType(),location=tostring(bag:canBeEquipped())}or false}
  local pen=assert(root:AddItem('Base.Pen'));pen:setFavorite(true);ids.pen={id=id(pen),type=pen:getFullType()}
  for _,name in ipairs({'front','tail'})do
-  local kind=name=='front'and'Base.BookCarpentry1'or'Base.BookCooking1';local item=assert((name=='front'and container or root):AddItem(kind));item:setFavorite(true)
+  local kind=name=='front'and'Base.BookCarpentry1'or'Base.BookCooking1';local item=assert((name=='front'and container or root):AddItem(kind));item:setFavorite(name~='front'or source~='world'or favorite)
   local total=item:getNumberOfPages();local initial=total-(name=='front'and 2 or 1);assert(initial>0)
   item:setAlreadyReadPages(initial);player:setAlreadyReadPages(kind,initial);ids[name]={id=id(item),type=kind,total=total,initial=initial}
  end
@@ -134,13 +204,13 @@ function F.expected(s,boundary,native)
   local result={};for k,v in pairs(value)do result[k]=copy(v)end;return result
  end
  local result=copy(s.ids.baseline)
- local base=s.ids.control:gsub('%-capacity%-lost$','');local lost=s.ids.control~=base
+ local base,lost,favorite=F.parseControl(s.ids.control);local favoriteUnmoved=favorite and not isClient()and not isServer()
  local cancelled=not native and(base=='header-cancel'or base=='reader-child-cancel')
  for _,name in ipairs({'front','tail'})do
   local pages=name=='front'and cancelled and boundary.before.books.front.pages or name=='tail'and native and lost and s.ids.tail.initial or s.ids[name].total
   result.books[name].pages=pages;result.books[name].characterPages=pages
  end
- if lost or not native and s.ids.control=='return-child-cancel'then
+ if lost or favoriteUnmoved or not native and base=='return-child-cancel'then
   result.books.front.container='root'
   for _,entry in ipairs(result.items)do if entry.id==s.ids.front.id then entry.container='root'end end
  end
@@ -153,10 +223,11 @@ function F.capacityLost(s,requestedAt,acceptedAt)
  assert(not isClient()and s.ids.source~='root','capacity change requires borrowed source authority')
  assert(F.refresh(s)and s.front:getContainer()==s.player:getInventory(),'capacity changed after the book already returned')
  assert(not s.capacityBefore,'duplicate capacity intervention')
+ local roomBefore=s.source:hasRoomFor(s.player,s.front);assert(roomBefore,'source return was already ineligible');assert(s.ids.source~='world'or not s.front:isFavorite(),'world capacity probe confounded by favorite refusal')
  s.capacityBefore=s.source:getCapacity();assert(s.capacityBefore>0,'source capacity was not initially available')
  s.source:setCapacity(0)
  local result={case=s.ids.case,actor=s.player:getOnlineID(),source=s.ids.source,itemId=s.ids.front.id,itemType=s.ids.front.type,
-  before=s.capacityBefore,after=s.source:getCapacity(),roomAfter=s.source:hasRoomFor(s.player,s.front),bookRoot=true,
+  before=s.capacityBefore,roomBefore=roomBefore,frontFavorite=s.front:isFavorite(),after=s.source:getCapacity(),roomAfter=s.source:hasRoomFor(s.player,s.front),bookRoot=true,
   requestedAt=requestedAt,acceptedAt=acceptedAt,at=getTimestampMs(),authority=true}
  assert(result.after==0 and not result.roomAfter,'authority capacity intervention did not deny the book')
  return result

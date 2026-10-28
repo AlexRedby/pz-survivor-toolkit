@@ -12,11 +12,18 @@ SOURCES = ('root', 'worn-bag', 'world')
 CONTROLS = ('header-cancel', 'reader-child-cancel', 'move-equip', 'move-volume')
 CASES = tuple(source + '.' + control for source in SOURCES for control in CONTROLS) + tuple(source + '.return-child-cancel' for source in SOURCES if source != 'root')
 CAPACITY_CASES = tuple(source + '.' + control + '-capacity-lost' for source in SOURCES if source != 'root' for control in ('header-cancel', 'move-volume'))
-CASES += CAPACITY_CASES
+FAVORITE_CASES = ('world.header-cancel-favorite', 'world.move-volume-favorite')
+CASES += CAPACITY_CASES + FAVORITE_CASES
 PREFIX = '[BOOK_CONTROLS] '
 
 def base_control(control):
-    return control.removesuffix('-capacity-lost')
+    return control.removesuffix('-capacity-lost') if control.endswith('-capacity-lost') else control.removesuffix('-favorite')
+
+def capacity_case(control):
+    return control.endswith('-capacity-lost')
+
+def favorite_case(control):
+    return control.endswith('-favorite')
 
 GAME_INPUTS = (
     'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',
@@ -38,7 +45,7 @@ def definitions():
               for name in ('success-queued', 'server-authority')}
     return {'book-controls': dict(status='ready', clients=1, default_mods=list(MODS), game_inputs=list(GAME_INPUTS),
         scenario_actions={'source-bound-book-controls': dict(checks=checks,
-            scope='Opt-in ordered eighteen-case source/control bank. Favorite Carpentry skillbook from root, worn military bag or direct world shelf; native onLiteratureItems/readItem owns pickup/read/return. Real Panel hit-tested singleton/header/reader-child cross, exact optional-return child cancellation that keeps reading and the book carried, or pending native Pen equip/TV RWM SetVolume drag before the progressed active reader. Empty authority hands and exact root Pen expose unrelated equipment/borrowed-return interactions. Queue-off controls run unchanged native producers naturally. Fresh reader and saved page, old Java drain, exact returned item/container, final explicit Pen hand intent, native durations/callback identity, Host equipment/radio outcomes, full inventory/worn/hands/appearance snapshots and independent native reader tail. All functional control denials are collected through normal native clear/drain, then the aggregate fails. One EN actor, full selected pack, disposable macOS SP/menu Host. Programmatic widget gestures, no physical pointer/rendering claim.')},
+            scope='Opt-in ordered twenty-case source/control bank. Carpentry skillbook from root, worn military bag or direct world shelf, with explicit mode-specific favorite-world probes; native onLiteratureItems/readItem owns pickup/read/return. Real Panel hit-tested singleton/header/reader-child cross, exact optional-return child cancellation that keeps reading and the book carried, or pending native Pen equip/TV RWM SetVolume drag before the progressed active reader. Empty authority hands and exact root Pen expose unrelated equipment/borrowed-return interactions. Queue-off controls run unchanged native producers naturally. Fresh reader and saved page, old Java drain, exact returned item/container, final explicit Pen hand intent, native durations/callback identity, Host equipment/radio outcomes, full inventory/worn/hands/appearance snapshots and independent native reader tail. All functional control denials are collected through normal native clear/drain, then the aggregate fails. One EN actor, full selected pack, disposable macOS SP/menu Host. Programmatic widget gestures, no physical pointer/rendering claim.')},
         cases=[dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'], modes=['native', 'toolkit'], languages=['EN']) for case in CASES])}
 
 
@@ -49,7 +56,7 @@ def validate(selection):
             or selection.get('mods') != MODS or selection.get('options', {}).get('book_controls') is not True
             or selection.get('options', {}).get('world_template')
             or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
-        raise ValueError('Book controls require book_controls=true, the exact ordered eighteen-case bank, full selected EN pack, fresh SP/menu Host and one client')
+        raise ValueError('Book controls require book_controls=true, the exact ordered twenty-case bank, full selected EN pack, fresh SP/menu Host and one client')
 
 
 def sources(project, selection):
@@ -95,14 +102,14 @@ def complete(selection, role, text):
         return False
 
 
-def expected(ids, enabled, boundary):
+def expected(ids, enabled, boundary, kind='mp'):
     value = copy.deepcopy(ids['baseline'])
-    control = base_control(ids['control']); lost = control != ids['control']
+    control = base_control(ids['control']); lost = capacity_case(ids['control']); favorite_unmoved = favorite_case(ids['control']) and kind == 'sp'
     cancelled = enabled and control in ('header-cancel', 'reader-child-cancel')
     for name in ('front', 'tail'):
         pages = boundary['before']['books']['front']['pages'] if name == 'front' and cancelled else ids['tail']['initial'] if name == 'tail' and lost and not enabled else ids[name]['total']
         value['books'][name]['pages'] = value['books'][name]['characterPages'] = pages
-    if lost or enabled and control == 'return-child-cancel':
+    if lost or favorite_unmoved or enabled and control == 'return-child-cancel':
         value['books']['front']['container'] = 'root'
         for entry in value['items']:
             if entry['id'] == ids['front']['id']: entry['container'] = 'root'
@@ -174,11 +181,36 @@ def performance_errors(value, case, enabled, probe=False):
                 or not isinstance(raw, list) or len(raw) != 20 or any(not _number(v) or v < 0 for v in raw)
                 or (metric.get('p95BudgetMs'), metric.get('p99BudgetMs')) != budgets):
             errors.append('Malformed raw timings/warmup separation/frozen budget: ' + expected_names[index]); continue
+        first, last = metric.get('firstDecision'), metric.get('lastDecision')
+        if index < 4:
+            valid_observations = all(isinstance(observation, dict) and set(observation) == {'allowed', 'reason', 'mode'}
+                and type(observation.get('allowed')) is bool
+                and (observation.get('reason') is False if observation.get('allowed') else isinstance(observation.get('reason'), str) and bool(observation['reason']))
+                and (observation.get('mode') is False or isinstance(observation.get('mode'), str)) for observation in (first, last))
+            if (not valid_observations or metric.get('decisionSamples') != 24 or metric.get('decisionStable') is not True
+                    or first != last or metric.get('decisionClass') != ('allowed' if valid_observations and first['allowed'] else 'denied')):
+                errors.append('Missing/unstable scalar decision observations: ' + expected_names[index])
+            if not enabled and valid_observations and (first['allowed'] is not False or first['reason'] != 'unavailable'):
+                errors.append('Queue-off decision is not its explicit unavailable denial baseline: ' + expected_names[index])
+        elif (metric.get('decisionSamples') != 0 or metric.get('decisionStable') is not True
+                or first is not False or last is not False or metric.get('decisionClass') != 'not-decision'):
+            errors.append('Panel update incorrectly claims an edit decision')
         ordered = sorted(raw); p95, p99 = ordered[18], ordered[19]
         if metric.get('p95Ms') != p95 or metric.get('p99Ms') != p99 or metric.get('passed') is not (p95 <= budgets[0] and p99 <= budgets[1]):
             errors.append('Timing quantile or pass claim differs from raw samples: ' + expected_names[index])
         if p95 > budgets[0] or p99 > budgets[1]:
             errors.append('Frozen performance budget exceeded: ' + expected_names[index])
+    actual_allowed = all(isinstance(metric.get('firstDecision'), dict) and metric['firstDecision'].get('allowed') is True
+        and metric.get('decisionStable') is True and metric.get('decisionClass') == 'allowed' for metric in metrics[:2])
+    actual_timing_passed = all(metric.get('passed') is True and metric.get('decisionStable') is True for metric in metrics)
+    if (value.get('pathClass') != ('toolkit-observed-decisions' if enabled else 'nativeoff-denial-baseline')
+            or value.get('authorityAllowed') is not actual_allowed
+            or value.get('positiveTimingClaim') is not (enabled and actual_allowed and actual_timing_passed)):
+        errors.append('Timing path/positive claim differs from actual scalar decision observations')
+    if probe and enabled and not actual_allowed:
+        denied = ', '.join(metric.get('name', '?') + ':' + str(metric.get('firstDecision', {}).get('reason'))
+                           for metric in metrics[:2] if isinstance(metric.get('firstDecision'), dict) and metric['firstDecision'].get('allowed') is not True)
+        errors.append('Intended Toolkit32 authority edit denied; no positive timing qualification: ' + denied)
     if not probe:
         bounded = value.get('probe32')
         errors.extend('32-member probe: ' + reason for reason in performance_errors(bounded, case, enabled, True))
@@ -204,7 +236,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
     try:
         enabled = selection['mode'] == 'toolkit'
         source, original_control = case.split('.', 1)
-        control = base_control(original_control); lost = original_control != control
+        control = base_control(original_control); lost = capacity_case(original_control); favorite_unmoved = favorite_case(original_control) and selection['kind'] == 'sp'
         keep = enabled and control == 'return-child-cancel'
         ids, boundary, records = row['ids'], row['boundary'], row['records']
         errors.extend(performance_errors(row.get('performance'), case, enabled))
@@ -233,9 +265,9 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
             errors.append('Fixture IDs missing or aliased')
         if ids['baseline'].get('hands') != {'primary': False, 'secondary': False}:
             errors.append('Native Pen must start with empty authority hands')
-        if ids['baseline']['books']['front'].get('container') != source or any(ids['baseline']['books'][name].get('favorite') is not True for name in ('front', 'tail')):
-            errors.append('Favorite book source container changed before producer')
-        required = expected(ids, enabled, boundary)
+        if ids['baseline']['books']['front'].get('container') != source or ids['baseline']['books']['front'].get('favorite') is not (source != 'world' or favorite_case(original_control)) or ids['baseline']['books']['tail'].get('favorite') is not True:
+            errors.append('Exact favorite/native world-return eligibility or source container changed before producer')
+        required = expected(ids, enabled, boundary, selection['kind'])
         if row.get('client') != required or row.get('server') != required:
             errors.append('Exact inventory/container conservation, paid pages, TV volume, Pen hand intent or untouched equipment/appearance failed')
         if lost:
@@ -243,29 +275,39 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
             if (capacity != capacity_authority or capacity.get('case') != case or capacity.get('source') != source
                     or capacity.get('itemId') != ids['front']['id'] or capacity.get('itemType') != ids['front']['type']
                     or capacity.get('actor') != ids['actor'] or capacity.get('authority') is not True
+                    or capacity.get('roomBefore') is not True or capacity.get('frontFavorite') is not (source != 'world')
                     or capacity.get('bookRoot') is not True or capacity.get('after') != 0 or capacity.get('roomAfter') is not False
                     or not _number(capacity.get('before')) or capacity['before'] <= 0
                     or not _number(capacity.get('requestedAt')) or not _number(capacity.get('at'))
                     or not boundary.get('at', float('inf')) <= capacity['requestedAt'] <= capacity['at']
                     or row.get('returnSucceeded') is not False):
                 errors.append('Missing exact authority capacity loss after the accepted edit/native control boundary')
+        if lost or favorite_unmoved:
+            if row.get('returnSucceeded') is not False:
+                errors.append('Failed return falsely claims actual movement')
             if enabled:
                 debt, ui = row.get('blockedReturn', {}), row.get('failureUI', {})
+                after = row.get('capacity', {}).get('at') if lost else boundary.get('at')
                 if (not isinstance(debt, dict) or not debt.get('id') or debt.get('itemId') != ids['front']['id']
                         or debt.get('itemType') != ids['front']['type'] or debt.get('state') != 'blocked'
                         or debt.get('reason') not in ('admission', 'server', 'unmoved')
+                        or favorite_unmoved and debt.get('reason') != 'unmoved'
                         or not isinstance(ui, dict) or ui.get('source') != 'ActionQueuePanel.KeepReturn'
                         or ui.get('input') != 'programmatic-press-callback' or ui.get('id') != debt.get('id')
                         or ui.get('itemId') != ids['front']['id'] or ui.get('count') != 1
                         or any(ui.get(k) is not True for k in ('visible', 'idle', 'bookRoot', 'pressCaptured', 'cleared', 'bookRetained'))
-                        or not _number(ui.get('at')) or ui['at'] < capacity.get('at', float('inf'))
-                        or capacity.get('acceptedAt') != boundary.get('ui', {}).get('acceptedAt')
-                        or not _number(capacity.get('acceptedAt')) or capacity['acceptedAt'] > capacity['requestedAt']):
+                        or not _number(ui.get('at')) or not _number(after) or ui['at'] < after):
                     errors.append('Failed return was not retained visibly with exact identity and explicitly kept through the real idle footer')
-            elif row.get('blockedReturn') is not False or row.get('failureUI') is not False or capacity.get('acceptedAt') is not False or row.get('nativeDebtAbsent') is not True:
-                errors.append('Queue-off capacity control acquired editor debt/Keep UI')
-        elif row.get('capacity') not in (None, False) or row.get('blockedReturn') not in (None, False) or row.get('failureUI') not in (None, False):
-            errors.append('Normal source/control case acquired capacity intervention or failed-return UI')
+                if lost and (capacity.get('acceptedAt') != boundary.get('ui', {}).get('acceptedAt')
+                        or not _number(capacity.get('acceptedAt')) or capacity['acceptedAt'] > capacity['requestedAt']):
+                    errors.append('Capacity intervention preceded exact accepted gesture')
+            elif (row.get('blockedReturn') is not False or row.get('failureUI') is not False or row.get('nativeDebtAbsent') is not True
+                    or lost and capacity.get('acceptedAt') is not False):
+                errors.append('Queue-off failed return acquired editor debt/Keep UI')
+        elif row.get('blockedReturn') not in (None, False) or row.get('failureUI') not in (None, False):
+            errors.append('Successful normal return acquired failed-return debt')
+        if not lost and row.get('capacity') not in (None, False):
+            errors.append('Noncapacity case acquired a capacity intervention')
         if (len(admissions) != 1 or admissions[0].get('producer') != 'ISInventoryPaneContextMenu.onLiteratureItems/readItem'
                 or admissions[0].get('volumeProducer') != 'RWMVolume.onVolumeChange'
                 or admissions[0].get('equipProducer') != 'ISInventoryPaneContextMenu.equipWeapon'
@@ -353,6 +395,45 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
             errors.append('Unexpected fresh read after cancellation/natural control')
         for record in records:
             errors.extend(_record_errors(record, selection['kind'], case, ids['actor'], acks, lost))
+        returns = [r for r in records if r.get('role') == 'return']
+        if favorite_unmoved and not any(r.get('item') == ids['front']['id'] and _number(r.get('performedAt'))
+                and [c.get('phase') for c in r.get('finishes', [])] == ['perform', 'complete']
+                and all(c.get('succeeded') is True for c in r['finishes']) for r in returns):
+            errors.append('Favorite refusal lacks actual source-bound successful callbacks plus exact unmoved final item')
+        if lost and enabled:
+            reason = row.get('blockedReturn', {}).get('reason')
+            attempted = [r for r in returns if r.get('item') == ids['front']['id']]
+            if reason == 'server' and not any(r.get('transactionRejected') is True for r in attempted):
+                errors.append('Server debt lacks exact rejected native transfer')
+            if reason == 'admission' and any(r.get('started') for r in attempted):
+                errors.append('Admission debt was claimed after starting a native return')
+            if reason == 'unmoved' and not any(_number(r.get('performedAt')) for r in attempted):
+                errors.append('Unmoved debt lacks actual native return execution')
+        gaps = row.get('replicaGaps')
+        if not isinstance(gaps, list):
+            errors.append('Missing exact replica convergence evidence')
+        else:
+            for gap in gaps:
+                if not isinstance(gap, dict):
+                    errors.append('Malformed exact replica gap'); continue
+                diagnostic = gap.get('diagnostic', {})
+                missing, mismatch = diagnostic.get('missing', {}), diagnostic.get('mismatch', {})
+                if (diagnostic.get('case') != case or diagnostic.get('actor') != ids['actor']
+                        or missing.get('front') is not True or any(value for name, value in missing.items() if name != 'front')
+                        or any(mismatch.values()) or diagnostic.get('counts', {}).get('front') != dict(root=0, world=0)):
+                    errors.append('Replica wait relaxed a scene/unrelated/exact ID invariant')
+                record = next((r for r in records if r.get('sequence') == gap.get('sequence')), {})
+                if (selection['kind'] != 'mp' or gap.get('case') != case or gap.get('actor') != ids['actor']
+                        or gap.get('itemId') != ids['front']['id'] or gap.get('itemType') != ids['front']['type']
+                        or gap.get('source') != source or gap.get('role') not in ('pickup', 'return')
+                        or record.get('role') != gap.get('role') or record.get('item') != ids['front']['id']
+                        or gap.get('actionRef') != record.get('actionRef') or gap.get('nativeRef') != record.get('nativeRef')
+                        or gap.get('transaction') != record.get('transaction') or record.get('transactionDone') is not True
+                        or record.get('transactionRejected') is not False or record.get('progress') is not True or not _number(record.get('performedAt'))
+                        or gap.get('resolved') is not True or not all(_number(gap.get(k)) for k in ('startedAt', 'deadlineAt', 'resolvedAt'))
+                        or gap.get('deadlineAt') != gap.get('startedAt', 0) + 2000
+                        or not gap.get('startedAt', float('inf')) <= gap.get('resolvedAt', 0) <= gap.get('deadlineAt', 0)):
+                    errors.append('Uncorrelated/unresolved/stale exact native transfer replica gap')
         if (not enabled or moving or keep) and not _number(front[-1].get('performedAt')):
             errors.append('Naturally finished/resumed reader never performed')
         elif enabled and not moving and not keep and (original.get('performedAt') is not None or [c.get('phase') for c in original.get('finishes', [])] != ['stop']):
@@ -389,7 +470,7 @@ def verify(root, selection, catalog):
         timing_rows = raw(text, 'PERFORMANCE')
         if [r.get('case') for r in timing_rows] != list(CASES): issues.append('Timing evidence missing, duplicated or reordered')
         debts, failure_uis = raw(text, 'BLOCKED_RETURN'), raw(text, 'FAILURE_UI')
-        expected_failures = list(CAPACITY_CASES) if selection['mode'] == 'toolkit' else []
+        expected_failures = list(CAPACITY_CASES) + (list(FAVORITE_CASES) if selection['kind'] == 'sp' else []) if selection['mode'] == 'toolkit' else []
         if [r.get('case') for r in debts] != expected_failures or [r.get('case') for r in failure_uis] != expected_failures:
             issues.append('Exact blocked-return and actual footer evidence missing, duplicated or reordered')
         for i, case in enumerate(CASES):
@@ -397,6 +478,12 @@ def verify(root, selection, catalog):
             errors = check_case(row, case, selection, prepared[i] if i < len(prepared) else None,
                 baselines[i] if i < len(baselines) else None, verified[i] if i < len(verified) else None,
                 [r for r in admissions if r.get('case') == case], [r for r in boundaries if r.get('case') == case], [r for r in drains if r.get('case') == case], [r for r in acks if r.get('case') == case], next((r for r in capacities if r.get('case') == case), None))
+            gap_rows = [r for r in raw(text, 'REPLICA_GAP') if r.get('case') == case]
+            converged = [r for r in raw(text, 'REPLICA_CONVERGED') if r.get('case') == case]
+            expected_gaps = row.get('replicaGaps', [])
+            expected_open = [dict({k:v for k,v in gap.items() if k not in ('resolved', 'resolvedAt')}, emitted=True) for gap in expected_gaps]
+            if gap_rows != expected_open or converged != expected_gaps:
+                errors.append('Raw exact replica gap/convergence receipts differ from final observed episodes')
             if [r for r in timing_rows if r.get('case') == case] != [row.get('performance')]:
                 errors.append('Raw performance evidence differs from the qualified case')
             if case in expected_failures:
@@ -417,4 +504,4 @@ def verify(root, selection, catalog):
     return dict(issues=issues, outcomes=outcomes, evidence={'limits': [
         'Programmatic real widget hit tests and handlers with an injected drag-threshold state; no physical pointer or rendering claim.',
         'Root singleton cross has no fabricated header; bag/world exercise actual operation/reader/optional-return controls. Four after-edit capacity failures retain an exact visible optional-return obligation, then explicitly Keep the item. Queue-off controls retain native rejected-return/tail-reset behavior.',
-        'One favorite skillbook type isolates source ancestry; no assertion about magazines/comics or older game builds.']})
+        'World normal/capacity books are nonfavorite to isolate eligible return; separate favorite-world SP no-effect/Host native-success probes preserve native protection. No magazine/comic or older-build claim.']})

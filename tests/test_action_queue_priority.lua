@@ -299,3 +299,18 @@ for _, mode in ipairs({'late-movement','late-disable','changed-constructor'}) do
     else assert(#q.queue==0,'manual abort must clear queued work')end
     ISReadABook.new=constructor
 end
+
+-- Normal empty native ticks are housekeeping, not an explicit cancellation.
+-- A future private debt/continuation must not lose its generation merely because
+-- the preceding action completed; even an empty explicit clear still revokes.
+reset();ordinary('idle-boundary');frame();finish()
+assert(q.current==nil and #q.queue==0,'native final completion did not leave an idle queue')
+local idleGeneration=q.toolkitOperationGeneration or 0
+for i=1,64 do q:tick() end
+assert((q.toolkitOperationGeneration or 0)==idleGeneration,'ordinary idle ticks revoked the queue generation')
+q:clearQueue()
+assert((q.toolkitOperationGeneration or 0)==idleGeneration+1,'explicit empty clear must still revoke ownership')
+local clearedGeneration=q.toolkitOperationGeneration
+for i=1,8 do q:tick() end
+assert(q.toolkitOperationGeneration==clearedGeneration,'idle after explicit clear invalidated ownership twice')
+print('Native empty ticks preserve generation; explicit empty clear revokes once.')

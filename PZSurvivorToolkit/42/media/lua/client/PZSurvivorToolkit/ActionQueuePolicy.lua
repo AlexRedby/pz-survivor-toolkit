@@ -1784,6 +1784,16 @@ local MAX_RETURN_EXECUTION_MEMBERS = 32
 local returnFailureSuffix = {ISReadABook = true, ISWalkToTimedAction = true,
     ISWalkToTimedActionF = true, ISPathFindAction = true, ISEquipWeaponAction = true, ISUnequipAction = true,
     ISRadioAction = true}
+local returnApproachBinding
+local returnApproachClosure = Proof and Proof.closure
+local function returnFailureApproach(action)
+    local owner = Toolkit.ActionQueueApproach
+    local checker = owner and owner.isAction
+    if type(checker) ~= "function" or not Proof or Proof.closure ~= returnApproachClosure
+        or type(returnApproachClosure) ~= "function" or not returnApproachClosure(checker, "ActionQueueApproach.lua") then return false end
+    if not returnApproachBinding then returnApproachBinding = {owner = owner, checker = checker} end
+    return owner == returnApproachBinding.owner and checker == returnApproachBinding.checker and checker(action) == true
+end
 function Policy.returnFailureIndependent(queue, action)
     -- Unsupported is a closed result, never permission on budget exhaustion.
     -- The first slice intentionally has no large-queue or recipe-input forecast.
@@ -1799,14 +1809,19 @@ function Policy.returnFailureIndependent(queue, action)
     own.positions = nil
     for i = index + 1, #queue.queue do
         local other = queue.queue[i]
-        if not returnFailureSuffix[other.Type]
+        local approach = other.Type == "ISQueueActionsAction" and returnFailureApproach(other)
+        if not returnFailureSuffix[other.Type] and not approach
             or other.Type == "ISRadioAction" and not mediaSetterModes[other.mode] then
             return false, "unsupported_tail_kind"
         end
         if other._isAddingActions or other.action then return false end
         local snapshot = snapshots[getmetatable(other)]
-        if not snapshot or not nativeMatches(other, snapshot) then return false, "unsupported_tail_binding" end
-        local contract = inspect(other, context)
+        if not approach and (not snapshot or not nativeMatches(other, snapshot)) then return false, "unsupported_tail_binding" end
+        local contract, source = inspect(other, context)
+        if approach and (source ~= "toolkit.approach" or not contract or not contract.deferred
+            or not contract.preparation or contract.capacityNonIncreasing ~= true) then
+            return false, "unsupported_tail_binding"
+        end
         if not contract or contract.knownInputs == false or contract.unknownOutputs
             or sharedItem(action, other, context) or sharedWorldTarget(action, other, context)
             or dynamicConflict(action, other, context) or dynamicConflict(other, action, context) then return false end

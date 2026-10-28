@@ -83,6 +83,9 @@ end
 -- Reset/death/replaced queues and arbitrary generation changes never do.
 function Settlement.invalidateEditor(queue)
     local state = cancellation(queue)
+    -- Explicit editor invalidation revokes optional UI debt; admitted native
+    -- cancellation receipts retain their separate generation bridge below.
+    Settlement.resetReturnFailures(queue)
     Toolkit.ActionQueueOperations.invalidateQueue(queue)
     if state and not Toolkit.Settings.actionQueue()
         and (queue.toolkitOperationGeneration or 0) == state.generation + 1 then
@@ -1729,13 +1732,96 @@ function Settlement.rejectReturnExecution(action, reason, guard)
     failureSerial = failureSerial + 1
     local failure = {id = failureSerial, action = action, record = record, planned = planned,
         candidate = planned.candidate, scope = planned.scope, queue = queue, generation = execution.generation,
-        item = action.item, source = execution.source, destination = execution.destination,
+        native = action.action, execution = execution, stop = action.stop, complete = action.onCompleteFunc,
+        transferGuard = action.toolkitTransferGuard, item = action.item, source = execution.source, destination = execution.destination,
         itemId = execution.id, itemType = execution.fullType,
         title = action.item:getDisplayName(), reason = reason, state = "blocked"}
     planned.failure, step.state = failure, "blocked"
     bucket.entries[#bucket.entries + 1] = failure
+    if bucket.activeQueue ~= queue or bucket.activeGeneration ~= execution.generation then
+        bucket.activeQueue, bucket.activeGeneration, bucket.activeCount = queue, execution.generation, 0
+    end
+    bucket.activeCount = bucket.activeCount + 1
     bucket.count, bucket.revision = bucket.count + 1, bucket.revision + 1
     return true
+end
+-- A source-reviewed restoration producer may ask whether its exact return
+-- would duplicate a still-undecided failed episode. This is only a suppression
+-- fence: it never waives the loan, publishes Keep intent or executes an item.
+local function singletonRestoration(action)
+    local groups = action.queueList
+    if type(groups) ~= "table" or getmetatable(groups) or type(groups[1]) ~= "table"
+        or getmetatable(groups[1]) or type(groups[1].items) ~= "table" or getmetatable(groups[1].items) then return false end
+    for key in pairs(groups) do if key ~= 1 then return false end end
+    for key in pairs(groups[1].items) do if key ~= 1 then return false end end
+    return groups[1].items[1] == action.item
+end
+local function exactReturnOwner(failure, root)
+    local owner = failure.candidate.sourceOwner
+    local destination = failure.destination
+    if not owner then return type(destination.getContainingItem) == "function" and destination:getContainingItem() == nil end
+    local holder = root:getItemById(owner.id)
+    if not sameMember(holder, owner) or type(holder.getInventory) ~= "function"
+        or holder:getInventory() ~= destination then return false end
+    local seen = {}
+    for _ = 1, 64 do
+        if destination == root then return true end
+        if not instanceof(destination, "ItemContainer") or seen[destination]
+            or type(destination.getContainingItem) ~= "function" then return false end
+        seen[destination] = true
+        holder = destination:getContainingItem()
+        if not instanceof(holder, "InventoryContainer") or type(holder.getInventory) ~= "function"
+            or holder:getInventory() ~= destination or type(holder.getContainer) ~= "function" then return false end
+        destination = holder:getContainer()
+    end
+    return false
+end
+function Settlement.returnRestorationBlocked(action)
+    local character = action and action.character
+    local bucket = character and returnFailures[character]
+    local queue = bucket and ISTimedActionQueue.queues[character]
+    if not bucket or not queue or queue.character ~= character or not Toolkit.Settings.actionQueue()
+        or character:isDead() or getSpecificPlayer(character:getPlayerNum()) ~= character
+        or #queue.queue ~= 0 or character:hasTimedActions() or action.action or action.started
+        or action.Type ~= "ISInventoryTransferAction" or getmetatable(action) ~= ISInventoryTransferAction
+        or not singletonRestoration(action) then return false end
+    local root = character:getInventory()
+    if action.srcContainer ~= root or action.destContainer == root or not instanceof(action.item, "InventoryItem") then return false end
+    for _, failure in ipairs(bucket.entries) do
+        local planned, candidate, previous = failure.planned, failure.candidate, failure.action
+        local step = failure.record.actions[previous]
+        if action.item == failure.item and action.destContainer == failure.destination
+            and failure.state == "blocked" and failure.queue == queue and operationLive(failure.record)
+            and (queue.toolkitOperationGeneration or 0) == failure.generation
+            and planned.failure == failure and planned.execution == failure.execution
+            and step and step.returning == planned and step.state == "blocked"
+            and candidate and candidate.phase == "active" and not candidate.ambiguous
+            and candidate.step and candidate.step.state == "earned" and candidate.plannedReturn == previous
+            and approvedExecutionGuard(failure.execution.guard)
+            and failure.native and previous.action == failure.native and previous.stop == failure.stop
+            and previous.onCompleteFunc == failure.complete and previous.toolkitTransferGuard == failure.transferGuard
+            and not character:getCharacterActions():contains(failure.native)
+            and failure.execution.queue == queue and failure.execution.generation == failure.generation
+            and failure.source == root and previous.srcContainer == root
+            and previous.destContainer == failure.destination and action.destContainer == failure.destination
+            and action.item == failure.item and previous.item == failure.item
+            and sameMember(action.item, {id = failure.itemId, fullType = failure.itemType})
+            and action.item:getContainer() == root and root:getItemById(failure.itemId) == action.item
+            and not action.item:getIsCraftingConsumed() and exactReturnOwner(failure, root)
+            and not sharedBorrowing(failure.scope, candidate, {remaining = MAX_EXECUTION_BORROWING_WORK}) then return true end
+    end
+    return false
+end
+-- O(1) observation hint, separate from historical UI notices. It performs no
+-- item lookup or debt traversal and grants no exact restoration/Keep authority.
+function Settlement.hasActiveBlockedReturn(character)
+    if not Toolkit.Settings.actionQueue() then return false end
+    local bucket = returnFailures[character]
+    if not bucket or not bucket.activeCount or bucket.activeCount == 0 then return false end
+    local queue = ISTimedActionQueue.queues[character]
+    return queue ~= nil and queue == bucket.activeQueue and queue.character == character
+        and (queue.toolkitOperationGeneration or 0) == bucket.activeGeneration
+        and getSpecificPlayer(character:getPlayerNum()) == character and not character:isDead()
 end
 function Settlement.blockedReturnInfo(character)
     local bucket = returnFailures[character]
@@ -1756,6 +1842,7 @@ function Settlement.resetReturnFailures(queue)
     for _, failure in ipairs(bucket.entries) do
         if failure.queue == queue then failure.state = "revoked" end
     end
+    if bucket.activeQueue == queue then bucket.activeCount = 0 end
     bucket.revision = bucket.revision + 1
 end
 function Settlement.keepReturn(character, id)
@@ -1793,6 +1880,9 @@ function Settlement.keepReturn(character, id)
                 end
             end
             table.remove(bucket.entries, index)
+            if bucket.activeQueue == failure.queue and bucket.activeGeneration == failure.generation then
+                bucket.activeCount = math.max(0, bucket.activeCount - 1)
+            end
             bucket.count, bucket.revision = bucket.count - 1, bucket.revision + 1
             return true
         end

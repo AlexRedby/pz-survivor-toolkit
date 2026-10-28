@@ -1209,8 +1209,14 @@ end
 local savedNext = next
 next = nil
 -- Pickup claims are candidates until the exact native attempt earns an effect.
-local function pickupFixture(client, ids)
+local function pickupFixture(client, ids, carried)
     local s = setup(client)
+    if carried then
+        local owner=s.item(901,s.root);owner.class='InventoryContainer'
+        owner.getInventory=function()return s.source end
+        s.source.class='ItemContainer';s.source.getContainingItem=function()return owner end
+        s.root.items[901]=owner;s.sourceOwner=owner
+    end
     s.root.isExistYet = function() return true end
     s.scope = s.settlement.deferred(s.player, s.token)
     s.pickups, s.members, s.owners = {}, {}, {}
@@ -1275,8 +1281,8 @@ local function pickupFixture(client, ids)
 end
 -- Explicitly cancelling one pending return retains the exact earned item while
 -- the body keeps running. Later body cancellation cannot recreate that return.
-local function pendingReturnFixture(client, unearned)
-    local s = pickupFixture(client)
+local function pendingReturnFixture(client, unearned, carried)
+    local s = pickupFixture(client,nil,carried)
     assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
     s.movePickup(1)
     if not unearned then assert(s.finishPickup(true)) end
@@ -2459,8 +2465,8 @@ print('Shared settlement: persistent phases, earned-only cleanup, late isolation
 
 -- Exact earned return execution uses the same private borrowing and outcome
 -- records as cancellation, including no-effect admission/server/SP results.
-local function returnExecutionFixture(client,unearned)
-    local s=pendingReturnFixture(client,unearned)
+local function returnExecutionFixture(client,unearned,carried)
+    local s=pendingReturnFixture(client,unearned,carried)
     local action=s.pendingReturn
     s.player.isPlayerMoving=function()return false end
     s.player.pressedMovement=function()return false end
@@ -2613,3 +2619,91 @@ do
     assert(s.settlement.blockedReturnInfo(s.player).count==0)
 end
 print('Shared return execution: earned-only binding, native admission/rejection/no-effect outcomes, private debts and no replay passed.')
+
+-- A private failed episode fences only the same source-reviewed idle return.
+-- It is not Keep, a transferable descriptor or permission to replay the item.
+local function blockedRestorationFixture(carried)
+    local s=returnExecutionFixture(false,false,carried);local action=s.pendingReturn
+    if not carried then s.source.getContainingItem=function()end end
+    s.player.hasTimedActions=function()return false end
+    s.queue.current,s.queue.queue=action,{action,s.tail}
+    assert(s.settlement.prepareReturnExecution(action,s.executionGuard))
+    action.action={isStarted=function()return false end};s.stack=false
+    assert(s.settlement.rejectReturnExecution(action,'admission',s.executionGuard))
+    s.queue.current,s.queue.queue=nil,{}
+    ISInventoryTransferAction={Type='ISInventoryTransferAction'};ISInventoryTransferAction.__index=ISInventoryTransferAction
+    s.restoring=setmetatable({Type='ISInventoryTransferAction',character=s.player,item=action.item,
+        srcContainer=s.root,destContainer=s.source,queueList={{items={action.item}}}},ISInventoryTransferAction)
+    return s
+end
+for _,carried in ipairs({false,true})do
+    local s=blockedRestorationFixture(carried)
+    assert(s.settlement.returnRestorationBlocked(s.restoring))
+    assert(s.settlement.returnRestorationBlocked(s.restoring),'fence must remain stable while a choice is pending')
+    assert(s.settlement.operationState(s.pendingReturn).borrowings[1].state=='active'
+        and s.settlement.blockedReturns(s.player)[1].state=='blocked'and s.counts()==0,
+        'suppression must not waive, transfer or publish Keep')
+    local id=s.settlement.blockedReturns(s.player)[1].id
+    assert(s.settlement.keepReturn(s.player,id))
+    assert(not s.settlement.returnRestorationBlocked(s.restoring),'committed Keep must consume the debt fence')
+end
+for _,change in ipairs({'generation','queue','item','destination','native','complete','stop','guard','consumed','started','batched','reset','dead','owner','ancestry-cycle'})do
+    local s=blockedRestorationFixture(true);local action=s.restoring
+    if change=='generation'then s.queue.toolkitOperationGeneration=1
+    elseif change=='queue'then ISTimedActionQueue.queues[s.player]={character=s.player,queue={}}
+    elseif change=='item'then action.item=s.item(action.item:getID(),s.root);action.queueList[1].items[1]=action.item
+    elseif change=='destination'then action.destContainer={}
+    elseif change=='native'then s.pendingReturn.action={}
+    elseif change=='complete'then s.pendingReturn.onCompleteFunc=function()end
+    elseif change=='stop'then s.pendingReturn.stop=function()end
+    elseif change=='guard'then s.pendingReturn.toolkitTransferGuard={}
+    elseif change=='consumed'then action.item.consumed=true
+    elseif change=='started'then action.action={}
+    elseif change=='batched'then action.queueList[1].items[2]=s.item(902,s.root)
+    elseif change=='reset'then s.settlement.resetReturnFailures(s.queue)
+    elseif change=='dead'then s.player.dead=true
+    elseif change=='owner'then s.root.items[901]=s.item(901,s.root)
+    elseif change=='ancestry-cycle'then s.sourceOwner.container=s.source end
+    assert(not s.settlement.returnRestorationBlocked(action),change..': changed restoration borrowed the fence')
+end
+print('Blocked return fence: exact native episode/item/endpoints/owner, idle scope, no waiver and reset/death denial passed.')
+
+-- Editor off revokes only optional failure notice authority. Re-enable exposes
+-- Forget, which must not read the item or publish an old Keep intent.
+do
+    local s=blockedRestorationFixture(false)
+    local notice=assert(s.settlement.blockedReturns(s.player)[1])
+    PZSurvivorToolkit.ActionQueueOperations.invalidateQueue=function(queue)
+        queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1
+    end
+    s.player.queueEnabled=false;s.settlement.invalidateEditor(s.queue)
+    assert(s.settlement.blockedReturns(s.player)[1].state=='revoked')
+    s.player.queueEnabled=true
+    s.root.getItemById=function()error('Forget after editor toggle must not inspect old inventory')end
+    PZSurvivorToolkit.ActionQueueTidyIntent={keepReturn=function()error('Forget must not publish old Keep intent')end}
+    assert(s.settlement.keepReturn(s.player,notice.id))
+    assert(s.settlement.blockedReturnInfo(s.player).count==0)
+end
+print('Editor invalidation revokes failed-return rights; re-enabled Forget has no item lookup or waiver.')
+
+-- The hot hint must ignore history/off/stale contexts without walking debt or
+-- inventory, while the UI continues to expose the same historical notices.
+for _,mode in ipairs({'active','off','generation','queue','revoked','kept'})do
+    local s=blockedRestorationFixture(false)
+    local before=s.settlement.blockedReturnInfo(s.player)
+    local id=s.settlement.blockedReturns(s.player)[1].id
+    if mode=='off'then s.player.queueEnabled=false
+    elseif mode=='generation'then s.queue.toolkitOperationGeneration=1
+    elseif mode=='queue'then ISTimedActionQueue.queues[s.player]={character=s.player,queue={}}
+    elseif mode=='revoked'then s.settlement.resetReturnFailures(s.queue)
+    elseif mode=='kept'then assert(s.settlement.keepReturn(s.player,id))end
+    local info=s.settlement.blockedReturnInfo(s.player)
+    assert(info.count==(mode=='kept'and 0 or before.count),'active hint must not alter UI history count')
+    s.player.getInventory=function()error('active hint must not read inventory')end
+    local original=ipairs;ipairs=function()error('active hint must not traverse debt')end
+    local ok,present=pcall(s.settlement.hasActiveBlockedReturn,s.player)
+    ipairs=original
+    assert(ok and present==(mode=='active'),mode..': wrong O(1) blocked return hint')
+    assert(s.settlement.blockedReturnInfo(s.player).revision==info.revision,'read-only hint changed UI revision')
+end
+print('Active failure hint: O(1), current queue/generation only, no historical/off scan or inventory lookup.')

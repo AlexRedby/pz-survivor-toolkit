@@ -1,6 +1,8 @@
 require "Hotbar/ISHotbar"
 require "PZSurvivorToolkit/ActionQueueAcknowledgements"
 local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
+local Proof = require "PZSurvivorToolkit/SourceProof"
+local proofClosure = Proof and Proof.closure
 local Intent = {}
 PZSurvivorToolkit.ActionQueueTidyIntent = Intent
 local states, watching = setmetatable({}, {__mode='k'}), setmetatable({}, {__mode='k'})
@@ -87,6 +89,31 @@ local function keptReturn(player,value,action)
     end
     return action.destContainer==destination
 end
+local blockedReturnBinding
+local function blockedReturnMethods()
+    local checker,hint=Settlement.returnRestorationBlocked,Settlement.hasActiveBlockedReturn
+    if PZSurvivorToolkit.ActionQueueSettlement~=Settlement or not Proof or Proof.closure~=proofClosure
+        or type(proofClosure)~='function'or type(checker)~='function' or type(hint)~='function'
+        or not proofClosure(checker,'ActionQueueSettlement.lua')or not proofClosure(hint,'ActionQueueSettlement.lua')then return end
+    if not blockedReturnBinding then blockedReturnBinding={checker=checker,hint=hint}end
+    if checker==blockedReturnBinding.checker and hint==blockedReturnBinding.hint then return blockedReturnBinding end
+end
+local function blockedReturn(action)
+    local methods=blockedReturnMethods()
+    if not methods then return false end
+    local ok,result=pcall(methods.checker,action)
+    return ok and result==true
+end
+local function mayHaveBlockedReturn(player)
+    if not PZSurvivorToolkit.Settings.actionQueue()then return false end
+    local methods=blockedReturnMethods()
+    if not methods then return false end
+    local ok,present=pcall(methods.hint,player)
+    -- Active current-generation debt only enables read-only buffering. Every
+    -- suppressed action still needs the separate exact episode proof.
+    return ok and present==true
+end
+
 local function confirm(record)
     local action,player=record.executor or record.action,record.player
     if not record.accepted or not record.finished or not record.effect or not guard(action) then return end
@@ -397,7 +424,10 @@ function Intent.install(valid,approvedWrapper)
 end
 function Intent.update(player,callback,...)
     local value=states[player]
-    if not value then return callback(...) end
+    if not value then
+        if not mayHaveBlockedReturn(player)then return callback(...)end
+        value=state(player)
+    end
     if player:isDead() or ISTimedActionQueue.queues[player]~=value.queue or not guard() then
         clear(player);return callback(...)
     end
@@ -486,7 +516,7 @@ function Intent.update(player,callback,...)
     local retainedReturns,retainedFloors={},{}
     for _,action in ipairs(actions) do
         if action.character==player and getmetatable(action)==ISInventoryTransferAction
-            and guard(action) and keptReturn(player,value,action) then
+            and guard(action) and (keptReturn(player,value,action) or blockedReturn(action)) then
             retainedReturns[action]=true
             if type(action.destContainer.getType)=='function' and action.destContainer:getType()=='floor' then
                 retainedFloors[action.item:getID()]=action.item
@@ -499,7 +529,8 @@ function Intent.update(player,callback,...)
         if action.character~=player or not guard(action) then buffered[#buffered+1]=action
         elseif retainedReturns[action] or class==P4RestoreFloorAction and action.item
             and retainedFloors[action.item:getID()]==action.item then
-            -- The committed exact return and its paired floor placement were waived.
+            -- A committed Keep or private undecided failed episode fences only
+            -- this exact return and its paired floor placement; no retry is run.
         elseif override and (class==ISEquipWeaponAction or class==ISUnequipAction
             and (same(action.item,identity(primary)) or same(action.item,identity(secondary)))) then
             -- Rebuild the validated hand group with only the explicit slots overlaid.

@@ -104,7 +104,12 @@ local nativeReadAnimEvent=function(self) self.fixtureReadEvents=(self.fixtureRea
 ISReadABook.animEvent=nativeReadAnimEvent
 ISInventoryTransferAction.new = function(self, character, item, source, destination)
     local action = ISBaseTimedAction.new(self, character)
-    action.item, action.srcContainer, action.destContainer = item, source, destination; return action
+    action.item, action.srcContainer, action.destContainer = item, source, destination
+    if QueueBlockedP4Fixture then
+        action.queueList={{items={item}}}
+        if QueueBlockedP4Fixture.nanItem==item then action.maxTime=0/0;QueueBlockedP4Fixture.retry=action end
+    end
+    return action
 end
 ISInventoryTransferAction.setAllowMissingItems = function(self, value) self.allowMissingItems = value end
 ISInventoryTransferAction.setOnComplete = function(self, callback, ...)
@@ -3578,6 +3583,81 @@ do
         recorded.onCompleteArgs[1]=nil
         assert(intent.status(recorded),'restored guarded source record lost its exact binding')
         settlement.beginPlannedReturn,settlement.finishPlannedReturn,settlement.returnRetention=beforeBegin,beforeFinish,beforeRetention
+        -- Actual native pickup outcome plus an admission refusal must fence only
+        -- P4's matching idle return until Keep. Other P4 returns still execute.
+        local fixtureIndependent=assert(loadstring([[return function()return true end]],'@fixture/ActionQueuePolicy.lua'))()
+        for _,fenceMode in ipairs({'active','disabled','foreign-checker'})do
+        local savedExecution,savedIndependent=PZSurvivorToolkit.ActionQueueExecution,actualPolicy.returnFailureIndependent
+        local savedActions,savedOnline,savedRootExists=player.getCharacterActions,player.getOnlineID,inventory.isExistYet
+        local savedBagInventory=tidyBagOwner.getInventory
+        tidyBagOwner.getInventory=function()return tidyBag end
+        local first,second,firstOwner=tidyTasks()
+        inventory.isExistYet=function()return true end
+        first.getIsCraftingConsumed=function()return false end;first.getDisplayName=first.getName
+        local scope=assert(compat.fixtureRegistries[2][player])
+        local pickup
+        for action in pairs(scope.tasks[firstOwner].actions)do
+            if action.Type=='ISInventoryTransferAction'and action.item==first and action.srcContainer==tidyBag then pickup=action end
+        end
+        assert(pickup,'source-backed fixture must retain its original pickup proof')
+        player.getOnlineID=function()return 101 end
+        player.getCharacterActions=function()return list({})end
+        local pickupGuard=function(action)return action==pickup end
+        first.container=tidyBag;inventory.values={second,tidyBagOwner}
+        pickup.action={};pickup.queueList={{items={first}}};pickup.transactionId=0
+        queue.current,queue.queue=pickup,{pickup}
+        assert(settlement.beginPickup(scope,pickup,pickupGuard),'fixture must observe the original native pickup episode')
+        first.container=inventory;inventory.values={first,second,tidyBagOwner}
+        pickup.queueList={}
+        assert(settlement.finishPickup(scope,pickup,true));settlement.poll(scope)
+        QueueBlockedP4Fixture={}
+        local returning=bulk.guardTransfer(ISInventoryTransferAction:new(player,first,inventory,tidyBag))
+        returning:setAllowMissingItems(true);returning.toolkitQueueOperation=firstOwner
+        settlement.track(returning,'body');returning.transactionId=0
+        QueueBlockedP4Fixture={action=returning}
+        local executionGuard=assert(loadstring([[return function(action,reference)
+            return action==QueueBlockedP4Fixture.action and (not reference
+                or action.item:getID()==reference.id and action.item:getFullType()==reference.fullType)
+        end]],'@fixture/ActionQueueExecution.lua'))()
+        PZSurvivorToolkit.ActionQueueExecution={matches=executionGuard,enqueued=function()return false end,inspect=function()end,completionState=function()end}
+        actualPolicy.returnFailureIndependent=fixtureIndependent
+        queue.current,queue.queue=returning,{returning}
+        assert(settlement.prepareReturnExecution(returning,executionGuard),'earned source pickup must bind its exact optional return')
+        returning.action={isStarted=function()return false end}
+        assert(settlement.rejectReturnExecution(returning,'admission',executionGuard),'native admission refusal must create private debt')
+        queue.current,queue.queue=nil,{}
+        QueueBlockedP4Fixture.nanItem=first
+        local savedFence=settlement.returnRestorationBlocked
+        local foreignCalls=0
+        if fenceMode=='disabled'then enabled=false
+        elseif fenceMode=='foreign-checker'then settlement.returnRestorationBlocked=function()foreignCalls=foreignCalls+1;error('foreign fence must not run')end end
+        tickTidy();tickTidy()
+        local retry=assert(QueueBlockedP4Fixture.retry,'actual P4 must construct the observed failed-capacity retry')
+        assert(retry.maxTime~=retry.maxTime,'fixture must retain native capacity-zero NaN timing metadata')
+        local unrelated=assert(findReturn(second),'unrelated P4 restoration must remain native')
+        if fenceMode=='active'then
+            assert(not findReturn(first),'P4 idle restoration must not replay an undecided failed return')
+            unrelated:perform();tickTidy();tickTidy()
+            assert(first.container==inventory and second.container==tidyBag,'fence changed an unrelated native restoration effect')
+            local debt=assert(settlement.blockedReturns(player)[1])
+            assert(debt.state=='blocked'and settlement.operationState(returning).borrowings[1].state=='active',
+                'fencing restoration must not revoke or prematurely waive the earned loan')
+            assert(settlement.keepReturn(player,debt.id),'Keep must remain available after source-owned idle restoration')
+            assert(settlement.blockedReturnInfo(player).count==0 and first.container==inventory)
+        else
+            local native=assert(findReturn(first),'disabled/changed proof must preserve native P4 restoration')
+            native:perform();unrelated:perform();tickTidy();tickTidy()
+            assert(first.container==tidyBag and second.container==tidyBag and foreignCalls==0,
+                'disabled/foreign fence changed native effects or executed foreign callbacks')
+            local debt=assert(settlement.blockedReturns(player)[1])
+            settlement.resetReturnFailures(queue);assert(settlement.keepReturn(player,debt.id),'fixture historical debt cleanup failed')
+        end
+        settlement.returnRestorationBlocked=savedFence
+        player.getCharacterActions,player.getOnlineID,inventory.isExistYet=savedActions,savedOnline,savedRootExists
+        tidyBagOwner.getInventory=savedBagInventory
+        PZSurvivorToolkit.ActionQueueExecution,actualPolicy.returnFailureIndependent=savedExecution,savedIndependent
+        QueueBlockedP4Fixture=nil
+        end
         PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions=previousPolicy,previousBulk
         reset()
     end

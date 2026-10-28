@@ -1387,6 +1387,36 @@ for _,phase in ipairs({'begin','finish'}) do
     end)
 end
 
+test('inactive history never creates empty Intent state or buffers the native callback',function()
+    for _,mode in ipairs({'revoked','stale','off'})do
+        local h=fixture();h.queueEnabled=mode~='off'
+        getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+        QueueInactiveHintFixture={active=mode=='off',hintCalls=0,historyCalls=0}
+        local methods=assert(loadstring([[return {
+            hasActiveBlockedReturn=function()QueueInactiveHintFixture.hintCalls=QueueInactiveHintFixture.hintCalls+1;return QueueInactiveHintFixture.active end,
+            blockedReturnInfo=function()QueueInactiveHintFixture.historyCalls=QueueInactiveHintFixture.historyCalls+1;return {count=1}end,
+            returnRestorationBlocked=function()error('negative hint must not inspect exact debt')end,
+        }]],'@fixture/ActionQueueSettlement.lua'))()
+        for name,value in pairs(methods)do h.settlement[name]=value end
+        local previous=require
+        require=function(name)
+            if name=='PZSurvivorToolkit/SourceProof'then return assert(loadfile(root..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua'))()end
+            return previous(name)
+        end
+        local path=root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'
+        local source
+        if NativeReadText then source=NativeReadText(path)
+        else local file=assert(io.open(path));source=file:read('*a');file:close()end
+        source=source:gsub('\nreturn Intent','\nIntent.fixtureStates=states\nreturn Intent')
+        local intent=assert(loadstring(source,'@'..path))();require=previous
+        local calls=0
+        for i=1,8 do assert(intent.update(h.player,function()calls=calls+1;return 'native'end)=='native')end
+        assert(calls==8 and intent.fixtureStates[h.player]==nil,'inactive hint allocated Intent state or delayed native callback')
+        assert(QueueInactiveHintFixture.historyCalls==0,'hint must not use historical UI count')
+        assert(QueueInactiveHintFixture.hintCalls==(mode=='off'and 0 or 8),'off hint must avoid the backend entirely')
+    end
+end)
+
 for _, failure in ipairs(failures) do print("FAIL tidy intent: " .. failure) end
 assert(#failures == 0, tostring(#failures) .. " of " .. checked .. " tidy intent checks failed")
 print("Tidy explicit intent checks passed (" .. checked .. ").")

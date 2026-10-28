@@ -45,7 +45,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 ### 0.1.326
 
 - Borrowed reading can cross independent equipment through a shared execution contract for a confirmed single automatic return. Native live capacity checks and exact item outcomes remain authoritative; unknown dependencies and merged transfers stay protected.
-- A proven never-started refusal, explicit Host rejection or completed SP transfer with no item movement keeps the borrowed item carried and preserves an independent queue tail. The Actions window retains the failed return with an explicit Keep item control; reset notices can be forgotten without replaying transfers.
+- A proven never-started refusal, explicit Host rejection or completed SP transfer with no item movement keeps the borrowed item carried and preserves an independent queue tail. The Actions window retains the failed return with an explicit Keep item control and fences the corresponding TidyUpMeister retry until the choice; reset notices can be forgotten without replaying transfers.
 
 ### 0.1.325
 
