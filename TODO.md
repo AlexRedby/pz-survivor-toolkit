@@ -1,7 +1,3 @@
-# Collect a single diagnostic run
-
-- [ ] Verify automatic and explicit single-run collection, paired regression and ETL preservation, then deliver a small in-place collector patch for the already-recorded package and update the current full package.
-
 # Windows capture reliability
 
 - [ ] Diagnose exceptional presentation stalls separately from gameplay chunk/FBO work. Use diagnostics 3.3 with a supported installed WPR after its standalone save check, and only when a further recording answers a concrete unresolved question; no rerun is requested now. Preserve clock uncertainty and distinguish native SwapBuffers waiting from GPU, driver, scheduler and capture interference; never infer CPU saturation from PresentMon CpuActive equalling whole-frame duration.
