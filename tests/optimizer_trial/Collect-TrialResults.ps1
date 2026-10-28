@@ -3,7 +3,7 @@ param([string]$ControlCapture, [string]$OptimizedCapture, [string]$PackageRoot,
       [ValidateSet('Auto','Comparison','Control','Optimized')][string]$RunMode = 'Auto')
 
 $script:TrialCollectorPath = $PSCommandPath
-$script:TrialCollectorRevision = '3.4.2'
+$script:TrialCollectorRevision = '3.5'
 
 # This collector reads receipts only. It never starts or stops a game process.
 function Assert-TrialResultPath([string]$Path) {
@@ -600,6 +600,8 @@ function New-TrialResultsBundle {
             $exitCode = Get-TrialResultProperty $receipt 'JavaExitCode'
             if ($null -eq $exitCode -or $exitCode -ne 0) { $issues += 'Game exit was not successful' }
             if ((Get-TrialResultProperty $receipt 'Activation') -notin @('Verified', 'ControlVerified')) { $issues += 'Full-pack activation was not verified' }
+            $logCapture = Get-TrialResultProperty $receipt 'LogCapture'
+            if ($null -ne $logCapture -and (Get-TrialResultProperty $logCapture 'Status') -ne 'Complete') { $issues += 'Background stdout/stderr capture is incomplete; inspect launch.json LogCapture' }
             $gameContext=Get-TrialBufferedGameContext $run $diagnostic
             if ($gameContext.status -notin @('Complete','Legacy')) { $issues += ('Buffered game context '+$gameContext.status+': '+$gameContext.reason) }
             $capture = $captures[$index]
