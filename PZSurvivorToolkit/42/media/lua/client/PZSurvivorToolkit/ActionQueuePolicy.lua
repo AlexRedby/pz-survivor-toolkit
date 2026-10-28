@@ -1316,7 +1316,7 @@ local function returnCapacityCapability(action, contract, context)
     return capability, execution
 end
 
-local function transferCapacityConflict(queue, a, b, last, check, context)
+local function transferCapacityConflict(queue, a, b, last, check, context, comparison)
     local carts = Toolkit.ActionQueueCarts
     local function transfer(action)
         return action.Type == "ISInventoryTransferAction"
@@ -1324,7 +1324,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
     end
     local aTransfer, bTransfer = transfer(a), transfer(b)
     if (aTransfer and not bTransfer) or (bTransfer and not aTransfer) then
-        local equipment = inspect(aTransfer and b or a, context)
+        local equipment = inspect(aTransfer and b or a, comparison or context)
         -- Hand/slot changes can alter carried weight or move heavy items out of external containers.
         if equipment and equipment.hands == queue.character then
             local transferAction = aTransfer and a or b
@@ -1515,23 +1515,68 @@ pendingReturnGuard = function(action, reference)
     end
     return count == 1
 end
+local returnRadioInspector = EditAdapters and EditAdapters.radio
+local returnRadioClosure = Proof and Proof.closure
+local function returnRadioProjectionIndependent(own)
+    if not EditAdapters or Toolkit.ActionQueueEditAdapters ~= EditAdapters
+        or EditAdapters.radio ~= returnRadioInspector or type(returnRadioInspector) ~= "function"
+        or not Proof or Proof.closure ~= returnRadioClosure
+        or not returnRadioClosure(returnRadioInspector, "ActionQueueEditAdapters.lua") then return false end
+    -- The owned radio adapter adds only domain=device. The exact return has
+    -- item/container edits; its plain resource footprint is otherwise unchanged.
+    local edit = own.edit
+    if edit ~= nil and (type(edit) ~= "table" or getmetatable(edit)
+        or type(edit.resources) ~= "table" or getmetatable(edit.resources)) then return false end
+    for _, resource in pairs(edit and edit.resources or {}) do
+        if type(resource) ~= "table" or getmetatable(resource) or resource.domain == "device" then return false end
+    end
+    return true
+end
+-- A comparison-only view may omit an optional, source-owned device edit only
+-- after every changed member's complete contract proves that domain absent.
+-- Full planner/forecast caches retain their complete contracts.
+local function cancellationComparisons(queue, first, last, context)
+    if #queue.queue > 32 or not targetCheckersUnchanged() then return context end
+    for index = first, last do
+        local own = inspect(queue.queue[index], context)
+        if not own or not returnRadioProjectionIndependent(own) then return context end
+    end
+    return {contracts = context.contracts, items = context.items, failureOverrides = {}}
+end
+local function cancellationComparison(other, context)
+    if not context.failureOverrides or other.Type ~= "ISRadioAction" or not mediaSetterModes[other.mode]
+        or other._isAddingActions or other.action
+        or (Operations.isContinuationPending and Operations.isContinuationPending(other.toolkitQueueOperation))
+        or context.contracts[other] or context.failureOverrides[other] then return context end
+    local snapshot = snapshots[getmetatable(other)]
+    local scope = activeDecision
+    local proven = scope and scope.native[other] == snapshot
+    if not snapshot or not (proven or nativeMatches(other, snapshot)) then return context end
+    local behavior, source = Definitions.behavior(other)
+    if behavior and source == "native.ISRadioAction" and behavior.inspect == radioResources then
+        context.failureOverrides[other] = {radioResources(other, true), source, behavior}
+    end
+    return context
+end
 pendingReturnReason = function(queue, action, context)
     local settlement = Toolkit.ActionQueueSettlement
     if not settlement or not settlement.canWaivePendingReturn
         or not settlement.canWaivePendingReturn(action, pendingReturnGuard) then return "dependent" end
     local index = queue:indexOf(action)
     local capacity = {first = index, last = index}
+    local comparisons = cancellationComparisons(queue, index, index, context)
     for otherIndex, other in ipairs(queue.queue) do
         if other ~= action then
-            if not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
+            local comparison = cancellationComparison(other, comparisons)
+            if not knownCraftInputs(other, comparison) then return "operation_dependent", nil, nil, other end
             if otherIndex > index then
-                local shared = sharedItem(action, other, context)
+                local shared = sharedItem(action, other, comparison)
                 if shared then return "operation_shared_item", nil, nil, other, shared end
-                local conflict = sharedWorldTarget(action, other, context)
-                    or dynamicConflict(action, other, context) or dynamicConflict(other, action, context)
+                local conflict = sharedWorldTarget(action, other, comparison)
+                    or dynamicConflict(action, other, comparison) or dynamicConflict(other, action, comparison)
                 if conflict then return "operation_dependent", nil, nil, other, conflict end
             end
-            local blocker = transferCapacityConflict(queue, action, other, #queue.queue, capacity, context)
+            local blocker = transferCapacityConflict(queue, action, other, #queue.queue, capacity, context, comparison)
             if blocker then return "container_capacity", nil, nil, other, blocker end
         end
     end
@@ -1620,29 +1665,31 @@ function Policy.cancelOperationReason(queue, action, context)
     end
     for item in pairs(type(token) == "table" and token.toolkitPickups or {}) do inputs[itemKey(item)] = true end
     local capacityCheck = {first = first, last = last}
+    local comparisons = cancellationComparisons(queue, first, last, context)
     local groupItems = plainGroupItems(queue, first, last, context)
     for i, other in ipairs(queue.queue) do
         if i > last or (i < first and not pendingRemovalOnly) then
-            if other._isAddingActions or not knownCraftInputs(other, context) then
+            local comparison = cancellationComparison(other, comparisons)
+            if other._isAddingActions or not knownCraftInputs(other, comparison) then
                 return unknownDenial(context, "operation_dependent", other), nil, nil, other
             end
-            for item in pairs(operationItems(other, context)) do
+            for item in pairs(operationItems(other, comparison)) do
                 if inputs[item] then return "operation_shared_item", nil, nil, other, item end
             end
-            if mayShareGroupResource(groupItems, other, context) then
+            if mayShareGroupResource(groupItems, other, comparison) then
                 for j = first, last do
-                    local item = sharedItem(queue.queue[j], other, context)
+                    local item = sharedItem(queue.queue[j], other, comparison)
                     if item then return "operation_shared_item", nil, nil, other, item end
-                    local conflict = sharedWorldTarget(queue.queue[j], other, context) or dynamicConflict(queue.queue[j], other, context)
-                        or dynamicConflict(other, queue.queue[j], context)
+                    local conflict = sharedWorldTarget(queue.queue[j], other, comparison) or dynamicConflict(queue.queue[j], other, comparison)
+                        or dynamicConflict(other, queue.queue[j], comparison)
                     if conflict then return "operation_dependent", nil, nil, other, conflict end
-                    local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck, context)
+                    local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck, context, comparison)
                     if capacity then return "container_capacity", nil, nil, other, capacity end
                 end
             end
             -- shortcut: output requirements of arbitrary later actions are unknown; add verified adapters to allow them.
             if output and i > last then
-                local independentCraft = craft(other) and knownCraftInputs(other, context)
+                local independentCraft = craft(other) and knownCraftInputs(other, comparison)
                 if ((other.onStartFunc or other.onCancelFunc) and not independentCraft) or other.retriggerLastAction
                     or (other.onCompleteFunc and other.onCompleteFunc ~= other.toolkitQueueSafeOnComplete and not independentCraft)
                     or (not independentCraft and not other.toolkitIndependentBulk and not other.toolkitBulkPreparation
@@ -1803,23 +1850,6 @@ local MAX_RETURN_EXECUTION_MEMBERS = 32
 local returnFailureSuffix = {ISReadABook = true, ISWalkToTimedAction = true,
     ISWalkToTimedActionF = true, ISPathFindAction = true, ISEquipWeaponAction = true, ISUnequipAction = true,
     ISRadioAction = true}
-local returnRadioInspector = EditAdapters and EditAdapters.radio
-local returnRadioClosure = Proof and Proof.closure
-local function returnRadioProjectionIndependent(own)
-    if not EditAdapters or Toolkit.ActionQueueEditAdapters ~= EditAdapters
-        or EditAdapters.radio ~= returnRadioInspector or type(returnRadioInspector) ~= "function"
-        or not Proof or Proof.closure ~= returnRadioClosure
-        or not returnRadioClosure(returnRadioInspector, "ActionQueueEditAdapters.lua") then return false end
-    -- The owned radio adapter adds only domain=device. The exact return has
-    -- item/container edits; its plain resource footprint is otherwise unchanged.
-    local edit = own.edit
-    if edit ~= nil and (type(edit) ~= "table" or getmetatable(edit)
-        or type(edit.resources) ~= "table" or getmetatable(edit.resources)) then return false end
-    for _, resource in pairs(edit and edit.resources or {}) do
-        if type(resource) ~= "table" or getmetatable(resource) or resource.domain == "device" then return false end
-    end
-    return true
-end
 local returnApproachBinding
 local returnApproachClosure = Proof and Proof.closure
 local function returnFailureApproach(action)

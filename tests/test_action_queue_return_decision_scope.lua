@@ -293,5 +293,73 @@ assert(largest.support==2 and largest.tailSweeps==1 and largest.tailMembers==30,
     'one decision repeated its isolated-return suffix proof')
 assert(largest.contracts==5 and largest.nativeMatches==32,
     'tail-only setters rebuilt full planner contracts/native proofs')
+
+-- Group-cancel and pending-return cancellation use comparison-only radio views.
+-- These are positive decisions through the actual public cancel entry points;
+-- settlement authority here remains an explicit double, as in the move fixture.
+sized(32)
+local originalSettlement=PZSurvivorToolkit.ActionQueueSettlement
+PZSurvivorToolkit.ActionQueueSettlement={requiredStep=function()return false end,
+ canWaivePendingReturn=function()return true end,pendingReturnWaiver=function()return {}end}
+local function cancelAllowed()
+ local group=policy.evaluateCancel(queue,reader,true)
+ assert(group.allowed,group.reason)
+ assert(not policy.previewCancel(queue,reader,true).reason,'group preview denied')
+ local pending=policy.evaluateCancel(queue,returning,false)
+ assert(pending.allowed and pending.mode=='pending-return',pending.reason)
+ assert(not policy.previewCancel(queue,returning,false).reason,'pending return preview denied')
+end
+Counters={};cancelAllowed()
+assert(Counters.contracts==20,'cancel comparisons rebuilt device-only projections')
+-- A later member of the own group must disable elision for the entire group.
+transferDomain='device';transferDevice={};Counters={};cancelAllowed()
+assert(Counters.contracts>=128,'device edit on a later group member borrowed the elision')
+transferDomain='item';transferDevice=nil
+-- Shared native item resources remain visible with device projection omitted.
+queue.queue[32].item=book
+assert(not policy.evaluateCancel(queue,reader,true).allowed,'group hid shared item')
+assert(not policy.evaluateCancel(queue,returning,false).allowed,'pending return hid shared item')
+queue.queue[32].item=nil
+local savedRadio=adapters.radio
+adapters.radio=function()return {resources={{domain='item',key=book:getID()}}}end
+assert(not policy.evaluateCancel(queue,reader,true).allowed,'changed helper hid group edit dependency')
+assert(not policy.evaluateCancel(queue,returning,false).allowed,'changed helper hid return edit dependency')
+adapters.radio=savedRadio
+for _,field in ipairs({'complete','onCompleteFunc'})do
+ local saved=queue.queue[32][field]
+ queue.queue[32][field]=function()error('foreign lifecycle/callback executed')end
+ assert(not policy.evaluateCancel(queue,reader,true).allowed,'group accepted foreign binding: '..field)
+ assert(not policy.evaluateCancel(queue,returning,false).allowed,'return accepted foreign binding: '..field)
+ queue.queue[32][field]=saved
+end
+-- The comparison overlay must never be returned as a full planner contract.
+local rawContext={contracts={},items={}}
+assert(not policy.cancelOperationReason(queue,reader,rawContext))
+assert(not rawContext.contracts[queue.queue[32]],'comparison published partial radio contract')
+assert(policy.inspect(queue.queue[32],rawContext).edit.resources[1].domain=='device',
+ 'full planner inherited partial radio contract')
+local pendingContext={contracts={},items={}}
+assert(not policy.cancelReason(queue,returning,pendingContext))
+assert(not pendingContext.contracts[queue.queue[32]],'pending comparison published partial radio contract')
+assert(policy.inspect(queue.queue[32],pendingContext).edit.resources[1].domain=='device')
+-- Nested positive cancel calls start their own native/projection lifetime.
+local originalCancel=policy.cancelOperationReason
+local inCancel=false
+policy.cancelOperationReason=function(q,a,context)
+ if not inCancel then
+  inCancel=true;assert(policy.evaluateCancel(q,a,true).allowed);inCancel=false
+ end
+ return originalCancel(q,a,context)
+end
+Counters={};assert(policy.evaluateCancel(queue,reader,true).allowed)
+assert(Counters.tailSweeps==2,'nested cancel inherited outer independent-return proof')
+policy.cancelOperationReason=originalCancel
+-- Fresh next invocation must observe both binding and resource mutations.
+queue.queue[32].item=book
+assert(policy.previewCancel(queue,reader,true).reason,'fresh group preview hid shared item')
+assert(policy.previewCancel(queue,returning,false).reason,'fresh return preview hid shared item')
+queue.queue[32].item=nil;cancelAllowed()
+PZSurvivorToolkit.ActionQueueSettlement=originalSettlement
+
 DecisionScopeNoTiming=nil
 print('Return decision scope: one bounded suffix, fresh nested/error/public boundaries, exact native/helper/callback gates, scalar/device parity and full-planner isolation passed.')
