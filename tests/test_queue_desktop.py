@@ -1,6 +1,7 @@
 """Owned-window isolation and the acknowledgement that lets the game become opaque."""
 from pathlib import Path
 from types import SimpleNamespace
+import json
 import subprocess
 import sys
 import tempfile
@@ -210,7 +211,7 @@ class DesktopTests(unittest.TestCase):
                 self.assertEqual(manager.evidence['discovery_probes']['123']['state'], 'asleep')
                 self.assertEqual(manager.evidence['display_probes']['123']['state'], 'awake')
                 self.assertEqual(manager.evidence['wake_graces']['123']['seconds'], 15)
-                self.assertEqual(manager.evidence['glfw_handles'], {})
+                self.assertEqual(manager.evidence['glfw_handles'], {'123': '456'})
                 self.assertEqual((self.root / 'Lua/test-window-routed.txt').read_text(), '123:456\n')
                 self.assertFalse((self.root / 'Lua/test-window-visible.txt').exists())
 
@@ -553,7 +554,7 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(self.probe.call_count, 2)
         manager.check(self.process)
         self.rows = '790|123|PZ-TEST\n'
-        with self.assertRaisesRegex(RuntimeError, 'escaped.*pid=123'):
+        with self.assertRaisesRegex(RuntimeError, 'identities changed.*pid=123'):
             manager.check(self.process)
 
     def test_current_run_keeps_waiting_while_owned_discovery_remains_empty(self):
@@ -675,12 +676,99 @@ class DesktopTests(unittest.TestCase):
         self.focused = '123'
         self.moved = False
         count = len(self.commands)
-        for rows in ('', '790|123|PZ-TEST\n', '789|123|C\n'):
+        for rows, kind in (('', 'window-undiscoverable'), ('790|123|PZ-TEST\n', 'window-identity-changed'),
+                           ('789|123|C\n', 'wrong-workspace')):
             with self.subTest(rows=rows):
                 self.rows = rows
-                with self.assertRaisesRegex(RuntimeError, 'escaped.*pid=123.*observed='):
+                with self.assertRaisesRegex(desktop.IsolationError, 'pid=123.*observed=') as caught:
                     manager.check(self.process)
+                self.assertEqual(caught.exception.kind, kind)
         self.assertTrue(all(argv[0] in ('list-windows', 'list-workspaces') for argv in self.commands[count:]))
+
+    def test_incident_keeps_last_verified_and_raw_failed_query_without_retry_or_mutation(self):
+        manager = desktop.prepare({})
+        manager.route(self.process, self.root, self.log)
+        manager.check(self.process)
+        verified = manager.evidence['last_verified']['123']
+        self.rows = ''
+        count = len(self.commands)
+        with self.assertRaises(desktop.IsolationError) as caught:
+            manager.check(self.process)
+        probe = {'status': 'returned', 'windows': {'status': 'returned', 'items': [{'id': 789, 'pid': 123}]}}
+        with patch.object(desktop.desktop_diagnostics, 'capture', return_value=probe) as native:
+            incident = manager.capture_incident(self.process, caught.exception, 'check')
+        native.assert_called_once_with(123)
+        self.assertEqual(incident['kind'], 'window-undiscoverable')
+        self.assertIs(incident['last_verified'], verified)
+        self.assertEqual(verified['windows'], {'789': 'PZ-TEST'})
+        self.assertEqual(incident['observation']['windows'], {})
+        self.assertEqual(incident['observation']['command']['stdout'], '')
+        self.assertEqual(incident['observation']['command']['returncode'], 0)
+        self.assertLessEqual(verified['at']['monotonic_ns'], incident['at']['monotonic_ns'])
+        self.assertEqual(incident['expected_windows'], ['789'])
+        self.assertEqual(manager.evidence['glfw_handles'], {'123': '456'})
+        self.assertEqual([command[0] for command in self.commands[count:]], ['list-windows'])
+        self.assertEqual(manager.evidence['incidents'], [incident])
+
+    def test_cli_timeout_retains_partial_output_and_original_error_when_probe_fails(self):
+        manager = desktop.prepare({})
+        manager.route(self.process, self.root, self.log)
+        self.fail_command = 'list-windows'
+        self.command_error = subprocess.TimeoutExpired('aerospace', 5, output=b'partial', stderr=b'AX timeout')
+        with self.assertRaises(desktop.IsolationError) as caught:
+            manager.check(self.process)
+        with patch.object(desktop.desktop_diagnostics, 'capture', side_effect=OSError('probe unavailable')):
+            incident = manager.capture_incident(self.process, caught.exception, 'check')
+        self.assertEqual(incident['kind'], 'cli-timeout')
+        self.assertIn('AeroSpace isolation failed', incident['error'])
+        self.assertEqual(incident['native']['status'], 'error')
+        self.assertEqual(incident['observation']['command']['stdout'], '[unverified window row redacted]\n')
+        self.assertEqual(incident['observation']['command']['stdout_redacted_rows'], 1)
+        self.assertEqual(incident['observation']['command']['stderr'], 'AX timeout')
+
+    def test_invalid_foreign_discovery_is_fatal_without_persisting_foreign_metadata(self):
+        manager = desktop.prepare({})
+        manager.route(self.process, self.root, self.log)
+        self.rows = '789|123|PZ-TEST\n991|888|PRIVATE-WORKSPACE\n'
+        with self.assertRaises(desktop.IsolationError) as caught:
+            manager.check(self.process)
+        self.assertEqual(caught.exception.kind, 'invalid-window-identity')
+        with patch.object(desktop.desktop_diagnostics, 'capture', return_value={'status': 'unavailable'}):
+            incident = manager.capture_incident(self.process, caught.exception, 'check')
+        encoded = json.dumps(incident)
+        self.assertNotIn('PRIVATE-WORKSPACE', encoded)
+        self.assertNotIn('991|888', encoded)
+        self.assertIn('789|123|PZ-TEST', encoded)
+        self.assertEqual(incident['observation']['command']['stdout_redacted_rows'], 1)
+
+    def test_process_exit_during_discovery_is_not_reported_as_missing_window(self):
+        manager = desktop.prepare({})
+        manager.route(self.process, self.root, self.log)
+        original = self.command
+        def exit_during_query(argv, **kwargs):
+            result = original(argv, **kwargs)
+            self.process.poll = lambda: -11
+            return result
+        with patch.object(desktop.subprocess, 'run', side_effect=exit_during_query), \
+                self.assertRaises(desktop.IsolationError) as caught:
+            manager.check(self.process)
+        self.assertEqual(caught.exception.kind, 'process-exited')
+        with patch.object(desktop.desktop_diagnostics, 'capture') as native:
+            incident = manager.capture_incident(self.process, caught.exception, 'check')
+        native.assert_not_called()
+        self.assertIsNone(incident['observation']['process_before'])
+        self.assertEqual(incident['observation']['process_after'], -11)
+        self.assertEqual(incident['native']['reason'], 'owned-process-exited')
+
+    def test_probe_result_is_discarded_if_process_exits_and_pid_might_be_reused(self):
+        manager = desktop.prepare({})
+        def dies(pid):
+            self.process.poll = lambda: -11
+            return {'status': 'returned', 'windows': {'items': [{'id': 999}]}}
+        with patch.object(desktop.desktop_diagnostics, 'capture', side_effect=dies):
+            incident = manager.capture_incident(self.process, RuntimeError('original failure'), 'route')
+        self.assertEqual(incident['native'], {'status': 'discarded', 'reason': 'owned-process-exited-during-probe'})
+        self.assertEqual(incident['error'], 'original failure')
 
     def test_visiting_workspace_during_routing_allows_acknowledgement(self):
         manager = desktop.prepare({})
@@ -844,7 +932,7 @@ class DesktopTests(unittest.TestCase):
             manager.check(self.process)
             second_rows.clear()
             second_rows['791'] = 'PZ-TEST'
-            with self.assertRaisesRegex(RuntimeError, 'escaped.*pid=124'):
+            with self.assertRaisesRegex(RuntimeError, 'identities changed.*pid=124'):
                 manager.check(second)
         self.assertEqual((cache / 'Lua/test-window-routed.txt').read_text(), '124:457:current\n')
         self.assertEqual((cache / 'Lua/test-window-visible.txt').read_text(), '124:457\n')
@@ -941,6 +1029,50 @@ class DesktopRunnerTests(unittest.TestCase):
         self.assertIn('owned-window routing failed', result['error'])
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertTrue(all(stream.closed for stream in self.harness.streams))
+
+    def test_incident_is_saved_before_owned_cleanup_for_routing_and_runtime_failures(self):
+        for phase in ('route', 'check'):
+            with self.subTest(phase=phase):
+                harness = test_queue_runner.NativeRunnerTests()
+                harness.setUp()
+                try:
+                    def fail(*args):
+                        raise desktop.IsolationError('window-undiscoverable', 'missing owned window')
+                    setattr(harness.desktop, phase, fail)
+                    def capture(process, error, observed_phase):
+                        self.assertIsNone(process.poll())
+                        self.assertEqual(observed_phase, phase)
+                        harness.desktop.evidence['incidents'] = [{'pid': process.pid, 'kind': error.kind}]
+                    harness.desktop.capture_incident = capture
+                    original_stop = test_queue_runner.runner.stop
+                    def stop(process, **kwargs):
+                        saved = json.loads((harness.root / 'desktop-incident.json').read_text())
+                        self.assertEqual(saved['desktop']['incidents'][0]['kind'], 'window-undiscoverable')
+                        self.assertEqual(saved['error'], 'missing owned window')
+                        return original_stop(process, **kwargs)
+                    with patch.object(test_queue_runner.runner, 'stop', side_effect=stop):
+                        result, _ = harness.invoke()
+                    self.assertEqual(result['status'], 'failed')
+                    self.assertEqual(result['error'], 'missing owned window')
+                finally:
+                    harness.doCleanups()
+
+    def test_diagnostic_or_persistence_failure_does_not_replace_primary_failure_or_skip_cleanup(self):
+        def fail(*args):
+            raise desktop.IsolationError('wrong-workspace', 'owned window moved')
+        self.harness.desktop.check = fail
+        self.harness.desktop.capture_incident = Mock(side_effect=OSError('diagnostic failed'))
+        original_write = test_queue_runner.runner.write_json
+        def write(path, value):
+            if path.name == 'desktop-incident.json':
+                raise OSError('incident storage unavailable')
+            original_write(path, value)
+        with patch.object(test_queue_runner.runner, 'write_json', side_effect=write):
+            result, kills = self.harness.invoke()
+        self.assertEqual(result['error'], 'owned window moved')
+        self.assertEqual(len(result['diagnostic_errors']), 2)
+        self.assertEqual([call.args[0] for call in kills], [101])
+        self.assertTrue((self.harness.root / 'execution.json').exists())
 
     def test_host_client_receives_window_agent_and_keeps_server_loader(self):
         self.harness.prepare_host()

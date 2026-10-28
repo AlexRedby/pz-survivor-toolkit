@@ -161,6 +161,27 @@ def run(root, resource_wait=300):
             path = root / (role + "-launch.log")
             return path.read_text(errors="replace") if path.is_file() else ""
 
+        def record_window_failure(role, error, phase):
+            """Persist the incident before probe shutdown or process termination."""
+            try:
+                window_manager.capture_incident(processes[role], error, phase)
+            except Exception as diagnostic_error:
+                execution.setdefault('diagnostic_errors', []).append(str(diagnostic_error))
+            try:
+                write_json(root / 'desktop-incident.json', {
+                    'role': role, 'phase': phase, 'error': str(error),
+                    'desktop': window_manager.evidence,
+                    'diagnostic_errors': execution.get('diagnostic_errors', [])})
+            except Exception as diagnostic_error:
+                execution.setdefault('diagnostic_errors', []).append('Incident persistence: ' + str(diagnostic_error))
+
+        def window_action(role, phase, *args):
+            try:
+                return getattr(window_manager, phase)(processes[role], *args)
+            except Exception as error:
+                record_window_failure(role, error, phase)
+                raise
+
         def launch(role):
             config = runtime["roles"][role]
             cache = Path(config["cache"])
@@ -195,7 +216,7 @@ def run(root, resource_wait=300):
             execution["processes"][role] = {"pid": process.pid}
             print(role + " PID " + str(process.pid), flush=True)
             if role != "server":
-                window_manager.route(process, cache, root / (role + "-launch.log"))
+                window_action(role, 'route', cache, root / (role + "-launch.log"))
 
         attached = {}
         def probe(role, spec, argument):
@@ -247,7 +268,7 @@ def run(root, resource_wait=300):
                 current = {role: text(role) for role in adapters.roles(selection)}
                 for role in clients:
                     if processes[role].poll() is None:
-                        window_manager.check(processes[role])
+                        window_action(role, 'check')
                 # A writer may be halfway through its final JSON line; final audit remains strict.
                 records = {role: events(current[role] if current[role].endswith("\n") else current[role].rsplit("\n", 1)[0] if "\n" in current[role] else "") for role in clients}
                 for role in clients:
@@ -286,7 +307,10 @@ def run(root, resource_wait=300):
                     break
                 for role, process in processes.items():
                     if process.poll() is not None and not (role == "client1" and execution["peer_disconnected"]):
-                        raise RuntimeError("Game process stopped unexpectedly: " + role)
+                        error = desktop.IsolationError('process-exited', "Game process stopped unexpectedly: " + role)
+                        if role in clients:
+                            record_window_failure(role, error, 'process-exit')
+                        raise error
                 if guard.poll() is not None:
                     raise RuntimeError("Display guard stopped")
                 time.sleep(2)
@@ -304,7 +328,7 @@ def run(root, resource_wait=300):
                             try:
                                 probe(role, spec, 'stop')
                             except (OSError, subprocess.SubprocessError, RuntimeError) as error:
-                                execution.update(status='failed', error='Probe close failed: ' + str(error))
+                                execution.setdefault('cleanup_errors', []).append('Probe close failed: ' + str(error))
                 for role, process in reversed(list(processes.items())):
                     if hosted and role == 'client1' and 'server' in execution['processes']:
                         try:
