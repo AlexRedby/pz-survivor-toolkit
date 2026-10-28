@@ -345,7 +345,10 @@ require = function(module)
     elseif module == 'Project_Cook/PJCK_FrozenCooking' or module == 'Project_Cook/PJCK_EvolvedSpiceGuard' then id, branch = 'Project_Cook', 'shared/'
     elseif module:match('^ISUI/WMI_') and module ~= 'ISUI/WMI_Compat_TABAS' then id, branch = 'WashFix', 'client/'
     elseif module == 'TimedActions/WMI_PatchWashClothing' then id, branch = 'WashFix', 'shared/'
-    elseif module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'))()
+    elseif module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then
+        local path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'
+        local source=read(path):gsub('\nreturn Intent','\nIntent.fixtureState=state\nreturn Intent')
+        return assert(loadstring(source,'@'..path))()
     elseif module == 'PZSurvivorToolkit/ActionQueueLifecycle' then
         if PZSurvivorToolkit.ActionQueueLifecycle then return PZSurvivorToolkit.ActionQueueLifecycle end
         return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua'))()
@@ -3586,7 +3589,7 @@ do
         -- Actual native pickup outcome plus an admission refusal must fence only
         -- P4's matching idle return until Keep. Other P4 returns still execute.
         local fixtureIndependent=assert(loadstring([[return function()return true end]],'@fixture/ActionQueuePolicy.lua'))()
-        for _,fenceMode in ipairs({'active','disabled','foreign-checker'})do
+        for _,fenceMode in ipairs({'active','restoring','keep-before-idle','keep-before-first-idle','disabled','foreign-checker'})do
         local savedExecution,savedIndependent=PZSurvivorToolkit.ActionQueueExecution,actualPolicy.returnFailureIndependent
         local savedActions,savedOnline,savedRootExists=player.getCharacterActions,player.getOnlineID,inventory.isExistYet
         local savedBagInventory=tidyBagOwner.getInventory
@@ -3595,6 +3598,9 @@ do
         inventory.isExistYet=function()return true end
         first.getIsCraftingConsumed=function()return false end;first.getDisplayName=first.getName
         local scope=assert(compat.fixtureRegistries[2][player])
+        if fenceMode=='restoring'or fenceMode:match('^keep%-before')then
+            local previousIntent=intent.fixtureState(player);previousIntent.restoring=true;previousIntent.idle=fenceMode=='keep-before-first-idle'and 1 or 0
+        end
         local pickup
         for action in pairs(scope.tasks[firstOwner].actions)do
             if action.Type=='ISInventoryTransferAction'and action.item==first and action.srcContainer==tidyBag then pickup=action end
@@ -3625,6 +3631,14 @@ do
         assert(settlement.prepareReturnExecution(returning,executionGuard),'earned source pickup must bind its exact optional return')
         returning.action={isStarted=function()return false end}
         assert(settlement.rejectReturnExecution(returning,'admission',executionGuard),'native admission refusal must create private debt')
+        if fenceMode:match('^keep%-before')then
+            local independent=ISReadABook:new(player,second);independent.action={}
+            queue.current,queue.queue=independent,{independent}
+            local earlyDebt=assert(settlement.blockedReturns(player)[1])
+            assert(not QueueBlockedP4Fixture.retry,'Keep precondition must precede every P4 idle restoration')
+            assert(settlement.keepReturn(player,earlyDebt.id),'Keep must commit while independent work remains active')
+            assert(not settlement.hasActiveBlockedReturn(player),'committed Keep must clear the active blocked hint')
+        end
         queue.current,queue.queue=nil,{}
         QueueBlockedP4Fixture.nanItem=first
         local savedFence=settlement.returnRestorationBlocked
@@ -3635,15 +3649,44 @@ do
         local retry=assert(QueueBlockedP4Fixture.retry,'actual P4 must construct the observed failed-capacity retry')
         assert(retry.maxTime~=retry.maxTime,'fixture must retain native capacity-zero NaN timing metadata')
         local unrelated=assert(findReturn(second),'unrelated P4 restoration must remain native')
-        if fenceMode=='active'then
+        if fenceMode=='active'or fenceMode=='restoring'or fenceMode:match('^keep%-before')then
             assert(not findReturn(first),'P4 idle restoration must not replay an undecided failed return')
             unrelated:perform();tickTidy();tickTidy()
             assert(first.container==inventory and second.container==tidyBag,'fence changed an unrelated native restoration effect')
-            local debt=assert(settlement.blockedReturns(player)[1])
-            assert(debt.state=='blocked'and settlement.operationState(returning).borrowings[1].state=='active',
-                'fencing restoration must not revoke or prematurely waive the earned loan')
-            assert(settlement.keepReturn(player,debt.id),'Keep must remain available after source-owned idle restoration')
-            assert(settlement.blockedReturnInfo(player).count==0 and first.container==inventory)
+            if fenceMode:match('^keep%-before')then
+                assert(settlement.operationState(returning).borrowings[1].state=='waived',
+                    'early Keep was replayed or its loan was rearmed')
+                assert(not TidyFixture.sessions[player]and not TidyFixture.restoring[player],
+                    'the actual P4 source must retire the complete old restoration epoch')
+                for _=1,8 do
+                    tickTidy()
+                    for _,callback in ipairs(events.OnPlayerUpdate or{})do callback(player)end
+                    assert(not findReturn(first)and #queue.queue==0 and first.container==inventory,
+                        'repeated/duplicate old-epoch P4 callbacks replayed the waived return')
+                end
+                assert(QueueBlockedP4Fixture.retry==retry,'old P4 epoch constructed another matching return')
+                -- A real later source departure and new task must remain native.
+                QueueBlockedP4Fixture.nanItem=nil
+                first.container=tidyBag;inventory.values={tidyBagOwner};tickTidy();tickTidy()
+                local nextPickup,nextRead
+                operations.run(function()
+                    nextPickup=ISInventoryTransferAction:new(player,first,tidyBag,inventory);ISTimedActionQueue.add(nextPickup)
+                    nextRead=ISReadABook:new(player,first);ISTimedActionQueue.add(nextRead)
+                end)
+                nextPickup:perform();nextRead:perform();inventory.values={first,tidyBagOwner}
+                tickTidy();tickTidy()
+                local fresh=assert(findReturn(first),'a new legitimate P4 loan inherited an old Keep fence')
+                assert(fresh.toolkitQueueOperation~=firstOwner,'new source work must own a fresh task')
+                fresh:perform();tickTidy();tickTidy()
+                assert(first.container==tidyBag,'new legitimate loan did not retain its native return effect')
+            else
+                local debt=assert(settlement.blockedReturns(player)[1])
+                assert(debt.state=='blocked'and settlement.operationState(returning).borrowings[1].state=='active',
+                    'fencing restoration must not revoke or prematurely waive the earned loan')
+                assert(settlement.keepReturn(player,debt.id),'Keep must remain available after source-owned idle restoration')
+            end
+            assert(settlement.blockedReturnInfo(player).count==0
+                and first.container==(fenceMode:match('^keep%-before')and tidyBag or inventory))
         else
             local native=assert(findReturn(first),'disabled/changed proof must preserve native P4 restoration')
             native:perform();unrelated:perform();tickTidy();tickTidy()
