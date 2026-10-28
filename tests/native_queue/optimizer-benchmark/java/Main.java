@@ -63,6 +63,12 @@ public final class Main {
         cache = actual;
     }
 
+    @LuaMethod(name="drivingPerfCallbackEnter", global=true)
+    public static int callbackEnter(Object closure) { return LuaCallbacks.enterSpan(closure); }
+
+    @LuaMethod(name="drivingPerfCallbackExit", global=true)
+    public static void callbackExit(int token) { LuaCallbacks.exit(token); }
+
     @LuaMethod(name="drivingPerfSetZoom", global=true)
     public static void setZoom(IsoPlayer player, double zoomFactor) throws Exception {
         gate();

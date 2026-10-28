@@ -74,9 +74,10 @@ public final class StageProfiler {
             cpuAvailable=cpu.isCurrentThreadCpuTimeSupported() && cpu.isThreadCpuTimeEnabled();
             timer=new Timer(); details=new Timer(DETAILS); rows=new Rows(); frameEvent=new FrameEvent();
             DetailHooks.install();
+            LuaCallbacks.start(ownerThread);
             candidate.start(); recording=candidate; started=true; enabled=true;
         } catch (Exception | Error failure) {
-            DetailHooks.remove();
+            DetailHooks.remove(); LuaCallbacks.abort();
             candidate.close();
             throw failure;
         }
@@ -95,6 +96,7 @@ public final class StageProfiler {
         cpuStart=cpuNow();
         long now=System.nanoTime();
         timer.begin(now); details.begin(now);
+        LuaCallbacks.frameBegin(lastFrameId,now);
         frameOpen=true; frameEvent.begin();
     }
 
@@ -102,7 +104,8 @@ public final class StageProfiler {
         if (!owns() || !frameOpen) return;
         long now=System.nanoTime(), cpuEnd=cpuNow();
         frameOpen=false;
-        if (!timer.complete(now) || !details.complete(now)) { omitted++; return; }
+        if (!timer.complete(now) || !details.complete(now)) { LuaCallbacks.frameEnd(now,false); omitted++; return; }
+        LuaCallbacks.frameEnd(now,true);
         long cpuNs=cpuStart<0 || cpuEnd<cpuStart ? -1 : cpuEnd-cpuStart;
         rows.capture(completed, lastFrameId, framePhase, frameContacts, frameSpeed, timer, details, cpuNs);
         completed++;
@@ -194,6 +197,7 @@ public final class StageProfiler {
                 +" translucent_sort=TimSort.doSort-call partial-details-on-throwable=included";
         Files.writeString(cache.resolve("driving-stages-status.txt"), status+"\n");
         System.out.println("[DRIVING_STAGES] "+status);
+        LuaCallbacks.finish(cache);
         if (diagnostic!=null) throw new IllegalStateException("Invalid stage profile: "+diagnostic);
     }
 
