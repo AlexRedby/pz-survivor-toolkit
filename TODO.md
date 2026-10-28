@@ -16,11 +16,6 @@ Implementation and migration are conditional on the performance gate in [the des
 - [ ] Fix every demonstrated shared cause while preserving earned cleanup, exact book IDs/pages, real resource prerequisites and native stop/Host settlement. Add focused failing regressions before changing permissions.
 - [ ] Batch the affected source/control combinations with the current selected pack in SP/menu Host, queue off/on. Require actual panel press/release and drag admission, saved-page resume, exact authority returns and clean logs before release.
 
-# Finish base walking delivery
-
-- [ ] Integrate current main, release the checked hidden-player inventory change with a newer Toolkit version and changelog, and run affected checks before pushing main.
-- [ ] Preserve required artifacts outside the task worktree, verify full server integration, and remove only owned temporary resources and redundant task refs before archiving.
-
 # Shared in-game verification campaign
 
 Collect the outstanding native checks below into one coordinated campaign. Reuse compatible game sessions instead of launching once per TODO item; retain separate case evidence and unfinished gates. The executable selections and remaining gates are mapped in `tests/native_queue/plans/in-game-campaign.example.json`; a block is not a claim of runtime coverage. Implementation/audit tasks below the campaign keep their acceptance requirements and join when ready.
