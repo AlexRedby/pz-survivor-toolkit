@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
@@ -52,7 +54,7 @@ class BookControlTests(unittest.TestCase):
                 if performed:
                     r['performedAt'] = seq + 12
                     r['finishes'] = [dict(phase=p, succeeded=True, at=seq + 12) for p in (['perform'] if kind == 'mp' else ['perform', 'complete'])]
-                else: r['finishes'] = [dict(phase='stop', at=11)]
+                else: r['finishes'] = []
                 if kind == 'mp' and role in ('volume', 'equip'):
                     for state in ('started', 'completed'):
                         ack = dict(case=case, sequence=seq, kind=typ, transaction=seq, token='12345678-1234-1234-1234-' + str(seq).zfill(12), state=state, player=0, at=seq + 11)
@@ -61,6 +63,13 @@ class BookControlTests(unittest.TestCase):
                     r.update(transaction=seq, transactionDone=True, transactionRejected=False)
             records.append(r);return r
         original = record(1, 'front', 101, 10, performed=not enabled or keep)
+        original['startedAt'] = 9
+        b['nativeCheckpoint'] = dict(finished=False, forceComplete=False)
+        if enabled and not keep:
+            original['stopReturned'] = dict(case=case,actionRef=b['reader'],nativeRef=b['native'],item=101,at=11,returned=True,
+                queueOwned=True,nativePresent=True,bridgeStopped=True,nativeSource=True,finished=False,forceComplete=False,pages=219)
+            original['stoppedRemoval'] = dict(at=11,actionRef=b['reader'],nativeRef=b['native'],sameNative=True,item=101,pages=219,
+                queueAbsent=True,nativeAbsent=True,finished=False,forceComplete=False)
         equip = record(2, 'equip', 103, 20, started=enabled or not lost)
         volume = record(3, 'volume', False, 30, started=enabled or not lost)
         tail = record(4, 'tail', 102, 40, started=enabled or not lost)
@@ -88,7 +97,7 @@ class BookControlTests(unittest.TestCase):
         row = dict(event='case', suite='book-controls', kind=kind, mode=mode, actor='client1', id=case, status='passed', reason=False, ids=spec,
                    baseline=copy.deepcopy(seed), authorityBaseline=copy.deepcopy(seed), boundary=b, records=records, starts=starts,
                    resume=resume, tailSnapshot=copy.deepcopy(final), volumeSnapshot=copy.deepcopy(before), equipSnapshot=copy.deepcopy(before),
-                   client=copy.deepcopy(final), server=copy.deepcopy(final), nativeMethodsUnchanged=True, reset=False,replicaGaps=[],capacity=False,blockedReturn=False,failureUI=False)
+                   client=copy.deepcopy(final), server=copy.deepcopy(final), nativeMethodsUnchanged=True, finishedAt=99, reset=False,replicaGaps=[],capacity=False,blockedReturn=False,failureUI=False)
         if lost:
             row['returnSucceeded'] = False
             row['capacity'] = dict(case=case, actor=0, source=source, itemId=101, itemType=spec['front']['type'], before=40,roomBefore=True,frontFavorite=source != 'world', after=0, roomAfter=False, bookRoot=True, requestedAt=11, acceptedAt=10 if enabled else False, at=12, authority=True)
@@ -126,7 +135,8 @@ class BookControlTests(unittest.TestCase):
 
     def check(self, evidence, kind='mp', mode='toolkit'):
         row, spec, baseline, final, admissions, boundaries, drains, acks = evidence
-        return a.check_case(row, row['id'], self.selection(kind, mode), spec, baseline, final, admissions, boundaries, drains, acks, row.get('capacity') if row.get('capacity') is not False else None)
+        return a.check_case(row, row['id'], self.selection(kind, mode), spec, baseline, final, admissions, boundaries, drains, acks, row.get('capacity') if row.get('capacity') is not False else None,
+                            [r['stopReturned'] for r in row['records'] if 'stopReturned' in r])
 
     def test_all_sources_controls_and_native_controls_qualify(self):
         for kind in ('sp', 'mp'):
@@ -184,6 +194,53 @@ class BookControlTests(unittest.TestCase):
         evidence = self.evidence('root.header-cancel', mode='native')
         evidence[0]['boundary']['ui'] = dict(accepted=True)
         self.assertTrue(self.check(evidence, mode='native'))
+
+    def test_exact_native_stop_and_dual_removal_are_required(self):
+        mutations = {
+            'missing stop': lambda r: r['records'][0].pop('stopReturned'),
+            'wrong old action': lambda r: r['records'][0]['stopReturned'].update(actionRef='unrelated'),
+            'wrong old native': lambda r: r['records'][0]['stopReturned'].update(nativeRef='unrelated'),
+            'wrong item': lambda r: r['records'][0]['stopReturned'].update(item=999),
+            'bridge not reached': lambda r: r['records'][0]['stopReturned'].update(bridgeStopped=False),
+            'stop returned failure': lambda r: r['records'][0]['stopReturned'].update(returned=False),
+            'source replaced': lambda r: r['records'][0]['stopReturned'].update(nativeSource=False),
+            'outside queue owner': lambda r: r['records'][0]['stopReturned'].update(queueOwned=False),
+            'native already absent at stop': lambda r: r['records'][0]['stopReturned'].update(nativePresent=False),
+            'checkpoint completed': lambda r: r['boundary']['nativeCheckpoint'].update(finished=True),
+            'checkpoint force completed': lambda r: r['boundary']['nativeCheckpoint'].update(forceComplete=True),
+            'stop completed': lambda r: r['records'][0]['stopReturned'].update(finished=True),
+            'stop force completed': lambda r: r['records'][0]['stopReturned'].update(forceComplete=True),
+            'stop before press': lambda r: r['records'][0]['stopReturned'].update(at=9),
+            'page advanced at stop': lambda r: r['records'][0]['stopReturned'].update(pages=220),
+            'no dual removal': lambda r: r['records'][0].pop('stoppedRemoval'),
+            'Lua queue retained': lambda r: r['records'][0]['stoppedRemoval'].update(queueAbsent=False),
+            'native queue retained': lambda r: r['records'][0]['stoppedRemoval'].update(nativeAbsent=False),
+            'native replaced': lambda r: r['records'][0]['stoppedRemoval'].update(sameNative=False),
+            'removal wrong item': lambda r: r['records'][0]['stoppedRemoval'].update(item=999),
+            'removal page advanced': lambda r: r['records'][0]['stoppedRemoval'].update(pages=220),
+            'removal future': lambda r: r['records'][0]['stoppedRemoval'].update(at=100),
+            'removal completed': lambda r: r['records'][0]['stoppedRemoval'].update(finished=True),
+            'removal force completed': lambda r: r['records'][0]['stoppedRemoval'].update(forceComplete=True),
+            'perform observed': lambda r: r['records'][0].update(performedAt=11),
+            'complete observed': lambda r: r['records'][0].update(finishes=[dict(phase='complete',succeeded=True,at=11)]),
+        }
+        for case in ('root.header-cancel', 'worn-bag.reader-child-cancel', 'world.move-equip'):
+            for kind in ('sp', 'mp'):
+                for name, mutate in mutations.items():
+                    with self.subTest(case=case, kind=kind, mutation=name):
+                        evidence=self.evidence(case,kind);mutate(evidence[0])
+                        self.assertTrue(self.check(evidence,kind),name)
+        evidence=self.evidence('root.header-cancel')
+        row,*_=evidence
+        args=[row,row['id'],self.selection(),evidence[1],evidence[2],evidence[3],*evidence[4:8]]
+        self.assertTrue(any('stop return/bridge' in e for e in a.check_case(*args,stops=[])))
+
+    def test_failed_fixture_status_does_not_claim_source_mismatch(self):
+        evidence=self.evidence('root.header-cancel')
+        evidence[0].update(status='failed',reason='frozen timing budget exceeded')
+        errors=self.check(evidence)
+        self.assertTrue(any('Fixture case failed: frozen timing' in e for e in errors))
+        self.assertFalse(any('Exact source, seeded IDs' in e for e in errors))
 
     def test_optional_return_cross_keeps_reader_and_retires_only_its_exact_return(self):
         for source in ('worn-bag', 'world'):
@@ -529,6 +586,8 @@ os.exit(0)
         original['actionRef'] = 'ISReadABook 0x111{pageTimer=0}'
         row['boundary']['reader'] = 'ISReadABook 0x111{pageTimer=15, action=java:1}'
         row['resume']['oldAction'] = 'ISReadABook 0x111{pageTimer=99}'
+        original['stopReturned']['actionRef'] = 'ISReadABook 0x111{pageTimer=15}'
+        original['stoppedRemoval']['actionRef'] = 'ISReadABook 0x111{pageTimer=16}'
         resumed['actionRef'] = 'ISReadABook 0x222{pageTimer=0}'
         row['resume']['newAction'] = 'ISReadABook 0x222{pageTimer=12}'
         equip = next(record for record in row['records'] if record['role'] == 'equip')
@@ -633,6 +692,8 @@ os.exit(0)
                 client.append(raw('FAILURE_UI',row['failureUI']))
             for marker, values in [('ADMISSION', admissions), ('BOUNDARY', boundaries), ('DRAIN', drains), ('ACK', acks)]:
                 client.extend(raw(marker, value) for value in values)
+            for record in row['records']:
+                if 'stopReturned' in record:client.append(raw('STOP_RETURNED',record['stopReturned']))
             client.append(raw('PERFORMANCE',row['performance']))
             client.append(event(row))
         client.append(event(dict(event='complete', suite='book-controls', cases=list(a.CASES), performed=len(a.CASES), skipped=0, failed=0)))
@@ -662,11 +723,31 @@ os.exit(0)
         self.assertTrue(all(path.is_file() for path in paths))
         self.assertIn(Path(a.__file__).with_name('tv_controls.py'), paths)
         self.assertIn(ROOT / 'tests/test_queue_book_controls.py', paths)
+        probe_source=ROOT / 'tests/native_queue/book-controls/java/Main.java'
+        self.assertIn(probe_source,paths)
+        self.assertIn('media/lua/shared/TimedActions/ISBaseTimedAction.lua',a.GAME_INPUTS)
+        self.assertIn('[QUEUE_TEST] FAIL book-controls-stop-observer',probe_source.read_text())
         with tempfile.TemporaryDirectory() as directory:
             runtime = dict(roles={role: dict(cache=str(Path(directory) / role)) for role in ('server', 'client1')})
-            a.stage(ROOT, directory, None, None, self.selection(), {}, runtime)
+            probe = Path(directory) / 'probe.jar'
+            with zipfile.ZipFile(probe,'w') as jar:
+                jar.writestr('net/alexredby/bookcontrolsprobe/Main.class',b'compiled observation fixture')
+                jar.writestr('net/alexredby/bookcontrolsprobe/Main$Stopped.class',b'compiled stop advice')
+            with mock.patch.object(a, '_stop_probe', return_value=probe):
+                a.stage(ROOT, directory, None, None, self.selection(), {}, runtime)
+            self.assertEqual(runtime['fixture']['mods'], ['BookControlsStopProbe'])
             for role in runtime['roles'].values():
-                lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
+                cache=Path(role['cache']);layer=cache/'mods/BookControlsStopProbe/42'
+                metadata=native._metadata(layer/'mod.info')
+                self.assertEqual({k:metadata[k] for k in ('id','require','javaPkgName','javaJarFile')},
+                    dict(id='BookControlsStopProbe',require='\\ZombieBuddy',javaPkgName='net.alexredby.bookcontrolsprobe',javaJarFile='media/java/BookControlsStopProbe.jar'))
+                staged=layer/'media/java/BookControlsStopProbe.jar'
+                self.assertEqual(staged.read_bytes(),probe.read_bytes())
+                self.assertEqual(native._approvals(cache,runtime['fixture']['mods']),
+                    [dict(id='BookControlsStopProbe',jar_hash=native.sha256(probe),decision=True,time='2026-01-01T00:00:00Z')])
+                with zipfile.ZipFile(staged) as jar:
+                    self.assertIn('net/alexredby/bookcontrolsprobe/Main$Stopped.class',jar.namelist())
+                lua = cache / 'mods/ActionQueueTest/42/media/lua'
                 for path in (ROOT / 'tests/native_queue/book-controls').rglob('*.lua'):
                     self.assertEqual(path.read_bytes(), (lua / path.relative_to(ROOT / 'tests/native_queue/book-controls')).read_bytes())
             self.assertEqual(runtime['fixture']['failure_markers'], ['[QUEUE_TEST] FAIL book-controls'])

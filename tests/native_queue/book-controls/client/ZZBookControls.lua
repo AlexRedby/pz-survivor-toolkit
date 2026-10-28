@@ -80,6 +80,28 @@ local function updateTransferEpisode(action,row)
   transferEpisode.live=true;transferEpisode.observedAt=now();transferEpisode.done=isItemTransactionDone(tx)==true;transferEpisode.rejected=isItemTransactionRejected(tx)==true
  end
 end
+-- The disposable Java probe calls this after the unchanged native stop returns,
+-- while the Base.stop bridge flag still exists. OnTick would race its cleanup.
+function bookControlsNativeStopped(action,episode,returned)
+ if native or not state or not boundary or action~=front or episode~=oldNative then return end
+ local row=assert(tracks[action]);assert(not row.stopReturned,'duplicate exact reader stop')
+ intact()
+ local q=queue()
+ row.stopReturned={case=case(),actionRef=ref(action),nativeRef=ref(episode),item=action.item:getID(),at=now(),returned=returned,
+  queueOwned=q.current==action and q.queue[1]==action and action.action==episode,
+  nativePresent=state.player:getCharacterActions():contains(episode),bridgeStopped=q.toolkitCancel==action and q.toolkitCancelStopped==true,
+  nativeSource=Proof.closure(ISReadABook.stop,'ISReadABook.lua')and T.ActionQueueLifecycle.hasNativeStopBridge()==true,
+  finished=episode:finished(),forceComplete=episode:isForceComplete(),pages=action.item:getAlreadyReadPages()}
+ raw('STOP_RETURNED',row.stopReturned)
+end
+local function observeStoppedRemoval()
+ if native or not boundary or not oldNative or control()=='return-child-cancel'then return end
+ local row=tracks[front];local q=queue()
+ if not row.stoppedRemoval and q:indexOf(front)==-1 and not state.player:getCharacterActions():contains(oldNative)then
+  row.stoppedRemoval={at=now(),actionRef=ref(front),nativeRef=ref(oldNative),sameNative=front.action==oldNative,item=front.item:getID(),pages=front.item:getAlreadyReadPages(),
+   queueAbsent=true,nativeAbsent=true,finished=oldNative:finished(),forceComplete=oldNative:isForceComplete()}
+ end
+end
 local function observe()
  local refreshed,diagnostic=F.refresh(state)
  if transferEpisode then
@@ -125,7 +147,7 @@ local function observe()
  end
  for action,row in pairs(tracks)do updateTransferEpisode(action,row)end
  if boundary and oldNative and not state.player:getCharacterActions():contains(oldNative)then if not boundary.drained then boundary.drained=true;boundary.drainedAt=now();raw('DRAIN',{case=case(),reader=boundary.reader,native=boundary.native,at=boundary.drainedAt,oldNativeAbsent=true})end end
- intact();return true
+ observeStoppedRemoval();intact();return true
 end
 local function lifecycleBegin(action,step)
  local row=register(action)
@@ -385,6 +407,7 @@ local function atBoundary()
  -- A paid native page leaves one unread page: a precise stop/resume checkpoint.
  oldNative=front.action
  boundary={case=case(),at=now(),before=actual,reader=ref(front),native=ref(oldNative),token=tokenID(front.toolkitQueueOperation),
+  nativeCheckpoint={finished=oldNative:finished(),forceComplete=oldNative:isForceComplete()},
   delta=front:getJobDelta(),tailRetained=queue():indexOf(tail)~=-1,volumePending=not volume.action,equipPending=not equip.action,requested=not native,drained=false,queue=queueEvidence()}
  assert(boundary.tailRetained and boundary.volumePending and boundary.equipPending,'independent work started before reader edit boundary')
  if native then
@@ -452,7 +475,7 @@ local function finish()
  local passed=not failure
  local row={event='case',id=case(),status=passed and'passed'or'failed',reason=failure or false,ids=ids,baseline=baseline,authorityBaseline=authorityBaseline,
   boundary=boundary,records=records,starts=starts,resume=resume or false,tailSnapshot=tailSnapshot or false,volumeSnapshot=volumeSnapshot or false,equipSnapshot=equipSnapshot or false,
-  client=actual,server=authorityFinal,performance=performance or false,replicaGaps=replicaGaps or{},tickSpacingMs=tickSpacing or {},capacity=capacityReceipt or false,nativeDebtAbsent=nativeDebtAbsent,blockedReturn=blockedEvidence or false,failureUI=failureUI or false,nativeMethodsUnchanged=true,reset=draining and{entrypoint='ISTimedActionQueue.clear',drained=true,at=draining.at}or false}
+  client=actual,server=authorityFinal,performance=performance or false,replicaGaps=replicaGaps or{},finishedAt=now(),tickSpacingMs=tickSpacing or {},capacity=capacityReceipt or false,nativeDebtAbsent=nativeDebtAbsent,blockedReturn=blockedEvidence or false,failureUI=failureUI or false,nativeMethodsUnchanged=true,reset=draining and{entrypoint='ISTimedActionQueue.clear',drained=true,at=draining.at}or false}
  if failedReturnExpected()then row.returnSucceeded=false end
  emit(row);if not passed then failures=failures+1 end
  if not isClient()then previous=state end

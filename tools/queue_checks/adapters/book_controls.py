@@ -1,6 +1,9 @@
 """Opt-in native book control bank: exact source, real Panel gesture and authority effects."""
 import copy
 import json
+import os
+import subprocess
+import zipfile
 from pathlib import Path
 import re
 import shutil
@@ -44,6 +47,7 @@ def favorite_case(control):
 GAME_INPUTS = (
     'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',
     'media/lua/shared/TimedActions/ISReadABook.lua',
+    'media/lua/shared/TimedActions/ISBaseTimedAction.lua',
     'media/lua/client/TimedActions/ISInventoryTransferAction.lua',
     'media/lua/shared/TimedActions/ISTransferAction.lua',
     'media/lua/shared/TimedActions/ISEquipWeaponAction.lua',
@@ -80,16 +84,41 @@ def sources(project, selection):
     code = Path(project) / 'PZSurvivorToolkit/42/media/lua'
     return [Path(__file__).with_name('tv_controls.py'), Path(__file__).parents[1] / 'mod_selection.py',
             Path(project) / 'tests/test_queue_book_controls.py',
-            *sorted((root / 'book-controls').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
+            *sorted(path for path in (root / 'book-controls').rglob('*') if path.suffix in ('.lua', '.java')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua',
             code / 'client/PZSurvivorToolkit/ActionQueuePanel.lua', code / 'client/PZSurvivorToolkit/ActionQueueProjection.lua',
             code / 'shared/PZSurvivorToolkit/SourceProof.lua']
 
 
+def _stop_probe(project, output, game, jdk):
+    classes = Path(output) / 'book-stop-probe/classes'
+    classes.mkdir(parents=True)
+    classpath = os.pathsep.join(str(Path(game) / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar'))
+    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+                    str(Path(project) / 'tests/native_queue/book-controls/java/Main.java')],
+                   check=True, capture_output=True, text=True, timeout=60)
+    compiled = sorted(classes.rglob('*.class'))
+    if not compiled:
+        raise ValueError('Book stop observation probe compilation produced no classes')
+    jar = classes.parent / 'BookControlsStopProbe.jar'
+    with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as archive:
+        for path in compiled:
+            archive.write(path, path.relative_to(classes).as_posix())
+    return jar
+
+
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     root = Path(project) / 'tests/native_queue'
+    probe = _stop_probe(project, output, game, jdk)
+    runtime.setdefault('fixture', {}).setdefault('mods', []).append('BookControlsStopProbe')
     for role in runtime['roles'].values():
+        layer = Path(role['cache']) / 'mods/BookControlsStopProbe/42'
+        (layer / 'media/java').mkdir(parents=True, exist_ok=True)
+        (layer / 'mod.info').write_text('name=Disposable book stop observation probe\nid=BookControlsStopProbe\nversionMin=42.21\n'
+                                      'require=\\ZombieBuddy\njavaPkgName=net.alexredby.bookcontrolsprobe\n'
+                                      'javaJarFile=media/java/BookControlsStopProbe.jar\n')
+        shutil.copy2(probe, layer / 'media/java/BookControlsStopProbe.jar')
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
         for package in ('book-controls', 'startup'):
             for path in sorted((root / package).rglob('*.lua')):
@@ -322,7 +351,7 @@ def performance_errors(value, case, enabled, probe=False):
     return errors
 
 
-def check_case(row, case, selection, prepared, authority_baseline, authority_final, admissions, boundaries, drains, acks, capacity_authority=None):
+def check_case(row, case, selection, prepared, authority_baseline, authority_final, admissions, boundaries, drains, acks, capacity_authority=None, stops=None):
     errors = []
     try:
         enabled = selection['mode'] == 'toolkit'
@@ -337,7 +366,9 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         spacing = row.get('tickSpacingMs')
         if not isinstance(spacing, list) or not spacing or len(spacing) > 60 or any(not _number(v) or v < 0 for v in spacing):
             errors.append('Missing bounded real tick-spacing observations')
-        if (row.get('id') != case or row.get('status') != 'passed' or ids != prepared or ids.get('case') != case
+        if row.get('status') != 'passed':
+            errors.append('Fixture case failed: ' + str(row.get('reason')))
+        if (row.get('id') != case or ids != prepared or ids.get('case') != case
                 or ids.get('source') != source or ids.get('control') != original_control or ids.get('front', {}).get('type') != 'Base.BookCarpentry1'
                 or ids.get('tail', {}).get('type') != 'Base.BookCooking1' or ids.get('pen', {}).get('type') != 'Base.Pen'
                 or ids.get('initialVolume') != .5 or ids.get('targetVolume') != .25
@@ -526,10 +557,33 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
                         or gap.get('deadlineAt') != gap.get('startedAt', 0) + 2000
                         or not gap.get('startedAt', float('inf')) <= gap.get('resolvedAt', 0) <= gap.get('deadlineAt', 0)):
                     errors.append('Uncorrelated/unresolved/stale exact native transfer replica gap')
+        interrupted = enabled and not keep
+        if interrupted:
+            stop, removal = original.get('stopReturned'), original.get('stoppedRemoval')
+            checkpoint = boundary.get('nativeCheckpoint', {})
+            if (not isinstance(stop, dict) or stops != [stop]
+                    or not _same_action(stop.get('actionRef'), boundary.get('reader'))
+                    or stop.get('case') != case or stop.get('nativeRef') != boundary.get('native')
+                    or stop.get('item') != ids['front']['id'] or stop.get('pages') != boundary['before']['books']['front']['pages']
+                    or any(stop.get(k) is not True for k in ('returned', 'queueOwned', 'nativePresent', 'bridgeStopped', 'nativeSource'))
+                    or any(stop.get(k) is not False for k in ('finished', 'forceComplete'))
+                    or any(checkpoint.get(k) is not False for k in ('finished', 'forceComplete'))
+                    or not _number(stop.get('at')) or not boundary.get('ui', {}).get('acceptedAt', float('inf')) <= stop['at'] <= boundary.get('drainedAt', 0)):
+                errors.append('Exact source-bound native stop return/bridge receipt missing or inconsistent')
+            if (not isinstance(removal, dict) or not _same_action(removal.get('actionRef'), boundary.get('reader'))
+                    or removal.get('nativeRef') != boundary.get('native')
+                    or removal.get('item') != ids['front']['id'] or removal.get('pages') != boundary['before']['books']['front']['pages']
+                    or any(removal.get(k) is not True for k in ('sameNative', 'queueAbsent', 'nativeAbsent'))
+                    or any(removal.get(k) is not False for k in ('finished', 'forceComplete'))
+                    or not _number(removal.get('at')) or not _number(row.get('finishedAt'))
+                    or not boundary.get('drainedAt', float('inf')) <= removal['at'] <= row['finishedAt']):
+                errors.append('Exact unfinished stopped reader removal from Lua and native queues missing')
+            if original.get('performedAt') is not None or original.get('finishes') != []:
+                errors.append('Interrupted original reader performed/completed or has unexpected lifecycle callbacks')
+        elif any(original.get(k) is not None for k in ('stopReturned', 'stoppedRemoval')) or stops:
+            errors.append('Naturally finished reader acquired a stop receipt')
         if (not enabled or moving or keep) and not _number(front[-1].get('performedAt')):
             errors.append('Naturally finished/resumed reader never performed')
-        elif enabled and not moving and not keep and (original.get('performedAt') is not None or [c.get('phase') for c in original.get('finishes', [])] != ['stop']):
-            errors.append('Cancelled original reader performed its remaining page')
         if not (lost and not enabled) and row.get('tailSnapshot', {}).get('books', {}).get('front') != required['books']['front']:
             errors.append('Book return/paid page was not settled before independent tail')
         if not (lost and not enabled) and row.get('tailSnapshot', {}).get('hands') != required['hands']:
@@ -559,6 +613,10 @@ def verify(root, selection, catalog):
         capacities = raw(authority, 'CAPACITY_LOST')
         if [r.get('case') for r in capacities] != list(CAPACITY_CASES): issues.append('Capacity interventions missing, duplicated or reordered')
         admissions, boundaries, drains, acks = (raw(text, marker) for marker in ('ADMISSION', 'BOUNDARY', 'DRAIN', 'ACK'))
+        stop_rows = raw(text, 'STOP_RETURNED')
+        expected_stops = [case for case in CASES if base_control(case.split('.', 1)[1]) != 'return-child-cancel'] if selection['mode'] == 'toolkit' else []
+        if [r.get('case') for r in stop_rows] != expected_stops:
+            issues.append('Native stop return receipts missing, duplicated or reordered')
         timing_rows = raw(text, 'PERFORMANCE')
         if [r.get('case') for r in timing_rows] != list(CASES): issues.append('Timing evidence missing, duplicated or reordered')
         debts, failure_uis = raw(text, 'BLOCKED_RETURN'), raw(text, 'FAILURE_UI')
@@ -569,7 +627,8 @@ def verify(root, selection, catalog):
             row = rows[i] if i < len(rows) else {}
             errors = check_case(row, case, selection, prepared[i] if i < len(prepared) else None,
                 baselines[i] if i < len(baselines) else None, verified[i] if i < len(verified) else None,
-                [r for r in admissions if r.get('case') == case], [r for r in boundaries if r.get('case') == case], [r for r in drains if r.get('case') == case], [r for r in acks if r.get('case') == case], next((r for r in capacities if r.get('case') == case), None))
+                [r for r in admissions if r.get('case') == case], [r for r in boundaries if r.get('case') == case], [r for r in drains if r.get('case') == case], [r for r in acks if r.get('case') == case], next((r for r in capacities if r.get('case') == case), None),
+                [r for r in stop_rows if r.get('case') == case])
             gap_rows = [r for r in raw(text, 'REPLICA_GAP') if r.get('case') == case]
             converged = [r for r in raw(text, 'REPLICA_CONVERGED') if r.get('case') == case]
             expected_gaps = row.get('replicaGaps', [])
