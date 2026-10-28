@@ -47,6 +47,39 @@ WPR_19041_GENERAL_HELP = (
 )
 
 
+# Verbatim advanced-help stdout from Windows ADK WPR 10.0.26100.
+# Successful exit 0, without machine paths or identities.
+WPR_26100_ADVANCED_HELP = (
+    '\r\n'
+    '  wpr -purgecache \tPurges the dynamic symbols cache.\r\n'
+    '\tUsage:\twpr -purgecache\r\n'
+    '\r\n'
+    '  wpr -log \tConfigure debug logging to the event log.\r\n'
+    '\tUsage:\twpr -log {enabled|disabled|remove}\r\n'
+    '\r\n'
+    '  wpr -disablepagingexecutive ...\tTurns Disable Paging Executive settings On or Off.\r\n'
+    '\tUsage:\twpr -disablepagingexecutive {on/off}\r\n'
+    '\r\n'
+    '  wpr [command] -instancename ...\tRun command with user specified instance name.\r\n'
+    '\tUsage:\twpr <command> -instancename <instance name>\r\n'
+    '\tCan be applied to any commands that manipulates the logging session.\r\n'
+    '\tUser can control multiple sessions by specifying unique instance name.\r\n'
+    '\tIf the logging session was started with this option, all the subsequent\r\n'
+    '\tcommands should use the same instance name option. Must be the last parameter.\r\n'
+    '\r\n'
+    '  wpr [command] -container ...\tRun command in container\r\n'
+    '\tUsage:\twpr <command> -container [<ID>...[up to 64 IDs] [-host]]\r\n'
+    '\t-host\tThe command is applied to the host as well as the container\r\n'
+    '\tSupported Container Commands:\r\n'
+    '\t\t-Start\tStart Trace Collection  (see wpr -help start)\r\n'
+    '\t\t-Stop\tStop Trace Collection   (see wpr -help stop)\r\n'
+    '\t\t-Cancel\tCancel Trace Collection (see wpr -help cancel)\r\n'
+    '\t\t-Status\tQuery Status Trace Collection (see wpr -help status)\r\n'
+    '\t\t-Flush\tFlush Trace Collection (see wpr -help flush)\r\n'
+    '\n'
+)
+
+
 class WprProfileTests(unittest.TestCase):
     def test_profile_retains_diagnostic_events_with_only_cpu_and_readying_stacks(self):
         root = ET.parse(SCRIPTS / 'PZTrial.wprp').getroot()
@@ -74,7 +107,8 @@ class WprProtocolTests(unittest.TestCase):
 
     def run_ps(self, body, timeout=12):
         env = dict(os.environ, PZ_WPR_SCRIPTS=str(SCRIPTS), PZ_WPR_ROOT=str(self.root),
-                   PZ_WPR_19041_HELP=WPR_19041_GENERAL_HELP)
+                   PZ_WPR_19041_HELP=WPR_19041_GENERAL_HELP,
+                   PZ_WPR_26100_HELP=WPR_26100_ADVANCED_HELP)
         result = subprocess.run([PWSH, '-NoProfile', '-NonInteractive', '-Command', "$ErrorActionPreference='Stop'; " + body],
                                 env=env, capture_output=True, text=True, timeout=timeout)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -116,6 +150,15 @@ function Invoke-TrialWprCommand {
    $output='-instancename <text>'
    if ($global:mode -eq 'unsupported') { $output='old help' }
    if ($global:mode -eq 'localized-help') { $output="`t-instancename`t - Nom de l'instance de trace" }
+   if ($global:mode -like 'adk-help*') {
+    $output=$env:PZ_WPR_26100_HELP
+    if ($global:mode -eq 'adk-help-failure') { $code=1 }
+    if ($global:mode -eq 'adk-help-timeout') { $timed=$true }
+    if ($global:mode -eq 'adk-help-mentioned') { $output='Error: wpr [command] -instancename is not supported' }
+    if ($global:mode -eq 'adk-help-command-token') { $output=$output.Replace('[command]', '[profile]').Replace('<command>', '<profile>') }
+    if ($global:mode -eq 'adk-help-command-prefix') { $output=$output.Replace('wpr ', 'otherwpr ') }
+    if ($global:mode -eq 'adk-help-option-suffix') { $output=$output.Replace('-instancename', '-instancename-extra') }
+   }
    if ($global:mode -like 'help-*') {
     $output=$env:PZ_WPR_19041_HELP
     if ($Arguments.Count -gt 1) {
@@ -194,6 +237,35 @@ $null=Invoke-TrialWprWorker $run $hash
             self.assertEqual(result['receipt']['status'], 'Unavailable')
             self.assertEqual(result['receipt']['reason'], reason)
             self.assertFalse(any(c[0] in ('-start', '-status', '-stop', '-cancel') for c in result['commands']))
+
+    def test_captured_26100_advanced_help_starts_and_saves_without_general_help(self):
+        result = self.worker(mode='adk-help')
+        receipt = result['receipt']
+        self.assertEqual(receipt['status'], 'Complete')
+        self.assertEqual(receipt['traceBytes'], 1024)
+        self.assertTrue(receipt['headerValidated'])
+        self.assertEqual(result['commands'][:2], [
+            ['-help', 'advanced'], ['-profiledetails', str(SCRIPTS / 'PZTrial.wprp') + '!PZTrial.light', '-filemode']])
+        self.assertNotIn(['-help'], result['commands'])
+        self.assertEqual(receipt['evidence'][0]['stage'], 'NamedInstanceSupport')
+        self.assertEqual(receipt['evidence'][0]['result']['output'], WPR_26100_ADVANCED_HELP)
+        self.assertEqual(receipt['evidence'][0]['result']['exitCode'], 0)
+        self.assertNotIn('NamedInstanceSupportGeneralHelp', [entry['stage'] for entry in receipt['evidence']])
+        self.assertTrue(any(command[0] == '-start' for command in result['commands']))
+        self.assertTrue(any(command[0] == '-stop' for command in result['commands']))
+        for command in result['commands']:
+            if command[0] in ('-start', '-status', '-stop', '-cancel'):
+                self.assertEqual(command[-2:], ['-instancename', receipt['instanceName']])
+
+    def test_failed_or_non_declaration_adk_help_never_controls_sessions(self):
+        for mode in ('adk-help-failure', 'adk-help-timeout', 'adk-help-mentioned',
+                     'adk-help-command-token', 'adk-help-command-prefix', 'adk-help-option-suffix'):
+            with self.subTest(mode=mode):
+                result = self.worker(mode=mode)
+                self.assertEqual(result['receipt']['reason'], 'NamedInstancesUnsupported')
+                self.assertEqual(result['receipt']['status'], 'Unavailable')
+                self.assertEqual(result['commands'], [['-help', 'advanced'], ['-help']])
+                self.assertFalse(result['collectorQueries'])
 
     def test_captured_19041_help_error_falls_back_to_read_only_general_help(self):
         # The fallback response is a fixture for the documented plain -help
