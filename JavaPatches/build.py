@@ -205,6 +205,8 @@ CHECKS['zombie.pathfind.nativeCode.BarricadedDoorPathChecks'] = 'BARRICADED_DOOR
 EXPLICIT_ONLY_CHECKS = {'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
                         'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks'}
 TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}
+# This umbrella runs 18 isolated Kahlua environments in one JVM invocation.
+CHECK_TIMEOUTS = {'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks': 240}
 
 def positive_timeout(value):
     seconds = int(value)
@@ -369,7 +371,7 @@ def main(argv=None):
     parser.add_argument('--check', action='store_true', help='Run original-engine versus woven-patch regression')
     parser.add_argument('--check-video', action='store_true', help='Run headless video timeline/FFmpeg regression (PZ_TEST_FFMPEG selects executable)')
     parser.add_argument('--test', action='append', choices=TEST_NAMES, default=[], metavar='NAME', help='Run only selected regressions; repeat for multiple. WashWaterRuleChecks and QueueOwnershipChecks require PZ_TEST_WORKSHOP with the Workshop content root. Names: ' + ', '.join(TEST_NAMES))
-    parser.add_argument('--test-timeout', type=positive_timeout, default=120, metavar='SECONDS', help='Timeout for each Java regression invocation (default: 120 seconds)')
+    parser.add_argument('--test-timeout', type=positive_timeout, default=None, metavar='SECONDS', help='Override timeout for each Java regression invocation (default: 120 seconds; QueueOwnershipChecks: 240 seconds)')
     args = parser.parse_args(argv)
     if args.test:
         selected = [TEST_NAMES[name] for name in args.test]
@@ -494,12 +496,13 @@ def main(argv=None):
                         cold_kotlin = name == 'net.alexredby.javapatchfixture.KotlinRuntimeChecks'
                         testpath = [str(testclasses), classpath] if cold_fonts or cold_kotlin else [str(runtime_classes), str(jar), str(fontjar), classpath]
                         log = log_path(name, trace)
+                        timeout = args.test_timeout if args.test_timeout is not None else CHECK_TIMEOUTS.get(name, 120)
                         try:
                             with log.open('w') as output:
-                                result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.project=' + str(ROOT.parent), '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=args.test_timeout)
+                                result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.project=' + str(ROOT.parent), '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
                         except subprocess.TimeoutExpired as error:
                             print(log.read_text(errors='replace'))
-                            raise RuntimeError(f'{name} timed out after {args.test_timeout} seconds; output saved to {log}') from error
+                            raise RuntimeError(f'{name} timed out after {timeout} seconds; output saved to {log}') from error
                     output = log.read_text(errors='replace')
                     print(output)
                     result.check_returncode()

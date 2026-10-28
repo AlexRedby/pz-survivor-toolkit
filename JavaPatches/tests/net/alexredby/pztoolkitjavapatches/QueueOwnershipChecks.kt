@@ -160,6 +160,7 @@ object QueueOwnershipChecks {
         val failures = mutableListOf<String>()
         for (variant in variants) {
             val label = variant ?: "OwnershipLookup"
+            val started = System.nanoTime()
             try {
                 runVariant(root, Path.of(workshop), variant)
                 println("QUEUE_OWNERSHIP_VARIANT_PASS $label")
@@ -167,6 +168,9 @@ object QueueOwnershipChecks {
                 failures.add(label)
                 println("QUEUE_OWNERSHIP_VARIANT_FAIL $label: ${failure.message}")
                 failure.printStackTrace(System.out)
+            } finally {
+                val elapsedMillis = (System.nanoTime() - started) / 1_000_000
+                println("QUEUE_OWNERSHIP_VARIANT_MILLISECONDS $label $elapsedMillis")
             }
         }
         check(failures.isEmpty()) { "Ownership variants failed: ${failures.joinToString()}" }

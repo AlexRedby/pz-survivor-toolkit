@@ -172,6 +172,20 @@ class BuildChecks(unittest.TestCase):
                 self.assertEqual([call.args[0][-1] for call in self.java_calls()],
                                  ['net.alexredby.pztoolkitjavapatches.' + name])
 
+    def test_ownership_umbrella_has_a_separate_bounded_default(self):
+        self.run_build('--test', 'MediaChecks', '--test', 'QueueOwnershipChecks')
+        self.assertEqual([call.kwargs['timeout'] for call in self.java_calls()], [120, 240])
+        self.run_build('--test', 'MediaChecks', '--test', 'QueueOwnershipChecks', '--test-timeout', '9')
+        self.assertEqual([call.kwargs['timeout'] for call in self.java_calls()], [9, 9])
+
+    def test_ownership_default_timeout_preserves_partial_output_and_previous_mod(self):
+        failure = subprocess.TimeoutExpired(['java'], 240, output='partial ownership variant')
+        with self.assertRaisesRegex(RuntimeError, 'timed out after 240 seconds'):
+            self.run_build('--test', 'QueueOwnershipChecks', java_result=failure)
+        self.assertIn('partial ownership variant', self.output.getvalue())
+        self.assertEqual(self.sentinel.read_text(), 'previous Java mod')
+        self.assertFalse(list((self.root / 'build').glob('.build-*')))
+
     def test_cart_selection_retains_markers_and_isolates_cold_bootstrap(self):
         self.run_build('--test', 'CartTransitionMathTest', '--test', 'CartBootstrapCheck')
         calls = self.java_calls()

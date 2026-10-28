@@ -108,6 +108,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 # Extend cancelled queue recovery
 
+- [ ] Add reconstruction for untouched singleton native beard trims with an already-held root tool, reusing the sealed grooming contract. Keep equipment preparation and started/receipt-bearing bodies excluded. Require pure constructor-free preview, fresh ID/style/callback validation, one-shot recovery regressions and selected-pack SP/Host queue-on/off conservation checks before granting support.
 - [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
 
 # Further action queue migration
@@ -202,10 +203,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 - [ ] Resolve startup diagnostics that leave food-age SP audits at `needs-review` even when the functional phases pass: font-page load errors, container-name normalization errors, Piano icon fallback and mannequin-zone property errors. Reproduce them with matching prepared and untouched dependency sources, compare error signatures and counts, and qualify or fix each source/caller before changing audit rules. Do not treat functional success as a clean runtime or assume a shared startup error was caused by the food-age correction.
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
-
-- [ ] Repair the isolated fixture in `test_queue_native_snapshot.py::test_selected_adapter_helpers_are_sealed_without_unrelated_adapters`: its temporary craft UI project omits the required `craft_ui_water.py`, causing `FileNotFoundError` while the recovery subcase passes. Copy the declared helper and rerun the focused snapshot tests; do not relax source sealing.
-
-- [ ] Give the growing `QueueOwnershipChecks` umbrella an appropriate bounded runtime or selectable variants. With the held-styling vectors, the default 120-second process deadline expired after 15 successful variants while entering makeup synchronization. Profile the remaining variants and retain per-variant isolation/source checks; use an explicit larger `--test-timeout` for this bounded gate meanwhile.
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.
 
