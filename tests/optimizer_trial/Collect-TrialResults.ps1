@@ -1,5 +1,9 @@
 [CmdletBinding()]
-param([string]$ControlCapture, [string]$OptimizedCapture, [string]$PackageRoot)
+param([string]$ControlCapture, [string]$OptimizedCapture, [string]$PackageRoot,
+      [ValidateSet('Auto','Comparison','Control','Optimized')][string]$RunMode = 'Auto')
+
+$script:TrialCollectorPath = $PSCommandPath
+$script:TrialCollectorRevision = '3.4.1'
 
 # This collector reads receipts only. It never starts or stops a game process.
 function Assert-TrialResultPath([string]$Path) {
@@ -245,7 +249,7 @@ function Get-TrialAutomaticCapture($Run, [string]$Mode) {
     return $capture
 }
 
-function Get-LatestTrialResult([string]$RunsRoot, [string]$Mode) {
+function Get-LatestTrialResult([string]$RunsRoot, [string]$Mode, [switch]$AllowMissing) {
     $null = Assert-TrialResultPath $RunsRoot
     $candidates = @()
     foreach ($directory in @(Get-ChildItem -LiteralPath $RunsRoot -Directory -Force -ErrorAction Stop)) {
@@ -260,10 +264,13 @@ function Get-LatestTrialResult([string]$RunsRoot, [string]$Mode) {
             try { $sortTime = (ConvertTo-TrialResultUtc $started) }
             catch { throw "Invalid ProcessStartUtc in $path" }
         }
-        $candidates += [pscustomobject]@{ Directory = $directory.FullName; Receipt = $receipt; SortTime = $sortTime; Name = $directory.Name }
+        $candidates += [pscustomobject]@{ Directory = $directory.FullName; Receipt = $receipt; SortTime = $sortTime; Name = $directory.Name; Mode = $Mode }
     }
     $selected = $candidates | Sort-Object SortTime, Name -Descending | Select-Object -First 1
-    if (-not $selected) { throw "No $Mode launch receipt found in $RunsRoot" }
+    if (-not $selected) {
+        if ($AllowMissing) { return $null }
+        throw "No $Mode launch receipt found in $RunsRoot"
+    }
     $exitCode = Get-TrialResultProperty $selected.Receipt 'JavaExitCode'
     $finished = Get-TrialResultProperty $selected.Receipt 'finishedUtc'
     if ($null -eq $exitCode -or -not $finished) { throw "Latest $Mode run is still open/incomplete. Exit the game and wait for its launcher to finish: $($selected.Directory)" }
@@ -415,24 +422,44 @@ function Get-TrialWprResult($Run, $Capture) {
     return $result
 }
 
+function Select-TrialResults {
+    param([string]$RunsRoot,
+          [ValidateSet('Auto','Comparison','Control','Optimized')][string]$RunMode = 'Auto')
+    $modes = @('Control','Optimized')
+    if ($RunMode -in @('Control','Optimized')) { $modes = @($RunMode) }
+    $selected = @()
+    foreach ($mode in $modes) {
+        # Only an absent mode is optional. Existing malformed, open or live runs
+        # must retain the original validation and cannot be silently skipped.
+        $run = Get-LatestTrialResult $RunsRoot $mode -AllowMissing:($RunMode -eq 'Auto')
+        if ($null -ne $run) { $selected += $run }
+    }
+    if (-not $selected.Count) { throw "No Control or Optimized launch receipts found in $RunsRoot" }
+    return $selected
+}
+
 function New-TrialResultsBundle {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)][string]$PackageRoot,
           [string]$ControlCapture,
-          [string]$OptimizedCapture)
+          [string]$OptimizedCapture,
+          [ValidateSet('Auto','Comparison','Control','Optimized')][string]$RunMode = 'Auto')
     $ErrorActionPreference = 'Stop'
     $root = Assert-TrialResultPath $PackageRoot
     $runs = Join-Path $root 'Profiles/OptimizerTrial/TrialRuns'
     # Validate every input before creating the staging directory or output archive.
-    $selected = @((Get-LatestTrialResult $runs 'Control'), (Get-LatestTrialResult $runs 'Optimized'))
+    $selected = @(Select-TrialResults $runs $RunMode)
+    $includedModes = @($selected | ForEach-Object { $_.Mode })
+    $missingModes = @(@('Control','Optimized') | Where-Object { $_ -notin $includedModes })
+    $scope = if ($selected.Count -eq 2) { 'Comparison' } else { 'SingleRun' }
     $captures = @()
-    $selections = @($ControlCapture, $OptimizedCapture)
-    for ($index = 0; $index -lt 2; $index++) {
-        $mode = @('Control', 'Optimized')[$index]
-        if ($selections[$index]) { $captures += Read-TrialCapture $selections[$index] $mode }
+    $selections = @{ Control = $ControlCapture; Optimized = $OptimizedCapture }
+    for ($index = 0; $index -lt $selected.Count; $index++) {
+        $mode = $selected[$index].Mode
+        if ($selections[$mode]) { $captures += Read-TrialCapture $selections[$mode] $mode }
         else { $captures += Get-TrialAutomaticCapture $selected[$index] $mode }
     }
-    if ($captures[0].Path -and $captures[1].Path -and ($captures[0].Path -eq $captures[1].Path -or $captures[0].Sha256 -eq $captures[1].Sha256)) {
+    if ($captures.Count -eq 2 -and $captures[0].Path -and $captures[1].Path -and ($captures[0].Path -eq $captures[1].Path -or $captures[0].Sha256 -eq $captures[1].Sha256)) {
         if (-not $captures[0].Automatic -and -not $captures[1].Automatic) { throw 'Select two different CapFrameX captures, one for each mode.' }
         foreach ($capture in $captures) {
             if ($capture.Automatic) { $capture.Issues += 'Control and Optimized CapFrameX captures are identical' }
@@ -442,13 +469,15 @@ function New-TrialResultsBundle {
     [IO.Directory]::CreateDirectory($diagnostics) | Out-Null
     $id = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
     $stage = Join-Path $diagnostics ('.collect-' + $id)
-    $archive = Join-Path $diagnostics ('PZDriving-Comparison-' + $id + '.zip')
+    $label = if ($scope -eq 'Comparison') { 'Comparison' } else { $includedModes[0] }
+    $archive = Join-Path $diagnostics ('PZDriving-' + $label + '-' + $id + '.zip')
     $utf8 = New-Object Text.UTF8Encoding($false)
     $runSummaries = @(); $missingPackage = @(); $readinessSnapshots=@(); $comparisonWarnings=@()
     try {
         [IO.Directory]::CreateDirectory($stage) | Out-Null
-        for ($index = 0; $index -lt 2; $index++) {
-            $mode = @('Control', 'Optimized')[$index]
+        for ($index = 0; $index -lt $selected.Count; $index++) {
+            $mode = $selected[$index].Mode
+            Write-Progress -Activity 'Collecting driving diagnostics' -Status ($mode + ': validating and copying JFR, frames and WPR; large ETL files can take several minutes') -PercentComplete ([int](80 * $index / $selected.Count))
             $run = $selected[$index]; $receipt = $run.Receipt; $issues = @(); $included = @(); $diagnostic=$null
             $relativeFiles = @('launch.json', 'diagnostics.json', 'telemetry.jsonl', 'hardware.json', 'game-options.ini', 'session-console.txt', 'stdout.txt', 'stderr.txt')
             foreach ($relative in $relativeFiles) {
@@ -613,7 +642,10 @@ function New-TrialResultsBundle {
             $runSummaries += [pscustomobject]@{ mode = $mode; runId = $run.Name; processStartUtc = (Get-TrialResultProperty $receipt 'ProcessStartUtc'); status = $(if ($issues.Count) { 'Incomplete' } else { 'Complete' }); issues = @($issues); files = @($included); diagnosticArtifacts=[pscustomobject]$artifactReferences; wpr=$wprSummary; gameContext=$gameContext; capFrameX = [pscustomobject]@{ file = $captureRelative; originalBasename = $capture.OriginalBasename; sha256 = $capture.Sha256; csvFile = $csvRelative; csvSha256 = $capture.CsvSha256; assignment = $assignment; unverifiedFiles = @($unverifiedFiles); sensorCoverageFile=$artifactReferences['sensor-coverage.json'] } }
         }
         $settingsComparison=[pscustomobject]@{status='Unknown'; differences=@(); reason='Saved capture readiness snapshots unavailable.'}
-        if ($readinessSnapshots.Count -eq 2 -and $null -ne $readinessSnapshots[0] -and $null -ne $readinessSnapshots[1]) {
+        if ($scope -eq 'SingleRun') {
+            $settingsComparison=[pscustomobject]@{status='NotApplicable'; differences=@(); reason='Only one run was collected; no Control/Optimized comparison is available.'}
+            $comparisonWarnings += 'Single-run diagnostic bundle; it does not measure a Control/Optimized performance difference.'
+        } elseif ($readinessSnapshots.Count -eq 2 -and $null -ne $readinessSnapshots[0] -and $null -ne $readinessSnapshots[1]) {
             try {
                 $readinessScript=Join-Path $PSScriptRoot 'TrialReadiness.ps1'
                 $null=Assert-TrialResultPath $readinessScript
@@ -621,7 +653,7 @@ function New-TrialResultsBundle {
                 $settingsComparison=Compare-TrialCaptureSettings $readinessSnapshots[0] $readinessSnapshots[1]
             } catch { $settingsComparison.reason='Saved option comparison unavailable; preserve and inspect capture-readiness.json.' }
         }
-        if ($settingsComparison.status -ne 'Matches') { $comparisonWarnings += ('Control/Optimized saved game settings comparison: '+$settingsComparison.status+'. '+$settingsComparison.reason) }
+        if ($scope -eq 'Comparison' -and $settingsComparison.status -ne 'Matches') { $comparisonWarnings += ('Control/Optimized saved game settings comparison: '+$settingsComparison.status+'. '+$settingsComparison.reason) }
         foreach ($name in @('pack-manifest.json', 'build-receipt.json', 'candidate-manifest.json', 'verification.txt')) {
             $source = Join-Path $root $name
             if (Test-Path -LiteralPath $source -PathType Leaf) { Copy-TrialResultFile $source (Join-Path $stage $name) }
@@ -632,13 +664,16 @@ function New-TrialResultsBundle {
         if (Test-Path -LiteralPath $profileSource -PathType Leaf) { Copy-TrialResultFile $profileSource (Join-Path $stage 'PZTrial.wprp') }
         $status = 'Complete'
         if ($missingPackage.Count -or @($runSummaries | Where-Object { $_.status -ne 'Complete' }).Count) { $status = 'Incomplete' }
-        $summary = [pscustomobject]@{ format = 1; createdUtc = [DateTime]::UtcNow.ToString('o'); status = $status; runs = $runSummaries; missingPackageFiles = @($missingPackage); settingsComparison=$settingsComparison; comparisonWarnings=@($comparisonWarnings); captureAlignment = 'CapFrameX assignments and saved options are recorded per run; live settings, capture timing and gameplay/route equivalence require analysis. WPR uses file mode with recording overhead; zero lost events are not inferred.' }
+        $collector = [pscustomobject]@{revision=$script:TrialCollectorRevision; scriptFile='Collect-TrialResults.ps1'; sha256=(Get-FileHash -LiteralPath (Assert-TrialResultPath $script:TrialCollectorPath) -Algorithm SHA256).Hash.ToLowerInvariant()}
+        $summary = [pscustomobject]@{ format = 1; scope=$scope; requestedMode=$RunMode; includedModes=@($includedModes); missingModes=@($missingModes); collector=$collector; createdUtc = [DateTime]::UtcNow.ToString('o'); status = $status; runs = $runSummaries; missingPackageFiles = @($missingPackage); settingsComparison=$settingsComparison; comparisonWarnings=@($comparisonWarnings); captureAlignment = 'CapFrameX assignments and saved options are recorded per run; live settings, capture timing and gameplay/route equivalence require analysis. WPR uses file mode with recording overhead; zero lost events are not inferred.' }
         [IO.File]::WriteAllText((Join-Path $stage 'comparison.json'), ($summary | ConvertTo-Json -Depth 16), $utf8)
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         # CreateFromDirectory uses CreateNew: never replace an existing archive.
+        Write-Progress -Activity 'Collecting driving diagnostics' -Status 'Compressing the result ZIP, including drive.etl; please wait' -PercentComplete 85
         [IO.Compression.ZipFile]::CreateFromDirectory($stage, $archive)
         return [pscustomobject]@{ Path = $archive; Summary = $summary }
     } finally {
+        Write-Progress -Activity 'Collecting driving diagnostics' -Completed
         if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
     }
 }
@@ -656,11 +691,15 @@ if ($MyInvocation.InvocationName -ne '.') {
             throw 'Cannot determine the trial package directory. Run Collect-results.cmd beside Collect-TrialResults.ps1, or specify -PackageRoot.'
         }
         $PackageRoot = Assert-TrialResultPath $PackageRoot
-        if (-not $ControlCapture -and -not (Test-TrialAutomaticResult (Get-LatestTrialResult (Join-Path $PackageRoot 'Profiles/OptimizerTrial/TrialRuns') 'Control'))) { $ControlCapture = Read-Host 'Drag the Control CapFrameX JSON here (full path), or enter - if unavailable, then press Enter' }
-        if (-not $OptimizedCapture -and -not (Test-TrialAutomaticResult (Get-LatestTrialResult (Join-Path $PackageRoot 'Profiles/OptimizerTrial/TrialRuns') 'Optimized'))) { $OptimizedCapture = Read-Host 'Drag the Optimized CapFrameX JSON here (full path), or enter - if unavailable, then press Enter' }
-        $result = New-TrialResultsBundle -PackageRoot $PackageRoot -ControlCapture $ControlCapture -OptimizedCapture $OptimizedCapture
+        $selected = @(Select-TrialResults (Join-Path $PackageRoot 'Profiles/OptimizerTrial/TrialRuns') $RunMode)
+        foreach ($run in $selected) {
+            if ($run.Mode -eq 'Control' -and -not $ControlCapture -and -not (Test-TrialAutomaticResult $run)) { $ControlCapture = Read-Host 'Drag the Control CapFrameX JSON here (full path), or enter - if unavailable, then press Enter' }
+            if ($run.Mode -eq 'Optimized' -and -not $OptimizedCapture -and -not (Test-TrialAutomaticResult $run)) { $OptimizedCapture = Read-Host 'Drag the Optimized CapFrameX JSON here (full path), or enter - if unavailable, then press Enter' }
+        }
+        $result = New-TrialResultsBundle -PackageRoot $PackageRoot -ControlCapture $ControlCapture -OptimizedCapture $OptimizedCapture -RunMode $RunMode
         Write-Host "$($result.Summary.status) result bundle: $($result.Path)"
-        if ($result.Summary.status -ne 'Complete') { Write-Warning 'INCOMPLETE: available logs were preserved. See comparison.json for missing/failed evidence; this is not a successful comparison.' }
+        if ($result.Summary.scope -eq 'SingleRun') { Write-Host ('Single-run diagnostics: ' + ($result.Summary.includedModes -join ', ') + '. No Control/Optimized comparison is claimed.') }
+        if ($result.Summary.status -ne 'Complete') { Write-Warning 'INCOMPLETE: available logs were preserved. See comparison.json for missing/failed evidence.' }
         Write-Host 'Send this one ZIP for analysis. Nothing was uploaded automatically.'
     } catch {
         [Console]::Error.WriteLine('Collection failed: ' + $_.Exception.Message)

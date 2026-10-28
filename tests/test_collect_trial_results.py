@@ -55,11 +55,11 @@ class TrialResultsTests(unittest.TestCase):
             (directory / "JVM" / name).write_text("fixture JVM snapshot")
         return directory
 
-    def collect(self, before="", *, expect_success=True, automatic=False):
+    def collect(self, before="", *, expect_success=True, automatic=False, mode=None):
         env = dict(os.environ, PZ_COLLECT_SCRIPT=str(SCRIPT), PZ_COLLECT_ROOT=str(self.root),
-                   PZ_CONTROL=str(self.control), PZ_OPTIMIZED=str(self.optimized))
+                   PZ_CONTROL=str(self.control), PZ_OPTIMIZED=str(self.optimized), PZ_RUN_MODE=mode or "Auto")
         capture_args = "" if automatic else " -ControlCapture $env:PZ_CONTROL -OptimizedCapture $env:PZ_OPTIMIZED"
-        command = ". $env:PZ_COLLECT_SCRIPT; " + before + "; try { $r = New-TrialResultsBundle -PackageRoot $env:PZ_COLLECT_ROOT" + capture_args + "; $r | ConvertTo-Json -Depth 20 -Compress } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
+        command = ". $env:PZ_COLLECT_SCRIPT; " + before + "; try { $r = New-TrialResultsBundle -PackageRoot $env:PZ_COLLECT_ROOT -RunMode $env:PZ_RUN_MODE" + capture_args + "; $r | ConvertTo-Json -Depth 20 -Compress } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
         result = subprocess.run([PWSH, "-NoLogo", "-NoProfile", "-Command", command], env=env, text=True, capture_output=True)
         if expect_success:
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
@@ -670,6 +670,107 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
                 self.assertFalse(list((self.root / "Diagnostics").glob(".collect-*")))
                 self.assertFalse((foreign_cwd / "Diagnostics").exists())
 
+    def assert_single_summary(self, summary, mode, *, requested="Auto", script=SCRIPT):
+        other = "Control" if mode == "Optimized" else "Optimized"
+        self.assertEqual(summary["status"], "Complete")
+        self.assertEqual(summary["scope"], "SingleRun")
+        self.assertEqual(summary["requestedMode"], requested)
+        self.assertEqual(summary["includedModes"], [mode])
+        self.assertEqual(summary["missingModes"], [other])
+        self.assertEqual([run["mode"] for run in summary["runs"]], [mode])
+        self.assertEqual(summary["settingsComparison"]["status"], "NotApplicable")
+        self.assertTrue(summary["settingsComparison"]["reason"])
+        self.assertEqual(summary["collector"]["revision"], "3.4.1")
+        self.assertEqual(summary["collector"]["scriptFile"], SCRIPT.name)
+        self.assertEqual(summary["collector"]["sha256"], hashlib.sha256(script.read_bytes()).hexdigest())
+
+    def test_file_entrypoint_auto_optimized_only_preserves_exact_raw_evidence(self):
+        script, foreign_cwd = self.entrypoint_fixture()
+        shutil.rmtree(self.runs / "control-run")
+        run, wrapper, wpr = self.extended_fixture("Optimized")
+        frame = json.loads((run / "frame-capture.json").read_text())
+        original = {path: path.read_bytes() for path in self.runs.rglob("*") if path.is_file()}
+        result = self.run_entrypoint(script, foreign_cwd)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("Drag the Control", result.stdout + result.stderr)
+        self.assertRegex(result.stdout, r"(?i)(single.*(no comparison|not a comparison)|no.*comparison)")
+        archives = list((self.root / "Diagnostics").glob("*.zip"))
+        self.assertEqual(len(archives), 1)
+        self.assertTrue(archives[0].name.startswith("PZDriving-Optimized-"))
+        with zipfile.ZipFile(archives[0]) as archive:
+            summary = json.loads(archive.read("comparison.json"))
+            self.assert_single_summary(summary, "Optimized", script=script)
+            raw = {"Runs/Optimized/JFR/drive.jfr": run / "JFR/drive.jfr",
+                   "Runs/Optimized/" + wrapper["relativeDirectory"] + "/drive.etl": wpr / "drive.etl"}
+            raw.update({"Runs/Optimized/CapFrameX/" + Path(frame["result"][kind]).name:
+                        Path(frame["result"][kind]) for kind in ("Json", "Csv")})
+            archived_raw = {name for name in archive.namelist()
+                            if name.endswith((".etl", ".jfr")) or "/CapFrameX/" in name}
+            self.assertEqual(archived_raw, set(raw))
+            for name, source in raw.items():
+                self.assertEqual(archive.read(name), source.read_bytes())
+            self.assertFalse(any(name.startswith("Runs/Control/") for name in archive.namelist()))
+        self.assertEqual(original, {path: path.read_bytes() for path in self.runs.rglob("*") if path.is_file()})
+        self.assertFalse((foreign_cwd / "Diagnostics").exists())
+
+    def test_auto_control_only_is_labelled_single_control(self):
+        shutil.rmtree(self.runs / "optimized-run")
+        self.automatic_fixture("Control")
+        result = self.collect(automatic=True)
+        self.assert_single_summary(result["Summary"], "Control")
+        self.assertTrue(Path(result["Path"]).name.startswith("PZDriving-Control-"))
+        with zipfile.ZipFile(result["Path"]) as archive:
+            self.assertIn("Runs/Control/JFR/drive.jfr", archive.namelist())
+            self.assertFalse(any(name.startswith("Runs/Optimized/") for name in archive.namelist()))
+
+    def test_explicit_optimized_ignores_open_control_but_auto_does_not(self):
+        self.automatic_fixture("Optimized")
+        self.run_fixture("Control", "open-control", "2026-10-21T10:00:00Z", closed=False)
+        result = self.collect(automatic=True, mode="Optimized")
+        # Both modes exist; only the requested mode belongs to this bundle.
+        summary = result["Summary"]
+        self.assertEqual(summary["scope"], "SingleRun")
+        self.assertEqual(summary["requestedMode"], "Optimized")
+        self.assertEqual(summary["includedModes"], ["Optimized"])
+        self.assertEqual(summary["missingModes"], ["Control"])
+        self.assertEqual([run["mode"] for run in summary["runs"]], ["Optimized"])
+        self.assertEqual(summary["status"], "Complete")
+        self.assertEqual(summary["settingsComparison"]["status"], "NotApplicable")
+        with zipfile.ZipFile(result["Path"]) as archive:
+            self.assertFalse(any(name.startswith("Runs/Control/") for name in archive.namelist()))
+        entrypoint = self.run_entrypoint(SCRIPT, self.root, "-PackageRoot", str(self.root),
+                                         "-RunMode", "Optimized")
+        self.assertEqual(entrypoint.returncode, 0, entrypoint.stdout + entrypoint.stderr)
+        self.assertNotIn("Drag the Control", entrypoint.stdout + entrypoint.stderr)
+        before = set((self.root / "Diagnostics").glob("*.zip"))
+        failed = self.collect(automatic=True, expect_success=False)
+        self.assertIn("Latest Control run is still open", failed.stderr)
+        self.assertEqual(before, set((self.root / "Diagnostics").glob("*.zip")))
+
+    def test_explicit_comparison_and_missing_requested_mode_require_receipts(self):
+        shutil.rmtree(self.runs / "control-run")
+        for mode in ("Comparison", "Control"):
+            with self.subTest(mode=mode):
+                result = self.collect(automatic=True, expect_success=False, mode=mode)
+                self.assertIn("Control", result.stderr)
+                self.assertFalse(list((self.root / "Diagnostics").glob("*.zip")))
+
+    def test_auto_with_no_runs_fails_without_creating_archive(self):
+        shutil.rmtree(self.runs / "control-run")
+        shutil.rmtree(self.runs / "optimized-run")
+        result = self.collect(automatic=True, expect_success=False)
+        self.assertRegex(result.stderr, r"(?i)(no .*run|no .*launch|not.*found)")
+        self.assertFalse(list((self.root / "Diagnostics").glob("*.zip")))
+
+    def test_auto_does_not_hide_malformed_newer_launch_behind_valid_runs(self):
+        latest = self.run_fixture("Control", "malformed-control", "2026-10-21T10:00:00Z")
+        self.automatic_fixture("Control")
+        self.automatic_fixture("Optimized")
+        (latest / "launch.json").write_text("{broken")
+        result = self.collect(automatic=True, expect_success=False)
+        self.assertIn("launch.json", result.stderr)
+        self.assertFalse(list((self.root / "Diagnostics").glob("*.zip")))
+
     def test_file_entrypoint_invalid_explicit_root_reports_source_and_stack(self):
         script, foreign_cwd = self.entrypoint_fixture()
         missing_root = self.root / "missing package"
@@ -687,7 +788,7 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
         shutil.copytree(self.runs, foreign_cwd / "Profiles" / "OptimizerTrial" / "TrialRuns")
         (self.runs / "control-run" / "launch.json").unlink()
         original = {path: path.read_bytes() for path in self.runs.rglob("*") if path.is_file()}
-        result = self.run_entrypoint(script, foreign_cwd)
+        result = self.run_entrypoint(script, foreign_cwd, "-RunMode", "Comparison")
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("No Control launch receipt found", result.stderr)
         self.assertIn('throw "No $Mode launch receipt', result.stderr)
@@ -706,6 +807,11 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
         (self.root / "account.json").write_text("not diagnostics")
         result = self.collect()
         self.assertEqual(result["Summary"]["status"], "Complete")
+        self.assertEqual(result["Summary"]["scope"], "Comparison")
+        self.assertEqual(result["Summary"]["requestedMode"], "Auto")
+        self.assertEqual(result["Summary"]["includedModes"], ["Control", "Optimized"])
+        self.assertEqual(result["Summary"]["missingModes"], [])
+        self.assertTrue(Path(result["Path"]).name.startswith("PZDriving-Comparison-"))
         with zipfile.ZipFile(result["Path"]) as archive:
             names = archive.namelist()
             self.assertIn("Runs/Control/JFR/drive.jfr", names)
