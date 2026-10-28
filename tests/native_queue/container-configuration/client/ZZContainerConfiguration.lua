@@ -29,15 +29,63 @@ end
 local function sameColor(color,style)
  return color and color.r==style.r and color.g==style.g and color.b==style.b
 end
+local function sameSet(left,right)
+ for key,value in pairs(left)do if right[key]~=value then return false end end
+ for key,value in pairs(right)do if left[key]~=value then return false end end
+ return true
+end
+local function copySet(source)
+ local result={};for key,value in pairs(source)do result[key]=value end;return result
+end
+local function emptySet(source)
+ for _ in pairs(source)do return false end;return true
+end
+local function checkSemanticClick(row)
+ local cats=copySet(picker.selectedCats)
+ local before=TagPicker.state(picker.selectedCats,row,picker.toolkitTagRule)
+ assert(row.tag and row.requiresRule and before==0,'Fixture semantic tag was already selected or not live')
+ picker.listbox.onmousedown(picker,row)
+ local checked,total=TagPicker.state(picker.selectedCats,row,picker.toolkitTagRule)
+ assert(checked==1 and total==1 and not picker.toolkitRulePicker,'Semantic checkbox did not directly select a live rule')
+ assert(sameSet(cats,picker.selectedCats),'Semantic checkbox broadened exact category assignments')
+ local found=false
+ for _,id in ipairs(picker.toolkitTagRule.include)do if id==row.tag then found=true end end
+ assert(found,'Semantic checkbox did not include the selected tag')
+end
 local function clickRow(key,tag)
  picker:rebuild()
  for _,row in ipairs(picker.listbox.items)do
   if tag and row.item.tag==tag or key and row.item.key==key then
-   assert(not row.item.requiresRule,'Fixture tag unexpectedly requires a rule')
-   picker.listbox.onmousedown(picker,row.item);return
+   if tag then checkSemanticClick(row.item)else
+    assert(not row.item.requiresRule,'Exact entry unexpectedly requires a tag rule')
+    local selected=picker.selection[key]
+    picker.listbox.onmousedown(picker,row.item)
+    assert(not selected and picker.selection[key],'Exact entry callback did not select the row')
+   end
+   return
   end
  end
  error('Actual sorting row missing: '..tostring(tag or key))
+end
+local function configureFinalRule()
+ picker.toolkitTagRuleButton.onclick(picker)
+ local advanced=assert(picker.toolkitRulePicker)
+ advanced:clearRule()
+ assert(advanced.rule.mode=='all','Cleared rule did not use All mode')
+ for _,choice in ipairs({{F.tag,'Include'},{'perishable','Include'},{'meat','Exclude'}})do
+  local id,state=choice[1],choice[2]
+  local found
+  for _,row in ipairs(advanced.entries)do if row.id==id then found=row;break end end
+  assert(found,'Actual advanced rule row missing: '..id)
+  advanced:cycle(found)
+  if state=='Exclude'then advanced:cycle(found)end
+  assert(advanced:state(id)==state,'Advanced callback selected the wrong state: '..id)
+ end
+ advanced:apply()
+ local rule=picker.toolkitTagRule
+ assert(not picker.toolkitRulePicker and rule.mode=='all' and #rule.include==2
+  and rule.include[1]==F.tag and rule.include[2]=='perishable'
+  and #rule.exclude==1 and rule.exclude[1]=='meat','Advanced Apply lost the final rule')
 end
 local function pickColor()
  Controls.chooseColor(picker)
@@ -157,7 +205,7 @@ local function tick()
   end
   assert(tagRows.electrical and tagRows.electronic and tagRows.seed,'Expected electrical/electronic/seed tags absent')
   assert(tagRows.electrical.label~=tagRows.electronic.label,'Electrical tags have indistinguishable labels')
-  picker.listbox.onmousedown(picker,tagRows.electrical)
+  checkSemanticClick(tagRows.electrical)
   assert(not picker.toolkitRulePicker,'Checkbox click opened advanced editor')
   local checked,total=TagPicker.state(picker.selectedCats,tagRows.electrical,picker.toolkitTagRule)
   assert(checked==total and total>0,'Electrical selection did not check row')
@@ -166,8 +214,8 @@ local function tick()
  elseif phase=='tag-checked'then
   shot('tag-checked')
   picker.filter:setText('');picker:rebuild()
-  assert(tagRows.seed.requiresRule,'Native partial-category seed fixture no longer covers rule rows')
-  picker.listbox.onmousedown(picker,tagRows.seed)
+  assert(tagRows.seed.requiresRule,'Seed fixture no longer covers live rule rows')
+  checkSemanticClick(tagRows.seed)
   local selected=TagPicker.state(picker.selectedCats,tagRows.seed,picker.toolkitTagRule)
   assert(not picker.toolkitRulePicker and selected==1,'Partial tag checkbox failed')
   picker.onlyChecked=true;picker:rebuild()
@@ -236,12 +284,22 @@ local function tick()
   assert(picker.appearanceName:getInternalText()==Tags.label(F.tag)
    and sameColor(picker.toolkitAppearance.color,Visuals.get(F.tag)),'Second tag changed initial defaults')
   checkTagIcon()
+  phase='final-rule'
+ elseif phase=='final-rule'then
+  -- AddUI is deferred; advanced Apply rejects an owner not yet admitted to the native UI list.
+  if not picker:isReallyVisible()then return end
+  picker.toolkitTagSwitch.onclick(picker)
+  assert(not picker.toolkitTagView,'Exact category switch did not change the view')
+  clickRow(packet.category)
+  picker.toolkitTagSwitch.onclick(picker)
+  configureFinalRule()
+  assert(picker.selectedCats[packet.category] and emptySet(picker.selectedItems)
+   and emptySet(picker.selectedPresets),'Rule Apply changed exact selections')
+  checkTagIcon()
   picker.appearanceName:setText(F.name);pickColor()
   assert(picker.appearanceName:getInternalText()==F.name,'Manual name override missing')
   emit('DEFAULTS',{tag=F.tag,item=F.item,role=role,menuClasses=menuClasses})
-  picker.selectedCats={[packet.category]=true};picker.selectedItems={};picker.selectedPresets={};picker.selection=picker.selectedCats;picker:setPriority(6)
-  picker.toolkitTagRule={mode='all',include={'food','perishable'},exclude={'meat'}}
-  picker.toolkitTagRuleTouched=true
+  picker:setPriority(6)
   picker.needRebuild=true
   phase='edit';nextAt=getTimestampMs()+1200
  elseif phase=='edit'then

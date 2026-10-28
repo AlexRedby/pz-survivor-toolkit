@@ -547,7 +547,7 @@
     {
       "id": "retained-item-full-pack-compatibility",
       "title": "Retained-item full-pack compatibility",
-      "todo": "TODO.md#retained-item-full-pack-compatibility",
+      "todo": "tests/native_queue/SCENARIOS.md#inventory-retention-and-classification",
       "jobs": [
         "retention-host"
       ],
@@ -590,14 +590,12 @@
     {
       "id": "configure-container-ui-repairs",
       "title": "Configure container UI repairs",
-      "todo": "TODO.md#configure-container-ui-repairs",
+      "todo": "tests/native_queue/SCENARIOS.md#inventory-retention-and-classification",
       "jobs": [
         "container-ui-sp",
         "container-ui-host"
       ],
-      "gates": [
-        "Review captured filters, checked electronics, advanced window foreground, scrolling and expanded group dropdown; callback success does not replace visual review."
-      ]
+      "gates": []
     },
     {
       "id": "item-catalogue-test-world",

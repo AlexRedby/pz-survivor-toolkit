@@ -76,10 +76,10 @@ def _one(text, event):
 
 
 def _expected(category):
-    return dict(name='QM supplies', iconKind='pzst-tag', iconValue='food',
+    return dict(name='QM supplies', iconKind='pzst-tag', iconValue='edible',
                 r=.25, g=.5, b=.75, a=1, category=category, categorySelected=True,
                 categoryCount=1, itemCount=0, presetCount=0, priority=6, ruleMode='all',
-                include=['food', 'perishable'], exclude=['meat'], revision=1)
+                include=['edible', 'perishable'], exclude=['meat'], revision=1)
 
 
 def _exact(value, expected):
@@ -133,7 +133,7 @@ def verify(root, selection, catalog):
             raise ValueError('Direct tag selection, Apply or foreground evidence absent')
         expected = _expected(category)
         defaults = _one(logs['client1'], 'DEFAULTS')
-        if (set(defaults) != {'tag', 'item', 'role', 'menuClasses'} or defaults['tag'] != 'food'
+        if (set(defaults) != {'tag', 'item', 'role', 'menuClasses'} or defaults['tag'] != 'edible'
                 or defaults['item'] != 'Base.Hammer' or defaults['role'] != 'client1'
                 or type(defaults['menuClasses']) is not int or defaults['menuClasses'] < 2):
             raise ValueError('Tag/item defaults or native/CleanUI menu routes absent')

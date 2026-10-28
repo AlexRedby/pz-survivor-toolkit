@@ -1,7 +1,8 @@
 local Config=require 'PZSurvivorToolkit/QuartermasterContainerConfig'
 local Appearance=require 'PZSurvivorToolkit/ContainerAppearance'
 local Rules=require 'PZSurvivorToolkit/QuartermasterTagRules'
-local F={module='ContainerConfigurationTest',name='QM supplies',tag='food',item='Base.Hammer'}
+local Categories=require 'PZSurvivorToolkit/ItemCategories'
+local F={module='ContainerConfigurationTest',name='QM supplies',tag='edible',item='Base.Hammer'}
 F.color={r=0.25,g=0.5,b=0.75,a=1}
 function F.prepare(player)
  local origin=assert(player:getSquare())
@@ -17,8 +18,8 @@ function F.prepare(player)
  local container=assert(obj:getContainer());container:setType('crate');container:setCapacity(100);container:setExplored(true)
  obj:getModData().PZSTContainerConfigurationFixture=true
  square:AddSpecialObject(obj)
- local item=assert(instanceItem(F.item))
- local category=assert(item:getDisplayCategory())
+ local script=assert(getScriptManager():FindItem(F.item))
+ local category=assert(Categories.forScript(script))
  if isServer() then obj:transmitCompleteItemToClients();obj:transmitModData() end
  return obj,{x=square:getX(),y=square:getY(),z=square:getZ(),index=obj:getObjectIndex(),category=category}
 end
@@ -47,7 +48,7 @@ function F.matches(receipt)
   and receipt.r==F.color.r and receipt.g==F.color.g and receipt.b==F.color.b and receipt.a==1
   and receipt.categorySelected and receipt.categoryCount==1 and receipt.itemCount==0 and receipt.presetCount==0
   and receipt.priority==6 and receipt.ruleMode=='all' and #receipt.include==2
-  and receipt.include[1]=='food' and receipt.include[2]=='perishable' and #receipt.exclude==1
+  and receipt.include[1]==F.tag and receipt.include[2]=='perishable' and #receipt.exclude==1
   and receipt.exclude[1]=='meat' and receipt.revision==1
 end
 function F.cleanup(obj)

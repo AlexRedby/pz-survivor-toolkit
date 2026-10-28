@@ -16,21 +16,13 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ## Inventory, crafting, food and storage block
 
-### Retained-item full-pack compatibility
-
-- [ ] Repeat the retained-item scenario with the complete current 67-mod selection using explicit locked sources; the earlier reduced-pack checks do not establish full-pack conservation.
-
 ### Full-pack follow-up checks
 
-- [ ] Run the isolated macOS automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete current 67-Mod-ID pack and explicit locked sources. The earlier bounded checks used 45 Mod IDs.
+- [ ] Add a Host partial-drop fixture for Smart Deposit and qualify server-authoritative transfers and retained contents with the complete locked 67-mod pack. The existing SP fixture cannot establish Host behavior.
 
 ### Warehouse client workload
 
 - [ ] Extend the full 67-mod SP warehouse walking capture to native menu Host, including another player's container edits, crafting inputs and quick transfers with loot hidden. Existing SP walking and Host transfer/Grab checks do not establish concurrent-player behavior or the user-save stutter cause; keep GPU/FPS claims separate from Lua wall time and UI callback cadence.
-
-### Configure container UI repairs
-
-- [ ] Run the isolated `container-configuration/edit` native UI scenario after AeroSpace can discover the owned client window. Inspect the filter, checked electronics rows, advanced window foreground, scrolled lists and expanded group dropdown screenshots. Focused Lua regressions pass; the attempted macOS B42.21 run stopped at window admission before world startup, so no visual pass is established. Use the complete current source lock; historical reduced-pack runs do not establish full-pack behavior.
 
 ### Item catalogue test world
 
@@ -133,7 +125,7 @@ Capture these during relevant campaign launches rather than adding an unrelated 
 
 ### Runtime observations to resolve
 
-- [ ] Resolve the common startup diagnostics that keep the food-age SP run at `needs-review` despite all four functional phases passing: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical startup fingerprints/counts; qualify or fix each source/caller before changing audit rules; do not treat functional success as a clean runtime.
+- [ ] Classify the startup diagnostics from the earlier food-age SP/control runs: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical fingerprints/counts; the current complete-pack food-age baseline is clean. Qualify or fix each historical source/caller before changing audit rules; do not infer that an old diagnostic is harmless from a later clean run.
 
 - [ ] Investigate macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Two shared-storage qualifications stopped after the same six size-100 inventory-work phases, before size-10000/freshness receipts, with empty observations for their previously owned windows (`pz-campaign-storage01`, `pz-campaign-shared02`); runtime logs were clean and the runner terminated both clients with exit 143. The later bounded probe retained the owned window through all size-10000 work; its sole empty result followed an unrelated fixture-quarantine shutdown. On recurrence collect incident timestamps, raw discovery output and owned-PID CoreGraphics metadata before termination to distinguish real loss from transient discovery failure; do not bypass PID/window or desktop guards.
 
@@ -236,6 +228,8 @@ For each migrated family, add an independent positive example and a dangerous ex
 The food-age runtime gates are grouped in the [shared campaign](#food-age-and-cooling); this optimization still requires implementation and measurement before acceptance.
 
 # Process friction
+
+- [ ] Remove unsupported capacity setup from the warehouse walking fixture: `ZZStorageProfileNative.lua` calls `setCapacity(10000)` for each crate, and B42.21 emits repeated warnings about exceeding its maximum capacity of 100 (`pz-campaign-inventory01/warehouse-walk-sp`). Use an engine-supported capacity and verify both density levels retain their exact contents and workload coverage.
 
 - [ ] Reconnect the cumulative-agent-memory MCP after its runtime update: `memory.read` rejects requests with `Memory MCP is from an older release; reconnect the server`. The bundled CLI remains the fallback but needs access to its external state directory. Complete when normal MCP reads and capture writes work again.
 

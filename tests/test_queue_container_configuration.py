@@ -17,10 +17,10 @@ class ContainerConfigurationAdapterTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.category = 'CrateCategory'
-        self.value = dict(name='QM supplies', iconKind='pzst-tag', iconValue='food',
+        self.value = dict(name='QM supplies', iconKind='pzst-tag', iconValue='edible',
                           r=.25, g=.5, b=.75, a=1, category=self.category,
                           categorySelected=True, categoryCount=1, itemCount=0, presetCount=0,
-                          priority=6, ruleMode='all', include=['food', 'perishable'],
+                          priority=6, ruleMode='all', include=['edible', 'perishable'],
                           exclude=['meat'], revision=1)
         self.selection = {'kind': 'sp'}
 
@@ -58,7 +58,7 @@ class ContainerConfigurationAdapterTests(unittest.TestCase):
         client1.extend(self.marker('SHOT', shot) for shot in shot_receipts[:11])
         client1.append(self.marker('TAGUI', dict(oneClick=True, checked=True, advancedApplied=True, foreground=True)))
         client1.append(self.marker('SHOT', shot_receipts[11]))
-        client1.append(self.marker('DEFAULTS', {'tag': 'food', 'item': 'Base.Hammer',
+        client1.append(self.marker('DEFAULTS', {'tag': 'edible', 'item': 'Base.Hammer',
                                                 'role': 'client1', 'menuClasses': 3}))
         client1.extend(self.marker('SHOT', shot) for shot in shot_receipts[12:])
         client1.extend([
@@ -94,6 +94,20 @@ class ContainerConfigurationAdapterTests(unittest.TestCase):
         result = adapter.verify(self.root, self.selection, {})
         self.assertEqual([], result['issues'])
         self.assertEqual(15, len(result['evidence']['screenshots']))
+
+    def test_retired_visible_tag_and_incoherent_authority_or_observer_fail(self):
+        for role, old, new in (
+                ('client1', '"tag":"edible"', '"tag":"food"'),
+                ('client1', '"iconValue":"edible"', '"iconValue":"food"'),
+                ('server', '"include":["edible","perishable"]', '"include":["food","perishable"]'),
+                ('client2', '"categorySelected":true', '"categorySelected":false')):
+            with self.subTest(role=role, field=old):
+                self.write_logs('mp')
+                path = self.root / (role + '-launch.log')
+                text = path.read_text()
+                self.assertIn(old, text)
+                path.write_text(text.replace(old, new))
+                self.assertTrue(adapter.verify(self.root, self.selection, {})['issues'])
 
     def test_missing_or_duplicate_shot_receipt_fails(self):
         self.write_logs('sp')
