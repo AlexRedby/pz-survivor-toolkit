@@ -516,6 +516,9 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     function ISButton:getRight() return self.x + self.width end
     function ISButton:getWidth() return self.width end
     function ISButton:getHeight() return self.height end
+    function ISButton:getX() return self.x end
+    function ISButton:getY() return self.y end
+    function ISButton:getKeepOnScreen() return true end
     function ISButton:getIsVisible() return self.visible end
     function ISButton:setVisible(value) self.visible = value end
     function ISButton:addToUIManager() ui[self] = true end
@@ -525,13 +528,18 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     function ISButton:setWidth(value) self.width = value end
     function ISButton:setHeight(value) self.height = value end
     function ISButton:setImage(value) self.image = value end
-    function ISButton:forceImageSize(width, height) self.imageWidth, self.imageHeight = width, height end
+    function ISButton:forceImageSize(width, height)
+        self.imageWidth, self.imageHeight = width, height
+        self.forcedWidthImage, self.forcedHeightImage = width, height
+    end
     function ISButton:ignoreWidthChange() self.ignoreWidth = true end
     function ISButton:ignoreHeightChange() self.ignoreHeight = true end
     function ISButton:forceClick() if self.enable then self.onclick(self.target, self) end end
     getTexture = function(path) return path end
     getPlayerScreenTop = function() return 0 end
     getPlayerScreenHeight = function() return 1080 end
+    getCore().getScreenWidth = function() return 1920 end
+    getCore().getScreenHeight = function() return 1080 end
     UIFont = { Small = 1 }
     getKeyName = function(key) return "KEY_" .. key end
     getText = function(key, value) return value and key .. ":" .. value or key end

@@ -191,6 +191,8 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
+- [ ] Make the Lua runner reject game-unsupported globals such as `next` before native qualification. An experimental dashboard regression passed under LuaJIT but failed on vehicle exit in real Kahlua because `next` is absent. Add a shared game-environment compatibility check or profile without breaking test-harness-only helpers, and require a missing-global regression to fail before launching the game.
+
 - [ ] Require exclusive admission for `base-walking-profile` timing captures, or reject a non-exclusive selection explicitly. Preparation without `--exclusive` currently records `resources.exclusive=false`; the initial Java highlight capture showed higher costs across unchanged callbacks despite starting with zero peer runs, requiring a fresh exclusive repeat against the exclusive Lua control. Make the timing isolation requirement visible and consistent without changing gameplay or input guards.
 
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.

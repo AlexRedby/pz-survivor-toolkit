@@ -40,6 +40,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.320
+
+- Update Toolkit sidebar button geometry, visibility and availability only when their live values change, including screen-edge clamping, owner replacement, paused settings and tooltip cleanup.
+
 ### 0.1.319
 
 - **Changed:** Pending Host makeup can move around independent work with a reviewed kit held in either or both hands in the character's main inventory. Remaining charges keep the grip; the final charge uses native matching-hand cleanup and preserves other held items. Attached, worn, automatically draining and non-root held supplies retain protection.
