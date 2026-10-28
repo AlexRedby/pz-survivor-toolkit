@@ -1,6 +1,7 @@
 """Pin package inputs and candidate provenance independently of dirty checkout files."""
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -12,7 +13,8 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.prepare_optimizer_trial import (BRIDGE, LAUNCHERS, build_bridge, bridge_resources,
-                                           prepare, record_java_source, snapshot_java_source, snapshot_pack)
+                                           diagnostic_selection, prepare, record_java_source, snapshot_java_source, snapshot_pack)
+from tools.queue_checks.mod_selection import metadata
 
 
 class MainPackSnapshot(unittest.TestCase):
@@ -69,7 +71,11 @@ class LocalCandidatePackage(unittest.TestCase):
             write('PZSurvivorToolkit/42/mod.info', 'id=PZSurvivorToolkit\nmodversion=0.1.284\n')
             dashboard = 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/VehicleDashboardTextures.lua'
             write(dashboard, '-- committed dashboard\n')
-            write('SurvivorQoL-selected.ini', 'Mods=PZSurvivorToolkit;PZToolkitJavaPatches\nWorkshopItems=123;456\n')
+            selected = ('# Main gameplay selection stays intact.\n'
+                        'Mods=PZSurvivorToolkit;NMBJABBA;NewMusic;NMBJQ;PZToolkitJavaPatches;NMBJFM\n'
+                        'WorkshopItems=123;3784065691;789;3777937059;456;3751236222\n'
+                        'NightLength=2\n')
+            write('SurvivorQoL-selected.ini', selected)
             write('JavaPatches/build.py', "from pathlib import Path\np=Path(__file__).parent/'build/PZToolkitJavaPatches/42/mod.info'\np.parent.mkdir(parents=True)\np.write_text('id=PZToolkitJavaPatches\\nmodversion=0.1.65\\n')\n")
             git('add', '.')
             git('commit', '-qm', 'Fixture base')
@@ -101,6 +107,29 @@ class LocalCandidatePackage(unittest.TestCase):
                 output, archive = prepare(base / 'package', base / 'game', base / 'jdk', root=repo)
             pack = json.loads((output / 'pack-manifest.json').read_text())
             receipt = json.loads((output / 'build-receipt.json').read_text())
+            effective_mods = ['PZSurvivorToolkit', 'NewMusic', 'PZToolkitJavaPatches']
+            effective_workshop = ['123', '789', '456']
+            self.assertEqual(effective_mods, pack['mod_ids'])
+            self.assertEqual(effective_workshop, pack['workshop_ids'])
+            exclusions = pack['excluded_mods']
+            self.assertEqual({('NMBJABBA', '3784065691'), ('NMBJQ', '3777937059'),
+                              ('NMBJFM', '3751236222')},
+                             {(entry['mod_id'], entry['workshop_id']) for entry in exclusions})
+            self.assertEqual(3, len(exclusions))
+            self.assertTrue(all(isinstance(entry['reason'], str) and entry['reason'].strip()
+                                for entry in exclusions))
+            self.assertEqual(exclusions, receipt['excluded_mods'])
+            self.assertEqual(len(effective_mods), receipt['selected_mod_count'])
+            packaged_selection = metadata(output / 'SurvivorQoL-selected.ini')
+            self.assertEqual({'Mods': ';'.join(effective_mods),
+                              'WorkshopItems': ';'.join(effective_workshop), 'NightLength': '2'},
+                             packaged_selection)
+            host = metadata(output / 'Server/PZOptimizerHost.ini')
+            self.assertEqual(';'.join(effective_mods + [BRIDGE]), host['Mods'])
+            self.assertEqual(packaged_selection['WorkshopItems'], host['WorkshopItems'])
+            self.assertEqual('2', host['NightLength'])
+            self.assertEqual(selected, (repo / 'SurvivorQoL-selected.ini').read_text())
+            self.assertEqual(selected, git('show', candidate + ':SurvivorQoL-selected.ini') + '\n')
             for proof in (pack, receipt):
                 self.assertEqual('local-candidate', proof['source_kind'])
                 self.assertEqual(candidate, proof['source_revision'])
@@ -122,10 +151,36 @@ class LocalCandidatePackage(unittest.TestCase):
                              receipt['wpr_profile']['sha256'])
             expected = output / 'mods' / BRIDGE / '42/media/lua/client/PZOptimizerTrialExpectedMods.lua'
             self.assertIn('revision=' + json.dumps(candidate), expected.read_text())
+            lua_ids = re.search(r'ids=\{([^}]*)\}', expected.read_text())
+            self.assertIsNotNone(lua_ids)
+            self.assertEqual(effective_mods + ['PZDrivingBench', BRIDGE],
+                             json.loads('[' + lua_ids.group(1) + ']'))
             with zipfile.ZipFile(archive) as bundle:
                 self.assertEqual(receipt, json.loads(bundle.read('PZDrivingOptimizerTrial/build-receipt.json')))
                 self.assertEqual((output / 'PZTrial.wprp').read_bytes(),
                                  bundle.read('PZDrivingOptimizerTrial/PZTrial.wprp'))
+
+
+class DiagnosticSelection(unittest.TestCase):
+    def test_pack_without_unavailable_music_is_unchanged_and_copied(self):
+        settings = {'Mods': 'PZSurvivorToolkit;NewMusic;PZToolkitJavaPatches',
+                    'WorkshopItems': '123;789;456', 'NightLength': '2'}
+        effective, exclusions = diagnostic_selection(settings)
+        self.assertIsNot(settings, effective)
+        self.assertEqual(settings, effective)
+        self.assertEqual([], exclusions)
+
+    def test_partial_music_pair_is_rejected_without_mutating_settings(self):
+        for mod, workshop in [('NMBJABBA', '3784065691'), ('NMBJQ', '3777937059'),
+                              ('NMBJFM', '3751236222')]:
+            for present in ('mod', 'workshop'):
+                with self.subTest(mod=mod, present=present):
+                    settings = {'Mods': 'PZSurvivorToolkit;NewMusic' + (';' + mod if present == 'mod' else ''),
+                                'WorkshopItems': '123;789' + (';' + workshop if present == 'workshop' else '')}
+                    original = dict(settings)
+                    with self.assertRaises(ValueError):
+                        diagnostic_selection(settings)
+                    self.assertEqual(original, settings)
 
 
 class ExplicitJavaSource(unittest.TestCase):
