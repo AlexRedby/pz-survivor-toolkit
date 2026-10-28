@@ -215,16 +215,41 @@ def record_java_source(jar: Path, identity: dict) -> None:
     temporary.replace(jar)
 
 
+# Explicit user-approved diagnostic subset; never rewrite the gameplay selection.
+DIAGNOSTIC_MUSIC_EXCLUSIONS = {
+    'NMBJABBA': '3784065691',
+    'NMBJQ': '3777937059',
+    'NMBJFM': '3751236222',
+}
+
+
+def diagnostic_selection(settings: dict) -> tuple[dict, list[dict]]:
+    """Exclude only the three unavailable album packs and report the actual delta."""
+    from tools.queue_checks.mod_selection import mod_ids
+    ordered = mod_ids(settings['Mods'])
+    workshop = settings['WorkshopItems'].split(';')
+    if not workshop or len(workshop) != len(set(workshop)) or any(not item.isascii() or not item.isdigit() for item in workshop):
+        raise ValueError('Invalid pinned Workshop list')
+    excluded = []
+    for identifier, item in DIAGNOSTIC_MUSIC_EXCLUSIONS.items():
+        if (identifier in ordered) != (item in workshop):
+            raise ValueError('Incomplete diagnostic music pair: ' + identifier + '/' + item)
+        if identifier in ordered:
+            ordered.remove(identifier)
+            workshop.remove(item)
+            excluded.append({'mod_id': identifier, 'workshop_id': item,
+                'reason': 'User-approved diagnostic exclusion: Workshop page unavailable on 2026-10-28'})
+    return {**settings, 'Mods': ';'.join(ordered), 'WorkshopItems': ';'.join(workshop)}, excluded
+
+
 def include_pack(stage: Path, source: Path, revision: str, game: Path, jdk: Path,
                  kotlin_home: Path | None, root: Path, java_source_identity: dict | None = None,
                  provenance: dict | None = None) -> dict:
     from tools.queue_checks.mod_selection import metadata, mod_ids
     from tools.prepare_driving_benchmark import _regular_tree
-    settings = metadata(source / 'SurvivorQoL-selected.ini')
+    settings, excluded = diagnostic_selection(metadata(source / 'SurvivorQoL-selected.ini'))
     ordered = mod_ids(settings['Mods'])
     workshop = settings['WorkshopItems'].split(';')
-    if not workshop or len(workshop) != len(set(workshop)) or any(not item.isascii() or not item.isdigit() for item in workshop):
-        raise ValueError('Invalid pinned Workshop list')
     command = [sys.executable, str(source / 'JavaPatches/build.py'), '--game', str(game), '--jdk', str(jdk)]
     if kotlin_home is not None:
         command += ['--kotlin-home', str(kotlin_home)]
@@ -245,11 +270,13 @@ def include_pack(stage: Path, source: Path, revision: str, game: Path, jdk: Path
                       for p in sorted(folder.rglob('*')) if p.is_file()}}
         shutil.copytree(folder, stage / 'mods' / identifier)
     manifest = {'format': 1, **(provenance or pack_provenance(root, revision)), 'mod_ids': ordered,
-                'workshop_ids': workshop, 'repository_mods': own}
+                'workshop_ids': workshop, 'repository_mods': own, 'excluded_mods': excluded}
     if java_source_identity is not None:
         manifest['java_source'] = java_source_identity
     (stage / 'pack-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-    shutil.copy2(source / 'SurvivorQoL-selected.ini', stage / 'SurvivorQoL-selected.ini')
+    (stage / 'SurvivorQoL-selected.ini').write_text(
+        '# Diagnostic subset; exact exclusions are recorded in pack-manifest.json.\n'
+        + ''.join(key + '=' + value + '\n' for key, value in settings.items()))
     # Separate native menu Host preset. The SP driving starter is not active in MP.
     host = dict(settings)
     host.update(Mods=';'.join(ordered + [BRIDGE]), Public='false', UPnP='false')
@@ -308,6 +335,7 @@ def prepare(output: Path, game: Path, jdk: Path, root: Path = ROOT,
                    'default_session': 'SinglePlayer',
                    'diagnostics_format': 3, 'diagnostics_revision': '3.4',
                    'source_only_upstream': True, **provenance, 'selected_mod_count': len(pack['mod_ids']),
+                   'excluded_mods': pack['excluded_mods'],
                    'repository_versions': {id: row['version'] for id, row in pack['repository_mods'].items()},
                    'bridge_jar_sha256': hashlib.sha256(
                        (bridge / f'42/media/java/{BRIDGE}.jar').read_bytes()).hexdigest(),
