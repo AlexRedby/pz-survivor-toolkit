@@ -1,9 +1,9 @@
-# Analyze the recorded Optimized run
+# Follow up the recorded Optimized run
 
-- [ ] Receive the existing finalized 2231369728-byte WPR trace (SHA256 b42225b59d8a0dc114be1214fcecca10ffb5d17e9bbbf7b39a8e591533a1ec29) through the repaired collector and inspect the first approximately 67 seconds of frame overlap. Preserve SizeWatchdog, 3687 lost events and missing tail as limitations; no new drive is needed.
-- [ ] Investigate the synchronous native wooden-wall map-object logging path: the recorded render producer gap includes 111 ms of stdout writes. Distinguish diagnostic output/scheduling overhead before a narrow SP/menu Host candidate; retain object creation/networking and meaningful errors.
-- [ ] Use the existing MainThread FBO/chunk/fog sample roots to select a behavior-preserving candidate; do not claim GPU saturation, GC-pause causation or optimizer gain from this one 64-mod recording.
-- [ ] Reduce WPR tracing volume/overhead before a future agreed comparison; current capture reached 2 GiB after 70 seconds and dropped events. Raising the cap alone is not a validated overhead fix.
+- [ ] Add launch-time physical-storage resolution for the actual game and Workshop paths, including pinned paths and junctions. The existing ETL proves game assets on an HDD and a 95 ms image-backed DLL read blocking MainThread; do not assume a nominal Steam folder or drive letter means NVMe. Preserve privacy in collected metadata and do not automatically relocate the user's game.
+- [ ] Prepare and qualify a narrow synchronous logging/output candidate: the existing JFR and native ETL prove about 111 ms of MainThread stdout/NTFS storage waits inside a 182 ms render-producer gap. Preserve object creation, callback/network ordering, meaningful errors and final log delivery; use full-pack SP/menu Host gates. The actual cause of the transient SSD latency is not established.
+- [ ] Use the existing MainThread FBO/chunk/fog samples to select a behavior-preserving candidate. Scheduled MainThread residency is about 98% in the captured native interval; storage hitches do not explain the sustained 23 FPS. Preserve tracing-overhead/event-loss limitations and do not claim optimizer gain from this one recording.
+- [ ] Reduce WPR volume/overhead before a future agreed comparison while retaining scheduler, disk/hard-fault and necessary graphics evidence. The current capture reached 2 GiB after 70 seconds, dropped events and generated about 92% of observed NVMe write bytes. Raising the cap alone is not a validated overhead fix. No new user drive or Control is requested.
 
 # Windows capture reliability
 
