@@ -288,6 +288,12 @@ end
 -- millisecond clock is deliberately reported as coarse; no render/Host-contention
 -- or full-queue regression claim follows from these tiny scenario timings.
 local function performanceAtBoundary()
+ local profileRequested=type(config.options)=='table'and config.options.profileCounts==true
+ local liveProfile=profileRequested and PZSurvivorToolkitBookProfile or nil
+ if profileRequested then
+  assert(type(liveProfile)=='table','diagnostic source profiler not loaded')
+  PZSurvivorToolkitBookProfileEnabled=true
+ end
  local q=queue();local list=q.queue;local before=F.snapshot(state);local actions,originalSet={},{}
  local radioClass,radioConstructor=ISRadioAction,ISRadioAction.new
  for i,action in ipairs(list)do actions[i]={action=action,native=action.action,token=action.toolkitQueueOperation};originalSet[action]=true end
@@ -311,6 +317,7 @@ local function performanceAtBoundary()
  end
  local function measure(result)
   for _,entry in ipairs(entries)do
+   if liveProfile then assert(liveProfile.start(tostring(result.queueCount)..'/'..entry.name),'diagnostic profiler opt-in rejected')end
    local decisionSamples,firstAllowed,firstReason,firstMode,lastAllowed,lastReason,lastMode=0,nil,nil,nil,nil,nil,nil
    local stable=true;local isDecision=entry.name~='panelUpdate'
    local function observe(decision)
@@ -338,6 +345,10 @@ local function performanceAtBoundary()
    local row={name=entry.name,kind=entry.kind,firstUseMs=sample(),rawMs={}}
    for i=1,result.warmup do observe(entry.call())end
    for i=1,result.samples do row.rawMs[i]=sample()end
+   if liveProfile then
+    row.sourceProfile=liveProfile.stop();row.sourceProfile.entrypointCalls=1+result.warmup+result.samples
+    row.sourceProfile.scope=result.queueCount==32 and'probe32'or'natural'
+   end
    row.decisionSamples=decisionSamples;row.decisionStable=stable
    if isDecision then
     row.firstDecision={allowed=firstAllowed,reason=firstReason,mode=firstMode}
@@ -356,7 +367,8 @@ local function performanceAtBoundary()
    if index<=2 and(metric.decisionClass~='allowed'or not metric.decisionStable)then result.authorityAllowed=false end
    if not metric.passed or not metric.decisionStable then timingPassed=false end
   end
-  result.positiveTimingClaim=not native and result.authorityAllowed and timingPassed
+  result.diagnosticProfile=liveProfile~=nil
+  result.positiveTimingClaim=not liveProfile and not native and result.authorityAllowed and timingPassed
  end
  local private,privateSet={},{}
  local ok,problem=pcall(function()
@@ -381,6 +393,7 @@ local function performanceAtBoundary()
   end
   measure(probe);performance.probe32=probe
  end)
+ if liveProfile and liveProfile.active then liveProfile.stop()end
  -- This suffix is never handed to a native queue tick: restore synchronously,
  -- even if construction/inspection/projection failed, without replacing tables.
  local unexecuted=true

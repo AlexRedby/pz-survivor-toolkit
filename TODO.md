@@ -12,6 +12,7 @@ Implementation and migration are conditional on the performance gate in [the des
 
 # Book reading edit regression
 
+- [ ] Profile the remaining equipment overhead through the actual full selected-pack source chain, including ItemEditAdapters and Compat/Tidy guards; keep source-instrumented diagnostic evidence separate from qualification. Use measured hot paths before adding a new authority API, then rerun the affected bank with instrumentation removed.
 - [ ] Finish the remaining positive-path performance fixes: keep cancelled-group and pending-return device projections comparison-local, and qualify a single fresh Execution-owned capacity observation for equipment without reusing private ledger authority across calls. Check the actual borrowed-return path, not only doubled CPU observers.
 - [ ] Capture exact native reading stop and subsequent removal from both action lists in the book bank; generic Lifecycle finish events do not observe ordinary native stop. Preserve source bindings, paid pages and independent work; reject missing/foreign/finished/force-complete or duplicate receipts.
 - [ ] Diagnose menu-Host stalls that stop at client RakNet initialization despite a ready child server. Use a bounded owned-client thread capture on recurrence, preserve desktop/resource gates, and finish matching-source Host controls before releasing the book slice. A successful startup retry does not establish the cause.

@@ -370,6 +370,7 @@ local file=assert(io.open(arg[1]));local text=file:read('*a');file:close()
 local first=assert(text:find('local function performanceAtBoundary()',1,true))
 local last=assert(text:find('\nlocal function atBoundary()',first,true))
 local body=text:sub(first,last-1)..'\nreturn performanceAtBoundary'
+config={options={}}
 local constructed,removed,calls,fail={},{},0,false
 local unstable,probeCalls=false,0
 local actor,tv,data={},{},{}
@@ -399,7 +400,10 @@ T={ActionQueuePanel=Panel,ActionQueuePolicy={evaluateMove=policy,evaluateCancel=
 ISTimedActionQueue={add=function()error('probe may not enqueue')end}
 T.ActionQueueOperations={run=function()error('probe may not stamp intent')end}
 local run=assert(loadstring(body,'@actual-performance-probe'))()
-for _,scenario in ipairs({'success','failure','unstable'})do
+for _,scenario in ipairs({'success','failure','unstable','absent-options','false-profile','top-level-ignored'})do
+ config=scenario=='absent-options'and{}or{options={}}
+ if scenario=='false-profile'then config.options.profileCounts=false end
+ if scenario=='top-level-ignored'then config.profileCounts=true end
  local fails=scenario=='failure';fail=fails;unstable=scenario=='unstable';probeCalls=0;constructed={};local oldRemoved=#removed
  local ok,problem=pcall(run)
  assert(ok~=fails,'probe failure propagation changed: '..tostring(problem))
@@ -409,11 +413,47 @@ for _,scenario in ipairs({'success','failure','unstable'})do
  for _,action in ipairs(constructed)do assert(not action.action and not action.started,'temporary constructor executed')end
  if ok then
   assert(performance.probe32.restored and performance.probe32.readOnly and #performance.probe32.temporary==27)
+  assert(not performance.diagnosticProfile and not performance.probe32.diagnosticProfile,'absent/false/nonnested option enabled profiling')
   local metric=performance.probe32.metrics[1]
   if unstable then assert(not metric.decisionStable and metric.decisionClass=='unstable'and metric.firstDecision.allowed and metric.lastDecision.allowed and not performance.probe32.positiveTimingClaim,'intermediate denial hidden by equal first/last samples')
   else assert(metric.decisionStable and metric.decisionClass=='allowed'and performance.probe32.positiveTimingClaim)end
  end
 end
+-- Explicit nested opt-in must fail before touching the queue if the private
+-- source profiler was not staged. The default harness config stays ordinary.
+config={options={profileCounts=true}};PZSurvivorToolkitBookProfile=nil
+fail=false;unstable=false;probeCalls=0;constructed={};local beforeMissing=#removed
+local ok,problem=pcall(run)
+assert(not ok and tostring(problem):find('diagnostic source profiler not loaded',1,true),'missing opted-in profiler was silently accepted')
+assert(#constructed==0 and #removed==beforeMissing and q.queue==list and #list==5,'missing-profiler check changed scene/queue')
+-- The profiler double records only diagnostic boundaries; actual production
+-- entrypoints, permission samples,32 constructor probe and cleanup stay real.
+local profileStarts,profileStops=0,0
+local profile={active=false}
+profile.start=function(label)
+ assert(PZSurvivorToolkitBookProfileEnabled==true and not profile.active,'profile start ignored explicit opt-in or leaked scope')
+ profile.active=true;profile.label=label;profileStarts=profileStarts+1;return true
+end
+profile.stop=function()
+ assert(profile.active,'unpaired diagnostic stop');profile.active=false;profileStops=profileStops+1
+ return{label=profile.label,mode='count-only',diagnostic=true,counts={}}
+end
+PZSurvivorToolkitBookProfile=profile;PZSurvivorToolkitBookProfileEnabled=false
+constructed={};probeCalls=0;local oldRemoved=#removed
+assert(pcall(run),'explicit diagnostic probe failed')
+assert(profileStarts==10 and profileStops==10 and not profile.active,'metrics did not own separate diagnostic scopes')
+assert(#constructed==27 and #removed==oldRemoved+1 and q.queue==list and #list==5,'diagnostic option changed32-probe cleanup')
+for _,result in ipairs({performance,performance.probe32})do
+ assert(result.diagnosticProfile and result.positiveTimingClaim==false and result.authorityAllowed,'diagnostic acquired final timing qualification or changed authority')
+ for _,metric in ipairs(result.metrics)do
+  assert(metric.sourceProfile and metric.sourceProfile.entrypointCalls==24 and metric.sourceProfile.label==tostring(result.queueCount)..'/'..metric.name)
+  assert(metric.sourceProfile.scope==(result.queueCount==32 and'probe32'or'natural'),'diagnostic queue scope mislabeled')
+ end
+end
+fail=true;constructed={};probeCalls=0;oldRemoved=#removed
+ok,problem=pcall(run)
+assert(not ok and tostring(problem):find('deliberate read-only inspection failure',1,true),'diagnostic hid original callback failure')
+assert(not profile.active and #constructed==27 and #removed==oldRemoved+1 and q.queue==list and #list==5,'failed diagnostic leaked active scope or suffix')
 assert(calls>0,'actual entrypoints were not exercised')
 os.exit(0)
 """
