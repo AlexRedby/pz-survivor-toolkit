@@ -24,6 +24,7 @@ if (-not (Test-Path -LiteralPath $jfrHelper)) { $jfrHelper = Join-Path $PSScript
 . $jfrHelper -JdkDir $JdkDir
 . (Join-Path $PSScriptRoot 'TrialDiagnostics.ps1')
 . (Join-Path $PSScriptRoot 'TrialDownload.ps1')
+. (Join-Path $PSScriptRoot 'TrialProcess.ps1')
 
 function Assert-TrialStrings($Values, [string]$Name) {
     if ($Values -isnot [Array]) { throw "$Name must be an array of strings." }
@@ -468,7 +469,7 @@ function New-TrialPlan([string]$Game, [string]$Cache, [string]$TrialMode, $Confi
         $vm += @(('@' + $profileArgs), '-Dpz.optimizerTrial.prewarm=true', ('-Dpz.optimizerTrial.sourceZip=' + $Candidate.Zip), ('-Dpz.optimizerTrial.cachedir=' + $Cache), ('-Dpz.optimizerTrial.overlay=' + $Candidate.Overlay), ('-Dpz.optimizerTrial.mode=' + $SessionType.ToLowerInvariant()))
     } else { $vm += '-Dpz.optimizerTrial.prewarm=false' }
     $arguments = @($vm) + @('-cp', ($classpath -join ';'), $Config.MainClass, ('-cachedir=' + $Cache), '-novoip')
-    return [pscustomobject]@{ Mode = $TrialMode; Session = $SessionType; Java = (Join-Path $Game 'jre64/bin/java.exe'); WorkingDirectory = $Game; Cache = $Cache; OptimizerProfile = $profile; OptimizerArguments = $profileArgs; WindowsVmVersion = $Config.WindowsVersion; VmArgs = $vm; Classpath = $classpath; MainClass = $Config.MainClass; Arguments = $arguments; CommandLine = (($arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '); Pid = $null; JavaExitCode = $null; Activation = 'CheckedOnly'; Logs = $null; Readiness = $null; ProcessStartUtc = $null; FinishedUtc = $null; Diagnostics = $null; automaticCapFrameX = $true; gameContextPolicy = 'BufferedWorldExitV2'; TrialWorld = $null }
+    return [pscustomobject]@{ Mode = $TrialMode; Session = $SessionType; Java = (Join-Path $Game 'jre64/bin/java.exe'); WorkingDirectory = $Game; Cache = $Cache; OptimizerProfile = $profile; OptimizerArguments = $profileArgs; WindowsVmVersion = $Config.WindowsVersion; VmArgs = $vm; Classpath = $classpath; MainClass = $Config.MainClass; Arguments = $arguments; CommandLine = (($arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '); Pid = $null; JavaExitCode = $null; Activation = 'CheckedOnly'; Logs = $null; Readiness = $null; ProcessStartUtc = $null; FinishedUtc = $null; Diagnostics = $null; LogCapture = $null; automaticCapFrameX = $true; gameContextPolicy = 'BufferedWorldExitV2'; TrialWorld = $null }
 }
 
 function New-TrialRunName {
@@ -655,23 +656,34 @@ function Invoke-OptimizerTrial {
         $plan.Logs = $sessionLogs
         $plan.Activation = 'Pending'
         Save-TrialPlan $plan $log
+        $capture = $null; $logsFinalized = $false
         $previousPath = $env:PATH; $previousApp = $env:SteamAppId; $previousGame = $env:SteamGameId
         try {
             $env:PATH = $game + ';' + (Join-Path $game 'win64') + ';' + (Join-Path $game 'jre64/bin') + ';' + $previousPath
             $env:SteamAppId = '108600'; $env:SteamGameId = '108600'
-            $process = Start-Process -FilePath $plan.Java -WorkingDirectory $game -ArgumentList $plan.CommandLine -RedirectStandardOutput $sessionLogs.Stdout -RedirectStandardError $sessionLogs.Stderr -PassThru
+            $capture = Start-TrialProcess $plan $sessionLogs
+            $process = $capture.Process
+            $plan.Pid = $process.Id
+            $plan.LogCapture = $capture.Snapshot()
             # Retain the process handle before waiting (Windows PowerShell 5.1 ExitCode handling).
             $null = $process.Handle
             $plan.Pid = $process.Id
             $plan.ProcessStartUtc = $process.StartTime.ToUniversalTime().ToString('o')
             Save-TrialPlan $plan $log
             Write-Host "Game java.exe PID: $($process.Id)"
+            Write-Host 'Keep this launcher open until the game exits and LOGS SAVED appears. Output is drained in the background.'
             $readyAnnounced = $false; $failureAnnounced = $false
             if ($Menu) { Write-Host 'MENU: automatic world creation and recording are disabled.' }
             elseif ($Mode -eq 'Optimized') { Write-Host 'Wait for READY, then press Ctrl+Shift+F8 IN THE GAME. Exit normally after DIAGNOSTICS DONE.' }
             else { $plan.Activation = 'ControlPending'; Save-TrialPlan $plan $log; Write-Host 'CONTROL: candidate disabled. Wait for the test world and full-pack READY.' }
             while ($true) {
                 $exited = $process.WaitForExit(1000)
+                $plan.LogCapture = $capture.Snapshot()
+                if ($plan.LogCapture.Status -eq 'Incomplete' -and -not $failureAnnounced) {
+                    $failureAnnounced = $true; $plan.Activation = 'Incomplete'
+                    Save-TrialPlan $plan $log
+                    Write-Warning 'INCOMPLETE: background log capture failed or overflowed. Keep the launcher open and exit the game normally; retain this run for analysis.'
+                }
                 # Stop reading full logs after READY so the launcher adds no polling I/O during capture.
                 if (-not $readyAnnounced -and -not $failureAnnounced) {
                     $sessionText = Read-TrialSessionText $sessionLogs
@@ -694,6 +706,13 @@ function Invoke-OptimizerTrial {
                 }
                 if ($exited) { break }
             }
+            $plan.LogCapture = Complete-TrialProcess $capture
+            $logsFinalized = $true
+            if ($plan.LogCapture.Status -ne 'Complete') {
+                $plan.Activation = 'Incomplete'; Save-TrialPlan $plan $log
+                throw "INCOMPLETE: stdout/stderr could not be fully drained. See LogCapture in $($sessionLogs.Receipt)"
+            }
+            Write-Host 'LOGS SAVED: stdout/stderr drained and closed.'
             $process.Refresh()
             $plan.JavaExitCode = $process.ExitCode
             $plan.Readiness = Get-TrialRunReadiness (Read-TrialSessionText $sessionLogs) $Mode $resolved.Pack.main_revision $resolved.Ids.Count $Session -ContextId $contextId -Menu:$Menu -PreviousFailure $failureAnnounced
@@ -712,12 +731,30 @@ function Invoke-OptimizerTrial {
             }
             Save-TrialPlan $plan $log
             if ($process.ExitCode -ne 0) { throw "Project Zomboid exited with code $($process.ExitCode). See $($sessionLogs.Directory)" }
+        } catch {
+            # A diagnostics failure must not tear down the pipe readers while
+            # the game is still writing. Keep draining until the user exits.
+            $launchFailure = $_
+            $plan.Activation = 'Incomplete'
+            if ($null -ne $capture -and -not $capture.Process.HasExited) {
+                Write-Warning ('Trial diagnostics failed: ' + $launchFailure.Exception.Message)
+                Write-Warning 'Keep this launcher open and exit the game normally. Background output capture will finish before this error is returned.'
+                while (-not $capture.Process.WaitForExit(1000)) { }
+            }
+            throw $launchFailure
         } finally {
             # Snapshot this run's console before the next launch rotates the shared console.txt.
-            if ($null -ne $plan.Pid) {
+            if ($null -ne $capture) {
                 try {
+                    $process = $capture.Process
+                    $plan.Pid = $process.Id
                     $process.Refresh()
                     if ($process.HasExited) {
+                        if ($null -ne $capture -and -not $logsFinalized) {
+                            $plan.LogCapture = Complete-TrialProcess $capture
+                            $logsFinalized = $true
+                            if ($plan.LogCapture.Status -ne 'Complete') { $plan.Activation = 'Incomplete' }
+                        }
                         $plan.FinishedUtc = [DateTime]::UtcNow.ToString('o')
                         $plan.JavaExitCode = $process.ExitCode
                         if (Test-Path -LiteralPath $sessionLogs.Console -PathType Leaf) {

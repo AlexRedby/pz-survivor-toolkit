@@ -1,7 +1,11 @@
+# Finish diagnostic launcher delivery
+
+- [ ] Finish collector regressions and verify the diagnostics-only package: new helper hashes and provenance must match source; all gameplay/mod/profile payload bytes must match the previous package. Preserve prior packages and recordings.
+
 # Follow up the recorded Optimized run
 
 - [ ] Add launch-time physical-storage resolution for the actual game and Workshop paths, including pinned paths and junctions. The existing ETL proves game assets on an HDD and a 95 ms image-backed DLL read blocking MainThread; do not assume a nominal Steam folder or drive letter means NVMe. Preserve privacy in collected metadata and do not automatically relocate the user's game.
-- [ ] Prepare and qualify a narrow synchronous logging/output candidate: the existing JFR and native ETL prove about 111 ms of MainThread stdout/NTFS storage waits inside a 182 ms render-producer gap. Preserve object creation, callback/network ordering, meaningful errors and final log delivery; use full-pack SP/menu Host gates. The actual cause of the transient SSD latency is not established.
+- [ ] Apply the concrete candidate/measurement gates in [the main-thread performance plan](tests/optimizer_trial/PERFORMANCE-PLAN.md): first prove fog traversal equivalence, then qualify translucent order reuse; use bounded Lua callback attribution and the retained loot lookup experiment for remaining chunk work. Keep SP/menu Host support and compare each delta against the current Optimized baseline. None of these gameplay candidates is yet delivered.
 - [ ] Use the existing MainThread FBO/chunk/fog samples to select a behavior-preserving candidate. Scheduled MainThread residency is about 98% in the captured native interval; storage hitches do not explain the sustained 23 FPS. Preserve tracing-overhead/event-loss limitations and do not claim optimizer gain from this one recording.
 - [ ] Reduce WPR volume/overhead before a future agreed comparison while retaining scheduler, disk/hard-fault and necessary graphics evidence. The current capture reached 2 GiB after 70 seconds, dropped events and generated about 92% of observed NVMe write bytes. Raising the cap alone is not a validated overhead fix. No new user drive or Control is requested.
 
