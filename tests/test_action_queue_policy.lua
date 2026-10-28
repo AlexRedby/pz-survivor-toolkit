@@ -115,8 +115,8 @@ do
     inspections,collections={},{}
     result=policy.evaluatePriority(queue,independent,true)
     assert(result.allowed and result.to==2 and result.after and result.target==head)
-    assert(inspections[independent]==1 and inspections[head]==1 and inspections[transfer]==1,
-        'priority fallback shares analysis with the failed preemption attempt')
+    assert(inspections[independent]==2 and inspections[head]==1 and inspections[transfer]==1,
+        'priority fallback rebuilds fresh facts at each public decision boundary')
     inspections,collections={},{}
     result=policy.evaluateCancel(queue,independent)
     assert(result.allowed and result.first==3 and result.last==3)

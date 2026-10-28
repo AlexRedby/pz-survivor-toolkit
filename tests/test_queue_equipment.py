@@ -1408,7 +1408,8 @@ local function run(kind,fault)
  local returnMerged=false
  local completed={}
  for _,item in ipairs(items) do completed[#completed+1]={id=item:getID(),fullType=item:getFullType(),state='completed'} end
- toolkit.ActionQueueSettlement={captureEffect=function()end,confirmEffect=function()end,remember=function()return true end,
+ toolkit.ActionQueueSettlement={completionState=function()return 'ready'end,
+  captureEffect=function()end,confirmEffect=function()end,remember=function()return true end,
   beginReturn=function()return true end,finishReturn=function()return true end,
   returnState=function()return 'completed' end,returnItems=function()return completed end,
   returnAttempts=function()return attempts end,
@@ -1541,7 +1542,8 @@ local function run(kind,mode,fault,equipment)
  toolkit.ActionQueueDefinitions={inspect=function()if enabled then return {},equipment and 'compat.tidy-equipment' or 'compat.tidy-transfers'end end}
  toolkit.ActionQueuePolicy={evaluateCancel=function()return {allowed=false}end}
  -- This timing fixture has no explicit UI intent; added provenance observers must stay unused.
- toolkit.ActionQueueSettlement={captureEffect=function()error('unexpected explicit effect capture')end,
+ toolkit.ActionQueueSettlement={completionState=function()return 'ready'end,drainingAction=function()return false end,
+  captureEffect=function()error('unexpected explicit effect capture')end,
   confirmEffect=function()error('unexpected explicit effect confirmation')end}
  toolkit.ActionQueueAcknowledgements={capture=function()end}
  toolkit.ActionQueueTidyIntent={status=function()return true end,begin=function()end,finish=function()end}

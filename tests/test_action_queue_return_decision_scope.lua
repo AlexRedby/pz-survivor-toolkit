@@ -201,6 +201,93 @@ end
 Counters={};assert(policy.evaluateMove(queue,equip,reader).allowed)
 assert(Counters.tailSweeps>=2,'nested decision borrowed another decision proof')
 policy.moveReason=originalMove
+-- Public context reuse is an output convenience, never authority from a
+-- previous decision. The same native reader can acquire a shared book later.
+sized(32)
+local laterBook=f.item('Base.BookCooking2')
+local laterReader=f.action(ISReadABook,{item=laterBook})
+queue.queue[32]=laterReader
+local reused={contracts={},items={}}
+assert(policy.evaluateMove(queue,equip,reader,false,reused).allowed)
+local oldContracts,oldItems=reused.contracts,reused.items
+laterReader.item=book
+assert(policy.previewMove(queue,equip,reader,false,reused).reason=='container_capacity',
+    'public preview reused stale suffix item facts')
+assert(not policy.evaluateMove(queue,equip,reader,false,reused).allowed,
+    'public evaluation reused stale suffix item facts')
+assert(reused.contracts~=oldContracts and reused.items~=oldItems and reused.contracts[laterReader],
+    'supplied context did not receive fresh result caches')
+-- Clear private tail views and diagnostics even if a caller returns a table
+-- previously used by another query. A hidden shared book must still deny.
+reused.failureOverrides={[laterReader]={{items={},itemTypes={},targets={}}}}
+reused.failurePositionPrerequisite=laterReader;reused.executionProbe=true
+reused.denialGate='stale';reused.denialReason='stale';reused.denialBlocker=laterReader
+reused.editFallback={reason='stale'}
+assert(not policy.evaluateMove(queue,equip,reader,false,reused).allowed,
+    'stale tail override hid the shared book at a new public boundary')
+assert(reused.failureOverrides==nil and reused.failurePositionPrerequisite==nil and reused.executionProbe==nil
+    and reused.denialGate~='stale' and reused.denialReason~='stale' and not reused.editFallback,
+    'public context retained prior diagnostics/private tail state')
+laterReader.item=laterBook
+assert(policy.evaluateMove(queue,equip,reader,false,reused).allowed,
+    'fresh public context did not recover after the shared-item condition ended')
+-- Nested calls with the identical caller-owned output still have distinct
+-- private contexts; inner maps/diagnostics and output mutations cannot reach
+-- the outer analysis. Outer publication wins only after its scope is restored.
+local sameOutput={}
+local outerContext,innerContext,innerContracts
+local entered=false
+local marker={}
+policy.moveReason=function(q,a,target,after,context)
+    if entered then
+        innerContext=context
+        assert(context~=outerContext and context.contracts~=outerContext.contracts
+            and context.items~=outerContext.items and context.denialReason==nil,
+            'nested same-output call inherited outer facts/diagnostics')
+        local result={originalMove(q,a,target,after,context)}
+        context.denialReason='inner-owned'
+        return unpack(result,1,9)
+    end
+    entered=true;outerContext=context
+    context.contracts[marker]={};context.denialReason='outer-owned'
+    local decision=policy.evaluateMove(q,a,target,after,sameOutput)
+    assert(decision.allowed and context.contracts[marker] and context.denialReason=='outer-owned',
+        'nested same-output call replaced outer maps/diagnostics')
+    innerContracts=sameOutput.contracts
+    assert(innerContracts==innerContext.contracts and innerContracts~=context.contracts
+        and sameOutput.denialReason=='inner-owned','inner output was not bounded independent publication')
+    sameOutput.contracts[marker]={inFlight=true};sameOutput.denialReason='caller-mutated'
+    assert(context.denialReason=='outer-owned' and context.contracts[marker].inFlight==nil,
+        'mutating nested public output changed outer private facts')
+    assert(policy.evaluateMove(q,a,target,after,context).allowed)
+    assert(context.contracts[marker] and context.contracts[marker].inFlight==nil
+        and context.denialReason=='outer-owned','private outer context was accepted as nested output carrier')
+    return originalMove(q,a,target,after,context)
+end
+assert(policy.evaluateMove(queue,equip,reader,false,sameOutput).allowed)
+assert(sameOutput.contracts==outerContext.contracts and sameOutput.contracts~=innerContracts
+    and sameOutput.denialReason==nil,'outer did not publish its own final context')
+-- The same isolation holds when the inner call throws and is caught by caller.
+entered=false
+policy.moveReason=function(q,a,target,after,context)
+    if entered then error('deliberate nested same-output failure')end
+    entered=true;outerContext=context
+    context.contracts[marker]={};context.denialReason='outer-owned'
+    assert(not pcall(policy.evaluateMove,q,a,target,after,sameOutput))
+    assert(context.contracts[marker] and context.denialReason=='outer-owned',
+        'nested same-output error corrupted outer analysis lifetime')
+    return originalMove(q,a,target,after,context)
+end
+assert(policy.evaluateMove(queue,equip,reader,false,sameOutput).allowed)
+policy.moveReason=originalMove
+laterReader.item=book
+assert(not policy.evaluateMove(queue,equip,reader,false,sameOutput).allowed,
+    'later same-output decision reused nested proof state')
+laterReader.item=laterBook
+local foreignOutput=setmetatable({},{__index=function()error('foreign output getter')end,
+    __newindex=function()error('foreign output setter')end})
+assert(policy.evaluateMove(queue,equip,reader,false,foreignOutput).allowed,
+    'foreign output table affected private authoritative analysis')
 local largest=ProfileResults[#ProfileResults].counters
 assert(largest.support==2 and largest.tailSweeps==1 and largest.tailMembers==30,
     'one decision repeated its isolated-return suffix proof')

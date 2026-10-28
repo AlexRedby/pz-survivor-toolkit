@@ -2003,31 +2003,42 @@ function Policy.evaluateCancel(queue, action, whole, context)
         returnWaiver = returnWaiver, blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
-local function inDecision(queue, context, callback, ...)
+-- A caller's table is bounded output only. Each public invocation owns its
+-- actual analysis maps, including reentrant calls using the same output table.
+local decisionContextMarker = {}
+local decisionContextFields = {"contracts", "items", "denialGate", "denialReason", "denialBlocker",
+    "editFallback", "failureOverrides", "failurePositionPrerequisite", "executionProbe"}
+local function freshDecisionContext(output)
+    if type(output) ~= "table" or getmetatable(output) or output[decisionContextMarker] then output = nil end
+    if output then for _, name in ipairs(decisionContextFields) do output[name] = nil end end
+    return {contracts = {}, items = {}, [decisionContextMarker] = true}, output
+end
+local function inDecision(queue, context, output, callback, ...)
     local previous = activeDecision
     activeDecision = {queue = queue, context = context, failures = {}, executions = {}, native = {}}
     local result = {pcall(callback, ...)}
     activeDecision = previous
+    if output then for _, name in ipairs(decisionContextFields) do output[name] = context[name] end end
     if not result[1] then error(result[2], 0) end
     return result[2]
 end
 local previewMove, previewCancel = Policy.previewMove, Policy.previewCancel
 local evaluateMove, evaluateCancel = Policy.evaluateMove, Policy.evaluateCancel
 function Policy.previewMove(queue, action, target, after, context)
-    context = context or {contracts = {}, items = {}}
-    return inDecision(queue, context, previewMove, queue, action, target, after, context)
+    local fresh, output = freshDecisionContext(context)
+    return inDecision(queue, fresh, output, previewMove, queue, action, target, after, fresh)
 end
 function Policy.evaluateMove(queue, action, target, after, context)
-    context = context or {contracts = {}, items = {}}
-    return inDecision(queue, context, evaluateMove, queue, action, target, after, context)
+    local fresh, output = freshDecisionContext(context)
+    return inDecision(queue, fresh, output, evaluateMove, queue, action, target, after, fresh)
 end
 function Policy.previewCancel(queue, action, whole)
-    local context = {contracts = {}, items = {}}
-    return inDecision(queue, context, previewCancel, queue, action, whole, context)
+    local context = freshDecisionContext()
+    return inDecision(queue, context, nil, previewCancel, queue, action, whole, context)
 end
 function Policy.evaluateCancel(queue, action, whole)
-    local context = {contracts = {}, items = {}}
-    return inDecision(queue, context, evaluateCancel, queue, action, whole, context)
+    local context = freshDecisionContext()
+    return inDecision(queue, context, nil, evaluateCancel, queue, action, whole, context)
 end
 
 local function priorityDecision(queue, action, preempt, decide)
