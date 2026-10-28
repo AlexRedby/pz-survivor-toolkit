@@ -7,15 +7,17 @@ Reference for the selected third-party mods, Workshop IDs, dependencies, load or
 
 This is the project’s selected set, not a general recommendation list. The INI is authoritative; entries also identify features already included in Toolkit and separate mods to disable. Upstream compatibility claims are distinguished from checks performed with this pack.
 
-**Inventory, equipment and storage:** [Show VHS Skills in Tooltip](#1-show-vhs-skills-in-tooltip), [Better Containers](#3-better-containers), [Clean HotBar](#4-clean-hotbar), [Tidy Up Meister](#7-tidy-up-meister), [NeatUI Equipment](#15-neatui-equipment), [Better Clothing Info](#16-better-clothing-info), [CleanUI](#28-cleanui), [The Shortcut](#29-the-shortcut), [Item classification and retained items: Toolkit](#32-item-classification-and-retained-items-toolkit), [Transfer a Specified Quantity: Toolkit](#33-transfer-a-specified-quantity-toolkit), [Included Quartermaster](#included-quartermaster), [Spongie's Open Jackets](#55-spongies-open-jackets), [Furniture Push & Pull](#61-furniture-push--pull).
+**Inventory, equipment and storage:** [Show VHS Skills in Tooltip](#1-show-vhs-skills-in-tooltip), [Better Containers](#3-better-containers), [Clean HotBar](#4-clean-hotbar), [Tidy Up Meister](#7-tidy-up-meister), [NeatUI Equipment](#15-neatui-equipment), [Better Clothing Info](#16-better-clothing-info), [CleanUI](#28-cleanui), [The Shortcut](#29-the-shortcut), [Item classification and retained items: Toolkit](#32-item-classification-and-retained-items-toolkit), [Transfer a Specified Quantity: Toolkit](#33-transfer-a-specified-quantity-toolkit), [Included Quartermaster](#included-quartermaster), [Spongie's Open Jackets](#54-spongies-open-jackets), [Furniture Push & Pull](#60-furniture-push--pull).
 
 **Crafting, food, farming and medicine:** [Neat Crafting](#5-neat-crafting), [Project Cook](#6-project-cook), [Research indicator: Toolkit](#18-research-indicator-toolkit), [Neat Building](#19-neat-building), [Eat Smart](#20-eat-smart), [Drink Smart](#21-drink-smart), [Washing Menus Improved](#22-washing-menus-improved), [Neat Crafting & Neat Building - XP & Mod Display](#23-neat-crafting--neat-building---xp--mod-display), [Wash Or Rot](#25-wash-or-rot), [Mini Health Plus](#27-mini-health-plus), [Planting information: Toolkit](#31-planting-information-toolkit), [Medicine Indicators: Toolkit + Moodle Framework](#34-medicine-indicators-toolkit--moodle-framework).
 
-**World, navigation and multiplayer:** [MP Fast Forward](#2-mp-fast-forward), [Moodle Descriptions Expanded](#8-moodle-descriptions-expanded), [Detailed Descriptions for Occupations and Traits](#9-detailed-descriptions-for-occupations-and-traits), [Peek a View](#10-peek-a-view), [Share Map Notes](#12-share-map-notes), [Better Generator Info](#13-better-generator-info), [Map Symbols Plus (Hand-drawn)](#14-map-symbols-plus-hand-drawn), [Rain Cleans Blood](#17-rain-cleans-blood), [Smart Radial Menu](#24-smart-radial-menu), [Gas Pump Indicator](#26-gas-pump-indicator), [Zombie Visibility Fix + Stair-O-Vision](#41-zombie-visibility-fix--stair-o-vision), [Plumbed Sink Mains Water Fix](#42-plumbed-sink-mains-water-fix), [Detailed Skill Tooltips](#49-detailed-skill-tooltips), [Foraging Tooltip Extended](#50-foraging-tooltip-extended), [Custom Light Switch](#51-custom-light-switch), [Nick's Turn Off Fridges](#52-nicks-turn-off-fridges), [Climb Ladders](#56-climb-ladders), [Immersive Snow](#58-immersive-snow), [JB's Bugs In Lights](#59-jbs-bugs-in-lights).
+**World, navigation and multiplayer:** [MP Fast Forward](#2-mp-fast-forward), [Moodle Descriptions Expanded](#8-moodle-descriptions-expanded), [Detailed Descriptions for Occupations and Traits](#9-detailed-descriptions-for-occupations-and-traits), [Peek a View](#10-peek-a-view), [Share Map Notes](#12-share-map-notes), [Better Generator Info](#13-better-generator-info), [Map Symbols Plus (Hand-drawn)](#14-map-symbols-plus-hand-drawn), [Rain Cleans Blood](#17-rain-cleans-blood), [Smart Radial Menu](#24-smart-radial-menu), [Gas Pump Indicator](#26-gas-pump-indicator), [Zombie Visibility Fix + Stair-O-Vision](#41-zombie-visibility-fix--stair-o-vision), [Plumbed Sink Mains Water Fix](#42-plumbed-sink-mains-water-fix), [Detailed Skill Tooltips](#49-detailed-skill-tooltips), [Foraging Tooltip Extended](#50-foraging-tooltip-extended), [Nick's Turn Off Fridges](#51-nicks-turn-off-fridges), [Climb Ladders](#55-climb-ladders), [Immersive Snow](#57-immersive-snow), [JB's Bugs In Lights](#58-jbs-bugs-in-lights).
 
-**Vehicles, carts and archery:** [Realistic Dashboard & Gauges](#35-realistic-dashboard--gauges), [Navigator](#36-navigator), [SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft](#40-saucedcarts-saucedwheelbarrow-and-wheelbarrow-craft), [Nepenthe's High Beams](#44-nepenthes-high-beams), [Reverse Drive Lights](#45-reverse-drive-lights), [Vanilla Vehicles Animated](#46-vanilla-vehicles-animated), [Animated Vehicle Parts Fix](#47-animated-vehicle-parts-fix), [Archery Nexus + Wilderness Progression](#48-archery-nexus--wilderness-progression), [Vehicle Aim Roof Fix](#53-vehicle-aim-roof-fix), [Vehicle Repair Overhaul](#54-vehicle-repair-overhaul), ['92 Jeep YJ Wrangler + that DAMN Library](#60-92-jeep-yj-wrangler--that-damn-library).
+**Vehicles, carts and archery:** [Realistic Dashboard & Gauges](#35-realistic-dashboard--gauges), [Navigator](#36-navigator), [SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft](#40-saucedcarts-saucedwheelbarrow-and-wheelbarrow-craft), [Nepenthe's High Beams](#44-nepenthes-high-beams), [Reverse Drive Lights](#45-reverse-drive-lights), [Vanilla Vehicles Animated](#46-vanilla-vehicles-animated), [Animated Vehicle Parts Fix](#47-animated-vehicle-parts-fix), [Archery Nexus + Wilderness Progression](#48-archery-nexus--wilderness-progression), [Vehicle Aim Roof Fix](#52-vehicle-aim-roof-fix), [Vehicle Repair Overhaul](#53-vehicle-repair-overhaul), ['92 Jeep YJ Wrangler + that DAMN Library](#59-92-jeep-yj-wrangler--that-damn-library).
 
-**Toolkit and media:** [TV & Radio ReInvented](#30-tv--radio-reinvented), [New Music](#57-new-music), [Toolkit Action Queues and Context Menus](#37-toolkit-action-queues-and-context-menus), [Survivor Wishlist](#38-survivor-wishlist), [Toolkit Java Patches](#39-toolkit-java-patches).
+**Toolkit and media:** [TV & Radio ReInvented](#30-tv--radio-reinvented), [New Music](#56-new-music), [Toolkit Action Queues and Context Menus](#37-toolkit-action-queues-and-context-menus), [Survivor Wishlist](#38-survivor-wishlist), [Toolkit Java Patches](#39-toolkit-java-patches).
+
+**Deferred / disabled:** [Custom Light Switch](#deferred--disabled-mods).
 
 
 ## 1 Show VHS Skills in Tooltip
@@ -286,7 +288,7 @@ The separate Workshop item `3761216758` and Mod ID `Quartermaster` are no longer
 
 Reworks vanilla vehicle models into separate animated parts: doors, hoods and trunks can visibly open, and removed panels disappear instead of remaining gray. The author reports B42.21 support and allows adding/removing it on existing saves. Only the main mod is selected; transparent windows, passenger-hiding, armor patches and other optional submods remain disabled. Vehicles with independent modded models need their own support.
 
-Selected before Animated Vehicle Parts Fix, Vehicle Aim Roof Fix and the lighting mods. VVA exposes standing vanilla aim poses inside vehicles; the selected [Vehicle Aim Roof Fix](#53-vehicle-aim-roof-fix) targets that symptom while keeping occupants visible. In single-player, leaving a running vehicle far enough away to unload it can collapse its animated parts when returning; the related fix below targets this bug. For multiplayer, VVA alone does not continuously synchronize animations to other players. Its recommended `VASinked` addon is not selected because its author warns of B42.20 incompatibility and users report B42.21 failure. Native macOS SP visuals, compatibility with Toolkit controls/lighting and Host owner/passenger animation visibility have not been verified.
+Selected before Animated Vehicle Parts Fix, Vehicle Aim Roof Fix and the lighting mods. VVA exposes standing vanilla aim poses inside vehicles; the selected [Vehicle Aim Roof Fix](#52-vehicle-aim-roof-fix) targets that symptom while keeping occupants visible. In single-player, leaving a running vehicle far enough away to unload it can collapse its animated parts when returning; the related fix below targets this bug. For multiplayer, VVA alone does not continuously synchronize animations to other players. Its recommended `VASinked` addon is not selected because its author warns of B42.20 incompatibility and users report B42.21 failure. Native macOS SP visuals, compatibility with Toolkit controls/lighting and Host owner/passenger animation visibility have not been verified.
 
 ## 47 Animated Vehicle Parts Fix
 
@@ -325,15 +327,7 @@ Breaks down search-radius modifiers from weather, darkness, exhaustion, skills a
 
 The author declares 42.15+ support and reports testing on 42.20.4 in SP/MP. Other mods replacing the Vision Effectiveness tooltip can conflict. B42.21 full-pack SP/Host behavior has not been verified.
 
-## 51 Custom Light Switch
-
-[Steam Workshop](https://steamcommunity.com/workshop/filedetails/?id=3779343349) · Workshop `3779343349` · Mod `CustomLightSwitch`
-
-Adds buildable and dismantlable wall switches, including lighting for player-built rooms, using lightbulbs and grid/generator power. Switches in the same room share their on/off state. Learn the recipe at Electrical 3, or read the added magazine at Electrical 1. Construction requires a screwdriver, electronics scrap, electric wire and screws; the new switch also needs a bulb. Building/dismantling grants Electrical XP, can wear the screwdriver and only partly returns construction materials, so this adds construction/progression behavior alongside convenience.
-
-No required dependencies are listed. The author declares B42.21+ support and reports SP and live-server multiplayer tests. English, French and Russian are listed. As checked on 21 October 2026, recent Workshop reports describe bulb-insertion and grid-power problems, including a switch still needing a generator before the power shutoff; an author update does not establish resolution in this set. B42.21 full-pack SP/Host construction, lighting, dismantling, Toolkit queue/menu integration and second-player synchronization have not been verified. Existing world settings are unchanged by the selected INI.
-
-## 52 Nick's Turn Off Fridges
+## 51 Nick's Turn Off Fridges
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3778868211) · Workshop `3778868211` · Mod `NicksTurnOffFridges`
 
@@ -343,7 +337,7 @@ No required dependencies or special load order are listed. The author declares B
 
 **Before removing the mod, plug every fridge and freezer back in.** The unplugged state is stored on each appliance. According to the author, removing the mod while it is unplugged leaves it inert, without cooling or power demand, until the mod is restored.
 
-## 53 Vehicle Aim Roof Fix
+## 52 Vehicle Aim Roof Fix
 
 [Steam Workshop](https://steamcommunity.com/workshop/filedetails/?id=3781616141) · Workshop `3781616141` · Mod `CarRoofFix`
 
@@ -351,7 +345,7 @@ Keeps the visible character seated when holding right mouse to look around or ai
 
 The author declares B42 SP/MP support and existing-save compatibility. Multiplayer can occasionally need a restart for animation loading; the author's optional Vehicle Enter/Exit Fix recommendation is not selected. Full-pack macOS B42.21 SP/Host RMB look-around, release, seat switching, armed aiming and second-player presentation remain unverified. Workshop supplies the mod directly; no files are repacked into Toolkit.
 
-## 54 Vehicle Repair Overhaul
+## 53 Vehicle Repair Overhaul
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=2757712197) · Workshop `2757712197`
 
@@ -369,7 +363,7 @@ Keep the upstream sandbox defaults unless deliberately changing the world: engin
 Known upstream limitation in the downloaded package: the salvage sandbox UI defines `VSO_EnableFullVehicleSalvaging` / `VSO_SalvageTime_*`, but the consumers read `VRO_EnableFullVehicleSalvaging` / `VRO_SalvageTime_*`. Those visible controls therefore do not reliably govern the corresponding behavior; full salvage falls back to enabled. Whole-vehicle action duration is independently `2000 - MetalWelding * 20`. This selection does not patch upstream code. Check real fuel/material/XP changes, repair and salvage menus, VVA parts, reload and a second Host player's view in disposable saves. Removing VRO also removes existing Fix-A-Flat items according to the author.
 
 
-## 55 Spongie's Open Jackets
+## 54 Spongie's Open Jackets
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=2812326159) · Workshop `2812326159` · Mods `SpnOpenClothBase`, `SpnOpenCloth`
 
@@ -377,7 +371,7 @@ Open jackets, roll shirt sleeves, tie sweaters around the waist and tuck trouser
 
 Enable both modules, with Base (`SpnOpenClothBase`) before Vanilla Items (`SpnOpenCloth`); the supplied INI includes both from the same Workshop item. Fluffy Hair is needed only for open hoodies and is not selected. Opening and rolling a jacket simultaneously can make skirts invisible because of a clothing-mask limitation reported by the author. No separate save-add/removal guarantee was found. Full-pack macOS B42.21 SP/Host clothing changes, actual insulation/protection, Better Clothing Info, Tidy Up Meister and remote appearance synchronization remain unverified.
 
-## 56 Climb Ladders
+## 55 Climb Ladders
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3774776279) · Workshop `3774776279` · Mod `SubirEscaleras`
 
@@ -386,7 +380,7 @@ Adds **Climb up the ladder** and **Climb down the ladder** to world ladders, inc
 The author says the mod adds no items, recipes or tiles and does not modify the saved world. The separate Build Ladders companion adds construction recipes and is optional; it is not selected. The author describes exit checks and climb restrictions for exhaustion, an unsplinted broken leg and overloading. Existing-world/removal safety and full-pack B42.21 SP/Host ascent/descent, moved/multistorey ladders, blocked exits, Toolkit menus/queue and remote animation remain unverified. Workshop reports include a Muldraugh police-station roof ladder moving a player through a wall; verify target ladders in a disposable save before relying on them for an escape.
 
 
-## 57 New Music
+## 56 New Music
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3739256725) · Workshop `3739256725` · Mod `NewMusic`
 
@@ -411,7 +405,7 @@ These New Music Builder packs by Ben Jelkin contain the following published albu
 The combined reported download size is approximately 633 MB, excluding the New Music base. Dates and contents were checked against the published Workshop track/album lists on 25 October 2026; later Workshop updates can change the selection or size. The pages identify these as B42 New Music content packs and list no additional framework. This is not a full-pack B42.21 SP/Host playback test. Keep existing media-spawn settings and check new loot, actual audio, cassette sides, save/reload, responsiveness and synchronized listening in a disposable profile.
 
 
-## 58 Immersive Snow
+## 57 Immersive Snow
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3810071828) · Workshop `3810071828` · Mod `ImmersiveSnow`
 
@@ -419,13 +413,13 @@ Adds footprints, animal tracks, tire ruts, snowy clothing/vehicles, frosted wind
 
 The author declares B42.20+, multiplayer and existing-save support, and lists Open Jackets and KI5 vehicles among supported visuals. No required dependency is listed for the base mod. The optional Project Viewpoint addon is not selected. The author reports some vehicle-angle flicker; recent users also report disappearing vehicle textures and performance costs, without a cause established for this pack. Full-pack macOS B42.21 SP/Host snow/wetness, VVA/Jeep/cart visuals, lighting and remote appearance remain unverified. The author says tracks are not saved and removal keeps saves loadable; use the upstream clean-save procedure and backups if removing it.
 
-## 59 JB's Bugs In Lights
+## 58 JB's Bugs In Lights
 
 [Steam Workshop](https://steamcommunity.com/workshop/filedetails/?id=3717902500) · Workshop `3717902500` · Mod `JB_BugsInLights`
 
-Renders insects around outdoor lights, normally in warm summer weather without rain. Mod Options control their number/size and seasonal, time-of-day and weather restrictions. No required dependencies are listed. The author declares B42 SP/MP and permits adding/removing it during a save; a separate B42.21 full-pack check is still needed. Check outdoor lamp appearance, coexistence with Custom Light Switch, responsiveness and the second Host player's view. Keep the configured limits modest if rendering becomes costly.
+Renders insects around outdoor lights, normally in warm summer weather without rain. Mod Options control their number/size and seasonal, time-of-day and weather restrictions. No required dependencies are listed. The author declares B42 SP/MP and permits adding/removing it during a save; a separate B42.21 full-pack check is still needed. If Custom Light Switch is re-enabled later, check outdoor lamp appearance, coexistence, responsiveness and the second Host player's view. Keep the configured limits modest if rendering becomes costly.
 
-## 60 '92 Jeep YJ Wrangler + that DAMN Library
+## 59 '92 Jeep YJ Wrangler + that DAMN Library
 
 | Selected mod | Workshop ID | Mod ID |
 |---|---|---|
@@ -438,10 +432,23 @@ The official Workshop package was downloaded with anonymous SteamCMD and checked
 
 The author permits adding the Jeep to an existing save and declares B42.13+ SP/MP; the library declares B42.20+ SP/MP. These are upstream claims, not full-pack verification. The INI does not spawn a Jeep or reset explored areas. Check its actual availability, parts/recipes, repair/salvage menus, lights, aiming/entry animations, towing and second-player state with VVA, Animated Vehicle Parts Fix, CarRoofFix, Toolkit and Immersive Snow in isolated macOS B42.21 SP/Host saves. Workshop supplies both mods; no files are repacked into Toolkit.
 
-## 61 Furniture Push & Pull
+## 60 Furniture Push & Pull
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3781319724) · Workshop `3781319724` · Mod `FurniturePushPull`
 
 Adds Push/Pull to move supported floor furniture by one tile, including multi-tile furniture and filled containers. Strength and furniture weight affect movement time/stamina; movement can attract zombies. The author describes server-authoritative multiplayer movement and permits adding it to existing saves. Version 1.2.1 explicitly updates placement for B42.21 and fixes an earlier disappearance bug. No required dependencies are listed.
 
 Attached sinks and other unsafe fixtures are protected, and plant-drying racks are excluded. Recent Workshop reports still describe disappearing crates in mixed mod sets; comments suggesting particular causes do not establish the cause in this pack. Before moving valuable storage, verify exact container/item identities, contents and Quartermaster designations, appearance and reload persistence in an isolated full-pack macOS B42.21 SP/Host save. Also check multi-tile geometry, doors, ground loot, competing players and remote state. Toolkit context-menu/queue compatibility and conservation of storage settings remain unverified.
+
+
+## Deferred / disabled mods
+
+### Custom Light Switch (deferred)
+
+[Steam Workshop](https://steamcommunity.com/workshop/filedetails/?id=3779343349) · Workshop `3779343349` · Mod `CustomLightSwitch`
+
+Adds buildable and dismantlable wall switches, including lighting for player-built rooms, using lightbulbs and grid/generator power. Switches in the same room share their on/off state. Learn the recipe at Electrical 3, or read the added magazine at Electrical 1. Construction requires a screwdriver, electronics scrap, electric wire and screws; the new switch also needs a bulb. Building/dismantling grants Electrical XP, can wear the screwdriver and only partly returns construction materials, so this adds construction/progression behavior alongside convenience.
+
+Deferred because the switches are currently unused, while the mod continuously scans nearby objects while idle. The audited 1.2.1 code performs that scan every 10 ticks within up to 205 cells, even when there are zero switches. The selection INI does not load it. The integration in Toolkit's action queue is optional and does not require this mod.
+
+No required dependencies are listed. The author declares B42.21+ support and reports SP and live-server multiplayer tests. English, French and Russian are listed. As checked on 21 October 2026, recent Workshop reports describe bulb-insertion and grid-power problems, including a switch still needing a generator before the power shutoff; an author update does not establish resolution in this set. B42.21 full-pack SP/Host construction, lighting, dismantling, Toolkit queue/menu integration and second-player synchronization have not been verified. Existing world settings are unchanged by the selected INI.

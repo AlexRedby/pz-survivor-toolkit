@@ -11,6 +11,8 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Deferred:** Custom Light Switch is no longer in the active selection (66 Mod IDs / 61 Workshop items). Its background world scan runs even without built switches; retain its catalog entry for possible future use.
+
 - **Changed:** Distribute only Toolkit and Java Patches. NewMusic, CleanUI, that DAMN Library and other third-party dependencies stay on Workshop; preparation no longer requires or ships modified dependency copies.
 
 - **Earlier experiment, no longer shipped:** A prepared DAMN Library copy removed the obsolete Plastic Welding Gun battery recipe pair, including the duplicate removal recipe that created a full battery without draining the gun. A Toolkit/Java implementation remains a separate follow-up; the Workshop recipes are unchanged by this distribution.
@@ -37,6 +39,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - **Added:** Vanilla Vehicles Animated and its ZombieBuddy-based Animated Vehicle Parts Fix to the B42.21 selection (47 Mod IDs / 44 Workshop items). Optional VVA submods and the outdated multiplayer synchronization addon remain disabled. SP visuals, lighting coexistence and Host animation synchronization are not yet verified.
 
 ## PZ Survivor Toolkit
+
+### 0.1.317
+
+- Reduce ground-highlight Lua/Java calls through the Java Patches visibility and ownership helpers, retaining the single shared Toolkit/Wishlist scan, live visibility, discovery budgets and foreign highlights. Keep the Lua path when helpers are absent or unsupported.
+- Skip native eligibility work for unwanted item types when only Wishlist ground highlighting is active.
 
 ### 0.1.316
 
@@ -1460,6 +1467,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.74
+
+- Add aggregate ground-item eligibility and exact highlight-ownership checks for the shared Toolkit/Wishlist scanner, without adding another world scan or changing the game's highlighting setters.
 
 ### 0.1.73
 

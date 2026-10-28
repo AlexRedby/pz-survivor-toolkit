@@ -28,8 +28,13 @@ end
 
 local function sameHighlight(record)
     local object = record.object
-    local colour = object:getHighlightColor(record.playerNum)
     local expected = record.modelColour
+    if toolkitGroundHighlightMatches then
+        local result = toolkitGroundHighlightMatches(object, record.playerNum, record.colour,
+            record.attached, expected.r, expected.g, expected.b, expected.a)
+        if result ~= nil then return result end
+    end
+    local colour = object:getHighlightColor(record.playerNum)
     return object:isHighlighted(record.playerNum)
         and object:isOutlineHighlight(record.playerNum)
         and object:isOutlineHlAttached(record.playerNum) == record.attached
@@ -77,27 +82,45 @@ function Highlighter.settingsChanged()
     Highlighter.clear()
 end
 
-local function eligible(object, context)
+local function eligibleDistance(object, context, radius)
+    if toolkitGroundHighlightDistance then
+        local result = toolkitGroundHighlightDistance(object, context.cell, context.playerNum,
+            context.z, context.x, context.y, radius)
+        if result ~= nil then return result >= 0 and result or nil end
+    end
     local square = object:getSquare()
     local item = object:getItem()
-    if not square or not item or item:getWorldItem() ~= object then return false end
-    if square:getZ() ~= context.z then return false end
+    if not square or not item or item:getWorldItem() ~= object then return nil end
+    if square:getZ() ~= context.z then return nil end
     if context.cell:getGridSquare(square:getX(), square:getY(), square:getZ()) ~= square then
-        return false
+        return nil
     end
     -- Seen/explored tiles are not proof of current sight: keep walls and FOV authoritative.
-    if not square:isCanSee(context.playerNum) then return false end
-    if not object:getDoRender() or object:getTargetAlpha(context.playerNum) <= 0 then return false end
-    if not item:getScriptItem():isWorldRender() then return false end
+    if not square:isCanSee(context.playerNum) then return nil end
+    if not object:getDoRender() or object:getTargetAlpha(context.playerNum) <= 0 then return nil end
+    if not item:getScriptItem():isWorldRender() then return nil end
     local dx = object:getWorldPosX() - context.x
     local dy = object:getWorldPosY() - context.y
+    local distance = dx * dx + dy * dy
+    if distance <= radius * radius then return distance end
+    return nil
+end
+
+local function eligible(object, context)
     local radius, colour = context.normalRadius, context.normalColour
-    if context.wishlist and context.wishlist.isWanted(context.playerNum, item:getFullType()) then
-        radius, colour = 15, context.wantedColour
+    if context.wishlist then
+        local item = object:getItem()
+        if not item then return false end
+        if context.wishlist.isWanted(context.playerNum, item:getFullType()) then
+            radius, colour = 15, context.wantedColour
+        elseif not context.normalEnabled then
+            -- Wishlist-only mode need not inspect native visibility/ownership for other types.
+            return false
+        end
     elseif not context.normalEnabled then
         return false
     end
-    if dx * dx + dy * dy <= radius * radius then return colour end
+    if eligibleDistance(object, context, radius) ~= nil then return colour end
     return false
 end
 

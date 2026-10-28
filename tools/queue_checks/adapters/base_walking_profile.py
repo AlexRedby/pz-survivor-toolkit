@@ -57,6 +57,8 @@ def validate(selection):
         raise ValueError('Base walking profile does not stage gameplay optimizers')
     if not isinstance(options.get('base_walking', {}), dict):
         raise ValueError('options.base_walking must be an object')
+    if options.get('base_walking', {}).get('ground_highlight_bridge') not in (None, 'lua', 'native'):
+        raise ValueError('ground_highlight_bridge must be lua or native when supplied')
     if type(options.get('base_walking', {}).get('disable_newmusic_inventory_probe', False)) is not bool:
         raise ValueError('NewMusic probe control must be boolean')
     if type(options.get('base_walking', {}).get('verify_toolkit_newmusic_control', False)) is not bool:
@@ -324,6 +326,23 @@ def verify(root, selection, catalog):
         frames, profile = _profile(root / 'client1', text, Path(runtime['jdk']))
         evidence.update(profile=profile, motion=_motion(root / 'client1', frames),
                         callbacks=_callbacks(root / 'client1', frames))
+        highlight_bridge = selection['options'].get('base_walking', {}).get('ground_highlight_bridge')
+        if highlight_bridge:
+            proofs = _raw(text, 'HIGHLIGHT_BRIDGE')
+            if (len(proofs) != 1 or proofs[0].get('mode') != highlight_bridge
+                    or proofs[0].get('highlightedObjects', 0) <= 0):
+                raise ValueError('Missing active ground-highlight bridge control witness')
+            for key in ('distanceCalls', 'matchesCalls'):
+                calls = proofs[0].get(key)
+                if type(calls) is not int or (calls <= 0 if highlight_bridge == 'native' else calls != 0):
+                    raise ValueError('Ground-highlight bridge control counts differ')
+            phase_proofs = _raw(text, 'HIGHLIGHT_BRIDGE_PHASE')
+            if ([proof.get('phase') for proof in phase_proofs] != [1, 2, 3]
+                    or any(proof.get('mode') != highlight_bridge or proof.get('unchanged') is not True
+                           or proof.get('highlightedObjects', 0) <= 0 for proof in phase_proofs)):
+                raise ValueError('Ground-highlight mode or workload was not preserved across phases')
+            evidence['ground_highlight_bridge'] = proofs[0]
+            evidence['ground_highlight_bridge_phases'] = phase_proofs
         if selection['options'].get('base_walking', {}).get('disable_newmusic_inventory_probe'):
             ready = _raw(text, 'READY')
             if len(ready) != 1 or ready[0].get('newMusicInventoryProbeRemoved') is not True:

@@ -10,6 +10,8 @@ local legs, rows, phaseRows = 0, {}, {}
 local lastX, lastY, lastZ, lastTick
 local profilerActive = false
 local newMusicRequested, newMusicProof = nil, nil
+local highlightBridge = selection.options.base_walking.ground_highlight_bridge
+local highlightDistance, highlightMatches, highlightDistanceCalls, highlightMatchesCalls
 Events.OnServerCommand.Add(function(module, command, args)
     if module == 'BaseWalkingProfile' and command == 'newmusic-proof' then newMusicProof = args end
 end)
@@ -86,6 +88,15 @@ local function beginPhase(number)
     lastX,lastY,lastZ=player:getX(),player:getY(),player:getZ()
 end
 local function finishPhase()
+    if highlightBridge then
+        local expectedDistance=highlightBridge=='native' and highlightDistance or nil
+        local expectedMatches=highlightBridge=='native' and highlightMatches or nil
+        assert(toolkitGroundHighlightDistance==expectedDistance and toolkitGroundHighlightMatches==expectedMatches,
+            'Ground highlight bridge mode changed during measurement')
+        local count=PZSurvivorToolkit.Highlighter.getStatus().highlightedObjects
+        assert(count>0,'Ground highlight workload disappeared during measurement')
+        log('HIGHLIGHT_BRIDGE_PHASE',{phase=phase,mode=highlightBridge,highlightedObjects=count,unchanged=true})
+    end
     active.elapsedMs=now()-since
     assert(active.samples>0,'No movement samples')
     if phase==2 then
@@ -146,6 +157,25 @@ Events.OnTick.Add(function()
                 assert(newMusicProof.savedSettingEnabled==true,'Saved conversion=true was not exercised')
                 log('TOOLKIT_NEWMUSIC',{clientDisabled=true,serverDisabled=true,savedSettingEnabled=true})
             end
+            if highlightBridge then
+                assert(PZSurvivorToolkit.Settings.isEnabled(),'Ground highlight comparison requires normal highlight enabled')
+                highlightDistance=assert(toolkitGroundHighlightDistance,'Native distance helper missing')
+                highlightMatches=assert(toolkitGroundHighlightMatches,'Native ownership helper missing')
+                assert(highlightDistance(nil,getCell(),player:getPlayerNum(),0,0,0,15)==-1,
+                    'Native highlight helpers do not support this game')
+                highlightDistanceCalls,highlightMatchesCalls=0,0
+                if highlightBridge=='lua' then
+                    toolkitGroundHighlightDistance,toolkitGroundHighlightMatches=nil,nil
+                else
+                    -- Prove real use during warmup, then remove observer wrappers before timing.
+                    toolkitGroundHighlightDistance=function(...)
+                        highlightDistanceCalls=highlightDistanceCalls+1;return highlightDistance(...)
+                    end
+                    toolkitGroundHighlightMatches=function(...)
+                        highlightMatchesCalls=highlightMatchesCalls+1;return highlightMatches(...)
+                    end
+                end
+            end
             origin=player:getSquare();destination=chooseDestination()
             local own,loot=getPlayerInventory(player:getPlayerNum()),getPlayerLoot(player:getPlayerNum())
             assert(own and loot,'Inventory pages missing')
@@ -186,6 +216,14 @@ Events.OnTick.Add(function()
                 return
             end
             if time-since<warmupMs or warmupSettledAt and time-warmupSettledAt<20000 then return end
+            if highlightBridge then
+                if highlightBridge=='native' then
+                    assert(highlightDistanceCalls>0 and highlightMatchesCalls>0,'Native highlight helpers were not exercised')
+                    toolkitGroundHighlightDistance,toolkitGroundHighlightMatches=highlightDistance,highlightMatches
+                end
+                log('HIGHLIGHT_BRIDGE',{mode=highlightBridge,distanceCalls=highlightDistanceCalls,
+                    matchesCalls=highlightMatchesCalls,highlightedObjects=PZSurvivorToolkit.Highlighter.getStatus().highlightedObjects})
+            end
             assert(idle(),'Warmup actions remain at profile begin')
             assert(baseWalkingProfileBegin(),'Profiler did not begin')
             profilerActive=true;beginPhase(1);state='stationary'

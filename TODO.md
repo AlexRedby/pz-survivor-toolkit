@@ -1,6 +1,6 @@
 # Base walking stutter investigation
 
-- [ ] Verify walking responsiveness with Toolkit's NewMusic conversion control on the weaker gameplay client with its actual settings and Wishlist. Use `tests/native_queue/contributions/base-walking-profile` to compare discovery cost and full-container scans after movement against matching controls. Establish the client's Better Containers nested settings and distinguish local callback cost, Host networking and perceived stutter; a reduction in discovery cost alone does not establish the complete cause or a fix on the remote client.
+- [ ] Verify walking responsiveness with Toolkit's NewMusic conversion control on the weaker gameplay client with ordinary Highlight disabled and its actual Wishlist settings. Use `tests/native_queue/contributions/base-walking-profile` to compare discovery cost and full-container scans after movement against matching controls. Establish the client's Better Containers nested settings and distinguish local callback cost, Host networking and perceived stutter; a reduction in discovery cost alone does not establish the complete cause or a fix on the remote client.
 
 # Batch action-queue audit and shared fixes
 
@@ -20,7 +20,7 @@
 
 # Welding torch refill
 
-- [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host using the complete locked 67-mod sources. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.
+- [ ] Run the `torch-refill` native cases with the complete selected mod set in isolated macOS B42.21 SP/menu Host using the current complete locked mod sources. The focused regressions and reduced-pack trunk-refill checks do not establish full-pack compatibility.
 
 # Legacy Host launchers
 
@@ -44,7 +44,7 @@
 
 # Retained-item full-pack compatibility
 
-- [ ] Repeat the retained-item scenario with the complete current 67-mod selection using explicit locked sources; the earlier reduced-pack checks do not establish full-pack conservation.
+- [ ] Repeat the retained-item scenario with the current complete selection using explicit locked sources; the earlier reduced-pack checks do not establish full-pack conservation.
 
 # Vehicle entry and exit roof clipping
 
@@ -68,7 +68,7 @@
 
 # Selected QoL additions
 
-- [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.
+- [ ] After installation is requested, check the two selected additions in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod, and foraging modifiers/radius. Custom Light Switch is deferred in the mod catalog and excluded from this gate. Author claims do not establish compatibility with this selected set.
 
 # Sport headlight push-button cycle
 
@@ -191,6 +191,10 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
+- [ ] Require exclusive admission for `base-walking-profile` timing captures, or reject a non-exclusive selection explicitly. Preparation without `--exclusive` currently records `resources.exclusive=false`; the initial Java highlight capture showed higher costs across unchanged callbacks despite starting with zero peer runs, requiring a fresh exclusive repeat against the exclusive Lua control. Make the timing isolation requirement visible and consistent without changing gameplay or input guards.
+
+- [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.
+
 - [ ] Align the no-game shared-wishlist fixture in `tests/native_queue/contributions/shared-wishlist/protocol.lua` with the `InventoryRows` contract used by `InventoryPresentation`. Running `python3 tests/native_queue/contributions/shared-wishlist/check.py` reaches highlight rendering and fails because the fixture's generic module stub lacks `captureAnchor`. Update the fixture dependencies without bypassing native row/anchor behavior; require the full protocol check, including highlight and cleanup assertions, to pass.
 
 - [ ] Resolve startup diagnostics that leave food-age SP audits at `needs-review` even when the functional phases pass: font-page load errors, container-name normalization errors, Piano icon fallback and mannequin-zone property errors. Reproduce them with matching prepared and untouched dependency sources, compare error signatures and counts, and qualify or fix each source/caller before changing audit rules. Do not treat functional success as a clean runtime or assume a shared startup error was caused by the food-age correction.
@@ -215,7 +219,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Qualify the bare game-JVM Kahlua model/server harness before using it as a full-suite gate. Reproduce the departed-player weak-reference/GC assertion failure in `tests/test_wishlist_model.lua` under Kahlua and compare the same case under the normal LuaJIT runner. Distinguish harness lifetime/GC behavior from a product leak; require the complete model/server checks to pass without weakening player-release assertions, and preserve normal LuaJIT and native SP/Host coverage.
 
-- [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
+- [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. The imported-base ground-highlight control also lost its previously routed window immediately after world readiness, before measurement. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
 
 - [ ] Add a reusable continuity diagnostic for native cart captures: grip and motion checks can accept abrupt torso rotation when switching pose routes. Use the tracked `GripPoseProbe.java` output and adjacent-frame JVM regression to distinguish correction rotation from native pose changes. Complete when the normal diagnostic workflow reports discontinuities with case/phase provenance and explicit IK-applied/fallback receipts for paired MP draws, without relying on a separate local replay helper or inventing a general visual-quality PASS.
 
