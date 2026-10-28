@@ -80,9 +80,9 @@ def fixture(root, fast=False, actions=False, variant=None):
     if actions: action_fixture(root, epoch, duration, matrix, model if variant is not None else None)
 
 
-def action_fixture(root, epoch, duration, matrix, model=None):
-    phases = ('drop-complete', 'pickup-complete', 'drop-cancel', 'drop-repeat', 'pickup-cancel', 'pickup-repeat')
-    grounds = (True, False, False, True, True, False)
+def action_fixture(root, epoch, duration, matrix, model=None, phases=None, grounds=None, observer_endpoints=False):
+    phases = phases or ('drop-complete', 'pickup-complete', 'drop-cancel', 'drop-repeat', 'pickup-cancel', 'pickup-repeat')
+    grounds = grounds or (True, False, False, True, True, False)
     logs = {role: [] for role in ('server', 'client1', 'client2')}
     poses = {'client1': [], 'client2': []}
     cameras = {'client1': [], 'client2': []}
@@ -96,7 +96,7 @@ def action_fixture(root, epoch, duration, matrix, model=None):
         server = dict(base, actor='server', wall=begin+1500, cargoID=99, cargoWeight=70, cargoPreserved=True,
                       inventoryCount=int(not ground), worldCount=int(ground), primaryID=-1 if ground else 42,
                       secondaryID=-1 if ground else 42, nativeActions=0, hasPath=False, held=not ground, ground=ground,
-                      ok=True, holdMs=100)
+                      ok=True, holdMs=100,position=dict(x=1,y=2,z=0))
         for role in ('client1', 'client2'):
             emit(role, 'WINDOW', dict(base, wall=begin+15, serverWall=begin+5))
             schedule = [(100, .1, True, False), (200, .15, True, False), (300, .2, True, False),
@@ -133,14 +133,22 @@ def action_fixture(root, epoch, duration, matrix, model=None):
                                recoveryObserved=cancelled, elapsed=1400)
                 emit(role, 'RECEIPT', receipt)
             emit(role, 'SERVER_ACK', dict(server, wall=begin+1510, serverWall=server['wall']))
+        if observer_endpoints:
+            observation=dict(base,actor='client2',wall=begin+1450,cargoID=99,cargoWeight=70,cargoPreserved=True,
+                inventoryScope='remote-hand-snapshot',inventoryCount=None,itemSource='world' if ground else 'hands',
+                handSameItem=not ground,worldAttached=ground,worldCount=int(ground),primaryID=-1 if ground else 42,
+                secondaryID=-1 if ground else 42,luaActions=0,nativeActions=0,hasPath=False,
+                pathScope='remote-network',nativeMoving=False,position=dict(x=1,y=2,z=0))
+            emit('client2','OBSERVER_RECEIPT',observation)
+            emit('server','SERVER_OBSERVATION',dict(observation,wall=begin+1460))
         emit('server', 'SERVER_RECEIPT', server)
-    done = dict(id=42, phases=6, wall=server['wall']+1)
+    done = dict(id=42, phases=len(phases), wall=server['wall']+1)
     emit('server', 'ALL_COMPLETE', done)
     for role in ('client1', 'client2'):
         emit(role, 'SERVER_DONE', dict(done, ok=True, wall=done['wall']+19, serverWall=done['wall']))
         for delta in (130, 230, 330):
-            emit(role, 'PRESENTATION', dict(index=6, phase=phases[-1], id=42, actor=role, wall=done['wall']+19+delta,
-                 active=False, recovering=False, progress=0, pickup=False, rendered=False, ik=False, primaryID=42, secondaryID=42))
+            emit(role, 'PRESENTATION', dict(index=len(phases), phase=phases[-1], id=42, actor=role, wall=done['wall']+19+delta,
+                 active=False, recovering=False, progress=0, pickup=False, rendered=False, ik=False, primaryID=-1 if grounds[-1] else 42, secondaryID=-1 if grounds[-1] else 42))
         with (root / role / 'body-clearance.jsonl').open('a') as output:
             output.write('\n'.join(map(json.dumps, poses[role])) + '\n')
         (root / role / 'render-camera.jsonl').write_text('\n'.join(map(json.dumps, cameras[role])) + '\n')
@@ -592,7 +600,7 @@ def check_capture_environment(lua):
     assert 'core.setAutoZoom(0,false)' in bridge and 'core.offscreenBuffer.setZoomAndTargetZoom(0,if(observer)1felse.25f)' in bridge
     assert 'doZoomScroll' not in client
     assert "' zoom='..getCore():getZoom(0)" in client
-    assert 'p:getStats():reset(CharacterStat.ENDURANCE)\n    cartLabGait(steps[stage][3]);if not wallSide then cartLabDrive(steps[stage][2]) end' in client
+    assert 'p:getStats():reset(CharacterStat.ENDURANCE)\n    cartLabGait(steps[stage][3]);if not wallSide and not visual then cartLabDrive(steps[stage][2]) end' in client
     assert 'setSprinting(' not in client and 'setForceSprint(' not in client
     assert 'setPerkLevelDebug(' not in client and 'setXPToLevel(' not in client
     assert "p:getPerkLevel(Perks.Sprinting)==10" in client and 'Authoritative Sprinting snapshot deadline' in client
@@ -861,7 +869,7 @@ def main():
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
         for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua',
-                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua', 'lease-lifetimes.lua', 'lease-menu-actions.lua', 'lease-inventory-state.lua', 'action-invalidation.lua', 'lease-lifecycle.lua', 'action-admission.lua', 'injury.lua'):
+                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua', 'lease-lifetimes.lua', 'lease-menu-actions.lua', 'lease-inventory-state.lua', 'action-invalidation.lua', 'lease-lifecycle.lua', 'action-admission.lua', 'injury.lua', 'visual-extended.lua'):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(HERE / name)) + '))'], check=True)
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')

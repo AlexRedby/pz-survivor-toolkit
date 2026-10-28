@@ -21,6 +21,9 @@ local function inventoryRow(event,row)
  row.actor='client1';row.event=event;row.phase=0;row.owner=getPlayer():getOnlineID();row.wall=getTimestampMs()
  print('[CART_LEASE_INVENTORY] '..J.encode(row))
 end
+local visual=config.options and config.options.cart_visual_extended==true and require 'CartMPVisualExtended'
+if visual then visual.validate(config) end
+local vc={stage=-1,ready=false,done=false,sent=false,drive=0,turns={}}
 local wallSide=config.options and config.options.cart_wall_exit
 local wallBank=wallSide and require 'CartMPWall'
 local wallInput=wallSide and require 'CartMPWallInput'
@@ -31,8 +34,8 @@ local variant=config.options and config.options.cart_variant or 'wooden-wheelbar
 local cartType=assert(variants[variant],'Unknown MP cart_variant')
 local actions=config.options and config.options.cart_actions and require 'CartMPActions' or nil
 local injury=config.options and config.options.cart_injury and require 'CartMPInjury' or nil
-local expectedPadVersion=wallSide and 4 or injury and 5 or 3
-local expectedPadSize=(wallSide or injury) and 63 or 31
+vc.padVersion=wallSide and 4 or injury and 5 or visual and 6 or 3
+vc.padSize=(wallSide or injury or visual) and 63 or 31
 local option=assert(PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'));option:setValue(true)
 local r=assert(getFileReader('smoke-user.txt',false));local user=r:readLine();r:close()
 local videoDirectory=assert(config.videoRoot[user],'Missing role videoRoot')
@@ -40,7 +43,7 @@ assert(type(videoDirectory)=='string' and videoDirectory:match('^/'),'Absolute r
 local started,setup,epoch,done=false,nil,nil,false
 local readyAt,lastReady,lastSample,lastEquip,video,stage,lastArm,skillSince=0,0,0,0,nil,-1,0,nil
 local function emit(e) e.suite='cart_motion_mp';e.kind='mp';e.mode=config.mode;e.actor=user;J.emit(e) end
-local function fail(e) cartLabDrive(0);cartLabGait(0);if injury and user=='client1' then injury.finish(getPlayer()) end;if video then toolkitVideoStop() end;print('[QUEUE_TEST] FAIL CART_MP '..tostring(e));emit({event='error',reason=tostring(e)});emit({event='complete',failed=1});done=true end
+local function fail(e) cartLabDrive(0);cartLabGait(0);if visual and user=='client2' then cartMPControlCameraStop() end;if injury and user=='client1' then injury.finish(getPlayer()) end;if video then toolkitVideoStop() end;print('[QUEUE_TEST] FAIL CART_MP '..tostring(e));emit({event='error',reason=tostring(e)});emit({event='complete',failed=1});done=true end
 Events.OnConnectFailed.Add(function(a,b) fail('connect '..tostring(a)..' '..tostring(b)) end)
 Events.OnServerCommand.Add(function(module,command,args)
  if module~='CartMP' then return end
@@ -48,6 +51,24 @@ Events.OnServerCommand.Add(function(module,command,args)
  elseif wallSide and command=='WallCleanup' then wallCleanup=args.wall
  elseif command=='Start' then epoch=args.epoch;print('[CART_MP] START epoch='..epoch)
  elseif injury and command=='InjuryAck' then local ok,e=pcall(injury.command,args);if not ok then fail(e) end
+ elseif visual and command=='VisualControlSetup' then
+  local ok,e=pcall(function()
+   assert(vc.ready and not vc.preControl and type(args)=='table' and args.id==setup.cartId
+    and type(args.route)=='table' and type(args.spec)=='table','Unexpected native control setup')
+   vc.preControl=args
+  end);if not ok then fail(e) end
+ elseif visual and command=='VisualControlStart' then
+  local ok,e=pcall(function()
+   assert(vc.positioned and vc.preControl and not vc.control and type(args)=='table' and type(args.epoch)=='number' and args.epoch>getTimestampMs()
+    and args.duration==visual.controlDuration and type(args.spec)=='table' and args.spec.id==setup.cartId,
+    'Duplicate/malformed visual control start');vc.control=args
+   visual.emit('CONTROL_START',{actor=user,epoch=args.epoch,spec=args.spec,route=args.route,duration=args.duration})
+  end);if not ok then fail(e) end
+ elseif visual and command=='VisualCleanup' then
+  local ok,e=pcall(function()
+   assert(vc.control and vc.sent and type(args)=='table' and args.id==setup.cartId and args.epoch==vc.control.epoch
+    and args.cargoID==vc.control.spec.cargoID and args.floors==setup.size*setup.size,'Visual cleanup descriptor differs');vc.cleanup=args
+  end);if not ok then fail(e) end
  elseif actions and command:sub(1,6)=='Action' then local ok,e=pcall(actions.command,command,args);if not ok then fail(e) end
  end
 end)
@@ -68,12 +89,14 @@ local lastActionSample=0
 local extended=wallSide or config.options and config.options.cart_fast_motion
 local duration=wallSide=='front' and 18000 or wallSide and 29000 or extended and 26000 or 15000
 if injury then duration=injury.duration end
+if visual then duration=visual.motionDuration end
 local steps={{0,0,0,'idle'},{2000,1,0,'walk'},{5000,8,0,'turn'},{8000,0,0,'stop'},{10000,4,2,'reverse'},{12000,0,0,'stop-back'}}
 if extended and not wallSide then
  steps[#steps+1]={15000,1,1,'run'};steps[#steps+1]={16500,5,2,'sprint-turn'}
  steps[#steps+1]={18500,0,0,'fast-stop'}
 end
 if wallSide then steps=wallInput.steps(wallSide) end
+if visual then steps=visual.steps(false) end
 if injury then for _,step in ipairs(injury.steps) do steps[#steps+1]=step end end
 local function sampleActionPresentation(owner,now,elapsed)
  -- Short observer cancels can cross .05 progress between100ms motion samples.
@@ -128,7 +151,7 @@ Events.OnTick.Add(function()
      print('[CART_MP] PAD_READY '..J.encode(row));padReady=true
     end
    elseif extended then
-    assert(setup.bankVersion==expectedPadVersion and setup.elevated==true and setup.z==7 and setup.size==expectedPadSize and setup.floorSprite=='carpentry_02_57','Native elevated pad descriptor missing')
+    assert(setup.bankVersion==vc.padVersion and setup.elevated==true and setup.z==7 and setup.size==vc.padSize and setup.floorSprite=='carpentry_02_57','Native elevated pad descriptor missing')
     if not padSince then padSince=now end
     local count=0
     for x=setup.minX,setup.minX+setup.size-1 do for y=setup.minY,setup.minY+setup.size-1 do
@@ -183,8 +206,8 @@ Events.OnTick.Add(function()
    setupCommand('Armed',{sprintLevel=p:getPerkLevel(Perks.Sprinting),padFloors=padReady and setup.size*setup.size or 0,padWalls=wallSide and 49 or 0,padVersion=setup.bankVersion});armed=true;lastArm=now
    print('[CART_MP] ARMED '..user..' sprintLevel='..p:getPerkLevel(Perks.Sprinting))
   end
-  if user=='client2' and owner then
-   if epoch and now>=epoch and (p:getX()-owner:getX())^2+(p:getY()-owner:getY())^2>25 then
+  if user=='client2' and owner and not vc.sent then
+   if epoch and now>=epoch and not vc.preControl and (p:getX()-owner:getX())^2+(p:getY()-owner:getY())^2>25 then
     local moved=false
     for _,offset in ipairs(wallSide and {{3,3},{3,-3},{4,0}} or {{2,3},{-2,-3},{3,2},{-3,-2}}) do
      local x,y,z=owner:getX()+offset[1],owner:getY()+offset[2],owner:getZ()
@@ -213,9 +236,10 @@ Events.OnTick.Add(function()
   if not video and elapsed>=-2000 then
    assert(toolkitVideoStart(videoDirectory,config.ffmpeg));video=true
    print('[CART_MP] VIDEO '..tostring(toolkitVideoStatus().file))
+   if visual then visual.emit('VIDEO_START',{actor=user,epoch=epoch,file=toolkitVideoStatus().file},now) end
   end
-  if video and extended and user=='client1' then
-   assert(setup.bankVersion==expectedPadVersion and setup.size==expectedPadSize and setup.margin==2 and setup.vegetationFree==true,'Validated extended pad descriptor missing')
+  if video and extended and user=='client1' and not vc.sent then
+   assert(setup.bankVersion==vc.padVersion and setup.size==vc.padSize and setup.margin==2 and setup.vegetationFree==true,'Validated extended pad descriptor missing')
    assert(p:getX()>=setup.minX+setup.margin and p:getX()<=setup.minX+setup.size-setup.margin
     and p:getY()>=setup.minY+setup.margin and p:getY()<=setup.minY+setup.size-setup.margin and math.abs(p:getZ()-setup.z)<.25,
     'Owner/cart margin left validated pad interior')
@@ -236,10 +260,15 @@ Events.OnTick.Add(function()
     end
     if injury then injury.phase(p,steps[stage][4],now,epoch) end
     p:getStats():reset(CharacterStat.ENDURANCE)
-    cartLabGait(steps[stage][3]);if not wallSide then cartLabDrive(steps[stage][2]) end
+    cartLabGait(steps[stage][3]);if not wallSide and not visual then cartLabDrive(steps[stage][2]) end
    end
    print('[CART_MP] PHASE '..steps[stage][4]..' wall='..now..' elapsed='..elapsed..' zoom='..getCore():getZoom(0))
    if not wallSide then print('[CART_MP_TRAFFIC] '..cartMPTraffic()) end
+  end
+  if visual and user=='client1' and elapsed<duration then
+   local step=steps[stage];local drive=visual.drive(step,vc.turns,cartLabSteeringHeading(),elapsed)
+   if drive~=vc.drive then vc.drive=drive;cartLabDrive(drive) end
+   visual.emit('INPUT',{actor=user,phase=step[4],epoch=epoch,elapsed=elapsed,drive=drive,gait=step[3],heading=cartLabSteeringHeading(),id=setup.cartId},now)
   end
   if wallSide and user=='client1' then
    local drive=wallInput.drive(wallSide,steps[stage],wallReleased,cartLabSteeringHeading())
@@ -257,7 +286,7 @@ Events.OnTick.Add(function()
   end
   sampleActionPresentation(owner,now,elapsed)
   if elapsed>=duration then
-   cartLabDrive(0);cartLabGait(0)
+   if not visual or not vc.control or vc.done then cartLabDrive(0);cartLabGait(0) end
    if injury and user=='client1' then injury.finish(p) end
    if actions and not actionsFinished then
     assert(elapsed<duration+35000,'MP action bank deadline')
@@ -266,10 +295,51 @@ Events.OnTick.Add(function()
     if admissionProbe and not admissionProbe.done() then return end
     actionsFinished=true
    end
+   if visual then
+    if not vc.ready then vc.ready=true;vc.readyAt=now;sendClientCommand('CartMP','VisualReady',{}) end
+    if vc.preControl and not vc.positioned then
+     local target=vc.preControl.route[user=='client1' and 'owner' or 'observer']
+     visual.ground(owner,vc.preControl.spec)
+     cartLabDrive(0);cartLabGait(0);position(p,target.x,target.y,target.z)
+     cartLabPoseHeading(vc.preControl.route.heading)
+     if user=='client2' then cartMPControlCamera(assert(owner)) end
+     assert(visual.positioned(p,target),'Native control setup did not centre empty-hand actor')
+     local receipt={actor=user,id=setup.cartId,x=p:getX(),y=p:getY(),z=p:getZ(),heading=cartLabHeading()}
+     visual.emit('CONTROL_POSITIONED',receipt,now);vc.positioned=true
+     sendClientCommand('CartMP','VisualPositioned',receipt)
+    end
+    if not vc.control then
+     assert(now-vc.readyAt<3000+visual.setupDuration+visual.controlLead,'Extended visual control setup deadline');return
+    end
+    assert(now-vc.control.epoch<visual.controlDuration+40000,'Extended visual control completion deadline')
+    local t=now-vc.control.epoch
+    if not vc.done then
+     local row=visual.ground(assert(owner,'Visual control owner missing'),vc.control.spec)
+     row.actor=user;row.epoch=vc.control.epoch;row.elapsed=t;visual.emit('CONTROL_ENDPOINT',row,now)
+     if t<0 then return end
+     if t<visual.controlDuration then
+      local controlSteps=visual.steps(true);local nextControl=1
+      for i,step in ipairs(controlSteps) do if t>=step[1] then nextControl=i end end
+      local step=controlSteps[nextControl]
+      if nextControl~=vc.stage then
+       vc.stage=nextControl;visual.emit('CONTROL_PHASE',{actor=user,phase=step[4],epoch=vc.control.epoch,elapsed=t,drive=step[2],gait=step[3]},now)
+       if user=='client1' then p:getStats():reset(CharacterStat.ENDURANCE) end
+      end
+      if user=='client1' then cartLabDrive(step[2]);cartLabGait(step[3]) end
+      for i=0,online:size()-1 do print('[CART_MP_STATE] '..cartMPState(online:get(i))) end
+      return
+     end
+     cartLabDrive(0);cartLabGait(0);if user=='client2' then cartMPControlCameraStop() end;vc.done=true
+     visual.emit('CONTROL_COMPLETE',{actor=user,id=setup.cartId,epoch=vc.control.epoch,elapsed=t,inputReleased=true},now)
+    end
+   end
    if invalidationProbe and not invalidationProbe.finish(owner,now) then return end
    if lifetimeProbe and not lifetimeProbe.finish(owner,now) then return end
    if not finishedAt then finishedAt=now end
-   if not stopped then assert(toolkitVideoStop(),'video stop failed');stopped=true;getCore():TakeFullScreenshot('cart-mp-end.png') end
+   if not stopped then
+    assert(toolkitVideoStop(),'video stop failed');stopped=true;getCore():TakeFullScreenshot('cart-mp-end.png')
+    if visual then visual.emit('VIDEO_STOP',{actor=user,epoch=vc.control.epoch},now) end
+   end
    if wallSide then
     if not wallDone then wallDone=true;wallDoneAt=now;sendClientCommand('CartMP','WallDone',{}) end
     if not wallCleanupSeen then
@@ -281,10 +351,21 @@ Events.OnTick.Add(function()
    end
    local status=toolkitVideoStatus();assert(status.state~='failed',status.error)
    if status.state~='completed' then assert(now-finishedAt<10000,'encoder deadline');return end
+   if visual then
+    if not vc.sent then
+     vc.sent=true;position(p,setup.returnX+(user=='client2' and 1 or 0),setup.returnY,setup.returnZ)
+     visual.emit('DONE',{actor=user,id=setup.cartId,epoch=vc.control.epoch,inputReleased=true,videoCompleted=true},now)
+     sendClientCommand('CartMP','VisualDone',{id=setup.cartId,inputReleased=true,videoCompleted=true})
+    end
+    if not vc.cleanup or not visual.cleanupReady(setup) then
+     assert(now-finishedAt<30000,'Owned visual pad/cart cleanup replication deadline');return
+    end
+    visual.emit('CLEANUP_READY',{actor=user,id=setup.cartId,cargoID=vc.control.spec.cargoID,epoch=vc.control.epoch,floors=0,worldCount=0},now)
+   end
    if wallSide and not wallCleanupSeen then return end
    print('[CART_MP] VIDEO_FINAL '..J.encode({file=status.file,frames=status.frames,captured=status.captured,dropped=status.dropped,seconds=status.seconds}))
    if not wallSide then print('[CART_MP_TRAFFIC] '..cartMPTraffic()) end
-   emit({event='case',id='owner_observer_motion',status='captured',cartActions=actions~=nil,cartInjury=injury~=nil})
+   emit({event='case',id='owner_observer_motion',status='captured',cartActions=actions~=nil,cartInjury=injury~=nil,cartVisualExtended=visual~=nil})
    emit({event='complete',expected=1,performed=1,skipped=0,failed=0});done=true
   end
  end)

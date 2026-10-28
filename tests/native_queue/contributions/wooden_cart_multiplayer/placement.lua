@@ -4,14 +4,17 @@ return function(player)
  local current=assert(player:getCurrentSquare(),'actor square missing')
  local wallSide=config.options and config.options.cart_wall_exit
  local injury=config.options and config.options.cart_injury==true
+ local visual=config.options and config.options.cart_visual_extended==true and require 'CartMPVisualExtended'
+ if visual then visual.validate(config) end
  local extended=config.options and (config.options.cart_fast_motion or wallSide)
  if extended then
   assert(config.kind=='mp' and config.options.mp_host==true and isServer() and not isClient() and cartMPPadHost(),
    'Elevated cart pad requires fresh disposable queue-smoke Host')
   local cell,chunks=getCell(),{}
   local x,y,z=current:getX(),current:getY(),7
-  local half=(wallSide or injury) and 31 or 15
-  local area={x=x+4.5,y=y+.5,z=z,minX=x-half,minY=y-half,size=half*2+1,margin=2,vegetationFree=true,bankVersion=wallSide and 4 or injury and 5 or 3,floorSprite='carpentry_02_57',elevated=true}
+  local half=(wallSide or injury or visual) and 31 or 15
+  local area={x=x+4.5,y=y+.5,z=z,minX=x-half,minY=y-half,size=half*2+1,margin=2,vegetationFree=true,bankVersion=wallSide and 4 or injury and 5 or visual and 6 or 3,floorSprite='carpentry_02_57',elevated=true}
+  if visual then area.returnX=current:getX()+.5;area.returnY=current:getY()+.5;area.returnZ=current:getZ() end
   local wall
   if wallSide then
    area.wallSide=wallSide;area.wallSprite='walls_exterior_wooden_01_0';area.wallX=x-3;area.wallMinY=y-24;area.wallMaxY=y+24;area.ownedWalls=49
@@ -23,7 +26,7 @@ return function(player)
   for a=x-half-1,x+half+1 do for b=y-half-1,y+half+1 do
    local chunk=cell:getChunkForGridSquare(a,b,0)
    local ground=cell:getGridSquare(a,b,0)
-   if (wallSide or injury) and (not chunk or not ground) then return nil end
+   if (wallSide or injury or visual) and (not chunk or not ground) then return nil end
    assert(chunk and ground,'Elevated cart pad ground chunk not loaded')
    chunks[chunk]=true
    local sq=cell:getGridSquare(a,b,z)
@@ -36,7 +39,8 @@ return function(player)
    assert(sq,'Elevated cart pad cannot create native square')
    cell:setCacheGridSquare(a,b,z,sq)
    -- Native addFloor transmits its AddItemToMap packet to relevant clients.
-   assert(sq:addFloor(area.floorSprite),'Elevated cart pad native floor creation failed')
+   local floor=assert(sq:addFloor(area.floorSprite),'Elevated cart pad native floor creation failed')
+   if visual then visual.ownFloor(sq,floor) end
   end end
   for chunk in pairs(chunks) do cell:setCacheChunk(chunk) end
   if wall then wall.create(area) end

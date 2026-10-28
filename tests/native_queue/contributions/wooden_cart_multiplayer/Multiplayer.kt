@@ -381,9 +381,11 @@ object Multiplayer {
     @LuaMethod(name = "cartMPCamera", global = true)
     fun camera(p: IsoPlayer) {
         val self = IsoPlayer.getInstance()
+        if (controlCamera) check(timelineCameraOwner?.get() === p && p.getOnlineID().toInt() == controlCameraOwnerID) {
+            "Native control camera owner identity changed"
+        }
         if (
-            TIMELINE &&
-                System.getenv("PZ_CART_INVENTORY_EQUIP") == "true" &&
+            timelineCloseCamera() &&
                 self != null &&
                 self.isLocalPlayer() &&
                 self.getUsername() == "client2" &&
@@ -392,7 +394,8 @@ object Multiplayer {
         ) {
             if (timelineCameraOwner?.get() !== p) timelineCameraOwner = WeakReference(p)
             timelinePan(zombie.iso.IsoCamera.cameras[0])
-            zoom(false)
+            zoom(controlCamera)
+            if (controlCamera) return
         }
         val x = p.getX() - self.getX()
         val y = p.getY() - self.getY()
@@ -926,10 +929,41 @@ object Multiplayer {
         fun exit() = timelineClockExit()
     }
 
+    private var controlCamera = false
+    private var controlCameraOwnerID = -1
+
+    @JvmStatic
+    @LuaMethod(name = "cartMPControlCamera", global = true)
+    fun controlCamera(owner: IsoPlayer) {
+        val self = IsoPlayer.getInstance()
+        check(self.isLocalPlayer() && self.getUsername() == "client2" && owner !== self && !owner.isLocalPlayer() && owner.getUsername() == "client1" && owner.getOnlineID() >= 0) {
+            "Native control camera requires the exact observer/owner pair"
+        }
+        controlCamera = true
+        controlCameraOwnerID = owner.getOnlineID().toInt()
+        timelineCameraOwner = WeakReference(owner)
+        camera(owner)
+    }
+
+    @JvmStatic
+    @LuaMethod(name = "cartMPControlCameraStop", global = true)
+    fun controlCameraStop() {
+        if (!controlCamera) return
+        controlCamera = false
+        controlCameraOwnerID = -1
+        timelineCameraOwner = null
+        zombie.iso.IsoCamera.cameras[0]?.let { camera ->
+            camera.rightClickTargetX = 0f
+            camera.rightClickX = 0f
+            camera.rightClickTargetY = 0f
+            camera.rightClickY = 0f
+        }
+    }
+
     private var timelineCameraOwner: WeakReference<IsoPlayer>? = null
 
     private fun timelineCloseCamera() =
-        TIMELINE && System.getenv("PZ_CART_INVENTORY_EQUIP") == "true"
+        controlCamera || TIMELINE && System.getenv("PZ_CART_INVENTORY_EQUIP") == "true"
 
     @JvmStatic
     fun timelinePan(camera: zombie.iso.PlayerCamera?) {
@@ -961,7 +995,7 @@ object Multiplayer {
                     Math.hypot(
                         (owner.getX() - self.getX()).toDouble(),
                         (owner.getY() - self.getY()).toDouble(),
-                    ) <= 16 &&
+                    ) <= (if (controlCamera) 48 else 16) &&
                     Math.abs(owner.getZ() - self.getZ()) <= .25f,
             ) {
                 "Framing target left owned fixture pad"

@@ -80,6 +80,12 @@ CONTROL_PHASES = (
     ('moving-forward', 1, 0, 1000), ('moving-reverse', 4, 0, 1800),
     ('run', 1, 1, 1000), ('run-stop', 0, 0, 1200),
     ('sprint', 1, 2, 1000), ('sprint-stop', 0, 0, 1500))
+CONTROL_EXTENDED_PHASES = (
+    ('correction-left', 5, 0, 180), ('correction-left-release', 1, 0, 600),
+    ('correction-right', 8, 0, 180), ('correction-right-release', 1, 0, 600),
+    ('correction-stop', 0, 0, 900))
+CONTROL_EXTENDED_POSES = {'correction-left': 0, 'correction-right': 0}
+CONTROL_RELEASE_PHASES = ('left-release', 'right-release', 'correction-left-release', 'correction-right-release')
 CONTROL_POSES = {'forward-0': 0, 'forward-angle': 2.1, 'left-held': 0, 'right-held': 0,
                  'pivot-left': 0, 'pivot-right': 0, 'reverse': .8, 'reverse-left': .8,
                  'reverse-right': .8, 'moving-forward': 1.3, 'run': 1.3, 'sprint': 1.3}
@@ -262,6 +268,21 @@ def environment(selection, role, cache):
 def validate(selection):
     suite = selection['suite']
     options = selection.get('options', {})
+    if 'cart_controls_extended' in options:
+        if (suite != SP or selection['cases'] != ['controls'] or type(options['cart_controls_extended']) is not bool
+                or options['cart_controls_extended'] and options.get('cart_scenes') != ['shopping-cart']):
+            raise ValueError('cart_controls_extended requires SP controls with only the shopping-cart scene')
+    if 'cart_visual_extended' in options:
+        if suite != MP or type(options['cart_visual_extended']) is not bool:
+            raise ValueError('cart_visual_extended requires an MP boolean selection')
+        if options['cart_visual_extended']:
+            incompatible = ('cart_injury', 'cart_inventory_equip', 'cart_lease_control', 'cart_lease_lifetimes',
+                            'cart_lease_menu', 'cart_lease_inventory', 'cart_action_invalidation', 'cart_hotkey_setdown',
+                            'cart_action_admission', 'cart_time_alignment', 'cart_timeline', 'cart_observer_association')
+            if (selection['cases'] != ['owner_observer_motion'] or options.get('cart_variant') != 'shopping-cart'
+                    or any(options.get(key) is not True for key in ('mp_host', 'cart_fast_motion', 'cart_actions'))
+                    or any(options.get(key, False) is not False for key in incompatible) or 'cart_wall_exit' in options):
+                raise ValueError('cart_visual_extended requires isolated shopping Host fast/actions without other probe banks')
     if 'cart_entry_contact_repro' in options:
         if (suite != SP or selection['cases'] != ['approach']
                 or type(options['cart_entry_contact_repro']) is not bool):
@@ -526,6 +547,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 _write(lua / 'client/QueueCartMPStartup.lua', (project / 'tests/native_queue/startup/client/ZZStartup.lua').read_text())
             for origin, target in [('client.lua', 'client/ZZCartMP.lua'), ('actions.lua', 'client/CartMPActions.lua'), ('injury.lua', 'client/CartMPInjury.lua'), ('server.lua', 'server/ZZCartMP_Server.lua'),
                                    ('placement.lua', 'shared/CartMPPlacement.lua'), ('wall.lua', 'shared/CartMPWall.lua'),
+                                   ('visual-extended.lua', 'shared/CartMPVisualExtended.lua'),
                                    ('wall-input.lua', 'client/CartMPWallInput.lua'), ('json.lua', 'shared/CartMPJSON.lua'),
                                    ('inventory-equip-client.lua', 'client/CartMPInventoryEquipClient.lua'),
                                    ('inventory-equip-server.lua', 'server/CartMPInventoryEquipServer.lua'),
@@ -538,6 +560,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                                    ('lease-lifecycle.lua', 'shared/CartLeaseLifecycle.lua')]:
                 # PZ auto-loads client Lua files even when ZZCartMP never requires them.
                 # Bank-specific guards must only enter the selected disposable profile.
+                if origin == 'visual-extended.lua' and selection.get('options', {}).get('cart_visual_extended') is not True:
+                    continue
                 if origin == 'actions.lua' and not selection.get('options', {}).get('cart_actions'):
                     continue
                 if origin == 'injury.lua' and not selection.get('options', {}).get('cart_injury'):
@@ -589,6 +613,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                           hideUI=selection.get('options', {}).get('cart_hide_ui', not manual))
             if 'cart_variant' in selection.get('options', {}):
                 motion.update(cartVariant=selection['options']['cart_variant'], cartType=VARIANTS[selection['options']['cart_variant']])
+            if 'cart_controls_extended' in selection.get('options', {}):
+                motion['controlsExtended'] = selection['options']['cart_controls_extended']
             if 'cart_authored_clip' in selection.get('options', {}):
                 motion['authoredClip'] = selection['options']['cart_authored_clip']
             if 'cart_entry_contact_repro' in selection.get('options', {}):
@@ -1145,7 +1171,99 @@ def _controls_paused_gap(a, b, reference=None):
     return proof
 
 
-def _controls_coverage(text, scenes):
+def _controls_action_coverage(log, motion):
+    """Require observed native transitions and a settled tail inside the same video."""
+    rows = []
+    for line in log.splitlines():
+        if '[CART_CONTROLS_ACTION] ' in line:
+            event, encoded = line.split('[CART_CONTROLS_ACTION] ', 1)[1].split(' ', 1)
+            rows.append((event, json.loads(encoded)))
+    expected = [(name, phase) for name in dict.fromkeys(row['case'] for row in motion) for phase in ('drop', 'pickup')]
+    if [(row.get('case'), row.get('phase')) for event, row in rows if event == 'BEGIN'] != expected:
+        raise ValueError('Missing, duplicate or reordered controls action phases')
+    groups = []
+    for event, row in rows:
+        if event == 'BEGIN':
+            groups.append([])
+        if not groups or event not in ('BEGIN', 'QUEUED', 'SAMPLE', 'COMPLETE'):
+            raise ValueError('Unexpected controls action event')
+        groups[-1].append((event, row))
+    clips = re.findall(r'\[WOOD_BANK\] COMPLETE (\S+) wall=(\d+) file=.+? frames=\d+ seconds=([\d.]+)', log)
+    starts = re.findall(r'\[WOOD_BANK\] CASE (\S+) wall=(\d+)', log)
+    if [name for name, _ in starts] != list(dict.fromkeys(name for name, _ in expected)) or len(clips) != len(starts):
+        raise ValueError('Missing extended controls video span')
+    video = {name: (int(start), float(seconds)) for name, start, seconds in clips}
+    if len(video) != len(clips) or any(name not in video or video[name][0] != int(start) for name, start in starts):
+        raise ValueError('Mismatched extended controls video span')
+    def endpoint(row, ground):
+        return (row['primaryID'] == (-1 if ground else row['id'])
+                and row['secondaryID'] == row['primaryID']
+                and row['inventoryCount'] == (0 if ground else 1) and row['worldCount'] == (1 if ground else 0)
+                and row['worldID'] == (row['id'] if ground else -1)
+                and row['containerOwned'] is (not ground) and row['hasWorldItem'] is ground
+                and row['luaActions'] == 0 and row['nativeActions'] == 0 and row['hasPath'] is False)
+    result = []
+    previous = None
+    for (name, phase), group in zip(expected, groups):
+        events = [event for event, _ in group]
+        if events[:2] != ['BEGIN', 'QUEUED'] or events[-1] != 'COMPLETE' or any(event != 'SAMPLE' for event in events[2:-1]):
+            raise ValueError('Controls action event sequence incomplete')
+        first, last = group[0][1], group[-1][1]
+        exact = next(row for row in motion if row['case'] == name)
+        required = {'case','phase','kind','wall','frame','elapsed','id','cargoID','cargoWeight','primaryID','secondaryID',
+                    'inventoryCount','worldCount','worldID','containerOwned','hasWorldItem','luaActions','nativeActions',
+                    'hasPath','actionType','started','nativeStarted','progress','nativeMaxTime','luaMaxTime','duration'}
+        for _, row in group:
+            if not isinstance(row, dict) or not required <= row.keys():
+                raise ValueError('Missing controls action fields')
+            if (any(type(row[key]) is not int for key in ('wall','frame','elapsed','id','cargoID','primaryID','secondaryID',
+                                                        'inventoryCount','worldCount','worldID','luaActions','nativeActions'))
+                    or any(type(row[key]) is not bool for key in ('containerOwned','hasWorldItem','hasPath','started','nativeStarted'))
+                    or any(type(row[key]) not in (int,float) or not math.isfinite(row[key]) for key in
+                           ('progress','nativeMaxTime','luaMaxTime','duration','cargoWeight'))
+                    or not isinstance(row['actionType'], str) or row['frame'] < 0 or row['elapsed'] < 0
+                    or any(row[key] != exact[key] for key in ('case','kind','id','cargoID','cargoWeight'))
+                    or row['phase'] != phase or row['wall']-first['wall'] != row['elapsed']):
+                raise ValueError('Controls action identity or native time differs')
+        if any(b['wall'] < a['wall'] or b['frame'] < a['frame'] for (_,a),(_,b) in zip(group,group[1:])):
+            raise ValueError('Controls action time reordered')
+        samples = [row for event,row in group if event=='SAMPLE']
+        if (len(samples) < 6 or any(b['wall'] <= a['wall'] or b['frame'] <= a['frame'] or b['wall']-a['wall'] > 150
+                                  for a,b in zip(samples,samples[1:]))):
+            raise ValueError('Controls action samples incomplete')
+        action = 'ToolkitWoodCartSetdown' if phase=='drop' else 'ToolkitWoodCartPickup'
+        progressing = [row for row in samples if row['actionType']==action and row['started'] and row['nativeStarted']
+                       and 0 < row['progress'] < 1 and row['nativeMaxTime'] > 1 and row['luaMaxTime'] > 1]
+        started = [row for _,row in group if row['actionType']==action and row['started'] and row['nativeStarted']]
+        if (any(not 1 < row['duration'] <= row['luaMaxTime'] or row['nativeMaxTime'] != math.floor(row['luaMaxTime'])
+                for row in started)
+                or len({(row['duration'],row['luaMaxTime'],row['nativeMaxTime']) for row in started}) != 1):
+            raise ValueError('Controls native duration differs from the started Lua action')
+        tail = [row for row in samples if row['wall'] >= last['wall']-650]
+        if (first['elapsed'] != 0 or not endpoint(first, phase=='pickup') or not endpoint(last,phase=='drop')
+                or not group[1][1]['actionType'] or len(progressing) < 2
+                or len({row['progress'] for row in progressing}) < 2
+                or last.get('progressed') is not True or last.get('actionTypeSeen') != action
+                or type(last.get('settledElapsed')) not in (int,float) or not 700 <= last['settledElapsed'] < 15000
+                or len(tail) < 4 or tail[-1]['wall']-tail[0]['wall'] < 500
+                or last['wall']-tail[-1]['wall'] > 100 or not all(endpoint(row,phase=='drop') for row in tail)
+                or previous and (first['wall'] < previous['wall'] or first['frame'] < previous['frame'])):
+            raise ValueError('Native controls action progression or settled ownership missing')
+        motion_samples = [json.loads(line.split('[CART_CONTROLS] SAMPLE ', 1)[1]) for line in log.splitlines()
+                          if '[CART_CONTROLS] SAMPLE ' in line]
+        motion_end = max(row['frame'] for row in motion_samples if row['case'] == name)
+        if first['frame'] < motion_end:
+            raise ValueError('Controls action preceded the end of motion capture')
+        start, seconds = video[name]
+        if not math.isfinite(seconds) or not start <= first['wall'] < last['wall'] <= start+seconds*1000+100:
+            raise ValueError('Controls action falls outside recorded video')
+        result.append({'case':name,'phase':phase,'actionType':action,'progressSamples':len(progressing),
+                       'settledElapsed':last['settledElapsed'],'id':last['id'],'cargoID':last['cargoID']})
+        previous = last
+    return {'nativeActionsVerified':True,'phases':result,'animationEquivalencePass':False}
+
+
+def _controls_coverage(text, scenes, extended=False):
     log = text.rsplit('[WOOD_BANK] RUN_STARTED', 1)[-1]
     records = [json.loads(line.split('[CART_CONTROLS] PHASE ', 1)[1])
                for line in log.splitlines() if '[CART_CONTROLS] PHASE ' in line]
@@ -1154,7 +1272,9 @@ def _controls_coverage(text, scenes):
                 'drive', 'gait', 'gaitSeen', 'elapsed', 'samples'}
     if any(not isinstance(row, dict) or not required <= row.keys() for row in records):
         raise ValueError('Missing controls receipt identity/fields')
-    expected = [(name, phase[0]) for name in scenes for phase in CONTROL_PHASES]
+    phases = CONTROL_PHASES + (CONTROL_EXTENDED_PHASES if extended else ())
+    poses = dict(CONTROL_POSES, **(CONTROL_EXTENDED_POSES if extended else {}))
+    expected = [(name, phase[0]) for name in scenes for phase in phases]
     if [(row['case'], row['phase']) for row in records] != expected:
         raise ValueError('Missing, duplicate or reordered controls phases')
     samples = {}
@@ -1173,7 +1293,7 @@ def _controls_coverage(text, scenes):
         identity = None
         previous = None
         measured = []
-        for receipt, (phase, drive, gait, duration) in zip((row for row in records if row['case'] == name), CONTROL_PHASES):
+        for receipt, (phase, drive, gait, duration) in zip((row for row in records if row['case'] == name), phases):
             exact = tuple(receipt[key] for key in ('id', 'cargoID', 'cargoWeight'))
             if identity is None:
                 identity = exact
@@ -1203,8 +1323,8 @@ def _controls_coverage(text, scenes):
                     paused_gaps.append(proof)
                 elif b['elapsed']-a['elapsed'] <= 500:
                     reference = (a,b)
-            if phase in CONTROL_POSES:
-                if any(abs(wrap(rows[0][key]-CONTROL_POSES[phase])) > .02 for key in ('heading', 'acceptedHeading')):
+            if phase in poses:
+                if any(abs(wrap(rows[0][key]-poses[phase])) > .02 for key in ('heading', 'acceptedHeading')):
                     raise ValueError('Controls initial heading not exercised: ' + name + '/' + phase)
             elif previous is None or any(abs(rows[0][key]-previous[key]) > .001 for key in ('x', 'y', 'heading', 'acceptedHeading')):
                 raise ValueError('Controls continuous transition was repositioned: ' + name + '/' + phase)
@@ -1219,13 +1339,19 @@ def _controls_coverage(text, scenes):
                 forward = dx*math.cos(mid)+dy*math.sin(mid)
                 yaw += turn; travel += forward
                 segments.append((b['elapsed'], forward, math.hypot(dx, dy), b['elapsed']-a['elapsed']))
-            if phase in ('left-held', 'right-held'):
+            if phase in ('correction-left', 'correction-right'):
+                accepted_yaw = sum(wrap(b['acceptedHeading']-a['acceptedHeading']) for a, b in zip(rows, rows[1:]))
+                correct = (.05 <= accepted_yaw*(-1 if drive == 5 else 1) <= math.pi/4
+                           and abs(yaw) <= math.pi/4 and travel > .01
+                           and rows[-1]['elapsed'] <= duration+100
+                           and all(b['elapsed']-a['elapsed'] <= 100 for a, b in zip(rows, rows[1:])))
+            elif phase in ('left-held', 'right-held'):
                 correct = yaw*(-1 if drive == 5 else 1) > math.pi and travel > .4
             elif phase in ('pivot-left', 'pivot-right'):
                 correct = yaw*(-1 if drive == 2 else 1) > .25 and abs(travel) < .12
             elif phase == 'pivot-release':
                 correct = abs(yaw) < .1 and abs(travel) < .05
-            elif phase in ('left-release', 'right-release'):
+            elif phase in CONTROL_RELEASE_PHASES:
                 accepted = rows[1:]
                 accepted_arc = sum(abs(wrap(b['acceptedHeading']-a['acceptedHeading'])) for a, b in zip(accepted, accepted[1:]))
                 visual_arc = sum(abs(wrap(b['heading']-a['heading'])) for a, b in zip(rows, rows[1:]))
@@ -1248,19 +1374,23 @@ def _controls_coverage(text, scenes):
                 correct = abs(yaw) < .25 and (travel < -.15 if drive == 4 else travel > .1)
             if not correct:
                 release = (' acceptedYawArc=' + str(accepted_arc) + ' visualYawArc=' + str(visual_arc)
-                           + ' lateVisualYawArc=' + str(late_arc)) if phase in ('left-release', 'right-release') else ''
+                           + ' lateVisualYawArc=' + str(late_arc)) if phase in CONTROL_RELEASE_PHASES else ''
                 raise ValueError('Controls relative movement/yaw failed: ' + name + '/' + phase
                                  + ' travel=' + str(travel) + ' yaw=' + str(yaw) + release)
             detail = {'phase': phase, 'travel': travel, 'yaw': yaw, 'samples': len(rows)}
             if paused_gaps:
                 detail['pausedFrameGaps'] = paused_gaps
-            if phase in ('left-release', 'right-release'):
+            if phase in CONTROL_RELEASE_PHASES:
                 detail.update(acceptedYawArc=accepted_arc, visualYawArc=visual_arc, lateVisualYawArc=late_arc)
             measured.append(detail)
             previous = rows[-1]
             last_frame = rows[-1]['frame']
         result.append({'case': name, 'kind': VARIANTS[name], 'id': identity[0], 'phases': measured})
-    return {'controlsVerified': True, 'cases': result}
+    report = {'controlsVerified': True, 'cases': result}
+    if extended:
+        report['extendedActions'] = _controls_action_coverage(log, records)
+        report['briefSteeringVerified'] = True
+    return report
 
 
 NATIVE_E_PHASES = ('native-before', 'pickup', 'drop-long', 'pickup-cancel', 'pickup-repeat', 'drop-repeat', 'native-after')
@@ -1389,15 +1519,18 @@ def verify(root, selection, catalog):
                  'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                              'nativeEVerified': True, 'functionalPass': True}}]}
         if selection['suite'] == SP and selection['cases'] == ['controls']:
-            report = _controls_coverage(texts['client1'], selected_scenes(selection))
+            report = _controls_coverage(texts['client1'], selected_scenes(selection),
+                                        extended=selection.get('options', {}).get('cart_controls_extended') is True)
             _write(analysis / 'controls.json', json.dumps(report, indent=2, allow_nan=False))
             evidence.update(controls=report, analysis=str(analysis), evidenceComplete=True,
-                            scope='SP physical keyboard controls with light cargo; animation and mesh equivalence are not assessed')
+                            scope='SP physical keyboard controls and selected native menu transitions; animation and mesh equivalence are not assessed')
             return {'issues': [], 'evidence': evidence, 'outcomes': [
                 {'actor': 'client1', 'case': 'controls', 'status': 'captured',
                  'reason': 'Native relative keyboard movement, held/released yaw, reverse and stops captured',
                  'outcome': {'animationEquivalencePass': False, 'evidenceComplete': True,
                              'controlsVerified': True, 'partialCoverage': debug,
+                             'briefSteeringVerified': report.get('briefSteeringVerified', False),
+                             'nativeActionsVerified': report.get('extendedActions', {}).get('nativeActionsVerified', False),
                              'selectedScenes': selected_scenes(selection)}}]}
         if selection['suite'] == SP and selection['cases'] == ['showcase']:
             report = _showcase_coverage(texts['client1'], selected_scenes(selection))

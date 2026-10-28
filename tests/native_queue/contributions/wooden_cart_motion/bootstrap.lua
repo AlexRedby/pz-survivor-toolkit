@@ -49,6 +49,10 @@ function cartLabCaptureUI(hidden)
  assert(captureUIWorld(),'Capture UI requires disposable single-player CartTestArea')
  if hidden==CartLabCaptureUIHidden then return end
  if not hidden then CartLabCaptureUIRestore();return end
+ -- The sidebar normally initializes entity windows in prerender. A capture can
+ -- suppress that first frame, so preserve its native lazy initialization first.
+ require 'Entity/ISEntityUI'
+ ISEntityUI.EnsurePlayers()
  local saved={elements={},visibleUI={},allUIVisible=ISUIHandler.allUIVisible,nativeVisible=cartLabCaptureUIVisible()}
  for i,value in ipairs(ISUIHandler.visibleUI) do saved.visibleUI[i]=value end
  local ui=UIManager.getUI()

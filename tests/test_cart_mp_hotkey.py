@@ -66,7 +66,8 @@ class CartMPHotkeyTests(unittest.TestCase):
                                           'presentationProgress', 'recoveryEnded', 'recoveryObserved', 'elapsed')}
             observation.pop('inventoryCount', None)
             observation.update(actor='client2', wall=row['wall']+50, worldAttached=row['worldCount'] == 1,
-                inventoryScope='remote-hand-snapshot',itemSource='world' if row['worldCount'] else 'hands',handSameItem=row['worldCount']==0)
+                inventoryScope='remote-hand-snapshot',itemSource='world' if row['worldCount'] else 'hands',handSameItem=row['worldCount']==0,
+                pathScope='remote-network',nativeMoving=False,position=dict(x=1,y=2,z=0))
             self.logs['client2'].append(('OBSERVER_RECEIPT', observation))
             self.logs['server'].append(('SERVER_OBSERVATION', copy.deepcopy(observation)))
 
@@ -150,6 +151,29 @@ class CartMPHotkeyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.analyze()
 
+    def test_native_remote_path_does_not_block_settled_hotkey_endpoint(self):
+        for role,kind in [('client2','OBSERVER_RECEIPT'),('server','SERVER_OBSERVATION')]:
+            for row in self.rows(role,kind):row['hasPath']=True
+        self.assertTrue(self.analyze()['actions']['hotkeySetdown']['evidenceComplete'])
+
+    def test_hotkey_remote_scope_motion_and_position_still_fail_closed(self):
+        original=copy.deepcopy(self.logs)
+        for change in [dict(pathScope='authoritative-approach'),dict(nativeMoving=True),dict(hasPath=None),
+                       dict(position=None),dict(position=dict(x=1.15,y=2.15,z=0)),dict(position=dict(x=1,y=2,z=1))]:
+            with self.subTest(change=change):
+                self.logs=copy.deepcopy(original)
+                # Mutate both copies so forwarding identity cannot hide a consumer validation gap.
+                for role,kind in [('client2','OBSERVER_RECEIPT'),('server','SERVER_OBSERVATION')]:
+                    self.rows(role,kind)[0].update(copy.deepcopy(change))
+                with self.assertRaisesRegex(ValueError,'observer native cargo/ownership/queue'):self.analyze()
+
+    def test_hotkey_authoritative_paths_still_fail(self):
+        original=copy.deepcopy(self.logs)
+        for role,kind in [('client1','RECEIPT'),('server','SERVER_RECEIPT')]:
+            with self.subTest(role=role):
+                self.logs=copy.deepcopy(original);self.rows(role,kind)[0]['hasPath']=True
+                with self.assertRaisesRegex(ValueError,'cargo/ownership/queue mismatch'):self.analyze()
+
     def test_native_float_tolerance_and_wrapped_yaw(self):
         for role, kind in (('client1', 'RECEIPT'), ('server', 'SERVER_RECEIPT'), ('client2', 'OBSERVER_RECEIPT'), ('server', 'SERVER_OBSERVATION')):
             self.rows(role, kind)[0]['worldPose']['x'] += .001
@@ -167,7 +191,7 @@ end
 package.preload.QueueTestSelection=function() return {disposable=true,options={cart_hotkey_setdown=true,cart_hotkey_key=100}} end
 package.preload.CartMPJSON=function() return dofile(JSON_SOURCE) end
 local function list(values) return {size=function() return #values end,get=function(_,i) return values[i+1] end} end
-local now,held,started,worldX,active,observations,remoteOnly=1000,true,false,9,true,0,false
+local now,held,started,worldX,active,observations,remoteOnly,moving=1000,true,false,9,true,0,false,false
 local q={queue={}}
 local cargo={getID=function() return 99 end,getFullType=function() return 'Base.Log' end,getActualWeight=function() return 70 end}
 local cargoInventory={getItems=function() return list({cargo}) end}
@@ -184,7 +208,7 @@ local native={size=function() return 0 end,isEmpty=function() return true end}
 local player={getInventory=function() return inventory end,getPrimaryHandItem=function() return held and cart or nil end,
  getSecondaryHandItem=function() return held and cart or nil end,getX=function() return 1 end,getY=function() return 2 end,
  getZ=function() return 0 end,getPlayerNum=function() return 0 end,getCharacterActions=function() return native end,
- hasPath=function() return false end,isTimedActionInstant=function() return false end}
+ hasPath=function() return remoteOnly end,isLocalPlayer=function() return not remoteOnly end,isPlayerMoving=function() return moving end,isTimedActionInstant=function() return false end}
 getCell=function() return {getGridSquare=function(_,x,y,z) if x==1 and y==2 and z==0 then return sq end end} end
 getTimestampMs=function() return now end
 ISTimedActionQueue={getTimedActionQueue=function() return q end}
@@ -204,7 +228,8 @@ triggerEvent=function(event,key)
 end
 sendClientCommand=function(_,command,row)
  if command=='ActionObservation' then
-  observations=observations+1;assert(row.actor=='client2' and row.inventoryCount==nil)
+  observations=observations+1;assert(row.actor=='client2' and row.inventoryCount==nil
+   and row.hasPath==true and row.pathScope=='remote-network' and row.nativeMoving==false)
   if row.index==1 then assert(row.worldPose.x==1.25)
   else assert(row.itemSource=='hands' and row.handSameItem and row.cargoPreserved) end
  end
@@ -223,16 +248,25 @@ local observer=dofile(ACTIONS_SOURCE)
 remoteOnly=true
 observer.command('ActionPhase',{index=1,phase='drop-complete',id=42})
 observer.command('ActionAudit',{index=1,phase='drop-complete',id=42,cargoID=99,cargoWeight=70,
- expectedWorld={x=1.25,y=2.75,z=0,rotation=90}})
+ expectedWorld={x=1.25,y=2.75,z=0,rotation=90},expectedPosition={x=1,y=2,z=0}})
 observer.sample(player,'client2');assert(observations==0,'Held state was accepted as replicated ground placement')
 held=false;q.queue={};q.current=nil;active=false;now=1200
 observer.sample(player,'client2');assert(observations==0,'Incorrect replicated placement was accepted')
-worldX=1.25;now=1300
+worldX=1.25;moving=true;now=1250
+observer.sample(player,'client2');assert(observations==0,'Moving remote endpoint was accepted')
+moving=false
+observer.command('ActionAudit',{index=1,phase='drop-complete',id=42,cargoID=99,cargoWeight=70,
+ expectedWorld={x=1.25,y=2.75,z=0,rotation=90},expectedPosition={x=1.15,y=2.15,z=0}})
+observer.sample(player,'client2');assert(observations==0,'Remote endpoint outside native Manhattan idle tolerance was accepted')
+observer.command('ActionAudit',{index=1,phase='drop-complete',id=42,cargoID=99,cargoWeight=70,
+ expectedWorld={x=1.25,y=2.75,z=0,rotation=90},expectedPosition={x=1,y=2,z=0}})
+remoteOnly=false;assert(not pcall(observer.sample,player,'client2'),'Local player was labeled as remote network scope');remoteOnly=true
+now=1300
 observer.sample(player,'client2');assert(observations==1,'Settled exact native world receipt missing')
 now=1400;observer.sample(player,'client2');assert(observations==1,'Observer duplicated native receipt')
 observer.command('ActionAck',{index=1,phase='drop-complete',id=42,ok=true})
 observer.command('ActionPhase',{index=2,phase='pickup-complete',id=42})
-observer.command('ActionAudit',{index=2,phase='pickup-complete',id=42,cargoID=99,cargoWeight=70})
+observer.command('ActionAudit',{index=2,phase='pickup-complete',id=42,cargoID=99,cargoWeight=70,expectedPosition={x=1,y=2,z=0}})
 held=true;now=1500;observer.sample(player,'client2')
 assert(observations==2,'Exact replicated hand/cargo snapshot was not accepted without an inventory list')
 """
@@ -310,7 +344,7 @@ command('ActionCheck',owner,{index=1,phase='drop-complete',id=42,expectedWorld=p
 callbacks.OnTick();now=41200;callbacks.OnTick();assert(acks==0,'Server acknowledged before native observer receipt')
 command('ActionObservation',observer,{actor='client2',index=1,phase='drop-complete',id=42,cargoID=99,
  cargoPreserved=true,cargoWeight=70,inventoryScope='remote-hand-snapshot',itemSource='world',handSameItem=false,
- luaActions=0,nativeActions=0,hasPath=false,worldAttached=true,worldCount=1,primaryID=-1,secondaryID=-1,worldPose=pose})
+ luaActions=0,nativeActions=0,hasPath=true,pathScope='remote-network',nativeMoving=false,position={x=1,y=2,z=0},worldAttached=true,worldCount=1,primaryID=-1,secondaryID=-1,worldPose=pose})
 worldX=2.25;now=41300;callbacks.OnTick();now=41500;callbacks.OnTick()
 assert(acks==0,'Observer receipt masked wrong independent server placement')
 worldX=1.25;now=41600;callbacks.OnTick();assert(acks==0,'Server skipped stable native endpoint hold')

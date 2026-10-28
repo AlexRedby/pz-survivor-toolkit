@@ -382,9 +382,15 @@
       "kind": "sp",
       "language": "RU",
       "timeout": 1800,
-      "boundary": "Already sequences all three cart variants; a single clean control platform/video lifecycle.",
+      "boundary": "One shopping-cart SP capture retains the 18 controls and adds brief corrections and native menu pickup/setdown in the same owned world/video lifecycle.",
       "resources": {
         "heap_mib": 4096
+      },
+      "options": {
+        "cart_controls_extended": true,
+        "cart_scenes": [
+          "shopping-cart"
+        ]
       }
     },
     {
@@ -395,12 +401,15 @@
       "language": "EN",
       "options": {
         "mp_host": true,
-        "cart_variant": "shopping-cart"
+        "cart_variant": "shopping-cart",
+        "cart_fast_motion": true,
+        "cart_actions": true,
+        "cart_visual_extended": true
       },
       "timeout": 1800,
-      "boundary": "Two-client owner/observer motion capture with native replication, separate from SP control bank.",
+      "boundary": "One two-client shopping bank records motion, short corrections, forward fast modes, native action transitions and an authoritative no-cart network control; separate from SP topology.",
       "resources": {
-        "heap_mib": 3072
+        "heap_mib": 2304
       }
     },
     {
@@ -660,15 +669,12 @@
     {
       "id": "shopping-cart-turn-footwork",
       "title": "Shopping cart turn footwork",
-      "todo": "TODO.md#shopping-cart-turn-footwork",
+      "todo": "TODO.md#cart-motion-full-pack-compatibility",
       "jobs": [
         "cart-controls-sp",
         "shopping-view-host"
       ],
-      "gates": [
-        "Review the captured full-pack SP/Host native-walk gait, handles, entry/release and held turns, retaining reverse/fast controls; these recordings do not provide automatic visual acceptance.",
-        "Add a dedicated brief steering-correction phase in SP/Host; angled-forward has zero yaw and the existing stationary pivots are broad turns."
-      ]
+      "gates": []
     },
     {
       "id": "vehicle-entry-and-exit-roof-clipping",
