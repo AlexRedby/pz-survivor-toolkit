@@ -158,7 +158,7 @@ local sections={}
 for section in (BenchmarkSections or 'component,edit,model,weights'):gmatch('[^,]+')do sections[section]=true end
 local maxSteps=BenchmarkMaxSteps or 1000
 BenchmarkEmit('scope','Native Kahlua CPU fixtures; no live UI, gameplay, MP, network or weaker-client performance qualification')
-BenchmarkEmit('candidate','Test-only adaptive hybrid: retain the production first sweep for independent/star resources, use a worklist for unresolved growth; production inspector/validation/EditModel. Weights remain baseline.')
+BenchmarkEmit('candidate','Test-only adaptive hybrid: retain the production first sweep for independent/star resources, use a worklist for unresolved growth; production inspector/validation/EditModel. The weight bank separately compares stateless and batch snapshot paths.')
 BenchmarkEmit('budgets','Proposed end-to-end targets: advisory p95<=1ms p99<=2ms; authoritative edit p95<=2ms p99<=4ms. This CPU bank does not time an end-to-end Queue.move commit.')
 BenchmarkEmit('counter_scope','legacy_target_callbacks counts only world/generator hooks, not all pair probes. Worklist counters exclude footprint extraction and the retained first sweep; no whole-candidate linearity claim.')
 BenchmarkEmit('parity_scope','Only reviewed ordinary fixture footprints are compared; complex/custom production footprints remain unsupported in this test-only candidate.')
@@ -222,7 +222,8 @@ for _,count in ipairs({10,50,200,1000}) do
     end
 end
 end
--- Production weight baseline: unique nested endpoint requests, not an inflated
+-- Production weight comparisons: plain exact native and factory-sensitive Food,
+-- unique nested endpoint requests, not an inflated
 -- repeated-call comparison. Java endpoint getters are explicit doubles here;
 -- timings isolate Lua traversal and underestimate native getter/bridge cost.
 local reads,enumerations=0,0
@@ -249,7 +250,7 @@ local function box(owner)
         getCapacityWeight=function()return 0 end}
 end
 local function put(item,container)item.container=container;container.items[#container.items+1]=item;return item end
-local function weightedScene(count,depth,worn)
+local function weightedScene(count,depth,worn,profile)
     local actor={class='IsoPlayer'};local root=box();root.parent=actor
     actor.getInventory=function()return root end;actor.isEquipped=function(_,item)return item.equipped==true end
     local containers={root};local current=root
@@ -266,7 +267,21 @@ local function weightedScene(count,depth,worn)
     food.getHungChange=function()return -.06 end;food.getBaseHunger=function()return -.06 end
     food.getReplaceOnUse=function()end;food.getReplaceOnUseFullType=function()end
     food.getUnequippedWeight=impure;food.getEquippedWeight=impure
-    put(food,current)
+    if profile=='affected'then put(food,current)end
+    if profile=='plain'then
+        -- Pinned exact native getter results, not another weight implementation.
+        -- Their Java recursion/bridge costs are outside this CPU fixture.
+        for _,container in ipairs(containers)do
+            container.getCapacityWeight=function()return 7.125 end
+            for _,item in ipairs(container.items)do
+                if item.class=='InventoryContainer'then
+                    item.getUnequippedWeight=function()return 9.25 end
+                    item.getEquippedWeight=function()return 3.125 end
+                    item.getHotbarEquippedWeight=function()return 4.5 end
+                end
+            end
+        end
+    end
     local ingredient={getItemType=function()return 'base:food'end,getHungerChange=function()return -12 end,
         getActualWeight=function()return .2 end,getLuaCreate=function()end,getItemConfig=function()end,
         getItemConfigKey=function()end,hasComponents=function()return false end,getReplaceOnUse=function()end}
@@ -275,25 +290,51 @@ local function weightedScene(count,depth,worn)
 end
 local weights=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueWeights.lua'))()
 if sections.weights then
+assert(loadfile(ProjectRoot..'/tests/test_queue_weight_snapshot.lua'))()
+assert(TestQueueWeightSnapshotPassed)
+local snapshot=assert(loadfile(ProjectRoot..'/tests/support/queue_weight_snapshot.lua'))()
+for _,profile in ipairs({'plain','affected'})do
 for _,count in ipairs({100,1000,10000})do
-    for _,depth in ipairs({1,4,8})do
+    for _,depth in ipairs({0,1,4,8})do
         for _,worn in ipairs({false,true})do
-            local actor,containers=weightedScene(count,depth,worn)
-            local function capture()
-                for _,container in ipairs(containers)do
-                    local upper=weights.capacity(container,actor)
-                    assert(type(upper)=='number' and upper>=0,'weight snapshot unsupported')
-                end
+            local actor,containers=weightedScene(count,depth,worn,profile)
+            local expected={}
+            for _,container in ipairs(containers)do
+                local upper,lower=weights.capacity(container,actor)
+                assert(type(upper)=='number' and upper>=0,'weight baseline unsupported')
+                expected[container]={upper=upper,lower=lower}
             end
-            reads,enumerations=0,0;capture()
-            local label='weight-baseline/items'..count..'/depth'..depth..'/'..(worn and 'worn' or 'nested')
-            BenchmarkEmit(label..'/item_reads',reads);BenchmarkEmit(label..'/container_enumerations',enumerations)
-            measure(label,capture,count>1000)
+            local function capture()
+                for _,container in ipairs(containers)do weights.capacity(container,actor)end
+            end
+            local request={containers=containers}
+            local function captureSnapshot()
+                local result=snapshot.capture(actor,request)
+                assert(result.status=='complete','weight batch unsupported: '..tostring(result.reason))
+                return result
+            end
+            local captured=captureSnapshot()
+            for _,container in ipairs(containers)do
+                assert(captured.containers[container].upper==expected[container].upper
+                    and captured.containers[container].lower==expected[container].lower,'snapshot bounds changed')
+            end
+            for index,callback in ipairs({capture,captureSnapshot})do
+                reads,enumerations=0,0;local result=callback()
+                local label=(index==1 and 'weight-baseline/'or 'weight-snapshot/')..profile..'/items'..count..'/depth'..depth..'/'..(worn and 'worn' or 'nested')
+                BenchmarkEmit(label..'/item_reads',reads);BenchmarkEmit(label..'/container_enumerations',enumerations)
+                if result then
+                    for _,key in ipairs({'nodes','edges','itemReads','containerReads','contentsHits','itemWeightHits'})do
+                        BenchmarkEmit(label..'/'..key,result.counters[key])
+                    end
+                end
+                measure(label,callback,count>1000)
+            end
         end
     end
 end
 end
+end
 assert(measurements>0,'no benchmark cases selected')
 BenchmarkEmit('measurements',measurements)
-BenchmarkEmit('gate','incomplete: weight snapshot optimization, live idle/hover/drag/priority, retention and selected-pack Host contention are not qualified')
+BenchmarkEmit('gate','incomplete: test-only snapshot and worklist CPU comparisons do not qualify live idle/hover/drag/priority, retention, selected-pack Host contention or runtime permissions')
 QueueResourceBenchmarkPassed=true
