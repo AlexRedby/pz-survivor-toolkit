@@ -2,7 +2,7 @@
 -- kit, bag ancestry or worn cosmetics. Read native facts, never prototypes.
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Access=require 'PZSurvivorToolkit/ItemAccess'
-local SupplyUse=require 'PZSurvivorToolkit/MakeupSupplyUse'
+local SupplyUse=require 'PZSurvivorToolkit/DrainableSupplyUse'
 local depletionSupports=SupplyUse and SupplyUse.supportsDepletion
 local heldSupports=SupplyUse and SupplyUse.supportsHeld
 local closure=Proof.closure
@@ -26,8 +26,8 @@ local function integer(n)return finite(n)and n%1==0 end
 local function plain(t)return type(t)=='table'and getmetatable(t)==nil end
 local function supplyProof()
  return plain(SupplyUse)and SupplyUse.supportsDepletion==depletionSupports and SupplyUse.supportsHeld==heldSupports
-  and type(depletionSupports)=='function'and closure(depletionSupports,'MakeupSupplyUse.lua')
-  and type(heldSupports)=='function'and closure(heldSupports,'MakeupSupplyUse.lua')
+  and type(depletionSupports)=='function'and closure(depletionSupports,'DrainableSupplyUse.lua')
+  and type(heldSupports)=='function'and closure(heldSupports,'DrainableSupplyUse.lua')
 end
 local function invoker(f)
  if type(f)~='function'then return false end

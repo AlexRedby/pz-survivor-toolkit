@@ -1,5 +1,9 @@
 -- Native ISCutHair keeps its selectors late. This records every possible
 -- input, never a winner or a reservation. Replacement creation is unaudited.
+local Proof=require 'PZSurvivorToolkit/SourceProof'
+local SupplyUse=require 'PZSurvivorToolkit/DrainableSupplyUse'
+local retainedHeld=SupplyUse and SupplyUse.supportsRetainedHeld
+local sourceClosure=Proof and Proof.closure
 local Costs={}
 if PZSurvivorToolkit then PZSurvivorToolkit.ActionQueueGroomingCosts=Costs end
 local classifier,instance,getManager=getClassSimpleName,instanceof,getScriptManager
@@ -24,12 +28,20 @@ local function count(list)
  return n
 end
 local function plain(value)return type(value)=='table'and getmetatable(value)==nil end
+local function heldProof()
+ return plain(SupplyUse)and SupplyUse.supportsRetainedHeld==retainedHeld
+  and type(retainedHeld)=='function'and type(Proof)=='table'and Proof.closure==sourceClosure
+  and type(sourceClosure)=='function'and sourceClosure(retainedHeld,'DrainableSupplyUse.lua')
+end
 local function fullType(value)return type(value)=='string'and value:match('^[^.]+%.[^.]+$')~=nil end
 local function selectors(name)
  if type(name)~='string'then return end
  local tags=(name:find('Mohawk',1,true)or name:find('Spike',1,true)or name:find('GreasedBack',1,true))and name~='MohawkFlat'
- return {Hairgel=tags or name:find('Greased',1,true)~=nil,
-  Hairspray2=tags or name:find('Buffont',1,true)~=nil},not not tags
+ local gel,spray=name:find('Greased',1,true)~=nil,name:find('Buffont',1,true)~=nil
+ -- Later branches select only their short type. Bound every candidate's
+ -- possible uses across the whole completion without choosing any winner.
+ return {Hairgel=tags or gel,Hairspray2=tags or spray},not not tags,
+  {Hairgel=(tags and 1 or 0)+(gel and 1 or 0),Hairspray2=(tags and 1 or 0)+(spray and 1 or 0)}
 end
 -- Native Kahlua tables do not implement Lua weak keys; keep one bounded
 -- evaluation boundary instead of retaining every prior context.
@@ -39,7 +51,7 @@ local function inspect(action,result,policy,carried,context)
  if type(action)~='table'or not plain(result)or type(policy)~='table'or type(policy.addContainerResources)~='function'
   or type(carried)~='function'then return nil,'arguments'end
  for _,name in ipairs(maps)do if result[name]~=nil and not plain(result[name])then return nil,'result-map:'..name end end
- local short,tagged=selectors(action.hairStyle)
+ local short,tagged,budgets=selectors(action.hairStyle)
  if not short then return nil,'style-name'end
  if not short.Hairgel and not short.Hairspray2 then return {} end
  if getClassSimpleName~=classifier then return nil,'global-identity:getClassSimpleName'end
@@ -107,7 +119,8 @@ local function inspect(action,result,policy,carried,context)
     if item:getReplaceOnDeplete()~=nil then return false,'candidate-replacement'end
     if item:getWeightEmpty()~=0 then return false,'candidate-weight-empty'end
     if not finite(item:getActualWeight())or item:getActualWeight()<0 then return false,'candidate-weight'end
-    if actor:getPrimaryHandItem()==item or actor:getSecondaryHandItem()==item then return false,'candidate-held'end
+    if (actor:getPrimaryHandItem()==item or actor:getSecondaryHandItem()==item)
+     and(not heldProof()or not retainedHeld(actor,item,budgets[kind]or(tagged and 1 or 0)))then return false,'candidate-held'end
     if tagged and (not script or classifier(script)~='Item'or script:getFullName()~=full)then return false,'candidate-script'end
     staged.items[id],staged.itemTypes[full]=true,true
     if hasTag then staged.dynamicInputs[full]=true end

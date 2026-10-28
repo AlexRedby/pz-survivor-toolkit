@@ -31,6 +31,7 @@ local function setup(kind,client,options)
  local tool=f.item(kind=='ISDyeHair'and'Base.HairDyeCommon'or'Base.Scissors')
  tool.setJobDelta=function(_,value)tool.delta=value end
  local javaGlobals,bcStore={}
+ local stylingSupply,supplyUse,sourceProof
  if options.pending then
   getActivatedMods,getModFileReader=nil,nil
   local root=player.inventory;root.class='ItemContainer';root.live=true
@@ -75,32 +76,70 @@ local function setup(kind,client,options)
    local function list(values)return {kind='ArrayList',size=function()return #values end,get=function(_,i)return values[i+1]end}end
    local scripts={}
    ItemTag={DO_HAIRDO={}}
+   ItemType={DRAINABLE={}}
    local function script(kind)
-    if not scripts[kind]then scripts[kind]={kind='Item',getFullName=function()return kind end,hasTag=function()return kind=='Base.Hairgel'or kind=='Base.Hairspray2'or kind=='Mod.StyleWax'end}end
+    if not scripts[kind]then
+     local value={kind='Item'}
+     function value:getFullName()return kind end
+     function value:hasTag()return kind=='Base.Hairgel'or kind=='Base.Hairspray2'or kind=='Mod.StyleWax'end
+     function value:getItemType()return ItemType.DRAINABLE end
+     function value:hasComponents()return self.components==true end
+     function value:getObsolete()return self.obsolete==true end
+     function value:getLuaCreate()return self.luaCreate end
+     function value:getItemConfigKey()return self.configKey end
+     function value:getItemConfig()return self.config end
+     function value:getReplaceOnUse()return self.replaceOnUse end
+     function value:getReplaceOnDeplete()return self.replaceOnDeplete end
+     function value:getActualWeight()return .5 end
+     function value:isDisappearOnUse()return self.disappear~=false end
+     scripts[kind]=value
+    end
     return scripts[kind]
    end
    local function decorate(item)
-    local kind=item:getFullType();item.getType=function()return kind:match('[^.]+$')end
-    item.getScriptItem=function()return script(kind)end;item.hasTag=function()return script(kind):hasTag(ItemTag.DO_HAIRDO)end
+    local kind=item:getFullType();item.getType=function()return kind:match('[^.]+$')end;item.container=root
+    item.getContainer=function()return item.container end
+    item.getScriptItem=function()return item.script or script(kind)end;item.hasTag=function()return script(kind):hasTag(ItemTag.DO_HAIRDO)end
     if item:hasTag(ItemTag.DO_HAIRDO)then item.kind='DrainableComboItem'end
     item.isBroken=function()return false end
-    item.getWorldItem=function()end;item.getReplaceOnDeplete=function()return item.replacement end
-    item.getWeightEmpty=function()return 0 end;item.getActualWeight=function()return .5 end
+    item.uses=options.stylingUses or 5
+    item.getCurrentUses=function()return item.uses end;item.getUses=function()return item.uses end
+    item.getWorldItem=function()return item.world end;item.getReplaceOnDeplete=function()return item.replacement end
+    item.getReplaceOnUse=function()return item.replaceOnUse end
+    item.getLuaCreate=function()return item:getScriptItem():getLuaCreate()end
+    item.getWeightEmpty=function()return item.emptyWeight or 0 end;item.getActualWeight=function()return item.weight or .5 end
+    item.hasComponents=function()return item.components==true end
+    item.isDisappearOnUse=function()return item:getScriptItem():isDisappearOnUse()end
+    item.isKeepOnDeplete=function()return not item:isDisappearOnUse()end
+    item.getAttachedSlot=function()return item.attachedSlot or -1 end
+    item.getAttachedToModel=function()return item.attachedToModel end
+    item.getAttachedSlotType=function()return item.attachedSlotType end
+    item.getEquipParent=function()return item.equipParent end
+    item.isActivated=function()return item.activated==true end
+    item.getIsCraftingConsumed=function()return item.craftingConsumed==true end
+    item.isUseWhileEquiped=function()return item.autoEquipped==true end
+    item.isUseWhileUnequiped=function()return item.autoUnequipped==true end
+    item.UseAndSync=function()error('inspection executed styling cost')end
     script(kind);return item
    end
    local factory=f.item;f.item=function(kind)return decorate(factory(kind))end;decorate(tool)
-   local manager={kind='ScriptManager',getAllItems=function()
+   local manager={kind='ScriptManager',FindItem=function(_,kind)return scripts[kind]end,getAllItems=function()
     player.catalogReads=(player.catalogReads or 0)+1
     local values={};for _,value in pairs(scripts)do values[#values+1]=value end;return list(values)
    end}
    getScriptManager=function()return manager end;javaGlobals[getScriptManager]=true
    root.kind='ItemContainer'
    root.getItems=function()
-    local values={};for _,item in pairs(byID)do if item.present~=false then values[#values+1]=item end end
+    local values={};for _,item in pairs(byID)do if item.present~=false and item:getContainer()==root then values[#values+1]=item end end
     local items=list(values);items.contains=function(_,item)return item.present~=false and byID[item:getID()]==item end;return items
    end
-   player.getPrimaryHandItem=function()return nil end;player.getSecondaryHandItem=function()return nil end
-   f.item('Base.Hairgel');script('Mod.StyleWax')
+   player.getPrimaryHandItem=function()return player.primary end;player.getSecondaryHandItem=function()return player.secondary end
+   player.worn={}
+   player.getWornItems=function()return {kind='WornItems',contains=function(_,item)
+    for _,worn in pairs(player.worn)do if worn==item then return true end end;return false
+   end}end
+   player.isEquipped=function(_,item)return player.primary==item or player.secondary==item or player:getWornItems():contains(item)end
+   stylingSupply=f.item(options.stylingKind or'Base.Hairgel');script('Mod.StyleWax')
   end
   if options.bcText then
    local bcSource=text(NativeWishlistWorkshopRoot..'/3586216562/mods/BetterContainers/42.21/media/lua/client/BetterContainers/Categorize/CategoryStore.lua')
@@ -120,6 +159,8 @@ local function setup(kind,client,options)
  local savedRequire=require
  local grooming=options.earlyGrooming and f.project('ActionQueueGrooming')or nil
  require=function(name)
+  if name=='PZSurvivorToolkit/SourceProof'then sourceProof=sourceProof or f.project('SourceProof');return sourceProof end
+  if name=='PZSurvivorToolkit/DrainableSupplyUse'then supplyUse=supplyUse or f.project('DrainableSupplyUse');return supplyUse end
   if name=='PZSurvivorToolkit/TextResolverProof'and options.pending then return f.project('TextResolverProof')end
   if name=='BetterContainers/Categorize/CategoryStore'and bcStore then return bcStore end
   if name=='PZSurvivorToolkit/ActionQueueGroomingPending'and options.pending then return f.project('ActionQueueGroomingPending')end
@@ -156,7 +197,8 @@ local function setup(kind,client,options)
  end
  return {f=f,api=api,policy=policy,body=body,tail=tail,queue=queue,native=native,tool=tool,player=player,
   receipt=receipt,remove=function()live[native]=nil end,enabled=function(value)enabled=value end,
-  javaGlobals=javaGlobals,advance=function(value)now=now+value end}
+  javaGlobals=javaGlobals,stylingSupply=stylingSupply,supplyUse=supplyUse,sourceProof=sourceProof,
+  advance=function(value)now=now+value end}
 end
 if GroomingNativeSetupOnly then return setup end
 for _,kind in ipairs({'ISCutHair','ISTrimBeard','ISDyeHair'})do

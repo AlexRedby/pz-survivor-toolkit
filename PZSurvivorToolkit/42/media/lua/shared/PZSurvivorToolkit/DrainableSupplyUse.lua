@@ -1,6 +1,6 @@
--- Native makeup consumes a plain kit and may clear its hands/remove it.
+-- Reviewed native consumers use a plain drainable and may clear/remove it.
 -- Prove held-root cleanup and the final removal route without executing either.
--- Callers separately prove access, appearance effects and queue dependencies.
+-- Callers separately prove access, their effects and queue dependencies.
 local SupplyUse={}
 local classifier,instance,managerOf,server=getClassSimpleName,instanceof,getScriptManager,isServer
 local types,drainable=ItemType,ItemType and ItemType.DRAINABLE
@@ -107,6 +107,15 @@ local function hands(actor,kit,required)
 end
 function SupplyUse.supportsHeld(actor,kit)
  local ok,allowed=pcall(function()return state(actor,kit,false)and hands(actor,kit,true)end)
+ return ok and allowed==true
+end
+-- A selector may revisit this same object. The caller supplies an upper bound
+-- for the WHOLE completion, not a chosen winner or a per-call reservation.
+function SupplyUse.supportsRetainedHeld(actor,kit,budget)
+ local ok,allowed=pcall(function()
+  return integer(budget)and budget>=1
+   and state(actor,kit,false)and hands(actor,kit,true)and kit:getCurrentUses()>budget
+ end)
  return ok and allowed==true
 end
 function SupplyUse.supportsDepletion(actor,kit)

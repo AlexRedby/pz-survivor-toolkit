@@ -276,11 +276,11 @@ local function setup(options)
  for _,name in ipairs({'isServer','isClient','instanceof','getClassSimpleName','getScriptManager','instanceItem',
   'sendAddItemToContainer','sendRemoveItemFromContainer','sendClothing','sendItemStats','getCell','getVehicleById'})do java[_G[name]]=true end
  local access=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemAccess.lua'))()
- local finalUse=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/MakeupSupplyUse.lua'))()
+ local finalUse=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/DrainableSupplyUse.lua'))()
  local nativeRequire=require
  require=function(module)
   if module=='PZSurvivorToolkit/ItemAccess'then return access end
-  if module=='PZSurvivorToolkit/MakeupSupplyUse'then return finalUse end
+  if module=='PZSurvivorToolkit/DrainableSupplyUse'then return finalUse end
   return nativeRequire(module)
  end
  if options.foreignAccess then access[options.foreignAccess]=function()return kit end end

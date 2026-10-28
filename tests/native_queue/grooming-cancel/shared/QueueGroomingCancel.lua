@@ -1,6 +1,12 @@
 -- Disposable setup ends at baseline. All later helpers only observe native state.
 local F={cases={'borrowed-scissors','style-no-tool','styled-scissors','beard-trim','dye-hair','dye-beard','sprayed-scissors','greased-scissors'}}
-function F.baseCase(caseID)return (caseID:gsub('^active%-',''):gsub('^move%-',''))end
+local held={
+ ['move-held-gel-primary']={base='styled-scissors',primary='gel',secondary='secondary'},
+ ['move-held-spray-secondary']={base='sprayed-scissors',primary='torch',secondary='gel'},
+ ['move-held-gel-both']={base='greased-scissors',primary='gel',secondary='gel'},
+}
+function F.held(caseID)return held[caseID]end
+function F.baseCase(caseID)return held[caseID]and held[caseID].base or(caseID:gsub('^active%-',''):gsub('^move%-',''))end
 function F.moving(caseID)return caseID:sub(1,5)=='move-'end
 function F.moveAllowed(caseID)
  local base=F.baseCase(caseID);for _,known in ipairs(F.cases)do if base==known then return true end end;return false
@@ -43,6 +49,26 @@ function F.fluid(item)
  local fluid=assert(item:getFluidContainer(),'native dye fluid container missing');local color=fluid:getColor()
  return {id=item:getID(),amount=fluid:getAmount(),color={r=color:getR(),g=color:getG(),b=color:getB()}}
 end
+function F.hands(state)
+ local player,root=state.player,state.player:getInventory();local result={}
+ for _,slot in ipairs({'primary','secondary'})do
+  local item;if slot=='primary'then item=player:getPrimaryHandItem()else item=player:getSecondaryHandItem()end
+  local found=item and root:getItemById(item:getID())
+  result[slot]=item and{id=item:getID(),kind=item:getFullType(),root=found~=nil,sameReference=found==item,
+   container=item:getContainer()==root and'root'or false,equipParent=item:getEquipParent()==player}or false
+ end
+ return result
+end
+function F.handsReady(state)
+ local spec=F.held(state.ids.case);if not spec then return true end
+ local player,root=state.player,state.player:getInventory()
+ for _,slot in ipairs({'primary','secondary'})do
+  local item;if slot=='primary'then item=player:getPrimaryHandItem()else item=player:getSecondaryHandItem()end
+  local wanted=root:getItemById(state.ids.items[spec[slot]])
+  if not wanted or item~=wanted or item:getContainer()~=root or item:getEquipParent()~=player then return false end
+ end
+ return true
+end
 function F.snapshot(state)
  assert(F.refresh(state),'exact grooming item replica unavailable')
  local player=state.player;local rows,worn={},{}
@@ -57,10 +83,12 @@ function F.snapshot(state)
  local values=player:getWornItems()
  for i=0,values:size()-1 do local v=values:get(i);worn[#worn+1]={id=v:getItem():getID(),location=tostring(v:getLocation())}end
  table.sort(worn,function(a,b)return a.location<b.location end)
- return {case=state.ids.case,male=not player:isFemale(),items=rows,primary=id(player:getPrimaryHandItem()),secondary=id(player:getSecondaryHandItem()),worn=worn,
+ local snapshot={case=state.ids.case,male=not player:isFemale(),items=rows,primary=id(player:getPrimaryHandItem()),secondary=id(player:getSecondaryHandItem()),worn=worn,
   torchActive=state.torch:isActivated(),frontPages=player:getAlreadyReadPages(state.front:getFullType()),
   tailPages=player:getAlreadyReadPages(state.tail:getFullType()),appearance=F.appearance(player),
   gel=state.gel and{id=state.gel:getID(),uses=state.gel:getCurrentUses()}or false,dye=state.dye and F.fluid(state.dye)or false}
+ if F.held(state.ids.case)then snapshot.hands=F.hands(state)end
+ return snapshot
 end
 function F.same(a,b)
  if type(a)~=type(b)then return false end
@@ -116,8 +144,12 @@ local function equipment(state)
  p:setWornItem(state.bag:canBeEquipped(),state.bag)
  if state.hat then p:setWornItem(state.hat:getBodyLocation(),state.hat)end
  if state.mask then p:setWornItem(state.mask:getBodyLocation(),state.mask)end
- p:setPrimaryHandItem(state.torch);p:setSecondaryHandItem(state.secondary)
- state.torch:setUsedDelta(1);state.torch:setActivated(true)
+ local held=F.held(state.ids.case)
+ p:setPrimaryHandItem(held and state[held.primary]or state.torch);p:setSecondaryHandItem(held and state[held.secondary]or state.secondary)
+ -- Native DrainableComboItem.update immediately deactivates an unheld Torch.
+ -- Only the held-Torch bank case and legacy setup should start it activated.
+ local torchActive=true;if held then torchActive=held.primary=='torch'or held.secondary=='torch'end
+ state.torch:setUsedDelta(1);state.torch:setActivated(torchActive)
  local visual=p:getHumanVisual();visual:setHairModel(state.ids.initialStyle);visual:setNonAttachedHair(nil)
  -- Disposable setup must not inherit prior dye colors. These values are exact
  -- fixed points of native HumanVisual's float32 -> byte -> float32 transport.
@@ -187,6 +219,7 @@ function F.prepare(player,caseID,previous)
  end
  for _,name in ipairs({'front','tail'})do ids[name..'Total']=state[name]:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and 3 or 1)end
  equipment(state)
+ assert(F.handsReady(state),'authority held styling input is not exact actor-root equipment')
  if isServer()then
   for _,wanted in pairs(ids.items)do local item=assert(F.find(player,wanted));if item:getContainer()==root then sendAddItemToContainer(root,item)end end
   sendClothing(player,state.bag:canBeEquipped(),state.bag)
@@ -201,11 +234,23 @@ function F.resolve(player,ids)
  local state=resolved[ids]or{player=player,ids=ids}
  if isClient()and player:getOnlineID()~=ids.actor or not F.refresh(state)then return end
  if not resolved[ids]then
-  equipment(state)
-  player:resetModel();if isClient()then player:updateHandEquips();sendHumanVisual(player)end
+  if F.held(ids.case)then
+   -- Only reader bookkeeping is local disposable setup. Equipment and visual
+   -- proof must arrive from authority; no client hand/worn/appearance repair.
+   if not F.handsReady(state)then return nil,F.snapshot(state)end
+   for _,name in ipairs({'front','tail'})do
+    local book=state[name];local pages=ids[name..'Initial'];book:setAlreadyReadPages(pages);player:setAlreadyReadPages(book:getFullType(),pages)
+   end
+   player:setPerkLevelDebug(Perks.Woodwork,0);player:setPerkLevelDebug(Perks.Doctor,0)
+  else
+   equipment(state)
+   player:resetModel();if isClient()then player:updateHandEquips();sendHumanVisual(player)end
+  end
   resolved[ids]=state
  end
- if not F.sameSetup(F.snapshot(state),ids.baseline)then return end
+ if not F.handsReady(state)then return nil,F.snapshot(state)end
+ local actual=F.snapshot(state)
+ if not F.sameSetup(actual,ids.baseline)then return nil,actual end
  return state
 end
 function F.source(state,container)
@@ -258,7 +303,8 @@ function F.effectsMatch(state,value,baseline,native,remote,authority)
 end
 function F.restored(state,snapshot)
  local baseline=state.ids.baseline
+ local torchActive=true;if F.held(state.ids.case)then torchActive=baseline.torchActive end
  return F.same(snapshot.items,baseline.items)and snapshot.primary==baseline.primary and snapshot.secondary==baseline.secondary
-  and F.same(snapshot.worn,baseline.worn)and snapshot.torchActive==true
+  and F.same(snapshot.worn,baseline.worn)and snapshot.torchActive==torchActive and(not F.held(state.ids.case)or F.same(snapshot.hands,baseline.hands))
 end
 return F

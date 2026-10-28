@@ -4,8 +4,12 @@ local function read(path)
  local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
 end
 local loaded={}
-local Proof
+local Proof,SupplyUse
 require=function(name)
+ if name=='PZSurvivorToolkit/DrainableSupplyUse'then
+  SupplyUse=SupplyUse or assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua'))()
+  return SupplyUse
+ end
  if name=='PZSurvivorToolkit/ActionQueueGroomingCosts'then return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))()end
  if name=='PZSurvivorToolkit/TextResolverProof'then return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))()end
  if name=='PZSurvivorToolkit/ActionQueueGroomingPending'then return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))()end

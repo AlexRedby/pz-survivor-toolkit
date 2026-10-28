@@ -22,7 +22,7 @@ Events.OnPreUIDraw.Add(function()
 end)
 local entered,ready,done=false,false,false
 local phase,index,since='prepare',1,0
-local state,ids,previous,baseline,authorityBaseline,checkpoint,authorityFinal,baselineRequested
+local state,ids,previous,baseline,authorityBaseline,checkpoint,authorityFinal,baselineRequested,setupActual
 local front,tail,body,pickup,boundary,beforeTail,idle,quiet,records,actions,classes,ackRecords,observedTerminal
 local bodyStarts,bodyCompletes=0,0
 local outcomes,startedReceipt,nativeEpisodes={}
@@ -43,6 +43,11 @@ local function role(action)
  if action==front then return 'front'end
  if action==tail then return 'tail'end
  if action==body then return 'body'end
+ local held=F.held(case())
+ if held and(action.Type=='ISEquipWeaponAction'or action.Type=='P4RestoreAction')then
+  local item=itemID(action)
+  if item==ids.items[held.primary]or item==ids.items[held.secondary]then return 'restore'end
+ end
  local borrowed=F.borrowed(state)
  if borrowed and action.Type=='ISInventoryTransferAction'and itemID(action)==borrowed:getID()then
   if F.source(state,action.srcContainer)and action.destContainer==state.player:getInventory()then pickup=action;return 'prepare'end
@@ -62,6 +67,9 @@ local function register(action)
  end
  row={sequence=serial,role=kind,kind=action.Type,item=itemID(action),constructorDuration=duration,started=false,starts=0,
   finishes={},nativeRef=false,transaction=false,token=false,terminal=false}
+ if kind=='restore'then
+  row.restoration={primary=action.primary==true,twoHands=action.twoHands==true,activated=action.activated==true,begins=0,source=false}
+ end
  records[#records+1]=row;actions[action]=row
  local class=getmetatable(action)
  if not classes[class]then
@@ -81,8 +89,35 @@ local function intact()
  local contract,adapter=T.ActionQueuePolicy.inspect(body)
  assert(contract and adapter=='native.'..ids.actionKind and (F.moveAllowed(case())or contract.knownInputs==false),'source-pinned native haircut inspector unavailable')
 end
+local function restorationProof(action,row)
+ local class=getmetatable(action);local compat=T.ActionQueueCompat
+ assert(_G[action.Type]==class and type(compat)=='table'and compat.isInstalled('P4TidyUpMeister')
+  and compat.verifySources('P4TidyUpMeister'),'reviewed P4 restoration source unavailable')
+ local contract,adapter=T.ActionQueuePolicy.inspect(action)
+ if action.Type=='ISEquipWeaponAction'then
+  assert(contract and(adapter=='native.ISEquipWeaponAction'or adapter=='compat.tidy-equipment'),'native/P4 equipment restoration inspection missing')
+ else
+  assert(action.Type=='P4RestoreAction'and Proof.closure(class.new,'P4RestoreAction.lua')
+   and Proof.closure(class.isValid,'P4RestoreAction.lua')and Proof.closure(class.perform,'P4RestoreAction.lua'),'native P4 restoration callbacks changed')
+  assert(not adapter or adapter=='compat.tidy-equipment','foreign P4 restoration inspection')
+  adapter=adapter or'P4RestoreAction.source'
+ end
+ if adapter=='compat.tidy-equipment'then
+  assert(contract.callbacksSafe==true,'P4 restoration callbacks are not source bound')
+ else
+  for _,name in ipairs({'onStartFunc','onCancelFunc','onCompleteFunc','onFailFunc','retriggerLastAction','additionalTest','additionalContext'})do
+   assert(action[name]==nil or action[name]==false,'P4 restoration injected callback '..name)
+  end
+  for name,callback in pairs(action)do
+   if type(callback)=='function'then assert(class[name]==callback,'P4 restoration injected function '..name)end
+  end
+ end
+ if row.restoration.source then assert(row.restoration.source==adapter,'P4 restoration binding changed')end
+ row.restoration.source=adapter
+end
 local function observeStarted(action)
  local row=register(action);if not row then return end
+ if row.restoration then restorationProof(action,row);row.restoration.begins=row.restoration.begins+1 end
  if action==tail then
   assert(not beforeTail,'independent tail began twice')
   beforeTail={case=case(),at=now(),callback='ISBaseTimedAction.begin',snapshot=snapshot()};raw('BEFORE_TAIL',beforeTail)
@@ -94,6 +129,7 @@ local function observeStarted(action)
 end
 local function observeBegin(action,step)
  local row=register(action);if not row then return end
+ if row.restoration and step=='perform'then restorationProof(action,row)end
  if step=='perform'and action.Type=='ISInventoryTransferAction'then
   row.transaction=action.transactionId or false
   local live=isClient()and type(action.transactionId)=='number'and action.transactionId~=0
@@ -164,8 +200,12 @@ Events.OnServerCommand.Add(function(module,name,args)
  elseif name=='Failed'then error(args.error)end
 end)
 local function enqueue()
- assert(F.sameSetup(snapshot(),ids.baseline),'local grooming baseline differs from exact authority setup')
- baseline=snapshot();records,actions,classes,ackRecords,observedTerminal={},{},{},{},{};serial=0
+ local actual=snapshot()
+ if not F.sameSetup(actual,ids.baseline)then
+  raw('BASELINE_MISMATCH',{case=case(),at=now(),actual=actual,expected=ids.baseline})
+  error('local grooming baseline differs from exact authority setup')
+ end
+ baseline=actual;records,actions,classes,ackRecords,observedTerminal={},{},{},{},{};serial=0
  bodyStarts,bodyCompletes=0,0;outcomes,startedReceipt,nativeEpisodes={},nil,{}
  assert(not state.player:isTimedActionInstant()and not getDebug(),'native haircut producer requires ordinary non-debug durations/equip')
  if moving()or baseCase()=='style-no-tool'then front=ISReadABook:new(state.player,state.front);ISTimedActionQueue.add(front)end
@@ -211,6 +251,7 @@ local function moveAtBoundary()
  end
  assert(#group>0 and beforeOrder[1]==actions[front].sequence and beforeOrder[2]==actions[tail].sequence
   and #beforeOrder==#group+2,'grooming producer group was detached before move')
+ if F.held(case())then assert(F.handsReady(state),'held styling input was stowed or replaced before move admission')end
  local before=snapshot();local progress=current:getJobDelta();local at=now()
  local accepted,reason=false,false
  if not native then accepted,reason=T.ActionQueue.move(queue(),body,tail,false)end
@@ -283,7 +324,7 @@ local function finish()
  emit({event='case',id=case(),status='passed',ids=ids,baseline=baseline,command=command,receipt=authorityFinal,clientFinal=actual,nativeMethodsUnchanged=true})
  previous=ids;index=index+1;state,ids,baseline,authorityBaseline,checkpoint,authorityFinal=nil,nil,nil,nil,nil,nil
  front,tail,body,pickup,boundary,beforeTail,idle,quiet,records,actions,classes,ackRecords,observedTerminal=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
- baselineRequested=nil;since=now();phase='prepare'
+ baselineRequested,setupActual=nil,nil;since=now();phase='prepare'
  if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
 end
 Events.OnGameStart.Add(function()entered=true;since=now()end)
@@ -303,7 +344,10 @@ Events.OnTick.Add(function()
   if records and not observe()then return end
   if phase=='prepare'then if not empty()then return end;phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
-   if not state then state=F.resolve(player,ids);if not state then return end end
+   if not state or F.held(case())then
+    local settled,actual=F.resolve(player,ids);setupActual=actual
+    if not settled then return end;state=settled;setupActual=nil
+   end
    if isClient()and not baselineRequested then baselineRequested=true;phase='baseline';request('Baseline');return end
    if not player:tooDarkToRead()then enqueue()end
   elseif phase=='baseline'and authorityBaseline then if not player:tooDarkToRead()then enqueue()end
@@ -317,7 +361,8 @@ Events.OnTick.Add(function()
   elseif phase=='verify'and authorityFinal then finish()end
  end)
  if not ok then
-  emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(problem),command={boundary=boundary or false,records=records or{},bodyStarts=bodyStarts,bodyCompletes=bodyCompletes},ids=ids or false})
+  local actual=setupActual or false;if state then local observed,value=pcall(snapshot);if observed then actual=value end end
+  emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(problem),actualSnapshot=actual,command={boundary=boundary or false,records=records or{},bodyStarts=bodyStarts,bodyCompletes=bodyCompletes},ids=ids or false})
   print('[QUEUE_TEST] FAIL grooming-cancel '..tostring(problem));done=true
  end
 end)
