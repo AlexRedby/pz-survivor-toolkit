@@ -104,6 +104,50 @@ do
  assert(not Tags.matchesRule(tags,rule),'rule matching retained an earlier tag-set cache')
 end
 
+-- Grouped conditions use OR between branches and AND within each branch.
+do
+ local grouped=assert(Tags.normalizeRule({groups={
+  {include={'mechanics'},exclude={'vehiclepart'}}, {include={'perishable'},exclude={}}
+ }}))
+ assert(Tags.matchesRule({'mechanics'},grouped))
+ assert(not Tags.matchesRule({'mechanics','vehiclepart'},grouped))
+ assert(Tags.matchesRule({'perishable','vehiclepart'},grouped),'exclusion escaped its own branch')
+ assert(not Tags.matchesRule({'food'},grouped))
+ assert(Tags.ruleActive(grouped) and Tags.ruleIncludes(grouped,'mechanics') and not Tags.ruleIncludes(grouped,'vehiclepart'))
+ local draft=Tags.ruleGroups(grouped);draft[1].include[1]='food'
+ assert(grouped.groups[1].include[1]=='mechanics','group draft aliases saved rule')
+ assert(Tags.fromRuleGroups({{include={'food','perishable'},exclude={'meat'}}}).mode=='all')
+ local legacy={mode='any',include={'food','mechanics'},exclude={'vehiclepart'}}
+ local branches=assert(Tags.ruleGroups(legacy))
+ assert(#branches==2 and branches[1].exclude~=branches[2].exclude)
+ local collapsed=assert(Tags.fromRuleGroups(branches));assert(collapsed.mode=='any')
+ for _,itemTags in ipairs({{}, {'food'}, {'mechanics'}, {'food','vehiclepart'}, {'mechanics','perishable'}}) do
+  assert(Tags.matchesRule(itemTags,legacy)==Tags.matchesRule(itemTags,{groups=branches}))
+  assert(Tags.matchesRule(itemTags,legacy)==Tags.matchesRule(itemTags,collapsed))
+ end
+ local large={mode='any',include={},exclude={}}
+ for i=1,64 do large.include[i]='category:Include'..i;large.exclude[i]='category:Exclude'..i end
+ local roundtrip=assert(Tags.fromRuleGroups(assert(Tags.ruleGroups(large))))
+ assert(roundtrip.mode=='any' and #roundtrip.include==64 and #roundtrip.exclude==64)
+ assert(Tags.matchesRule({'category:Include64'},roundtrip))
+ assert(not Tags.matchesRule({'category:Include64','category:Exclude64'},roundtrip))
+ local negative=assert(Tags.fromRuleGroups({{exclude={'vehiclepart'}},{include={'perishable'}}}))
+ assert(Tags.matchesRule({},negative) and not Tags.matchesRule({'vehiclepart'},negative))
+ assert(Tags.matchesRule({'vehiclepart','perishable'},negative))
+ local unconditional=assert(Tags.normalizeRule({groups={{include={'food'}},{}}}))
+ assert(Tags.matchesRule({},unconditional) and not Tags.ruleActive(unconditional),'empty branch truth changed')
+ assert(Tags.matchesRule({},Tags.fromRuleGroups(Tags.ruleGroups({mode='any',exclude={'food'}}))))
+ for _,bad in ipairs({{groups={}}, {groups=false}, {groups={[2]={}}}, {groups={extra={}}},
+  {groups={{mode='all'}}}, {groups={{include={'food'},exclude={'food'}}}},
+  {groups={{include={[2]='food'}}}}, {groups={{include={'unknown'}}}},
+  {groups={{}},mode='all'}, {groups={{}},include={}}, {groups={{}},extra=true}}) do
+  assert(not Tags.normalizeRule(bad) and not Tags.matchesRule({},bad),'malformed grouped rule accepted')
+ end
+ local tooMany={};for i=1,65 do tooMany[i]={include={'food'}} end
+ assert(not Tags.fromRuleGroups(tooMany))
+ assert(not Tags.fromRuleGroups({{include=huge}}))
+end
+
 local function scriptItem(fullType, category, doubleClick)
  return {fullType=fullType,category=category,
   getFullName=function(self) return self.fullType end,

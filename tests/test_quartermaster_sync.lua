@@ -156,6 +156,19 @@ boxes, synced = LootSorter.gatherBoxes(player)
 assert(synced and #boxes == 1 and boxes[1].cats.Manual and Rules.presetsSynced(), 'disabled tags lost native selections')
 begin(); waiting(); receive(snapshot(0))
 assert(LootSorter.arePresetsSynced(), 'new world could not restart its revision sequence')
+-- Complete Host snapshots carry grouped rules through the same detached read API.
+begin();waiting()
+local grouped={groups={{include={'mechanics'},exclude={'vehiclepart'}},{include={'perishable'},exclude={}}}}
+receive(snapshot(0,{},grouped))
+local groupedBoxes,groupedSynced=LootSorter.gatherBoxes(player)
+assert(groupedSynced and #groupedBoxes==1)
+local received=Rules.getPreset('Pantry',LootSorter.getPresetStore().Pantry)
+received.groups[1].include[1]='food'
+assert(Rules.getPreset('Pantry',LootSorter.getPresetStore().Pantry).groups[1].include[1]=='mechanics',
+ 'grouped snapshot read aliases synchronized state')
+local Tags=require 'PZSurvivorToolkit/ItemTags'
+assert(Tags.matchesRule({'perishable','vehiclepart'},groupedBoxes[1].rules[1]))
+assert(not Tags.matchesRule({'mechanics','vehiclepart'},groupedBoxes[1].rules[1]))
 client = false
 assert(LootSorter.arePresetsSynced(), 'single-player acquired a network prerequisite')
 print('Quartermaster sync passed: complete snapshots, obsolete/out-of-order replies, draft isolation, empty stores, generations and read-only discovery.')

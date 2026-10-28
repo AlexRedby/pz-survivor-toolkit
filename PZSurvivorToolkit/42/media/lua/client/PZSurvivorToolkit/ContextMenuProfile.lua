@@ -35,7 +35,13 @@ local function clone(value)
     for key, child in pairs(value) do result[key] = clone(child) end
     return result
 end
-local function parse(lines, Rules, Tags)
+local function boundedIndex(value, maximum)
+    if type(value) ~= "string" or #value > 2 or not value:match("^[1-9]%d*$") then return end
+    local number = tonumber(value)
+    if number <= maximum then return number end
+end
+
+local function parse(lines, Rules, Tags, version)
     local self, builtin = empty(), {root = true, hidden = true}
     for _, id in ipairs(Rules.groups) do builtin[id] = true end
     local function allowed(id) return builtin[id] or self.customGroups[id] ~= nil end
@@ -57,20 +63,47 @@ local function parse(lines, Rules, Tags)
     local filters, ordered = {}, {}
     for _, row in ipairs(pending) do
         if row[1] == "F" and type(row[2]) == "string" and row[2]:match("^tags:%d+$") and #row[2] <= 160
-            and not filters[row[2]] and #ordered < 64 and cleanName(row[3]) and (row[4] == "all" or row[4] == "any") then
-            filters[row[2]] = {id = row[2], name = row[3], rule = {mode = row[4], include = {}, exclude = {}}}
-            ordered[#ordered + 1] = filters[row[2]]
+            and cleanName(row[3]) then
+            local existing = filters[row[2]]
+            if existing then
+                if existing.rule.groups or row[4] == "groups" then existing.invalid = true end
+            elseif #ordered < 64 then
+                local rule
+                if row[4] == "all" or row[4] == "any" then rule = {mode = row[4], include = {}, exclude = {}}
+                elseif row[4] == "groups" and version == 2 and #row == 5 then
+                    local count = boundedIndex(row[5], 64)
+                    if count then
+                        rule = {groups = {}}
+                        for index = 1, count do rule.groups[index] = {include = {}, exclude = {}} end
+                    end
+                end
+                if rule then
+                    local profile = {id = row[2], name = row[3], rule = rule}
+                    filters[row[2]], ordered[#ordered + 1] = profile, profile
+                end
+            end
         end
     end
     for _, row in ipairs(pending) do
-        local profile = row[1] == "A" and filters[row[2]]
-        if profile and (row[3] == "include" or row[3] == "exclude") then
-            local values = profile.rule[row[3]]
-            if #values < 65 then values[#values + 1] = row[4] or "" end
+        local profile = (row[1] == "A" or row[1] == "B") and filters[row[2]]
+        if profile then
+            if profile.rule.groups then
+                local index = row[1] == "B" and boundedIndex(row[3], #profile.rule.groups)
+                if not index or #row ~= 5 or (row[4] ~= "include" and row[4] ~= "exclude") then
+                    profile.invalid = true
+                else
+                    local values = profile.rule.groups[index][row[4]]
+                    if #values >= 64 then profile.invalid = true else values[#values + 1] = row[5] end
+                end
+            elseif row[1] == "B" then profile.invalid = true
+            elseif row[3] == "include" or row[3] == "exclude" then
+                local values = profile.rule[row[3]]
+                if #values < 65 then values[#values + 1] = row[4] or "" end
+            end
         end
     end
     for _, profile in ipairs(ordered) do
-        local rule = Tags and Tags.normalizeRule(profile.rule)
+        local rule = not profile.invalid and Tags and Tags.normalizeRule(profile.rule)
         if rule and Tags.ruleActive(rule) then profile.rule = rule; self.tagProfiles[#self.tagProfiles + 1] = profile end
     end
     for _, row in ipairs(pending) do
@@ -106,16 +139,26 @@ local function parse(lines, Rules, Tags)
 end
 
 local function serialize(self)
-    local lines = {}
+    local lines, version = {}, 1
     local function line(...)
         local fields = {}; for i = 1, select('#', ...) do fields[i] = encode(select(i, ...)) end
         lines[#lines + 1] = table.concat(fields, "|")
     end
     for id, name in pairs(self.customGroups) do line("G", id, name) end
     for _, profile in ipairs(self.tagProfiles) do
-        line("F", profile.id, profile.name, profile.rule.mode)
-        for _, field in ipairs({"include", "exclude"}) do
-            for _, tag in ipairs(profile.rule[field]) do line("A", profile.id, field, tag) end
+        if profile.rule.groups then
+            version = 2
+            line("F", profile.id, profile.name, "groups", #profile.rule.groups)
+            for index, group in ipairs(profile.rule.groups) do
+                for _, field in ipairs({"include", "exclude"}) do
+                    for _, tag in ipairs(group[field]) do line("B", profile.id, index, field, tag) end
+                end
+            end
+        else
+            line("F", profile.id, profile.name, profile.rule.mode)
+            for _, field in ipairs({"include", "exclude"}) do
+                for _, tag in ipairs(profile.rule[field]) do line("A", profile.id, field, tag) end
+            end
         end
     end
     for itemType, tags in pairs(self.typeTags) do
@@ -133,7 +176,7 @@ local function serialize(self)
     for scope, parents in pairs(self.orders) do
         for parent, keys in pairs(parents) do for index, key in ipairs(keys) do line("O", scope, parent, index, key) end end
     end
-    return lines
+    return lines, version
 end
 
 function Profile.new(Rules, Tags)
@@ -149,7 +192,7 @@ function Profile.new(Rules, Tags)
         if snapshot then return true end
         local ok, candidate, data = pcall(function()
             local context = Storage.load()
-            return context, parse(context.lines, Rules, Tags)
+            return context, parse(context.lines, Rules, Tags, context.version or 1)
         end)
         if not ok then return failed("ReadFailed", candidate) end
         -- Discovery may continue while storage is unavailable; preferences always come from the verified disk state.

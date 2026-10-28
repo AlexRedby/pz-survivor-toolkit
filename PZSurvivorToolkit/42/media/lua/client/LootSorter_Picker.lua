@@ -18,6 +18,7 @@ local TagRules = require "PZSurvivorToolkit/QuartermasterTagRules"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Categories = require "PZSurvivorToolkit/ItemCategories"
 local AppearanceControls = require "PZSurvivorToolkit/ContainerAppearanceControls"
+local UIStyle = require "PZSurvivorToolkit/UIStyle"
 
 LootSorter = LootSorter or {}
 LootSorter.toolkitTagPicker = true
@@ -54,7 +55,7 @@ end
 function Picker:activeList()
     if self.mode == "items" then return LootSorter.getItemNames()
     elseif self.mode == "presets" then return LootSorter.presetNames(LootSorter.getPresetStore())
-    elseif Tags.enabled() then return TagPicker.categories(LootSorter.getCategories(), self.selectedCats)
+    elseif Tags.enabled() then return TagPicker.categories(TagPicker.catalog(self).visibleCategories, self.selectedCats)
     else return LootSorter.getCategories() end
 end
 
@@ -301,6 +302,8 @@ function Picker:createChildren()
 
     self:layout()
     self:rebuild()
+    self.toolkitTagsEnabled = Tags.enabled()
+    self._lw, self._lh = self:getWidth(), self:getHeight()
 end
 
 -- position every control from the CURRENT window size, so resizing stays aligned and nothing clips
@@ -462,7 +465,13 @@ function Picker:prerender()
         self:layout()
         if self.joypadConfigured then self:configJoypad() end
     end
-    self.toolkitTagRuleButton:setTitle(getText("UI_PZST_QMTagRule") .. (Tags.ruleActive(self.toolkitTagRule) and " *" or ""))
+    if self.toolkitSummaryRule ~= self.toolkitTagRule or not self.toolkitRuleSummary then
+        self.toolkitSummaryRule = self.toolkitTagRule
+        self.toolkitRuleSummary = TagPicker.ruleSummary(self.toolkitTagRule)
+        self.toolkitTagRuleButton:setTooltip(self.toolkitRuleSummary)
+    end
+    self.toolkitTagRuleButton:setTitle(UIStyle.fit(
+        getText("UI_PZST_QMTagRule") .. ": " .. self.toolkitRuleSummary, self.toolkitTagRuleButton.width - 16))
     self.toolkitTagSwitch:setTitle(getText(self.toolkitTagView and "UI_PZST_QMShowCategories" or "UI_PZST_QMShowTags"))
     ISCollapsableWindow.prerender(self)
     if self.configJoypadLater then self.configJoypadLater = false; self:configJoypad() end
@@ -598,10 +607,8 @@ function Picker:onSelectFiltered()
             for _, entry in ipairs(entries) do
                 if not entry.item.requiresRule then TagPicker.selectRow(self.selectedCats, entry.item, true) end
             end
-            local included = {}
-            for _, tag in ipairs(rule and rule.include or {}) do included[tag] = true end
             for _, row in ipairs(candidates) do
-                if not row.requiresRule or included[row.tag] then
+                if not row.requiresRule or Tags.ruleIncludes(rule, row.tag) then
                     AppearanceControls.select(self, row.tag and "tag" or "cats", row.tag or row.key)
                     break
                 end

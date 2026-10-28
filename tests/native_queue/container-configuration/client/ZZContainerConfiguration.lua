@@ -9,6 +9,8 @@ local JSON=require 'QueueHealthEvents'
 local started,done,since,nextAt,phase=false,false,0,0,'prepare'
 local packet,obj,picker,role,go,observe,finished,localReceipt
 local menuClasses=0
+local ruleTimings={}
+local openingProfile
 local function emit(event,value) print('[CONTAINER_CONFIG] '..event..' '..JSON.encode(value))end
 local function close()if LootSorter._picker then LootSorter._picker:closePicker()end end
 local function shot(name)
@@ -45,6 +47,25 @@ local function checkTagIcon()
  assert(icon and icon.kind=='pzst-tag' and icon.value==F.tag,'Tag icon descriptor missing')
  local texture=assert(Visuals.get(F.tag).texture,'Real tag texture missing')
  assert(Helpers.getIconTexture(icon)==texture,'BC helper did not resolve persisted tag icon')
+end
+local function assertGroupedConditions(rulePicker)
+ local groups=assert(rulePicker.conditions,'Rule editor condition groups absent')
+ assert(#groups==2 and #groups[1]==3 and #groups[2]==2,'Grouped condition rows differ')
+ local expected={{{'food',false},{'perishable',false},{'meat',true}},
+                 {{'mechanics',false},{'vehiclepart',true}}}
+ for gi,group in ipairs(groups)do
+  for ri,row in ipairs(group)do
+   assert(row.id==expected[gi][ri][1] and row.excluded==expected[gi][ri][2],
+    'Visible condition row/order/polarity differs')
+  end
+ end
+ local normalized=assert(rulePicker.rule,'Normalized rule absent')
+ assert(#normalized.groups==2 and #normalized.groups[1].include==2
+  and normalized.groups[1].include[1]=='food' and normalized.groups[1].include[2]=='perishable'
+  and #normalized.groups[1].exclude==1 and normalized.groups[1].exclude[1]=='meat'
+  and #normalized.groups[2].include==1 and normalized.groups[2].include[1]=='mechanics'
+  and #normalized.groups[2].exclude==1 and normalized.groups[2].exclude[1]=='vehiclepart',
+  'Normalized grouped condition semantics differ')
 end
 local function probeMenus()
  local page=assert(getPlayerLoot(0));page:refreshBackpacks()
@@ -101,6 +122,9 @@ local function tick()
   phase=role=='client1' and 'start' or 'observe'
  elseif phase=='start'then
   if not go then return end
+  if selection.options.profile_container_open and not openingProfile then
+   openingProfile=require 'ContainerConfigurationTiming';openingProfile.begin();phase='opening-profile';return
+  end
   print('[CONTAINER_CONFIG_DIAG] editing local='..tostring(player:getUsername())..' specific='..tostring(getSpecificPlayer(0):getUsername())..' role='..tostring(role))
   probeMenus()
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker);checkControls()
@@ -115,6 +139,8 @@ local function tick()
   Controls.chooseIcon(picker)
   assert(picker.toolkitIconPicker and #picker.toolkitIconPicker.list.items>0,'Real icon chooser absent/empty')
   phase='icon';nextAt=getTimestampMs()+1200
+ elseif phase=='opening-profile'then
+  if openingProfile.step(obj)then phase='start' end
  elseif phase=='icon'then
   shot('icon')
   local chooser=assert(picker.toolkitIconPicker);local selected
@@ -138,10 +164,49 @@ local function tick()
   checkTagIcon()
   picker.appearanceName:setText(F.name);pickColor()
   assert(picker.appearanceName:getInternalText()==F.name,'Manual name override missing')
-  emit('DEFAULTS',{tag=F.tag,item=F.item,role=role,menuClasses=menuClasses})
   picker.selectedCats={[packet.category]=true};picker.selectedItems={};picker.selectedPresets={};picker.selection=picker.selectedCats;picker:setPriority(6)
-  picker.toolkitTagRule={mode='all',include={'food','perishable'},exclude={'meat'}}
-  picker.toolkitTagRuleTouched=true
+  picker.toolkitTagRule={}
+  local beforeOpen=getTimestampMs()
+  picker:onTagRule()
+  local rulePicker=assert(picker.toolkitRulePicker,'Actual tag-rule entry did not open editor')
+  local afterOpen=getTimestampMs()
+  rulePicker:clearRule()
+  local beforeChooser=getTimestampMs()
+  local chooser=rulePicker:addCondition(1)
+  local afterChooser=getTimestampMs()
+  chooser=assert(chooser and rulePicker.tagChoice,'Empty condition did not open tag chooser')
+  chooser.search:setText(Tags.label('food'))
+  ruleTimings={ruleOpenMs=afterOpen-beforeOpen,chooserOpenMs=afterChooser-beforeChooser,
+   ruleEditMs=afterChooser-afterOpen}
+  phase='tag-shot';nextAt=getTimestampMs()+1200
+ elseif phase=='tag-shot'then
+  local rulePicker=assert(picker.toolkitRulePicker,'Rule editor disappeared before tag choice')
+  local chooser=assert(rulePicker.tagChoice,'Tag chooser disappeared before screenshot')
+  chooser:reload()
+  shot('tags')
+  local food
+  for _,row in ipairs(chooser.list.items)do
+   if row.item.id=='food' then food=row.item;break end
+  end
+  assert(food,'Filtered tag chooser did not contain the actual food entry')
+  local editStarted=getTimestampMs()
+  chooser:choose(food)
+  rulePicker:addCondition(1,'perishable',false)
+  rulePicker:addCondition(1,'meat',true)
+  rulePicker:addGroup('mechanics',false)
+  rulePicker:addCondition(2,'vehiclepart',true)
+  assertGroupedConditions(rulePicker)
+  ruleTimings.ruleEditMs=ruleTimings.ruleEditMs+getTimestampMs()-editStarted
+  emit('DEFAULTS',{tag=F.tag,item=F.item,role=role,menuClasses=menuClasses,
+   ruleOpenMs=ruleTimings.ruleOpenMs,ruleEditMs=ruleTimings.ruleEditMs,
+   chooserOpenMs=ruleTimings.chooserOpenMs})
+  phase='rule-shot';nextAt=getTimestampMs()+1200
+ elseif phase=='rule-shot'then
+  shot('rules')
+  local rulePicker=assert(picker.toolkitRulePicker,'Rule editor disappeared before apply')
+  assertGroupedConditions(rulePicker)
+  rulePicker:apply()
+  assert(not picker.toolkitRulePicker and picker.toolkitTagRuleTouched,'Rule editor Apply did not commit')
   picker.needRebuild=true
   phase='edit';nextAt=getTimestampMs()+1200
  elseif phase=='edit'then
@@ -156,8 +221,15 @@ local function tick()
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker)
   assert(picker.appearanceName:getInternalText()==F.name and picker.selectedCats[packet.category]
    and picker.toolkitAppearance.icon.value==F.tag and picker.toolkitAppearance.color.r==F.color.r
-   and picker.priority==6 and picker.toolkitTagRule.include[2]=='perishable','Reopen lost unified fields')
+   and picker.priority==6,'Reopen lost unified fields')
   checkTagIcon()
+  picker:onTagRule()
+  local reopenedRules=assert(picker.toolkitRulePicker,'Saved rules did not reopen')
+  assertGroupedConditions(reopenedRules)
+  reopenedRules:toggleCondition(1,1)
+  assert(reopenedRules.rule.groups[1].exclude[1]=='food','Rule draft mutation did not apply')
+  reopenedRules:close()
+  assert(not picker.toolkitRulePicker,'Rule draft Cancel left editor open')
   picker.appearanceName:setText('Cancelled draft');picker:setPriority(99);picker.selectedCats={}
   picker.toolkitAppearance={};picker.toolkitAppearanceTouched=true;picker:closePicker()
   localReceipt=F.receipt(obj,player,packet.category);assert(F.matches(localReceipt),'Cancel changed stored fields')
@@ -173,6 +245,10 @@ local function tick()
   assert(picker.appearanceName:getInternalText()==F.name and picker.selectedCats[packet.category]
    and picker.toolkitAppearance.icon.value==F.tag and picker.toolkitAppearance.color.b==F.color.b,'Observer editor differs')
   checkTagIcon()
+  picker:onTagRule()
+  local observerRules=assert(picker.toolkitRulePicker,'Observer grouped rules absent')
+  assertGroupedConditions(observerRules)
+  observerRules:close()
   phase='observer-shot';nextAt=getTimestampMs()+1200
  elseif phase=='observer-shot'then
   shot('observer')

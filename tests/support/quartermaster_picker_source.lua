@@ -1,6 +1,7 @@
 -- UI primitives only: window construction, rows, modes and save callbacks come from the owned picker.
 return function(control, rules, options)
     options = options or {}
+    local isListableScriptItem = LootSorter.isListableScriptItem
     local function rect(x, y, w, h)
         local c = control()
         c.x, c.y, c.width, c.height = x, y, w, h
@@ -97,6 +98,7 @@ return function(control, rules, options)
     local publications, coordinates = {}, 0
     local preset = {cats = {OC_Food = true}, items = {Beans = true}, rev = 7, gen = 'generation'}
     LootSorter = {PRIORITY_MAX_DIGITS = 5, DBG = function() end,
+        isListableScriptItem = isListableScriptItem,
         getCategories = options.categories or function() return {'OC_Food', 'OC_FoodPerishable', 'OC_Electrical'} end,
         getTagScriptItems = options.scriptItems or function() return {} end,
         getItemNames = function() return {'Beans', 'Hammer'} end,
@@ -106,6 +108,17 @@ return function(control, rules, options)
         notify = function(_, message) failures[#failures + 1] = message end,
         addCoord = function() coordinates = coordinates + 1 end,
         removeCoords = function() coordinates = coordinates + 1 end}
+    getAllItems = function()
+        local scripts = options.scriptItems and options.scriptItems() or {}
+        if not options.scriptItems then
+            local tags = require 'PZSurvivorToolkit/ItemTags'
+            for _, category in ipairs(LootSorter.getCategories()) do
+                scripts[#scripts + 1] = {tags = tags.forCategory(category),
+                    getDisplayCategory = function() return category end}
+            end
+        end
+        return {size = function() return #scripts end, get = function(_, index) return scripts[index + 1] end}
+    end
     local function event() return {Add = function() end, Remove = function() end} end
     Events.OnReceiveGlobalModData, Events.OnTick, Events.OnObjectAdded = event(), event(), event()
     isClient, isServer = function() return false end, function() return false end

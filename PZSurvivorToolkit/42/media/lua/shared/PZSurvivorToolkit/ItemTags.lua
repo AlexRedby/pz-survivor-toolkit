@@ -104,15 +104,15 @@ function Tags.matches(categoryOrTags, selected, mode)
     return matchesSelection(tagSet(categoryOrTags), selected, mode)
 end
 
-function Tags.normalizeRule(value)
-    if value == nil then return {mode = "all", include = {}, exclude = {}} end
-    if type(value) ~= "table" then return nil, "invalid rule" end
+Tags.MAX_RULE_GROUPS = 64
+Tags.MAX_RULE_TERMS = 64
+
+local function normalizeGroup(value)
+    if type(value) ~= "table" then return nil, "invalid group" end
     for key in pairs(value) do
-        if key ~= "mode" and key ~= "include" and key ~= "exclude" then return nil, "unknown rule field" end
+        if key ~= "include" and key ~= "exclude" then return nil, "unknown group field" end
     end
-    local mode = value.mode == nil and "all" or value.mode
-    if mode ~= "all" and mode ~= "any" then return nil, "invalid match mode" end
-    local result, included = {mode = mode}, {}
+    local result, included = {}, {}
     for _, field in ipairs({"include", "exclude"}) do
         local source, seen, list, count = value[field], {}, {}, 0
         if source == nil then source = {} end
@@ -136,17 +136,119 @@ function Tags.normalizeRule(value)
     return result
 end
 
+function Tags.normalizeRule(value)
+    if value == nil then return {mode = "all", include = {}, exclude = {}} end
+    if type(value) ~= "table" then return nil, "invalid rule" end
+    if value.groups ~= nil then
+        for key in pairs(value) do if key ~= "groups" then return nil, "unknown rule field" end end
+        if type(value.groups) ~= "table" then return nil, "invalid groups" end
+        local count, groups = 0, {}
+        for index, group in pairs(value.groups) do
+            count = count + 1
+            if count > 64 or type(index) ~= "number" or index % 1 ~= 0 or index < 1 or index > 64 then
+                return nil, "invalid group index"
+            end
+            local normalized, err = normalizeGroup(group)
+            if not normalized then return nil, err end
+            groups[index] = normalized
+        end
+        if count == 0 then return nil, "empty groups" end
+        for index = 1, count do if value.groups[index] == nil then return nil, "sparse groups" end end
+        return {groups = groups}
+    end
+    for key in pairs(value) do
+        if key ~= "mode" and key ~= "include" and key ~= "exclude" then return nil, "unknown rule field" end
+    end
+    local mode = value.mode == nil and "all" or value.mode
+    if mode ~= "all" and mode ~= "any" then return nil, "invalid match mode" end
+    local group, err = normalizeGroup({include = value.include, exclude = value.exclude})
+    if not group then return nil, err end
+    group.mode = mode
+    return group
+end
+
+-- Expand legacy ANY without moving its global exclusions outside their branches.
+function Tags.ruleGroups(rule)
+    local normalized, err = Tags.normalizeRule(rule)
+    if not normalized then return nil, err end
+    if normalized.groups then return normalized.groups end
+    if normalized.mode ~= "any" or #normalized.include == 0 then
+        return {{include = normalized.include, exclude = normalized.exclude}}
+    end
+    local groups = {}
+    for _, id in ipairs(normalized.include) do
+        local excludes = {}
+        for index, excluded in ipairs(normalized.exclude) do excludes[index] = excluded end
+        groups[#groups + 1] = {include = {id}, exclude = excludes}
+    end
+    return groups
+end
+
+function Tags.fromRuleGroups(groups)
+    local normalized, err = Tags.normalizeRule({groups = groups})
+    if not normalized then return nil, err end
+    groups = normalized.groups
+    if #groups == 1 then
+        return {mode = "all", include = groups[1].include, exclude = groups[1].exclude}
+    end
+    local includes, common = {}, signature(groups[1].exclude)
+    for _, group in ipairs(groups) do
+        if #group.include ~= 1 or signature(group.exclude) ~= common then return normalized end
+        includes[#includes + 1] = group.include[1]
+    end
+    return Tags.normalizeRule({mode = "any", include = includes, exclude = groups[1].exclude})
+end
+
+function Tags.ruleIncludes(rule, id)
+    local normalized = Tags.normalizeRule(rule)
+    if not normalized then return false end
+    for _, group in ipairs(normalized.groups or {normalized}) do
+        for _, included in ipairs(group.include) do if included == id then return true end end
+    end
+    return false
+end
+
+local function groupShape(group)
+    return type(group) == "table" and type(group.include) == "table" and type(group.exclude) == "table"
+end
+
+local function groupsShape(groups)
+    if type(groups) ~= "table" or #groups < 1 or #groups > Tags.MAX_RULE_GROUPS then return false end
+    for index = 1, #groups do if not groupShape(groups[index]) then return false end end
+    return true
+end
+
+-- Rules are validated at persistence and authority boundaries; matching keeps the
+-- existing cheap shape guards and does not copy/sort a rule for every item.
 function Tags.ruleActive(rule)
-    return type(rule) == "table" and type(rule.include) == "table" and type(rule.exclude) == "table"
-        and (#rule.include > 0 or #rule.exclude > 0)
+    if type(rule) ~= "table" then return false end
+    if rule.groups == nil then
+        return groupShape(rule) and (#rule.include > 0 or #rule.exclude > 0)
+    end
+    if not groupsShape(rule.groups) then return false end
+    for _, group in ipairs(rule.groups) do
+        if #group.include == 0 and #group.exclude == 0 then return false end
+    end
+    return true
+end
+
+local function matchesGroup(present, group, mode)
+    for _, id in ipairs(group.exclude) do if present[id] then return false end end
+    return matchesSelection(present, group.include, mode)
 end
 
 function Tags.matchesRule(categoryOrTags, rule)
-    if type(rule) ~= "table" or (rule.mode ~= "all" and rule.mode ~= "any")
-        or type(rule.include) ~= "table" or type(rule.exclude) ~= "table" then return false end
+    if type(rule) ~= "table" then return false end
+    if rule.groups == nil then
+        if (rule.mode ~= "all" and rule.mode ~= "any") or not groupShape(rule) then return false end
+        return matchesGroup(tagSet(categoryOrTags), rule, rule.mode)
+    end
+    if not groupsShape(rule.groups) then return false end
     local present = tagSet(categoryOrTags)
-    for _, id in ipairs(rule.exclude) do if present[id] then return false end end
-    return #rule.include == 0 or matchesSelection(present, rule.include, rule.mode)
+    for _, group in ipairs(rule.groups) do
+        if matchesGroup(present, group, "all") then return true end
+    end
+    return false
 end
 
 return Tags

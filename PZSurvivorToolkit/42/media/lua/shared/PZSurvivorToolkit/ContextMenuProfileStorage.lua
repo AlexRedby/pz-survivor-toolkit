@@ -25,8 +25,8 @@ end
 local function parse(values, slot)
     if #values == 0 then return end
     local version = values[1]:match("^" .. MAGIC .. "|([^|]+)")
-    if version and version ~= "1" then error("Unsupported context menu profile snapshot version") end
-    local generation, count = values[1]:match("^" .. MAGIC .. "|1|(%d+)|(%d+)$")
+    if version and version ~= "1" and version ~= "2" then error("Unsupported context menu profile snapshot version") end
+    local generation, count = values[1]:match("^" .. MAGIC .. "|[12]|(%d+)|(%d+)$")
     generation, count = tonumber(generation), tonumber(count)
     if not generation or generation < 1 or generation > MAX_GENERATION
         or not count or count + 2 ~= #values then return end
@@ -37,7 +37,7 @@ local function parse(values, slot)
     end
     local hash = checksum(body)
     if not hash or values[#values] ~= string.format("END|%d|%d", generation, hash) then return end
-    return {lines = lines, generation = generation, slot = slot}
+    return {lines = lines, version = tonumber(version), generation = generation, slot = slot}
 end
 
 function Storage.load()
@@ -50,10 +50,12 @@ function Storage.load()
     if second then return second end
     if #a > 0 and #b > 0 then error("No valid context menu profile snapshot; files retained") end
     -- The untouched legacy file is the prior snapshot when the first migration write is interrupted.
-    return {lines = read(legacy), generation = 0, slot = 2}
+    return {lines = read(legacy), version = 1, generation = 0, slot = 2}
 end
 
-function Storage.save(previous, lines)
+function Storage.save(previous, lines, version)
+    version = version or 1
+    if version ~= 1 and version ~= 2 then error("Unsupported context menu profile snapshot version") end
     local current = Storage.load()
     if type(previous) ~= "table" or current.generation ~= previous.generation
         or current.slot ~= previous.slot or not same(current.lines, previous.lines) then
@@ -72,7 +74,7 @@ function Storage.save(previous, lines)
     end
     if count ~= #lines then error("Sparse context menu profile records") end
     local generation, slot = current.generation + 1, 3 - current.slot
-    local body = {string.format("%s|1|%d|%d", MAGIC, generation, count)}
+    local body = {string.format("%s|%d|%d|%d", MAGIC, version, generation, count)}
     for _, line in ipairs(lines) do body[#body + 1] = line end
     local hash = checksum(body)
     if not hash then error("Invalid context menu profile text or storage limit") end

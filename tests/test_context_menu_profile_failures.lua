@@ -48,3 +48,27 @@ local writes=disk.writes
 assert(not older.setOverride('drop','hidden') and disk.writes==writes)
 assert(older.ensureLoaded() and older.getOverride('other')=='medical' and older.getOverride('drop')=='custom:1')
 print('PASS stable profile object, blocked-load retry, discovery merge, rollback, ambiguous commits, cold reload and stale writers')
+
+-- Failed/ambiguous grouped writes keep complete rules together with their scoped state.
+for _,fault in ipairs({{prefix=20},{writerClose=true},{readback=true}}) do
+ disk.reset('')
+ local current=Profile.new(rules,Tags)
+ local grouped={groups={{include={'mechanics'},exclude={'vehiclepart'}},{include={'perishable'}}}}
+ local id=assert(current.createTagProfile('Grouped',grouped))
+ local retained=disk.files[a]
+ disk.faults[b]=fault
+ local replacement={groups={{exclude={'food'}},{include={'mechanics','perishable'}}}}
+ assert(not current.updateTagProfile(id,'Replacement',replacement))
+ assert(current.getTagProfile(id).name=='Grouped' and current.getTagProfile(id).rule.groups[1].include[1]=='mechanics',
+  'failed grouped update leaked draft into active profile')
+ assert(disk.files[a]==retained)
+ disk.faults={}
+ assert(current.ensureLoaded())
+ local ambiguous=not fault.prefix
+ local loaded=current.getTagProfile(id)
+ assert(loaded.name==(ambiguous and 'Replacement' or 'Grouped'))
+ assert(Tags.matchesRule({'food','perishable','vehiclepart'},loaded.rule)==not ambiguous,
+  'grouped recovery mixed predicates from different snapshots')
+ assert(Profile.new(rules,Tags).getTagProfile(id).name==loaded.name)
+end
+print('PASS grouped profile rollback, retained snapshots and ambiguous cold reload')

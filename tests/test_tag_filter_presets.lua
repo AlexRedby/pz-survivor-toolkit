@@ -152,7 +152,32 @@ assert(#Presets.list() == 0 and #reopen().list() == 0 and writes == 0, 'zero-len
 assert(Presets.save('initialized', {include = {'food'}}) and #reopen().list() == 1,
     'uninitialized slots cannot create a valid store')
 
-for _, unknown in ipairs({'2', '100', 'future'}) do
+-- Grouped entries require v2 so older readers cannot silently fall back to stale rules.
+reset()
+assert(Presets.save('legacy', {mode='any',include={'food','mechanics'},exclude={'vehiclepart'}}))
+local grouped={groups={{include={'mechanics'},exclude={'vehiclepart'}},{include={'perishable'},exclude={}}}}
+assert(Presets.save('grouped', grouped))
+assert(disk[a]:find('PZST_TAG_FILTERS|1|',1,true) and disk[b]:find('PZST_TAG_FILTERS|2|',1,true))
+grouped.groups[1].include[1]='food'
+local reloaded=reopen().list()
+local Tags=require 'PZSurvivorToolkit/ItemTags'
+assert(#reloaded==2 and reloaded[1].rule.groups[1].include[1]=='mechanics')
+assert(Tags.matchesRule({'perishable','vehiclepart'},reloaded[1].rule))
+assert(not Tags.matchesRule({'mechanics','vehiclepart'},reloaded[1].rule))
+assert(reloaded[2].rule.mode=='any' and #reloaded[2].rule.exclude==1,'mixed legacy rule changed during v2 reload')
+for _,malformed in ipairs({
+ 'PZST_TAG_FILTERS|2|1|1\nG|Bad|0\nEND|1|1\n',
+ 'PZST_TAG_FILTERS|2|1|1\nG|Bad|65\nEND|1|1\n',
+ 'PZST_TAG_FILTERS|2|1|1\nG|Bad|2\nC|food|\nEND|1|1\n',
+ 'PZST_TAG_FILTERS|2|1|1\nG|Bad|1\nC|food|food\nEND|1|1\n',
+ 'PZST_TAG_FILTERS|1|1|1\nG|Bad|1\nC|food|\nEND|1|1\n',
+}) do
+ reset();disk[a]=malformed
+ errorIs('ReadFailed',Presets.list)
+ assert(writes==0)
+end
+
+for _, unknown in ipairs({'3', '100', 'future'}) do
     original = stable(); disk[b] = 'PZST_TAG_FILTERS|' .. unknown .. '|2|0\nEND|2|0\n'
     local protected = disk[b]
     errorIs('Version', Presets.list)
@@ -160,7 +185,7 @@ for _, unknown in ipairs({'2', '100', 'future'}) do
     errorIs('Version', Presets.remove, 'original')
     assert(disk[a] == original and disk[b] == protected, 'unknown version overwritten')
 end
-original = stable(); disk[b] = 'PZST_TAG_FILTERS|2|future|header|changed|shape\n'
+original = stable(); disk[b] = 'PZST_TAG_FILTERS|3|future|header|changed|shape\n'
 errorIs('Version', Presets.save, 'new', {include = {'food'}})
 assert(disk[a] == original and disk[b]:find('changed|shape', 1, true), 'future header shape overwritten')
 

@@ -36,19 +36,29 @@ local function count(set) local n=0;for _ in pairs(set or {})do n=n+1 end;return
 function F.receipt(obj,player,category)
  local value=assert(Config.read(obj,0,player));local a=value.appearance or {};local icon=a.icon or {};local color=a.color or {}
  local rule=Rules.getBox(obj,0) or {}
+ local groups={}
+ for _,group in ipairs(rule.groups or {})do
+  groups[#groups+1]={include=group.include or {},exclude=group.exclude or {}}
+ end
  return {name=a.name or '',iconKind=icon.kind or '',iconValue=icon.value or '',
   r=color.r or -1,g=color.g or -1,b=color.b or -1,a=color.a or -1,
   category=category,categorySelected=value.cats[category]==true,categoryCount=count(value.cats),
   itemCount=count(value.items),presetCount=count(value.presets),priority=value.priority,
-  ruleMode=rule.mode or '',include=rule.include or {},exclude=rule.exclude or {},revision=Rules.getBoxRevision(obj,0)}
+  ruleMode=rule.mode or '',include=rule.include or {},exclude=rule.exclude or {},groups=groups,
+  revision=Rules.getBoxRevision(obj,0)}
 end
 function F.matches(receipt)
  return receipt.name==F.name and receipt.iconKind=='pzst-tag' and receipt.iconValue==F.tag
   and receipt.r==F.color.r and receipt.g==F.color.g and receipt.b==F.color.b and receipt.a==1
   and receipt.categorySelected and receipt.categoryCount==1 and receipt.itemCount==0 and receipt.presetCount==0
-  and receipt.priority==6 and receipt.ruleMode=='all' and #receipt.include==2
-  and receipt.include[1]=='food' and receipt.include[2]=='perishable' and #receipt.exclude==1
-  and receipt.exclude[1]=='meat' and receipt.revision==1
+  and receipt.priority==6 and receipt.ruleMode=='' and #receipt.include==0 and #receipt.exclude==0
+  and #receipt.groups==2
+  and #receipt.groups[1].include==2 and receipt.groups[1].include[1]=='food'
+  and receipt.groups[1].include[2]=='perishable' and #receipt.groups[1].exclude==1
+  and receipt.groups[1].exclude[1]=='meat'
+  and #receipt.groups[2].include==1 and receipt.groups[2].include[1]=='mechanics'
+  and #receipt.groups[2].exclude==1 and receipt.groups[2].exclude[1]=='vehiclepart'
+  and receipt.revision==1
 end
 function F.cleanup(obj)
  assert(obj and obj:getModData().PZSTContainerConfigurationFixture,'Refusing foreign object cleanup')

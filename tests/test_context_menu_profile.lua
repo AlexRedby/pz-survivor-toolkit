@@ -105,3 +105,82 @@ disk.reset('P|tags:1|drop|hidden\nF|tags:1|Invalid|all\nA|tags:1|include|not-a-t
 local invalid=Profile.new(rules,Tags)
 assert(#invalid.tagProfiles==0 and not invalid.scoped['tags:1'],'invalid persisted filters must not activate scoped rules')
 print('PASS tag profile precedence, field inheritance, mixed selections, sample isolation, escaped persistence, exact-category matching, validation and resets')
+
+-- The shared rule editor can save OR branches without changing profile inheritance.
+disk.reset('')
+local groupedModel=Profile.new(rules,Tags)
+local draft={groups={{include={'mechanics'},exclude={'vehiclepart'}},{include={'perishable'},exclude={}}}}
+local groupedID=assert(groupedModel.createTagProfile('Mechanics | food %',draft))
+draft.groups[1].include[1]='food'
+assert(groupedModel.getTagProfile(groupedID).rule.groups[1].include[1]=='mechanics','grouped profile aliases editor draft')
+local anyID=assert(groupedModel.createTagProfile('Legacy any',{mode='any',include={'food','mechanics'},exclude={'vehiclepart'}}))
+groupedModel.rememberItem('Base.Tool','Tool',{'mechanics'})
+groupedModel.rememberItem('Base.Food','Food',{'perishable','vehiclepart'})
+groupedModel.rememberItem('Base.Part','Part',{'mechanics','vehiclepart'})
+assert(groupedModel.setOverride('drop','hidden',groupedID))
+assert(groupedModel.renameGroup('equipment','Grouped hands',groupedID))
+assert(groupedModel.setOrder(groupedID,'root',{'drop','equip'}))
+assert(groupedModel.getOverride('drop','Base.Tool')=='hidden' and groupedModel.getOverride('drop','Base.Food')=='hidden')
+assert(groupedModel.getOverride('drop','Base.Part')==nil,'branch exclusion escaped or disappeared')
+assert(groupedModel.matchingTagProfiles({{'mechanics'},{'perishable','vehiclepart'}})[1]==groupedID,
+ 'mixed selection lost distinct matching OR branches')
+local groupedReload=Profile.new(rules,Tags)
+local groupedRule=groupedReload.getTagProfile(groupedID).rule
+assert(groupedRule.groups[1].include[1]=='mechanics' and #groupedRule.groups==2)
+assert(Tags.matchesRule({'mechanics'},groupedRule) and Tags.matchesRule({'perishable','vehiclepart'},groupedRule))
+assert(not Tags.matchesRule({'mechanics','vehiclepart'},groupedRule))
+assert(groupedReload.getTagProfile(anyID).rule.mode=='any','v2 storage changed legacy rule shape')
+assert(groupedReload.getOverride('drop','Base.Tool')=='hidden' and groupedReload.groupName('equipment','Base.Tool')=='Grouped hands')
+assert(groupedReload.getOrder('Base.Tool','root')[2]=='equip','grouped profile lost scoped preferences on reload')
+local negative={groups={{exclude={'vehiclepart'}},{include={'perishable'}}}}
+assert(groupedReload.updateTagProfile(groupedID,'Negative branch',negative))
+local negativeReload=Profile.new(rules,Tags).getTagProfile(groupedID).rule
+assert(Tags.matchesRule({},negativeReload) and not Tags.matchesRule({'vehiclepart'},negativeReload)
+ and Tags.matchesRule({'vehiclepart','perishable'},negativeReload),'negative-only branch changed after reload')
+local large={mode='any',include={},exclude={}}
+for index=1,64 do large.include[index]='category:Include'..index;large.exclude[index]='category:Exclude'..index end
+local largeID=assert(groupedReload.createTagProfile('Legacy limit',large))
+local largeRule=Profile.new(rules,Tags).getTagProfile(largeID).rule
+assert(largeRule.mode=='any' and #largeRule.include==64 and #largeRule.exclude==64,'legacy rule limit did not survive mixed v2 storage')
+local escaped={groups={{include={'category:Part|100%'}},{exclude={'food'}}}}
+local escapedID=assert(groupedReload.createTagProfile('Escaped grouped',escaped))
+local escapedReload=Profile.new(rules,Tags).getTagProfile(escapedID).rule
+assert(escapedReload.groups[1].include[1]=='category:Part|100%' and Tags.matchesRule({'category:Part|100%'},escapedReload))
+local Storage=require 'PZSurvivorToolkit/ContextMenuProfileStorage'
+assert(Storage.load().version==2,'grouped profile was saved in an unversioned legacy envelope')
+local before=disk.writes
+assert(not groupedReload.createTagProfile('Empty branches',{groups={}})
+ and not groupedReload.createTagProfile('Unconditional',{groups={{},{include={'food'}}}})
+ and not groupedReload.updateTagProfile(groupedID,'Conflicting',{groups={{include={'food'},exclude={'food'}}}}))
+assert(disk.writes==before,'invalid grouped editor input reached storage')
+local tooMany={};for index=1,65 do tooMany[index]={include={'food'}} end
+assert(not groupedReload.createTagProfile('Too many',{groups=tooMany}) and disk.writes==before)
+
+local header='F|tags:1|Grouped|groups|2'
+local terms={'B|tags:1|1|include|mechanics','B|tags:1|1|exclude|vehiclepart','B|tags:1|2|include|perishable'}
+local malformed={
+ {header,'B|tags:1|0|include|food'}, {header,'B|tags:1|3|include|food'},
+ {header,'B|tags:1|01|include|food'}, {header,'B|tags:1|1|other|food'},
+ {header,'B|tags:1|1|include|food|extra'}, {header,'A|tags:1|include|food'},
+ {header,'B|tags:1|1|include|not-a-tag'},
+ {header,'B|tags:1|1|include|food','B|tags:1|1|exclude|food'},
+ {header,header}, {'F|tags:1|Grouped|groups|0'}, {'F|tags:1|Grouped|groups|65'},
+ {'F|tags:1|Grouped|groups|01'}, {'F|tags:1|Grouped|groups|2|extra'},
+}
+local overLimit={header}
+for index=1,65 do overLimit[#overLimit+1]='B|tags:1|1|include|category:Term'..index end
+malformed[#malformed+1]=overLimit
+for _,records in ipairs(malformed) do
+ disk.reset('')
+ local lines={};for _,record in ipairs(records) do lines[#lines+1]=record end
+ for _,record in ipairs(terms) do lines[#lines+1]=record end
+ lines[#lines+1]='P|tags:1|drop|hidden'
+ Storage.save(Storage.load(),lines,2)
+ local invalidGrouped=Profile.new(rules,Tags)
+ assert(#invalidGrouped.tagProfiles==0 and not invalidGrouped.scoped['tags:1'],
+  'malformed grouped profile activated its scoped preferences')
+end
+disk.reset('')
+Storage.save(Storage.load(),{header,unpack(terms)},1)
+assert(#Profile.new(rules,Tags).tagProfiles==0,'legacy envelope accepted grouped profile records')
+print('PASS grouped profile branches, negative-only conditions, legacy limits, escaped persistence, inherited scopes and bounded malformed records')

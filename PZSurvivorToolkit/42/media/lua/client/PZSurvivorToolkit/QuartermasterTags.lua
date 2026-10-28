@@ -42,7 +42,8 @@ end
 function Adapter.openRule(picker, rule, onApply, selectedTag)
     RulePicker.open({player = getSpecificPlayer(picker.playerNum or 0), owner = picker,
         selectedTag = selectedTag,
-        rule = rule, categories = picker:activeList(), scriptItems = Adapter.catalog(picker).scriptItems,
+        rule = rule, categories = picker:activeList(),
+        tagSources = function() return Adapter.catalog(picker).tagSources end,
         title = getText("UI_PZST_QMTagRuleTitle"), onApply = function(value, firstSelectedTag)
             picker.toolkitTagRule = Tags.normalizeRule(value)
             picker.toolkitTagRuleTouched = true
@@ -52,25 +53,55 @@ function Adapter.openRule(picker, rule, onApply, selectedTag)
 end
 
 -- Loaded scripts and their tag projection are a snapshot for this window. Text/selection filters
--- consume it, and the rule preview uses the same source. No session-wide cache survives a reopen.
+-- consume it, and the tag chooser reuses the projection. No session-wide cache survives a reopen.
 function Adapter.catalog(picker)
     if picker.toolkitTagCatalog then return picker.toolkitTagCatalog end
-    local catalog = {scriptItems = LootSorter.getTagScriptItems(), groups = {}}
-    for _, script in ipairs(catalog.scriptItems) do
-        local category = Categories.forScript(script)
-        if category then
-            local group = catalog.groups[category] or {count = 0, tags = {}}
-            catalog.groups[category] = group
-            group.count = group.count + 1
-            local seen = {}
-            for _, id in ipairs(Tags.forScriptItem(script)) do
-                if not seen[id] then group.tags[id] = (group.tags[id] or 0) + 1; seen[id] = true end
+    local catalog = {tagSources = {}, groups = {}, visibleCategories = {}}
+    local categorySet, sourceSet = {}, {}
+    local scripts = getAllItems and getAllItems()
+    for index = 0, (scripts and scripts:size() or 0) - 1 do
+        local script = scripts:get(index)
+        if script then
+            local visible = LootSorter.isListableScriptItem(script)
+            local routable = not script.getObsolete or not script:getObsolete()
+            local tags, category
+            if routable then
+                tags = Tags.forScriptItem(script)
+                category = tags.legacyCategory
+            elseif visible then
+                -- Preserve the category API's fail-open policy for incomplete script objects.
+                pcall(function() category = Categories.forScript(script) end)
+            end
+            if visible and category and category ~= "" and not categorySet[category] then
+                categorySet[category] = true
+                catalog.visibleCategories[#catalog.visibleCategories + 1] = category
+            end
+            if tags then
+                -- The chooser uses the first ID as a fallback family when no schema root matches.
+                -- Keep that order while collapsing the repeated script projections.
+                local sourceKey = table.concat(tags, "\0")
+                if not sourceSet[sourceKey] then
+                    sourceSet[sourceKey] = true
+                    catalog.tagSources[#catalog.tagSources + 1] = tags
+                end
+                if category then
+                    local group = catalog.groups[category] or {count = 0, tags = {}}
+                    catalog.groups[category] = group
+                    group.count = group.count + 1
+                    local seen = {}
+                    for _, id in ipairs(tags) do
+                        if not seen[id] then group.tags[id] = (group.tags[id] or 0) + 1; seen[id] = true end
+                    end
+                end
             end
         end
     end
+    table.sort(catalog.visibleCategories)
     picker.toolkitTagCatalog = catalog
     return catalog
 end
+
+Adapter.ruleSummary = RulePicker.summary
 
 local function sameCategories(left, right)
     if not left or #left ~= #right then return false end
@@ -117,10 +148,10 @@ end
 
 function Adapter.drawRow(list, y, item)
     local row, picker = item.item, list.target
-    local checked, total = Adapter.state(picker.selectedCats, row)
     local h, w = item.height, list:getWidth()
     local scroll = list:getYScroll()
     if y + scroll + h < 0 or y + scroll >= list:getHeight() then return y + h end
+    local checked, total = Adapter.state(picker.selectedCats, row)
     if checked > 0 then list:drawRect(0, y, w, h - 1, 0.28, 0.25, 0.45, 0.75)
     elseif list.mouseoverselected == item.index and list:isMouseOver() then
         list:drawRect(0, y, w, h - 1, 0.25, 0.35, 0.35, 0.35)

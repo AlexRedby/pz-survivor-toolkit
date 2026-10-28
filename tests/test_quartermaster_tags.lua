@@ -12,7 +12,9 @@ local itemCategories = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/sh
 local categoryTags = {OC_Food = {'food'}, OC_FoodPerishable = {'food', 'perishable'},
     OC_Electrical = {'electrical'}, OC_FoodElectrical = {'food', 'electrical'}}
 require = function(name)
-    if name == 'LootSorter_Categories' then return end
+    if name == 'LootSorter_Categories' then
+        return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/LootSorter_Categories.lua')
+    end
     if name == 'PZSurvivorToolkit/ContainerAppearanceControls' then
         return {create=function() end, layout=function(_, top) return top end,
             close=function() end, value=function() end,
@@ -29,7 +31,9 @@ require = function(name)
     end
     if name == 'PZSurvivorToolkit/QuartermasterTagRuleClient' or name == 'PZSurvivorToolkit/QuartermasterTagRules' then return ruleApi end
     if name == 'PZSurvivorToolkit/QuartermasterTags' then return assert(adapter) end
-    if name == 'PZSurvivorToolkit/TagRulePicker' then return {open = function(args) openedRulePicker = args end} end
+    if name == 'PZSurvivorToolkit/TagRulePicker' then return {open = function(args) openedRulePicker = args end,
+        summary=function() return 'rule summary' end} end
+    if name == 'PZSurvivorToolkit/UIStyle' then return {fit=function(value) return value end} end
     assert(name == 'PZSurvivorToolkit/ItemTags')
     return {enabled = function() return enabled end,
         normalizeRule = function(value)
@@ -40,8 +44,17 @@ require = function(name)
             return result
         end,
         ruleActive = function(value) return value and (#value.include > 0 or #value.exclude > 0) or false end,
+        ruleIncludes = function(rule,id)
+            for _,tag in ipairs(rule and rule.include or {}) do if tag==id then return true end end
+            return false
+        end,
         forCategory = function(category) return categoryTags[category] or {'category:' .. category} end,
-        forScriptItem = function(script) tagReads = tagReads + 1; return script.tags end,
+        forScriptItem = function(script)
+            tagReads = tagReads + 1
+            local tags = {legacyCategory = itemCategories.forScript(script)}
+            for index, id in ipairs(script.tags) do tags[index] = id end
+            return tags
+        end,
         label = function(id) return id end}
 end
 Events = {OnGameStart = {Add = function(fn) starts[#starts + 1] = fn end},
@@ -92,7 +105,18 @@ local function createFixture(...)
     return fixture
 end
 local fixture = createFixture(control, ruleApi, {categories = function() return availableCats end,
-    scriptItems = function() catalogReads = catalogReads + 1; return scriptCatalog end,
+    scriptItems = function()
+        catalogReads = catalogReads + 1
+        local scripts, seen = {}, {}
+        for _, item in ipairs(scriptCatalog) do scripts[#scripts + 1], seen[item.uiCategory] = item, true end
+        for _, category in ipairs(availableCats) do
+            if not seen[category] then
+                scripts[#scripts + 1] = {uiCategory = category, tags = categoryTags[category] or {'category:' .. category},
+                    getDisplayCategory = function() return category end}
+            end
+        end
+        return scripts
+    end,
     cats = storedCats, items = storedItems})
 local open = fixture.open
 local function edit() return fixture.edit(LootSorter._picker) end
@@ -102,8 +126,13 @@ local function find(p, tagOrCategory)
     end
 end
 local function click(p, id) local row = assert(find(p, id), 'missing ' .. id); p.listbox.onmousedown(p, row); p:prerender() end
-assert(open())
+LootSorter.openPicker(fixture.object, 0, 0)
 local p = LootSorter._picker
+local initialRows, initialLayout, firstLayouts = p.listbox.items, p.layout, 0
+p.layout = function(self) firstLayouts = firstLayouts + 1; initialLayout(self) end
+p:configJoypad(); p:prerender()
+p.layout = initialLayout
+assert(p.listbox.items == initialRows and firstLayouts == 0, 'first frame repeated the prepared rows/layout')
 assert(p.children[#p.children] == p.dimmer, 'tag switch bypasses preset dimmer')
 assert(p.joypadButtonsY[4][1] == p.toolkitTagSwitch and p.joypadButtonsY[5][1] == p.toolkitTagRuleButton
     and p.listbox.y == 192)
@@ -138,6 +167,11 @@ assert(fixture.contextMenu() == nil, 'tag row opened an exact-category context m
 p.listbox.doDrawItem(p.listbox, 0, p.listbox.items[fi])
 assert(p.listbox.semanticIcon and p.listbox.semanticIcon.id=='food','tag association icon missing')
 assert(p.listbox.drawnText == 'food (1/3)' and not p.listbox.ticks, 'partial selection not displayed')
+local state, offscreenChecks = adapter.state, 0
+adapter.state = function(...) offscreenChecks = offscreenChecks + 1; return state(...) end
+p.listbox.doDrawItem(p.listbox, 10000, p.listbox.items[fi])
+adapter.state = state
+assert(offscreenChecks == 0, 'offscreen tag rows still counted category selections')
 local dash = false
 for _, size in ipairs(p.listbox.draws) do if size[1] == 10 and size[2] == 2 then dash = true end end
 assert(dash, 'partial checkbox has no dash')
@@ -267,7 +301,7 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     seed, seedIndex = assert(find(itemPicker, 'seed'))
     click(itemPicker,'seed')
     assert(openedRulePicker.owner==itemPicker and openedRulePicker.rule.mode=='all'
-        and openedRulePicker.rule.include[1]=='seed' and openedRulePicker.scriptItems==scriptCatalog,
+        and openedRulePicker.rule.include[1]=='seed' and openedRulePicker.tagSources()==itemPicker.toolkitTagCatalog.tagSources,
         'partial seed tag did not open a locale-independent real-item rule draft')
     unchanged(itemPicker.selectedCats,catsBefore,'partial tag click changed exact category picks')
     unchanged(itemPicker.selectedItems,itemsBefore,'partial tag click persisted localized names')
@@ -301,9 +335,53 @@ for _,names in ipairs({{'Candy','Sunflower seeds','Full packet','Empty packet','
     unchanged(itemPicker.selectedItems,itemsBefore,'Select all rule Apply persisted localized names')
     assert(next(itemPicker.selectedCats)==nil,'Select all broadened a partial category')
     itemPicker.toolkitTagRuleButton.onclick(itemPicker)
-    assert(openedRulePicker.scriptItems==scriptCatalog,'dynamic editor preview lacks the script catalog')
+    assert(openedRulePicker.tagSources()==itemPicker.toolkitTagCatalog.tagSources,'dynamic editor chooser lacks the cached tag projections')
     assert(catalogReads == readsBefore + 1 and tagReads == projectionReads,
         'search, selection, saved-category changes or rule opening re-enumerated the item/tag catalog')
+end
+do
+    local visible = script('Visible', 'OC_Snack', {'food', 'snack'})
+    local duplicate = script('Duplicate', 'OC_Snack', {'food', 'snack'})
+    local hidden = script('Hidden', 'OC_Snack', {'food'})
+    local hiddenOnly = script('Hidden only', 'HiddenCategory', {'hidden'})
+    local obsolete = script('Obsolete', 'ObsoleteCategory', {'obsolete'})
+    local incomplete = script('Incomplete', 'IncompleteCategory', {'incomplete'})
+    for _, item in ipairs({visible, duplicate, hidden, hiddenOnly, obsolete}) do
+        item.isHidden = function() return item == hidden or item == hiddenOnly end
+        item.getObsolete = function() return item == obsolete end
+    end
+    incomplete.getObsolete = function() return true end
+    local scripts, reads, categoryReads = {visible, duplicate, hidden, hiddenOnly, obsolete, incomplete}, 0, 0
+    OrganizedCategories = {getScriptInventoryDisplayCategory = function(item)
+        categoryReads = categoryReads + 1; return item.uiCategory
+    end}
+    local test = createFixture(control, ruleApi, {
+        categories = function() error('enabled window performed a separate category scan') end,
+        scriptItems = function() reads = reads + 1; return scripts end,
+        cats = {MissingModCategory = true}})
+    local projections = tagReads
+    local picker = test.open()
+    local catalog = picker.toolkitTagCatalog
+    assert(reads == 1 and tagReads == projections + 4 and categoryReads == 5,
+        'window did not classify the current script universe exactly once')
+    assert(#catalog.visibleCategories == 2 and catalog.visibleCategories[1] == 'IncompleteCategory'
+        and catalog.visibleCategories[2] == 'OC_Snack', 'visible/hidden/obsolete inclusion policies changed')
+    assert(catalog.groups.OC_Snack.count == 3 and catalog.groups.OC_Snack.tags.snack == 2
+        and catalog.groups.HiddenCategory and not catalog.groups.ObsoleteCategory
+        and not catalog.groups.IncompleteCategory, 'hidden or obsolete scripts changed routing coverage')
+    assert(#catalog.tagSources == 3, 'chooser retained duplicate script tag sources')
+    local snack = assert(find(picker, 'snack'))
+    assert(snack.requiresRule and #snack.categories == 0, 'hidden shared-category script broadened a partial tag')
+    assert(find(picker, 'MissingModCategory'), 'saved missing category was lost')
+    picker.filter:setText('food'); picker:prerender()
+    picker.toolkitTagRuleButton.onclick(picker); openedRulePicker.tagSources()
+    assert(reads == 1 and categoryReads == 5, 'filtering or rule opening reclassified scripts')
+    visible.uiCategory = 'ChangedCategory'
+    scripts = {visible}
+    local reopened = test.open()
+    assert(reads == 2 and categoryReads == 6 and #reopened.toolkitTagCatalog.visibleCategories == 1
+        and reopened.toolkitTagCatalog.visibleCategories[1] == 'ChangedCategory',
+        'reopening reused stale categories or script projections')
 end
 OrganizedCategories = nil
 print('Quartermaster tag view checks passed: owned controls, exact/refined selections, filters, controller, modes, reopens and opt-out.')

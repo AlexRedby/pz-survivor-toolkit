@@ -93,8 +93,11 @@ def _one(text, event):
 def _expected(category):
     return dict(name='QM supplies', iconKind='pzst-tag', iconValue='food',
                 r=.25, g=.5, b=.75, a=1, category=category, categorySelected=True,
-                categoryCount=1, itemCount=0, presetCount=0, priority=6, ruleMode='all',
-                include=['food', 'perishable'], exclude=['meat'], revision=1)
+                categoryCount=1, itemCount=0, presetCount=0, priority=6, ruleMode='',
+                include=[], exclude=[], groups=[
+                    {'include': ['food', 'perishable'], 'exclude': ['meat']},
+                    {'include': ['mechanics'], 'exclude': ['vehiclepart']},
+                ], revision=1)
 
 
 def _exact(value, expected):
@@ -116,10 +119,41 @@ def _shot(root, role, name):
     return str(path)
 
 
+def _opening_profile(text):
+    samples = _one(text, 'PERF').get('samples')
+    names = ['idle', 'containerCold', 'ruleCold', 'chooserCold', 'chooserWarm', 'ruleWarm', 'containerWarm']
+    if not isinstance(samples, list) or [row.get('name') for row in samples if isinstance(row, dict)] != names:
+        raise ValueError('Opening profile stages missing, duplicated or reordered')
+
+    def duration(value):
+        return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+    for row in samples:
+        for key in ('callbackMs', 'firstUiPassMs', 'started'):
+            if not duration(row.get(key)):
+                raise ValueError('Invalid opening profile duration: ' + key)
+        if row['name'] != 'idle' and not duration(row.get('firstTargetRenderMs')):
+            raise ValueError('Opening profile lacks target window render')
+        for key in ('frameGaps', 'uiMs'):
+            values = row.get(key)
+            if not isinstance(values, list) or len(values) < 5 or not all(duration(value) for value in values):
+                raise ValueError('Opening profile lacks valid frame samples')
+        calls = row.get('functions')
+        if calls == []:  # Lua encodes an empty map as an array.
+            calls = {}
+        if not isinstance(calls, dict):
+            raise ValueError('Invalid opening profile function counters')
+        for value in calls.values():
+            if (not isinstance(value, dict) or type(value.get('calls')) is not int or value['calls'] < 1
+                    or not duration(value.get('totalMs')) or not duration(value.get('maxMs'))):
+                raise ValueError('Invalid opening profile function timing')
+    return samples
+
+
 def verify(root, selection, catalog):
     root = Path(root)
     roles = ['client1', 'client2'] if selection['kind'] == 'mp' else ['client1']
-    issues, receipts, screenshots = [], {}, []
+    issues, receipts, screenshots, timings, opening = [], {}, [], {}, []
     try:
         logs = {role: (root / (role + '-launch.log')).read_text(errors='replace') for role in roles}
         authority_role = 'server' if selection['kind'] == 'mp' else 'client1'
@@ -132,12 +166,15 @@ def verify(root, selection, catalog):
         category = prepared['category']
         if selection['kind'] == 'mp' and len(re.findall(re.escape('[STARTUP_TEST] SERVER_READY') + r'(?:\s|$)', authority)) != 1:
             raise ValueError('Missing/duplicate Host server readiness')
-        sequences = {'client1': ['SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'COMPLETE']}
+        sequences = {'client1': ['SHOT', 'SHOT', 'DEFAULTS', 'SHOT', 'SHOT', 'SAVE', 'LOCAL', 'COMPLETE']}
         if selection['kind'] == 'sp':
-            sequences['client1'] = ['PREPARED', 'SHOT', 'DEFAULTS', 'SHOT', 'SAVE', 'LOCAL', 'AUTHORITY', 'COMPLETE']
+            sequences['client1'] = ['PREPARED', 'SHOT', 'SHOT', 'DEFAULTS', 'SHOT', 'SHOT', 'SAVE', 'LOCAL', 'AUTHORITY', 'COMPLETE']
         else:
             sequences['client2'] = ['SHOT', 'OBSERVER', 'COMPLETE']
             sequences['server'] = ['PREPARED', 'AUTHORITY']
+        if selection.get('options', {}).get('profile_container_open'):
+            sequences['client1'].insert(1 if selection['kind'] == 'sp' else 0, 'PERF')
+            opening = _opening_profile(logs['client1'])
         for role, expected_events in sequences.items():
             text = authority if role == 'server' else logs[role]
             events = re.findall(re.escape(MARKER) + r'([A-Z]+) ', text)
@@ -145,10 +182,14 @@ def verify(root, selection, catalog):
                 raise ValueError(role + ' native lifecycle missing, duplicated or reordered')
         expected = _expected(category)
         defaults = _one(logs['client1'], 'DEFAULTS')
-        if (set(defaults) != {'tag', 'item', 'role', 'menuClasses'} or defaults['tag'] != 'food'
+        if (set(defaults) != {'tag', 'item', 'role', 'menuClasses', 'ruleOpenMs', 'ruleEditMs', 'chooserOpenMs'} or defaults['tag'] != 'food'
                 or defaults['item'] != 'Base.Hammer' or defaults['role'] != 'client1'
-                or type(defaults['menuClasses']) is not int or defaults['menuClasses'] < 2):
+                or type(defaults['menuClasses']) is not int or defaults['menuClasses'] < 2
+                or any(type(defaults[key]) not in (float, int) or type(defaults[key]) is bool
+                       or not math.isfinite(defaults[key]) or defaults[key] < 0
+                       for key in ('ruleOpenMs', 'ruleEditMs', 'chooserOpenMs'))):
             raise ValueError('Tag/item defaults or native/CleanUI menu routes absent')
+        timings = {key: defaults[key] for key in ('ruleOpenMs', 'ruleEditMs', 'chooserOpenMs')}
         if _records(logs['client1'], 'SAVE') != [{'count': 1, 'role': 'client1'}]:
             raise ValueError('Expected exactly one unified Save callback')
         for actor, event, text in [('client1', 'LOCAL', logs['client1']), ('authority', 'AUTHORITY', authority)]:
@@ -160,7 +201,7 @@ def verify(root, selection, catalog):
             if not _exact(receipts['client2'], expected):
                 raise ValueError('Observer global BC appearance or routing differs')
         for role, text in logs.items():
-            names = ['icon', 'edit'] if role == 'client1' else ['observer']
+            names = ['icon', 'tags', 'rules', 'edit'] if role == 'client1' else ['observer']
             if _records(text, 'SHOT') != [{'name': name, 'role': role} for name in names]:
                 raise ValueError(role + ' screenshots missing, duplicated or reordered')
             screenshots += [_shot(root, role, name) for name in names]
@@ -173,6 +214,9 @@ def verify(root, selection, catalog):
     return {'issues': issues,
             'outcomes': [{'actor': role, 'case': 'edit', 'status': 'failed' if issues else 'passed',
                           'reason': '; '.join(issues)} for role in roles],
-            'evidence': {'receipts': receipts, 'screenshots': screenshots,
+            'evidence': {'receipts': receipts, 'screenshots': screenshots, 'timingsMs': timings,
+                         'openingProfile': opening,
                          'limits': ['Native callback-driven checks; no physical input claims.',
-                                    'Screenshots require visual inspection; presence does not certify layout.']}}
+                                    'Screenshots require visual inspection; presence does not certify layout.',
+                                    'Opening profiles include UI frame intervals and Lua render callbacks, not GPU presentation timestamps.',
+                                    'Timing values have no automatic pass threshold.']}}

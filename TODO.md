@@ -1,3 +1,9 @@
+# Container rule editor
+
+- [ ] Integrate the grouped editor and opening optimizations with current main's semantic/custom tags and container groups, verify affected consumers and tests, then release with a newer Toolkit version and push main.
+- [ ] Finish the native before/after comparison of cold/warm container and tag chooser opening when the exclusive desktop slot is available. Use the optional opening profile before menu probes; compare callback time and UI frame gaps, verify the target window renders, and retain source/snapshot checks.
+- [ ] Verify container rules with the full selected mod set once the missing Workshop dependencies are available, using isolated settings and saves.
+
 # Shopping cart animation port
 
 - [ ] Cover partial/flashlight shopping-cart meshes in native direct rendering and action handoffs. Empty/full direct support, its renderer-specific world-Z compensation and original native wheel-index partition are verified; source geometry regressions for all six models do not replace the remaining native variants.

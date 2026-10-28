@@ -17,6 +17,13 @@ Version labels come from committed component metadata, including changes made wi
 
 ## PZ Survivor Toolkit
 
+### 0.1.194
+
+- Replace the tag-rule catalogue and match preview with visible condition rows, explicit Has/Not controls, AND conditions and OR groups. Choose or replace tags through a searchable chooser; show the configured expression on the container editor's rule button.
+- Preserve legacy all/any rules and exclusions, including container designations, saved filters, Quartermaster presets and context-menu profiles. Grouped rules round-trip through their storage and Host authority.
+- Reuse prepared script-tag projections, build the tag chooser only when needed and skip offscreen row drawing. Rule changes no longer rebuild and sort an item preview. Preserve live inventory categories when reopening the chooser.
+- Build visible categories and tag projections in one fresh pass per container window, collapse duplicate chooser sources and avoid repeating list construction/layout on the first frame. Offscreen tag rows skip selection counting as well as drawing.
+
 ### 0.1.193
 
 - Resolve Quartermaster's explicit item-name destination candidates once per requested display name and plan. Preserve priority/distance order, per-item carrier/destination admission, capacity overflow and category/tag fallback without enumerating unrelated preset entries.
