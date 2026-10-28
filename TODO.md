@@ -1,3 +1,21 @@
+# Shared queue resources and container capacity
+
+Implementation and migration are conditional on the performance gate in [the design plan](docs/design/QUEUE_RESOURCE_CAPACITY.md). Keep the native executor and existing protections until each replacement is qualified.
+
+- [ ] Implement the smaller common-contract/admission/outcome design using the existing EditModel, Weights, Policy and Settlement. Preserve the cheap stateless/native capacity path; do not add a mandatory whole-inventory or whole-queue snapshot to every decision. Keep optional forecasts advisory and capability-scoped, with complete dependency closure, fresh facts, native hard/soft limits, peak occupancy, unknown effects and exact cleanup ownership.
+- [ ] Before integrating either test-only prototype, define a cheap eligibility rule from verified resource facts and qualify it against both ordinary native-exact and overlapping affected cases. The snapshot's nested gain does not justify its flat/single-container regression; the worklist's counters do not cover the retained first sweep. Reject routes that exceed frozen budgets instead of enabling them globally.
+- [ ] Complete exclusive selected-pack idle/hover/drag/click/blocked-priority, retention and Host-contention measurements before granting new permissions. Keep the adaptive worklist and snapshot prototypes outside runtime until the corresponding performance/correctness gates pass.
+- [ ] Qualify the first vertical slice: borrowed-book pickup/read/return with plain root equip and independent TV controls. Address the book regression below through the common path; grant new permissions only after the corresponding admission, failure/outcome and earned-return checks in the next item also pass. Remove only superseded capacity gates, retaining native callback/event proofs and checkpoint/resume boundaries.
+- [ ] Qualify execution admission and correlated item outcomes at every native transfer batch boundary in SP/menu Host. Cover concurrent actors, intervening capacity changes, partial effects, duplicate/late/unknown results and unavailable returns; retain exact items, paid effects and independent work without automatic replay or long queue reservations.
+- [ ] Migrate every registered queue family through the coverage ledger in the plan, in effect-based batches. For each batch remove the replaced local checks in the same change, or record the exact retained legacy boundary and its removal gate here. Preserve explicit unsupported contracts; a registration or shared wrapper alone is not migrated coverage.
+- [ ] Retire the legacy queue-capacity algorithm only after all applicable consumers have verified contracts, matching queue-off/on SP/Host controls and performance qualification. Recheck shipped component versions against main and record delivered behavior before release; do not install into the user's game automatically.
+
+# Book reading edit regression
+
+- [ ] Reproduce the reported blocked cancel/preemption through real queue-panel controls for root, worn-bag and world-container reading, comparing collapsed operation and expanded reader rows. Include native producer/type/callback bindings, earned returns and independent neighboring actions; collect actual denial gates rather than asking the user to identify an old case.
+- [ ] Fix every demonstrated shared cause while preserving earned cleanup, exact book IDs/pages, real resource prerequisites and native stop/Host settlement. Add focused failing regressions before changing permissions.
+- [ ] Batch the affected source/control combinations with the current selected pack in SP/menu Host, queue off/on. Require actual panel press/release and drag admission, saved-page resume, exact authority returns and clean logs before release.
+
 # Finish base walking delivery
 
 - [ ] Integrate current main, release the checked hidden-player inventory change with a newer Toolkit version and changelog, and run affected checks before pushing main.
@@ -95,7 +113,7 @@ These are implementation and verification gaps, not evidence that every action u
 ## General rules for move and cancel
 
 - [ ] Extend the version-1 edit contract to remaining world-container pickup/return (hot cookable food and special containers) and craft inputs. Describe exact identity versus late selector scope, bounded native effects and complete resource domains; retain legacy protection for missing contracts. Do not infer semantics from action names or treat same-item access alone as a dependency.
-- [ ] Extend the conservative full-current-weight transfer gate to proven quantity-dependent capacity effects and remaining world-container ancestry. Do not credit uncertain MP releases or reserve future inventory. Add exact native producer/consumer and return-container gates before expanding permissions.
+- [ ] Migrate quantity-dependent capacity effects and remaining world-container ancestry through the performance-gated shared system above, rather than extending a second transfer-capacity algorithm. Retain current bounds until exact producer/consumer, admission and authoritative return contracts are qualified.
 - [ ] Extend persistent prepare/body/cleanup effect records to the remaining legacy pickup and family-owned restoration paths. Replace a family proof only after exact native effects and corresponding SP/Host gates are proven. Preserve shared ownership, confirmed explicit equipment intent, earned output and paid costs; never infer an effect from queue disappearance or replay authoritative work.
 - [ ] Register interruption capabilities through the same contract: cancel, finish the current atomic step and defer the remainder, or native stop with a validated checkpoint/resume. Generalize existing book/world handling through that interface without inventing arbitrary timer restoration or repeating already-paid work. Unknown active actions keep native cancellation and only supported boundaries may be edited.
 - [ ] Extend the generated edit oracle and existing scenario matrix to native partial completion, cleanup, replaced resources and delayed/duplicate outcomes. Gate each additional consumable/transfer adapter on exact conservation and at-most-once effects, without enumerating every pair of action names.
@@ -109,7 +127,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 # Extend cancelled queue recovery
 
-- [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
+- [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer and singleton beard-trim adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
 
 # Further action queue migration
 
@@ -203,10 +221,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 - [ ] Resolve startup diagnostics that leave food-age SP audits at `needs-review` even when the functional phases pass: font-page load errors, container-name normalization errors, Piano icon fallback and mannequin-zone property errors. Reproduce them with matching prepared and untouched dependency sources, compare error signatures and counts, and qualify or fix each source/caller before changing audit rules. Do not treat functional success as a clean runtime or assume a shared startup error was caused by the food-age correction.
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
-
-- [ ] Repair the isolated fixture in `test_queue_native_snapshot.py::test_selected_adapter_helpers_are_sealed_without_unrelated_adapters`: its temporary craft UI project omits the required `craft_ui_water.py`, causing `FileNotFoundError` while the recovery subcase passes. Copy the declared helper and rerun the focused snapshot tests; do not relax source sealing.
-
-- [ ] Give the growing `QueueOwnershipChecks` umbrella an appropriate bounded runtime or selectable variants. With the held-styling vectors, the default 120-second process deadline expired after 15 successful variants while entering makeup synchronization. Profile the remaining variants and retain per-variant isolation/source checks; use an explicit larger `--test-timeout` for this bounded gate meanwhile.
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.
 

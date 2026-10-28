@@ -9,7 +9,8 @@ local Grooming={}
 local base=ISBaseTimedAction
 local toolkit=PZSurvivorToolkit
 local lifecycle,stopBridge,acknowledgements,captureReceipt,receiptState
-local installedPolicy,installedResources
+local installedPolicy,installedResources,recoveryBindings
+local proofOwn,proofClosure,proofMatches=Proof.own,Proof.closure,Proof.matches
 local profiles={
  {name='ISCutHair',pin=1007133567,field='item',sound=true},
  {name='ISTrimBeard',pin=1652611680,field='item',sound=true},
@@ -127,6 +128,57 @@ local function inspector(profile,snapshot,resources,policy)
  end
 end
 
+-- Recovery reuses the exact installed pending inspector. It only stores native
+-- intent for an untouched trim whose tool can be found by the same root ID on
+-- both clients. A pure preview probe may omit the native base defaults.
+local function recoverTrim(action)
+ local binding=recoveryBindings
+ local profile=profiles[2]
+ if not binding or type(action)~='table' or not profile.inspect
+  or toolkit~=PZSurvivorToolkit or toolkit.ActionQueueGrooming~=Grooming
+  or toolkit.ActionQueuePolicy~=installedPolicy or installedPolicy.addContainerResources~=binding.containers
+  or installedPolicy.registerNative~=binding.registerNative
+  or Proof.own~=proofOwn or Proof.closure~=proofClosure or Proof.matches~=proofMatches
+  or instanceof~=binding.instanceof or getSpecificPlayer~=binding.player
+  or getFilenameOfClosure~=binding.filename or getmetatable(base)~=binding.baseMeta
+  or proofOwn(base,'__index')~=binding.baseIndex
+  or proofOwn(binding.baseMeta,'__index')~=binding.baseMetaIndex
+  or getmetatable(profile.class)~=binding.trimMeta or proofOwn(profile.class,'__index')~=profile.class
+  or proofOwn(binding.trimMeta,'__index')~=binding.trimMetaIndex
+  or ItemTag~=binding.tags or not binding.razor or not binding.scissors
+  or ItemTag.RAZOR~=binding.razor or ItemTag.SCISSORS~=binding.scissors
+  or not lifecycle or toolkit.ActionQueueLifecycle~=lifecycle or lifecycle.hasNativeStopBridge~=stopBridge
+  or not unchanged(profile,profile.snapshot,action) then return false end
+ if action.action~=nil or action.started~=nil or action.toolkitNativeTransaction~=nil or action.toolkitNativeKind~=nil
+  or action.sound~=nil or action.additionalContext or action._isAddingActions or action.toolkitQueueLinked
+  or action.maxTime~=300 or action.maxTimeInit~=nil
+  or action.stopOnWalk~=nil and action.stopOnWalk~=true
+  or action.stopOnRun~=nil and action.stopOnRun~=true
+  or action.stopOnAim~=nil and action.stopOnAim~=true
+  or action.caloriesModifier~=nil and action.caloriesModifier~=1
+  or action.ignoreHandsWounds or action.forceProgressBar then return false end
+ local token=action.toolkitQueueOperation
+ if token~=nil and (type(token)~='table' or getmetatable(token)~=nil) then return false end
+ local actor,tool=action.character,action.item
+ if not binding.instanceof(actor,'IsoPlayer') or not actor:isLocalPlayer()
+  or binding.player(actor:getPlayerNum())~=actor or actor:isDead() or actor:isAsleep()
+  or actor:isTimedActionInstant() or not binding.instanceof(tool,'InventoryItem')
+  or binding.instanceof(tool,'InventoryContainer') or tool:getIsCraftingConsumed() or tool:isBroken()
+  or actor:getPrimaryHandItem()~=tool and actor:getSecondaryHandItem()~=tool then return false end
+ local root,id=actor:getInventory(),tool:getID()
+ if not binding.instanceof(root,'ItemContainer') or tool:getContainer()~=root
+  or type(id)~='number' or id~=id or id<=-math.huge or id>=math.huge or id%1~=0
+  or not root:getItems():contains(tool) or root:getItemById(id)~=tool
+  or not (tool:hasTag(binding.razor) or tool:hasTag(binding.scissors)) then return false end
+ local result=profile.inspect(action)
+ return type(result)=='table' and result.knownInputs==true and result.capacityNonIncreasing==true
+  and result.cancelWaiting==true and result.cancelOperation==true and result.pendingMoveBlocker==nil
+  and result.hands==actor and result.equipment==actor and result.targets[actor]==true
+end
+function Grooming.canRecoverTrim(action)
+ local ok,accepted=pcall(recoverTrim,action)
+ return ok and accepted==true
+end
 -- Only these reviewed constructors have no effects before native allocation.
 -- Dynamic styling/fluid and cosmetic ordering stay unknown to move edits.
 -- Active cancellation uses the same audited stop lifecycle as other atomic bodies.
@@ -135,12 +187,22 @@ function Grooming.install(policy,resources)
   or installedPolicy and (installedPolicy~=policy or installedResources~=resources)then return false end
  if not Proof.matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)then return false end
  installedPolicy,installedResources=policy,resources
+ if not recoveryBindings then
+  recoveryBindings={containers=policy.addContainerResources,registerNative=policy.registerNative,
+   instanceof=instanceof,player=getSpecificPlayer,filename=getFilenameOfClosure,
+   baseMeta=getmetatable(base),baseIndex=proofOwn(base,'__index'),
+   baseMetaIndex=proofOwn(getmetatable(base),'__index'),trimMeta=getmetatable(profiles[2].class),
+   trimMetaIndex=proofOwn(getmetatable(profiles[2].class),'__index'),
+   tags=ItemTag,razor=ItemTag and ItemTag.RAZOR,scissors=ItemTag and ItemTag.SCISSORS}
+ end
  local complete=true
  for _,profile in ipairs(profiles)do
   if not profile.installed then
    local snapshot=capture(profile)
    if snapshot then
-    policy.registerNative(profile.name,inspector(profile,snapshot,resources,policy))
+    local inspect=inspector(profile,snapshot,resources,policy)
+    policy.registerNative(profile.name,inspect)
+    profile.snapshot,profile.inspect=snapshot,inspect
     profile.installed=true
    else complete=false end
   end

@@ -32,7 +32,7 @@ end
 local adapters={capture=function(a,active)
  captures=captures+1
  if a.unsupported then return nil,'unsupported' end
- return {label=a.label,kind=a.Type,active=active}
+ return {label=a.label,kind=a.Type,active=active,singleton=a.singleton}
 end,validate=function(records,actor)
  validations=validations+1
  if blocked then return nil,'item_missing' end
@@ -115,6 +115,17 @@ do
  assert(recovery.preview(player).blocked=='item_missing'and not recovery.restore(player,saved.id))
  assert(recovery.info(player).id==saved.id);blocked=false
  assert(recovery.restore(player,saved.id)and #q.queue==1 and q.queue[1].label=='safe')
+end
+-- Constructor contracts may require a complete singleton operation. A supported
+-- preparation must not silently widen that contract into a compound replay.
+do
+ drain();local token={};local prep,body=action('preparation',nil,token),action('singleton body',nil,token)
+ body.singleton=true
+ local tail=action('independent');local q=queue(prep,body,tail);reset(q);drain()
+ local saved=infoCount(1,1);assert(recovery.info(player).reason=='compound_operation')
+ assert(recovery.restore(player,saved.id)and #q.queue==1 and q.queue[1].label=='independent')
+ drain();local one=action('whole command');one.singleton=true;q=queue(one);reset(q);drain()
+ saved=infoCount(1);assert(recovery.restore(player,saved.id)and #q.queue==1 and q.queue[1].label=='whole command')
 end
 -- A completion callback can be paid while its row is still present.
 do
