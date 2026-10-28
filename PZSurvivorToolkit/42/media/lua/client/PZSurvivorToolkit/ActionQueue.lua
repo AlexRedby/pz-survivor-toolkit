@@ -16,6 +16,7 @@ require "TimedActions/ISEquipHeavyItem"
 require "TimedActions/ISUnequipAction"
 require "Vehicles/TimedActions/ISPathFindAction"
 require "PZSurvivorToolkit/BulkActions"
+require "PZSurvivorToolkit/ActionQueueExecution"
 require "RadioCom/ISRadioAction"
 
 local Toolkit = PZSurvivorToolkit
@@ -25,6 +26,7 @@ Toolkit.ActionQueue = Queue
 local Operations = Toolkit.ActionQueueOperations
 local Batch = Toolkit.ActionQueueBatch
 local Settlement = Toolkit.ActionQueueSettlement
+local Execution = Toolkit.ActionQueueExecution
 local processPriority
 require "PZSurvivorToolkit/ActionQueuePolicy"
 local Policy = Toolkit.ActionQueuePolicy
@@ -62,10 +64,12 @@ ISBaseTimedAction.begin = function(action)
     if media then media.start(action) end
     local intent=Toolkit.ActionQueueTidyIntent
     if intent and isClient() then intent.start(action) end
+    if Execution then Execution.begin(action) end
     Toolkit.ActionQueueLifecycle.started(action)
     local token = action.toolkitQueueOperation
     if type(token) == "table" then token.toolkitStarted = true end
     local result = begin(action)
+    if Execution then Execution.bind(action) end
     if media then media.bind(action) end
     if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.bindCancellation(action) end
     return result
@@ -221,7 +225,8 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         end
     end
     if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.completeCancellation(queue, action) end
-    return completed(queue, action)
+    completed(queue, action)
+    if Execution then Execution.completed(action) end
 end
 
 function Queue.move(queue, action, target, after)
@@ -291,6 +296,7 @@ ISBaseTimedAction.stop = function(action)
     if approach then approach.onStop(action) end
     if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.stop(action) end
     local queue = ISTimedActionQueue.queues[action.character]
+    if queue and Execution and Execution.preserveStop(action) then queue.toolkitCancel = action end
     local terminal = queue and Toolkit.ActionQueueLifecycle.deferStop(queue, action)
     if terminal ~= nil then
         if terminal then
@@ -369,6 +375,7 @@ if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop"
 -- Native reset/clear delegate here even when another mod retains an earlier reset wrapper.
 local cancelQueue = ISTimedActionQueue.cancelQueue
 ISTimedActionQueue.cancelQueue = function(queue)
+    if Execution then Execution.reset(queue) end
     Settlement.resetCancellation(queue)
     if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.reset(queue) end
     if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.capture(queue) end
@@ -498,6 +505,16 @@ ISTimedActionQueue.tick = function(queue)
     -- Native idle clear is housekeeping; explicit clear still revokes late continuations.
     if not queue.queue[1] then return end
     local current, health = queue.queue[1], Toolkit.ActionQueueHealth
+    -- An admitted single earned return can fail before its native start. Its
+    -- isolated admission result retains the exact item/debt, not a success.
+    if Toolkit.Settings.actionQueue() and live(queue) and queue.current == current and current.action
+        and not current:isStarted() and not queue.character:getCharacterActions():contains(current.action)
+        and not queue.character:isPlayerMoving() and not queue.character:pressedMovement(false)
+        and Execution and Execution.skipUnstarted(queue, current) then
+        current:forceCancel()
+        queue:onCompleted(current)
+        return
+    end
     -- Java removes invalid, never-started actions without stop(); native tick would clear unrelated work.
     if Toolkit.Settings.actionQueue() and live(queue) and queue.current == current and current.action
         and not current:isStarted() and not queue.character:getCharacterActions():contains(current.action)

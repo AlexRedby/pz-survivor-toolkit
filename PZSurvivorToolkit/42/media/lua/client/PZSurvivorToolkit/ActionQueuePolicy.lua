@@ -704,7 +704,7 @@ function Policy.addContainerResources(result, container)
     if container then result.knownInputs = false end
 end
 
-local function transferResources(action)
+local function transferResources(action, context)
     local result = itemResources(action)
     if not result then return end
     if instanceof(action.item, "InventoryContainer") then result.knownInputs = false end
@@ -723,6 +723,10 @@ local function transferResources(action)
         result.edit = ItemEditAdapters.transfer(action)
         if result.edit and (not carriedContainers(action.srcContainer,action.character)
             or not carriedContainers(action.destContainer,action.character)) then result.positions={[action.character]=true} end
+    end
+    local execution = Toolkit.ActionQueueExecution
+    if result.knownInputs ~= false and execution and not (context and context.executionProbe) then
+        result.execution = execution.inspect(action)
     end
     return result
 end
@@ -1302,7 +1306,16 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
     if (aTransfer and not bTransfer) or (bTransfer and not aTransfer) then
         local equipment = inspect(aTransfer and b or a, context)
         -- Hand/slot changes can alter carried weight or move heavy items out of external containers.
-        if equipment and equipment.hands == queue.character then return queue.character:getInventory() end
+        if equipment and equipment.hands == queue.character then
+            local transferAction = aTransfer and a or b
+            local contract = inspect(transferAction, context)
+            local capability = contract and contract.execution
+            -- Native live admission and exact outcome handling own this earned
+            -- single return. No equipment-neutrality or future-space claim.
+            local execution = Toolkit.ActionQueueExecution
+            if not capability or not execution or not execution.capacityDeferred
+                or not execution.capacityDeferred(transferAction, capability) then return queue.character:getInventory() end
+        end
     end
     if not aTransfer or not bTransfer then return end
     if check.done then return check.blocker end
@@ -1763,6 +1776,30 @@ end
 Policy.live, Policy.stoppable = live, stoppable
 Policy.resumableWorld, Policy.preparationCanFinish = resumableWorld, preparationCanFinish
 Policy.operationItems = operationItems
+
+-- Failure isolation never guesses that an unknown or resource-dependent suffix
+-- is independent. Capacity-sharing future transfers remain on their native path
+-- until their own admission/outcome contracts are migrated. No inventory scan.
+function Policy.returnFailureIndependent(queue, action)
+    local index = queue and queue:indexOf(action)
+    if not index or index < 1 then return false end
+    local context = {contracts = {}, items = {}, executionProbe = true}
+    local own = inspect(action, context)
+    if not own or own.knownInputs == false or own.unknownOutputs then return false end
+    -- Transfer reachability is a position prerequisite, not a position effect.
+    -- A later walk remains independent of its terminal no-effect rejection.
+    own.positions = nil
+    for i = index + 1, #queue.queue do
+        local other = queue.queue[i]
+        if other.Type == "ISInventoryTransferAction" or other.Type == "ISCartTransferAction"
+            or other._isAddingActions or other.action then return false end
+        local contract = inspect(other, context)
+        if not contract or contract.knownInputs == false or contract.unknownOutputs
+            or sharedItem(action, other, context) or sharedWorldTarget(action, other, context)
+            or dynamicConflict(action, other, context) or dynamicConflict(other, action, context) then return false end
+    end
+    return true
+end
 
 function Policy.replaceStop(previous, replacement)
     if type(adoptGroomingBase) == "function" and Toolkit.ActionQueueGrooming == Grooming and Grooming.adoptBase == adoptGroomingBase then adoptGroomingBase("stop", previous, replacement) end

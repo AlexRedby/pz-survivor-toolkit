@@ -12,6 +12,8 @@ Implementation and migration are conditional on the performance gate in [the des
 
 # Book reading edit regression
 
+- [ ] Add the shared native-live/exact-item execution capability for a single earned optional return, including guarded merge exclusion, pre-start admission failure, explicit MP rejection and completed SP no-effect outcomes. Retain blocked return debt visibly and never infer success or replay an uncertain transfer; preserve native controls and independent tails.
+- [ ] Grant the equipment/return capacity exception only through that verified execution contract, preserving ownership, callback, active-step and real dependency gates. Qualify runtime failures and the real panel source/control bank together before shipping the exception.
 - [ ] Reproduce the reported blocked cancel/preemption through real queue-panel controls for root, worn-bag and world-container reading, comparing collapsed operation and expanded reader rows. Include native producer/type/callback bindings, earned returns and independent neighboring actions; collect actual denial gates rather than asking the user to identify an old case.
 - [ ] Fix every demonstrated shared cause while preserving earned cleanup, exact book IDs/pages, real resource prerequisites and native stop/Host settlement. Add focused failing regressions before changing permissions.
 - [ ] Batch the affected source/control combinations with the current selected pack in SP/menu Host, queue off/on. Require actual panel press/release and drag admission, saved-page resume, exact authority returns and clean logs before release.

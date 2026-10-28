@@ -172,6 +172,84 @@ function Panel.taskTitle(queue, first, last)
     return Toolkit.ActionQueueLabels.taskTitle(queue, first, last)
 end
 
+local function returnBackend()
+    local execution = Toolkit.ActionQueueExecution
+    if execution and type(execution.blockedReturnInfo) == "function"
+        and type(execution.blockedReturns) == "function" and type(execution.keepReturn) == "function" then return execution end
+end
+
+function Panel:createReturnButtons()
+    if self.keepReturnButton or not returnBackend() then return end
+    self.keepReturnButton = ISButton:new(8, self.height - 34, self.width - 50, 24, "", self, Panel.keepFailedReturn)
+    self.keepReturnButton:initialise(); self.keepReturnButton:instantiate(); self:addChild(self.keepReturnButton)
+    local down = self.keepReturnButton.onMouseDown
+    self.keepReturnButton.onMouseDown = function(control, x, y)
+        local selected = self.returnEntries and self.returnEntries[self.returnIndex or 1]
+        control.returnId, control.returnBackend = selected and selected.id, self.returnBackend
+        return down(control, x, y)
+    end
+    self.nextReturnButton = ISButton:new(self.width - 34, self.height - 34, 24, 24, ">", self, Panel.nextFailedReturn)
+    self.nextReturnButton:initialise(); self.nextReturnButton:instantiate(); self:addChild(self.nextReturnButton)
+    self.nextReturnButton:setTooltip(getText("UI_PZSurvivorToolkit_queue_return_next"))
+    self.keepReturnButton:setVisible(false); self.nextReturnButton:setVisible(false)
+end
+
+function Panel:keepFailedReturn(button)
+    local id, backend = button.returnId, button.returnBackend
+    button.returnId, button.returnBackend = nil, nil
+    if id and backend == returnBackend() then
+        local accepted = backend.keepReturn(self.queue.character, id)
+        self.returnRejected = not accepted
+    end
+    -- Only display data is invalidated. keepReturn always resolves its own live authority.
+    self.returnRevision = nil; self:update()
+end
+
+function Panel:nextFailedReturn()
+    if self.returnEntries and #self.returnEntries > 1 then
+        self.returnIndex = (self.returnIndex or 1) % #self.returnEntries + 1
+        self.returnRejected = nil; self:updateBlockedReturns()
+    end
+end
+
+function Panel:updateBlockedReturns()
+    local backend = returnBackend()
+    local info = backend and backend.blockedReturnInfo(self.queue.character)
+    local visible = info ~= nil and info.count > 0
+    if visible then self:createReturnButtons() end
+    if self.returnVisible ~= visible then self.returnVisible = visible; self:onResize() end
+    if self.keepReturnButton then
+        self.keepReturnButton:setVisible(visible)
+        self.nextReturnButton:setVisible(visible and info.count > 1)
+    end
+    if not visible then
+        self.returnEntries, self.returnRevision, self.returnBackend, self.returnCount = nil, nil, nil, nil
+        self.returnIndex, self.returnRejected, self.returnRenderedIndex, self.returnRenderedRejected = nil, nil, nil, nil
+        return
+    end
+    local changed = self.returnBackend ~= backend or self.returnRevision ~= info.revision or self.returnCount ~= info.count
+    if changed then
+        local previous = self.returnEntries and self.returnEntries[self.returnIndex or 1]
+        self.returnEntries = backend.blockedReturns(self.queue.character)
+        self.returnBackend, self.returnRevision, self.returnCount = backend, info.revision, info.count
+        self.returnIndex = 1
+        if previous then for index, entry in ipairs(self.returnEntries) do if entry.id == previous.id then self.returnIndex = index; break end end end
+    end
+    self.keepReturnButton:setWidth(self.width - (info.count > 1 and 50 or 16))
+    if not changed and self.returnRenderedIndex == self.returnIndex and self.returnRenderedRejected == self.returnRejected then return end
+    self.returnRenderedIndex, self.returnRenderedRejected = self.returnIndex, self.returnRejected
+    local entry = self.returnEntries[self.returnIndex or 1]
+    local title = entry and (entry.title or entry.itemType) or getText("UI_PZSurvivorToolkit_queue_return_item")
+    local revoked = entry and entry.state == "revoked"
+    self.keepReturnButton:setTitle(getText("UI_PZSurvivorToolkit_queue_return_" .. (revoked and "forget" or "keep"), title, self.returnIndex or 1, info.count))
+    self.keepReturnButton:setEnable(entry ~= nil and (entry.state == "blocked" or revoked))
+    local reason = revoked and "revoked" or entry and entry.reason
+    if reason ~= "revoked" and reason ~= "admission" and reason ~= "server" and reason ~= "unmoved" then reason = "unavailable" end
+    local tooltip = getText("UI_PZSurvivorToolkit_queue_return_" .. reason)
+    if self.returnRejected and reason ~= "unavailable" then tooltip = tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_return_unavailable") end
+    self.keepReturnButton:setTooltip(tooltip)
+end
+
 function Panel:createChildren()
     ISCollapsableWindow.createChildren(self)
     self.closeButton:setVisible(false)
@@ -201,6 +279,7 @@ function Panel:createChildren()
             button:setVisible(false)
         end
     end
+    self:createReturnButtons()
 end
 
 function Panel:restoreCancelled(button)
@@ -498,6 +577,7 @@ function Panel:update()
     self.projectedRows, self.projectedRowCount = self.list.items, #self.list.items
     self.title = getText("UI_PZSurvivorToolkit_queue_title", groupCount)
     self:updateRecovery()
+    self:updateBlockedReturns()
 end
 
 function Panel:clearSnapshots()
@@ -507,16 +587,29 @@ function Panel:clearSnapshots()
     self.list.cancelFeedback = nil
     self.list:clear()
     self.expanded = {}
+    self.returnEntries, self.returnRevision, self.returnBackend, self.returnCount, self.returnIndex = nil, nil, nil, nil, nil
+    self.returnRejected, self.returnRenderedIndex, self.returnRenderedRejected = nil, nil, nil
+    if self.keepReturnButton then
+        self.keepReturnButton.returnId, self.keepReturnButton.returnBackend = nil, nil
+        self.keepReturnButton:setVisible(false); self.nextReturnButton:setVisible(false)
+    end
+    if self.returnVisible then self.returnVisible = false; self:onResize() end
 end
 
 function Panel:onResize()
     ISCollapsableWindow.onResize(self)
     if not self.list then return end
     self.list:setWidth(self.width - 16)
-    self.list:setHeight(self.height - self.list.y - 12 - (self.recoveryVisible and 30 or 0))
+    self.list:setHeight(self.height - self.list.y - 12 - (self.recoveryVisible and 30 or 0) - (self.returnVisible and 30 or 0))
     if self.restoreButton then
         self.restoreButton:setY(self.height - 34); self.restoreButton:setWidth(self.width - 50)
         self.forgetButton:setY(self.height - 34); self.forgetButton:setX(self.width - 34)
+    end
+    if self.keepReturnButton then
+        local y = self.height - 34 - (self.recoveryVisible and 30 or 0)
+        self.keepReturnButton:setY(y); self.keepReturnButton:setWidth(self.width - (self.returnCount and self.returnCount > 1 and 50 or 16))
+        self.nextReturnButton:setY(y); self.nextReturnButton:setX(self.width - 34)
+        self.keepReturnButton.returnId, self.keepReturnButton.returnBackend = nil, nil
     end
     self.list:clearGesture()
 end
@@ -527,7 +620,10 @@ function Panel.refresh()
         local queue = player and ISTimedActionQueue.queues[player]
         local recovery = Toolkit.ActionQueueRecovery
         local saved = recovery and player and recovery.info(player)
-        if saved and not queue then queue = ISTimedActionQueue.getTimedActionQueue(player) end
+        local execution = returnBackend()
+        local failures = execution and player and execution.blockedReturnInfo(player)
+        local failedReturn = failures and failures.count > 0
+        if (saved or failedReturn) and not queue then queue = ISTimedActionQueue.getTimedActionQueue(player) end
         local panel = panels[playerNum]
         if panel and panel.queue ~= queue then
             positions[playerNum] = {x = panel:getX(), y = panel:getY()}
@@ -536,7 +632,7 @@ function Panel.refresh()
             panels[playerNum], panel = nil, nil
         end
         local visible = Toolkit.Settings.actionQueue() and player and not player:isDead()
-            and queue and (#queue.queue > 0 or saved ~= nil)
+            and queue and (#queue.queue > 0 or saved ~= nil or failedReturn)
         if visible and not panel then
             local position = positions[playerNum]
             local x = position and position.x or getPlayerScreenLeft(playerNum) + math.max(80, getPlayerScreenWidth(playerNum) - 440)

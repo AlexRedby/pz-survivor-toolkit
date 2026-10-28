@@ -48,7 +48,12 @@ local function setup(client)
     removeItemTransaction = function() error('settlement must never remove an item transaction') end
     instanceof = function(value, kind) return type(value) == 'table' and value.class == kind end
     local loaded = {}
+    getFilenameOfClosure = NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
     require = function(name)
+        if name == 'PZSurvivorToolkit/SourceProof' then
+            if not loaded[name]then loaded[name]=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()end
+            return loaded[name]
+        end
         if name == 'PZSurvivorToolkit/ActionQueueAcknowledgements' then
             if not loaded[name] then
                 loaded[name] = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
@@ -2451,3 +2456,125 @@ end
 
 print('Native cleanup receipt generations: second toggle retains only its allocated native episode; replacement revokes it.')
 print('Shared settlement: persistent phases, earned-only cleanup, late isolation and exact native P4 returns passed.')
+
+-- Exact earned return execution uses the same private borrowing and outcome
+-- records as cancellation, including no-effect admission/server/SP results.
+local function returnExecutionFixture(client)
+    local s=pendingReturnFixture(client)
+    local action=s.pendingReturn
+    s.player.isPlayerMoving=function()return false end
+    s.player.pressedMovement=function()return false end
+    s.stack=true
+    s.player.getCharacterActions=function()return {contains=function(_,native)return s.stack and native==action.action end}end
+    s.queue.indexOf=function(self,member)for index,value in ipairs(self.queue)do if value==member then return index end end;return -1 end
+    action.queueList={{items={action.item}}};action.transactionId=0;action.started=false
+    action.item.getDisplayName=function()return 'Borrowed test book'end
+    QueueReturnExecutionFixture=s
+    local guard=assert(loadstring([[return function(action,reference)
+        local s=QueueReturnExecutionFixture
+        return action==s.pendingReturn and s.nativeLive~=false
+            and (not reference or reference.id==action.item:getID()and reference.fullType==action.item:getFullType())
+    end]],'@fixture/ActionQueueExecution.lua'))()
+    PZSurvivorToolkit.ActionQueueExecution={matches=guard}
+    s.executionGuard=guard
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent=assert(loadstring([[return function(queue,action)
+        return not QueueReturnExecutionFixture.unsafeTail
+    end]],'@fixture/ActionQueuePolicy.lua'))()
+    return s
+end
+for _,client in ipairs({false,true})do
+    local s=returnExecutionFixture(client);local action=s.pendingReturn;local guard=s.executionGuard
+    assert(s.settlement.returnExecutionSupported(action,guard),'earned pending return lacks execution descriptor')
+    assert(not s.settlement.prepareReturnExecution(action,guard),'preview/pending membership cannot start an episode')
+    s.queue.current,s.queue.queue=action,{action,s.tail}
+    assert(s.settlement.prepareReturnExecution(action,guard),'current earned return must bind before allocation')
+    assert(not s.settlement.prepareReturnExecution(action,guard),'one episode cannot bind twice')
+    s.settlement.started(action)
+    action.action={isStarted=function()return false end};s.stack=false
+    assert(s.settlement.rejectReturnExecution(action,'admission',guard),'never-started refusal must isolate exact return')
+    assert(not s.settlement.rejectReturnExecution(action,'admission',guard),'rejection must publish at most one debt')
+    local info=s.settlement.blockedReturnInfo(s.player);local debts=s.settlement.blockedReturns(s.player)
+    assert(info.count==1 and #debts==1 and debts[1].itemId==181 and debts[1].reason=='admission')
+    debts[1].itemId=999
+    assert(s.settlement.blockedReturns(s.player)[1].itemId==181,'UI copies must not mutate proof')
+    assert(s.settlement.completionState(s.queue,action)=='ready','known refusal must not stall independent work')
+    assert(s.settlement.keepReturn(s.player,info and s.settlement.blockedReturns(s.player)[1].id))
+    assert(s.settlement.blockedReturnInfo(s.player).count==0 and s.root.items[181]==action.item
+        and s.queue.queue[2]==s.tail and s.counts()==0,'keeping debt must not transfer, rebuild or drop independent work')
+end
+for _,state in ipairs({'rejected','absent','completed','unresolved','duplicated-effect'})do
+    local s=returnExecutionFixture(true);local action=s.pendingReturn;local guard=s.executionGuard
+    s.queue.current,s.queue.queue=action,{action,s.tail}
+    assert(s.settlement.prepareReturnExecution(action,guard))
+    action.action={isStarted=function()return true end};action.started=true;action.transactionId=71
+    s.transaction.byId[71]={done=state=='absent'or state=='completed',rejected=state=='absent'or state=='rejected'or state=='duplicated-effect'}
+    if state=='duplicated-effect'then s.source.items[181]={container=s.source,getContainer=function(self)return self.container end}end
+    local rejected=s.settlement.rejectReturnExecution(action,'server',guard)
+    assert(rejected==(state=='rejected'),state..': only positive rejection with no observed effects may isolate')
+    local info=s.settlement.blockedReturnInfo(s.player)
+    assert((info and info.count or 0)==(rejected and 1 or 0))
+    if rejected then assert(s.settlement.completionState(s.queue,action)=='ready')end
+end
+for _,moved in ipairs({false,true})do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn;local guard=s.executionGuard
+    s.queue.current,s.queue.queue=action,{action,s.tail};assert(s.settlement.prepareReturnExecution(action,guard))
+    action.action={isStarted=function()return true end};action.started=true
+    assert(s.settlement.beginPlannedReturn(action,guard))
+    if moved then s.root.items[181],s.source.items[181],action.item.container=nil,action.item,s.source end
+    action.queueList={};action.started=false
+    assert(s.settlement.finishPlannedReturn(action,true));s.stack=false
+    assert(s.settlement.rejectReturnExecution(action,'unmoved',guard)==not moved)
+    assert(s.settlement.completionState(s.queue,action)=='ready')
+    if moved then assert(not s.settlement.blockedReturnInfo(s.player),'confirmed native return created a debt')end
+end
+for _,changed in ipairs({'native-started','transaction','still-stacked','generation','source','consumed','dependent-tail'})do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn;local guard=s.executionGuard
+    s.queue.current,s.queue.queue=action,{action,s.tail};assert(s.settlement.prepareReturnExecution(action,guard))
+    action.action={isStarted=function()return changed=='native-started'end};s.stack=false
+    if changed=='transaction'then action.transactionId=5
+    elseif changed=='still-stacked'then s.stack=true
+    elseif changed=='generation'then s.queue.toolkitOperationGeneration=1
+    elseif changed=='source'then action.srcContainer={}
+    elseif changed=='consumed'then action.item.consumed=true
+    elseif changed=='dependent-tail'then s.unsafeTail=true end
+    assert(not s.settlement.rejectReturnExecution(action,'admission',guard),changed..': unsafe admission cannot create a debt')
+end
+-- Cancelling the reader creates a required native cleanup step, but its
+-- original exact optional-return intent must survive that scheduling boundary.
+for _,client in ipairs({false,true})do
+    local s=returnExecutionFixture(client);local old=s.pendingReturn;local guard=s.executionGuard
+    PZSurvivorToolkit.ActionQueuePolicy.editUnchanged=function()return true end
+    PZSurvivorToolkit.ActionQueueExecution.admitEditMember=function(action)
+        return s.settlement.authorizeReturnRetention(action,guard)
+    end
+    local request={action=s.current,token=s.token}
+    assert(s.settlement.admitCancellation(s.queue,request,{allowed=true,first=1,last=2,snapshot={}}))
+    s.queue.toolkitGroupCancel=request;s.token.toolkitCancelled=true
+    assert(s.settlement.finish(s.queue,request,s.discard))
+    local returning=s.queue.queue[2]
+    assert(returning~=old and returning.Type=='ISInventoryTransferAction','fixture must use the scheduled native cleanup')
+    s.queue.toolkitGroupCancel=nil;s.queue.current,s.queue.queue=returning,{returning,s.tail}
+    s.pendingReturn=returning;returning.queueList={{items={returning.item}}};returning.transactionId=0;returning.started=false
+    assert(s.settlement.returnExecutionSupported(returning,guard),'scheduled optional return lost its isolation contract')
+    assert(s.settlement.prepareReturnExecution(returning,guard),'scheduled optional return cannot bind')
+    returning.action={isStarted=function()return false end};s.stack=false
+    assert(s.settlement.rejectReturnExecution(returning,'admission',guard),'scheduled cleanup failure cancelled independent work')
+    assert(s.settlement.completionState(s.queue,returning)=='ready')
+    local failure=s.settlement.blockedReturns(s.player)[1]
+    assert(failure and s.settlement.keepReturn(s.player,failure.id),'scheduled debt cannot retain the exact item')
+    assert(s.root.items[181]==returning.item and s.queue.queue[2]==s.tail)
+end
+-- Reset revokes execution rights, while a historical notice can be explicitly
+-- forgotten without looking up or mutating any current item/borrow state.
+do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn;local guard=s.executionGuard
+    s.queue.current,s.queue.queue=action,{action,s.tail};assert(s.settlement.prepareReturnExecution(action,guard))
+    action.action={isStarted=function()return false end};s.stack=false
+    assert(s.settlement.rejectReturnExecution(action,'admission',guard))
+    local failure=s.settlement.blockedReturns(s.player)[1]
+    s.settlement.resetReturnFailures(s.queue)
+    s.root.getItemById=function()error('forgetting history must not inspect inventory')end
+    assert(s.settlement.keepReturn(s.player,failure.id))
+    assert(s.settlement.blockedReturnInfo(s.player).count==0)
+end
+print('Shared return execution: earned-only binding, native admission/rejection/no-effect outcomes, private debts and no replay passed.')

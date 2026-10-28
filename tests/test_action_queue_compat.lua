@@ -3486,8 +3486,14 @@ do
         PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions=actualPolicy,bulk
         local settlement=PZSurvivorToolkit.ActionQueueSettlement
         local intent=PZSurvivorToolkit.ActionQueueTidyIntent
-        local beforeBegin,beforeFinish=settlement.beginPlannedReturn,settlement.finishPlannedReturn
+        local beforeBegin,beforeFinish,beforeRetention=settlement.beginPlannedReturn,settlement.finishPlannedReturn,settlement.returnRetention
         local owned,begun;local captures,finishes=0,0
+        local handle={}
+        settlement.returnRetention=function(candidate,action)
+            if candidate~=handle or action~=owned then return end
+            return {character=player,queue=queue,generation=queue.toolkitOperationGeneration or 0,
+                source=inventory,destination=tidyBag,item=action.item}
+        end
         settlement.beginPlannedReturn=function(action,guard)
             if action~=owned then return false end
             assert(guard(action)and actualPolicy.matchesNative(action),'planned return lost full native binding proof')
@@ -3498,17 +3504,24 @@ do
             assert(succeeded,'native planned return failed');finishes=finishes+1;begun=nil;return true
         end
         local function returning(id)
-            return bulk.guardTransfer(ISInventoryTransferAction:new(player,item(inventory,id),inventory,tidyBag))
+            local value=item(inventory,id);inventory.values={value}
+            return bulk.guardTransfer(ISInventoryTransferAction:new(player,value,inventory,tidyBag))
         end
         owned=returning(19401)
         assert(actualPolicy.matchesNative(owned)and actualPolicy.isOrdinaryTransfer(owned),'actual guarded return must match native Policy')
-        assert(not intent.status(owned),'owned stop/no-op callback must not widen P4 source-instance permissions')
+        assert(intent.status(owned)and intent.canKeepReturn(owned),
+            'P4 must recognize the exact owned native stop/no-op callback binding')
+        assert(not intent.keepReturn(owned,{}),'a copied or foreign ledger handle cannot publish Keep intent')
+        assert(intent.keepReturn(owned,handle),'earned native guarded return must publish Keep intent with P4 active')
         assert(intent.begin(owned,'perform'),'actual Compat listener must capture an owned guarded planned return')
         intent.finish(owned,'perform',true)
         assert(captures==1 and finishes==1,'owned guarded return did not pair its real observer begin/finish')
         local outside=returning(19402)
-        assert(not intent.begin(outside,'perform'),'valid but unowned guard cannot mint a planned return')
-        for _,change in ipairs({'guard','callback','helper'})do
+        local priorCaptures=captures
+        intent.begin(outside,'perform');intent.finish(outside,'perform',true)
+        assert(captures==priorCaptures,'ordinary P4 observation cannot mint a private planned return')
+        assert(not intent.keepReturn(outside,handle),'an unowned guarded action cannot borrow another return handle')
+        for _,change in ipairs({'guard','callback','args','stop','helper'})do
             local beforeCaptures,beforeFinishes=captures,finishes
             owned=returning(19403)
             local restore
@@ -3519,15 +3532,27 @@ do
             elseif change=='callback'then
                 local original=owned.onCompleteFunc;owned.onCompleteFunc=function()error('foreign completion must not run')end
                 restore=function()owned.onCompleteFunc=original end
+            elseif change=='args'then
+                owned.onCompleteArgs[1]='foreign'
+                restore=function()owned.onCompleteArgs[1]=nil end
+            elseif change=='stop'then
+                local original=owned.stop;owned.stop=function()error('foreign stop must not run')end
+                restore=function()owned.stop=original end
             else
                 local original=ISInventoryTransferAction.getNotFullFloorSquare
                 ISInventoryTransferAction.getNotFullFloorSquare=function()error('foreign helper must not run')end
                 restore=function()ISInventoryTransferAction.getNotFullFloorSquare=original end
             end
-            assert(not actualPolicy.matchesNative(owned)and not intent.begin(owned,'perform'),
-                'forged '..change..' obtained planned native return observation')
+            if change~='args'then
+                assert(not actualPolicy.matchesNative(owned)and not intent.begin(owned,'perform'),
+                    'forged '..change..' obtained planned native return observation')
+            end
+            assert(not intent.canKeepReturn(owned)and not intent.keepReturn(owned,handle),
+                'forged '..change..' published Keep intent through P4')
             assert(captures==beforeCaptures and finishes==beforeFinishes,'rejected '..change..' reached the private ledger begin')
             restore()
+            assert(intent.canKeepReturn(owned)and intent.keepReturn(owned,handle),
+                'restored exact '..change..' did not regain Keep intent')
             assert(intent.begin(owned,'perform'),'restored exact '..change..' did not regain its native observation')
             intent.finish(owned,'perform',true)
             assert(captures==beforeCaptures+1 and finishes==beforeFinishes+1,'restored '..change..' did not pair its native observer finish')
@@ -3539,7 +3564,20 @@ do
         assert(not intent.status(ordinary),'planned return migration widened a changed P4 owner proof')
         P4TidyUpMeister.registerActionPolicy=sourcePolicy
         assert(intent.status(ordinary),'restored exact P4 owner did not regain source permissions')
-        settlement.beginPlannedReturn,settlement.finishPlannedReturn=beforeBegin,beforeFinish
+        local firstItem=tidyTasks(false,nil,true,true);tickTidy();tickTidy()
+        local recorded=findReturn(firstItem)
+        assert(recorded and compat.fixtureRegistries[1][recorded]and intent.status(recorded),
+            'fixture must capture an original source-recorded P4 return')
+        bulk.guardTransfer(recorded)
+        assert(intent.status(recorded),'owned Bulk guard added after source capture must retain P4 binding')
+        local savedStop=recorded.stop;recorded.stop=function()end
+        assert(not intent.status(recorded),'recorded return accepted a foreign stop after Bulk guarding')
+        recorded.stop=savedStop
+        recorded.onCompleteArgs[1]='foreign'
+        assert(not intent.status(recorded),'recorded return accepted changed completion arguments')
+        recorded.onCompleteArgs[1]=nil
+        assert(intent.status(recorded),'restored guarded source record lost its exact binding')
+        settlement.beginPlannedReturn,settlement.finishPlannedReturn,settlement.returnRetention=beforeBegin,beforeFinish,beforeRetention
         PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions=previousPolicy,previousBulk
         reset()
     end

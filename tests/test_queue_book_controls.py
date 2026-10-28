@@ -1,0 +1,390 @@
+"""Native bank qualification and causal mutations; fixture controls remain real widgets."""
+import copy
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'tools'))
+from queue_checks.adapters import book_controls as a
+from queue_checks import adapters
+
+
+class BookControlTests(unittest.TestCase):
+    def selection(self, kind='mp', mode='toolkit'):
+        return dict(suite='book-controls', cases=list(a.CASES), kind=kind, mode=mode, clients=1,
+                    languages=['EN'], mods=list(a.MODS), options=dict(book_controls=True, **({'mp_host': True} if kind == 'mp' else {})))
+
+    def evidence(self, case='worn-bag/move-equip', kind='mp', mode='toolkit'):
+        source, original_control = case.split('/'); control = a.base_control(original_control); lost = original_control != control
+        enabled = mode == 'toolkit'; moving = enabled and control.startswith('move-'); keep = enabled and control == 'return-child-cancel'
+        spec = dict(case=case, source=source, control=original_control, actor=0, targetVolume=.25, initialVolume=.5,
+                    front=dict(id=101, type='Base.BookCarpentry1', total=220, initial=218),
+                    tail=dict(id=102, type='Base.BookCooking1', total=220, initial=219), pen=dict(id=103, type='Base.Pen'),
+                    bag=dict(id=104, type='Base.Bag_Military', location='base:back') if source == 'worn-bag' else False)
+        where = 104 if source == 'worn-bag' else source
+        items = [dict(id=spec[n]['id'], type=spec[n]['type'], container=where if n == 'front' else 'root', condition=10, favorite=True, count=1) for n in ('front', 'tail', 'pen')]
+        if source == 'worn-bag': items.append(dict(id=104, type=spec['bag']['type'], container='root', condition=10, favorite=False, count=1))
+        seed = dict(case=case, items=items, worn=[dict(id=104, location='base:back')] if source == 'worn-bag' else [], hands=dict(primary=False, secondary=False),
+                    appearance=dict(hair='Long', beard='Scruffy', hairColor=dict(r=.2, g=.4, b=.6), beardColor=dict(r=.6, g=.4, b=.2)),
+                    books={n: dict(id=spec[n]['id'], type=spec[n]['type'], pages=spec[n]['initial'], characterPages=spec[n]['initial'], total=220, container=source if n == 'front' else 'root', favorite=True) for n in ('front', 'tail')},
+                    volume=.5, powered=True, bagWorn=source == 'worn-bag')
+        spec['baseline'] = copy.deepcopy(seed)
+        before = copy.deepcopy(seed); before['books']['front'].update(pages=219, characterPages=219)
+        before['books']['front']['container'] = 'root'
+        b = dict(case=case, at=10, before=before, reader='reader:1', native='java:1', token=10 if enabled else False,
+                 delta=.995, tailRetained=True, volumePending=True, equipPending=True, requested=enabled, drained=True, drainedAt=11)
+        acks = []; records = []
+        def record(seq, role, item, token, started=True, performed=True):
+            typ = {'front': 'ISReadABook', 'tail': 'ISReadABook', 'volume': 'ISRadioAction', 'equip': 'ISEquipWeaponAction', 'pickup': 'ISInventoryTransferAction', 'return': 'ISInventoryTransferAction'}[role]
+            r = dict(sequence=seq, role=role, item=item, token=token if enabled else False, type=typ, mode='SetVolume' if role == 'volume' else False,
+                     actionRef='reader:1' if seq == 1 else 'lua:' + str(seq), duration=30 if role == 'volume' else 100, nativeSource=True,
+                     started=started, progress=started, finishes=[], receipts=[])
+            if started:
+                r.update(nativeRef='java:' + str(seq), startedAt=seq + 10, allocatedAt=seq + 9,
+                         effectiveDuration=r['duration'], durationBefore=r['duration'], durationAfter=r['duration'])
+                if performed:
+                    r['performedAt'] = seq + 12
+                    r['finishes'] = [dict(phase=p, succeeded=True, at=seq + 12) for p in (['perform'] if kind == 'mp' else ['perform', 'complete'])]
+                else: r['finishes'] = [dict(phase='stop', at=11)]
+                if kind == 'mp' and role in ('volume', 'equip'):
+                    for state in ('started', 'completed'):
+                        ack = dict(case=case, sequence=seq, kind=typ, transaction=seq, token='12345678-1234-1234-1234-' + str(seq).zfill(12), state=state, player=0, at=seq + 11)
+                        r['receipts'].append(ack); acks.append(ack)
+                if role in ('pickup', 'return'):
+                    r.update(transaction=seq, transactionDone=True, transactionRejected=False)
+            records.append(r);return r
+        original = record(1, 'front', 101, 10, performed=not enabled or keep)
+        equip = record(2, 'equip', 103, 20, started=enabled or not lost)
+        volume = record(3, 'volume', False, 30, started=enabled or not lost)
+        tail = record(4, 'tail', 102, 40, started=enabled or not lost)
+        if moving:
+            resumed = record(5, 'front', 101, 10)
+            resume = dict(oldAction=original['actionRef'], newAction=resumed['actionRef'], oldNative=original['nativeRef'], newNative=resumed['nativeRef'],
+                          item=101, token=10, startPage=219, pages=219, oldNativeAbsent=True, at=15)
+        else: resume = False
+        admission = [dict(sequence=r['sequence'], role=r['role'], type=r['type'], token=r['token'], actionRef=r['actionRef'], nativeRef=False, current=r is original) for r in (original, equip, volume, tail)]
+        if source != 'root':
+            pickup = record(6, 'pickup', 101, 10); returned = record(7, 'return', 101, 10, started=not keep and not lost)
+            admission.insert(0, dict(sequence=6, role='pickup', type=pickup['type'], token=pickup['token']))
+            admission.insert(2, dict(sequence=7, role='return', type=returned['type'], token=returned['token']))
+        starts = [1, 2, 5, 3, 4] if moving and control == 'move-equip' else [1, 3, 5, 2, 4] if moving else [1] if lost and not enabled else [1, 2, 3, 4]
+        b['queue'] = copy.deepcopy(admission)
+        b['ui'] = dict(source='ActionQueuePanel.List', input='programmatic-drag' if moving else 'programmatic-press-release',
+                       header=source != 'root' and control not in ('reader-child-cancel', 'return-child-cancel'), singleton=source == 'root', target=returned['actionRef'] if keep else original['actionRef'], operation=10,
+                       at=10, acceptedAt=10, hitTested=True, pressCaptured=True, gestureCleared=True, accepted=True, feedback=False,
+                       bodyContinues=True, returnAbsent=True, bookRoot=True, operationCancelled=False,
+                       decision=dict(reason=False, source=source), dragging=True, movingAction=(equip if control == 'move-equip' else volume)['actionRef'],
+                       movingAnchor=(equip if control == 'move-equip' else volume)['actionRef'], movingToken=20 if control == 'move-equip' else 30) if enabled else False
+        final = a.expected(spec, enabled, b)
+        row = dict(event='case', suite='book-controls', kind=kind, mode=mode, actor='client1', id=case, status='passed', reason=False, ids=spec,
+                   baseline=copy.deepcopy(seed), authorityBaseline=copy.deepcopy(seed), boundary=b, records=records, starts=starts,
+                   resume=resume, tailSnapshot=copy.deepcopy(final), volumeSnapshot=copy.deepcopy(before), equipSnapshot=copy.deepcopy(before),
+                   client=copy.deepcopy(final), server=copy.deepcopy(final), nativeMethodsUnchanged=True, reset=False,capacity=False,blockedReturn=False,failureUI=False)
+        if lost:
+            row['returnSucceeded'] = False
+            row['capacity'] = dict(case=case, actor=0, source=source, itemId=101, itemType=spec['front']['type'], before=40, after=0, roomAfter=False, bookRoot=True, requestedAt=11, acceptedAt=10 if enabled else False, at=12, authority=True)
+            if enabled:
+                row['blockedReturn'] = dict(id=501, itemId=101, itemType=spec['front']['type'], title='Carpentry', reason='server' if kind == 'mp' else 'admission', state='blocked')
+                row['failureUI'] = dict(case=case, source='ActionQueuePanel.KeepReturn',input='programmatic-press-callback', id=501,itemId=101,revision=1,count=1,visible=True,idle=True,bookRoot=True,at=20,pressCaptured=True,cleared=True,bookRetained=True)
+            else: row['tailSnapshot'] = False; row['nativeDebtAbsent'] = True
+        row['performance'] = dict(case=case,timer='getTimestampMs',units='ms',coarse=True,readOnly=True,queueEnabled=enabled,queueCount=len(b['queue']),warmup=3,samples=20,
+                                  limits='Tiny fixture, coarse timer; no end-to-end, regression or Host contention qualification.',metrics=[])
+        for index,name in enumerate(('evaluateMove','evaluateCancel','previewMove','previewCancel','panelUpdate')):
+            row['performance']['metrics'].append(dict(name=name,kind='authoritative' if index<2 else 'advisory',firstUseMs=25,rawMs=[0]*20,
+                p95Ms=0,p99Ms=0,p95BudgetMs=2 if index<2 else 1,p99BudgetMs=4 if index<2 else 2,passed=True))
+        row['tickSpacingMs'] = [16,17,16]
+        admitted = dict(case=case, producer='ISInventoryPaneContextMenu.onLiteratureItems/readItem', volumeProducer='RWMVolume.onVolumeChange',
+                        equipProducer='ISInventoryPaneContextMenu.equipWeapon', sourceBound=True, queue=admission)
+        raw_b = copy.deepcopy(b); raw_b['drained'] = False; raw_b.pop('drainedAt')
+        drain = dict(case=case, reader=b['reader'], native=b['native'], at=b['drainedAt'], oldNativeAbsent=True)
+        return row, spec, copy.deepcopy(seed), copy.deepcopy(final), [admitted], [raw_b], [drain], acks
+
+    def check(self, evidence, kind='mp', mode='toolkit'):
+        row, spec, baseline, final, admissions, boundaries, drains, acks = evidence
+        return a.check_case(row, row['id'], self.selection(kind, mode), spec, baseline, final, admissions, boundaries, drains, acks, row.get('capacity') if row.get('capacity') is not False else None)
+
+    def test_all_sources_controls_and_native_controls_qualify(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for case in a.CASES:
+                    with self.subTest(kind=kind, mode=mode, case=case):
+                        self.assertEqual(self.check(self.evidence(case, kind, mode), kind, mode), [])
+
+    def test_causal_mutations_fail_qualification(self):
+        mutations = {
+            'pen hand intent lost': lambda r: r['client']['hands'].update(primary=False),
+            'unrelated inventory item lost': lambda r: r['client']['items'].pop(),
+            'book source not conserved': lambda r: r['server']['books']['front'].update(container='root'),
+            'old native not drained': lambda r: r['boundary'].update(drained=False),
+            'wrong paid page': lambda r: r['boundary']['before']['books']['front'].update(pages=218),
+            'fresh action reused': lambda r: r['resume'].update(newAction=r['resume']['oldAction']),
+            'fresh Java reused': lambda r: r['resume'].update(newNative=r['resume']['oldNative']),
+            'fresh reader skipped saved page': lambda r: r['resume'].update(startPage=218),
+            'wrong fresh item': lambda r: r['resume'].update(item=999),
+            'native body reused': lambda r: r['resume'].update(oldNativeAbsent=False),
+            'equipment order not promoted': lambda r: r.update(starts=[1, 5, 2, 3, 4]),
+            'shortened constructor': lambda r: r['records'][1].update(duration=1),
+            'shortened allocation': lambda r: r['records'][1].update(effectiveDuration=1),
+            'replaced native callbacks': lambda r: r.update(nativeMethodsUnchanged=False),
+            'missing exact outcome': lambda r: r['records'][1]['receipts'].pop(),
+            'forged outcome token': lambda r: r['records'][1]['receipts'][1].update(token='bad'),
+            'missing perform callback': lambda r: r['records'][1].update(finishes=[]),
+            'wrong equip item': lambda r: r['records'][1].update(item=999),
+            'UI cross accepted only by API': lambda r: r['boundary']['ui'].update(hitTested=False),
+            'UI declined operation': lambda r: r['boundary']['ui'].update(accepted=False),
+            'missing real drag anchor': lambda r: r['boundary']['ui'].update(movingAnchor=False),
+            'wrong native source': lambda r: r['records'][1].update(nativeSource=False),
+            'tail started too soon': lambda r: r.update(starts=[1, 4, 2, 5, 3]),
+            'tail pen missing': lambda r: r['tailSnapshot']['hands'].update(primary=False),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                evidence = self.evidence(); mutate(evidence[0]); self.assertTrue(self.check(evidence), name)
+
+    def test_missing_raw_source_chain_and_drains_are_rejected(self):
+        for member in (4, 5, 6, 7):
+            evidence = self.evidence()
+            evidence[member].clear()
+            self.assertTrue(self.check(evidence))
+        evidence = self.evidence(); evidence[4][0]['queue'].pop(0)
+        self.assertTrue(self.check(evidence))
+        evidence = self.evidence(); evidence[4][0]['queue'][0]['token'] = 999
+        self.assertTrue(self.check(evidence))
+
+    def test_cancellation_and_natural_branch_cannot_swap(self):
+        for case in ('root/header-cancel', 'worn-bag/reader-child-cancel', 'world/header-cancel'):
+            evidence = self.evidence(case)
+            evidence[0]['records'][0]['performedAt'] = 99
+            self.assertTrue(self.check(evidence))
+        evidence = self.evidence('root/header-cancel', mode='native')
+        evidence[0]['boundary']['ui'] = dict(accepted=True)
+        self.assertTrue(self.check(evidence, mode='native'))
+
+    def test_optional_return_cross_keeps_reader_and_retires_only_its_exact_return(self):
+        for source in ('worn-bag', 'world'):
+            case = source + '/return-child-cancel'
+            mutations = {
+                'reader stopped': lambda r: r['boundary']['ui'].update(bodyContinues=False),
+                'return retained': lambda r: r['boundary']['ui'].update(returnAbsent=False),
+                'operation cancelled': lambda r: r['boundary']['ui'].update(operationCancelled=True),
+                'reader did not finish': lambda r: r['records'][0].pop('performedAt'),
+                'retired return ran': lambda r: next(v for v in r['records'] if v['role'] == 'return').update(started=True),
+                'return callback ran': lambda r: next(v for v in r['records'] if v['role'] == 'return').update(finishes=[dict(phase='perform', succeeded=True, at=20)]),
+                'cross targets reader': lambda r: r['boundary']['ui'].update(target=r['boundary']['reader']),
+                'late return resurrected': lambda r: r['client']['books']['front'].update(container=source),
+            }
+            for name, mutate in mutations.items():
+                with self.subTest(source=source, mutation=name):
+                    evidence = self.evidence(case); mutate(evidence[0]); self.assertTrue(self.check(evidence))
+        self.assertNotIn('root/return-child-cancel', a.CASES)
+
+    def test_capacity_loss_requires_exact_retained_debt_and_real_idle_keep(self):
+        mutations = {
+            'capacity not lost': lambda r: r['capacity'].update(after=40),
+            'change before accepted UI': lambda r: r['capacity'].update(requestedAt=9),
+            'wrong authority': lambda r: r['capacity'].update(authority=False),
+            'wrong exact item': lambda r: r['blockedReturn'].update(itemId=999),
+            'revoked obligation': lambda r: r['blockedReturn'].update(state='revoked'),
+            'failure silently hidden': lambda r: r['failureUI'].update(visible=False),
+            'queue not drained': lambda r: r['failureUI'].update(idle=False),
+            'keep not exact': lambda r: r['failureUI'].update(id=999),
+            'debt discarded': lambda r: r.update(blockedReturn=False),
+            'failed return claimed success': lambda r: r.update(returnSucceeded=True),
+            'item lost after keep': lambda r: r['failureUI'].update(bookRetained=False),
+            'independent tail discarded': lambda r: r['client']['books']['tail'].update(pages=219),
+        }
+        for case in a.CAPACITY_CASES:
+            for name, mutate in mutations.items():
+                with self.subTest(case=case, mutation=name):
+                    evidence = self.evidence(case); mutate(evidence[0]); self.assertTrue(self.check(evidence))
+            native = self.evidence(case, mode='native')
+            self.assertEqual(native[0]['starts'], [1]); self.assertIs(native[0]['blockedReturn'], False)
+            self.assertEqual(native[0]['client']['books']['tail']['pages'], native[1]['tail']['initial'])
+
+    def test_timing_samples_quantiles_and_frozen_design_budgets(self):
+        self.assertEqual(self.check(self.evidence()), [])  # Slow first-use is separate from warmed samples.
+        mutations = {
+            'no evidence': lambda r: r.update(performance=False),
+            'not read only': lambda r: r['performance'].update(readOnly=False),
+            'wrong timer': lambda r: r['performance'].update(timer='fabricated'),
+            'wrong warmup': lambda r: r['performance'].update(warmup=0),
+            'missing sample': lambda r: r['performance']['metrics'][0]['rawMs'].pop(),
+            'nonfinite sample': lambda r: r['performance']['metrics'][0]['rawMs'].__setitem__(0,float('nan')),
+            'negative sample': lambda r: r['performance']['metrics'][0]['rawMs'].__setitem__(0,-1),
+            'changed frozen budget': lambda r: r['performance']['metrics'][0].update(p99BudgetMs=99),
+            'wrong quantile': lambda r: r['performance']['metrics'][0].update(p95Ms=1),
+            'false pass claim': lambda r: r['performance']['metrics'][0]['rawMs'].__setitem__(19,5),
+            'no tick observations': lambda r: r.update(tickSpacingMs=[]),
+        }
+        for name,mutate in mutations.items():
+            with self.subTest(name=name):
+                evidence=self.evidence();mutate(evidence[0]);self.assertTrue(self.check(evidence))
+        evidence=self.evidence();metric=evidence[0]['performance']['metrics'][0]
+        metric['rawMs'][-1]=5;metric.update(p99Ms=5,passed=False)
+        self.assertTrue(any('Frozen performance budget exceeded' in e for e in self.check(evidence)))
+
+    def test_selection_is_opt_in_exact_ordered_bank(self):
+        a.validate(self.selection())
+        self.assertEqual(adapters.get('book-controls'), a)
+        for field, value in [('cases', list(reversed(a.CASES))), ('cases', list(a.CASES[:-1])), ('mods', a.MODS[:-1]), ('languages', ['RU']), ('clients', True), ('options', dict(mp_host=True))]:
+            selection = self.selection(); selection[field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError): a.validate(selection)
+        selection = self.selection(); selection['options']['world_template'] = 'fixture'
+        with self.assertRaises(ValueError): a.validate(selection)
+
+    def log_bank(self, kind='mp', mode='toolkit'):
+        selection = self.selection(kind, mode); client, server = [], []
+        def raw(marker, value): return a.PREFIX + marker + ' ' + json.dumps(value)
+        def event(value): return '[QUEUE_CHECK] ' + json.dumps(value)
+        client.append(event(dict(event='setup', suite='book-controls', cases=list(a.CASES), queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True)))
+        for case in a.CASES:
+            row, spec, baseline, final, admissions, boundaries, drains, acks = self.evidence(case, kind, mode)
+            authority = server if kind == 'mp' else client
+            authority.extend([raw('PREPARED', spec), raw('BASELINE', baseline), raw('VERIFIED', final)])
+            if row.get('capacity') is not False: authority.append(raw('CAPACITY_LOST', row['capacity']))
+            if row.get('blockedReturn') is not False:
+                client.append(raw('BLOCKED_RETURN',dict(case=case,entry=row['blockedReturn'])))
+                client.append(raw('FAILURE_UI',row['failureUI']))
+            for marker, values in [('ADMISSION', admissions), ('BOUNDARY', boundaries), ('DRAIN', drains), ('ACK', acks)]:
+                client.extend(raw(marker, value) for value in values)
+            client.append(raw('PERFORMANCE',row['performance']))
+            client.append(event(row))
+        client.append(event(dict(event='complete', suite='book-controls', cases=list(a.CASES), performed=len(a.CASES), skipped=0, failed=0)))
+        client.append(raw('COMPLETE', dict(cases=list(a.CASES), failed=0)))
+        return selection, '\n'.join(client), '\n'.join(server)
+
+    def test_whole_bank_raw_evidence_and_completion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for kind, mode in [('mp', 'toolkit'), ('sp', 'native')]:
+                selection, client, server = self.log_bank(kind, mode)
+                (root / 'client1-launch.log').write_text(client); (root / 'server-launch.log').write_text(server)
+                self.assertEqual(a.verify(root, selection, {})['issues'], [])
+                self.assertTrue(a.complete(selection, 'client1', client))
+                self.assertFalse(a.complete(selection, 'server', client))
+                for bad in (client.replace('"performed": ' + str(len(a.CASES)), '"performed": 0'), client + '\n' + a.PREFIX + 'DENIED {}', client + '\n' + a.PREFIX + 'RESET {}', client.replace('"authorityEquipment": true', '"authorityEquipment": false')):
+                    (root / 'client1-launch.log').write_text(bad)
+                    self.assertTrue(a.verify(root, selection, {})['issues'])
+            # Diagnostic completion must stop the common runner after the whole
+            # failed bank, while qualification still fails all denied features.
+            denied = a.PREFIX + 'COMPLETE ' + json.dumps(dict(cases=list(a.CASES), failed=len(a.CASES)))
+            self.assertTrue(a.complete(self.selection(), 'client1', denied))
+            self.assertFalse(a.complete(self.selection(), 'client1', denied + '\n' + denied))
+
+    def test_staging_and_source_sealing(self):
+        paths = a.sources(ROOT, self.selection())
+        self.assertTrue(all(path.is_file() for path in paths))
+        self.assertIn(Path(a.__file__).with_name('tv_controls.py'), paths)
+        self.assertIn(ROOT / 'tests/test_queue_book_controls.py', paths)
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = dict(roles={role: dict(cache=str(Path(directory) / role)) for role in ('server', 'client1')})
+            a.stage(ROOT, directory, None, None, self.selection(), {}, runtime)
+            for role in runtime['roles'].values():
+                lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
+                for path in (ROOT / 'tests/native_queue/book-controls').rglob('*.lua'):
+                    self.assertEqual(path.read_bytes(), (lua / path.relative_to(ROOT / 'tests/native_queue/book-controls')).read_bytes())
+            self.assertEqual(runtime['fixture']['failure_markers'], ['[QUEUE_TEST] FAIL book-controls'])
+
+    def test_failed_return_footer_revision_cache_idle_layout_and_stale_press(self):
+        lua = shutil.which('luajit')
+        if not lua: self.skipTest('LuaJIT not installed')
+        source = r"""
+local W={};W.__index=W
+function W:derive()local t={};t.__index=t;setmetatable(t,{__index=self});return t end
+function W:new(x,y,w,h)local t=setmetatable({x=x,y=y,width=w,height=h,items={},selected=-1,visible=true},self);return t end
+function W:initialise()if self.createChildren then self:createChildren()end end
+function W:instantiate()end
+function W:createChildren()self.closeButton=W:new();self.closeButtonTexture='close'end
+function W:addChild(child)child.parent=self end
+function W:setVisible(v)self.visible=v end
+function W:getIsVisible()return self.visible end
+function W:setEnable(v)self.enabled=v end
+function W:setTitle(v)self.title=v end
+function W:setTooltip(v)self.tooltip=v end
+function W:setY(v)self.y=v end
+function W:setX(v)self.x=v end
+function W:getX()return self.x end
+function W:getY()return self.y end
+function W:setWidth(v)self.width=v end
+function W:setHeight(v)self.height=v end
+function W:titleBarHeight()return 16 end
+function W:update()end
+function W:onResize()end
+function W:getYScroll()return 0 end
+function W:setYScroll()end
+function W:setScrollHeight()end
+function W:clear()self.items={}end
+function W:onMouseDown()return true end
+local windows={}
+function W:addToUIManager()windows[#windows+1]=self end
+function W:removeFromUIManager()self.removed=true end
+ISCollapsableWindow=W;ISScrollingListBox=W;ISButton=W:derive()
+function ISButton:new(x,y,w,h,title,target,callback)local t=W.new(self,x,y,w,h);t.title,t.target,t.onclick=title,target,callback;return t end
+UIFont={Small=1};getTextManager=function()return{getFontHeight=function()return 14 end}end
+getTexture=function(v)return v end;getText=function(key,...)local values={...};for i,v in ipairs(values)do values[i]=tostring(v)end;return key..table.concat(values,'|')end
+local player={isDead=function()return false end,getInventory=function()error('UI must not scan inventory')end}
+local queue={character=player,queue={}}
+ISTimedActionQueue={queues={[player]=queue},getTimedActionQueue=function()return queue end}
+getNumActivePlayers=function()return 1 end;getSpecificPlayer=function()return player end
+getPlayerScreenLeft=function()return 0 end;getPlayerScreenTop=function()return 0 end;getPlayerScreenHeight=function()return 900 end;getPlayerScreenWidth=function()return 1600 end
+getTimestampMs=function()return 1000 end;Events={OnTickEvenPaused={Add=function()end}}
+local revision,entries,copies,kept=1,{{id=11,itemId=101,title='Book',state='blocked',reason='admission'}},0,nil
+local execution={blockedReturnInfo=function()return{count=#entries,revision=revision}end,blockedReturns=function()copies=copies+1;return entries end,
+ keepReturn=function(_,id)kept=id;for index,entry in ipairs(entries)do if entry.id==id then table.remove(entries,index);revision=revision+1;return true end end;return false,'unavailable'end}
+PZSurvivorToolkit={Settings={actionQueue=function()return true end},ActionQueueExecution=execution}
+require=function(name)if name=='PZSurvivorToolkit/ActionQueueProjection'then return{capture=function()return{stable=false}end}end end
+assert(loadfile(arg[1]))()
+local Panel=PZSurvivorToolkit.ActionQueuePanel;Panel.refresh();local view=windows[#windows];view:update()
+assert(view.visible and #view.list.items==0 and view.keepReturnButton.visible and view.keepReturnButton.enabled,'idle failure footer absent')
+assert(view.list.height==view.height-view.list.y-42,'one footer layout')
+local firstCopies=copies;for i=1,10 do view:update()end;assert(copies==firstCopies,'unchanged revision allocated list copies')
+view.keepReturnButton:onMouseDown(1,1)
+entries={{id=12,itemId=102,title='Replacement',state='blocked',reason='server'}};revision=revision+1;view:update()
+view:keepFailedReturn(view.keepReturnButton);assert(kept==11 and #entries==1,'stale press waived a replacement')
+view.keepReturnButton:onMouseDown(1,1);view:keepFailedReturn(view.keepReturnButton);assert(kept==12 and #entries==0,'fresh exact keep did not clear debt')
+Panel.refresh();assert(not view.visible,'idle empty window must hide after debt is dismissed')
+entries={{id=13,title='One',state='blocked',reason='unmoved'},{id=14,title='Two',state='revoked',reason='server'}};revision=revision+1
+Panel.refresh();view:update();assert(view.nextReturnButton.visible);view:nextFailedReturn()
+assert(view.keepReturnButton.enabled and view.keepReturnButton.title:find('queue_return_forget',1,true),'revoked notice has no Forget control')
+view.keepReturnButton:onMouseDown(1,1);entries[2]={id=15,title='New revoked notice',state='revoked',reason='server'};revision=revision+1;view:update()
+view:keepFailedReturn(view.keepReturnButton);assert(kept==14 and #entries==2,'stale revoked press forgot a replacement')
+view:nextFailedReturn();view:nextFailedReturn();view.keepReturnButton:onMouseDown(1,1);view:keepFailedReturn(view.keepReturnButton)
+assert(kept==15 and #entries==1 and entries[1].id==13,'Forget did not remove only the captured historical notice')
+PZSurvivorToolkit.ActionQueueRecovery={info=function()return{id=1,count=1,skipped=0}end,preview=function()return{id=1,available=true}end}
+local other=Panel:new(0,0,420,300);other.queue=queue;other:initialise();other:update()
+assert(other.list.height==other.height-other.list.y-72,'recovery and failure footer overlap')
+assert(other.keepReturnButton.y==other.restoreButton.y-30,'footer rows overlap')
+other:setVisible(false);other:clearSnapshots();assert(not other.returnEntries and not other.returnBackend and not other.keepReturnButton.visible,'hidden UI retained debt cache')
+PZSurvivorToolkit.ActionQueueExecution=nil;other:setVisible(true);other:update();assert(not other.keepReturnButton.visible,'removed API retained stale controls')
+local legacy=Panel:new(0,0,420,300);legacy.queue=queue;legacy:initialise();legacy:update();assert(not legacy.keepReturnButton,'legacy panel acquired execution controls')
+os.exit(0)
+"""
+        subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePanel.lua')], check=True)
+
+    def test_fixture_compiles_and_does_not_repair_client_equipment(self):
+        lua = shutil.which('luajit')
+        if not lua: self.skipTest('LuaJIT not installed')
+        paths = list((ROOT / 'tests/native_queue/book-controls').rglob('*.lua'))
+        subprocess.run([lua, '-e', 'for i=1,#arg do assert(loadfile(arg[i]))end;os.exit()', '--', *map(str, paths)], check=True)
+        source = (ROOT / 'tests/native_queue/book-controls/shared/QueueBookControls.lua').read_text()
+        resolve = source.split('function F.resolve', 1)[1]
+        for mutation in ('setPrimaryHandItem', 'setSecondaryHandItem', 'setWornItem', 'resetModel', 'teleportTo'):
+            self.assertNotIn(mutation, resolve)
+        client = (ROOT / 'tests/native_queue/book-controls/client/ZZBookControls.lua').read_text()
+        self.assertIn('ISTimedActionQueue.clear(state.player)', client)
+        self.assertIn("raw('DENIED',ui.decision)", client)
+        self.assertIn("phase='reset-drain'", client)
+        self.assertIn('list:rowUnderMouse', client)
+        self.assertIn('list:onMouseDown', client)
+        self.assertIn('list:onMouseUp', client)
+        self.assertNotIn('T.ActionQueue.move(', client)
+        self.assertNotIn('T.ActionQueue.cancel(', client)
+        self.assertNotIn('setMaxTime', client)
+
+
+if __name__ == '__main__': unittest.main()

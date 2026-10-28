@@ -63,6 +63,8 @@ function Actions.guardTransfer(transfer)
     if guard and guard.marker == transferGuard and transfer.stop == guard.stop then return transfer end
     local stop = transfer.stop
     local guardedStop = function(self)
+        local execution = PZSurvivorToolkit.ActionQueueExecution
+        if execution then execution.beforeStop(self) end
         -- B42 cancellation uses a client-local ID without an owner on the server.
         if isClient() and self.transactionId ~= 0
             and isItemTransactionRejected(self.transactionId)

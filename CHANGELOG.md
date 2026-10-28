@@ -42,6 +42,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.326
+
+- Borrowed reading can cross independent equipment through a shared execution contract for a confirmed single automatic return. Native live capacity checks and exact item outcomes remain authoritative; unknown dependencies and merged transfers stay protected.
+- A proven never-started refusal, explicit Host rejection or completed SP transfer with no item movement keeps the borrowed item carried and preserves an independent queue tail. The Actions window retains the failed return with an explicit Keep item control; reset notices can be forgotten without replaying transfers.
+
 ### 0.1.325
 
 - Open container configuration and tag management immediately, preparing their tag catalogues in small steps between frames with a loading indicator. Reduce the remaining work by sharing recipe reads within each step, avoiding redundant script scans, and collecting chooser IDs without copying unused state metadata. Fresh windows and ordinary live item classification retain current data and tag order.
@@ -56,6 +61,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 ### 0.1.323
 
 - Reduce refresh work while the personal inventory window is fully hidden and idle. Keep container discovery and item categories current, and rebuild the visible contents when the window opens. Explicit refreshes and visible collapsed windows retain their normal behavior.
+
 
 ### 0.1.322
 

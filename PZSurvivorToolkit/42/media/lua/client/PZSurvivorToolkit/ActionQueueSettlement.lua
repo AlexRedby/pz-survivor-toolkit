@@ -3,6 +3,9 @@ local Toolkit = PZSurvivorToolkit
 local Settlement = {}
 Toolkit.ActionQueueSettlement = Settlement
 local providers, byId = {}, {}
+local executionProof = require "PZSurvivorToolkit/SourceProof"
+local returnFailures, failureSerial = {}, 0
+local MAX_RETURN_FAILURES = 32
 local cleanupMarker = {}
 
 local operationMarker, stepMarker = {}, {}
@@ -123,6 +126,10 @@ function Settlement.admitCancellation(queue, request, decision)
     end
     capture(record.preparationScope)
     for _, binding in ipairs(record.borrowings) do capture(binding.scope) end
+    local execution = Toolkit.ActionQueueExecution
+    if execution and type(execution.admitEditMember) == "function" then
+        for index = decision.first, decision.last do execution.admitEditMember(queue.queue[index]) end
+    end
     cancellations[queue] = {character = action.character, action = action, native = action.action,
         token = request.token, request = request, record = record, list = queue.queue, members = {}, scopes = scopes,
         generation = queue.toolkitOperationGeneration or 0, originalGeneration = record.generation}
@@ -1031,14 +1038,15 @@ function Settlement.poll(scope) pollPickups(scope) end
 -- the body that still uses it. A sealed, revalidated capability retires only the
 -- exact earned loan; its historical ID still fences enqueue-only return hints.
 local returnWaiverMarker = {}
-local function returnWaiverCandidate(action, guard)
+local function returnWaiverCandidate(action, guard, allowCurrent)
     local record = action and operation(action.character, action.toolkitQueueOperation)
     local queue, token = record and record.queue, action and action.toolkitQueueOperation
     local step = record and record.actions[action]
     local policy = Toolkit.ActionQueuePolicy
     if not record or not step or record.settlement or token.toolkitCancelled
         or queue.toolkitCancel or queue.toolkitGroupCancel or not queue.current or queue.queue[1] ~= queue.current
-        or queue.current.character ~= record.character or action == queue.current or action == queue.queue[1]
+        or queue.current.character ~= record.character
+        or (not allowCurrent and (action == queue.current or action == queue.queue[1]))
         or action.action or action.started or step.started or step.state ~= "pending" or step.required
         or Settlement.isCleanup(action) or requiredCleanup(action) or step.returning
         or action.Type ~= "ISInventoryTransferAction" or not action.allowMissingItems
@@ -1499,6 +1507,7 @@ function Settlement.completionState(queue, action)
     end
     local planned = plannedReturn(action)
     if planned then
+        if planned.failure then return Settlement.cancellationState(queue, action) end
         local state = Settlement.returnState(planned.obligation)
         if state == "waiting" then return "waiting" end
         if state ~= "completed" and state ~= "rejected" then return "failed" end
@@ -1572,9 +1581,196 @@ local function bindPlannedReturn(action, scope, candidate)
     local owner, obligation = action.toolkitQueueOperation, {token = action.toolkitQueueOperation}
     obligation[obligationScope] = function(value) if value == obligation then return scope, owner end end
     step.returning = {obligation = obligation, item = {id = action.item:getID(), fullType = action.item:getFullType()},
-        source = action.srcContainer, destination = action.destContainer, owner = candidate.sourceOwner}
+        source = action.srcContainer, destination = action.destContainer, owner = candidate.sourceOwner,
+        scope = scope, candidate = candidate, waivable = candidate.executionOptional == true}
     candidate.plannedReturn, candidate.returnDestination = action, action.destContainer
 end
+
+-- A descriptor never executes validation or reserves capacity. Only exact earned
+-- optional loans can acquire this narrowly audited isolated-failure capability.
+local function approvedExecutionGuard(guard)
+    local execution = Toolkit.ActionQueueExecution
+    return execution and guard == execution.matches and executionProof
+        and type(executionProof.closure) == "function"
+        and executionProof.closure(guard, "ActionQueueExecution.lua")
+end
+local failureTailChecker
+local function independentReturnTail(queue, action)
+    local policy = Toolkit.ActionQueuePolicy
+    local checker = policy and policy.returnFailureIndependent
+    if type(checker) ~= "function" or not executionProof
+        or not executionProof.closure(checker, "ActionQueuePolicy.lua") then return false end
+    if failureTailChecker and checker ~= failureTailChecker then return false end
+    failureTailChecker = checker
+    return checker(queue, action) == true
+end
+local function executionCandidate(action, guard)
+    if not approvedExecutionGuard(guard) or not action then return end
+    local record = operation(action.character, action.toolkitQueueOperation)
+    local queue = record and record.queue
+    local step = record and record.actions[action]
+    if not step or not queue or not queued(queue, action) or not queue.current
+        or queue.queue[1] ~= queue.current or queue.toolkitCancel or queue.toolkitGroupCancel
+        or getSpecificPlayer(action.character:getPlayerNum()) ~= action.character
+        or not guard(action) or not independentReturnTail(queue, action) then return end
+    local bucket = returnFailures[action.character]
+    if bucket and bucket.count >= MAX_RETURN_FAILURES and not (step.returning and step.returning.failure) then return end
+    local planned = step.returning
+    if planned then
+        local candidate, scope = planned.candidate, planned.scope
+        if planned.direction == "pickup" or not candidate or not scope or not planned.waivable
+            or candidate.phase ~= "active" or candidate.plannedReturn ~= action or candidate.ambiguous
+            or not candidate.step or candidate.step.state ~= "earned" or not borrowingLive(scope)
+            or sharedBorrowing(scope, candidate) or not sameMember(action.item, planned.item)
+            or action.srcContainer ~= planned.source or action.destContainer ~= planned.destination then return end
+        return candidate, scope, record, step
+    end
+    local candidate, scope, owner = returnWaiverCandidate(action, guard, true)
+    return candidate, scope, owner, candidate and step or nil
+end
+function Settlement.returnExecutionSupported(action, guard)
+    return executionCandidate(action, guard) ~= nil
+end
+function Settlement.authorizeReturnRetention(action, guard)
+    local candidate = executionCandidate(action, guard)
+    if not candidate then return false end
+    candidate.executionOptional = true
+    return true
+end
+function Settlement.prepareReturnExecution(action, guard)
+    local candidate, scope, record, step = executionCandidate(action, guard)
+    if not candidate or record.queue.current ~= action or record.queue.queue[1] ~= action
+        or action.action or action.started then return false end
+    candidate.executionOptional = true
+    if not step.returning then bindPlannedReturn(action, scope, candidate) end
+    local planned = step.returning
+    if planned.execution then return false end
+    planned.execution = {guard = guard, queue = record.queue, generation = record.queue.toolkitOperationGeneration or 0,
+        source = action.srcContainer, destination = action.destContainer,
+        id = action.item:getID(), fullType = action.item:getFullType()}
+    return true
+end
+local function unmovedReturn(action, planned)
+    local execution = planned.execution
+    local root = action.character:getInventory()
+    local item = root:getItemById(execution.id)
+    local destinationItem = execution.destination:getItemById(execution.id)
+    return root == execution.source and sameMember(item, execution) and item == action.item
+        and item:getContainer() == root and not item:getIsCraftingConsumed()
+        and not (destinationItem and destinationItem:getContainer() == execution.destination)
+end
+function Settlement.rejectReturnExecution(action, reason, guard)
+    if not approvedExecutionGuard(guard) then return false end
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    local planned = step and step.returning
+    local execution = planned and planned.execution
+    local queue = execution and execution.queue
+    if not execution or execution.guard ~= guard or planned.failure or not operationLive(record)
+        or queue ~= ISTimedActionQueue.queues[action.character] or queue.current ~= action or queue.queue[1] ~= action
+        or (queue.toolkitOperationGeneration or 0) ~= execution.generation
+        or queue.toolkitCancel or queue.toolkitGroupCancel or action.character:isPlayerMoving()
+        or action.character:pressedMovement(false) or not action.action or not guard(action)
+        or action.srcContainer ~= execution.source or action.destContainer ~= execution.destination
+        or not sameMember(action.item, execution) or not unmovedReturn(action, planned)
+        or not independentReturnTail(queue, action) then return false end
+    local native = action.action
+    if reason == "server" then
+        if not isClient() or returnAuthority(true, action.transactionId) ~= "rejected"
+            or not Settlement.stopReturn(action, planned.obligation, guard)
+            or Settlement.returnState(planned.obligation) ~= "rejected" then return false end
+    elseif reason == "admission" then
+        if action.started or action.transactionId ~= 0 or native:isStarted()
+            or action.character:getCharacterActions():contains(native) or returnProof(planned.obligation) then return false end
+    elseif reason == "unmoved" then
+        local proof = returnProof(planned.obligation)
+        local attempt = proof and proof.active
+        if isClient() or not proof or proof.invalid or proof.sequenceError or not proof.ended or proof.next
+            or #proof.members ~= 1 or not attempt or not attempt.finished or not attempt.succeeded
+            or not sameMember(action.item, proof.members[1]) or #action.queueList ~= 0
+            or action.character:getCharacterActions():contains(native) then return false end
+        -- Native SP consumed the only group without moving its exact item. This
+        -- is a no-effect disposition, never a fabricated multiplayer receipt.
+        attempt.terminal, attempt.disposition = "rejected", "native-no-effect"
+    else return false end
+    local bucket = returnFailures[action.character]
+    if not bucket then bucket = {count = 0, revision = 0, entries = {}, queue = queue}; returnFailures[action.character] = bucket end
+    if bucket.count >= MAX_RETURN_FAILURES then return false end
+    failureSerial = failureSerial + 1
+    local failure = {id = failureSerial, action = action, record = record, planned = planned,
+        candidate = planned.candidate, scope = planned.scope, queue = queue, generation = execution.generation,
+        item = action.item, source = execution.source, destination = execution.destination,
+        itemId = execution.id, itemType = execution.fullType,
+        title = action.item:getDisplayName(), reason = reason, state = "blocked"}
+    planned.failure, step.state = failure, "blocked"
+    bucket.entries[#bucket.entries + 1] = failure
+    bucket.count, bucket.revision = bucket.count + 1, bucket.revision + 1
+    return true
+end
+function Settlement.blockedReturnInfo(character)
+    local bucket = returnFailures[character]
+    if not bucket then return end
+    return {count = bucket.count, revision = bucket.revision}
+end
+function Settlement.blockedReturns(character)
+    local bucket, result = returnFailures[character], {}
+    for _, failure in ipairs(bucket and bucket.entries or {}) do
+        result[#result + 1] = {id = failure.id, itemId = failure.itemId, itemType = failure.itemType,
+            title = failure.title, reason = failure.reason, state = failure.state}
+    end
+    return result
+end
+function Settlement.resetReturnFailures(queue)
+    local bucket = queue and returnFailures[queue.character]
+    if not bucket then return end
+    for _, failure in ipairs(bucket.entries) do
+        if failure.queue == queue then failure.state = "revoked" end
+    end
+    bucket.revision = bucket.revision + 1
+end
+function Settlement.keepReturn(character, id)
+    local bucket = returnFailures[character]
+    if not bucket or character:isDead() or getSpecificPlayer(character:getPlayerNum()) ~= character then return false, "unavailable" end
+    for index, failure in ipairs(bucket.entries) do
+        if failure.id == id then
+            if failure.state == "revoked" then
+                -- Explicitly forget historical UI information. No old receipt,
+                -- item lookup, retention intent or execution right is revived.
+                table.remove(bucket.entries, index)
+                bucket.count, bucket.revision = bucket.count - 1, bucket.revision + 1
+                return true
+            end
+            local candidate = failure.candidate
+            if not candidate or candidate.phase ~= "active" then return false, "unavailable" end
+            local root = character:getInventory()
+            local item = root:getItemById(failure.itemId)
+            if item ~= failure.item or not sameMember(item, {id=failure.itemId, fullType=failure.itemType})
+                or item:getContainer() ~= root then return false, "unavailable" end
+            do
+                if not operationLive(failure.record) or sharedBorrowing(failure.scope, candidate) then return false, "dependent" end
+                -- Publish the same private exact-item retention intent as the
+                -- pending-return cross. This never reconstructs or retries work.
+                local proof = {action = failure.action, candidate = candidate, scope = failure.scope,
+                    record = failure.record, item = item, source = failure.source,
+                    destination = failure.destination, used = true, publishing = true}
+                local handle = {}; handle[returnWaiverMarker] = function(value)if value == handle then return proof end end
+                candidate.phase = "waived"
+                local intent = Toolkit.ActionQueueTidyIntent
+                if intent and type(intent.keepReturn) == "function" then
+                    local ok, kept = pcall(intent.keepReturn, failure.action, handle)
+                    proof.publishing = false
+                    if not ok or kept ~= true then candidate.phase = "active"; return false, "unavailable" end
+                end
+            end
+            table.remove(bucket.entries, index)
+            bucket.count, bucket.revision = bucket.count - 1, bucket.revision + 1
+            return true
+        end
+    end
+    return false, "unavailable"
+end
+if Events and Events.OnGameStart then Events.OnGameStart.Add(function() returnFailures = {} end) end
+if Events and Events.OnPlayerDeath then Events.OnPlayerDeath.Add(function(character) returnFailures[character] = nil end) end
 
 -- An earned ground placement may require a native floor pickup before equipment
 -- restoration. Observe that cleanup transaction without creating a new borrowing
