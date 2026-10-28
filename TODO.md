@@ -40,11 +40,12 @@ Group compatible visual checks around prepared vehicles. Keep speed/healing meas
 
 ### Cart motion full-pack compatibility
 
-- [ ] Repeat injured-cart locomotion/healing and matched-effective-weight cart/no-cart steady Walk/Run/Sprint speed comparisons in isolated macOS SP/menu Host with the complete selected mod pack using explicit locked sources.
+- [ ] Complete the full 16-scene metal-wheelbarrow SP injury bank after the [native-window ownership diagnosis](#runtime-observations-to-resolve). Both full-pack attempts were stopped by the desktop guard; neither qualifies locomotion/healing. Retain the exact source lock and ordinary timing/runtime checks.
+- [ ] Add and qualify complete-pack menu-Host injury banks for metal/shopping carts and matched-effective-weight cart/no-cart Walk/Run/Sprint speed comparisons for all three variants. The current Host injury fixture covers the wooden variant only.
 
 ### Shopping cart turn footwork
 
-- [ ] Run the accepted native-walk shopping gait with bounded stance correction and stable handles with the full selected mod pack on macOS SP/Host. Check entry/release, a small correction and held turns on the clean platform, retaining reverse/fast gait controls and second-player visibility. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.
+- [ ] Review the captured full-pack SP controls and Host owner/observer clips for the accepted native-walk shopping gait, stable handles, entry/release and held turns, retaining reverse/fast controls. Add and qualify a brief steering-correction phase in SP/Host: the current angled-forward phase has zero yaw and the stationary pivots are broad turns, so they do not establish a small correction. Existing clips can be reviewed without another launch. Do not reopen minor foot gliding or cloth contact as an open-ended polish task.
 
 ### Vehicle entry and exit roof clipping
 
@@ -56,7 +57,6 @@ Group compatible visual checks around prepared vehicles. Keep speed/healing meas
 
 ### In-cabin vehicle door control
 
-- [ ] Recheck the restored early red-aperture icon in the real radial menu with sufficient margins to both sector edges. The user selected the pre-angle-correction artwork; a historical in-game capture exists, but the current 64x64 export has not been captured again.
 - [ ] Inspect passenger expanded/retracted controls and dashboard scaling in game; the current live scenario covers the stationary driver and programmatic callbacks.
 
 ### Vehicle diagnostics controls
@@ -127,7 +127,7 @@ Capture these during relevant campaign launches rather than adding an unrelated 
 
 - [ ] Classify the startup diagnostics from the earlier food-age SP/control runs: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical fingerprints/counts; the current complete-pack food-age baseline is clean. Qualify or fix each historical source/caller before changing audit rules; do not infer that an old diagnostic is harmless from a later clean run.
 
-- [ ] Investigate macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Two shared-storage qualifications stopped after the same six size-100 inventory-work phases, before size-10000/freshness receipts, with empty observations for their previously owned windows (`pz-campaign-storage01`, `pz-campaign-shared02`); runtime logs were clean and the runner terminated both clients with exit 143. The later bounded probe retained the owned window through all size-10000 work; its sole empty result followed an unrelated fixture-quarantine shutdown. On recurrence collect incident timestamps, raw discovery output and owned-PID CoreGraphics metadata before termination to distinguish real loss from transient discovery failure; do not bypass PID/window or desktop guards.
+- [ ] Investigate macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Two shared-storage qualifications stopped after the same six size-100 inventory-work phases, before size-10000/freshness receipts, with empty observations for their previously owned windows (`pz-campaign-storage01`, `pz-campaign-shared02`); runtime logs were clean and the runner terminated both clients with exit 143. The later bounded probe retained the owned window through all size-10000 work; its sole empty result followed an unrelated fixture-quarantine shutdown. `vehicles04/metal-wheelbarrow-injury` hit the same empty observation during its final recorded scene; owned cleanup ended the client with 143 and FFmpeg with 255, so that capture remains rejected. Its fresh `vehicles06` retry lost the owned window before fixture execution, with a clean runtime log and client exit 143. On recurrence collect incident timestamps, raw discovery output and owned-PID CoreGraphics metadata before termination to distinguish real loss from transient discovery failure; do not bypass PID/window or desktop guards.
 
 - [ ] Diagnose intermittent menu-Host child startup failures. Container-group Host02 emitted ZombieBuddy premain output, then stalled before engine logs; `jcmd Thread.print` could not attach. Host03 emitted no child stdout and reported `Stream closed` 20.054 seconds after `HOST_REQUEST`. B42.21 `CoopMaster.watchServer()` destroys the child after 20 seconds unless `readServer()` has received its first line; timing supports that watchdog explanation, but the child exit reason was not preserved and the underlying JVM stall is unknown. Fresh Host04 passed with unchanged startup guards, so a retry does not establish a fix. Capture bounded child stderr, first-output timing and native termination reason on recurrence; preserve readiness, process-ownership and cleanup guards.
 
@@ -229,10 +229,9 @@ The food-age runtime gates are grouped in the [shared campaign](#food-age-and-co
 
 # Process friction
 
+- [ ] Validate the required Kotlin 2.4.21 toolchain during cart campaign preflight. `vehicles01 --dry-run` passed with no compiler configured, but each cart preparation then copied sources before failing with `Kotlin 2.4.21 compiler distribution is required`. Resolve and validate the selected compiler before profile creation; the documented `KOTLIN_HOME` remains necessary until this guard is added.
+
 - [ ] Remove unsupported capacity setup from the warehouse walking fixture: `ZZStorageProfileNative.lua` calls `setCapacity(10000)` for each crate, and B42.21 emits repeated warnings about exceeding its maximum capacity of 100 (`pz-campaign-inventory01/warehouse-walk-sp`). Use an engine-supported capacity and verify both density levels retain their exact contents and workload coverage.
-
-- [ ] Reconnect the cumulative-agent-memory MCP after its runtime update: `memory.read` rejects requests with `Memory MCP is from an older release; reconnect the server`. The bundled CLI remains the fallback but needs access to its external state directory. Complete when normal MCP reads and capture writes work again.
-
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
 

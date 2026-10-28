@@ -201,7 +201,8 @@
       "timeout": 3600,
       "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 4096
       }
     },
     {
@@ -216,7 +217,8 @@
       "timeout": 3600,
       "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 4096
       }
     },
     {
@@ -232,7 +234,8 @@
       "timeout": 3600,
       "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 4096
       }
     },
     {
@@ -247,7 +250,8 @@
       "timeout": 3600,
       "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 4096
       }
     },
     {
@@ -271,7 +275,8 @@
       "timeout": 3600,
       "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 4096
       }
     },
     {
@@ -286,7 +291,8 @@
       "timeout": 3600,
       "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 4096
       }
     },
     {
@@ -305,7 +311,8 @@
       "timeout": 1800,
       "boundary": "Two-client injury bank requires this exact injury baseline and independent healing timeline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 3072
       }
     },
     {
@@ -324,7 +331,8 @@
       "timeout": 1800,
       "boundary": "Two-client injury bank requires this exact injury baseline and independent healing timeline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 3072
       }
     },
     {
@@ -343,7 +351,8 @@
       "timeout": 1800,
       "boundary": "Two-client injury bank requires this exact injury baseline and independent healing timeline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 3072
       }
     },
     {
@@ -362,7 +371,8 @@
       "timeout": 1800,
       "boundary": "Two-client injury bank requires this exact injury baseline and independent healing timeline.",
       "resources": {
-        "exclusive": true
+        "exclusive": true,
+        "heap_mib": 3072
       }
     },
     {
@@ -372,7 +382,10 @@
       "kind": "sp",
       "language": "RU",
       "timeout": 1800,
-      "boundary": "Already sequences all three cart variants; a single clean control platform/video lifecycle."
+      "boundary": "Already sequences all three cart variants; a single clean control platform/video lifecycle.",
+      "resources": {
+        "heap_mib": 4096
+      }
     },
     {
       "id": "shopping-view-host",
@@ -385,7 +398,10 @@
         "cart_variant": "shopping-cart"
       },
       "timeout": 1800,
-      "boundary": "Two-client owner/observer motion capture with native replication, separate from SP control bank."
+      "boundary": "Two-client owner/observer motion capture with native replication, separate from SP control bank.",
+      "resources": {
+        "heap_mib": 3072
+      }
     },
     {
       "id": "dashboard-controls-sp",
@@ -636,8 +652,9 @@
         "cart-host-right-heavy"
       ],
       "gates": [
-        "Review captures and exact locomotion/healing/speed analysis, retaining native-duration and matched-effective-weight controls.",
-        "Host has no matched-effective-weight speed-parity fixture, and the injury Host bank covers the wooden variant; do not infer other variants or MP speed parity from SP."
+        "Resolve owned-window discovery failure and qualify the full metal-wheelbarrow SP injury bank; preserve rejected attempts and all runtime/timing guards.",
+        "Review the recorded motion visuals without treating capture or numerical checks as animation equivalence.",
+        "Host lacks matched-effective-weight speed parity and metal/shopping injury coverage; add and qualify those fixtures before accepting those behaviors."
       ]
     },
     {
@@ -649,7 +666,8 @@
         "shopping-view-host"
       ],
       "gates": [
-        "Inspect accepted native-walk gait, handles, entry/release, corrections and held turns; retain reverse/fast controls. These banks provide footage, not automatic visual acceptance."
+        "Review the captured full-pack SP/Host native-walk gait, handles, entry/release and held turns, retaining reverse/fast controls; these recordings do not provide automatic visual acceptance.",
+        "Add a dedicated brief steering-correction phase in SP/Host; angled-forward has zero yaw and the existing stationary pivots are broad turns."
       ]
     },
     {
@@ -681,7 +699,6 @@
         "door-icon-sp"
       ],
       "gates": [
-        "Review the current early red-aperture icon and margins in the captured native radial menu.",
         "Add actual passenger expanded/retracted controls and dashboard-scale coverage; stationary driver callbacks do not establish it."
       ]
     },
