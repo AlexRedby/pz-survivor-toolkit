@@ -10,6 +10,7 @@ Run commands from the repository root. Use Python 3.10+ for preparation and ordi
 | Reproduce a game or Host issue in isolated profiles | [Native scenarios](#native-scenarios) |
 | Build engine patches, run JVM checks or capture test video | [Java development](development/JAVA.md) |
 | Extend a shared Toolkit mechanism | [Architecture and extension contracts](development/ARCHITECTURE.md) |
+| Implement shared queue resource/capacity decisions | [Performance-gated implementation plan](design/QUEUE_RESOURCE_CAPACITY.md) |
 | Edit cart clips, replay captured motion or recalibrate clearance | [Animation authoring](development/ANIMATION.md) |
 | Review the proposed cart multiplayer protocol | [Cart multiplayer design](design/CART_MULTIPLAYER.md) |
 
@@ -65,6 +66,18 @@ To run the same checks against your installed game's native Mod Options implemen
 ```
 
 The independent CleanUI food-age investigation is not part of the prepared distribution and does not ship a CleanUI correction. Its opt-in native regression compiles only its Java fixture against the installed game and runs original/prepared CleanUI helpers in real Kahlua. Run `PZ_NATIVE_FOOD_AGE_CHECK=1 PZ_GAME="/path/to/game/Java" PZ_JDK="/path/to/jdk" PZ_CLEANUI_SOURCE="/path/to/mods/CleanUI" python3 -m unittest tests.test_cleanui_food_age_native`. It checks native ageing, freshness events, cooling controls and clock handling; it does not establish live UI or Host transport. The default test run skips this external-input check.
+
+## Queue resource performance prototype
+
+`tools/benchmark_queue_resources.py` runs production queue Policy, EditModel and weight code with explicit state doubles in the installed game's native Kahlua. It compiles only a development Kotlin host, starts no game/UI/Host, installs nothing and grants no new queue permissions. The worklist and its adaptive source instrumentation remain test-only. Reports include source/toolchain fingerprints, samples, allocation availability and GC data; a successful bank means the measurements completed, not that the performance gate passed.
+
+```sh
+python3 tools/benchmark_queue_resources.py --game "$PZ_GAME" --jdk "$PZ_JDK" --kotlin-home "$KOTLIN_HOME" --output .codex/investigations/queue-resource-profile --section component --section edit --max-steps 200 --samples 100 --warmup 10 --timeout 300
+```
+
+The output directory must be new. Repeat `--section` to select `component`, `edit`, `model` or `weights`; omitting it selects all four. `--max-steps 50|200|1000` limits action-count workloads, not the weight bank's item counts. That bank covers 100/1000/10000 items and nesting depths 1/4/8. Stress cases use at most three measured samples and one warmup; their tail quantiles are exploratory. Normal-bank default 30-sample percentiles are exploratory too, not a statistically established p99 guarantee. Java item/container getters are doubles in this CPU bank, so it does not measure their real game/bridge costs, selected-mod callbacks, UI responsiveness, retention or multiplayer contention. The [design plan](design/QUEUE_RESOURCE_CAPACITY.md#performance-gate-before-runtime-integration) keeps those gates separate.
+
+Run `python3 -m unittest tests.test_benchmark_queue_resources` for selection/provenance/failure checks and `.venv/bin/python tools/run_tests.py --test test_queue_resource_worklist` for exhaustive/oracle, malformed-input and bounded-work checks. The native bank also runs those worklist vectors in Kahlua before measurement. Component counters cover the worklist alone; `legacy_target_callbacks` counts only world/generator hooks, not all short-circuited pair comparisons. The retained first sweep can still perform pairwise work. `edit/*` times one `Policy.evaluateMove`, not the complete `Queue.move` commit, which revalidates separately. Candidate equivalence is restricted to the ordinary fixture footprints; it is not general production parity for custom/complex callbacks.
 
 ## Native scenarios
 
