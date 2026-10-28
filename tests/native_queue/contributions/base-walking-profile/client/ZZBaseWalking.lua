@@ -9,6 +9,8 @@ local since, phase, active, player, origin, destination, action, goal, legStart
 local legs, rows, phaseRows = 0, {}, {}
 local lastX, lastY, lastZ, lastTick
 local profilerActive = false
+local discoveryProfile = selection.options.base_walking.inventory_discovery_profile == true
+    and require 'InventoryDiscoveryProfile' or nil
 local newMusicRequested, newMusicProof = nil, nil
 local highlightBridge = selection.options.base_walking.ground_highlight_bridge
 local highlightDistance, highlightMatches, highlightDistanceCalls, highlightMatchesCalls
@@ -43,6 +45,7 @@ end
 local function fail(problem)
     if done then return end
     done=true
+    if discoveryProfile then pcall(discoveryProfile.finish) end
     if profilerActive then pcall(baseWalkingProfileFinish);profilerActive=false end
     pcall(flush)
     log('FAIL',{stage=state,error=tostring(problem),legs=legs,position=player and pos() or nil})
@@ -82,6 +85,7 @@ end
 local function beginPhase(number)
     phase=number
     assert(baseWalkingProfilePhase(number),'Profiler rejected phase')
+    if discoveryProfile then discoveryProfile.begin(number,player:getPlayerNum(),json,log) end
     active={phase=number,name=({'stationary','walking','post-stationary'})[number],
         elapsedMs=0,samples=0,distance=0,tileChanges=0,movementTicks=0,maxTickMs=0}
     since=now();lastTick=since
@@ -104,6 +108,7 @@ local function finishPhase()
     else assert(active.distance<1,'Stationary phase moved unexpectedly') end
     phaseRows[#phaseRows+1]=active
     log('PHASE',active)
+    if discoveryProfile then discoveryProfile.finishPhase() end
 end
 local function walk()
     goal=(legs%2==0) and destination or origin

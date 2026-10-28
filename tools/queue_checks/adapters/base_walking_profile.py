@@ -24,6 +24,9 @@ NATIVE_HASHES = {
     'zombie/ui/UIManager.class': 'fa9a2ec9388573f74082a22f3f357c08f3b0e662325ba4ea587b03a5de005704',
     'org/lwjglx/opengl/Display.class': '15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578',
 }
+DISCOVERY_NATIVE_HASHES = {
+    'zombie/inventory/ItemContainer.class': 'a2ac7dd6235f91255dc57b91419a2c8609bdb105214cddf7fb445b70507b6f96',
+}
 
 
 def definitions():
@@ -63,6 +66,8 @@ def validate(selection):
         raise ValueError('NewMusic probe control must be boolean')
     if type(options.get('base_walking', {}).get('verify_toolkit_newmusic_control', False)) is not bool:
         raise ValueError('Toolkit NewMusic verification must be boolean')
+    if type(options.get('base_walking', {}).get('inventory_discovery_profile', False)) is not bool:
+        raise ValueError('Inventory discovery profile must be boolean')
     if (options.get('base_walking', {}).get('verify_toolkit_newmusic_control')
             and options.get('base_walking', {}).get('disable_newmusic_inventory_probe')):
         raise ValueError('Toolkit verification must not remove callbacks through the fixture')
@@ -95,8 +100,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     clients = sorted((fixture / 'client').glob('*.lua'))
     if not clients or any(not path.is_file() for path in java_sources):
         raise ValueError('Base walking Java observer/client scenario is missing')
+    discovery = selection['options'].get('base_walking', {}).get('inventory_discovery_profile', False)
+    native_hashes = {**NATIVE_HASHES, **(DISCOVERY_NATIVE_HASHES if discovery else {})}
     with zipfile.ZipFile(game / 'projectzomboid.jar') as archive:
-        for name, expected in NATIVE_HASHES.items():
+        for name, expected in native_hashes.items():
             if hashlib.sha256(archive.read(name)).hexdigest() != expected:
                 raise ValueError('Unsupported base walking native input: ' + name)
     classpath = os.pathsep.join(str(game / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar'))
@@ -124,6 +131,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 'javaJarFile=media/java/' + MOD_ID + '.jar\n')
             with zipfile.ZipFile(version / 'media/java' / (MOD_ID + '.jar'), 'w', zipfile.ZIP_DEFLATED) as jar:
                 for path in sorted(build.rglob('*.class')):
+                    if not discovery and path.name.startswith('Main$Floor'):
+                        continue
                     jar.write(path, path.relative_to(build).as_posix())
     client = runtime['roles']['client1']
     cache, classes = Path(client['cache']), Path(client['classes'])
@@ -149,7 +158,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     settings_path.write_text(text)
     runtime.setdefault('fixture', {}).setdefault('mods', []).append(MOD_ID)
     runtime['fixture'].update(server_ready='[STARTUP_TEST] SERVER_READY', failure_markers=[PREFIX + 'FAIL '])
-    receipt = {'test_only': True, 'native_hashes': NATIVE_HASHES,
+    receipt = {'test_only': True, 'native_hashes': native_hashes,
                'java_sources': {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in java_sources},
                'sandbox_sha256': hashlib.sha256(_sandbox(selection).read_bytes()).hexdigest(),
                'client_properties': props, 'observer_mod': MOD_ID, 'optimizer_staged': False}
@@ -310,6 +319,73 @@ def _callbacks(cache, frames):
             'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
+def _discovery(root, text):
+    records = _raw(text, 'INVENTORY_DISCOVERY')
+    path = Path(root) / 'client1/Lua/base-walking-inventory-discovery.jsonl.txt'
+    if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size < 512 * 1024:
+        raise ValueError('Missing bounded regular inventory discovery artifact')
+    saved = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    if records != saved:
+        raise ValueError('Inventory discovery log/file receipts differ')
+    begins = [row for row in records if row.get('kind') == 'begin']
+    ends = [row for row in records if row.get('kind') == 'end']
+    if [row.get('phase') for row in begins] != [1, 2, 3] or [row.get('phase') for row in ends] != [1, 2, 3]:
+        raise ValueError('Missing ordered inventory discovery phases')
+    for begin, end in zip(begins, ends):
+        if (end.get('aborted') is not False or end.get('restore_conflicts') != 0
+                or end.get('samples', {}).get('observer_errors') != 0
+                or end.get('settings') != begin.get('settings')):
+            raise ValueError('Inventory discovery observer failed or settings changed')
+    timings, names = [], set()
+    for row in records:
+        if row.get('kind') != 'timing':
+            continue
+        key = (row.get('phase'), row.get('name'))
+        if key in names or key[0] not in (1, 2, 3) or not isinstance(key[1], str):
+            raise ValueError('Invalid or duplicate inventory discovery timing')
+        names.add(key)
+        if type(row.get('calls')) is not int or row['calls'] < 0 or row.get('errors') != 0:
+            raise ValueError('Invalid inventory discovery call/error counts')
+        values = [row.get(name) for name in ('inclusive_ms', 'exclusive_ms', 'max_ms')]
+        if any(type(value) not in (int, float) or not math.isfinite(value) or value < 0 for value in values):
+            raise ValueError('Invalid inventory discovery durations')
+        if values[1] > values[0] + 0.001 or values[2] > values[0] + 0.001:
+            raise ValueError('Inconsistent inventory discovery durations')
+        if row['calls'] == 0 and any(values):
+            raise ValueError('Uncalled inventory method has measured duration')
+        timings.append(row)
+    walking = next((row for row in timings if row['phase'] == 2 and row['name'] == 'page.refreshBackpacks.loot'), None)
+    if walking is None or walking['calls'] <= 0 or ends[1].get('samples', {}).get('loot', {}).get('refreshes') != walking['calls']:
+        raise ValueError('Missing measured walking loot refreshes')
+    floor_path = Path(root) / 'client1/base-walking-inventory-floor.csv'
+    if floor_path.is_symlink() or not floor_path.is_file() or not 0 < floor_path.stat().st_size < 64 * 1024:
+        raise ValueError('Missing bounded regular native floor artifact')
+    with floor_path.open() as source:
+        floor = [{key: value if key == 'method' else int(value) for key, value in row.items()}
+                 for row in csv.DictReader(source)]
+    methods = ['AddItem(InventoryItem)', 'clear()', 'removeItemsFromProcessItems()']
+    if [(row['phase'], row['method']) for row in floor] != [(phase, method) for phase in (1, 2, 3) for method in methods]:
+        raise ValueError('Missing native floor method/phase counters')
+    if any(row['calls'] < 0 or not 0 <= row['max_inclusive_ns'] <= row['inclusive_ns']
+           or row['calls'] == 0 and row['inclusive_ns'] != 0 for row in floor):
+        raise ValueError('Invalid native floor counters')
+    if any(row['calls'] != walking['calls'] for row in floor if row['phase'] == 2 and row['method'] != methods[0]):
+        raise ValueError('Native floor reset counts differ from walking loot refreshes')
+    counts = ends[1]['samples']['loot']
+    cardinalities = [counts.get('floor_items_' + suffix) for suffix in ('min', 'last', 'max')]
+    if (any(type(value) is not int or value < 0 for value in cardinalities)
+            or not cardinalities[0] <= cardinalities[1] <= cardinalities[2]):
+        raise ValueError('Missing or invalid walking floor cardinalities')
+    additions = next(row for row in floor if row['phase'] == 2 and row['method'] == methods[0])
+    if cardinalities[2] > 0 and additions['calls'] == 0:
+        raise ValueError('Nonempty walking floor lacks native AddItem observations')
+    receipt = '[BASE_WALKING_PROFILE] INVENTORY_FLOOR csv=' + str(floor_path) + ' unclosed_scopes=0'
+    if text.count(receipt) != 1:
+        raise ValueError('Native floor observation scope did not close')
+    return {'phases': ends, 'timings': timings, 'floor': floor, 'path': path.relative_to(root).as_posix(),
+            'limits': ['Opt-in method observers add overhead; use component attribution, not absolute frame-time comparisons.']}
+
+
 def verify(root, selection, catalog):
     root = Path(root)
     text = (root / 'client1-launch.log').read_text(errors='replace')
@@ -326,6 +402,8 @@ def verify(root, selection, catalog):
         frames, profile = _profile(root / 'client1', text, Path(runtime['jdk']))
         evidence.update(profile=profile, motion=_motion(root / 'client1', frames),
                         callbacks=_callbacks(root / 'client1', frames))
+        if selection['options'].get('base_walking', {}).get('inventory_discovery_profile'):
+            evidence['inventory_discovery'] = _discovery(root, text)
         highlight_bridge = selection['options'].get('base_walking', {}).get('ground_highlight_bridge')
         if highlight_bridge:
             proofs = _raw(text, 'HIGHLIGHT_BRIDGE')
