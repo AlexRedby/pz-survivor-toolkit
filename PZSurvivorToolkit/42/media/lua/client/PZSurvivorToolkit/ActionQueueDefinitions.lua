@@ -54,6 +54,8 @@ function Definitions.resolve(action)
     local kind = action and action.Type
     if action and Food and (Food.isCommand(action) or (Food.isOpening and Food.isOpening(action))
         or (Food.isOpeningWait and Food.isOpeningWait(action))) then kind = "ISEatFoodAction" end
+    local approach=PZSurvivorToolkit.ActionQueueApproach
+    if approach and approach.isAction(action)then kind="ISWalkToTimedAction"end
     local id = kind and Definitions.types[kind]
     local entry = id and Definitions.entries[id]
     return entry and entry.presentation, id
@@ -74,10 +76,10 @@ function Definitions.behavior(action)
     return found, foundId
 end
 
-function Definitions.inspect(action)
+function Definitions.inspect(action,context)
     local behavior, id = Definitions.behavior(action)
     if not behavior then return nil end
-    local ok, contract = pcall(behavior.inspect, action)
+    local ok, contract = pcall(behavior.inspect, action, context)
     if not ok then return nil end
     return contract, id, behavior
 end

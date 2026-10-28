@@ -128,6 +128,12 @@ class ObstacleMatrixTests(unittest.TestCase):
     def reasons(self, log):
         return [reason for _,reason in a.analyze_motion(log)[3]]
 
+    def test_canonical_root_gaits_and_reverse_preserve_full_matrix_gate(self):
+        log = self.log.replace('Bob_WalkBwdNoAim1Hand@', 'Toolkit_CartPivot_Backward@').replace('Bob_Walk@', 'Toolkit_CartPivot_Walk@').replace('Bob_Run@', 'Toolkit_CartPivot_Run@').replace('Bob_Sprint@', 'Toolkit_CartPivot_Sprint@')
+        self.assertEqual(a.analyze_motion(log)[3], [])
+        for wrong in ('Toolkit_CartPivot_Backwards', 'Toolkit_CartPivot_Walk', 'Toolkit_CartPivot_StopRun'):
+            self.assertIn('manual native reverse gait never progresses', self.reasons(log.replace('Toolkit_CartPivot_Backward@', wrong + '@')))
+
     def test_complete_72_variant_bank_requires_six_independent_controls(self):
         starts,cases,controls,failures,_=a.analyze_motion(self.log)
         self.assertEqual((len(starts),len(cases),len(controls)),(72,72,6))

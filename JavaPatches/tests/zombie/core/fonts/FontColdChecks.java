@@ -15,33 +15,33 @@ import zombie.debug.LogSeverity;
 
 public final class FontColdChecks {
     public static void main(String[] args) throws Exception {
-        FontChecks.setup();
+        FontColdSupport.setup();
         var logger = DebugLog.getInstance();
         var log = new ByteArrayOutputStream();
         DebugType.General.setLogSeverity(LogSeverity.Error);
         logger.setStdOut(log);
         logger.setStdErr(log);
         try {
-            FontChecks.require(Agent.arguments.getOrDefault("patches_jar", "")
+            FontColdSupport.require(Agent.arguments.getOrDefault("patches_jar", "")
                 .endsWith(":net.alexredby.pztoolkitbootstrap"), "font check did not use isolated premain bootstrap");
-            FontChecks.require(FontAssets.SUPPORTED, "unsupported font bytecode");
-            FontChecks.require(FontColdChecks.class.getClassLoader().getResource(
+            FontColdSupport.require(FontAssets.SUPPORTED, "unsupported font bytecode");
+            FontColdSupport.require(FontColdChecks.class.getClassLoader().getResource(
                 "net/alexredby/pztoolkitjavapatches/Main.class") == null,
                 "normal patch JAR was already on the startup classpath");
-            FontChecks.require(GameWindow.fileSystem.getTexturePackDevice("UI") == null,
+            FontColdSupport.require(GameWindow.fileSystem.getTexturePackDevice("UI") == null,
                 "cold fonts started with UI already mounted");
-            FontChecks.glyphs("media/mainfont.fnt", "media/mainfont_0.png");
-            FontChecks.glyphs("media/mainfont2.fnt", "media/mainfont2_0.png");
-            FontChecks.glyphs("media/fonts/zomboidDialogue.fnt", "media/fonts/zomboidDialogue_0.png");
-            FontChecks.require(GameWindow.texturePackTextures.size() == 2, "early mount exposed unrelated UI entries");
+            FontColdSupport.glyphs("media/mainfont.fnt", "media/mainfont_0.png");
+            FontColdSupport.glyphs("media/mainfont2.fnt", "media/mainfont2_0.png");
+            FontColdSupport.glyphs("media/fonts/zomboidDialogue.fnt", "media/fonts/zomboidDialogue_0.png");
+            FontColdSupport.require(GameWindow.texturePackTextures.size() == 2, "early mount exposed unrelated UI entries");
             var device = GameWindow.fileSystem.getTexturePackDevice("UI");
             GameWindow.setTexturePackLookup();
-            FontChecks.require(GameWindow.texturePackTextures.isEmpty(), "native lookup reset retained early entries");
-            FontChecks.glyphs("media/mainfont.fnt", Path.of("media/mainfont_0.png").toAbsolutePath().toString());
-            FontChecks.glyphs("media/mainfont2.fnt", Path.of("media/mainfont2_0.png").toAbsolutePath().toString());
-            FontChecks.require(GameWindow.fileSystem.getTexturePackDevice("UI") == device,
+            FontColdSupport.require(GameWindow.texturePackTextures.isEmpty(), "native lookup reset retained early entries");
+            FontColdSupport.glyphs("media/mainfont.fnt", Path.of("media/mainfont_0.png").toAbsolutePath().toString());
+            FontColdSupport.glyphs("media/mainfont2.fnt", Path.of("media/mainfont2_0.png").toAbsolutePath().toString());
+            FontColdSupport.require(GameWindow.fileSystem.getTexturePackDevice("UI") == device,
                 "second font initialization remounted UI");
-            FontChecks.require(!log.toString().contains("failed to load page") && !log.toString().contains("Exception"),
+            FontColdSupport.require(!log.toString().contains("failed to load page") && !log.toString().contains("Exception"),
                 "native font failure after premain advice: " + log);
             Class<?> phase = Class.forName("me.zed_0xff.zombie_buddy.Loader$Phase");
             var load = Loader.class.getDeclaredMethod("loadJar", Path.class, String.class, String.class, phase);
@@ -51,15 +51,15 @@ public final class FontColdChecks {
             Object mainPhase = mainField.get(null);
             Path jar = Path.of(System.getProperty("pz.test.patch.jar"));
             String approvedHash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(jar)));
-            FontChecks.require(Boolean.TRUE.equals(load.invoke(null, jar, "net.alexredby.pztoolkitjavapatches",
+            FontColdSupport.require(Boolean.TRUE.equals(load.invoke(null, jar, "net.alexredby.pztoolkitjavapatches",
                 approvedHash, mainPhase)), "ordinary mod JAR was not appended and loaded");
-            FontChecks.require(me.zed_0xff.zombie_buddy.Exposer.getClassesWithGlobalLuaMethod().stream()
+            FontColdSupport.require(me.zed_0xff.zombie_buddy.Exposer.getClassesWithGlobalLuaMethod().stream()
                 .anyMatch(type -> type.getName().equals("net.alexredby.pztoolkitjavapatches.VideoRecording")),
                 "ordinary mod load lost Lua exports");
             String property = new String("WindowShape");
-            FontChecks.require(zombie.core.properties.IsoPropertyType.lookupOrDefaultStr(property) == property,
+            FontColdSupport.require(zombie.core.properties.IsoPropertyType.lookupOrDefaultStr(property) == property,
                 "ordinary bootstrap changed native string property identity");
-            FontChecks.require(!log.toString().contains("Property Name not found"),
+            FontColdSupport.require(!log.toString().contains("Property Name not found"),
                 "ordinary loader phase did not install existing property advice: " + log);
             logger.setStdOut(System.out);
             logger.setStdErr(System.err);

@@ -477,6 +477,109 @@ if NativeTVWindowSource then
             check(car, 2, "car")
             check(device("Unknown.TV", "InventoryItem", translatedName("Base.TvBlack")), nil, nil)
         end
+        -- Run the real upstream read/clear/prerender lifecycle with a crowded floor square.
+        -- Its readFromObject calls clear itself, so committing before that call loses the binding.
+        local function dropped(fullType)
+            local radio = device(fullType or "Base.RadioRed", "InventoryItem")
+            local floor = device(nil, "IsoRadio")
+            local objects = {gets = 0, values = {}}
+            for i = 1, 128 do objects.values[i] = {} end
+            local world = {classes = {IsoWorldInventoryObject = true}, getItem = function() return radio end}
+            objects.values[129] = world
+            function objects:size() return #self.values end
+            function objects:get(index) self.gets = self.gets + 1; return self.values[index + 1] end
+            local square = {getWorldObjects = function() return objects end, getObjects = function() return list({}) end}
+            floor.getSquare = function() return square end
+            floor.getModData = function() return {RadioItemID = 7} end
+            return floor, objects
+        end
+        local floor, floorObjects = dropped()
+        window:readFromObject(player, floor)
+        assert(window._toolkitRadioBinding, "upstream clear during read must not discard the successful binding")
+        equal(floorObjects.gets, 129, "read performs the initial floor scan")
+        for _ = 1, 50 do window:prerender() end
+        equal(floorObjects.gets, 179, "stable upstream renders must perform one indexed lookup each")
+        equal(window.closeButton.visible, true, "cached renders still refresh the close button")
+        window:clear(); equal(window._toolkitRadioBinding, nil)
+        local beforeClearRender = floorObjects.gets
+        window:prerender(); equal(floorObjects.gets, beforeClearRender, "cleared windows must not resolve the old device")
+        window:readFromObject(player, floor)
+        equal(floorObjects.gets - beforeClearRender, 129, "reopening must perform a fresh scan")
+        local otherFloor, otherObjects = dropped("Base.RadioBlack")
+        window:readFromObject(player, otherFloor)
+        equal(otherObjects.gets, 129, "rebinding performs a fresh scan")
+        local beforeRebindRender = floorObjects.gets
+        window:prerender(); equal(otherObjects.gets, 130); equal(floorObjects.gets, beforeRebindRender)
+        equal(draw, "black")
+        -- No negative cache: a floor item may arrive while the same window remains bound.
+        local missingWorld = table.remove(otherObjects.values)
+        window:prerender(); equal(window._toolkitRadioBinding, nil)
+        otherObjects.values[#otherObjects.values + 1] = missingWorld
+        window:prerender(); assert(window._toolkitRadioBinding); equal(draw, "black")
+        for _, lang in ipairs({"EN", "RU"}) do
+            language = lang
+            local module = window.modules[3].element
+            local readModule = module.readFromObject
+            module.readFromObject = function() error("read fixture error") end
+            assert(not pcall(window.readFromObject, window, player, floor))
+            equal(window._toolkitRadioBinding, nil, "failed upstream reads must not retain a binding")
+            equal(getItemNameFromFullType, translatedName, "failed upstream reads must restore translations")
+            module.readFromObject = readModule
+            window:readFromObject(player, floor)
+            local drawTexture = window.drawTexture
+            window.drawTexture = function() error("render fixture error") end
+            assert(not pcall(window.prerender, window))
+            equal(getItemNameFromFullType, translatedName, "failed upstream renders must restore translations")
+            window.drawTexture = function(self)
+                self:clear()
+            end
+            window:prerender()
+            equal(window._toolkitRadioBinding, nil, "clear inside prerender must not resurrect the prior binding")
+            window.drawTexture = drawTexture
+            -- A module callback may clear the binding while upstream read is still on the stack.
+            module.readFromObject = function() window:clear() end
+            window:readFromObject(player, floor)
+            equal(window._toolkitRadioBinding, nil, "read must commit only while still bound to its intended device")
+            module.readFromObject = readModule
+        end
+        local module = window.modules[3].element
+        local readModule, drawTexture = module.readFromObject, window.drawTexture
+        local nestedBinding
+        module.readFromObject = function()
+            local oldWorld = floorObjects.values[#floorObjects.values]
+            floorObjects.values[#floorObjects.values] = {classes = oldWorld.classes, getItem = oldWorld.getItem}
+            module.readFromObject = readModule
+            window:readFromObject(player, floor)
+            nestedBinding = window._toolkitRadioBinding
+        end
+        window:readFromObject(player, floor)
+        assert(nestedBinding)
+        equal(window._toolkitRadioBinding, nestedBinding, "outer read must preserve a newer nested binding")
+        local afterNestedRead = floorObjects.gets
+        window:prerender()
+        equal(floorObjects.gets - afterNestedRead, 1, "nested read's current binding must avoid another scan")
+        for _, field in ipairs({"device", "player", "deviceData"}) do
+            module.readFromObject = function() window[field] = {} end
+            window:readFromObject(player, floor)
+            equal(window._toolkitRadioBinding, nil, "read must reject a changed " .. field)
+            module.readFromObject = readModule
+            window:readFromObject(player, floor)
+            window.drawTexture = function() window[field] = {} end
+            window:prerender()
+            equal(window._toolkitRadioBinding, nil, "render must reject a changed " .. field)
+            window.drawTexture = drawTexture
+        end
+        window:readFromObject(player, floor)
+        window:readFromObject(nil, floor)
+        equal(window._toolkitRadioBinding, nil, "upstream rejected read must remain uncached")
+        equal(window.device, nil)
+        window:readFromObject(player, floor)
+        window:close(); equal(window._toolkitRadioBinding, nil, "upstream close must reach wrapped clear")
+        ISRadioWindow.instancesIso[0] = window
+        local beforeReopen = floorObjects.gets
+        equal(ISRadioWindow.activate(player, floor), window)
+        equal(floorObjects.gets - beforeReopen, 129, "upstream activate after close must rescan")
+        assert(window._toolkitRadioBinding)
         JoypadState.players[1] = {}; focus = origin
         local held, data = device("Base.RadioRed", "InventoryItem")
         player.held = held
@@ -494,7 +597,7 @@ if NativeTVWindowSource then
         equal(closed, true); equal(window.device, nil); equal(focus, nil); equal(data.on, false)
         assert(parentRenders > 0)
         local resolver = PZSurvivorToolkit.TVDeviceResolver
-        assert(not pcall(resolver.call, held, function() error("fixture error") end))
+        assert(not pcall(resolver.call, held, nil, function() error("fixture error") end))
         equal(getItemNameFromFullType, translatedName, "translation getter must restore on failure")
         if TVSource then
             RWMPanel.readFromObject = function(panel, p, object, d, kind)
@@ -510,7 +613,7 @@ if NativeTVWindowSource then
                 local slot = {setVisible = function(self, value) self.visible = value end}
                 local panel = {slotVHS = slot, playMediaButton = slot,
                     volumeBar = {setVolume = function() end, getVolumeSteps = function() return 10 end}}
-                resolver.call(object, RWMMergedTV.readFromObject, panel, player, object, d, "InventoryItem")
+                resolver.call(object, nil, RWMMergedTV.readFromObject, panel, player, object, d, "InventoryItem")
                 equal(panel.canMedia, itemType ~= "Base.TvAntique")
                 equal(slot.visible, panel.canMedia)
                 equal(getItemNameFromFullType, translatedName)

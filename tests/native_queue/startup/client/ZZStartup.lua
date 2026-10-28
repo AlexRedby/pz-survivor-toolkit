@@ -19,6 +19,13 @@ Events.OnMainMenuEnter.Add(function()
  entered=true
  if config.kind~='mp' or connecting or isClient() then return end
  local reader=assert(getFileReader('smoke-user.txt',false));local user=reader:readLine();reader:close()
+ -- The lifecycle fixture owns the second connection after an actual menu exit.
+ if user=='client2' and config.cases and #config.cases==1 and config.cases[1]=='lease_lifecycle' then
+  local reader=getFileReader('cart-lease-lifecycle-rejoin.txt',false)
+  local checkpoint=reader and reader:readLine()
+  if reader then reader:close() end
+  if checkpoint=='pending' or checkpoint=='connecting' then return end
+ end
  if host and user=='client1' then
   if hostOwner then return end
   hostOwner=true

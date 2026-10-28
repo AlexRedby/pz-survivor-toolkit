@@ -105,19 +105,9 @@ function LootSorter.onInvContext(playerNum, context, items)
     if not item then return end
     if not instanceof(item, "InventoryItem") then item = item.items and item.items[1] end
     if not item then return end
-    -- our craftable Storage Manifest item: right-click -> open the manifest window (from anywhere)
+    -- The notebook remains a shortcut to the shared warehouse window.
     if item.getFullType and item:getFullType() == "Quartermaster.StorageManifest" then
-        if LootSorter.toggleManifest then
-            context:addOption("Open storage manifest", nil, function() LootSorter.toggleManifest() end)
-        else
-            -- The item is still craftable in multiplayer, so say why it does nothing rather than
-            -- leave the player right-clicking a dead object.
-            local option = context:addOption("Open storage manifest", nil, nil)
-            option.notAvailable = true
-            local tip = ISWorldObjectContextMenu.addToolTip()
-            tip.description = "Single-player only for now."
-            option.toolTip = tip
-        end
+        context:addOption(getText("UI_PZST_Manifest_Open"), playerNum, LootSorter.toggleManifest)
         return
     end
     local container = item:getContainer()

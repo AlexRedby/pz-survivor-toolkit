@@ -9,6 +9,8 @@
 --   carriers = { {ref, factor=<num 0..1>, space=<num>}, ... }  (bags-first = lowest factor first)
 --   budget   = <num>  effective-weight room before overburden
 --   Designations are read-only snapshots for this plan; callbacks must not rewrite them.
+--   noDuplicates boxes supply existingTypes[fullType] = first existing item ref.
+--   Item records supply fullType. Reservations apply across the whole haul, not per trip.
 --   matches  = optional function(box, item) -> bool : category/tag match; explicit item names still win.
 --   accepts  = optional function(carrierRef, itemRef) -> bool : may this carrier hold this item?
 --              Injected so the pure planner never calls the engine directly -- in-game it wraps
@@ -76,7 +78,23 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
     -- 1) assign each item to a same-category box WITH ROOM, cascading to further same-cat boxes.
     -- Only items with a roomy, accepting carrier may reserve destination space.
     -- Otherwise an impossible haul can block later items or force them into overflow boxes.
-    local byBox, boxUsed, leftover, carrierChoices = {}, {}, {}, {}
+    local byBox, boxUsed, leftover, carrierChoices, reservedTypes = {}, {}, {}, {}, {}
+    local function scope(box) return box.duplicateScope or box end
+    local function existingKeeper(box, item)
+        return box.noDuplicates and item.fullType and box.existingTypes
+            and box.existingTypes[item.fullType] == item.ref and box.container == item.container
+    end
+    local function admits(box, item)
+        if box.noDuplicates then
+            if not item.fullType then return false end
+            local existing = box.existingTypes and box.existingTypes[item.fullType]
+            if (existing and not existingKeeper(box, item))
+                or (reservedTypes[scope(box)] and reservedTypes[scope(box)][item.fullType]) then return false end
+            -- Sorting this very shelf must keep its first copy, even when the shelf is full.
+            if existingKeeper(box, item) then return true end
+        end
+        return (boxUsed[box] + item.weight) <= box.capacity and acceptsDestination(box, item)
+    end
     -- why leftover items couldn't be placed, so the caller can show a clear message:
     --   carry   = no carrier has both enough room and permission to hold the item
     --   full    = a box IS designated for it, but every matching box is full or rejects it
@@ -90,13 +108,13 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
             if (c.space or 0) >= it.weight and accepts(c.ref, it.ref) then choices[#choices + 1] = ci end
         end
         carrierChoices[it] = choices
-        local dest = nil
+        local dest, matched = nil, false
         if #choices > 0 then
             -- pass 1: a box that names THIS item (by display name) wins over any category box
             if it.name then
                 for _, b in ipairs(boxesForItemName(namedBoxes, boxes, it.name)) do
-                    if (boxUsed[b] + it.weight) <= b.capacity
-                        and acceptsDestination(b, it) then
+                    matched = true
+                    if admits(b, it) then
                         dest = b; break
                     end
                 end
@@ -104,27 +122,29 @@ function LootSorter.planTrips(items, boxes, carriers, budget, accepts, matches, 
             -- pass 2: otherwise fall back to a same-category box (cascading to further same-cat boxes)
             if not dest then
                 for _, b in ipairs(boxes) do
-                    if matches(b, it) and (boxUsed[b] + it.weight) <= b.capacity
-                        and acceptsDestination(b, it) then
-                        dest = b; break
+                    if matches(b, it) then
+                        matched = true
+                        if admits(b, it) then
+                            dest = b; break
+                        end
                     end
                 end
             end
         end
         if dest then
-            boxUsed[dest] = boxUsed[dest] + it.weight
+            if not existingKeeper(dest, it) then boxUsed[dest] = boxUsed[dest] + it.weight end
+            if dest.noDuplicates then
+                local key = scope(dest)
+                reservedTypes[key] = reservedTypes[key] or {}
+                reservedTypes[key][it.fullType] = true
+            end
             byBox[dest] = byBox[dest] or {}
             table.insert(byBox[dest], it)
         elseif #choices == 0 then
             addLeftover(it, "carry")
         else
-            -- carryable but unplaced: distinguish "matching box(es) full" from "no matching box at all"
-            local matched = false
-            for _, b in ipairs(boxes) do
-                if (it.name and b.items and b.items[it.name]) or matches(b, it) then
-                    matched = true; break
-                end
-            end
+            -- The completed search already distinguished unavailable designations
+            -- from no match; do not repeat every rule evaluation for the reason.
             addLeftover(it, matched and "full" or "nomatch")
         end
     end

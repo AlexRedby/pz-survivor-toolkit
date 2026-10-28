@@ -56,7 +56,7 @@ ISBaseTimedAction.begin = function(action)
         isForceComplete = function() return false end, hasStalled = function() return false end}
 end
 local function project(name)
-    if name == 'ActionQueue' then project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+    if name == 'ActionQueue' then project('ActionQueueSettlement'); project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
 
     return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))()
 end

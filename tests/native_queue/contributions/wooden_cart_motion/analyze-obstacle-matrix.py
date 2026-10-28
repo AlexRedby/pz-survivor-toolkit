@@ -12,6 +12,7 @@ footprint = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(footprint)
 collision = footprint.collision
 wrap, fields = collision.wrap, collision.fields
+native_clip = collision.native_clip
 _motion_spec = importlib.util.spec_from_file_location('obstacle_motion_clock', Path(__file__).with_name('analyze-motion-matrix.py'))
 _motion = importlib.util.module_from_spec(_motion_spec)
 _motion_spec.loader.exec_module(_motion)
@@ -251,7 +252,7 @@ def analyze_motion(text, selected=None):
             gait_ok = ((not row['run'] and not row['sprint']) if requested == 0
                        else row['run'] and not row['sprint'] if requested == 1 else row['sprint'])
             clip = ('Bob_WalkBwdNoAim1Hand' if row['drive'] == 4 else 'Bob_'+('Walk','Run','Sprint')[requested]) if row['drive'] else None
-            clocks = [c['time'] for c in row['clips'] if c['name'] == clip and c['weight'] > .1 and c['speed'] > 0] if gait_ok else []
+            clocks = [c['time'] for c in row['clips'] if native_clip(c['name']) == clip and c['weight'] > .1 and c['speed'] > 0] if gait_ok else []
             if _motion.moving_clock_stall(clock_state, row, clip, clocks) > 500:
                 fail(name, 'Matching native gait clock froze through more than 500ms of measured movement')
         for a, b in zip(rows, rows[1:]):
@@ -266,7 +267,7 @@ def analyze_motion(text, selected=None):
         clip = dict(walk='Bob_Walk', run='Bob_Run', sprint='Bob_Sprint')[gait]
         def matched_gait(selected):
             return [r for r in selected if ((not r['run'] and not r['sprint']) if gait == 'walk' else (r['run'] and not r['sprint']) if gait == 'run' else r['sprint'])
-                    and any(c['name'] == clip and c['weight'] > .1 and c['speed'] > 0 for c in r['clips'])]
+                    and any(native_clip(c['name']) == clip and c['weight'] > .1 and c['speed'] > 0 for c in r['clips'])]
         matched = matched_gait(moving)
         if len(matched) < max(2, .6*len(moving)) or not footprint.progressing(matched, {clip}):
             fail(name, 'requested native approach gait never progresses')

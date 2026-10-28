@@ -122,13 +122,13 @@ def main():
         assert all(path.exists() for path in dependencies), 'Missing compile dependency'
         compiler, java = args.jdk / 'bin/javac', args.jdk / 'bin/java'
         classpath = os.pathsep.join(map(str, dependencies))
-        subprocess.run([str(compiler), '--release', '17', '-cp', classpath, '-d', str(output), *map(str, HERE.glob('*.java'))], check=True)
+        subprocess.run([str(compiler), '--release', '25', '-cp', classpath, '-d', str(output), *map(str, HERE.glob('*.java'))], check=True)
         runtime = os.pathsep.join([str(output), classpath])
         for check in ['WoodenWheelProbeCheck', 'WoodenWheelProbeLifecycleTest', 'GripPoseProbeCheck', 'ClearanceProbeCheck']:
             subprocess.run([str(java), '--enable-native-access=ALL-UNNAMED', '-cp', runtime, check], check=True)
         world_check = output / 'WorldCartProbeCheck.java'
         world_check.write_text(WORLD_PROBE_CHECK)
-        subprocess.run([str(compiler), '--release', '17', '-cp', runtime, '-d', str(output), str(world_check)], check=True)
+        subprocess.run([str(compiler), '--release', '25', '-cp', runtime, '-d', str(output), str(world_check)], check=True)
         subprocess.run([str(java), '--enable-native-access=ALL-UNNAMED', '-cp', runtime, 'WorldCartProbeCheck'], check=True)
         print('JAVA_EVIDENCE_CHECK_PASS (compile and offline probe checks); live=NOT_RUN')
 

@@ -46,7 +46,7 @@ class PrepareInstall(unittest.TestCase):
             "[controls](docs/FEATURES.md#controls) [changes](CHANGELOG.md)\n", encoding="utf-8")
         (self.root / "JavaPatches/README.md").write_text(
             "[install](../MOD_INSTALL.md#prepare-once) "
-            "[regressions](../docs/DEVELOPMENT.md#java-development) "
+            "[regressions](../docs/development/JAVA.md#java-development) "
             "[fixture](../tests/native_queue/contributions/video-recording/README.md) "
             "[version](build.py) [changes](../CHANGELOG.md#toolkit-java-patches)\n",
             encoding="utf-8")
@@ -85,6 +85,13 @@ class PrepareInstall(unittest.TestCase):
         self.build.assert_not_called()
         self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
 
+    def test_kotlin_home_is_forwarded_as_an_absolute_path(self):
+        kotlin_home = Path('compiler folder/kotlinc')
+        prepare_install.prepare(self.root, kotlin_home=kotlin_home)
+        self.build.assert_called_once_with(
+            [sys.executable, str(self.root / 'JavaPatches/build.py'),
+             '--kotlin-home', str(kotlin_home.resolve())], cwd=self.root, check=True)
+
     def test_complete_set_preserves_metadata_and_builds_once_with_forwarded_options(self):
         game, jdk = self.root / "game folder", self.root / "jdk folder"
         result = prepare_install.prepare(self.root, game, jdk, check=True)
@@ -115,7 +122,7 @@ class PrepareInstall(unittest.TestCase):
                          "[changes](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/CHANGELOG.md)\n")
         self.assertEqual((result / "JavaPatches/README.md").read_text(encoding="utf-8"),
                          "[install](../MOD_INSTALL.md#prepare-once) "
-                         "[regressions](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/docs/DEVELOPMENT.md#java-development) "
+                         "[regressions](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/docs/development/JAVA.md#java-development) "
                          "[fixture](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/tests/native_queue/contributions/video-recording/README.md) "
                          "[version](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/JavaPatches/build.py) "
                          "[changes](https://github.com/AlexRedby/pz-survivor-toolkit/blob/main/CHANGELOG.md#toolkit-java-patches)\n")
@@ -373,8 +380,7 @@ class PrepareInstall(unittest.TestCase):
                               ('PZSurvivorToolkit', 'EURY_CONTAINERS'),
                               ('PZSurvivorToolkit', 'MPFastForward'),
                               ('ZombieBuddy', 'PZToolkitJavaPatches'),
-                              ('RealisticDash', 'Navigator'),
-                              ('PZSurvivorToolkit', 'organizedCategories_core')):
+                              ('RealisticDash', 'Navigator')):
             with self.subTest(before=before, after=after):
                 ordered = list(dict.fromkeys([after, before, *prepare_install.MOD_IDS]))
                 (self.root / prepare_install.INI_NAME).write_text('Mods=' + ';'.join(ordered) + '\n')
@@ -391,10 +397,36 @@ class PrepareInstall(unittest.TestCase):
                 prepare_install.prepare(self.root)
         self.assertEqual(2, self.build.call_count)
 
-    def test_current_selected_mod_order_is_accepted(self):
+    def test_full_workshop_selection_publishes_only_owned_mods_without_external_inputs(self):
         shutil.copyfile(ROOT / prepare_install.INI_NAME, self.root / prepare_install.INI_NAME)
-        prepare_install.prepare(self.root)
+        for name in ('CleanUI', 'NewMusic', 'damnlib'):
+            stale = self.output / 'mods' / name / 'old-override.lua'
+            stale.parent.mkdir(parents=True)
+            stale.write_text('stale private third-party copy')
+            (self.output / (name.lower() + '-source-patch.json')).write_text('stale provenance')
+        result = prepare_install.prepare(self.root)
+        self.assertEqual(set(prepare_install.MOD_IDS),
+                         {path.name for path in (result / 'mods').iterdir()})
+        self.assertFalse(list(result.glob('*-source-patch.json')))
+        self.assertEqual((ROOT / prepare_install.INI_NAME).read_bytes(),
+                         (result / 'Server' / prepare_install.INI_NAME).read_bytes())
         self.build.assert_called_once()
+        self.assertFalse(self.sentinel.exists())
+
+    def test_full_workshop_selection_failure_keeps_previous_publication(self):
+        shutil.copyfile(ROOT / prepare_install.INI_NAME, self.root / prepare_install.INI_NAME)
+        for name in ('CleanUI', 'NewMusic', 'damnlib'):
+            stale = self.output / 'mods' / name / 'old-override.lua'
+            stale.parent.mkdir(parents=True)
+            stale.write_text('previous published bytes')
+        before = {path.relative_to(self.output): path.read_bytes()
+                  for path in self.output.rglob('*') if path.is_file()}
+        self.build.side_effect = subprocess.CalledProcessError(1, ['build'])
+        with self.assertRaises(subprocess.CalledProcessError):
+            prepare_install.prepare(self.root)
+        self.assertEqual(before, {path.relative_to(self.output): path.read_bytes()
+                                 for path in self.output.rglob('*') if path.is_file()})
+        self.assertEqual([self.output], list((self.root / 'dist').iterdir()))
 
     def test_rerun_removes_stale_prepared_files_and_preserves_other_dist_outputs(self):
         sibling = self.root / "dist/unrelated.zip"

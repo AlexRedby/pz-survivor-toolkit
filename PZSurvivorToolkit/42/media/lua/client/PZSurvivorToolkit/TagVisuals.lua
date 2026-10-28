@@ -1,4 +1,5 @@
 local Visuals = {}
+local Custom = require "PZSurvivorToolkit/TagCustomization"
 local green = {r = 0.48, g = 0.80, b = 0.40}
 local yellow = {r = 0.95, g = 0.80, b = 0.30}
 local blue = {r = 0.40, g = 0.68, b = 0.95}
@@ -17,16 +18,27 @@ local families = {
     maintenance = {blue, "Item_Glue"}, cleaning = {blue, "Item_Toothbrush"},
     medical = {red, "media/ui/LootableMaps/map_medcross.png"}, drug = {red, "Item_Pills"},
     material = {brown, "Item_Plank"}, construction = {brown, "Item_Hammer"},
-    crafting = {brown, "Item_Hammer"}, furniture = {brown, "Item_Plank"},
+    crafting = {brown, "Item_Hammer"}, furniture = {brown, "media/ui/Sidebar/48/Furniture_On_48.png"},
     clothing = {purple, "Item_ShirtGeneric"}, character = {purple, "Item_Toothbrush"},
     collectable = {purple, "Item_PlushSpiffo"}, entertainment = {purple, "Item_Baseball"},
-    literature = {blue, "Item_Book"}, container = {blue, "Item_Backpack_Blue"},
+    readable = {blue, "Item_Book"}, literature = {blue, "Item_Book"}, writeable = {blue, "Item_Paper"},
+    container = {blue, "Item_Backpack_Blue"},
     weapon = {red, "Item_HandGun3"}, ammunition = {red, "Item_PistolAmmo"},
     security = {yellow, "Item_Key1"}, placeable = {neutral, "Item_Plank"},
     junk = {neutral, "Item_Money"},
+    fresh = {green, "Item_Apple"}, stale = {yellow, "Item_AlarmClock"}, rotten = {brown, "Item_AppleRotten"},
+    raw = {red, "Item_Steak"}, cooked = {green, "Item_Pan"}, burnt = {brown, "Item_Charcoal"},
+    edible = {green, "Item_Fork"}, dismantle = {blue, "Item_Screwdriver"},
+    bandage = {red, "Item_Bandage"}, disinfectant = {red, "Item_Alcohol"}, dirty = {brown, "Item_BandageDirty"},
+    broken = {red, "media/ui/icon_broken.png"},
+    empty = {blue, "Item_GlassBottle"},
+    sharpen = {blue, "Item_Whetstone2"},
+    ignite = {yellow, "Item_Lighter"}, smelting = {brown, "Item_Ingot_Iron"},
+    ingredient = {green, "Item_Pan"}, beverage = {green, "Item_GlassJar"},
+    fruit = {green, "Item_Apple"}, vegetable = {green, "Item_Carrots"}, meat = {green, "Item_Steak"},
 }
 local icons = {
-    perishable = "Item_AlarmClock", nonperishable = "Item_GlassJar", preserved = "Item_GlassJar",
+    perishable = "Item_AlarmClock", nonperishable = "Item_CannedCorn", preserved = "Item_CannedPeas",
     fruit = "Item_Apple", meat = "Item_Steak", seasoning = "Item_Salt", beverage = "Item_GlassJar",
     ingredient = "Item_Pan", serving = "Item_Pan", utensil = "Item_Pan",
     electronic = "Item_Battery", power = "Item_Battery", lightbulb = "Item_Flashlight2",
@@ -63,7 +75,7 @@ local icons = {
     pottery = "Item_Pot", prepared = "Item_GlassWine", protection = "Item_HardHatYellow",
     recreational = "Item_Cigarette", refrigeration = "Item_Cooler", seating = "Item_TableLeg",
     snack = "Item_CornChips", spear = "Item_SpearStone", station = "Item_Anvil_Forged",
-    storage = "Item_AmmoCase", surface = "Item_TableLeg", tabletop = "Item_CardDeck",
+    storage = "Item_AmmoCase", surface = "Build_TableLargeWood", tabletop = "Item_CardDeck",
     thrown = "Item_Limestone", top = "Item_ShirtGeneric", toy = "Item_ToyBear", tracking = "Item_CompassDirectional",
     trapping = "Item_Mousetrap", undergarment = "Item_Underwear1", unfinished = "Item_SpearHead_Crude01",
     vehicleaddition = "Item_CarBattery", video = "Item_Cassette3", vinyl = "Item_Disc",
@@ -73,7 +85,7 @@ local icons = {
 
 local textures, styles = {}, {}
 
-function Visuals.get(id, contextTags)
+function Visuals.defaults(id, contextTags)
     local family = families[id]
     if not family then
         for _, tag in ipairs(contextTags or {}) do
@@ -99,10 +111,39 @@ function Visuals.get(id, contextTags)
         if icon and textures[icon] == nil then
             textures[icon] = (getTexture and getTexture(icon)) or false
         end
-        styles[color][key] = {r = color.r, g = color.g, b = color.b,
+        styles[color][key] = {r = color.r, g = color.g, b = color.b, icon = icon,
             texture = icon and textures[icon] or nil}
     end
     return styles[color][key]
+end
+
+local customStyles, revision = {}, -1
+function Visuals.get(id, contextTags)
+    local base = Visuals.defaults(id, contextTags)
+    local current = Custom.cacheRevision()
+    if current ~= revision then customStyles, revision = {}, current end
+    local definition = id and Custom.definition(id)
+    if definition and definition.deleted then return base end
+    local inherited, familyId
+    if not families[id] then
+        for _, tag in ipairs(contextTags or {}) do
+            if families[tag] then
+                familyId = tag
+                local family = Custom.definition(tag)
+                inherited = family and family.color
+                break
+            end
+        end
+    end
+    if not definition and not inherited then return base end
+    definition = definition or {}
+    local key = tostring(id) .. "|" .. tostring(base) .. "|" .. tostring(familyId)
+    if not customStyles[key] then
+        local color, icon = definition.color or inherited or base, definition.icon or base.icon
+        if icon and textures[icon] == nil then textures[icon] = (getTexture and getTexture(icon)) or false end
+        customStyles[key] = {r=color.r, g=color.g, b=color.b, icon=icon, texture=icon and textures[icon] or nil}
+    end
+    return customStyles[key]
 end
 
 return Visuals

@@ -4,13 +4,16 @@ local Adapters = {}
 PZSurvivorToolkit.ActionQueueEditAdapters = Adapters
 
 local class, base = ISRadioAction, ISBaseTimedAction
-local methods = {}
+local methods, ownMethods = {}, {}
 local lifecycle = {"new", "begin", "create", "adjustMaxTime", "isValid", "isValidStart", "waitToStart", "start", "update",
     "stop", "perform", "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceComplete", "forceStop", "forceCancel", "invoke"}
-for name, callback in pairs(class) do if type(callback) == "function" then methods[name] = callback end end
+for name, callback in pairs(class) do if type(callback) == "function" then methods[name], ownMethods[name] = callback, true end end
 for _, name in ipairs(lifecycle) do methods[name] = class[name] or false end
 local basePerform = base.perform
-local modes = {SetVolume = true, MuteMicrophone = true, SetChannel = true}
+local modes = {SetVolume = true, MuteMicrophone = true, SetChannel = true,
+    MuteVolume = true, UnMuteVolume = true, ToggleOnOff = true}
+local controlModes = {SetVolume = true, MuteMicrophone = true, SetChannel = true,
+    MuteVolume = true, UnMuteVolume = true, ToggleOnOff = true, TogglePlayMedia = true}
 local sourceTrusted
 local adoptedBase = {}
 
@@ -47,7 +50,7 @@ local function trusted(action)
     end
     for name, callback in pairs(methods) do
         if (action[name] or false) ~= callback then return false end
-        if callback and not rawget(class, name)
+        if callback and not ownMethods[name]
             and not Proof.closure(callback, "ISBaseTimedAction.lua")
             and not (adoptedBase[name] == callback and Proof.closure(callback, "ActionQueue.lua")) then return false end
     end
@@ -57,8 +60,17 @@ local function trusted(action)
     return true
 end
 
--- This describes pending native setters only. It never performs validation or writes device state.
--- Playback, power changes and inventory/vehicle devices retain the existing conservative policy.
+-- Callback provenance remains useful after native execution changes live validity.
+-- Callers must separately validate the captured device binding and lifecycle ownership.
+function Adapters.radioCallbacksTrusted(action)
+    return type(action) == "table" and controlModes[action.mode] == true and trusted(action)
+        and action.stopOnWalk == false and action.stopOnRun == true and action.ignoreHandsWounds == true
+        and instanceof(action.character, "IsoPlayer") and not action.onStartFunc and not action.onCompleteFunc
+        and not action.onCancelFunc and not action.onFailFunc and not action.additionalTest and not action.retriggerLastAction
+end
+
+-- This describes pending native controls only, without invoking validity or effects.
+-- Playback and inventory/vehicle devices retain the conservative policy.
 function Adapters.radio(action)
     if type(action) ~= "table" or not modes[action.mode] or not trusted(action)
         or action.action or action.started or action._isAddingActions
@@ -73,8 +85,26 @@ function Adapters.radio(action)
     local on, power, volume, channel, mic = data:getIsTurnedOn(), data:getPower(), data:getDeviceVolume(), data:getChannel(), data:getMicIsMuted()
     if type(on) ~= "boolean" or not finite(power) or not finite(volume) or volume < 0 or volume > 1
         or not finite(channel) or channel % 1 ~= 0 or type(mic) ~= "boolean" then return end
-    local field, value
-    if action.mode == "SetVolume" then
+    local field, value, toggle
+    local facts = {on = on, powered = power > 0, volume = volume, channel = channel, micMuted = mic}
+    local requires = {{field = "on", equal = true}, {field = "powered", equal = true}}
+    if action.mode == "ToggleOnOff" then
+        -- Bound power projection to fixed mains-powered TVs. Native powerability
+        -- also accounts for the world's electricity; battery charge is not a substitute.
+        if not instanceof(device, "IsoTelevision") or data:getIsBatteryPowered() ~= false then return end
+        local powerable = data:canBePoweredHere()
+        if type(powerable) ~= "boolean" then return end
+        facts.powerable = powerable
+        requires = {{field = "powerable", equal = true}}
+        field, toggle = "on", true
+    elseif action.mode == "MuteVolume" then
+        requires[#requires + 1] = {field = "volume", above = 0}
+        field, value = "volume", 0
+    elseif action.mode == "UnMuteVolume" then
+        if not finite(action.secondaryItem) then return end
+        requires[#requires + 1] = {field = "volume", max = 0}
+        field, value = "volume", math.max(0, math.min(1, action.secondaryItem))
+    elseif action.mode == "SetVolume" then
         if not finite(action.secondaryItem) then return end
         field, value = "volume", math.max(0, math.min(1, action.secondaryItem))
     elseif action.mode == "MuteMicrophone" then
@@ -89,9 +119,8 @@ function Adapters.radio(action)
         field, value = "channel", action.secondaryItem
     end
     return {version = 1, complete = true, capacity = "unchanged", resources = {{domain = "device", key = device,
-        facts = {on = on, powered = power > 0, volume = volume, channel = channel, micMuted = mic},
-        requires = {{field = "on", equal = true}, {field = "powered", equal = true}},
-        effects = {{field = field, set = value}}, bounds = {volume = {min = 0, max = 1}}}}}
+        facts = facts, requires = requires,
+        effects = {{field = field, set = value, toggle = toggle}}, bounds = {volume = {min = 0, max = 1}}}}}
 end
 
 return Adapters

@@ -102,6 +102,7 @@ local rule = {mode = 'all', include = {'food'}, exclude = {'perishable'}}
 local function baseline()
     object.md = {unrelated = {untouched = 42}, LSBox = {['0'] = {Old = true}, ['1'] = {Other = true}},
         LSBoxItems = {['0'] = {OldItem = true}}, LSBoxPresets = {['0'] = {OldPreset = 12}}, LSBoxPriority = {['0'] = 8},
+        LSBoxNoDuplicates = {['1'] = true},
         [Rules.FIELD] = {['1'] = {mode = 'all', include = {'electrical'}, exclude = {}}},
         [Rules.REVISIONS] = {['0'] = 3, ['1'] = 7},
         BetterContainers = {customize = {survivor = {name = 'User', icon = {kind = 'item', value = 'Base.Axe'},
@@ -111,7 +112,7 @@ end
 local function args(config)
     return {x = 10, y = 20, z = 0, object = 0, ci = 0, rule = rule, baseRevision = Rules.getBoxRevision(object, 0), configuration = config}
 end
-local config = {cats = {Food = true}, items = {['Base.Beans'] = true}, presets = {Pantry = 41}, priority = 7,
+local config = {cats = {Food = true}, items = {['Base.Beans'] = true}, presets = {Pantry = 41}, priority = 7, noDuplicates = true,
     appearance = {name = ' Pantry ', icon = {kind = 'texture', value = 'media/ui/pantry.png'}, color = {r = 0.2, g = 0.3, b = 0.4, a = 0.5}}}
 baseline()
 local before = clone(object.md)
@@ -136,11 +137,14 @@ object.transmitModData = function(self)
     publications = publications + 1
     assert(self.md.LSBox['0'].Food and self.md.LSBoxItems['0']['Base.Beans'] and self.md.LSBoxPresets['0'].Pantry == 41)
     assert(self.md.LSBoxPriority['0'] == 7 and self.md[Rules.FIELD]['0'].include[1] == 'food' and self.md[Rules.REVISIONS]['0'] == 4)
+    assert(self.md.LSBoxNoDuplicates['0'] == true, 'publication omitted duplicate policy')
     assert(self.md.crate_customContainerName == 'Pantry' and self.md.BetterContainers.customize._global.name == 'Pantry',
         'publication exposed a partial configuration')
 end
 assert(Rules.applyBox(player, args(config)) == 'ok' and publications == 1 and calls.user == 1 and calls.global == 1)
 assert(object.md.unrelated.untouched == 42 and object.md.LSBox['1'].Other and object.md[Rules.REVISIONS]['1'] == 7)
+assert(Config.read(object, 0, player).noDuplicates and object.md.LSBoxNoDuplicates['1'],
+    'duplicate policy was lost or changed another compartment')
 assert(object.md.BetterContainers.customize.other.name == 'Other player'
     and object.md.BetterContainers.customize.survivor.containers[1].name == 'Other compartment')
 config.presets.Pantry = 99; config.appearance.icon.value = 'changed'
@@ -151,6 +155,10 @@ local stale = args({cats = {Bad = true}, appearance = {name = 'Bad'}}); stale.ba
 assert(Rules.applyBox(player, stale) == 'stale' and same(saved, object.md) and publications == 1)
 local invalid = args({cats = {}, appearance = {color = {r = 2, g = 0, b = 0}}})
 assert(Rules.applyBox(player, invalid) == 'invalid' and same(saved, object.md))
+for _, value in ipairs({'true', 1, {}}) do
+    assert(Rules.applyBox(player, args({noDuplicates = value})) == 'invalid' and same(saved, object.md),
+        'invalid duplicate policy changed the configuration')
+end
 mode = 'server'; interact = false
 assert(Rules.applyBox(player, args({})) == 'denied' and same(saved, object.md)); interact = true
 safe = false; assert(Rules.applyBox(player, args({})) == 'denied'); safe = true
@@ -162,6 +170,8 @@ assert(Rules.applyBox(player, args({cats = {Manual = true}})) == 'ok')
 assert(same(saved.BetterContainers, object.md.BetterContainers) and object.md.crate_customContainerName == 'Pantry',
     'omitted appearance changed existing customization')
 assert(not object.md.LSBoxItems['0'] and not object.md.LSBoxPresets['0'] and not object.md.LSBoxPriority['0'])
+assert(object.md.LSBoxNoDuplicates['0'] == nil and object.md.LSBoxNoDuplicates['1'] == true
+    and Config.read(object, 0, player).noDuplicates == false, 'omitted policy did not restore default for selected compartment')
 assert(Rules.applyBox(player, args({appearance = {}})) == 'ok')
 assert(not object.md.crate_customContainerName and not object.md.container_0_customContainerName)
 assert(not object.md.BetterContainers.customize.survivor.name and not object.md.BetterContainers.customize._global.icon)
@@ -175,9 +185,10 @@ sendClientCommand = function(selected, module, command, packet)
     assert(selected == player and module == 'Quartermaster' and command == 'saveBox')
     sent = packet
 end
-local submitted = {cats = {Food = true}, presets = {Pantry = 41}, appearance = {name = 'Client'}}
+local submitted = {cats = {Food = true}, presets = {Pantry = 41}, noDuplicates = true, appearance = {name = 'Client'}}
 Rules.saveBox(object, 0, rule, player, function(value) verdict = value end, 3, submitted)
-submitted.cats.Food = nil; submitted.appearance.name = 'changed'
+submitted.cats.Food = nil; submitted.appearance.name = 'changed'; submitted.noDuplicates = false
+assert(sent.configuration.noDuplicates == true, 'client request lost duplicate policy snapshot')
 object.md.unrelated.untouched = 99
 local function respond(value, revision)
     for _, fn in ipairs(Events.OnServerCommand.handlers) do
@@ -188,6 +199,8 @@ local previousPublications = publications
 respond('ok', 4)
 assert(verdict == 'ok' and object.md.LSBox['0'].Food and object.md.BetterContainers.customize._global.name == 'Client'
     and object.md.unrelated.untouched == 99 and publications == previousPublications)
+assert(object.md.LSBoxNoDuplicates['0'] == true and object.md.LSBoxNoDuplicates['1'] == true,
+    'accepted acknowledgement lost duplicate policy or changed sibling compartment')
 Rules.saveBox(object, 0, rule, player, function(value) verdict = value end, 4, {appearance = {name = 'Refused'}})
 local stable = clone(object.md); respond('denied', 5)
 assert(verdict == 'denied' and same(stable, object.md))
@@ -195,6 +208,8 @@ Rules.saveBox(object, 0, rule, player, function(value) verdict = value end, 4, {
 object.md[Rules.REVISIONS]['0'] = 6; stable = clone(object.md); respond('ok', 5)
 assert(verdict == 'stale' and same(stable, object.md))
 assert(Config.normalize({presets = {Pantry = 41}}).presets.Pantry == 41)
+assert(Config.normalize({}).noDuplicates == false and Config.normalize({noDuplicates = false}).noDuplicates == false)
+assert(Config.normalize({noDuplicates = true}).noDuplicates == true)
 assert(not Config.normalize({priority = math.huge}) and not Appearance.normalize({icon = {kind = 'item'}}))
 next = originalNext
 print('Quartermaster complete container configuration checks passed')

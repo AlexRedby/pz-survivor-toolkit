@@ -48,6 +48,7 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks)
  if foreignCallback=='delegate'then ISDeviceMediaAction.isValid=function()error('foreign delegate must never execute')end end
  if wrapped then assert(loadstring(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/TVMediaAction.lua'),'@PZSurvivorToolkit/TVMediaAction.lua'))()end
  if foreignCallback==true then ISDeviceMediaAction.complete=function()error('foreign preinstalled callback')end end
+ if foreignCallback=='base'then ISBaseTimedAction.update=function()error('foreign inherited helper must not run')end end
  local originalInstance=instanceof
  instanceof=function(value,kind)
   return originalInstance(value,kind)or type(value)=='table'and
@@ -481,6 +482,7 @@ assert(not setup(false,'helper').installed,'changed native device resolver sourc
 assert(not setup(false,'base').installed,'changed inherited native lifecycle source cannot inherit adapter permission')
 assert(not setup(true,'toolkit').installed,'changed owned validity wrapper source cannot inherit permission')
 assert(not setup(false,nil,true).installed,'foreign preinstalled complete cannot be blessed by source files')
+assert(not setup(false,nil,'base').installed,'foreign inherited media helper cannot acquire native completion ownership')
 assert(not setup(true,nil,'delegate').installed,'owned wrapper cannot bless a foreign captured validity delegate')
 print('Media actual-source callbacks, exact VHS/TV resources, native effects, cancellation and fail-closed guards passed.')
 
@@ -780,6 +782,7 @@ print('Media replication-before-Done native validity/stop ordering passed.')
 local function ordinary(enabled,wrapped,options)
  options=options or {}
  local s=setup(wrapped,options.changedSource,nil,true);local f=s.f
+ ISInventoryPaneContextMenu.getContainers=function()return {contains=function(_,container)return container==s.root end}end
  local now,present,begun,forcedStop=1000,{}, {},false
  local input=options.cancel and nativeCancelHelpers(f.player)or nil
  f.project('ActionQueueReading') -- cancellation integration only; never capture a reading range.
@@ -808,8 +811,17 @@ local function ordinary(enabled,wrapped,options)
   -- Model ActionAcknowledgements.bind after the native start boundary.
   handle.table.toolkitNativeTransaction=13;handle.table.toolkitNativeKind=handle.table.Type
  end
- local insert=ISDeviceMediaAction:new(f.player,false,s.item,s.square)
- local play=ISRadioAction:new('TogglePlayMedia',f.player,s.tv)
+ local removing=options.eject==true
+ if removing then s.data.media=true;s.data.index=s.item:getRecordedMediaIndex();s.data.removed=0
+  s.data.removeMediaItem=function(self)self.removed=self.removed+1 end end
+ local insert=ISDeviceMediaAction:new(f.player,removing,not removing and s.item or nil,s.square)
+ local play=removing and ISBaseTimedAction:new(f.player)or ISRadioAction:new('TogglePlayMedia',f.player,s.tv)
+ if removing then play.isValid=function()return true end end -- Independent tail double, no TV effects.
+ local stored
+ if removing and options.stored then
+  local bag=s.container('bag');local owner=f.item('Base.Bag_Schoolbag');owner.class='InventoryContainer';owner.container=s.root;bag.owner=owner
+  stored=s.tape();stored.container=bag
+ end
  local q=f.queue()
  assert(q.toolkitOperationGeneration==nil and q.toolkitOperationsInvalid==nil,'exercise a fresh queue before its first disabled tick')
  ISTimedActionQueue.add(insert);ISTimedActionQueue.add(play)
@@ -830,14 +842,27 @@ local function ordinary(enabled,wrapped,options)
    'first disabled tick must not invalidate the real started ACK captured after native begin')
   assert((q.toolkitOperationGeneration or 0)==generation,'ordinary begin must settle initial queue-off invalidation before ACK capture')
  end
- local _,serverData,serverSquare=s.device();local serverTape=s.tape()
- local serverInsert=ISDeviceMediaAction:new(f.player,false,serverTape,serverSquare)
+ local _,serverData,serverSquare=s.device();local serverTape=not removing and s.tape()or nil
+ local serverRoot,serverOutput,output
+ if removing then
+  serverRoot=s.container();serverData.media=true;serverData.index=s.item:getRecordedMediaIndex();serverData.removed=0
+  serverData.removeMediaItem=function(self,destination)
+   self.removed=self.removed+1;serverOutput=s.tape();serverOutput.container=destination
+   self.media=false;self.index=-1
+  end
+  f.player.inventory=serverRoot
+ end
+ local serverInsert=ISDeviceMediaAction:new(f.player,removing,serverTape,serverSquare)
  isClient,isServer=function()return false end,function()return true end
- assert(serverInsert:complete()and serverData.consumed==1 and serverTape.container==nil)
+ assert(serverInsert:complete())
+ if removing then
+  assert(serverData.removed==1 and serverOutput.container==serverRoot and not serverData.media)
+  f.player.inventory=s.root;output=s.tape();output.container=nil
+ else assert(serverData.consumed==1 and serverTape.container==nil)end
  isClient,isServer=function()return true end,function()return false end
  local function effects(kind)
-  if kind~='tape' then s.data.media=true;s.data.index=s.item:getRecordedMediaIndex()end
-  if kind~='media'then s.item.container=nil end
+  if kind~='tape' then s.data.media=not removing;s.data.index=removing and -1 or s.item:getRecordedMediaIndex()end
+  if kind~='media'then if removing then output.container=s.root else s.item.container=nil end end
  end
  local function frame(done)
   -- Model IsoGameCharacter validity before LuaTimedActionNew observes Done.
@@ -864,11 +889,12 @@ local function ordinary(enabled,wrapped,options)
    'confirmed ordinary insertion must begin exact pending play once')
   q:tick();assert(q.current==play and #begun==2,'completion cannot replay playback begin')
   play:perform()
-  assert(q.current==nil and #q.queue==0 and s.data.playing,'actual native play must play installed media')
+  assert(q.current==nil and #q.queue==0 and(removing or s.data.playing),'actual native continuation must finish once')
  end
  return {s=s,f=f,q=q,insert=insert,play=play,ack=ack,effects=effects,frame=frame,finish=finish,
-  resetObserved=resetObserved,input=input,begun=begun,serverData=serverData,expire=function()now=31001 end,
-  noReplay=function()assert(serverData.consumed==1 and s.data.consumed==0,'client recovery must never invoke/replay insertion effects')end}
+  resetObserved=resetObserved,input=input,begun=begun,serverData=serverData,output=output,stored=stored,expire=function()now=31001 end,
+  noReplay=function()assert(removing and serverData.removed==1 and s.data.removed==0
+   or not removing and serverData.consumed==1 and s.data.consumed==0,'client recovery must never invoke/replay media effects')end}
 end
 
 -- 1. Fresh queue on/off and each effects-first ordering, through real begin/create.
@@ -978,3 +1004,78 @@ for _,enabled in ipairs({true,false})do
  end
 end
 print('Ordinary media queue on/off: actual native begin/create and real ACK listener; modeled Java/network effects, both completion orders, cancellation and fail-closed identity checks passed.')
+
+-- Ejection is the inverse native race, with a fresh output ID rather than tape debit.
+for _,enabled in ipairs({true,false})do
+ for _,wrapped in ipairs({true,false})do
+  for _,first in ipairs({'media','tape','both'})do
+   local o=ordinary(enabled,wrapped,{eject=true});o.effects(first)
+   assert(o.output:getID()~=o.s.item:getID(),'native eject creates a new identity')
+   assert(o.frame(false)=='waiting'and o.q.current==o.insert and #o.begun==1,
+    'eject early media/output cannot cancel the independent tail')
+   o.finish();o.noReplay()
+  end
+ end
+ for _,first in ipairs({'media','tape'})do
+  local o=ordinary(enabled,true,{eject=true});o.ack('completed');assert(o.frame(true)=='performed')
+  o.q:tick();assert(o.q.current==o.insert and #o.begun==1,'Done must wait for native eject output and empty TV')
+  o.effects(first);o.q:tick();assert(o.q.current==o.insert and #o.begun==1,'one eject effect is insufficient')
+  o.effects('both');o.q:tick();assert(o.q.current==o.play and #o.begun==2)
+  o.q:tick();assert(#o.begun==2);o.noReplay()
+ end
+ local o=ordinary(enabled,true,{eject=true,changedSource='native'});o.effects('media')
+ assert(o.frame(false)=='stopped','unaudited source retains native post-eject invalidation')
+ o.resetObserved();o.noReplay()
+end
+for _,scenario in ipairs({'wrong-index','duplicate','preexisting','nested','moved-after-seen','wrong-tv','changed-callback','canceled','reset'})do
+ local o=ordinary(true,true,{eject=true});o.ack('completed');assert(o.frame(true)=='performed')
+ if scenario=='preexisting'then o.output.container=nil;o.s.data.media=false;o.s.data.index=-1
+ elseif scenario=='wrong-index'then o.effects('both');o.output.mediaIndex=99
+ elseif scenario=='duplicate'then o.effects('both');o.s.tape()
+ elseif scenario=='nested'then o.effects('both');o.output.container=o.s.container('bag')
+ elseif scenario=='moved-after-seen'then o.effects('tape');o.q:tick();o.output.container=o.s.container();o.effects('media')
+ elseif scenario=='wrong-tv'then o.s.tv.gone=true
+ elseif scenario=='changed-callback'then o.insert.complete=function()error('foreign completion must not run')end
+ elseif scenario=='canceled'then o.ack('canceled')
+ else o.q:resetQueue()end
+ o.q:tick()
+ assert(#o.begun==1 and o.play.action==nil,'invalid ejection cannot release its continuation '..scenario)
+ o.noReplay()
+end
+print('Eject native-source lifecycle: both queue modes/wrappers/channel orders, new root output, no replay and failed identity/receipt guards passed.')
+
+-- Known empty ejects and redundant/unavailable TV buttons discard only their
+-- operation. Unknown callbacks and explicit whole-queue reset keep native rules.
+for _,mode in ipairs({'TogglePlayMedia','MuteVolume','UnMuteVolume','SetChannel','SetVolume'})do
+ local s=setup(true);local f=s.f;f.project('ActionQueueEditAdapters')
+ s.data.getPower=function()return 1 end;s.data.volume=mode=='UnMuteVolume'and 1 or 0
+ s.data.getDeviceVolume=function(self)return self.volume end
+ if mode=='SetVolume'or mode=='SetChannel'then s.data.getIsTurnedOn=function()return false end end
+ local value=mode=='SetChannel'and 200 or mode=='SetVolume'and 0.5 or mode=='UnMuteVolume'and 0.5 or nil
+ local action=ISRadioAction:new(mode,f.player,s.tv,value)
+ assert(PZSurvivorToolkit.ActionQueueMedia.canSkipUnavailable(action),'unavailable native TV mode '..mode)
+ local callback=action.isValid;action.isValid=function()return false end
+ assert(not PZSurvivorToolkit.ActionQueueMedia.canSkipUnavailable(action),'foreign validity must not gain skip permission')
+ action.isValid=callback
+ PZSurvivorToolkit.Settings.actionQueue=function()return false end
+ assert(not PZSurvivorToolkit.ActionQueueMedia.canSkipUnavailable(action),'disabled queue preserves native invalid control policy')
+end
+for _,enabled in ipairs({true,false})do
+ local o=ordinary(enabled,true,{eject=true,noAck=true});o.effects('media')
+ assert(o.frame(false)=='stopped','missing ACK cannot infer ejection success')
+ if enabled then
+  assert(o.q.current==o.insert and o.q.toolkitCancelStopped,'known empty ejection stop must preserve unrelated operation')
+  o.q:tick();assert(o.q.current==o.play and #o.begun==2,'native removal must settle before independent tail starts')
+ else o.resetObserved()end
+ o.noReplay()
+end
+print('Unavailable TV commands: strict callbacks, queue-off native fallback and operation-only empty-eject stop passed.')
+
+for _,enabled in ipairs({true,false})do
+ local o=ordinary(enabled,true,{eject=true,stored=true});o.ack('completed');assert(o.frame(true)=='performed')
+ o.effects('media');o.stored.container=o.s.root;o.q:tick()
+ assert(o.q.current==o.insert and #o.begun==1,'preexisting nested VHS cannot masquerade as the fresh eject output')
+ o.effects('both');o.q:tick();assert(o.q.current==o.play and #o.begun==2)
+ o.noReplay()
+end
+print('Eject input snapshot excludes matching tapes previously held in nested bags.')

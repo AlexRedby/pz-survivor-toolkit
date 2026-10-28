@@ -147,7 +147,8 @@ Events.OnGameStart.Add=function(callback) starts[#starts+1]=callback end
 local restrictionPath=clientRoot..'/Restrictions/TransferRestrictions.lua'
 local visualPath=clientRoot..'/CartState/VisualUpdateQueue.lua'
 require=function(module)
-    if module=='PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua')
+    if module=='PZSurvivorToolkit/SourceProof' then return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua')
+    elseif module=='PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua')
     elseif module=='SaucedCarts/Restrictions/TransferRestrictions' then
         local hook=assert(read(restrictionPath):match('(local function initTransferActionHook%(%).-\nend)'))
         Events.OnGameStart.Add(source('local transferActionHookInitialized=false\n'..hook..'\nreturn initTransferActionHook',restrictionPath))
@@ -287,6 +288,54 @@ pickup:perform()
 assert(#moves==2 and moves[1]==nail1:getID() and moves[2]==nail2:getID() and flushes==1 and refreshes==1
     and inv:contains(nail1) and inv:contains(nail2) and inside1:contains(nail3)
     and q.current==separate and q.queue[2]==waiting,'actual SP cart perform consumed the later operation or lost native effects/tail')
+-- Native batching follows the live queue setting, including already queued work.
+do
+    local setting=PZSurvivorToolkit.Settings.actionQueue
+    local enabled=true
+    PZSurvivorToolkit.Settings.actionQueue=function() return enabled end
+    local firstItem,secondItem=item('Base.Nails',inside1),item('Base.Nails',inside1)
+    local first=transfer(firstItem,inside1,inv)
+    local second=transfer(secondItem,inside1,inv)
+    local firstOwner,secondOwner=first.toolkitQueueOperation,second.toolkitQueueOperation
+    local tail=book()
+    local function batch()
+        return ISCartTransferAction.collectBatch(first,{second,tail})
+    end
+    local batchItems,merged=batch()
+    assert(#batchItems==1 and merged==0,'enabled carts must retain different queued operation owners')
+    second.toolkitQueueOperation=firstOwner
+    batchItems,merged=batch()
+    assert(#batchItems==2 and merged==1,'enabled carts must still batch within one operation')
+    second.toolkitQueueOperation=secondOwner
+    enabled=false
+    batchItems,merged=batch()
+    assert(#batchItems==2 and merged==1 and batchItems[1]==firstItem and batchItems[2]==secondItem,
+        'disabled carts must batch compatible queued transfers across operation owners')
+    for _,field in ipairs({'srcContainer','destContainer','onCompleteFunc','allowMissingItems'}) do
+        local previous=second[field]
+        if field=='onCompleteFunc' then second[field]=function() end
+        elseif field=='allowMissingItems' then second[field]=not first[field]
+        else second[field]={} end
+        assert(not nativeMerge(first,second),'upstream fixture must retain '..field..' merge barrier')
+        batchItems,merged=batch()
+        assert(#batchItems==1 and merged==0,'disabled carts bypassed upstream '..field..' merge barrier')
+        second[field]=previous
+    end
+    enabled=true
+    batchItems,merged=batch()
+    assert(#batchItems==1 and merged==0,'re-enabling carts must restore queued operation isolation')
+    enabled=false
+    local moveCount,flushCount,refreshCount=#moves,flushes,refreshes
+    q=f.queue(first,second,tail)
+    first:perform()
+    assert(#moves==moveCount+2 and moves[moveCount+1]==firstItem:getID() and moves[moveCount+2]==secondItem:getID()
+        and inv:contains(firstItem) and inv:contains(secondItem)
+        and flushes==flushCount+1 and refreshes==refreshCount+1 and q.current==tail and #q.queue==1,
+        'disabled SP cart perform lost native batch effects or unrelated reading tail')
+    assert(next(second)==nil and first.toolkitQueueOperation==firstOwner and firstOwner~=secondOwner,
+        'native cart merge must wipe its child without replacing the executor operation owner')
+    PZSurvivorToolkit.Settings.actionQueue=setting
+end
 -- MP sends exact IDs and advances natively; pending actions with no receipt remain protected.
 client=true
 local mp=transfer(nail3,inside1,inv);q=f.queue(mp,waiting);mp:begin()
@@ -304,11 +353,15 @@ PZSurvivorToolkit.Settings.queueGroupCancel=function() return true end
 local api=f.project('ActionQueue')
 local borrowed=item('Base.BookFirstAid1',inside1)
 local token={};local borrow=transfer(borrowed,inside1,inv,token)
-q=f.queue(borrow);ops.adopt(borrow,token);borrow:perform()
-assert(token.toolkitPickups[borrowed]==inside1 and inv:contains(borrowed),'actual cart pickup did not record its original source')
-local using=f.action(ISReadABook,{item=borrowed});using.toolkitQueueOperation=token;using:begin()
+local using=f.action(ISReadABook,{item=borrowed});using.toolkitQueueOperation=token
 local returnAction=transfer(borrowed,inv,inside1,token);returnAction:setAllowMissingItems(true)
-local tail=book();q=f.queue(using,returnAction,tail)
+-- Native completion advances one persistent player queue. Replacing it after
+-- pickup invalidates the operation's queue-bound provenance by design.
+local tail=book();q=f.queue(borrow,using,returnAction,tail)
+ops.adopt(borrow,token);borrow:begin();borrow:perform()
+assert(token.toolkitPickups[borrowed]==inside1 and inv:contains(borrowed),'actual cart pickup did not record its original source')
+assert(q.current==using and q.queue[1]==using and using.action,
+    'native pickup completion did not start reading in the original queue')
 ISInventoryPaneContextMenu.getContainers=function() return {contains=function(_,value) return value==inside1 or value==inv end} end
 assert(carts.isReturn(returnAction) and not policy.cancelOperationReason(q,using),'verified SP cart return made borrowed operation uncancellable')
 assert(api.cancelOperation(q,using) and token.toolkitCancelled)
@@ -350,7 +403,7 @@ for _,scenario in ipairs(scenarios) do
         approvedPerform=replacement.perform
         local compatPath=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
         local query=assert(read(compatPath):match('(function Compat.isTransferPerform%(callback%).-\nend)'))
-        compat=assert(loadstring('local containerTransferPerform,containerHelpersUnchanged=...\nlocal ready={EURY_CONTAINERS=true};local Compat={}\n'
+        compat=assert(loadstring('local reviewedTransferPerform,transferPerformGuard=...\nlocal Compat={}\n'
             ..query..'\nreturn Compat','@'..compatPath))(approvedPerform,guard)
         assert(compat.isTransferPerform(approvedPerform) and not compat.isTransferPerform(function() end),
             'Compat perform query approved a different callback')
@@ -483,7 +536,7 @@ local unverified=f.project('ActionQueueCarts')
 assert(not unverified.install() and ISCartTransferAction.canMergeAction==mergeBefore
     and not unverified.isTransferConstructor(ISInventoryTransferAction.new),
     'unverified constructor installed permissions or altered upstream batching')
--- ContainerRestrictions changes unequip new/complete globally, but only the marked non-cart food mask is audited.
+-- Actual globally wrapped unequip preparation shares one guarded native contract for ordinary items.
 local restrictionsPath=SaucedCartsSource..'/ContainerRestrictions.lua'
 local restrictionsSource=read(restrictionsPath)
 local coreSource=read(SaucedCartsSource..'/Core.lua')
@@ -495,15 +548,23 @@ local pinCode='local Proof=assert(loadfile(ProjectRoot..\'/PZSurvivorToolkit/42/
 local maskHookCode='local unequipHookInitialized=false\n'
     ..assert(restrictionsSource:match('(local function flushDistanceOnCreate%(character, item, label%).-\nend)'))..'\n'
     ..assert(restrictionsSource:match('(local function wrapUnequipNew%(%).-\nend)'))..'\n'
-    ..assert(restrictionsSource:match('(local function initUnequipHook%(%).-\nend)'))..'\nreturn initUnequipHook'
+    ..assert(restrictionsSource:match('(local function initUnequipHook%(%).-\nend)'))..'\n'
+    ..'local dropActionHookInitialized=false\n'
+    ..assert(restrictionsSource:match('(local function wrapDropNew%(%).-\nend)'))..'\n'
+    ..assert(restrictionsSource:match('(local function initDropActionHook%(%).-\nend)'))
+    ..'\nreturn function() initUnequipHook();initDropActionHook() end'
 for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegate','foreign-lifecycle','preinstalled'}) do
     -- Rebuild the fixture so the helper must observe native predecessors before the real OnGameStart hook.
     local maskFixture=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
     local character=maskFixture.player
+    local maskInstanceof=instanceof
+    instanceof=function(value,kind)return maskInstanceof(value,kind)
+        or kind=='InventoryItem' and type(value)=='table' and value.class=='InventoryContainer' end
     ItemBodyLocation={};ISWearClothing={isStopOnWalk=function() return false end}
     maskFixture.native('shared/TimedActions/ISUnequipAction.lua')
-    local removed=0
-    character.removeWornItem=function() removed=removed+1 end
+    maskFixture.native('shared/TimedActions/ISDropWorldItemAction.lua')
+    local removed,removedItems=0,{}
+    character.removeWornItem=function(_,value) removed=removed+1;removedItems[#removedItems+1]=value end
     character.getPrimaryHandItem,character.getSecondaryHandItem=function() end,function() end
     getPlayerHotbar,sendEquip,triggerEvent=function() end,function() end,function() end
     isForceDropHeavyItem=function() return false end
@@ -553,21 +614,60 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
     if mode=='foreign-lifecycle' then ISUnequipAction.start=function() error('foreign start') end end
     if mode=='foreign-delegate' then ISUnequipAction.complete=function() error('foreign predecessor') end end
     if mode=='preinstalled' then source(maskHookCode,restrictionsPath)() end
+    local dropBefore={new=ISDropWorldItemAction.new,isValid=ISDropWorldItemAction.isValid,complete=ISDropWorldItemAction.complete}
     local maskCarts=maskFixture.project('ActionQueueCarts');assert(maskCarts.install())
     for _,callback in ipairs(pendingStarts) do callback() end
     local mask=maskFixture.item('Base.Hat_GasMask_nofilter')
     mask.getCategory=function() return 'Clothing' end;mask.getWorldItem=function() end
+    local hat=maskFixture.item('Base.Hat_BaseballCap')
+    hat.getCategory=function() return 'Clothing' end;hat.getWorldItem=function() end
     owned=ISUnequipAction:new(character,mask,50,'food')
     local foreign=ISUnequipAction:new(character,mask,50,'food')
-    assert(owned.maxTimeInit==50 and owned.reason=='food','actual wrapper changed native constructor arguments')
-    assert(not maskPolicy.inspect(foreign),'unmarked identical mask removal borrowed food ownership')
+    local ordinaryHat=ISUnequipAction:new(character,hat,50)
+    assert(owned.maxTimeInit==50 and owned.reason=='food'and ordinaryHat.maxTimeInit==50 and ordinaryHat.reason==nil,
+        'actual wrapper changed native constructor arguments')
     local contract,adapter=maskPolicy.inspect(owned)
-    if mode~='valid' then assert(not contract,'changed source or preinstalled helper acquired mask permission: '..mode)
+    if mode~='valid' then
+        assert(not contract and not maskPolicy.inspect(foreign)and not maskPolicy.inspect(ordinaryHat)
+            and not maskPolicy.matchesNative(owned)and not maskPolicy.matchesNative(ordinaryHat),
+            'changed source or preinstalled helper acquired ordinary equipment permission: '..mode)
+        if mode=='changed-source' or mode=='preinstalled' then
+            assert(not maskCarts.isDropCallback('new',ISDropWorldItemAction.new),'unverified drop predecessor/source acquired storage permission: '..mode)
+        end
     else
-        assert(adapter=='compat.food-mask-unequip' and contract.preparationFinish and maskPolicy.preparationCanFinish(owned),
-            'owned native mask removal did not regain preparation cancellation')
+        local function canonical(action)
+            local value,id=maskPolicy.inspect(action)
+            assert(value and id=='native.ISUnequipAction'and value.preparation and value.preparationFinish
+                and value.cancelWaiting==false and value.interrupt=='finish-step'
+                and value.items[action.item:getID()]and value.hands==character
+                and maskPolicy.preparationCanFinish(action)and maskPolicy.matchesNative(action),
+                'ordinary marked/unmarked equipment did not retain canonical native preparation')
+            local behavior,behaviorID=PZSurvivorToolkit.ActionQueueDefinitions.behavior(action)
+            assert(behavior and behaviorID==id,'ordinary equipment has ambiguous native/food contracts')
+            return value
+        end
+        canonical(owned);canonical(foreign);canonical(ordinaryHat)
+        -- Marker ownership is unrelated to the exact reviewed native preparation binding.
+        owned=ordinaryHat;canonical(ordinaryHat);canonical(foreign)
+        owned=ISUnequipAction:new(character,mask,50,'food');canonical(owned)
+        for _,action in ipairs({owned,ordinaryHat})do
+            for _,field in ipairs({'onStartFunc','onCompleteFunc','onCancelFunc','onFailFunc','additionalTest','retriggerLastAction'})do
+                action[field]=function()end
+                assert(not maskPolicy.inspect(action)and not maskPolicy.matchesNative(action),
+                    'custom equipment callback retained canonical binding: '..field)
+                action[field]=nil
+            end
+        end
         character.getPrimaryHandItem=function(self) return self.primary end
         character.getSecondaryHandItem=function(self) return self.secondary end
+        local bag=maskFixture.item('Base.Bag_Schoolbag');bag.class='InventoryContainer'
+        local drop=setmetatable({Type='ISDropWorldItemAction',item=bag,character=character},ISDropWorldItemAction)
+        assert(maskCarts.isNonCartDrop(drop),'actual pinned non-cart drop wrappers lost the native storage branch')
+        for name,callback in pairs(dropBefore)do
+            assert(maskCarts.isDropCallback(name,callback) and maskCarts.isDropCallback(name,ISDropWorldItemAction[name]),
+                'actual drop-hook transition lost its exact native predecessor/replacement: '..name)
+        end
+        bag.cart=true;assert(not maskCarts.isNonCartDrop(drop),'cart acquired ordinary storage drop permission');bag.cart=nil
         assert(maskCarts.isUnequipConstructor(originalNew) and maskCarts.isUnequipConstructor(ISUnequipAction.new)
             and maskCarts.isNonCartUnequip(owned) and maskCarts.isNonCartItem(mask) and maskCarts.equipmentSafe(character),
             'observed native delegate did not expose the exact non-cart equipment proof')
@@ -576,7 +676,8 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
             assert(not maskCarts.equipmentSafe(character),'held cart acquired equipment proof: '..hand)
             character[hand]=nil
         end
-        owned:complete();assert(removed==1,'actual non-cart wrapper did not delegate native completion exactly once')
+        owned:complete();assert(removed==1 and removedItems[1]==mask,'actual mask wrapper did not delegate exact native completion once')
+        ordinaryHat:complete();assert(removed==2 and removedItems[2]==hat,'actual hat wrapper did not delegate exact native completion once')
         for _,name in ipairs({'new','complete','start','stop'}) do
             local method=ISUnequipAction[name];ISUnequipAction[name]=function() end
             assert(not maskPolicy.inspect(owned) and not maskCarts.isUnequipConstructor(ISUnequipAction.new),'changed unequip lifecycle retained equipment permission: '..name)
@@ -594,10 +695,15 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
         cartTypes[mask:getFullType()]={}
         assert(not maskPolicy.inspect(owned),'registered cart type retained non-cart mask permission');cartTypes[mask:getFullType()]=nil
         local marking=maskFood.isMaskRemoval;maskFood.isMaskRemoval=function() return true end
-        assert(not maskPolicy.inspect(owned),'replacement ownership predicate retained mask permission');maskFood.isMaskRemoval=marking
+        canonical(owned);canonical(foreign);canonical(ordinaryHat);maskFood.isMaskRemoval=marking
         owned.item.cart=true
-        assert(not maskPolicy.inspect(owned),'cart classification retained ordinary mask permission');owned.item.cart=nil
-        assert(maskPolicy.inspect(owned),'restored exact helpers did not restore mask permission')
+        assert(not maskPolicy.inspect(owned)and not maskPolicy.matchesNative(owned),'cart classification retained ordinary mask permission');owned.item.cart=nil
+        canonical(owned);canonical(foreign);canonical(ordinaryHat)
+        -- Adoption is exact and atomic; a foreign predecessor cannot replace the established binding.
+        assert(not maskPolicy.adoptNativeUnequipVariant({new=function()end,complete=originalComplete},
+            {new=ISUnequipAction.new,complete=ISUnequipAction.complete},function()return true end,function()return true end),
+            'foreign equipment predecessor was adopted')
+        canonical(owned);canonical(ordinaryHat)
     end
     SaucedCarts.debug=debugBefore
 end

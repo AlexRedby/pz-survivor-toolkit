@@ -1,5 +1,6 @@
 """Quartermaster store provenance and exact native distribution evidence."""
 import json
+import copy
 from pathlib import Path
 import sys
 import tempfile
@@ -11,6 +12,90 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import quartermaster as adapter
 from queue_checks.adapters import quartermaster_distribution as distribution
 from queue_checks.adapters import quartermaster_crafting as crafting
+
+
+def group_evidence(root):
+    """Native receipt fixture; mutations below must fail even with matching client claims."""
+    packet = dict(ids=[31, 32, 33, 34, 35], types=['Base.BookCooking1', 'Base.BookCooking1',
+                  'Base.BookCooking2', 'Base.BookCooking2', 'Base.BookCooking1'], names=['Cooking I', 'Cooking II'],
+                  creator='client1', member=dict(x=18, y=10, z=0, index=1))
+    created = dict(cats=[], items={'Cooking I': True, 'Cooking II': True}, presets=[], priority=6, noDuplicates=False,
+                   appearance=dict(name='PZST cooking group', icon=dict(kind='item', value='Base.BookCooking1'),
+                                   color=dict(r=.25, g=.5, b=.75, a=1)))
+    updated = copy.deepcopy(created)
+    updated.update(priority=11, appearance=dict(name='PZST shared cooking', icon=dict(kind='item', value='Base.BookCooking2'),
+                                              color=dict(r=.75, g=.25, b=.5, a=1)))
+    detached = copy.deepcopy(updated)
+    detached.update(items={'Cooking I': True}, priority=4,
+                    appearance=dict(name='PZST local cooking', icon=dict(kind='item', value='Base.BookCooking2'),
+                                    color=dict(r=.5, g=.75, b=.25, a=1)))
+    unique = copy.deepcopy(updated)
+    unique.update(priority=9, noDuplicates=True)
+    blank = dict(cats=[], items=[], presets=[], priority=0, noDuplicates=False, appearance=[])
+    first_rule = dict(mode='all', include=['readable'], exclude=['writeable'])
+    updated_rule = dict(mode='all', include=['experience', 'readable'], exclude=['writeable'])
+    stages = [dict(stage=stage, groupId='group-7', revision=revision, creator='client1', links=['group-7', link],
+                   configurations=configs, rules=rules)
+              for stage, revision, link, configs, rules in [
+                  ('created', 1, False, [created, blank], [first_rule, dict(mode='all', include=[], exclude=[])]),
+                  ('joined', 1, 'group-7', [created, created], [first_rule, first_rule]),
+                  ('updated', 2, 'group-7', [updated, updated], [updated_rule, updated_rule]),
+                  ('detached', 2, False, [updated, detached], [updated_rule, updated_rule]),
+                  ('rejoined', 2, 'group-7', [updated, updated], [updated_rule, updated_rule]),
+                  ('unique', 3, 'group-7', [unique, unique], [updated_rule, updated_rule])]]
+    result = dict(ids=packet['ids'], items=[dict(id=value, fullType=kind, container=dest)
+                  for value, kind, dest in zip(packet['ids'], packet['types'], [2, 2, 4, 2, 3])],
+                  groupId='group-7', groupRevision=3, memberCount=2, noDuplicates=True, priorities=[9, 5],
+                  existingGroupCopy=True, sameBatch=True, differentVolume=True, moved=4, conserved=5)
+    def row(event, value):
+        return '[QM_DISTRIBUTION] GROUP_' + event + ' ' + json.dumps(value) + '\n'
+    client = row('PREPARED', packet) + ''.join(row('LOCAL', stage) for stage in stages)
+    client += row('SHOT', dict(name='quartermaster-group-editor', width=520, height=850))
+    client += row('TRANSFERS_LOCAL', result) + row('COMPLETE', dict(stages=6, members=2, localDetached=True, groupDuplicates=True))
+    server = row('PREPARED_AUTHORITY', packet) + ''.join(row('AUTHORITY', stage) for stage in stages)
+    server += row('TRANSFERS_AUTHORITY', result)
+    screenshot = root / 'client1/Screenshots/quartermaster-group-editor.png'
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    screenshot.write_bytes(b'\x89PNG\r\n\x1a\n\0\0\0\rIHDR' + (1600).to_bytes(4, 'big')
+                           + (900).to_bytes(4, 'big') + b'\0' * 9)
+    return client, server
+
+
+class QuartermasterGroupReceipts(unittest.TestCase):
+    def test_group_receipts_require_authority_scope_and_exact_book_effects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            client, authority = group_evidence(root)
+            selection = dict(kind='mp')
+            self.assertEqual(len(distribution._groups(root, selection, client, authority, [11, 12])['stages']), 6)
+            invalid = []
+            rows = authority.splitlines(keepends=True)
+            invalid.extend(authority.replace(row, '') for row in rows)
+            invalid.extend(authority + row for row in rows)
+            invalid += [authority.replace('"revision": 2', '"revision": 1'),
+                        authority.replace('"creator": "client1"', '"creator": "client2"'),
+                        authority.replace('"links": ["group-7", false]', '"links": ["group-7", "group-7"]'),
+                        authority.replace('"name": "PZST shared cooking"', '"name": "old name"'),
+                        authority.replace('"priority": 11', '"priority": 6'),
+                        authority.replace('"noDuplicates": false', '"noDuplicates": true'),
+                        authority.replace('"include": ["experience", "readable"]', '"include": ["readable"]'),
+                        authority.replace('"container": 4', '"container": 2'),
+                        authority.replace('"conserved": 5', '"conserved": 4')]
+            for wrong in invalid:
+                with self.subTest(authority=wrong), self.assertRaises((ValueError, KeyError)):
+                    distribution._groups(root, selection, client, wrong, [11, 12])
+            # A matching client/server claim must still meet the contract.
+            for original, replacement in [('"noDuplicates": false', '"noDuplicates": true'),
+                                           ('"priority": 11', '"priority": 6'),
+                                           ('"container": 4', '"container": 2'),
+                                           ('"ids": [31, 32, 33, 34, 35]', '"ids": [31, 32, 33, 34, 34]')]:
+                with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                    distribution._groups(root, selection, client.replace(original, replacement),
+                                         authority.replace(original, replacement), [11, 12])
+            screenshot = root / 'client1/Screenshots/quartermaster-group-editor.png'
+            screenshot.unlink()
+            with self.assertRaises(OSError):
+                distribution._groups(root, selection, client, authority, [11, 12])
 
 
 class QuartermasterPresets(unittest.TestCase):
@@ -53,7 +138,14 @@ class QuartermasterPresets(unittest.TestCase):
         adapter.stage(ROOT, self.output, self.game, self.root / 'jdk', self.selection, locations, self.runtime)
 
     def test_owned_toolkit_provides_quartermaster_without_external_mod(self):
-        self.assertEqual(adapter.MODS, ['PZSurvivorToolkit', 'organizedCategories_core'])
+        self.assertEqual(adapter.MODS, ['PZSurvivorToolkit'])
+        for owner in (distribution, crafting):
+            self.assertNotIn('organizedCategories_core', owner.MODS)
+        backpack = (ROOT / 'tests/native_queue/quartermaster-distribution/client/ZZQuartermasterBackpack.lua').read_text()
+        self.assertIn("require 'PZSurvivorToolkit/ItemRetentionUI'", backpack)
+        self.assertIn('Retention.setRetained(0,{items[5]},true)', backpack)
+        self.assertIn('Retention.isRetained(items[5])', backpack)
+        self.assertNotIn('OrganizedCategories', backpack)
 
     def test_reload_seals_and_copies_only_known_global_store_files(self):
         adapter.validate(self.selection)
@@ -176,10 +268,10 @@ class QuartermasterPresets(unittest.TestCase):
 
     def test_transfer_verifier_requires_ordered_exact_outcomes_and_custom_denial(self):
         self.selection.update(suite=adapter.TRANSFER_SUITE, cases=['manifest'], options={})
-        records = ['PHASE success moved=2 remaining=0 tailRead=true dirty=true',
-                   'PHASE partial moved=1 remaining=1 tailRead=true dirty=true',
-                   'PHASE rejected moved=0 remaining=2 tailRead=false dirty=false',
-                   'PHASE withdraw moved=1 remaining=1 tailRead=true dirty=true',
+        records = ['PHASE success moved=2 remaining=0 tailRead=true queueObserved=true',
+                   'PHASE partial moved=1 remaining=1 tailRead=true queueObserved=true',
+                   'PHASE rejected moved=0 remaining=2 tailRead=false queueObserved=false',
+                   'PHASE withdraw moved=1 remaining=1 tailRead=true queueObserved=true',
                     'CUSTOM protected=3 queueUnchanged=true', 'COMPLETE case=manifest']
         log = self.output / 'client1-launch.log'
         def write(rows): log.write_text(''.join('[QM_TRANSFER] ' + row + '\n' for row in rows))
@@ -212,6 +304,41 @@ class QuartermasterCrafting(unittest.TestCase):
                         self.assertEqual(source.read_bytes(), staged.read_bytes())
 
 
+class QuartermasterSupplyUnits(unittest.TestCase):
+    def test_standalone_case_requires_exact_native_uses_and_authority(self):
+        selection = dict(suite=crafting.SUITE, cases=['uses'], kind='mp', mode='toolkit',
+                         clients=1, languages=['EN'], mods=crafting.MODS, options={'mp_host': True})
+        crafting.validate(selection)
+        for change in ({'cases': ['vanilla', 'uses']}, {'options': {}}):
+            with self.assertRaises(ValueError):
+                crafting.validate(dict(selection, **change))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            client, server = '', ''
+            for index, case in enumerate(('full', 'carried', 'partial'), 1):
+                ids = list(range(index*10, index*10 + (3 if case == 'partial' else 2)))
+                prep = dict(index=index, case=case, ids=ids, source=dict(x=1, y=2, z=0, index=1))
+                expected = [(0, 0), (0, 0), (2, 4)] if case == 'partial' else [(2 if case == 'full' else 1, 2), (2, 4)]
+                receipt = dict(index=index, case=case, items=[dict(id=item, container=loc, uses=uses)
+                               for item, (loc, uses) in zip(ids, expected)], outputIds=[index*10+5], outputs=1, consumedUses=2)
+                for event, value in [('PREPARED', prep), ('VERIFIED', receipt)]:
+                    server += '[QM_USES] ' + event + ' ' + json.dumps(value) + '\n'
+                client += '[QM_USES] RESULT ' + json.dumps(dict(index=index, case=case, walked=case!='carried',
+                           picked=case!='carried', crafted=True, returned=case=='full', receipt=receipt)) + '\n'
+            server += '[QM_USES] CLEANUP\n'
+            client += '[QM_USES] COMPLETE\n'
+            (root / 'client1-launch.log').write_text(client)
+            authority = root / 'server-launch.log'
+            authority.write_text(server)
+            report = crafting.verify(root, selection, {})
+            self.assertEqual(report['issues'], [])
+            self.assertIsInstance(report['outcomes'][0]['outcome'], dict)
+            for invalid in (server.replace('"uses": 2', '"uses": 1'), server.replace('"consumedUses": 2', '"consumedUses": 1'),
+                            server + server, server.replace('[QM_USES] CLEANUP', '[QM_OTHER] CLEANUP')):
+                authority.write_text(invalid)
+                self.assertTrue(crafting.verify(root, selection, {})['issues'])
+
+
 class QuartermasterBackpack(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -231,7 +358,9 @@ class QuartermasterBackpack(unittest.TestCase):
 
     def test_backpack_case_is_separate_fresh_sp_with_existing_required_mods(self):
         cases = distribution.definitions()[distribution.SUITE]['cases']
-        self.assertEqual([(case['id'], case['kinds']) for case in cases], [('sort', ['sp', 'mp']), ('backpack', ['sp'])])
+        self.assertEqual([(case['id'], case['kinds']) for case in cases],
+                         [('sort', ['sp', 'mp']), ('backpack', ['sp']), ('deposit', ['sp', 'mp']), ('batch', ['mp']),
+                          ('barricaded-door', ['sp', 'mp'])])
         distribution.validate(self.selection)
         for changes in ({'kind': 'mp'}, {'cases': ['sort', 'backpack']}, {'mode': 'native'},
                         {'languages': ['RU']}, {'clients': 2}, {'mods': distribution.MODS[:-1]},
@@ -240,6 +369,12 @@ class QuartermasterBackpack(unittest.TestCase):
                 distribution.validate(dict(self.selection, **changes))
         for kind in ('sp', 'mp'):
             distribution.validate(dict(self.selection, cases=['sort'], kind=kind))
+            distribution.validate(dict(self.selection, cases=['deposit'], kind=kind, options={'mp_host': kind == 'mp'}))
+        with self.assertRaises(ValueError):
+            distribution.validate(dict(self.selection, cases=['deposit'], kind='mp'))
+        distribution.validate(dict(self.selection, cases=['batch'], kind='mp', options={'mp_host': True}))
+        with self.assertRaises(ValueError):
+            distribution.validate(dict(self.selection, cases=['batch'], kind='sp', options={'mp_host': True}))
 
     def test_backpack_requires_exact_result_and_case_specific_completion(self):
         text = self.write()
@@ -293,14 +428,145 @@ class QuartermasterBackpack(unittest.TestCase):
         prepared = {'ids': [11, 12, 13, 14]}
         result = {'items': [{'id': value, 'container': dest} for value, dest in zip(prepared['ids'], [2, 3, 1, 1])],
                   'moved': 2, 'retained': 2, 'favorite': True}
+        books = dict(ids=[21, 22, 23, 24, 25], types=['Base.BookCarpentry1', 'Base.BookCarpentry1',
+                     'Base.BookCarpentry2', 'Base.BookCarpentry2', 'Base.BookCarpentry1'])
+        book_result = dict(ids=books['ids'], items=[dict(id=value, fullType=kind, container=dest)
+                           for value, kind, dest in zip(books['ids'], books['types'], [2, 2, 3, 2, 3])],
+                           noDuplicates=True, fallbackNoDuplicates=False, priorities=[7, 5],
+                           existingCopy=True, sameBatch=True, differentVolume=True, moved=4, conserved=5)
+        group_client, group_server = group_evidence(self.root)
         text = ('[QM_DISTRIBUTION] PREPARED ' + json.dumps(prepared) + '\n'
                 '[QM_DISTRIBUTION] LOCAL ' + json.dumps(result) + '\n'
                 '[QM_DISTRIBUTION] AUTHORITY ' + json.dumps(result) + '\n'
+                '[QM_DISTRIBUTION] BOOKS_PREPARED ' + json.dumps(books) + '\n'
+                '[QM_DISTRIBUTION] BOOKS_LOCAL ' + json.dumps(book_result) + '\n'
+                '[QM_DISTRIBUTION] BOOKS_AUTHORITY ' + json.dumps(book_result) + '\n'
+                + group_client + group_server +
                 '[QM_DISTRIBUTION] COMPLETE moved=2 retained=2 walking=true pickup=true destinations=2 favorite=true\n')
         (self.root / 'client1-launch.log').write_text(text)
         self.assertEqual(distribution.verify(self.root, selection, {})['issues'], [])
         self.assertTrue(distribution.complete(selection, 'client1', text))
         self.assertFalse(distribution.complete(self.selection, 'client1', text))
+        server = ('[QM_DISTRIBUTION] AUTHORITY ' + json.dumps(result) + '\n'
+                  '[QM_DISTRIBUTION] BOOKS_PREPARED_AUTHORITY ' + json.dumps(books) + '\n'
+                  '[QM_DISTRIBUTION] BOOKS_AUTHORITY ' + json.dumps(book_result) + '\n' + group_server)
+        (self.root / 'server-launch.log').write_text(server)
+        host = dict(selection, kind='mp')
+        self.assertEqual(distribution.verify(self.root, host, {})['issues'], [])
+        for invalid in (server.replace('"noDuplicates": true', '"noDuplicates": false'),
+                        server.replace('"priorities": [7, 5]', '"priorities": [5, 7]'),
+                        server.replace('"container": 3', '"container": 2'),
+                        server.replace('Base.BookCarpentry2', 'Base.BookCarpentry1'),
+                        server.replace('BOOKS_AUTHORITY ', 'BOOKS_MISSING '),
+                        server + '[QM_DISTRIBUTION] BOOKS_AUTHORITY ' + json.dumps(book_result) + '\n'):
+            with self.subTest(server=invalid):
+                (self.root / 'server-launch.log').write_text(invalid)
+                self.assertTrue(distribution.verify(self.root, host, {})['issues'])
+
+
+class QuartermasterBatch(unittest.TestCase):
+    def test_whole_rejection_then_native_acceptance_requires_matching_authority(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selection = dict(cases=['batch'], kind='mp')
+            packet = dict(kind='batch', ids=[1, 2, 3, 4], ballastId=5,
+                          boxes=[dict(x=x, y=y, z=0, index=1) for x, y in [(10, 10), (12, 10), (11, 11)]])
+            effects = [dict(kind='batch', stage=stage, ids=packet['ids'], ballastId=5,
+                            destinations=destinations, sourceCount=count, limitedCapacity=1,
+                            limitedWeight=weight, tailWeight=.0625, conserved=5)
+                       for stage, destinations, count, weight in [('rejected', [1, 1, 1, 3], 3, .875),
+                                                                  ('accepted', [2, 2, 1, 3], 1, 1)]]
+            def record(event, value):
+                return '[QM_BATCH] ' + event + ' ' + json.dumps(value) + '\n'
+            client = record('PREPARED', packet)
+            server = '[PZToolkitJavaPatches] itemBatchAdmission=true,\n' + record('PREPARED', packet)
+            for index, effect in enumerate(effects, 1):
+                client += record(effect['stage'].upper(), dict(result=effect, merged=True, transactionId=index))
+                server += record(effect['stage'].upper(), effect)
+            client += record('CLEANUP', dict(objects=3)) + record('COMPLETE',
+                       dict(case='batch', rejected=True, accepted=True, manual=True, continued=True))
+            server += record('CLEANUP', dict(objects=3))
+            (root / 'client1-launch.log').write_text(client)
+            (root / 'server-launch.log').write_text(server)
+            self.assertEqual(distribution.verify(root, selection, {})['issues'], [])
+            for invalid in [server.replace('true,', 'false,'), server.replace('"limitedWeight": 1', '"limitedWeight": 1.0625'),
+                            server.replace('"destinations": [1, 1, 1, 3]', '"destinations": [2, 1, 1, 3]')]:
+                (root / 'server-launch.log').write_text(invalid)
+                self.assertTrue(distribution.verify(root, selection, {})['issues'])
+
+
+class QuartermasterBarricadedDoor(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.selection = dict(suite=distribution.SUITE, cases=['barricaded-door'], kind='sp', mode='toolkit',
+                              clients=1, languages=['EN'], mods=distribution.MODS, options={})
+        self.prepared = {'ids': [501, 502]}
+        self.authority = dict(self.prepared, moved=2, normalDoorOpened=True, barricadedDoorClosed=True,
+                              barricadeIntact=True, conserved=True)
+        self.result = dict(self.authority, nativeWalking=True, detour=True)
+
+    def record(self, event, value):
+        return '[QM_DOOR] ' + event + ' ' + json.dumps(value) + '\n'
+
+    def write(self, kind='sp'):
+        events = [('PREPARED', self.prepared), ('RESULT', self.result)]
+        if kind == 'sp':
+            events.append(('AUTHORITY', self.authority))
+        events += [('CLEANUP', {'objects': 15, 'localRemoved': True, 'registryCleared': True}),
+                   ('COMPLETE', {'case': 'barricaded-door'})]
+        client = ''.join(self.record(*row) for row in events)
+        server = self.record('PREPARED', self.prepared) + self.record('AUTHORITY', self.authority) + self.record('CLEANUP', {'objects': 15})
+        (self.root / 'client1-launch.log').write_text(client)
+        (self.root / 'server-launch.log').write_text(server)
+        return client, server
+
+    def test_requires_menu_host_and_keeps_supported_sp(self):
+        distribution.validate(self.selection)
+        with self.assertRaises(ValueError):
+            distribution.validate(dict(self.selection, kind='mp'))
+        distribution.validate(dict(self.selection, kind='mp', options={'mp_host': True}))
+
+    def test_requires_detour_intact_barricade_and_exact_item_effects(self):
+        self.write()
+        self.assertEqual(distribution.verify(self.root, self.selection, {})['issues'], [])
+        for key in self.result:
+            original = self.result[key]
+            self.result[key] = [501, 599] if key == 'ids' else 1 if key == 'moved' else False
+            with self.subTest(key=key):
+                self.write()
+                self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
+            self.result[key] = original
+        client, _ = self.write()
+        lines = client.splitlines(keepends=True)
+        for bad in ([client.replace(line, '') for line in lines] + [client + line for line in lines]
+                    + [''.join(reversed(lines)), client + '[QM_DOOR] FAIL changed door\n']):
+            (self.root / 'client1-launch.log').write_text(bad)
+            self.assertTrue(distribution.verify(self.root, self.selection, {})['issues'])
+
+    def test_host_requires_independent_matching_authority_and_cleanup(self):
+        selection = dict(self.selection, kind='mp', options={'mp_host': True})
+        client, server = self.write('mp')
+        self.assertEqual(distribution.verify(self.root, selection, {})['issues'], [])
+        for key in self.authority:
+            wrong = dict(self.authority)
+            wrong[key] = [501, 599] if key == 'ids' else 1 if key == 'moved' else False
+            (self.root / 'server-launch.log').write_text(
+                self.record('PREPARED', self.prepared) + self.record('AUTHORITY', wrong) + self.record('CLEANUP', {'objects': 15}))
+            with self.subTest(key=key):
+                self.assertTrue(distribution.verify(self.root, selection, {})['issues'])
+        for bad in ('', server + server, ''.join(reversed(server.splitlines(keepends=True))),
+                    server.replace('"objects": 15', '"objects": 14'), server.splitlines(keepends=True)[0]):
+            (self.root / 'server-launch.log').write_text(bad)
+            self.assertTrue(distribution.verify(self.root, selection, {})['issues'])
+        self.write('mp')
+        (self.root / 'client1-launch.log').write_text(client.replace(self.record('CLEANUP', {'objects': 15, 'localRemoved': True, 'registryCleared': True}), ''))
+        self.assertTrue(distribution.verify(self.root, selection, {})['issues'])
+        for field in ('localRemoved', 'registryCleared'):
+            self.write('mp')
+            (self.root / 'client1-launch.log').write_text(client.replace('"' + field + '": true', '"' + field + '": false'))
+            self.assertTrue(distribution.verify(self.root, selection, {})['issues'])
 
 
 if __name__ == '__main__':

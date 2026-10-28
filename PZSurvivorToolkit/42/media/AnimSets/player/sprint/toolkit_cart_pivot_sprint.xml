@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <animNode>
 	<m_Name>ToolkitCartPivotSprint</m_Name>
-	<m_AnimName>Bob_Idle</m_AnimName>
+	<m_AnimName>Toolkit_CartPivot_Idle</m_AnimName>
 	<m_Priority>11</m_Priority>
 	<m_ConditionPriority>201</m_ConditionPriority>
 	<m_BlendTime>0.2</m_BlendTime>
@@ -32,31 +32,31 @@
 	<m_Scalar>ToolkitCartStepX</m_Scalar>
 	<m_Scalar2>ToolkitCartStepY</m_Scalar2>
 	<m_2DBlends referenceID="1">
-		<m_AnimName>Bob_Idle</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_Idle</m_AnimName>
 		<m_XPos>0.00</m_XPos>
 		<m_YPos>0.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
 	</m_2DBlends>
 	<m_2DBlends referenceID="2">
-		<m_AnimName>Bob_Sprint</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_Sprint</m_AnimName>
 		<m_XPos>0.00</m_XPos>
 		<m_YPos>1.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
 	</m_2DBlends>
 	<m_2DBlends referenceID="3">
-		<m_AnimName>Bob_WalkBwdNoAim1Hand</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_Backward</m_AnimName>
 		<m_XPos>0.00</m_XPos>
 		<m_YPos>-1.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
 	</m_2DBlends>
 	<m_2DBlends referenceID="4">
-		<m_AnimName>Bob_StrafeNoAim_Right</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_StrafeRight</m_AnimName>
 		<m_XPos>1.00</m_XPos>
 		<m_YPos>0.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
 	</m_2DBlends>
 	<m_2DBlends referenceID="5">
-		<m_AnimName>Bob_StrafeNoAim_Left</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_StrafeLeft</m_AnimName>
 		<m_XPos>-1.00</m_XPos>
 		<m_YPos>0.00</m_YPos>
 		<m_SpeedScale>0.80</m_SpeedScale>
@@ -88,7 +88,7 @@
 	</m_Conditions>
 	<m_Transitions>
 		<m_Target>ToolkitCartIdle</m_Target>
-		<m_AnimName>Bob_SprintToStop2h_Heavy</m_AnimName>
+		<m_AnimName>Toolkit_CartPivot_StopSprint</m_AnimName>
 		<m_blendInTime>.22</m_blendInTime>
 		<m_blendOutTime>0.60</m_blendOutTime>
 		<m_speedScale>1.0</m_speedScale>
@@ -103,4 +103,16 @@
 			<m_Value>false</m_Value>
 		</m_Conditions>
 	</m_Transitions>
+	<m_2DBlends referenceID="6">
+		<m_AnimName>Bob_Run</m_AnimName>
+		<m_XPos>0.00</m_XPos>
+		<m_YPos>0.00</m_YPos>
+		<m_SpeedScale>0.80</m_SpeedScale>
+	</m_2DBlends>
+	<m_2DBlends referenceID="7">
+		<m_AnimName>Bob_Sprint</m_AnimName>
+		<m_XPos>0.00</m_XPos>
+		<m_YPos>0.00</m_YPos>
+		<m_SpeedScale>0.80</m_SpeedScale>
+	</m_2DBlends>
 </animNode>

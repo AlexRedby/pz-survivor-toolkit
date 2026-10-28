@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and prepare the complete local mod set for the server and all clients."""
+"""Build and prepare the two repository-owned mods for the server and all clients."""
 
 from __future__ import annotations
 
@@ -26,12 +26,11 @@ LOAD_ORDER = (
     ("PZSurvivorToolkit", "EURY_CONTAINERS"),
     ("PZSurvivorToolkit", "MPFastForward"),
     ("RealisticDash", "Navigator"),
-    ("PZSurvivorToolkit", "organizedCategories_core"),
 )
 
 
 def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None,
-            check: bool = False) -> Path:
+            check: bool = False, kotlin_home: Path | None = None) -> Path:
     root = root.resolve()
     dist = root / "dist"
     output = dist / "SurvivorQoL"
@@ -55,32 +54,33 @@ def prepare(root: Path = ROOT, game: Path | None = None, jdk: Path | None = None
     if any(item and (not item.isascii() or not item.isdigit()) for item in workshop):
         raise ValueError("WorkshopItems must contain only numeric Workshop IDs; local mods have none")
 
-    command = [sys.executable, str(root / "JavaPatches/build.py")]
-    for option, value in (("--game", game), ("--jdk", jdk)):
-        if value is not None:
-            command.extend((option, str(value.resolve())))
-    if check:
-        command.append("--check")
-    subprocess.run(command, cwd=root, check=True)
-
-    patch = root / "JavaPatches/build" / MOD_IDS[1]
-    errors = validate_no_symlinks(patch)
-    if errors:
-        raise ValueError("; ".join(errors))
-    info = metadata(patch / "42/mod.info")
-    if info.get("id") != MOD_IDS[1] or not (patch / "common").is_dir():
-        raise ValueError("Generated Java patch mod has an invalid ID or missing common directory")
-    jar_name = info.get("javaJarFile", "")
-    jar = patch / "42" / jar_name
-    if not jar_name or not jar.is_file() or not jar.resolve().is_relative_to((patch / "42").resolve()):
-        raise ValueError("Generated Java patch mod javaJarFile is missing or outside the mod")
-
     dist.mkdir(exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=".SurvivorQoL-", dir=dist))
     previous = temporary / "previous"
     promoted = False
     try:
         staging = temporary / "prepared"
+
+        command = [sys.executable, str(root / "JavaPatches/build.py")]
+        for option, value in (("--game", game), ("--jdk", jdk), ("--kotlin-home", kotlin_home)):
+            if value is not None:
+                command.extend((option, str(value.resolve())))
+        if check:
+            command.append("--check")
+        subprocess.run(command, cwd=root, check=True)
+
+        patch = root / "JavaPatches/build" / MOD_IDS[1]
+        errors = validate_no_symlinks(patch)
+        if errors:
+            raise ValueError("; ".join(errors))
+        info = metadata(patch / "42/mod.info")
+        if info.get("id") != MOD_IDS[1] or not (patch / "common").is_dir():
+            raise ValueError("Generated Java patch mod has an invalid ID or missing common directory")
+        jar_name = info.get("javaJarFile", "")
+        jar = patch / "42" / jar_name
+        if not jar_name or not jar.is_file() or not jar.resolve().is_relative_to((patch / "42").resolve()):
+            raise ValueError("Generated Java patch mod javaJarFile is missing or outside the mod")
+
         for name in MOD_IDS:
             source = patch if name == MOD_IDS[1] else root / name
             shutil.copytree(source, staging / "mods" / name)
@@ -124,18 +124,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--game", type=Path, help="game Java folder; defaults are provided by JavaPatches/build.py")
     parser.add_argument("--jdk", type=Path, help="JDK 25+ folder; defaults are provided by JavaPatches/build.py")
-    parser.add_argument("--check", action="store_true", help="also run the Java native regression checks")
+    parser.add_argument("--kotlin-home", type=Path, help="Kotlin 2.4.21 compiler distribution; also accepts KOTLIN_HOME or kotlinc on PATH")
+    parser.add_argument("--check", action="store_true", help="also run the native JVM regression checks")
     args = parser.parse_args()
     try:
-        output = prepare(game=args.game, jdk=args.jdk, check=args.check)
+        output = prepare(game=args.game, jdk=args.jdk, check=args.check,
+                         kotlin_home=args.kotlin_home)
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
     print(f"Ready: {output}")
-    print("Copy the contents of mods/ into Zomboid/mods on the server and every client.")
+    print("Copy PZSurvivorToolkit and PZToolkitJavaPatches from mods/ into Zomboid/mods on every side.")
+    print("All third-party mods, including CleanUI and NewMusic, come from Workshop and are not bundled.")
     print("For a new server profile, copy Server/SurvivorQoL-selected.ini into Zomboid/Server.")
     print("For an existing profile, copy only Mods= and WorkshopItems= into its INI; keep its other settings.")
-    print("Clients use this same prepared copy and do not need Python or a JDK.")
+    print("Clients use this same prepared copy and do not need Python, a JDK or a Kotlin compiler.")
     print("Complete ZombieBuddy loader setup and JAR approvals on each machine; see the prepared MOD_INSTALL.md.")
     return 0
 

@@ -75,6 +75,10 @@ end
 f.project('ActionQueueOperations'); f.project('ActionQueueDefinitions'); f.project('ActionQueueLabels')
 local policy = f.project('ActionQueuePolicy')
 local api = f.project('ActionQueue')
+local function startedNative()
+    return {finished=function()return false end,isStarted=function()return true end,
+        isForceComplete=function()return false end}
+end
 local function dry(towel)
     local value = ISDryMyself:new(player, towel); value.toolkitQueueOperation={}; return value
 end
@@ -138,6 +142,8 @@ drying.onStartFunc=nil
 
 -- Native SP update spends the towel before completion; finishing or cancelling must never replay it.
 wetness=80; towel.uses=3; drying=dry(towel); tail=book(); q=f.queue(drying, tail)
+-- update is a started Java episode; preserve that identity through cancellation.
+drying.action=startedNative()
 drying:update()
 assert(towel.uses==2 and towel.spent==1 and wetness==72)
 assert(api.cancelOperation(q, drying) and q.toolkitGroupCancel and not q.toolkitCancel,
@@ -151,6 +157,7 @@ assert(q.queue[1]==tail and #q.queue==1 and tail.begun and towel.spent==1,
 towel.uses=3; drying=dry(towel); local follow=dry(item('Base.DishCloth'))
 follow.toolkitQueueOperation=drying.toolkitQueueOperation
 tail=book(); q=f.queue(drying, follow, tail)
+drying.action=startedNative()
 assert(api.cancelOperation(q, drying))
 drying:complete(); drying:perform()
 assert(q.queue[1]==tail and #q.queue==1 and not follow.action,
@@ -171,6 +178,65 @@ blood,dirt=1,1; soap.uses=2; bodyWash.sink=sink()
 assert(bodyWash:complete() and soap.uses==1 and bodyWash.sink.water==9)
 assert(bodyWash:complete() and soap.uses==1 and bodyWash.sink.water==9)
 
+-- The real body constructor chooses native soap again; its preview argument is not an input contract.
+-- Completion may clean only a prefix, but always removes all four existing makeup items.
+do
+    local oldParts,oldVisual,oldSoaps=BloodBodyPartType,player.getHumanVisual,inventory.getSoapList
+    local oldWorn,oldRemoveWorn,oldRemove=player.getWornItem,player.removeWornItem,inventory.Remove
+    local oldStatsRemove,oldSend=stats.remove,sendHumanVisual
+    BloodBodyPartType={MAX={index=function()return 3 end},FromIndex=function(i)return i end}
+    local nativeSoap=item('Base.Soap2');nativeSoap.class='DrainableComboItem'
+    local previewSoap=item('Base.Soap2');previewSoap.class='DrainableComboItem'
+    local soapQueries=0
+    inventory.getSoapList=function(_,argument,includeFluid)
+        assert(argument==nil and includeFluid==false,'body constructor changed native selector arguments')
+        soapQueries=soapQueries+1;return list(nativeSoap)
+    end
+    local slots={ItemBodyLocation.MAKE_UP_FULL_FACE,ItemBodyLocation.MAKE_UP_EYES,
+        ItemBodyLocation.MAKE_UP_EYES_SHADOW,ItemBodyLocation.MAKE_UP_LIPS}
+    for _,water in ipairs({2,1})do
+        local parts={{blood=1,dirt=1},{blood=0,dirt=1},{blood=0,dirt=0}}
+        player.getHumanVisual=function()return {
+            getBlood=function(_,part)return parts[part+1].blood end,
+            getDirt=function(_,part)return parts[part+1].dirt end,
+            setBlood=function(_,part,value)parts[part+1].blood=value end,
+            setDirt=function(_,part,value)parts[part+1].dirt=value end}end
+        local worn,makeup,removed,happiness,sent={},{},0,0,0
+        for _,slot in ipairs(slots)do
+            local value=item('Base.BodyMakeupFixture');worn[slot]=value;makeup[#makeup+1]=value
+        end
+        player.getWornItem=function(_,slot)return worn[slot]end
+        player.removeWornItem=function(_,value)
+            for slot,candidate in pairs(worn)do if value==candidate then worn[slot]=nil;removed=removed+1;return end end
+            error('body wash removed an absent makeup item')
+        end
+        inventory.Remove=function(self,value)
+            assert(self.values[value:getID()]==value);self.values[value:getID()]=nil
+        end
+        stats.remove=function(_,kind,amount)assert(kind==CharacterStat.UNHAPPINESS);happiness=happiness+amount end
+        sendHumanVisual=function(actor)assert(actor==player);sent=sent+1 end
+        nativeSoap.uses,previewSoap.uses=3,3
+        local target=sink();target.water=water
+        local body=ISWashYourself:new(player,target,list(previewSoap))
+        local contract,source=policy.inspect(body)
+        assert(source=='native.ISWashYourself'and contract.knownInputs==false
+            and contract.targets[player]and contract.targets[target]and contract.items[nativeSoap:getID()],
+            'body wash must retain the conservative native resource contract')
+        assert(body.soaps:get(0)==nativeSoap and body.maxTime==water*70 and body.forceProgressBar,
+            'body duration/soap must come from the actual native constructor')
+        assert(ISWashYourself.GetRequiredWater(player)==2 and ISWashYourself.GetRequiredSoap(player)==1)
+        assert(body:complete()and target.water==0 and nativeSoap.uses==2 and previewSoap.uses==3)
+        assert(parts[1].blood==0 and parts[1].dirt==0 and parts[2].dirt==(water==1 and 1 or 0)
+            and parts[3].blood==0 and parts[3].dirt==0,'body washing changed native enum-order/partial-water effects')
+        assert(removed==4 and next(worn)==nil and happiness==water*2 and sent==1)
+        for _,value in ipairs(makeup)do assert(not inventory:contains(value),'makeup must be consumed, not merely unequipped')end
+    end
+    assert(soapQueries==2)
+    BloodBodyPartType,player.getHumanVisual,inventory.getSoapList=oldParts,oldVisual,oldSoaps
+    player.getWornItem,player.removeWornItem,inventory.Remove=oldWorn,oldRemoveWorn,oldRemove
+    stats.remove,sendHumanVisual=oldStatsRemove,oldSend
+end
+
 -- Real clothing completion owns its soap/water mutation; cancellation never calls it early.
 local garment=item('Base.Shirt'); garment.class='Clothing'
 local garmentBlood=1
@@ -188,6 +254,7 @@ player.updateHandEquips, player.resetModel=function() end, function() end
 player.isPrimaryHandItem, player.isSecondaryHandItem=function() return false end, function() return false end
 local cleaning=wash(garment, soap); cleaning.noSoap=false
 soap.uses=2; tail=book(); q=f.queue(cleaning, tail)
+cleaning.action=startedNative()
 assert(api.cancelOperation(q, cleaning) and soap.uses==2 and cleaning.sink.water==10)
 assert(cleaning:complete() and soap.uses==1 and cleaning.sink.water==2)
 cleaning:perform()

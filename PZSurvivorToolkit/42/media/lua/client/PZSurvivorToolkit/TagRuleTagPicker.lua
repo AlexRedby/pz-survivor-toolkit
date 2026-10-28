@@ -92,14 +92,22 @@ end
 
 function Choice:createChildren()
     ISCollapsableWindowJoypad.createChildren(self)
-    self.search = ISTextEntryBox:new("", 12, 54, self.width - 24, 26)
+    local fontHeight = getTextManager():getFontHeight(UIFont.Small)
+    local controlHeight = math.max(26, fontHeight + 8)
+    self.searchLabelY = math.max(32, self:titleBarHeight() + 8)
+    local searchY = self.searchLabelY + fontHeight + 8
+    local groupY = searchY + controlHeight + 8
+    local listY = groupY + controlHeight + 10
+    local footerY = self.height - controlHeight - 10
+    self.search = ISTextEntryBox:new("", 12, searchY, self.width - 24, controlHeight)
+    self.search:setFont(UIFont.Small)
     self.search:initialise(); self.search:instantiate(); self:addChild(self.search)
-    self.group = ISComboBox:new(12, 88, self.width - 24, 26)
+    self.group = ISComboBox:new(12, groupY, self.width - 24, controlHeight)
     self.group:initialise(); self.group:instantiate()
     self.group:addOptionWithData(text("AllGroups"), false)
     for _, family in ipairs(self.families) do self.group:addOptionWithData(Tags.label(family), family) end
     self:addChild(self.group)
-    self.list = ISScrollingListBox:new(12, 124, self.width - 24, self.height - 172)
+    self.list = ISScrollingListBox:new(12, listY, self.width - 24, math.max(40, footerY - listY - 8))
     self.list:initialise(); self.list:instantiate()
     self.list.itemheight = getTextManager():getFontHeight(UIFont.Small) + 12
     self.list.doDrawItem = Choice.drawRow
@@ -108,7 +116,7 @@ function Choice:createChildren()
     self:addChild(self.list)
     local width = (self.width - 36) / 2
     local function button(x, title, callback)
-        local b = ISButton:new(x, self.height - 36, width, 26, title, self, callback)
+        local b = ISButton:new(x, footerY, width, controlHeight, title, self, callback)
         b:initialise(); b:instantiate(); UIStyle.button(b); self:addChild(b); return b
     end
     self.cancelButton = button(12, text("Cancel"), Choice.close)
@@ -119,9 +127,21 @@ end
 function Choice:prerender()
     if not Tags.enabled() or not self.owner:getIsVisible() then self:close(); return end
     if self.reassertTop then self.reassertTop = false; self:bringToTop() end
+    local revision = Tags.revision and Tags.revision() or 0
+    if self.tagRevision ~= revision then
+        local family = self.group:getOptionData(self.group.selected)
+        self.entries, self.families = self.owner:catalogEntries()
+        self.group:clear(); self.group:addOptionWithData(text("AllGroups"), false); self.group.selected = 1
+        for _, id in ipairs(self.families) do
+            self.group:addOptionWithData(Tags.label(id), id)
+            if id == family then self.group.selected = #self.group.options end
+        end
+        self.tagRevision = revision
+        self:reload()
+    end
     if self.search:getInternalText():lower() ~= self.lastQuery or self.group.selected ~= self.lastGroup then self:reload() end
     ISCollapsableWindowJoypad.prerender(self)
-    self:drawText(text("Search"), 12, 32, 0.9, 0.9, 0.9, 1, UIFont.Small)
+    self:drawText(text("Search"), 12, self.searchLabelY, 0.9, 0.9, 0.9, 1, UIFont.Small)
 end
 
 function Choice:onGainJoypadFocus(data)
@@ -150,6 +170,9 @@ function Choice.open(owner, entries, families, onPick)
     choice.title, choice.resizable, choice.playerNum = text("Select"), false, owner.playerNum
     choice.background, choice.backgroundColor = true, {r=0.04,g=0.04,b=0.04,a=1}
     choice:initialise(); choice:instantiate(); choice:addToUIManager()
+    choice:bringToTop()
+    choice.reassertTop = true
+    choice.tagRevision = Tags.revision and Tags.revision() or 0
     owner.tagChoice = choice; owner.dimmer:setVisible(true)
     local joypad = choice.playerNum and JoypadState and JoypadState.players[choice.playerNum + 1]
     if joypad and setJoypadFocus then choice.grabbedJoypad = true; setJoypadFocus(choice.playerNum, choice) end

@@ -1,3 +1,5 @@
+isClient=function() return false end
+ModData={getOrCreate=function() return {} end}
 local enabled, applied, firstSelected = true, nil, nil
 PZSurvivorToolkit = {Settings={itemTags=function() return enabled end}}
 getText=function(key) return key end
@@ -5,7 +7,9 @@ getTextOrNull=function() end
 UIFont={Small=1}
 Joypad={AButton=1,BButton=2,XButton=3,YButton=4}
 local measurements, draws, projections = 0, 0, 0
-getTextManager=function() return {getFontHeight=function() return 16 end,
+local fontHeight = 16
+local topUI
+getTextManager=function() return {getFontHeight=function() return fontHeight end,
     MeasureStringX=function(_,_,value) measurements=measurements+1;return #value*8 end} end
 local screenWidth=800
 getCore=function() return {getScreenWidth=function() return screenWidth end,getScreenHeight=function() return 600 end} end
@@ -17,6 +21,9 @@ function Base:derive() local result={};setmetatable(result,{__index=self});retur
 function Base:initialise() end
 function Base:instantiate() if self.createChildren then self:createChildren() end end
 function Base:createChildren() end
+function Base:titleBarHeight() return math.max(20, fontHeight + 1) end
+function Base:bringToTop() topUI=self end
+function Base:setFont(value) self.font=value end
 function Base:prerender() end
 function Base:addChild() end
 function Base:addToUIManager() self.added=true end
@@ -39,7 +46,7 @@ function Base:drawText() draws=draws+1 end
 function Base:drawRect() draws=draws+1 end
 function Base:drawRectBorder() draws=draws+1 end
 function Base:drawTextureScaledAspect() draws=draws+1 end
-function Base:clear() self.items={};self.count=0;self.selected=1;self.scroll=0 end
+function Base:clear() self.items={};self.options={};self.count=0;self.selected=1;self.scroll=0 end
 function Base:addItem(label,item)
     self.items[#self.items+1]={text=label,item=item,height=self.itemheight,index=#self.items+1};self.count=#self.items
 end
@@ -128,7 +135,7 @@ local entries=picker:catalogEntries()
 assert(projections==before+#scripts,'chooser did not prepare script tags exactly once')
 local byId={};for _,entry in ipairs(entries) do byId[entry.id]=entry end
 assert(byId.food and byId.perishable and byId.tool and byId.vehiclepart,'tag catalogue incomplete')
-assert(byId.perishable.families.food,'property family missing')
+assert(byId.vehiclepart.families.mechanics,'property family missing')
 picker:addCondition(2,'tool');picker:catalogEntries()
 assert(projections==before+#scripts,'second chooser opening rebuilt immutable script projections')
 picker:changeCondition(1,1)
@@ -155,6 +162,54 @@ byId={};for _,entry in ipairs(entries)do byId[entry.id]=true end
 assert(byId.medical and not byId.tool,'chooser reused stale live instance categories');picker:close()
 picker=open({scriptItems={},rule=original});entries=picker:catalogEntries()
 assert(#entries==2,'saved missing tags cannot be edited');picker:close()
+
+-- User-defined tags remain available with no matching script, and revisions refresh an open chooser.
+local originalRevision, originalAllIds = Tags.revision, Tags.allIds
+local revision, customIds = 1, {'custom:first'}
+Tags.revision = function() return revision end
+Tags.allIds = function() return customIds end
+picker = open({scriptItems = {}})
+picker:chooseTag(function() end)
+chooser = picker.tagChoice
+local function hasChoice(id)
+    for _, row in ipairs(chooser.entries) do if row.id == id then return true end end
+end
+assert(hasChoice('custom:first'), 'unassigned custom tag missing from chooser')
+customIds, revision = {'custom:second'}, 2
+chooser:prerender()
+assert(hasChoice('custom:second') and not hasChoice('custom:first'), 'open chooser ignored custom-tag revision')
+picker:close()
+Tags.revision, Tags.allIds = originalRevision, originalAllIds
+
+fontHeight = 32
+picker = open({categories = {'Tool'}})
+assert(topUI == picker, 'editor was not raised on opening')
+topUI = owner; picker:prerender()
+assert(topUI == picker and not picker.reassertTop, 'opening mouse event buried the editor')
+topUI = owner; picker:prerender()
+assert(topUI == owner, 'editor steals focus on every frame')
+owner.dimmer:onMouseDown(); picker:prerender()
+assert(topUI == picker, 'parent dimmer did not restore editor foreground')
+assert(picker.list.y >= picker:titleBarHeight() + 8
+    and picker.list.y + picker.list.height < picker.addGroupButton.y
+    and picker.addGroupButton.y + picker.addGroupButton.height < picker.hintY
+    and picker.hintY + fontHeight < picker.applyButton.y, 'large font overlaps editor controls')
+picker:chooseTag(function() end); chooser = picker.tagChoice
+assert(topUI == chooser and chooser.reassertTop, 'chooser did not claim foreground')
+topUI = picker; chooser:prerender()
+assert(topUI == chooser and not chooser.reassertTop, 'opening mouse event buried chooser')
+picker.reassertTop = true; picker:prerender()
+assert(topUI == chooser, 'late parent foreground repair buried its active chooser')
+chooser:prerender()
+assert(chooser.searchLabelY >= chooser:titleBarHeight() + 8
+    and chooser.searchLabelY + fontHeight < chooser.search.y
+    and chooser.search.y + chooser.search.height < chooser.group.y
+    and chooser.group.y + chooser.group.height < chooser.list.y
+    and chooser.list.y + chooser.list.height < chooser.selectButton.y,
+    'large font overlaps chooser search/family/list/footer')
+picker.dimmer:onMouseDown(); topUI = picker; chooser:prerender()
+assert(topUI == chooser, 'editor dimmer did not restore chooser foreground')
+picker:close(); fontHeight = 16
 
 local restoredFocus
 JoypadState={players={{focus=owner}}}

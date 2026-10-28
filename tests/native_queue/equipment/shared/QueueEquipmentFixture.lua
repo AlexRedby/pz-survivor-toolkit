@@ -2,6 +2,8 @@ local Fixture={}
 local Slots=require 'QueueEquipmentSlots'
 local Floor=require 'QueueEquipmentFloor'
 local Bulk=require 'QueueEquipmentBulk'
+local Clothing=require 'QueueEquipmentClothing'
+local Hotbar=require 'QueueEquipmentHotbar'
 local function inventory(player)
  local result={}
  local function scan(container)
@@ -123,7 +125,9 @@ function Fixture.prepare(player,id,ids,options)
  seed('hammer',id:match('^tidy%-') and 'Base.Torch' or 'Base.Hammer');seed('screwdriver','Base.Screwdriver');seed('bag',Slots.isBelt(id) and 'Base.Bag_ALICEpack_Army' or 'Base.Bag_Schoolbag')
  state.location=state.bag:canBeEquipped();assert(state.location and tostring(state.location)~='','fixture bag has no native worn slot')
  player:setWornItem(state.location,state.bag)
- player:setPrimaryHandItem(state.hammer);player:setSecondaryHandItem(state.screwdriver)
+ if not (isClient()and Clothing.desired(state))then
+  player:setPrimaryHandItem(state.hammer);player:setSecondaryHandItem(state.screwdriver)
+ end
  if not isServer() then getPlayerInventory(player:getPlayerNum()):refreshBackpacks() end
  state.source=state.bag:getItemContainer()
  if not isServer() then assert(ISInventoryPaneContextMenu.getContainers(player):contains(state.source),'native menu cannot see worn fixture bag') end
@@ -154,6 +158,18 @@ function Fixture.prepare(player,id,ids,options)
   assert(state.removalDelta>2,'native bag reduction must materially affect carried weight')
   assert(not fitsAfterRemoval,'pickup would still fit after native bag removal')
   assert(root:hasRoomFor(player,state.pickup),'pickup must fit again after native hand state restore')
+ elseif Hotbar.isCase(id)then Hotbar.prepare(state,seed)
+ elseif Clothing.isCase(id) then Clothing.prepare(state,seed)
+ elseif id=='tidy-group' or id=='tidy-multigroup' then
+  seed('groupOne','Base.Nails',state.source);seed('groupTwo','Base.Nails',state.source)
+  if id=='tidy-multigroup' then
+   seed('groupHeavyOne','Base.Hammer',state.source);seed('groupHeavyTwo','Base.Hammer',state.source)
+   assert(state.groupHeavyOne:getWeight()>0.1 and state.groupHeavyTwo:getWeight()>0.1,'P4 multi-group requires native heavy items')
+  end
+  seed('pickup','Base.Pistol',root)
+  assert(state.pickup:getCurrentAmmoCount()==0 and not state.pickup:isRoundChambered(),'group rack gun must be empty')
+  state.hammer:setUsedDelta(1);state.hammer:setActivated(true)
+  assert(state.groupOne:getWeight()<=0.1 and state.groupTwo:getWeight()<=0.1,'P4 group requires native lightweight items')
  elseif id=='hands-chain' or id=='waiting-cancel' then seed('bat','Base.BaseballBat',state.source);seed('content','Base.Nails',state.source)
  elseif Bulk.isCase(id) then Bulk.prepare(state,seed)
  elseif id=='floor-pickup' then Floor.prepare(state,seed)
@@ -203,9 +219,11 @@ function Fixture.verify(state,mode,checkpoint)
  end
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then primary,secondary=state.pickup,nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,nil end
+ if Hotbar.isCase(state.id)then primary,secondary=Hotbar.expectedHands(state,false)end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
+ if Clothing.overlap(state)then primary,secondary=Clothing.expectedHands(state,false)end
  assert(player:getPrimaryHandItem()==primary and player:getSecondaryHandItem()==secondary,'native final hand identities differ')
  if state.id=='bag-capacity' then
   state.expectedWorn[state.location]=nil
@@ -220,13 +238,26 @@ function Fixture.verify(state,mode,checkpoint)
   assert(state.content:getContainer()==state.source,'unrelated bag content moved')
   assert(state.source:getItems():size()==(cancelled and 2 or 1),'bag content count differs')
  end
+ if (state.id=='tidy-group' or state.id=='tidy-multigroup') then
+  for _,item in ipairs({state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}) do
+   assert(item:getContainer()==root,'borrowed group did not reach root before unrelated tail')
+  end
+ end
  local extra={}
+ if Hotbar.isCase(state.id)then extra.hotbarCheckpoint=Hotbar.verify(state,false,true);extra.hotbarItem=state.pickup:getID()end
  if Bulk.isCase(state.id) then extra=Bulk.verify(state,false,false) end
  if Slots.handles(state.id) then extra=Slots.verify(state,mode) end
- assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,state.expectedWorn)
+ local expectedWorn=state.expectedWorn
+ if Clothing.isCase(state.id) then
+  Clothing.appearanceCheckpoint(state)
+  extra.clothingCheckpoint=Clothing.verify(state,Clothing.removes(state),nil,'checkpoint')
+  extra.clothingItem=state.clothingItem:getID()
+  expectedWorn=Clothing.expectedWorn(state,state.expectedWorn,Clothing.removes(state))
+ end
+ assert(state.bag:getContainer()==root,'carried source bag changed container');sameWorn(player,expectedWorn)
  local outcome={inventoryPreserved=true,frontCompleted=true,tailCompleted=not checkpoint,equipmentMatches=true,nativeDurations=true,
   policyChecked=mode=='toolkit',cancelled=cancelled,capacityBarrier=state.id=='bag-capacity' and mode=='toolkit',
-  primary=primary:getID(),secondary=secondary and secondary:getID() or false,bag=state.bag:getID(),front=state.front:getID(),tail=state.tail:getID(),
+  primary=primary and primary:getID()or false,secondary=secondary and secondary:getID() or false,bag=state.bag:getID(),front=state.front:getID(),tail=state.tail:getID(),
   capacity=state.effectiveCapacity,weightBefore=state.weightBefore,weightAfterReplacement=state.weightAfterRemoval}
  for key,value in pairs(extra) do outcome[key]=value end
  if state.id=='floor-pickup' then outcome.floorPickup=true;outcome.pickupWorldRemoved=true end
@@ -235,7 +266,10 @@ end
 function Fixture.release(state)
  Fixture.refresh(state)
  local player=state.player
+ local stopped=Clothing.stopRing(state)
+ if stopped then print('[EQUIPMENT_TEST] WATCH_CLEANUP '..require('QueueHealthEvents').encode(stopped))end
  if Slots.handles(state.id) then Slots.cleanup(state) end
+ if Hotbar.isCase(state.id)then Hotbar.release(state)end
  for _,item in ipairs(state.owned) do player:removeFromHands(item);player:removeWornItem(item) end
  if state.belt then
   local location=state.belt:getBodyLocation()
@@ -245,6 +279,7 @@ function Fixture.release(state)
   if isServer() then sendClothing(player,location,state.originalWorn[location]) end
  end
  for location,item in pairs(state.originalWorn) do player:setWornItem(location,item) end
+ if state.holster and isServer()then sendClothing(player,state.holsterLocation,state.originalWorn[state.holsterLocation])end
  player:setPrimaryHandItem(state.originalPrimary);player:setSecondaryHandItem(state.originalSecondary)
  -- Close both bag views while authoritative containers still exist.
  if not isServer() then
@@ -265,6 +300,10 @@ function Fixture.removed(state)
  if state.belt then
   local current=state.player:getWornItem(state.belt:getBodyLocation())
   if current and current:getID()==state.belt:getID() then return false end
+ end
+ if state.holster then
+  local current=state.player:getWornItem(state.holsterLocation)
+  if current and current:getID()==state.holster:getID()then return false end
  end
  if (state.id=='floor-pickup' or state.id=='tidy-floor') and Floor.resolve(state.floor) then return false end
  return true
@@ -300,7 +339,9 @@ function Fixture.cleanup(state)
 end
 function Fixture.descriptor(state)
  local result={case=state.id,items={},originalWorn={},primary=state.originalPrimary and state.originalPrimary:getID(),
-  secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor}
+  secondary=state.originalSecondary and state.originalSecondary:getID(),floor=state.floor,clothingHair=state.clothingHair,
+  clothingSetupPending=state.clothingSetupPending,clothingWatch=state.clothingWatch,
+  clothingRingPending=state.clothingRingPending,clothingWatchStartedAge=state.clothingWatchStartedAge,hotbarHair=state.hotbarHair}
  for name,item in pairs(state.items) do result.items[name]=item:getID() end
  for location,item in pairs(state.originalWorn) do
   result.originalWorn[#result.originalWorn+1]={location=tostring(location),id=item:getID(),fullType=item:getFullType()}
@@ -309,8 +350,10 @@ function Fixture.descriptor(state)
  return result
 end
 function Fixture.available(player,ids)
+ if Hotbar.isCase(ids.case)and not Hotbar.available(player,ids)then return false end
  local actual=inventory(player)
  if not originalWorn(player,ids,actual) then return false end
+ if Clothing.isCase(ids.case)and not Clothing.available(player,ids)then return false end
  for name,id in pairs(ids.items) do
   if name~='pickup' or not ids.floor then if not actual[id] then return false end end
  end
@@ -321,19 +364,30 @@ function Fixture.settled(state,mode,checkpoint)
  local player=state.player
  local cancelled=state.id=='waiting-cancel' and mode=='toolkit'
  local primary,secondary=state.hammer,state.screwdriver
- if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' then primary,secondary=state.pickup,nil end
+ if state.id=='tidy-hands' or state.id=='tidy-floor' or state.id=='tidy-empty-hands' or (state.id=='tidy-group' or state.id=='tidy-multigroup') then primary,secondary=state.pickup,nil end
+ if Hotbar.isCase(state.id)then primary,secondary=Hotbar.expectedHands(state,false)end
  if state.id=='waiting-cancel' and not cancelled then primary,secondary=state.bat,state.bat end
  if state.id=='bag-capacity' then secondary=state.pickupBag end
+ if Clothing.overlap(state)then primary,secondary=Clothing.expectedHands(state,false)end
  if player:getPrimaryHandItem()~=primary or player:getSecondaryHandItem()~=secondary then return false end
+ if Hotbar.radio(state)and not Hotbar.radioReady(state,false)then return false end
+ if Hotbar.flashlight(state)and not Hotbar.flashlightReady(state,false)then return false end
  for _,book in ipairs(checkpoint and {state.front} or {state.front,state.tail}) do if book:getAlreadyReadPages()~=book:getNumberOfPages() then return false end end
  if state.bat and state.bat:getContainer()~=(cancelled and state.source or state.root) then return false end
  if state.pickup and state.pickup:getContainer()~=state.root then return false end
+ if state.id=='tidy-group' or state.id=='tidy-multigroup' then
+  for _,item in ipairs({state.groupOne,state.groupTwo,state.groupHeavyOne,state.groupHeavyTwo}) do if item:getContainer()~=state.root then return false end end
+ end
  if Bulk.isCase(state.id) then
   for name,item in pairs(state.items) do
    if name:match('^bulk') and item:getContainer()~=Bulk.container(state,name,false,false) then return false end
   end
  end
  if state.id=='clothing-chain' and player:getWornItem(state.clothingLocation)~=state.clothingB then return false end
+ if Clothing.isCase(state.id) and (not Clothing.slotMatches(state,Clothing.removes(state))
+  or not Clothing.appearanceReady(state,'checkpoint'))then return false end
+ if Clothing.wristwatch(state)and (not Clothing.watchMatches(state)
+  or not isClient()and Clothing.watchProcessing(state).pendingRemoval)then return false end
  if state.id=='hotbar-chain' or Slots.isBelt(state.id) then
   local item,old=state.hotbarReplacement,state.hotbarInitial
   -- Native attachment and item-field packets use separate channels.

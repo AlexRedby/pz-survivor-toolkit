@@ -132,7 +132,10 @@ do
     assert(inspections[independent]==1 and inspections[transfer]==1)
     independent.container=vessel()
     independent.updateEmpty=function()error('must never execute replaced helpers')end
-    assert(policy.evaluateMove(queue,independent,transfer).reason=='move_dependent','next decision revalidates helpers')
+    result=policy.evaluateMove(queue,independent,transfer)
+    assert(not result.allowed and result.reason=='edit_unknown' and result.blocker==independent,
+        'next decision revalidates helpers and identifies the unreviewed action')
+    assert(policy.moveReason(queue,independent,transfer)=='move_dependent','raw helper guard remains compatible')
     independent.updateEmpty=nil
     assert(policy.evaluateMove(queue,independent,transfer).allowed,'restored helper restores the next decision')
     local opaque=f.action(ISBaseTimedAction:derive('OpaqueAnalysis'))
@@ -330,7 +333,9 @@ for _, actionType in ipairs({'handcraft', 'legacy'}) do
             end)
             assert(not checked.resources and not checked.contract.knownInputs and checked.contract.unknownOutputs,
                 actionType .. ' ' .. method .. ' keeps unknown craft effects protected')
-            assert(not checked.cancel.allowed and checked.cancel.reason == 'operation_dependent')
+            assert(not checked.cancel.allowed and checked.cancel.reason == 'edit_unknown' and checked.cancel.blocker == rejected)
+            assert(policy.cancelOperationReason(redrawQueue, second) == 'operation_dependent',
+                'unknown craft effects retain the raw cancellation gate')
             assert(not checked.rejectedCancel.allowed and checked.rejectedCancel.reason == 'operation_dependent')
             assert(not checked.move.allowed and checked.move.reason == 'move_craft_inputs')
         end
@@ -954,6 +959,29 @@ do
             targets={},knownInputs=true,cancelWaiting=true}
         return action
     end
+    -- A stable HumanVisual is a separate shared target. Actor-wide food
+    -- state and unrelated reading do not become appearance dependencies.
+    for _,pairPath in ipairs({false,true})do
+        legacy(pairPath)
+        local a,b=plain(),plain()
+        local visualA,visualB={class='HumanVisual'},{class='HumanVisual'}
+        a.fixtureContract.targets[visualA]=true;b.fixtureContract.targets[visualA]=true
+        local owner=f.queue(head,a,b)
+        assert(policy.previewMove(owner,a,b,true).reason=='move_dependent'
+            and policy.previewMove(owner,b,a).reason=='move_dependent',
+            'same appearance must remain ordered in both directions')
+        b.fixtureContract.targets={[visualB]=true}
+        assert(not policy.previewMove(owner,a,b,true).reason and not policy.previewMove(owner,b,a).reason,
+            'different native visuals must remain independent')
+        b.fixtureContract.targets={[f.player]=true}
+        assert(not policy.previewMove(owner,a,b,true).reason and not policy.previewMove(owner,b,a).reason,
+            'appearance ownership must not become an actor-wide food barrier')
+        local book=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
+        owner=f.queue(head,a,book)
+        assert(not policy.previewMove(owner,book,a).reason and not policy.previewMove(owner,a,book,true).reason,
+            'appearance cleanup must not block an unrelated book')
+    end
+    legacy(false)
     local target={class='IsoObject'}
     local variants={
         function(a,b)b.item.id=a.item.id;b.fixtureContract.items={[a.item.id]=true}end,

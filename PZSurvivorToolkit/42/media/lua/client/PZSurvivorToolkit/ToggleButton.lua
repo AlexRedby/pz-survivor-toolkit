@@ -54,6 +54,9 @@ local function tools(_, button)
     if wishlist and wishlist.UI then
         menu:addOption(getText("UI_PZSW_Open"), num, wishlist.UI.toggle)
     end
+    if LootSorter and LootSorter.toggleManifest then
+        menu:addOption(getText("UI_PZST_Manifest_Open"), num, LootSorter.toggleManifest)
+    end
     if Toolkit.ContextMenus and Toolkit.Settings.contextMenus() then
         menu:addOption(getText("UI_PZSurvivorToolkit_context_editor"), nil, Toolkit.ContextMenus.openEditor)
     end
@@ -93,6 +96,27 @@ local function detach()
     owner = nil
 end
 
+local function place(control, x, y, size, visible, screenWidth, screenHeight)
+    -- Size setters also clamp position. Resolve size first, then compare the
+    -- live native position with the same screen bounds used by ISUIElement.
+    if control:getWidth() ~= size then control:setWidth(size) end
+    if control:getHeight() ~= size then control:setHeight(size) end
+    if control:getKeepOnScreen() then
+        x = math.max(0, math.min(x, screenWidth - size))
+        y = math.max(0, math.min(y, screenHeight - size))
+    end
+    if control:getX() ~= x then control:setX(x) end
+    if control:getY() ~= y then control:setY(y) end
+    if control.forcedWidthImage ~= size-4 or control.forcedHeightImage ~= size-4 then
+        control:forceImageSize(size-4, size-4)
+    end
+    if control:getIsVisible() ~= visible then control:setVisible(visible) end
+    if not visible and control.tooltipUI and control.tooltipUI:getIsVisible() then
+        control.tooltipUI:setVisible(false)
+        control.tooltipUI:removeFromUIManager()
+    end
+end
+
 local function attach()
     local player = getPlayer()
     local data = player and getPlayerData(player:getPlayerNum())
@@ -115,26 +139,21 @@ local function attach()
         sidebar.toolkitHighlightButton = button
     end
     local hub = sidebar.toolkitToolsButton
-    hub:setEnable(not player:isDead())
+    local available = not player:isDead()
+    if hub.enable ~= available then hub:setEnable(available) end
     if button then button:update() end
-    local nativeWidth = sidebar.invBtn and sidebar.invBtn:getWidth() or sidebar:getWidth()
+    local width, top = sidebar:getWidth(), sidebar:getAbsoluteY()
+    local nativeWidth = sidebar.invBtn and sidebar.invBtn:getWidth() or width
     local size = math.max(24, math.floor((nativeWidth - 4) / 2))
     -- Beside Inventory stays clear of the default multiplayer chat below the sidebar.
-    local x = sidebar:getAbsoluteX() + sidebar:getWidth() + 6
+    local x = sidebar:getAbsoluteX() + width + 6
     local maxY = getPlayerScreenTop(player:getPlayerNum()) + getPlayerScreenHeight(player:getPlayerNum())
-        - sidebar:getAbsoluteY() - size - 6
-    local y = sidebar:getAbsoluteY() + math.max(0, math.min(sidebar.invBtn and sidebar.invBtn:getY() or 0, maxY))
-    local function place(control, offset)
-        control:setX(x+offset);control:setY(y);control:setWidth(size);control:setHeight(size)
-        control:forceImageSize(size-4,size-4)
-        control:setVisible(sidebar:getIsVisible())
-        if not sidebar:getIsVisible() and control.tooltipUI then
-            control.tooltipUI:setVisible(false)
-            control.tooltipUI:removeFromUIManager()
-        end
-    end
-    if button then place(button,0) end
-    place(hub,button and size+4 or 0)
+        - top - size - 6
+    local y = top + math.max(0, math.min(sidebar.invBtn and sidebar.invBtn:getY() or 0, maxY))
+    local visible, core = sidebar:getIsVisible(), getCore()
+    local screenWidth, screenHeight = core:getScreenWidth(), core:getScreenHeight()
+    if button then place(button, x, y, size, visible, screenWidth, screenHeight) end
+    place(hub, x + (button and size+4 or 0), y, size, visible, screenWidth, screenHeight)
 end
 
 -- Native sidebar-size changes replace the panel; detached controls follow its lifetime.

@@ -114,6 +114,20 @@ function ISInventoryPane:renderdetails(doDragged)
             self:refreshContainer()
         end
     end
+    local MOUSEX, MOUSEY = self:getMouseX(), self:getMouseY()
+    for index in ipairs(self.items) do
+        local y, xoff, yoff, doIt = index - 1, 0, 0, true
+        local isDragging = false
+        if self.dragging ~= nil and self.selected[y+1] ~= nil and self.dragStarted then
+            xoff = MOUSEX - self.draggingX
+            yoff = MOUSEY - self.draggingY
+            if not doDragged then doIt = false else self:suspendStencil(); isDragging = true end
+        elseif doDragged then doIt = false end
+        local topOfItem = y * self.itemHgt
+        if doIt then
+            self:drawRect(1+xoff, (y*self.itemHgt)+self.headerHgt+yoff, self:getWidth()-1, self.itemHgt, 0.20, 1.0, 1.0, 1.0)
+        end
+    end
 end
 function ISInventoryPane:unused()
 end
@@ -131,6 +145,8 @@ end
 
 local function buildClass(source, enhanced)
     source = source:gsub('\r', '')
+    -- CleanUI's vanilla-mode clone uses a distinct class/helper namespace.
+    source = source:gsub('CleanUI_Vanilla_ISInventoryPane', 'ISInventoryPane'):gsub('CleanUI_Vanilla_', 'CleanUI_')
     local class = {MAX_ITEMS_IN_STACK_TO_RENDER = 50}
     local env = setmetatable({ISInventoryPane = class}, {__index = _G})
     env.CleanUI_getStackDisplayItem = function(group)
@@ -185,7 +201,18 @@ local function buildClass(source, enhanced)
         .. branch .. ' end'))
     setfenv(chunk, env)
     local renderRefresh = chunk()
+    -- Execute the upstream drag-offset branch and draw call, recording its
+    -- coordinates without mocking the formula that caused the drift.
+    local dragBranch = assert(render:match('(local isDragging = false.-)local topOfItem'))
+    local dragRect = assert(render:match('(self:drawRect%(1%+xoff,[^\n]+)'))
+    local dragChunk = assert(loadstring('return function(self) local doDragged=true; '
+        .. 'local MOUSEX,MOUSEY=self:getMouseX(),self:getMouseY(); '
+        .. 'for index in ipairs(self.items) do local y,xoff,yoff,doIt=index-1,0,0,true; '
+        .. dragBranch .. ' if doIt then ' .. dragRect .. ' end end end'))
+    setfenv(dragChunk, env)
+    local renderDrag = dragChunk()
     function class:renderdetails(doDragged)
+        if doDragged then return renderDrag(self) end
         renderRefresh(self, doDragged)
         if not doDragged then
             table.wipe(self.items)
@@ -233,6 +260,8 @@ local function pane(class)
         draggingMarquisX = 0, draggingMarquisY = 15,
         getMouseX = function() return 50 end, getMouseY = function() return 5 end,
         getYScroll = function() return 0 end, getHeight = function() return 1000 end,
+        getWidth = function() return 100 end, suspendStencil = function() end,
+        drawRect = function(self, x, y) self.preview[#self.preview + 1] = {x=x, y=y} end,
         setYScroll = function() end,
         isMouseOver = function() return true end, updateScrollbars = function() end,
         contextButton1 = hide, contextButton2 = hide, contextButton3 = hide}, {__index = class})
@@ -346,6 +375,106 @@ for _, spec in ipairs({{name='native',class=native}, {name='CleanUI',class=enhan
         local selected = p.selected
         p:onMouseUp(51, 15)
         assert(p.selected == selected and p.selected[1] ~= nil and not p.selected[2], 'drag release replaced selection')
+    end)
+    check(spec.name .. ' drag preview stays at pointer during earlier batch transfers', function()
+        for _, scroll in ipairs({0, -17}) do
+            local p = clickPane()
+            p.collapsed.c = true
+            for index=4,7 do
+                local value = item()
+                p.groups[index] = {name='row'..index, cat='Tool', items={value,value}}
+                p.collapsed['row'..index] = true
+            end
+            p:refreshContainer(); p:renderdetails(false)
+            local first, last = p.groups[5], p.groups[6]
+            p.firstSelect, p.mouseOverOption = 5, 6
+            p.selected = {[5]=first}
+            shift = true
+            p:onMouseDown(50, 55)
+            shift = false
+            assert(p.selected[5] == first and p.selected[6] == last, 'Shift range setup failed')
+            p.dragStarted = true
+            local mouseY = 95
+            p.getYScroll = function() return scroll end
+            p.getMouseY = function() return mouseY - scroll end
+            local dragY, downY, payload = p.draggingY, p.downY, ISMouseDrag.dragging
+            local function preview()
+                p.preview = {}
+                p:renderdetails(true)
+                assert(p.draggingY == dragY and p.downY == downY, 'render changed persistent input coordinates')
+                assert(ISMouseDrag.dragging == payload, 'render replaced drop payload')
+                assert(#p.preview == 2, 'drag lost selected rows')
+                return p.preview[1].y + scroll, p.preview[2].y + scroll
+            end
+            local top, bottom = preview()
+            table.remove(p.groups, #p.groups)
+            p:refreshContainer(); p:renderdetails(false)
+            assert(preview() == top, 'removal below selection moved preview')
+            for pass=1,3 do
+                table.remove(p.groups, 1)
+                p.inventory:setDrawDirty(true)
+                p:renderdetails(false)
+                assert(p.selected[5-pass] == first and p.selected[6-pass] == last, 'refresh changed selected identities')
+                local nextTop, nextBottom = preview()
+                assert(nextTop == top and nextBottom == bottom, 'earlier transfer moved drag preview upward')
+            end
+            mouseY = mouseY - 30
+            local nextTop, nextBottom = preview()
+            assert(nextTop == top - 30 and nextBottom == bottom - 30, 'preview stopped following pointer')
+            p:onMouseUp(51, 95)
+            p.mouseOverOption = 1
+            p:onMouseDown(50, 5)
+            p.dragStarted, p.preview = true, {}
+            p:renderdetails(true)
+            assert(p.preview[1].y + scroll == mouseY - 5, 'next drag reused the previous origin')
+        end
+    end)
+    check(spec.name .. ' expanded child drag survives refresh before first preview', function()
+        local p = clickPane()
+        local a, b, c, d = item(), item(), item(), item()
+        local stack = {name='stack', cat='Tool', items={a,a,b,c,d}}
+        p.groups, p.itemslist, p.collapsed = {stack}, {stack}, {stack=false}
+        p:renderdetails(false)
+        p.selected, p.mouseOverOption = {[4]=c,[5]=d}, 5
+        p:onMouseDown(50, 45)
+        p.dragStarted = true
+        p.getMouseY = function() return 75 end
+        stack.items = {b,b,c,d}
+        p:refreshContainer(); p:refreshContainer(); p:renderdetails(false)
+        p.preview = {}
+        p:renderdetails(true)
+        assert(p.preview[1].y == 60 and p.preview[2].y == 70,
+            'first preview used the refreshed rows as its origin')
+        assert(p.selected[3] == c and p.selected[4] == d, 'expanded child selection changed')
+        local drawRect, dragY = p.drawRect, p.draggingY
+        p.drawRect = function() error('draw failure') end
+        local ok, err = pcall(p.renderdetails, p, true)
+        assert(not ok and tostring(err):find('draw failure', 1, true), 'render error swallowed')
+        assert(p.draggingY == dragY, 'render failure leaked compensated input coordinates')
+        p.drawRect = drawRect
+        p.selected, p.preview = {}, {}
+        p:renderdetails(true)
+        assert(#p.preview == 0 and p.draggingY == dragY, 'empty selection retained preview')
+    end)
+    check(spec.name .. ' disjoint drag retains native spacing', function()
+        local p = clickPane()
+        p.collapsed.c = true
+        local d = item()
+        p.groups[4] = {name='d', cat='Tool', items={d,d}}
+        p.collapsed.d = true
+        p:refreshContainer(); p:renderdetails(false)
+        p.selected, p.mouseOverOption = {[2]=p.groups[2],[4]=p.groups[4]}, 4
+        p:onMouseDown(50, 35)
+        p.dragStarted = true
+        p.getMouseY = function() return 85 end
+        p.preview = {}; p:renderdetails(true)
+        local top, bottom = p.preview[1].y, p.preview[2].y
+        assert(bottom - top == 20, 'disjoint preview compacted the selection')
+        table.remove(p.groups, 3)
+        p:refreshContainer(); p:renderdetails(false)
+        p.preview = {}; p:renderdetails(true)
+        assert(p.preview[1].y == top and p.preview[2].y == bottom - 10,
+            'gap removal changed the top anchor or native row spacing')
     end)
     check(spec.name .. ' modifier release keeps selection', function()
         for _, modifier in ipairs({'shift', 'ctrl'}) do
@@ -465,4 +594,4 @@ if hasAnchor then
     end)
 end
 assert(#failures == 0, table.concat(failures, '\n'))
-print('Inventory interaction checks passed: click identity, group semantics, filtered/dirty marquee and Shift anchor.')
+print('Inventory interaction checks passed: stable drag preview, click identity, group semantics, filtered/dirty marquee and Shift anchor.')

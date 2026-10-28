@@ -3,6 +3,7 @@ require 'PZSurvivorToolkit'
 if PZSurvivorToolkit.BCPinCompatibility then return end
 local Classes = require 'PZSurvivorToolkit/InventoryClasses'
 local Rows = require 'PZSurvivorToolkit/InventoryRows'
+local Order = require 'PZSurvivorToolkit/InventoryOrder'
 local Pins = require 'BetterContainers/Upgrades/PinnedItems'
 if Pins._panePatched or Pins._paneVisualPatched then
     print('[PZSurvivorToolkit] Pin compatibility needs Toolkit before Better Containers')
@@ -14,45 +15,12 @@ PZSurvivorToolkit.BCPinCompatibility = true
 Pins._panePatched, Pins._paneVisualPatched = true, true
 local installed = {}
 
-local function itemRow(row)
-    return row.type ~= 'separator' and not row._bcEquippedAttachedSeparator and not row._ocPinned
-        and row.items and row.items[1] and row.items[1].getFullType
-end
-
 local function prioritize(pane)
-    if not Pins.displayPinnedItem(pane.inventoryPage) or not pane.itemslist then return false end
-    local rows, ordered, first = pane.itemslist, {}, 1
-    while first <= #rows do
-        local head, last = rows[first], first
-        if itemRow(head) then
-            while last < #rows do
-                local row = rows[last + 1]
-                if not itemRow(row) or (row.equipped == true) ~= (head.equipped == true)
-                    or (row.matchesSearch == true) ~= (head.matchesSearch == true) then break end
-                last = last + 1
-            end
-            -- Stable partition retains the chosen column order and search/equipment sections.
-            for _, pinned in ipairs({true, false}) do
-                for index = first, last do
-                    local row = rows[index]
-                    if Pins.isFavourite(row.items[1]:getFullType()) == pinned then ordered[#ordered + 1] = row end
-                end
-            end
-        else
-            ordered[#ordered + 1] = head
-        end
-        first = last + 1
-    end
-    local changed = false
-    for index, row in ipairs(ordered) do
-        changed = changed or rows[index] ~= row
-        rows[index] = row
-    end
-    return changed
+    return Order.prioritize(pane, Pins)
 end
 
 local function finishRows(pane, selected, anchor)
-    if not Pins.displayPinnedItem(pane.inventoryPage) or not pane.itemslist then return end
+    if not pane.itemslist then return end
     if prioritize(pane) then
         table.wipe(pane.selected)
         table.wipe(pane.items)
@@ -70,7 +38,7 @@ local function install(class)
         return restore(pane, selected)
     end
     class.refreshContainer = function(pane, ...)
-        local anchor = pane.firstSelect and pane.items and pane.items[pane.firstSelect]
+        local anchor = Rows.captureAnchor(pane)
         local result = refresh(pane, ...)
         finishRows(pane, pane:saveSelection({}), anchor)
         return result
@@ -85,9 +53,9 @@ local function installClasses()
         splitInstalled = true
         local split = OrganizedCategories.splitStacksByDisplayCategory
         OrganizedCategories.splitStacksByDisplayCategory = function(pane, ...)
-            if not pane or not Pins.displayPinnedItem(pane.inventoryPage) then return split(pane, ...) end
+            if not pane then return split(pane, ...) end
             local selected = pane:saveSelection({})
-            local anchor = pane.firstSelect and pane.items and pane.items[pane.firstSelect]
+            local anchor = Rows.captureAnchor(pane)
             local result = split(pane, ...)
             finishRows(pane, selected, anchor)
             return result

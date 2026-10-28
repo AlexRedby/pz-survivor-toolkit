@@ -66,6 +66,8 @@ for _, file in ipairs({'shared/LootSorter_Util.lua', 'shared/LootSorter_Presets.
 end
 local Rules = require 'PZSurvivorToolkit/QuartermasterTagRules'
 local Presets = require 'PZSurvivorToolkit/QuartermasterPresets'
+local Groups = require 'PZSurvivorToolkit/ContainerGroups'
+dofile(root .. 'client/PZSurvivorToolkit/ContainerGroupSync.lua')
 local synced, request = LootSorter.arePresetsSynced, LootSorter.requestPresets
 dofile(root .. 'client/PZSurvivorToolkit/QuartermasterTagRuleClient.lua')
 assert(LootSorter.arePresetsSynced == synced and LootSorter.requestPresets == request,
@@ -76,6 +78,7 @@ local function begin()
     object.md = {LSBoxPresets = {['0'] = {Pantry = 100}}}
     fire('OnGameStart')
     fire('OnReceiveGlobalModData', 'LootSorter_Registry', {boxes = {['10,20,0'] = true}})
+    assert(Groups.receive({schema=1,revision=0,nextId=0,groups={}}))
     requests, objectTransmits, removals = {}, 0, 0
 end
 local function snapshot(revision, cats, tagRule, generation)
@@ -169,6 +172,26 @@ assert(Rules.getPreset('Pantry',LootSorter.getPresetStore().Pantry).groups[1].in
 local Tags=require 'PZSurvivorToolkit/ItemTags'
 assert(Tags.matchesRule({'perishable','vehiclepart'},groupedBoxes[1].rules[1]))
 assert(not Tags.matchesRule({'mechanics','vehiclepart'},groupedBoxes[1].rules[1]))
+-- Registry and presets may precede the world group snapshot at login.
+Groups.resetReceived(); requests = {}
+boxes, synced = LootSorter.gatherBoxes(player)
+assert(not synced and #boxes == 0 and requests[Groups.STORE] == 1 and objectTransmits == 0 and removals == 0,
+    'sort planned before receiving the complete group snapshot')
+assert(Groups.receive({schema=1,revision=0,nextId=0,groups={}}))
+object.md[Groups.FIELD] = {['0']='1'}
+object.md[Groups.REVISIONS] = {['0']=1}
+boxes, synced = LootSorter.gatherBoxes(player)
+assert(not synced and #boxes == 0 and requests[Groups.STORE] == 2 and objectTransmits == 0 and removals == 0,
+    'a membership arriving before its group snapshot routed as an independent container')
+assert(Groups.receive({schema=1,revision=1,nextId=1,groups={['1']={id='1',rev=1,createdBy='owner',rule=rule,
+    configuration={cats={},items={},presets={},priority=7,noDuplicates=true,appearance={name='Group'}}}}}))
+boxes, synced = LootSorter.gatherBoxes(player)
+assert(synced and #boxes == 1 and boxes[1].groupId == '1' and boxes[1].noDuplicates and boxes[1].priority == 7,
+    'group receipt did not unblock the exact shared destination')
+object.md[Groups.FIELD]['0'] = 'missing'
+boxes, synced = LootSorter.gatherBoxes(player)
+assert(synced and #boxes == 1 and boxes[1].groupId == nil,
+    'a broken link covered by the complete snapshot permanently blocked legacy fallback')
 client = false
 assert(LootSorter.arePresetsSynced(), 'single-player acquired a network prerequisite')
 print('Quartermaster sync passed: complete snapshots, obsolete/out-of-order replies, draft isolation, empty stores, generations and read-only discovery.')

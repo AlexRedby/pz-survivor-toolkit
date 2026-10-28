@@ -6,11 +6,11 @@ local function event()
 end
 local function events()
  local result={}
- for _,name in ipairs({'OnConnected','OnMainMenuEnter','OnPreUIDraw','OnGameStart','OnServerCommand','OnTick','OnServerStarted','OnClientCommand','OnFillInventoryObjectContextMenu'})do result[name]=event()end
+ for _,name in ipairs({'OnConnected','OnMainMenuEnter','OnPreUIDraw','OnGameStart','OnServerCommand','OnTick','OnServerStarted','OnClientCommand','OnFillInventoryObjectContextMenu','OnConnectFailed','OnDisconnect'})do result[name]=event()end
  return result
 end
 local function load(path,env)return assert(setfenv(assert(loadfile(path)),env))()end
-local function client(user,toolkit,clock)
+local function client(user,toolkit,clock,selection,fixture)
  local output={}
  local env=setmetatable({Events=events(),print=function(line)output[#output+1]=line end},{__index=_G})
  env.require=function(name)
@@ -25,8 +25,26 @@ local function client(user,toolkit,clock)
   return{readLine=function()i=i+1;return lines[i]end,close=function()end}
  end
  env.PZSurvivorWishlist={Client={},UI={windows={}}}
- load(root..'/client/ZZWishlist.lua',env)
+ env.QueueTestSelection=selection
+ load(fixture or root..'/client/ZZWishlist.lua',env)
  return env,output
+end
+
+do
+ for _,fixture in ipairs({root..'/client/ZZWishlist.lua',arg[3]})do
+  for _,host in ipairs({false,true})do
+   local env=client('client1',true,{now=0},{kind='mp',options={mp_host=host}},fixture)
+   local connects,advanced=0,0
+   env.isClient=function()return false end;env.isIngameState=function()return false end
+   env.ConnectToServer={instance={connect=function()connects=connects+1 end}}
+   env.MainScreen={instance={charCreationProfession={getIsVisible=function()return true end,
+    onOptionMouseDown=function()advanced=advanced+1 end},charCreationMain={onOptionMouseDown=function()end}}}
+   env.MapSpawnSelect={instance={useDefaultSpawnRegion=function()end,setVisible=function()end}}
+   env.Events.OnMainMenuEnter.fire();env.Events.OnPreUIDraw.fire()
+   assert(connects==(host and 0 or 1) and advanced==(host and 0 or 1),'legacy startup must defer only to menu Host bootstrap')
+  end
+ end
+ print('PASS wishlist startup routing: single/session Host defers and separate-server callbacks remain active')
 end
 local function spec(env,name)
  for _,s in ipairs(env.WishlistTestFixture.stages)do if s[1]==name then return s end end
@@ -89,7 +107,18 @@ do
   self.renderCalls=self.renderCalls+1;self.items=self.nativeRows
  end}
  load(project..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/Inventory.lua',env)
- local inventory=env.PZSurvivorWishlist.Inventory;inventory.install()
+ local inventory=env.PZSurvivorWishlist.Inventory
+ -- InventoryPresentation now owns the actual native rendering wrapper.
+ -- Keep that boundary and Wishlist real; unrelated icon/tooltip presenters are inert.
+ local requireFixture=env.require
+ env.require=function(name)
+  if name=='PZSurvivorWishlist/Inventory'then return inventory end
+  if name=='PZSurvivorToolkit/InventoryClasses'then return requireFixture(name) end
+  return{drawIcon=function()end,draw=function()return false end,refresh=function()end,install=function()end}
+ end
+ env.getActivatedMods=function()return{contains=function(_,id)return id=='PZSurvivorToolkit'end}end
+ env.ISInventoryItem={renderItemIcon=function()end};env.ISInventoryPage={}
+ load(project..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryPresentation.lua',env)
  local render=env.ISInventoryPane.renderdetails
  local function item(fullType)return{isItem=true,getFullType=function()return fullType end}end
  local nails=item('Base.Nails')

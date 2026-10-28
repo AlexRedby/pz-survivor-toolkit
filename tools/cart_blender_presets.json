@@ -1,0 +1,68 @@
+{
+  "wood_cart_pickup": {
+    "clip_name": "Toolkit_WoodCart_Pickup",
+    "playback_seconds": 1.833333333333,
+    "cart": {
+      "workshop_id": "3689975894",
+      "relative_path": "mods/SaucedWheelbarrow/42/media/models_X/weapons/2handed/Wheelbarrow_wood.fbx",
+      "ground": [
+        76.507645,
+        0.0,
+        -0.034614854,
+        0.0,
+        0.034614854,
+        -1.2464679e-05,
+        76.507645,
+        0.0,
+        -5.6394756e-09,
+        -76.50765,
+        -1.2464677e-05,
+        0.0,
+        -0.00628506,
+        0.002857726,
+        -0.41680235,
+        1.0
+      ],
+      "held": [
+        76.5,
+        -3.9394883e-05,
+        -1.4673389e-05,
+        0.0,
+        2.8023098e-05,
+        20.771942,
+        73.62592,
+        0.0,
+        -2.4333809e-05,
+        -73.625916,
+        20.771938,
+        0.0,
+        -0.0060535767,
+        0.097179376,
+        -0.34652624,
+        1.0
+      ],
+      "axle": [
+        -6.642862e-06,
+        -0.0041269097,
+        -0.0010569958
+      ],
+      "lift_start": 0.48
+    },
+    "scope": "Calibrated wooden pickup reference. Runtime arm IK, ground adaptation, clothing and lifecycle still require PZ checks."
+  },
+  "shopping_cart_pickup": {
+    "clip_name": "Toolkit_ShoppingCart_Pickup"
+  },
+  "wood_cart_brace": {
+    "clip_name": "Toolkit_WoodCartBrace"
+  },
+  "metal_cart_pickup": {
+    "clip_name": "Toolkit_MetalCart_Pickup"
+  },
+  "wood_cart_pivot_left": {
+    "clip_name": "Toolkit_WoodCartPivot_Left"
+  },
+  "wood_cart_pivot_right": {
+    "clip_name": "Toolkit_WoodCartPivot_Right"
+  }
+}

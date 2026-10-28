@@ -11,11 +11,16 @@ local Bulk = {}
 Toolkit.BulkFood = Bulk
 local Membership = require "PZSurvivorToolkit/ActionQueueMembership"
 local InventoryMembership = require "PZSurvivorToolkit/InventoryMembership"
+local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
+local Lifecycle = require "PZSurvivorToolkit/ActionQueueLifecycle"
 local commands, meals, cleanup, removals, openings, waits = {}, {}, {}, {}, {}, {}
 local registries = {commands, meals, cleanup, removals, openings, waits}
+local maskEffects = {}
 local function portion(value) return value == 1 or value == 0.5 or value == 0.25 end
+local pollMaskEffects
 
 function Bulk.prune()
+    if pollMaskEffects then pollMaskEffects() end
     local queued = Membership.find(registries)
     for _, registry in ipairs(registries) do
         for action in pairs(registry) do if not queued[action] then registry[action] = nil end end
@@ -24,6 +29,7 @@ end
 Events.OnTick.Add(Bulk.prune)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
     for _, registry in ipairs(registries) do for action in pairs(registry) do registry[action] = nil end end
+    for action in pairs(maskEffects) do maskEffects[action] = nil end
 end) end
 
 local function edible(item)
@@ -180,14 +186,86 @@ function Bulk.isMaskRemoval(action)
         and action.character == entry.player and action.item and action.item:getID() == entry.maskId
 end
 
-function Bulk.retainCleanup(action, current, queue)
-    local entry = cleanup[action]
-    if not Bulk.isCleanup(action) or not Toolkit.ActionQueuePolicy.inspect(action) then return false end
-    -- Keep restoration only when removal has already run or is the step being finished.
-    if entry.unequip ~= current and queue:indexOf(entry.unequip) ~= -1 then return false end
-    entry.retained = true
+local function sameMask(item, record)
+    return item and item:getID() == record.maskId and item:getFullType() == record.maskType
+end
+
+local function maskSource(action, record)
+    local policy, carts = Toolkit.ActionQueuePolicy, Toolkit.ActionQueueCarts
+    return action == record.action and getmetatable(action) == record.class and record.class == ISUnequipAction
+        and action.Type == 'ISUnequipAction' and action.character == record.player
+        and action.toolkitQueueOperation == record.token and sameMask(action.item, record)
+        and action.item:IsClothing() and not action.fromHotbar and not action.reason
+        and not isForceDropHeavyItem(action.item) and not record.player:isDead()
+        and ISTimedActionQueue.queues[record.player] == record.queue
+        and (record.queue.toolkitOperationGeneration or 0) == record.generation
+        and ((policy and policy.matchesNative and policy.matchesNative(action))
+            or (carts and carts.isNonCartUnequip and carts.isNonCartUnequip(action)))
+end
+
+local function maskRemoved(record)
+    if not record.beforeWorn or not maskSource(record.action, record) then return false end
+    local player = record.player
+    local item = player:getInventory():getItemById(record.maskId)
+    return sameMask(item, record) and item:getContainer() == player:getInventory()
+        and not sameMask(player:getWornItem(record.location), record)
+        and not sameMask(player:getPrimaryHandItem(), record)
+        and not sameMask(player:getSecondaryHandItem(), record)
+end
+
+function Bulk.maskStarted(action)
+    local record = maskEffects[action]
+    if not record or record.started or not maskSource(action, record) then return false end
+    record.started, record.location = true, action.item:getBodyLocation()
+    record.beforeWorn = record.location ~= nil and sameMask(record.player:getWornItem(record.location), record)
+    return record.beforeWorn == true
+end
+
+function Bulk.maskBegin(action, phase)
+    local record = maskEffects[action]
+    if not record or phase ~= 'perform' or not record.beforeWorn or not maskSource(action, record) then return false end
+    if isClient() and (action.toolkitNativeTransaction == nil or action.toolkitNativeKind ~= 'ISUnequipAction') then return false end
+    -- Enqueue only reserves ownership. Native allocation/transaction binding must
+    -- precede this capture, and replication may already have removed the mask.
+    if not record.proof then
+        record.proof = Settlement.captureEffect(action)
+        Settlement.bindEffect(record.handle, record.proof)
+    end
     return true
 end
+
+pollMaskEffects = function()
+    for action, record in pairs(maskEffects) do
+        if record.failed or not maskSource(action, record)
+            or not record.finished and record.queue:indexOf(action) == -1 then maskEffects[action] = nil
+        elseif record.finished and record.proof then
+            local observed = maskRemoved(record)
+            local state = Settlement.effectState(record.proof, observed)
+            if state == 'completed' then
+                if Settlement.earn(record.handle, record.proof, observed) then record.earned = true end
+                maskEffects[action] = nil
+            elseif state ~= 'waiting' then maskEffects[action] = nil end
+        end
+    end
+end
+
+function Bulk.maskFinish(action, phase, succeeded)
+    local record = maskEffects[action]
+    if not record or (phase ~= 'complete' and not (isClient() and phase == 'perform')) then return end
+    if not succeeded then record.failed = true else record.finished = true end
+    pollMaskEffects()
+end
+
+local function installMaskObserver()
+    Lifecycle = Lifecycle or Toolkit.ActionQueueLifecycle
+    if Lifecycle and Lifecycle.registerObserver then
+        Lifecycle.registerObserver('bulk-food-mask', {
+            started = Bulk.maskStarted, begin = Bulk.maskBegin, finish = Bulk.maskFinish,
+        })
+    end
+end
+installMaskObserver()
+Events.OnGameStart.Add(installMaskObserver)
 
 local function installCleanupContract()
     if not Toolkit.ActionQueuePolicy then return end
@@ -195,8 +273,8 @@ local function installCleanupContract()
         if not Bulk.isCleanup(action) then return end
         return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true},
             targets = {}, hands = action.character, preparationFinish = true, cancelWaiting = true,
-            cancelOperation = not cleanup[action].retained, interrupt = "finish-step"}
-    end)
+            cancelOperation = not Settlement.isCleanup(action), interrupt = "finish-step"}
+    end, nil, Bulk.isCleanup)
 end
 installCleanupContract()
 Events.OnGameStart.Add(installCleanupContract)
@@ -291,7 +369,21 @@ local function dispatch(player, entry)
             and action.item == entry.unequip.item then cleanup[action] = entry end
         if action.character == player and action.Type == "ISInventoryTransferAction"
             and not action.toolkitTransferGuard and not action.onCompleteFunc then Actions.guardTransfer(action) end
-        return add(action)
+        local result = add(action)
+        if action.character == player and action == entry.unequip and action.item then
+            local handle = Settlement.track(action, 'prepare')
+            if handle then
+                local queue = ISTimedActionQueue.getTimedActionQueue(player)
+                local record = {action = action, class = ISUnequipAction, player = player, queue = queue,
+                    generation = queue.toolkitOperationGeneration or 0, token = action.toolkitQueueOperation,
+                    maskId = entry.maskId, maskType = action.item:getFullType(), handle = handle}
+                entry.maskEffect = record
+                maskEffects[action] = record
+            end
+        elseif cleanup[action] == entry and entry.maskEffect then
+            Settlement.cleanup(action, entry.maskEffect.handle)
+        end
+        return result
     end
     -- Keep the game's mask, utensil, transfer and return handling, including mod integrations.
     local ok, err = pcall(ISInventoryPaneContextMenu.eatItem, item, entry.percentage, player:getPlayerNum(), entry.recipe, entry.recipe and 0)

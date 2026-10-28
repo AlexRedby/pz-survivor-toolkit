@@ -12,7 +12,7 @@ local ITEM_BUDGET = 128
 local SQUARE_SLICE = 16
 local REFRESH_MS = 250
 local tracked, byObject = {}, {}
-local cursor = 1
+local cursor, refreshEpoch = 1, 0
 local scan, previous, nextScanAt = nil, nil, 0
 local lastError
 local clearing = false
@@ -28,8 +28,13 @@ end
 
 local function sameHighlight(record)
     local object = record.object
-    local colour = object:getHighlightColor(record.playerNum)
     local expected = record.modelColour
+    if toolkitGroundHighlightMatches then
+        local result = toolkitGroundHighlightMatches(object, record.playerNum, record.colour,
+            record.attached, expected.r, expected.g, expected.b, expected.a)
+        if result ~= nil then return result end
+    end
+    local colour = object:getHighlightColor(record.playerNum)
     return object:isHighlighted(record.playerNum)
         and object:isOutlineHighlight(record.playerNum)
         and object:isOutlineHlAttached(record.playerNum) == record.attached
@@ -77,27 +82,45 @@ function Highlighter.settingsChanged()
     Highlighter.clear()
 end
 
-local function eligible(object, context)
+local function eligibleDistance(object, context, radius)
+    if toolkitGroundHighlightDistance then
+        local result = toolkitGroundHighlightDistance(object, context.cell, context.playerNum,
+            context.z, context.x, context.y, radius)
+        if result ~= nil then return result >= 0 and result or nil end
+    end
     local square = object:getSquare()
     local item = object:getItem()
-    if not square or not item or item:getWorldItem() ~= object then return false end
-    if square:getZ() ~= context.z then return false end
+    if not square or not item or item:getWorldItem() ~= object then return nil end
+    if square:getZ() ~= context.z then return nil end
     if context.cell:getGridSquare(square:getX(), square:getY(), square:getZ()) ~= square then
-        return false
+        return nil
     end
     -- Seen/explored tiles are not proof of current sight: keep walls and FOV authoritative.
-    if not square:isCanSee(context.playerNum) then return false end
-    if not object:getDoRender() or object:getTargetAlpha(context.playerNum) <= 0 then return false end
-    if not item:getScriptItem():isWorldRender() then return false end
+    if not square:isCanSee(context.playerNum) then return nil end
+    if not object:getDoRender() or object:getTargetAlpha(context.playerNum) <= 0 then return nil end
+    if not item:getScriptItem():isWorldRender() then return nil end
     local dx = object:getWorldPosX() - context.x
     local dy = object:getWorldPosY() - context.y
+    local distance = dx * dx + dy * dy
+    if distance <= radius * radius then return distance end
+    return nil
+end
+
+local function eligible(object, context)
     local radius, colour = context.normalRadius, context.normalColour
-    if context.wishlist and context.wishlist.isWanted(context.playerNum, item:getFullType()) then
-        radius, colour = 15, context.wantedColour
+    if context.wishlist then
+        local item = object:getItem()
+        if not item then return false end
+        if context.wishlist.isWanted(context.playerNum, item:getFullType()) then
+            radius, colour = 15, context.wantedColour
+        elseif not context.normalEnabled then
+            -- Wishlist-only mode need not inspect native visibility/ownership for other types.
+            return false
+        end
     elseif not context.normalEnabled then
         return false
     end
-    if dx * dx + dy * dy <= radius * radius then return colour end
+    if eligibleDistance(object, context, radius) ~= nil then return colour end
     return false
 end
 
@@ -126,6 +149,7 @@ local function refresh(record, context)
         return true
     end)
     if not ok then reportError(valid) end
+    if ok and valid then record.refreshEpoch = refreshEpoch end
     return ok and valid
 end
 
@@ -133,6 +157,9 @@ local function visit(object, context)
     if not object then return end
     local existing = byObject[object]
     if existing then
+        -- Maintenance already read this object in this exact tick. Visibility and
+        -- ownership are still rechecked on the next tick, even without movement.
+        if existing.refreshEpoch == refreshEpoch then return end
         if not refresh(existing, context) then forget(existing.index) end
         return
     end
@@ -178,7 +205,7 @@ local function beginScan(context)
         z = context.z,
         centerX = math.floor(context.x),
         centerY = math.floor(context.y),
-        pending = {}, pendingIndex = 1,
+        pending = {}, pendingIndex = 1, bySquare = {},
     }
 end
 
@@ -197,8 +224,46 @@ local function visitSlice(entry, context, budget)
     return processed, entry.index >= objects:size()
 end
 
+local function forgetSquare(entry)
+    scan.bySquare[entry.square] = nil
+    local last = scan.pending[#scan.pending]
+    scan.pending[#scan.pending] = nil
+    if entry.slot <= #scan.pending then
+        scan.pending[entry.slot] = last
+        last.slot = entry.slot
+    end
+end
+
+local function visitSquare(square, context, budget, enqueue)
+    local pending = scan.bySquare[square]
+    local entry = pending or {square = square, index = 0}
+    local processed, done = visitSlice(entry, context, budget)
+    if pending and done then
+        forgetSquare(entry)
+    elseif not pending and not done and enqueue and #scan.pending < #scan.offsets then
+        -- Only finite sweeps admit cursors; priority resumes existing ones.
+        -- The cap also covers transient stale identities after square reloads.
+        entry.x, entry.y = square:getX(), square:getY()
+        entry.slot = #scan.pending + 1
+        scan.pending[entry.slot], scan.bySquare[square] = entry, entry
+    end
+    return processed, done
+end
+
 local function scanTick(context)
     local squares, items = 0, 0
+    if context.moved then
+        local x, y = math.floor(context.x), math.floor(context.y)
+        -- Keep nearby discovery prompt without restarting the fair sweep.
+        -- Reserve most item work and half the square work for its progress.
+        for index = 1, SQUARE_BUDGET / 2 do
+            local offset = scan.offsets[index]
+            local square = context.cell:getGridSquare(x + offset.x, y + offset.y, context.z)
+            squares = squares + 1
+            if square then items = items + visitSquare(square, context, SQUARE_SLICE - items, false) end
+            if items >= SQUARE_SLICE then break end
+        end
+    end
     -- Reserve half the item budget for dense squares, so neither discovery nor piles starve.
     while squares < SQUARE_BUDGET and items < ITEM_BUDGET / 2
         and scan.offsetIndex <= #scan.offsets do
@@ -207,28 +272,36 @@ local function scanTick(context)
         squares = squares + 1
         local square = context.cell:getGridSquare(scan.centerX + offset.x, scan.centerY + offset.y, scan.z)
         if square then
-            local entry = { square = square, index = 0 }
-            local processed, done = visitSlice(entry, context, ITEM_BUDGET / 2 - items)
-            items = items + processed
-            if not done then scan.pending[#scan.pending + 1] = entry end
+            items = items + visitSquare(square, context, ITEM_BUDGET / 2 - items, true)
         end
     end
     local pendingSquares = 0
     while items < ITEM_BUDGET and #scan.pending > 0 and pendingSquares < SQUARE_BUDGET do
         if scan.pendingIndex > #scan.pending then scan.pendingIndex = 1 end
         local index = scan.pendingIndex
-        local processed, done = visitSlice(scan.pending[index], context, ITEM_BUDGET - items)
+        local processed, done = visitSquare(scan.pending[index].square, context, ITEM_BUDGET - items, true)
         items, pendingSquares = items + processed, pendingSquares + 1
-        if done then
-            scan.pending[index] = scan.pending[#scan.pending]
-            scan.pending[#scan.pending] = nil
-        else
-            scan.pendingIndex = index + 1
-        end
+        if not done then scan.pendingIndex = index + 1 end
     end
-    if scan.offsetIndex > #scan.offsets and #scan.pending == 0 then
-        scan = nil
-        nextScanAt = getTimestampMs() + REFRESH_MS
+    if scan.offsetIndex > #scan.offsets then
+        local x, y = math.floor(context.x), math.floor(context.y)
+        if x ~= scan.centerX or y ~= scan.centerY then
+            -- A fresh area must not wait for every old item. Retain cursors
+            -- in the new sweep's square lattice, exactly its discovery domain.
+            -- Native world offsets are not clamped to a tile, so a circle/tile
+            -- test would incorrectly skip displaced but eligible world items.
+            -- At most #offsets cached-coordinate checks occur once per sweep.
+            for index = #scan.pending, 1, -1 do
+                local entry = scan.pending[index]
+                if math.abs(entry.x - x) > context.radius or math.abs(entry.y - y) > context.radius then
+                    forgetSquare(entry)
+                end
+            end
+            scan.centerX, scan.centerY, scan.offsetIndex = x, y, 1
+        elseif #scan.pending == 0 then
+            scan = nil
+            nextScanAt = getTimestampMs() + REFRESH_MS
+        end
     end
 end
 
@@ -238,7 +311,8 @@ local function tick()
     local cell = getCell()
     local normalEnabled = Toolkit.Settings.isEnabled()
     local wishlist = PZSurvivorWishlist
-    local wantedEnabled = wishlist and wishlist.Client and wishlist.Settings and wishlist.Settings.groundEnabled()
+    local wantedEnabled = player and wishlist and wishlist.Client and wishlist.Settings
+        and wishlist.Settings.groundEnabled() and wishlist.Client.hasWanted(player:getPlayerNum())
     if (not normalEnabled and not wantedEnabled) or not player or player:isDead() or not cell then
         if #tracked > 0 or scan or previous then Highlighter.clear() end
         return
@@ -264,9 +338,14 @@ local function tick()
     end
     local moved = previous and (math.floor(context.x) ~= math.floor(previous.x)
         or math.floor(context.y) ~= math.floor(previous.y))
-    if moved then scan, nextScanAt = nil, 0 end
+    -- Finish the bounded sweep and its dense-square cursors across ordinary
+    -- movement. New sweeps start at the current position; writes always use
+    -- current eligibility, including during the nearby priority pass.
+    if moved then nextScanAt = 0 end
+    context.moved = moved
     previous = context
     if clearing then return end
+    refreshEpoch = refreshEpoch + 1
     prune(context)
     if not scan and (moved or getTimestampMs() >= nextScanAt) then beginScan(context) end
     if scan then scanTick(context) end
@@ -281,7 +360,8 @@ local function onTick()
 end
 
 function Highlighter.getStatus()
-    return { highlightedObjects = #tracked, scanning = scan ~= nil, clearing = clearing, lastError = lastError }
+    return { highlightedObjects = #tracked, scanning = scan ~= nil, clearing = clearing, lastError = lastError,
+        pendingSquares = scan and #scan.pending or 0 }
 end
 
 Events.OnTick.Add(onTick)

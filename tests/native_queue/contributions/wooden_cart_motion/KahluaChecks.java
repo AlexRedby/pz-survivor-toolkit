@@ -22,8 +22,8 @@ public final class KahluaChecks {
             }
         }
         net.alexredby.cartlab.Main.drive=-1;
-        if(net.alexredby.cartlab.Main.Keys.enter(keys[4],false)
-                || net.alexredby.cartlab.Main.RawKeys.enter(keys[4],false))
+        if(net.alexredby.cartlab.MainAdvice.Keys.enter(keys[4],false)
+                || net.alexredby.cartlab.MainAdvice.RawKeys.enter(keys[4],false))
             throw new AssertionError("Manual mode must leave native keyboard input untouched");
         net.alexredby.cartlab.Main.gait=0;
         System.out.println("CART_INDEPENDENT_KEYS_PASS");

@@ -517,6 +517,10 @@ function Profile.new(Rules, Tags)
         end
         actualLayouts[scopeOf(scope)] = {version = preferencesRevision, layout = layout, parents = parents}
     end
+    function self.clearLayouts()
+        self.layouts, actualLayouts = {}, {}
+        self.revision = self.revision + 1
+    end
     function self.hasChanges(scope, context)
         for _, id in ipairs(scopes(scope, context)) do
             for _ in pairs(id == "*" and self.overrides or (self.scoped[id] or {})) do return true end

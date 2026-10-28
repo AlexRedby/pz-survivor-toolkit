@@ -32,6 +32,7 @@ local style = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSu
 require = function(module)
     if module == "PZSurvivorToolkit/UIStyle" then return style end
     if module == "PZSurvivorToolkit/ItemCategories" then return {} end
+    if module == "PZSurvivorToolkit/ItemTags" then return {label = function(id) return id end} end
 end
 isClient = function() return false end
 Events = {OnTick = {}}
@@ -84,3 +85,24 @@ row.item.name, row.item.cat = "A", nil
 draw()
 assert(drawn[1].text == "A" and drawn[2].text == "", "short names and missing categories need no suffix")
 print("Manifest text fitting passed: actual row drawing, font, two dots, Unicode, narrow columns and warm cache.")
+
+-- A disappeared tag must reset to All, never silently select another tag at the old index.
+getText = function(key) return key end
+local function picker(options, selected)
+    return {options = options, selected = selected,
+        clear = function(self) self.options = {} end,
+        addOptionWithData = function(self, text, data) self.options[#self.options + 1] = {text = text, data = data} end}
+end
+local win = setmetatable({view = {tagOptions = {"food", "tool"}, setPayload = function() return true end},
+    tagPicker = picker({{data = false}, {data = "food"}, {data = "gone"}}, 3),
+    rebuild = function(self) self.rebuilt = (self.rebuilt or 0) + 1 end}, {__index = window})
+win:receive({}, "ready")
+assert(win.tagPicker.selected == 1, "removed tag silently selected another filter")
+win.tagPicker.selected = 3
+win.view.tagOptions = {"tool", "food"}
+win:receive({}, "ready")
+assert(win.tagPicker.selected == 2, "retained tag must follow identity after reordering")
+win.view.setPayload = function() return false end
+win:receive({}, "error")
+assert(win.rebuilt == 2 and win.connectionStatus == "error", "status changes must preserve the cached view")
+print("Manifest tag selection: removed/reset, retained/reordered and connection-only refresh passed.")

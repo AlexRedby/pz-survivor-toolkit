@@ -1,5 +1,8 @@
 local content='E|legacy|Old entry\nR|legacy|medical\nR|bad|missing\nO|*|root|0|bad\nO|*|root|999999|bad\nP|bad scope|x|medical\n'
 getText=function(key) return key end
+isClient=function() return false end
+local tagData={}
+ModData={getOrCreate=function() return tagData end}
 package.path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/?.lua;'..package.path
 local disk=dofile(ProjectRoot..'/tests/support/context_menu_files.lua')(content)
 local Profile=dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ContextMenuProfile.lua')

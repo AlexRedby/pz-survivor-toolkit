@@ -1,14 +1,15 @@
 """Unified Quartermaster container editing through native UI callbacks and Host authority."""
-import json
 import math
 from pathlib import Path
 import re
 import shutil
 import struct
 
+from .. import receipts
+
 SUITE = 'container-configuration'
 MARKER = '[CONTAINER_CONFIG] '
-MODS = ['PZSurvivorToolkit', 'EURY_CONTAINERS', 'CleanUI']
+MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS']
 PNG = b'\x89PNG\r\n\x1a\n'
 
 
@@ -57,23 +58,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def _records(text, event):
-    rows = []
-    for line in text.splitlines():
-        offset = line.find(MARKER + event + ' ')
-        if offset >= 0:
-            def unique(pairs):
-                result = {}
-                for key, value in pairs:
-                    if key in result:
-                        raise ValueError('Duplicate receipt JSON key ' + key)
-                    result[key] = value
-                return result
-            row = json.loads(line[offset + len(MARKER + event + ' '):], object_pairs_hook=unique,
-                             parse_constant=lambda value: (_ for _ in ()).throw(ValueError('Nonfinite JSON ' + value)))
-            if type(row) is not dict:
-                raise ValueError('Receipt must be an object: ' + event)
-            rows.append(row)
-    return rows
+    return receipts.records(text, MARKER, event)
 
 
 def complete(selection, role, text):
@@ -91,11 +76,11 @@ def _one(text, event):
 
 
 def _expected(category):
-    return dict(name='QM supplies', iconKind='pzst-tag', iconValue='food',
+    return dict(name='QM supplies', iconKind='pzst-tag', iconValue='edible',
                 r=.25, g=.5, b=.75, a=1, category=category, categorySelected=True,
                 categoryCount=1, itemCount=0, presetCount=0, priority=6, ruleMode='',
                 include=[], exclude=[], groups=[
-                    {'include': ['food', 'perishable'], 'exclude': ['meat']},
+                    {'include': ['edible', 'perishable'], 'exclude': ['meat']},
                     {'include': ['mechanics'], 'exclude': ['vehiclepart']},
                 ], revision=1)
 
@@ -153,7 +138,7 @@ def _opening_profile(text):
 def verify(root, selection, catalog):
     root = Path(root)
     roles = ['client1', 'client2'] if selection['kind'] == 'mp' else ['client1']
-    issues, receipts, screenshots, timings, opening = [], {}, [], {}, []
+    issues, receipts, screenshots, opening = [], {}, [], []
     try:
         logs = {role: (root / (role + '-launch.log')).read_text(errors='replace') for role in roles}
         authority_role = 'server' if selection['kind'] == 'mp' else 'client1'
@@ -166,9 +151,10 @@ def verify(root, selection, catalog):
         category = prepared['category']
         if selection['kind'] == 'mp' and len(re.findall(re.escape('[STARTUP_TEST] SERVER_READY') + r'(?:\s|$)', authority)) != 1:
             raise ValueError('Missing/duplicate Host server readiness')
-        sequences = {'client1': ['SHOT', 'SHOT', 'DEFAULTS', 'SHOT', 'SHOT', 'SAVE', 'LOCAL', 'COMPLETE']}
+        owner_events = ['SHOT'] * 11 + ['TAGUI', 'SHOT', 'SHOT', 'SHOT', 'DEFAULTS', 'SHOT', 'SHOT', 'SAVE', 'LOCAL']
+        sequences = {'client1': owner_events + ['COMPLETE']}
         if selection['kind'] == 'sp':
-            sequences['client1'] = ['PREPARED', 'SHOT', 'SHOT', 'DEFAULTS', 'SHOT', 'SHOT', 'SAVE', 'LOCAL', 'AUTHORITY', 'COMPLETE']
+            sequences['client1'] = ['PREPARED', *owner_events, 'AUTHORITY', 'COMPLETE']
         else:
             sequences['client2'] = ['SHOT', 'OBSERVER', 'COMPLETE']
             sequences['server'] = ['PREPARED', 'AUTHORITY']
@@ -180,16 +166,14 @@ def verify(root, selection, catalog):
             events = re.findall(re.escape(MARKER) + r'([A-Z]+) ', text)
             if events != expected_events:
                 raise ValueError(role + ' native lifecycle missing, duplicated or reordered')
+        if _one(logs['client1'], 'TAGUI') != dict(oneClick=True, checked=True, advancedApplied=True, foreground=True):
+            raise ValueError('Direct tag selection, Apply or foreground evidence absent')
         expected = _expected(category)
         defaults = _one(logs['client1'], 'DEFAULTS')
-        if (set(defaults) != {'tag', 'item', 'role', 'menuClasses', 'ruleOpenMs', 'ruleEditMs', 'chooserOpenMs'} or defaults['tag'] != 'food'
+        if (set(defaults) != {'tag', 'item', 'role', 'menuClasses'} or defaults['tag'] != 'edible'
                 or defaults['item'] != 'Base.Hammer' or defaults['role'] != 'client1'
-                or type(defaults['menuClasses']) is not int or defaults['menuClasses'] < 2
-                or any(type(defaults[key]) not in (float, int) or type(defaults[key]) is bool
-                       or not math.isfinite(defaults[key]) or defaults[key] < 0
-                       for key in ('ruleOpenMs', 'ruleEditMs', 'chooserOpenMs'))):
+                or type(defaults['menuClasses']) is not int or defaults['menuClasses'] < 2):
             raise ValueError('Tag/item defaults or native/CleanUI menu routes absent')
-        timings = {key: defaults[key] for key in ('ruleOpenMs', 'ruleEditMs', 'chooserOpenMs')}
         if _records(logs['client1'], 'SAVE') != [{'count': 1, 'role': 'client1'}]:
             raise ValueError('Expected exactly one unified Save callback')
         for actor, event, text in [('client1', 'LOCAL', logs['client1']), ('authority', 'AUTHORITY', authority)]:
@@ -201,8 +185,17 @@ def verify(root, selection, catalog):
             if not _exact(receipts['client2'], expected):
                 raise ValueError('Observer global BC appearance or routing differs')
         for role, text in logs.items():
-            names = ['icon', 'tags', 'rules', 'edit'] if role == 'client1' else ['observer']
-            if _records(text, 'SHOT') != [{'name': name, 'role': role} for name in names]:
+            names = (['empty', 'search', 'no-results', 'checked', 'items', 'presets', 'rule', 'color', 'tag-checked', 'tag-scroll', 'tag-dropdown',
+                      'icon', 'tags', 'rules', 'edit', 'minimum'] if role == 'client1' else ['observer'])
+            dimensions = {'empty': (480, 700), 'search': (480, 700), 'no-results': (480, 700),
+                          'checked': (480, 700), 'items': (480, 700), 'presets': (480, 700),
+                          'rule': (480, 700), 'color': (480, 700),
+                          'tag-checked': (480, 700), 'tag-scroll': (480, 700), 'tag-dropdown': (480, 700),
+                          'icon': (480, 700), 'tags': (480, 700), 'rules': (480, 700),
+                          'edit': (480, 700), 'minimum': (420, 600), 'observer': (480, 700)}
+            expected_shots = [{'name': name, 'role': role, 'width': dimensions[name][0],
+                               'height': dimensions[name][1]} for name in names]
+            if _records(text, 'SHOT') != expected_shots:
                 raise ValueError(role + ' screenshots missing, duplicated or reordered')
             screenshots += [_shot(root, role, name) for name in names]
             if not complete(selection, role, text):
@@ -214,9 +207,7 @@ def verify(root, selection, catalog):
     return {'issues': issues,
             'outcomes': [{'actor': role, 'case': 'edit', 'status': 'failed' if issues else 'passed',
                           'reason': '; '.join(issues)} for role in roles],
-            'evidence': {'receipts': receipts, 'screenshots': screenshots, 'timingsMs': timings,
-                         'openingProfile': opening,
+            'evidence': {'receipts': receipts, 'screenshots': screenshots, 'openingProfile': opening,
                          'limits': ['Native callback-driven checks; no physical input claims.',
                                     'Screenshots require visual inspection; presence does not certify layout.',
-                                    'Opening profiles include UI frame intervals and Lua render callbacks, not GPU presentation timestamps.',
-                                    'Timing values have no automatic pass threshold.']}}
+                                    'Opening profiles measure Lua callbacks and UI frame intervals, not GPU presentation timestamps.']}}

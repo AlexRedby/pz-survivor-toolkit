@@ -171,6 +171,15 @@ class FootprintTests(unittest.TestCase):
             if start<=float(row['wallTimeMillis'])<start+getattr(self,'duration',12000): update(row, float(row['wallTimeMillis'])-start)
         write_updates(self.root, rows)
 
+    def test_canonical_clips_keep_motion_and_mesh_checks_with_raw_names(self):
+        log = self.log.replace('Bob_WalkBwdNoAim1Hand', 'Toolkit_CartPivot_Backward').replace('Bob_Run', 'Toolkit_CartPivot_Run').replace('Bob_Walk', 'Toolkit_CartPivot_Walk')
+        report = self.report(log)
+        self.assertTrue(report['motionPass'], report['motionFailures'])
+        self.assertTrue(report['footprintPass'], report['footprintFailures'])
+        for wrong in ('Toolkit_CartPivot_Backwards', 'Toolkit_CartPivot_Walk'):
+            report = self.report(log.replace('Toolkit_CartPivot_Backward', wrong))
+            self.assertFalse(report['motionPass'])
+
     def test_full_matrix_separates_motion_mesh_and_pose_runtime(self):
         report=self.report()
         self.assertTrue(report['motionPass'], report['motionFailures'])

@@ -53,6 +53,14 @@ class StopTimingAnalyzerTest(unittest.TestCase):
             writer = csv.DictWriter(stream, fieldnames=rows[0]);writer.writeheader();writer.writerows(rows)
         return module.analyze(self.root, self.text if text is None else text, selected_cases)
 
+    def test_canonical_heavy_stops_keep_raw_names_and_wrong_aliases_fail_residual_gate(self):
+        text = self.text.replace('Bob_RunToStop2H_Heavy', 'Toolkit_CartPivot_StopRun').replace('Bob_SprintToStop2h_Heavy', 'Toolkit_CartPivot_StopSprint')
+        report = self.analyze(text)
+        self.assertTrue(report['residualBrakingVerified'])
+        self.assertEqual(report['cases'][0]['stops'][0]['heavyTrack']['observedNames'], ['Toolkit_CartPivot_StopRun'])
+        for wrong in ('Toolkit_CartPivot_StopRnu', 'Toolkit_CartPivot_StopSprint', 'Toolkit_CartPivot_Run'):
+            self.assertFalse(self.analyze(text.replace('Toolkit_CartPivot_StopRun', wrong))['residualBrakingVerified'])
+
     def test_measures_both_release_clocks_and_real_track(self):
         report = self.analyze()
         self.assertTrue(report['timingVerified'])

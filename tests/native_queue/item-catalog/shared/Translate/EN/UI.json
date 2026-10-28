@@ -1,0 +1,9 @@
+{
+  "UI_PZST_ItemCatalogReady": "Catalogue ready. Right-click an item to copy its name, ID and tags. F6: return to entrance.",
+  "UI_PZST_ItemCatalogPreparing": "Preparing item catalogue...",
+  "UI_PZST_ItemCatalogInstructions": "Use ordinary inventory windows. Crates are ordered by category; right-click a crate for its number.",
+  "UI_PZST_ItemCatalogItems": "Preparing items:",
+  "UI_PZST_ItemCatalogFloor": "Building catalogue floor:",
+  "UI_PZST_ItemCatalogCrates": "Filling crates:",
+  "UI_PZST_ItemCatalogCopy": "Copy catalogue details"
+}

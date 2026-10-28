@@ -7,12 +7,16 @@ local function test(name, callback)
 end
 
 local function fixture(client)
-    local h = {valid = true, nextID = 0, callbacks = {}, emitted = {}}
+    local h = {valid = true, nextID = 0, callbacks = {}, emitted = {}, now = 100}
     require = function() end
     isClient = function() return client == true end
     instanceof = function(value, kind) return kind == "InventoryItem" and type(value) == "table" and value.inventoryItem end
-    Events = {OnMainMenuEnter = {Add = function(callback) h.callbacks[#h.callbacks + 1] = callback end}}
-    PZSurvivorToolkit = {Settings = {actionQueue = function() return false end}}
+    getTimestampMs = function() return h.now end
+    isItemTransactionDone = function() return h.txDone ~= false end
+    isItemTransactionRejected = function() return h.txRejected == true end
+    Events = {OnMainMenuEnter = {Add = function(callback) h.callbacks[#h.callbacks + 1] = callback end},
+        OnServerCommand = {Add = function(callback) h.receive = callback end}}
+    PZSurvivorToolkit = {Settings = {actionQueue = function() return h.queueEnabled == true end}}
     local function class(name)
         local value = {Type = name}
         value.__index = value
@@ -53,6 +57,8 @@ local function fixture(client)
     function h.player:getAttachedItems() return {getItem = function(_, slot) return h.player.attached[slot] end} end
     function h.player:hasTimedActions() return self.nativeBusy == true end
     function h.player:isDead() return self.dead == true end
+    function h.player:getPlayerNum() return 0 end
+    function h.player:getOnlineID() return 101 end
     function getSpecificPlayer(number) if number == 0 then return h.player end end
     h.queue = {queue = {}, character = h.player}
     function h.queue:indexOf(action)
@@ -109,10 +115,35 @@ local function fixture(client)
         if animated then return ISTimedActionQueue.add(ISAttachItemHotbar:new(bar.chr, item, slot)) end
         bar.chr.attached[slot] = item
     end}
-    h.intent = assert(loadfile(root .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua"))()
-    h.lifecycle = assert(loadfile(root .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua"))()
+    -- Load the real shared proof and ACK observer; only the native transport is modeled.
+    local loaded = {}
+    require = function(name)
+        if name == 'PZSurvivorToolkit/ActionQueueAcknowledgements' or name == 'PZSurvivorToolkit/ActionQueueSettlement'
+            or name == 'PZSurvivorToolkit/ActionQueueTidyIntent' or name == 'PZSurvivorToolkit/ActionQueueLifecycle' then
+            if not loaded[name] then
+                loaded[name] = assert(loadfile(root .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
+            end
+            return loaded[name]
+        end
+    end
+    h.acks = require('PZSurvivorToolkit/ActionQueueAcknowledgements')
+    h.settlement = require('PZSurvivorToolkit/ActionQueueSettlement')
+    h.intent = require('PZSurvivorToolkit/ActionQueueTidyIntent')
+    h.lifecycle = require('PZSurvivorToolkit/ActionQueueLifecycle')
+    function h.receipt(action, state, token)
+        h.receive('PZSurvivorToolkitActions', 'State', {protocol = 1, player = 101,
+            transaction = action.toolkitNativeTransaction, kind = action.toolkitNativeKind,
+            token = token or action.receiptToken, state = state})
+    end
+    function h.startReceipt(action, transaction, token)
+        action.action = action.action or {}
+        h.queue.current = action
+        action.toolkitNativeTransaction, action.toolkitNativeKind = transaction or 7, 'fixture'
+        action.receiptToken = token or '11111111-1111-4111-8111-111111111111'
+        h.receipt(action, 'started')
+    end
     h.intent.install(function(action)
-        return h.valid and (not action or acceptedClasses[getmetatable(action)] and not action.changed
+        return h.valid and (not action or (not h.originalOnlyID or action.item:getID()==h.originalOnlyID) and acceptedClasses[getmetatable(action)] and not action.changed
             and not action.onStartFunc and not action.onCompleteFunc and not action.onCancelFunc
             and not action.retriggerLastAction and not action.onFailFunc and not action.additionalTest)
     end, function(menu,name)
@@ -126,6 +157,7 @@ local function fixture(client)
         function value:getID() return self.id end
         function value:getFullType() return self.kind end
         function value:getContainer() return self.container end
+        function value:getIsCraftingConsumed() return false end
         function value:IsClothing() return self.location ~= nil end
         function value:getBodyLocation() return self.location end
         function value:canBeEquipped() return self.location end
@@ -141,39 +173,43 @@ local function fixture(client)
     end
     function h.transfer(item, destination) return ISInventoryTransferAction:new(h.player, item, item:getContainer(), destination) end
     function h.equip(item, primary, twoHands) return ISEquipWeaponAction:new(h.player, item, 1, primary, twoHands) end
-    function h.complete(action, noEffect, succeeded)
-        local phase = (client or getmetatable(action) == ISInventoryTransferAction) and "perform" or "complete"
-        h.lifecycle.begin(action, phase)
-        if not noEffect then
-            if getmetatable(action) == ISInventoryTransferAction then
-                h.move(action.item, action.destContainer)
-                if action.destContainer ~= h.inventory then
-                    if h.player.primary == action.item then h.player.primary = nil end
-                    if h.player.secondary == action.item then h.player.secondary = nil end
-                    for slot, item in pairs(h.player.attached) do if item == action.item then h.player.attached[slot] = nil end end
-                    for location, item in pairs(h.player.worn) do if item == action.item then h.player.worn[location] = nil end end
-                end
-            elseif getmetatable(action) == ISEquipWeaponAction then
-                local before = h.player.primary and h.player.primary == h.player.secondary
-                if action.twoHands then h.player.primary, h.player.secondary = action.item, action.item
-                elseif action.primary then
-                    if before or h.player.secondary == action.item then h.player.secondary = nil end
-                    h.player.primary = action.item
-                else
-                    if before or h.player.primary == action.item then h.player.primary = nil end
-                    h.player.secondary = action.item
-                end
-                if action.item.activatable then action.item.activated = true end
-            elseif getmetatable(action) == ISUnequipAction then
+    function h.applyEffect(action)
+        if getmetatable(action) == ISInventoryTransferAction then
+            h.move(action.item, action.destContainer)
+            if action.destContainer ~= h.inventory then
                 if h.player.primary == action.item then h.player.primary = nil end
                 if h.player.secondary == action.item then h.player.secondary = nil end
-            elseif getmetatable(action) == ISWearClothing then h.player.worn[action.item.location] = action.item
-            elseif getmetatable(action) == ISAttachItemHotbar then h.player.attached[action.slot] = action.item
-            elseif getmetatable(action) == P4RestoreAction then action.item.activated = action.activated end
-        end
+                for slot, item in pairs(h.player.attached) do if item == action.item then h.player.attached[slot] = nil end end
+                for location, item in pairs(h.player.worn) do if item == action.item then h.player.worn[location] = nil end end
+            end
+        elseif getmetatable(action) == ISEquipWeaponAction then
+            local before = h.player.primary and h.player.primary == h.player.secondary
+            if action.twoHands then h.player.primary, h.player.secondary = action.item, action.item
+            elseif action.primary then
+                if before or h.player.secondary == action.item then h.player.secondary = nil end
+                h.player.primary = action.item
+            else
+                if before or h.player.primary == action.item then h.player.primary = nil end
+                h.player.secondary = action.item
+            end
+            if action.item.activatable then action.item.activated = true end
+        elseif getmetatable(action) == ISUnequipAction then
+            if h.player.primary == action.item then h.player.primary = nil end
+            if h.player.secondary == action.item then h.player.secondary = nil end
+        elseif getmetatable(action) == ISWearClothing then h.player.worn[action.item.location] = action.item
+        elseif getmetatable(action) == ISAttachItemHotbar then h.player.attached[action.slot] = action.item
+        elseif getmetatable(action) == P4RestoreAction then action.item.activated = action.activated end
+    end
+    function h.complete(action, noEffect, succeeded)
+        action.action = action.action or {}
+        h.queue.current = action
+        local phase = (client or getmetatable(action) == ISInventoryTransferAction) and "perform" or "complete"
+        h.lifecycle.begin(action, phase)
+        if not noEffect then h.applyEffect(action) end
         h.lifecycle.finish(action, phase, succeeded ~= false)
         local index = h.queue:indexOf(action)
         if index ~= -1 then table.remove(h.queue.queue, index) end
+        if h.queue.current == action then h.queue.current = nil end
     end
     function h.drain()
         while #h.queue.queue > 0 do h.complete(h.queue.queue[1]) end
@@ -184,7 +220,7 @@ local function fixture(client)
         ISInventoryPaneContextMenu.onGrabItems({item}, 0)
         h.drain()
     end
-    function h.nativeMerge()
+    function h.nativeMerge(onMerged,canObserve)
         assert(NativeActionRoot, 'native source root required')
         local path=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua'
         local source
@@ -192,7 +228,7 @@ local function fixture(client)
             local file=assert(io.open(path));source=file:read('*a');file:close()
         end
         source=source:gsub('\r','')
-        for _,name in ipairs({'canMergeAction','checkQueueList','perform'}) do
+        for _,name in ipairs({'canMergeAction','checkQueueList','perform','stop'}) do
             local body=assert(source:match('(function ISInventoryTransferAction:'..name..'%b().-\nend)'))
             assert(loadstring(body))()
         end
@@ -204,14 +240,20 @@ local function fixture(client)
             if index~=-1 then table.remove(h.queue.queue,index) end
         end}
         createItemTransaction=function() return 1 end
-        removeItemTransaction=function() end
+        removeItemTransaction=function(id,cancel)
+            h.removed=h.removed or {};h.removed[#h.removed+1]={id=id,cancel=cancel}
+        end
+        ISBaseTimedAction.stop=function()
+            h.queue.queue={};h.queue.current=nil
+            h.queue.toolkitOperationGeneration=(h.queue.toolkitOperationGeneration or 0)+1
+        end
         local noop=function() end
         for _,name in ipairs({'playTransferCompleteSound','resetJobDelta','startActionAnim','playSourceContainerCloseSound',
             'playDestContainerCloseSound','stopLoopingSound'}) do ISInventoryTransferAction[name]=noop end
-        ISInventoryTransferAction.isAlreadyTransferred=function(_,item) return item:getContainer()==h.inventory end
+        ISInventoryTransferAction.isAlreadyTransferred=function(action,item) return item:getContainer()==action.destContainer end
         ISInventoryTransferAction.isValid=function(action) return not action.blocked or not action.blocked[action.item:getID()] end
         ISInventoryTransferAction.transferItem=function(action,item) h.move(item,action.destContainer) end
-        h.intent.observeTransfers()
+        h.intent.observeTransfers(onMerged,canObserve)
         function h.prepareNative(action)
             action.action={reset=noop,setTime=noop,stopTimedActionAnim=noop,setLoopedAction=noop,setWaitForFinished=noop}
         end
@@ -229,6 +271,139 @@ local function fixture(client)
     end
     return h
 end
+
+-- Settlement publishes a one-use copy only during a committed waiver. These
+-- isolated Intent checks model that private boundary; Settlement tests own seals.
+local function retainReturn(h,item,destination,owner)
+    local action=h.transfer(item,destination)
+    local handle={}
+    local dto={character=h.player,queue=h.queue,generation=h.queue.toolkitOperationGeneration or 0,
+        item=item,source=h.inventory,destination=destination,owner=owner}
+    local published=true
+    h.settlement.returnRetention=function(candidate,original)
+        if not published or candidate~=handle or original~=action then return end
+        published=false
+        return dto
+    end
+    return action,handle,dto
+end
+for _,client in ipairs({false,true}) do
+    test('committed return intent creates idle state and preserves other restoration '..tostring(client),function()
+        local h=fixture(client)
+        local kept,other,torch,secondary=h.item(),h.item(),h.item(),h.item()
+        torch.activatable=true
+        local action,handle=retainReturn(h,kept,h.source)
+        assert(h.intent.canKeepReturn(action)and h.intent.keepReturn(action,handle))
+        assert(not h.intent.keepReturn(action,handle),'a consumed publication must not re-arm old keep intent')
+        assert(#h.queue.queue==0 and kept:getContainer()==h.inventory,'retention publication must not execute inventory effects')
+        h.restore(function()
+            ISTimedActionQueue.add(h.transfer(kept,h.source))
+            ISTimedActionQueue.add(h.transfer(other,h.source))
+            ISTimedActionQueue.add(h.equip(torch,true,false))
+            ISTimedActionQueue.add(h.equip(secondary,false,false))
+            ISTimedActionQueue.add(P4RestoreAction:new(h.player,torch,true))
+        end)
+        assert(#h.queue.queue==4,'only the exact waived return may disappear from the native P4 batch')
+        h.drain()
+        assert(kept:getContainer()==h.inventory and other:getContainer()==h.source)
+        assert(h.player.primary==torch and h.player.secondary==secondary and torch:isActivated())
+        h.tick();h.tick()
+        h.restore(function()ISTimedActionQueue.add(h.transfer(kept,h.source))end)
+        assert(#h.queue.queue==1,'finished P4 idle session must not retain a permanent item exemption')
+    end)
+    test('return intent matches only its exact native endpoints '..tostring(client),function()
+        for _,mutation in ipairs({'destination','source','item','guard','multi-item','unknown-floor'})do
+            local h=fixture(client)
+            local kept,other=h.item(),h.item()
+            local action,handle=retainReturn(h,kept,h.source)
+            assert(h.intent.keepReturn(action,handle))
+            h.restore(function()
+                local returned=h.transfer(kept,h.source)
+                if mutation=='destination'then returned.destContainer={items={}}
+                elseif mutation=='source'then returned.srcContainer={items={}}
+                elseif mutation=='item'then returned=h.transfer(other,h.source)
+                elseif mutation=='guard'then returned.changed=true
+                elseif mutation=='multi-item'then returned.queueList[1].items[2]=other
+                elseif mutation=='unknown-floor'then returned=P4RestoreFloorAction:new(h.player,kept)end
+                ISTimedActionQueue.add(returned)
+            end)
+            assert(#h.queue.queue==1,mutation..': uncertain or unrelated restoration was suppressed')
+        end
+    end)
+    test('return retention expires on generation loss missing root and proven departure '..tostring(client),function()
+        for _,boundary in ipairs({'generation','missing-root','departure','type-change'})do
+            local h=fixture(client)
+            local kept=h.item()
+            local action,handle=retainReturn(h,kept,h.source)
+            assert(h.intent.keepReturn(action,handle))
+            if boundary=='generation'then h.queue.toolkitOperationGeneration=1
+            elseif boundary=='missing-root'then h.move(kept,h.source);h.tick();h.move(kept,h.inventory)
+            elseif boundary=='departure'then
+                ISTimedActionQueue.add(h.transfer(kept,h.source));h.drain()
+                ISTimedActionQueue.add(h.transfer(kept,h.inventory));h.drain()
+            elseif boundary=='type-change'then kept.kind='Base.Foreign';h.tick();kept.kind='Base.Hammer'end
+            h.restore(function()ISTimedActionQueue.add(h.transfer(kept,h.source))end)
+            assert(#h.queue.queue==1,boundary..': old intent leaked into a later borrowing episode')
+        end
+    end)
+    test('return retention handles only exact carried bag owner replicas '..tostring(client),function()
+        for _,mutation in ipairs({'exact','foreign-id','foreign-type','not-carried'})do
+            local h=fixture(client)
+            local kept,bag=h.item(),h.item(nil,50,'Base.Bag')
+            local old={items={}};bag.contents=old;function bag:getInventory()return self.contents end
+            local action,handle=retainReturn(h,kept,old,{id=bag:getID(),fullType=bag:getFullType()})
+            assert(h.intent.keepReturn(action,handle))
+            local replacement=h.item(nil,mutation=='foreign-id'and 51 or 50,mutation=='foreign-type'and'Base.OtherBag'or'Base.Bag')
+            replacement.contents={items={}};function replacement:getInventory()return self.contents end
+            if mutation=='foreign-id'then h.inventory.items[50]=nil end
+            if mutation=='not-carried'then h.move(replacement,h.source)end
+            h.restore(function()ISTimedActionQueue.add(h.transfer(kept,replacement.contents))end)
+            assert(#h.queue.queue==(mutation=='exact'and 0 or 1),mutation..': wrong bag replica ownership decision')
+        end
+    end)
+    test('exact waived floor return suppresses only its paired native placement '..tostring(client),function()
+        local h=fixture(client)
+        local kept,other=h.item(),h.item()
+        h.source.getType=function()return'floor'end
+        local action,handle=retainReturn(h,kept,h.source)
+        assert(h.intent.keepReturn(action,handle))
+        h.restore(function()
+            ISTimedActionQueue.add(P4RestoreFloorAction:new(h.player,kept))
+            ISTimedActionQueue.add(h.transfer(kept,h.source))
+            ISTimedActionQueue.add(P4RestoreFloorAction:new(h.player,other))
+            ISTimedActionQueue.add(h.transfer(other,h.source))
+        end)
+        assert(#h.queue.queue==2 and h.queue.queue[1].item==other and h.queue.queue[2].item==other,
+            'paired exact placement was retained or unrelated floor restoration was removed')
+    end)
+end
+test('keepReturn rejects uncommitted copied and stale DTO publications',function()
+    for _,mutation in ipairs({'forged','source','destination','item','generation','queue','actor','guard','local-actor','helper'})do
+        local h=fixture()
+        local kept=h.item()
+        local action,handle,dto=retainReturn(h,kept,h.source)
+        if mutation=='forged'then handle={}
+        elseif mutation=='source'then dto.source={}
+        elseif mutation=='destination'then dto.destination={}
+        elseif mutation=='item'then dto.item=h.item()
+        elseif mutation=='generation'then dto.generation=1
+        elseif mutation=='queue'then dto.queue={}
+        elseif mutation=='actor'then dto.character={}
+        elseif mutation=='guard'then h.valid=false
+        elseif mutation=='local-actor'then getSpecificPlayer=function()return{}end
+        elseif mutation=='helper'then ISInventoryTransferUtil.newInventoryTransferAction=function()end end
+        assert(not h.intent.keepReturn(action,handle),mutation..': invalid publication admitted keep intent')
+    end
+end)
+test('loaded P4 requires installed source proof but absent P4 needs no keep adapter',function()
+    local h=fixture()
+    local unloaded=assert(loadfile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'))()
+    P4TidyUpMeister={}
+    assert(not unloaded.canKeepReturn(h.transfer(h.item(),h.source)))
+    assert(not unloaded.keepReturn(h.transfer(h.item(),h.source),{}))
+    P4TidyUpMeister=nil
+    assert(unloaded.canKeepReturn(nil)and unloaded.keepReturn(nil,{}),'missing optional P4 must remain a no-op')
+end)
 
 test("confirmed explicit pickup keeps item and borrowed tool returns", function()
     local h = fixture()
@@ -742,6 +917,138 @@ test("new queue and main menu invalidate old intent", function()
 end)
 
 if NativeActionRoot then
+    test('native return sequence preserves per-attempt effects across reset, stop and byte reuse',function()
+        for _,client in ipairs({false,true}) do
+            for _,stopNext in ipairs({false,true}) do
+                local h=fixture(client);h.queueEnabled=true
+                h.source.isExistYet=function()return true end
+                h.source.getItemById=function(self,id)return self.items[id]end
+                local obligation,merges=nil,0
+                h.nativeMerge(function(action)
+                    merges=merges+1;h.settlement.refreshReturn(action,obligation)
+                end,function(action)return h.settlement.returnMatches(action,obligation)end)
+                local lightOne,lightTwo=h.item(nil,71,'Base.Nails'),h.item(nil,72,'Base.Nails')
+                local heavyOne,heavyTwo=h.item(nil,73),h.item(nil,74)
+                heavyOne.weight,heavyTwo.weight=1,1
+                local executor=h.transfer(lightOne,h.source)
+                ISTimedActionQueue.add(executor)
+                for _,item in ipairs({lightTwo,heavyOne,heavyTwo})do ISTimedActionQueue.add(h.transfer(item,h.source))end
+                h.prepareNative(executor);h.queue.current=executor;executor.transactionId=1
+                local native=executor.action
+                h.originalOnlyID=lightOne:getID()
+                if client then executor:checkQueueList()end
+                local scope=h.settlement.deferred(h.player,{})
+                obligation=h.settlement.obligation(h.settlement.context(scope))
+                local function guard(action,member)
+                    return h.valid and action==executor and action.item:getID()==(member and member.id or lightOne:getID())
+                end
+                for ordinal=1,3 do
+                    assert(h.settlement.beginReturn(executor,obligation,guard),'native continuation must bind its own attempt')
+                    if client then
+                        for _,item in ipairs(executor.queueList[1].items)do h.move(item,h.source)end
+                    end
+                    h.lifecycle.begin(executor,'perform');executor:perform();h.lifecycle.finish(executor,'perform',true)
+                    assert(executor.action==native and h.settlement.finishReturn(obligation,true))
+                    local history=h.settlement.returnAttempts(obligation)
+                    assert(#history==ordinal and history[ordinal].ordinal==ordinal and history[ordinal].state=='completed')
+                    for _,item in ipairs(history[ordinal].items)do assert(item.state=='completed')end
+                    if ordinal==1 and stopNext then
+                        if client then h.txDone,h.txRejected=false,true end
+                        assert(h.settlement.stopReturn(executor,obligation,guard))
+                        executor:stop()
+                        history=h.settlement.returnAttempts(obligation)
+                        assert(#history==2 and history[1].state=='completed' and history[1].items[1].state=='completed'
+                            and history[2].phase=='stop' and history[2].state==(client and 'rejected' or 'unavailable'))
+                        assert(h.settlement.returnState(obligation)=='unavailable','native reset retires live capabilities')
+                        assert(h.removed[#h.removed].cancel==true,'native stop must retain its transaction cancellation')
+                        break
+                    elseif ordinal<3 then
+                        assert(h.settlement.returnState(obligation)=='waiting' and h.settlement.returnMatches(executor,obligation))
+                    end
+                end
+                if not stopNext then
+                    assert(h.settlement.returnState(obligation)=='completed' and #h.queue.queue==0)
+                    local history=h.settlement.returnAttempts(obligation)
+                    assert(#history==3 and history[2].transaction==history[3].transaction,
+                        'reused native transaction byte must retain separate ordinals')
+                    assert(merges>=(client and 4 or 3),'observation-only continuation must reach native merge listeners')
+                end
+            end
+        end
+    end)
+    test('native SP merge and Host group retain exact P4 return members through child wipe',function()
+        for _,client in ipairs({false,true}) do
+            for _,partial in ipairs({false,true}) do
+                local h=fixture(client)
+                h.queueEnabled=true
+                h.source.isExistYet=function()return true end
+                h.source.getItemById=function(self,id)return self.items[id]end
+                local obligation
+                h.nativeMerge(function(action) h.settlement.refreshReturn(action,obligation) end)
+                local one,two=h.item(),h.item()
+                local executor,child=h.transfer(one,h.source),h.transfer(two,h.source)
+                ISTimedActionQueue.add(executor);ISTimedActionQueue.add(child)
+                if partial then executor.blocked={[two:getID()]=true} end
+                h.prepareNative(executor);h.queue.current=executor
+                executor.transactionId=17
+                if client then executor:checkQueueList() end
+                local scope=h.settlement.deferred(h.player,{})
+                obligation=h.settlement.obligation(h.settlement.context(scope))
+                assert(h.settlement.beginReturn(executor,obligation,function()return h.valid end))
+                if client then
+                    h.move(one,h.source)
+                    if not partial then h.move(two,h.source)end
+                end
+                h.lifecycle.begin(executor,'perform')
+                executor:perform()
+                h.lifecycle.finish(executor,'perform',true)
+                assert(h.settlement.finishReturn(obligation,true))
+                assert(child.character==nil and #h.queue.queue==0,'native merge must wipe the actual child')
+                local items=h.settlement.returnItems(obligation)
+                assert(#items==2 and items[1].id==one:getID() and items[2].id==two:getID(),
+                    'SP must capture after native merge; Host must retain its pre-transaction group')
+                assert(items[1].state=='completed' and items[2].state==(partial and 'waiting' or 'completed'))
+                assert(h.settlement.returnState(obligation)==(partial and 'waiting' or 'completed'))
+                if partial then
+                    h.now=h.now+30001
+                    items=h.settlement.returnItems(obligation)
+                    assert(items[1].state=='completed' and items[2].state=='unavailable',
+                        'failed sibling cannot erase or inherit the successful exact native transfer')
+                end
+            end
+        end
+    end)
+    test('native merge observation can attach after installation without replacing its helper',function()
+        local h=fixture();h.nativeMerge()
+        local helper=ISInventoryTransferAction.checkQueueList
+        local calls=0
+        local observer=function(action)
+            calls=calls+1
+            assert(#action.queueList==1 and #action.queueList[1].items==2)
+        end
+        h.intent.observeTransfers(observer);h.intent.observeTransfers(observer)
+        assert(ISInventoryTransferAction.checkQueueList==helper,'late observation must not replace pinned native helper')
+        local one,two=h.item(),h.item()
+        local executor=h.transfer(one,h.source)
+        ISTimedActionQueue.add(executor);ISTimedActionQueue.add(h.transfer(two,h.source))
+        h.performNative(executor)
+        assert(calls==1,'duplicate subscription cannot duplicate observed outcomes')
+    end)
+    test('failed read-only merge observer cannot abort or replay native effects',function()
+        local h=fixture();h.nativeMerge()
+        local failed,healthy=0,0
+        h.intent.observeTransfers(function()failed=failed+1;error('observer failure')end)
+        h.intent.observeTransfers(function()healthy=healthy+1 end)
+        for _=1,2 do
+            local one,two=h.item(),h.item()
+            local executor=h.transfer(one,h.source)
+            ISTimedActionQueue.add(executor);ISTimedActionQueue.add(h.transfer(two,h.source))
+            h.performNative(executor)
+            assert(one:getContainer()==h.source and two:getContainer()==h.source and #h.queue.queue==0,
+                'observer failure must preserve exact native transfers and advancement')
+        end
+        assert(failed==1 and healthy==2,'failed observer must stay quarantined without suppressing independent listeners')
+    end)
     test('native small-item merge retains every explicit ID and returns borrowed neighbor',function()
         for _,client in ipairs({false,true}) do
             local h=fixture(client);h.nativeMerge()
@@ -853,6 +1160,230 @@ if NativeActionRoot then
             ISTimedActionQueue.add(h.transfer(one,h.source));ISTimedActionQueue.add(h.transfer(two,h.source))
         end)
         assert(#h.queue.queue==2,'earlier explicit IDs protected later automatic borrow')
+    end)
+end
+
+for _, order in ipairs({'effect-first', 'receipt-first'}) do
+    test('MP correlated explicit pickup waits both completion gates: ' .. order, function()
+        local h = fixture(true)
+        local item = h.item(h.source)
+        ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+        local action = h.queue.queue[1]
+        h.startReceipt(action)
+        h.complete(action, order == 'receipt-first')
+        if order == 'receipt-first' then h.receipt(action, 'completed') end
+        local callbacks = 0
+        h.restore(function() callbacks = callbacks + 1; ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+        assert(callbacks == 0 and #h.queue.queue == 0,
+            'idle native restoration must wait while a correlated terminal or replication effect is pending')
+        if order == 'receipt-first' then h.move(item, h.inventory) else h.receipt(action, 'completed') end
+        h.restore(function() callbacks = callbacks + 1; ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+        assert(callbacks == 1 and #h.queue.queue == 0 and item:getContainer() == h.inventory,
+            'finished pending intent must confirm after both authoritative gates, without replaying a transfer')
+    end)
+end
+
+for _, terminal in ipairs({'canceled', 'rejected'}) do
+    test('MP ' .. terminal .. ' pickup cannot become explicit intent from inventory state', function()
+        local h = fixture(true)
+        local item = h.item(h.source)
+        ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+        local action = h.queue.queue[1]
+        h.startReceipt(action); h.complete(action)
+        h.receipt(action, terminal)
+        h.restore(function() ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+        assert(#h.queue.queue == 1 and h.queue.queue[1].item == item,
+            'terminal failure must release native restoration even when an effect is visible')
+        h.drain()
+        assert(item:getContainer() == h.source, 'failed intent must not replay its earlier pickup')
+    end)
+end
+
+test('MP duplicate completion cannot resurrect retired explicit pickup intent', function()
+    local h = fixture(true)
+    local item = h.item(h.source)
+    ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+    local action = h.queue.queue[1]
+    h.startReceipt(action); h.complete(action); h.receipt(action, 'completed'); h.tick()
+    -- A genuine later native outgoing action retires the previous explicit pickup.
+    ISTimedActionQueue.add(h.transfer(item, h.source)); h.drain()
+    h.receipt(action, 'completed')
+    h.move(item, h.inventory)
+    h.restore(function() ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+    assert(#h.queue.queue == 1, 'duplicate completion restored an already retired pickup privilege')
+end)
+
+for _, mutation in ipairs({'guard', 'native', 'transaction', 'kind', 'generation', 'receipt-reset', 'ack-module'}) do
+    test('MP pending explicit pickup fails closed after ' .. mutation .. ' change', function()
+        local h = fixture(true)
+        local item = h.item(h.source)
+        ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+        local action = h.queue.queue[1]
+        h.startReceipt(action); h.complete(action)
+        if mutation == 'guard' then h.valid = false
+        elseif mutation == 'native' then action.action = {}
+        elseif mutation == 'transaction' then action.toolkitNativeTransaction = 8
+        elseif mutation == 'kind' then action.toolkitNativeKind = 'other'
+        elseif mutation == 'generation' then h.queue.toolkitOperationGeneration = 1
+        elseif mutation == 'receipt-reset' then h.acks.reset(h.queue)
+        else PZSurvivorToolkit.ActionQueueAcknowledgements = {capture = h.acks.capture, observe = h.acks.observe} end
+        h.receipt(action, 'completed')
+        h.now = h.now + 30001
+        h.restore(function() ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+        assert(#h.queue.queue == 1, 'changed ancestry acquired an explicit return exemption')
+    end)
+end
+
+test('MP signed-byte receipt ID reuse cannot attach stale completion to a later intent', function()
+    local h = fixture(true)
+    local first, second = h.item(h.source), h.item(h.source)
+    ISInventoryPaneContextMenu.onGrabItems({first}, 0)
+    local oldAction = h.queue.queue[1]
+    h.startReceipt(oldAction, -7); h.complete(oldAction)
+    h.acks.reset(h.queue)
+    ISInventoryPaneContextMenu.onGrabItems({second}, 0)
+    local newAction = h.queue.queue[1]
+    h.startReceipt(newAction, -7, '22222222-2222-4222-8222-222222222222')
+    h.complete(newAction)
+    h.receipt(oldAction, 'completed')
+    local callbacks = 0
+    h.restore(function() callbacks = callbacks + 1 end)
+    assert(callbacks == 0, 'old token completed the later pending intent with the same signed-byte ID')
+    h.receipt(newAction, 'completed'); h.now = h.now + 30001
+    h.restore(function()
+        callbacks = callbacks + 1
+        ISTimedActionQueue.add(h.transfer(first, h.source)); ISTimedActionQueue.add(h.transfer(second, h.source))
+    end)
+    assert(callbacks == 1 and #h.queue.queue == 1 and h.queue.queue[1].item == first,
+        'queue reset must retire the old proof while the new exact receipt protects only its own item')
+end)
+
+test('MP explicit confirmed intent remains active with queue management disabled', function()
+    local h = fixture(true)
+    assert(not PZSurvivorToolkit.Settings.actionQueue())
+    local item = h.item(h.source)
+    ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+    local action = h.queue.queue[1]
+    h.startReceipt(action); h.complete(action); h.receipt(action, 'completed')
+    h.restore(function() ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+    assert(#h.queue.queue == 0 and item:getContainer() == h.inventory,
+        'the explicit P4 intent observer incorrectly depends on queue-edit settings')
+end)
+
+test('MP missing terminal receipt releases native restoration after bounded timeout', function()
+    local h = fixture(true)
+    local item = h.item(h.source)
+    ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+    local action = h.queue.queue[1]
+    h.startReceipt(action); h.complete(action)
+    local callbacks = 0
+    h.now = h.now + 29999
+    h.restore(function() callbacks = callbacks + 1 end)
+    assert(callbacks == 0, 'a still-correlated pending effect lost its bounded terminal wait')
+    h.now = h.now + 2
+    h.restore(function() callbacks = callbacks + 1; ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+    assert(callbacks == 1 and #h.queue.queue == 1,
+        'missing terminal receipt held native restoration indefinitely or inferred completion')
+    h.receipt(action, 'completed'); h.drain(); h.move(item, h.inventory)
+    h.restore(function() ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+    assert(#h.queue.queue == 1, 'late timeout completion resurrected explicit intent')
+end)
+
+test('MP pending intent holds restoration only at an idle native boundary', function()
+    local h = fixture(true)
+    local item = h.item(h.source)
+    ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+    local action = h.queue.queue[1]
+    h.startReceipt(action); h.complete(action)
+    h.player.nativeBusy = true
+    local callbacks = 0
+    h.tick(function() callbacks = callbacks + 1 end)
+    assert(callbacks == 1, 'pending observation stalled the ordinary native update while actions were busy')
+    h.player.nativeBusy = false
+    h.restore(function() callbacks = callbacks + 1 end)
+    assert(callbacks == 1, 'the native idle restoration boundary escaped the pending receipt hold')
+end)
+
+test('MP completed receipt without replicated effect times out without replay', function()
+    local h = fixture(true)
+    local item = h.item(h.source)
+    ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+    local action = h.queue.queue[1]
+    h.startReceipt(action); h.complete(action, true); h.receipt(action, 'completed')
+    local callbacks = 0
+    h.restore(function() callbacks = callbacks + 1 end)
+    assert(callbacks == 0 and item:getContainer() == h.source,
+        'receipt-only completion ran native restoration or replayed the missing pickup')
+    h.now = h.now + 30001
+    h.restore(function() callbacks = callbacks + 1 end)
+    assert(callbacks == 1 and item:getContainer() == h.source,
+        'missing replication must release after the bounded wait without executing an effect')
+    h.move(item, h.inventory)
+    h.restore(function() ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+    assert(#h.queue.queue == 1, 'a later unrelated transfer revived timed-out receipt-only intent')
+end)
+
+test('MP unmarked native callback cannot gain proof from an unrelated late pickup', function()
+    local h = fixture(true)
+    local item = h.item(h.source)
+    ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+    h.complete(h.queue.queue[1], true)
+    h.move(item, h.inventory)
+    h.restore(function() ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+    assert(#h.queue.queue == 1, 'unmarked native no-effect callback acquired a correlated replication wait')
+end)
+
+test('MP pending explicit pickup expires when native outgoing transfer ends its borrowing episode', function()
+    local h = fixture(true)
+    local item = h.item(h.source)
+    ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+    local original = h.queue.queue[1]
+    h.startReceipt(original); h.complete(original)
+    ISTimedActionQueue.add(h.transfer(item, h.source)); h.drain()
+    ISTimedActionQueue.add(h.transfer(item, h.inventory)); h.drain()
+    h.receipt(original, 'completed')
+    h.restore(function() ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+    assert(#h.queue.queue == 1 and h.queue.queue[1].item == item,
+        'late old receipt protected a later unrelated borrowing episode')
+end)
+
+test('MP observed pickup intent cannot revive after the item leaves root inventory', function()
+    local h = fixture(true)
+    local item = h.item(h.source)
+    ISInventoryPaneContextMenu.onGrabItems({item}, 0)
+    local original = h.queue.queue[1]
+    h.startReceipt(original); h.complete(original)
+    h.move(item, h.source); h.tick()
+    h.move(item, h.inventory); h.receipt(original, 'completed')
+    h.restore(function() ISTimedActionQueue.add(h.transfer(item, h.source)) end)
+    assert(#h.queue.queue == 1 and h.queue.queue[1].item == item,
+        'late completion revived an old intent after its observed item left root inventory')
+end)
+
+test('transfer lifecycle observers run for automatic pickups without explicit UI intent',function()
+    local h=fixture()
+    local begins,finishes=0,0
+    h.intent.observeTransfers(function() end,nil,{
+        begin=function(action) begins=begins+1;assert(action.item:getContainer()==h.source);return true end,
+        finish=function(action,succeeded) finishes=finishes+1;assert(succeeded and action.item:getContainer()==h.inventory) end,
+    })
+    local item=h.item(h.source)
+    ISTimedActionQueue.add(h.transfer(item,h.inventory));h.drain()
+    assert(begins==1 and finishes==1,'automatic pickup lost the before/after native observation boundary')
+end)
+
+for _,phase in ipairs({'begin','finish'}) do
+    test('failed '..phase..' transfer observer cannot stop native effects or later observers',function()
+        local h=fixture()
+        local broken,healthy=0,0
+        h.intent.observeTransfers(function() end,nil,{[phase]=function() broken=broken+1;error('injected read-only failure') end})
+        h.intent.observeTransfers(function() end,nil,{finish=function() healthy=healthy+1 end})
+        for _=1,2 do
+            local item=h.item(h.source)
+            ISTimedActionQueue.add(h.transfer(item,h.inventory));h.drain()
+            assert(item:getContainer()==h.inventory and #h.queue.queue==0,'observer aborted or replayed native transfer')
+        end
+        assert(broken==1 and healthy==2,'failed observer was not quarantined independently')
     end)
 end
 

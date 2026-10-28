@@ -196,9 +196,10 @@ end
 -- Script choices are prepared lazily once. Live inventory references are re-read when
 -- opening the chooser; their categories can change while the rule editor stays open.
 function Picker:catalogEntries()
-    if self.entries and not self.options.items then return self.entries, self.families end
+    local revision = Tags.revision and Tags.revision() or 0
+    if self.entries and not self.options.items and self.tagRevision == revision then return self.entries, self.families end
     local entries, byId, families, familySet, roots = {}, {}, {}, {}, {}
-    for _, definition in pairs(Schema.categories) do roots[definition[1]] = true end
+    for _, definition in pairs(Schema.categories) do if definition[1] then roots[definition[1]] = true end end
     local function add(id, sourceFamilies)
         local row = byId[id]
         if not row then
@@ -212,6 +213,7 @@ function Picker:catalogEntries()
         end
     end
     local function addSource(ids)
+        ids = Tags.choices and Tags.choices(ids) or ids
         local sourceFamilies = {}
         for _, id in ipairs(ids) do if roots[id] then sourceFamilies[#sourceFamilies + 1] = id end end
         if #sourceFamilies == 0 and ids[1] then sourceFamilies[1] = ids[1] end
@@ -226,12 +228,15 @@ function Picker:catalogEntries()
                 or options.scriptItems and Tags.forScriptItem(source) or Tags.forCategory(source))
         end
     end
+    for _, id in ipairs(Tags.allIds and Tags.allIds() or {}) do
+        if id:sub(1, 7) == "custom:" then add(id, {}) end
+    end
     for _, conditions in ipairs(self.conditions) do
         for _, condition in ipairs(conditions) do add(condition.id, {}) end
     end
     table.sort(entries, function(a,b) if a.label == b.label then return a.id < b.id end; return a.label < b.label end)
     table.sort(families, function(a,b) return Tags.label(a) < Tags.label(b) end)
-    self.entries, self.families = entries, families
+    self.entries, self.families, self.tagRevision = entries, families, revision
     return entries, families
 end
 
@@ -311,11 +316,17 @@ end
 
 function Picker:createChildren()
     ISCollapsableWindowJoypad.createChildren(self)
+    local fontHeight = getTextManager():getFontHeight(UIFont.Small)
+    local controlHeight = math.max(28, fontHeight + 10)
+    local top = math.max(32, self:titleBarHeight() + 8)
+    local footerY = self.height - controlHeight - 12
+    self.hintY = footerY - fontHeight - 10
+    local groupY = self.hintY - controlHeight - 10
     local function button(x, y, w, title, callback)
-        local b = ISButton:new(x, y, w, 28, title, self, callback)
+        local b = ISButton:new(x, y, w, controlHeight, title, self, callback)
         b:initialise(); b:instantiate(); UIStyle.button(b); self:addChild(b); return b
     end
-    self.list = ISScrollingListBox:new(12, 32, self.width - 24, self.height - 142)
+    self.list = ISScrollingListBox:new(12, top, self.width - 24, math.max(40, groupY - top - 8))
     self.list:initialise(); self.list:instantiate()
     self.list.itemheight = math.max(34, getTextManager():getFontHeight(UIFont.Small) + 16)
     self.list.doDrawItem = Picker.drawRow
@@ -331,11 +342,11 @@ function Picker:createChildren()
         else onJoypadDown(list, key, data) end
     end
     self:addChild(self.list)
-    self.addGroupButton = button(12, self.height - 102, self.width - 24, text("AddOr"), function(owner) owner:addGroup() end)
+    self.addGroupButton = button(12, groupY, self.width - 24, text("AddOr"), function(owner) owner:addGroup() end)
     local w = (self.width - 48) / 3
-    self.clearButton = button(12, self.height - 40, w, text("Clear"), Picker.clearRule)
-    self.cancelButton = button(24 + w, self.height - 40, w, text("Cancel"), Picker.close)
-    self.applyButton = button(36 + w * 2, self.height - 40, w, text("Apply"), Picker.apply)
+    self.clearButton = button(12, footerY, w, text("Clear"), Picker.clearRule)
+    self.cancelButton = button(24 + w, footerY, w, text("Cancel"), Picker.close)
+    self.applyButton = button(36 + w * 2, footerY, w, text("Apply"), Picker.apply)
     self.dimmer = ISPanel:new(0, 0, self.width, self.height)
     self.dimmer:initialise(); self.dimmer:instantiate()
     self.dimmer.backgroundColor = {r=0,g=0,b=0,a=0.65}
@@ -362,10 +373,13 @@ end
 
 function Picker:prerender()
     if not Tags.enabled() or closed(self.owner) then self:close(); return end
-    if self.reassertTop then self.reassertTop = false; self:bringToTop() end
+    if self.reassertTop then
+        self.reassertTop = false; self:bringToTop()
+        if self.tagChoice then self.tagChoice:bringToTop(); self.tagChoice.reassertTop = true end
+    end
     ISCollapsableWindowJoypad.prerender(self)
     local hint = self.validationMessage or (self.grabbedJoypad and text("ControllerHint") or "")
-    self:drawText(UIStyle.fit(hint, self.width - 24), 12, self.height - 66, 0.9, 0.75, 0.55, 1, UIFont.Small)
+    self:drawText(UIStyle.fit(hint, self.width - 24), 12, self.hintY, 0.9, 0.75, 0.55, 1, UIFont.Small)
 end
 
 function Picker.open(options)
@@ -390,6 +404,9 @@ function Picker.open(options)
     picker.background, picker.backgroundColor = true, {r=0.04,g=0.04,b=0.04,a=1}
     picker.playerNum = type(options.player) == "number" and options.player or options.player and options.player:getPlayerNum()
     picker:initialise(); picker:instantiate(); picker:addToUIManager()
+    picker:bringToTop()
+    -- The native opening mouse event may raise the owner after this callback.
+    picker.reassertTop = true
     if picker.owner then
         picker.owner.toolkitRulePicker = picker
         if picker.owner.dimmer and picker.owner.dimmer.setVisible then

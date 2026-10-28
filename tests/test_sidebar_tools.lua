@@ -9,7 +9,8 @@ local function test(name, body)
     body(); count = count + 1; print("PASS " .. name)
 end
 local function setup()
-    local w = {height = 720, top = 0, show = true, enabled = true, context = true,
+    local w = {height = 720, top = 0, screenWidth = 1280, screenHeight = 1080,
+        show = true, enabled = true, context = true, writes = {},
         mods = {PZSurvivorToolkit = true}, ui = {}, added = {}, removed = {}}
     local function event()
         local handlers = {}
@@ -27,7 +28,9 @@ local function setup()
     getTexture = function(path) return path end
     getKeyName = function(key) return "KEY_" .. key end
     getText = function(key, arg) return arg and key .. ":" .. arg or key end
-    getCore = function() return {isDoingTextEntry = function() return w.typing end} end
+    getCore = function() return {isDoingTextEntry = function() return w.typing end,
+        getScreenWidth = function() return w.screenWidth end,
+        getScreenHeight = function() return w.screenHeight end} end
     MainScreen = {instance = {setVisible = function(_, value) w.mainVisible = value end}}
     MainOptions = {instance = {
         isVisible = function() return w.optionsVisible end,
@@ -71,7 +74,11 @@ local function setup()
     function ISButton:setImage(value) self.image = value end
     function ISButton:ignoreWidthChange() self.ignoreWidth = true end
     function ISButton:ignoreHeightChange() self.ignoreHeight = true end
-    function ISButton:forceImageSize(width, height) self.imageWidth, self.imageHeight = width, height end
+    function ISButton:forceImageSize(width, height)
+        self.imageWidth, self.imageHeight = width, height
+        self.forcedWidthImage, self.forcedHeightImage = width, height
+    end
+    function ISButton:getX() return self.x end
     function ISButton:getWidth() return self.width end
     function ISButton:getHeight() return self.height end
     function ISButton:getY() return self.y end
@@ -95,6 +102,24 @@ local function setup()
     function ISButton:setY(value) self.y = value end
     function ISButton:setWidth(value) self.width = value end
     function ISButton:setHeight(value) self.height = value end
+    function ISButton:getKeepOnScreen() return self.keepOnScreen ~= false and self.parent == nil end
+    -- Use actual native setters when available: setWidth/Height also clamp position.
+    if NativeActionRoot then
+        local file = assert(io.open(NativeActionRoot .. "/client/ISUI/ISUIElement.lua"))
+        local source = file:read("*a"):gsub("\r\n", "\n"); file:close()
+        for _, name in ipairs({"setX", "setY", "setWidth", "setHeight"}) do
+            local body = assert(source:match("function ISUIElement:" .. name .. "%b().-\nend"))
+            local loader = assert(loadstring(body))
+            setfenv(loader, setmetatable({ISUIElement=ISButton}, {__index=_G})); loader()
+        end
+    end
+    for _, name in ipairs({"setEnable", "setX", "setY", "setWidth", "setHeight", "forceImageSize", "setVisible"}) do
+        local original = ISButton[name]
+        ISButton[name] = function(self, ...)
+            w.writes[name] = (w.writes[name] or 0) + 1
+            return original(self, ...)
+        end
+    end
     function ISButton:render() self.nativeRenders = (self.nativeRenders or 0)+1 end
     function ISButton:drawTextureScaledAspect(texture, x, y, width, height)
         self.tickDraw = {texture=texture, x=x, y=y, width=width, height=height}
@@ -150,6 +175,42 @@ local function setup()
     end
     return w
 end
+
+test("idle sidebar ticks do not repeat writes and live geometry repairs remain immediate", function()
+    local w=setup(); w:loadToolkit()
+    local side=w.data.equipped
+    local light, hub=side.toolkitHighlightButton, side.toolkitToolsButton
+    w.writes={}; w:tick(600)
+    equal(next(w.writes), nil, "unchanged sidebar must not write UI properties")
+    side.x,side.y=40,110; w:tick()
+    equal(light.x,94); equal(light.y,122); equal(hub.x,122)
+    equal(w.writes.setX,2); equal(w.writes.setY,2)
+    equal(w.writes.setWidth,nil); equal(w.writes.setEnable,nil)
+    side.invBtn.width=84; w:tick()
+    equal(light.width,40); equal(light.height,40); equal(hub.x,138)
+    equal(light.forcedWidthImage,36)
+    -- A viewport resize can clamp top-level controls without changing the sidebar.
+    w.screenWidth,w.screenHeight=120,130; w:tick()
+    equal(light.x,80); equal(hub.x,80); equal(light.y,90)
+    w.writes={}; w:tick(120)
+    equal(next(w.writes),nil,"stable screen-edge clamps must not trigger repeated writes")
+    w.screenWidth,w.screenHeight=1280,1080; w:tick()
+    equal(light.x,94); equal(hub.x,138); equal(light.y,122)
+    light.x,light.width,light.visible=1,7,false
+    light.forcedWidthImage=1; w:tick()
+    equal(light.x,94); equal(light.width,40); equal(light.visible,true); equal(light.forcedWidthImage,36)
+    local tooltipRemovals=0
+    hub.tooltipUI={visible=true,setVisible=function(self,value) self.visible=value end,
+        getIsVisible=function(self) return self.visible end,
+        removeFromUIManager=function() tooltipRemovals=tooltipRemovals+1 end}
+    side.visible=false; w:tick(); equal(tooltipRemovals,1)
+    w.writes={}; w:tick(120)
+    equal(next(w.writes),nil); equal(tooltipRemovals,1,"hidden tooltip cleanup must not repeat")
+    hub.tooltipUI.visible=true; w:tick(); equal(tooltipRemovals,2,"newly shown tooltip must still be cleaned")
+    w.dead=true; w:tick(); equal(light.enable,false); equal(hub.enable,false)
+    w.writes={}; w:tick(120); equal(next(w.writes),nil)
+    w.dead=false; side.visible=true; w:tick(); equal(light.enable,true); equal(hub.enable,true)
+end)
 
 test("compact icons sit beside inventory and show status, shortcut and tick", function()
     local w=setup(); w:loadToolkit()
@@ -271,6 +332,18 @@ test("tools hub remains with highlight hidden and opens optional tools and setti
     local last=w.menu; w.dead=true; w:tick(); equal(side.toolkitToolsButton.enable, false)
     side.toolkitToolsButton:click(); equal(w.menu, last)
     w.player=nil; side.toolkitToolsButton:click(); equal(w.menu, last)
+end)
+
+test("warehouse entry passes the owning player to the shared window", function()
+    local w = setup()
+    local previous = LootSorter
+    LootSorter = {toggleManifest = function(num) w.warehousePlayer = num end}
+    w:loadToolkit()
+    w.data.equipped.toolkitToolsButton:click()
+    equal(w.menu.options[1].name, "UI_PZST_Manifest_Open")
+    w.menu.options[1].callback(w.menu.options[1].target)
+    equal(w.warehousePlayer, 2)
+    LootSorter = previous
 end)
 
 test("Wishlist hotkey works without registering a separate sidebar callback", function()

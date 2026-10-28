@@ -7,9 +7,90 @@ local originDebug=false
 local variantIndex,variantStep,variantSince=1,0,0
 local rotaryScale,rotaryStep=1,0
 local pushHeld
+local baseline,pendingAcks,request,replacement,removed,cleanupId=nil,{},0
+local ownedCount=0
+local baselineAck=false
+local initialSettlement,initialSince,beforeSettlement,afterSettlement
 local variants={{script="Base.PickUpTruck",family="heavy"},{script="Base.SportsCar",family="sport"}}
+if config.kind=='mp' then variants=video.push and video.rocker and {{script='Base.PickUpTruck',family='heavy'}} or {} end
 local function log(text) print('[VEHICLE_LIGHTS] '..text) end
 local function clock() return getTimestampMs() end
+local function owned() ownedCount=ownedCount+1;log('OWNED index='..ownedCount..' id='..vehicle:getId()) end
+local function cleaned() log('CLEANUP index='..ownedCount..' id='..cleanupId..' queueDrained=true removed=true') end
+local function drained()
+ local p=getPlayer()
+ if #ISTimedActionQueue.getTimedActionQueue(p).queue~=0 or p:hasTimedActions() then return false end
+ -- Stock B42 Kahlua exposes pairs(), but no global next().
+ for _ in pairs(pendingAcks) do return false end
+ return true
+end
+local function captureBaseline(p)
+ assert(not p:getVehicle() and drained(),'fixture requires an unseated actor and empty native action queue')
+ local b={x=p:getX(),y=p:getY(),z=p:getZ(),dir=p:getDir(),forwardX=p:getForwardDirectionX(),forwardY=p:getForwardDirectionY(),
+  god=p:isGodMod(),ghost=p:isGhostMode(),auto=p:getAutoDrink(),primary=p:getPrimaryHandItem(),secondary=p:getSecondaryHandItem(),
+  guide=SurvivalGuide and SurvivalGuide.instance,guideVisible=SurvivalGuide and SurvivalGuide.instance and SurvivalGuide.instance:getIsVisible(),
+  time=getGameTime():getTimeOfDay(),ui=ISUIHandler.allUIVisible,climate={},panes={},options={},nep={}}
+ for _,index in ipairs({ClimateManager.FLOAT_AMBIENT,ClimateManager.FLOAT_DAYLIGHT_STRENGTH,ClimateManager.FLOAT_NIGHT_STRENGTH,
+  ClimateManager.FLOAT_FOG_INTENSITY,ClimateManager.FLOAT_PRECIPITATION_INTENSITY,ClimateManager.FLOAT_CLOUD_INTENSITY}) do
+  local value=getClimateManager():getClimateFloat(index);b.climate[index]={enabled=value:isEnableAdmin(),value=value:getAdminValue()}
+ end
+ for _,fn in ipairs({getPlayerInventory,getPlayerLoot,getPlayerInfoPanel}) do if fn and fn(0) then b.panes[#b.panes+1]={pane=fn(0),visible=fn(0):getIsVisible()} end end
+ local opts=PZAPI.ModOptions:getOptions('PZSurvivorToolkit')
+ for _,key in ipairs({'VehicleBeamShape','VehicleReverseLight','VehicleLightSpill'}) do b.options[key]=opts:getOption(key):getValue() end
+ for _,key in ipairs({'alwaysOn','lengthMult','intensityMult','debugMode'}) do b.nep[key]=NepHBO7.options[key]:getValue() end
+ local mhp=PZAPI.ModOptions:getOptions('MiniHealthPlus');b.mhp=mhp and mhp:getOption('DisableMod')
+ if b.mhp then b.mhpValue=b.mhp:getValue() end
+ if video.dashboard then b.scale=require('YourDash/DashboardCore').GetScaleKey() end
+ return b
+end
+local function restoreNonPositionBaseline(p)
+ assert(drained() and not p:getVehicle(),'native requests/actions remain at restoration')
+ p:setDir(baseline.dir)
+ p:setForwardDirection(baseline.forwardX,baseline.forwardY)
+ local equipmentChanged=p:getPrimaryHandItem()~=baseline.primary or p:getSecondaryHandItem()~=baseline.secondary
+ p:setPrimaryHandItem(baseline.primary);p:setSecondaryHandItem(baseline.secondary)
+ if isClient() and equipmentChanged then p:updateHandEquips() end
+ p:setGodMod(baseline.god);p:setGhostMode(baseline.ghost);p:setAutoDrink(baseline.auto)
+ local opts=PZAPI.ModOptions:getOptions('PZSurvivorToolkit')
+ for key,value in pairs(baseline.options) do opts:getOption(key):setValue(value) end
+ PZSurvivorToolkit.VehicleLighting.refreshBeams();PZSurvivorToolkit.VehicleLighting.configureReverse()
+ for key,value in pairs(baseline.nep) do NepHBO7.options[key]:setValue(value) end
+ for index,state in pairs(baseline.climate) do local value=getClimateManager():getClimateFloat(index);value:setAdminValue(state.value);value:setEnableAdmin(state.enabled) end
+ getGameTime():setTimeOfDay(baseline.time)
+ if ISUIHandler.allUIVisible~=baseline.ui then ISUIHandler.toggleUI() end
+ for _,entry in ipairs(baseline.panes) do entry.pane:setVisible(entry.visible) end
+ if baseline.guide then assert(SurvivalGuide.instance==baseline.guide,'survival guide replaced');baseline.guide:setVisible(baseline.guideVisible) end
+ if baseline.mhp then baseline.mhp:setValue(baseline.mhpValue);if TwisTonFire_MHP_RefreshModOptions then TwisTonFire_MHP_RefreshModOptions() end end
+ if baseline.scale then require('YourDash/DashboardCore').SetTextureSizeIndex(assert(({['0.75x']=1,['1x']=2,['1.4x']=3,['2x']=4})[baseline.scale])) end
+ lightsFixtureRestore()
+ assert(p:isGodMod()==baseline.god and p:isGhostMode()==baseline.ghost and p:getAutoDrink()==baseline.auto,'actor flags restoration failed')
+ assert(p:getPrimaryHandItem()==baseline.primary and p:getSecondaryHandItem()==baseline.secondary,'equipment restoration failed')
+ assert(ISUIHandler.allUIVisible==baseline.ui,'UI visibility restoration failed')
+ for key,value in pairs(baseline.options) do assert(opts:getOption(key):getValue()==value,'Toolkit option restoration failed '..key) end
+ for key,value in pairs(baseline.nep) do assert(NepHBO7.options[key]:getValue()==value,'high-beam option restoration failed '..key) end
+ for index,state in pairs(baseline.climate) do local value=getClimateManager():getClimateFloat(index)
+  assert(value:isEnableAdmin()==state.enabled and math.abs(value:getAdminValue()-state.value)<.0001,'climate override restoration failed')
+ end
+end
+local function settled(state,p,stage)
+ local now=clock()
+ local idle=drained() and not p:getVehicle() and lightsFixtureMotionIdle()
+ local ready=F.observePositionSettlement(state,p,now,idle)
+ if state.logs<12 and (not state.loggedAt or now-state.loggedAt>=500) then
+  log('POSITION_SETTLING stage='..stage..' generation='..ownedCount..' '..F.settlementText(state,now)..' '..lightsFixtureMotionProbe())
+  state.logs=state.logs+1;state.loggedAt=now
+ end
+ return ready
+end
+local function powerRequest(dash,mode)
+ local family=dash.__YourDashFamily
+ if not isClient() or not ((video.push and family=='sport') or (video.rocker and family=='heavy')) then return end
+ request=request+1
+ local args={family=family,mode=mode,on=mode~='off',id=vehicle:getId(),generation=ownedCount,request=request}
+ pendingAcks[request]=args
+ log('POWER_REQUEST family='..family..' mode='..mode..' on='..tostring(args.on)..' id='..args.id..' generation='..ownedCount..' request='..request)
+ sendClientCommand('VehicleLightsTest','power',args)
+end
 local function hideUI()
  -- Hide only this disposable profile's overlays; lighting mods remain active.
  local options=PZAPI.ModOptions:getOptions('MiniHealthPlus')
@@ -78,16 +159,13 @@ local function dashboardCapture(name)
   ..' box='..math.floor(box:getAbsoluteX())..','..math.floor(box:getAbsoluteY())..','..math.ceil(box:getWidth())..','..math.ceil(box:getHeight())
   ..' lamp='..math.floor(image:getAbsoluteX())..','..math.floor(image:getAbsoluteY())..','..math.ceil(image:getWidth())..','..math.ceil(image:getHeight())
   ..' angle='..tostring(dash.__lightKnobAngle))
- if video.rocker and isClient() then
-  sendClientCommand('VehicleLightsTest','rockerPower',{mode=expected,on=expected~='off'})
- end
+ powerRequest(dash,expected)
  if video.push and dash.__YourDashFamily=='sport' then
   local control=assert(dash.lightsTex)
   assert(control.texture==dash.__light_knob,'sport button must retain its original artwork')
   assert(control.width==dash.__light_knob:getWidthOrig() and control.height==dash.__light_knob:getHeightOrig(),'sport button bounds changed')
   log('PUSH_VIEW '..name..' pressed='..tostring(control.__pressed)
    ..' button='..math.floor(control:getAbsoluteX())..','..math.floor(control:getAbsoluteY())..','..math.ceil(control.width)..','..math.ceil(control.height))
-  if isClient() then sendClientCommand('VehicleLightsTest','rockerPower',{mode=expected,on=expected~='off'}) end
  end
 end
 local function capture(name)
@@ -150,10 +228,31 @@ local function headlights(value)
  if isClient() then sendClientCommand(getPlayer(),'vehicle','setHeadlightsOn',{vehicle=vehicle:getId(),on=value}) end
 end
 Events.OnServerCommand.Add(function(module,command,args)
- if module=='VehicleLightsTest' and command=='vehicle' then vehicleId=args.id end
- if module=='VehicleLightsTest' and command=='rockerPower' then
-  assert(args.on==(args.mode~='off'),'server power acknowledgement mismatch')
-  log((video.push and 'HOST_PUSH_POWER ' or 'HOST_ROCKER_POWER ')..args.mode..' on='..tostring(args.on))
+ if module=='VehicleLightsTest' and command=='vehicle' then assert(args.generation==1,'invalid initial vehicle generation');vehicleId=args.id end
+ if module=='VehicleLightsTest' and command=='replacement' then
+  assert(not replacement and args.old==cleanupId and args.generation==ownedCount+1,'unexpected replacement acknowledgement');replacement=args
+ end
+ if module=='VehicleLightsTest' and command=='removed' then
+  assert(not removed and args.id==cleanupId and args.generation==ownedCount,'unexpected removal acknowledgement');removed=args.id
+ end
+ if module=='VehicleLightsTest' and command=='baselineRestored' then
+  assert(not baselineAck and phase==41 and args.generation==ownedCount,'unexpected baseline acknowledgement')
+  assert(args.primaryID==(baseline.primary and baseline.primary:getID() or -1)
+   and args.secondaryID==(baseline.secondary and baseline.secondary:getID() or -1),'authority equipment differs')
+  assert(type(args.stableMs)=='number' and args.stableMs>=F.settleMilliseconds and type(args.samples)=='number' and args.samples>=F.settleSamples,
+   'authority stationary observation missing')
+  assert(type(args.x)=='number' and type(args.y)=='number' and math.abs(args.x-baseline.x)<.01 and math.abs(args.y-baseline.y)<.01 and args.z==baseline.z,
+   'authority stationary position differs')
+  baselineAck=true
+  afterSettlement=F.newPositionSettlement(baseline)
+  log('BASELINE_RESTORED generation='..args.generation..' primaryID='..args.primaryID..' secondaryID='..args.secondaryID..' position=true')
+ end
+ if module=='VehicleLightsTest' and command=='power' then
+  local expected=assert(pendingAcks[args.request],'duplicate/late server power acknowledgement')
+  for _,key in ipairs({'family','mode','on','id','generation','request'}) do assert(args[key]==expected[key],'server power acknowledgement mismatch '..key) end
+  assert(args.request==request-(function()local n=0;for _ in pairs(pendingAcks)do n=n+1 end;return n end)()+1,'server power acknowledgement order differs')
+  pendingAcks[args.request]=nil
+  log('POWER_ACK family='..args.family..' mode='..args.mode..' on='..tostring(args.on)..' id='..args.id..' generation='..args.generation..' request='..args.request)
  end
 end)
 Events.OnGameStart.Add(function() started=true;since=clock() end)
@@ -168,7 +267,15 @@ Events.OnPostUIDraw.Add(function()
 end)
 local function run()
  local p=getPlayer();if not p or not p:getSquare() then return end
- climate();hideUI()
+ if not baseline then
+  if not initialSettlement then initialSettlement=F.newPositionSettlement(nil);initialSince=clock() end
+  if not settled(initialSettlement,p,'initial') then
+   assert(clock()-initialSince<15000,'initial native actor did not settle '..F.settlementText(initialSettlement,clock())..' '..lightsFixtureMotionProbe());return
+  end
+  baseline=captureBaseline(p)
+  log('POSITION_SETTLED stage=initial generation=0 '..F.settlementText(initialSettlement,clock()))
+ end
+ if phase<40 then climate();hideUI() end
  if phase==0 then
   if clock()-since<12000 then return end
   p:setGodMod(true);p:setGhostMode(true);p:setAutoDrink(false)
@@ -181,6 +288,7 @@ local function run()
   if isClient() then vehicle=vehicleId and getVehicleById(vehicleId) end
   if not vehicle or clock()-since<2000 then return end
   assert(vehicle:getSquare(),'spawned vehicle is not in world')
+  owned()
   vehicle:enter(0,p);vehicle:setCharacterPosition(p,0,'inside');vehicle:transmitCharacterPosition(0,'inside')
   triggerEvent('OnEnterVehicle',p)
   assert(vehicle:isDriver(p),'driver entry failed')
@@ -265,6 +373,7 @@ local function run()
     headlights(true);NepHBO7.deactivateHighBeams(vehicle);lightsFixtureCamera(1.2)
     originDebug=true;label='standard_geometry';phase=31;since=clock()
    else phase=30;variantStep=0 end
+  elseif video.dashboard and video.push and video.rocker then phase=30;variantStep=0
   else assert(toolkitVideoStop());stopSince=clock();phase=11 end
  elseif phase==32 and clock()-since>1800 then
   local scales={'0.75x','1x','1.4x','2x'}
@@ -304,16 +413,35 @@ local function run()
   local spec=variants[variantIndex]
   if not spec then assert(toolkitVideoStop());stopSince=clock();phase=11;return end
   if variantStep==0 then
-   headlights(false);vehicle:exit(p)
+   if not drained() then assert(clock()-since<15000,'native queue/power acknowledgements did not drain');return end
+   headlights(false);vehicle:exit(p);triggerEvent('OnExitVehicle',p)
    local x,y=origin.x,origin.y+(variantIndex-1)*10
    p:teleportTo(x+2,y+2,0)
-   vehicle=F.prepare(p,x,y,origin.dir,spec.script)
+   cleanupId=vehicle:getId()
+   if isClient() then
+    sendClientCommand('VehicleLightsTest','replace',{id=cleanupId,generation=ownedCount,x=x,y=y,dir=origin.dir,script=spec.script})
+    variantSince=clock();variantStep=15;return
+   end
+   F.remove(vehicle);cleaned()
+   vehicle=F.prepare(p,x,y,origin.dir,spec.script);owned()
+   variantStep=16
+  elseif variantStep==15 then
+   if not removed or getVehicleById(cleanupId) then assert(clock()-variantSince<15000,'owned Host removal did not replicate');return end
+   cleaned()
+   sendClientCommand('VehicleLightsTest','removeObserved',{id=cleanupId,generation=ownedCount})
+   removed=nil;variantStep=17;variantSince=clock()
+  elseif variantStep==17 then
+   if not replacement or not getVehicleById(replacement.id) then assert(clock()-variantSince<15000,'owned Host replacement did not replicate');return end
+   vehicle=assert(getVehicleById(replacement.id));owned();replacement=nil
+   variantStep=16
+  elseif variantStep==16 then
    vehicle:enter(0,p);vehicle:setCharacterPosition(p,0,'inside');vehicle:transmitCharacterPosition(0,'inside')
    triggerEvent('OnEnterVehicle',p)
    getPlayerVehicleDashboard(0):setVehicle(vehicle)
    require('YourDash/DashboardCore').SetTextureSizeIndex(2)
    if video.origins then lightsFixtureCamera(1.2) end
-   vehicle:tryStartEngine(true);variantSince=clock();variantStep=1
+   if isClient() then sendClientCommand('VehicleLightsTest','start',{}) else vehicle:tryStartEngine(true) end
+   variantSince=clock();variantStep=1
   elseif variantStep==1 then
    if not vehicle:isEngineRunning() then assert(clock()-variantSince<18000,'variant engine start');return end
    NepHBO7.deactivateHighBeams(vehicle)
@@ -366,8 +494,41 @@ local function run()
  elseif phase==11 then
   local s=toolkitVideoStatus()
   if s.state~='completed' and s.state~='failed' then assert(clock()-stopSince<20000,'recorder did not finish');return end
+  assert(s.state=='completed',s.error)
+  if not drained() then assert(clock()-stopSince<20000,'final native queue/power acknowledgements did not drain');return end
   log('VIDEO_RESULT '..'{"state":"'..s.state..'","file":"'..s.file..'","frames":'..s.frames..',"seconds":'..s.seconds..',"captured":'..s.captured..',"dropped":'..s.dropped..',"width":'..s.width..',"height":'..s.height..',"error":"'..s.error..'"}')
-  assert(s.state=='completed',s.error);lightsFixtureInput(-1);done=true;log('COMPLETE road')
+  lightsFixtureInput(0);vehicle:exit(p);triggerEvent('OnExitVehicle',p);cleanupId=vehicle:getId()
+  if isClient() then sendClientCommand('VehicleLightsTest','remove',{id=cleanupId,generation=ownedCount}) else F.remove(vehicle);removed=cleanupId end
+  phase=40;since=clock()
+ elseif phase==40 then
+  if not removed or isClient() and getVehicleById(cleanupId) then assert(clock()-since<15000,'owned vehicle removal did not replicate');return end
+  cleaned();restoreNonPositionBaseline(p)
+  log('BASELINE_STATE_RESTORED generation='..ownedCount..' settings=true orientation=true equipment=true')
+  beforeSettlement=F.newPositionSettlement(nil);phase=42;since=clock()
+ elseif phase==42 then
+  if not settled(beforeSettlement,p,'before') then
+   assert(clock()-since<15000,'native exit motion did not settle '..F.settlementText(beforeSettlement,clock())..' '..lightsFixtureMotionProbe());return
+  end
+  log('POSITION_SETTLED stage=before generation='..ownedCount..' '..F.settlementText(beforeSettlement,clock()))
+  local before,after=F.restorePosition(p,baseline)
+  log('POSITION_RESTORE generation='..ownedCount..' before='..before..' after='..after)
+  afterSettlement=F.newPositionSettlement(baseline)
+  phase=41;since=clock()
+  if isClient() then sendClientCommand('VehicleLightsTest','restoreBaseline',{generation=ownedCount,
+   x=baseline.x,y=baseline.y,z=baseline.z,
+   primaryID=baseline.primary and baseline.primary:getID() or -1,secondaryID=baseline.secondary and baseline.secondary:getID() or -1})
+  else baselineAck=true end
+ elseif phase==41 then
+  local ready=settled(afterSettlement,p,'after')
+  if not baselineAck or not ready then
+   assert(clock()-since<15000,'baseline restoration did not settle authority='..tostring(baselineAck)..' '..F.positionText(p,baseline)..' '..F.settlementText(afterSettlement,clock())..' '..lightsFixtureMotionProbe());return
+  end
+  assert(drained() and not p:getVehicle(),'actions/vehicle reappeared after restoration')
+  assert(p:getPrimaryHandItem()==baseline.primary and p:getSecondaryHandItem()==baseline.secondary,'equipment changed after restoration')
+  assert(math.abs(p:getX()-baseline.x)<.01 and math.abs(p:getY()-baseline.y)<.01 and p:getZ()==baseline.z,
+   'position changed after restoration '..F.positionText(p,baseline))
+  log('POSITION_SETTLED stage=after generation='..ownedCount..' '..F.settlementText(afterSettlement,clock()))
+  log('RESTORED queueDrained=true settings=true');done=true;log('COMPLETE road')
  end
 end
 Events.OnTick.Add(function()

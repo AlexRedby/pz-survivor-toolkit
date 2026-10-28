@@ -25,7 +25,8 @@ for _, name in ipairs({'OnGameStart','OnCreatePlayer','OnObjectAdded','OnInitGlo
     end
 end
 local moddata = {}
-ModData = {getOrCreate = function(key) moddata[key] = moddata[key] or {}; return moddata[key] end,
+ModData = {get = function(key) return moddata[key] end,
+    getOrCreate = function(key) moddata[key] = moddata[key] or {}; return moddata[key] end,
     transmit = function() end, request = function() end}
 getFileReader = function(path, create)
     if create and disk[path] == nil then disk[path] = '' end
@@ -50,7 +51,7 @@ local current = {getX = function() return 10 end, getY = function() return 19 en
     isBlockedTo = function(self) return self.blocked end}
 local player = {getCurrentSquare = function() return current end, getUsername = function() return 'survivor' end}
 getSpecificPlayer = function() return player end
-local container = {isLockedToCharacter = function(self) return self.locked end}
+local container = {isLockedToCharacter = function(self) return self.locked end, getType = function() return 'crate' end}
 local object = {md = {}, getSquare = function() return square end, getObjectIndex = function() return 0 end,
     getContainerCount = function() return 1 end, getContainerByIndex = function() return container end,
     transmitModData = function(self) self.transmits = (self.transmits or 0) + 1 end}
@@ -94,6 +95,46 @@ end
 local function target()
     return LootSorter.findDesignatedOnSquare(square, player)[1] or {cats = {}, items = {}, rules = {}}
 end
+do
+ local toyBox={cats={},rules={{mode='all',include={'toy'},exclude={}}}}
+ local weaponBox={cats={},rules={{mode='all',include={'weapon'},exclude={}}}}
+ local toy=record('weaponRanged','Base.Revolver_CapGun')
+ local weapon=record('weaponRanged','Base.Crossbow')
+ assert(Rules.matches(toyBox,toy) and not Rules.matches(toyBox,weapon), 'toy box inherited ranged category')
+ assert(not Rules.matches(weaponBox,toy) and Rules.matches(weaponBox,weapon), 'weapon box accepted a cap gun')
+ assert(Rules.matches(toyBox,record('ammunitionRanged','Base.CapGunCap')), 'toy box rejected caps')
+ local matcher=Rules.matcher()
+ assert(matcher(toyBox,toy) and not matcher(weaponBox,toy), 'planned routing disagreed with direct toy routing')
+end
+do
+    local ordinary={cats={},rules={{mode='all',include={'container'},exclude={'wearable'}}}}
+    local bag=record('Container','Mod.Backpack')
+    local case=record('Container','Mod.Case')
+    for _,value in ipairs({bag,case}) do
+        value.ref.IsInventoryContainer=function() return true end
+        value.ref.getBodyLocation=function() return nil end
+    end
+    bag.ref.canBeEquipped=function() return 'Back' end
+    case.ref.canBeEquipped=function() return nil end
+    assert(not Rules.matches(ordinary,bag) and Rules.matches(ordinary,case),
+        'Container excluding Wearable did not distinguish bags from hand-carried cases')
+    local matcher=Rules.matcher()
+    assert(not matcher(ordinary,bag) and matcher(ordinary,case),'planned container exclusion differed')
+end
+do
+    local readingBox={cats={},rules={{mode='all',include={'readable'},exclude={}}}}
+    local note=record('literatureWriteable','Base.Notebook')
+    note.ref.IsLiterature=function() return true end
+    note.ref.canBeWrite=function() return true end
+    note.ref.isEmptyPages=function(self) return not self.written end
+    assert(not Rules.matches(readingBox,note),'sorter accepted blank paper as readable')
+    note.ref.written=true
+    assert(Rules.matches(readingBox,note),'sorter rejected a written note')
+    local matcher=Rules.matcher()
+    assert(matcher(readingBox,note),'planner rejected a written note')
+    note.ref.written=false
+    assert(not Rules.matcher()(readingBox,note),'a new plan retained previously written content')
+end
 local rule={mode='all',include={'food'},exclude={'perishable'}}
 local function args(value) return {x=10,y=20,z=0,object=0,ci=0,rule=value or rule,baseRevision=Rules.getBoxRevision(object,0)} end
 local nativeLootSorter = LootSorter
@@ -121,6 +162,7 @@ assert(#boxes == 1 and Rules.matches(boxes[1],record('Food')), 'sorter gather mi
 local Presets = require 'PZSurvivorToolkit/QuartermasterPresets'
 mode='client'; LootSorter._receivedRegistry=moddata.LootSorter_Registry
 assert(Presets.receive({schema=1,revision=0,presets=presets(),rules={}}))
+assert(require('PZSurvivorToolkit/ContainerGroups').receive({schema=1,revision=0,nextId=0,groups={}}))
 safe=false
 boxes=LootSorter.gatherBoxes(player)
 assert(#boxes==0 and not object.md.LSBox, 'rule lookup touched forbidden safehouse before permission gate')
@@ -257,10 +299,11 @@ assert(disk['QuartermasterPresets.txt'] == legacyNative and disk['PZSTQuartermas
     'snapshot writes changed legacy files')
 do
     local value = {cats = {Precise = 'truthy', Ignored = false}, items = {Beans = true},
-        presets = {Bound = 41}, priority = '7', pzstTagRule = rule}
+        presets = {Bound = 41}, priority = '7', noDuplicates = true, pzstTagRule = rule}
     local snapshot = LootSorter.snapshotDesignation(value)
     assert(snapshot.cats.Precise == 'truthy' and not snapshot.cats.Ignored and snapshot.presets.Bound == 41
-        and snapshot.priority == 7 and LootSorter.snapshotDesignation({priority = 'invalid'}).priority == 0,
+        and snapshot.priority == 7 and snapshot.noDuplicates and not LootSorter.snapshotDesignation({}).noDuplicates
+        and LootSorter.snapshotDesignation({priority = 'invalid'}).priority == 0,
         'designation snapshot lost truthy values, generations or numeric priority')
     snapshot.cats.Precise, snapshot.items.Beans, snapshot.presets.Bound = nil, nil, 42
     snapshot.pzstTagRule.include[1], snapshot.pzstTagRule.exclude[1] = 'electrical', 'meat'
@@ -282,10 +325,12 @@ do
             assert(self.md.LSBox['0'].Precise == 'truthy' and not self.md.LSBox['0'].Old
                 and self.md.LSBoxItems['0'].Beans and not self.md.LSBoxItems['0'].OldItem
                 and self.md.LSBoxPresets['0'].Bound == 41 and not self.md.LSBoxPresets['0'].OldPreset
-                and self.md.LSBoxPriority['0'] == 7, 'publication exposed a partial native designation')
+                and self.md.LSBoxPriority['0'] == 7 and self.md.LSBoxNoDuplicates['0'],
+                'publication exposed a partial native designation')
         else
             assert(not self.md.LSBox['0'] and not self.md.LSBoxItems['0'] and not self.md.LSBoxPresets['0']
-                and not self.md.LSBoxPriority['0'], 'empty complete designation did not clear every native field')
+                and not self.md.LSBoxPriority['0'] and not self.md.LSBoxNoDuplicates['0'],
+                'empty complete designation did not clear every native field')
         end
     end
     LootSorter.setBoxDesignation(object, 0, value)
@@ -312,6 +357,53 @@ do
     object.md, LootSorter.clipboard, LootSorter.addCoord = originalData, originalClipboard, originalAdd
 end
 -- Client commands carry the selected authenticated player; failures and timeouts leave caller in control.
+do
+    local Groups = require 'PZSurvivorToolkit/ContainerGroups'
+    local Config = require 'PZSurvivorToolkit/QuartermasterContainerConfig'
+    local Appearance = require 'PZSurvivorToolkit/ContainerAppearance'
+    local Discovery = require 'PZSurvivorToolkit/ManifestDiscovery'
+    local originalData, originalObjects, originalInstanceof = object.md, square.getObjects, instanceof
+    object.md = {}
+    local peer = {md = {}, getSquare = object.getSquare, getContainerCount = object.getContainerCount,
+        getContainerByIndex = object.getContainerByIndex, getModData = object.getModData,
+        hasModData = object.hasModData, transmitModData = object.transmitModData, getObjectIndex = function() return 1 end}
+    square.getObjects = function() return list({object, peer}) end
+    instanceof = function(value, kind) return (value == object or value == peer) and kind == 'IsoObject' end
+    local function save(obj, config, selectedRule)
+        local request = args(selectedRule)
+        request.object, request.baseRevision, request.configuration = obj:getObjectIndex(), Rules.getBoxRevision(obj, 0), config
+        assert(Rules.applyBox(player, request) == 'ok')
+    end
+    save(object, {cats = {Food = true}, items = {Beans = true}, presets = {}, priority = 4, noDuplicates = false,
+        appearance = {name = 'Pantry'}, groupOperation = {mode = 'create'}}, rule)
+    local id = Groups.link(object, 0)
+    save(peer, {groupOperation = {mode = 'join', id = id}}, rule)
+    local draft = Groups.resolve(object, 0).configuration
+    draft.cats, draft.items, draft.priority, draft.noDuplicates = {Electronics = true}, {Radio = true}, 12, true
+    draft.appearance = {name = 'Devices', icon = {kind = 'item', value = 'Base.RadioBlack'}}
+    draft.groupOperation = {mode = 'update', id = id, baseRevision = 1}
+    save(object, draft, {mode = 'all', include = {'electrical'}, exclude = {}})
+    assert(peer.md.LSBox['0'].Food and peer.md.LSBoxPriority['0'] == 4, 'group update unexpectedly rewrote peer storage')
+    assert(LootSorter.getBoxCats(peer, 0).Electronics and not LootSorter.getBoxCats(peer, 0).Food
+        and LootSorter.getBoxItems(peer, 0).Radio and LootSorter.getBoxPriority(peer, 0) == 12
+        and LootSorter.getBoxNoDuplicates(peer, 0) and Rules.getBox(peer, 0).include[1] == 'electrical'
+        and Config.read(peer, 0, player).priority == 12 and Appearance.read(peer, 0, player).name == 'Devices',
+        'a linked reader used the stale materialized configuration')
+    local discovered = LootSorter.findDesignatedOnSquare(square, player)
+    assert(#discovered == 2 and discovered[2].groupId == id and discovered[2].priority == 12
+        and discovered[2].noDuplicates and discovered[2].cats.Electronics and not discovered[2].cats.Food
+        and Discovery.designated(peer, 0), 'sort/manifest discovery lost effective group settings')
+    LootSorter.setBoxCats(peer, 0, {Medical = true})
+    assert(not Groups.link(peer, 0) and LootSorter.getBoxCats(peer, 0).Medical
+        and LootSorter.getBoxPriority(peer, 0) == 12 and Appearance.read(peer, 0, player).name == 'Devices'
+        and LootSorter.getBoxCats(object, 0).Electronics and Groups.resolve(object, 0).rev == 2,
+        'legacy local edit stayed linked or lost the current inherited configuration')
+    save(peer, {groupOperation = {mode = 'join', id = id}}, rule)
+    LootSorter.setBoxDesignation(peer, 0, {cats = {Medical = true}})
+    assert(not Groups.link(peer, 0) and LootSorter.getBoxCats(peer, 0).Medical
+        and Appearance.read(peer, 0, player).name == 'Devices', 'complete local designation lost shared appearance on detach')
+    object.md, square.getObjects, instanceof = originalData, originalObjects, originalInstanceof
+end
 mode='client'; local sent, callback
 -- A fresh client process installs the shared transport's client sweep.
 dofile(root .. 'shared/LootSorter_Rpc.lua')
@@ -387,23 +479,25 @@ do
     end
     baseline()
     LootSorter.clipboard = {cats = {ClipboardA = true}, items = {ItemA = true}, presets = {Pantry = 41},
-        priority = 3, pzstTagRule = {mode = 'all', include = {'food'}, exclude = {'perishable'}}}
+        priority = 3, noDuplicates = true, pzstTagRule = {mode = 'all', include = {'food'}, exclude = {'perishable'}}}
     local clipboardA = LootSorter.clipboard
     assert(LootSorter.pasteDesignation(object, 0) and publications == 0 and object.md.LSBox['0'].Original,
         'paste wrote native selections before authority accepted its configuration')
     assert(sent.baseRevision == 1 and sent.configuration and sent.configuration.cats.ClipboardA and sent.configuration.items.ItemA
-        and sent.configuration.presets.Pantry == 41 and sent.configuration.priority == 3
+        and sent.configuration.presets.Pantry == 41 and sent.configuration.priority == 3 and sent.configuration.noDuplicates
         and sent.rule.include[1] == 'food' and sent.configuration.appearance == nil,
         'paste did not submit the complete sorting-only configuration with its captured revision')
     clipboardA.cats.ClipboardA, clipboardA.items.ItemA, clipboardA.presets.Pantry = nil, nil, 42
     clipboardA.pzstTagRule.include[1], clipboardA.pzstTagRule.exclude[1] = 'electrical', 'meat'
+    clipboardA.noDuplicates = false
     local expectedClipboard = {cats = {ClipboardB = true}, items = {ItemB = true}, presets = {}, priority = 9}
     LootSorter.clipboard = expectedClipboard
     object.md.unrelated = 'changed while pending'
     respond('ok')
     assert(Rules.getBoxRevision(object, 0) == 2 and Rules.getBox(object, 0).include[1] == 'food'
         and object.md.LSBox['0'].ClipboardA and not object.md.LSBox['0'].Original and object.md.LSBoxItems['0'].ItemA
-        and object.md.LSBoxPresets['0'].Pantry == 41 and object.md.LSBoxPriority['0'] == 3,
+        and object.md.LSBoxPresets['0'].Pantry == 41 and object.md.LSBoxPriority['0'] == 3
+        and LootSorter.getBoxNoDuplicates(object, 0),
         'accepted paste did not mirror every sorting layer from its detached snapshot')
     assert(publications == 0 and added == 0 and removed == 0 and LootSorter.clipboard == expectedClipboard,
         'accepted paste republished client data or changed the current clipboard')
@@ -415,7 +509,7 @@ do
     local copied = LootSorter.copyDesignation(object, 0)
     object.md.LSBox['0'].ClipboardA, object.md.LSBoxItems['0'].ItemA, object.md.LSBoxPresets['0'].Pantry = nil, nil, 42
     object.md[Rules.FIELD]['0'].include[1], object.md[Rules.FIELD]['0'].exclude[1] = 'electrical', 'meat'
-    assert(copied.cats.ClipboardA and copied.items.ItemA and copied.presets.Pantry == 41
+    assert(copied.cats.ClipboardA and copied.items.ItemA and copied.presets.Pantry == 41 and copied.noDuplicates
         and copied.pzstTagRule.include[1] == 'food' and copied.pzstTagRule.exclude[1] == 'perishable',
         'copy aliased source native sets or nested rule')
     copied.cats.ClipboardA, copied.pzstTagRule.include[1] = 'changed', 'seed'
@@ -441,6 +535,10 @@ do
     LootSorter.copyDesignation(object, 0)
     assert(LootSorter.hasClipboardContent() and LootSorter.describeClipboard() == 'UI_PZST_QMTagRule',
         'rule-only clipboard was hidden or described as empty')
+    object.md = {LSBoxNoDuplicates = {['0'] = true}}
+    LootSorter.copyDesignation(object, 0)
+    assert(LootSorter.hasClipboardContent() and LootSorter.describeClipboard() == 'UI_PZST_ContainerNoDuplicates',
+        'duplicate-only clipboard was hidden or lost its translated description')
     baseline()
     expectedClipboard = {}
     LootSorter.clipboard = expectedClipboard
@@ -468,15 +566,16 @@ do
     LootSorter.addCoord, LootSorter.removeCoords, LootSorter.notify = originalAdd, originalRemove, originalNotify
 end
 do
-    local previousProvider = OrganizedCategories
+    local Categories = require 'PZSurvivorToolkit/ItemCategories'
+    local previousPrepare = Categories.prepareItem
     local previousGather, previousNotify = LootSorter.gatherBoxesOrWarn, LootSorter.notify
     local item = {category = 'Material', getDisplayCategory = function(self) return self.category end}
     local source = {getItems = function() return list({item}) end, isInCharacterInventory = function() return true end}
     local gathered = false
-    OrganizedCategories = {applyItemDisplayOverride = function(current)
+    Categories.prepareItem = function(current)
         assert(current == item, 'sort replaced the original inventory item')
         current.category = 'craftingTailoring_material'
-    end}
+    end
     LootSorter.gatherBoxesOrWarn = function()
         gathered = true
         assert(item.category == 'craftingTailoring_material', 'owned sort did not prepare its raw source before planning')
@@ -484,8 +583,8 @@ do
     end
     LootSorter.notify = function() end
     LootSorter.sort(source, 0)
-    assert(gathered and item.category == 'craftingTailoring_material', 'owned sort required an external preparation wrapper')
-    OrganizedCategories = previousProvider
+    assert(gathered and item.category == 'craftingTailoring_material', 'owned sort did not invoke its classification boundary')
+    Categories.prepareItem = previousPrepare
     LootSorter.gatherBoxesOrWarn, LootSorter.notify = previousGather, previousNotify
 end
 do
@@ -532,6 +631,25 @@ do
         'debug sort lost its box diagnostics or the required planner snapshot')
     assert(boxLogs[1] == 'box[1] cap=10 used=2.0 dist=1 cats=[Food ] items=[Apple ]',
         'lazy diagnostics changed the debug box output')
+    -- A loaded but unreachable member still contributes occupancy before destination pruning.
+    local firstBook = {getFullType = function() return 'Base.BookCooking1' end}
+    local blockedSquare = {}
+    local peer = {square = blockedSquare, container = {getItems = function() return list({firstBook}) end},
+        cats = {Food = true}, groupId = 'library', noDuplicates = true}
+    destination.getItems = function() return list({}) end
+    LootSorter.gatherBoxesOrWarn = function()
+        return {peer, {square = square, container = destination, cats = {Food = true},
+            groupId = 'library', noDuplicates = true, dist = 1}}
+    end
+    AdjacentFreeTileFinder.Find = function(sq) return sq == square and current or nil end
+    debug = false
+    LootSorter.planTrips = function(items, gathered, ...)
+        assert(#gathered == 1 and gathered[1].duplicateScope == 'library'
+            and gathered[1].existingTypes['Base.BookCooking1'] == firstBook
+            and #gathered[1].ref.groupPeers == 2, 'sort lost group occupancy or live peer references before planning')
+        return previousPlanner(items, gathered, ...)
+    end
+    LootSorter.sort(source, 0)
     LootSorter.gatherBoxesOrWarn, LootSorter.notify, LootSorter.planTrips = previousGather, previousNotify, previousPlanner
     LootSorter.isDebug, LootSorter.DBG, LootSorter.BOX_FILL_FRACTION = previousDebug, previousLog, previousFill
     AdjacentFreeTileFinder = previousFinder

@@ -98,6 +98,12 @@ class CollisionAnalyzerTests(unittest.TestCase):
         self.assertFalse(report['motionPass'])
         return [failure[1] for failure in report['failures']]
 
+    def test_canonical_forward_and_backward_gaits_keep_the_collision_gate(self):
+        log = self.log.replace('Bob_WalkBwdNoAim1Hand@', 'Toolkit_CartPivot_Backward@').replace('Bob_Run@', 'Toolkit_CartPivot_Run@')
+        self.assertTrue(analyzer.analyze(log)['motionPass'])
+        self.assertIn('native reverse gait does not progress', self.failures(log.replace('Toolkit_CartPivot_Backward@', 'Toolkit_CartPivot_Walk@')))
+        self.assertIn('native reverse gait does not progress', self.failures(log.replace('Toolkit_CartPivot_Backward@', 'Toolkit_CartPivot_Backwards@')))
+
     def test_complete_native_controls_and_matrix(self):
         report = analyzer.analyze(self.log)
         self.assertTrue(report['motionPass'], report['failures'])

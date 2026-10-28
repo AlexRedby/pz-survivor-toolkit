@@ -1,5 +1,11 @@
 from pathlib import Path
 import argparse,csv,json,math,re,statistics
+import importlib.util
+
+_clip_spec = importlib.util.spec_from_file_location('cart_native_clip_names', Path(__file__).with_name('clip_names.py'))
+_clip_names = importlib.util.module_from_spec(_clip_spec)
+_clip_spec.loader.exec_module(_clip_names)
+native_clip = _clip_names.native_clip
 
 
 def temporal_return(frames,start,release,end):
@@ -95,7 +101,7 @@ for line in log.splitlines():
  native=re.search(r'tracks:(.*?),bones:',row['native'])[1]
  row['stops']=[{'name':n,'weight':float(w),'time':float(t),'rate':float(rate)}
   for n,w,t,rate in re.findall(r'([^;@]+)@([^/]+)/([^/]+)/([^/]+)/[^;]+;',native)
-  if n in ['Bob_RunToStop2H_Heavy','Bob_SprintToStop2h_Heavy'] and float(w)>.001]
+  if native_clip(n) in ['Bob_RunToStop2H_Heavy','Bob_SprintToStop2h_Heavy'] and float(w)>.001]
  cases[name].append(row)
 
 results=[];problems=[]
@@ -126,7 +132,7 @@ for name,rows in cases.items():
    report['temporalReturn']=temporal_return(wheel,starts[name],event['elapsed'],end)if wheel else {
     'available':False,'reason':'Native wheel CSV unavailable; sparse bodyShift log is not a peak-speed substitute'}
    expectedClip='Bob_RunToStop2H_Heavy'if spec=='run-stop'else 'Bob_SprintToStop2h_Heavy'
-   if not any(t['name']==expectedClip and t['weight']>=.8 for t in clips):problems.append((name,'missing full native stop',report))
+   if not any(native_clip(t['name'])==expectedClip and t['weight']>=.8 for t in clips):problems.append((name,'missing full native stop',report))
    if not report['observedCoastingFrames']:problems.append((name,'no coasting',report))
    if report['lastMovementAfterReleaseMs']>2500:problems.append((name,'did not settle',report))
   reports.append(report)

@@ -9,7 +9,8 @@ add(function()
  -- VISUAL_TEXTURE_GATE
  local visuals=require 'PZSurvivorToolkit/TagVisuals'
  for _,tag in ipairs({'food','electrical','tool','medical','material','perishable','fruit','preserved'}) do assert(visuals.get(tag).texture,'Missing tag icon '..tag) end
- for _,id in ipairs({'organizedCategories_core','CleanUI','EURY_CONTAINERS','PZSurvivorToolkit'}) do assert(getActivatedMods():contains(id),'missing '..id) end
+ for _,id in ipairs({'CleanUI','EURY_CONTAINERS','PZSurvivorToolkit'}) do assert(getActivatedMods():contains(id),'missing '..id) end
+ assert(PZSurvivorToolkit.ItemCategories and PZSurvivorToolkit.ItemTags,'owned classification/tag APIs missing')
  assert(not getActivatedMods():contains('Quartermaster'),'external Quartermaster conflicts with the owned picker')
  local p=getPlayer();p:setGodMod(true);p:setGhostMode(true);p:setAutoDrink(false)
  getCore():setOptionAutoDrink(false)

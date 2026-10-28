@@ -82,7 +82,10 @@ local function recipe(name, inputs, outputs)
     local value = {id = name, inputs = inputs, outputs = outputs, source = "inputs {} outputs {}"}
     function value:getName() return self.id end
     function value:getTranslationName() return self.id end
-    function value:getLoadedScriptBodies() return list({"recipes.txt", self.source}) end
+    function value:getLoadedScriptBodies()
+        self.sourceReads = (self.sourceReads or 0) + 1
+        return list({"recipes.txt", self.source})
+    end
     function value:hasOnTickInputs() return false end
     function value:hasOnTickOutputs() return false end
     function value:getInputs() return list(self.inputs) end
@@ -97,8 +100,21 @@ end
 local saw = recipe("SawLogs", {input("Base.Log"), input("Base.Saw", true)}, {output("Base.Plank", 3)})
 local spoon = recipe("Spoon", {input("Base.Plank"), input("Base.Knife", true)}, {output("Base.Spoon")})
 local nativeRecipes, nativeItems = {saw, spoon}, {}
-CraftRecipeManager = {isValidRecipeForCharacter = function(value) return not value.unavailable end}
-getScriptManager = function() return {getAllCraftRecipes = function() return list(nativeRecipes) end} end
+CraftRecipeManager = {isValidRecipeForCharacter = function(value)
+    value.availabilityChecks = (value.availabilityChecks or 0) + 1
+    return not value.unavailable
+end}
+local function scriptManager()
+    local cachedRecipes, cachedList
+    return {getAllCraftRecipes = function()
+        if cachedRecipes ~= nativeRecipes then
+            cachedRecipes, cachedList = nativeRecipes, list(nativeRecipes)
+        end
+        return cachedList
+    end}
+end
+local manager = scriptManager()
+getScriptManager = function() return manager end
 ISInventoryPaneContextMenu = {getContainers = function() return list({container}) end}
 local surface = {getSquare = function() return {} end}
 local lastSelectedRecipe
@@ -206,6 +222,11 @@ ISCraftingUI = {ReturnItemsToOriginalContainer = function(p, items)
     end
 end}
 local resetEvents = {}
+local scriptReloads = 0
+reloadScripts = function(first, second)
+    scriptReloads = scriptReloads + 1
+    return first, nil, second
+end
 Events = {}
 for _, name in ipairs({"OnGameStart", "OnMainMenuEnter", "OnGameExit", "OnPlayerDeath"}) do
     Events[name] = {Add = function(fn) resetEvents[name] = fn end}
@@ -339,6 +360,7 @@ enabled, player.asleep, player.dead, currentPlayer = true, false, false, player
 local originalSource = spoon.source
 for _, source in ipairs({"OnCreate = thing", "onTest = other", "OnStart=third", "OnUpdate = fourth", "OnFailed = fifth"}) do
     spoon.source = source
+    resetEvents.OnGameStart()
     local failed, message = api.collect(panel)
     assert(not failed and message == "UI_PZST_CraftChainUnsupportedCallbacks")
     assert(lastSelectedRecipe == spoon)
@@ -346,6 +368,7 @@ end
 spoon.source = originalSource
 for _, flag in ipairs({"variable", "partial", "fluid", "replace"}) do
     spoon.inputs[1][flag] = true
+    resetEvents.OnGameStart()
     local failed, message = api.collect(panel)
     assert(not failed and message == "UI_PZST_CraftChainUnsupportedInputs")
     assert(lastSelectedRecipe == spoon)
@@ -355,6 +378,7 @@ for _, change in ipairs({{mapped = true}, {chance = 0.5}, {variable = true}, {fl
     local key, value = testNext(change)
     local prior = spoon.outputs[1][key]
     spoon.outputs[1][key] = value
+    resetEvents.OnGameStart()
     local failed, message = api.collect(panel)
     assert(not failed and message == "UI_PZST_CraftChainUnsupportedOutputs")
     assert(lastSelectedRecipe == spoon)
@@ -362,6 +386,7 @@ for _, change in ipairs({{mapped = true}, {chance = 0.5}, {variable = true}, {fl
 end
 spoon.inputs[1].alternatives = {"Base.Plank", "Base.Branch"}
 spoon.inputs[1].amounts = {["Base.Plank"] = 1, ["Base.Branch"] = 2}
+resetEvents.OnGameStart()
 panel.logic:setManualSelectInputs(true)
 local branch, branch2, plank = item("Base.Branch"), item("Base.Branch"), item("Base.Plank")
 nativeItems = {branch, branch2, plank}
@@ -462,12 +487,15 @@ neatPicker:onItemSelected(branch)
 panel.logic:setManualSelectInputs(false)
 assert(not api.collect(panel).recipes.Spoon.inputs[1].preference, "automatic mode clears an earlier picker preference")
 spoon.outputs[1].amount=1001
+resetEvents.OnGameStart()
 failed,message=api.collect(panel)
 assert(not failed and message=="UI_PZST_CraftChainUnsupportedOutputs", "giant mod output cannot bypass the planner search budget")
 spoon.outputs[1].amount=1;spoon.inputs[1].amounts["Base.Plank"]=1001
+resetEvents.OnGameStart()
 failed,message=api.collect(panel)
 assert(not failed and message=="UI_PZST_CraftChainUnsupportedInputs")
 spoon.inputs[1].amounts["Base.Plank"]=1
+resetEvents.OnGameStart()
 nativeItems={};for i=1,10001 do nativeItems[i]=item("Base.Plank") end
 failed,message=api.collect(panel)
 assert(not failed and message=="UI_PZST_CraftChaincomplex" and lastSelectedRecipe==spoon)
@@ -536,4 +564,130 @@ for _, name in ipairs({"OnPlayerDeath", "OnMainMenuEnter", "OnGameExit"}) do
     assert(activeCount() == 0, "shutdown empties the strong active registry")
     assert(api.collect(panel) and #panel.logic.listeners == listenerCount, "post-shutdown collection reuses bound listeners")
 end
+-- The catalog owns script structure; each model still owns its current inputs and live eligibility.
+local closureTarget = recipe("ClosureTarget", {
+    input("Base.Part", false, {"Base.Part", "Base.Branch"}), input("Base.Tool", true)}, {output("Base.Result")})
+local makePart = recipe("MakePart", {input("Base.Raw")}, {output("Base.Part")})
+local otherPart = recipe("OtherPart", {input("Base.Other")}, {output("Base.Part")})
+local makeRaw = recipe("MakeRaw", {input("Base.Ore")}, {output("Base.Raw")})
+local makeBranch = recipe("MakeBranch", {input("Base.Seed")}, {output("Base.Branch")})
+local makeTool = recipe("MakeTool", {input("Base.Metal")}, {output("Base.Tool")})
+local orphan = recipe("Orphan", {input("Base.Ore")}, {output("Base.Unrelated")})
+nativeRecipes = {closureTarget, makePart, otherPart, makeRaw, makeBranch, makeTool, orphan}
+local closurePanel = {logic = HandcraftLogic.new(player, nil, surface)}
+closurePanel.logic:setRecipe(closureTarget)
+nativeItems = {item("Base.Ore"), item("Base.Metal")}
+resetEvents.OnGameStart()
+local firstModel = assert(api.collect(closurePanel))
+for _, candidate in ipairs({makePart, otherPart, makeRaw, makeBranch, makeTool}) do
+    assert(firstModel.recipes[candidate.id], "closure includes every producer, alternate input and retained-tool prerequisite")
+end
+assert(not firstModel.recipes.Orphan and not orphan.availabilityChecks,
+    "an unrelated recipe cannot trigger live character or workbench validation")
+for _, candidate in ipairs(nativeRecipes) do
+    assert(candidate.sourceReads == 1, "one catalog build reads each recipe's static contract once")
+end
+local secondModel = assert(api.collect(closurePanel, {ClosureTarget = {[0] = "Base.Branch"}}))
+assert(#secondModel.recipes.ClosureTarget.inputs[1].choices == 1
+    and #secondModel.recipes.ClosureTarget.inputs[1].allChoices == 2,
+    "an override narrows this model while retaining every UI alternative")
+firstModel.recipes.ClosureTarget.inputs[1].choices[1].fullType = "Base.Corrupted"
+firstModel.recipes.ClosureTarget.outputs["Base.Result"] = 99
+firstModel.recipes.MakePart.inputs[1].allChoices[1].amount = 99
+nativeItems = {item("Base.Branch"), item("Base.Tool"), item("Base.Metal")}
+local thirdModel = assert(api.collect(closurePanel))
+assert(#thirdModel.resources == 3 and thirdModel.resources[1].item == nativeItems[1],
+    "catalog reuse must rebuild current inventory objects instead of retaining stock snapshots")
+assert(#thirdModel.recipes.ClosureTarget.inputs[1].choices == 2
+    and thirdModel.recipes.ClosureTarget.inputs[1].choices[1].fullType == "Base.Part"
+    and not thirdModel.recipes.ClosureTarget.inputs[1].preference
+    and thirdModel.recipes.ClosureTarget.outputs["Base.Result"] == 1
+    and thirdModel.recipes.MakePart.inputs[1].choices[1].amount == 1,
+    "model mutation and prior material overrides must not modify the reusable catalog")
+for _, candidate in ipairs(nativeRecipes) do
+    assert(candidate.sourceReads == 1, "replanning reuses script structure")
+    assert((candidate.availabilityChecks or 0) == (candidate == orphan and 0 or 3),
+        "each collection validates only relevant live recipes")
+end
+otherPart.unavailable = true
+assert(not api.collect(closurePanel).recipes.OtherPart, "a producer losing character eligibility disappears on the next model")
+otherPart.unavailable = nil
+assert(api.collect(closurePanel).recipes.OtherPart, "a newly eligible producer returns without catalog invalidation")
+closureTarget.workstation = true
+local unavailable, unavailableReason = api.collect(closurePanel)
+assert(not unavailable and unavailableReason == "UI_PZST_CraftChainUnavailable")
+closurePanel.logic.bench = "bench"
+assert(api.collect(closurePanel), "a newly selected workbench must be checked live")
+closureTarget.surface, surface.far = true, true
+assert(not api.collect(closurePanel), "surface distance must not be reused from a previous collection")
+surface.far = nil
+assert(api.collect(closurePanel))
+closureTarget.surface, closureTarget.workstation = nil, nil
+local overridden = assert(api.collect(closurePanel, {Orphan = {[0] = "Base.Ore"}}))
+assert(overridden.recipes.Orphan.inputs[1].preference == "Base.Ore",
+    "an existing override outside the current target closure retains its material contract")
+for _, invalidOverride in ipairs({{Orphan = {[7] = false}}, {Orphan = {[0] = "Base.Invalid"}},
+    {MissingRecipe = {[0] = false}}}) do
+    local invalidModel, invalidReason = api.collect(closurePanel, invalidOverride)
+    assert(not invalidModel and invalidReason == "UI_PZST_CraftChainUnsupportedSelection",
+        "out-of-closure overrides must still fail closed")
+end
+orphan.unavailable = true
+local invalidModel, invalidReason = api.collect(closurePanel, {Orphan = {[0] = "Base.Ore"}})
+assert(not invalidModel and invalidReason == "UI_PZST_CraftChainUnsupportedSelection",
+    "a stale out-of-closure override cannot silently disappear")
+orphan.unavailable = nil
+for _, name in ipairs({"OnGameStart", "OnMainMenuEnter", "OnGameExit"}) do
+    local priorReads = orphan.sourceReads
+    resetEvents[name]()
+    assert(api.collect(closurePanel) and orphan.sourceReads == priorReads + 1,
+        "each script/world lifecycle reset releases the catalog")
+end
+local priorReads = orphan.sourceReads
+manager = scriptManager()
+assert(api.collect(closurePanel) and orphan.sourceReads == priorReads + 1,
+    "a replacement ScriptManager cannot reuse another manager's catalog")
+priorReads = orphan.sourceReads
+local replacementRecipes = {}
+for i, candidate in ipairs(nativeRecipes) do replacementRecipes[i] = candidate end
+nativeRecipes = replacementRecipes
+assert(api.collect(closurePanel) and orphan.sourceReads == priorReads + 1,
+    "a replacement native recipe list invalidates structure even when its size is unchanged")
+priorReads = orphan.sourceReads
+nativeRecipes[#nativeRecipes + 1] = recipe("LateRecipe", {}, {output("Base.LateOutput")})
+assert(api.collect(closurePanel) and orphan.sourceReads == priorReads + 1,
+    "an appended native recipe invalidates structure even when the list identity is unchanged")
+priorReads = closureTarget.sourceReads
+api.install(); api.install()
+closureTarget.inputs[1].alternatives = {"Base.Other"}
+local reloadFirst, reloadEmpty, reloadLast = reloadScripts("reload-first", "reload-last")
+assert(scriptReloads == 1 and reloadFirst == "reload-first" and reloadEmpty == nil and reloadLast == "reload-last",
+    "catalog invalidation wraps script reload once and preserves its arguments and complete return values")
+local reloadedModel = assert(api.collect(closurePanel))
+assert(closureTarget.sourceReads == priorReads + 1
+    and #reloadedModel.recipes.ClosureTarget.inputs[1].choices == 1
+    and reloadedModel.recipes.ClosureTarget.inputs[1].choices[1].fullType == "Base.Other"
+    and not reloadedModel.recipes.MakeBranch,
+    "same-size in-place script reload rebuilds the changed recipe structure and prerequisite closure")
+-- Native names can collide: keep the old last-available definition, including its own prerequisites.
+local firstDefinition = recipe("Duplicate", {input("Base.Raw")}, {output("Base.Other")})
+local lastDefinition = recipe("Duplicate", {input("Base.DuplicateInput")}, {output("Base.Different")})
+local duplicateInput = recipe("DuplicateInput", {}, {output("Base.DuplicateInput")})
+nativeRecipes = {closureTarget, firstDefinition, lastDefinition, duplicateInput}
+local duplicates = assert(api.collect(closurePanel))
+assert(duplicates.recipes.Duplicate.native == lastDefinition and duplicates.recipes.DuplicateInput,
+    "reachable duplicate names must preserve the last available native definition and its prerequisites")
+lastDefinition.unavailable = true
+assert(api.collect(closurePanel).recipes.Duplicate.native == firstDefinition,
+    "an unavailable later duplicate must not mask the earlier available producer")
+lastDefinition.unavailable = nil
+local shadowTarget = recipe("ClosureTarget", {}, {output("Base.Other")})
+nativeRecipes[#nativeRecipes + 1] = shadowTarget
+assert(api.collect(closurePanel).recipes.ClosureTarget.native == closureTarget,
+    "the actual selected target wins over every other native definition sharing its name")
+local cycle = recipe("Cycle", {input("Base.Other")}, {output("Base.Raw")})
+nativeRecipes[#nativeRecipes + 1] = cycle
+local cyclicModel = assert(api.collect(closurePanel))
+assert(cyclicModel.recipes.Cycle and cycle.availabilityChecks == 1,
+    "a cyclic prerequisite graph must terminate and validate each recipe only once")
 print("Craft chain native adapter checks passed: contracts, protection, deferred inputs, atomic preflight, deterministic recipe filtering and manual choices.")

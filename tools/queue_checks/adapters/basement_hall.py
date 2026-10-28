@@ -39,6 +39,12 @@ def validate(selection):
         _path(selection, key, executable=True)
 
 
+def environment(selection, role, cache):
+    if selection.get('suite') == 'basement-hall' and role == 'client1' and selection.get('kind') == 'sp':
+        return {'PZ_BASEMENT_HALL_CACHE': Path(cache)}
+    return {}
+
+
 def sources(project, selection):
     return (sorted(path for path in (Path(project) / 'tests/native_queue/contributions/basement-hall').rglob('*')
                   if path.is_file() and path.suffix in ('.java', '.lua', '.py', '.md'))
@@ -57,7 +63,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     intake = Path(project) / 'tests/native_queue/contributions/basement-hall'
     classes = Path(output) / 'basement-hall-classes'
     classes.mkdir()
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '17', '-cp',
+    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
                     os.pathsep.join(str(Path(game) / jar) for jar in ('projectzomboid.jar', 'ZombieBuddy.jar')),
                     '-d', str(classes), str(intake / 'Main.java')], check=True, capture_output=True,
                    text=True, timeout=60, env={key: value for key, value in os.environ.items()
@@ -83,7 +89,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                   video={'directory': str(cache / 'videos'), 'ffmpeg': str(_path(selection, 'ffmpeg', True))})
     (lua / 'shared/QueueTestSelection.lua').write_text('QueueTestSelection=' + _lua(config) + '\nreturn QueueTestSelection\n')
     runtime.setdefault('fixture', {}).update(mods=['BasementHallFixture'], failure_markers=[MARKER + 'FAIL '])
-    runtime['roles']['client1'].setdefault('env', {})['PZ_BASEMENT_HALL_CACHE'] = str(cache)
+    runtime['roles']['client1'].setdefault('env', {}).update(
+        {name: str(value) for name, value in environment(selection, 'client1', cache).items()})
 
 
 def complete(selection, role, text):

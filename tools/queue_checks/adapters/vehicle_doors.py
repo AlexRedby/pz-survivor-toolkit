@@ -7,6 +7,8 @@ import re
 import shutil
 
 MARKER = '[VEHICLE_DOORS] '
+IDLE_CHECKS = ['idle-sidebar-on-foot', 'idle-sidebar-settled', 'idle-sidebar-layout',
+               'idle-sidebar-hidden', 'idle-sidebar-option', 'idle-sidebar-replacement', 'idle-sidebar-restored']
 
 
 def definitions():
@@ -16,6 +18,9 @@ def definitions():
 
 
 def validate(selection):
+    for name in ('idle_ui', 'idle_ui_screenshot'):
+        if name in selection.get('options', {}) and type(selection['options'][name]) is not bool:
+            raise ValueError('Vehicle doors option ' + name + ' must be boolean')
     if (selection['cases'] != ['close'] or selection['kind'] not in ('sp', 'mp')
             or selection['mode'] != 'toolkit' or selection['clients'] != 1
             or selection['languages'] not in (['EN'], ['RU'])
@@ -39,7 +44,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     classes.mkdir()
     source = Path(project) / 'tests/native_queue/vehicle-doors/support/VehicleDoorRadialCapture.java'
     javac = Path(jdk) / 'bin' / ('javac.exe' if os.name == 'nt' else 'javac')
-    subprocess.run([str(javac), '-cp', str(game / 'projectzomboid.jar'), '-d', str(classes), str(source)],
+    subprocess.run([str(javac), '--release', '25', '-cp', str(game / 'projectzomboid.jar'), '-d', str(classes), str(source)],
                    check=True, capture_output=True, text=True, timeout=60)
     jar = Path(output) / 'radial-capture.jar'
     with zipfile.ZipFile(jar, 'w') as archive:
@@ -55,17 +60,30 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 
 def complete(selection, role, text):
-    return role == 'client1' and text.count(MARKER + 'COMPLETE close') == 1
+    if role != 'client1' or text.count(MARKER + 'COMPLETE close') != 1:
+        return False
+    if selection.get('options', {}).get('idle_ui'):
+        before = text.split(MARKER + 'COMPLETE close', 1)[0]
+        checks = re.findall(re.escape(MARKER) + r'PASS (\S+)', before)
+        return checks[-len(IDLE_CHECKS):] == IDLE_CHECKS
+    return True
 
 
 def verify(root, selection, catalog):
     text = (Path(root) / 'client1-launch.log').read_text(errors='replace')
     checks = re.findall(re.escape(MARKER) + r'PASS (\S+)', text)
     expected = ['seated-open-door', 'native-radial', 'dashboard-button', 'native-action-once', 'closed-driver-only', 'authority']
+    if selection.get('options', {}).get('idle_ui'):
+        expected += IDLE_CHECKS
     issues = [] if checks == expected and complete(selection, 'client1', text) and MARKER + 'FAIL ' not in text else ['Missing ordered vehicle door assertions']
     source = (Path(root) / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
     if len(re.findall(re.escape(MARKER) + r'AUTHORITY closed-driver-only id=(-?\d+)', source)) != 1 or MARKER + 'FAIL ' in source:
         issues.append('Missing authoritative seated driver door completion')
+    limits = ['Programmatic radial builder and dashboard callback, stationary driver; no physical input, moving-car or remote peer coverage.']
+    if selection.get('options', {}).get('idle_ui'):
+        limits.append('Idle sidebar qualification uses programmatic native vehicle exit and owned sidebar instance setters; no frame-time or physical-input claim.')
+        if not re.search(re.escape(MARKER) + r'IDLE_SIDEBAR settled_ticks=60 sidebar_setter_writes=0\b', text):
+            issues.append('Missing settled native sidebar write evidence')
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'close',
             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],
-            'evidence': {'checks': checks, 'limits': ['Programmatic radial builder and dashboard callback, stationary driver; no physical input, moving-car or remote peer coverage.']}}
+            'evidence': {'checks': checks, 'limits': limits}}

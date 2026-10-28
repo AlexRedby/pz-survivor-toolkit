@@ -90,6 +90,13 @@ deliver(message(first, 'completed', firstToken))
 deliver(message(first, 'canceled', firstToken))
 deliver(message(first, 'rejected', firstToken))
 assert(state(current) == 'completed', 'cancel after completion rewrote settled outcome')
+assert(acknowledgements.observe(current, record) == 'completed', 'captured terminal observation was lost')
+assert(acknowledgements.observe(current, {}) == nil and acknowledgements.observe(current, false) == nil,
+    'forged receipt granted an observation')
+local copied = {}
+for key, value in pairs(record) do copied[key] = value end
+assert(acknowledgements.observe(current, copied) == nil, 'copied seal authorized a forged receipt table')
+assert(acknowledgements.observe(foreign, record) == nil, 'receipt was transferable to another action')
 deliver(message(second, 'canceled', foreignToken))
 deliver(message(second, 'completed', foreignToken))
 assert(state(foreign) == 'canceled', 'completion after cancellation rewrote settled outcome')
@@ -97,6 +104,7 @@ assert(state(foreign) == 'canceled', 'completion after cancellation rewrote sett
 local replacement = action(first, -126, 'ToolkitAckProbe')
 currentQueue.current, currentQueue.queue = replacement, {replacement}
 assert(acknowledgements.state(current, record) == nil, 'removed action kept live permission')
+assert(acknowledgements.observe(current, record) == 'completed', 'queue advancement revoked settled observation')
 deliver(message(first, 'started', firstToken))
 deliver(message(first, 'completed', firstToken))
 assert(state(replacement) == nil, 'replayed byte-id start attached to replacement')
@@ -108,6 +116,9 @@ deliver(message(first, 'completed', firstToken))
 assert(state(replacement) == 'started', 'old terminal completed reused byte id')
 deliver(message(first, 'rejected', replacementToken))
 assert(state(replacement) == 'rejected', 'native failure did not settle receipt')
+assert(acknowledgements.observe(current, record) == 'completed'
+    and acknowledgements.observe(replacement, replacementRecord) == 'rejected',
+    'signed-byte reuse mixed retained receipt outcomes')
 
 currentQueue.toolkitOperationGeneration = 2
 assert(acknowledgements.state(replacement, replacementRecord) == nil, 'generation change retained permission')
@@ -134,6 +145,22 @@ assert(state(build) == nil, 'generic type matched native build')
 deliver(message(first, 'started', buildToken, 127, 'build'))
 deliver(message(first, 'completed', buildToken, 127, 'build'))
 assert(state(build) == 'completed', 'native build outcome was not recognized')
+-- A stopped native action may still own the Lua head while started/terminal
+-- messages are in flight. Physical Java membership must not replace receipt identity.
+do
+    local stopped = action(first, 126, 'ISFitnessAction')
+    currentQueue.current, currentQueue.queue = stopped, {stopped}
+    first.getCharacterActions = function() return {contains=function() return false end} end
+    local identity = token()
+    assert(not acknowledgements.capture(stopped))
+    deliver(message(first, 'started', identity, 126, 'ISFitnessAction'))
+    local captured = assert(acknowledgements.capture(stopped), 'late start could not bind stopped current workout')
+    assert(captured.state == 'started')
+    deliver(message(first, 'canceled', identity, 126, 'ISFitnessAction'))
+    assert(acknowledgements.state(stopped, captured) == 'canceled', 'late terminal lost exact stopped workout')
+    currentQueue.current, currentQueue.queue = build, {build}
+    assert(not acknowledgements.capture(stopped), 'late workout receipt granted rights after Lua ownership ended')
+end
 -- Native retriggering can reuse the Lua table with a fresh Java action.
 local reused = action(first, 123, 'ToolkitAckProbe')
 currentQueue.current, currentQueue.queue = reused, {reused}
@@ -143,6 +170,7 @@ local _, oldRecord = state(reused)
 deliver(message(first, 'completed', oldToken, 123))
 reused.action = {}
 assert(state(reused) == nil, 'retriggered Lua table inherited old native outcome')
+assert(acknowledgements.observe(reused, oldRecord) == nil, 'native replacement inherited retained observation')
 local newToken = token()
 deliver(message(first, 'started', newToken, 123))
 local _, newRecord = state(reused)
@@ -161,9 +189,17 @@ currentQueue.current, currentQueue.queue = build, {build}
 local nextToken = token()
 deliver(message(first, 'started', nextToken, 127, 'build'))
 assert(acknowledgements.capture(build), 'following action must acquire its own current receipt')
+assert(acknowledgements.observe(completedAction, completedRecord) == 'started'
+    and acknowledgements.state(completedAction, completedRecord) == nil,
+    'removed action observation granted live cancellation rights')
 deliver(message(first, 'completed', completedToken, 125))
 assert(completedRecord.state == 'completed' and acknowledgements.capture(completedAction) == nil,
     'late outcome must settle observation without granting removed action permission')
+assert(acknowledgements.observe(completedAction, completedRecord) == 'completed',
+    'late outcome was not observable after its current registry entry was replaced')
+deliver(message(first, 'canceled', completedToken, 125))
+assert(acknowledgements.observe(completedAction, completedRecord) == 'completed',
+    'duplicate terminal rewrote retained observation')
 local resetAction = action(first, 124, 'ToolkitAckProbe')
 currentQueue.current, currentQueue.queue = resetAction, {resetAction}
 local resetToken = token()
@@ -175,6 +211,65 @@ assert(not acknowledgements.capture(resetAction) and not acknowledgements.fixtur
 assert(acknowledgements.capture(foreign), 'reset must preserve another local player\'s current receipt')
 deliver(message(first, 'completed', resetToken, 124))
 assert(resetRecord.state == 'started', 'explicit reset retained pending terminal observation')
+assert(acknowledgements.observe(resetAction, resetRecord) == nil
+    and acknowledgements.observe(completedAction, completedRecord) == nil,
+    'reset epoch must revoke both pending and already retired retained references')
+
+-- Every retained observation is tied to the original ownership snapshot, even
+-- after its native action has left the queue and can no longer capture rights.
+local revocations = {
+    {'death', function(c) c.dead = true end},
+    {'local player replacement', function(c) players[c.slot] = {} end},
+    {'local slot change', function(c) c.slot = 3; players[3] = c end},
+    {'online identity change', function(c) c.online = c.online + 1 end},
+    {'character replacement', function(c, a) a.character = second end},
+    {'native replacement', function(c, a) a.action = {} end},
+    {'transaction change', function(c, a) a.toolkitNativeTransaction = 122 end},
+    {'kind change', function(c, a) a.toolkitNativeKind = 'build' end},
+    {'queue replacement', function(c) ISTimedActionQueue.queues[c] = {} end},
+    {'operation generation change', function(c, a, q) q.toolkitOperationGeneration = 2 end},
+    {'reset', function(c, a, q) acknowledgements.reset(q) end},
+}
+for _, scenario in ipairs(revocations) do
+    local owner = character(2, 21)
+    local original = action(owner, 121, 'ToolkitAckProbe')
+    local ownedQueue = queue(owner, original)
+    local receiptToken = token()
+    deliver(message(owner, 'started', receiptToken, 121))
+    local captured = acknowledgements.capture(original)
+    assert(captured and acknowledgements.observe(original, captured) == 'started')
+    local following = action(owner, 122, 'ToolkitAckProbe')
+    ownedQueue.current, ownedQueue.queue = following, {following}
+    scenario[2](owner, original, ownedQueue)
+    assert(acknowledgements.observe(original, captured) == nil, scenario[1] .. ' retained observation')
+    deliver({protocol = 1, player = 21, transaction = 121, kind = 'ToolkitAckProbe',
+        token = receiptToken, state = 'completed'})
+    assert(captured.state == 'started', scenario[1] .. ' accepted late terminal')
+    acknowledgements.reset(ownedQueue)
+    ISTimedActionQueue.queues[owner] = nil
+    players[2], players[3] = nil, nil
+end
+
+-- A still-pending old byte generation cannot settle its newer replacement.
+local byteOwner = character(2, 22)
+local byteAction = action(byteOwner, -128, 'ToolkitAckProbe')
+local byteQueue = queue(byteOwner, byteAction)
+local byteToken = token()
+deliver(message(byteOwner, 'started', byteToken, -128))
+local byteRecord = acknowledgements.capture(byteAction)
+local byteNext = action(byteOwner, -128, 'ToolkitAckProbe')
+byteQueue.current, byteQueue.queue = byteNext, {byteNext}
+local byteNextToken = token()
+deliver(message(byteOwner, 'started', byteNextToken, -128))
+local byteNextRecord = acknowledgements.capture(byteNext)
+deliver(message(byteOwner, 'completed', byteToken, -128))
+assert(acknowledgements.observe(byteAction, byteRecord) == 'started'
+    and acknowledgements.observe(byteNext, byteNextRecord) == 'started',
+    'old byte terminal crossed generation boundary')
+deliver(message(byteOwner, 'completed', byteNextToken, -128))
+assert(acknowledgements.observe(byteNext, byteNextRecord) == 'completed')
+acknowledgements.reset(byteQueue)
+ISTimedActionQueue.queues[byteOwner], players[2] = nil, nil
 -- Inspect strong registry keys directly: Lua 5.1 weak-key collection would hide
 -- Kahlua's ignored __mode, so GC cannot establish that completed actions retire.
 for i = 1, 500 do

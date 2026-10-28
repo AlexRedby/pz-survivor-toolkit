@@ -59,6 +59,18 @@ def number(value):
     return type(value) in (int, float) and math.isfinite(value)
 
 
+def remote_endpoint_settled(row, authority):
+    """path2 also belongs to native remote prediction, independently of queues."""
+    position,expected=row.get('position'),authority.get('position')
+    return (row.get('luaActions')==row.get('nativeActions')==0 and type(row.get('hasPath')) is bool
+            and row.get('pathScope')=='remote-network' and row.get('nativeMoving') is False
+            and isinstance(position,dict) and isinstance(expected,dict)
+            and all(number(position.get(key)) and number(expected.get(key)) for key in ('x','y','z'))
+            # IsoPlayer.updateRemotePlayer uses .2 Manhattan distance to settle native motion.
+            and abs(position['x']-expected['x'])+abs(position['y']-expected['y'])<.2
+            and abs(position['z']-expected['z'])<.25)
+
+
 def model_diagnostics(row):
     keys=('heldModel','overridePrimary','overrideSecondary')
     if 'modelProbeVersion' in row or any(key in row for key in keys):
@@ -123,14 +135,63 @@ def palm(row, side):
     return math.dist(actual, wanted)
 
 
-def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelbarrow'):
+def action_draws(profile, role):
+    """Actual DrawSolid callbacks, kept separate from the prepared pose snapshots."""
+    source = Path(profile) / role / 'render-camera.jsonl'
+    require(source.is_file(), role + ': missing actual action body/cart draw proof')
+    result = {}
+    for line in source.read_text().splitlines():
+        row = parse(line)
+        require(isinstance(row, dict) and row.get('renderProbeVersion') == 1
+                and type(row.get('captureId')) is int and row['captureId'] > 0
+                and row.get('part') in ('body', 'cart'), role + ': malformed action draw proof')
+        key = (row['captureId'], row['part'])
+        require(key not in result, role + ': duplicate action draw proof')
+        result[key] = row
+    return result
+
+
+def drawn_action_frames(frames, draws, role, cartid, variant):
+    result = []
+    for frame in frames:
+        require(frame.get('renderProbeVersion') == 1 and type(frame.get('captureId')) is int
+                and type(frame.get('slotToken')) is int and number(frame.get('nativeWallTimeMillis')),
+                role + ': missing original action render identity')
+        pair = [draws.get((frame['captureId'], part)) for part in ('body', 'cart')]
+        if all(row is None for row in pair):
+            continue  # Prepared off-screen poses do not establish an actual draw.
+        require(all(row is not None for row in pair), role + ': incomplete actual action body/cart draw')
+        for row in pair:
+            # Inventory can advance between preparation and the render thread's
+            # draw. Bind identity to the exact frozen slot; retain live hands as
+            # separately validated diagnostics, never as prepared-model evidence.
+            require(row.get('id') == frame['id'] and row.get('preparedPrimary') == frame['primary']
+                    and row.get('preparedSecondary') == frame['secondary']
+                    and all(type(row.get(k)) is int for k in ('preparedPrimary', 'preparedSecondary', 'primary', 'secondary'))
+                    and row.get('slotToken') == frame['slotToken'] and row.get('captureWallTimeMillis') == frame['wallTimeMillis']
+                    and all(number(row.get(k)) for k in ('cameraWallTimeMillis', 'wallTimeMillis', 'cameraX', 'cameraY', 'cameraZ', 'cameraAngle'))
+                    and frame['nativeWallTimeMillis'] <= frame['wallTimeMillis'] <= row['cameraWallTimeMillis'] <= row['wallTimeMillis'] <= frame['wallTimeMillis']+1000
+                    and row.get('cameraWorldIso') is True and row.get('cameraInVehicle') is False,
+                    role + ': stale/foreign actual action draw')
+            if row['part'] == 'cart':
+                require(row.get('model') == frame['model'] == FILLED_MODELS[variant], role + ': action draw fill/model mismatch')
+        require(frame.get('cartItemId') == cartid and frame.get('cartItemSource') == ('transition' if frame['primary'] == -1 else 'hands')
+                and frame.get('cartItemModel') in HELD_MODELS[variant] and frame.get('modelProbeVersion') == 1
+                and (frame.get('heldModel') is None if frame['primary'] == -1 else frame.get('heldModel') in HELD_MODELS[variant])
+                and all(frame.get(key) in (None, '') or frame.get(key) in HELD_MODELS[variant] for key in ('overridePrimary', 'overrideSecondary')),
+                role + ': action rendered model lacks exact native cart identity/fill')
+        result.append(frame)
+    return result
+
+
+def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelbarrow', profile=None, phases=ACTION_PHASES, grounds=ACTION_GROUND, observer_endpoints=False):
     def rows(role, kind):
         marker = '[CART_MP_ACTION] ' + kind + ' '
         values = [parse(line.split(marker, 1)[1]) for line in logs[role].splitlines() if marker in line]
         require(all(isinstance(row, dict) for row in values), role + '/' + kind + ': malformed action object')
         return values
     def ordered(values, label):
-        require([(r.get('index'), r.get('phase')) for r in values] == list(enumerate(ACTION_PHASES, 1)), label + ': missing/duplicate/reordered action phases')
+        require([(r.get('index'), r.get('phase')) for r in values] == list(enumerate(phases, 1)), label + ': missing/duplicate/reordered action phases')
         require(all(r.get('id') == cartid and number(r.get('wall')) for r in values), label + ': wrong action identity/time')
         require(all(a['wall'] < b['wall'] for a, b in zip(values, values[1:])), label + ': reordered action timestamps')
         return values
@@ -140,15 +201,15 @@ def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelb
     server = ordered(rows('server', 'SERVER_RECEIPT'), 'server receipt')
     require(begins[0]['wall'] >= epoch+duration and server[-1]['wall'] <= epoch+duration+35000, 'Action bank outside bounded post-motion window')
     done = rows('server', 'ALL_COMPLETE')
-    require(len(done) == 1 and done[0].get('id') == cartid and done[0].get('phases') == 6
+    require(len(done) == 1 and done[0].get('id') == cartid and done[0].get('phases') == len(phases)
             and number(done[0].get('wall')) and done[0]['wall'] >= server[-1]['wall'], 'Missing authoritative ActionsDone')
     cargo = (server[0].get('cargoID'), server[0].get('cargoWeight'))
     require(type(cargo[0]) is int and cargo[0] >= 0 and number(cargo[1]) and cargo[1] > 0, 'Missing authoritative cargo identity')
     cancels = rows('client1', 'CANCEL')
     require([(r.get('index'), r.get('phase')) for r in cancels] == [(3, 'drop-cancel'), (5, 'pickup-cancel')], 'Missing/duplicate/reordered native cancellations')
     require(all(r.get('id') == cartid and number(r.get('progress')) and .35 <= r['progress'] < .55 for r in cancels), 'Native cancellation outside progress window')
-    for index, (begin, receipt, check, ground) in enumerate(zip(begins, owner, server, ACTION_GROUND)):
-        label = ACTION_PHASES[index]
+    for index, (begin, receipt, check, ground) in enumerate(zip(begins, owner, server, grounds)):
+        label = phases[index]
         require(begin['wall'] <= server_begin[index]['wall'] < check['wall'] and begin['wall'] < receipt['wall'] <= check['wall']
                 and check['wall']-receipt['wall'] < 3500, label + ': action/authority window reordered or expired')
         require(index == 0 or begin['wall'] >= server[index-1]['wall'], label + ': next action preceded server acknowledgement')
@@ -171,11 +232,12 @@ def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelb
                 and number(check.get('holdMs')) and 100 <= check['holdMs'] < 3000, label + ': independent server endpoint missing')
     result = {}
     for role in ('client1', 'client2'):
+        draws = action_draws(profile, role) if variant != 'wooden-wheelbarrow' else None
         windows = ordered(rows(role, 'WINDOW'), role + '/window')
         acknowledgements = ordered(rows(role, 'SERVER_ACK'), role + '/ack')
         finished = rows(role, 'SERVER_DONE')
         require(len(finished) == 1 and finished[0].get('ok') is True and finished[0].get('id') == cartid
-                and finished[0].get('phases') == 6 and finished[0].get('serverWall') == done[0]['wall']
+                and finished[0].get('phases') == len(phases) and finished[0].get('serverWall') == done[0]['wall']
                 and number(finished[0].get('wall')), role + ': final server broadcast missing')
         for index, (window, ack, source) in enumerate(zip(windows, acknowledgements, server)):
             require(window.get('serverWall') == server_begin[index]['wall'] and ack.get('serverWall') == source['wall']
@@ -183,26 +245,31 @@ def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelb
                     and all(ack.get(key) == source.get(key) for key in ('cargoID', 'cargoWeight', 'cargoPreserved', 'inventoryCount', 'worldCount', 'primaryID', 'secondaryID', 'nativeActions', 'hasPath', 'held', 'ground')),
                     role + ': authoritative acknowledgement differs')
         samples = rows(role, 'PRESENTATION')
-        require(all(r.get('actor') == role and type(r.get('index')) is int and 1 <= r['index'] <= 6
-                    and r.get('phase') == ACTION_PHASES[r['index']-1] and r.get('id') == cartid
+        require(all(r.get('actor') == role and type(r.get('index')) is int and 1 <= r['index'] <= len(phases)
+                    and r.get('phase') == phases[r['index']-1] and r.get('id') == cartid
                     and number(r.get('wall')) and number(r.get('progress')) and 0 <= r['progress'] <= 1
                     and all(type(r.get(key)) is bool for key in ('active', 'recovering', 'pickup', 'rendered', 'ik'))
                     and all(type(r.get(key)) is int for key in ('primaryID', 'secondaryID')) for r in samples), role + ': malformed presentation sample')
         require(all(a['wall'] < b['wall'] and a['index'] <= b['index'] for a, b in zip(samples, samples[1:])), role + ': reordered presentation samples')
-        phases = []
-        for index, name in enumerate(ACTION_PHASES):
+        phase_results = []
+        for index, name in enumerate(phases):
             selected = [r for r in samples if r['index'] == index+1 and r['wall'] <= acknowledgements[index]['wall']]
             require(selected and all(windows[index]['wall'] <= r['wall'] for r in selected), role + '/' + name + ': missing phase samples')
             active = [r for r in selected if r['active'] and r['progress'] > .05]
+            presented = [r for r in active if r['rendered'] and r['ik']]
             require(len(active) >= 2 and active[-1]['wall']-active[0]['wall'] >= 50
                     and max(r['progress'] for r in active)-min(r['progress'] for r in active) > .05
                     and all(b['progress'] >= a['progress']-.02 for a, b in zip(active, active[1:]))
-                    and any(r['rendered'] and r['ik'] for r in active), role + '/' + name + ': native active/progress/render/IK coverage missing')
+                    and len(presented) >= 2 and presented[-1]['wall']-presented[0]['wall'] >= 50
+                    and max(r['progress'] for r in presented)-min(r['progress'] for r in presented) > .05,
+                    role + '/' + name + ': native active/progress/render/IK coverage missing')
             require(all(r['pickup'] is name.startswith('pickup') for r in selected if r['active'] or r['recovering']), role + '/' + name + ': presentation direction differs')
             require(index not in (2, 4) or any(r['recovering'] and r['progress'] > 0 for r in selected), role + '/' + name + ': cancellation recovery sample missing')
             frames = [r for r in poses[role] if begins[index]['wall'] <= r['wallTimeMillis'] <= owner[index]['wall']
                       and r['primary'] == r['secondary'] == (-1 if name.startswith('pickup') else cartid)]
-            frames = coverage(frames, 'wallTimeMillis', 0, (active[0]['wall'], active[-1]['wall']), role + '/' + name + '/action render')
+            if draws is not None:
+                frames = drawn_action_frames(frames, draws, role, cartid, variant)
+            frames = coverage(frames, 'wallTimeMillis', 0, (presented[0]['wall'], presented[-1]['wall']), role + '/' + name + '/action render')
             require(all(r['local'] is (role == 'client1') for r in frames), role + '/' + name + ': raw action render identity mismatch')
             phase = {'phase': name, 'activeSamples': len(active), 'renderFrames': len(frames),
                      'recoverySamples': sum(r['recovering'] for r in selected)}
@@ -210,15 +277,30 @@ def action_coverage(logs, poses, cartid, epoch, duration, variant='wooden-wheelb
                 phase.update(wheelFloorRange=[min(wheel(r) for r in frames), max(wheel(r) for r in frames)],
                              palmHandleErrorMax={side: max(palm(r, side) for r in frames) for side in 'LR'})
             else:
-                require(all(r.get('model') in MODELS[variant] for r in frames), role + '/' + name + ': action rendered another cart model')
-                phase.update(models=sorted({r['model'] for r in frames}), rawTransformCoverage=True,
-                             scope='Metal cart action matrices and lifecycle; geometry and animation equivalence require separate review')
-            phases.append(phase)
-        quiet = [r for r in samples if r['index'] == 6 and r['wall'] >= finished[0]['wall']]
+                require(all(r.get('model') == FILLED_MODELS[variant] for r in frames), role + '/' + name + ': action rendered another cart fill/model')
+                phase.update(models=sorted({r['model'] for r in frames}), rawTransformCoverage=True, nativeDrawCoverage=True,
+                             scope='Exact cart action matrices, actual body/cart draws and lifecycle; geometry and animation equivalence require separate review')
+            phase_results.append(phase)
+        quiet = [r for r in samples if r['index'] == len(phases) and r['wall'] >= finished[0]['wall']]
         require(len(quiet) >= 2 and quiet[-1]['wall']-quiet[0]['wall'] >= 100
                 and quiet[-1]['wall'] >= finished[0]['wall']+200
                 and all(not r['active'] and not r['recovering'] for r in quiet), role + ': final presentation quiescence missing')
-        result[role] = phases
+        result[role] = phase_results
+    if observer_endpoints:
+        observed=ordered(rows('client2','OBSERVER_RECEIPT'),'observer endpoint')
+        authoritative=ordered(rows('server','SERVER_OBSERVATION'),'server observer endpoint')
+        for index,(row,accepted,ground) in enumerate(zip(observed,authoritative,grounds)):
+            require(row.get('actor')=='client2' and row.get('cargoID')==cargo[0]
+                    and row.get('cargoWeight')==cargo[1] and row.get('cargoPreserved') is True
+                    and row.get('inventoryScope')=='remote-hand-snapshot' and row.get('inventoryCount') is None
+                    and row.get('itemSource')==('world' if ground else 'hands') and row.get('handSameItem') is (not ground)
+                    and row.get('worldAttached') is ground and row.get('worldCount')==int(ground)
+                    and row.get('primaryID')==(-1 if ground else cartid) and row.get('secondaryID')==(-1 if ground else cartid)
+                    and remote_endpoint_settled(row,server[index]),
+                    phases[index]+': observer native endpoint mismatch')
+            require(all(row.get(key)==accepted.get(key) for key in row if key!='wall')
+                    and row['wall']<=accepted['wall']<=server[index]['wall'],
+                    phases[index]+': observer receipt not accepted by server')
     return {'evidenceComplete': True, 'cargoID': cargo[0], 'cargoWeight': cargo[1], 'phases': result}
 
 
@@ -300,7 +382,7 @@ def hotkey_coverage(logs, cartid, configured_key=None):
                 and observed.get('itemSource') == ('world' if ground else 'hands') and observed.get('handSameItem') is (not ground)
                 and observed.get('worldCount') == int(ground) and observed.get('primaryID') == (-1 if ground else cartid)
                 and observed.get('secondaryID') == (-1 if ground else cartid) and observed.get('worldAttached') is ground
-                and observed.get('luaActions') == 0 and observed.get('nativeActions') == 0 and observed.get('hasPath') is False,
+                and remote_endpoint_settled(observed,server[index]),
                 ACTION_PHASES[index-1] + ': observer native cargo/ownership/queue differs')
         require(owner[index]['wall'] <= observed['wall'] <= server[index]['wall']
                 and server[index]['wall']-owner[index]['wall'] < 3500,
@@ -325,6 +407,10 @@ def analyze(profile):
     require(isinstance(selection, dict) and selection.get('suite') in ('cart_motion_mp', 'wooden_cart_multiplayer')
             and selection.get('kind') == 'mp' and selection.get('mode') == 'toolkit'
             and selection.get('cases') == ['owner_observer_motion'], 'Frozen selection does not match the Cart MP capture')
+    visual_module=runpy.run_path(str(Path(__file__).with_name('analyze-visual-extended.py')))
+    visual=visual_module['validate_options'](selection, require)
+    injury_module=runpy.run_path(str(Path(__file__).with_name('analyze-injury.py')))
+    injury=injury_module['validate_options'](selection.get('options', {}), require)
     if 'cart_wall_exit' in selection.get('options', {}):
         return runpy.run_path(str(Path(__file__).with_name('analyze-wall.py')))['analyze'](profile, selection, globals())
     extended = selection.get('options', {}).get('cart_fast_motion', False)
@@ -340,11 +426,14 @@ def analyze(profile):
             'cart_hotkey_key requires hotkey setdown and an integer keyboard code in 1..255')
     variant = selection.get('options', {}).get('cart_variant', 'wooden-wheelbarrow')
     require(isinstance(variant, str) and variant in VARIANTS, 'cart_variant must be an exact supported MP variant')
-    require(not actions or variant in ('wooden-wheelbarrow', 'metal-wheelbarrow'), 'cart_actions requires a calibrated wheelbarrow')
     item = VARIANTS[variant]
     expected_phases = [('idle', 0), ('walk', 2000), ('turn', 5000), ('stop', 8000), ('reverse', 10000), ('stop-back', 12000)]
-    if extended:
+    if extended and not visual:
         expected_phases += [('run', 15000), ('sprint-turn', 16500), ('fast-stop', 18500)]
+    if visual:
+        expected_phases=visual_module['MOTION_PHASES']
+    if injury:
+        expected_phases += [(name,target) for name,target,_,_ in injury_module['PHASES']]
     logs = {role: (profile / (role + '-launch.log')).read_text() for role in ROLES}
     for role, text in logs.items():
         require('[CLEARANCE_PROBE] ERROR' not in text and '[GRIP_POSE_PROBE] ERROR' not in text, role + ': probe error')
@@ -361,6 +450,8 @@ def analyze(profile):
         require(events[0].get('cases') == ['owner_observer_motion'] and type(events[0].get('expected')) is int and events[0]['expected'] == 1, role + ': setup selection mismatch')
         require(events[1].get('id') == 'owner_observer_motion' and events[1].get('status') == 'captured', role + ': missing capture receipt')
         require(events[1].get('cartActions', False) is actions, role + ': action capture differs from selection')
+        require(events[1].get('cartInjury', False) is injury, role + ': injury capture differs from selection')
+        require(events[1].get('cartVisualExtended', False) is visual, role + ': extended visual capture differs from selection')
         require(all(type(events[2].get(key)) is int and events[2][key] == value for key, value in {'expected': 1, 'performed': 1, 'skipped': 0, 'failed': 0}.items()), role + ': unsuccessful capture completion')
         phases = re.findall(r'\[CART_MP\] PHASE ([a-z-]+) wall=(\d+) elapsed=(\d+)', logs[role])
         require([phase[0] for phase in phases] == [p[0] for p in expected_phases], role + ': missing/duplicate scenario phase')
@@ -379,28 +470,34 @@ def analyze(profile):
         states[role] = [r for r in states[role] if r['id'] == identity and r['user'] == 'client1']
     windows = dict(WINDOWS)
     if extended:
-        windows.update({'run': (15300, 16200), 'sprint-turn': (17000, 18200),
+        if visual:
+            windows.update(visual_module['MOTION_WINDOWS'])
+        else:
+            windows.update({'run': (15300, 16200), 'sprint-turn': (17000, 18200),
                         'fast-stop': (18600, 20000), 'fast-settled': (24500, 25500)})
         pads=[parse(line.split('[CART_MP] CART_PAD ',1)[1]) for line in logs['server'].splitlines() if '[CART_MP] CART_PAD ' in line]
         require(len(pads)==1, 'Unique authoritative extended pad descriptor required')
         pad=pads[0]
-        require(all(number(pad.get(k)) for k in ('minX','minY','z')) and pad.get('bankVersion')==3
-                and pad.get('size')==31 and pad.get('margin')==2 and pad.get('vegetationFree') is True
+        pad_size,pad_version=(63,6) if visual else (63,5) if injury else (31,3)
+        require(all(number(pad.get(k)) for k in ('minX','minY','z')) and pad.get('bankVersion')==pad_version
+                and pad.get('size')==pad_size and pad.get('margin')==2 and pad.get('vegetationFree') is True
                 and pad.get('elevated') is True and pad['z']==7 and pad.get('floorSprite')=='carpentry_02_57',
-                'Extended bank requires native elevated vegetation-free31x31 pad with two tile cart margin')
+                'Extended bank requires native elevated vegetation-free'+str(pad_size)+'x'+str(pad_size)+' pad with two tile cart margin')
         for role in ('client1','client2'):
             setups=[parse(line.split('[CART_MP] SETUP ',1)[1]) for line in logs[role].splitlines() if '[CART_MP] SETUP ' in line]
             require(setups and all(all(row.get(k)==pad[k] for k in ('minX','minY','z','bankVersion','size','margin','vegetationFree','elevated','floorSprite')) for row in setups),
                     role+': authoritative pad bounds were not shared')
             ready=[parse(line.split('[CART_MP] PAD_READY ',1)[1]) for line in logs[role].splitlines() if '[CART_MP] PAD_READY ' in line]
-            require(len(ready)==1 and ready[0].get('floors')==961 and number(ready[0].get('wall')) and ready[0]['wall']<epoch
+            require(len(ready)==1 and ready[0].get('floors')==pad_size*pad_size and number(ready[0].get('wall')) and ready[0]['wall']<epoch
                     and all(ready[0].get(k)==pad[k] for k in ('minX','minY','z','bankVersion','size')),
                     role+': every native replicated floor was not observed')
+        pad_end=visual_module['control_end'](logs) if visual else None
         for role,rows in states.items():
-            require(all(pad['minX']+2<=r['x']<=pad['minX']+29 and pad['minY']+2<=r['y']<=pad['minY']+29
-                        and abs(r['z']-pad['z'])<.25 for r in rows if r['wall']>=epoch-2000),
+            require(all(pad['minX']+pad['margin']<=r['x']<=pad['minX']+pad['size']-pad['margin']
+                        and pad['minY']+pad['margin']<=r['y']<=pad['minY']+pad['size']-pad['margin']
+                        and abs(r['z']-pad['z'])<.25 for r in rows if epoch-2000<=r['wall'] and (not visual or r['wall']<pad_end)),
                     role+': owner/cart left validated pad interior during video')
-    active = [r for r in states['client1'] if epoch <= r['wall'] <= epoch + (26000 if extended else 15000)]
+    active = [r for r in states['client1'] if epoch <= r['wall'] <= epoch + (visual_module['MOTION_DURATION'] if visual else injury_module['DURATION'] if injury else 26000 if extended else 15000)]
     cartids = {r['primary'] for r in active}
     require(len(cartids) == 1 and next(iter(cartids)) >= 0, 'Unique equipped owner cartID required')
     cartid = next(iter(cartids))
@@ -472,7 +569,7 @@ def analyze(profile):
     stop = {role: coverage(rows, 'wall', epoch, WINDOWS['settled-stop'], role + '/final') for role, rows in states.items()}
     owner = max(stop['client1'], key=lambda r: r['wall'])
     result['finalPositionDeltaFromOwner'] = {role: math.hypot(max(rows, key=lambda r: r['wall'])['x'] - owner['x'], max(rows, key=lambda r: r['wall'])['y'] - owner['y']) for role, rows in stop.items()}
-    if extended:
+    if extended and not visual:
         moving = {}
         for name, flag in (('run', 'run'), ('sprint-turn', 'sprint')):
             rows = coverage(states['client1'], 'wall', epoch, windows[name], name + '/native progress')
@@ -487,11 +584,17 @@ def analyze(profile):
                 'Fast gait did not settle to a native stop')
         result['fastMotion'] = moving
     if actions:
-        result['actions'] = action_coverage(logs, poses, cartid, epoch, 26000 if extended else 15000, variant)
+        result['actions'] = action_coverage(logs, poses, cartid, epoch, visual_module['MOTION_DURATION'] if visual else 26000 if extended else 15000, variant, profile,
+            phases=visual_module['ACTION_PHASES'] if visual else ACTION_PHASES,
+            grounds=visual_module['ACTION_GROUND'] if visual else ACTION_GROUND,observer_endpoints=visual)
         if hotkey:
             result['actions']['hotkeySetdown'] = hotkey_coverage(logs, cartid, hotkey_key)
         require(spec is None or result['actions']['cargoID'] == spec['cargoID']
                 and abs(result['actions']['cargoWeight']-spec['cargoWeight']) < .001, 'Action sequence changed initial motion cargo')
+    if visual:
+        result['visualExtended']=visual_module['analyze'](profile,selection,result,logs,states,globals())
+    if injury:
+        result['injury']=injury_module['analyze'](profile, selection, result)
     return result
 
 

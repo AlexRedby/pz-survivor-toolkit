@@ -110,7 +110,9 @@ local unequipMethods = {}
 for name, callback in pairs(unequipClass or {}) do if type(callback) == "function" then unequipMethods[name] = callback end end
 local transferWalk = luautils.walkToContainer
 local transferPredicate = luautils.haveToBeTransfered
-trusted = trusted and nativeClosure(transferPredicate, "luautils.lua") and nativeClosure(transferWalk, "luautils.lua")
+local approach = Toolkit.ActionQueueApproach
+local nativeTransferWalk = approach and approach.nativeHelper(luautils, "walkToContainer", transferWalk) or transferWalk
+trusted = trusted and nativeClosure(transferPredicate, "luautils.lua") and nativeClosure(nativeTransferWalk, "luautils.lua")
 local transferHelpers = {}
 for name, callback in pairs(ISInventoryTransferUtil) do
     if type(callback) == "function" then
@@ -575,6 +577,7 @@ Definitions.registerBehavior("toolkit.fire-unequip", {
         return record and action.character == record.character and action.item == record.item
             and action.toolkitQueueOperation == record.token and snapshotUnchanged(record.saved, record.expected)
             and helpersSafe() and equipmentSafe(record.saved) and type(cartMatches) == "function" and cartMatches(action)
+            and not Toolkit.ActionQueuePolicy.matchesNative(action)
     end, inspect = function(action)
         return {items = {[action.item:getID()] = true}, itemTypes = {[action.item:getFullType()] = true}, targets = {},
             hands = action.character, preparation = true, preparationFinish = true, cancelWaiting = false, interrupt = "finish-step"}

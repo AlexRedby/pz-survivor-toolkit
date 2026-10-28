@@ -25,7 +25,18 @@ return function(source)
             cursor = boundary + 1; return line
         end}
     end
+    local dependencies = {}
     require = function(module)
+        local name = module:match('^PZSurvivorToolkit/(.+)$')
+        if name == 'ActionQueueSettlement' or name == 'ActionQueueTidyIntent' or name == 'ActionQueueMembership' then
+            -- The surrounding checks stub require; Compat still needs its real
+            -- declared collaborators even when this fixture selects only Neat.
+            if not dependencies[module] then
+                dependencies[module] = Toolkit[name] or assert(loadfile(ProjectRoot
+                    .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))()
+            end
+            return dependencies[module]
+        end
         if module == 'PZSurvivorToolkit/SourceProof' then
             return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
         end
@@ -34,6 +45,12 @@ return function(source)
         end
         if module == 'Neat_Crafting/NC_CraftActionPanel' then return assert(loadstring(source))() end
         return previousRequire(module)
+    end
+    if not ISInventoryTransferAction then
+        -- Minimal craft checks replace Operations, whose production require
+        -- normally loads this class before Compat installs its transfer observer.
+        ISInventoryPage = ISInventoryPage or {}
+        assert(loadfile(NativeActionRoot .. '/client/TimedActions/ISInventoryTransferAction.lua'))()
     end
     local compat = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'))()
     require, getModFileReader, getActivatedMods, Events = previousRequire, reader, mods, events

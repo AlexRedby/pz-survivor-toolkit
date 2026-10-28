@@ -1,0 +1,881 @@
+{
+  "game": "/path/to/game/Java",
+  "jdk": "/path/to/jdk25",
+  "mods": "selected",
+  "options": {
+    "pack_lock": "/path/to/current-full-pack.lock.json",
+    "patch_jar": "/path/to/PZToolkitJavaPatches.jar",
+    "ffmpeg": "/path/to/ffmpeg",
+    "ffprobe": "/path/to/ffprobe",
+    "mod_sources": {
+      "PZSurvivorToolkit": "/path/to/prepared/PZSurvivorToolkit",
+      "PZToolkitJavaPatches": "/path/to/prepared/PZToolkitJavaPatches"
+    }
+  },
+  "jobs": [
+    {
+      "id": "retention-host",
+      "suite": "item-retention",
+      "case": "trunk",
+      "kind": "mp",
+      "language": "EN",
+      "boundary": "Two EN/RU Host clients and retained-item UI ordering; distinct ownership contract.",
+      "options": {
+        "mp_host": true
+      }
+    },
+    {
+      "id": "warehouse-sp",
+      "suite": "warehouse-manifest",
+      "case": "snapshot",
+      "kind": "sp",
+      "language": "EN",
+      "boundary": "Warehouse snapshot/edit/withdrawal has its own world-container and client-role lifecycle."
+    },
+    {
+      "id": "deposit-sp",
+      "suite": "quartermaster-distribution",
+      "case": "deposit",
+      "kind": "sp",
+      "language": "EN",
+      "boundary": "Native automatic-deposit fixture owns world containers and exact transfer/cancel receipts."
+    },
+    {
+      "id": "supply-units-sp",
+      "suite": "quartermaster-crafting",
+      "case": "uses",
+      "kind": "sp",
+      "language": "EN",
+      "boundary": "Already sequences full/carried/partial supply rolls; isolated ordinary-duration crafting baseline."
+    },
+    {
+      "id": "warehouse-host",
+      "suite": "warehouse-manifest",
+      "case": "snapshot",
+      "kind": "mp",
+      "language": "EN",
+      "boundary": "Warehouse snapshot/edit/withdrawal has its own world-container and client-role lifecycle.",
+      "options": {
+        "mp_host": true
+      }
+    },
+    {
+      "id": "deposit-host",
+      "suite": "quartermaster-distribution",
+      "case": "deposit",
+      "kind": "mp",
+      "language": "EN",
+      "boundary": "Native automatic-deposit fixture owns world containers and exact transfer/cancel receipts.",
+      "options": {
+        "mp_host": true
+      }
+    },
+    {
+      "id": "supply-units-host",
+      "suite": "quartermaster-crafting",
+      "case": "uses",
+      "kind": "mp",
+      "language": "EN",
+      "boundary": "Already sequences full/carried/partial supply rolls; isolated ordinary-duration crafting baseline.",
+      "options": {
+        "mp_host": true
+      }
+    },
+    {
+      "id": "deposit-batch-host",
+      "suite": "quartermaster-distribution",
+      "case": "batch",
+      "kind": "mp",
+      "language": "EN",
+      "boundary": "Host batch admission changes owned stack/count state and needs its own authority sequence.",
+      "options": {
+        "mp_host": true
+      }
+    },
+    {
+      "id": "smart-deposit-sp",
+      "suite": "smart-deposit",
+      "case": "partial",
+      "kind": "sp",
+      "language": "EN",
+      "boundary": "One SP case with a partially occupied destination and native drop assertions."
+    },
+    {
+      "id": "wishlist-host-control",
+      "suite": "shared-wishlist",
+      "case": "full",
+      "kind": "mp",
+      "language": "EN",
+      "mode": "native",
+      "boundary": "Independent queue-disabled full-pack control; cannot share the candidate process.",
+      "options": {
+        "mp_host": true
+      }
+    },
+    {
+      "id": "wishlist-host",
+      "suite": "shared-wishlist",
+      "case": "full",
+      "kind": "mp",
+      "language": "EN",
+      "control_job": "wishlist-host-control",
+      "boundary": "Two-client full integration after its independent native control; already contains all preserved stages.",
+      "options": {
+        "mp_host": true
+      }
+    },
+    {
+      "id": "warehouse-walk-sp",
+      "suite": "storage-profile",
+      "case": "walk",
+      "kind": "sp",
+      "language": "EN",
+      "timeout": 1800,
+      "boundary": "Fresh-world workload baseline with no prior crafting, capture or inventory mutations.",
+      "resources": {
+        "exclusive": true
+      }
+    },
+    {
+      "id": "inventory-work-sp",
+      "suite": "storage-profile",
+      "case": "inventory-work",
+      "kind": "sp",
+      "language": "EN",
+      "session": "storage-sp",
+      "timeout": 1800,
+      "resources": {
+        "exclusive": true
+      }
+    },
+    {
+      "id": "inventory-freshness-sp",
+      "suite": "storage-profile",
+      "case": "inventory-freshness",
+      "kind": "sp",
+      "language": "EN",
+      "session": "storage-sp",
+      "timeout": 1800,
+      "resources": {
+        "exclusive": true
+      }
+    },
+    {
+      "id": "container-ui-sp",
+      "suite": "container-configuration",
+      "case": "edit",
+      "kind": "sp",
+      "language": "EN",
+      "boundary": "Container editing has its own authoritative world/UI lifecycle and captured window states."
+    },
+    {
+      "id": "container-ui-host",
+      "suite": "container-configuration",
+      "case": "edit",
+      "kind": "mp",
+      "language": "EN",
+      "boundary": "Container editing has its own authoritative world/UI lifecycle and captured window states.",
+      "options": {
+        "mp_host": true
+      }
+    },
+    {
+      "id": "food-age-sp",
+      "suite": "storage-profile",
+      "case": "inventory-food-age",
+      "kind": "sp",
+      "language": "EN",
+      "timeout": 1800,
+      "boundary": "Natural expiry needs a fresh independent world-time baseline; never append it to inventory/video work."
+    },
+    {
+      "id": "wooden-wheelbarrow-injury",
+      "suite": "wooden_cart_motion",
+      "case": "injury",
+      "kind": "sp",
+      "language": "RU",
+      "options": {
+        "cart_variant": "wooden-wheelbarrow",
+        "mesh_fbx": "/path/to/original/Wheelbarrow_wood.fbx"
+      },
+      "timeout": 3600,
+      "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 4096
+      }
+    },
+    {
+      "id": "wooden-wheelbarrow-speed-parity",
+      "suite": "wooden_cart_motion",
+      "case": "speed-parity",
+      "kind": "sp",
+      "language": "RU",
+      "options": {
+        "cart_variant": "wooden-wheelbarrow"
+      },
+      "timeout": 3600,
+      "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 4096
+      }
+    },
+    {
+      "id": "metal-wheelbarrow-injury",
+      "suite": "wooden_cart_motion",
+      "case": "injury",
+      "kind": "sp",
+      "language": "RU",
+      "options": {
+        "cart_variant": "metal-wheelbarrow",
+        "mesh_fbx": "/path/to/original/Wheelbarrow_metal.fbx"
+      },
+      "timeout": 3600,
+      "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 4096
+      }
+    },
+    {
+      "id": "metal-wheelbarrow-speed-parity",
+      "suite": "wooden_cart_motion",
+      "case": "speed-parity",
+      "kind": "sp",
+      "language": "RU",
+      "options": {
+        "cart_variant": "metal-wheelbarrow"
+      },
+      "timeout": 3600,
+      "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 4096
+      }
+    },
+    {
+      "id": "shopping-cart-injury",
+      "suite": "wooden_cart_motion",
+      "case": "injury",
+      "kind": "sp",
+      "language": "RU",
+      "options": {
+        "cart_variant": "shopping-cart",
+        "mesh_fbx": "/path/to/original/ShoppingCart_PZ.fbx",
+        "cart_mesh_fbx": {
+          "ShoppingCartModel": "/path/to/ShoppingCartModel.fbx",
+          "ShoppingCartPartialModel": "/path/to/ShoppingCartPartialModel.fbx",
+          "ShoppingCartFullModel": "/path/to/ShoppingCartFullModel.fbx",
+          "ShoppingCartFlashlightModel": "/path/to/ShoppingCartFlashlightModel.fbx",
+          "ShoppingCartFlashlightPartialModel": "/path/to/ShoppingCartFlashlightPartialModel.fbx",
+          "ShoppingCartFlashlightFullModel": "/path/to/ShoppingCartFlashlightFullModel.fbx"
+        }
+      },
+      "timeout": 3600,
+      "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 4096
+      }
+    },
+    {
+      "id": "shopping-cart-speed-parity",
+      "suite": "wooden_cart_motion",
+      "case": "speed-parity",
+      "kind": "sp",
+      "language": "RU",
+      "options": {
+        "cart_variant": "shopping-cart"
+      },
+      "timeout": 3600,
+      "boundary": "Independent injury/healing or matched-weight speed bank; immutable variant/probes and fresh timing baseline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 4096
+      }
+    },
+    {
+      "id": "cart-host-left-mild",
+      "suite": "wooden_cart_multiplayer",
+      "case": "owner_observer_motion",
+      "kind": "mp",
+      "language": "EN",
+      "options": {
+        "mp_host": true,
+        "cart_fast_motion": true,
+        "cart_injury": true,
+        "cart_injury_side": "left",
+        "cart_injury_severity": "mild"
+      },
+      "timeout": 1800,
+      "boundary": "Two-client injury bank requires this exact injury baseline and independent healing timeline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 3072
+      }
+    },
+    {
+      "id": "cart-host-left-heavy",
+      "suite": "wooden_cart_multiplayer",
+      "case": "owner_observer_motion",
+      "kind": "mp",
+      "language": "EN",
+      "options": {
+        "mp_host": true,
+        "cart_fast_motion": true,
+        "cart_injury": true,
+        "cart_injury_side": "left",
+        "cart_injury_severity": "heavy"
+      },
+      "timeout": 1800,
+      "boundary": "Two-client injury bank requires this exact injury baseline and independent healing timeline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 3072
+      }
+    },
+    {
+      "id": "cart-host-right-mild",
+      "suite": "wooden_cart_multiplayer",
+      "case": "owner_observer_motion",
+      "kind": "mp",
+      "language": "EN",
+      "options": {
+        "mp_host": true,
+        "cart_fast_motion": true,
+        "cart_injury": true,
+        "cart_injury_side": "right",
+        "cart_injury_severity": "mild"
+      },
+      "timeout": 1800,
+      "boundary": "Two-client injury bank requires this exact injury baseline and independent healing timeline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 3072
+      }
+    },
+    {
+      "id": "cart-host-right-heavy",
+      "suite": "wooden_cart_multiplayer",
+      "case": "owner_observer_motion",
+      "kind": "mp",
+      "language": "EN",
+      "options": {
+        "mp_host": true,
+        "cart_fast_motion": true,
+        "cart_injury": true,
+        "cart_injury_side": "right",
+        "cart_injury_severity": "heavy"
+      },
+      "timeout": 1800,
+      "boundary": "Two-client injury bank requires this exact injury baseline and independent healing timeline.",
+      "resources": {
+        "exclusive": true,
+        "heap_mib": 3072
+      }
+    },
+    {
+      "id": "cart-controls-sp",
+      "suite": "wooden_cart_motion",
+      "case": "controls",
+      "kind": "sp",
+      "language": "RU",
+      "timeout": 1800,
+      "boundary": "One shopping-cart SP capture retains the 18 controls and adds brief corrections and native menu pickup/setdown in the same owned world/video lifecycle.",
+      "resources": {
+        "heap_mib": 4096
+      },
+      "options": {
+        "cart_controls_extended": true,
+        "cart_scenes": [
+          "shopping-cart"
+        ]
+      }
+    },
+    {
+      "id": "shopping-view-host",
+      "suite": "wooden_cart_multiplayer",
+      "case": "owner_observer_motion",
+      "kind": "mp",
+      "language": "EN",
+      "options": {
+        "mp_host": true,
+        "cart_variant": "shopping-cart",
+        "cart_fast_motion": true,
+        "cart_actions": true,
+        "cart_visual_extended": true
+      },
+      "timeout": 1800,
+      "boundary": "One two-client shopping bank records motion, short corrections, forward fast modes, native action transitions and an authoritative no-cart network control; separate from SP topology.",
+      "resources": {
+        "heap_mib": 2304
+      }
+    },
+    {
+      "id": "dashboard-controls-sp",
+      "suite": "vehicle-lights",
+      "case": "road",
+      "kind": "sp",
+      "language": "EN",
+      "options": {
+        "dashboard": true,
+        "push": true,
+        "rocker": true
+      },
+      "timeout": 1800,
+      "boundary": "One night road/video lifecycle contains sport and heavy controls; its time/weather/sandbox baseline stays separate."
+    },
+    {
+      "id": "dashboard-controls-host",
+      "suite": "vehicle-lights",
+      "case": "road",
+      "kind": "mp",
+      "language": "EN",
+      "options": {
+        "mp_host": true,
+        "dashboard": true,
+        "push": true,
+        "rocker": true
+      },
+      "timeout": 1800,
+      "boundary": "One-client Host road/video lifecycle with authoritative owned-vehicle switching and power acknowledgements."
+    },
+    {
+      "id": "door-icon-sp",
+      "suite": "vehicle-doors",
+      "case": "close",
+      "kind": "sp",
+      "language": "EN",
+      "boundary": "Native radial-menu screenshots use their own vehicle/UI setup; no passenger fixture yet."
+    }
+  ],
+  "sets": {
+    "inventory": [
+      "retention-host",
+      "warehouse-sp",
+      "deposit-sp",
+      "supply-units-sp",
+      "warehouse-host",
+      "deposit-host",
+      "supply-units-host",
+      "deposit-batch-host",
+      "smart-deposit-sp",
+      "wishlist-host-control",
+      "wishlist-host",
+      "warehouse-walk-sp",
+      "inventory-work-sp",
+      "inventory-freshness-sp",
+      "container-ui-sp",
+      "container-ui-host",
+      "food-age-sp"
+    ],
+    "carts": [
+      "wooden-wheelbarrow-injury",
+      "wooden-wheelbarrow-speed-parity",
+      "metal-wheelbarrow-injury",
+      "metal-wheelbarrow-speed-parity",
+      "shopping-cart-injury",
+      "shopping-cart-speed-parity",
+      "cart-host-left-mild",
+      "cart-host-left-heavy",
+      "cart-host-right-mild",
+      "cart-host-right-heavy",
+      "cart-controls-sp",
+      "shopping-view-host"
+    ],
+    "vehicles": [
+      "dashboard-controls-sp",
+      "dashboard-controls-host",
+      "door-icon-sp"
+    ],
+    "qualification": [
+      "inventory-work-sp",
+      "inventory-freshness-sp",
+      "dashboard-controls-sp",
+      "dashboard-controls-host",
+      "warehouse-sp",
+      "warehouse-host"
+    ],
+    "sp": [
+      "warehouse-sp",
+      "deposit-sp",
+      "supply-units-sp",
+      "smart-deposit-sp",
+      "warehouse-walk-sp",
+      "inventory-work-sp",
+      "inventory-freshness-sp",
+      "container-ui-sp",
+      "food-age-sp",
+      "wooden-wheelbarrow-injury",
+      "wooden-wheelbarrow-speed-parity",
+      "metal-wheelbarrow-injury",
+      "metal-wheelbarrow-speed-parity",
+      "shopping-cart-injury",
+      "shopping-cart-speed-parity",
+      "cart-controls-sp",
+      "dashboard-controls-sp",
+      "door-icon-sp"
+    ],
+    "host": [
+      "retention-host",
+      "warehouse-host",
+      "deposit-host",
+      "supply-units-host",
+      "deposit-batch-host",
+      "wishlist-host-control",
+      "wishlist-host",
+      "container-ui-host",
+      "cart-host-left-mild",
+      "cart-host-left-heavy",
+      "cart-host-right-mild",
+      "cart-host-right-heavy",
+      "shopping-view-host",
+      "dashboard-controls-host"
+    ],
+    "full": [
+      "retention-host",
+      "warehouse-sp",
+      "deposit-sp",
+      "supply-units-sp",
+      "warehouse-host",
+      "deposit-host",
+      "supply-units-host",
+      "deposit-batch-host",
+      "smart-deposit-sp",
+      "wishlist-host-control",
+      "wishlist-host",
+      "warehouse-walk-sp",
+      "inventory-work-sp",
+      "inventory-freshness-sp",
+      "container-ui-sp",
+      "container-ui-host",
+      "food-age-sp",
+      "wooden-wheelbarrow-injury",
+      "wooden-wheelbarrow-speed-parity",
+      "metal-wheelbarrow-injury",
+      "metal-wheelbarrow-speed-parity",
+      "shopping-cart-injury",
+      "shopping-cart-speed-parity",
+      "cart-host-left-mild",
+      "cart-host-left-heavy",
+      "cart-host-right-mild",
+      "cart-host-right-heavy",
+      "cart-controls-sp",
+      "shopping-view-host",
+      "dashboard-controls-sp",
+      "dashboard-controls-host",
+      "door-icon-sp"
+    ]
+  },
+  "campaign": [
+    {
+      "id": "retained-item-full-pack-compatibility",
+      "title": "Retained-item full-pack compatibility",
+      "todo": "tests/native_queue/SCENARIOS.md#inventory-retention-and-classification",
+      "jobs": [
+        "retention-host"
+      ],
+      "gates": []
+    },
+    {
+      "id": "full-pack-follow-up-checks",
+      "title": "Full-pack follow-up checks",
+      "todo": "TODO.md#full-pack-follow-up-checks",
+      "jobs": [
+        "warehouse-sp",
+        "deposit-sp",
+        "supply-units-sp",
+        "warehouse-host",
+        "deposit-host",
+        "supply-units-host",
+        "deposit-batch-host",
+        "smart-deposit-sp",
+        "wishlist-host-control",
+        "wishlist-host"
+      ],
+      "gates": [
+        "Smart Deposit has no Host partial-drop fixture; SP cannot establish its Host behavior."
+      ]
+    },
+    {
+      "id": "warehouse-client-workload",
+      "title": "Warehouse client workload",
+      "todo": "TODO.md#warehouse-client-workload",
+      "jobs": [
+        "warehouse-walk-sp",
+        "inventory-work-sp",
+        "inventory-freshness-sp"
+      ],
+      "gates": [
+        "Extend the workload fixture to concurrent Host edits, crafting inputs and quick transfers with loot hidden; existing SP timings do not prove this.",
+        "Keep GPU/FPS and actual user-save stutter conclusions separate from Lua/UI timings."
+      ]
+    },
+    {
+      "id": "configure-container-ui-repairs",
+      "title": "Configure container UI repairs",
+      "todo": "tests/native_queue/SCENARIOS.md#inventory-retention-and-classification",
+      "jobs": [
+        "container-ui-sp",
+        "container-ui-host"
+      ],
+      "gates": []
+    },
+    {
+      "id": "item-catalogue-test-world",
+      "title": "Item catalogue test world",
+      "todo": "TODO.md#item-catalogue-test-world",
+      "jobs": [],
+      "gates": [
+        "Use item-catalog/browse in an explicitly attended manual session; inspect aisle access, tags and clipboard menus.",
+        "Quit normally, export the stopped world with save-world, reopen the sealed copy and inspect persistence; this requires a real restart."
+      ]
+    },
+    {
+      "id": "food-age-and-cooling",
+      "title": "Food age and cooling",
+      "todo": "TODO.md#food-age-and-cooling",
+      "jobs": [
+        "food-age-sp"
+      ],
+      "gates": [
+        "Existing food-age case is the 199/200-item baseline in both UI modes; extend clipped/hidden expiry, later expansion, repeated regrouping and Host replication.",
+        "Add real refrigeration/freezing, power and transfer fixtures with native Food.updateAge observations; headless configured-state checks are insufficient."
+      ]
+    },
+    {
+      "id": "cart-motion-full-pack-compatibility",
+      "title": "Cart motion full-pack compatibility",
+      "todo": "TODO.md#cart-motion-full-pack-compatibility",
+      "jobs": [
+        "wooden-wheelbarrow-injury",
+        "wooden-wheelbarrow-speed-parity",
+        "metal-wheelbarrow-injury",
+        "metal-wheelbarrow-speed-parity",
+        "shopping-cart-injury",
+        "shopping-cart-speed-parity",
+        "cart-host-left-mild",
+        "cart-host-left-heavy",
+        "cart-host-right-mild",
+        "cart-host-right-heavy"
+      ],
+      "gates": [
+        "Resolve owned-window discovery failure and qualify the full metal-wheelbarrow SP injury bank; preserve rejected attempts and all runtime/timing guards.",
+        "Review the recorded motion visuals without treating capture or numerical checks as animation equivalence.",
+        "Host lacks matched-effective-weight speed parity and metal/shopping injury coverage; add and qualify those fixtures before accepting those behaviors."
+      ]
+    },
+    {
+      "id": "shopping-cart-turn-footwork",
+      "title": "Shopping cart turn footwork",
+      "todo": "TODO.md#cart-motion-full-pack-compatibility",
+      "jobs": [
+        "cart-controls-sp",
+        "shopping-view-host"
+      ],
+      "gates": []
+    },
+    {
+      "id": "vehicle-entry-and-exit-roof-clipping",
+      "title": "Vehicle entry and exit roof clipping",
+      "todo": "TODO.md#vehicle-entry-and-exit-roof-clipping",
+      "jobs": [],
+      "gates": [
+        "Extend vehicle-pose/transitions to a real second-client view and low-roof/tall-cab geometry; existing one-client Base.CarNormal checks are already covered."
+      ]
+    },
+    {
+      "id": "sport-headlight-push-button-cycle",
+      "title": "Sport headlight push-button cycle",
+      "todo": "TODO.md#sport-headlight-push-button-cycle",
+      "jobs": [
+        "dashboard-controls-sp",
+        "dashboard-controls-host"
+      ],
+      "gates": [
+        "Extend Host sport held/released visual coverage to all four scales; current Host footage covers standard-scale cycling and power acknowledgements. Retain the VVA coexistence acceptance gate."
+      ]
+    },
+    {
+      "id": "in-cabin-vehicle-door-control",
+      "title": "In-cabin vehicle door control",
+      "todo": "TODO.md#in-cabin-vehicle-door-control",
+      "jobs": [
+        "door-icon-sp"
+      ],
+      "gates": [
+        "Add actual passenger expanded/retracted controls and dashboard-scale coverage; stationary driver callbacks do not establish it."
+      ]
+    },
+    {
+      "id": "vehicle-diagnostics-controls",
+      "title": "Vehicle diagnostics controls",
+      "todo": "TODO.md#vehicle-diagnostics-controls",
+      "jobs": [],
+      "gates": [
+        "Extend vehicle-diagnostics/controls to actual driving before acceptance; stationary EN/RU controls were already covered."
+      ]
+    },
+    {
+      "id": "winter-base-and-jeep-additions",
+      "title": "Winter, base and Jeep additions",
+      "todo": "TODO.md#winter-base-and-jeep-additions",
+      "jobs": [],
+      "gates": [
+        "After the requested installation decision, inspect snow/wetness, clothing/cart visuals, light insects/performance, Jeep behavior and furniture contents; retain reload and second-player checks."
+      ]
+    },
+    {
+      "id": "new-music-selection",
+      "title": "New Music selection",
+      "todo": "TODO.md#new-music-selection",
+      "jobs": [],
+      "gates": [
+        "After the requested installation decision, use an audible two-player session for loot, both cassette sides, controls/batteries, transitions, reload, performance and TVRadio coexistence; the silent runner cannot qualify playback."
+      ]
+    },
+    {
+      "id": "open-jackets-and-climb-ladders-selection",
+      "title": "Open Jackets and Climb Ladders selection",
+      "todo": "TODO.md#open-jackets-and-climb-ladders-selection",
+      "jobs": [],
+      "gates": [
+        "After the requested installation decision, inspect clothing/insulation integrations and ladder use/occupied exits/movement, reload and second-player synchronization."
+      ]
+    },
+    {
+      "id": "vehicle-repair-overhaul-verification",
+      "title": "Vehicle Repair Overhaul verification",
+      "todo": "TODO.md#vehicle-repair-overhaul-verification",
+      "jobs": [],
+      "gates": [
+        "Use both VRO/VSO modules from the current complete source lock, then add real repair/salvage materials/XP/fuel, reload and peer checks; review sandbox-key mismatch and empty/evacuate owned vehicles before removal."
+      ]
+    },
+    {
+      "id": "vehicle-aim-roof-fix-verification",
+      "title": "Vehicle aim roof fix verification",
+      "todo": "TODO.md#vehicle-aim-roof-fix-verification",
+      "jobs": [],
+      "gates": [
+        "Use CarRoofFix from the current complete source lock, then inspect RMB release/seats/armed aiming and a second view; preserve heavy/spear/chainsaw controls."
+      ]
+    },
+    {
+      "id": "nicks-turn-off-fridges-selection",
+      "title": "Nick's Turn Off Fridges selection",
+      "todo": "TODO.md#nicks-turn-off-fridges-selection",
+      "jobs": [],
+      "gates": [
+        "After the requested installation decision, test unplug/replug, cooling, fuel, reload and peers with real appliances; restore all appliances before removing the mod."
+      ]
+    },
+    {
+      "id": "selected-qol-additions",
+      "title": "Selected QoL additions",
+      "todo": "TODO.md#selected-qol-additions",
+      "jobs": [],
+      "gates": [
+        "After the requested installation decision, inspect skill/recipe tooltips, foraging modifiers/radius and construction/bulb/power/dismantling/peer behavior for the three selected additions."
+      ]
+    },
+    {
+      "id": "vanilla-vehicle-visuals",
+      "title": "Vanilla vehicle visuals",
+      "todo": "TODO.md#vanilla-vehicle-visuals",
+      "jobs": [],
+      "gates": [
+        "After the requested installation decision, inspect the exact VVA/fix pair, removed body panels, running-engine reload, door/light alignment and remote animations."
+      ]
+    },
+    {
+      "id": "sandwich-ingredient-consumption-on-a-joining-client",
+      "title": "Sandwich ingredient consumption on a joining client",
+      "todo": "TODO.md#sandwich-ingredient-consumption-on-a-joining-client",
+      "jobs": [],
+      "gates": [
+        "Obtain original bread add-ins and sandwich toppings, then compare actual costs on joiner/host/server with queue on/off; no replacement reproduction or guessed recipe."
+      ]
+    },
+    {
+      "id": "vehicle-ownership-desync",
+      "title": "Vehicle ownership desync",
+      "todo": "TODO.md#vehicle-ownership-desync",
+      "jobs": [],
+      "gates": [
+        "Capture the original two-position episode with synchronous VEHICLE_SYNC logs and actual WAN conditions; localhost race or absence of failure cannot close it."
+      ]
+    },
+    {
+      "id": "medical-visual-packet-reproduction",
+      "title": "Medical visual packet reproduction",
+      "todo": "TODO.md#medical-visual-packet-reproduction",
+      "jobs": [],
+      "gates": [
+        "Use the preserved visual-sync diagnostic setup to reproduce the specific SyncVisualsPacket 7/8 mismatch, compare ordered IDs/readiness/in-flight snapshots and keep normal-treatment and MP controls."
+      ]
+    },
+    {
+      "id": "legacy-host-launchers",
+      "title": "Legacy Host launchers",
+      "todo": "TODO.md#legacy-host-launchers",
+      "jobs": [],
+      "gates": [
+        "Qualify normal client-only loader plus inherited-loader control on macOS and Linux before removing fallback scripts; Windows evidence alone is insufficient."
+      ]
+    },
+    {
+      "id": "runtime-observations-to-resolve",
+      "title": "Runtime observations to resolve",
+      "todo": "TODO.md#runtime-observations-to-resolve",
+      "jobs": [
+        "retention-host",
+        "warehouse-sp",
+        "deposit-sp",
+        "supply-units-sp",
+        "warehouse-host",
+        "deposit-host",
+        "supply-units-host",
+        "deposit-batch-host",
+        "smart-deposit-sp",
+        "wishlist-host-control",
+        "wishlist-host",
+        "warehouse-walk-sp",
+        "inventory-work-sp",
+        "inventory-freshness-sp",
+        "container-ui-sp",
+        "container-ui-host",
+        "food-age-sp",
+        "wooden-wheelbarrow-injury",
+        "wooden-wheelbarrow-speed-parity",
+        "metal-wheelbarrow-injury",
+        "metal-wheelbarrow-speed-parity",
+        "shopping-cart-injury",
+        "shopping-cart-speed-parity",
+        "cart-host-left-mild",
+        "cart-host-left-heavy",
+        "cart-host-right-mild",
+        "cart-host-right-heavy",
+        "cart-controls-sp",
+        "shopping-view-host",
+        "dashboard-controls-sp",
+        "dashboard-controls-host",
+        "door-icon-sp"
+      ],
+      "gates": [
+        "Audit full startup/case/cleanup logs on every selected run, classifying the historical font/container/Piano/mannequin observations against exact sources.",
+        "On recurrence capture native-window identity/placement loss and Host child first-output/stderr/termination timing without bypassing desktop or readiness guards."
+      ]
+    },
+    {
+      "id": "development-gated-additions-to-this-campaign",
+      "title": "Development-gated additions to this campaign",
+      "todo": "TODO.md#development-gated-additions-to-this-campaign",
+      "jobs": [],
+      "gates": [
+        "Add remaining queue recovery/action-family native cases only after their source audits and contracts or implementations are ready; preserve queue-disabled controls and two-client reset/death/disconnect."
+      ]
+    }
+  ]
+}

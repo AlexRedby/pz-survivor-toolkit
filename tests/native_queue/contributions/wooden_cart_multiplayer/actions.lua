@@ -5,15 +5,19 @@ require 'TimedActions/ISTimedActionQueue'
 local J=require 'CartMPJSON'
 local Actions={}
 local config=require 'QueueTestSelection'
-local variants={['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal'}
-local cartType=assert(variants[config.options and config.options.cart_variant or 'wooden-wheelbarrow'],'Actions require a calibrated wheelbarrow')
+local admission=config.options and config.options.cart_action_admission==true and require 'CartActionAdmissionProbe'
+local variants={['wooden-wheelbarrow']='SaucedWheelbarrow.WheelbarrowWood',['metal-wheelbarrow']='SaucedWheelbarrow.WheelbarrowMetal',['shopping-cart']='SaucedCarts.ShoppingCart'}
+local cartType=assert(variants[config.options and config.options.cart_variant or 'wooden-wheelbarrow'],'Actions require an exact supported cart variant')
 local hotkey=config.options and config.options.cart_hotkey_setdown==true
+local visual=config.options and config.options.cart_visual_extended==true
+local endpointAudit=hotkey or visual
 local audit
 local phases={
  {name='drop-complete',drop=true,ground=true}, {name='pickup-complete',ground=false},
  {name='drop-cancel',drop=true,cancel=true,ground=false}, {name='drop-repeat',drop=true,ground=true},
  {name='pickup-cancel',cancel=true,ground=true}, {name='pickup-repeat',ground=false},
 }
+if visual then phases[#phases+1]={name='control-release',drop=true,ground=true} end
 local session,window,serverDone,doneAt,quietAt=nil,nil,nil,nil,nil
 local presentationDone=false
 local observed={}
@@ -25,6 +29,8 @@ local function status(p) return assert(toolkitWoodCartStatus,'Native presentatio
 local function queue(p) return ISTimedActionQueue.getTimedActionQueue(p) end
 local function empty(p) return #queue(p).queue==0 and p:getCharacterActions():isEmpty() and not p:hasPath() end
 local function inspect(p,spec,observer)
+ assert(not observer or not p:isLocalPlayer(),'Observer endpoint requires the remote owner replica')
+ local nativeMoving;if observer then nativeMoving=p:isPlayerMoving() end
  local found,count,worlds=nil,0,0
  local a,b=p:getPrimaryHandItem(),p:getSecondaryHandItem()
  if observer then
@@ -54,7 +60,9 @@ local function inspect(p,spec,observer)
   itemSource=world and 'world' or observer and found and 'hands' or 'inventory',handSameItem=a~=nil and a==b and a:getID()==spec.id,
   worldCount=worlds,primaryID=a and a:getID() or -1,secondaryID=b and b:getID() or -1,
   worldAttached=found and found:getWorldItem()~=nil or false,luaActions=#queue(p).queue,
-  nativeActions=p:getCharacterActions():size(),hasPath=p:hasPath()},found
+  nativeActions=p:getCharacterActions():size(),hasPath=p:hasPath(),
+  pathScope=observer and 'remote-network' or 'authoritative-approach',
+  nativeMoving=nativeMoving,position={x=p:getX(),y=p:getY(),z=p:getZ()}},found
 end
 local function matches(row,ground)
  local inventoryOK
@@ -62,9 +70,19 @@ local function matches(row,ground)
   inventoryOK=row.inventoryCount==nil and (ground and row.itemSource=='world'
    or not ground and row.itemSource=='hands' and row.handSameItem)
  else inventoryOK=row.inventoryCount==(ground and 0 or 1) end
- return row.cargoPreserved and row.luaActions==0 and row.nativeActions==0 and not row.hasPath
+ -- hasPath() only tests path2 != null. IsoPlayer.updateRemotePlayer owns network
+ -- paths too; PathFindBehavior2.update can return Succeeded without clearing path2.
+ -- A remote endpoint instead requires idle motion and the authoritative position.
+ local pathOK
+ if row.pathScope=='remote-network' then pathOK=row.nativeMoving==false else pathOK=not row.hasPath end
+ return row.cargoPreserved and row.luaActions==0 and row.nativeActions==0 and pathOK
   and (ground and inventoryOK and row.worldCount==1 and row.worldAttached and row.primaryID==-1 and row.secondaryID==-1
    or not ground and inventoryOK and row.worldCount==0 and not row.worldAttached and row.primaryID==row.id and row.secondaryID==row.id)
+end
+local function samePosition(actual,expected)
+ -- Match updateRemotePlayer's .2 Manhattan idle threshold; z uses the pad guard.
+ return actual and expected and math.abs(actual.x-expected.x)+math.abs(actual.y-expected.y)<.2
+  and math.abs(actual.z-expected.z)<.25
 end
 local function samePose(actual,expected)
  if not actual or not expected then return false end
@@ -121,6 +139,7 @@ local function enqueue(p,now)
  end
  assert(PZSurvivorToolkit.ActionQueueOperations,'Action queue operations required').run(callback)
  assert(not empty(p),'Native cart callback queued no action')
+ if admission then admission.trackQueued(queue(p).queue,{index=session.index,phase=spec.name,id=session.id}) end
  if hotkey and spec.drop then
   local queued=queue(p).queue
   assert(#queued==1 and queued[1].Type=='ToolkitWoodCartDrop' and queued[1].item==item,
@@ -134,7 +153,7 @@ function Actions.command(command,args)
   assert(phases[args.index] and phases[args.index].name==args.phase,'Wrong server action phase')
   audit=nil;window=args;marker('WINDOW',args)
  elseif command=='ActionAudit' then
-  assert(hotkey and window and args.index==window.index and args.id==window.id,'Unexpected observation audit')
+  assert(endpointAudit and window and args.index==window.index and args.id==window.id,'Unexpected observation audit')
   audit=args
  elseif command=='ActionAck' then
   assert(args.ok==true,'Server rejected action check: '..tostring(args.error))
@@ -155,8 +174,9 @@ function Actions.sample(owner,actor)
  local s=status(owner)
  if audit and actor=='client2' then
   local row=inspect(owner,audit,true)
-  if matches(row,phases[audit.index].ground) and not s.active and not s.recovering
-   and (not phases[audit.index].ground or samePose(row.worldPose,audit.expectedWorld)) then
+  if matches(row,phases[audit.index].ground) and row.nativeMoving==false
+   and samePosition(row.position,audit.expectedPosition) and not s.active and not s.recovering
+   and (not audit.expectedWorld or samePose(row.worldPose,audit.expectedWorld)) then
    row.actor=actor;row.index=audit.index;row.phase=audit.phase;row.expectedWorld=audit.expectedWorld
    marker('OBSERVER_RECEIPT',row);sendClientCommand('CartMP','ActionObservation',row);audit=nil
   end

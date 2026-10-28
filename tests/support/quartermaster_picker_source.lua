@@ -47,16 +47,24 @@ return function(control, rules, options)
     end}
     ISTextEntryBox = {new = function(_, text, x, y, w, h)
         local c = rect(x, y, w, h)
-        c.text = text
+        c.text, c.font = text, UIFont.Small
+        function c:instantiate() self.nativeFont = self.font end
+        function c:setFont(font) self.font, self.nativeFont = font, font end
         function c:getInternalText() return self.text end
         function c:setText(value) self.text = value end
         function c:setMaxTextLength(value) self.maxLength = value end
         return c
     end}
-    ISLabel = {new = function(_, x, y, h) return rect(x, y, 0, h) end}
-    ISScrollingListBox = {new = function(_, x, y, w, h)
+    ISLabel = {new = function(_, x, y, h, name)
+        local label = rect(x, y, 0, h); label.name = name
+        function label:setName(value) self.name = value end
+        return label
+    end}
+    ISScrollingListBox = {prerender = function() end, new = function(_, x, y, w, h)
         local lb = rect(x, y, w, h)
         lb.vscroll = rect(w - 16, 0, 16, h)
+        function lb.vscroll:setAnchorRight(value) self.anchorRight = value end
+        function lb.vscroll:setAnchorBottom(value) self.anchorBottom = value end
         function lb:updateScrollbars() end
         function lb:getScrollHeight() return self.scrollHeight or self.count * self.itemheight end
         function lb:setScrollHeight(height) self.scrollHeight = height end
@@ -71,7 +79,9 @@ return function(control, rules, options)
     local contextMenu
     ISContextMenu = {get = function()
         contextMenu = {options = {}, addOption = function(self, title, target, callback, key)
-            self.options[#self.options + 1] = {title = title, target = target, callback = callback, key = key}
+            local option = {title = title, target = target, callback = callback, key = key}
+            self.options[#self.options + 1] = option
+            return option
         end}
         return contextMenu
     end}
@@ -108,17 +118,19 @@ return function(control, rules, options)
         notify = function(_, message) failures[#failures + 1] = message end,
         addCoord = function() coordinates = coordinates + 1 end,
         removeCoords = function() coordinates = coordinates + 1 end}
-    getAllItems = function()
+    local fixtureGetAllItems = function()
         local scripts = options.scriptItems and options.scriptItems() or {}
         if not options.scriptItems then
             local tags = require 'PZSurvivorToolkit/ItemTags'
             for _, category in ipairs(LootSorter.getCategories()) do
                 scripts[#scripts + 1] = {tags = tags.forCategory(category),
-                    getDisplayCategory = function() return category end}
+                    getDisplayCategory = function() return category end,
+                    getFullName = function() return 'Fixture.Category.' .. category end}
             end
         end
         return {size = function() return #scripts end, get = function(_, index) return scripts[index + 1] end}
     end
+    getAllItems = fixtureGetAllItems
     local function event() return {Add = function() end, Remove = function() end} end
     Events.OnReceiveGlobalModData, Events.OnTick, Events.OnObjectAdded = event(), event(), event()
     isClient, isServer = function() return false end, function() return false end
@@ -127,7 +139,7 @@ return function(control, rules, options)
     LootSorter.notify = function(_, message) failures[#failures + 1] = message end
     local obj = {md = {LSBox = {['0'] = (options.cats or {OC_Food = true, MissingModCategory = true})},
         LSBoxItems = {['0'] = (options.items or {Beans = true})}, LSBoxPresets = {['0'] = {Pantry = 'generation'}},
-        LSBoxPriority = {['0'] = 4}}}
+        LSBoxPriority = {['0'] = 4}, LSBoxNoDuplicates = {['0'] = options.noDuplicates or nil}}}
     local square = {getX = function() return 10 end, getY = function() return 20 end, getZ = function() return 0 end,
         getObjects = function() return {size = function() return 1 end, get = function() return obj end} end}
     obj.getModData, obj.hasModData = function(self) return self.md end, function() return true end
@@ -136,7 +148,8 @@ return function(control, rules, options)
     obj.getContainerByIndex = function()
         local items = {}
         for _, category in ipairs(contents) do
-            items[#items + 1] = {getDisplayCategory = function() return category end}
+            items[#items + 1] = {getDisplayCategory = function() return category end,
+                    getFullName = function() return 'Fixture.Category.' .. category end}
         end
         return {getItems = function() return {size = function() return #items end,
             get = function(_, index) return items[index + 1] end} end}
@@ -144,6 +157,7 @@ return function(control, rules, options)
     function obj:transmitModData()
         publications[#publications + 1] = LootSorter.snapshotDesignation({cats = self.md.LSBox['0'],
             items = self.md.LSBoxItems['0'], presets = self.md.LSBoxPresets['0'], priority = self.md.LSBoxPriority['0'],
+            noDuplicates = self.md.LSBoxNoDuplicates and self.md.LSBoxNoDuplicates['0'],
             pzstTagRule = self.md.PZSTQuartermasterTagRules and self.md.PZSTQuartermasterTagRules['0']})
     end
     rules.saveBox = function(obj, ci, rule, _, callback, revision, configuration)
@@ -161,6 +175,7 @@ return function(control, rules, options)
     LootSorter.notifyPresetFailure = function(_, outcome) failures[#failures + 1] = outcome end
     assert(LootSorter.toolkitTagPicker, 'owned picker did not declare tag UI setup')
     local function open()
+        getAllItems = fixtureGetAllItems
         LootSorter.openPicker(obj, 0, 0)
         local p = assert(LootSorter._picker)
         p:configJoypad()

@@ -78,7 +78,7 @@ def analyze(text, lifecycle, body, grip, world, draws, pose_tail, *, hotkey=Fals
         cart_type = first['cartType']
         assert cart_type in CLIPS, 'Unsupported captured repeat cart type'
         clip = CLIPS[cart_type]
-        assert cart_type == 'SaucedWheelbarrow.WheelbarrowWood', 'Full repeat analysis requires wooden wheel calibration; use tracks() for metal clip evidence'
+        assert cart_type == 'SaucedWheelbarrow.WheelbarrowWood', 'Full repeat analysis requires wooden wheel calibration; use tracks() for other cart clip evidence'
         assert first['cargoCount'] > 0 and first['cargo'] > 0 if load == 'full' else first['cargoCount'] == first['cargo'] == 0, 'Wrong repeat cargo variant'
         for row in rows + receipts:
             finite(row)

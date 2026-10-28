@@ -13,8 +13,12 @@ import zombie.inventory.InventoryItem;
 
 /** Read-only final render poses for native body/handle clearance measurements. */
 public final class ClearanceProbe {
+    private static final boolean FULL_TAIL_BONES = false;
     private static BufferedWriter output;
-    private static BufferedWriter worldOutput, tailOutput, lifecycleOutput, outlineOutput, approachOutput;
+    private static BufferedWriter worldOutput, tailOutput, lifecycleOutput, outlineOutput, approachOutput, entryOutput;
+    private record EntryWindow(InventoryItem item,long start) {}
+    private static final java.util.WeakHashMap<zombie.characters.IsoPlayer,EntryWindow> entryWindows=new java.util.WeakHashMap<>();
+    private static final long ENTRY_NANOS=200_000_000L;
     private static final java.util.WeakHashMap<zombie.characters.CharacterTimedActions.LuaTimedActionNew,Long> actionIds=new java.util.WeakHashMap<>();
     private record StoppedCart(long actionId, InventoryItem item) {}
     private static final java.util.WeakHashMap<zombie.characters.IsoGameCharacter,StoppedCart> stoppedCarts=new java.util.WeakHashMap<>();
@@ -89,7 +93,7 @@ public final class ClearanceProbe {
                 if(comma)row.append(',');comma=true;row.append(quoted(name)).append(':');matrix(row,pose(body,skin,index));
             }
             // Skinning needs every influencing bone, including thighs and pelvis after the cart leaves the hands.
-            if(impact)for(var entry:skin.boneIndices.entrySet()) {
+            if(impact || FULL_TAIL_BONES)for(var entry:skin.boneIndices.entrySet()) {
                 String name=entry.getKey();
                 if(java.util.Set.of("Bip01_L_UpperArm","Bip01_L_Forearm","Bip01_L_Hand",
                     "Bip01_R_UpperArm","Bip01_R_Forearm","Bip01_R_Hand","Bip01_Spine","Bip01_Head",
@@ -146,10 +150,99 @@ public final class ClearanceProbe {
             }
         }
     }
+    // Independent bounded diagnostics; never change production flags, matrices or animation state.
+    private static boolean entryWindow(ModelSlotRenderData slot) {
+        if(entryOutput==null || !(slot.character instanceof zombie.characters.IsoPlayer player))return false;
+        var item=player.getPrimaryHandItem();
+        if(!supported(item) || player.getSecondaryHandItem()!=item) {entryWindows.remove(player);return false;}
+        boolean present=false;
+        for(var data:slot.modelData)if(data.modelInstance!=null && data.modelInstance.parent!=null
+            && data.modelInstance.modelScript!=null && supported(data.modelInstance.modelScript.getName())) {present=true;break;}
+        if(!present)return false;
+        long now=System.nanoTime();var window=entryWindows.get(player);
+        if(window==null || window.item()!=item) {window=new EntryWindow(item,now);entryWindows.put(player,window);}
+        return now-window.start()<=ENTRY_NANOS;
+    }
+    private static void entryGate(StringBuilder row,ModelSlotRenderData slot) {
+        var player=(zombie.characters.IsoPlayer)slot.character;
+        var primary=player.getPrimaryHandItem();var secondary=player.getSecondaryHandItem();
+        row.append("{\"actorIdentity\":").append(System.identityHashCode(player))
+            .append(",\"onlineId\":").append(player.getOnlineID()).append(",\"localPlayer\":").append(player.isLocalPlayer())
+            .append(",\"primaryId\":").append(primary==null?-1:primary.getID())
+            .append(",\"secondaryId\":").append(secondary==null?-1:secondary.getID())
+            .append(",\"inventoryOwnsPrimary\":").append(primary!=null && primary.getContainer()==player.getInventory())
+            .append(",\"primaryInWorld\":").append(primary!=null && primary.getWorldItem()!=null)
+            .append(",\"aiming\":").append(player.isAiming()).append(",\"sneaking\":").append(player.isSneaking())
+            .append(",\"inVehicle\":").append(player.getVehicle()!=null)
+            .append(",\"visualEnabled\":").append(net.alexredby.pztoolkitjavapatches.CartMotionSync.visualEnabled(player))
+            .append(",\"steeringEnabled\":").append(net.alexredby.pztoolkitjavapatches.CartSteeringHooks.enabled(player))
+            .append(",\"supportedHeldCart\":").append(net.alexredby.pztoolkitjavapatches.CartSteeringHooks.supportedCart(player));
+        for(String key:new String[]{"ToolkitCartMotion","IsPerformingAnAction","ToolkitWoodCartAction"})
+            row.append(',').append(quoted(key)).append(':').append(player.getVariableBoolean(key));
+        for(String key:new String[]{"Weapon","PerformingAction","RightHandMask","LeftHandMask","ToolkitCartPose"})
+            row.append(',').append(quoted(key)).append(':').append(quoted(player.getVariableString(key)));
+        row.append(",\"overridePrimary\":").append(quoted(player.overridePrimaryHandModel))
+            .append(",\"overrideSecondary\":").append(quoted(player.overrideSecondaryHandModel))
+            .append(",\"forceNullOverride\":").append(player.forceNullOverride).append(",\"actions\":[");
+        boolean comma=false;
+        for(var action:player.getCharacterActions()) {
+            if(comma)row.append(',');comma=true;
+            row.append("{\"identity\":").append(System.identityHashCode(action))
+                .append(",\"finished\":").append(action.finished()).append(",\"forceStop\":").append(action.forceStop)
+                .append(",\"forceComplete\":").append(action.forceComplete);
+            if(action instanceof zombie.characters.CharacterTimedActions.LuaTimedActionNew lua) {
+                var table=lua.getTable();var id=table==null?null:table.rawget("cartId");
+                row.append(",\"type\":").append(quoted(lua.getMetaType())).append(",\"started\":").append(lua.isStarted())
+                    .append(",\"cartId\":").append(id instanceof Number?id:"null")
+                    .append(",\"completed\":").append(table!=null && Boolean.TRUE.equals(table.rawget("completed")));
+            }
+            row.append('}');
+        }
+        row.append("]}");
+    }
+    private static String entryPose(ModelSlotRenderData slot,ModelInstanceRenderData cart) {
+        var row=new StringBuilder(16384).append("{\"wallTimeMillis\":").append(System.currentTimeMillis())
+            .append(",\"nanoTime\":").append(System.nanoTime()).append(",\"slotIdentity\":").append(System.identityHashCode(slot))
+            .append(",\"dataIdentity\":").append(System.identityHashCode(cart))
+            .append(",\"slotX\":").append(slot.x).append(",\"slotY\":").append(slot.y)
+            .append(",\"slotZ\":").append(slot.z).append(",\"female\":").append(slot.character.isFemale())
+            .append(",\"slotAngle\":").append(slot.animPlayerAngle).append(",\"gate\":");
+        entryGate(row,slot);row.append(",\"cart\":");matrix(row,new Matrix4f(cart.xfrm).transpose());
+        row.append(",\"bones\":{");boolean comma=false;
+        for(var body:slot.modelData)if(body.modelInstance==cart.modelInstance.parent && body.matrixPalette!=null
+            && body.modelInstance.model.tag instanceof SkinningData skin) {
+            for(var entry:skin.boneIndices.entrySet()) {
+                if(comma)row.append(',');comma=true;row.append(quoted(entry.getKey())).append(':');
+                matrix(row,pose(body,skin,entry.getValue()));
+            }
+            break;
+        }
+        return row.append("}}").toString();
+    }
+    public static synchronized String entryBefore(ModelSlotRenderData slot) {
+        if(!entryWindow(slot))return null;
+        for(var cart:slot.modelData)if(cart.modelInstance!=null && cart.modelInstance.parent!=null
+            && cart.modelInstance.modelScript!=null && supported(cart.modelInstance.modelScript.getName()))return entryPose(slot,cart);
+        return null;
+    }
+    public static synchronized void entryAfter(ModelSlotRenderData slot,String before) throws Exception {
+        if(entryOutput==null || before==null)return;
+        for(var cart:slot.modelData)if(cart.modelInstance!=null && cart.modelInstance.parent!=null
+            && cart.modelInstance.modelScript!=null && supported(cart.modelInstance.modelScript.getName())) {
+            entryOutput.write("{\"event\":\"grounding-pair\",\"before\":"+before+",\"after\":"+entryPose(slot,cart)+"}\n");entryOutput.flush();return;
+        }
+    }
+    public static synchronized void entryDraw(ModelSlotRenderData slot,ModelInstanceRenderData cart,String source) throws Exception {
+        if(!entryWindow(slot) || cart==null || cart.modelInstance==null || cart.modelInstance.parent==null
+            || cart.modelInstance.modelScript==null || !supported(cart.modelInstance.modelScript.getName()))return;
+        entryOutput.write("{\"event\":\"draw\",\"source\":"+quoted(source)+",\"pose\":"+entryPose(slot,cart)+"}\n");entryOutput.flush();
+    }
     public static class Capture {
+        @Advice.OnMethodEnter(suppress=Throwable.class)
+        public static String enter(@Advice.Argument(0) ModelSlotRenderData slot) {return ClearanceProbe.entryBefore(slot);}
         @Advice.OnMethodExit(suppress=Throwable.class)
-        public static void exit(@Advice.Argument(0) ModelSlotRenderData slot) {
-            try{ClearanceProbe.snapshot(slot);}catch(Throwable e){System.err.println("[CLEARANCE_PROBE] ERROR "+e);}
+        public static void exit(@Advice.Argument(0) ModelSlotRenderData slot,@Advice.Enter String before) {
+            try{ClearanceProbe.entryAfter(slot,before);ClearanceProbe.snapshot(slot);}catch(Throwable e){System.err.println("[CLEARANCE_PROBE] ERROR "+e);}
         }
     }
 
@@ -414,22 +507,22 @@ public final class ClearanceProbe {
     }
     public static class MeshCapture {
         @Advice.OnMethodExit(onThrowable=Throwable.class,suppress=Throwable.class)
-        public static void exit(@Advice.This ModelInstanceRenderData data,@Advice.Thrown Throwable thrown) {
-            try{if(thrown==null)ClearanceProbe.mesh(data,"ModelInstanceRenderData.RenderCharacter-exit");}
+        public static void exit(@Advice.This ModelInstanceRenderData data,@Advice.Argument(0) ModelSlotRenderData slot,@Advice.Thrown Throwable thrown) {
+            try{if(thrown==null){ClearanceProbe.mesh(data,"ModelInstanceRenderData.RenderCharacter-exit");ClearanceProbe.entryDraw(slot,data,"ModelInstanceRenderData.RenderCharacter-exit");}}
             catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ERROR cart mesh "+error);}
         }
     }
     public static class SplitMeshCapture {
         @Advice.OnMethodExit(suppress=Throwable.class)
-        public static void exit(@Advice.Argument(2) ModelInstanceRenderData data,@Advice.Return boolean rendered) {
-            try{if(rendered)ClearanceProbe.mesh(data,"CartWheelSpin.render-exit");}
+        public static void exit(@Advice.Argument(1) ModelSlotRenderData slot,@Advice.Argument(2) ModelInstanceRenderData data,@Advice.Return boolean rendered) {
+            try{if(rendered){ClearanceProbe.mesh(data,"CartWheelSpin.render-exit");ClearanceProbe.entryDraw(slot,data,"CartWheelSpin.render-exit");}}
             catch(Throwable error){System.err.println("[CLEARANCE_PROBE] ERROR cart mesh "+error);}
         }
     }
 
     private static void closeOutputs() throws Exception {
-        var body=output;var world=worldOutput;var tails=tailOutput;var lifecycle=lifecycleOutput;var outlines=outlineOutput;var approaches=approachOutput;
-        output=null;worldOutput=null;tailOutput=null;lifecycleOutput=null;outlineOutput=null;approachOutput=null;actionIds.clear();stoppedCarts.clear();nextActionId=0;
+        var body=output;var world=worldOutput;var tails=tailOutput;var lifecycle=lifecycleOutput;var outlines=outlineOutput;var approaches=approachOutput;var entries=entryOutput;
+        output=null;worldOutput=null;tailOutput=null;lifecycleOutput=null;outlineOutput=null;approachOutput=null;entryOutput=null;entryWindows.clear();actionIds.clear();stoppedCarts.clear();nextActionId=0;
         Exception failure=null;
         try{if(body!=null)body.close();}catch(Exception error){failure=error;}
         try{if(world!=null)world.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
@@ -437,6 +530,7 @@ public final class ClearanceProbe {
         try{if(lifecycle!=null)lifecycle.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         try{if(outlines!=null)outlines.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         try{if(approaches!=null)approaches.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
+        try{if(entries!=null)entries.close();}catch(Exception error){if(failure==null)failure=error;else failure.addSuppressed(error);}
         if(failure!=null)throw failure;
     }
 
@@ -452,7 +546,8 @@ public final class ClearanceProbe {
         Path lifecycleFile=directory.resolve("action-lifecycle.jsonl");
         Path outlineFile=directory.resolve("cart-outlines.jsonl");
         Path approachFile=directory.resolve("cart-approach.jsonl");
-        if(Files.exists(approachFile) || Files.exists(outlineFile) || Files.exists(file) || Files.exists(worldFile) || Files.exists(tailFile) || Files.exists(lifecycleFile))throw new IllegalStateException("Preserve existing clearance output first");
+        Path entryFile=directory.resolve("cart-entry-gates.jsonl");
+        if(Files.exists(entryFile) || Files.exists(approachFile) || Files.exists(outlineFile) || Files.exists(file) || Files.exists(worldFile) || Files.exists(tailFile) || Files.exists(lifecycleFile))throw new IllegalStateException("Preserve existing clearance output first");
         try {
             output=Files.newBufferedWriter(file,java.nio.file.StandardOpenOption.CREATE_NEW);
             worldOutput=Files.newBufferedWriter(worldFile,java.nio.file.StandardOpenOption.CREATE_NEW);
@@ -460,6 +555,7 @@ public final class ClearanceProbe {
             lifecycleOutput=Files.newBufferedWriter(lifecycleFile,java.nio.file.StandardOpenOption.CREATE_NEW);
             outlineOutput=Files.newBufferedWriter(outlineFile,java.nio.file.StandardOpenOption.CREATE_NEW);
             approachOutput=Files.newBufferedWriter(approachFile,java.nio.file.StandardOpenOption.CREATE_NEW);
+            entryOutput=Files.newBufferedWriter(entryFile,java.nio.file.StandardOpenOption.CREATE_NEW);
             if(!installed){new AgentBuilder.Default().disableClassFormatChanges()
                 .with(AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
                 .with(AgentBuilder.Listener.StreamWriting.toSystemError().withErrorsOnly())

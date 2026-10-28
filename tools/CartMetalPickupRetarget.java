@@ -123,8 +123,7 @@ public final class CartMetalPickupRetarget {
             var offsets=new ArrayList<org.lwjgl.util.vector.Matrix4f>();
             for(int i=0;i<count;i++) {indices.put(input.readUTF(),i);parents.add(input.readInt());offsets.add(new org.lwjgl.util.vector.Matrix4f());}
             var actor=new SkinningData(new HashMap<>(),offsets,offsets,offsets,parents,indices);
-            // Profile HELD already includes8deg lowering and cylindrical floor alignment.
-            // It matches native01 y=.22126661; lowering/alignment must not run twice.
+            // Profile HELD includes the calibrated pitch, side stance and cylindrical support; do not align it twice.
             var profile=CartWheelbarrow.METAL;var held=profile.held(new Matrix4f());
             // GROUND was captured with the original .06 stance; move its actor-relative
             // position by the exact approach delta without moving the world cart.
@@ -132,7 +131,8 @@ public final class CartMetalPickupRetarget {
             if(!CartWorldSupport.apply("SaucedWheelbarrow.WheelbarrowMetal",ground,1))
                 throw new AssertionError("metal ground support rejected");
             // Actor-space capture includes native item placement height after model calibration.
-            ground.translateLocal(0,.00175f*2.44949f/1.5f,.06f-profile.pickupStanceBack());
+            ground.translateLocal(0,.00175f*2.44949f/1.5f,
+                .06f-profile.pickupStanceBack()+(float)((1.162308812-profile.axle())/1.5));
             int frames=input.readInt();output.writeInt(frames);int contacts=0;
             var samples=new ArrayList<Sample>();
             for(int frame=0;frame<frames;frame++) {
@@ -173,7 +173,8 @@ public final class CartMetalPickupRetarget {
                     for(String side:new String[]{"L","R"}) nativeThumb(poses,actor,side,CartTransitionMath.smooth(phase.grip()));
                     if(!CartGrip.transitionGrip(poses,actor,false,new Matrix4f(),cart,(float)phase.reach(),(float)phase.grip(),null,"WheelbarrowMetal"))
                         throw new AssertionError("metal IK refused frame="+frame+" time="+time);
-                    if(phase.reach()==1) for(String side:new String[]{"L","R"}) {
+                    // Before full closure the live route still keeps the open hand beside the shaft.
+                    if(phase.grip()==1) for(String side:new String[]{"L","R"}) {
                         var target=new Matrix4f();CartGrip.transitionTarget("WheelbarrowMetal",side.equals("L"),false,new Matrix4f(),cart,target);
                         if(!poses[actor.getBone("Bip01_"+side+"_Hand").index].equals(target,.000002f))
                             throw new AssertionError("metal contact missed at "+time);

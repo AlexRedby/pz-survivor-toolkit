@@ -1,9 +1,13 @@
 require "Hotbar/ISHotbar"
+require "PZSurvivorToolkit/ActionQueueAcknowledgements"
+local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
 local Intent = {}
 PZSurvivorToolkit.ActionQueueTidyIntent = Intent
 local states, watching = setmetatable({}, {__mode='k'}), setmetatable({}, {__mode='k'})
 local transfers=setmetatable({}, {__mode='k'})
 local mergeOriginal,mergeObserver
+local mergeListeners={}
+local transferEvent
 local scope, guard, wrappedUI, installed
 local serial=0
 local function pack(...) return {n=select('#',...),...} end
@@ -23,14 +27,71 @@ end
 local function state(player)
     local queue=ISTimedActionQueue.getTimedActionQueue(player)
     local value=states[player]
-    if not value or value.queue~=queue then clear(player);value={queue=queue,pending={},pickups={},hands={},worn={},attached={},activation={},versions={},idle=0};states[player]=value end
+    if not value or value.queue~=queue then clear(player);value={queue=queue,pending={},pickups={},returnIntents={},hands={},worn={},attached={},activation={},versions={},idle=0};states[player]=value end
     return value
+end
+-- A committed return waiver is deliberate inventory intent. Its publication
+-- comes from Settlement's private earned-loan proof, never from a copied flag.
+function Intent.canKeepReturn(action)
+    if not guard then return P4TidyUpMeister == nil end
+    local player=action and action.character
+    local queue=player and ISTimedActionQueue.queues[player]
+    return player and not player:isDead() and getSpecificPlayer(player:getPlayerNum())==player
+        and queue and queue.character==player and getmetatable(action)==ISInventoryTransferAction
+        and action.srcContainer==player:getInventory() and action.destContainer~=action.srcContainer
+        and guard() and guard(action) or false
+end
+function Intent.keepReturn(action,handle)
+    if not guard then return P4TidyUpMeister == nil end
+    if not Intent.canKeepReturn(action) or type(Settlement.returnRetention)~='function' then return false end
+    local retained=Settlement.returnRetention(handle,action)
+    local player=action.character
+    local queue=ISTimedActionQueue.queues[player]
+    local inventory=player:getInventory()
+    if not retained or retained.character~=player or retained.queue~=queue
+        or retained.generation~=(queue.toolkitOperationGeneration or 0)
+        or retained.source~=inventory or retained.source~=action.srcContainer
+        or retained.destination~=action.destContainer or retained.item~=action.item
+        or not instanceof(retained.item,'InventoryItem') or retained.item:getContainer()~=inventory
+        or inventory:getItemById(retained.item:getID())~=retained.item then return false end
+    local owner=retained.owner
+    if owner and (type(owner.id)~='number' or type(owner.fullType)~='string') then return false end
+    local value=state(player)
+    value.returnIntents[retained.item:getID()]={item=identity(retained.item),source=inventory,destination=retained.destination,
+        generation=retained.generation,owner=owner and {id=owner.id,kind=owner.fullType} or nil}
+    return true
+end
+local function keptReturn(player,value,action)
+    local retained=action.item and value.returnIntents[action.item:getID()]
+    if not retained or retained.generation~=(value.queue.toolkitOperationGeneration or 0)
+        or retained.source~=player:getInventory() or action.srcContainer~=retained.source
+        or resolve(player,retained.item)~=action.item then return false end
+    local groups=action.queueList
+    if type(groups)~='table' or #groups~=1 or type(groups[1].items)~='table'
+        or #groups[1].items~=1 then return false end
+    local member=groups[1].items[1]
+    local adapters=PZSurvivorToolkit.ActionQueueItemEditAdapters
+    if member~=action.item and not (adapters and type(adapters.matchesTransferMember)=='function'
+        and adapters.matchesTransferMember(action,member)) then return false end
+    local destination=retained.destination
+    if retained.owner then
+        local holder=player:getInventory():getItemById(retained.owner.id)
+        if not same(holder,retained.owner) then return false end
+        if type(holder.getInventory)=='function' then destination=holder:getInventory()
+        elseif type(holder.getItemContainer)=='function' then destination=holder:getItemContainer()
+        else return false end
+        local policy=PZSurvivorToolkit.ActionQueuePolicy
+        if policy and type(policy.isCarriedContainer)=='function' then
+            if not policy.isCarriedContainer(destination,player) then return false end
+        elseif holder:getContainer()~=player:getInventory() then return false end
+    end
+    return action.destContainer==destination
 end
 local function confirm(record)
     local action,player=record.executor or record.action,record.player
-    if not record.accepted or not record.effect or not guard(action) then return end
+    if not record.accepted or not record.finished or not record.effect or not guard(action) then return end
     local item=resolve(player,record.item)
-    if not item then return end
+    if not item or not Settlement.confirmEffect(record.proof, true) then return end
     local value=state(player)
     local function remember(group,slot,ref)
         local key=group..':'..tostring(slot)
@@ -70,6 +131,11 @@ local function captureBefore(action,record)
         record.beforeWorn=record.location and same(action.character:getWornItem(record.location),record.item)
     end
 end
+-- Read-only integration status for diagnostics; this grants no queue rights.
+function Intent.status(action)
+    if not guard then return false,'not_installed' end
+    return guard(action)
+end
 function Intent.start(action)
     local record=watching[action]
     if record and guard(action) then captureBefore(action,record);record.started=true end
@@ -86,21 +152,43 @@ local function transfer(action)
     return batch
 end
 -- Observe the native merge before table.wipe destroys the child action's identity.
-function Intent.observeTransfers()
+function Intent.observeTransfers(onMerged, canObserve, callbacks)
+    if type(onMerged)=='function' then
+        local present=false
+        for _,listener in ipairs(mergeListeners) do if listener.callback==onMerged then present=true;break end end
+        if not present then mergeListeners[#mergeListeners+1]={callback=onMerged,canObserve=canObserve,events=callbacks} end
+    end
     if mergeObserver or type(ISInventoryTransferAction.checkQueueList)~='function' then return end
     mergeOriginal=ISInventoryTransferAction.checkQueueList
     mergeObserver=function(action,...)
-        if not guard or not guard(action) then return mergeOriginal(action,...) end
+        local original = guard and guard(action)
+        local observation = original
+        if not observation then
+            for _,listener in ipairs(mergeListeners) do
+                if not listener.failed and type(listener.canObserve)=='function' then
+                    local ok,accepted=pcall(listener.canObserve,action)
+                    if not ok then listener.failed=true
+                    elseif accepted==true then observation=true end
+                end
+            end
+        end
+        if not observation then return mergeOriginal(action,...) end
         local queue=ISTimedActionQueue.getTimedActionQueue(action.character)
         local candidates={}
         for _,child in ipairs(queue.queue) do
             local record=watching[child]
-            if child~=action and record and record.kind=='grab' and guard(child)
+            if original and child~=action and record and record.kind=='grab' and guard(child)
                 and child.srcContainer==action.srcContainer and child.destContainer==action.destContainer then
                 candidates[#candidates+1]=record
             end
         end
+        transferEvent('merging',action)
         local result=pack(mergeOriginal(action,...))
+        -- Observation cannot abort native perform and cause the same transfer to
+        -- be retried. Quarantine a failed listener; never revive its proof here.
+        for _,listener in ipairs(mergeListeners) do
+            if not listener.failed then listener.failed=not pcall(listener.callback,action) end
+        end
         for _,record in ipairs(candidates) do
             if queue:indexOf(record.action)==-1 then
                 for _,group in ipairs(action.queueList or {}) do for _,item in ipairs(group.items) do
@@ -113,7 +201,7 @@ function Intent.observeTransfers()
         end
         local batch=transfers[action]
         -- MP calls this again AFTER consuming its group; retain that group's receipt.
-        if batch and batch.attempted and not isClient() then batch.attempted=groupItems(action) end
+        if original and batch and batch.attempted and not isClient() then batch.attempted=groupItems(action) end
         return unpack(result,1,result.n)
     end
     ISInventoryTransferAction.checkQueueList=mergeObserver
@@ -121,22 +209,62 @@ end
 function Intent.isQueueObserver(previous,replacement)
     return previous==mergeOriginal and replacement==mergeObserver and replacement~=nil
 end
+transferEvent=function(event,action,...)
+    local observed=false
+    for _,listener in ipairs(mergeListeners) do
+        local callback=listener.events and listener.events[event]
+        if not listener.failed and type(callback)=='function' then
+            local ok,result=pcall(callback,action,...)
+            if not ok then listener.failed=true
+            elseif result==true then observed=true end
+        end
+    end
+    return observed
+end
 function Intent.begin(action,phase)
+    local observing=phase=='perform' and transferEvent('begin',action) or false
     local record=watching[action]
     if phase=='perform' and getmetatable(action)==ISInventoryTransferAction and guard and guard(action)
         and (record or states[action.character] or transfers[action]) then
         local batch=transfer(action)
         if record and record.kind=='grab' then batch.records[record.item.id]=record end
         batch.attempted=groupItems(action)
+        for _,ref in ipairs(batch.attempted) do
+            local member=batch.records[ref.id]
+            if member and not member.proof then member.proof=Settlement.captureEffect(action) end
+        end
         return true
     end
-    if not record then return false end
+    if not record then return observing end
+    if phase=='perform' and not record.proof then record.proof=Settlement.captureEffect(action) end
     if (phase=='complete' or isClient() and phase=='perform') and not (isClient() and record.started) then
         captureBefore(action,record)
     end
     return true
 end
+local function observeEffect(record)
+    local action,player=record.executor or record.action,record.player
+    if record.kind=='equip' then
+        record.clearedOpposite=record.oppositeBefore and not (action.primary and player:getSecondaryHandItem() or not action.primary and player:getPrimaryHandItem())
+    end
+    local item=resolve(player,record.item)
+    if item then
+        if record.kind=='grab' then record.effect=true
+        elseif record.kind=='equip' then
+            record.effect=action.twoHands and same(player:getPrimaryHandItem(),record.item) and same(player:getSecondaryHandItem(),record.item)
+                or not action.twoHands and same(action.primary and player:getPrimaryHandItem() or player:getSecondaryHandItem(),record.item)
+        elseif record.kind=='unequip' then
+            record.effect=record.beforeHands and not same(player:getPrimaryHandItem(),record.item) and not same(player:getSecondaryHandItem(),record.item)
+                and (not record.beforeWorn or not same(player:getWornItem(record.location),record.item))
+        elseif record.kind=='wear' then
+            local location=item:IsClothing() and item:getBodyLocation() or item:canBeEquipped()
+            record.effect=same(player:getWornItem(location),record.item)
+        elseif record.kind=='attach' then record.effect=same(player:getAttachedItems():getItem(action.slot),record.item) end
+    end
+    if record.kind=='equip' and item and item:canBeActivated() then record.activated=item:isActivated() end
+end
 function Intent.finish(action,phase,succeeded)
+    if phase=='perform' then transferEvent('finish',action,succeeded) end
     -- Inventory transfers apply their effects in perform(), including in SP.
     if phase~='complete' and not (phase=='perform' and (isClient() or getmetatable(action)==ISInventoryTransferAction)) then return end
     local player=action.character
@@ -147,10 +275,11 @@ function Intent.finish(action,phase,succeeded)
         for _,ref in ipairs(batch.attempted or {}) do
             local record=batch.records[ref.id]
             if record and record.item.kind==ref.kind then
+                record.proof=record.proof or Settlement.captureEffect(action)
                 record.finished=true;record.effect=valid and resolve(player,ref)~=nil
                 confirm(record)
                 batch.records[ref.id]=nil
-                if not record.effect then
+                if not valid or Settlement.effectState(record.proof, record.effect)=="unavailable" then
                     watching[record.action]=nil
                     if value then value.pending[record.action]=nil end
                 end
@@ -158,6 +287,15 @@ function Intent.finish(action,phase,succeeded)
             if valid and value and action.srcContainer==player:getInventory() and action.destContainer~=action.srcContainer
                 and not resolve(player,ref) then
                 value.pickups[ref.id]=nil
+                local retained=value.returnIntents[ref.id]
+                if retained and retained.item.kind==ref.kind then value.returnIntents[ref.id]=nil end
+                -- An already-finished intent belongs to this borrowing episode.
+                -- A late receipt cannot protect a later automatic pickup of it.
+                for pending,previous in pairs(value.pending) do
+                    if previous.finished and previous.item.id==ref.id and previous.item.kind==ref.kind then
+                        value.pending[pending],watching[pending]=nil,nil
+                    end
+                end
                 for _,group in ipairs({'hands','worn','attached'}) do
                     for slot,wanted in pairs(value[group]) do if wanted and wanted.id==ref.id and wanted.kind==ref.kind then value[group][slot]=nil end end
                 end
@@ -179,24 +317,8 @@ function Intent.finish(action,phase,succeeded)
     local record=watching[action]
     if not record then return end
     record.finished=true
-    if record.kind=='equip' then
-        record.clearedOpposite=record.oppositeBefore and not (action.primary and player:getSecondaryHandItem() or not action.primary and player:getPrimaryHandItem())
-    end
-    local item=succeeded and resolve(player,record.item)
-    if item then
-        if record.kind=='grab' then record.effect=true
-        elseif record.kind=='equip' then
-            record.effect=action.twoHands and same(player:getPrimaryHandItem(),record.item) and same(player:getSecondaryHandItem(),record.item)
-                or not action.twoHands and same(action.primary and player:getPrimaryHandItem() or player:getSecondaryHandItem(),record.item)
-        elseif record.kind=='unequip' then
-            record.effect=record.beforeHands and not same(player:getPrimaryHandItem(),record.item) and not same(player:getSecondaryHandItem(),record.item)
-                and (not record.beforeWorn or not same(player:getWornItem(record.location),record.item))
-        elseif record.kind=='wear' then
-            local location=item:IsClothing() and item:getBodyLocation() or item:canBeEquipped()
-            record.effect=same(player:getWornItem(location),record.item)
-        elseif record.kind=='attach' then record.effect=same(player:getAttachedItems():getItem(action.slot),record.item) end
-    end
-    if record.kind=='equip' and item and item:canBeActivated() then record.activated=item:isActivated() end
+    record.proof=record.proof or Settlement.captureEffect(action)
+    if succeeded then observeEffect(record) else record.failed=true end
     confirm(record)
 end
 local function capture(action)
@@ -244,7 +366,7 @@ function Intent.install(valid,approvedWrapper)
         if entry[1] then helpers[#helpers+1]={owner=entry[1],name=entry[2],callback=entry[1][entry[2]]} end
     end
     guard=function(action)
-        for _,entry in ipairs(helpers) do if entry.owner[entry.name]~=entry.callback then return false end end
+        for _,entry in ipairs(helpers) do if entry.owner[entry.name]~=entry.callback then return false,'helper_changed',entry.name end end
         return valid(action)
     end
     for _,name in ipairs({'OnPrimaryWeapon','OnSecondWeapon','OnTwoHandsEquip'}) do wrap(ISInventoryPaneContextMenu,name,'equip') end
@@ -279,8 +401,22 @@ function Intent.update(player,callback,...)
     if player:isDead() or ISTimedActionQueue.queues[player]~=value.queue or not guard() then
         clear(player);return callback(...)
     end
+    local waiting=false
     for action,record in pairs(value.pending) do
-        if value.queue:indexOf(record.executor or action)==-1 then
+        local executor=record.executor or action
+        if record.finished and not record.failed and guard(executor)
+            and (not record.effect or resolve(player,record.item)) then
+            -- Only marked network work can wait for late replication. A native
+            -- no-effect callback cannot acquire intent from a later unrelated item.
+            local status=Settlement.effectState(record.proof, record.effect==true)
+            if status=="waiting" and not record.effect then
+                observeEffect(record)
+                status=Settlement.effectState(record.proof, record.effect==true)
+            end
+            if status=="completed" then confirm(record)
+            elseif status=="waiting" then waiting=true
+            else value.pending[action],watching[action]=nil,nil end
+        elseif record.finished or value.queue:indexOf(executor)==-1 then
             value.pending[action],watching[action]=nil,nil
         end
     end
@@ -288,7 +424,14 @@ function Intent.update(player,callback,...)
         if action.character==player and value.queue:indexOf(action)==-1 then transfers[action]=nil end
     end
     for id,ref in pairs(value.pickups) do if not resolve(player,ref) then value.pickups[id]=nil end end
+    for id,retained in pairs(value.returnIntents) do
+        if retained.generation~=(value.queue.toolkitOperationGeneration or 0)
+            or retained.source~=player:getInventory() or not resolve(player,retained.item) then value.returnIntents[id]=nil end
+    end
     local empty=#value.queue.queue==0 and not player:hasTimedActions()
+    -- P4 may construct restoration on its first idle callback. Hold that idle
+    -- boundary only; active native updates and action timers continue unchanged.
+    if empty and waiting then return end
     value.idle=empty and value.idle+1 or 0
     local phase=not value.restoring and value.idle>=2
     if not phase then
@@ -338,10 +481,25 @@ function Intent.update(player,callback,...)
         if item.IsClothing and item:IsClothing() then return item:getBodyLocation() end
         return item.canBeEquipped and item:canBeEquipped()
     end
+    -- Only the exact guarded P4 return produced in this idle batch can pair
+    -- with a floor relocation. Keep unrelated returns and native equipment work.
+    local retainedReturns,retainedFloors={},{}
+    for _,action in ipairs(actions) do
+        if action.character==player and getmetatable(action)==ISInventoryTransferAction
+            and guard(action) and keptReturn(player,value,action) then
+            retainedReturns[action]=true
+            if type(action.destContainer.getType)=='function' and action.destContainer:getType()=='floor' then
+                retainedFloors[action.item:getID()]=action.item
+            end
+        end
+    end
     local buffered={}
     for _,action in ipairs(actions) do
         local class=getmetatable(action)
         if action.character~=player or not guard(action) then buffered[#buffered+1]=action
+        elseif retainedReturns[action] or class==P4RestoreFloorAction and action.item
+            and retainedFloors[action.item:getID()]==action.item then
+            -- The committed exact return and its paired floor placement were waived.
         elseif override and (class==ISEquipWeaponAction or class==ISUnequipAction
             and (same(action.item,identity(primary)) or same(action.item,identity(secondary)))) then
             -- Rebuild the validated hand group with only the explicit slots overlaid.

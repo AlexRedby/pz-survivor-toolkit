@@ -12,6 +12,8 @@ import zombie.vehicles.VehiclePart;
 /** Disposable input and read-only lamp diagnostics; native transmission logic stays intact. */
 public final class Main {
     public static volatile int inputMode = -1;
+    private static Float originalZoom;
+    private static boolean originalAutoZoom;
     private static final String[] PARTS = {
         "HeadlightLeft", "HeadlightRight", "HeadlightRearLeft", "HeadlightRearRight"
     };
@@ -88,8 +90,43 @@ public final class Main {
         if (!Double.isFinite(zoom) || zoom <= 0 || zoom > Float.MAX_VALUE)
             throw new IllegalArgumentException("Zoom must be a positive finite float");
         Core core = Core.getInstance();
+        if (originalZoom == null) {
+            originalZoom = core.getZoom(0);
+            originalAutoZoom = core.offscreenBuffer.autoZoom[0];
+        }
         core.offscreenBuffer.autoZoom[0] = false;
         core.offscreenBuffer.setZoomAndTargetZoom(0, (float) zoom);
+    }
+
+    @LuaMethod(name="lightsFixtureRestore", global=true)
+    public static void restore() {
+        disposable();
+        inputMode = -1;
+        if (originalZoom != null) {
+            Core core = Core.getInstance();
+            core.offscreenBuffer.autoZoom[0] = originalAutoZoom;
+            core.offscreenBuffer.setZoomAndTargetZoom(0, originalZoom);
+            originalZoom = null;
+        }
+    }
+
+    @LuaMethod(name="lightsFixtureMotionIdle", global=true)
+    public static boolean motionIdle() {
+        disposable();
+        IsoPlayer player = IsoPlayer.getInstance();
+        var deferred = player.getDeferredMovement(new zombie.iso.Vector2());
+        return !player.isPlayerMoving() && !player.pressedMovement(false) && !player.hasPath()
+            && deferred.x == 0 && deferred.y == 0;
+    }
+
+    @LuaMethod(name="lightsFixtureMotionProbe", global=true)
+    public static String motionProbe() {
+        disposable();
+        IsoPlayer player = IsoPlayer.getInstance();
+        var deferred = player.getDeferredMovement(new zombie.iso.Vector2());
+        return "moving=" + player.isPlayerMoving() + " pressed=" + player.pressedMovement(false)
+            + " path=" + player.hasPath() + " deferred=" + deferred.x + "," + deferred.y
+            + " state=" + player.getCurrentStateName() + " input=" + inputMode;
     }
 
     @LuaMethod(name="lightsFixtureOriginError", global=true)

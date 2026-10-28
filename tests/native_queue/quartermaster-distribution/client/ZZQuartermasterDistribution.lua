@@ -3,6 +3,9 @@ if config.cases[1]~='sort' then return end
 local Fixture=require 'QuartermasterDistributionFixture'
 local Rules=require 'PZSurvivorToolkit/QuartermasterTagRuleClient'
 local JSON=require 'QueueHealthEvents'
+local Books=require 'QuartermasterBooksFixture'
+local GroupClient=require 'QuartermasterGroupsClient'
+local bookPacket,bookReceipt,bookPicker,bookWalked,bookTransferred
 local started,done,since,phase=false,false,0,'prepare'
 local state,packet,boxes,point,saved,receipt,cleaned,arrived,designatedAt
 local designationPicker,presetEditor,presetGeneration
@@ -34,7 +37,8 @@ Events.OnPlayerUpdate.Add(function(player)
 end)
 Events.OnServerCommand.Add(function(module,command,value)
  if module~='QuartermasterDistributionTest'then return end
- if command=='Prepared'then packet=value elseif command=='Verified'then receipt=value
+ if command=='BooksPrepared'then bookPacket=value elseif command=='BooksVerified'then bookReceipt=value
+ elseif command=='Prepared'then packet=value elseif command=='Verified'then receipt=value
  elseif command=='PasteVerified'then pasteReceipt=value elseif command=='Cleaned'then cleaned=true end
 end)
 Events.OnGameStart.Add(function()
@@ -169,12 +173,73 @@ local function tick()
   phase='verified'
  elseif phase=='verified'then
   if not receipt then return end
+  if isClient()then sendClientCommand('QuartermasterDistributionTest','PrepareBooks',{})
+  else bookPacket=Books.prepare(state)end
+  phase='books-resolve'
+ elseif phase=='books-resolve'then
+  if not bookPacket or not Books.resolve(boxes,bookPacket)then return end
+  print('[QM_DISTRIBUTION] BOOKS_PREPARED '..JSON.encode(bookPacket))
+  stageWalk(point.x+2);phase='books-fallback'
+ elseif phase=='books-fallback'or phase=='books-unique'then
+  if not stageArrived()then return end
+  arrived=arrived or getTimestampMs();if getTimestampMs()-arrived<500 then return end
+  arrived=nil
+  local index=phase=='books-fallback'and 2 or 3
+  LootSorter.openPicker(boxes[index],0,0);bookPicker=assert(LootSorter._picker)
+  bookPicker.selectedCats={};bookPicker.selectedPresets={};bookPicker.selectedItems={}
+  for _,id in ipairs({bookPacket.ids[1],bookPacket.ids[3]})do
+   local item=assert(boxes[1]:getContainer():getItemById(id));bookPicker.selectedItems[item:getDisplayName()]=true
+  end
+  bookPicker.toolkitTagRule={mode='all',include={},exclude={}};bookPicker.toolkitTagRuleTouched=true
+  bookPicker.priority=index==3 and 7 or 5
+  assert(bookPicker.chkNoDuplicates,'native container unique checkbox missing')
+  if bookPicker.noDuplicates~=(index==3)then
+   bookPicker.chkNoDuplicates.onclick(bookPicker.chkNoDuplicates.target,bookPicker.chkNoDuplicates)
+  end
+  assert(bookPicker.noDuplicates==(index==3),'native checkbox callback did not update draft')
+  bookPicker.btnSave.onclick(bookPicker)
+  phase=index==2 and 'books-fallback-saved'or 'books-unique-saved'
+ elseif phase=='books-fallback-saved'then
+  if LootSorter._picker==bookPicker then return end
+  assert(not LootSorter.getBoxNoDuplicates(boxes[2],0),'fallback saved unique mode')
+  stageWalk(point.x+4);phase='books-unique'
+ elseif phase=='books-unique-saved'then
+  if LootSorter._picker==bookPicker then return end
+  assert(LootSorter.getBoxNoDuplicates(boxes[3],0),'unique mode did not save')
+  designatedAt=getTimestampMs();stageWalk(point.x);phase='books-ready'
+ elseif phase=='books-ready'then
+  if not stageArrived()then return end
+  local loot=assert(getPlayerLoot(0));loot:refreshBackpacks();loot.inventoryPane:refreshContainer()
+  local handler=loot.controlsUI:checkHandler(ISLootWindowObjectControlHandler_LootSorterDistribute,boxes[1],boxes[1]:getContainer())
+  assert(handler:shouldBeVisible(),'book distribution control hidden')
+  local button=handler:getControl();local before=LootSorter._sortRunSeq or 0
+  button.onclick(button.target,button)
+  assert((LootSorter._sortRunSeq or 0)>before and #queue().queue>0,'book distribution did not start')
+  phase='books-sorting'
+ elseif phase=='books-sorting'then
+  local current=queue().current
+  if current and current.Type=='LootSorterWalkAction'and current:isStarted()then bookWalked=true end
+  if current and current.Type=='LootSorterDeposit'and current:isStarted()and current:getJobDelta()>0 then bookTransferred=true end
+  if #queue().queue>0 or player:hasTimedActions()then return end
+  local result=Books.receipt(player,boxes,bookPacket);if not result then return end
+  assert(bookWalked and bookTransferred,'missing native skill book walk/transfer')
+  print('[QM_DISTRIBUTION] BOOKS_LOCAL '..JSON.encode(result))
+  if isClient()then sendClientCommand('QuartermasterDistributionTest','VerifyBooks',{})
+  else bookReceipt=result;print('[QM_DISTRIBUTION] BOOKS_AUTHORITY '..JSON.encode(result))end
+  phase='books-verified'
+ elseif phase=='books-verified'then
+  if not bookReceipt then return end
+  GroupClient.begin(boxes,point,state);phase='groups'
+ elseif phase=='groups'then
+  if not GroupClient.tick()then return end
+  phase='after-groups'
+ elseif phase=='after-groups'then
   -- Respect native delayed registry-add grace before removing designations.
   if getTimestampMs()-designatedAt<LootSorter.ADD_GRACE_MS+1000 then return end
   LootSorter.setBoxItems(boxes[2],0,{})
   saved=false;Rules.saveBox(boxes[3],0,{mode='all',include={},exclude={}},player,function(verdict)
    assert(verdict=='ok','tag cleanup rejected');saved=true
-  end,nil,{cats={},items={},presets={},priority=0})
+  end,nil,{cats={},items={},presets={},priority=0,noDuplicates=false,appearance={},groupOperation={mode='detach'}})
   phase='cleanup'
  elseif phase=='cleanup'then
   if not saved then return end
@@ -198,6 +263,6 @@ local function tick()
 end
 Events.OnTick.Add(function()
  if not started or done then return end
- local ok,problem=pcall(function()assert(getTimestampMs()-since<180000,'distribution timeout phase='..phase);tick()end)
+ local ok,problem=pcall(function()assert(getTimestampMs()-since<420000,'distribution timeout phase='..phase);tick()end)
  if not ok then done=true;print('[QUEUE_TEST] FAIL distribution '..tostring(problem))end
 end)

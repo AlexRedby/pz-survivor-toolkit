@@ -2,17 +2,33 @@
 """Prepare/run isolated native suites, audit results, and display actual coverage."""
 import argparse
 import json
+import math
 from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios
+from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios, campaign
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
 
 
-def selection(args, catalog, options=None):
+def load_catalog(suites=None):
+    """Resolve only the requested declarations; full reports retain the complete catalog."""
+    catalog = report.read_json(CATALOG)
+    if suites is not None:
+        known = dict.fromkeys([*catalog['suites'], *adapters.MODULES])
+        unknown = set(suites) - known.keys()
+        if unknown:
+            raise ValueError('Unknown suites: ' + ', '.join(sorted(unknown))
+                             + '; available: ' + ', '.join(known))
+    catalog['suites'].update(adapters.definitions(suites))
+    if suites is not None:
+        catalog['suites'] = {suite: catalog['suites'][suite] for suite in suites}
+    return catalog
+
+
+def selection(args, catalog, options=None, desktop_mode=None):
     suite = catalog["suites"][args.suite]
     if suite["status"] != "ready":
         raise ValueError("Suite has not been migrated: " + args.suite)
@@ -42,10 +58,20 @@ def selection(args, catalog, options=None):
     else:
         mods = args.mods.split(",") if args.mods else spec.get('default_mods', suite.get('default_mods', ['PZSurvivorToolkit']))
     language = args.language or spec.get('languages', ['EN'])[0]
-    clients = 1 if kind == 'sp' else suite.get('clients', 2)
+    topologies = {1 if kind == 'sp' else all_cases[identifier].get('clients', suite.get('clients', 2))
+                  for identifier in cases}
+    if len(topologies) != 1:
+        raise ValueError('Selected cases require different client topologies; run them separately')
+    clients = topologies.pop()
+    actors = {all_cases[identifier].get('actor') for identifier in cases}
+    if len(actors) != 1:
+        raise ValueError('Selected cases require different actor roles; run them separately')
+    actor = actors.pop()
     options = (report.read_json(args.config) if args.config else {}) if options is None else options
     if not isinstance(options, dict):
         raise ValueError('--config must contain a JSON object of suite options')
+    if desktop_mode is not None:
+        options['desktop_mode'] = desktop_mode
     if getattr(args, 'cart_scene', None):
         if args.suite != 'wooden_cart_motion':
             raise ValueError('--cart-scene requires the wooden_cart_motion suite')
@@ -76,12 +102,15 @@ def selection(args, catalog, options=None):
     resources = getattr(args, 'resources', {})
     if not isinstance(resources, dict):
         raise ValueError('resources must be an object')
-    return {"schema_version": 1, "suite": args.suite, "mode": args.mode,
+    result = {"schema_version": 1, "suite": args.suite, "mode": args.mode,
             "cases": cases, "mods": mods, 'kind': kind, 'clients': clients, 'options': options,
             'config_source': str(args.config.resolve()) if args.config else None,
             "languages": [language] if clients == 1 else ["EN", "RU"],
             "timeout_seconds": args.timeout, "ports": args.ports or [17343, 17344], 'ports_auto': args.ports is None,
             'resources': dict(admission.DEFAULTS, **resources), "expected_checks": len(cases) + 2}
+    if actor is not None:
+        result['actor'] = actor
+    return result
 
 
 def save_report(output, catalog, control=None):
@@ -139,7 +168,7 @@ def selected_jobs(plan, only=None, sets=(), skip=None):
     return selected
 
 
-def batch_selection(plan, job, catalog, config, runs):
+def batch_selection(plan, job, catalog, config, runs, desktop_mode=None):
     if 'cases' in job:
         raise ValueError("Batch jobs use 'case' with comma-separated IDs; 'cases' would be ignored")
     plan_options, job_options = plan.get('options', {}), job.get('options', {})
@@ -164,46 +193,138 @@ def batch_selection(plan, job, catalog, config, runs):
         kind=job.get('kind'), language=job.get('language'), mods=mods if isinstance(mods, str) else ','.join(mods) if mods else None,
         config=config, mod_source=[], timeout=job.get('timeout', 900), ports=job.get('ports'),
         resources=dict(plan.get('resources', {}), **job.get('resources', {})))
-    return selection(namespace, catalog, options)
+    return selection(namespace, catalog, options, desktop_mode=desktop_mode)
+
+
+def batch_sessions(plan, jobs, catalog, config, output, desktop_mode=None):
+    """Explicit groups only: validate every shared lifecycle before any preparation."""
+    labels, previous = set(), None
+    referenced = {job[key] for job in plan['jobs'] for key in ('control_job', 'seed_job') if job.get(key)}
+    for job in plan['jobs']:
+        label = job.get('session')
+        if 'session' in job:
+            if not isinstance(label, str) or not native.MOD_ID.fullmatch(label) or label in ('.', '..'):
+                raise ValueError('Session IDs must be nonempty safe names')
+            if label != previous and label in labels:
+                raise ValueError('Session jobs must be contiguous: ' + label)
+            labels.add(label)
+        previous = label
+    units = []
+    for job in jobs:
+        label = job.get('session')
+        if label and units and units[-1]['session'] == label:
+            units[-1]['jobs'].append(job)
+        else:
+            units.append({'session': label, 'jobs': [job]})
+    paths = {job['id']: (output / job['id']).resolve() for job in jobs}
+    for unit in units:
+        members, label = unit['jobs'], unit['session']
+        unit['output'] = output / members[0]['id']
+        if not label:
+            continue
+        selections = []
+        for job in members:
+            if any(job.get(key) for key in ('control_job', 'seed_job')) or job['id'] in referenced:
+                raise ValueError('Session jobs cannot supply or consume control/seed dependencies: ' + job['id'])
+            selected = batch_selection(plan, job, catalog, config, paths, desktop_mode)
+            native._validate(selected)
+            if catalog['suites'][selected['suite']].get('shared_session') is not True:
+                raise ValueError('Suite has no shared-session contract: ' + selected['suite'])
+            if any(selected['options'].get(key) for key in ('world_template', 'seed_run', 'startup_connection')):
+                raise ValueError('Session jobs require a fresh lifecycle: ' + job['id'])
+            adapters.get(selected['suite']).validate(selected)
+            selections.append(selected)
+        def identity(selected):
+            return json.dumps({key: value for key, value in selected.items()
+                               if key not in ('cases', 'expected_checks')}, sort_keys=True, allow_nan=False)
+        first = selections[0]
+        first_identity = identity(first)
+        waits = [job.get('resource_wait', plan.get('resource_wait', 300)) for job in members]
+        if any(type(wait) not in (int, float) or not math.isfinite(wait) or wait < 0 for wait in waits):
+            raise ValueError('Session resource_wait must be a finite nonnegative number: ' + label)
+        if any(identity(selected) != first_identity for selected in selections[1:]) or any(
+                wait != waits[0] for wait in waits[1:]):
+            raise ValueError('Incompatible source/settings/topology in session: ' + label)
+        cases = [case for selected in selections for case in selected['cases']]
+        if len(cases) != len(set(cases)):
+            raise ValueError('Session cases must be unique: ' + label)
+        combined = dict(first, cases=cases, expected_checks=len(cases) + 2,
+                        timeout_seconds=sum(selected['timeout_seconds'] for selected in selections))
+        native._validate(combined)
+        adapters.get(combined['suite']).validate(combined)
+        unit['selection'] = combined
+        unit['members'] = selections
+    return units
 
 
 def batch(args, catalog):
     plan = report.read_json(args.plan)
     jobs = selected_jobs(plan, getattr(args, 'jobs', None), getattr(args, 'sets', ()), getattr(args, 'skip_jobs', None))
+    campaign.validate(plan)
     identifiers = [job['id'] for job in jobs]
     if args.output.exists():
         raise FileExistsError('Fresh batch output directory required')
+    units = batch_sessions(plan, jobs, catalog, args.plan, args.output, getattr(args, 'desktop_mode', None))
+    if 'campaign' in plan:
+        # Unlike an ordinary independent-job batch, a campaign preflights all
+        # selected environments before spending its first native launch.
+        paths = {job['id']: (args.output / job['id']).resolve() for job in jobs}
+        checked_packs = {}
+        for unit in units:
+            job = unit['jobs'][0]
+            selected = unit.get('selection') or batch_selection(plan, job, catalog, args.plan, paths, getattr(args, 'desktop_mode', None))
+            native._validate(selected)
+            native.window_size(selected)
+            native.source_inputs(ROOT, plan['game'], plan['jdk'], selected, plan.get('workshop', []),
+                                 pack_cache=checked_packs, validate_adapter=not job.get('seed_job'))
     if getattr(args, 'dry_run', False):
-        runs, rows = {}, []
-        for job in jobs:
-            selected = batch_selection(plan, job, catalog, args.plan, runs)
-            output = (args.output / job['id']).resolve()
-            rows.append({'id': job['id'], 'run': str(output), 'selection': selected,
-                         'control': str(runs[job['control_job']]) if job.get('control_job') else None,
-                         'resource_wait': job.get('resource_wait', plan.get('resource_wait', 300))})
-            runs[job['id']] = output
+        runs, rows, sessions = {}, [], []
+        for unit in units:
+            for index, job in enumerate(unit['jobs']):
+                selected = unit['members'][index] if unit['session'] else batch_selection(
+                    plan, job, catalog, args.plan, runs, getattr(args, 'desktop_mode', None))
+                output = unit['output'].resolve()
+                rows.append({'id': job['id'], 'run': str(output), 'selection': selected,
+                             'session': unit['session'],
+                             'control': str(runs[job['control_job']]) if job.get('control_job') else None,
+                             'resource_wait': job.get('resource_wait', plan.get('resource_wait', 300))})
+                runs[job['id']] = output
+            sessions.append({'id': unit['session'] or unit['jobs'][0]['id'],
+                             'jobs': [job['id'] for job in unit['jobs']], 'run': str(unit['output'].resolve()),
+                             'selection': unit.get('selection', selected),
+                             'boundary': unit['jobs'][0].get('boundary')})
         print(json.dumps({'status': 'planned', 'game': plan['game'], 'jdk': plan['jdk'],
-                          'workshop': plan.get('workshop', []), 'jobs': rows}, indent=2))
+                          'workshop': plan.get('workshop', []), 'jobs': rows, 'sessions': sessions,
+                          'launches': len(units), 'jobs_without_reuse': len(jobs),
+                          'campaign': campaign.build(plan, jobs, planned=True)}, indent=2))
         return 0
     args.output.mkdir(parents=True)
-    results, reports, completed = [], [], {}
-    for job in jobs:
-        output = args.output / job['id']
-        item = {'id': job['id'], 'run': str(output.resolve())}
+    results, reports, completed, sessions, accepted = [], [], {}, [], set()
+    for unit in units:
+        job, output = unit['jobs'][0], unit['output']
+        item = {'run': str(output.resolve())}
         interrupted = False
-        print('START ' + job['id'], flush=True)
+        print('START ' + (unit['session'] or job['id']) + ' [' + ','.join(j['id'] for j in unit['jobs']) + ']', flush=True)
         try:
             for key in ('control_job', 'seed_job'):
                 if job.get(key) and job[key] not in completed:
                     raise ValueError('Dependency has no completed report: ' + job[key])
+                if 'campaign' in plan and job.get(key) and job[key] not in accepted:
+                    raise ValueError('Campaign dependency requires a passed report with clean runtime: ' + job[key])
             control = completed[job['control_job']] if job.get('control_job') else None
-            selected = batch_selection(plan, job, catalog, args.plan, completed)
+            selected = unit.get('selection')
+            if selected is None:
+                selected = batch_selection(plan, job, catalog, args.plan, completed,
+                                           getattr(args, 'desktop_mode', None))
             native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])])
             execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)
             value = save_report(output, catalog, control)
             reports.append(value)
-            completed[job['id']] = output.resolve()
+            for member in unit['jobs']:
+                completed[member['id']] = output.resolve()
+                if value['status'] == 'passed' and value['runtime']['status'] == 'clean':
+                    accepted.add(member['id'])
             item.update(status=value['status'], functional=value['functional']['status'], runtime=value['runtime']['status'])
             print(report.summary(value), flush=True)
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
@@ -211,9 +332,17 @@ def batch(args, catalog):
             item.update(status='blocked' if not (output / 'execution.json').exists() else 'failed',
                         error='Batch job interrupted' if isinstance(error, KeyboardInterrupt) else str(error))
             print(item['status'].upper() + ' ' + job['id'] + ': ' + item['error'], flush=True)
-        results.append(item)
+        for index, member in enumerate(unit['jobs']):
+            row = dict(item, id=member['id'])
+            if unit['session']:
+                row.update(session=unit['session'], cases=unit['members'][index]['cases'])
+            results.append(row)
+        sessions.append(dict(item, id=unit['session'] or job['id'], jobs=[member['id'] for member in unit['jobs']],
+                             boundary=job.get('boundary')))
         overall = 'failed' if any(row['status'] in ('failed', 'blocked') for row in results) else 'needs-review' if any(row['status'] == 'needs-review' for row in results) else 'passed'
-        report.write_json(args.output / 'batch-report.json', {'status': overall, 'jobs': results, 'remaining': identifiers[len(results):]})
+        report.write_json(args.output / 'batch-report.json', {'status': overall, 'jobs': results,
+                          'sessions': sessions, 'launches_planned': len(units),
+                          'remaining': identifiers[len(results):], 'campaign': campaign.build(plan, jobs, results)})
         report.write_json(args.output / 'coverage.json', report.matrix(catalog, reports))
         if interrupted:
             return 130
@@ -250,10 +379,12 @@ def main(argv=None):
         command.add_argument('--native-mib', type=int, default=1024, help='Estimated native/graphics/encoder memory per process, beyond heap')
         command.add_argument('--cpu-per-instance', type=float, default=1.0, help='Estimated logical CPU budget per game process')
         command.add_argument('--exclusive', action='store_true', help='Reserve the desktop exclusively for physical input or timing measurements')
+        command.add_argument('--desktop-mode', choices=('auto', 'aerospace', 'current'),
+                             help='macOS: auto (default) routes to PZ-TEST, with current-desktop fallback only for a sleeping physical display; aerospace requires routing; current is a legacy guarded auto alias. Run GUI tests outside the sandbox')
         if name == "run":
             command.add_argument("--resource-wait", type=float, default=300, help="Seconds to wait for admission; 0 refuses immediately")
             command.add_argument("--control", type=Path, help="Completed matching native control run directory")
-    command = commands.add_parser("resume", help="Launch a fresh already prepared snapshot")
+    command = commands.add_parser("resume", help="Launch a fresh already prepared snapshot using its immutable desktop policy; prepare again to change it")
     command.add_argument("output", type=Path)
     command.add_argument("--control", type=Path)
     command.add_argument("--resource-wait", type=float, default=300)
@@ -267,13 +398,15 @@ def main(argv=None):
     command.add_argument('--suite', action='append', default=[], help='Show only this suite; repeatable')
     command.add_argument('--kind', choices=('sp', 'mp'), help='Show only single-player or multiplayer cases')
     command.add_argument('--mode', choices=('toolkit', 'native'), help='Show only this feature mode')
-    command = commands.add_parser('batch', help='Run an explicit stand plan sequentially with fresh profiles and a combined report')
+    command = commands.add_parser('batch', help='Run a plan with explicit compatible session groups and a combined report')
     command.add_argument('plan', type=Path)
     command.add_argument('output', type=Path)
     command.add_argument('--jobs', help='Run only these comma-separated job IDs and their control/seed dependencies')
     command.add_argument('--set', dest='sets', action='append', default=[], help='Run a named set from the plan; repeatable')
     command.add_argument('--skip-jobs', help='Disable comma-separated jobs; required dependencies cannot be disabled')
     command.add_argument('--dry-run', action='store_true', help='Print resolved job selections as JSON without preparing profiles or launching games')
+    command.add_argument('--desktop-mode', choices=('auto', 'aerospace', 'current'),
+                         help='Override desktop launch strategy for every selected job; otherwise use each plan option or the safe auto default')
     command = commands.add_parser('lock-pack', help='Resolve and hash the actual SurvivorQoL-selected.ini pack without launching the game')
     command.add_argument('output', type=Path)
     command.add_argument('--game', type=Path, required=True)
@@ -307,8 +440,6 @@ def main(argv=None):
                 for limit in value['limits']:
                     print('Note: ' + limit)
             return 0
-        catalog = report.read_json(CATALOG)
-        catalog['suites'].update(adapters.definitions())
         if args.command == 'lock-pack':
             overrides = {}
             for argument in args.mod_source:
@@ -323,13 +454,15 @@ def main(argv=None):
             value = worlds.export(args.run, args.output)
             print('Saved world template: ' + str(args.output.resolve()) + ' (' + str(len(value['files'])) + ' files)')
             return 0
+        if args.command == 'prepare':
+            catalog = load_catalog([args.suite])
+        elif args.command == 'matrix' and args.suite:
+            catalog = load_catalog(args.suite)
+        else:
+            catalog = load_catalog()
         if args.command == 'batch':
             return batch(args, catalog)
         if args.command == "matrix":
-            unknown = set(args.suite) - catalog['suites'].keys()
-            if unknown:
-                raise ValueError('Unknown suites: ' + ', '.join(sorted(unknown))
-                                 + '; available: ' + ', '.join(catalog['suites']))
             value = report.matrix(catalog, [report.read_json(path) for path in args.reports])
             for field in ('rows', 'scenarios'):
                 value[field] = [row for row in value[field]
@@ -346,7 +479,8 @@ def main(argv=None):
             return 0
         if args.command in ("prepare", "run"):
             args.resources = {key: getattr(args, key) for key in admission.DEFAULTS}
-            native.prepare(ROOT, args.output, args.game, args.jdk, selection(args, catalog), args.workshop)
+            native.prepare(ROOT, args.output, args.game, args.jdk,
+                           selection(args, catalog, desktop_mode=args.desktop_mode), args.workshop)
             print("Prepared: " + str(args.output.resolve()), flush=True)
             if args.command == "prepare":
                 return 0

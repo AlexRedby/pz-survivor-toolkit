@@ -1,3 +1,5 @@
+isClient=function()return false end
+ModData={getOrCreate=function()return {} end}
 local pickerOptions, presetMenuOptions
 local tagReads = 0
 require = function(name)
@@ -11,7 +13,21 @@ require = function(name)
         return {get=function() return {r=0.4,g=0.8,b=0.3,texture={}} end}
     end
     if name == "PZSurvivorToolkit/ItemTagSchema" or name == "PZSurvivorToolkit/ItemTags"
-        or name == "PZSurvivorToolkit/PlantingTags" or name == "PZSurvivorToolkit/InventoryMembership" then
+        or name == "PZSurvivorToolkit/TagCustomization" or name == "PZSurvivorToolkit/PlantingTags"
+        or name == "PZSurvivorToolkit/ItemCookingTags" or name == "PZSurvivorToolkit/ItemDisassemblyTags"
+        or name == "PZSurvivorToolkit/ItemCookingStates"
+        or name == "PZSurvivorToolkit/ItemFluidTags"
+        or name == "PZSurvivorToolkit/ItemUsageTags"
+        or name == "PZSurvivorToolkit/ItemBaitTags"
+        or name == "PZSurvivorToolkit/ItemRepairTags"
+        or name == "PZSurvivorToolkit/ItemLaundryTags"
+        or name == "PZSurvivorToolkit/ItemSmeltingTags"
+        or name == "PZSurvivorToolkit/ItemSharpeningTags"
+        or name == "PZSurvivorToolkit/ItemBrokenTags"
+        or name == "PZSurvivorToolkit/ItemMediaTags" or name == "PZSurvivorToolkit/ItemCategories"
+        or name == "PZSurvivorToolkit/ItemCategoryRules" or name == "PZSurvivorToolkit/ItemCategoryData"
+        or name == "PZSurvivorToolkit/LegacyItemCategories"
+        or name == "PZSurvivorToolkit/InventoryMembership" or name == "PZSurvivorToolkit/ItemTagProperties" then
         local module = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
         if name == "PZSurvivorToolkit/ItemTags" then
             local forItem = module.forItem
@@ -135,8 +151,8 @@ do
     for pass=1,5 do pane:restoreSelection({}) end
     assert(categoryReads == 0 and tagReads == 0, 'inactive restores still classified inventory for closed menus')
     local categories, tags = PZSurvivorToolkit.InventoryFilter.choices(pane)
-    assert(#categories == 3 and tags.food and tags.tool and tagReads == 4,
-        'on-demand choices omitted items or classified duplicated group headers')
+    assert(#categories == 3 and not tags.food and tags.tool and tagReads == 4,
+        'on-demand choices resurfaced retired Food or classified duplicated group headers')
     categoryReads, tagReads = 0, 0
     categoryChoices(pane)
     assert(categoryReads == 4 and tagReads == 0, 'category-only choices unnecessarily classified tags')
@@ -233,13 +249,16 @@ trigger.callback(trigger.target,trigger)
 local tagMenu=assert(menu)
 assert(#tagMenu.options>0 and tagMenu.options[1].iconTexture,'tag picker missing icons')
 assert(tagMenu.options[1].color.g>tagMenu.options[1].color.r,'tag picker missing family color')
-local foodOption
-for _,option in ipairs(tagMenu.options) do if option.arg=='food' then foodOption=option end end
-assert(foodOption,'food tag missing from picker')
+local toolOption
+for _,option in ipairs(tagMenu.options) do
+    assert(option.arg~='food','retired Food must not appear as a new picker choice')
+    if option.arg=='tool' then toolOption=option end
+end
+assert(toolOption,'tool tag missing from picker')
 local beforeTag = refreshes
-foodOption.callback(foodOption.target,foodOption.arg)
+toolOption.callback(toolOption.target,toolOption.arg)
 assert(refreshes == beforeTag + 1, 'tag selection rebuilt the inventory more than once')
-assert(pane.toolkitTag=='food' and #pane.itemslist==1,'decorated picker changed tag filtering')
+assert(pane.toolkitTag=='tool' and #pane.itemslist==2,'decorated picker changed tag filtering')
 print('Inventory filter checks passed: exact categories, search, empty results, selections, bulk actions and clear.')
 
 pane.toolkitTag, pane.toolkitTagRule = nil, {mode='all', include={'tool'}, exclude={'weapon'}}
@@ -417,7 +436,9 @@ for _,sourceCode in ipairs({NativeInventoryPaneSource or false, CleanUIInventory
             if name=='PZSurvivorToolkit/InventoryPlantingTooltip' or name=='PZSurvivorToolkit/InventoryMediaTooltip'
                 or name=='PZSurvivorToolkit/InventoryClothingTooltip' then return {install=function() end} end
             if name=='ISUI/ISInventoryPane' or name=='ISUI/ISInventoryPage' then return end
-            if name=='PZSurvivorWishlist/Inventory' then return {draw=function() end,invalidate=function() end} end
+            if name=='PZSurvivorWishlist/Inventory' or name=='PZSurvivorToolkit/InventoryRetention' then
+                return {draw=function() end,invalidate=function() end}
+            end
             return require(name)
         end
         for _,name in ipairs({'saveSelection','restoreSelection','refreshContainer'}) do
@@ -708,6 +729,101 @@ if OCDisplayOverrideSource then
     print('Actual OC category split retains full choices/picker universe and current split projection.')
 end
 
+-- Workload regression: refreshing/restoring an inactive filter must not copy the
+-- full stock merely to support a menu which was never opened. Keep upstream
+-- selection hooks, and prove the lazy universe survives a later row projection.
+do
+    local counts = {physical=0, upstream=0, projected=0}
+    local watched, stock, groups = {}, {}, {}
+    local originalIpairs = ipairs
+    for groupIndex=1,3 do
+        local values = {}
+        for index=1,1600 do
+            local item = {category='Category'..groupIndex}
+            function item:getDisplayCategory() return self.category end
+            item.getCategory = item.getDisplayCategory
+            values[#values+1], stock[#stock+1] = item, item
+        end
+        table.insert(values, 1, values[1]) -- native dummy header
+        watched[values] = true
+        groups[#groups+1] = {name='stock'..groupIndex,items=values}
+    end
+    local rows, callbacks = groups, {}
+    local paneClass = {prerender=function() end}
+    local upstreamMarker = {}
+    function paneClass:restoreSelection(saved)
+        counts.upstream = counts.upstream + 1
+        self.selected[1] = upstreamMarker
+    end
+    function paneClass:refreshContainer()
+        self.itemslist = rows
+        self:restoreSelection({})
+    end
+    local env = setmetatable({PZSurvivorToolkit={Settings={inventoryFilters=function() return true end}},
+        ISInventoryPane=paneClass,CleanUI_Clean_ISInventoryPane=false,CleanUI_Vanilla_ISInventoryPane=false,
+        CleanUI_RegisterInventoryUiToggleCallback=false,ISInventoryPageTransferHandler=false,
+        ISInventoryCommonHandler_SortMenu=false,
+        Events={OnGameStart={Add=function(callback) callbacks[#callbacks+1]=callback end}}}, {__index=_G})
+    env.ipairs = function(value)
+        local iterator, state, index = originalIpairs(value)
+        if not watched[value] then return iterator, state, index end
+        return function(current, previous)
+            local key, item = iterator(current, previous)
+            if key then counts.physical = counts.physical + 1 end
+            return key, item
+        end, state, index
+    end
+    env.require = function(name)
+        if name=='PZSurvivorToolkit/InventoryClasses' then
+            return {panes=function(install) install(paneClass) end,onToggle=function() end}
+        end
+        if name=='PZSurvivorToolkit/InventoryRows' then
+            local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))
+            setfenv(chunk,env)
+            local result=chunk()
+            local restore=result.restoreSelection
+            result.restoreSelection=function(...)
+                counts.projected=counts.projected+1
+                return restore(...)
+            end
+            return result
+        end
+        if name=='PZSurvivorToolkit/InventorySearch' then return {forPane=function() end} end
+        if name=='PZSurvivorToolkit/ItemTags' then return {enabled=function() return false end} end
+        return {}
+    end
+    local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryFilter.lua'))
+    setfenv(chunk,env);chunk();callbacks[1]()
+    local pane=setmetatable({mode='details',items={},selected={},collapsed={},player=0}, {__index=paneClass})
+    for pass=1,20 do
+        pane:refreshContainer()
+        pane:restoreSelection({})
+        pane:restoreSelection({_cleanUISelectedGroups={}}) -- actual CleanUI saveSelection shape
+    end
+    assert(counts.physical==0, 'inactive filter eagerly enumerated the 4800-item stock')
+    assert(counts.upstream==60 and counts.projected==0 and #pane.selected==0,
+        'empty selection optimization discarded an upstream hook or still projected all rows')
+    pane:restoreSelection({[stock[1]]=true})
+    assert(counts.projected==1 and pane.selected[2]==stock[1], 'nonempty physical selection lost the final row mapping')
+    pane:restoreSelection({_cleanUISelectedGroups={stock1=true}})
+    assert(counts.projected==2 and pane.selected[1]==groups[1], 'CleanUI group-only selection lost the final row mapping')
+    pane.mode='icons';pane:restoreSelection({})
+    assert(counts.projected==2 and pane.selected[1]==upstreamMarker, 'icon mode lost its native restore result')
+    pane.mode='details'
+    pane.itemslist={groups[1]};pane:restoreSelection({}) -- late pin/split projection, before opening any menu
+    local choices=env.PZSurvivorToolkit.InventoryFilter.choices(pane, false)
+    assert(#choices==3 and #pane.toolkitFilterItems==4800 and counts.physical==4803,
+        'lazy menu lost excluded source rows or copied duplicate dummy headers')
+    stock[1].category='Live category'
+    choices=env.PZSurvivorToolkit.InventoryFilter.choices(pane, false)
+    assert(#choices==4 and counts.physical==4803, 'reopened menu rescanned groups or cached stale instance categories')
+    rows={groups[2]};pane:refreshContainer()
+    choices=env.PZSurvivorToolkit.InventoryFilter.choices(pane, false)
+    assert(#choices==1 and choices[1].id=='Category2' and #pane.toolkitFilterItems==1600,
+        'real refresh retained old-container menu references')
+    print('Inactive filter workload: 20 refreshes/60 upstream restores, zero physical snapshot visits/empty row projections; lazy live menu passed.')
+end
+
 -- Transfer eligibility may visit every physical item in an aggregate. Its
 -- membership index belongs to this synchronous command, never the next click.
 do
@@ -926,3 +1042,32 @@ do
         print('Actual CleanUI transfer handler preview, command, floor and menu integration passed.')
     end
 end
+
+-- Freshness choices include future states; filtering still splits actual mixed stacks.
+do
+    local function apple(age)
+        return {age=age,getDisplayCategory=function() return 'foodPerishable_fruit' end,
+            getCategory=function() return 'Food' end,getName=function() return 'Apple' end,
+            getFullType=function() return 'Base.Apple' end,getContainer=function() return source end,
+            getUnequippedWeight=function() return 1 end,IsFood=function() return true end,
+            getOffAge=function() return 1 end,getOffAgeMax=function() return 2 end,
+            isFresh=function(self) return self.age<1 end,isRotten=function(self) return self.age>=2 end}
+    end
+    local fresh,rotten=apple(0),apple(2)
+    groups={{cat='foodPerishable_fruit',name='Apple',items={fresh,fresh,rotten},matchesSearch=true}}
+    enabled,tagsEnabled=true,true
+    pane.toolkitCategory,pane.toolkitTag,pane.searchMode,pane.searchText=nil,nil,nil,''
+    pane.saved={};pane.toolkitTagRule={mode='all',include={'rotten'},exclude={}}
+    pane:refreshContainer()
+    assert(#pane.itemslist==1 and #pane.itemslist[1].items==2 and pane.itemslist[1].items[1]==rotten,
+        'freshness filter kept a fresh sibling in the same native stack')
+    local _,choices=PZSurvivorToolkit.InventoryFilter.choices(pane)
+    assert(choices.fresh and choices.stale and choices.rotten,
+        'future freshness choices were hidden by current state or active filter')
+    assert(not choices.compost,'removed Compost tag remains in the filter')
+    fresh.age=2;pane:refreshContainer()
+    assert(#pane.itemslist[1].items==3,'filter reused old freshness for a physical item')
+    fresh.age,rotten.age=0,0;pane:refreshContainer()
+    assert(#pane.itemslist==0,'rotten filter became a broad food-category filter')
+end
+print('Food inventory filters passed: mixed freshness stacks, future choices and live age changes.')

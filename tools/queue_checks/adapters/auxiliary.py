@@ -18,8 +18,7 @@ ANIMAL_CASES = {
     'combined-shared': ('combined', 'shared', 'held'),
     'combined-starved': ('combined', 'starved', 'held'),
 }
-ITEM_MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS',
-             'organizedCategories_core']
+ITEM_MODS = ['NeatUI_Framework', 'CleanUI', 'PZSurvivorToolkit', 'EURY_CONTAINERS']
 INVENTORY_MODS = list(ITEM_MODS)
 PNG = b'\x89PNG\r\n\x1a\n'
 
@@ -31,6 +30,7 @@ def definitions():
         ('item-tags', ['scenes'], 'sp', ['RU'], ITEM_MODS),
         ('inventory-presentation', ['scenes'], 'sp', ['EN'], INVENTORY_MODS),
         ('smart-deposit', ['partial'], 'sp', ['EN'], INVENTORY_MODS),
+        ('storage-profile', ['walk', 'inventory-work', 'inventory-freshness', 'inventory-food-age'], 'sp', ['EN'], INVENTORY_MODS),
         ('inventory-tooltips', ['scenes'], 'sp', ['EN'], INVENTORY_MODS + ['VHSSkillNameInTooltip', 'EURY_CLOTHINGINFO']),
         ('animal-trailer', list(ANIMAL_CASES), 'mp', ['EN'], ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']),
     ):
@@ -41,6 +41,13 @@ def definitions():
     result['item-tags']['window_size'] = [1280, 900]
     result['inventory-presentation']['window_size'] = [1280, 900]
     result['smart-deposit']['window_size'] = [1280, 900]
+    result['storage-profile']['window_size'] = [1280, 900]
+    result['storage-profile']['shared_session'] = True
+    result['storage-profile']['limits'] = [
+        'Shared SP sessions require inventory-work first in a fresh world, followed by inventory-freshness.',
+        'Walking performance and natural food-age baselines stay isolated; shared runtime qualification remains a native gate.']
+    for case in result['storage-profile']['cases']:
+        case['capability'] = 'effect' if case['id'] in ('inventory-freshness', 'inventory-food-age') else 'capture'
     result['inventory-tooltips']['window_size'] = [1280, 900]
     return result
 
@@ -72,13 +79,17 @@ def validate(selection):
         raise ValueError('Unsupported auxiliary queue mode')
     spec = definitions()[suite]
     cases = selection['cases']
-    if not cases or len(set(cases)) != len(cases) or any(case not in [row['id'] for row in spec['cases']] for case in cases) or suite != 'animal-trailer' and len(cases) != 1:
+    storage_session = suite == 'storage-profile' and cases == ['inventory-work', 'inventory-freshness']
+    if not cases or len(set(cases)) != len(cases) or any(case not in [row['id'] for row in spec['cases']] for case in cases) or suite != 'animal-trailer' and len(cases) != 1 and not storage_session:
         raise ValueError('Auxiliary fixtures require exactly one supported case per fresh run')
+    if storage_session and (type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
+                            or any(selection.get('options', {}).get(key) for key in ('seed_run', 'world_template', 'startup_connection', 'mp_host'))):
+        raise ValueError('Storage shared session requires fresh one-client SP with inventory-work first')
     case = spec['cases'][0]
     if selection['kind'] not in case['kinds'] or len(selection['languages']) != 1 or selection['languages'][0] not in case['languages']:
         raise ValueError('Unsupported kind/language for ' + suite)
     required = set(ITEM_MODS if suite == 'item-tags' else ['ZombieBuddy', 'PZSurvivorToolkit'])
-    if suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
+    if suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
         required = set(INVENTORY_MODS)
         if suite == 'inventory-tooltips':
             required.update(('VHSSkillNameInTooltip', 'EURY_CLOTHINGINFO'))
@@ -124,6 +135,8 @@ def sources(project, selection):
         paths.append(_path(selection, 'patch_jar'))
         if len(selection['cases']) > 1:
             paths.append(Path(project) / 'tests/native_queue/support/QueueFixtureSession.lua')
+    if selection['suite'] == 'storage-profile' and len(selection['cases']) > 1:
+        paths.append(Path(project) / 'tests/native_queue/support/QueueFixtureSession.lua')
     return paths
 
 
@@ -148,13 +161,22 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             shutil.copy2(intake / 'VideoFixture.lua', client / 'ZZVideoFixture.lua')
             config = {'output': str(cache / 'videos'), 'ffmpeg': str(_path(selection, 'ffmpeg', True))}
             _write(client / 'ToolkitVideoConfig.lua', 'return {' + ','.join(key + '=' + json.dumps(value, ensure_ascii=False) for key, value in config.items()) + '}\n')
-    elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
+    elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
         manifest = json.loads((intake / 'manifest.json').read_text())
         identifier = manifest['helper_mod_id']
         fixture['mods'] = [identifier]
         fixture['failure_markers'] = [manifest['failure_marker']]
         for cache in caches:
-            _load(intake / 'prepare.py').prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier)
+            prepare = _load(intake / 'prepare.py').prepare
+            if suite == 'storage-profile':
+                if len(selection['cases']) > 1:
+                    prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, cases=selection['cases'])
+                else:
+                    prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, case=selection['cases'][0])
+            else:
+                prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier)
+        if suite == 'storage-profile' and len(selection['cases']) > 1:
+            fixture['failure_markers'].append('[QUEUE_SESSION] QUARANTINE ')
     elif suite == 'item-tags':
         fixture['mods'] = ['QuartermasterScreens']
         prepare = _load(intake / 'prepare.py')
@@ -206,12 +228,13 @@ Events.OnGameStart.Add(function() Events.OnTick.Add(setup) end)
 
 
 def complete(selection, role, text):
-    if selection['suite'] == 'animal-trailer' and len(selection['cases']) > 1:
+    if selection['suite'] in ('animal-trailer', 'storage-profile') and len(selection['cases']) > 1:
         return bool(re.search(r'\[QUEUE_SESSION\] COMPLETE case=' + re.escape(selection['cases'][-1]) + ' epoch=' +
                               str(len(selection['cases'])) + ' actor=' + re.escape(role) + r' cases=' + str(len(selection['cases'])) + r'(?:\s|$)', text))
     marker = {'video-recording': '[VIDEO_TEST] PASSED', 'item-tags': '[QM_SCREEN] COMPLETE',
               'inventory-presentation': '[INVENTORY_SCREEN] COMPLETE',
               'smart-deposit': '[SMART_DEPOSIT] COMPLETE',
+              'storage-profile': '[STORAGE_PROFILE] COMPLETE',
               'inventory-tooltips': '[INVENTORY_TOOLTIP] COMPLETE',
               'animal-trailer': '[ANIMAL_TRAILER] CLIENT COMPLETE'}[selection['suite']]
     return marker in text
@@ -288,6 +311,71 @@ def _verify_animal_session(root, selection, intake):
             'limits': ['Same immutable production JAR environment; owned fixture reset is separate from a fresh save.']}}
 
 
+def _verify_storage_session(root, selection, intake):
+    issues, outcomes, proofs = [], [], {}
+    try:
+        validate(selection)
+        text = _client_text(root)
+        cases = selection['cases']
+        if not complete(selection, 'client1', text) or any(marker in text for marker in (
+                '[QUEUE_SESSION] QUARANTINE ', '[STORAGE_PROFILE] FAIL', 'KahluaException')):
+            raise ValueError('Storage session incomplete, quarantined or failed')
+        expected = []
+        for epoch, case in enumerate(cases, 1):
+            events = [('BEGIN', 'server', ''), ('BEGIN', 'client1', ''),
+                      ('PREPARE', 'client1', ''), ('PREPARE', 'client1', ''),
+                      ('START', 'server', ''), ('START', 'client1', ''),
+                      ('FINISH', 'client1', ' ok=true'), ('LOCAL_CLEAN', 'client1', ' ok=true'),
+                      ('FINISH', 'client1', ' ok=true'), ('CLEANUP', 'server', ' ok=true'),
+                      ('CLEANUP', 'client1', ' ok=true'), ('CLEANUP', 'client1', ' ok=true'),
+                      ('JOINT_CLEAN', 'server', ' ok=true'),
+                      ('JOINT_CLEAN', 'client1', ' ok=true')]
+            if epoch == len(cases):
+                # Authority emits COMPLETE immediately after its joint cleanup.
+                events.insert(-1, ('COMPLETE', 'server', ' cases=' + str(len(cases))))
+                events.append(('COMPLETE', 'client1', ' cases=' + str(len(cases))))
+            actual = re.findall(r'\[QUEUE_SESSION\] (\w+) case=' + re.escape(case) +
+                                ' epoch=' + str(epoch) + r' actor=(\S+)([^\r\n]*)', text)
+            if actual != events:
+                raise ValueError('Storage session lifecycle missing, duplicated or reordered: ' + case)
+            expected.extend((event, case, str(epoch), actor, extra) for event, actor, extra in events)
+        # The local authority instantiates its next case before the queued
+        # JointClean reaches the client. Preserve that transport barrier exactly;
+        # independent per-case order alone cannot prove safe case transitions.
+        for epoch, case in enumerate(cases[1:], 2):
+            begin = expected.index(('BEGIN', case, str(epoch), 'server', ''))
+            joint = expected.index(('JOINT_CLEAN', cases[epoch-2], str(epoch-1), 'client1', ' ok=true'))
+            expected[begin], expected[joint] = expected[joint], expected[begin]
+        all_events = re.findall(r'\[QUEUE_SESSION\] (\w+) case=(\S+) epoch=(\d+) actor=(\S+)([^\r\n]*)', text)
+        if all_events != expected or text.count('[QUEUE_SESSION] ') != len(all_events):
+            raise ValueError('Unknown or reordered storage session case/epoch receipt')
+        beginnings = list(re.finditer(r'\[STORAGE_SESSION\] BEGIN case=(\S+) epoch=(\d+)(?:\r?$)', text, re.M))
+        if [(match[1], match[2]) for match in beginnings] != [(case, str(epoch)) for epoch, case in enumerate(cases, 1)]:
+            raise ValueError('Storage case windows missing, duplicated or reordered')
+        for index, case in enumerate(cases):
+            epoch = index + 1
+            window = text[beginnings[index].start():beginnings[index+1].start() if index+1 < len(cases) else len(text)]
+            restored = ('[STORAGE_SESSION] RESTORED case=' + case + ' epoch=' + str(epoch) +
+                        ' inventory=true weight=true ui=true player=true observers=true queue=true rpc=none time=forward')
+            if len(re.findall(re.escape(restored) + r'\r?$', window, re.M)) != 1 or window.find(restored) < window.find('[STORAGE_PROFILE] COMPLETE'):
+                raise ValueError('Storage exact baseline restoration missing/reordered: ' + case)
+            verifier = 'inventory_work_verify.py' if case == 'inventory-work' else 'freshness_verify.py'
+            proofs[case] = _load(intake / verifier).verify(root, window)
+            outcomes.append({'actor': 'client1', 'case': case, 'status': 'captured' if case == 'inventory-work' else 'passed',
+                             'outcome': {'fixture': 'storage-profile', 'epoch': epoch}})
+        if len(re.findall(r'\[STORAGE_SESSION\] RESTORED ', text)) != len(cases):
+            raise ValueError('Unknown/duplicate storage restoration receipt')
+        if text.count('[STORAGE_SESSION] ') != 2 * len(cases):
+            raise ValueError('Unknown storage lifecycle receipt')
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        issues.append(str(error))
+        outcomes = [{'actor': 'client1', 'case': case, 'status': 'failed', 'reason': str(error)}
+                    for case in selection['cases']]
+    return {'issues': issues, 'outcomes': outcomes, 'evidence': {'verification': proofs, 'limits': [
+        'Inventory-work is always first in a fresh SP world; functional freshness follows exact fixture/UI/player cleanup.',
+        'Forward-only ordinary world time; no shared natural-expiry, walking, Host or performance-pass claim.']}}
+
+
 def verify(root, selection, catalog):
     root = Path(root)
     suite = selection['suite']
@@ -295,6 +383,8 @@ def verify(root, selection, catalog):
     intake = _intake(project, suite)
     if suite == 'animal-trailer' and len(selection['cases']) > 1:
         return _verify_animal_session(root, selection, intake)
+    if suite == 'storage-profile' and len(selection['cases']) > 1:
+        return _verify_storage_session(root, selection, intake)
     issues, evidence = [], {}
     try:
         text = _client_text(root)
@@ -302,8 +392,11 @@ def verify(root, selection, catalog):
             raise ValueError('Missing fixture completion marker')
         if suite == 'video-recording':
             evidence['clips'] = _load(intake / 'verify.py').verify(root / 'client1', _path(selection, 'ffmpeg', True), _path(selection, 'ffprobe', True))
-        elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips'):
-            evidence.update(_load(intake / 'verify.py').verify(root, text))
+        elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
+            verifier = ({'inventory-work': 'inventory_work_verify.py', 'inventory-freshness': 'freshness_verify.py',
+                         'inventory-food-age': 'food_age_verify.py'}
+                        .get(selection['cases'][0], 'verify.py') if suite == 'storage-profile' else 'verify.py')
+            evidence.update(_load(intake / verifier).verify(root, text))
         elif suite == 'item-tags':
             manifest = json.loads((intake / 'manifest.json').read_text())
             if '[QM_SCREEN] FAIL' in text or 'KahluaException' in text:
@@ -329,5 +422,5 @@ def verify(root, selection, catalog):
     except (ValueError, OSError, KeyError, subprocess.SubprocessError) as error:
         issues.append(str(error))
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': selection['cases'][0],
-            'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues),
+            'status': 'failed' if issues else 'captured' if suite == 'storage-profile' and selection['cases'][0] not in ('inventory-freshness', 'inventory-food-age') else 'passed', 'reason': '; '.join(issues),
             'outcome': {'fixture': suite}}], 'evidence': evidence}

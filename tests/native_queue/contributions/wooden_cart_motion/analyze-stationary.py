@@ -1,10 +1,16 @@
 """Stationary wheelbarrow gates; native mesh/grip and visual review remain separate."""
 import argparse
 import csv
+import importlib.util
 import json
 import math
 from pathlib import Path
 import re
+
+_clip_spec = importlib.util.spec_from_file_location('cart_native_clip_names', Path(__file__).with_name('clip_names.py'))
+_clip_names = importlib.util.module_from_spec(_clip_spec)
+_clip_spec.loader.exec_module(_clip_names)
+native_clip = _clip_names.native_clip
 
 STEPS = {
     'left': [(1000, 0, 1), (3500, 0, 0)],
@@ -106,7 +112,7 @@ def analyze(text, wheel):
         pivot = [r for r in rows if r['stationary']]
         if len(pivot) < 3:
             failures.append((name, 'stationary turn never engaged'))
-        if any(r['run'] or r['sprint'] or any(c['name'] in ('Bob_Run', 'Bob_Sprint') and c['weight'] > .1 for c in r['clips']) for r in pivot):
+        if any(r['run'] or r['sprint'] or any(native_clip(c['name']) in ('Bob_Run', 'Bob_Sprint') and c['weight'] > .1 for c in r['clips']) for r in pivot):
             failures.append((name, 'fast gait during stationary turn'))
         if any(abs(r['stepY']) > .015 for r in pivot if abs(r['stepX']) > .05):
             failures.append((name, 'stationary gait has forward/backward input'))
@@ -115,18 +121,18 @@ def analyze(text, wheel):
         if wrong_side:
             failures.append((name, 'stationary gait steps in opposite direction'))
         clips = [(r['elapsed'], c) for r in pivot for c in r['clips']
-                 if c['name'] in ('Bob_StrafeNoAim_Left', 'Bob_StrafeNoAim_Right') and c['weight'] > .1 and c['speed'] > 0]
+                 if native_clip(c['name']) in ('Bob_StrafeNoAim_Left', 'Bob_StrafeNoAim_Right') and c['weight'] > .1 and c['speed'] > 0]
         progressing = any(a['name'] == b['name'] and t1 > t0 and abs(b['time'] - a['time']) > .001
                           for (t0, a), (t1, b) in zip(clips, clips[1:]))
         if not progressing:
             failures.append((name, 'native lateral gait does not progress'))
         wrong_clip = False
         for row in pivot:
-            active_clips = [c for c in row['clips'] if c['name'] in ('Bob_StrafeNoAim_Left', 'Bob_StrafeNoAim_Right') and c['weight'] > .1]
+            active_clips = [c for c in row['clips'] if native_clip(c['name']) in ('Bob_StrafeNoAim_Left', 'Bob_StrafeNoAim_Right') and c['weight'] > .1]
             if not active_clips or abs(wrap(row['target'] - row['heading'])) < .03:
                 continue
             expected_clip = 'Bob_StrafeNoAim_Left' if wrap(row['target'] - row['heading']) > 0 else 'Bob_StrafeNoAim_Right'
-            wrong_clip |= max(active_clips, key=lambda c: c['weight'])['name'] != expected_clip
+            wrong_clip |= native_clip(max(active_clips, key=lambda c: c['weight'])['name']) != expected_clip
         if wrong_clip:
             failures.append((name, 'native lateral gait uses opposite side'))
         # Each contiguous pivot keeps its axle fixed; gaps delimit cancellation/restart.

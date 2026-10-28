@@ -11,6 +11,15 @@ return function(config,factories,server)
  end
  local S={index=1,epoch=1,phase='prepare',actors={},cases=config.cases,config=config}
  local context,prepared,finished,cleaned
+ local function actorFor(player)
+  if config.actor then return config.actor(player) end
+  return player:getUsername()
+ end
+ local function transport(module,command,player,args,authority)
+  if config.transport then return config.transport(module,command,player,args,authority) end
+  if authority then sendServerCommand(player,module,command,args)
+  else sendClientCommand(module,command,args) end
+ end
  local function log(kind,actor,extra)
   print('[QUEUE_SESSION] '..kind..' case='..tostring(S.cases[S.index])..' epoch='..S.epoch..' actor='..actor..(extra and ' '..extra or ''))
  end
@@ -21,8 +30,7 @@ return function(config,factories,server)
   return type(args)=='table' and args.fixtureCase==S.cases[S.index] and args.fixtureEpoch==S.epoch and args.fixtureActor==actor
  end
  local function transmit(player,command,args)
-  if server then sendServerCommand(player,'QueueFixtureSession',command,envelope(args,player:getUsername()))
-  else sendClientCommand('QueueFixtureSession',command,envelope(args,config.user)) end
+  transport('QueueFixtureSession',command,player,envelope(args,server and actorFor(player) or config.user),server)
  end
  local function broadcast(command,args)
   for _,player in pairs(S.actors) do
@@ -44,8 +52,8 @@ return function(config,factories,server)
   for _,name in ipairs({'OnTick','OnGameStart','OnClientCommand','OnServerCommand','OnServerStarted'}) do
    context.handlers[name]={};context.events[name]={Add=function(fn) table.insert(context.handlers[name],fn) end}
   end
-  context.send=function(command,args) sendClientCommand(config.module or 'CraftChainTest',command,envelope(args,config.user)) end
-  context.reply=function(player,command,args) sendServerCommand(player,config.module or 'CraftChainTest',command,envelope(args,player:getUsername())) end
+  context.send=function(command,args) transport(config.module or 'CraftChainTest',command,nil,envelope(args,config.user),false) end
+  context.reply=function(player,command,args) transport(config.module or 'CraftChainTest',command,player,envelope(args,actorFor(player)),true) end
   local function finishClean()
    local clean,result,reason=pcall(context.cleanup)
    if not clean or result~=true then S.quarantine('client cleanup '..tostring(reason or result));return end
@@ -80,7 +88,7 @@ return function(config,factories,server)
   broadcast('Next')
  end
  function S.receive(command,player,args)
-  local actor=server and player:getUsername() or config.user
+  local actor=server and actorFor(player) or config.user
   if not allowed[actor] then S.quarantine('unexpected actor');return end
   if not matches(args,actor) then log('REJECT',actor,'command='..tostring(command));return end
   if command=='Quarantine' then S.quarantine(args.reason);return end
@@ -126,7 +134,7 @@ return function(config,factories,server)
   end
   if not server and context and context.observeProduct then context.observeProduct(module,command,args) end
   if module~=(config.module or 'CraftChainTest') or S.phase~='running' then return end
-  local actor=server and player:getUsername() or config.user
+  local actor=server and actorFor(player) or config.user
   if not matches(args,actor) then log('REJECT',actor,'command='..tostring(command));return end
   if server and S.actors[actor]~=player then S.quarantine('fixture actor reconnected');return end
   if server then callbacks('OnClientCommand',module,command,player,args)
@@ -136,7 +144,12 @@ return function(config,factories,server)
   if S.deadline and getTimestampMs()>S.deadline and S.phase~='done' and S.phase~='quarantined' then S.quarantine('session deadline; effects unknown');return end
   if not server and S.phase=='prepare' and S.pendingPrepare then
    local player=getPlayer()
-   if player and player:getOnlineID()>=0 then
+   local ready=false
+   if player then
+    if config.localPlayerReady then ready=config.localPlayerReady(player)
+    else ready=player:getOnlineID()>=0 end
+   end
+   if ready then
     -- OnGameStart precedes MP connection; native OnTick runs after ingame becomes true.
     S.pendingPrepare=false;log('PREPARE',config.user);transmit(nil,'Prepare')
    end

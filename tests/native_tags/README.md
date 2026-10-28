@@ -1,6 +1,6 @@
-# Native tag checks
+# Native tag integration fixture
 
-Two actual EN/RU clients and an isolated server, launched through the shared native process guard. Requires macOS, JDK 25+, B42.21 and explicit installed mod roots. No live profile is changed; VOIP is disabled. The fixture applies Better Containers' normal option to disable its alternate categorization before stages and again after reconnect, using organizedCategories as the provider. Stock action durations remain in use. Inputs, source hashes, logs, screenshots and exact authoritative item receipts stay in the output directory.
+This separate B42.21 multiplayer fixture checks tag rules across English and Russian clients, server authority and reconnect. It requires macOS, JDK 25+ and explicit installed mod roots. It uses its own runner and shared native process guard; the `native_queue` guide covers the other suites. No live profile is changed and VOIP is disabled. Better Containers' alternate categorization is disabled through its normal option, with organizedCategories as the provider. Stock action durations remain in use. Inputs, source hashes, logs, screenshots and authoritative item receipts stay in the output directory.
 
 ```sh
 python3 tests/native_tags/run.py /tmp/tag-rules-fresh \

@@ -1,0 +1,42 @@
+{
+  "id": "storage-profile",
+  "build": "42.21",
+  "helper_mod_id": "StorageProfileNative",
+  "fixture": "ZZStorageProfileNative.lua",
+  "required_mods": [
+    "NeatUI_Framework",
+    "CleanUI",
+    "PZSurvivorToolkit",
+    "EURY_CONTAINERS"
+  ],
+  "densities": {
+    "sparse": 12,
+    "dense": 4800
+  },
+  "modes": [
+    "clean",
+    "vanilla"
+  ],
+  "states": [
+    "own-only",
+    "both-hidden",
+    "loot-collapsed",
+    "both-open"
+  ],
+  "completion_marker": "[STORAGE_PROFILE] COMPLETE",
+  "failure_marker": "[STORAGE_PROFILE] FAIL",
+  "cases": [
+    "walk",
+    "inventory-work",
+    "inventory-freshness",
+    "inventory-food-age"
+  ],
+  "feature_controls": [
+    "off-empty",
+    "normal-only",
+    "wishlist-only",
+    "both-enabled",
+    "off-repeat"
+  ],
+  "ground_items": 200
+}

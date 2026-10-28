@@ -2,8 +2,14 @@ local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/'
 PZSurvivorToolkit = {}
 UIFont = {Small=1, Medium=2}
 Joypad = {AButton=1, BButton=2}
-getText = function(key) return key end
-getTextManager = function() return {MeasureStringX=function(_, _, text) return #text end} end
+getText = function(key) return ({UI_PZST_ContainerTarget='Container', UI_PZST_ContainerDefault='Container',
+    UI_PZST_ContainerName='Name', UI_PZST_ContainerNameHint='Optional name', UI_PZST_ContainerIcon='Choose icon',
+    UI_PZST_ContainerIconLabel='Icon', UI_PZST_ContainerColor='Color', UI_PZST_ContainerResetAppearance='Reset'})[key] or key end
+getTextOrNull = function(key) return key == 'IGUI_ContainerTitle_crate' and 'Wooden crate' end
+getTexture = function(path) return 'texture:' .. path end
+ContainerButtonIcons = {crate='native-crate-icon'}
+getTextManager = function() return {MeasureStringX=function(_, _, text) return #text end,
+    getFontHeight=function() return 18 end} end
 local player = {getJoypadBind=function() return 0 end}
 getSpecificPlayer = function() return player end
 local focus
@@ -23,6 +29,9 @@ function Widget:setMaxTextLength(value) self.limit=value end
 function Widget:setX(value) self.x=value end
 function Widget:setY(value) self.y=value end
 function Widget:setWidth(value) self.width=value end
+function Widget:setHeight(value) self.height=value end
+function Widget:setFont(value) self.font=value end
+function Widget:setName(value) self.value=value end
 function Widget:getAbsoluteX() return self.x or 10 end
 function Widget:getAbsoluteY() return self.y or 20 end
 function Widget:getHeight() return 26 end
@@ -62,8 +71,9 @@ require=function(name)
     if name:sub(1,5)=='ISUI/' then return end
     if name=='PZSurvivorToolkit/ContainerAppearance' then return {
         available=function() return enabled end,
-        read=function(obj,ci,who) assert(obj=='crate' and ci==2 and who==player);reads=reads+1;return copy(saved) end}
+        read=function(obj,ci,who) assert(obj and obj:getContainerByIndex(ci):getType()=='crate' and ci==2 and who==player);reads=reads+1;return copy(saved) end}
     end
+    if name=='PZSurvivorToolkit/UIStyle' then return {fit=function(value) return value end} end
     if name=='BetterContainers/Helpers' then return {getIconTexture=function(icon) return icon.value end} end
     if name=='PZSurvivorToolkit/ContainerIconPicker' then return {open=function(_,fn) iconCallback=fn end} end
     if name=='PZSurvivorToolkit/ContainerTagIcons' then return {install=function() end} end
@@ -73,15 +83,24 @@ require=function(name)
 end
 local Controls=dofile(root..'client/PZSurvivorToolkit/ContainerAppearanceControls.lua')
 local function picker(kind)
-    local p={targetKind=kind or 'box',targetObj='crate',targetCI=2,playerNum=0}
+    local p={targetKind=kind or 'box',targetObj={getContainerByIndex=function(_,ci)
+        assert(ci==2);return {getType=function() return 'crate' end}
+    end},targetCI=2,playerNum=0}
     function p:addChild() end
-    function p:getWidth() return 396 end
+    function p:getWidth() return self.width or 420 end
     Controls.create(p)
     return p
 end
 local p=picker()
 assert(p.appearanceName.value=='Old' and p.appearanceIcon.image=='Base.Plank')
-assert(Controls.value(p)==nil and Controls.layout(p,28)==92)
+assert(Controls.value(p)==nil and Controls.layout(p,28)==148)
+assert(p.appearanceHeading.value=='Container: Wooden crate' and p.appearanceIcon.image=='Base.Plank')
+assert(p.appearanceIcon.imageSize[1]==44 and p.appearanceIcon.width==64
+    and p.appearanceIcon.x + p.appearanceIcon.width < p.appearanceName.x
+    and p.appearanceColor.y == p.appearanceName.y + p.appearanceName.height + 6
+    and p.appearanceColor.x + p.appearanceColor.width <= 410
+    and p.appearanceReset.x + p.appearanceReset.width <= 410,
+    'minimum-width appearance controls overlap or exceed the window')
 Controls.select(p,'tag','food')
 assert(Controls.value(p)==nil,'selection overwrote an existing appearance')
 p.appearanceName:setText('New')
@@ -102,6 +121,7 @@ Controls.chooseColor(p);p.toolkitTagClosed=true;popup=p.toolkitColorPicker;popup
 assert(not p.toolkitAppearance.color,'late color callback changed closed draft')
 Controls.close(p);assert(not popup.visible and not p.toolkitColorPicker)
 saved={};p=picker()
+assert(p.appearanceIcon.image=='native-crate-icon','blank appearance hid the native container icon')
 assert(Controls.value(p)==nil,'opening a blank editor suggested an appearance')
 Controls.select(p,'presets','Pantry')
 assert(Controls.value(p)==nil,'unordered preset guessed a first tag')
@@ -128,5 +148,17 @@ end
 saved={};p=picker();p.appearanceName:setText('Typed before selection');Controls.select(p,'items','Hammer')
 assert(Controls.value(p).name=='Typed before selection','item erased a manually typed name')
 assert(not picker('preset').appearanceName,'sorting preset acquired a chest appearance')
-enabled=false;assert(not picker().appearanceName,'BC-free picker created appearance controls')
+enabled=false;local plain=picker()
+assert(plain.appearanceName and not plain.appearanceIcon and not plain.appearanceColor,
+    'BC-free picker must retain the native name field without unsupported controls')
+Controls.layout(plain,28);plain.appearanceName:setText('Plain shelf')
+assert(Controls.value(plain).name=='Plain shelf' and plain.appearanceReset.y>plain.appearanceName.y)
+Controls.reset(plain);Controls.select(plain,'tag','food')
+assert(Controls.value(plain).name=='Label food' and not plain.toolkitAppearance.icon and not plain.toolkitAppearance.color,
+    'BC-free selection changed hidden icon/color fields')
+local groupAppearance={name='Shared',icon={kind='item',value='Base.Book'},color={r=.1,g=.2,b=.3,a=1}}
+Controls.setValue(plain,groupAppearance);groupAppearance.color.r=.9
+local complete=Controls.snapshot(plain);complete.color.g=.8
+assert(complete.name=='Shared' and complete.color.r==.1 and plain.toolkitAppearance.color.g==.2,
+    'group appearance is not detached on both load and capture')
 print('PASS appearance draft, first tag/item suggestions, independent preservation, reset/cancel and native color callbacks')

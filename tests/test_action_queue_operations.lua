@@ -4,11 +4,15 @@ if not NativeActionRoot then
     return
 end
 require = function(name)
+    if name == 'PZSurvivorToolkit/SourceProof' then
+        return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua')
+    end
     if name == 'PZSurvivorToolkit/InventoryClasses' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
     end
 end
-PZSurvivorToolkit = {}
+local queueEnabled = true
+PZSurvivorToolkit = {Settings = {actionQueue = function() return queueEnabled end}}
 local function derive(self, name)
     local t = {Type = name, derive = derive}
     t.__index = t
@@ -162,6 +166,41 @@ ISInventoryTransferAction.checkQueueList(t1)
 for _ in pairs(t2) do error('merged action was not wiped') end
 assert(#q.queue == 2 and q.queue[2] == t3 and t3.item == item)
 
+-- Disabling the feature restores native coalescing without changing action tokens.
+-- Exercise the native removal/wipe path, then re-enable around the same executor.
+for _, barrier in ipairs({'none', 'source', 'destination', 'callback', 'allowMissing', 'type'}) do
+    reset()
+    local a, b, tail = transfer(), transfer(), action('IndependentTail')
+    a.item = {getWeight=function() return .01 end, getFullType=function() return 'Base.Nails' end}
+    b.item = {getWeight=function() return .01 end, getFullType=function() return 'Base.Nails' end}
+    a.queueList = {{items={a.item},time=10,type='Base.Nails'}}
+    ISTimedActionQueue.add(a); ISTimedActionQueue.add(b); ISTimedActionQueue.add(tail)
+    local aToken,bToken = a.toolkitQueueOperation,b.toolkitQueueOperation
+    assert(aToken~=bToken)
+    if barrier=='source' then b.srcContainer={}
+    elseif barrier=='destination' then b.destContainer={}
+    elseif barrier=='callback' then b.onCompleteFunc=function() end
+    elseif barrier=='allowMissing' then b.allowMissingItems=true
+    elseif barrier=='type' then b.Type='OtherAction' end
+    queueEnabled=false
+    assert(a.toolkitQueueOperation==aToken and b.toolkitQueueOperation==bToken)
+    ISInventoryTransferAction.checkQueueList(a)
+    if barrier=='none' then
+        assert(#q.queue==2 and q.queue[2]==tail and #a.queueList==1 and #a.queueList[1].items==2,
+            'off-mode did not preserve native lightweight grouping or independent tail')
+        for _ in pairs(b) do error('off-mode native merge did not wipe accepted child') end
+        queueEnabled=true
+        local c=transfer(); ISTimedActionQueue.add(c)
+        assert(not a:canMergeAction(c),'re-enabling allowed another operation into the existing executor')
+        assert(#a.queueList[1].items==2 and a.toolkitQueueOperation==aToken,
+            're-enabling must not rewrite already merged native groups or executor token')
+    else
+        assert(#q.queue==3 and q.queue[2]==b and b.toolkitQueueOperation==bToken,
+            'off-mode bypassed upstream '..barrier..' barrier')
+    end
+    queueEnabled=true
+end
+
 -- Opted-in continuations are one-shot, preserve token ownership and become opaque until finished.
 reset()
 local asyncToken = {}
@@ -182,11 +221,14 @@ assert(enqueue().toolkitQueueOperation ~= asyncToken, 'async scope restores afte
 local canceledToken = {}
 handle = operations.attachContinuation(canceledToken, player)
 operations.invalidate(canceledToken)
+queueEnabled=false
 operations.runContinuation(handle, function() error('cancelled callback') end)
 assert(not operations.isContinuationPending(canceledToken) and not operations.attachContinuation(canceledToken, player))
 local cleaned = false
 operations.runWith(canceledToken, function() cleaned = true end)
 assert(cleaned, 'native cleanup must not be suppressed by token cancellation')
+queueEnabled=true
+operations.runContinuation(handle, function() error('toggle revived cancelled callback') end)
 
 -- Explicit clear/reset invalidates old callbacks, including additions after a clear inside the callback.
 for _, target in ipairs({q, player}) do
@@ -500,4 +542,137 @@ operations.runWith(completedPrimaryToken, function() ISTimedActionQueue.add(acti
 assert(completedPrimaryToken.presentation.title == 'ContextMenu_Read',
     'completed primary title must survive its remaining lower-rank transfers')
 definitions.describe, operations.bounds, getText = describe, bounds, previousGetText
-print('Action operation grouping native-contract checks passed.')
+
+-- Native volume-bar direct and deferred callbacks must group their approach
+-- and radio control when no ISButton callback is still on the stack.
+do
+    getText=function(key)return key end
+    reset()
+    ISPanel,ISPanelJoypad=ISBaseObject,ISBaseObject
+    load('client/RadioCom/RadioWindowModules/RWMPanel.lua')
+    UIFont={Small='Small'};getTextManager=function()return {getFontHeight=function()return 12 end}end
+    load('client/RadioCom/RadioWindowModules/RWMVolume.lua')
+    load('client/RadioCom/ISUIRadio/ISVolumeBar.lua')
+    load('shared/RadioCom/ISRadioAction.lua')
+    getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    getGameFilesInput=function(path)
+        local file=assert(io.open(NativeActionRoot..'/'..path:gsub('^media/lua/','')))
+        return {readLine=function()local line=file:read('*l');return line and line:gsub('\r$','')end,
+            close=function()file:close()end}
+    end
+    local nativeVolume=RWMVolume.onVolumeChange
+    assert(operations.installVolumeProducer())
+    local scopedVolume=RWMVolume.onVolumeChange
+    assert(scopedVolume~=nativeVolume and operations.installVolumeProducer() and RWMVolume.onVolumeChange==scopedVolume,
+        'repeated installation cannot stack native producer wrappers')
+    local data={canPlayerRemoteInteract=function()return false end}
+    local square={};local device={getSquare=function()return square end,getDeviceData=function()return data end}
+    local panel=setmetatable({player=player,device=device,deviceData=data,deviceType='IsoObject',
+        volumeBar={getVolumeSteps=function()return 10 end}},RWMVolume)
+    luautils={walkAdj=function(p,s)
+        assert(p==player and s==square)
+        ISTimedActionQueue.add(action('ISWalkToTimedAction'));return true
+    end}
+    local lastToken
+    local function check(commit)
+        reset();enqueue();commit()
+        local walk,setter=q.queue[2],q.queue[3]
+        assert(#q.queue==3 and walk.Type=='ISWalkToTimedAction' and setter.Type=='ISRadioAction'and setter.mode=='SetVolume')
+        assert(walk.toolkitQueueOperation==setter.toolkitQueueOperation and walk.toolkitQueueOperation~=lastToken,
+            'each native commit groups only its own walk and setter')
+        lastToken=walk.toolkitQueueOperation
+    end
+    check(function()panel:onVolumeChange(4)end)
+    local slider=setmetatable({volumeSteps=10,dragInside=true,getWidth=function()return 100 end,
+        getIsVisible=function()return true end,onVolumeChange=RWMVolume.onVolumeChange,
+        onVolumeChangeTarget=panel},ISVolumeBar)
+    check(function()slider:onMouseUp(35,0)end)
+    ISPanel.update=function()end
+    UIManager={getMillisSinceLastUpdate=function()return 600 end}
+    local bar=setmetatable({joyMeter=500,hoverVolume=6,onVolumeChange=RWMVolume.onVolumeChange,
+        onVolumeChangeTarget=panel},ISVolumeBar)
+    check(function()bar:update()end)
+    local walked=panel.doWalkTo
+    panel.doWalkTo=function()ISTimedActionQueue.add(action('ForeignWalk'));return true end
+    reset();enqueue();panel:onVolumeChange(5)
+    assert(q.queue[2].toolkitQueueOperation~=q.queue[3].toolkitQueueOperation,
+        'changed upstream walk helper cannot acquire a native producer scope')
+    panel.doWalkTo=walked
+    RWMVolume.onVolumeChange=function()error('foreign replacement')end
+    assert(not operations.installVolumeProducer(),'foreign replacement cannot be adopted or wrapped again')
+end
+
+-- The same native insertion scope is used by owned and ordinary native commands.
+-- Failure must close it even after children were queued, without treating partial
+-- effects as completion or letting a later independent request inherit ownership.
+PZSurvivorToolkit.Settings.actionQueue = function() return queueEnabled end
+local commandFactories = {
+    toolkit = function(callback) return operations.command(player, callback, {}) end,
+    native = function(callback) return ISQueueActionsAction:new(player, callback) end,
+}
+for kind, factory in pairs(commandFactories) do
+    for _, afterChild in ipairs({false, true}) do
+        reset()
+        local failure, child, completions = {}, nil, 0
+        local broken = factory(function()
+            if afterChild then child = enqueue() end
+            error(failure)
+        end)
+        broken.forceComplete = function() completions = completions + 1 end
+        local untouched = action('IndependentTail')
+        ISTimedActionQueue.add(broken); ISTimedActionQueue.add(untouched)
+        local succeeded, result = pcall(broken.start, broken)
+        assert(not succeeded and result == failure, kind .. ' hid the producer error')
+        assert(completions == 0, kind .. ' completed a failed expansion')
+        assert(not q:isCurrentActionAddingOtherActions() and broken._numAddedActions == nil,
+            kind .. ' retained the native insertion boundary')
+        if child then
+            assert(q.queue[2] == child and child.toolkitQueueOperation == broken.toolkitQueueOperation,
+                kind .. ' rolled back or detached an already-enqueued child')
+        end
+        local following = enqueue()
+        assert(q.queue[#q.queue - 1] == untouched and q.queue[#q.queue] == following,
+            kind .. ' inserted independent work inside the failed producer')
+        assert(following.toolkitQueueOperation ~= broken.toolkitQueueOperation)
+    end
+    reset()
+    local completions = 0
+    local empty = factory(function() end)
+    empty.forceComplete = function() completions = completions + 1 end
+    local untouched = action('IndependentTail')
+    ISTimedActionQueue.add(empty); ISTimedActionQueue.add(untouched)
+    empty:start()
+    assert(completions == 1 and #q.queue == 2 and q.queue[2] == untouched
+        and not q:isCurrentActionAddingOtherActions(), kind .. ' empty success discarded independent work')
+
+    reset()
+    local child, body
+    local parent = factory(function()
+        child = factory(function() body = enqueue() end)
+        child.forceComplete = function() end
+        ISTimedActionQueue.add(child)
+    end)
+    parent.forceComplete = function() end
+    untouched = action('IndependentTail')
+    ISTimedActionQueue.add(parent); ISTimedActionQueue.add(untouched)
+    parent:start()
+    assert(q.queue[2] == child and child.toolkitQueueOperation == parent.toolkitQueueOperation)
+    q:onCompleted(parent)
+    child:start()
+    assert(q.queue[1] == child and q.queue[2] == body and q.queue[3] == untouched
+        and body.toolkitQueueOperation == parent.toolkitQueueOperation
+        and not q:isCurrentActionAddingOtherActions(), kind .. ' nested expansion lost its ordering or ownership')
+end
+-- Disabling controls retains the native empty-expansion stop contract.
+reset(); queueEnabled = false
+local stopped, completed = 0, 0
+local nativeEmpty = ISQueueActionsAction:new(player, function() end)
+nativeEmpty.forceStop = function() stopped = stopped + 1 end
+nativeEmpty.forceComplete = function() completed = completed + 1 end
+ISTimedActionQueue.add(nativeEmpty)
+nativeEmpty:start()
+assert(stopped == 1 and completed == 0, 'disabled queue changed native empty-command semantics')
+queueEnabled = true
+reset()
+
+print('Action operation grouping: native contracts, volume slider/deferred commits and foreign helper guards passed.')

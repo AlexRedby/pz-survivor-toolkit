@@ -1,3 +1,5 @@
+local worldTags={}
+ModData={getOrCreate=function()return worldTags end}
 local shared = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
 package.path = shared .. '?.lua;' .. package.path
 local enabled = true
@@ -40,7 +42,7 @@ local function item(fullType, category, name, weight, doubleClick)
     local ref = {getFullType = function() return fullType end,
         getDisplayCategory = function() return category end,
         getScriptItem = function() return script end}
-    return {ref = ref, cat = category, name = name, weight = weight or 1}, script
+    return {ref = ref, fullType = fullType, cat = category, name = name, weight = weight or 1}, script
 end
 local sunflower = item('base.SunflowerSeeds', 'foodNonPerishable_candySnack', 'Sunflower seeds')
 local candy = item('Base.Candy', 'foodNonPerishable_candySnack', 'Candy')
@@ -85,7 +87,81 @@ local function checkPlan(items, boxes, carriers, budget, accepts, acceptsDestina
     for _, record in ipairs(plan.leftover) do assert(knownItems[record], 'planner cloned a leftover record') end
     return destinations, plan
 end
+-- No-duplicates restrictions apply after matching, with reservations across all trips.
+do
+    local first = item('Base.BookCarpentry1', 'Literature', 'Carpentry Vol. 1')
+    local second = item('Base.BookCarpentry1', 'Literature', 'Renamed copy')
+    local nextVolume = item('Base.BookCarpentry2', 'Literature', 'Carpentry Vol. 2')
+    local shelf, trash = box(nil, {Literature = true}), box(nil, {Literature = true})
+    shelf.noDuplicates, shelf.priority, shelf.dist = true, 10, 20
+    trash.priority, trash.dist = -1, 1
+    shelf.existingTypes = {}
+    local destinations, plan = checkPlan({first, second, nextVolume}, {trash, shelf},
+        {{ref = {}, factor = 1, space = 1}}, 1)
+    assert(destinations[first] == shelf and destinations[second] == trash and destinations[nextVolume] == shelf,
+        'empty unique shelf must keep one of each full type across multiple trips')
+    assert(#plan.trips == 3 and shelf.existingTypes[first.fullType] == nil,
+        'duplicate reservations must not mutate the content snapshot')
+    shelf.existingTypes[first.fullType] = {}
+    destinations = checkPlan({first, second, nextVolume}, {trash, shelf})
+    assert(destinations[first] == trash and destinations[second] == trash and destinations[nextVolume] == shelf,
+        'existing copy must send duplicates to lower priority without rejecting a different volume')
+    shelf.items[first.name], shelf.cats = true, {}
+    destinations = checkPlan({first}, {trash, shelf})
+    assert(destinations[first] == trash, 'explicit-name match bypassed duplicate exclusion')
+    shelf.noDuplicates = false
+    destinations = checkPlan({first, second}, {shelf, trash})
+    assert(destinations[first] == shelf and destinations[second] == trash,
+        'disabled restriction changed name/category matching')
+    shelf.noDuplicates, shelf.cats = true, {Literature = true}
+    destinations, plan = checkPlan({first}, {shelf})
+    assert(not destinations[first] and #plan.leftover == 1 and plan.leftoverReasons.full == 1,
+        'duplicate without fallback should remain in source')
+    shelf.existingTypes = {}
+    destinations = checkPlan({first, second}, {shelf, trash}, nil, nil,
+        function(_, ref) return ref ~= first.ref end)
+    assert(not destinations[first] and destinations[second] == shelf,
+        'uncarryable item reserved the only unique slot')
+    destinations = checkPlan({first, second}, {shelf, trash}, nil, nil, nil,
+        function(dest, record) return dest ~= shelf or record ~= first end)
+    assert(destinations[first] == trash and destinations[second] == shelf,
+        'native-rejected item reserved the only unique slot')
+    -- Sort the shelf itself: retain its first copy, route only extras, even when full.
+    shelf.existingTypes[first.fullType], shelf.used, shelf.capacity = first.ref, 100, 100
+    local source = {}; shelf.container, first.container, second.container = source, source, source
+    destinations, plan = checkPlan({second, first}, {shelf, trash})
+    assert(destinations[first] == shelf and destinations[second] == trash, 'sorting shelf evacuated its last copy')
+    local kept, cut = LootSorter.stripSelfPlacements(plan.trips, source)
+    assert(cut == 1 and #kept == 1 and kept[1].perBox[trash][1].item == second)
+end
 local seeds = box(seedRule)
+do
+    local one = item('Base.BookCooking1', 'Literature', 'Cooking Vol. 1')
+    local extra = item('Base.BookCooking1', 'Literature', 'Cooking Vol. 1')
+    local otherVolume = item('Base.BookCooking2', 'Literature', 'Cooking Vol. 2')
+    local a, b, trash = box(nil, {Literature = true}), box(nil, {Literature = true}), box(nil, {Literature = true})
+    a.noDuplicates, b.noDuplicates, a.duplicateScope, b.duplicateScope = true, true, 'library', 'library'
+    a.priority, b.priority, trash.priority = 10, 9, -1
+    a.container, b.container = {}, {}
+    a.existingTypes, b.existingTypes = {}, {}
+    a.capacity = 0
+    local routed = checkPlan({one, extra, otherVolume}, {trash, a, b})
+    assert(routed[one] == b and routed[extra] == trash and routed[otherVolume] == b,
+        'full first member should overflow within group, duplicate should overflow out of group')
+    a.capacity = 100
+    a.existingTypes[one.fullType], b.existingTypes[one.fullType] = one.ref, one.ref
+    one.container = b.container
+    routed = checkPlan({extra, one}, {a, b, trash})
+    assert(routed[extra] == trash and routed[one] == b,
+        'group occupancy must preserve an existing copy in a different-priority member')
+    local other = box(nil, {Literature = true})
+    other.noDuplicates, other.duplicateScope, other.priority = true, 'other-library', 1
+    routed = checkPlan({extra}, {a, b, other, trash})
+    assert(routed[extra] == other, 'independent library was blocked by a different group')
+    a.noDuplicates, b.noDuplicates = false, false
+    routed = checkPlan({one, extra}, {a, b, trash})
+    assert(routed[one] == a and routed[extra] == a, 'group membership imposed duplicate exclusion when disabled')
+end
 local destinations, plan = checkPlan({sunflower, candy, potato, full, empty}, {seeds})
 assert(destinations[sunflower] == seeds and destinations[potato] == seeds and destinations[full] == seeds,
     'native item-aware seed rule missed planting inputs')
@@ -342,14 +418,17 @@ local originalForItem = Tags.forItem
 Tags.forItem = function(ref) if ref == candy.ref then error('routing test failure') end; return originalForItem(ref) end
 assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
 Tags.forItem = originalForItem
-local originalMatches, matchCalls = Tags.matchesRule, 0
-Tags.matchesRule = function(...)
-    matchCalls = matchCalls + 1
-    if matchCalls == 2 then error('routing test failure') end
-    return originalMatches(...)
+local originalMatcher, matchCalls = Tags.ruleMatcher, 0
+Tags.ruleMatcher = function(...)
+    local match = originalMatcher(...)
+    return function(rule)
+        matchCalls = matchCalls + 1
+        if matchCalls == 2 then error('routing test failure') end
+        return match(rule)
+    end
 end
 assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
-Tags.matchesRule = originalMatches
+Tags.ruleMatcher = originalMatcher
 
 -- A large set of alternative boxes must not reclassify each physical item for
 -- each candidate. A new plan/standalone read still sees repaired or retagged items.
@@ -357,11 +436,38 @@ do
     local records, alternatives = {}, {}
     for index=1,100 do records[index]=item('Base.Candy','Food','Candy '..index) end
     for index=1,40 do alternatives[index]=box(seedRule) end
-    local classify, reads = Tags.forItem, 0
+    local classify, prepare, reads, preparations, evaluations = Tags.forItem, Tags.ruleMatcher, 0, 0, 0
     Tags.forItem=function(ref) reads=reads+1; return classify(ref) end
+    Tags.ruleMatcher=function(tags)
+        preparations=preparations+1
+        local match=prepare(tags)
+        return function(rule) evaluations=evaluations+1; return match(rule) end
+    end
     local _,failed=checkPlan(records,alternatives)
-    Tags.forItem=classify
-    assert(#failed.leftover==100 and reads==100,'routing reclassified items for alternative/full-reason checks')
+    assert(#failed.leftover==100 and failed.leftoverReasons.nomatch==100 and reads==100 and preparations==100,
+        'routing rebuilt item classification/membership for alternative destinations')
+    assert(evaluations==4000,'unsuccessful routing repeated rule evaluations for the refusal reason')
+    reads,preparations=0,0
+    checkPlan({candy},{box(nil,{[candy.cat]=true})})
+    checkPlan({candy},{box(seedRule,{}, {[candy.name]=true})})
+    assert(reads==0 and preparations==0,'direct category/name success eagerly prepared semantic tags')
+    local brokenFood=item('Base.Candy','Food','Broken non-tool')
+    brokenFood.ref.isBroken=function() return true end
+    checkPlan({brokenFood},alternatives)
+    assert(reads==1 and preparations==1,'broken non-tool rebuilt its prepared membership for rules')
+    local brokenTool=item('Base.Hammer','toolCarpentry','Broken hammer')
+    brokenTool.ref.isBroken=function() return true end
+    reads,preparations=0,0
+    checkPlan({brokenTool},{box(nil,{}, {[brokenTool.name]=true})})
+    assert(reads==0 and preparations==0,'explicit broken-tool assignment eagerly prepared semantic tags')
+    local brokenAlternatives={}
+    for index=1,40 do
+        brokenAlternatives[index]=box({mode='any',include={'broken','tool'},exclude={}})
+        brokenAlternatives[index].capacity=0
+    end
+    checkPlan({brokenTool},brokenAlternatives)
+    assert(reads==1 and preparations==1,'Broken destination exceptions reclassified each alternative')
+    Tags.forItem,Tags.ruleMatcher=classify,prepare
 
     local state={category='Food',broken=false}
     local record={cat='Food',name='Mutable',weight=1,ref={
@@ -382,6 +488,32 @@ do
     state.broken=true
     assert(Rules.matcher()(legacy,record),'tag opt-out retained a broken-tool classification')
     enabled=true
+end
+-- Refusal reasons come from the completed destination search, including named
+-- destinations whose capacity/admission failed before a category could match.
+do
+    for _,fullBox in ipairs({true,false}) do
+        local named=box(nil,{}, {[candy.name]=true})
+        named.capacity=fullBox and 0 or 100
+        local matched,admitted=0,0
+        local result=LootSorter.planTrips({candy},{named},{carrier},100,nil,function()
+            matched=matched+1; return false
+        end,function()
+            admitted=admitted+1; return false
+        end)
+        assert(#result.leftover==1 and result.leftoverReasons.full==1 and result.leftoverReasons.nomatch==0,
+            'unavailable explicit destination lost its matching designation')
+        assert(matched==1 and admitted==(fullBox and 0 or 1),'refusal changed matching/admission calls')
+    end
+    local fullBox=box(nil,{Food=true}); fullBox.capacity=0
+    local calls=0
+    local result=LootSorter.planTrips({candy},{fullBox},{carrier},100,nil,function()
+        calls=calls+1; return true
+    end,function() error('full destination reached admission') end)
+    assert(calls==1 and result.leftoverReasons.full==1,'full category destination lost its first match')
+    result=LootSorter.planTrips({candy},{fullBox},{{ref={},space=0,factor=1}},100,nil,
+        function() error('uncarryable item reached designation matching') end)
+    assert(result.leftoverReasons.carry==1 and result.leftoverReasons.full==0,'carry lost refusal precedence')
 end
 -- Explicit-name lookup must not scan unrelated boxes for every physical item.
 do
@@ -440,3 +572,236 @@ do
     assert(destinations[record]==category,'a later plan reused an earlier name index')
 end
 print('Quartermaster item routing passed: seed/food roles, packets, broken tools, repair, box/preset rules, additive picks, display-name precedence, opt-out, identities, destination admission, capacity/carriers/leftovers and failure safety.')
+
+-- Same type/name/category, different physical freshness: route using each instance.
+do
+    ItemTag={CANT_COMPOST='no-compost',IS_COMPOSTABLE='compostable'}
+    local function apple(age, forbidden)
+        local record=item('Base.Apple','foodPerishable_fruit','Apple')
+        local value=record.ref
+        value.age=age
+        value.IsFood=function() return true end
+        value.getOffAge=function() return 1 end
+        value.getOffAgeMax=function() return 2 end
+        value.isFresh=function(self) return self.age<1 end
+        value.isRotten=function(self) return self.age>=2 end
+        value.hasTag=function(_,tag) return forbidden and tag==ItemTag.CANT_COMPOST or false end
+        return record
+    end
+    local fresh,stale,rotten,restricted=apple(0),apple(1),apple(2),apple(2,true)
+    local compost=box({mode='all',include={'rotten'},exclude={}})
+    local fridge=box({mode='all',include={'perishable'},exclude={'rotten'}})
+    local route,plan=checkPlan({fresh,stale,rotten,restricted},{compost,fridge})
+    assert(route[fresh]==fridge and route[stale]==fridge and route[rotten]==compost,
+        'freshness routing mixed same-type physical food states')
+    assert(route[restricted]==compost and #plan.leftover==0,'Rotten incorrectly depends on compost eligibility')
+    fresh.ref.age=2
+    route=checkPlan({fresh,stale,rotten},{compost,fridge})
+    assert(route[fresh]==compost and route[stale]==fridge,'new plan retained pre-spoilage state')
+    fresh.ref.age=0
+    route=checkPlan({fresh},{compost,fridge})
+    assert(route[fresh]==fridge,'new plan retained an earlier rotten state')
+end
+print('Freshness routing passed: same-type states, fridge exclusion, universal rotten state and new-plan refresh.')
+
+-- Equal-type fluid vessels route by current contents and refresh after filling.
+do
+    local function vessel(amount)
+        local record=item('Base.EmptyPetrolCan','containerLiquid','Can')
+        record.ref.amount=amount
+        record.ref.getFluidContainer=function(value)
+            return {isEmpty=function()return value.amount==0 end,getAmount=function()return value.amount end}
+        end
+        return record
+    end
+    local empty,filled=vessel(0),vessel(0.000001)
+    local emptyBox=box({mode='all',include={'liquid','empty'},exclude={}})
+    local supplyBox=box({mode='all',include={'liquid'},exclude={'empty'}})
+    local destinations=checkPlan({empty,filled},{emptyBox,supplyBox})
+    assert(destinations[empty]==emptyBox and destinations[filled]==supplyBox,
+        'same-type fluid vessels ignored current Empty state')
+    empty.ref.amount=0.5
+    destinations=checkPlan({empty},{emptyBox,supplyBox})
+    assert(destinations[empty]==supplyBox,'new plan retained Empty after a refill')
+    empty.ref.amount=0
+    destinations=checkPlan({empty},{emptyBox,supplyBox})
+    assert(destinations[empty]==emptyBox,'new plan retained filled state after emptying')
+end
+
+-- Routing consumes effective exact tags instead of a cached category projection.
+local customId='custom:12345678-1234-1234-1234-123456789abc'
+local C=require 'PZSurvivorToolkit/TagCustomization'
+worldTags.definitions[customId]={name='Workshop'}
+worldTags.types['base.candy']={[customId]='add'}
+local delta={}
+candy.ref.hasModData=function()return true end
+candy.ref.getModData=function()return {[C.FIELD]=delta}end
+local customDestination=box({mode='all',include={customId},exclude={}})
+destinations=checkPlan({candy,sunflower},{customDestination})
+assert(destinations[candy]==customDestination and not destinations[sunflower])
+delta[customId]='remove'
+destinations=checkPlan({candy},{customDestination});assert(not destinations[candy])
+delta[customId]=nil;worldTags.definitions[customId]={deleted=true}
+destinations=checkPlan({candy},{customDestination});assert(not destinations[candy],
+ 'deleted tag routed an item through a saved include')
+
+-- Sharpening is a current usable-item role, including partial sharpness loss.
+do
+    ItemTag=ItemTag or {};ItemTag.SHARPENABLE='base:sharpenable'
+    Attribute={Sharpness='Sharpness'}
+    local function blade(name,sharpness,broken)
+        local record,definition=item(name,'toolCooking',name)
+        record.ref.hasTag=function(_,id)return id==ItemTag.SHARPENABLE end
+        record.ref.sharpness=sharpness
+        record.ref.isBroken=function()return broken==true end
+        record.ref.getMaxSharpness=function()return 1 end
+        record.ref.getAttributes=function(ref)return {getAttribute=function(_,id)
+            assert(id==Attribute.Sharpness)
+            return {getFloatValue=function()return ref.sharpness end}
+        end}end
+        record.ref.getSharpness=function()error('planner read mutating native sharpness')end
+        return record
+    end
+    local dull=blade('Base.KitchenKnife',0.8)
+    local sharp=blade('Base.KitchenKnifeForged',1)
+    local broken=blade('Base.Scissors',0.1,true)
+    local station=box({mode='all',include={'sharpen'},exclude={}})
+    local destinations=checkPlan({dull,sharp,broken},{station})
+    assert(destinations[dull]==station and not destinations[sharp] and not destinations[broken],
+        'sharpening box accepted fully sharpened/broken tools or lost partial sharpness')
+    dull.ref.sharpness=1
+    assert(not checkPlan({dull},{station})[dull],'new plan retained the old sharpening state')
+end
+
+-- Broken tools need a positive, currently matching destination role. In
+-- particular, a false arm of an Any rule must not open ordinary tool routing.
+do
+    local Custom = require 'PZSurvivorToolkit/TagCustomization'
+    local broken = item('Base.Hammer', 'toolCarpentry', 'Broken hammer')
+    broken.ref.broken = true
+    broken.ref.isBroken = function(ref) return ref.broken end
+    local delta = {}
+    broken.ref.hasModData = function() return true end
+    broken.ref.getModData = function() return {[Custom.FIELD] = delta} end
+    local brokenBox = box({mode = 'all', include = {'broken'}, exclude = {}})
+    local smeltingBox = box({mode = 'all', include = {'smelting'}, exclude = {}})
+    local combined = box({mode = 'all', include = {'broken', 'smelting'}, exclude = {}})
+    local brokenAny = box({mode = 'any', include = {'broken', 'tool'}, exclude = {}}, {toolCarpentry = true})
+    local smeltingAny = box({mode = 'any', include = {'smelting', 'tool'}, exclude = {}}, {toolCarpentry = true})
+    local excludesBroken = box({mode = 'all', include = {'smelting'}, exclude = {'broken'}}, {toolCarpentry = true})
+    local negativeOnly = box({mode = 'all', include = {'tool'}, exclude = {'broken'}}, {toolCarpentry = true})
+    local function expect(target, record, wanted, message)
+        assert(Rules.matches(target, record) == wanted, 'direct: ' .. message)
+        assert((checkPlan({record}, {target})[record] == target) == wanted, 'plan: ' .. message)
+    end
+    expect(brokenBox, broken, true, 'Broken selection lost a broken tool')
+    expect(brokenAny, broken, true, 'Any lost its matching Broken arm')
+    expect(smeltingBox, broken, false, 'broken alone fabricated Smelting')
+    expect(combined, broken, false, 'All skipped its absent Smelting requirement')
+    expect(smeltingAny, broken, false, 'nonmatching Smelting alternative bypassed the tool guard')
+    expect(negativeOnly, broken, false, 'Broken exclusion was ignored')
+    local matchingGroup = box({groups={
+        {include={'broken','tool'},exclude={}}, {include={'food'},exclude={}}
+    }})
+    local falseBrokenGroup = box({groups={
+        {include={'broken','food'},exclude={}}, {include={'tool'},exclude={}}
+    }}, {toolCarpentry=true})
+    local excludedBrokenGroup = box({groups={
+        {include={'broken'},exclude={'tool'}}, {include={'tool'},exclude={}}
+    }})
+    expect(matchingGroup, broken, true, 'matching Broken conjunction lost its routing exception')
+    expect(falseBrokenGroup, broken, false, 'nonmatching Broken group opened another Tool branch')
+    expect(excludedBrokenGroup, broken, false, 'group-local exclusion lost the Broken admission guard')
+
+
+    delta.broken = 'remove'
+    expect(brokenBox, broken, false, 'manual Broken removal was ignored')
+    expect(brokenAny, broken, false, 'nonmatching Broken alternative or category bypassed the guard')
+    expect(negativeOnly, broken, false, 'negative Broken reference opened ordinary tool routing')
+    delta.smelting = 'add'
+    expect(smeltingBox, broken, true, 'manual Smelting addition could not collect a broken tool')
+    expect(smeltingAny, broken, true, 'Any lost its matching Smelting arm')
+    expect(matchingGroup, broken, false, 'manually removed Broken left a grouped exception')
+    expect(box({groups={{include={'smelting','food'}},{include={'tool'}}}}), broken, false,
+        'nonmatching Smelting group opened another Tool branch')
+    expect(box({groups={{include={'smelting','tool'}},{include={'food'}}}}), broken, true,
+        'matching Smelting conjunction could not collect a broken tool')
+
+    expect(combined, broken, false, 'All ignored manually removed Broken')
+    expect(excludesBroken, broken, true, 'Broken removal did not update an explicit exclusion')
+    delta.broken = nil
+    expect(combined, broken, true, 'explicit Broken and Smelting combination failed')
+    expect(excludesBroken, broken, false, 'category bypassed a failed explicit exclusion')
+    delta.smelting = 'remove'
+    expect(smeltingAny, broken, false, 'manual Smelting removal left a false Any bypass')
+    expect(combined, broken, false, 'All ignored manually removed Smelting')
+
+    presetRules.BrokenTools = {gen = 31, rule = {mode = 'all', include = {'broken'}, exclude = {}}}
+    local presets = {BrokenTools = {gen = 31, cats = {toolCarpentry = true}, items = {}}}
+    local linked = box(nil, {}, {}, {BrokenTools = 31}, presets)
+    expect(linked, broken, true, 'linked Broken preset did not collect a broken tool')
+    delta.broken = 'remove'
+    expect(linked, broken, false, 'linked preset category bypassed removed Broken')
+    delta.broken = nil
+    broken.ref.broken = false
+    expect(brokenBox, broken, false, 'repaired item retained Broken in a later plan')
+    expect(box(nil, {toolCarpentry = true}), broken, true, 'repair did not restore ordinary tool routing')
+    broken.ref.broken = true
+    enabled = false
+    expect(box(nil, {toolCarpentry = true}), broken, true, 'tag opt-out changed legacy broken-tool routing')
+    enabled = true
+    presetRules.BrokenTools = nil
+end
+
+-- Scissors are both tools and genuine furnace subjects. Native furnace inputs
+-- with AllowDestroyedItem accept their broken instances through Smelting.
+do
+    local savedManager, savedResource = getScriptManager, ResourceType
+    local savedCreate, savedTest = toolkitRecipeOnCreate, toolkitRecipeHasItemTest
+    ResourceType = {Item = 'item'}
+    toolkitRecipeOnCreate = function() return nil end
+    toolkitRecipeHasItemTest = function() return false end
+    local scissors, definition = item('Base.Scissors', 'toolCooking', 'Scissors')
+    scissors.ref.isBroken = function() return true end
+    local allowDestroyed = true
+    -- ExtractSteelFromSmallItem resolves smeltablesteelsmall at input 4/4;
+    -- mode:destroy and ItemCount make the scissors a whole material subject.
+    local input = {
+        getResourceType = function() return ResourceType.Item end,
+        getPossibleInputItems = function() return list({definition}) end,
+        getIntAmount = function() return 1 end,
+        isUsesPartialItem = function() return false end,
+        doesItemPassRoutineStatusTests = function(_, ref, character)
+            assert(ref == scissors.ref and character == nil)
+            return not ref:isBroken() or allowDestroyed
+        end,
+    }
+    for _, method in ipairs({'isKeep', 'isTool', 'isApplyOnTick', 'hasConsumeFromItem', 'hasCreateToItem', 'isReplace'}) do
+        input[method] = function() return false end
+    end
+    local recipes = list({{
+        getName = function() return 'ExtractSteelFromSmallItem' end,
+        getInputs = function() return list({{}, {}, {}, input}) end,
+        isVanilla = function() return true end,
+    }})
+    local manager = {getAllCraftRecipes = function() return recipes end}
+    getScriptManager = function() return manager end
+    local furnace = box({mode = 'all', include = {'smelting'}, exclude = {}})
+    local combined = box({mode = 'all', include = {'broken', 'smelting'}, exclude = {}})
+    for _, target in ipairs({furnace, combined}) do
+        assert(Rules.matches(target, scissors) and checkPlan({scissors}, {target})[scissors] == target,
+            'AllowDestroyedItem furnace subject was stopped by the broken-tool guard')
+    end
+    presetRules.Furnace = {gen = 32, rule = {mode = 'all', include = {'smelting'}, exclude = {}}}
+    local linked = box(nil, {}, {}, {Furnace = 32}, {Furnace = {gen = 32, cats = {toolCooking = true}, items = {}}})
+    assert(Rules.matches(linked, scissors) and checkPlan({scissors}, {linked})[scissors] == linked,
+        'linked Smelting preset could not collect native broken scissors')
+    allowDestroyed = false
+    for _, target in ipairs({furnace, combined, linked}) do
+        assert(not Rules.matches(target, scissors) and not checkPlan({scissors}, {target})[scissors],
+            'native destroyed-item refusal was bypassed by a category or an explicit role')
+    end
+    presetRules.Furnace = nil
+    getScriptManager, ResourceType = savedManager, savedResource
+    toolkitRecipeOnCreate, toolkitRecipeHasItemTest = savedCreate, savedTest
+end

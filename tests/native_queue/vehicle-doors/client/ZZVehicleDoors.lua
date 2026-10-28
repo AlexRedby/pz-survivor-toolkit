@@ -1,5 +1,7 @@
 local F = require 'VehicleDoorsFixture'
 local Doors = require 'PZSurvivorToolkit/VehicleDoors'
+local selection = require 'QueueTestSelection'
+local IdleUI = selection.options and selection.options.idle_ui and require 'SidebarIdleUI'
 local stage, id, requested, authority, command, nextAt, failed = 0, nil, false, false, nil, 0, false
 Events.OnServerCommand.Add(function(module, name, args)
     if module ~= 'VehicleDoorsTest' then return end
@@ -107,13 +109,23 @@ local function run()
         getCore():TakeFullScreenshot('vehicle-doors-dashboard-closed.png')
         stage = 4.5; nextAt = getTimestampMs() + 600
     elseif stage == 4.5 then
-        pass('authority'); stage = 5
-        print('[VEHICLE_DOORS] COMPLETE close')
+        pass('authority')
+        if IdleUI then IdleUI.start(player, pass); stage = 4.75
+        else stage = 5; print('[VEHICLE_DOORS] COMPLETE close') end
+    elseif stage == 4.75 and IdleUI.step() then
+        stage = 5; print('[VEHICLE_DOORS] COMPLETE close')
     end
 end
 Events.OnTick.Add(function()
     if failed or stage == 5 or not isIngameState() or not getPlayer() or not getPlayer():getSquare() or getTimestampMs() < nextAt then return end
     nextAt = getTimestampMs() + 100
     local ok, err = pcall(run)
-    if not ok then failed = true; print('[VEHICLE_DOORS] FAIL stage=' .. stage .. ' ' .. tostring(err)) end
+    if not ok then
+        failed = true
+        if IdleUI then
+            local restored, reason = pcall(IdleUI.restore)
+            if not restored then print('[VEHICLE_DOORS] IDLE_SIDEBAR restore_failed=' .. tostring(reason)) end
+        end
+        print('[VEHICLE_DOORS] FAIL stage=' .. stage .. ' ' .. tostring(err))
+    end
 end)

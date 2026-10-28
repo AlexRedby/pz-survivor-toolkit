@@ -9,8 +9,13 @@ import runpy
 import shutil
 import subprocess
 import tempfile
+import sys
+import zipfile
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[3] / "tools"))
+from cart_jvm import compile_sources, clean_environment
+from queue_checks.adapters.carts import main_source, runtime_sources
 
 
 def fixture(root, fast=False, actions=False, variant=None):
@@ -75,11 +80,12 @@ def fixture(root, fast=False, actions=False, variant=None):
     if actions: action_fixture(root, epoch, duration, matrix, model if variant is not None else None)
 
 
-def action_fixture(root, epoch, duration, matrix, model=None):
-    phases = ('drop-complete', 'pickup-complete', 'drop-cancel', 'drop-repeat', 'pickup-cancel', 'pickup-repeat')
-    grounds = (True, False, False, True, True, False)
+def action_fixture(root, epoch, duration, matrix, model=None, phases=None, grounds=None, observer_endpoints=False):
+    phases = phases or ('drop-complete', 'pickup-complete', 'drop-cancel', 'drop-repeat', 'pickup-cancel', 'pickup-repeat')
+    grounds = grounds or (True, False, False, True, True, False)
     logs = {role: [] for role in ('server', 'client1', 'client2')}
     poses = {'client1': [], 'client2': []}
+    cameras = {'client1': [], 'client2': []}
     def emit(role, kind, row): logs[role].append('[CART_MP_ACTION] ' + kind + ' ' + json.dumps(row))
     for index, (phase, ground) in enumerate(zip(phases, grounds), 1):
         begin = epoch+duration+500+(index-1)*2500
@@ -90,7 +96,7 @@ def action_fixture(root, epoch, duration, matrix, model=None):
         server = dict(base, actor='server', wall=begin+1500, cargoID=99, cargoWeight=70, cargoPreserved=True,
                       inventoryCount=int(not ground), worldCount=int(ground), primaryID=-1 if ground else 42,
                       secondaryID=-1 if ground else 42, nativeActions=0, hasPath=False, held=not ground, ground=ground,
-                      ok=True, holdMs=100)
+                      ok=True, holdMs=100,position=dict(x=1,y=2,z=0))
         for role in ('client1', 'client2'):
             emit(role, 'WINDOW', dict(base, wall=begin+15, serverWall=begin+5))
             schedule = [(100, .1, True, False), (200, .15, True, False), (300, .2, True, False),
@@ -110,23 +116,42 @@ def action_fixture(root, epoch, duration, matrix, model=None):
                                 enabled=False, female=False, cart=matrix,
                                 bones={side: matrix for side in ('Bip01_L_Hand', 'Bip01_R_Hand')})
                     pose['local'] = role == 'client1'; poses[role].append(pose)
-                    if model is not None: pose['model'] = model
+                    if model is not None:
+                        pose.update(model=model, modelProbeVersion=1, heldModel=None if hands == -1 else model,
+                                    overridePrimary=model if hands == -1 else None, overrideSecondary=None,
+                                    cartItemId=42, cartItemSource='transition' if hands == -1 else 'hands', cartItemModel=model,
+                                    renderProbeVersion=1, captureId=len(poses[role]), slotToken=7, nativeWallTimeMillis=begin+delta-1)
+                        for part in ('body', 'cart'):
+                            cameras[role].append(dict(renderProbeVersion=1, captureId=pose['captureId'], slotToken=7,
+                                id=7, primary=hands, secondary=hands, preparedPrimary=hands, preparedSecondary=hands,
+                                part=part, model=model if part == 'cart' else 'MaleBody',
+                                captureWallTimeMillis=begin+delta, cameraWallTimeMillis=begin+delta+1, wallTimeMillis=begin+delta+2,
+                                cameraX=1, cameraY=2, cameraZ=0, cameraAngle=0, cameraWorldIso=True, cameraInVehicle=False))
             if role == 'client1':
                 receipt = dict(server, actor=role, wall=begin+1400, luaActions=0, cancelled=cancelled,
                                nativeProgress=True, presentationProgress=True, recoveryEnded=True,
                                recoveryObserved=cancelled, elapsed=1400)
                 emit(role, 'RECEIPT', receipt)
             emit(role, 'SERVER_ACK', dict(server, wall=begin+1510, serverWall=server['wall']))
+        if observer_endpoints:
+            observation=dict(base,actor='client2',wall=begin+1450,cargoID=99,cargoWeight=70,cargoPreserved=True,
+                inventoryScope='remote-hand-snapshot',inventoryCount=None,itemSource='world' if ground else 'hands',
+                handSameItem=not ground,worldAttached=ground,worldCount=int(ground),primaryID=-1 if ground else 42,
+                secondaryID=-1 if ground else 42,luaActions=0,nativeActions=0,hasPath=False,
+                pathScope='remote-network',nativeMoving=False,position=dict(x=1,y=2,z=0))
+            emit('client2','OBSERVER_RECEIPT',observation)
+            emit('server','SERVER_OBSERVATION',dict(observation,wall=begin+1460))
         emit('server', 'SERVER_RECEIPT', server)
-    done = dict(id=42, phases=6, wall=server['wall']+1)
+    done = dict(id=42, phases=len(phases), wall=server['wall']+1)
     emit('server', 'ALL_COMPLETE', done)
     for role in ('client1', 'client2'):
         emit(role, 'SERVER_DONE', dict(done, ok=True, wall=done['wall']+19, serverWall=done['wall']))
         for delta in (130, 230, 330):
-            emit(role, 'PRESENTATION', dict(index=6, phase=phases[-1], id=42, actor=role, wall=done['wall']+19+delta,
-                 active=False, recovering=False, progress=0, pickup=False, rendered=False, ik=False, primaryID=42, secondaryID=42))
+            emit(role, 'PRESENTATION', dict(index=len(phases), phase=phases[-1], id=42, actor=role, wall=done['wall']+19+delta,
+                 active=False, recovering=False, progress=0, pickup=False, rendered=False, ik=False, primaryID=-1 if grounds[-1] else 42, secondaryID=-1 if grounds[-1] else 42))
         with (root / role / 'body-clearance.jsonl').open('a') as output:
             output.write('\n'.join(map(json.dumps, poses[role])) + '\n')
+        (root / role / 'render-camera.jsonl').write_text('\n'.join(map(json.dumps, cameras[role])) + '\n')
     for role, lines in logs.items():
         with (root / (role+'-launch.log')).open('a') as output: output.write('\n'.join(lines) + '\n')
 
@@ -311,17 +336,17 @@ def check_variants():
     analyzer = runpy.run_path(str(HERE / 'analyze.py'))
     for variant in analyzer['VARIANTS']:
         with tempfile.TemporaryDirectory(prefix='cart-mp-variant-check-') as directory:
-            root = Path(directory); fixture(root, fast=True, actions=variant in ('wooden-wheelbarrow', 'metal-wheelbarrow'), variant=variant)
+            root = Path(directory); fixture(root, fast=True, actions=True, variant=variant)
             report = analyzer['analyze'](root)
             assert report['cartVariant'] == variant and report['cargo']['id'] == 99 and len(report['phases']) == 10
             render = report['phases']['run']['client2']['render']
             assert ('wheelFloorRange' in render) == (variant=='wooden-wheelbarrow')
             assert ('rawTransformCoverage' in render) == (variant!='wooden-wheelbarrow')
-            if variant == 'metal-wheelbarrow':
+            if variant != 'wooden-wheelbarrow':
                 assert report['actions']['evidenceComplete']
                 for role in ('client1', 'client2'):
                     for phase in report['actions']['phases'][role]:
-                        assert phase['models'] == ['WheelbarrowMetal'] and phase['rawTransformCoverage']
+                        assert phase['models'] == [analyzer['FILLED_MODELS'][variant]] and phase['rawTransformCoverage'] and phase['nativeDrawCoverage']
                         assert 'wheelFloorRange' not in phase and 'palmHandleErrorMax' not in phase
             files = {p: p.read_text() for p in root.rglob('*') if p.is_file()}
             model=analyzer['FILLED_MODELS'][variant]
@@ -342,9 +367,6 @@ def check_variants():
             selection = root/'selection.json'
             for invalid in (None, True, 'unknown', 'SaucedCarts.ShoppingCart'):
                 value = json.loads(files[selection]); value['options']['cart_variant'] = invalid
-                rejected(selection, json.dumps(value))
-            if variant == 'shopping-cart':
-                value = json.loads(files[selection]); value['options']['cart_actions'] = True
                 rejected(selection, json.dumps(value))
             server = root/'server-launch.log'
             rejected(server, '\n'.join(line for line in files[server].splitlines() if '[CART_MP] CART_SPEC ' not in line))
@@ -379,7 +401,102 @@ def check_variants():
                     for row in rows:row['model']=wrong
                     rejected(probe,'\n'.join(map(json.dumps,rows)))
                 rejected(observer,files[observer].replace('"heldModel": "ShoppingCartFullModel"','"heldModel": "ShoppingCartModel"'))
-    return 'PASS (three exact cart variants, strict cargo/full render/held models and diagnostics, default wood geometry and invalid options)'
+            if variant != 'wooden-wheelbarrow':
+                # Selected full cargo must remain the same exact model during all six actions,
+                # including empty-hand pickup and cancellation, on each real draw path.
+                for role in ('client1', 'client2'):
+                    action_probe = root/role/'body-clearance.jsonl'
+                    original_rows = [json.loads(line) for line in files[action_probe].splitlines()]
+                    index = next(i for i,r in enumerate(original_rows) if r.get('cartItemSource') == 'transition')
+                    for key,value in (('cartItemId',43),('cartItemSource','hands'),('cartItemModel','ShoppingCartPartialModel'),
+                                      ('heldModel',model),('slotToken',99)):
+                        rows=copy.deepcopy(original_rows);rows[index][key]=value
+                        rejected(action_probe,'\n'.join(map(json.dumps,rows)))
+                    rows=copy.deepcopy(original_rows)
+                    for row in rows:
+                        if row.get('cartItemSource') == 'transition': row['captureId'] += 999999
+                    rejected(action_probe,'\n'.join(map(json.dumps,rows)))
+                    if variant == 'shopping-cart':
+                        rows=copy.deepcopy(original_rows)
+                        for row in rows:
+                            if 'cartItemId' in row: row['model']='ShoppingCartPartialModel'
+                        rejected(action_probe,'\n'.join(map(json.dumps,rows)))
+                    draws=root/role/'render-camera.jsonl'
+                    rejected(draws,'')
+                    camera_rows=[json.loads(line) for line in files[draws].splitlines()]
+                    rejected(draws,'\n'.join(map(json.dumps,camera_rows[1:])))
+                    for key,value in (('id',8),('slotToken',99),('preparedPrimary',99),('preparedSecondary',99),
+                                      ('preparedPrimary',None),('preparedSecondary',None),('primary',None),('cameraX',float('nan')),
+                                      ('model','ShoppingCartPartialModel'),('wallTimeMillis',0)):
+                        rows=copy.deepcopy(camera_rows)
+                        for row in rows:
+                            if row['part']=='cart': row[key]=value
+                        rejected(draws,'\n'.join(map(json.dumps,rows)))
+                    # The exact prepared cart still draws after live inventory
+                    # changes on the simulation thread (native04 boundary race).
+                    rows=copy.deepcopy(camera_rows)
+                    for row in rows:
+                        if row['captureId']==camera_rows[0]['captureId']:
+                            row['primary']=row['secondary']=-1
+                    try:
+                        draws.write_text('\n'.join(map(json.dumps,rows))+'\n')
+                        assert analyzer['analyze'](root)['actions']['evidenceComplete']
+                    finally:draws.write_text(files[draws])
+                    presentation=root/(role+'-launch.log')
+                    marker='[CART_MP_ACTION] PRESENTATION '
+                    lines=[]
+                    for line in files[presentation].splitlines():
+                        if marker in line:
+                            row=json.loads(line.split(marker,1)[1])
+                            if row['index']==2 and row['active'] and row['progress']>.1: row['ik']=False
+                            line=marker+json.dumps(row)
+                        lines.append(line)
+                    rejected(presentation,'\n'.join(lines)+'\n')
+    return 'PASS (three exact cart variants and six action phases, strict full models/cart identity, actual owner/observer draws, render/IK/cancel/retry, no wooden geometry for other carts)'
+
+
+
+def check_short_action_capture():
+    """A short remote cancel still needs five distinct actual body/cart draws."""
+    analyzer = runpy.run_path(str(HERE / 'analyze.py'))
+    with tempfile.TemporaryDirectory(prefix='cart-short-action-check-') as directory:
+        root = Path(directory); fixture(root, fast=True, actions=True, variant='shopping-cart')
+        # Compress only the observer's five active pickup-cancel frames to112ms.
+        log = root/'client2-launch.log'; marker='[CART_MP_ACTION] PRESENTATION '
+        lines=log.read_text().splitlines()
+        active=[json.loads(line.split(marker,1)[1]) for line in lines if marker in line]
+        active=[row for row in active if row['index']==5 and row['active']]
+        old=[row['wall'] for row in active]; remap={wall:old[0]+index*28 for index,wall in enumerate(old)}
+        for index,line in enumerate(lines):
+            if marker in line:
+                row=json.loads(line.split(marker,1)[1])
+                if row['index']==5 and row['active']:row['wall']=remap[row['wall']]
+                lines[index]=marker+json.dumps(row)
+        log.write_text('\n'.join(lines)+'\n')
+        pose_path=root/'client2/body-clearance.jsonl'
+        poses=[json.loads(line) for line in pose_path.read_text().splitlines()]
+        ids=set()
+        for row in poses:
+            if row['wallTimeMillis'] in remap:
+                previous=row['wallTimeMillis'];row['wallTimeMillis']=remap[previous]
+                row['nativeWallTimeMillis']+=row['wallTimeMillis']-previous;ids.add(row['captureId'])
+        pose_path.write_text('\n'.join(map(json.dumps,poses))+'\n')
+        draw_path=root/'client2/render-camera.jsonl'
+        draws=[json.loads(line) for line in draw_path.read_text().splitlines()]
+        for row in draws:
+            if row['captureId'] in ids:
+                delta=remap[row['captureWallTimeMillis']]-row['captureWallTimeMillis']
+                for key in ('captureWallTimeMillis','cameraWallTimeMillis','wallTimeMillis'):row[key]+=delta
+        draw_path.write_text('\n'.join(map(json.dumps,draws))+'\n')
+        assert analyzer['analyze'](root)['actions']['phases']['client2'][4]['renderFrames']==5
+        # The former33ms cadence drops alternating28ms native frames. Preserve
+        # strict rejection instead of accepting an under-sampled cancel window.
+        remove=sorted(ids)[1::2]
+        pose_path.write_text('\n'.join(json.dumps(row) for row in poses if row.get('captureId') not in remove)+'\n')
+        try:analyzer['analyze'](root)
+        except ValueError as error:assert 'client2/pickup-cancel/action render: fewer than five samples' in str(error)
+        else:raise AssertionError('Decimated short action evidence accepted')
+    return 'PASS (112ms observer cancel: five actual paired draws accepted, decimated frames rejected)'
 
 
 
@@ -418,16 +535,16 @@ local host=true
 isServer=function() return true end
 isClient=function() return false end
 cartMPPadHost=function() return host end
-local writes,floors=0,0
+local writes,floors,probe=0,0,16
 local empty={size=function() return 0 end}
 local occupied={size=function() return 1 end}
 local upper={}
 local chunk={}
 local cell={}
-function cell:getChunkForGridSquare(x,y,z) return not (mode=='unloaded' and x==16 and y==16) and chunk or nil end
+function cell:getChunkForGridSquare(x,y,z) return not (mode=='unloaded' and x==probe and y==probe) and chunk or nil end
 function cell:getGridSquare(x,y,z)
- if z==0 then return square end
- if x==16 and y==16 and mode~='empty' then return {
+ if z==0 then return not (mode=='unloaded-ground' and x==probe and y==probe) and square or nil end
+ if x==probe and y==probe and mode~='empty' then return {
   getFloor=function() return mode=='floor' and {} or nil end,
   getObjects=function() return mode=='occupied' and occupied or empty end,
   getSpecialObjects=function() return mode=='special' and occupied or empty end,
@@ -455,33 +572,45 @@ end
 mode='empty';host=true;local elevated=assert(dofile(PLACEMENT))(player)
 assert(elevated.minX==-15 and elevated.minY==-15 and elevated.x==4.5 and elevated.y==.5 and elevated.size==31 and elevated.margin==2 and elevated.bankVersion==3 and elevated.elevated==true and elevated.z==7 and floors==961,'Native elevated floor creation/cache count')
 assert(elevated.x>=elevated.minX+elevated.margin and elevated.x+2<=elevated.minX+elevated.size-elevated.margin and elevated.y>=elevated.minY+elevated.margin and elevated.y+3<=elevated.minY+elevated.size-elevated.margin,'Extended owner/observer start outside interior')
+package.loaded.QueueTestSelection.options.cart_injury=true
+upper={};writes=0;floors=0;probe=32
+for _,value in ipairs({'guard','unloaded','unloaded-ground','floor','occupied','special','item','corpse','actor','upper-room','upper-vehicle'}) do
+ mode=value;host=value~='guard';writes=0
+ local ok,result=pcall(assert(dofile(PLACEMENT)),player)
+ if value=='unloaded' or value=='unloaded-ground' then
+  assert(ok and result==nil and writes==0,'Injury pad must retry missing ground/chunks before mutation: '..value)
+ else assert(not ok and writes==0,'Invalid injury pad halo edited before whole preflight: '..value..' '..tostring(result)) end
+end
+mode='empty';host=true;local injured=assert(dofile(PLACEMENT))(player)
+assert(injured.minX==-31 and injured.minY==-31 and injured.size==63 and injured.bankVersion==5
+ and injured.z==7 and injured.elevated==true and injured.margin==2 and floors==3969,'Native63x63 injury floor creation/cache count')
 package.loaded.QueueTestSelection={disposable=false}
 local ok,err=pcall(dofile,PLACEMENT)
 assert(not ok and tostring(err):find('disposable',1,true),'Missing disposable guard')
 """.replace('PLACEMENT', placement)
     subprocess.run([lua, '-e', code], check=True)
-    return 'PASS (default13x13; elevated31x31 native creation/cache and whole preflight refusal with zero edits)'
+    return 'PASS (default13x13; fast31x31 and injury63x63 native creation/cache, missing injury chunk/ground retries and whole preflight refusal with zero edits)'
 
 
 def check_capture_environment(lua):
     client=(HERE/'client.lua').read_text()
-    bridge=(HERE/'MPMain.methods').read_text()
+    bridge=re.sub(r'\s+', '', (HERE/'Multiplayer.kt').read_text()).replace(',)', ')')
     assert "local expectedZoom=user=='client2' and 1 or .25" in client
     assert "assert(cartMPZoom(user=='client2')==expectedZoom" in client
-    assert 'core.setAutoZoom(0,false);' in bridge and 'core.offscreenBuffer.setZoomAndTargetZoom(0,observer?1f:.25f);' in bridge
+    assert 'core.setAutoZoom(0,false)' in bridge and 'core.offscreenBuffer.setZoomAndTargetZoom(0,if(observer)1felse.25f)' in bridge
     assert 'doZoomScroll' not in client
     assert "' zoom='..getCore():getZoom(0)" in client
-    assert 'p:getStats():reset(CharacterStat.ENDURANCE)\n    cartLabGait(steps[stage][3]);if not wallSide then cartLabDrive(steps[stage][2]) end' in client
+    assert 'p:getStats():reset(CharacterStat.ENDURANCE)\n    cartLabGait(steps[stage][3]);if not wallSide and not visual then cartLabDrive(steps[stage][2]) end' in client
     assert 'setSprinting(' not in client and 'setForceSprint(' not in client
     assert 'setPerkLevelDebug(' not in client and 'setXPToLevel(' not in client
     assert "p:getPerkLevel(Perks.Sprinting)==10" in client and 'Authoritative Sprinting snapshot deadline' in client
-    assert 'zombie.network.GameServer.server || zombie.network.GameClient.client' in bridge
-    assert 'p.getNetworkCharacterAI().updateXpChecker();' in bridge
+    assert 'zombie.network.GameServer.server||zombie.network.GameClient.client' in bridge
+    assert 'p.getNetworkCharacterAI().updateXpChecker()' in bridge
     assert 'INetworkPacket.send(p,zombie.network.PacketTypes.PacketType.PlayerXp,p)' in bridge
     assert 'worldExistedAtStartup' in bridge and 'zombie.network.CoopSlave.instance==null' in bridge
     assert 'cartMPBrace(p,setup.cartId,setup.wallX,setup.y)' in client
     assert "assert(type(brace)=='string','Native brace diagnostics missing for exact fixture owner/cart')" in client
-    assert client.index('if count~=961 then return end')<client.index('position(p,setup.x,setup.y,setup.z)')
+    assert client.index('if count~=setup.size*setup.size then return end')<client.index('position(p,setup.x,setup.y,setup.z)')
     assert "padFloors=padReady and setup.size*setup.size or 0,padWalls=wallSide and 49 or 0,padVersion=setup.bankVersion" in client
     code="""
 local started,command,startCount
@@ -541,207 +670,179 @@ actions.command('ActionAck',{index=2,id=42,ok=true});actions.sample(player,'clie
 actions.command('ActionPhase',{index=6,phase='pickup-repeat',id=42})
 actions.command('ActionAck',{index=6,id=42,ok=true});actions.sample(player,'client1');assert(count==4,'Final quiescence lost')
 """.replace('SOURCE',json.dumps(str(HERE/'actions.lua')))
+    for variant in ('wooden-wheelbarrow', 'metal-wheelbarrow', 'shopping-cart'):
+        selected=code.replace('return {options={}}', 'return {options={cart_variant='+json.dumps(variant)+'}}')
+        subprocess.run([lua,'-e',selected],check=True,capture_output=True)
+    return 'PASS (three action variants; matching Ack closes phase, old/foreign Ack and final quiet preserved)'
+
+
+def check_action_sampling(lua):
+    client=(HERE/'client.lua').read_text()
+    signature='local function sampleActionPresentation(owner,now,elapsed)'
+    assert client.count(signature)==1 and client.count('  sampleActionPresentation(owner,now,elapsed)')==1
+    helper=signature+client.split(signature,1)[1].split('\nend',1)[0]+'\nend'
+    motion=client.split('  if elapsed<=duration or now-lastSample>=100 then',1)[1].split('\n  end',1)[0]
+    assert 'CART_MP_STATE' in motion and 'actions.sample' not in motion
+    code=r"""
+for _,name in ipairs({'SaucedCarts/ContextMenu','ISUI/ISContextMenu','ISUI/ISInventoryPaneContextMenu','TimedActions/ISTimedActionQueue'}) do package.preload[name]=function() return {} end end
+package.preload.QueueTestSelection=function() return {options={cart_variant='shopping-cart'}} end
+local presentations={}
+package.preload.CartMPJSON=function() return {encode=function(row)
+ if row.active~=nil then local copy={};for key,value in pairs(row) do copy[key]=value end;presentations[#presentations+1]=copy end
+ return '{}'
+end} end
+print=function() end
+sendClientCommand=function() error('Presentation sampling added a network send') end
+local now=1000
+getTimestampMs=function() return now end
+local native={active=true,recovering=false,rendered=true,ik=true,progress=0}
+toolkitWoodCartStatus=function() return native end
+local actions=dofile(SOURCE)
+local user,duration,actionsFinished,lastActionSample='client2',15000,false,0
+HELPER
+local item={getID=function() return 42 end}
+local owner={getPrimaryHandItem=function() return item end,getSecondaryHandItem=function() return item end}
+actions.command('ActionPhase',{index=3,phase='drop-cancel',id=42})
+sampleActionPresentation(owner,now,duration-1);assert(#presentations==0,'Action samples escaped bank start')
+-- Native05 observer pattern: progress .04774 at the second100ms sample,
+-- .15055 at the third, recovery by the fourth. Native ticks remain16ms.
+local coarse={};local lastMotion=0
+for delta=0,400,16 do
+ now=1000+delta
+ native.active=delta<330;native.recovering=delta>=330
+ native.progress=delta<=112 and delta*.04774006456/112 or .04774006456+(delta-112)*(.15054546297-.04774006456)/112
+ if now-lastMotion>=100 then
+  lastMotion=now
+  if native.active and native.progress>.05 then coarse[#coarse+1]={wall=now,progress=native.progress} end
+ end
+ sampleActionPresentation(owner,now,duration+delta)
+end
+assert(#coarse==1,'Regression trace must expose the former100ms sampling gap')
+local active={}
+for _,row in ipairs(presentations) do
+ assert(row.actor=='client2' and row.index==3 and row.id==42 and row.primaryID==42 and row.secondaryID==42)
+ if row.active and row.progress>.05 and row.rendered and row.ik then active[#active+1]=row end
+end
+assert(#active>=5,'Short observer progress crossing lost sufficient presentation rows')
+assert(active[#active].wall-active[1].wall>=50 and active[#active].progress-active[1].progress>.05,'Existing active time/progress coverage lost')
+local count=#presentations
+actions.command('ActionAck',{index=3,id=42,ok=true})
+now=now+32;sampleActionPresentation(owner,now,duration+500);assert(#presentations==count,'Closed phase sampled')
+actions.command('ActionPhase',{index=6,phase='pickup-repeat',id=42})
+actionsFinished=true;now=now+32;sampleActionPresentation(owner,now,duration+550);assert(#presentations==count,'Finished action bank sampled')
+""".replace('SOURCE',json.dumps(str(HERE/'actions.lua'))).replace('HELPER',helper)
     subprocess.run([lua,'-e',code],check=True,capture_output=True)
-    return 'PASS (matching Ack closes completed phase; old/foreign Ack and final quiet preserved)'
+    return 'PASS (short observer progress crossing captured at25ms; motion/action sampling separated, phase closure and bank bounds retained; no new sends)'
 
 
-def check_java(game, jdk, patch):
+def check_java(game, jdk, patch, kotlin_home=None):
     if game is None and jdk is None and patch is None:
         return 'SKIPPED (supply --game-java-dir, --jdk, --patch-jar)'
     assert all(value is not None for value in (game, jdk, patch)), 'Supply all three Java dependencies'
     javac = jdk / 'bin' / ('javac.exe' if os.name == 'nt' else 'javac')
     version = subprocess.run([str(javac), '-version'], check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True).stdout
     assert int(re.search(r'javac (\d+)', version)[1]) >= 25
-    jars = [game / 'projectzomboid.jar', game / 'ZombieBuddy.jar', patch]
+    jars = [(game / 'projectzomboid.jar').resolve(), (game / 'ZombieBuddy.jar').resolve(), patch.resolve()]
     assert all(p.is_file() for p in jars), 'Missing explicit compile JAR'
-    base = (HERE.parent / 'wooden_cart_motion/Main.java').read_text()
-    anchor = '    public static void main(String[] args)'
-    assert base.count(anchor) == 1, 'Java base integration anchor changed'
+    sp = HERE.parent / 'wooden_cart_motion'
     with tempfile.TemporaryDirectory(prefix='cart-mp-compile-') as directory:
         root = Path(directory)
-        main = root / 'Main.java'
-        main.write_text(base.replace(anchor, (HERE / 'MPMain.methods').read_text() + '\n' + anchor))
-        subprocess.run([str(javac), '--release', '17', '-cp', os.pathsep.join(map(str, jars)), '-d', str(root), str(main), str(HERE / 'ClearanceProbe.java')], check=True)
-        assert (root / 'net/alexredby/cartlab/Main.class').is_file() and (root / 'ClearanceProbe.class').is_file()
-        checks=root/'ModelProbeCheck.java'
-        checks.write_text(r'''
-public final class ModelProbeCheck {
-    private static final class BracePlayer extends zombie.characters.IsoPlayer {
-        boolean local=true,dead;
-        String user="client1";
-        short online;
-        zombie.inventory.InventoryItem primary,secondary;
-        zombie.inventory.ItemContainer inventory;
-        zombie.iso.IsoGridSquare square;
-        BracePlayer(){super(null,null,0,0,0);}
-        @Override public float getX(){return 10;}
-        @Override public float getY(){return 20;}
-        @Override public float getZ(){return 7;}
-        @Override public float getDirectionAngleRadians(){return 0;}
-        @Override public zombie.core.skinnedmodel.animation.AnimationPlayer getAnimationPlayer(){return null;}
-        @Override public boolean isLocalPlayer(){return local;}
-        @Override public boolean isDead(){return dead;}
-        @Override public String getUsername(){return user;}
-        @Override public short getOnlineID(){return online;}
-        @Override public zombie.inventory.InventoryItem getPrimaryHandItem(){return primary;}
-        @Override public zombie.inventory.InventoryItem getSecondaryHandItem(){return secondary;}
-        @Override public zombie.inventory.ItemContainer getInventory(){return inventory;}
-        @Override public zombie.iso.IsoGridSquare getCurrentSquare(){return square;}
-    }
-    private static final class BraceItem extends zombie.inventory.InventoryItem {
-        int identity;
-        String type;
-        zombie.inventory.ItemContainer container;
-        BraceItem(){super("SaucedWheelbarrow","WheelbarrowWood","WheelbarrowWood",(String)null);}
-        @Override public int getID(){return identity;}
-        @Override public String getFullType(){return type;}
-        @Override public zombie.inventory.ItemContainer getContainer(){return container;}
-    }
-    public static void main(String[] args) throws Exception {
-        zombie.core.random.RandStandard.INSTANCE.init();zombie.core.random.RandLua.INSTANCE.init();
-        var main=Class.forName("net.alexredby.cartlab.Main");
-        var host=main.getDeclaredMethod("padHost");
-        if((boolean)host.invoke(null))throw new AssertionError("Non-server pad mutation permission");
-        var fresh=zombie.network.GameServer.class.getDeclaredField("worldExistedAtStartup");fresh.setAccessible(true);
-        var unsafeField=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
-        var unsafe=(sun.misc.Unsafe)unsafeField.get(null);
-        boolean previousServer=zombie.network.GameServer.server,previousClient=zombie.network.GameClient.client,previousWorld=fresh.getBoolean(null);
-        String previousName=zombie.network.GameServer.serverName;var previousCoop=zombie.network.CoopSlave.instance;
-        try {
-            zombie.network.GameServer.server=true;zombie.network.GameClient.client=false;
-            zombie.network.GameServer.serverName="queue-smoke";zombie.network.CoopSlave.instance=(zombie.network.CoopSlave)unsafe.allocateInstance(zombie.network.CoopSlave.class);
-            fresh.setBoolean(null,false);
-            if(!(boolean)host.invoke(null))throw new AssertionError("Fresh native Host pad gate refused");
-            fresh.setBoolean(null,true);
-            if((boolean)host.invoke(null))throw new AssertionError("Existing native world allowed pad mutation");
-            fresh.setBoolean(null,false);zombie.network.GameServer.serverName="user-save";
-            if((boolean)host.invoke(null))throw new AssertionError("Foreign native Host allowed pad mutation");
-        } finally {
-            zombie.network.GameServer.server=previousServer;zombie.network.GameClient.client=previousClient;
-            zombie.network.GameServer.serverName=previousName;zombie.network.CoopSlave.instance=previousCoop;fresh.setBoolean(null,previousWorld);
-        }
-        var ownerGuard=main.getDeclaredMethod("mpBraceOwner",zombie.characters.IsoPlayer.class,int.class);ownerGuard.setAccessible(true);
-        var previousPlayer=zombie.characters.IsoPlayer.getInstance();var previousConnection=zombie.network.GameClient.connection;
-        boolean previousHandshake=zombie.network.GameClient.instance.connected;
-        var owner=(BracePlayer)unsafe.allocateInstance(BracePlayer.class);owner.local=true;owner.user="client1";
-        owner.square=(zombie.iso.IsoGridSquare)unsafe.allocateInstance(zombie.iso.IsoGridSquare.class);
-        owner.inventory=(zombie.inventory.ItemContainer)unsafe.allocateInstance(zombie.inventory.ItemContainer.class);
-        var cart=(BraceItem)unsafe.allocateInstance(BraceItem.class);cart.identity=42;cart.type="SaucedWheelbarrow.WheelbarrowWood";cart.container=owner.inventory;
-        owner.primary=owner.secondary=cart;
-        try {
-            zombie.network.GameClient.client=true;zombie.network.GameServer.server=false;zombie.network.GameClient.instance.connected=true;
-            zombie.characters.IsoPlayer.setInstance(owner);
-            zombie.network.GameClient.connection=(zombie.core.raknet.UdpConnection)unsafe.allocateInstance(zombie.core.raknet.UdpConnection.class);
-            if(zombie.network.GameClient.connection.isFullyConnected())throw new AssertionError("Expected native Host transport flag false");
-            if(!(boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Armed exact owner blocked by native Host transport flag");
-            zombie.network.GameClient.instance.connected=false;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Disconnected client sampled");zombie.network.GameClient.instance.connected=true;
-            if((boolean)ownerGuard.invoke(null,owner,43) || (boolean)ownerGuard.invoke(null,null,42))throw new AssertionError("Foreign cart/null owner sampled");
-            owner.local=false;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Remote actor sampled");owner.local=true;
-            owner.user="client2";if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Observer sampled");owner.user="client1";
-            owner.dead=true;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Dead owner sampled");owner.dead=false;
-            owner.online=-1;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Offline actor sampled");owner.online=0;
-            var square=owner.square;owner.square=null;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Unloaded owner sampled");owner.square=square;
-            owner.secondary=null;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Unequipped cart sampled");owner.secondary=cart;
-            cart.container=null;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Non-owned cart sampled");cart.container=owner.inventory;
-            cart.type="SaucedWheelbarrow.WheelbarrowMetal";if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Foreign cart type sampled");cart.type="SaucedWheelbarrow.WheelbarrowWood";
-            zombie.characters.IsoPlayer.setInstance(null);if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Different local instance sampled");zombie.characters.IsoPlayer.setInstance(owner);
-            zombie.network.GameServer.server=true;if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Server sampled as local owner");
-            zombie.network.GameServer.server=false;zombie.network.GameClient.client=false;
-            if((boolean)ownerGuard.invoke(null,owner,42))throw new AssertionError("Single-player actor sampled");
-        } finally {
-            zombie.characters.IsoPlayer.setInstance(previousPlayer);zombie.network.GameClient.connection=previousConnection;
-            zombie.network.GameClient.instance.connected=previousHandshake;
-            zombie.network.GameServer.server=previousServer;zombie.network.GameClient.client=previousClient;
-        }
-        String raw="quote\"slash\\\n\r\t"+(char)1;
-        for(String[] target:new String[][]{{"ClearanceProbe","jsonString"},{"net.alexredby.cartlab.Main","mpJsonString"}}) {
-            var method=Class.forName(target[0]).getDeclaredMethod(target[1],String.class);method.setAccessible(true);
-            System.out.println(method.invoke(null,raw));
-            if(!"null".equals(method.invoke(null,(Object)null)))throw new AssertionError("null model JSON");
-        }
-        var probe=Class.forName("ClearanceProbe");
-        var preparedWriter=probe.getDeclaredField("output");preparedWriter.setAccessible(true);
-        var cameraWriter=probe.getDeclaredField("cameras");cameraWriter.setAccessible(true);
-        var drawText=new java.io.StringWriter();preparedWriter.set(null,new java.io.BufferedWriter(new java.io.StringWriter()));
-        cameraWriter.set(null,new java.io.BufferedWriter(drawText));
-        var renderSlot=(zombie.core.skinnedmodel.model.ModelSlotRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelSlotRenderData.class);
-        renderSlot.character=owner;renderSlot.x=10.25f;renderSlot.y=20;renderSlot.z=7;renderSlot.animPlayerAngle=(float)(Math.PI/2);renderSlot.squareDepth=.25f;
-        var sourceSlot=(zombie.core.skinnedmodel.ModelManager.ModelSlot)unsafe.allocateInstance(zombie.core.skinnedmodel.ModelManager.ModelSlot.class);sourceSlot.character=owner;
-        ClearanceProbe.rememberNative(renderSlot,sourceSlot);
-        var originalMap=probe.getDeclaredField("nativePoses");originalMap.setAccessible(true);
-        var nativePose=((java.util.Map<?,?>)originalMap.get(null)).get(renderSlot);
-        var originalX=nativePose.getClass().getDeclaredMethod("x");originalX.setAccessible(true);
-        if((float)originalX.invoke(nativePose)!=10)throw new AssertionError("Cosmetic slot coordinate replaced original native capture");
-        var bodyModel=(zombie.core.skinnedmodel.model.ModelInstance)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstance.class);
-        var cartModel=(zombie.core.skinnedmodel.model.ModelInstance)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstance.class);
-        var prepareDraw=probe.getDeclaredMethod("prepareDraw",zombie.core.skinnedmodel.model.ModelSlotRenderData.class,
-            zombie.core.skinnedmodel.model.ModelInstance.class,zombie.core.skinnedmodel.model.ModelInstance.class);prepareDraw.setAccessible(true);
-        prepareDraw.invoke(null,renderSlot,bodyModel,cartModel);
-        var bodyData=(zombie.core.skinnedmodel.model.ModelInstanceRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstanceRenderData.class);bodyData.modelInstance=bodyModel;
-        var cartData=(zombie.core.skinnedmodel.model.ModelInstanceRenderData)unsafe.allocateInstance(zombie.core.skinnedmodel.model.ModelInstanceRenderData.class);cartData.modelInstance=cartModel;
-        var previousCamera=zombie.core.skinnedmodel.ModelCamera.instance;
-        var camera=(zombie.core.opengl.CharacterModelCamera)unsafe.allocateInstance(zombie.core.opengl.CharacterModelCamera.class);
-        camera.x=10.25f;camera.y=20;camera.z=7;camera.useAngle=(float)(Math.PI/2);camera.useWorldIso=true;
-        try {
-            zombie.core.skinnedmodel.ModelCamera.instance=camera;ClearanceProbe.beginCamera(camera);
-            ClearanceProbe.draw(renderSlot,bodyData);ClearanceProbe.draw(renderSlot,bodyData);
-            camera.x=11;ClearanceProbe.draw(renderSlot,cartData);
-            var recorded=drawText.toString();
-            if(recorded.lines().count()!=2 || !recorded.contains("\"part\":\"body\"") || !recorded.contains("\"part\":\"cart\"")
-                || !recorded.contains("\"cameraX\":10.25") || !recorded.contains("\"currentCameraX\":11.0"))
-                throw new AssertionError("Consumed camera/body/cart draw identity was not independently captured");
-            ClearanceProbe.endCamera();prepareDraw.invoke(null,renderSlot,bodyModel,cartModel);
-            try {ClearanceProbe.draw(renderSlot,bodyData);throw new AssertionError("Draw without consumed camera was accepted");}
-            catch(IllegalStateException expected) {}
-        } finally {
-            ClearanceProbe.endCamera();zombie.core.skinnedmodel.ModelCamera.instance=previousCamera;
-            preparedWriter.set(null,null);cameraWriter.set(null,null);
-        }
-        var traceField=probe.getDeclaredField("solve");traceField.setAccessible(true);
-        var trace=(ThreadLocal<StringBuilder>)traceField.get(null);
-        var outputField=probe.getDeclaredField("solves");outputField.setAccessible(true);
-        var text=new java.io.StringWriter();outputField.set(null,new java.io.BufferedWriter(text));
-        if(ClearanceProbe.reachInput(null)!=null)throw new AssertionError("Unscoped solver diagnostic");
-        for(boolean ok:new boolean[]{true,false}) {
-            trace.set(new StringBuilder("{\"failures\":["));
-            if(!ok) {ClearanceProbe.refusal("reach", "\"bone\":\"Bip01_R_Hand\"");ClearanceProbe.refusal("transitionGrip",null);}
-            ClearanceProbe.finishSolve(ok);
-            if(trace.get()!=null)throw new AssertionError("Solver scope leaked into next frame");
-        }
-        ClearanceProbe.finishSolve(false);System.out.print(text);outputField.set(null,null);
-        var family=probe.getDeclaredMethod("cartFamily",String.class,String.class);family.setAccessible(true);
-        for(String model:new String[]{"ShoppingCartModel","ShoppingCartPartialModel","ShoppingCartFullModel"})
-            if(!(boolean)family.invoke(null,"SaucedCarts.ShoppingCart",model))throw new AssertionError("same-family mismatch was filtered");
-        if((boolean)family.invoke(null,"SaucedCarts.ShoppingCart","WheelbarrowWood")
-            || (boolean)family.invoke(null,"Base.Log","ShoppingCartFullModel"))throw new AssertionError("wrong cart family");
-        var capture=probe.getDeclaredMethod("captureModel",zombie.inventory.InventoryItem.class,String.class);capture.setAccessible(true);
-        for(String model:new String[]{"WheelbarrowWood","WheelbarrowMetal"}) {
-            if(!(boolean)capture.invoke(null,null,model))throw new AssertionError("Empty native pickup hands filtered presentation model: "+model);
-            cart.type="SaucedWheelbarrow."+model;
-            if(!(boolean)capture.invoke(null,cart,model))throw new AssertionError("Exact held cart presentation filtered: "+model);
-            String other=model.equals("WheelbarrowWood")?"WheelbarrowMetal":"WheelbarrowWood";
-            if((boolean)capture.invoke(null,cart,other) || (boolean)capture.invoke(null,cart,"ShoppingCartFullModel"))
-                throw new AssertionError("Held item acquired another cart family: "+model);
-        }
-        for(String model:new String[]{"ShoppingCartModel","ShoppingCartFullModel","WheelbarrowMetalExtra","Other.WheelbarrowMetal"})
-            if((boolean)capture.invoke(null,null,model))throw new AssertionError("Unrelated empty-hand model captured: "+model);
-        cart.type="Base.Log";
-        if((boolean)capture.invoke(null,cart,"WheelbarrowMetal"))throw new AssertionError("Foreign held item acquired metal presentation");
-        var known=probe.getDeclaredMethod("cartModel",String.class);known.setAccessible(true);
-        if((boolean)known.invoke(null,"ShoppingCartUnknownModel"))throw new AssertionError("unknown attachment");
-    }
-}
-''')
-        classpath=os.pathsep.join([str(root),*map(str,jars)])
-        subprocess.run([str(javac),'--release','17','-cp',classpath,'-d',str(root),str(checks)],check=True)
-        java=jdk/'bin'/('java.exe' if os.name=='nt' else 'java')
-        result=subprocess.run([str(java),'-cp',classpath,'ModelProbeCheck'],capture_output=True,text=True,
-            env=dict(os.environ,PZ_CART_RUNTIME_FILE=str(root/'runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'commands.txt')))
+        main = root / 'Main.kt'
+        main.write_text(main_source(sp / 'Main.kt', multiplayer=True))
+        sources = runtime_sources(sp, HERE)
+        sources[0] = main
+        sources += [HERE / 'ClearanceProbe.kt', *sorted(HERE.glob('*Check.kt'))]
+        classes = root / 'classes'
+        compile_sources(jdk, os.pathsep.join(map(str, jars)), classes, sources, kotlin_home=kotlin_home)
+        assert (classes / 'net/alexredby/cartlab/Main.class').is_file()
+        assert (classes / 'ClearanceProbe.class').is_file()
+        classpath = os.pathsep.join([str(classes), *map(str, jars)])
+        java = jdk / 'bin' / ('java.exe' if os.name == 'nt' else 'java')
+        env = dict(clean_environment(), PZ_CART_RUNTIME_FILE=str(root / 'runtime.lua'),
+                   PZ_CART_COMMAND_FILE=str(root / 'commands.txt'))
+        monitor = subprocess.run([str(java), '-cp', classpath, 'ModuleMonitorCheck'],
+            capture_output=True, text=True, timeout=15,
+            env=dict(env, PZ_CART_TIMELINE='false', PZ_CART_OBSERVER_ASSOCIATION='false'))
+        assert monitor.returncode == 0 and 'MODULE_MONITOR_CHECK_PASS' in monitor.stdout, monitor.stdout + '\n' + monitor.stderr
+        result = subprocess.run([str(java), '-cp', classpath, 'ModelProbeCheck'],
+                                capture_output=True, text=True, env=env, timeout=30)
+        assert result.returncode == 0, result.stdout + '\n' + result.stderr
+        parsed = [json.loads(line) for line in result.stdout.splitlines()]
+        assert parsed[:2] == ['quote"slash\\\n\r\t\x01', 'quote"slash\\\n\r\t\x01']
+        assert parsed[2:] == [dict(failures=[], ok=True),
+                             dict(failures=[dict(method='reach', bone='Bip01_R_Hand'),
+                                            dict(method='transitionGrip')], ok=False)]
+        for name, marker in [('NativeTimeCheck', 'NATIVE_TIME_CHECK_PASS'),
+                             ('ClockTimeCheck', 'CLOCK_TIME_CHECK_PASS')]:
+            result = subprocess.run([str(java), '-cp', classpath, name, str(HERE)], cwd=game,
+                capture_output=True, text=True, env=dict(env, PZ_CART_TIMELINE='true'), timeout=30)
+            assert result.returncode == 0 and marker in result.stdout, result.stdout + '\n' + result.stderr
+        lab = root / 'CartLab.jar'
+        with zipfile.ZipFile(lab, 'x', zipfile.ZIP_DEFLATED) as output:
+            for source in sorted(path for path in classes.rglob('*') if path.is_file()):
+                output.write(source, source.relative_to(classes).as_posix())
+        # This cold Java entry must load before the private Kotlin runtime is appended by the mod loader.
+        subprocess.run([str(javac), '--release', '25', '-cp', classpath, '-d', str(classes),
+                        str(HERE / 'ObserverLoaderCheck.java')], check=True, env=clean_environment())
+        (root/'Lua').mkdir()
+        for name, marker, flags in [
+                ('ActionAdmissionCheck', 'ACTION_ADMISSION_CHECK_PASS', {}),
+                ('zombie.core.ActionAdmissionIncarnationCheck', 'ACTION_ADMISSION_INCARNATION_CHECK_PASS',
+                 {'PZ_CART_ACTION_INVALIDATION':'true'}),
+                ('NullableDiagnosticCheck', 'NULLABLE_DIAGNOSTIC_CHECK_PASS',
+                 {'PZ_CART_TIMELINE': 'true', 'PZ_CART_OBSERVER_ASSOCIATION': 'true'})]:
+            result = subprocess.run([str(java), '-javaagent:' + str(game/'ZombieBuddy.jar')
+                + '=config_dir=' + str(root) + ',policy=deny-new,verbosity=1',
+                '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.',
+                '-cp', classpath, 'ObserverLoaderCheck', str(lab), name, str(HERE.parents[3])], cwd=game,
+                env=dict(clean_environment(), PZ_CART_LEASE_CONTROL='true', PZ_CART_ACTION_ADMISSION='true',
+                         PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),
+                         PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt'), **flags),
+                capture_output=True, text=True, timeout=90)
+            assert result.returncode == 0 and marker in result.stdout and 'ERROR' not in result.stdout + result.stderr, result.stdout + '\n' + result.stderr
+        result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1',
+            '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverLoaderCheck',str(lab),'ObserverAssociationCheck'],
+            cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_LEASE_CONTROL='true',PZ_CART_ACTION_ADMISSION='true',
+                PZ_CART_OBSERVER_ASSOCIATION='true',PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
+            capture_output=True,text=True,timeout=90)
+        assert result.returncode==0 and 'OBSERVER_ASSOCIATION_CHECK_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
+        for check_args,marker,expected_error in [([], 'OBSERVER_PARAMS_CHECK_PASS', False),
+                (['null-roundtrip'], 'OBSERVER_PARAMS_NULL_ROUNDTRIP_PASS', False),
+                (['pending-default'], 'OBSERVER_PARAMS_PENDING_DEFAULT_PASS', False),
+                (['fail-cleanup'], 'OBSERVER_PARAMS_FAIL_CLEANUP_PASS', True)]:
+            result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1',
+                '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverLoaderCheck',str(lab),'ObserverParamsCheck',*check_args],
+                cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_LEASE_CONTROL='true',PZ_CART_ACTION_ADMISSION='true',
+                    PZ_CART_OBSERVER_ASSOCIATION='true',PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
+                capture_output=True,text=True,timeout=90)
+            output=result.stdout+'\n'+result.stderr
+            assert result.returncode==0 and marker in output,output
+            assert ('"event":"params-error"' in output)==expected_error,output
+            assert 'ERROR' not in output,output
+        result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1',
+            '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverLoaderCheck',str(lab),'EquipmentLifetimeCheck'],
+            cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_LEASE_CONTROL='true',PZ_CART_LEASE_LIFETIME='true',
+                PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
+            capture_output=True,text=True,timeout=90)
+        assert result.returncode==0 and 'EQUIPMENT_LIFETIME_CHECK_PASS' in result.stdout and 'EQUIPMENT_ELIGIBILITY_CHECK_PASS' in result.stdout and 'EQUIPMENT_NATIVE_COOP_BIRTH_CHECK_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
+        result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1',
+            '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'ObserverLoaderCheck',str(lab),'LeaseCostCheck'],
+            cwd=game,env=dict(os.environ,PZ_CART_LEASE_CONTROL='true',
+                PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
+            capture_output=True,text=True,timeout=90)
+        assert result.returncode==0 and 'LEASE_COST_CHECK_PASS' in result.stdout and 'LEASE_CONNECTION_ACTIVITY_CHECK_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
+
+        result=subprocess.run([str(java),'-javaagent:'+str(game/'ZombieBuddy.jar')+'=config_dir='+str(root)+',policy=deny-new,verbosity=1,patches_jar='+str(lab)+':net.alexredby.cartlab',
+            '-Djava.awt.headless=true','-Dzomboid.steam=0','-Djava.library.path=.','-cp',classpath,'TimelineNativeCheck'],
+            cwd=game,env=dict(os.environ,PZ_CART_TIMELINE='true',PZ_CART_RUNTIME_FILE=str(root/'Lua/runtime.lua'),PZ_CART_COMMAND_FILE=str(root/'Lua/commands.txt')),
+            capture_output=True,text=True,timeout=90)
         assert result.returncode==0,result.stdout+'\n'+result.stderr
-        parsed=[json.loads(line) for line in result.stdout.splitlines()]
-        assert parsed[:2]==['quote"slash\\\n\r\t\x01']*2
-        assert parsed[2:]==[dict(failures=[],ok=True), dict(failures=[dict(method='reach',bone='Bip01_R_Hand'),dict(method='transitionGrip')],ok=False)]
-    return 'PASS (composed keyboard fixture, native Host read-only brace ownership/lifecycle guard, original native pose and consumed body/cart camera capture, render family mismatch capture, wood/metal empty-hand pickup selection and JSON escaping)'
+        assert 'TIMELINE_NATIVE_PASS' in result.stdout and 'ERROR' not in result.stdout+result.stderr,result.stdout+'\n'+result.stderr
+        rows=[json.loads(line) for line in (root/'cart-timeline-server.jsonl').read_text().splitlines()]
+        assert [row['event'] for row in rows]==['publish','variable-write','trace-end'],rows
+        assert [row['seq'] for row in rows]==[1,2,3] and all(row['clockReady'] and row['serverNs']>0 for row in rows)
+        assert rows[0]['cartID']==42 and rows[1]['serial']==3 and rows[1]['serializedBytes']>0
+    return 'PASS (shared cross-module Main.class monitor, nullable pending/native diagnostic JSON and strict wrong-type refusal, composed keyboard fixture, native Host read-only brace guard, original native pose and consumed body/cart draw capture with frozen hand identity despite live inventory mutation, exact shopping empty-hand transition association, bounded native action/handoff capture cadence and duplicate slot guard, timeline payload identity/shape, installed native clock/prediction/per-GUID counter API, native diagnostic State marker preservation/unknown-key isolation, mod-load parameter birth/mutation/escape/default and failure cleanup checks, native equipment setters/reentrant OnEquip/load/death-entry/removal/connection tombstones and original Coop birth with immutable old retirement, exact native command serialization/callback receipts, and real ZombieBuddy weaving/native serialization/async-writer shutdown, family/JSON guards)'
 
 
 def main():
@@ -750,6 +851,7 @@ def main():
     parser.add_argument('--game-java-dir', type=Path)
     parser.add_argument('--jdk', type=Path)
     parser.add_argument('--patch-jar', type=Path)
+    parser.add_argument('--kotlin-home', type=Path)
     args = parser.parse_args()
     manifest = json.loads((HERE / 'manifest.json').read_text())
     assert manifest['runner_adapter'] is None and manifest['live_after_parameterization'] is False
@@ -763,18 +865,30 @@ def main():
     print('Analyzer:', check_analyzer())
     print('Extended analyzer:', check_extended_analyzer())
     print('Variants:', check_variants())
+    print('Short action capture:', check_short_action_capture())
     lua = args.lua or shutil.which('luajit') or shutil.which('lua')
     if lua:
-        for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua'):
+        for name in ('client.lua', 'server.lua', 'placement.lua', 'json.lua', 'actions.lua', 'wall.lua', 'wall-input.lua',
+                     'inventory-equip-protocol.lua', 'inventory-equip-client.lua', 'inventory-equip-server.lua', 'lease-protocol.lua', 'lease-probe.lua', 'lease-lifetimes.lua', 'lease-menu-actions.lua', 'lease-inventory-state.lua', 'action-invalidation.lua', 'lease-lifecycle.lua', 'action-admission.lua', 'injury.lua', 'visual-extended.lua'):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(HERE / name)) + '))'], check=True)
         subprocess.run([lua, '-e', 'local J=dofile(' + json.dumps(str(HERE / 'json.lua')) + '); assert(J.encode({true,false})=="[true,false]"); assert(not pcall(J.encode,0/0))'], check=True)
         print('Lua: PASS (syntax and JSON values)')
+        bank=subprocess.run([lua,str(HERE/'LeaseLifetimeBankCheck.lua'),str(HERE.parents[3])],check=True,capture_output=True,text=True,timeout=15)
+        assert 'LEASE_LIFETIME_BANK_CHECK_PASS messages=42 cycles=6 staleSourceRefusals=4' in bank.stdout,bank.stdout+bank.stderr
+        print('Equipment bank: PASS (actual Lua controller and42-message baseline plus injected resnapshot/resync races across three mocked native API contexts; native setter proof is separate)')
+        menu_bank=subprocess.run([lua,str(HERE/'LeaseMenuBankCheck.lua'),str(HERE.parents[3])],check=True,capture_output=True,text=True,timeout=15)
+        assert 'LEASE_MENU_BANK_CHECK_PASS messages=50 ownerActions=4 absenceObservations=6' in menu_bank.stdout,menu_bank.stdout+menu_bank.stderr
+        print('Menu lifetime bank: PASS (actual Lua protocol across mocked native roles; owner input driver and native game proof checked separately)')
+        lifecycle=subprocess.run([lua,str(HERE/'LeaseLifecycleBankCheck.lua'),str(HERE)],check=True,capture_output=True,text=True,timeout=15)
+        assert 'LIFECYCLE_STATE_MACHINE_MOCK_PASS' in lifecycle.stdout,lifecycle.stdout+lifecycle.stderr
+        print('Lifecycle state machine: PASS (mock native authority, continued Host absence polling and exact nonce logs; actual game evidence is separate)')
         print('Placement:', check_placement(lua))
         print('Capture environment:', check_capture_environment(lua))
         print('Action windows:', check_action_windows(lua))
+        print('Action sampling:', check_action_sampling(lua))
     else:
         print('Lua: SKIPPED (supply --lua or install Lua/LuaJIT)')
-    print('Java:', check_java(args.game_java_dir, args.jdk, args.patch_jar))
+    print('JVM:', check_java(args.game_java_dir, args.jdk, args.patch_jar, args.kotlin_home))
 
 
 if __name__ == '__main__':

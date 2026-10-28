@@ -16,7 +16,7 @@ end
 function Client.state(playerNum)
     playerNum = playerNum or 0
     if not states[playerNum] then
-        states[playerNum] = { lists = {}, selectedId = nil, queue = {}, generation = 0, wanted = {} }
+        states[playerNum] = { lists = {}, selectedId = nil, queue = {}, generation = 0, wanted = {}, hasWanted = false }
     end
     return states[playerNum]
 end
@@ -89,6 +89,11 @@ function Client.isWanted(playerNum, fullType)
     return Client.state(playerNum).wanted[fullType] == true
 end
 
+function Client.hasWanted(playerNum)
+    -- Kahlua pairs snapshots keys; this per-tick read must not enumerate membership.
+    return Client.state(playerNum).hasWanted == true
+end
+
 local function send(playerNum, args)
     local player = getSpecificPlayer(playerNum)
     if not player then return end
@@ -123,12 +128,14 @@ function Client.receive(playerNum, payload)
     if type(payload) ~= "table" or type(payload.lists) ~= "table" then return end
     local state = Client.state(playerNum)
     local previousError = state.error
-    state.lists, state.wanted = payload.lists, {}
+    state.lists, state.wanted, state.hasWanted = payload.lists, {}, false
     for _, list in ipairs(state.lists) do
         for fullType, entry in pairs(list.entries) do
             if not entry.done then
-                if not entry.vehicleTypes then state.wanted[fullType] = true end
-                for _, variant in ipairs(entry.vehicleTypes or {}) do state.wanted[variant] = true end
+                if not entry.vehicleTypes then state.wanted[fullType], state.hasWanted = true, true end
+                for _, variant in ipairs(entry.vehicleTypes or {}) do
+                    state.wanted[variant], state.hasWanted = true, true
+                end
             end
         end
     end

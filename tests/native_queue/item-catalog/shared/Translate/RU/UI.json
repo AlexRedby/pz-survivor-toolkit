@@ -1,0 +1,9 @@
+{
+  "UI_PZST_ItemCatalogReady": "Каталог готов. ПКМ по предмету: скопировать название, ID и теги. F6: ко входу.",
+  "UI_PZST_ItemCatalogPreparing": "Подготовка каталога предметов...",
+  "UI_PZST_ItemCatalogInstructions": "Обычные окна инвентаря. Ящики расставлены по категориям; номер ящика виден по ПКМ.",
+  "UI_PZST_ItemCatalogItems": "Подготовка предметов:",
+  "UI_PZST_ItemCatalogFloor": "Подготовка площадки:",
+  "UI_PZST_ItemCatalogCrates": "Раскладка по ящикам:",
+  "UI_PZST_ItemCatalogCopy": "Скопировать данные для замечания"
+}
