@@ -1,6 +1,7 @@
-Consolidated Windows optimizer comparison candidate v4.2
+Consolidated Windows optimizer comparison candidate v4.3
 Game: B42.21 revision 4a0e9546ec. Toolkit 0.1.299; Java Patches 0.1.70.
-Recorder format 3 / revision 3.4.
+Recorder format 3 / revision 3.4. Results collector revision 3.4.1.
+Collector-only v4.3 repair: Auto accepts one closed available mode; explicit RunMode can select Optimized/Control or require Comparison. Existing malformed/open/live-run, path, hash and artifact checks remain active. SingleRun scope and missingModes describe missing bundled evidence, and settingsComparison is NotApplicable for a single run. Complete describes collected evidence, not a measured performance improvement. The collector records its own revision/hash so an in-place repair preserves the original recording package provenance. No game rerun is needed to collect an existing recording.
 
 Scope and provenance
 This is the combined research candidate, rebased on remote main before packaging. It is not a main release. pack-manifest.json and build-receipt.json identify the exact committed source, common main base, component versions and file hashes. main_revision is a legacy alias for source_revision, not a claim that the candidate is published main. The optimizer's upstream source pin is recorded separately.
