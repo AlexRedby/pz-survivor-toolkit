@@ -157,6 +157,91 @@ for _,mutation in ipairs({'owner','apply'})do
 end
 print('PASS actual styling helper integration and late full-type/tag selector dependencies in both directions; foreign proof APIs never execute')
 
+local function heldStyle(style,kind,hand,uses)
+ local s=pending('ISCutHair',{style=style,styling=true,stylingKind=kind,stylingUses=uses})
+ local supply=assert(s.stylingSupply)
+ if hand~='secondary'then s.player.primary=supply end
+ if hand~='primary'then s.player.secondary=supply end
+ supply.equipParent=s.player
+ assert(type(s.supplyUse)=='table'and s.sourceProof.closure(s.supplyUse.supportsRetainedHeld,'DrainableSupplyUse.lua'),
+  'held styling integration did not load the actual shared native-state proof')
+ return s,supply
+end
+local function noStyleEffects(s,supply,uses,primary,secondary)
+ assert(supply.uses==uses and supply:getContainer()==s.player:getInventory()and supply.equipParent==s.player
+  and s.player.primary==primary and s.player.secondary==secondary and not s.tool.delta
+  and not s.player.modelResets and not s.player.growthResets and not s.player.visualSync
+  and not s.player.itemSync and not s.player.events,'pending held styling inspection executed effects or changed ownership')
+end
+for _,spec in ipairs({{'MohawkFan','Base.Hairgel','primary',2},{'MohawkFan','Base.Hairgel','both',2},
+ {'Buffont','Base.Hairspray2','secondary',2},{'GreasedBack','Base.Hairgel','both',3}})do
+ local s,supply=heldStyle(unpack(spec));local primary,secondary=s.player.primary,s.player.secondary
+ local c=assert(s.policy.inspect(s.body))
+ assert(c.knownInputs and c.items[supply:getID()]and c.itemTypes[supply:getFullType()]and c.hands==s.player
+  and c.equipment==s.player and c.targets[s.player]and c.capacityNonIncreasing,'held supply lost conservative resource/actor footprint')
+ assert(s.api.move(s.queue,s.body,s.tail,false),'retained held styling cannot move earlier around independent reader')
+ assert(s.api.move(s.queue,s.body,s.tail,true),'retained held styling cannot move later around independent reader')
+ noStyleEffects(s,supply,spec[4],primary,secondary)
+ assert(s.policy.evaluateCancel(s.queue,s.body).allowed,'retained held style lost unpaid pending cancellation')
+end
+for _,spec in ipairs({{'MohawkFan','Base.Hairgel',1,2},{'Buffont','Base.Hairspray2',1,2},{'GreasedBack','Base.Hairgel',2,3}})do
+ for _,uses in ipairs({spec[3],spec[4]})do
+  local s,supply=heldStyle(spec[1],spec[2],'primary',uses)
+  local expected=uses==spec[4];local c=assert(s.policy.inspect(s.body))
+  assert(c.knownInputs==expected,'held styling did not reserve the entire native branch budget: '..spec[1]..' '..uses)
+  assert(s.api.move(s.queue,s.body,s.tail,false)==expected,'held style crossed its depletion budget boundary')
+  assert(s.policy.evaluateCancel(s.queue,s.body).allowed,'depletion budget refusal disabled unpaid cancellation')
+  noStyleEffects(s,supply,uses,supply,nil)
+ end
+end
+for _,resource in ipairs({'same-supply','future-short-type','future-tag-type','hands','equipment','actor'})do
+ for _,reverse in ipairs({false,true})do
+  local s,supply=heldStyle('GreasedBack','Base.Hairgel','primary',3)
+  assert(s.policy.inspect(s.body).knownInputs,'valid held style missing before dependency check')
+  local other=s.f.action(ISBaseTimedAction,{Type='HeldStylingDependency'})
+  local c={items={},itemTypes={},targets={},knownInputs=true}
+  if resource=='same-supply'then c.items[supply:getID()]=true
+  elseif resource=='future-short-type'then c.outputTypes={['Mod.Hairgel']=true}
+  elseif resource=='future-tag-type'then c.outputTypes={['Mod.StyleWax']=true}
+  elseif resource=='hands'then c.hands=s.player
+  elseif resource=='equipment'then c.equipment=s.player
+  else c.targets[s.player]=true end
+  PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('test.held-styling-dependency',{
+   types={'HeldStylingDependency'},matches=function(action)return action==other end,inspect=function()return c end})
+  s.queue=reverse and s.f.queue(s.front,s.body,other)or s.f.queue(s.front,other,s.body)
+  assert(not s.api.move(s.queue,s.body,other,reverse),'held style crossed '..resource..' in '..tostring(reverse))
+  noStyleEffects(s,supply,3,supply,nil)
+ end
+end
+for _,mutation in ipairs({'helper','module-metatable','components','replacement','script-components','script-create','equip-parent',
+ 'worn','activated','attached','auto-equipped','auto-unequipped','fractional','other-hand-source'})do
+ local s,supply=heldStyle('GreasedBack','Base.Hairgel','primary',3)
+ assert(s.policy.inspect(s.body).knownInputs,'held styling proof failed before mutation')
+ if mutation=='helper'then s.supplyUse.supportsRetainedHeld=function()error('foreign retained-held helper executed')end
+ elseif mutation=='module-metatable'then setmetatable(s.supplyUse,{})
+ elseif mutation=='components'then supply.components=true
+ elseif mutation=='replacement'then supply.replacement='Base.Unknown'
+ elseif mutation=='script-components'then supply:getScriptItem().components=true
+ elseif mutation=='script-create'then supply:getScriptItem().luaCreate='Unknown.Callback'
+ elseif mutation=='equip-parent'then supply.equipParent={}
+ elseif mutation=='worn'then s.player.worn.back=supply
+ elseif mutation=='activated'then supply.activated=true
+ elseif mutation=='attached'then supply.attachedSlot=0
+ elseif mutation=='auto-equipped'then supply.autoEquipped=true
+ elseif mutation=='auto-unequipped'then supply.autoUnequipped=true
+ elseif mutation=='fractional'then supply.uses=3.5
+ elseif mutation=='other-hand-source'then
+  local other=s.f.item('Base.Hammer');other.equipParent=s.player;other.container={};s.player.secondary=other
+ end
+ local c=assert(s.policy.inspect(s.body))
+ assert(not c.knownInputs and c.cancelWaiting,'unproved held styling gained a complete contract: '..mutation)
+ assert(not s.api.move(s.queue,s.body,s.tail,false),'unproved held styling moved: '..mutation)
+ assert(s.policy.evaluateCancel(s.queue,s.body).allowed,'unproved held styling lost pending cancellation: '..mutation)
+ assert(supply.uses==(mutation=='fractional'and 3.5 or 3)and not s.player.itemSync and not s.player.visualSync,
+  'rejected held styling consumed or synchronized supplies')
+end
+print('PASS real shared root-held drainable integration, whole styling budgets, read-only proof, material/actor dependencies in both directions and fail-closed state/API guards')
+
 local female=pending('ISCutHair',{female=true,maleOnlyStyle=true})
 assert(not female.policy.inspect(female.body).knownInputs and not female.api.move(female.queue,female.body,female.tail,false),'unavailable female style fell back to male catalog')
 local validFemale=pending('ISCutHair',{female=true})

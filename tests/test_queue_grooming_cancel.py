@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,7 +13,7 @@ from queue_checks.adapters import grooming_cancel as g
 
 class GroomingCancellationTests(unittest.TestCase):
     def evidence(self,case='borrowed-scissors',mode='toolkit',kind='sp'):
-        selected=case;active=case in g.ACTIVE_CASES;moving=case in g.MOVE_CASES;case=g.base_case(case)
+        selected=case;active=case in g.ACTIVE_CASES;moving=case in g.ALL_MOVE_CASES;case=g.base_case(case)
         native=mode=='native';completed=native or moving;mp=kind=='mp';borrowed=g.BORROWED[case]
         selection=dict(suite='grooming-cancel',cases=[case],mode=mode,kind=kind,clients=1,languages=['EN'],mods=list(g.MODS),options={'mp_host':True} if mp else {})
         names=['bag','content','front','tail','torch','secondary']+([borrowed] if borrowed else [])+(['hat'] if case in ('borrowed-scissors','dye-hair') else [])+(['mask'] if case=='dye-beard' else [])+(['gel'] if case in g.STYLING_COSTS else [])
@@ -30,6 +31,11 @@ class GroomingCancellationTests(unittest.TestCase):
                       primary=items['torch'],secondary=items['secondary'],worn=[dict(id=items['bag'],location='base:back')]+([dict(id=items['hat'],location='base:hat')] if 'hat'in items else [])+([dict(id=items['mask'],location='base:mask')] if 'mask'in items else []),
                       torchActive=True,frontPages=97,tailPages=99,appearance=dict(model='Fabian',nonAttached=False,color=dict(r=.2,g=.4,b=.6),beardModel='LongScruffy' if case not in g.HAIRCUT else '',beardColor=dict(r=.3,g=.25,b=.2)),
                       gel=dict(id=items['gel'],uses=g.STYLING_COSTS[case]['initial']) if 'gel'in items else False,dye=dict(id=items['dye'],amount=1,color=dict(r=.1,g=.5,b=.9)) if 'dye'in items else False)
+        if selected in g.HELD_MOVES:
+            spec=g.HELD_MOVES[selected]
+            baseline.update(primary=items[spec['primary']],secondary=items[spec['secondary']],hands=g.expected_hands(dict(ids,case=selected)),
+                            torchActive=spec['primary']=='torch' or spec['secondary']=='torch')
+            selection['options']['grooming_held_moves']=True
         authority_base=copy.deepcopy(baseline);ids['baseline']=copy.deepcopy(authority_base)
         if mp and borrowed=='dye':baseline['dye']['color']=g.fluid_wire_color(authority_base['dye']['color'])
         def final_state(initial,remote=False):
@@ -86,7 +92,7 @@ class GroomingCancellationTests(unittest.TestCase):
                 boundary['startedReceipt']=started
                 command['outcomes']=[dict(protocol=1,player=ids['actor'],**started),dict(protocol=1,player=ids['actor'],**dict(started,state=body['terminal']))]
         if moving:
-            moved=not native and selected in g.INDEPENDENT_CASES
+            moved=not native and selected in g.INDEPENDENT_CASES+g.HELD_CASES
             def rename(value):
                 if isinstance(value,dict):
                     if value.get('case')==case:value['case']=selected
@@ -112,10 +118,22 @@ class GroomingCancellationTests(unittest.TestCase):
             before=copy.deepcopy(final);before['tailPages']=99
             before['appearance']=copy.deepcopy(baseline['appearance']);before['gel']=copy.deepcopy(baseline['gel']);before['dye']=copy.deepcopy(baseline['dye'])
             if moved and borrowed:next(item for item in before['items'] if item['id']==items[borrowed])['container']='root'
+            if selected in g.HELD_MOVES and moved:
+                before['hands']=g.expected_hands(ids,True)
+                for slot,hand in before['hands'].items():before[slot]=hand['id'] if hand else False
             boundary=dict(case=selected,at=10,mode=mode,kind='ISReadABook',item=items['front'],progress=.2,started=True,bodyUnallocated=True,
                           stage='move',startedReceipt=False,tailRetained=True,snapshot=copy.deepcopy(baseline),accepted=moved,
                           reason=False if native or moved else 'dependent',beforeOrder=order,afterOrder=[front['sequence']]+group+[tail['sequence']] if moved else order.copy(),
                           group=group,front=front['sequence'],tail=tail['sequence'],body=body['sequence'])
+            if selected in g.HELD_MOVES:
+                spec=g.HELD_MOVES[selected];hands=[(spec['primary'],True,spec['primary']==spec['secondary'])]
+                for name,primary,two_hands in hands:
+                    equip=record('restore','ISEquipWeaponAction',items[name]);equip.update(constructorDuration=50,startedAt=81,
+                        finishes=[dict(phase='perform',succeeded=True,at=85)],restoration=dict(primary=primary,twoHands=two_hands,activated=False,begins=1,source='native.ISEquipWeaponAction'))
+                    restore=record('restore','P4RestoreAction',items[name]);restore.update(constructorDuration=1,
+                        finishes=[dict(phase='perform',succeeded=True,at=86)],restoration=dict(primary=False,twoHands=False,activated=name=='torch',begins=1,source='P4RestoreAction.source'))
+                    records.extend((equip,restore))
+                for i,value in enumerate(records,1):value['sequence']=i
             trace=[]
             if mp:
                 identity=dict(transaction=body['transaction'],kind=ids['actionKind'],token=body['token'])
@@ -176,14 +194,14 @@ class GroomingCancellationTests(unittest.TestCase):
         authority=[]
         for row in rows:
             authority.extend('[GROOMING_TEST] '+marker+' '+json.dumps(value) for marker,value in [('PREPARED',row['ids']),('BASELINED',row['receipt']['baseline']),('VERIFIED',row['receipt'])])
-            markers=[(marker,row['command'][key]) for marker,key in [('EDIT' if row['id'] in g.MOVE_CASES else 'CANCEL','boundary'),('BEFORE_TAIL','beforeTail'),('IDLE','idle')]]
+            markers=[(marker,row['command'][key]) for marker,key in [('EDIT' if row['id'] in g.ALL_MOVE_CASES else 'CANCEL','boundary'),('BEFORE_TAIL','beforeTail'),('IDLE','idle')]]
             outcomes=row['command'].get('outcomes',[])
             if outcomes:
-                if row['id'] in g.MOVE_CASES:
+                if row['id'] in g.ALL_MOVE_CASES:
                     markers[1:1]=[('OUTCOME',dict(case=row['id'],receipt=value)) for value in outcomes]
                 else:markers.insert(2,('OUTCOME',dict(case=row['id'],receipt=outcomes[1])))
             if reverse:markers=markers[::-1]
-            lines.extend('[GROOMING_TEST] OUTCOME '+json.dumps(dict(case=row['id'],receipt=value)) for value in ([] if row['id'] in g.MOVE_CASES else outcomes[:1]))
+            lines.extend('[GROOMING_TEST] OUTCOME '+json.dumps(dict(case=row['id'],receipt=value)) for value in ([] if row['id'] in g.ALL_MOVE_CASES else outcomes[:1]))
             lines.extend('[GROOMING_TEST] '+marker+' '+json.dumps(value) for marker,value in markers)
             lines.append('[QUEUE_CHECK] '+json.dumps(dict(row,**context)))
         lines.append('[QUEUE_CHECK] '+json.dumps(dict(event='complete',cases=selection['cases'],performed=len(rows),skipped=0,failed=0,**context)))
@@ -334,7 +352,7 @@ class GroomingCancellationTests(unittest.TestCase):
             for mode in ('native','toolkit'):
                 for kind in ('sp','mp'):
                     selection,row=self.evidence(case,mode,kind)
-                    native=mode=='native'or case in g.MOVE_CASES;remote=kind=='mp';base_case=g.base_case(case)
+                    native=mode=='native'or case in g.ALL_MOVE_CASES;remote=kind=='mp';base_case=g.base_case(case)
                     state=table(dict(ids=row['ids'],gel=True if base_case in g.STYLING_COSTS else None,dye=True if base_case.startswith('dye-') else None))
                     base,final,authority=table(row['baseline']),table(row['clientFinal']),table(row['receipt']['baseline'])
                     with self.subTest(case=case,mode=mode,kind=kind):
@@ -381,7 +399,7 @@ class GroomingCancellationTests(unittest.TestCase):
                 for kind in ('sp','mp'):
                     _,row=self.evidence(case,mode,kind);base=g.base_case(case)
                     state=dict(ids=row['ids'],gel=base in g.STYLING_COSTS,dye=base.startswith('dye-'))
-                    values=[state,row['clientFinal'],row['baseline'],mode=='native' or case in g.MOVE_CASES,kind=='mp',row['receipt']['baseline']]
+                    values=[state,row['clientFinal'],row['baseline'],mode=='native' or case in g.ALL_MOVE_CASES,kind=='mp',row['receipt']['baseline']]
                     script.append('assert(F.effectsMatch('+','.join(literal(v) for v in values)+'),'+literal(case+'/'+mode+'/'+kind)+')')
                     changed=copy.deepcopy(row['clientFinal']);changed['appearance']['beardModel']='unexpected';values[1]=changed
                     script.append('assert(not F.effectsMatch('+','.join(literal(v) for v in values)+'))')
@@ -455,8 +473,8 @@ class GroomingCancellationTests(unittest.TestCase):
         selection,row=self.evidence('move-borrowed-scissors','native','mp')
         row['command']['records'][0]['finishes'][0]['at']=51
         self.assertEqual(self.report(selection,row)['issues'],[])
-        rows=[self.evidence(case,kind='mp')[1] for case in g.ALL_CASES]
-        selection,_=self.evidence(kind='mp');selection['cases']=g.ALL_CASES.copy()
+        rows=[self.evidence(case,kind='mp')[1] for case in g.LEGACY_CASES]
+        selection,_=self.evidence(kind='mp');selection['cases']=g.LEGACY_CASES.copy()
         self.assertEqual(self.report(selection,rows)['issues'],[])
 
     def test_move_rejects_detached_preparation_fabricated_success_and_missing_costs(self):
@@ -682,6 +700,427 @@ class GroomingCancellationTests(unittest.TestCase):
                 selection,row=self.evidence('move-greased-scissors',mode,kind)
                 row['receipt']['checkpoint']['gel']['uses']=19
                 with self.assertRaises(AssertionError):self.check(selection,row)
+
+    def test_held_bank_is_explicit_and_runs_all_three_cases_in_both_modes_and_roles(self):
+        from queue_checks import scenarios
+        definition=g.definitions()['grooming-cancel']
+        self.assertEqual(scenarios.select(definition,'restore-hands',None,'sp','native')[0],g.HELD_CASES)
+        for mode in ('native','toolkit'):
+            for kind in ('sp','mp'):
+                selection,_=self.evidence(g.HELD_CASES[0],mode,kind);selection['cases']=g.HELD_CASES.copy()
+                g.validate(selection)
+                rows=[self.evidence(case,mode,kind)[1] for case in g.HELD_CASES]
+                with self.subTest(mode=mode,kind=kind):self.assertEqual(self.report(selection,rows)['issues'],[])
+                for row in rows:
+                    result=self.check(selection,row)
+                    self.assertEqual(result['moved'],mode=='toolkit')
+                    self.assertTrue(result['cleanupVerified'] and result['tailCompleted'] and result['authoritative'])
+                    self.assertEqual(row['clientFinal']['hands'],g.expected_hands(row['ids']))
+        selection,_=self.evidence(g.HELD_CASES[0]);selection['cases']=g.HELD_CASES.copy()
+        for changes in ({'cases':g.HELD_CASES[::-1]},{'cases':g.MOVE_CASES},{'cases':g.HELD_CASES[:1]},
+                        {'cases':g.HELD_CASES+[g.MOVE_CASES[0]]},{'options':{}},{'options':{'grooming_held_moves':False}}):
+            with self.subTest(changes=changes),self.assertRaises(ValueError):g.validate(dict(selection,**changes))
+        legacy,_=self.evidence('move-styled-scissors');g.validate(legacy)
+        with self.assertRaises(ValueError):g.validate(dict(legacy,options={'grooming_held_moves':True}))
+
+    def test_held_admission_and_restoration_reject_stowed_foreign_and_proxy_hand_refs(self):
+        def stow(value):value.update(primary=False);value['hands']['primary']=False
+        def wrong(value):
+            source=next(row for row in value['items'] if row['kind']=='Base.Paperclip')
+            value.update(primary=source['id']);value['hands']['primary'].update(id=source['id'],kind=source['kind'])
+        changes={'stowed':stow,'foreign-root-member':wrong,
+                 'proxy':lambda v:v['hands']['primary'].update(sameReference=False),
+                 'lost-owner':lambda v:v['hands']['primary'].update(equipParent=False),
+                 'not-root':lambda v:v['hands']['primary'].update(root=False),
+                 'nested':lambda v:v['hands']['primary'].update(container=1),
+                 'unknown-hand':lambda v:v['hands'].update(third=False),
+                 'missing-slot':lambda v:v['hands'].pop('secondary'),
+                 'stale-kind':lambda v:v['hands']['primary'].update(kind='Base.Hammer'),
+                 'fabricated-ref':lambda v:v['hands']['primary'].update(sameReference=1)}
+        for case in g.HELD_CASES:
+            for mode in ('native','toolkit'):
+                for kind in ('sp','mp'):
+                    for place in ('baseline','admission','checkpoint','clientFinal','authorityFinal'):
+                        for name,change in changes.items():
+                            selection,row=self.evidence(case,mode,kind)
+                            value={'baseline':row['baseline'],'admission':row['command']['boundary']['snapshot'],
+                                   'checkpoint':row['receipt']['checkpoint'],'clientFinal':row['clientFinal'],'authorityFinal':row['receipt']['final']}[place]
+                            change(value)
+                            with self.subTest(case=case,mode=mode,kind=kind,place=place,change=name),self.assertRaises((AssertionError,KeyError,TypeError)):self.check(selection,row)
+        selection,row=self.evidence('move-held-gel-both');row['command']['boundary']['snapshot']['hands']['secondary']=False
+        row['command']['boundary']['snapshot']['secondary']=False
+        with self.assertRaises(AssertionError):self.check(selection,row)
+
+    def test_held_costs_topology_appearance_and_reader_effects_cannot_be_waived(self):
+        for case in g.HELD_CASES:
+            for mode in ('native','toolkit'):
+                for kind in ('sp','mp'):
+                    changes={
+                        'missing-use':lambda r:r['clientFinal']['gel'].update(uses=g.STYLING_COSTS[g.base_case(case)]['initial']),
+                        'extra-use':lambda r:r['receipt']['final']['gel'].update(uses=17),
+                        'ghost-supply':lambda r:r['clientFinal']['items'].__setitem__(slice(None),[v for v in r['clientFinal']['items'] if v['id']!=r['ids']['items']['gel']]),
+                        'nested-supply':lambda r:next(v for v in r['clientFinal']['items'] if v['id']==r['ids']['items']['gel']).update(container=r['ids']['items']['bag']),
+                        'foreign-supply-id':lambda r:r['receipt']['final']['gel'].update(id=999),
+                        'wrong-cosmetic':lambda r:r['receipt']['final']['appearance'].update(model='Bald'),
+                        'lost-tail':lambda r:r['receipt']['final'].update(tailPages=r['ids']['tailInitial']),
+                        'lost-front':lambda r:r['clientFinal'].update(frontPages=r['ids']['frontInitial']),
+                        'no-scissors-return':lambda r:r['command']['records'].__setitem__(slice(None),[v for v in r['command']['records'] if v['role']!='return']),
+                        'unsealed-completion':lambda r:r['command'].update(bodyCompletes=0),
+                    }
+                    for name,change in changes.items():
+                        selection,row=self.evidence(case,mode,kind);change(row)
+                        with self.subTest(case=case,mode=mode,kind=kind,change=name),self.assertRaises((AssertionError,KeyError,ValueError)):self.check(selection,row)
+        # Only the Host client BEFORE_TAIL may observe the intermediate first use.
+        for kind in ('sp','mp'):
+            selection,row=self.evidence('move-held-gel-both','toolkit',kind)
+            row['command']['beforeTail']['snapshot']['gel']['uses']=19
+            if kind=='mp':self.check(selection,row)
+            else:
+                with self.assertRaises(AssertionError):self.check(selection,row)
+
+    def test_held_p4_restoration_requires_native_source_begin_order_and_single_perform(self):
+        changes={
+            'missing':lambda rows:rows.pop(),
+            'replayed':lambda rows:rows[0]['finishes'].append(copy.deepcopy(rows[0]['finishes'][0])),
+            'no-begin':lambda rows:rows[0]['restoration'].update(begins=0),
+            'double-begin':lambda rows:rows[0]['restoration'].update(begins=2),
+            'foreign-source':lambda rows:rows[0]['restoration'].update(source='foreign.equip'),
+            'foreign-item':lambda rows:rows[0].update(item=999),
+            'wrong-two-hands':lambda rows:rows[0]['restoration'].update(twoHands=not rows[0]['restoration']['twoHands']),
+            'wrong-duration':lambda rows:rows[0].update(constructorDuration=1),
+            'early-cleanup':lambda rows:rows[0]['finishes'][0].update(at=10),
+            'failed-native':lambda rows:rows[0]['finishes'][0].update(succeeded=False),
+            'no-native-equip':lambda rows:rows[0].update(nativeRef=False),
+        }
+        for case in g.HELD_CASES:
+            for mode in ('native','toolkit'):
+                for kind in ('sp','mp'):
+                    for name,change in changes.items():
+                        selection,row=self.evidence(case,mode,kind);restores=[v for v in row['command']['records'] if v['role']=='restore'];change(restores)
+                        if name=='missing':row['command']['records']=[v for v in row['command']['records'] if v['role']!='restore']+restores
+                        with self.subTest(case=case,mode=mode,kind=kind,change=name),self.assertRaises((AssertionError,KeyError)):self.check(selection,row)
+                    selection,row=self.evidence(case,mode,kind)
+                    # Native duration-one P4 callbacks can finish between polls.
+                    for value in row['command']['records']:
+                        if value['kind']=='P4RestoreAction':value.update(started=False,starts=0,nativeRef=False)
+                    self.check(selection,row)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_actual_held_resolve_waits_authority_and_never_repairs_equipment_or_visual(self):
+        source=Path(__file__).parent/'native_queue/grooming-cancel/shared/QueueGroomingCancel.lua'
+        script=r"""
+local F=assert(loadfile(arg[1]))()
+function isClient()return true end
+Perks={Woodwork=1,Doctor=2}
+for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-held-gel-both'})do
+ local root={};local player={getInventory=function()return root end,getOnlineID=function()return 7 end};local spec=F.held(case)
+ local function item(id,kind)
+  local v={getID=function()return id end,getFullType=function()return kind end,getContainer=function()return root end,getEquipParent=function()return player end}
+  return v
+ end
+ local gel=item(1,'Base.Hairgel');local torch=item(2,'Base.Torch');local other=item(3,'Base.Screwdriver')
+ local refs={gel=gel,torch=torch,secondary=other};local byID={[1]=gel,[2]=torch,[3]=other}
+ function root:getItemById(id)return byID[id]end
+ local primary,secondary=refs[spec.primary],refs[spec.secondary]
+ function player:getPrimaryHandItem()return primary end
+ function player:getSecondaryHandItem()return secondary end
+ local ids={case=case,actor=7,items={gel=1,torch=2,secondary=3},frontInitial=97,tailInitial=99,baseline={}}
+ local state={player=player,ids=ids};local writes=0
+ F.refresh=function(s)
+  s.front={setAlreadyReadPages=function(_,v)assert(v==97);writes=writes+1 end,getFullType=function()return 'front'end}
+  s.tail={setAlreadyReadPages=function(_,v)assert(v==99);writes=writes+1 end,getFullType=function()return 'tail'end};return true
+ end
+ F.snapshot=function(s)return {hands=F.hands(s)}end
+ ids.baseline=F.snapshot(state)
+ function player:setAlreadyReadPages(kind,v)assert(kind=='front'and v==97 or kind=='tail'and v==99);writes=writes+1 end
+ function player:setPerkLevelDebug()writes=writes+1 end
+ for _,name in ipairs({'setPrimaryHandItem','setSecondaryHandItem','setWornItem','removeWornItem','updateHandEquips','getHumanVisual','resetModel'})do
+  player[name]=function()error('client repaired '..name)end
+ end
+ sendHumanVisual=function()error('client sent visual repair')end;sendEquip=function()error('client sent equip repair')end
+ local original=primary;primary=nil
+ assert(not F.handsReady(state)and not F.resolve(player,ids)and writes==0,'stowed hand was admitted or repaired')
+ primary=item(original:getID(),original:getFullType())
+ assert(not F.handsReady(state)and not F.resolve(player,ids)and writes==0,'same-ID proxy was admitted')
+ primary=original;local owner=original.getEquipParent;original.getEquipParent=function()return {}end
+ assert(not F.handsReady(state)and not F.resolve(player,ids)and writes==0,'foreign equip parent was admitted')
+ original.getEquipParent=owner
+ assert(F.handsReady(state)and F.resolve(player,ids)and writes==6,'authority exact refs did not release reader-only setup')
+ assert(F.resolve(player,ids)and writes==6,'reader setup repeated')
+ secondary=nil
+ assert(not F.handsReady(state)and not F.resolve(player,ids),'lost secondary was hidden after resolve')
+end
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=script,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_grooming_fixture_lua_parses(self):
+        root=Path(__file__).parent/'native_queue/grooming-cancel'
+        for source in root.rglob('*.lua'):
+            result=subprocess.run([shutil.which('luajit'),'-',str(source)],input='assert(loadfile(arg[1]))',text=True,capture_output=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_actual_move_controller_rejects_hands_stowed_after_native_enqueue(self):
+        root=Path(__file__).parent/'native_queue/grooming-cancel'
+        script=r"""
+local function set(fn,key,value)
+ for i=1,100 do local name=debug.getupvalue(fn,i);if not name then break end;if name==key then debug.setupvalue(fn,i,value);return end end
+ error('missing fixture upvalue '..key)
+end
+local function get(fn,key)
+ for i=1,100 do local name,value=debug.getupvalue(fn,i);if not name then break end;if name==key then return value end end
+ error('missing fixture upvalue '..key)
+end
+for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-held-gel-both'})do
+ for _,mode in ipairs({'native','toolkit'})do for _,scenario in ipairs({'actual','stowed','proxy','foreign-owner'})do
+  local F=assert(loadfile(arg[2]))();local cost=F.stylingCost(case);local spec=F.held(case)
+  local config={mode=mode,cases={case},kind='sp',options={grooming_held_moves=true}}
+  Events=setmetatable({},{__index=function(t,k)local v={Add=function()end};t[k]=v;return v end})
+  local q={queue={}};function q:indexOf(action)for i,v in ipairs(self.queue)do if v==action then return i end end;return -1 end
+  local edited,checkpoint,serial=0,0,0;local token={};local inventory={};local player={}
+  local function item(id,kind)return {getID=function()return id end,getFullType=function()return kind end,
+   getContainer=function()return inventory end,getEquipParent=function()return player end}end
+  local gel,torch,other,scissors=item(8,cost.kind),item(20,'Base.Torch'),item(21,'Base.Screwdriver'),item(7,'Base.Scissors')
+  local refs={gel=gel,torch=torch,secondary=other};local primary,secondary=refs[spec.primary],refs[spec.secondary]
+  inventory.getItemById=function(_,id)return ({[8]=gel,[20]=torch,[21]=other,[7]=scissors})[id]end
+  inventory.getItemFromType=function(_,name)if 'Base.'..name==cost.kind then return gel end end
+  player.getInventory=function()return inventory end;player.isTimedActionInstant=function()return false end
+  player.getPrimaryHandItem=function()return primary end;player.getSecondaryHandItem=function()return secondary end
+  function getDebug()return false end;function getPlayer()return player end;function getTimestampMs()return 10 end
+  ISReadABook={new=function(_,actor,book)return {Type='ISReadABook',character=actor,item=book,maxTime=100,isStarted=function()return true end,getJobDelta=function()return .2 end}end}
+  ISTimedActionQueue={add=function(action)q.queue[#q.queue+1]=action;if #q.queue==1 then action.action={};q.current=action end end}
+  local function produce(actor,target,time)
+   assert(#q.queue==2 and F.handsReady({player=player,ids={case=case,items={gel=8,torch=20,secondary=21}}}))
+   ISTimedActionQueue.add({Type='ISInventoryTransferAction',character=player,item=scissors,toolkitQueueOperation=token})
+   local body={Type='ISCutHair',character=player,item=scissors,maxTime=time,maxTimeInit=time,toolkitQueueOperation=token}
+   setmetatable(body,ISCutHair);ISTimedActionQueue.add(body)
+  end
+  ISCutHair={};ISTrimBeard={};ISDyeHair={};ISCharacterScreen={onCutHair=produce};ISInventoryPaneContextMenu={}
+  PZSurvivorToolkit={ActionQueuePolicy={inspect=function()return {knownInputs=true},'native.ISCutHair'end},
+   ActionQueueOperations={run=function(fn)fn()end},ActionQueue={move=function(actual,body,tail,after)
+    edited=edited+1;assert(mode=='toolkit'and actual==q and tail==q.queue[2]and after==false)
+    q.queue={q.queue[1],q.queue[3],q.queue[4],tail};return true
+   end}}
+  local json={encode=function()return '{}'end};local proof={closure=function()return true end}
+  require=function(name)if name=='QueueGroomingCancel'then return F elseif name=='QueueTestSelection'then return config
+   elseif name=='QueueHealthEvents'then return json elseif name=='PZSurvivorToolkit/SourceProof'then return proof end end
+  local file=assert(io.open(arg[1]));local source=file:read('*a');file:close()
+  local client=assert(loadstring(source..'\nreturn {enqueue=enqueue,move=moveAtBoundary}'))()
+  local ids={case=case,baseline={},actionKind='ISCutHair',targetStyle=cost.target,duration=300,items={gel=8,torch=20,secondary=21}}
+  local state={player=player,ids=ids,gel=gel,scissors=scissors,front=item(1,'front'),tail=item(2,'tail')}
+  set(client.enqueue,'state',state);set(client.enqueue,'ids',ids);set(client.enqueue,'queue',function()return q end)
+  set(client.enqueue,'snapshot',function()return {hands=F.hands(state)}end)
+  set(client.enqueue,'register',function(action)local actions=get(client.enqueue,'actions');if actions[action]then return actions[action]end
+   serial=serial+1;actions[action]={sequence=serial};return actions[action]end)
+  F.sameSetup=function()return true end
+  client.enqueue();assert(q:indexOf(get(client.enqueue,'body'))==4,'producer did not preserve pending scissors group')
+  if scenario=='stowed'then primary=nil
+  elseif scenario=='proxy'then primary=item(primary:getID(),primary:getFullType())
+  elseif scenario=='foreign-owner'then primary.getEquipParent=function()return {}end end
+  set(client.move,'nativeEpisodes',{[q.current]=q.current.action})
+  set(client.move,'request',function(name)assert(name=='Checkpoint');checkpoint=checkpoint+1 end)
+  set(client.move,'raw',function(marker,row)
+   assert(marker=='EDIT'and F.same(row.snapshot.hands,F.hands(state)))
+   assert(row.snapshot.hands.primary.sameReference and row.snapshot.hands.secondary.sameReference)
+  end)
+  local okay=pcall(client.move)
+  assert(okay==(scenario=='actual'),'stowed/proxy/foreign-owner hand passed actual move controller')
+  assert(edited==(scenario=='actual'and mode=='toolkit'and 1 or 0)and checkpoint==(scenario=='actual'and 1 or 0))
+ end end
+end
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(root/'client/ZZGroomingCancel.lua'),str(root/'shared/QueueGroomingCancel.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_selected_p4_only_restores_changed_native_hand_refs_with_duration_one(self):
+        selected=os.environ.get('PZ_TEST_P4_SOURCE')
+        if not selected:self.skipTest('Set PZ_TEST_P4_SOURCE to the locked selected P4 source')
+        from cart_blender import game_default
+        game=Path(os.environ['PZ_GAME_DIR']) if os.environ.get('PZ_GAME_DIR') else game_default()
+        source=Path(selected);version=source/'42.20' if (source/'42.20').is_dir() else source
+        project=Path(__file__).resolve().parents[1]
+        script=r"""
+local version,game,project=arg[1],arg[2],arg[3]
+local function text(path)local f=assert(io.open(path));local s=f:read('*a');f:close();return s end
+local function reader(path)
+ local f=io.open(path);if not f then return end
+ return {readLine=function()local line=f:read('*l');return line and line:gsub('\r$','')end,close=function()f:close()end}
+end
+getGameFilesInput=function(path)return reader(game..'/'..path)end
+getModFileReader=function(mod,path)assert(mod=='P4TidyUpMeister');return reader(version..'/'..path)end
+getFilenameOfClosure=function(fn)return debug.getinfo(fn,'S').source:gsub('^@','')end
+local Proof=assert(loadfile(project..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
+assert(Proof.matches('media/lua/client/P4TidyUpMeister.lua',389269229,'P4TidyUpMeister',true),'selected P4 source pin differs')
+assert(Proof.matches('media/lua/shared/TimedActions/P4RestoreAction.lua',1645293368,'P4TidyUpMeister',true),'selected P4 restore pin differs')
+assert(loadfile(game..'/media/lua/shared/ISBaseObject.lua'))()
+package.preload.ISBaseObject=function()return ISBaseObject end
+package.preload['TimedActions/ISBaseTimedAction']=function()assert(loadfile(game..'/media/lua/shared/TimedActions/ISBaseTimedAction.lua'))();return ISBaseTimedAction end
+assert(loadfile(game..'/media/lua/shared/TimedActions/ISEquipWeaponAction.lua'))()
+assert(loadfile(game..'/media/lua/shared/TimedActions/ISCutHair.lua'))()
+assert(loadfile(version..'/media/lua/shared/TimedActions/P4RestoreAction.lua'))()
+local p4=text(version..'/media/lua/client/P4TidyUpMeister.lua')
+local function method(name,nextName)
+ local first=assert(p4:find('P4TidyUpMeister.'..name..' = function',1,true))
+ local last=assert(p4:find('\nP4TidyUpMeister.'..nextName..' = function',first,true))
+ assert(loadstring(p4:sub(first,last-1),'@P4TidyUpMeister.lua'))()
+end
+local function list(items)return {size=function()return #items end,get=function(_,i)return items[i+1]end}end
+P4TidyUpMeister={sessions={},restoring={},restoreFloor={},nextSessionId=1,
+ debugLog=function()end,debugHalo=function()end,itemLabel=function()return 'item'end,
+ findReplacementItems=function()return {}end,queueTransferRestores=function()end}
+method('captureSession','actionTypeOf');method('shouldObserveCharacter','prepareQueueAdd')
+method('prepareQueueAdd','observeQueuedAction');method('queueRestore','forceRestoreHands')
+local characterScreen=text(game..'/media/lua/client/XpSystem/ISUI/ISCharacterScreen.lua')
+local worldMenu=text(game..'/media/lua/client/ISUI/ISWorldObjectContextMenu.lua')
+ISCharacterScreen={};ISWorldObjectContextMenu={}
+local first=assert(characterScreen:find('ISCharacterScreen.onCutHair = function',1,true))
+local last=assert(characterScreen:find('\nISCharacterScreen.setDisplayedTraits',first,true))
+assert(loadstring(characterScreen:sub(first,last-1),'@ISCharacterScreen.lua'))()
+first=assert(worldMenu:find('ISWorldObjectContextMenu.equip = function',1,true));last=assert(worldMenu:find('\nISWorldObjectContextMenu.equip2',first,true))
+assert(loadstring(worldMenu:sub(first,last-1),'@ISWorldObjectContextMenu.lua'))()
+local F=assert(loadfile(project..'/tests/native_queue/grooming-cancel/shared/QueueGroomingCancel.lua'))()
+isServer=function()return false end;getPlayerHotbar=function()return nil end
+ItemTag={LIGHTER='Lighter'}
+getPlayerInventory=function()return {refreshBackpacks=function()end}end
+getText=function(key)return key end;getDebug=function()return false end
+getHairStylesInstance=function()return {FindMaleStyle=function(_,name)return {getName=function()return name end,isAttachedHair=function()return false end}end}end
+predicateScissors={};predicateRazor={}
+for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-held-gel-both'})do
+ local spec=F.held(case);local player,root={},{};local primary,secondary;local queued={}
+ local function item(id,kind,active)
+  local value={id=id,kind=kind,active=active or false}
+  function value:getID()return self.id end;function value:getFullType()return self.kind end
+  function value:getContainer()return root end;function value:getEquipParent()return player end
+  function value:canBeActivated()return self.kind=='Base.Torch'end
+  function value:isActivated()return self.active end;function value:setActivated(v)self.active=v end
+  function value:isRequiresEquippedBothHands()return false end;function value:getName()return self.kind end
+  function value:getCurrentUsesFloat()return 20 end;function value:hasTag()return false end
+  function value:playActivateSound()end
+  return value
+ end
+ local gel=item(8,F.stylingCost(case).kind);local torch=item(20,'Base.Torch',true);local other=item(21,'Base.Screwdriver');local scissors=item(7,'Base.Scissors')
+ local refs={gel=gel,torch=torch,secondary=other};primary,secondary=refs[spec.primary],refs[spec.secondary]
+ local initialPrimary,initialSecondary=primary,secondary
+ function root:getItems()return list({gel,torch,other,scissors})end
+ function root:getItemById(id)return ({[8]=gel,[20]=torch,[21]=other,[7]=scissors})[id]end
+ function root:getFirstEvalRecurse(predicate)if predicate==predicateScissors then return scissors end end
+ function player:getPrimaryHandItem()return primary end;function player:getSecondaryHandItem()return secondary end
+ function player:setPrimaryHandItem(v)primary=v end;function player:setSecondaryHandItem(v)secondary=v end
+ function player:getInventory()return root end;function player:getWornItems()return list({})end
+ function player:getModData()return {}end;function player:isLocalPlayer()return true end
+ function player:isFemale()return false end;function player:getClothingItem_Head()return nil end
+ function player:getVisual()return {getNonAttachedHair=function()return nil end}end
+ function player:getPlayerNum()return 0 end;function player:isTimedActionInstant()return false end
+ function player:getClothingItem_Back()return nil end;function player:isEquippedClothing()return false end
+ function player:getCurrentSquare()return nil end
+ instanceof=function(object,kind)return object==player and kind=='IsoPlayer'or object==scissors and kind=='InventoryItem'end
+ local queue={queue={}}
+ ISTimedActionQueue={getTimedActionQueue=function()return queue end,add=function(action)queued[#queued+1]=action end}
+ local session=P4TidyUpMeister.prepareQueueAdd({Type='ISReadABook',character=player})
+ assert(session.primaryItem==initialPrimary and session.secondaryItem==initialSecondary)
+ assert(primary==initialPrimary and secondary==initialSecondary,'P4 enqueue stowed actual held supply')
+ ISWorldObjectContextMenu.transferIfNeeded=function(actor,item)
+  assert(actor==player and item==scissors);queued[#queued+1]={Type='ISInventoryTransferAction',item=item}
+ end
+ ISCharacterScreen.onCutHair(player,F.stylingCost(case).target,300)
+ assert(#queued==3 and queued[1].Type=='ISInventoryTransferAction'and queued[2].Type=='ISEquipWeaponAction'and queued[3].Type=='ISCutHair')
+ assert(primary==initialPrimary and secondary==initialSecondary,'native producer stowed held input before move admission')
+ assert(F.handsReady({player=player,ids={case=case,items={gel=8,torch=20,secondary=21}}}))
+ assert(queued[2]:complete(),'native scissors equip did not complete')
+ local expectedSecondary=initialSecondary;if spec.primary==spec.secondary then expectedSecondary=nil end
+ assert(primary==scissors and secondary==expectedSecondary,'native scissors preparation hand transition differs')
+ session.restoreHands=true;queued={};P4TidyUpMeister.queueRestore(session)
+ assert(#queued==2,'selected P4 manufactured restoration for unchanged secondary')
+ assert(queued[1].Type=='ISEquipWeaponAction'and queued[1].item==initialPrimary and queued[1].primary and queued[1].twoHands==(spec.primary==spec.secondary)and queued[1].maxTime==50)
+ assert(queued[2].Type=='P4RestoreAction'and queued[2].item==initialPrimary and queued[2].maxTime==1)
+ assert(queued[1]:complete()and queued[2]:complete())
+ assert(primary==initialPrimary and secondary==initialSecondary,'native P4 hand restoration changed captured refs')
+ queued={};P4TidyUpMeister.queueRestore(session)
+ assert(#queued==0,'selected P4 re-equipped already restored hands')
+end
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(version),str(game),str(project)],input=script,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_actual_equipment_setup_activates_only_the_held_bank_torch(self):
+        fixture=Path(__file__).parent/'native_queue/grooming-cancel/shared/QueueGroomingCancel.lua'
+        script=r"""
+local F=assert(loadfile(arg[1]))()
+local file=assert(io.open(arg[1]));local source=file:read('*a');file:close()
+local body=assert(source:match('(local function equipment.-)\nfunction F%.prepare'))
+local equipment=assert(loadstring('return function(F,clearHead,Perks)\n'..body..'\nreturn equipment end'))()(F,function()end,{Woodwork=1,Doctor=2})
+ImmutableColor={new=function(...)return {...}end}
+local visual={};for _,name in ipairs({'setHairModel','setNonAttachedHair','setHairColor','setBeardColor','setBeardModel'})do visual[name]=function()end end
+for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-held-gel-both','move-styled-scissors'})do
+ local player={getHumanVisual=function()return visual end};local primary,secondary,activation
+ function player:setPrimaryHandItem(value)primary=value end;function player:setSecondaryHandItem(value)secondary=value end
+ for _,name in ipairs({'setWornItem','resetModel','setAlreadyReadPages','setPerkLevelDebug'})do player[name]=function()end end
+ local function item(id)
+  return {getID=function()return id end,canBeEquipped=function()return 'back'end,setUsedDelta=function()end,
+   setActivated=function(_,value)activation=value end,getFullType=function()return 'book'end,setAlreadyReadPages=function()end}
+ end
+ local state={player=player,gel=item(1),torch=item(2),secondary=item(3),bag=item(4),front=item(5),tail=item(6),
+  ids={case=case,initialStyle='Fabian',frontInitial=217,tailInitial=219}}
+ local spec=F.held(case);local expected=not spec or spec.primary=='torch'or spec.secondary=='torch'
+ equipment(state)
+ assert(activation==expected,'unstable active unheld Torch seeded by actual equipment helper')
+ assert(primary==(spec and state[spec.primary]or state.torch)and secondary==(spec and state[spec.secondary]or state.secondary))
+ local base={items={},worn={},primary=primary:getID(),secondary=secondary:getID(),torchActive=expected,hands={primary=primary:getID(),secondary=secondary:getID()}}
+ state.ids.baseline=base
+ assert(F.restored(state,base),'settled native Torch baseline was not restorable')
+ local altered={};for key,value in pairs(base)do altered[key]=value end;altered.torchActive=not expected
+ assert(not F.restored(state,altered),'opposite final Torch state was waived')
+end
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(fixture)],input=script,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
+    def test_held_torch_activation_is_spec_pinned_and_restored_in_each_role(self):
+        for case in g.HELD_CASES:
+            for mode in ('native','toolkit'):
+                for kind in ('sp','mp'):
+                    selection,row=self.evidence(case,mode,kind);spec=g.HELD_MOVES[case]
+                    expected=spec['primary']=='torch' or spec['secondary']=='torch'
+                    self.assertIs(row['baseline']['torchActive'],expected)
+                    self.check(selection,row)
+                    for place in ('baseline','clientFinal','authorityFinal'):
+                        selection,row=self.evidence(case,mode,kind)
+                        value={'baseline':row['baseline'],'clientFinal':row['clientFinal'],'authorityFinal':row['receipt']['final']}[place]
+                        value['torchActive']=not expected
+                        with self.subTest(case=case,mode=mode,kind=kind,place=place),self.assertRaises(AssertionError):self.check(selection,row)
+                    selection,row=self.evidence(case,mode,kind)
+                    # Matching forged baseline/final booleans cannot define a new bank contract.
+                    for value in (row['ids']['baseline'],row['baseline'],row['receipt']['baseline'],row['receipt']['checkpoint'],
+                                  row['receipt']['final'],row['clientFinal'],row['command']['boundary']['snapshot'],row['command']['idle']['snapshot']):
+                        value['torchActive']=not expected
+                    with self.assertRaises(AssertionError):self.check(selection,row)
+
+    @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
+    def test_pre_enqueue_mismatch_records_actual_state_without_normalizing_it(self):
+        fixture=Path(__file__).parent/'native_queue/grooming-cancel/client/ZZGroomingCancel.lua'
+        script=r"""
+local file=assert(io.open(arg[1]));local source=file:read('*a');file:close()
+local first=assert(source:find('local function enqueue()',1,true));local last=assert(source:find(' baseline=actual;',first,true))
+local prefix=source:sub(first,last+#' baseline=actual;'-1)
+local F={sameSetup=function(a,b)return a.torchActive==b.torchActive end}
+local actual={torchActive=false,hands={primary={id=1,sameReference=true}},appearance={model='Fabian'}}
+local expected={torchActive=true,hands=actual.hands,appearance=actual.appearance}
+local publications={};local baseline
+local enqueue=assert(loadstring('return function(F,snapshot,ids,case,now,raw)\n'..prefix..'\nend\nreturn enqueue end'))()(F,
+ function()return actual end,{baseline=expected},function()return 'move-held-gel-primary'end,function()return 3 end,
+ function(marker,row)publications[#publications+1]={marker,row}end)
+assert(not pcall(enqueue),'baseline mismatch proceeded to native enqueue')
+assert(#publications==1 and publications[1][1]=='BASELINE_MISMATCH')
+local row=publications[1][2]
+assert(row.actual==actual and row.expected==expected and row.at==3 and row.actual.torchActive==false and row.expected.torchActive==true)
+assert(actual.hands.primary.sameReference and actual.appearance.model=='Fabian','diagnostic changed physical witness')
+"""
+        result=subprocess.run([shutil.which('luajit'),'-',str(fixture)],input=script,text=True,capture_output=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_requires_exact_full_pack_and_fresh_single_actor_host(self):
         for changes in ({'mods':g.MODS[:-1]},{'clients':True},{'options':{'world_template':'saved-world'}},{'kind':'mp','options':{}}):

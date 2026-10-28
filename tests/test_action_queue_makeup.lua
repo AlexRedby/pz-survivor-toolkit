@@ -261,11 +261,11 @@ local function setup(options)
             if module=='PZSurvivorToolkit/ActionQueueMakeup'then return makeup end
             if module=='PZSurvivorToolkit/ActionQueueMakeupMove'then return move end
             if module=='PZSurvivorToolkit/ItemAccess'then return access end
-            if module=='PZSurvivorToolkit/MakeupSupplyUse'then return supplyUse end
+            if module=='PZSurvivorToolkit/DrainableSupplyUse'then return supplyUse end
             if module=='PZSurvivorToolkit/ActionQueueOperations'then return PZSurvivorToolkit.ActionQueueOperations end
             return savedRequire(module)
         end
-        supplyUse=f.project('MakeupSupplyUse')
+        supplyUse=f.project('DrainableSupplyUse')
         move=f.project('ActionQueueMakeupMove')
         makeup=f.project('ActionQueueMakeup')
         policy=f.project('ActionQueuePolicy')

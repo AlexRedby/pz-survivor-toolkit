@@ -40,6 +40,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.320
+
+- **Changed:** Pending hair styling can move around independent work with a reviewed gel or hairspray held in the main inventory, when enough charges remain for the whole style. Native late selection, repeated GreasedBack costs, tool preparation and hand restoration remain intact; potentially depleted or unsafe held supplies retain protection. Makeup and styling share the same native drainable-state proof.
+
 ### 0.1.319
 
 - **Changed:** Pending Host makeup can move around independent work with a reviewed kit held in either or both hands in the character's main inventory. Remaining charges keep the grip; the final charge uses native matching-hand cleanup and preserves other held items. Attached, worn, automatically draining and non-root held supplies retain protection.
