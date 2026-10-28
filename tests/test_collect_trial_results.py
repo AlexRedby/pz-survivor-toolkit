@@ -782,6 +782,23 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
                 self.assertFalse(list((self.root / "Diagnostics").glob(".collect-*")))
                 self.assertFalse((foreign_cwd / "Diagnostics").exists())
 
+    def test_async_log_failure_is_preserved_as_incomplete(self):
+        run = self.runs / "optimized-run"
+        path = run / "launch.json"
+        receipt = json.loads(path.read_text())
+        receipt["LogCapture"] = {"Policy": "AsyncPipeQueueV1", "Status": "Incomplete",
+                                 "Stdout": {"DroppedBytes": 17}, "Stderr": {"DroppedBytes": 0}}
+        path.write_text(json.dumps(receipt))
+        self.collect(mode="Optimized")
+        archive_path = next((self.root / "Diagnostics").glob("*.zip"))
+        with zipfile.ZipFile(archive_path) as archive:
+            summary = json.loads(archive.read("comparison.json"))
+            self.assertEqual(summary["status"], "Incomplete")
+            self.assertIn("Background stdout/stderr capture is incomplete; inspect launch.json LogCapture",
+                          summary["runs"][0]["issues"])
+            self.assertEqual(archive.read("Runs/Optimized/stdout.txt"), (run / "stdout.txt").read_bytes())
+            self.assertEqual(json.loads(archive.read("Runs/Optimized/launch.json"))["LogCapture"], receipt["LogCapture"])
+
     def assert_single_summary(self, summary, mode, *, requested="Auto", script=SCRIPT):
         other = "Control" if mode == "Optimized" else "Optimized"
         self.assertEqual(summary["status"], "Complete")
@@ -792,7 +809,7 @@ function Copy-TrialResultFile([string]$Source, [string]$Destination) {
         self.assertEqual([run["mode"] for run in summary["runs"]], [mode])
         self.assertEqual(summary["settingsComparison"]["status"], "NotApplicable")
         self.assertTrue(summary["settingsComparison"]["reason"])
-        self.assertEqual(summary["collector"]["revision"], "3.4.2")
+        self.assertEqual(summary["collector"]["revision"], "3.5")
         self.assertEqual(summary["collector"]["scriptFile"], SCRIPT.name)
         self.assertEqual(summary["collector"]["sha256"], hashlib.sha256(script.read_bytes()).hexdigest())
 
