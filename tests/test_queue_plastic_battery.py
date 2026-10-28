@@ -226,9 +226,9 @@ class PlasticBatteryNativeTests(unittest.TestCase):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 selection = dict(cases=['native-recipes'], kind=kind, mode=mode, clients=1,
-                                 languages=['EN'], mods=['damnlib'], options=dict(mp_host=kind == 'mp'))
+                                 languages=['EN'], mods=['damnlib', 'PZToolkitJavaPatches'], options=dict(mp_host=kind == 'mp'))
                 adapter.validate(selection)
-                for key, value in [('clients', 2), ('languages', ['RU']), ('mods', []),
+                for key, value in [('clients', 2), ('languages', ['RU']), ('mods', []), ('mods', ['damnlib']),
                                    ('cases', ['charge-matrix', 'native-recipes'])]:
                     with self.subTest(key=key), self.assertRaises(ValueError):
                         adapter.validate(dict(selection, **{key: value}))
@@ -241,10 +241,22 @@ class PlasticBatteryNativeTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         adapter.validate(dict(selection, cases=['charge-matrix']))
 
+    def test_original_capture_excludes_the_runtime_recipe_correction(self):
+        case = adapter.definitions()['plastic-battery']['cases'][0]
+        self.assertEqual(case['default_mods'], ['damnlib'])
+        self.assertEqual(case['modes'], ['native'])
+        selection = dict(cases=['charge-matrix'], kind='sp', mode='native', clients=1,
+                         languages=['EN'], mods=['damnlib'], options={})
+        adapter.validate(selection)
+        adapter.validate(dict(selection, mods=['damnlib', 'PZSurvivorToolkit']))
+        for changes in (dict(mode='toolkit'), dict(mods=['damnlib', 'PZToolkitJavaPatches'])):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'without Java Patches'):
+                adapter.validate(dict(selection, **changes))
+
     def test_stage_installs_common_startup_and_health_support_for_both_roles(self):
         project = Path(__file__).resolve().parents[1]
         selection = dict(cases=['native-recipes'], kind='mp', mode='native', clients=1,
-                         languages=['EN'], mods=['damnlib'], options=dict(mp_host=True))
+                         languages=['EN'], mods=['damnlib', 'PZToolkitJavaPatches'], options=dict(mp_host=True))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             runtime = dict(roles={role: dict(cache=str(root / role)) for role in ('client1', 'server')})

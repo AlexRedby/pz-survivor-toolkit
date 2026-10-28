@@ -48,9 +48,8 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ### Food age and cooling
 
-- [ ] Migrate the reviewed CleanUI collapsed-food-age correction into Toolkit or Java Patches if still needed with Workshop CleanUI. Installation ships only the two owned mods; the standalone source-preparation experiment is no longer delivered. Establish a safe runtime integration and focused/native checks with unmodified Workshop sources before claiming the correction is delivered; retain the remaining runtime gates below.
-  - [ ] Extend the passing 199/200-item SP natural-expiry/regroup/reopen case in both UI modes to expiry while clipped/hidden, later expand/refresh, repeated group rebuilds and Host/server replication. Record item identities, age/lastAged, boundary events and actual regrouping without observer age writes; the separate old `inventory-freshness` case still has `naturalAgeing=false`.
-  - [ ] Qualify live refrigeration/freezing, power changes and transfers between environments. Native `Food.updateAge` owns elapsed-time/freezing calculations and events; container transitions and generator toggles call it, while `finishupdate` can retire inert food and client cell processing is skipped. The new headless cooling controls use configured native states, not real appliance transitions. Preserve those calls and avoid a global age-result cache.
+- [ ] Extend the passing 199/200-item SP natural-expiry/regroup/reopen case in both UI modes to expiry while clipped/hidden, later expand/refresh, repeated group rebuilds and Host/server replication. The current baseline uses Java Patches with unmodified Workshop CleanUI and the 63-mod selection. Record item identities, age/lastAged, boundary events and actual regrouping without observer age writes; the separate old `inventory-freshness` case still has `naturalAgeing=false`.
+- [ ] Qualify live refrigeration/freezing, power changes and transfers between environments. Native `Food.updateAge` owns elapsed-time/freezing calculations and events; container transitions and generator toggles call it, while `finishupdate` can retire inert food and client cell processing is skipped. The new headless cooling controls use configured native states, not real appliance transitions. Preserve those calls and avoid a global age-result cache.
 
 ## Vehicle and cart block
 
@@ -152,11 +151,6 @@ Capture these during relevant campaign launches rather than adding an unrelated 
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
-
-# Workshop dependency corrections
-
-- [ ] Migrate the reviewed DAMN Library obsolete Plastic Welding Gun battery recipe correction into Toolkit or Java Patches. Installation now ships only owned mods, so the standalone `tools/damnlib_source.py` experiment does not deliver this correction. Preserve the native standard recipes and battery-charge transfer; require focused and native qualification with unmodified Workshop sources before claiming it is delivered.
-
 
 # Container editor visual states
 

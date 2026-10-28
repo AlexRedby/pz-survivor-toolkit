@@ -10,9 +10,10 @@ MARKER = '[PLASTIC_BATTERY] '
 
 def definitions():
     return {SUITE: {'status': 'ready', 'clients': 1,
-                   'default_mods': ['damnlib', 'PZSurvivorToolkit'],
+                   'default_mods': ['ZombieBuddy', 'PZToolkitJavaPatches', 'damnlib', 'PZSurvivorToolkit'],
                    'cases': [{'id': 'charge-matrix', 'producer': 'fixture', 'capability': 'capture',
-                              'kinds': ['sp'], 'languages': ['EN'], 'modes': ['native', 'toolkit']},
+                              'kinds': ['sp'], 'languages': ['EN'], 'modes': ['native'],
+                              'default_mods': ['damnlib']},
                              {'id': 'native-recipes', 'producer': 'fixture', 'capability': 'effect',
                               'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['native', 'toolkit']}]}}
 
@@ -20,6 +21,10 @@ def definitions():
 def validate(selection):
     fixed = selection.get('cases') == ['native-recipes']
     options = selection.get('options', {})
+    if fixed and 'PZToolkitJavaPatches' not in selection.get('mods', []):
+        raise ValueError('Native battery qualification requires the Java Patches runtime recipe correction')
+    if not fixed and (selection.get('mode') != 'native' or 'PZToolkitJavaPatches' in selection.get('mods', [])):
+        raise ValueError('Original battery charge-matrix requires native mode without Java Patches')
     if (selection.get('cases') not in (['charge-matrix'], ['native-recipes'])
             or selection.get('kind') not in (('sp', 'mp') if fixed else ('sp',))
             or selection.get('mode') not in ('native', 'toolkit')

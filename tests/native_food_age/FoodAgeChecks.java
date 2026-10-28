@@ -15,6 +15,7 @@ import zombie.SandboxOptions;
 import zombie.Lua.*;
 import zombie.inventory.*;
 import zombie.inventory.types.Food;
+import net.alexredby.pztoolkitjavapatches.CleanUIFoodAge;
 
 /** Real Food/Kahlua checks, without a game loop, UI, generator or network. */
 public final class FoodAgeChecks {
@@ -37,8 +38,7 @@ public final class FoodAgeChecks {
         return source.substring(start, end);
     }
 
-    static void loadHelper(Path path) throws Exception {
-        String source = Files.readString(path);
+    static void loadHelper(String source) throws Exception {
         StringBuilder setup = new StringBuilder("local function CleanUI_getCachedTimestampMs() return Now end\n");
         Matcher constants = Pattern.compile("(?m)^local CLEANUI_COLLAPSED_FOOD_AGE_UPDATE_[A-Z_]+ = [0-9]+\\s*$").matcher(source);
         while (constants.find()) setup.append(constants.group()).append('\n');
@@ -182,11 +182,14 @@ public final class FoodAgeChecks {
     }
 
     public static void main(String[] args) throws Exception {
-        require(args.length == 3, "expected original pane, prepared pane, private cache");
+        require(args.length == 2, "expected original pane and private cache");
+        String original = Files.readString(Path.of(args[0]));
+        String corrected = CleanUIFoodAge.transformSource(original);
+        require(!corrected.equals(original), "reviewed original CleanUI input was not corrected by the shipped patch");
         Field field = Unsafe.class.getDeclaredField("theUnsafe"); field.setAccessible(true);
         unsafe = (Unsafe) field.get(null);
         lastFrozenUpdate = Food.class.getDeclaredField("lastFrozenUpdate"); lastFrozenUpdate.setAccessible(true);
-        zombie.ZomboidFileSystem.instance.setCacheDir(args[2]);
+        zombie.ZomboidFileSystem.instance.setCacheDir(args[1]);
         zombie.core.random.RandStandard.INSTANCE.init(); zombie.core.random.RandLua.INSTANCE.init();
         GameTime.setInstance(new GameTime()); clock(100);
         LuaManager.platform = new J2SEPlatform(); LuaManager.env = LuaManager.platform.newEnvironment();
@@ -204,7 +207,7 @@ public final class FoodAgeChecks {
         SandboxOptions.instance.foodRotSpeed.setValue(3); SandboxOptions.instance.fridgeFactor.setValue(3);
         LuaManager.env.rawset("AgeEvents", 0.0);
         for (boolean fixed : List.of(false, true)) {
-            loadHelper(Path.of(args[fixed ? 1 : 0]));
+            loadHelper(fixed ? corrected : original);
             boundaries(fixed);
             for (int size : List.of(200, 10000)) for (String kind : List.of("crate", "fridge")) freshness(fixed, size, kind);
             if (fixed) nativeControls();

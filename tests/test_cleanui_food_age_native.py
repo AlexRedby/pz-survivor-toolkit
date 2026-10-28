@@ -1,4 +1,4 @@
-"""Opt-in current CleanUI/native Food regression, headless and privately staged."""
+"""Opt-in Workshop CleanUI/native Food regression against the shipped Java correction."""
 import hashlib
 import json
 import os
@@ -9,8 +9,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'tools'))
-from cleanui_source import prepare_cleanui
+sys.path.insert(0, str(ROOT / 'JavaPatches'))
+from build import require_current_patch_jar
 
 
 def sha256(path):
@@ -18,36 +18,31 @@ def sha256(path):
 
 
 @unittest.skipUnless(os.environ.get('PZ_NATIVE_FOOD_AGE_CHECK') == '1',
-                     'opt-in native Food check: PZ_NATIVE_FOOD_AGE_CHECK=1, PZ_GAME, PZ_JDK, PZ_CLEANUI_SOURCE')
+                     'opt-in native Food check: PZ_NATIVE_FOOD_AGE_CHECK=1, PZ_GAME, PZ_JDK, PZ_CLEANUI_PANE, PZ_PATCH_JAR')
 class NativeCleanUiFoodAgeTests(unittest.TestCase):
-    def test_current_source_starves_tail_and_prepared_copy_preserves_native_age(self):
-        missing = [key for key in ('PZ_GAME', 'PZ_JDK', 'PZ_CLEANUI_SOURCE') if not os.environ.get(key)]
+    def test_current_source_starves_tail_and_shipped_patch_preserves_native_age(self):
+        keys = ('PZ_GAME', 'PZ_JDK', 'PZ_CLEANUI_PANE', 'PZ_PATCH_JAR')
+        missing = [key for key in keys if not os.environ.get(key)]
         self.assertFalse(missing, 'Native Food check opted in but required inputs are missing: ' + ', '.join(missing))
-        game, jdk, source = (Path(os.environ[key]).expanduser().resolve()
-                             for key in ('PZ_GAME', 'PZ_JDK', 'PZ_CLEANUI_SOURCE'))
+        game, jdk, original_pane, patch_jar = (Path(os.environ[key]).expanduser().resolve() for key in keys)
         jar = game / 'projectzomboid.jar'
-        for path in (jar, jdk / 'bin/java', jdk / 'bin/javac'):
+        for path in (jar, jdk / 'bin/java', jdk / 'bin/javac', original_pane, patch_jar):
             self.assertTrue(path.is_file(), 'Required native Food input is missing: ' + str(path))
-        self.assertTrue(source.is_dir(), 'PZ_CLEANUI_SOURCE must be the complete CleanUI mod root')
+        require_current_patch_jar(patch_jar, ROOT / 'JavaPatches')
+        original_hash = sha256(original_pane)
+        classpath = os.pathsep.join(map(str, (jar, patch_jar)))
         java_source = ROOT / 'tests/native_food_age/FoodAgeChecks.java'
         environment = {key: value for key, value in os.environ.items()
                        if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS', 'DYLD_INSERT_LIBRARIES')}
         with tempfile.TemporaryDirectory(prefix='pz-food-age-regression-') as directory:
             private = Path(directory)
-            prepared = private / 'CleanUI'
-            provenance = prepare_cleanui(source, prepared)
-            self.assertFalse(provenance['already_patched'],
-                             'The differential regression needs the reviewed original CleanUI source')
-            original_pane, fixed_pane = source / provenance['target'], prepared / provenance['target']
-            self.assertEqual(sha256(original_pane), provenance['input_sha256'])
-            self.assertEqual(sha256(fixed_pane), provenance['output_sha256'])
-            compiled = subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', str(jar),
+            compiled = subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', classpath,
                                        '-d', str(private), str(java_source)], cwd=game, env=environment,
                                       capture_output=True, text=True, timeout=30)
             self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
             result = subprocess.run([str(jdk / 'bin/java'), '-Djava.awt.headless=true', '-Dzomboid.steam=0',
-                                     '-cp', str(private) + os.pathsep + str(jar), 'FoodAgeChecks',
-                                     str(original_pane), str(fixed_pane), str(private / 'cache')],
+                                     '-cp', str(private) + os.pathsep + classpath, 'FoodAgeChecks',
+                                     str(original_pane), str(private / 'cache')],
                                     cwd=game, env=environment, capture_output=True, text=True, timeout=90)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             results = [json.loads(line.removeprefix('FOOD_AGE_RESULT ')) for line in result.stdout.splitlines()
@@ -63,12 +58,11 @@ class NativeCleanUiFoodAgeTests(unittest.TestCase):
             for row in results:
                 self.assertEqual(row['helper_events'], int(row['fixed']))
                 self.assertEqual(row['tail_after_helper'] == row['tail_after_catchup'], row['fixed'])
-            self.assertEqual(sha256(original_pane), provenance['input_sha256'], 'Workshop input changed')
+            self.assertEqual(sha256(original_pane), original_hash, 'Workshop input changed')
             print(json.dumps({'native_food_age': summaries[0], 'observations': results,
                               'provenance': {'game_jar_sha256': sha256(jar), 'probe_sha256': sha256(java_source),
-                                             'patch_id': provenance['patch_id'], 'target': provenance['target'],
-                                             'input_sha256': provenance['input_sha256'],
-                                             'output_sha256': provenance['output_sha256']}}))
+                                             'patch_jar_sha256': sha256(patch_jar),
+                                             'input_sha256': original_hash}}))
 
 
 if __name__ == '__main__':

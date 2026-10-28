@@ -17,9 +17,9 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 - **Changed:** Distribute only Toolkit and Java Patches. NewMusic, CleanUI, that DAMN Library and other third-party dependencies stay on Workshop; preparation no longer requires or ships modified dependency copies.
 
-- **Earlier experiment, no longer shipped:** A prepared DAMN Library copy removed the obsolete Plastic Welding Gun battery recipe pair, including the duplicate removal recipe that created a full battery without draining the gun. A Toolkit/Java implementation remains a separate follow-up; the Workshop recipes are unchanged by this distribution.
+- **Earlier experiment, replaced:** A prepared DAMN Library copy removed the obsolete Plastic Welding Gun battery recipe pair, including the duplicate removal recipe that created a full battery without draining the gun. Java Patches now excludes this reviewed pair during native script registration; distribution contains no modified DAMN Library copy.
 
-- **Earlier experiment, no longer shipped:** A prepared CleanUI copy corrected freshness beyond the first 50 items in visible collapsed stacks. Third-party source preparation is now excluded from delivery; a Toolkit/Java implementation remains a separate follow-up.
+- **Earlier experiment, replaced:** A prepared CleanUI copy corrected freshness beyond the first 50 items in visible collapsed stacks. Java Patches now supplies this correction at runtime; distribution contains no modified CleanUI copy.
 
 - **Added:** Immersive Snow, JB's Bugs In Lights, the main '92 Jeep YJ Wrangler with required that DAMN Library, and Furniture Push & Pull (67 Mod IDs / 62 Workshop items). The library loads before the Jeep and vehicle repair/salvage remain last. Downloaded B42 metadata confirms the main Jeep requires only `damnlib`; optional JP18 adds Jurassic Park spawns and requires the main Jeep. JP18/Viewpoint modules stay disabled; existing sandbox settings are preserved. Full-pack SP/Host visuals, performance, vehicle behavior and filled-furniture/Quartermaster conservation remain unverified.
 
@@ -1494,6 +1494,11 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.75
+
+- Correct freshness for every member of a visible collapsed food stack in the reviewed CleanUI version, including items beyond its former first-50 limit. Preserve native ageing, freshness events and the one-second update interval, and recover after a backward clock change. The correction runs in memory before Lua compilation; Workshop files stay unchanged and unreviewed source versions retain their original behavior.
+- Exclude the reviewed DAMN Library duplicate Plastic Welding Gun battery recipes during native script registration. The standard insert/remove commands transfer the actual remaining charge. Workshop files and unrelated recipes stay unchanged; unreviewed sources retain their original behavior.
 
 ### 0.1.74
 

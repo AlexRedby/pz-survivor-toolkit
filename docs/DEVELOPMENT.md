@@ -57,7 +57,13 @@ Use `tools/prepare_install.py` to prepare only the two owned mods, `PZSurvivorTo
 
 Toolkit owns the runtime NewMusic compatibility that disables vanilla CD/player conversion and its associated inventory observer, while preserving normal music loot. Run `python3 -m unittest discover -s tests -p 'test_prepare_install.py'` for the two-folder preparation contract and `PZ_NEWMUSIC_SOURCE="/path/to/mods/NewMusic" .venv/bin/python -m unittest tests.test_newmusic_runtime` for the source-backed Lua compatibility checks with Lupa installed. These checks do not establish live multiplayer performance.
 
-The earlier CleanUI food-age and DAMN Library duplicate battery-recipe source-preparation experiments are no longer shipped. Their standalone source tools and checks remain available for investigation; delivering either correction through Toolkit or Java Patches requires a separate runtime integration and validation.
+Java Patches corrects the reviewed CleanUI collapsed-food-age helper in memory before Lua compilation. It verifies the native loader/compiler and exact CleanUI source; unknown versions retain their original code. It also excludes the reviewed DAMN Library Plastic Welding Gun duplicate battery recipes during native script registration, retaining standard recipes and charge transfer. Workshop files and unknown sources are unchanged. The earlier dependency-copy preparation tools have been removed.
+
+Run `PZ_CLEANUI_SOURCE="/path/to/mods/CleanUI" python3 JavaPatches/build.py --test CleanUIFoodAgeChecks` to check the native loader/compiler hooks, source ownership, nested/error cleanup, unchanged unsupported inputs and the reviewed renderer's compiled result. Without the external source, the check explicitly skips that last comparison.
+
+Run `PZ_DAMNLIB_ROOT="/path/to/mods/damnlib" python3 JavaPatches/build.py --test DamnLibraryBatteryRecipeChecks` to check the woven native recipe-registration hook against the reviewed original source. It checks the complete recipe registry, reload, source ownership and unchanged unsupported inputs, with server diagnostics enabled in both debug modes. This explicit check requires the external DAMN Library source.
+
+The `plastic-battery/native-recipes` suite requires Java Patches with the original DAMN Library and checks all six empty/partial/full insertion and removal cases in SP or one-client menu Host. Use the current prepared mods with `--mods selected`; it compares exact native charges and item identities on client and authority. The `charge-matrix` investigation instead requires native mode without Java Patches so it can observe the original duplicate recipes.
 
 To run the same checks against your installed game's native Mod Options implementation:
 
@@ -65,7 +71,7 @@ To run the same checks against your installed game's native Mod Options implemen
 .venv/bin/python tools/run_tests.py --game "$PZ_GAME" --test test_highlighter
 ```
 
-The independent CleanUI food-age investigation is not part of the prepared distribution and does not ship a CleanUI correction. Its opt-in native regression compiles only its Java fixture against the installed game and runs original/prepared CleanUI helpers in real Kahlua. Run `PZ_NATIVE_FOOD_AGE_CHECK=1 PZ_GAME="/path/to/game/Java" PZ_JDK="/path/to/jdk" PZ_CLEANUI_SOURCE="/path/to/mods/CleanUI" python3 -m unittest tests.test_cleanui_food_age_native`. It checks native ageing, freshness events, cooling controls and clock handling; it does not establish live UI or Host transport. The default test run skips this external-input check.
+The opt-in CleanUI food-age regression compiles only its Java fixture and compares the original Workshop helper with the correction from the current Java Patches JAR in real Kahlua. Build the candidate first, then run `PZ_NATIVE_FOOD_AGE_CHECK=1 PZ_GAME="/path/to/game/Java" PZ_JDK="/path/to/jdk" PZ_CLEANUI_PANE="/path/to/mods/CleanUI/42.19/media/lua/client/ISUI/ISInventoryPane.lua" PZ_PATCH_JAR="JavaPatches/build/PZToolkitJavaPatches/42/media/java/PZToolkitJavaPatches.jar" python3 -m unittest tests.test_cleanui_food_age_native`. It checks native ageing, freshness events, configured cooling controls and clock handling; it does not establish live UI or Host transport. The default test run skips this external-input check. The `storage-profile/inventory-food-age` native case checks natural expiry and regrouping in both live inventory modes with unmodified Workshop CleanUI.
 
 ## Queue resource performance prototype
 

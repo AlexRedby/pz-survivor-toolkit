@@ -10,6 +10,8 @@ Use the [combined installation guide](../MOD_INSTALL.md) for the complete mod se
 |---|---|
 | Actions, transfers and building | Safer cancellation/completion, transfer capacity checks and server acknowledgements for supported queue operations. [Scope](../docs/reference/JAVA_PATCHES.md#shared-action-lifecycle-and-outcomes). |
 | Crafting | Repair the reproduced stale workstation reference that could leave progress at 100%. [Scope](../docs/reference/JAVA_PATCHES.md#workstation-crafting-references). |
+| Plastic Welding Gun | Exclude the reviewed DAMN Library duplicate battery recipes during script registration. Native insert/remove recipes and charge transfer remain available; Workshop files and unknown source versions stay unchanged. |
+| Food freshness | Correct the reviewed CleanUI helper so visible collapsed stacks refresh every member instead of only the first 50. Native ageing and events remain in control; Workshop files are unchanged. Unknown CleanUI versions retain their original code. |
 | Animals | Trailer reconciliation, early equipment delivery and hutch unloading guards. These do not restore previously lost animals. [Scope](../docs/reference/JAVA_PATCHES.md#animal-trailer-reconciliation). |
 | Vehicles and carts | Recover the confirmed driver-authority handoff race; support Toolkit cart control and rendering. This does not fix every desync. [Cart limits](../docs/features/VEHICLES.md#saucedcarts). |
 | Media | Server VHS handling and macOS mod-video paths. [Playback setup](../MOD_INSTALL.md#tv--radio-reinvented). |

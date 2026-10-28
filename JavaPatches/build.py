@@ -184,6 +184,8 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.pztoolkitjavapatches.CartTransitionMathTest': 'PASS cart transition world/actor roundtrips',
           'net.alexredby.javapatchfixture.CartBootstrapCheck': 'CART_BOOTSTRAP_PASS'}
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryTest'] = 'CART_INJURY_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.CleanUIFoodAgeChecks'] = 'CLEANUI_FOOD_AGE_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.DamnLibraryBatteryRecipeChecks'] = 'DAMN_LIBRARY_BATTERY_RECIPES_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryGripTest'] = 'CART_INJURY_GRIP_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartSpeedParityTest'] = 'CART_SPEED_PARITY_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartLegClearancePaletteTest'] = 'CART_LEG_CLEARANCE_PALETTE_PASS'
@@ -202,7 +204,8 @@ CHECKS['net.alexredby.pztoolkitjavapatches.VehicleTransitionRenderTest'] = 'VEHI
 CHECKS['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
 CHECKS['zombie.pathfind.nativeCode.BarricadedDoorPathChecks'] = 'BARRICADED_DOOR_PATH_CHECKS_PASS'
 # Workshop-dependent checks require an explicit --test; --check keeps its game-only inputs.
-EXPLICIT_ONLY_CHECKS = {'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
+EXPLICIT_ONLY_CHECKS = {'net.alexredby.pztoolkitjavapatches.DamnLibraryBatteryRecipeChecks',
+                        'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
                         'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks'}
 TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}
 # This umbrella runs all isolated Kahlua ownership variants in one JVM invocation.
@@ -346,7 +349,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.74',
+    'version': '0.1.75',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',
