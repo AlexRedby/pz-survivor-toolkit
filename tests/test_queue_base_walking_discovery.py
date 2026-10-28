@@ -91,5 +91,69 @@ class DiscoveryEvidenceChecks(unittest.TestCase):
             profile._discovery(self.root, self.receipts())
 
 
+class PlayerRefreshChecks(unittest.TestCase):
+    def setUp(self):
+        self.row = dict(kind='inventory-refresh-checks', playerNum=0, clock='getTimestampMs',
+            warmupPerMode=8, callsPerBatch=64, rounds=3, totalCalls=384,
+            candidateCalls=192, controlCalls=192, counterModulus=10001,
+            checks={key: True for key in ('hiddenPlayerDeferred', 'directPaneImmediate',
+                'reopenFresh', 'visibleCollapsedPlayerLive', 'restored')},
+            limits={key: False for key in ('inventoryMutation', 'worldMutation', 'movement',
+                'categoryMutation', 'classHooks', 'paneHooks')},
+            workload=dict(rawItems=27, buttons=8, settings=dict(mode='details', onCharacter=True)),
+            rowProjection=dict(groups=10, actualItems=27, matchesForcedControl=True),
+            cleanup=dict(visible=False, collapsed=False, selectionRestored=True,
+                         inventoryRestored=True, forceRestored=True), batches={})
+        self.row['limits'].update(timingIncludesAssertions=True, identityChecksOutsideTiming=True)
+        counter = 9990
+        for index, mode in enumerate(('candidate', 'control', 'control', 'candidate', 'candidate', 'control'), 1):
+            builds = 64 if mode == 'control' else 0
+            after = (counter + builds) % 10001
+            self.row['batches'][str(index)] = dict(round=(index+1)//2, mode=mode, calls=64,
+                elapsedMs=120 if mode == 'control' else 40, rowCounterBefore=counter,
+                rowCounterAfter=after, rowCounterDelta=builds, allRowsPending=mode == 'candidate',
+                identityUnchanged=True)
+            counter = after
+
+    def text(self):
+        return profile.PREFIX + 'INVENTORY_REFRESH_CHECKS ' + json.dumps(self.row)
+
+    def test_native_workload_and_counter_wrap(self):
+        self.assertEqual(profile._refresh_checks(self.text())['median_batch_ms'],
+                         dict(candidate=40, control=120))
+
+    def test_missing_behavior_or_cleanup_fails(self):
+        self.row['checks']['directPaneImmediate'] = False
+        with self.assertRaisesRegex(ValueError, 'behavior or restoration'):
+            profile._refresh_checks(self.text())
+        self.row['checks']['directPaneImmediate'] = True
+        self.row['cleanup']['forceRestored'] = False
+        with self.assertRaisesRegex(ValueError, 'not restored'):
+            profile._refresh_checks(self.text())
+
+    def test_missing_or_changed_batches_fail(self):
+        self.row['batches']['2']['mode'] = 'candidate'
+        with self.assertRaisesRegex(ValueError, 'batch workload'):
+            profile._refresh_checks(self.text())
+        del self.row['batches']['2']
+        with self.assertRaisesRegex(ValueError, 'batches are missing'):
+            profile._refresh_checks(self.text())
+
+    def test_counters_and_identity_are_required(self):
+        self.row['batches']['2']['rowCounterDelta'] = 0
+        with self.assertRaisesRegex(ValueError, 'row counters'):
+            profile._refresh_checks(self.text())
+        self.row['batches']['2']['rowCounterDelta'] = 64
+        self.row['batches']['2']['identityUnchanged'] = False
+        with self.assertRaisesRegex(ValueError, 'batch workload'):
+            profile._refresh_checks(self.text())
+
+    def test_timings_do_not_claim_a_speedup(self):
+        for batch in self.row['batches'].values():
+            batch['elapsedMs'] = 120
+        self.assertEqual(profile._refresh_checks(self.text())['median_batch_ms'],
+                         dict(candidate=120, control=120))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -254,7 +254,12 @@ Events.OnTick.Add(function()
             elseif state=='post-stationary' and time-since>=22000 then
                 finishPhase()
                 local path=baseWalkingProfileFinish();profilerActive=false
-                flush();done=true
+                flush()
+                if selection.options.base_walking.inventory_refresh_checks then
+                    local checks=require 'InventoryRefreshChecks'
+                    log('INVENTORY_REFRESH_CHECKS',checks.run(player:getPlayerNum(),json,log))
+                end
+                done=true
                 log('COMPLETE',{case='walk',profile=path,phases=3,legs=legs})
             end
         end

@@ -68,6 +68,11 @@ def validate(selection):
         raise ValueError('Toolkit NewMusic verification must be boolean')
     if type(options.get('base_walking', {}).get('inventory_discovery_profile', False)) is not bool:
         raise ValueError('Inventory discovery profile must be boolean')
+    if type(options.get('base_walking', {}).get('inventory_refresh_checks', False)) is not bool:
+        raise ValueError('Inventory refresh checks must be boolean')
+    if (options.get('base_walking', {}).get('inventory_refresh_checks')
+            and not options.get('base_walking', {}).get('inventory_discovery_profile')):
+        raise ValueError('Inventory refresh checks require discovery profiling')
     if (options.get('base_walking', {}).get('verify_toolkit_newmusic_control')
             and options.get('base_walking', {}).get('disable_newmusic_inventory_probe')):
         raise ValueError('Toolkit verification must not remove callbacks through the fixture')
@@ -386,6 +391,61 @@ def _discovery(root, text):
             'limits': ['Opt-in method observers add overhead; use component attribution, not absolute frame-time comparisons.']}
 
 
+def _refresh_checks(text):
+    records = _raw(text, 'INVENTORY_REFRESH_CHECKS')
+    if len(records) != 1:
+        raise ValueError('Missing unique native player inventory refresh checks')
+    row = records[0]
+    expected = dict(kind='inventory-refresh-checks', playerNum=0, clock='getTimestampMs',
+                    warmupPerMode=8, callsPerBatch=64, rounds=3, totalCalls=384,
+                    candidateCalls=192, controlCalls=192, counterModulus=10001)
+    if any(type(row.get(key)) is not type(value) or row[key] != value for key, value in expected.items()):
+        raise ValueError('Native player refresh workload differs')
+    checks = ('hiddenPlayerDeferred', 'directPaneImmediate', 'reopenFresh',
+              'visibleCollapsedPlayerLive', 'restored')
+    if any(row.get('checks', {}).get(key) is not True for key in checks):
+        raise ValueError('Native player refresh behavior or restoration failed')
+    limits = row.get('limits', {})
+    if (any(limits.get(key) is not False for key in
+            ('inventoryMutation', 'worldMutation', 'movement', 'categoryMutation', 'classHooks', 'paneHooks'))
+            or any(limits.get(key) is not True for key in ('timingIncludesAssertions', 'identityChecksOutsideTiming'))):
+        raise ValueError('Native player refresh observer scope differs')
+    workload = row.get('workload', {})
+    if (any(type(workload.get(key)) is not int or workload[key] <= 0 for key in ('rawItems', 'buttons'))
+            or workload.get('settings', {}).get('mode') != 'details'
+            or workload.get('settings', {}).get('onCharacter') is not True):
+        raise ValueError('Native player inventory workload is missing')
+    projection = row.get('rowProjection', {})
+    if (projection.get('matchesForcedControl') is not True
+            or any(type(projection.get(key)) is not int or projection[key] <= 0 for key in ('groups', 'actualItems'))):
+        raise ValueError('Native player row projection does not match forced control')
+    cleanup = row.get('cleanup', {})
+    if (any(cleanup.get(key) is not True for key in ('selectionRestored', 'inventoryRestored', 'forceRestored'))
+            or cleanup.get('visible') is not False or type(cleanup.get('collapsed')) is not bool):
+        raise ValueError('Native player UI state was not restored')
+    batches = row.get('batches', {})
+    if not isinstance(batches, dict) or set(batches) != {str(i) for i in range(1, 7)}:
+        raise ValueError('Native player refresh batches are missing')
+    times = {'candidate': [], 'control': []}
+    order = ['candidate', 'control', 'control', 'candidate', 'candidate', 'control']
+    for index, mode in enumerate(order, 1):
+        batch = batches[str(index)]
+        if (batch.get('mode') != mode or type(batch.get('round')) is not int
+                or batch['round'] != (index + 1) // 2 or batch.get('calls') != 64
+                or type(batch.get('elapsedMs')) is not int or batch['elapsedMs'] < 0
+                or batch.get('allRowsPending') is not (mode == 'candidate')
+                or batch.get('identityUnchanged') is not True):
+            raise ValueError('Native player refresh batch workload or timing differs')
+        before, after, builds = (batch.get(key) for key in ('rowCounterBefore', 'rowCounterAfter', 'rowCounterDelta'))
+        if (any(type(value) is not int or not 0 <= value < 10001 for value in (before, after, builds))
+                or (after - before) % 10001 != builds or builds != (64 if mode == 'control' else 0)):
+            raise ValueError('Native player row counters do not prove the batch behavior')
+        times[mode].append(batch['elapsedMs'])
+    return {'receipt': row, 'median_batch_ms': {key: sorted(value)[1] for key, value in times.items()},
+            'limits': ['Alternating synchronous batches compare complete refresh callbacks, not FPS or remote-client stutter.',
+                       'UI correctness checks do not simulate physical input or remote inventory mutation.']}
+
+
 def verify(root, selection, catalog):
     root = Path(root)
     text = (root / 'client1-launch.log').read_text(errors='replace')
@@ -404,6 +464,8 @@ def verify(root, selection, catalog):
                         callbacks=_callbacks(root / 'client1', frames))
         if selection['options'].get('base_walking', {}).get('inventory_discovery_profile'):
             evidence['inventory_discovery'] = _discovery(root, text)
+        if selection['options'].get('base_walking', {}).get('inventory_refresh_checks'):
+            evidence['inventory_refresh_checks'] = _refresh_checks(text)
         highlight_bridge = selection['options'].get('base_walking', {}).get('ground_highlight_bridge')
         if highlight_bridge:
             proofs = _raw(text, 'HIGHLIGHT_BRIDGE')
