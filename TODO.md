@@ -1,3 +1,8 @@
+# Finish base walking delivery
+
+- [ ] Integrate current main, release the checked hidden-player inventory change with a newer Toolkit version and changelog, and run affected checks before pushing main.
+- [ ] Preserve required artifacts outside the task worktree, verify full server integration, and remove only owned temporary resources and redundant task refs before archiving.
+
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
