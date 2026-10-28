@@ -23,6 +23,33 @@ def sources(project, selection):
             root / 'tools/prepare_optimizer_trial.py']
 
 
+def stage_viewport(project, output, game, jdk, runtime, native_guards):
+    """Stage the same native observer for every role, without enabling an optimizer overlay."""
+    root, output, game, jdk = map(Path, (project, output, game, jdk))
+    probe = Path(output) / 'viewport-classes'
+    probe.mkdir(parents=True)
+    subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp',
+        os.pathsep.join(str(game / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar')),
+        '-d', str(probe), str(root / 'tests/native_queue/support/viewport/Main.java')],
+        check=True, capture_output=True, text=True, timeout=60)
+    runtime.setdefault('fixture', {}).setdefault('mods', []).append('NativeViewportProbe')
+    for settings in runtime['roles'].values():
+        helper = Path(settings['cache']) / 'mods/NativeViewportProbe'
+        (helper / 'common').mkdir(parents=True)
+        jar = helper / '42/media/java/NativeViewportProbe.jar'
+        jar.parent.mkdir(parents=True)
+        with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as bundle:
+            for source in sorted(probe.rglob('*.class')):
+                bundle.write(source, source.relative_to(probe).as_posix())
+        (helper / '42/mod.info').write_text('name=Disposable native viewport observation\nid=NativeViewportProbe\n'
+            'versionMin=42.21\nrequire=\\ZombieBuddy\njavaPkgName=net.alexredby.nativeviewport\n'
+            'javaJarFile=media/java/NativeViewportProbe.jar\n')
+        with zipfile.ZipFile(jar, 'a', zipfile.ZIP_DEFLATED) as bundle:
+            bundle.writestr('native-optimizer-guards.properties', ''.join(
+                name + '=' + value + '\n' for name, value in sorted(native_guards.items())))
+
+
+
 def stage(project, output, game, jdk, selection, runtime):
     archive = selection.get('options', {}).get('optimizer_archive')
     if not archive:
@@ -35,13 +62,7 @@ def stage(project, output, game, jdk, selection, runtime):
     scratch = output / 'optimizer-inputs'
     scratch.mkdir()
     overlay = prepare_overlay(manifest, archive, game, scratch)
-    probe = scratch / 'viewport-classes'
-    probe.mkdir()
-    subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp',
-        os.pathsep.join(str(game / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar')),
-        '-d', str(probe), str(root / 'tests/native_queue/support/viewport/Main.java')],
-        check=True, capture_output=True, text=True, timeout=60)
-    runtime.setdefault('fixture', {}).setdefault('mods', []).append('NativeViewportProbe')
+    stage_viewport(root, scratch, game, jdk, runtime, manifest['native_guards'])
     props = {'pz.optimizerTrial.profile': manifest['profile']['id'],
              **{'pzopt.' + key: value for key, value in manifest['profile']['properties'].items()}}
     assignments = '\n'.join('System.setProperty(' + json.dumps(key) + ', ' + json.dumps(value) + ');'
@@ -56,19 +77,6 @@ def stage(project, output, game, jdk, selection, runtime):
         runtime['fixture'].setdefault('failure_markers', []).extend([
             '[OptimizerTrial] prewarm disabled:', '[OptimizerTrialProbe] FAIL '])
     for role, settings in runtime['roles'].items():
-        helper = Path(settings['cache']) / 'mods/NativeViewportProbe'
-        (helper / 'common').mkdir(parents=True)
-        jar = helper / '42/media/java/NativeViewportProbe.jar'
-        jar.parent.mkdir(parents=True)
-        with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as bundle:
-            for source in sorted(probe.rglob('*.class')):
-                bundle.write(source, source.relative_to(probe).as_posix())
-        (helper / '42/mod.info').write_text('name=Disposable native viewport observation\nid=NativeViewportProbe\n'
-            'versionMin=42.21\nrequire=\\ZombieBuddy\njavaPkgName=net.alexredby.nativeviewport\n'
-            'javaJarFile=media/java/NativeViewportProbe.jar\n')
-        with zipfile.ZipFile(jar, 'a', zipfile.ZIP_DEFLATED) as bundle:
-            bundle.writestr('native-optimizer-guards.properties', ''.join(
-                name + '=' + value + '\n' for name, value in sorted(manifest['native_guards'].items())))
         if prewarm:
             bridge = build_bridge(Path(settings['cache']) / 'mods', game, jdk, root)
             if role.startswith('client'):

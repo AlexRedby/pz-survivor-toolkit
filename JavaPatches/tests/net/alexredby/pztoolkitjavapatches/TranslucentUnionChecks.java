@@ -15,6 +15,7 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 import java.util.function.Consumer;
 import java.util.zip.ZipFile;
@@ -50,16 +51,22 @@ public final class TranslucentUnionChecks {
     }
 
     /** Only the square fixture and production helper are child-first; utility classes stay real. */
-    private static final class FixtureLoader extends ClassLoader {
-        FixtureLoader() { super(TranslucentUnionChecks.class.getClassLoader()); }
+    static final class FixtureLoader extends ClassLoader {
+        private final Map<String, byte[]> fixtures;
+        FixtureLoader() { this(Map.of()); }
+        FixtureLoader(Map<String, byte[]> fixtures) {
+            super(TranslucentUnionChecks.class.getClassLoader());
+            this.fixtures = Map.copyOf(fixtures);
+        }
         @Override protected synchronized Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-            if (!name.equals(SQUARE.replace('/', '.')) && !name.startsWith(HELPER.replace('/', '.'))) {
+            if (!fixtures.containsKey(name) && !name.equals(SQUARE.replace('/', '.')) && !name.startsWith(HELPER.replace('/', '.'))) {
                 return super.loadClass(name, resolve);
             }
             Class<?> result = findLoadedClass(name);
             if (result == null) {
                 try {
-                    byte[] bytes = name.equals(SQUARE.replace('/', '.')) ? squareFixture() : resource(name.replace('.', '/'));
+                    byte[] bytes = fixtures.containsKey(name) ? fixtures.get(name)
+                            : name.equals(SQUARE.replace('/', '.')) ? squareFixture() : resource(name.replace('.', '/'));
                     result = defineClass(name, bytes, 0, bytes.length);
                 } catch (Exception error) { throw new ClassNotFoundException(name, error); }
             }
@@ -113,7 +120,7 @@ public final class TranslucentUnionChecks {
     }
 
     /** Extract instructions at runtime; no engine method bodies are committed in this test. */
-    private static MethodHandle extract(FixtureLoader loader, byte[] bytes, boolean woven) throws Throwable {
+    static MethodHandle extract(FixtureLoader loader, byte[] bytes, boolean woven) throws Throwable {
         List<Op> ops = instructions(bytes);
         int add = -1, helper = -1, contains = 0;
         for (int i = 0; i < ops.size(); i++) {
