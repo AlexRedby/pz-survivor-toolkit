@@ -72,6 +72,17 @@ class BenchmarkViewportStagingTests(unittest.TestCase):
                 patch.object(optimizer_profile, 'stage', side_effect=AssertionError('Control must not enter full optimizer stage')):
             benchmark.stage(project, output, game, jdk, selection, {}, runtime)
 
+    def test_callback_capture_requires_explicit_stage_capture(self):
+        selection = self.fixture('drive')[4]
+        for value in (True, 1, 'true', None):
+            selection['options']['callback_profile'] = value
+            with self.assertRaisesRegex(ValueError, 'callback_profile'):
+                benchmark.validate(selection)
+        selection['options'].update(stage_profile=True, callback_profile=True)
+        benchmark.validate(selection)
+        selection['options']['callback_profile'] = False
+        benchmark.validate(selection)
+
     def test_seed_native_drive_and_optimized_drive_stage_the_same_guarded_observer(self):
         for case, enabled in (('seed', False), ('drive', False), ('drive', True)):
             with self.subTest(case=case, enabled=enabled):
