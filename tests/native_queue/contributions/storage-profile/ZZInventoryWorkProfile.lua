@@ -1,6 +1,8 @@
 -- Passive timings around the actual selected pane renderer, with native items.
 local selection=require 'QueueTestSelection'
-assert(selection.cases[1]=='inventory-work')
+local sessionContext=#selection.cases>1 and require('StorageProfileSession').context()or nil
+assert((sessionContext and sessionContext.case or selection.cases[1])=='inventory-work')
+local Events=sessionContext and sessionContext.events or Events
 local Lookup=require 'ReceiptLookupNative'
 local freshnessOptions=require 'BetterContainers/_Options'
 local entered,starting,started,done=false,false,false,false
@@ -8,6 +10,7 @@ local stage,since,phaseIndex,freshnessIndex,began='setup',0,0,1,0
 local owned,food,foodSet,phases,restores={},{},{},{},{}
 local player,inventory,page,pane,group,active,lookup,lookupBag,emptyBag,nested,first,last
 local originalMode,initialIds,iconOriginal,iconWrapper,rendererFailure,renderObserver,originalFreshnessOptions
+local fillVisibility
 local sizes,modes,views={100,10000},{'clean','vanilla'},{'collapsed-visible','collapsed-clipped','expanded-clipped'}
 for _,size in ipairs(sizes)do for _,mode in ipairs(modes)do for _,view in ipairs(views)do
  phases[#phases+1]={size=size,mode=mode,view=view,freshness=true}
@@ -48,6 +51,21 @@ local function restorePane()
  active=nil
  for i=#restores,1,-1 do local r=restores[i];assert(r.owner[r.key]==r.wrapper,'observer changed');r.owner[r.key]=r.raw end
  restores={};renderObserver=nil
+end
+local function restoreFillVisibility()
+ if not fillVisibility then return end
+ local saved=fillVisibility
+ saved.pane:setVisible(saved.visible)
+ assert(saved.pane:getIsVisible()==saved.visible,'fill pane visibility not restored')
+ fillVisibility=nil
+end
+local function beginFill()
+ assert(not fillVisibility and not active and #restores==0,'fill overlaps measured observers')
+ local owner=getPlayerInventory(0).inventoryPane
+ fillVisibility={pane=owner,visible=owner:getIsVisible(),from=#food,target=phases[phaseIndex].size,index=phaseIndex}
+ owner:setVisible(false);assert(not owner:getIsVisible(),'fill pane remained visible')
+ stage='fill'
+ log('FILL_BEGIN',{index=phaseIndex,from=#food,target=fillVisibility.target,measurement=false,paneHidden=true})
 end
 local function summary(values)
  local sorted,total,zeros={},0,0
@@ -166,9 +184,10 @@ local function endPhase()
   scrollY=pane:getYScroll(),width=pane:getWidth(),height=pane:getHeight(),groupObjects=actualCount(group)})
  restorePane();phaseIndex=phaseIndex+1
  if not phases[phaseIndex]then stage='freshness';since=now()
- elseif #food<phases[phaseIndex].size then stage='fill'else configure()end
+ elseif #food<phases[phaseIndex].size then beginFill()else configure()end
 end
 local function cleanup()
+ restoreFillVisibility()
  restorePane()
  assert(ISInventoryItem.renderItemIcon==iconWrapper,'icon observer changed');ISInventoryItem.renderItemIcon=iconOriginal
  for _,item in ipairs(owned)do assert(item:getContainer()==inventory);inventory:Remove(item)end
@@ -181,6 +200,7 @@ local function cleanup()
  log('WORK_RESTORED',{ownedRemoved=#owned,foodRemoved=#food,originalItems=n,observers=true,
   mode=CleanUI_isCleanInventoryUIEnabled()==originalMode,freshnessOptions=true,phases=#phases,lookupObjectsPreserved=true})
  log('COMPLETE');done=true
+ if sessionContext then sessionContext.finish(true)end
 end
 local function setup()
  assert(not isClient()and not isServer(),'SP profile required')
@@ -213,13 +233,22 @@ local function tick()
     emptyContainer=emptyBag:getInventory(),expectedCount=4800,log=function(kind,row)log('WORK_'..kind,row)end}
    stage='lookup'
   end
- elseif stage=='lookup'then if lookup:tick()then phaseIndex=1;stage='fill'end
+ elseif stage=='lookup'then if lookup:tick()then phaseIndex=1;beginFill()end
  elseif stage=='fill'then
+  assert(fillVisibility and getPlayerInventory(0).inventoryPane==fillVisibility.pane
+   and not fillVisibility.pane:getIsVisible()and not active and #restores==0,'fill pane/measurement state changed')
   for _=1,100 do if #food<phases[phaseIndex].size then
    local item=assert(inventory:AddItem('Base.Apple'));item:setAge(0)
    food[#food+1]=item;foodSet[item]=true;owned[#owned+1]=item
   end end
-  if #food==phases[phaseIndex].size then configure()end
+  if #food<phases[phaseIndex].size and #food%1000==0 then
+   log('FILL_PROGRESS',{index=phaseIndex,count=#food,target=phases[phaseIndex].size,measurement=false})
+  end
+  if #food==phases[phaseIndex].size then
+   local saved=fillVisibility;restoreFillVisibility()
+   log('FILL_COMPLETE',{index=phaseIndex,from=saved.from,target=#food,measurement=false,visibilityRestored=true})
+   configure()
+  end
  elseif stage=='warm'then
   if phases[phaseIndex].view~='collapsed-visible'then pane:setYScroll(-pane:getScrollHeight())end
   if now()-since>=1500 then beginPhase()end
@@ -261,6 +290,7 @@ Events.OnTick.Add(function()
  local ok,error=pcall(tick)
  if not ok then
   local restored,restoreError=pcall(function()
+   restoreFillVisibility()
    restoreFreshnessOptions()
    restorePane()
    if iconWrapper and ISInventoryItem.renderItemIcon==iconWrapper then ISInventoryItem.renderItemIcon=iconOriginal end
@@ -268,5 +298,6 @@ Events.OnTick.Add(function()
    if originalMode~=nil then CleanUI_setCleanInventoryUIEnabled(originalMode)end
   end)
   log('FAIL',{stage=stage,phase=phaseIndex,error=tostring(error),restored=restored,restoreError=tostring(restoreError)});done=true
+  if sessionContext then sessionContext.quarantine(error)end
  end
 end)

@@ -28,14 +28,15 @@ function P.receipt(payload, packet, stage, loaded, expectedSamples)
    assert(record.icon and record.icon.kind == 'item' and record.icon.value == F.ft, 'Persisted icon differs')
    for key, value in pairs(F.appearance.color) do assert(record.color and record.color[key] == value, 'Persisted color differs') end
   end
-  local default, custom = record.entries[F.identity(packet)], record.entries[F.identity(packet, true)]
-  local counts = F.counts('initial')
-  if (default and default.n or 0) ~= counts[i] or (custom and custom.n or 0) ~= counts[i + 2] then return end
   for key, entry in pairs(record.entries) do
    assert(entry.ft == F.ft and entry.key == key and entry.cat == packet.category, 'Persisted item key/category differs')
    assert(key == F.identity(packet) and entry.name == nil
     or key == F.identity(packet, true) and entry.name == F.custom, 'Persisted custom/default names differ')
+   F.assertIdentity(entry, packet.identities[key == F.identity(packet) and 'default' or 'custom'], 'Persisted Manifest')
   end
+  local default, custom = record.entries[F.identity(packet)], record.entries[F.identity(packet, true)]
+  local counts = F.counts('initial')
+  if (default and default.n or 0) ~= counts[i] or (custom and custom.n or 0) ~= counts[i + 2] then return end
   if expectedSamples and record.sampledAt ~= expectedSamples[i] then return end
   samples[i], ages[i] = record.sampledAt, now - record.sampledAt
   if ages[i] < 0 or not loaded and ages[i] < 500 then return end
@@ -49,7 +50,7 @@ function P.prepare(player)
  local state, packet = F.prepare(player)
  local meta = ModData.getOrCreate(P.STORE)
  for key in pairs(meta) do meta[key] = nil end
- meta.schema, meta.packet, meta.home, meta.tokens = 1, packet, home, {}
+ meta.schema, meta.packet, meta.home, meta.tokens = 2, packet, home, {}
  for i, object in ipairs(state.boxes) do
   local token = 'WarehousePersistence:' .. tostring(packet.ids[1]) .. ':' .. tostring(i)
   meta.tokens[i] = token; object:getModData().PZSTWarehousePersistenceToken = token

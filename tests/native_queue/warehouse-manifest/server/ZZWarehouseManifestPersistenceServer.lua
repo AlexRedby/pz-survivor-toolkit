@@ -24,7 +24,7 @@ local function restored()
  if case ~= 'persist-reload' or cold or done then return end
  local ok, problem = pcall(function()
   meta = assert(ModData.get(P.STORE), 'Native world has no persistence fixture descriptor')
-  assert(meta.schema == 1 and meta.stage == 'readyForReload' and meta.savedSamples, 'World is not a completed warehouse seed')
+  assert(meta.schema == 2 and meta.stage == 'readyForReload' and meta.savedSamples, 'World is not a current completed warehouse seed; prepare a fresh seed')
   cold = assert(P.current(Authority.getStore(), meta, 'cold', false, meta.savedSamples), 'Persisted last-known samples/counts were not restored before sampling')
   emit('COLD', cold)
  end)
@@ -119,7 +119,8 @@ Events.OnTick.Add(function()
   else
    if case == 'persist-seed' then
     emit('PERSISTED', {schema = Authority.getStore().schema, samples = meta.savedSamples,
-     counts = F.counts('initial'), ids = meta.packet.ids, boxes = meta.packet.boxes, loaded = false, completedAt = getTimestampMs()})
+     counts = F.counts('initial'), ids = meta.packet.ids, boxes = meta.packet.boxes,
+     identities = meta.packet.identities, category = meta.packet.category, loaded = false, completedAt = getTimestampMs()})
    else
     assert(P.native(meta, players.client1), 'Reload exact native IDs changed before cleanup')
     local boxes = assert(P.reacquire(meta)); F.cleanup({boxes = boxes})

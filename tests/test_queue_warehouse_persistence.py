@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import warehouse_manifest as common
 from queue_checks.adapters import warehouse_persistence as adapter
+from tests import test_queue_warehouse_manifest as identity_fixture
 try:
     from lupa.lua51 import LuaRuntime
 except ImportError:
@@ -24,13 +25,14 @@ class WarehousePersistenceTests(unittest.TestCase):
         self.root = Path(temp.name)
         self.selection = dict(suite=common.SUITE, cases=['persist-seed'], kind='mp', mode='toolkit',
                               clients=2, languages=['EN', 'RU'], mods=common.MODS, options={'mp_host': True})
-        self.packet = dict(ids=[101, 102, 103, 104], category='Material',
+        self.packet = dict(ids=[101, 102, 103, 104], category='Material', identities=identity_fixture.native_identities(),
                            boxes=[dict(x=x, y=20, z=0, object=1, ci=0, key=f'{x},20,0', id=f'{x},20,0/1/0') for x in (10, 11)])
         self.prepared = dict(packet=self.packet, home=dict(x=12, y=20, z=0), away=dict(x=612, y=220, z=0))
         self.samples = dict(initial=1000, unloaded=1500, revisited=3000, rejoined=3500, saved=4000, restored=4000)
         self.rows = {}
         self.seed = dict(schema=2, samples=[4000, 4000], counts=[2, 1, 1, 0], ids=self.packet['ids'],
-                         boxes=self.packet['boxes'], loaded=False, completedAt=6000)
+                         boxes=self.packet['boxes'], identities=self.packet['identities'], category=self.packet['category'],
+                         loaded=False, completedAt=6000)
 
     def receipt(self, stage, role=None):
         loaded = stage in ('initial', 'revisited', 'rejoined')
@@ -115,6 +117,30 @@ class WarehousePersistenceTests(unittest.TestCase):
             prepared['packet']['ids'][0] = 999; self.flush()
             self.assertTrue(self.verify()['issues'])
 
+    def test_reload_preserves_exact_authoritative_native_state_descriptors(self):
+        self.samples['revisited'] = 7000
+        self.build('persist-reload');self.selection['options']['world_template'] = '/tmp/sealed-native-world'
+        prepared = next(value for event, value in self.rows['server'] if event == 'PREPARED')
+        identity = prepared['packet']['identities']['default']
+        identity['ingredient'] = True
+        identity['key'] = identity['key'].replace(':ingredient:false', ':ingredient:true')
+        self.flush()
+        with patch.object(adapter, '_seed', return_value=(self.root / 'seed', copy.deepcopy(self.seed))):
+            self.assertIn('Reload replaced original persisted native item states', self.verify()['issues'])
+
+    def test_seed_rejects_missing_native_state_and_state_key_disagreement(self):
+        for mutation in ('missing', 'state', 'persisted'):
+            self.build()
+            prepared = self.rows['server'][0][1]['packet']
+            if mutation == 'missing':
+                del prepared['identities']
+            elif mutation == 'state':
+                prepared['identities']['default']['cookingState'] = 'cooked'
+            else:
+                next(value for event, value in self.rows['server'] if event == 'PERSISTED')['identities'] = {}
+            self.flush()
+            with self.subTest(mutation=mutation): self.assertTrue(self.verify()['issues'])
+
     def test_wrong_last_known_age_counts_bool_and_missing_screenshots_fail(self):
         for key, value in [('counts', [True, 1, 1, 0]), ('loaded', True), ('samples', [0, 0]), ('ages', [-1, -1]),
                            ('worldAbsent', False), ('nativeIds', True), ('windowCount', True)]:
@@ -181,9 +207,9 @@ LootSorter = {toggleManifest = function()
 end}
 fixture = {ft = 'Base.Nails', custom = 'Warehouse custom nails', appearance = {
  name = 'Warehouse fixture A', icon = {kind = 'item', value = 'Base.Nails'}, color = {r = .25, g = .5, b = .75, a = 1}},
- identity = function(_, custom) return custom and 'custom' or 'default' end,
+ identity = function(_, custom) return custom and 'custom' or 'default' end, assertIdentity = function() end,
  counts = function() return {2, 1, 1, 0} end}
-packet = {category = 'Material', boxes = {}}
+packet = {category = 'Material', boxes = {}, identities = {default = {}, custom = {}}}
 payload = {schema = 2, revision = 1, containers = {}}
 for i = 1, 2 do
  local point = {id = tostring(i), key = tostring(i), x = 9 + i, y = 20, z = 0, object = 1, ci = 0}
@@ -245,6 +271,34 @@ handlers.OnTick()
         lua.execute("now = 10700; handlers.OnTick(); now = 11600; handlers.OnTick()")
         self.assertEqual(lua.eval('stateCount()'), 2)
         self.assertEqual(lua.eval('shots'), 2)
+
+
+@unittest.skipIf(LuaRuntime is None, 'Lupa is required to execute the persistence native menu lifecycle')
+class WarehousePersistenceNativeIdentityTests(unittest.TestCase):
+    def test_last_known_and_restored_records_keep_authoritative_native_states(self):
+        lua = identity_fixture.WarehouseManifestIdentityTests().fixture()
+        lua.execute("selection.cases={'persist-seed'};package.preload['WarehouseManifestFixture']=function()return fixture end")
+        lua.globals().persistence = lua.execute((ROOT / 'tests/native_queue/warehouse-manifest/shared/WarehouseManifestPersistence.lua').read_text())
+        lua.execute('''
+local payload=payloadFromSeed()
+assert(persistence.receipt(payload,packet,'initial',true))
+for _,record in pairs(payload.containers)do record.loaded=false end
+assert(persistence.receipt(payload,packet,'unloaded',false,{1000,1000}))
+local function primitive(value)
+ if type(value)~='table'then return value end
+ local result={};for key,item in pairs(value)do result[key]=primitive(item)end;return result
+end
+local savedPacket,savedPayload=primitive(packet),primitive(payload)
+assert(savedPacket.identities.default.cookingState==false,'known false native state was dropped')
+assert(persistence.receipt(savedPayload,savedPacket,'restored',false,{1000,1000}))
+local entry=savedPayload.containers[savedPacket.boxes[1].id].entries[fixture.identity(savedPacket)]
+entry.ingredient=true
+assert(not pcall(persistence.receipt,savedPayload,savedPacket,'restored',false,{1000,1000}),
+ 'restored record accepted changed native state with the original key')
+savedPacket=primitive(packet);savedPacket.identities=nil
+assert(not pcall(persistence.receipt,payload,savedPacket,'restored',false,{1000,1000}),
+ 'legacy seed without frozen native states was accepted')
+''')
 
 
 @unittest.skipIf(LuaRuntime is None, 'Lupa is required to execute the persistence native menu lifecycle')

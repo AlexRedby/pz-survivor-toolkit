@@ -17,6 +17,19 @@ except ImportError:
     LuaRuntime = None
 
 
+def native_identities(category='Material'):
+    """Synthetic native-shaped descriptors; source lifecycle tests use real Model.item."""
+    result = {}
+    for kind, name in (('default', ''), ('custom', adapter.CUSTOM)):
+        row = dict(ft='Base.Nails', cat=category, n=1, ingredient=False, cookingState=False, usageState='00000000000000')
+        if name:
+            row['name'] = name
+        row['key'] = ''.join(str(len(value)) + ':' + value for value in ('Base.Nails', name, category, ''))
+        row['key'] += ':ingredient:false:cookingState:false:usageState:00000000000000'
+        result[kind] = row
+    return result
+
+
 class WarehouseManifestTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -25,7 +38,7 @@ class WarehouseManifestTests(unittest.TestCase):
         self.selection = dict(suite=adapter.SUITE, cases=['snapshot'], kind='mp', mode='toolkit',
                               clients=2, languages=['EN', 'RU'], mods=adapter.MODS, options={'mp_host': True})
         self.prepared = dict(boxes=[dict(x=x, y=20, z=0, object=1, ci=0, key=f'{x},20,0', id=f'{x},20,0/1/0') for x in (10, 11)],
-                             ids=[101, 102, 103, 104], category='Material')
+                             ids=[101, 102, 103, 104], category='Material', identities=native_identities())
         self.mutated = dict(removedId=101, customId=104, addedIds=[105, 106], changedAt=2000)
         self.transfer = dict(id=104, source='11,20,0/1/0', destination='client1')
         self.rows = {}
@@ -111,6 +124,26 @@ class WarehouseManifestTests(unittest.TestCase):
             adapter.validate(dict(self.selection, kind='sp', clients=1, languages=[language], options={}))
         with self.assertRaises(ValueError):
             adapter.validate(dict(self.selection, kind='sp', clients=1, languages=['EN']))
+
+    def test_current_pack_uses_toolkit_categories_without_organized_categories(self):
+        from queue_checks import native
+        mods = native._metadata(ROOT / 'SurvivorQoL-selected.ini')['Mods'].split(';')
+        self.assertNotIn('organizedCategories_core', mods)
+        adapter.validate(dict(self.selection, mods=mods))
+        adapter.validate(dict(self.selection, mods=mods, kind='sp', clients=1, languages=['EN'], options={}))
+
+    def test_authoritative_native_state_schema_and_full_keys_fail_closed(self):
+        self.write(); original = copy.deepcopy(self.rows)
+        for field, bad in (('key', 'legacy-key'), ('n', True), ('n', 2), ('name', 'Localized default'),
+                           ('ingredient', 0), ('cookingState', True), ('fluidState', 'fuel'),
+                           ('usageState', 'invalid'), ('usageState', '????'), ('mediaIndex', True), ('extra', False)):
+            self.rows = copy.deepcopy(original)
+            self.rows['server'][0][1]['identities']['default'][field] = bad
+            self.flush()
+            with self.subTest(field=field): self.assertTrue(self.result()['issues'])
+        self.rows = copy.deepcopy(original)
+        del self.rows['server'][0][1]['identities']
+        self.flush(); self.assertTrue(self.result()['issues'])
 
     def test_fixture_dependencies_staged_for_every_role_and_source_sealed(self):
         runtime = {'roles': {role: {'cache': str(self.root / role)} for role in ('server', 'client1', 'client2')}}
@@ -230,6 +263,160 @@ class WarehouseManifestTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertTrue(self.result()['issues'])
                 self.assertFalse(adapter.complete(self.selection, 'client1', path.read_text()))
+
+
+@unittest.skipIf(LuaRuntime is None, 'Lupa is required to execute the native fixture lifecycle')
+class WarehouseManifestIdentityTests(unittest.TestCase):
+    def fixture(self):
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.execute(r'''
+PZSurvivorToolkit={};selection={cases={'snapshot'}}
+ItemType={FOOD='food'}
+local function list(values)
+ values=values or{};values.size=function(self)return #self end;values.get=function(self,i)return self[i+1]end
+ return values
+end
+local script={isItemType=function()return false end}
+local nextId=100
+local function pool()
+ local result={items=list()}
+ function result:getItems()return self.items end
+ function result:setType(value)self.kind=value end
+ function result:getType()return self.kind end
+ function result:setCapacity()end;function result:setExplored()end
+ function result:AddItem(kind)
+  nextId=nextId+1
+  local item={id=nextId,ft=kind,container=self,name='Nails',category='Material'}
+  function item:getID()return self.id end;function item:getFullType()return self.ft end
+  function item:getContainer()return self.container end;function item:getScriptItem()return script end
+  function item:IsFood()return false end
+  function item:getDisplayCategory()return self.category end
+  function item:isCustomName()return self.custom==true end
+  function item:setCustomName(v)self.custom=v end
+  function item:setName(v)self.name=v end
+  function item:getName()return self.name end;function item:getDisplayName()return self.name end
+  self.items[#self.items+1]=item;return item
+ end
+ function result:getItemById(id)for _,item in ipairs(self.items)do if item.id==id then return item end end end
+ function result:Remove(item)for i,value in ipairs(self.items)do if value==item then table.remove(self.items,i);item.container=nil;return end end end
+ return result
+end
+local squares={}
+cell={getGridSquare=function(_,x,y,z)
+ local key=x..','..y..','..z
+ if not squares[key]then
+  local square={x=x,y=y,z=z,objects=list()}
+  function square:getX()return self.x end;function square:getY()return self.y end;function square:getZ()return self.z end
+  function square:canStand()return true end;function square:isFree()return true end
+  function square:getObjects()return self.objects end
+  function square:AddSpecialObject(object)self.objects[#self.objects+1]=object end
+  squares[key]=square
+ end
+ return squares[key]
+end}
+getCell=function()return cell end
+player={inventory=pool(),getSquare=function()return cell:getGridSquare(10,20,0)end,
+ getInventory=function(self)return self.inventory end}
+instanceItem=function(kind)return pool():AddItem(kind)end
+IsoThumpable={new=function(_,square)
+ local object={square=square,pool=pool(),data={}}
+ function object:getSquare()return self.square end
+ function object:getContainer()return self.pool end
+ function object:getObjectIndex()for i,value in ipairs(self.square.objects)do if value==self then return i-1 end end end
+ function object:getModData()return self.data end;function object:hasModData()return true end
+ function object:setIsContainer()end;function object:setBlockAllTheSquare()end
+ return object
+end}
+LootSorter={isAuthority=function()return true end,serverFns={addCoord=function()return 'ok'end}}
+isServer=function()return false end
+package.preload['QueueTestSelection']=function()return selection end
+package.preload['PZSurvivorToolkit/ItemCategories']=function()return {prepareItem=function()end}end
+package.preload['PZSurvivorToolkit/TagCustomization']=function()return {itemDelta=function(item)return item.delta end}end
+package.preload['PZSurvivorToolkit/ItemCookingTags']=function()return {read=function()return false end}end
+package.preload['PZSurvivorToolkit/ItemFluidTags']=function()return {read=function()return nil end}end
+package.preload['PZSurvivorToolkit/ItemUsageTags']=function()return {
+ read=function(_,item)return item.usage or '00000000000000'end,encode=function(value)return value end}end
+package.preload['PZSurvivorToolkit/ContainerAppearance']=function()return {apply=function()end}end
+''')
+        shared = ROOT / 'PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit'
+        for name in ('ItemCookingStates', 'ManifestModel'):
+            lua.execute("package.preload[%r]=function()\n%s\nend" % ('PZSurvivorToolkit/' + name, (shared / (name + '.lua')).read_text()))
+        lua.execute("model=require('PZSurvivorToolkit/ManifestModel')")
+        lua.globals().fixture = lua.execute((ROOT / 'tests/native_queue/warehouse-manifest/shared/WarehouseManifestFixture.lua').read_text())
+        lua.execute('state,packet=fixture.prepare(player)')
+        lua.execute('''
+getTimestampMs=function()return 2000 end
+function payloadFromSeed()
+ local payload={schema=model.SCHEMA,revision=1,containers={}}
+ for i,point in ipairs(packet.boxes)do
+  local record={kind='crate',name=i==1 and fixture.appearance.name or 'Warehouse fixture B',
+   loaded=true,sampledAt=1000,entries={},icon=i==1 and fixture.appearance.icon or nil,
+   color=i==1 and fixture.appearance.color or nil}
+  for key,value in pairs(point)do record[key]=value end
+  for kind,identity in pairs(packet.identities)do
+   if kind=='default'or i==1 then
+    local entry={};for key,value in pairs(identity)do entry[key]=value end
+    entry.n=kind=='default'and(i==1 and 2 or 1)or 1
+    record.entries[identity.key]=entry
+   end
+  end
+  payload.containers[point.id]=record
+ end
+ return payload
+end
+''')
+        return lua
+
+    def test_authority_uses_current_model_keys_from_exact_seeded_native_items(self):
+        lua = self.fixture()
+        lua.execute('''
+local ordinary=state.boxes[1]:getContainer():getItemById(packet.ids[1])
+local named=state.boxes[1]:getContainer():getItemById(packet.ids[4])
+assert(fixture.identity(packet)==model.item(ordinary).key,'default fixture key omitted current native states')
+assert(fixture.identity(packet,true)==model.item(named).key,'custom fixture key omitted current native states')
+assert(fixture.identity(packet)~=model.identity(fixture.ft,nil,packet.category),'test failed to exercise state suffixes')
+assert(fixture.native(state.boxes,packet,'initial',player))
+assert(fixture.snapshot(payloadFromSeed(),packet,'initial'))
+''')
+        def primitive(value):
+            return {key: primitive(item) for key, item in value.items()} if hasattr(value, 'items') else value
+        adapter._item_identities(primitive(lua.globals().packet.identities), lua.globals().packet.category)
+
+    def test_native_key_validator_preserves_utf16_custom_tag_state_encoding(self):
+        lua = self.fixture()
+        lua.execute('''
+for kind,id in pairs({default=packet.ids[1],custom=packet.ids[4]})do
+ local item=state.boxes[1]:getContainer():getItemById(id)
+ item.delta={['category:tool']='remove',['category:😀']='add'}
+ packet.identities[kind]=model.item(item)
+end
+''')
+        def primitive(value):
+            return {key: primitive(item) for key, item in value.items()} if hasattr(value, 'items') else value
+        # This runtime indexes UTF-8; native Kahlua counts UTF-16. Use a native
+        # shaped key from the same captured primitive state for that boundary.
+        value = primitive(lua.globals().packet.identities)
+        for row in value.values():
+            tag = '13:category:tool:remove11:category:😀:add'
+            row['tagKey'] = tag
+            row['key'] = row['key'].split(':usageState:')[0] + ':usageState:' + row['usageState'] + str(len(tag.encode('utf-16-le')) // 2) + ':' + tag
+        adapter._item_identities(value, lua.globals().packet.category)
+
+    def test_snapshot_and_native_guards_reject_state_drift_and_legacy_keys(self):
+        lua = self.fixture()
+        lua.execute('''
+local payload=payloadFromSeed();local record=payload.containers[packet.boxes[1].id]
+record.entries[fixture.identity(packet)].cookingState=true
+assert(not pcall(fixture.snapshot,payload,packet,'initial'),'snapshot accepted changed native state under the same key')
+payload=payloadFromSeed();record=payload.containers[packet.boxes[1].id]
+local entry=record.entries[fixture.identity(packet)]
+record.entries[fixture.identity(packet)]=nil
+entry.key=model.identity(fixture.ft,nil,packet.category);record.entries[entry.key]=entry
+assert(not pcall(fixture.snapshot,payload,packet,'initial'),'snapshot accepted a legacy bare key')
+local ordinary=state.boxes[1]:getContainer():getItemById(packet.ids[1])
+ordinary.usage='00000000000001'
+assert(not pcall(fixture.native,state.boxes,packet,'initial',player),'native identity ignored changed usage state')
+''')
 
 
 @unittest.skipIf(LuaRuntime is None, 'Lupa is required to execute the native fixture lifecycle')

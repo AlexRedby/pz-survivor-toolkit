@@ -6,7 +6,30 @@ local Appearance = require 'PZSurvivorToolkit/ContainerAppearance'
 local F = {module = 'WarehouseManifestTest', ft = 'Base.Nails', custom = 'Warehouse custom nails'}
 F.appearance = {name = 'Warehouse fixture A', icon = {kind = 'item', value = 'Base.Nails'},
  color = {r = .25, g = .5, b = .75, a = 1}}
-function F.identity(packet, custom) return Model.identity(F.ft, custom and F.custom or nil, packet.category) end
+function F.identity(packet, custom)
+ local identities = assert(packet.identities, 'Warehouse fixture lacks authoritative item identities; prepare a fresh seed')
+ local entry = assert(identities[custom and 'custom' or 'default'], 'Warehouse fixture item identity absent')
+ assert(type(entry.key) == 'string' and entry.key ~= '', 'Warehouse fixture item key absent')
+ return entry.key
+end
+local function same(a, b)
+ if type(a) ~= type(b) then return false end
+ if type(a) ~= 'table' then return a == b end
+ for key, value in pairs(a) do if not same(value, b[key]) then return false end end
+ for key, value in pairs(b) do if not same(value, a[key]) then return false end end
+ return true
+end
+function F.assertIdentity(entry, expected, label)
+ assert(type(entry) == 'table' and type(expected) == 'table', label .. ' missing item identity')
+ -- Aggregate count is validated by each phase. All remaining native Model.item
+ -- fields, including known false states and tag deltas, belong to the identity.
+ for key, value in pairs(expected) do
+  if key ~= 'n' then assert(same(entry[key], value), label .. ' item state differs: ' .. key) end
+ end
+ for key, value in pairs(entry) do
+  if key ~= 'n' then assert(same(value, expected[key]), label .. ' unexpected item state: ' .. key) end
+ end
+end
 function F.coord(square) return square:getX() .. ',' .. square:getY() .. ',' .. square:getZ() end
 local function descriptor(object)
  local square = object:getSquare()
@@ -24,7 +47,7 @@ function F.prepare(player)
  end end
  assert(#squares == 2, 'Two free loaded warehouse fixture tiles are required')
  local state = {boxes = {}, ids = {}}
- local packet = {boxes = {}, ids = state.ids, category = assert(Model.item(assert(instanceItem(F.ft))).cat)}
+ local packet = {boxes = {}, ids = state.ids}
  for i, square in ipairs(squares) do
   local object = IsoThumpable.new(getCell(), square, 'carpentry_01_16', false, {})
   object:setIsContainer(true); object:setBlockAllTheSquare(true)
@@ -45,6 +68,13 @@ function F.prepare(player)
  local custom = assert(state.boxes[1]:getContainer():AddItem(F.ft))
  custom:setName(F.custom); custom:setCustomName(true); state.ids[4] = custom:getID()
  if isServer() then sendAddItemToContainer(state.boxes[1]:getContainer(), custom) end
+ local ordinary = assert(state.boxes[1]:getContainer():getItemById(state.ids[1]))
+ packet.identities = {default = assert(Model.item(ordinary)), custom = assert(Model.item(custom))}
+ local normalIdentity, customIdentity = packet.identities.default, packet.identities.custom
+ packet.category = assert(normalIdentity.cat, 'Native fixture category absent')
+ assert(normalIdentity.ft == F.ft and normalIdentity.name == nil and customIdentity.ft == F.ft
+  and customIdentity.cat == packet.category and customIdentity.name == F.custom
+  and normalIdentity.key ~= customIdentity.key, 'Native default/custom fixture identities differ')
  state.packet = packet
  return state, packet
 end
@@ -76,6 +106,7 @@ function F.native(boxes, packet, phase, player)
    if not wanted[item:getID()] or item:getFullType() ~= F.ft then return end
    assert((item:getID() == packet.ids[4]) == item:isCustomName(), 'Native custom-name flag changed')
    if item:isCustomName() then assert(item:getName() == F.custom, 'Native custom name changed') end
+   F.assertIdentity(Model.item(item), packet.identities[item:isCustomName() and 'custom' or 'default'], 'Native warehouse')
    wanted[item:getID()] = nil
   end
   for _ in pairs(wanted) do return end
@@ -83,6 +114,8 @@ function F.native(boxes, packet, phase, player)
  if phase == 'transferred' and player then
   local custom = player:getInventory():getItemById(packet.ids[4])
   if not custom or custom:getFullType() ~= F.ft or custom:getName() ~= F.custom then return end
+  assert(custom:isCustomName(), 'Withdrawn custom-name flag changed')
+  F.assertIdentity(Model.item(custom), packet.identities.custom, 'Withdrawn warehouse')
  end
  return {phase = phase, counts = F.counts(phase), ids = packet.ids, addedIds = packet.addedIds or {}}
 end
@@ -121,13 +154,14 @@ function F.snapshot(payload, packet, phase)
    assert(record.icon and record.icon.kind == 'item' and record.icon.value == F.ft, 'Manifest icon differs')
    for key, value in pairs(F.appearance.color) do assert(record.color and record.color[key] == value, 'Manifest color differs') end
   end
-  local default, custom = record.entries[F.identity(packet)], record.entries[F.identity(packet, true)]
-  if (default and default.n or 0) ~= counts[i] or (custom and custom.n or 0) ~= counts[i + 2] then return end
   for key, entry in pairs(record.entries) do
    assert(entry.ft == F.ft and entry.key == key and entry.cat == packet.category, 'Manifest entry identity/category differs')
    assert(key == F.identity(packet) and entry.name == nil
     or key == F.identity(packet, true) and entry.name == F.custom, 'Manifest leaked a localized default or changed custom label')
+   F.assertIdentity(entry, packet.identities[key == F.identity(packet) and 'default' or 'custom'], 'Manifest snapshot')
   end
+  local default, custom = record.entries[F.identity(packet)], record.entries[F.identity(packet, true)]
+  if (default and default.n or 0) ~= counts[i] or (custom and custom.n or 0) ~= counts[i + 2] then return end
   samples[i] = record.sampledAt
  end
  return {phase = phase, revision = payload.revision, samples = samples, counts = counts}

@@ -129,9 +129,10 @@ def verify(root, selection, catalog):
         ids = packet['ids']
         if type(ids) is not list or len(ids) != 4 or len(set(ids)) != 4 or any(type(value) is not int for value in ids):
             raise ValueError('Persistence exact native item IDs absent')
-        if (set(packet) != {'boxes', 'ids', 'category'} or type(packet['category']) is not str or not packet['category']
+        if (set(packet) != {'boxes', 'ids', 'category', 'identities'} or type(packet['category']) is not str or not packet['category']
                 or type(packet['boxes']) is not list or len(packet['boxes']) != 2):
             raise ValueError('Persistence native container descriptors absent')
+        common._item_identities(packet['identities'], packet['category'])
         for point in packet['boxes']:
             if (type(point) is not dict or set(point) != {'x', 'y', 'z', 'object', 'ci', 'key', 'id'}
                     or any(type(point[key]) is not int for key in ('x', 'y', 'z', 'object', 'ci'))
@@ -175,7 +176,8 @@ def verify(root, selection, catalog):
                         or saved['id'] != f"{saved['key']}/{saved['object']}/0"):
                     raise ValueError('Persisted stable crate location differs')
             expected = dict(schema=2, samples=stage_values['saved']['samples'], counts=[2, 1, 1, 0], ids=ids,
-                            boxes=saved_boxes, loaded=False, completedAt=persisted.get('completedAt'))
+                            boxes=saved_boxes, identities=packet['identities'], category=packet['category'],
+                            loaded=False, completedAt=persisted.get('completedAt'))
             if not common._exact(persisted, expected) or not common._positive(persisted['completedAt']):
                 raise ValueError('Persisted world last-known receipt differs')
             evidence['persisted'] = persisted
@@ -189,6 +191,8 @@ def verify(root, selection, catalog):
             _receipt(cold_with_proof, 'cold', False)
             if ids != seed['ids'] or packet['boxes'] != seed['boxes']:
                 raise ValueError('Reload replaced original persisted crate/item identities')
+            if packet['category'] != seed['category'] or not common._exact(packet['identities'], seed['identities']):
+                raise ValueError('Reload replaced original persisted native item states')
             if cold['samples'] != seed['samples'] or cold['counts'] != seed['counts']:
                 raise ValueError('Cold authority did not restore exact persisted samples/counts')
             if stage_values['restored']['samples'] != seed['samples']:

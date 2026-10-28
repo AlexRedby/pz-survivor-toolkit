@@ -9,7 +9,7 @@ from .. import receipts
 
 SUITE = 'warehouse-manifest'
 MARKER = '[WAREHOUSE_MANIFEST] '
-MODS = ['PZSurvivorToolkit', 'EURY_CONTAINERS', 'organizedCategories_core']
+MODS = ['PZSurvivorToolkit', 'EURY_CONTAINERS']
 PHASES = ('initial', 'changed', 'transferred')
 COUNTS = ([2, 1, 1, 0], [1, 3, 0, 1], [1, 3, 0, 0])
 CUSTOM = 'Warehouse custom nails'
@@ -58,7 +58,7 @@ def validate(selection):
             or any(options.get(key) for key in ('world_template', 'seed_run', 'startup_connection'))
             or kind == 'mp' and options.get('mp_host') is not True
             or kind == 'sp' and options.get('mp_host')):
-        raise ValueError('Warehouse Manifest requires fresh SP or two-client menu Host, snapshot, Toolkit/BC/OC and EN/RU')
+        raise ValueError('Warehouse Manifest requires fresh SP or two-client menu Host, snapshot, Toolkit/BC and EN/RU')
 
 
 def sources(project, selection):
@@ -114,6 +114,56 @@ def _exact(value, expected):
     return value == expected
 
 
+def _item_identities(value, category):
+    """Validate frozen native Model.item descriptors, including known false states."""
+    if type(value) is not dict or set(value) != {'default', 'custom'}:
+        raise ValueError('Missing authoritative warehouse item identities')
+    required = {'key', 'ft', 'cat', 'n'}
+    optional = {'name', 'ingredient', 'cookingState', 'fluidState', 'usageState',
+                'tagDelta', 'tagKey', 'mediaId', 'mediaIndex'}
+    def units(text):
+        # Native Kahlua Model.identity counts UTF-16 code units.
+        return len(text.encode('utf-16-le')) // 2
+    for kind, row in value.items():
+        if (type(row) is not dict or not required <= set(row) or set(row) - required - optional
+                or row.get('ft') != 'Base.Nails' or row.get('cat') != category
+                or type(row.get('n')) is not int or row['n'] != 1
+                or type(row.get('key')) is not str or not row['key']
+                or kind == 'default' and 'name' in row
+                or kind == 'custom' and row.get('name') != CUSTOM):
+            raise ValueError('Invalid authoritative warehouse ' + kind + ' item identity')
+        if ('ingredient' in row and type(row['ingredient']) is not bool
+                or 'cookingState' in row and row['cookingState'] is not False and row['cookingState'] not in ('raw', 'cooked', 'burnt')
+                or 'fluidState' in row and row['fluidState'] not in ('none', 'beverage', 'alcoholic')
+                or 'usageState' in row and (type(row['usageState']) is not str
+                    or not re.fullmatch(r'(?:[01?]{4}|[01?]{10,14})', row['usageState']) or not re.search('[01]', row['usageState']))
+                or 'mediaIndex' in row and (type(row['mediaIndex']) is not int or row['mediaIndex'] < 0)
+                or 'mediaId' in row and (type(row['mediaId']) is not str or not row['mediaId'] or 'mediaIndex' not in row)):
+            raise ValueError('Invalid authoritative warehouse native state')
+        tag_key = ''
+        if 'tagDelta' in row or 'tagKey' in row:
+            delta = row.get('tagDelta')
+            if (type(delta) is not dict or not delta or type(row.get('tagKey')) is not str
+                    or any(type(key) is not str or not key or operation not in ('add', 'remove') for key, operation in delta.items())):
+                raise ValueError('Invalid authoritative warehouse tag delta')
+            tag_key = ''.join(str(units(key)) + ':' + key + ':' + delta[key]
+                              for key in sorted(delta, key=lambda text: text.encode('utf-16-be')))
+            if row['tagKey'] != tag_key:
+                raise ValueError('Authoritative warehouse tag key differs')
+        media = row.get('mediaId', '#' + str(row['mediaIndex']) if 'mediaIndex' in row else '')
+        expected = ''.join(str(units(part)) + ':' + part for part in (row['ft'], row.get('name', ''), category, media))
+        for field in ('ingredient', 'cookingState', 'fluidState', 'usageState'):
+            if field in row:
+                text = str(row[field]).lower() if type(row[field]) is bool else row[field]
+                expected += ':' + field + ':' + text
+        if tag_key:
+            expected += str(units(tag_key)) + ':' + tag_key
+        if row['key'] != expected:
+            raise ValueError('Authoritative warehouse item key omits/differs from native state')
+    if value['default']['key'] == value['custom']['key']:
+        raise ValueError('Default/custom warehouse identities overlap')
+
+
 def complete(selection, role, text):
     if selection.get('cases') in (['legacy-seed'], ['legacy-reload']):
         from . import warehouse_legacy
@@ -152,11 +202,12 @@ def verify(root, selection, catalog):
         logs = {role: (root / (role + '-launch.log')).read_text(errors='replace') for role in roles}
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else logs['client1']
         prepared = _one(authority, 'PREPARED')
-        if (set(prepared) != {'boxes', 'ids', 'category'} or type(prepared['boxes']) is not list
+        if (set(prepared) != {'boxes', 'ids', 'category', 'identities'} or type(prepared['boxes']) is not list
                 or len(prepared['boxes']) != 2 or type(prepared['ids']) is not list
                 or len(prepared['ids']) != 4 or any(type(value) is not int for value in prepared['ids'])
                 or len(set(prepared['ids'])) != 4 or type(prepared['category']) is not str or not prepared['category']):
             raise ValueError('Invalid authoritative preparation identities')
+        _item_identities(prepared['identities'], prepared['category'])
         for point in prepared['boxes']:
             if (type(point) is not dict or set(point) != {'x', 'y', 'z', 'object', 'ci', 'key', 'id'}
                     or any(type(point[key]) is not int for key in ('x', 'y', 'z', 'object', 'ci'))

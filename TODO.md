@@ -1,18 +1,15 @@
 # Shared in-game verification campaign
 
-Collect the outstanding native checks below into one coordinated campaign. Reuse compatible game sessions instead of launching once per TODO item; retain separate case evidence and unfinished gates. These are coverage blocks, not executable multi-suite jobs yet. Implementation/audit tasks below the campaign keep their acceptance requirements and join when ready.
+Collect the outstanding native checks below into one coordinated campaign. Reuse compatible game sessions instead of launching once per TODO item; retain separate case evidence and unfinished gates. The executable selections and remaining gates are mapped in `tests/native_queue/plans/in-game-campaign.example.json`; a block is not a claim of runtime coverage. Implementation/audit tasks below the campaign keep their acceptance requirements and join when ready.
 
 ## Preparation and fewer-launch execution
 
-- [ ] Freeze one current complete selected-pack snapshot, matching prepared Toolkit/Java/CleanUI/DAMN copies and explicit external inputs; finish relevant offline checks before starting the game. Recheck historical missing-source claims below against the actual lock. Do not drop selected mods to make full-pack checks launch, reuse stale snapshots, or install conditional additions without the requested installation decision.
-- [ ] Migrate remaining compatible fixtures to explicit batch `session` groups before scheduling the wider campaign. The runner supports qualified same-suite groups; `torch-refill` is qualified for all three cases in one SP session and one one-client Host session. Use `tests/native_queue/support/QueueFixtureSession.lua`: exact owned resources, case/epoch receipts, drained actions/network requests, removed phase observers, server/client cleanup acknowledgements and quarantine on uncertain effects. Qualify each suite/topology before enabling its `shared_session` contract. Define which inventory/equipment, UI, health/injuries, weight, position, time/weather and sandbox state each fixture changes and must restore; keep incompatible natural-time/history baselines separate and never clear unrelated state. Cross-suite reuse still needs an explicit lifecycle and validation contract.
-- [ ] Resolve current selection restrictions before claiming combined full-pack coverage: `item-retention` requires two EN/RU Host clients and forbids `organizedCategories_core`, while `warehouse-manifest/snapshot` requires it. Full-pack retention needs a proven fixture/contract migration; a reduced-pack control cannot close that gate. `torch-refill` accepts one EN client with sequential cases; `storage-profile`/`smart-deposit` currently cover only SP/EN single cases; vehicle fixtures do not prove second-client/passenger/driving behavior. Extend exact validators, roles and receipts with focused checks before combining them; do not bypass guards.
-- [ ] Extend `tests/native_queue/plans/shared-session.example.json` into one executable campaign plan and coverage report after the remaining fixture compatibility gates are resolved. Group by exact source lock, SP/Host topology, language, sandbox, control mode and world lifecycle; record actual launch count and reasons for splits. Run setup checks first, stop dependent phases after setup/cleanup failures, and rerun only failed or newly affected phases. Preserve ordinary action durations, independent native/queue-disabled controls, desktop ownership and full runtime-log auditing; functional success alone does not close a gate.
+- [ ] Execute the resolved sets from `tests/native_queue/plans/in-game-campaign.example.json` after the remaining fixture compatibility gates are resolved, retaining its campaign coverage report. Group by exact source lock, SP/Host topology, language, sandbox, control mode and world lifecycle; record actual launch count and reasons for splits. Run setup checks first, stop dependent phases after setup/cleanup failures, and rerun only failed or newly affected phases. Preserve ordinary action durations, independent native/queue-disabled controls, desktop ownership and full runtime-log auditing; functional success alone does not close a gate.
 
 | Session group | Combine after fixture qualification | Required separate boundaries |
 |---|---|---|
 | SP with the unchanged complete pack | Inventory/storage, torch refill, food/UI and compatible vehicle checks | Natural-age/cooling baselines and timing must not inherit time, lighting, injury or workload changes; isolate performance from video/capture work. |
-| Menu Host with two EN/RU clients | Warehouse edits, Wishlist, retention after its pack conflict is resolved, remote vehicle/cart views and joining-client cases | Single-client fixtures need explicit role/topology support; until then retain a qualified one-client Host group. |
+| Menu Host with two EN/RU clients | Warehouse edits, Wishlist, retention, remote vehicle/cart views and joining-client cases | Single-client fixtures need explicit role/topology support; until then retain a qualified one-client Host group. |
 | Save/reload continuation | Compatible persistence checks from a verified stopped seed | Real save/quit, sealed export/copy and restart remain required. Preserve identities and exact pack/build; reuse worlds only where the suite contract supports it. |
 | Controls and external environments | Compatible controls within each unchanged mode/platform | Native/queue-disabled modes, loader inheritance controls, macOS/Linux qualification and real WAN reproduction remain distinct. |
 | Conditional mod/manual checks | Source-resolved installed additions, visual inspections and catalogue browsing | Keep installation decisions and missing inputs explicit. The normal silent runner cannot prove audible music playback; use an appropriate requested audio-check session. |
@@ -25,7 +22,7 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ### Full-pack follow-up checks
 
-- [ ] Run the isolated macOS Warehouse, automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete current 67-Mod-ID pack and explicit locked sources. The earlier bounded checks used 45 Mod IDs.
+- [ ] Run the isolated macOS automatic-deposit, Smart Deposit partial-drop and Quartermaster recipe-unit SP/Host scenarios, plus the Host batch-admission case and two-player Wishlist synchronization with the complete current 67-Mod-ID pack and explicit locked sources. The earlier bounded checks used 45 Mod IDs.
 
 ### Warehouse client workload
 
@@ -33,11 +30,11 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ### Configure container UI repairs
 
-- [ ] Run the isolated `container-configuration/edit` native UI scenario after AeroSpace can discover the owned client window. Inspect the filter, checked electronics rows, advanced window foreground, scrolled lists and expanded group dropdown screenshots. Focused Lua regressions pass; the attempted macOS B42.21 run stopped at window admission before world startup, so no visual pass is established. Seven selected Workshop mods are unavailable; verify the full selected pack once present.
+- [ ] Run the isolated `container-configuration/edit` native UI scenario after AeroSpace can discover the owned client window. Inspect the filter, checked electronics rows, advanced window foreground, scrolled lists and expanded group dropdown screenshots. Focused Lua regressions pass; the attempted macOS B42.21 run stopped at window admission before world startup, so no visual pass is established. Use the complete current source lock; historical reduced-pack runs do not establish full-pack behavior.
 
 ### Item catalogue test world
 
-- [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen. The isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text. Seven selected Workshop mods remain outside coverage; five startup font errors also remain unclassified.
+- [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen with the complete current source lock. The earlier isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text, but omitted seven selected mods; five startup font errors also remain unclassified.
 
 ### Food age and cooling
 
@@ -63,11 +60,7 @@ Group compatible visual checks around prepared vehicles. Keep speed/healing meas
 
 ### Sport headlight push-button cycle
 
-- [ ] Run the isolated sport push-button SP/Host checks when the shared desktop test slot is available. Inspect off/low/high/off releases, held/released appearance at all four scales and server power acknowledgements. Current focused regressions cover the cycle and ACK guards; native launch was blocked at admission. Keep the VVA-pair coexistence gate below separate from the available 45-mod test subset.
-
-### Approved truck headlight rocker
-
-- [ ] Complete the isolated Host truck-rocker run and inspect its server power acknowledgements. The focused regressions and full-mod-set single-player visual check already cover the off/low/high sequence, all four scales, complete pull-knob/legend removal and unchanged standard/sport controls.
+- [ ] Extend the Host sport capture to held/released appearance at all four scales. Current complete-pack SP/Host combined dashboard runs have clean runtime and exact restored state; reviewed SP footage covers held/released off/low/high at four scales, while reviewed Host footage covers the standard-scale cycle and server power acknowledgements. Keep the VVA-pair coexistence gate below separate; these runs do not establish that pair's compatibility.
 
 ### In-cabin vehicle door control
 
@@ -96,11 +89,11 @@ Prepare fixtures before launch where possible; add them to compatible inventory/
 
 ### Vehicle Repair Overhaul verification
 
-- [ ] Resolve both VRO modules from Workshop 2757712197 or explicit sources, then check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify menus with Toolkit/VVA, actual materials/XP and 10-use fuel drain, reload and second-player state. Empty test containers and remove occupants/animals before removal. Recheck the upstream VSO/VRO sandbox-key mismatch before relying on custom controls; source/metadata checks do not establish runtime compatibility.
+- [ ] Use both VRO modules from the current complete source lock to check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify menus with Toolkit/VVA, actual materials/XP and 10-use fuel drain, reload and second-player state. Empty test containers and remove occupants/animals before removal. Recheck the upstream VSO/VRO sandbox-key mismatch before relying on custom controls; source/metadata checks do not establish runtime compatibility.
 
 ### Vehicle aim roof fix verification
 
-- [ ] Resolve CarRoofFix through Workshop or an explicit source override, then verify RMB look-around, release, seat switching and armed aiming in isolated macOS B42.21 SP/Host with the full selected pack, including a second player's view. Check the unmodified heavy/spear/chainsaw aim nodes separately; metadata/XML and selection checks do not establish gameplay compatibility.
+- [ ] Use CarRoofFix from the current complete source lock to verify RMB look-around, release, seat switching and armed aiming in isolated macOS B42.21 SP/Host with the full selected pack, including a second player's view. Check the unmodified heavy/spear/chainsaw aim nodes separately; metadata/XML and selection checks do not establish gameplay compatibility.
 
 ### Nick's Turn Off Fridges selection
 
@@ -142,7 +135,7 @@ Capture these during relevant campaign launches rather than adding an unrelated 
 
 - [ ] Resolve the common startup diagnostics that keep the food-age SP run at `needs-review` despite all four functional phases passing: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical startup fingerprints/counts; qualify or fix each source/caller before changing audit rules; do not treat functional success as a clean runtime.
 
-- [ ] Investigate intermittent macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Distinguish a genuinely closed/escaped window from a transient discovery failure, and qualify stable ownership without bypassing the PID/window or desktop guards.
+- [ ] Investigate macOS native-window ownership loss under the normal `auto` policy: the wooden-cart retry stopped after bootstrap with `Owned client window escaped its isolated test workspace` and an empty observation; a fresh snapshot completed. Two shared-storage qualifications stopped after the same six size-100 inventory-work phases, before size-10000/freshness receipts, with empty observations for their previously owned windows (`pz-campaign-storage01`, `pz-campaign-shared02`); runtime logs were clean and the runner terminated both clients with exit 143. The later bounded probe retained the owned window through all size-10000 work; its sole empty result followed an unrelated fixture-quarantine shutdown. On recurrence collect incident timestamps, raw discovery output and owned-PID CoreGraphics metadata before termination to distinguish real loss from transient discovery failure; do not bypass PID/window or desktop guards.
 
 - [ ] Diagnose intermittent menu-Host child startup failures. Container-group Host02 emitted ZombieBuddy premain output, then stalled before engine logs; `jcmd Thread.print` could not attach. Host03 emitted no child stdout and reported `Stream closed` 20.054 seconds after `HOST_REQUEST`. B42.21 `CoopMaster.watchServer()` destroys the child after 20 seconds unless `readServer()` has received its first line; timing supports that watchdog explanation, but the child exit reason was not preserved and the underlying JVM stall is unknown. Fresh Host04 passed with unchanged startup guards, so a retry does not establish a fix. Capture bounded child stderr, first-output timing and native termination reason on recurrence; preserve readiness, process-ownership and cleanup guards.
 
@@ -249,17 +242,15 @@ The food-age runtime gates are grouped in the [shared campaign](#food-age-and-co
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
 
-- [ ] Repair the isolated fixture in `test_queue_native_snapshot.py::test_selected_adapter_helpers_are_sealed_without_unrelated_adapters`: its temporary craft UI project omits the required `craft_ui_water.py`, causing `FileNotFoundError` while the recovery subcase passes. Copy the declared helper and rerun the focused snapshot tests; do not relax source sealing.
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.
 
 - [ ] Report the exact rejected suite-selection constraint: running `queue-recovery` without explicit `--language EN` produces only a blanket list of requirements. Include actual and expected language/cases/mod selection in the validation error; explicit EN with both ordered cases succeeds.
 
-- [ ] Expose bounded preparation/admission progress in the native runner output. Full-pack inventory profiling was silent while preparing and then reported only a generic desktop wait (`/tmp/pz-native-work-baseline4.log`); separate status/selection probes were needed to discover that the active interactive catalogue had a four-hour bound. Even read-only `status --json` and `prepare` require host access outside the sandbox because `sysctl hw.memsize hw.logicalcpu` is denied inside it; retain the clear failure and document this diagnostic requirement. The full-pack `inventory-work` run also spent about 80 seconds in unreported 10,000-food fill/setup between phases 6 and 7 (`/tmp/pz-freshness-cost-full-current01/client1/Logs/*DebugLog.txt`); add bounded fixture-stage/item-count progress. Report preparation, queue position and active suite/deadline without changing exclusive timing isolation or input guards.
+- [ ] Expose bounded preparation/admission progress in the native runner output. Full-pack inventory profiling was silent while preparing and then reported only a generic desktop wait (`/tmp/pz-native-work-baseline4.log`); separate status/selection probes were needed to discover that the active interactive catalogue had a four-hour bound. Even read-only `status --json` and `prepare` require host access outside the sandbox because `sysctl hw.memsize hw.logicalcpu` is denied inside it; retain the clear failure and document this diagnostic requirement. The campaign warehouse Host profile also exhausted its 300-second admission wait behind an exclusive run without starting a game; expose the owner suite/deadline and the safe `resume` command for still-unused prepared profiles. After the resumed Host passed, the original batch still reported it blocked; let campaign coverage reference the resumed result while retaining the first attempt. Report preparation, queue position and active suite/deadline without changing exclusive timing isolation or input guards.
 
 - [ ] Give native fixtures a shared role-aware asynchronous placement contract. `QueueEnergyPlacement` returns the chosen square before arrival, and calling `teleportTo` on a server's remote actor did not move the Host client. Require one local-client placement, exact settled tile confirmation on both roles, corner/centre tolerance and bounded wait diagnostics so each suite does not rediscover these constraints.
 
-- [ ] Add an explicit batch policy for fatal fixture/control failures. The animal-terminal preparation assertion failed, but the batch still prepared and queued the dependent candidate; repeating that broken setup adds no evidence. Keep independent gameplay-failure collection available, but allow a setup-failure stop with a partial combined report and no further launches. Current work uses the common single-run CLI sequentially with checked exit codes.
 
 - [ ] Make Lua-dependent test entrypoints select and report the project interpreter consistently. System `python3 -m unittest` fails with `ModuleNotFoundError: lupa` in the inventory-work/freshness/food-age fixture tests, while the same checks pass through the local `.venv/bin/python`; earlier worktrees also borrowed another checkout's environment. Complete when bootstrap/runner paths reliably select the declared local runtime without machine-specific paths.
 

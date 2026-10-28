@@ -179,6 +179,58 @@ def _lua(value):
     raise ValueError("Unsupported Lua selection value: " + repr(value))
 
 
+def source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None, validate_adapter=True):
+    """Read-only launch inputs; an invocation-local cache avoids rehashing one pack per job.
+
+    Preparation deliberately calls this without a cache, so a later source edit
+    still fails the fresh snapshot even after a successful campaign preflight.
+    """
+    project, game, jdk = (Path(path).resolve() for path in (project, game, jdk))
+    launch_java = game / 'jre64/bin/java.exe' if os.name == 'nt' else jdk_binary(jdk, 'java')
+    for path in (game / "projectzomboid.jar", launch_java, jdk_binary(jdk, 'java'), jdk_binary(jdk, 'javac')):
+        if not path.is_file():
+            raise ValueError("Missing game/JDK file: " + str(path))
+    for binary in ("java", "javac"):
+        if not os.access(jdk_binary(jdk, binary), os.X_OK):
+            raise ValueError("JDK binary is not executable: " + str(jdk / "bin" / binary))
+    if not (game / "media/lua").is_dir():
+        raise ValueError("Missing native game Lua sources: " + str(game / "media/lua"))
+    if "ZombieBuddy" in selection["mods"] and not (game / "ZombieBuddy.jar").is_file():
+        raise ValueError("Selected ZombieBuddy requires the installed game/ZombieBuddy.jar agent")
+    adapter = adapters.get(selection['suite'])
+    if adapter and validate_adapter:
+        adapter.validate(selection)
+    overrides = selection.get('options', {}).get('mod_sources', {})
+    locked = selection.get('options', {}).get('pack_lock')
+    if locked:
+        if not isinstance(locked, str) or not Path(locked).is_absolute():
+            raise ValueError('pack_lock must be an absolute lock-file path')
+        key = (str(project), str(game), str(Path(locked).resolve()), tuple(selection['mods']))
+        if pack_cache is not None and key in pack_cache:
+            pinned = pack_cache[key]
+        else:
+            pinned = pack.validate(locked, project, game, selection['mods'])
+            if pack_cache is not None:
+                pack_cache[key] = pinned
+        if any(id not in pinned or Path(path).resolve() != Path(pinned[id]).resolve() for id, path in overrides.items()):
+            raise ValueError('Mod override differs from pack lock; regenerate the lock explicitly')
+        overrides = pinned
+    locations = _locations(project, list(map(Path, workshop)), selection["mods"], overrides)
+    template = selection.get('options', {}).get('world_template')
+    world = None
+    if template:
+        if not isinstance(template, str) or not Path(template).is_absolute():
+            raise ValueError('world_template must be an absolute saved template path')
+        if selection.get('options', {}).get('seed_run'):
+            raise ValueError('Choose world_template or scenario seed_run, not both')
+        world_selection = selection
+        if selection.get('ports_auto'):
+            ports = report.read_json(Path(template) / 'world.json')['ports']
+            world_selection = dict(selection, ports=ports, ports_auto=False)
+        template, world = worlds.validate(template, world_selection, game)
+    return locations, template, world
+
+
 def prepare(project: Path, output: Path, game: Path, jdk: Path,
             selection: dict, workshop: list[Path] = ()) -> Path:
     """Return a fresh snapshot directory; never reuse or change an earlier run."""
@@ -194,37 +246,11 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         selection = dict(selection, ports=json.loads((Path(selection['options']['seed_run']) / 'selection.json').read_text())['ports'])
     _validate(selection)
     selection = dict(selection, window_size=window_size(selection))
-    for path in (game / "projectzomboid.jar", launch_java, jdk_binary(jdk, 'java'), jdk_binary(jdk, 'javac')):
-        if not path.is_file():
-            raise ValueError("Missing game/JDK file: " + str(path))
-    for binary in ("java", "javac"):
-        if not os.access(jdk_binary(jdk, binary), os.X_OK):
-            raise ValueError("JDK binary is not executable: " + str(jdk / "bin" / binary))
-    if not (game / "media/lua").is_dir():
-        raise ValueError("Missing native game Lua sources: " + str(game / "media/lua"))
-    if "ZombieBuddy" in selection["mods"] and not (game / "ZombieBuddy.jar").is_file():
-        raise ValueError("Selected ZombieBuddy requires the installed game/ZombieBuddy.jar agent")
-    adapter = adapters.get(selection['suite'])
-    if adapter:
-        adapter.validate(selection)
-    overrides = selection.get('options', {}).get('mod_sources', {})
+    locations, template, world = source_inputs(project, game, jdk, selection, workshop)
     locked = selection.get('options', {}).get('pack_lock')
-    if locked:
-        pinned = pack.validate(locked, project, game, selection['mods'])
-        if any(id not in pinned or Path(path).resolve() != Path(pinned[id]).resolve() for id, path in overrides.items()):
-            raise ValueError('Mod override differs from pack lock; regenerate the lock explicitly')
-        overrides = pinned
-    locations = _locations(project, list(map(Path, workshop)), selection["mods"], overrides)
-    template = selection.get('options', {}).get('world_template')
-    world = None
-    if template:
-        if not isinstance(template, str) or not Path(template).is_absolute():
-            raise ValueError('world_template must be an absolute saved template path')
-        if selection.get('options', {}).get('seed_run'):
-            raise ValueError('Choose world_template or scenario seed_run, not both')
-        template, world = worlds.validate(template, selection, game)
-        if output.is_relative_to(template):
-            raise ValueError('Run output must be outside the world template')
+    adapter = adapters.get(selection['suite'])
+    if world and output.is_relative_to(template):
+        raise ValueError('Run output must be outside the world template')
     if any(output.is_relative_to(source) for source in [game, jdk, *locations.values()]):
         raise ValueError("Output must be outside game, JDK and source mod directories")
     if any(char in str(path)[len(path.drive):] for path in (output, game, jdk) for char in (",", ":", "\n", "\r")):

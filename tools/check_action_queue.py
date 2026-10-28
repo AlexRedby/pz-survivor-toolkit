@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios
+from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios, campaign
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
@@ -260,10 +260,23 @@ def batch_sessions(plan, jobs, catalog, config, output, desktop_mode=None):
 def batch(args, catalog):
     plan = report.read_json(args.plan)
     jobs = selected_jobs(plan, getattr(args, 'jobs', None), getattr(args, 'sets', ()), getattr(args, 'skip_jobs', None))
+    campaign.validate(plan)
     identifiers = [job['id'] for job in jobs]
     if args.output.exists():
         raise FileExistsError('Fresh batch output directory required')
     units = batch_sessions(plan, jobs, catalog, args.plan, args.output, getattr(args, 'desktop_mode', None))
+    if 'campaign' in plan:
+        # Unlike an ordinary independent-job batch, a campaign preflights all
+        # selected environments before spending its first native launch.
+        paths = {job['id']: (args.output / job['id']).resolve() for job in jobs}
+        checked_packs = {}
+        for unit in units:
+            job = unit['jobs'][0]
+            selected = unit.get('selection') or batch_selection(plan, job, catalog, args.plan, paths, getattr(args, 'desktop_mode', None))
+            native._validate(selected)
+            native.window_size(selected)
+            native.source_inputs(ROOT, plan['game'], plan['jdk'], selected, plan.get('workshop', []),
+                                 pack_cache=checked_packs, validate_adapter=not job.get('seed_job'))
     if getattr(args, 'dry_run', False):
         runs, rows, sessions = {}, [], []
         for unit in units:
@@ -278,13 +291,15 @@ def batch(args, catalog):
                 runs[job['id']] = output
             sessions.append({'id': unit['session'] or unit['jobs'][0]['id'],
                              'jobs': [job['id'] for job in unit['jobs']], 'run': str(unit['output'].resolve()),
-                             'selection': unit.get('selection', selected)})
+                             'selection': unit.get('selection', selected),
+                             'boundary': unit['jobs'][0].get('boundary')})
         print(json.dumps({'status': 'planned', 'game': plan['game'], 'jdk': plan['jdk'],
                           'workshop': plan.get('workshop', []), 'jobs': rows, 'sessions': sessions,
-                          'launches': len(units), 'jobs_without_reuse': len(jobs)}, indent=2))
+                          'launches': len(units), 'jobs_without_reuse': len(jobs),
+                          'campaign': campaign.build(plan, jobs, planned=True)}, indent=2))
         return 0
     args.output.mkdir(parents=True)
-    results, reports, completed, sessions = [], [], {}, []
+    results, reports, completed, sessions, accepted = [], [], {}, [], set()
     for unit in units:
         job, output = unit['jobs'][0], unit['output']
         item = {'run': str(output.resolve())}
@@ -294,6 +309,8 @@ def batch(args, catalog):
             for key in ('control_job', 'seed_job'):
                 if job.get(key) and job[key] not in completed:
                     raise ValueError('Dependency has no completed report: ' + job[key])
+                if 'campaign' in plan and job.get(key) and job[key] not in accepted:
+                    raise ValueError('Campaign dependency requires a passed report with clean runtime: ' + job[key])
             control = completed[job['control_job']] if job.get('control_job') else None
             selected = unit.get('selection')
             if selected is None:
@@ -306,6 +323,8 @@ def batch(args, catalog):
             reports.append(value)
             for member in unit['jobs']:
                 completed[member['id']] = output.resolve()
+                if value['status'] == 'passed' and value['runtime']['status'] == 'clean':
+                    accepted.add(member['id'])
             item.update(status=value['status'], functional=value['functional']['status'], runtime=value['runtime']['status'])
             print(report.summary(value), flush=True)
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
@@ -318,11 +337,12 @@ def batch(args, catalog):
             if unit['session']:
                 row.update(session=unit['session'], cases=unit['members'][index]['cases'])
             results.append(row)
-        sessions.append(dict(item, id=unit['session'] or job['id'], jobs=[member['id'] for member in unit['jobs']]))
+        sessions.append(dict(item, id=unit['session'] or job['id'], jobs=[member['id'] for member in unit['jobs']],
+                             boundary=job.get('boundary')))
         overall = 'failed' if any(row['status'] in ('failed', 'blocked') for row in results) else 'needs-review' if any(row['status'] == 'needs-review' for row in results) else 'passed'
         report.write_json(args.output / 'batch-report.json', {'status': overall, 'jobs': results,
                           'sessions': sessions, 'launches_planned': len(units),
-                          'remaining': identifiers[len(results):]})
+                          'remaining': identifiers[len(results):], 'campaign': campaign.build(plan, jobs, results)})
         report.write_json(args.output / 'coverage.json', report.matrix(catalog, reports))
         if interrupted:
             return 130

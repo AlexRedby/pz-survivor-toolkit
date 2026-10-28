@@ -357,7 +357,7 @@ class NativeSnapshotTests(unittest.TestCase):
         from queue_checks.adapters import (craft_ui, inventory_grab, inventory_transfer,
                                            fluid, food, quartermaster_crafting, queue_recovery, approach_queue)
         dependencies = (
-            (craft_ui, ('craft.py',)),
+            (craft_ui, ('craft.py', 'craft_ui_water.py')),
             (inventory_grab, ('craft.py',)),
             (inventory_transfer, ('craft.py',)),
             (fluid, ('craft.py',)),

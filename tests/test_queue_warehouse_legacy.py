@@ -13,7 +13,7 @@ from queue_checks.adapters import warehouse_legacy as adapter
 class LegacyWarehouseTests(unittest.TestCase):
     def selection(self, case):
         return dict(cases=[case], kind='sp', clients=1, mode='toolkit', languages=['EN'],
-                    mods=['PZSurvivorToolkit', 'EURY_CONTAINERS', 'organizedCategories_core'],
+                    mods=['PZSurvivorToolkit', 'EURY_CONTAINERS'],
                     options={'world_template': '/tmp/sealed'} if case == 'legacy-reload' else {})
 
     def line(self, event, value):

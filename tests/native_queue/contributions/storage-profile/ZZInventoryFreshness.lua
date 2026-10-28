@@ -1,6 +1,8 @@
 -- Functional native UI gate. Observers forward real calls; no timing claim.
 local selection=require 'QueueTestSelection'
-assert(selection.cases[1]=='inventory-freshness')
+local sessionContext=#selection.cases>1 and require('StorageProfileSession').context()or nil
+assert((sessionContext and sessionContext.case or selection.cases[1])=='inventory-freshness')
+local Events=sessionContext and sessionContext.events or Events
 local Presenter=require 'PZSurvivorToolkit/InventoryFreshness'
 local Options=require 'BetterContainers/_Options'
 local entered,starting,started,done=false,false,false,false
@@ -201,6 +203,7 @@ local function cleanup()
  CleanUI_setCleanInventoryUIEnabled(originalMode)
  log('FRESH_RESTORED',{ownedRemoved=#owned,foodRemoved=#foods,originalItems=inventory:getItems():size(),observers=true,items=true,options=true,mode=true,fixtureAges=true,phases=#phases})
  log('COMPLETE');done=true
+ if sessionContext then sessionContext.finish(true)end
 end
 local function tick()
  if observerFailure then error(observerFailure,0)end
@@ -275,5 +278,6 @@ Events.OnTick.Add(function()
    if originalMode~=nil then CleanUI_setCleanInventoryUIEnabled(originalMode)end
   end)
   log('FAIL',{stage=stage,index=index,error=tostring(err),restored=restored,restoreError=tostring(restoreError)});done=true
+  if sessionContext then sessionContext.quarantine(err)end
  end
 end)

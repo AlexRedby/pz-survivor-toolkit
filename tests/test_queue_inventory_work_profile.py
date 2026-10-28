@@ -69,6 +69,14 @@ class InventoryWorkProfileTests(unittest.TestCase):
                     originalFreshnessOptions={bar=bar,percentage=percentage}
                 end,
                 measure=function(value)active=value end,
+                beginFill=beginFill,restoreFillVisibility=restoreFillVisibility,tick=tick,
+                fillStatus=function()return fillVisibility end,
+                state=function()return stage,active,phaseIndex,since end,
+                seedFill=function(testInventory,testFood,index)
+                    inventory=testInventory;food=testFood;foodSet={};owned={}
+                    for _,item in ipairs(food)do foodSet[item]=true;owned[#owned+1]=item end
+                    phaseIndex=index;began=0
+                end,
                 seed=function(testPane,testInventory,testOwned,testActive)
                     pane=testPane;inventory=testInventory;owned=testOwned or {}
                     active=testActive;started=true;originalMode=false
@@ -160,6 +168,81 @@ class InventoryWorkProfileTests(unittest.TestCase):
                 assert(not pcall(fixture.phaseOptions,phase),'mismatched feature flags accepted')
             end
             assert(fixture.phases[13].view=='collapsed-visible' and fixture.phases[14].view=='collapsed-clipped')
+        ''',fixture)
+
+    def test_unmeasured_fill_hides_only_its_pane_and_restores_before_full_warmup(self):
+        for baseline_visible in (True, False):
+            lua,fixture=self.fixture_runtime()
+            lua.execute('''
+                local fixture,baselineVisible=...
+                local clock,draws=100,0
+                getTimestampMs=function()return clock end
+                local items={}
+                local inventory={AddItem=function(self)
+                    local item={setAge=function()end};items[#items+1]=item;return item
+                end}
+                local initial={};for i=1,100 do initial[i]=inventory:AddItem()end
+                fixture.seedFill(inventory,initial,7)
+                local function render()draws=draws+1 end
+                local function pane(class,visible)
+                    class.__index=class;class.renderdetails=render
+                    local p=setmetatable({visible=visible,inventory=inventory,collapsed={unrelated=false},scroll=-19},class)
+                    function p:getIsVisible()return self.visible end;function p:setVisible(v)self.visible=v end
+                    function p:setMode(v)self.mode=v end;function p:setYScroll(v)self.scroll=v end
+                    function p:refreshContainer()
+                        local group={name='food',items={items[1]}}
+                        for _,item in ipairs(items)do group.items[#group.items+1]=item end
+                        self.itemslist={group}
+                        for i=1,60 do self.itemslist[#self.itemslist+1]={name='spacer'..i,items={}}end
+                    end
+                    return p
+                end
+                CleanUI_Clean_ISInventoryPane={};CleanUI_Vanilla_ISInventoryPane={}
+                local old=pane(CleanUI_Vanilla_ISInventoryPane,baselineVisible)
+                local page={inventoryPane=old,visible=false}
+                for _,key in ipairs({'X','Y','Width','Height'})do page['set'..key]=function()end end
+                function page:setVisible(v)self.visible=v end
+                function page:clearMaxDrawHeight()end;function page:setPinned()end
+                local loot={visible=true,setVisible=function(self,v)self.visible=v end}
+                getPlayerInventory=function()return page end;getPlayerLoot=function()return loot end
+                CleanUI_setCleanInventoryUIEnabled=function(clean)
+                    assert(old.visible==baselineVisible,'fill failed to restore prior pane visibility before mode/configuration')
+                    ISInventoryPane=clean and CleanUI_Clean_ISInventoryPane or CleanUI_Vanilla_ISInventoryPane
+                    page.inventoryPane=pane(ISInventoryPane,false)
+                end
+                fixture.beginFill()
+                assert(not old.visible and not page.visible and loot.visible and old.collapsed.unrelated==false)
+                assert(fixture.fillStatus().from==100 and fixture.fillStatus().target==10000)
+                -- Simulate native draws between all 99 bounded fill ticks.
+                for i=1,99 do
+                    if old.visible then old:renderdetails(false)end
+                    local stage,active=fixture.state();assert(stage=='fill'and active==nil)
+                    fixture.tick()
+                end
+                assert(draws==0 and #items==10000,'construction rendered or changed the target workload')
+                assert(fixture.fillStatus()==nil and old.visible==baselineVisible)
+                local stage,active,index,since=fixture.state()
+                assert(stage=='warm'and active==nil and index==7 and since==100)
+                assert(page.visible and page.inventoryPane.visible and page.inventoryPane.mode=='details')
+                assert(page.inventoryPane.scroll==0 and page.inventoryPane.collapsed.food==true and not loot.visible)
+                assert(fixture.phases[7].size==10000 and fixture.phases[7].mode=='clean'and fixture.phases[7].view=='collapsed-visible')
+                clock=1599;fixture.tick();stage,active=fixture.state();assert(stage=='warm'and active==nil)
+                clock=1600;fixture.tick();stage,active=fixture.state();assert(stage=='measure'and active.started==1600)
+                assert(#active.primary==0 and active.refresh.calls==0,'fill/warmup leaked into measurements')
+                assert(select(2,capturedLog:gsub('%[STORAGE_PROFILE%] FILL_BEGIN ',''))==1)
+                assert(select(2,capturedLog:gsub('%[STORAGE_PROFILE%] FILL_COMPLETE ',''))==1)
+            ''',fixture,baseline_visible)
+
+    def test_aborted_fill_restores_exact_prior_pane_visibility(self):
+        lua,fixture=self.fixture_runtime()
+        lua.execute('''
+            local fixture=...
+            local owner={visible=false,getIsVisible=function(self)return self.visible end,setVisible=function(self,v)self.visible=v end}
+            getPlayerInventory=function()return {inventoryPane=owner}end
+            fixture.seedFill({}, {},1);fixture.beginFill()
+            owner.visible=true
+            fixture.restoreFillVisibility()
+            assert(owner.visible==false and fixture.fillStatus()==nil)
         ''',fixture)
 
     def test_actual_pane_class_and_captured_renderer_are_required(self):

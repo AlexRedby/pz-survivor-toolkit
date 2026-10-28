@@ -10,12 +10,13 @@ MARKER = '[WAREHOUSE_LEGACY] '
 
 
 def validate(selection):
+    from .warehouse_manifest import MODS
     options = selection.get('options', {})
     case = selection.get('cases')
     if (case not in ([CASES[0]], [CASES[1]]) or selection.get('kind') != 'sp'
             or selection.get('clients', 1) != 1 or type(selection.get('clients', 1)) is not int
             or selection.get('mode') != 'toolkit' or selection.get('languages') not in (['EN'], ['RU'])
-            or not {'PZSurvivorToolkit', 'EURY_CONTAINERS', 'organizedCategories_core'} <= set(selection.get('mods', []))
+            or not set(MODS) <= set(selection.get('mods', []))
             or not isinstance(options, dict) or any(options.get(k) for k in ('mp_host', 'seed_run', 'startup_connection'))
             or bool(options.get('world_template')) != (case == [CASES[1]])):
         raise ValueError('Legacy Warehouse requires one SP EN/RU client, legacy seed or sealed-world reload')
