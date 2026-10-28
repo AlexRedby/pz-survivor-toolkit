@@ -36,6 +36,7 @@ local function setup(savedFile, mediaActive, medicineActive, navigatorActive, ex
     Keyboard = { KEY_F8 = 66 }
     PZSurvivorToolkit = {}
     PZSurvivorWishlist = nil
+    toolkitGroundHighlightDistance, toolkitGroundHighlightMatches = nil, nil
     getActivatedMods = function()
         return {contains = function(_, id) return mediaActive == true and id == "TVRadio_ReInvented"
             or medicineActive == true and id == "MoodleFramework"
@@ -515,6 +516,9 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     function ISButton:getRight() return self.x + self.width end
     function ISButton:getWidth() return self.width end
     function ISButton:getHeight() return self.height end
+    function ISButton:getX() return self.x end
+    function ISButton:getY() return self.y end
+    function ISButton:getKeepOnScreen() return true end
     function ISButton:getIsVisible() return self.visible end
     function ISButton:setVisible(value) self.visible = value end
     function ISButton:addToUIManager() ui[self] = true end
@@ -524,13 +528,18 @@ test("sidebar button shares settings with menu and rebound key, survives sidebar
     function ISButton:setWidth(value) self.width = value end
     function ISButton:setHeight(value) self.height = value end
     function ISButton:setImage(value) self.image = value end
-    function ISButton:forceImageSize(width, height) self.imageWidth, self.imageHeight = width, height end
+    function ISButton:forceImageSize(width, height)
+        self.imageWidth, self.imageHeight = width, height
+        self.forcedWidthImage, self.forcedHeightImage = width, height
+    end
     function ISButton:ignoreWidthChange() self.ignoreWidth = true end
     function ISButton:ignoreHeightChange() self.ignoreHeight = true end
     function ISButton:forceClick() if self.enable then self.onclick(self.target, self) end end
     getTexture = function(path) return path end
     getPlayerScreenTop = function() return 0 end
     getPlayerScreenHeight = function() return 1080 end
+    getCore().getScreenWidth = function() return 1920 end
+    getCore().getScreenHeight = function() return 1080 end
     UIFont = { Small = 1 }
     getKeyName = function(key) return "KEY_" .. key end
     getText = function(key, value) return value and key .. ":" .. value or key end
@@ -1609,6 +1618,88 @@ test("empty authoritative Wishlist does no world work while moving and wakes for
     snapshot({["Base.Hammer"] = {done = false}})
     w:advance(100)
     equal(pile[1]:isHighlighted(0), true, "new session snapshots resume highlighting")
+end)
+
+test("native highlighter results own eligibility and foreign-highlight decisions", function()
+    local w = setup()
+    local object = w:add(0.5, 0.5, 0, "Base.Hammer")
+    object.getSquare = function() error("native eligibility must not repeat Lua getters") end
+    local distance, distanceCalls, matchesCalls = -1, 0, 0
+    toolkitGroundHighlightDistance = function(candidate, cell, playerNum, z, x, y, radius)
+        equal(candidate, object)
+        equal(cell, w.cell)
+        equal(playerNum, 0)
+        equal(z, 0)
+        equal(x, w.player.x)
+        equal(y, w.player.y)
+        equal(radius, 15)
+        distanceCalls = distanceCalls + 1
+        return distance
+    end
+    local matches = true
+    toolkitGroundHighlightMatches = function(candidate, playerNum, outline, attached, r, g, b, a)
+        equal(candidate, object)
+        equal(playerNum, 0)
+        equal(outline, "1:0.55:0.05:1")
+        equal(attached, false)
+        equal(r, 1); equal(g, 0.55); equal(b, 0.05); equal(a, 1)
+        matchesCalls = matchesCalls + 1
+        return matches
+    end
+    w:advance(70)
+    assert(distanceCalls > 0)
+    equal(object:isHighlighted(0), false, "negative native distance is final rejection")
+    distance = 0 -- zero is a valid squared distance, not rejection
+    w:advance(70)
+    equal(object:isHighlighted(0), true)
+    assert(matchesCalls > 0, "stable owned highlights use native matching")
+    object:setHighlightColor(0, 0, 0, 1, 1)
+    matches = false
+    w:advance(1)
+    w:apply("Enabled", false)
+    equal(object:isHighlighted(0), true, "foreign takeover must survive native mismatch and cleanup")
+    equal(object:getHighlightColor(0):getB(), 1)
+end)
+
+test("unsupported native highlighter falls back for refresh and cleanup", function()
+    local w = setup()
+    local object = w:add(0.5, 0.5, 0, "Base.Hammer")
+    local distanceCalls, matchesCalls = 0, 0
+    toolkitGroundHighlightDistance = function() distanceCalls = distanceCalls + 1; return nil end
+    toolkitGroundHighlightMatches = function() matchesCalls = matchesCalls + 1; return nil end
+    w:advance(70)
+    equal(object:isHighlighted(0), true)
+    assert(distanceCalls > 0 and matchesCalls > 0)
+    object.square.visible[0] = false
+    w:advance(1)
+    equal(object:isHighlighted(0), false, "fallback keeps live visibility and clears owned state")
+    object.square.visible[0] = true
+    w:advance(70)
+    equal(object:isHighlighted(0), true)
+    w:apply("Enabled", false)
+    equal(object:isHighlighted(0), false)
+end)
+
+test("wishlist-only rejects other types before native eligibility work", function()
+    local w = setup()
+    w:apply("Enabled", false)
+    PZSurvivorWishlist = {
+        Client = { hasWanted = function() return true end,
+            isWanted = function(_, fullType) return fullType == "Base.Hammer" end },
+        Settings = { groundEnabled = function() return true end,
+            color = function() return {r = 0.25, g = 0.85, b = 0.75, a = 1} end },
+    }
+    local wanted = w:add(0.5, 0.5, 0, "Base.Hammer")
+    wanted.item.getFullType = function() return "Base.Hammer" end
+    for index = 1, 200 do
+        local other = w:add(0.5, 0.5, 0, "Base.Nails")
+        other.item.getFullType = function() return "Base.Nails" end
+        other.getSquare = function() error("unwanted item must not enter native eligibility") end
+    end
+    w:advance(100)
+    equal(wanted:isHighlighted(0), true)
+    equal(w.highlighter.getStatus().highlightedObjects, 1)
+    assert(w.maxItemReads <= 128 and w.maxInspections <= 256)
 end)
 
 print("Passed " .. count .. " behavioural tests (Lua 5.1; game rendering remains untested).")

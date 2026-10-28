@@ -10,12 +10,6 @@
     "client1": "EN",
     "client2": "RU"
   },
-  "source_sha256": {
-    ".codex/investigations/craft-chains-20261013/native/ZZCraftChains.lua": "771cd2538ba13af5b15edac975a1c6ec488d5f6155c18a3665389a0c7f070a89",
-    ".codex/investigations/craft-chains-20261013/native/ZZCraftChains_Server.lua": "169ec08a77debb4bc39d7bcf9b9cbae4728b3f13b159e40cf62dbb19f0370496",
-    ".codex/investigations/craft-alternatives-20261013/native/ZZCraftAlternatives.lua": "62422b7c1f95abb61f7a2f481721a24ecdf12a07a2fd5d8e2c1f2207f2686e4a",
-    ".codex/investigations/craft-alternatives-20261013/native/ZZCraftAlternatives_Server.lua": "fa6fe0bdf3ded904e955d9dbf965b94756197b0db35ff0ca92927ffcf1bca91b"
-  },
   "scenarios": {
     "crafting": {
       "client": "client/chains.lua",
@@ -123,13 +117,6 @@
       "language": "EN for client1, RU for client2",
       "voice": "disabled with -novoip"
     }
-  },
-  "historical_evidence": {
-    "date": "2026-10-13",
-    "crafting": "craft-full-03",
-    "ui": "neat-plan-ui-03",
-    "alternatives": "alternatives-choices-02",
-    "result": "zero fixture failures per EN/RU client; historical snapshots only"
   },
   "output_contract": {
     "server_ready": "[QUEUE_TEST] SERVER_READY",

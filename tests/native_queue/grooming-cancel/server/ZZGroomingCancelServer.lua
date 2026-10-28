@@ -21,6 +21,7 @@ Events.OnClientCommand.Add(function(module,name,player,args)
    pending={since=getTimestampMs()}
   elseif name=='Checkpoint'then
    assert(state and baseline and not pending and not checkpoint,'unexpected grooming checkpoint')
+   assert(F.handsReady(state),'authority held styling input changed before move checkpoint')
    checkpoint=F.snapshot(state);raw('CHECKPOINT',checkpoint);sendServerCommand(player,module,'Checkpointd',checkpoint)
   elseif name=='Verify'then
    assert(state and baseline and checkpoint and not pending,'unexpected grooming verify')

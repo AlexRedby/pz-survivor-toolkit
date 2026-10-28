@@ -5,7 +5,6 @@
   "runner_adapter": null,
   "live_after_parameterization": false,
   "exclusive_native_process": true,
-  "origin": ".codex/investigations/cart-mp-20261016; original run07 replication counterexample before parameterization",
   "sources": [
     "ClearanceProbe.kt",
     "ClearanceProbe.mf",

@@ -4,9 +4,12 @@ require "TimedActions/WalkToTimedAction"
 require "RadioCom/ISRadioAction"
 require "TimedActions/ISDeviceMediaAction"
 require "TimedActions/ISDeviceBatteryAction"
+require "TimedActions/ISTrimBeard"
 require "PZSurvivorToolkit/ActionQueueOperations"
 local Proof = require "PZSurvivorToolkit/SourceProof"
 local Toolkit = PZSurvivorToolkit
+local Grooming = Toolkit.ActionQueueGrooming
+local recoverTrim = Grooming and Grooming.canRecoverTrim
 local Recovery = {}
 Toolkit.ActionQueueRecoveryAdapters = Recovery
 local pins = {}
@@ -139,6 +142,11 @@ local function transferTrusted(action)
     local adapters=Toolkit.ActionQueueItemEditAdapters
     return adapters and adapters.transfer and adapters.transfer(action)~=nil
 end
+local function trimTrusted(action)
+    return Grooming and Toolkit.ActionQueueGrooming==Grooming and Grooming.canRecoverTrim==recoverTrim
+        and type(recoverTrim)=="function" and Proof.closure(recoverTrim,"ActionQueueGrooming.lua")
+        and recoverTrim(action)==true
+end
 local function capture(action,active)
     if type(action)~="table" or not instanceof(action.character,"IsoPlayer") or not clearCallbacks(action) then return nil,"unsupported" end
     local record={version=1,character=action.character}
@@ -160,7 +168,10 @@ local function capture(action,active)
         record.kind,record.active="read",active==true
     else
         if active or action.action or action.started then return nil,"active" end
-        if action.Type=="ISWalkToTimedAction" then
+        if action.Type=="ISTrimBeard" then
+            if not trimTrusted(action) or not itemIntent(record,action.item) then return nil,"unsupported" end
+            record.kind,record.beardStyle,record.singleton="trim",action.beardStyle,true
+        elseif action.Type=="ISWalkToTimedAction" then
             if not nativeClass(action,"walk") or not instanceof(action.location,"IsoGridSquare") or action.maxTime~=-1
                 or action.stopOnWalk~=false or action.stopOnRun~=false or action.allowedWhileDraggingCorpses~=true then return nil,"unsupported" end
             record.kind,record.square="walk",action.location
@@ -208,7 +219,7 @@ end
 
 local fields={version=true,character=true,kind=true,approach=true,itemId=true,itemType=true,container=true,active=true,
     device=true,data=true,square=true,x=true,y=true,z=true,mode=true,value=true,remove=true,mediaIndex=true,
-    source=true,destination=true,allowMissing=true}
+    source=true,destination=true,allowMissing=true,beardStyle=true,singleton=true}
 plainRecord=function(record,character)
     if type(record)~="table" or getmetatable(record) or record.version~=1 or record.character~=character then return false end
     for key in pairs(record) do if not fields[key] then return false end end
@@ -345,7 +356,17 @@ local function project(records,character,construct)
     local unmodeledRootOutput=false
     for _,record in ipairs(records) do
         local action
-        if record.kind=="read" then
+        if record.kind=="trim" then
+            local item=items[record.itemId]
+            if record.singleton~=true or type(record.beardStyle)~="string" or locations[record.itemId]~=root then return nil,"unavailable" end
+            local candidate=setmetatable({Type="ISTrimBeard",character=character,item=item,
+                beardStyle=record.beardStyle,maxTime=300},ISTrimBeard)
+            if not trimTrusted(candidate) then return nil,"unsupported" end
+            if construct then
+                action=ISTrimBeard:new(character,record.beardStyle,item)
+                if not trimTrusted(action) then return nil,"unsupported" end
+            end
+        elseif record.kind=="read" then
             local item=items[record.itemId]
             if locations[record.itemId]~=root or not pageBook(item,character,record.active)
                 or not nativeClass(probe("read",character,item),"read") then return nil,"unavailable" end

@@ -10,8 +10,31 @@ function F.same(a,b)
  for k in pairs(b)do if a[k]==nil then return false end end
  return true
 end
-F.moves={'move-earlier','move-later','move-promote','move-deny-writer','move-deny-nested'}
-function F.moveCase(case)for _,value in ipairs(F.moves)do if case==value then return true end end;return false end
+F.moves={'move-earlier','move-later','move-promote','move-deny-writer'}
+F.carriedMoves={'move-worn-earlier','move-nested-later','move-nested-promote','move-nested-deny-writer'}
+F.worldMoves={'move-world-container-earlier','move-world-bag-later','move-world-container-promote','move-world-bag-deny-walk'}
+F.depletionMoves={'deplete-root-earlier','deplete-nested-later','deplete-world-container-promote','deplete-world-bag-later','deplete-root-deny-writer'}
+F.heldMoves={'held-primary-earlier','held-secondary-later','held-both-promote','held-primary-other-secondary','held-primary-deny-equip'}
+local moveSpecs={
+ ['move-earlier']={kind='earlier'},['move-later']={kind='later'},['move-promote']={kind='promote'},['move-deny-writer']={kind='deny-writer'},
+ ['move-worn-earlier']={kind='earlier',supply='worn-bag'},['move-nested-later']={kind='later',supply='nested-bag'},
+ ['move-nested-promote']={kind='promote',supply='nested-bag'},['move-nested-deny-writer']={kind='deny-writer',supply='nested-bag'},
+ ['move-world-container-earlier']={kind='earlier',supply='world-container'},['move-world-bag-later']={kind='later',supply='world-bag'},
+ ['move-world-container-promote']={kind='promote',supply='world-container'},['move-world-bag-deny-walk']={kind='deny-walk',supply='world-bag'},
+ ['deplete-root-earlier']={kind='earlier',depletion=true},['deplete-nested-later']={kind='later',supply='nested-bag',depletion=true},
+ ['deplete-world-container-promote']={kind='promote',supply='world-container',depletion=true},['deplete-world-bag-later']={kind='later',supply='world-bag',depletion=true},
+ ['deplete-root-deny-writer']={kind='deny-writer',depletion=true},
+ ['held-primary-earlier']={kind='earlier',uses=1,depletion=true,initialHands={primary='kit',secondary=false},postHands={primary=false,secondary=false}},
+ ['held-secondary-later']={kind='later',uses=5,depletion=false,initialHands={primary=false,secondary='kit'},postHands={primary=false,secondary='kit'}},
+ ['held-both-promote']={kind='promote',uses=1,depletion=true,initialHands={primary='kit',secondary='kit'},postHands={primary=false,secondary=false}},
+ ['held-primary-other-secondary']={kind='earlier',uses=1,depletion=true,initialHands={primary='kit',secondary='hammer'},postHands={primary=false,secondary='hammer'}},
+ ['held-primary-deny-equip']={kind='deny-equip',uses=1,depletion=true,initialHands={primary='kit',secondary=false},postHands={primary='hammer',secondary=false}}}
+function F.spec(case)return moveSpecs[case]end
+function F.heldCase(case)return moveSpecs[case]and moveSpecs[case].initialHands~=nil or false end
+function F.moveCase(case)return moveSpecs[case]~=nil end
+function F.moveKind(case)return moveSpecs[case]and moveSpecs[case].kind end
+function F.moveSupply(case)return moveSpecs[case]and moveSpecs[case].supply end
+function F.depletionCase(case)return moveSpecs[case]and moveSpecs[case].depletion==true or false end
 function F.placed(case)return F.supplyCase(case)or F.moveCase(case)end
 F.supplySP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag'}
 F.supplyMP={'apply-worn-bag','apply-nested-bag','apply-world-container','apply-world-bag','cancel-nested-bag','cancel-world-container'}
@@ -95,6 +118,20 @@ local function adjacent(player)
   if square and square:canStand()and square:isFree(false)and not origin:isBlockedTo(square)then return square end
  end;error('no free adjacent makeup supply tile')
 end
+-- A free native two-step route; execution uses normal pathfinding in both
+-- directions. The actor's published supply checkpoints stay on the origin.
+function F.walkRoute(player,world)
+ local origin=assert(player:getCurrentSquare());local x,y,z=origin:getX(),origin:getY(),origin:getZ()
+ for _,d in ipairs({{1,0},{-1,0},{0,1},{0,-1}})do
+  local via=getCell():getGridSquare(x+d[1],y+d[2],z)
+  local out=getCell():getGridSquare(x+2*d[1],y+2*d[2],z)
+  if via and out and via:canStand()and out:canStand()and via:isFree(false)and out:isFree(false)
+   and not origin:isBlockedTo(via)and not via:isBlockedTo(out)
+   and math.max(math.abs(out:getX()-world.x),math.abs(out:getY()-world.y))>1 then
+   return {origin={x=x,y=y,z=z},via={x=via:getX(),y=via:getY(),z=z},out={x=out:getX(),y=out:getY(),z=z},source=world}
+  end
+ end;error('no free native two-step makeup walk route away from world source')
+end
 local function backpackSlot(bag)
  local slot=ItemBodyLocation.BACK
  assert(slot and bag:canBeEquipped()==slot,'native schoolbag Back equipment slot changed')
@@ -137,7 +174,48 @@ function F.definition(kind)
  for _,v in ipairs(MakeUpDefinitions.makeup)do if v.item==kind then return v end end
  error('native makeup definition missing '..tostring(kind))
 end
-function F.snapshot(s)
+function F.handsReady(s,post)
+ if not s.ids.held then return true end
+ local expected=F.spec(s.ids.case)[post and'postHands'or'initialHands'];local root=s.player:getInventory()
+ for _,slot in ipairs({'primary','secondary'})do
+  local actual;if slot=='primary'then actual=s.player:getPrimaryHandItem()else actual=s.player:getSecondaryHandItem()end
+  if not expected[slot]then if actual~=nil then return false end
+  else
+   local item=direct(root,s.ids.items[expected[slot]])
+   if not item or actual~=item or item:getContainer()~=root or item:getEquipParent()~=s.player then return false end
+  end
+ end;return true
+end
+local function hands(player,root)
+ local out={}
+ for _,slot in ipairs({'primary','secondary'})do
+  local item;if slot=='primary'then item=player:getPrimaryHandItem()else item=player:getSecondaryHandItem()end
+  if not item then out[slot]=false
+  else local found=direct(root,item:getID());out[slot]={id=item:getID(),kind=item:getFullType(),root=found~=nil,
+   sameReference=found==item,container=item:getContainer()==root and'root'or false,equipParent=item:getEquipParent()==player}end
+ end;return out
+end
+-- Read physical membership and the newly paid root/worn object. A detached
+-- client kit reference can retain stale uses, so it is never queried here.
+function F.depletionReady(s)
+ if not s.ids.depletion or not s.ids.baseline then return false end
+ local kit,source=F.kit(s);if kit or not source then return false end
+ local root=s.player:getInventory();if direct(root,s.ids.items.kit)then return false end
+ if s.ids.supply then
+  local _,actual=F.supplyState(s.player,s.ids.supply);if not actual then return false end
+  for _,row in ipairs(actual.items)do if row.id==s.ids.items.kit then return false end end
+  for _,ancestor in ipairs(actual.ancestors)do for _,row in ipairs(ancestor.items)do if row.id==s.ids.items.kit then return false end end end
+ end
+ local initial={};for _,row in ipairs(s.ids.baseline.root)do initial[row.id]=true end
+ local output
+ for i=0,root:getItems():size()-1 do local item=root:getItems():get(i)
+  if not initial[item:getID()]then
+   if output or item:getFullType()~=s.ids.target then return false end;output=item
+  end
+ end
+ return output~=nil and output:getContainer()==root and s.player:getWornItem(ItemBodyLocation.MAKE_UP_EYES)==output and F.handsReady(s,true)
+end
+function F.snapshot(s,transition)
  local p,root=s.player,s.player:getInventory();local items,worn={},{}
  local values=root:getItems()
  for i=0,values:size()-1 do local item=values:get(i);items[#items+1]={id=item:getID(),kind=item:getFullType()}end
@@ -149,14 +227,16 @@ function F.snapshot(s)
    sameReference=found==item,container=item:getContainer()==root and'root'or false}
  end
  table.sort(worn,function(a,b)return a.slot<b.slot end)
- local kit,source=F.kit(s);assert(kit,'exact native makeup kit disappeared')
- assert(kit:getFullType()==s.ids.types.kit and kit:getContainer()==source,'makeup kit identity/topology changed')
+ local kit,source=F.kit(s);assert(source,'exact native makeup source disappeared')
+ if kit then assert(kit:getFullType()==s.ids.types.kit and kit:getContainer()==source,'makeup kit identity/topology changed')
+ else assert(s.ids.depletion and(transition==true or F.depletionReady(s)),'exact native makeup kit disappeared without paid depletion proof')end
  local supplyState
  if s.ids.supply then local ignored;ignored,supplyState=F.supplyState(p,s.ids.supply);assert(ignored==source,'supply identity changed')end
  local value= {case=s.ids.case,actor=p:getOnlineID(),root=items,worn=worn,
-  kit={id=kit:getID(),kind=kit:getFullType(),uses=kit:getCurrentUses(),maxUses=kit:getMaxUses(),root=source==root},
+  kit=kit and {id=kit:getID(),kind=kit:getFullType(),uses=kit:getCurrentUses(),maxUses=kit:getMaxUses(),root=source==root}or false,
   frontPages=p:getAlreadyReadPages(s.ids.types.front),tailPages=p:getAlreadyReadPages(s.ids.types.tail)}
  if supplyState then value.supply=supplyState end
+ if s.ids.held then value.hands=hands(p,root)end
  if s.ids.move then value.middlePages=p:getAlreadyReadPages(s.ids.types.middle)end
  if supplyState or s.ids.move then value.placement=F.placement(p)end;return value
 end
@@ -176,7 +256,9 @@ function F.resolve(player,ids)
  end
  player:setPerkLevelDebug(Perks.Woodwork,0);player:setPerkLevelDebug(Perks.Doctor,0)
  if ids.move then player:setPerkLevelDebug(Perks.Cooking,0)end
+ if ids.held and not F.handsReady(s,false)then return end
  local actual=F.snapshot(s);local expected=ids.baseline
+ if ids.held and not F.same(actual.hands,expected.hands)then return end
  if not F.same(actual.root,expected.root)or not F.same(actual.kit,expected.kit)or #actual.worn~=#expected.worn or not F.same(actual.supply,expected.supply)then return end
  for i,row in ipairs(actual.worn)do
   local before=expected.worn[i]
@@ -192,12 +274,14 @@ end
 function F.prepare(player,case,previous,placement)
  assert(not isClient(),'makeup setup requires authority')
  if F.placed(case)then assert(F.atPlacement(player,placement),'makeup supply actor has not settled on exact placement tile')end
- local root=player:getInventory();cleanupSupply(player,previous)
+ local root=player:getInventory()
+ if previous and previous.held then player:setPrimaryHandItem(nil);player:setSecondaryHandItem(nil);if isServer()then sendEquip(player)end end
+ cleanupSupply(player,previous)
  for _,slot in ipairs(slots)do local item=player:getWornItem(slot);if item then player:removeWornItem(item,false)end end
  local remove={}
  for i=0,root:getItems():size()-1 do
   local item=root:getItems():get(i)
-  local owned=previous and (item:getID()==previous.items.kit or item:getID()==previous.items.front or item:getID()==previous.items.tail or item:getID()==previous.items.middle or item:getID()==previous.items.writer)
+  local owned=previous and (item:getID()==previous.items.kit or item:getID()==previous.items.front or item:getID()==previous.items.tail or item:getID()==previous.items.middle or item:getID()==previous.items.writer or item:getID()==previous.items.hammer)
   for _,slot in ipairs(slots)do if item:getBodyLocation()==slot then owned=true end end
   if owned then remove[#remove+1]=item end
  end
@@ -211,20 +295,22 @@ function F.prepare(player,case,previous,placement)
  local ids={case=case,actor=player:getOnlineID(),items={},types={},target='Base.MakeUp_Crow',alternate='Base.MakeUp_RedStripes2',
   different='Base.MakeUp_EyesShadowWhite',oldType='Base.MakeUp_RedStripes1',slot=tostring(ItemBodyLocation.MAKE_UP_EYES),
   otherSlot=tostring(ItemBodyLocation.MAKE_UP_EYES_SHADOW),producer='ISMakeUpUI.onApplyMakeUp',duration=1}
+ if F.depletionCase(case)then ids.depletion=true end
+ if F.heldCase(case)then ids.held=true;ids.handSpec={initial=F.spec(case).initialHands,post=F.spec(case).postHands}end
  if F.moveCase(case)then ids.move=true;ids.placement={x=placement.x,y=placement.y,z=placement.z}end
  local function seed(name,kind,destination)
   local item=assert((destination or root):AddItem(kind),'native fixture item absent '..kind);ids.items[name]=item:getID();ids.types[name]=kind;return item
  end
  -- Native Eyes supports both Eyes and EyesShadow; no fabricated All kit.
  local source,object,worldBag=root,nil,nil
- if F.supplyCase(case)or case=='move-deny-nested'then
+ if F.supplyCase(case)or F.moveSupply(case)then
   ids.placement={x=placement.x,y=placement.y,z=placement.z}
-  source,ids.supply,object,worldBag=supply(player,case=='move-deny-nested'and'apply-nested-bag'or case)
+  source,ids.supply,object,worldBag=supply(player,F.moveSupply(case)and'apply-'..F.moveSupply(case)or case)
  end
  local kit=seed('kit','Base.MakeupEyeshadow',source)
  if ids.supply then assert(source:AddItem('Base.Pencil'),'native source sentinel missing')end
  assert(kit:getMakeUpType()=='Eyes'and kit:getMaxUses()==5,'native Eyes supply definition changed')
- kit:setCurrentUses(kit:getMaxUses());ids.kitUses=kit:getCurrentUses();ids.kitType=kit:getMakeUpType()
+ kit:setCurrentUses(ids.held and F.spec(case).uses or ids.depletion and 1 or kit:getMaxUses());ids.kitUses=kit:getCurrentUses();ids.kitType=kit:getMakeUpType()
  for _,kind in ipairs({ids.target,ids.alternate,ids.different,ids.oldType})do
   local def=F.definition(kind);local script=assert(getScriptManager():FindItem(kind))
   assert(def.makeuptypes[ids.kitType]and script:getLuaCreate()==nil and script:getItemConfig()==nil,'unreviewed native cosmetic producer')
@@ -235,10 +321,17 @@ function F.prepare(player,case,previous,placement)
   and getScriptManager():FindItem(ids.different):getBodyLocation()==ItemBodyLocation.MAKE_UP_EYES_SHADOW,'native cosmetic slots changed')
  for _,name in ipairs(ids.move and {'front','middle','tail'}or {'front','tail'})do
   local book=seed(name,name=='front'and'Base.BookCarpentry1'or name=='middle'and'Base.BookCooking1'or'Base.BookFirstAid1')
-  ids[name..'Total']=book:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and(ids.move and 8 or 3)or 1)
+  ids[name..'Total']=book:getNumberOfPages();ids[name..'Initial']=ids[name..'Total']-(name=='front'and(ids.move and not ids.depletion and not ids.held and not F.moveSupply(case)and 8 or 3)or 1)
   book:setAlreadyReadPages(ids[name..'Initial']);player:setAlreadyReadPages(book:getFullType(),ids[name..'Initial'])
  end
- if case=='move-deny-writer'then seed('writer','Base.Socks_Ankle')end
+ if F.moveKind(case)=='deny-writer'then seed('writer','Base.Socks_Ankle')end
+ if ids.held then
+  local spec=F.spec(case)
+  if spec.initialHands.secondary=='hammer'or spec.postHands.primary=='hammer'then seed('hammer','Base.Hammer')end
+  player:setPrimaryHandItem(spec.initialHands.primary and assert(direct(root,ids.items[spec.initialHands.primary]))or nil)
+  player:setSecondaryHandItem(spec.initialHands.secondary and assert(direct(root,ids.items[spec.initialHands.secondary]))or nil)
+  assert(F.handsReady({player=player,ids=ids},false),'authority did not equip exact root kit/hands')
+ end
  if case~='apply-empty'and not ids.move then local old=seed('old',ids.oldType);player:setWornItem(ItemBodyLocation.MAKE_UP_EYES,old)end
  -- Native root packet acknowledgement precedes authoritative wearing. This
  -- avoids manufacturing a same-ID unattached clothing proxy on the client.
@@ -250,6 +343,7 @@ function F.prepare(player,case,previous,placement)
   ids.supply.world={kind='world-bag',x=square:getX(),y=square:getY(),z=square:getZ(),index=square:getWorldObjects():indexOf(world),
    id=worldBag:getID(),type=worldBag:getFullType(),owner=worldBag:getModData().MakeupSupplyOwner}
  end
+ if F.moveKind(case)=='deny-walk'then ids.walk=F.walkRoute(player,assert(ids.supply.world))end
  if isServer()then
   if object then object:transmitCompleteItemToClients();object:transmitModData()end
   if ids.supply and not ids.supply.world then
@@ -257,6 +351,7 @@ function F.prepare(player,case,previous,placement)
   end
   for name,wanted in pairs(ids.items)do if name~='kit'or source==root then sendAddItemToContainer(root,assert(root:getItemById(wanted)))end end
   for _,slot in ipairs(slots)do sendClothing(player,slot,player:getWornItem(slot))end
+  if ids.held then sendEquip(player)end
  end
  local s={player=player,ids=ids};ids.baseline=F.snapshot(s);return s
 end

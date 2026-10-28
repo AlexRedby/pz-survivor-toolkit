@@ -1,3 +1,26 @@
+# Shared queue resources and container capacity
+
+Implementation and migration are conditional on the performance gate in [the design plan](docs/design/QUEUE_RESOURCE_CAPACITY.md). Keep the native executor and existing protections until each replacement is qualified.
+
+- [ ] Implement the smaller common-contract/admission/outcome design using the existing EditModel, Weights, Policy and Settlement. Preserve the cheap stateless/native capacity path; do not add a mandatory whole-inventory or whole-queue snapshot to every decision. Keep optional forecasts advisory and capability-scoped, with complete dependency closure, fresh facts, native hard/soft limits, peak occupancy, unknown effects and exact cleanup ownership.
+- [ ] Before integrating either test-only prototype, define a cheap eligibility rule from verified resource facts and qualify it against both ordinary native-exact and overlapping affected cases. The snapshot's nested gain does not justify its flat/single-container regression; the worklist's counters do not cover the retained first sweep. Reject routes that exceed frozen budgets instead of enabling them globally.
+- [ ] Complete exclusive selected-pack idle/hover/drag/click/blocked-priority, retention and Host-contention measurements before granting new permissions. Keep the adaptive worklist and snapshot prototypes outside runtime until the corresponding performance/correctness gates pass.
+- [ ] Qualify the first vertical slice: borrowed-book pickup/read/return with plain root equip and independent TV controls. Address the book regression below through the common path; grant new permissions only after the corresponding admission, failure/outcome and earned-return checks in the next item also pass. Remove only superseded capacity gates, retaining native callback/event proofs and checkpoint/resume boundaries.
+- [ ] Qualify execution admission and correlated item outcomes at every native transfer batch boundary in SP/menu Host. Cover concurrent actors, intervening capacity changes, partial effects, duplicate/late/unknown results and unavailable returns; retain exact items, paid effects and independent work without automatic replay or long queue reservations.
+- [ ] Migrate every registered queue family through the coverage ledger in the plan, in effect-based batches. For each batch remove the replaced local checks in the same change, or record the exact retained legacy boundary and its removal gate here. Preserve explicit unsupported contracts; a registration or shared wrapper alone is not migrated coverage.
+- [ ] Retire the legacy queue-capacity algorithm only after all applicable consumers have verified contracts, matching queue-off/on SP/Host controls and performance qualification. Recheck shipped component versions against main and record delivered behavior before release; do not install into the user's game automatically.
+
+# Book reading edit regression
+
+- [ ] Reproduce the reported blocked cancel/preemption through real queue-panel controls for root, worn-bag and world-container reading, comparing collapsed operation and expanded reader rows. Include native producer/type/callback bindings, earned returns and independent neighboring actions; collect actual denial gates rather than asking the user to identify an old case.
+- [ ] Fix every demonstrated shared cause while preserving earned cleanup, exact book IDs/pages, real resource prerequisites and native stop/Host settlement. Add focused failing regressions before changing permissions.
+- [ ] Batch the affected source/control combinations with the current selected pack in SP/menu Host, queue off/on. Require actual panel press/release and drag admission, saved-page resume, exact authority returns and clean logs before release.
+
+# Finish base walking delivery
+
+- [ ] Integrate current main, release the checked hidden-player inventory change with a newer Toolkit version and changelog, and run affected checks before pushing main.
+- [ ] Preserve required artifacts outside the task worktree, verify full server integration, and remove only owned temporary resources and redundant task refs before archiving.
+
 # Shared in-game verification campaign
 
 Collect the outstanding native checks below into one coordinated campaign. Reuse compatible game sessions instead of launching once per TODO item; retain separate case evidence and unfinished gates. The executable selections and remaining gates are mapped in `tests/native_queue/plans/in-game-campaign.example.json`; a block is not a claim of runtime coverage. Implementation/audit tasks below the campaign keep their acceptance requirements and join when ready.
@@ -18,11 +41,11 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ### Full-pack follow-up checks
 
-- [ ] Add a Host partial-drop fixture for Smart Deposit and qualify server-authoritative transfers and retained contents with the complete locked 67-mod pack. The existing SP fixture cannot establish Host behavior.
+- [ ] Add a Host partial-drop fixture for Smart Deposit and qualify server-authoritative transfers and retained contents with the current complete source lock. The existing SP fixture cannot establish Host behavior.
 
 ### Warehouse client workload
 
-- [ ] Extend the full 67-mod SP warehouse walking capture to native menu Host, including another player's container edits, crafting inputs and quick transfers with loot hidden. Existing SP walking and Host transfer/Grab checks do not establish concurrent-player behavior or the user-save stutter cause; keep GPU/FPS claims separate from Lua wall time and UI callback cadence.
+- [ ] Extend the previously qualified 67-mod SP warehouse walking capture to native menu Host with the current complete source lock, including another player's container edits, crafting inputs and quick transfers with loot hidden. Existing SP walking and Host transfer/Grab checks do not establish concurrent-player behavior or the user-save stutter cause; keep GPU/FPS claims separate from Lua wall time and UI callback cadence.
 
 ### Item catalogue test world
 
@@ -30,7 +53,7 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ### Food age and cooling
 
-- [ ] Complete live qualification of the prepared CleanUI food-age correction. `prepare_install --cleanui` now supplies a source-checked complete dependency copy; use that exact source in fresh native snapshots.
+- [ ] Migrate the reviewed CleanUI collapsed-food-age correction into Toolkit or Java Patches if still needed with Workshop CleanUI. Installation ships only the two owned mods; the standalone source-preparation experiment is no longer delivered. Establish a safe runtime integration and focused/native checks with unmodified Workshop sources before claiming the correction is delivered; retain the remaining runtime gates below.
   - [ ] Extend the passing 199/200-item SP natural-expiry/regroup/reopen case in both UI modes to expiry while clipped/hidden, later expand/refresh, repeated group rebuilds and Host/server replication. Record item identities, age/lastAged, boundary events and actual regrouping without observer age writes; the separate old `inventory-freshness` case still has `naturalAgeing=false`.
   - [ ] Qualify live refrigeration/freezing, power changes and transfers between environments. Native `Food.updateAge` owns elapsed-time/freezing calculations and events; container transitions and generator toggles call it, while `finishupdate` can retire inert food and client cell processing is skipped. The new headless cooling controls use configured native states, not real appliance transitions. Preserve those calls and avoid a global age-result cache.
 
@@ -40,7 +63,7 @@ Group compatible visual checks around prepared vehicles. Keep speed/healing meas
 
 ### Cart motion full-pack compatibility
 
-- [ ] Complete offline visual review of the captured full-pack SP injury/healing banks for wooden/metal wheelbarrows and shopping carts. The full 16-scene automatic banks are available; metal-wheelbarrow `vehicles07` completes the previously missing capture. Reports retain `geometryVerified=false` and `animationEquivalencePass=false`; compare geometry and native-animation behavior using the existing clips before claiming visual equivalence. No additional game launch is needed for this review.
+- [ ] Complete offline visual review of the captured full-pack SP injury/healing banks for wooden/metal wheelbarrows and shopping carts. The full 16-scene automatic banks are available for the verified 67-mod source lock; preserve that historical source scope when comparing against newer selections. Reports retain `geometryVerified=false` and `animationEquivalencePass=false`; compare geometry and native-animation behavior using the existing clips before claiming visual equivalence. No additional game launch is needed for this review.
 - [ ] Add and qualify complete-pack menu-Host injury banks for metal/shopping carts and matched-effective-weight cart/no-cart Walk/Run/Sprint speed comparisons for all three variants. The current Host injury fixture covers the wooden variant only.
 
 ### Shopping cart turn footwork
@@ -93,7 +116,7 @@ Prepare fixtures before launch where possible; add them to compatible inventory/
 
 ### Selected QoL additions
 
-- [ ] After installation is requested, check all three in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod; foraging modifiers/radius; switch construction, bulb insertion/removal, grid/generator lighting, dismantling and second-player synchronization. Author claims do not establish compatibility with this selected set.
+- [ ] After installation is requested, check the two selected additions in isolated full-pack macOS B42.21 SP/Host saves: skill and recipe tooltips alongside the selected trait-description mod, and foraging modifiers/radius. Custom Light Switch is deferred in the mod catalog and excluded from this gate. Author claims do not establish compatibility with this selected set.
 
 ### Vanilla vehicle visuals
 
@@ -113,7 +136,7 @@ Collect missing recipe inputs and original-episode diagnostics before reserving 
 
 ### Medical visual packet reproduction
 
-- [ ] Native MP medicine: obtain a live reproduction of the rare `SyncVisualsPacket` count mismatch 7/8 from MP10 using the preserved diagnostic setup `tests/native_queue/contributions/visual-sync`. Compare ordered IDs before write and after parse, asset readiness and in-flight old snapshots; establish the cause of the specific failure. Gate for any fix: a positive regression case, correct 8/8 packets, normal treatment effects and comparable MP controls with log audit. Do not bypass the count guard or treat absence of a message as proof of a fix.
+- [ ] Native MP medicine: obtain a live reproduction of the rare `SyncVisualsPacket` count mismatch 7/8 using the tracked diagnostic setup `tests/native_queue/contributions/visual-sync`. Compare ordered IDs before write and after parse, asset readiness and in-flight old snapshots; establish the cause of the specific failure. Gate for any fix: a positive regression case, correct 8/8 packets, normal treatment effects and comparable MP controls with log audit. Do not bypass the count guard or treat absence of a message as proof of a fix.
 
 ## Startup, restart and runtime diagnostics
 
@@ -125,11 +148,11 @@ Capture these during relevant campaign launches rather than adding an unrelated 
 
 ### Runtime observations to resolve
 
-- [ ] Classify the startup diagnostics from the earlier food-age SP/control runs: `/tmp/pz-cleanui-food-age-sp-fixed02/report.json` records six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. The untouched-source control has identical fingerprints/counts; the current complete-pack food-age baseline is clean. Qualify or fix each historical source/caller before changing audit rules; do not infer that an old diagnostic is harmless from a later clean run.
+- [ ] Classify the startup diagnostics from earlier food-age SP/control runs: six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. Matching untouched-source controls had the same signatures/counts, while a complete-pack baseline was clean. Reproduce with matching prepared and untouched dependencies, qualify or fix each source/caller before changing audit rules, and retain strict runtime auditing.
 
-- [ ] Resolve intermittent empty AeroSpace observations under the normal `auto` policy using the new pre-cleanup `desktop-incident.json` on recurrence. Earlier wooden-cart/shared-storage runs and metal-wheelbarrow `vehicles04`/`vehicles06` failed with empty observations; fresh retries, including the full `vehicles07` metal bank, do not establish a fix. `vehicles04` correlates with automatic display sleep/session lock about 2.5 seconds before teardown; `vehicles06` has no matching lock/sleep event and its expected native window leaves its space when the client connection closes. Compare the saved last verified placement, failed CLI result, process liveness and owned-PID CoreGraphics/display/session metadata before selecting a recovery policy. CoreGraphics existence alone does not establish AeroSpace placement; minimized windows can also be absent from workspace listings. Keep PID/window/desktop guards and avoid blind retries or display-state changes. `--monitor all` already includes hidden workspaces.
+- [ ] Resolve intermittent empty AeroSpace observations under the normal `auto` policy using the pre-cleanup `desktop-incident.json` on recurrence. Routed windows have become undiscoverable after bootstrap/world readiness, during shared-storage work and near the end of a cart injury bank; an imported-base ground-highlight control also failed before measurement. One cart failure closely followed automatic display sleep/session lock; another had no matching event and its expected native window left its space only when the client connection closed. Successful retries do not establish a fix. Compare saved last verified placement, failed CLI result, process liveness and owned-PID CoreGraphics/display/session metadata before selecting recovery. CoreGraphics existence alone does not establish AeroSpace placement; minimized windows can also be absent from workspace listings. Keep PID/window/desktop guards and avoid blind retries or display-state changes. `--monitor all` already includes hidden workspaces.
 
-- [ ] Diagnose intermittent menu-Host child startup failures. Container-group Host02 emitted ZombieBuddy premain output, then stalled before engine logs; `jcmd Thread.print` could not attach. Host03 emitted no child stdout and reported `Stream closed` 20.054 seconds after `HOST_REQUEST`. B42.21 `CoopMaster.watchServer()` destroys the child after 20 seconds unless `readServer()` has received its first line; timing supports that watchdog explanation, but the child exit reason was not preserved and the underlying JVM stall is unknown. Fresh Host04 passed with unchanged startup guards, so a retry does not establish a fix. Capture bounded child stderr, first-output timing and native termination reason on recurrence; preserve readiness, process-ownership and cleanup guards.
+- [ ] Diagnose intermittent menu-Host child startup failures during container-group checks: a child can stall before engine logs, either after ZombieBuddy premain output with `jcmd Thread.print` unable to attach, or without stdout before `Stream closed` near the 20-second startup deadline. B42.21 `CoopMaster.watchServer()` destroys the child after 20 seconds unless `readServer()` has received its first line; this is a suspected termination path, not an established cause of the JVM stall. Capture bounded child stderr, first-output timing and native termination reason on recurrence. A successful retry does not establish a fix; preserve readiness, process-ownership and cleanup guards.
 
 ## Development-gated additions to this campaign
 
@@ -138,6 +161,11 @@ Capture these during relevant campaign launches rather than adding an unrelated 
 # Batch action-queue audit and shared fixes
 
 - [ ] Continue the remaining lifecycle, dependency/resource and recovery-contract audits in batches beyond the verified owned-field repair. Record concrete failed cases and missing evidence separately, group shared causes before implementation, and retain existing balance/resource protections.
+
+# Workshop dependency corrections
+
+- [ ] Migrate the reviewed DAMN Library obsolete Plastic Welding Gun battery recipe correction into Toolkit or Java Patches. Installation now ships only owned mods, so the standalone `tools/damnlib_source.py` experiment does not deliver this correction. Preserve the native standard recipes and battery-charge transfer; require focused and native qualification with unmodified Workshop sources before claiming it is delivered.
+
 
 # Container editor visual states
 
@@ -150,7 +178,7 @@ These are implementation and verification gaps, not evidence that every action u
 ## General rules for move and cancel
 
 - [ ] Extend the version-1 edit contract to remaining world-container pickup/return (hot cookable food and special containers) and craft inputs. Describe exact identity versus late selector scope, bounded native effects and complete resource domains; retain legacy protection for missing contracts. Do not infer semantics from action names or treat same-item access alone as a dependency.
-- [ ] Extend the conservative full-current-weight transfer gate to proven quantity-dependent capacity effects and remaining world-container ancestry. Do not credit uncertain MP releases or reserve future inventory. Add exact native producer/consumer and return-container gates before expanding permissions.
+- [ ] Migrate quantity-dependent capacity effects and remaining world-container ancestry through the performance-gated shared system above, rather than extending a second transfer-capacity algorithm. Retain current bounds until exact producer/consumer, admission and authoritative return contracts are qualified.
 - [ ] Extend persistent prepare/body/cleanup effect records to the remaining legacy pickup and family-owned restoration paths. Replace a family proof only after exact native effects and corresponding SP/Host gates are proven. Preserve shared ownership, confirmed explicit equipment intent, earned output and paid costs; never infer an effect from queue disappearance or replay authoritative work.
 - [ ] Register interruption capabilities through the same contract: cancel, finish the current atomic step and defer the remainder, or native stop with a validated checkpoint/resume. Generalize existing book/world handling through that interface without inventing arbitrary timer restoration or repeating already-paid work. Unknown active actions keep native cancellation and only supported boundaries may be edited.
 - [ ] Extend the generated edit oracle and existing scenario matrix to native partial completion, cleanup, replaced resources and delayed/duplicate outcomes. Gate each additional consumable/transfer adapter on exact conservation and at-most-once effects, without enumerating every pair of action names.
@@ -164,7 +192,7 @@ These are implementation and verification gaps, not evidence that every action u
 
 # Extend cancelled queue recovery
 
-- [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
+- [ ] Add explicit reconstruction and live validation for untouched consumption, crafting and the remaining queued action families beyond the audited read/walk/radio/media/direct-transfer and singleton beard-trim adapters. Preserve completed effects and required cleanup; do not enable uncertain started operations. Add focused family regressions and corresponding selected-pack SP/Host checks before granting recovery.
 
 # Further action queue migration
 
@@ -179,8 +207,8 @@ These operations can execute normally while some queue controls remain disabled.
 - [ ] Complex handcraft recipes: identify concrete blocked recipes with Lua callbacks, fluid/energy inputs, unrestricted item selection or replacement/depletion/break effects. Add narrow resource/output contracts where practical; keep actual shared materials and shared crafting UI ordered. Plain-item crafting support is not an unfinished item here.
 - [ ] Medical world pickups and unknown treatment producers: add exact item/patient/wound contracts for specific unsupported entry points before allowing edits. Preserve native wound checks, supplies and clothing effects; do not mark all medicine unsupported.
 - [ ] Carried-container capacity: MP does not credit space that a previous pending pickup may free; synthetic proximity endpoints and unknown capacity callbacks also remain protected. Prove exact source/destination/ancestor capacity and authoritative transfer effects before relaxing a concrete blocked case.
-- [ ] Grooming: prove replacement/creation effects, nonzero empty weights, held supplies and custom selector candidates or ancestry before expanding their move permissions. Prove finer appearance/equipment independence before crossing cosmetic operations, and checkpoint/resume before moving started bodies; retain native callback and paid-effect guards.
-- [ ] Extend makeup reordering beyond the verified owned, nondepleting root-kit subset: model projected kit consumption/replacements, ancestor storage, appearance writers and transient output capacity before allowing those dependencies to move. Preserve native instant SP application, finish-step protection for allocated Host bodies and existing pending cancellation.
+- [ ] Grooming: prove replacement/creation effects, nonzero empty weights, depleting or non-root held supplies, automatic drain or unsafe hand state, and custom selector candidates or ancestry outside the retained plain-drainable proof before expanding their move permissions. Prove finer appearance/equipment independence before crossing cosmetic operations, and checkpoint/resume before moving started bodies; retain native callback and paid-effect guards.
+- [ ] Extend makeup edit contracts to projected kit consumption/replacements, non-root held or attached supplies, unsafe other-hand references and automatic drain, inner world-container removal transport, remaining storage and diagonal/vehicle access, safe movement projections, finer appearance/equipment writers and transient output capacity. Before separating worn and HumanVisual domains, require a nonmutating proof of initialized native hair state and explicit bounds for selected OnClothingUpdated callbacks such as snow body visuals; full HumanVisual packets also retain whole-domain ordering. Preserve native instant SP application, finish-step protection for allocated Host bodies, exact paid effects and existing pending cancellation.
 - [ ] Unknown mod actions and asynchronous continuations: capture the concrete action type, producer, continuation and cleanup when an operation is split into separate rows or becomes an edit barrier. Add scoped grouping/edit contracts for reviewed entry points; unknown or modified callbacks must retain a clear denial reason.
 
 ## Shared game sessions and build regression
@@ -217,11 +245,11 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Inventory infrastructure proposals
 
-- [ ] Keep the discarded details-selection mapping deferred per the prior decision; revisit only after native profiling shows material cost or a requested change requires this boundary. InventoryFilter still calls the upstream all-item mapper before replacing/clearing its result. The actual-source probe `.codex/investigations/stabilization-audit-20261026/selection_restore_audit.py` confirms 288,060 lookups for 60 empty-selection restores of 4,800 items, but adds no in-game latency evidence. If revisited, replace only verified mapper leaves while preserving external ordering/filter hooks, synchronous intermediate restores, unknown/icon-mode fallback and render-capped selection/Shift-anchor correctness.
+- [ ] Keep the discarded details-selection mapping deferred; revisit only after native profiling shows material cost or a requested change requires this boundary. `InventoryFilter` calls the upstream all-item mapper before replacing/clearing its result. Profile repeated empty-selection restores with a large inventory to distinguish redundant lookup work from actual in-game latency. If a change is justified, replace only verified mapper leaves while preserving external ordering/filter hooks, synchronous intermediate restores, unknown/icon-mode fallback and render-capped selection/Shift-anchor correctness.
 
 # Measured stabilization candidates
 
-- [ ] Defer Smart Deposit actor-identity cache hardening until a real consumer replaces the actor within a slot while retaining its pane, drag object and selection without normal lifecycle events. Current game respawn and CleanUI mode switching recreate the inventory UI. Eight current-source probe cases (`.codex/investigations/smart-deposit-actor-current/`) show an artificially retained hint can be stale below 200 ms, while fresh admission/execution and recreated UI use the current actor. If an actual retained-UI consumer is found, add actor identity to the cache key and qualify that path; do not treat ordinary respawn as a demonstrated bug.
+- [ ] Defer Smart Deposit actor-identity cache hardening until a real consumer replaces the actor within a slot while retaining its pane, drag object and selection without normal lifecycle events. Current game respawn and CleanUI mode switching recreate the inventory UI. If such a consumer is found, reproduce hint reuse within the cache lifetime, add actor identity to the cache key and qualify that path, including fresh admission/execution and recreated UI. Do not treat an artificially retained UI or ordinary respawn as a demonstrated gameplay bug.
 
 - [ ] Optimize remaining vanilla full-stack render work separately through a public CleanUI-owned updater used by both renderers, or another proven narrow ownership boundary. The current helper is private; Toolkit/BC's freshness indicator installer only owns read/draw work. Avoid private-closure rewriting, whole-renderer replacement or globally suppressing `Food.updateAge`. Re-measure source-locked native calls and timing in both renderers across collapsed/expanded and primary/drag passes, separately from indicator aggregation. Require preserved ageing and renderer side effects plus a measured reduction before adopting an optimization; the old 8-9 ms collapsed baseline is historical.
 
@@ -229,33 +257,38 @@ The food-age runtime gates are grouped in the [shared campaign](#food-age-and-co
 
 # Process friction
 
-- [ ] Validate the required Kotlin 2.4.21 toolchain during cart campaign preflight. `vehicles01 --dry-run` passed with no compiler configured, but each cart preparation then copied sources before failing with `Kotlin 2.4.21 compiler distribution is required`. Resolve and validate the selected compiler before profile creation; the documented `KOTLIN_HOME` remains necessary until this guard is added.
+- [ ] Validate the required Kotlin 2.4.21 toolchain during cart campaign preflight. Cart campaign `--dry-run` passed with no compiler configured, but each cart preparation then copied sources before failing with `Kotlin 2.4.21 compiler distribution is required`. Resolve and validate the selected compiler before profile creation; the documented `KOTLIN_HOME` remains necessary until this guard is added.
 
-- [ ] Remove unsupported capacity setup from the warehouse walking fixture: `ZZStorageProfileNative.lua` calls `setCapacity(10000)` for each crate, and B42.21 emits repeated warnings about exceeding its maximum capacity of 100 (`pz-campaign-inventory01/warehouse-walk-sp`). Use an engine-supported capacity and verify both density levels retain their exact contents and workload coverage.
+- [ ] Remove unsupported capacity setup from the warehouse walking fixture: `ZZStorageProfileNative.lua` calls `setCapacity(10000)` for each crate, and B42.21 emits repeated warnings about exceeding its maximum capacity of 100 during full-pack warehouse walking. Use an engine-supported capacity and verify both density levels retain their exact contents and workload coverage.
+
+- [ ] Make the Lua runner reject game-unsupported globals such as `next` before native qualification. An experimental dashboard regression passed under LuaJIT but failed on vehicle exit in real Kahlua because `next` is absent. Add a shared game-environment compatibility check or profile without breaking test-harness-only helpers, and require a missing-global regression to fail before launching the game.
+
+- [ ] Require exclusive admission for `base-walking-profile` timing captures, or reject a non-exclusive selection explicitly. Preparation without `--exclusive` currently records `resources.exclusive=false`; the initial Java highlight capture showed higher costs across unchanged callbacks despite starting with zero peer runs, requiring a fresh exclusive repeat against the exclusive Lua control. Make the timing isolation requirement visible and consistent without changing gameplay or input guards.
+
+- [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.
+
+- [ ] Align the no-game shared-wishlist fixture in `tests/native_queue/contributions/shared-wishlist/protocol.lua` with the `InventoryRows` contract used by `InventoryPresentation`. Running `python3 tests/native_queue/contributions/shared-wishlist/check.py` reaches highlight rendering and fails because the fixture's generic module stub lacks `captureAnchor`. Update the fixture dependencies without bypassing native row/anchor behavior; require the full protocol check, including highlight and cleanup assertions, to pass.
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
-
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.
 
 - [ ] Report the exact rejected suite-selection constraint: running `queue-recovery` without explicit `--language EN` produces only a blanket list of requirements. Include actual and expected language/cases/mod selection in the validation error; explicit EN with both ordered cases succeeds.
 
-- [ ] Expose bounded preparation/admission progress in the native runner output. Full-pack inventory profiling was silent while preparing and then reported only a generic desktop wait (`/tmp/pz-native-work-baseline4.log`); separate status/selection probes were needed to discover that the active interactive catalogue had a four-hour bound. Even read-only `status --json` and `prepare` require host access outside the sandbox because `sysctl hw.memsize hw.logicalcpu` is denied inside it; retain the clear failure and document this diagnostic requirement. The campaign warehouse Host profile also exhausted its 300-second admission wait behind an exclusive run without starting a game; expose the owner suite/deadline and the safe `resume` command for still-unused prepared profiles. After the resumed Host passed, the original batch still reported it blocked; let campaign coverage reference the resumed result while retaining the first attempt. Report preparation, queue position and active suite/deadline without changing exclusive timing isolation or input guards.
+- [ ] Expose bounded preparation/admission progress in the native runner output. Full-pack `inventory-work` preparation, bulk food-fixture setup and waiting for an active interactive catalogue can remain silent or report only a generic desktop wait. Imported-base manifest verification can also spend several CPU-active minutes after `Prepared` before appearing in the admission queue; report that verification phase and its file progress. Report the current phase, fixture stage/item count, queue position and active suite/deadline without requiring separate status probes. Cover an imported-base profile exhausting its default 300-second resource wait before launch and resuming with `resume --resource-wait 1800` while retaining its valid snapshot. Keep host-resource access errors explicit for sandboxed `status --json` and `prepare`, and describe the required execution context. Verify progress during setup and contention without changing exclusive timing isolation, resource admission or input guards. After a successful resume, let campaign coverage reference the resumed result while retaining the first blocked attempt.
 
 - [ ] Give native fixtures a shared role-aware asynchronous placement contract. `QueueEnergyPlacement` returns the chosen square before arrival, and calling `teleportTo` on a server's remote actor did not move the Host client. Require one local-client placement, exact settled tile confirmation on both roles, corner/centre tolerance and bounded wait diagnostics so each suite does not rediscover these constraints.
+
+- [ ] Add an explicit batch policy for fatal fixture/control setup failures. Campaign dependencies already require passed, clean reports, but a failed setup can still be followed by independent launches and ordinary comparison batches can retain failed controls. Keep independent gameplay-failure collection available, while allowing a setup-failure stop with a partial combined report and no further launches. Qualify both policies without weakening dependency or runtime checks.
 
 
 - [ ] Make Lua-dependent test entrypoints select and report the project interpreter consistently. System `python3 -m unittest` fails with `ModuleNotFoundError: lupa` in the inventory-work/freshness/food-age fixture tests, while the same checks pass through the local `.venv/bin/python`; earlier worktrees also borrowed another checkout's environment. Complete when bootstrap/runner paths reliably select the declared local runtime without machine-specific paths.
 
 - [ ] Make optional inventory-refresh source coverage explicit: `tools/run_tests.py --game ... --test test_inventory_refresh` does not bind CleanUI/Better Containers, so those source-backed sections are silently omitted. Report missing integrations or provide a required-source mode; use explicit current 42.19/42.21 source paths for this change.
 
-- [ ] Qualify the bare game-JVM Kahlua model/server harness before using it as a full-suite gate: the storage segment passes, but the complete `test_wishlist_model.lua` run fails the departed-player weak-reference/GC assertion (`/tmp/pz-wishlist-v3-kahlua/model.log`). Distinguish harness lifetime/GC behavior from a product leak; preserve the passing normal LuaJIT suite and native SP/Host evidence.
+- [ ] Qualify the bare game-JVM Kahlua model/server harness before using it as a full-suite gate. Reproduce the departed-player weak-reference/GC assertion failure in `tests/test_wishlist_model.lua` under Kahlua and compare the same case under the normal LuaJIT runner. Distinguish harness lifetime/GC behavior from a product leak; require the complete model/server checks to pass without weakening player-release assertions, and preserve normal LuaJIT and native SP/Host coverage.
 
 
-- [ ] Add a reusable continuity diagnostic for native cart captures. Grip and motion checks accepted a 54-degree torso route-switch snap; diagnosing it required an external replay helper for `injury-torso-poses.jsonl`. The captured adjacent-frame JVM regression protects that failure. Complete when the normal diagnostic workflow reports correction rotation separately from native pose changes, with case/phase provenance and explicit IK-applied/fallback receipts for paired MP draws, without inventing a general visual-quality PASS.
+- [ ] Add a reusable continuity diagnostic for native cart captures: grip and motion checks can accept abrupt torso rotation when switching pose routes. Use the tracked `GripPoseProbe.java` output and adjacent-frame JVM regression to distinguish correction rotation from native pose changes. Complete when the normal diagnostic workflow reports discontinuities with case/phase provenance and explicit IK-applied/fallback receipts for paired MP draws, without relying on a separate local replay helper or inventing a general visual-quality PASS.
 
 - [ ] Add isolated output selection to `JavaPatches/build.py`: the builder writes only to `ROOT/build`, so preserving an existing potentially shared artifact while building a fresh task candidate requires a separate source copy. During container-group native preparation, a previously source-matched artifact in another worktree was rebuilt concurrently; the manifest guard rejected changed `build.py`, `ScriptItemProperties.java` and `RecipeItemProperties.java` fingerprints, requiring a fresh task-owned build. Provide an explicit output directory with the same source-manifest validation and atomic promotion; do not weaken the stale-artifact guard.
-
-# Preview tooling
-
-- [ ] Clarify the visualization helper's render/serve examples: `render.py fragment destination --serve` fails with `destination cannot be used with --serve`. Serving works with `render.py fragment --serve`; distinguish that invocation from standalone export to avoid a failed preview attempt.

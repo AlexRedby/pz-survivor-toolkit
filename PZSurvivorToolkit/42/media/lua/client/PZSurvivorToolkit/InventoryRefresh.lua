@@ -1,8 +1,9 @@
 -- Keep nearby-container discovery/BC aggregates live, but do not build unused
--- details rows for a hidden or collapsed idle loot window. Header values and
--- explicit pane refreshes stay live.
+-- details rows for a hidden idle window or collapsed idle loot window. Header
+-- values and explicit pane refreshes stay live.
 require "ISUI/ISInventoryPage"
 local Classes = require "PZSurvivorToolkit/InventoryClasses"
+local Categories = require "PZSurvivorToolkit/ItemCategories"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 if PZSurvivorToolkit.InventoryRefresh then return PZSurvivorToolkit.InventoryRefresh end
 local Refresh = {}
@@ -25,7 +26,8 @@ end
 
 local function idleDetailsHidden(page)
     local pane = page.inventoryPane
-    if page.onCharacter or not detailsHidden(page) or not pane or pane.mode ~= "details" then return false end
+    if not detailsHidden(page) or (page.onCharacter and not hidden(page))
+        or not pane or pane.mode ~= "details" then return false end
     -- Keep selection, drag, controller and active-filter consumers on their live
     -- path. An idle clipped list has no row identity that an input can consume.
     if page.joyfocus or pane.joyfocus or pane.doController or pane.firstSelect
@@ -73,6 +75,10 @@ local function gatePane(page, state)
     state.pane = pane
     state.gate = function(self, ...)
         if self == state.pane and mayDefer(page, state) then
+            -- Player refreshes also maintain the physical items' categories.
+            -- Those are consumed outside this hidden list (equipment/routing),
+            -- so defer only row presentation. The loot path adds no item scan.
+            if page.onCharacter then Categories.prepareContainer(self.inventory) end
             if not state.rowsPending and self.items then table.wipe(self.items) end
             state.rowsPending = true
             return

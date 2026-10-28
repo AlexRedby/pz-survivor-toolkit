@@ -27,8 +27,15 @@ Use the common runner's default `auto` desktop policy; do not select a strategy 
 
 ## Process friction
 
-Record process friction encountered during the current task in the root `TODO.md` as soon as it appears. This includes tool failures, unexpected errors in logs, awkward or slow setup, repetitive manual work, missing diagnostics, and a need for supporting scripts or tools outside the task's scope.
+Record process friction encountered during the current task as soon as it appears, choosing the TODO by responsibility:
 
-Before adding an item, check `TODO.md` for the same underlying problem, including differently worded entries. Add useful new context to an existing item instead of creating a duplicate. Keep the item concise and actionable: describe the observed problem, its impact, available evidence (such as a command, error, log or file path), and the next step or completion condition. Distinguish observations from suspected causes; a full investigation is not required before recording the issue.
+- Published root `TODO.md`: problems in this project's code, dependencies, build, installation, tests and project-owned development tools, including useful work outside the current task.
+- Private `.codex/TODO.md`: problems in external systems, the local environment and global agent or internal tools whose maintenance is outside this project. Create this file when needed and verify it is ignored by Git and untracked before recording internal details. Never force-add it or copy its internal details into tracked files.
+
+Classify by the component that needs work, not just its filesystem location: game/mod dependencies and the project's test runner still belong in the public TODO. For a mixed issue, keep the project change in the public TODO and external-system diagnostics in the private TODO.
+
+Before adding an item, check the appropriate TODO for the same underlying problem, including differently worded entries. Add useful new context to an existing item instead of creating a duplicate. Keep the item concise and actionable: describe the observed problem, its impact, evidence suitable for that TODO's visibility, and the next step or completion condition. Distinguish observations from suspected causes; a full investigation is not required before recording the issue.
+
+Repository documentation and both TODO files must remain useful after local temporary files are deleted. Describe the symptom, relevant conditions, affected component and completion criterion directly; reference tracked sources or reproducible steps instead of temporary reports, ignored investigation files or unexplained capture IDs. Rewrite a project problem in place rather than moving it to the private TODO just to retain a stale artifact path. Command examples may create fresh outputs, but must not assume an old local capture already exists.
 
 After recording it, continue the current task. A TODO entry does not expand the task's scope or authorize unrelated tooling work. If the problem blocks progress, report the blocker and handle what is necessary to proceed within the existing authorization.

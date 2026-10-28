@@ -16,8 +16,14 @@ STYLING_COSTS={'styled-scissors':dict(kind='Base.Hairgel',initial=20,uses=1,targ
 ACTIVE_CASES=['active-'+case for case in CASES]
 MOVE_CASES=['move-'+case for case in CASES]
 INDEPENDENT_CASES=MOVE_CASES.copy()
-ALL_CASES=CASES+ACTIVE_CASES+MOVE_CASES
-def base_case(case):return case.removeprefix('active-').removeprefix('move-')
+HELD_MOVES={'move-held-gel-primary':dict(base='styled-scissors',primary='gel',secondary='secondary'),
+            'move-held-spray-secondary':dict(base='sprayed-scissors',primary='torch',secondary='gel'),
+            'move-held-gel-both':dict(base='greased-scissors',primary='gel',secondary='gel')}
+HELD_CASES=list(HELD_MOVES)
+ALL_MOVE_CASES=MOVE_CASES+HELD_CASES
+LEGACY_CASES=CASES+ACTIVE_CASES+MOVE_CASES
+ALL_CASES=LEGACY_CASES+HELD_CASES
+def base_case(case):return HELD_MOVES[case]['base'] if case in HELD_MOVES else case.removeprefix('active-').removeprefix('move-')
 HAIRCUT=set(CASES[:3])|STYLING_COSTS.keys()
 BODY={case:('ISCutHair' if case in HAIRCUT else 'ISTrimBeard' if case=='beard-trim' else 'ISDyeHair') for case in CASES}
 PRODUCER={'ISCutHair':'ISCharacterScreen.onCutHair','ISTrimBeard':'ISCharacterScreen.onTrimBeard','ISDyeHair':'ISInventoryPaneContextMenu.onDyeHair'}
@@ -28,10 +34,11 @@ PREFIX='[GROOMING_TEST] '
 
 def definitions():
     return {'grooming-cancel':dict(status='ready',clients=1,default_mods=list(MODS),
-        scenario_actions={'native-haircut':dict(scope='Actual character-screen haircut/beard and inventory dye producers; waiting deletion after native scissors pickup or behind a reader; active cancellation after native body progress and sealed Host started receipt. Pending move-* cases enqueue independent front/tail readers before the actual grooming producer; all standard cut/tie/beard/styling/dye groups move before tail; all complete normally in both controls. Source-bound callbacks, exact borrowed tool return, native P4 idle hands/headwear restoration, appearance and gel conservation. Host completion uses sealed native transaction plus authority outputs; direct remote callback counts unavailable.',
+        scenario_actions={'native-haircut':dict(scope='Actual character-screen haircut/beard and inventory dye producers; waiting deletion after native scissors pickup or behind a reader; active cancellation after native body progress and sealed Host started receipt. Pending move-* cases enqueue independent front/tail readers before the actual grooming producer; all standard cut/tie/beard/styling/dye groups move before tail; all complete normally in both controls. Source-bound callbacks, exact borrowed tool return, native P4 idle hands/headwear restoration, appearance and gel conservation. Host completion uses sealed native transaction plus authority outputs; direct remote callback counts unavailable. Separate grooming_held_moves opt-in bank proves exact authority-seeded actor-root primary/secondary/both styling supplies at admission, retained native costs and P4 restoration.',
             checks={'cancel-waiting':{case:dict(cancelled=True,cleanupVerified=True) for case in CASES},
                     'cancel-active':{case:dict(cancelled=True,cleanupVerified=True,activeCancelVerified=True) for case in ACTIVE_CASES},
                     'move-independent':{case:dict(moveVerified=True,moved=True) for case in INDEPENDENT_CASES},
+                    'restore-hands':{case:dict(moveVerified=True,cleanupVerified=True) for case in HELD_CASES},
                     'server-authority':{case:dict(authoritative=True) for case in ALL_CASES}},toolkit_only=['cancel-waiting','cancel-active','move-independent'],
             not_applicable={'move-dependent':'These saved cases use independent readers and standard grooming resources; shared/unknown material conflicts are covered by source-bound Policy regressions.'})},
         cases=[dict(id=case,producer='native-haircut',capability='effect',kinds=['sp','mp'],modes=['native','toolkit'],languages=['EN']) for case in ALL_CASES])}
@@ -39,6 +46,9 @@ def definitions():
 
 def validate(selection):
     cases=selection.get('cases')
+    held=selection.get('options',{}).get('grooming_held_moves') is True
+    if held and cases!=HELD_CASES or not held and type(cases) is list and any(case in HELD_CASES for case in cases):
+        raise ValueError('Held grooming moves require the separate ordered three-case grooming_held_moves bank')
     if (type(cases) is not list or not cases or any(type(case) is not str or case not in ALL_CASES for case in cases) or len(set(cases))!=len(cases)
             or selection.get('kind') not in ('sp','mp') or selection.get('mode') not in ('native','toolkit')
             or selection.get('mods')!=MODS or selection.get('languages')!=['EN']
@@ -97,6 +107,18 @@ def snapshot(value,case):
            or not isinstance(row['location'],str) for row in value['worn']):return False
     if len({row['location'] for row in value['worn']})!=len(value['worn']):return False
     if any(value.get(key) is not False and (type(value.get(key)) is not int or value[key] not in ids) for key in ('primary','secondary')):return False
+    if case in HELD_MOVES:
+        hands=value.get('hands')
+        if type(hands) is not dict or set(hands)!={'primary','secondary'}:return False
+        lookup={row['id']:row for row in value['items']}
+        for slot,hand in hands.items():
+            if hand is False:
+                if value[slot] is not False:return False
+                continue
+            if (type(hand) is not dict or set(hand)!={'id','kind','root','sameReference','container','equipParent'}
+                    or type(hand['id']) is not int or value[slot]!=hand['id'] or hand['root'] is not True or hand['sameReference'] is not True
+                    or hand['container']!='root' or hand['equipParent'] is not True
+                    or not any(row['id']==hand['id'] and row['kind']==hand['kind'] and row['container']=='root' for row in value['items'])):return False
     appearance=value.get('appearance',{});color=appearance.get('color',{})
     return (set(appearance)=={'model','nonAttached','color','beardModel','beardColor'} and isinstance(appearance['model'],str) and bool(appearance['model'])
             and (appearance['nonAttached'] is False or isinstance(appearance['nonAttached'],str))
@@ -111,7 +133,16 @@ def snapshot(value,case):
 
 
 def restored(value,base):
-    return all(value.get(key)==base.get(key) for key in ('items','worn','primary','secondary')) and value.get('torchActive') is True
+    return all(value.get(key)==base.get(key) for key in ('items','worn','primary','secondary','hands')) and value.get('torchActive') is (base.get('torchActive') if base.get('case') in HELD_MOVES else True)
+
+
+def expected_hands(ids,prepared=False):
+    spec=HELD_MOVES[ids['case']];names={slot:spec[slot] for slot in ('primary','secondary')}
+    if prepared:
+        names['primary']='scissors'
+        if spec['primary']==spec['secondary']:names['secondary']=False
+    return {slot:False if name is False else dict(id=ids['items'][name],kind=ids['types'][name],root=True,sameReference=True,container='root',equipParent=True)
+            for slot,name in names.items()}
 
 
 def valid_color(value):
@@ -157,7 +188,7 @@ def styling_states(ids,remote=False):
 
 
 def check_case(row,selection,prepared,authority):
-    selected=row['id'];case=base_case(selected);active=selected in ACTIVE_CASES;moving=selected in MOVE_CASES;native=selection['mode']=='native';mp=selection['kind']=='mp';completed=native or moving;expected=int(completed);moved=moving and not native and selected in INDEPENDENT_CASES
+    selected=row['id'];case=base_case(selected);active=selected in ACTIVE_CASES;moving=selected in ALL_MOVE_CASES;native=selection['mode']=='native';mp=selection['kind']=='mp';completed=native or moving;expected=int(completed);moved=moving and not native and selected in INDEPENDENT_CASES+HELD_CASES
     ids,base,command,receipt=row['ids'],row['baseline'],row['command'],row['receipt']
     assert ids==prepared and receipt==authority,'authority marker/row differs'
     assert ids['duration']==duration(case) and ids['actionKind']==BODY[case] and ids['producer']==PRODUCER[BODY[case]] and ids['borrowed']==BORROWED[case] and ids['male'] is True
@@ -192,7 +223,11 @@ def check_case(row,selection,prepared,authority):
     assert restored(base,ids['baseline']) and restored(receipt['baseline'],ids['baseline'])
     for baseline_role,initial in enumerate((base,receipt['baseline'])):
         assert initial['appearance']['model']==ids['initialStyle'] and initial['appearance']['nonAttached'] is False
-        assert initial['primary']==ids['items']['torch'] and initial['secondary']==ids['items']['secondary']
+        hands=HELD_MOVES.get(selected,dict(primary='torch',secondary='secondary'))
+        assert initial['primary']==ids['items'][hands['primary']] and initial['secondary']==ids['items'][hands['secondary']]
+        if selected in HELD_MOVES:
+            assert initial['hands']==expected_hands(ids),'baseline held styling refs differ'
+            assert initial['torchActive'] is (hands['primary']=='torch' or hands['secondary']=='torch'),'held bank Torch activation differs from exact initial hand spec'
         lookup={item['id']:item for item in initial['items']}
         assert all(lookup[item]['kind']==ids['types'][name] for name,item in ids['items'].items())
         assert all(lookup[item]['container']==(ids['items']['bag'] if name in ('content','scissors','razor','dye') else 'root') for name,item in ids['items'].items()),'seeded item topology changed'
@@ -209,6 +244,9 @@ def check_case(row,selection,prepared,authority):
         if case in STYLING_COSTS:assert initial['gel']==dict(id=ids['items']['gel'],uses=STYLING_COSTS[case]['initial'])
         else:assert initial['gel'] is False
     boundary=command['boundary'];before=command['beforeTail'];idle=command['idle']
+    if selected in HELD_MOVES:
+        assert boundary['snapshot']['hands']==receipt['checkpoint']['hands']==expected_hands(ids),'live move/checkpoint held styling refs differ'
+        assert before['snapshot']['hands'] in ([expected_hands(ids),expected_hands(ids,True)] if moved and mp else [expected_hands(ids,True)] if moved else [expected_hands(ids)]),'native pre-tail equipment transition differs'
     assert boundary['case']==selected and boundary['mode']==selection['mode'] and boundary['accepted'] is (moved if moving else not native)
     assert (boundary['reason'] is False if not moving or native or moved else isinstance(boundary['reason'],str) and bool(boundary['reason']))
     assert boundary['started'] is True and boundary['bodyUnallocated'] is (not active) and boundary['tailRetained'] is True
@@ -272,6 +310,7 @@ def check_case(row,selection,prepared,authority):
     elif moving:
         assert boundary['stage']=='move' and boundary['startedReceipt'] is False
         check_move_order(command,ids,moved,mp)
+        if selected in HELD_MOVES:check_held_restoration(command,ids)
     elif boundary.get('stage','waiting')!='waiting':raise AssertionError('waiting stage differs')
     assert all(end['succeeded'] is True and number(end['at']) for record in records for end in record['finishes'])
     for role in ('tail',):
@@ -320,6 +359,31 @@ def check_case(row,selection,prepared,authority):
     if not native and not moving:
         assert receipt['checkpoint']['appearance']==receipt['baseline']['appearance'] and receipt['checkpoint']['gel']==receipt['baseline']['gel'] and receipt['checkpoint']['dye']==receipt['baseline']['dye']
     return dict(cancelled=not native and not moving,cleanupVerified=True,authoritative=True,nativeEffectsVerified=True,tailCompleted=True,activeCancelVerified=active and not native,moveVerified=moving,moved=moved)
+
+
+def check_held_restoration(command,ids):
+    spec=HELD_MOVES[ids['case']];records=command['records'];tail=next(row for row in records if row['role']=='tail')
+    # Selected P4 42.20 only queues changed refs. Native scissors replace the
+    # primary; secondary is conserved, or restored by the one two-hands equip.
+    hands=[(spec['primary'],True,spec['primary']==spec['secondary'])]
+    expected=[]
+    for name,primary,two_hands in hands:
+        expected.extend([('ISEquipWeaponAction',ids['items'][name],primary,two_hands,False),
+                         ('P4RestoreAction',ids['items'][name],False,False,name=='torch')])
+    actual=[row for row in records if row['role']=='restore']
+    assert len(actual)==len(expected),'P4 hand restoration action count differs'
+    tail_end=max(end['at'] for end in tail['finishes'])
+    for row,(kind,item,primary,two_hands,activated) in zip(actual,expected):
+        assert row['kind']==kind and row['item']==item and row['constructorDuration']==(50 if kind=='ISEquipWeaponAction' else 1),'P4 hand restoration identity/order/duration differs'
+        proof=row['restoration']
+        assert set(proof)=={'primary','twoHands','activated','begins','source'}
+        assert proof['primary'] is primary and proof['twoHands'] is two_hands and proof['activated'] is activated
+        assert type(proof['begins']) is int and proof['begins']==1,'native P4 restoration begin missing/replayed'
+        assert proof['source'] in (('native.ISEquipWeaponAction','compat.tidy-equipment') if kind=='ISEquipWeaponAction' else ('P4RestoreAction.source','compat.tidy-equipment')),'P4 hand restoration source binding differs'
+        assert sum(end['phase']=='perform' and end['succeeded'] is True for end in row['finishes'])==1,'native P4 restoration perform missing/replayed'
+        assert all(end['at']>=tail_end for end in row['finishes']),'P4 hand restoration preceded independent tail completion'
+        if kind=='ISEquipWeaponAction':
+            assert row['started'] is True and row['starts']==1 and isinstance(row['nativeRef'],str) and row['nativeRef'],'native P4 equipment episode missing'
 
 
 def check_move_order(command,ids,moved,mp):
@@ -378,22 +442,22 @@ def verify(root,selection,catalog):
     expected_stream=[]
     for row in results:
         command=row.get('command',{})
-        expected_stream.extend([(marker,command.get(key)) for marker,key in [('EDIT' if row.get('id') in MOVE_CASES else 'CANCEL','boundary'),('BEFORE_TAIL','beforeTail'),('IDLE','idle')]])
+        expected_stream.extend([(marker,command.get(key)) for marker,key in [('EDIT' if row.get('id') in ALL_MOVE_CASES else 'CANCEL','boundary'),('BEFORE_TAIL','beforeTail'),('IDLE','idle')]])
         expected_stream.append(('CASE',row.get('id')))
     if stream!=expected_stream:issues.append('Grooming raw publication order differs')
     if raw(authority,'BASELINED')!=[row.get('receipt',{}).get('baseline') for row in results]:issues.append('Authority grooming baseline marker differs')
     for marker in ('CANCEL','EDIT','BEFORE_TAIL','IDLE'):
         key={'CANCEL':'boundary','EDIT':'boundary','BEFORE_TAIL':'beforeTail','IDLE':'idle'}[marker]
-        if raw(text,marker)!=[row.get('command',{}).get(key) for row in results if marker not in ('CANCEL','EDIT') or (row.get('id') in MOVE_CASES)==(marker=='EDIT')]:issues.append('Raw grooming '+marker+' evidence differs')
+        if raw(text,marker)!=[row.get('command',{}).get(key) for row in results if marker not in ('CANCEL','EDIT') or (row.get('id') in ALL_MOVE_CASES)==(marker=='EDIT')]:issues.append('Raw grooming '+marker+' evidence differs')
     expected_outcomes=[dict(case=row['id'],receipt=receipt) for row in results for receipt in row.get('command',{}).get('outcomes',[])]
     if raw(text,'OUTCOME')!=expected_outcomes:issues.append('Authority grooming outcome publication differs')
     publications=[]
     for match in re.finditer(re.escape(PREFIX)+r'(OUTCOME|CANCEL|EDIT|IDLE) ([^\n]+)',text):
         publications.append((match[1],json.loads(match[2])))
     for row in results:
-        if row.get('id') not in ACTIVE_CASES+MOVE_CASES or selection['kind']!='mp':continue
+        if row.get('id') not in ACTIVE_CASES+ALL_MOVE_CASES or selection['kind']!='mp':continue
         own=[(marker,value) for marker,value in publications if value.get('case')==row['id']]
-        if [marker for marker,_ in own]!=(['EDIT','OUTCOME','OUTCOME','IDLE'] if row['id'] in MOVE_CASES else ['OUTCOME','CANCEL','OUTCOME','IDLE']):
+        if [marker for marker,_ in own]!=(['EDIT','OUTCOME','OUTCOME','IDLE'] if row['id'] in ALL_MOVE_CASES else ['OUTCOME','CANCEL','OUTCOME','IDLE']):
             issues.append(row['id']+': active authority receipt/checkpoint order differs')
     if len(prepared)!=len(results) or len(verified)!=len(results):issues.append('Authority grooming markers missing/duplicate')
     for index,row in enumerate(results):

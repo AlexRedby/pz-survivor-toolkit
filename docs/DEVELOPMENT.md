@@ -10,6 +10,7 @@ Run commands from the repository root. Use Python 3.10+ for preparation and ordi
 | Reproduce a game or Host issue in isolated profiles | [Native scenarios](#native-scenarios) |
 | Build engine patches, run JVM checks or capture test video | [Java development](development/JAVA.md) |
 | Extend a shared Toolkit mechanism | [Architecture and extension contracts](development/ARCHITECTURE.md) |
+| Implement shared queue resource/capacity decisions | [Performance-gated implementation plan](design/QUEUE_RESOURCE_CAPACITY.md) |
 | Edit cart clips, replay captured motion or recalibrate clearance | [Animation authoring](development/ANIMATION.md) |
 | Review the proposed cart multiplayer protocol | [Cart multiplayer design](design/CART_MULTIPLAYER.md) |
 
@@ -27,7 +28,7 @@ python3 tools/package_mod.py --check
 python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip
 python3 -m unittest discover -s tests -p 'test_prepare_install.py'
 python3 -m unittest discover -s JavaPatches/tests
-python3 tools/prepare_install.py --cleanui "$PZ_CLEANUI_SOURCE" --damnlib "$PZ_DAMNLIB_SOURCE" --check
+python3 tools/prepare_install.py --check
 ```
 
 List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or several with repeatable `--test NAME` (relative to `tests/`, with or without `.lua`). For example, `--test test_tv_controls --test test_vhs_ownership` runs only those tests and their associated variants, without scanning all mod files. Omit `--test` for the existing full Lua checks, including the syntax scan. Quartermaster checks always use the owned `PZSurvivorToolkit/42/media/lua` sources. Explicitly selecting its craft UI or the native tag transfer/placement checks also requires native game sources through `--game` or `--native-action-root`. Other checks retain their existing source-dependent SKIP behavior; a skipped integration check does not validate that integration.
@@ -50,7 +51,13 @@ With `--game`, vehicle ground-placement regressions exercise the installed game'
 
 Action queue and native Wishlist menu checks use `--game`. Add `--wishlist-workshop-root /path/to/steamapps/workshop/content/108600` for the Wishlist checks against installed adapters.
 
-`python3 tools/package_mod.py --check` validates the Toolkit mod structure without creating an archive. To create a developer-only archive, run `python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip`; Wishlist Lua sources are included automatically. Use `tools/prepare_install.py --cleanui "$PZ_CLEANUI_SOURCE" --damnlib "$PZ_DAMNLIB_SOURCE"` to prepare the two owned mods and complete corrected CleanUI/DAMN Library copies; it creates no archive. Both inputs must be complete external mod roots. Reviewed offline patches change only CleanUI's active food-age helper and DAMN Library's active duplicate battery recipe pair; unknown source hashes fail before publication and Workshop inputs remain unchanged. Fresh native pack locks must select both prepared dependency roots with `--mod-source CleanUI=/path/to/dist/SurvivorQoL/mods/CleanUI --mod-source damnlib=/path/to/dist/SurvivorQoL/mods/damnlib`. The root `cleanui-source-patch.json` and `damnlib-source-patch.json` record portable input/output hashes.
+`python3 tools/package_mod.py --check` validates the Toolkit mod structure without creating an archive. To create a developer-only archive, run `python3 tools/package_mod.py --output dist/PZSurvivorToolkit.zip`; Wishlist Lua sources are included automatically.
+
+Use `tools/prepare_install.py` to prepare only the two owned mods, `PZSurvivorToolkit` and `PZToolkitJavaPatches`; it creates no archive and requires no third-party source directories. All third-party mods, including CleanUI, NewMusic and that DAMN Library, come from Workshop. Their downloaded files are not copied, patched or repackaged by preparation.
+
+Toolkit owns the runtime NewMusic compatibility that disables vanilla CD/player conversion and its associated inventory observer, while preserving normal music loot. Run `python3 -m unittest discover -s tests -p 'test_prepare_install.py'` for the two-folder preparation contract and `PZ_NEWMUSIC_SOURCE="/path/to/mods/NewMusic" .venv/bin/python -m unittest tests.test_newmusic_runtime` for the source-backed Lua compatibility checks with Lupa installed. These checks do not establish live multiplayer performance.
+
+The earlier CleanUI food-age and DAMN Library duplicate battery-recipe source-preparation experiments are no longer shipped. Their standalone source tools and checks remain available for investigation; delivering either correction through Toolkit or Java Patches requires a separate runtime integration and validation.
 
 To run the same checks against your installed game's native Mod Options implementation:
 
@@ -58,7 +65,19 @@ To run the same checks against your installed game's native Mod Options implemen
 .venv/bin/python tools/run_tests.py --game "$PZ_GAME" --test test_highlighter
 ```
 
-The opt-in native food-age regression compiles only its Java fixture against the installed game and runs original/prepared CleanUI helpers in real Kahlua. Run `PZ_NATIVE_FOOD_AGE_CHECK=1 PZ_GAME="/path/to/game/Java" PZ_JDK="/path/to/jdk" PZ_CLEANUI_SOURCE="/path/to/mods/CleanUI" python3 -m unittest tests.test_cleanui_food_age_native`. It checks native ageing, freshness events, cooling controls and clock handling; it does not establish live UI or Host transport. The default test run skips this external-input check.
+The independent CleanUI food-age investigation is not part of the prepared distribution and does not ship a CleanUI correction. Its opt-in native regression compiles only its Java fixture against the installed game and runs original/prepared CleanUI helpers in real Kahlua. Run `PZ_NATIVE_FOOD_AGE_CHECK=1 PZ_GAME="/path/to/game/Java" PZ_JDK="/path/to/jdk" PZ_CLEANUI_SOURCE="/path/to/mods/CleanUI" python3 -m unittest tests.test_cleanui_food_age_native`. It checks native ageing, freshness events, cooling controls and clock handling; it does not establish live UI or Host transport. The default test run skips this external-input check.
+
+## Queue resource performance prototype
+
+`tools/benchmark_queue_resources.py` runs production queue Policy, EditModel and weight code with explicit state doubles in the installed game's native Kahlua. It compiles only a development Kotlin host, starts no game/UI/Host, installs nothing and grants no new queue permissions. The worklist, synchronous batch weight snapshot and their source instrumentation remain test-only. Reports include source/toolchain fingerprints, samples, allocation availability and GC data; a successful bank means the measurements completed, not that the performance gate passed.
+
+```sh
+python3 tools/benchmark_queue_resources.py --game "$PZ_GAME" --jdk "$PZ_JDK" --kotlin-home "$KOTLIN_HOME" --output .codex/investigations/queue-resource-profile --section component --section edit --max-steps 200 --samples 100 --warmup 10 --timeout 300
+```
+
+The output directory must be new. Repeat `--section` to select `component`, `edit`, `model` or `weights`; omitting it selects all four. `--max-steps 50|200|1000` limits action-count workloads, not the weight bank's item counts. The weight bank compares stateless and batch captures for 100/1000/10000 items at nesting depths 0/1/4/8, with both ordinary factory-free native-exact and affected extra-food profiles. A deeper-container gain does not qualify the flat/native-exact path. Stress cases use at most three measured samples and one warmup; their tail quantiles are exploratory. Normal-bank default 30-sample percentiles are exploratory too, not a statistically established p99 guarantee. Java item/container getters are doubles in this CPU bank, so it does not measure their real game/bridge costs, selected-mod callbacks, UI responsiveness, retention or multiplayer contention. The [design plan](design/QUEUE_RESOURCE_CAPACITY.md#performance-gate-before-runtime-integration) keeps those gates separate.
+
+Run `python3 -m unittest tests.test_benchmark_queue_resources` for selection/provenance/failure checks and `.venv/bin/python tools/run_tests.py --test test_queue_resource_worklist` for exhaustive/oracle, malformed-input and bounded-work checks. Run `.venv/bin/python tools/run_tests.py --test test_action_queue_weights --test test_queue_weight_snapshot` for the original binary32 oracle and batch bounds, overlap/order, freshness, malformed topology, budget, exception and reentrancy checks. The native bank runs worklist vectors before measurement and snapshot vectors when `weights` is selected. Snapshot result maps are published only after the complete union graph is validated; unsupported or limited captures expose no partial weights. A failed capture cannot grant an edit through a less complete fallback; select a proven cheap path before capture, or keep the declared contract protected. Its single topology scan does not mean every script/fluid/weight getter is invoked once. Invalid duplicate ownership remains explicitly outside parity with legacy aggregate shortcuts. Component counters cover the worklist alone; `legacy_target_callbacks` counts only world/generator hooks, not all short-circuited pair comparisons. The retained first sweep can still perform pairwise work. `edit/*` times one `Policy.evaluateMove`, not the complete `Queue.move` commit, which revalidates separately. Candidate equivalence is restricted to the ordinary fixture footprints; it is not general production parity for custom/complex callbacks.
 
 ## Native scenarios
 

@@ -136,6 +136,7 @@ local function run(source,label,bcSource)
     CleanUI_RegisterInventoryUiToggleCallback=function(fn)callbacks[#callbacks+1]=fn;fn()end
     require=function(name)
         if name=='PZSurvivorToolkit/InventoryClasses' then return dofile(client..name..'.lua') end
+        if name=='PZSurvivorToolkit/ItemCategories' then return {prepareContainer=function()end} end
     end
     local R=dofile(client..'PZSurvivorToolkit/InventoryRefresh.lua')
     Events.OnGameBoot.fire();Events.OnGameStart.fire()
@@ -148,6 +149,25 @@ local function run(source,label,bcSource)
     assert(stats.copied==192000 and stats.events==40,'native discovery/BC raw aggregation must stay live')
     assert(aggregate.contents:size()==4800 and #page.backpacks==13,'hidden transfer/craft consumers lost raw contents')
     assert(#page.inventoryPane.items==0,'hidden pending rows must not retain stale input targets')
+    -- The player window has no movement scheduler, but item/container events
+    -- call refreshBackpacks directly. Only its fully hidden idle rows defer.
+    local character=makePage();character.onCharacter=true
+    local playerStats={};for key,value in pairs(stats)do playerStats[key]=value end
+    local beforePlayerRows,beforePlayerCount=stats.rows,stats.count
+    character.inventoryPane.items={{stale='player-row'}}
+    character:refreshBackpacks();character:refreshBackpacks()
+    assert(stats.rows==beforePlayerRows and stats.count==beforePlayerCount
+        and character.toolkitRefreshState.rowsPending and character.toolkitRefreshState.countPending
+        and #character.inventoryPane.items==0,'hidden idle PLAYER did not defer rows/count')
+    isGamePaused=function()return true end
+    character:setVisible(true)
+    assert(stats.rows==beforePlayerRows+1 and stats.count==beforePlayerCount+1
+        and not character.toolkitRefreshState.rowsPending,'paused PLAYER reopen did not flush rows/count')
+    character.isCollapsed=true;character:refreshBackpacks()
+    assert(stats.rows==beforePlayerRows+2 and stats.count==beforePlayerCount+2,
+        'visible collapsed PLAYER must retain its immediate refresh path')
+    isGamePaused=function()return false end
+    for key,value in pairs(playerStats)do stats[key]=value end
     -- The gate delegates to the current complete class chain, not a stale closure.
     local oldRefresh,lateCalls=Pane.refreshContainer,0
     Pane.refreshContainer=function(...)lateCalls=lateCalls+1;return oldRefresh(...)end
@@ -256,12 +276,13 @@ local function run(source,label,bcSource)
     local before=stats.rows
     local x,y,z=page.inventoryPane:refreshContainer()
     assert(x=='rows' and y==nil and z==17 and stats.rows==before+1)
+    for _,owner in ipairs({'loot','player'})do
     for _,visibility in ipairs({'hidden','collapsed'})do
         page.visible=visibility=='collapsed';page.isCollapsed=visibility=='collapsed'
         for _,kind in ipairs({'selected','firstSelect','drag','dragFocus','dragging','marquee','pendingMarquee',
             'controller','pageFocus','paneFocus','joypad','visibleFilter','filter','tag','rule','search','categorySearch','icons','character'}) do
             local pane=page.inventoryPane
-            pane.selected={};ISMouseDrag={};page.joyfocus=nil;page.onCharacter=false;player.joypad=-1
+            pane.selected={};ISMouseDrag={};page.joyfocus=nil;page.onCharacter=owner=='player';player.joypad=-1
             for _,field in ipairs({'firstSelect','dragging','draggingMarquis','toolkitPendingMarquee','doController',
                 'joyfocus','toolkitVisibleItems','toolkitCategory','toolkitTag','toolkitTagRule','searchText','searchCategoryText'})do pane[field]=nil end
             pane.mode='details'
@@ -283,10 +304,11 @@ local function run(source,label,bcSource)
             elseif kind=='search' then pane.searchText='nails'
             elseif kind=='categorySearch' then pane.searchCategoryText='Tool'
             elseif kind=='icons' then pane.mode='icons'
-            elseif kind=='character' then page.onCharacter=true end
+            elseif kind=='character' then page.onCharacter=true;page.visible=true end
             before=stats.rows;page:refreshBackpacks()
-            assert(stats.rows==before+1,visibility..' '..kind..' input/filter state must retain the live path')
+            assert(stats.rows==before+1,owner..' '..visibility..' '..kind..' input/filter state must retain the live path')
         end
+    end
     end
     page.visible=false;page.isCollapsed=false;page.onCharacter=false
     page.inventoryPane.mode='details'
@@ -359,7 +381,10 @@ do
     local player={getJoypadBind=function()return -1 end,getCurrentSquare=function()return 1 end,getDir=function()return 1 end}
     getSpecificPlayer=function()return player end
     Events={OnGameBoot={Add=function()end},OnGameStart={Add=function()end}}
-    require=function(name)if name=='PZSurvivorToolkit/InventoryClasses'then return{onToggle=function()end}end end
+    require=function(name)
+        if name=='PZSurvivorToolkit/InventoryClasses'then return{onToggle=function()end}end
+        if name=='PZSurvivorToolkit/ItemCategories'then return{prepareContainer=function()end}end
+    end
     local R=dofile(client..'PZSurvivorToolkit/InventoryRefresh.lua');R.install()
     local prior=Page.addContainerButton
     Page.addContainerButton=function(...)stats.late=stats.late+1;return prior(...)end
@@ -424,7 +449,7 @@ do
         if kind=='icons'then immediate.inventoryPane.mode='icons'
         elseif kind=='opaque'then immediate.inventoryPane.refreshContainer=function()end
         elseif kind=='other-class'then CleanUI_Clean_ISInventoryPage={}
-        elseif kind=='character'then immediate.onCharacter=true end
+        elseif kind=='character'then immediate.onCharacter=true;immediate.visible=true end
         before=stats.weights
         immediate:refreshBackpacks()
         assert(stats.weights==before+1 and immediate.button.tooltip=='capacity:'..inventory.weight,
@@ -432,6 +457,104 @@ do
         CleanUI_Clean_ISInventoryPage=Page
     end
     print('PASS CleanUI hidden/collapsed tooltip workload: clipped rows/tooltips defer, title counts stay live; argument/result arity, late hooks, fresh expand, early/failure obligations and immediate fallbacks preserved')
+end
+
+-- Execute both Toolkit category owners: displayCategory mutates the actual item
+-- instance even when hidden player row construction is deferred. Native row/UI
+-- leaves are doubles; unknown per-instance callbacks and late hooks stay owned.
+do
+    local function event()
+        local callbacks={}
+        return {Add=function(fn)callbacks[#callbacks+1]=fn end,
+            fire=function()for _,fn in ipairs(callbacks)do fn()end end}
+    end
+    local stats={rows=0,classifications=0,late=0,counts=0}
+    local physical={category='old',wanted='toolSurvival'}
+    function physical:getDisplayCategory()return self.category end
+    function physical:setDisplayCategory(value)self.category=value end
+    local inventory={getItems=function()return{size=function()return 1 end,get=function()return physical end}end}
+    local Pane={};Pane.__index=Pane
+    function Pane:refreshContainer()
+        stats.rows=stats.rows+1
+        self.rowCategory=physical:getDisplayCategory()
+        return 'rows',nil,19,nil
+    end
+    local Page={};Page.__index=Page
+    function Page:getIsVisible()return self.visible end
+    function Page:setVisible(value)self.visible=value end
+    function Page:refreshBackpacks()
+        self.inventoryPane:refreshContainer()
+        self:updateItemCount()
+    end
+    function Page:updateItemCount()stats.counts=stats.counts+1 end
+    function Page:update()end
+    function Page:prerender()end
+    local events={OnGameBoot=event(),OnGameStart=event(),OnCreatePlayer=event()}
+    local env=setmetatable({PZSurvivorToolkit={},Events=events,ISInventoryPage=Page,
+        CleanUI_Clean_ISInventoryPage=false,CleanUI_Vanilla_ISInventoryPage=false,ISMouseDrag={},
+        getSpecificPlayer=function()return nil end}, {__index=_G})
+    local categories
+    env.require=function(name)
+        if name=='PZSurvivorToolkit/InventoryClasses'then
+            return{onToggle=function()end,panes=function(fn)fn(Pane)end}
+        elseif name=='PZSurvivorToolkit/ItemCategoryRules'then
+            return{forItem=function(value)stats.classifications=stats.classifications+1;return value.wanted end}
+        elseif name=='PZSurvivorToolkit/ItemCategories'then return categories
+        elseif name=='PZSurvivorToolkit/LegacyItemCategories'then return{reset=function()end}
+        elseif name=='PZSurvivorToolkit/InventoryRows'then
+            return{captureAnchor=function()end,restoreAnchor=function()end}
+        end
+        return{}
+    end
+    local categoryChunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/ItemCategories.lua'))
+    setfenv(categoryChunk,env);categories=categoryChunk()
+    local categoryHook=assert(loadfile(client..'ToolkitItemCategories.lua'));setfenv(categoryHook,env);categoryHook()
+    local refreshHook=assert(loadfile(client..'PZSurvivorToolkit/InventoryRefresh.lua'));setfenv(refreshHook,env);refreshHook()
+    events.OnGameBoot.fire()
+    local page=setmetatable({onCharacter=true,visible=false},Page)
+    local pane=setmetatable({inventory=inventory,mode='details',selected={},items={{stale=true}}},Pane)
+    page.inventoryPane=pane
+    -- This models NeatUI's OnClothingUpdated/OnEquip* refreshFor: it calls
+    -- pane:refreshContainer directly, outside refreshBackpacks' scope.
+    local inherited=Pane.refreshContainer
+    Pane.refreshContainer=function(...)
+        stats.late=stats.late+1
+        return inherited(...)
+    end
+    page:refreshBackpacks()
+    assert(stats.rows==0 and stats.late==0 and stats.classifications==1 and stats.counts==0
+        and physical.category=='toolSurvival' and #pane.items==0,
+        'hidden PLAYER did not preserve actual item classification without building rows')
+    physical.wanted='foodBeverage';page:refreshBackpacks()
+    assert(stats.classifications==2 and physical.category=='foodBeverage' and stats.rows==0,
+        'pending hidden PLAYER ignored a changed per-instance category')
+    local a,b,c,d=pane:refreshContainer()
+    assert(a=='rows' and b==nil and c==nil and d==nil and stats.rows==1 and stats.late==1
+        and stats.classifications==3 and pane.rowCategory=='foodBeverage'
+        and not page.toolkitRefreshState.rowsPending,
+        'explicit PLAYER pane refresh skipped category/foreign chain or lost return values')
+    page:refreshBackpacks()
+    physical.wanted='mechanicsFuel';page:setVisible(true)
+    assert(stats.rows==2 and stats.late==2 and stats.classifications==5
+        and pane.rowCategory=='mechanicsFuel' and physical.category=='mechanicsFuel'
+        and stats.counts==1 and not page.toolkitRefreshState.countPending,
+        'PLAYER reopen failed to consume fresh actual categories/rows/count')
+    page.isCollapsed=true;page:refreshBackpacks()
+    assert(stats.rows==3 and stats.late==3 and stats.classifications==6 and stats.counts==2,
+        'visible collapsed PLAYER should keep its original complete callback chain')
+    page.visible=false
+    local calls=0
+    page.inventoryPane=setmetatable({inventory=inventory,mode='details',selected={},items={},
+        refreshContainer=function()calls=calls+1 end},Pane)
+    page:refreshBackpacks()
+    assert(calls==1 and stats.classifications==6,
+        'opaque PLAYER callback was replaced or category work escaped its owner')
+    -- A loot defer must never add the separate category pass required by PLAYER.
+    page.onCharacter=false
+    page.inventoryPane=setmetatable({inventory=inventory,mode='details',selected={},items={}},Pane)
+    page:refreshBackpacks()
+    assert(stats.classifications==6 and stats.rows==3,'loot deferral acquired extra category enumeration')
+    print('PASS hidden PLAYER actual ItemCategories/ToolkitItemCategories: physical displayCategory stays live; rows/count defer, explicit late chain/reopen/collapsed/opaque/loot contracts hold')
 end
 
 -- Unlike the scheduling fixture above, execute the entire installed CleanUI
@@ -464,7 +587,8 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
         function result:setCapacity()end
         return result
     end
-    local function item(id)return{id=id,getCategory=function()return 'Item'end}end
+    local function item(id)return{id=id,getCategory=function()return 'Item'end,
+        isItemType=function()return false end,hasTag=function()return false end}end
     local ground={item('ground')}
     local floor=inventory('floor')
     local chest=inventory('crate',{item('stock1'),item('stock2')})
@@ -505,6 +629,7 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
     local proximity
     local env=setmetatable({PZSurvivorToolkit={},ISInventoryPage=Page,CleanUI_Clean_ISInventoryPage=Page,
         CleanUI_Vanilla_ISInventoryPage=false,ISMouseDrag={},ISHandCraftPanel={},ISBuildPanel={},
+        ItemType={KEY_RING='KeyRing'},ItemTag={KEY_RING='KeyRing'},
         ContainerButtonIcons={floor={}},IsoDirections={},
         getSpecificPlayer=function()return player end,getTimestampMs=function()return 100 end,
         getText=function(value)return value end,getTextOrNull=function(value)return value end,
@@ -517,6 +642,7 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
         end}end}, {__index=_G})
     env.require=function(name)
         if name=='PZSurvivorToolkit/InventoryClasses'then return{onToggle=function()end}end
+        if name=='PZSurvivorToolkit/ItemCategories'then return{prepareContainer=function()end}end
         if name=='BetterContainers/_Options'then return{getEffectivePermissions=function()return eff end}end
         return{}
     end
@@ -576,6 +702,56 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
         and not state.rowsPending and not state.countPending and not state.tooltipsPending,
         'full actual CleanUI/BC expanded draw did not flush deferred presentation')
     print('PASS full actual CleanUI refreshBackpacks + BC begin/buttonsAdded: hidden/collapsed rows/tooltips defer, collapsed counts and floor/aggregate remain live, reopen fresh')
+    -- Run the actual upstream onCharacter branch as well: inventory/bag
+    -- buttons and BC event phases remain live while only presentation defers.
+    local carried=inventory('inventory',{item('carried')})
+    local equipped=inventory('bag',{item('bag-stock')})
+    local bag=item('bag')
+    bag.getCategory=function()return 'Container'end
+    bag.getInventory=function()return equipped end
+    bag.getTex=function()return{}end
+    bag.getName=function()return 'equipped bag'end
+    bag.getVisual=function()end
+    carried.items.values[#carried.items.values+1]=bag
+    player.getInventory=function()return carried end
+    player.isEquipped=function(_,value)return value==bag end
+    local characterPane=setmetatable({inventory=carried,mode='details',selected={},items={{stale=true}}},Pane)
+    local character=setmetatable({player=0,onCharacter=true,visible=false,inventory=carried,
+        inventoryPane=characterPane,backpacks={},buttonPool={},height=200,padding=2,containerButtonPanelWidth=40,
+        resizeWidget=page.resizeWidget,containerButtonPanel=page.containerButtonPanel},Page)
+    characterPane.parent=character
+    local playerRows,playerCounts,playerWeights=stats.rows,stats.counts,stats.weights
+    local playerBegins,playerEnds=stats.phases.begin,stats.phases['end']
+    character:refreshBackpacks();character:refreshBackpacks()
+    local characterState=assert(character.toolkitRefreshState)
+    local playerButtons={}
+    for _,button in ipairs(character.backpacks)do playerButtons[button.inventory]=true end
+    assert(stats.rows==playerRows and stats.counts==playerCounts and stats.weights==playerWeights
+        and characterState.rowsPending and characterState.countPending and characterState.tooltipsPending
+        and #characterPane.items==0 and #character.backpacks==3
+        and playerButtons[carried] and playerButtons[equipped] and playerButtons[aggregate]
+        and stats.phases.begin==playerBegins+2 and stats.phases['end']==playerEnds+2,
+        'actual PLAYER discovery lost inventory/bag/BC lifecycle or built hidden presentation: rows='
+            ..stats.rows..'/'..playerRows..' counts='..stats.counts..'/'..playerCounts
+            ..' weights='..stats.weights..'/'..playerWeights..' pending='..tostring(characterState.rowsPending)
+            ..'/'..tostring(characterState.countPending)..'/'..tostring(characterState.tooltipsPending)
+            ..' buttons='..#character.backpacks..' phases='..stats.phases.begin..'/'..stats.phases['end'])
+    -- Native equip/clothing integrations refresh the pane directly and must
+    -- still rebuild immediately without requiring the player page to be shown.
+    characterPane:refreshContainer()
+    assert(stats.rows==playerRows+1 and #characterPane.itemslist==2 and not characterState.rowsPending,
+        'actual hidden PLAYER explicit pane refresh was suppressed')
+    character:refreshBackpacks()
+    carried.items.values[#carried.items.values+1]=item('late-carried')
+    character:setVisible(true)
+    assert(stats.rows==playerRows+2 and stats.counts==playerCounts+1 and #characterPane.itemslist==3
+        and character.totalItems==3 and not characterState.rowsPending
+        and not characterState.countPending and not characterState.tooltipsPending,
+        'actual PLAYER reopen failed to rebuild fresh carried contents/count/tooltips')
+    character.isCollapsed=true;character:refreshBackpacks()
+    assert(stats.rows==playerRows+3 and stats.counts==playerCounts+2,
+        'actual visible collapsed PLAYER unexpectedly deferred presentation')
+    print('PASS full actual CleanUI PLAYER refreshBackpacks + BC: hidden inventory/bag discovery live, rows/count/tooltips defer, direct equip refresh/reopen/collapsed preserve native contracts')
     if NativeBCProximityPaneSource then
         -- Actual BC update assumes every group has a duplicate header. A
         -- headerless singleton has no j=2 children, so it selects the header
