@@ -44,6 +44,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.326
 
+- Reduce temporary allocations while comparing queued resources. Absent dependencies no longer create empty maps; static inspection fields are reused and boolean container checks avoid building unused ancestry lists. Keep live binding checks, full capacity ancestry and native transfer effects.
 - Borrowed reading can cross independent equipment through a shared execution contract for a confirmed single automatic return. Native live capacity checks and exact item outcomes remain authoritative; unknown dependencies and merged transfers stay protected.
 - A proven never-started refusal, explicit Host rejection or completed SP transfer with no item movement keeps the borrowed item carried and preserves an independent queue tail. The Actions window retains the failed return with an explicit Keep item control and fences the corresponding TidyUpMeister retry until the choice; reset notices can be forgotten without replaying transfers.
 
