@@ -19,6 +19,23 @@ import check_action_queue as cli
 
 
 class BookControlTests(unittest.TestCase):
+    def test_native_binding_evidence_requires_compiled_sources_and_supported_environment(self):
+        value = dict(compatFactories=2, cartFactories=1, canonicalPairs=True, plainEnvironment=True,
+                     debugDisabled=True, readOnly=True, scope='source-owned-upvalues-no-guard-calls')
+        self.assertEqual(a.native_binding_errors(value), [])
+        for key in value:
+            changed = dict(value); changed.pop(key)
+            self.assertTrue(a.native_binding_errors(changed), key)
+        for key in ('canonicalPairs', 'plainEnvironment', 'debugDisabled', 'readOnly'):
+            changed = dict(value); changed[key] = False
+            self.assertTrue(a.native_binding_errors(changed), key)
+        for key, wrong in [('compatFactories', 1), ('cartFactories', 0), ('compatFactories', True), ('scope', 'guard-called')]:
+            changed = dict(value); changed[key] = wrong
+            self.assertTrue(a.native_binding_errors(changed), key)
+        changed = dict(value, error='native observation unavailable')
+        self.assertTrue(a.native_binding_errors(changed))
+        self.assertTrue(a.native_binding_errors(None))
+
     def selection(self, kind='mp', mode='toolkit'):
         return dict(suite='book-controls', cases=list(a.CASES), kind=kind, mode=mode, clients=1,
                     languages=['EN'], mods=list(a.MODS), options=dict(book_controls=True, **({'mp_host': True} if kind == 'mp' else {})))

@@ -517,7 +517,14 @@ Events.OnTick.Add(function()
    PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native)
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
    assert(T.ActionQueueLifecycle.registerObserver('fixture.book-controls',{started=register,begin=lifecycleBegin,finish=lifecycleFinish}),'read-only native observer missing')
-   ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,sourceBound=true,authorityEquipment=true})
+   local bindings=bookControlsNativeBindings
+   if config.options and config.options.require_native_bindings==true then
+    assert(type(bindings)=='table'and bindings.readOnly==true and bindings.compatFactories==2 and bindings.cartFactories==1
+     and bindings.canonicalPairs==true and bindings.plainEnvironment==true and bindings.debugDisabled==true and not bindings.error,
+     'native binding-loop source/environment evidence missing')
+    raw('NATIVE_BINDINGS',bindings)
+   end
+   ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,sourceBound=true,authorityEquipment=true,nativeBindings=bindings or false})
   end
   local elapsed=now()-since
   if elapsed>180000 and(phase=='boundary'or phase=='drain')then resetFailure('native functional timeout '..phase);since=now()

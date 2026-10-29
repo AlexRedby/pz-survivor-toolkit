@@ -70,6 +70,9 @@ def definitions():
 
 
 def validate(selection):
+    flag = selection.get('options', {}).get('require_native_bindings', False)
+    if type(flag) is not bool:
+        raise ValueError('require_native_bindings must be boolean')
     if (selection.get('cases') != list(CASES) or selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients')) is not int or selection['clients'] != 1
@@ -593,6 +596,16 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
     return errors
 
 
+def native_binding_errors(value):
+    if not isinstance(value, dict):
+        return ['Missing native binding-loop source/environment evidence']
+    expected = dict(compatFactories=2, cartFactories=1, canonicalPairs=True, plainEnvironment=True,
+                    debugDisabled=True, readOnly=True, scope='source-owned-upvalues-no-guard-calls')
+    if (value.get('error') or any(type(value.get(k)) is not type(v) or value.get(k) != v for k, v in expected.items())):
+        return ['Native binding-loop source/environment evidence differs']
+    return []
+
+
 def verify(root, selection, catalog):
     root = Path(root); issues, outcomes = [], []
     try:
@@ -607,6 +620,11 @@ def verify(root, selection, catalog):
                 or len(final) != 1 or final[0].get('cases') != list(CASES) or final[0].get('performed') != len(CASES)
                 or final[0].get('failed') != 0 or final[0].get('skipped') != 0 or any(r.get('event') == 'fatal' for r in events)):
             issues.append('Missing complete ordered book-controls qualification bank or functional denials remain')
+        if selection.get('options', {}).get('require_native_bindings') is True:
+            observed = setup[0].get('nativeBindings') if len(setup) == 1 else None
+            issues.extend(native_binding_errors(observed))
+            if raw(text, 'NATIVE_BINDINGS') != [observed]:
+                issues.append('Raw native binding-loop evidence differs from setup')
         prepared, baselines, verified = (raw(authority, marker) for marker in ('PREPARED', 'BASELINE', 'VERIFIED'))
         if [r.get('id') for r in rows] != list(CASES) or any([r.get('case') for r in values] != list(CASES) for values in (prepared, baselines, verified)):
             issues.append('Cases or raw authoritative snapshots missing, duplicated or reordered')
