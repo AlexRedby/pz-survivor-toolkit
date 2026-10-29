@@ -1513,6 +1513,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.76
+
+- Reduce repeated action-queue binding comparisons for the reviewed Toolkit source and native VM. Preserve every ownership observation and original Lua fallback, keep input readers with their native owner, and serialize original bytecode without retaining old Lua environments.
+
 ### 0.1.75
 
 - Correct freshness for every member of a visible collapsed food stack in the reviewed CleanUI version, including items beyond its former first-50 limit. Preserve native ageing, freshness events and the one-second update interval, and recover after a backward clock change. The correction runs in memory before Lua compilation; Workshop files stay unchanged and unreviewed source versions retain their original behavior.

@@ -185,6 +185,8 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.javapatchfixture.CartBootstrapCheck': 'CART_BOOTSTRAP_PASS'}
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryTest'] = 'CART_INJURY_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CleanUIFoodAgeChecks'] = 'CLEANUI_FOOD_AGE_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingCompilerChecks'] = 'QUEUE_BINDING_COMPILER_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingSourceChecks'] = 'QUEUE_BINDING_SOURCE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.DamnLibraryBatteryRecipeChecks'] = 'DAMN_LIBRARY_BATTERY_RECIPES_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryGripTest'] = 'CART_INJURY_GRIP_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CartSpeedParityTest'] = 'CART_SPEED_PARITY_PASS'
@@ -349,7 +351,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.75',
+    'version': '0.1.76',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',
