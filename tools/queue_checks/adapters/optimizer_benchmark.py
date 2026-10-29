@@ -72,6 +72,7 @@ def sources(project, selection):
     root = Path(project)
     return [*sorted((root / 'tests/native_queue/optimizer-benchmark/java').glob('*')),
             root / 'tests/native_queue/optimizer-benchmark/CallbackDetails.lua',
+            root / 'tests/native_queue/optimizer-benchmark/ApproachLane.lua',
             root / 'tools/queue_checks/callback_chain.py',
             *sorted((root / 'tests/driving_benchmark/mods').rglob('*.lua')),
             root / 'tests/optimizer_trial/java/Main.java', root / 'tests/optimizer_trial/java/mod.info.template',
@@ -135,6 +136,45 @@ def verify_callback_details(cache):
     return receipt
 
 
+def route_source(text, scenario):
+    """Transform only the disposable starter; Muldraugh keeps its original footprint search."""
+    original = text
+    urban = scenario in ('west-point-extinction', 'muldraugh-extinction')
+    if urban:
+        text = text.replace('START_X=10818, START_Y=10118', 'START_X=11050, START_Y=6902')
+        start, end = text.index('local function spawnSquare(player)'), text.index('local function initialize(vehicle)')
+        text = text[:start] + """local function spawnSquare(player)
+    assert(math.abs(player:getX()-F.START_X)<3 and math.abs(player:getY()-F.START_Y)<3,
+        "Urban seed did not restore its exact start")
+    for ahead=-4,4 do for side=-1,1 do
+        if not street(F.START_X+ahead,F.START_Y+side) then return end
+    end end
+    return street(F.START_X,F.START_Y), "E", 90
+end
+
+""" + text[end:]
+        text = text.replace('Base.CarNormal', 'Base.SportsCar')
+        if scenario == 'muldraugh-extinction':
+            text = original.replace('START_X=10818, START_Y=10118', 'START_X=10594, START_Y=10650')
+            text = text.replace('Base.CarNormal', 'Base.SportsCar')
+            directions = '{{0,1,"N",180},{1,0,"E",90}}'
+            entry, boundary = 'local function spawnSquare(player)', 'local function initialize(vehicle)'
+            if text.count(directions)!=1 or text.count(entry)!=1 or text.count(boundary)!=1:
+                raise ValueError('Muldraugh starter footprint boundary changed')
+            text = text.replace(directions, '{{0,1,"N",180}}').replace(entry, 'local function originalSpawnSquare(player)')
+            replacement = """local function spawnSquare(player)
+    local config = require "QueueTestSelection"
+    local options = config.options and config.options.driving_perf or {}
+    return require("DrivingApproachLane").choose(player, originalSpawnSquare, street, options.approach_tiles or 40)
+end
+
+""" + boundary
+            text = text.replace(boundary, replacement)
+    else:
+        text = text.replace('START_X=10818, START_Y=10118', 'START_X=10590, START_Y=11680')
+    return text
+
+
 def stage(project, output, game, jdk, selection, locations, runtime):
     from prepare_optimizer_trial import build_bridge
     project, output, game, jdk = map(Path, (project, output, game, jdk))
@@ -191,31 +231,14 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     if text.count(anchor) != 1: raise ValueError('Starter preparation guard changed')
     client.write_text(text.replace(anchor, 'if PZDrivingPerfSeeding then return end\n    ' + anchor))
     route = cache / 'mods/PZDrivingBench/42/media/lua/shared/DrivingBenchFixture.lua'
-    route_text = route.read_text()
-    original_route_text = route_text
     scenario = selection['options'].get('driving_perf', {}).get('scenario')
-    urban = scenario in ('west-point-extinction', 'muldraugh-extinction')
-    if urban:
-        route_text = route_text.replace('START_X=10818, START_Y=10118', 'START_X=11050, START_Y=6902')
-        start, end = route_text.index('local function spawnSquare(player)'), route_text.index('local function initialize(vehicle)')
-        route_text = route_text[:start] + """local function spawnSquare(player)
-    assert(math.abs(player:getX()-F.START_X)<3 and math.abs(player:getY()-F.START_Y)<3,
-        "Urban seed did not restore its exact start")
-    for ahead=-4,4 do for side=-1,1 do
-        if not street(F.START_X+ahead,F.START_Y+side) then return end
-    end end
-    return street(F.START_X,F.START_Y), "E", 90
-end
-
-""" + route_text[end:]
-        route_text = route_text.replace('Base.CarNormal', 'Base.SportsCar')
-        if scenario == 'muldraugh-extinction':
-            route_text = original_route_text.replace('START_X=10818, START_Y=10118', 'START_X=10594, START_Y=10650')
-            route_text = route_text.replace('Base.CarNormal', 'Base.SportsCar')
-            route_text = route_text.replace('{{0,1,"N",180},{1,0,"E",90}}', '{{0,1,"N",180}}')
-    else:
-        route_text = route_text.replace('START_X=10818, START_Y=10118', 'START_X=10590, START_Y=11680')
-    route.write_text(route_text)
+    replacement = route.with_name(route.name + '.approach.tmp')
+    replacement.write_text(route_source(route.read_text(), scenario))
+    replacement.replace(route)
+    if scenario == 'muldraugh-extinction':
+        helper = mod / 'media/lua/shared/DrivingApproachLane.lua'
+        helper.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(project / 'tests/native_queue/optimizer-benchmark/ApproachLane.lua', helper)
     (cache / 'Lua/DrivingBench-run.txt').write_text('PZDrivingBench-Perf\n')
     settings = cache / 'options.ini'
     settings.write_text(settings.read_text() + 'vsync=false\nframeRate=144\nautozoom=false,false,false,false\n')
@@ -444,6 +467,10 @@ def verify(root, selection, catalog):
         from queue_checks import callback_chain
         try: evidence['callback_chain_staging'] = callback_chain.verify(root / 'client1')
         except (OSError, ValueError, KeyError): issues.append('Missing/invalid callback chain staging receipt')
+    if selection['options'].get('driving_perf', {}).get('scenario') == 'muldraugh-extinction':
+        marker = '[DRIVING_APPROACH] SELECTED ' if selection['cases'] == ['seed'] else '[DRIVING_APPROACH] RESTORED '
+        if text.count(marker) != 1:
+            issues.append('Missing/duplicate lane-qualified seed/restore receipt')
     if selection['options']['optimizer_enabled']:
         for marker in ('[OptimizerTrial] official cache and preload active', 'anim sets preloaded in ', 'action groups handed to the game'):
             if marker not in text: issues.append('Missing optimizer activation: ' + marker)
