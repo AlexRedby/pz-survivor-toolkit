@@ -173,6 +173,11 @@ Events.OnTick.Add(function()
     local ok,problem=pcall(function()
         assert(math.abs(PZDrivingBenchClient.vehicle:getCurrentSpeedKmHour())<.5,'Seed car moved')
         if urban then assert(total==(nativePopulation and 0 or 1600) and PZDrivingBenchClient.vehicle:getScriptName()=='Base.SportsCar','Wrong urban seed');checkUrbanPreset() end
+        if muldraugh then
+            local choice=require("DrivingApproachLane").seal(PZDrivingApproachLaneChoice,
+                PZDrivingBenchClient.vehicle,perf.approach_tiles or 40)
+            ModData.getOrCreate('PZDrivingPerfWorld').approach_lane=choice
+        end
         save(true)
         getCore():TakeFullScreenshot('driving-perf-seed.png')
         print('[DRIVING_PERF_WORLD] SEED_SAVED')

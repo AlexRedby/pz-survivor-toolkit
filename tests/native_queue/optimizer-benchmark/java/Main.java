@@ -78,6 +78,30 @@ public final class Main {
         Core.getInstance().offscreenBuffer.setZoomAndTargetZoom(player.getPlayerNum(), (float)zoomFactor);
     }
 
+    @LuaMethod(name="drivingPerfAssessApproach", global=true)
+    public static se.krka.kahlua.vm.KahluaTable assessApproach(double x,double y,double requestedDistance) throws Exception {
+        gate();
+        if (owned!=null) throw new IllegalStateException("Approach selection is only allowed before capture");
+        return ApproachClearance.assess(x,y,requestedDistance);
+    }
+
+    @LuaMethod(name="drivingPerfVerifyApproachVehicle", global=true)
+    public static boolean verifyApproachVehicle(BaseVehicle vehicle,double requestedDistance,
+                                               double halfWidth,double halfLength,double clearance) throws Exception {
+        gate();
+        if (owned!=null) throw new IllegalStateException("Approach verification is only allowed before capture");
+        if (vehicle==null || !"Base.SportsCar".equals(vehicle.getScriptName()) || vehicle.getSquare()==null) return false;
+        ApproachClearance.Dimensions current;
+        try {
+            current=ApproachClearance.dimensions(vehicle.getScript());
+            if (!ApproachClearance.receiptDimensions(current,halfWidth,halfLength,clearance)) return false;
+        } catch (RuntimeException malformed) { return false; }
+        Vector3f forward=new Vector3f();
+        vehicle.getForwardVector(forward);
+        return ApproachClearance.northGroundWithinClearance(forward.x,forward.z,requestedDistance,
+                vehicle.getSquare().getZ(),vehicle.getZ(),current);
+    }
+
     @LuaMethod(name="drivingPerfBegin", global=true)
     public static String begin(IsoPlayer player, double targetKmh, double stationarySeconds,
                                double approachTiles, double measuredTiles, double zoomFactor, double minVisibleZombies,

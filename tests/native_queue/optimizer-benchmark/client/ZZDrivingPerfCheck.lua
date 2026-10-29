@@ -46,6 +46,13 @@ Events.OnTick.Add(function()
             assert(options.full_throttle == nil or type(options.full_throttle) == "boolean", "full_throttle must be boolean")
             local fullThrottle = options.full_throttle == true
             local gateSpeed = fullThrottle and (options.minimum_approach_kmh or 80) or (options.speed_kmh or 30)
+            if options.scenario=="muldraugh-extinction" then
+                local choice=require("DrivingApproachLane").verify(
+                    ModData.getOrCreate("PZDrivingPerfWorld").approach_lane,C.vehicle,options.approach_tiles or 40)
+                print("[DRIVING_APPROACH] RESTORED x="..choice.x.." y="..choice.y
+                    .." checked_distance="..choice.checked_distance.." requested_distance="..choice.requested_distance
+                    .." coverage="..choice.coverage)
+            end
             drivingPerfBegin(getPlayer(), gateSpeed, options.stationary_seconds or 10,
                 options.approach_tiles or 40, options.measured_tiles or 300, actualZoom,
                 options.min_visible_zombies == nil and 1 or options.min_visible_zombies,
