@@ -340,6 +340,14 @@ def stage_metrics(cache):
         'translucent_sort': 'TimSort.doSort-call', 'partial-details-on-throwable': 'included'}
     if any(status.get(key) != value for key, value in required_status.items()):
         raise ValueError('Incomplete/invalid stage profile status or detail boundaries')
+    tile_details = status.get('tile_details')
+    tile_profile = status.get('tile_profile')
+    if (tile_details is not None or tile_profile is not None) and (
+            tile_details != 'method-boundaries-v1' or tile_profile not in ('native', 'official')):
+        raise ValueError('Invalid tile detail declaration/profile')
+    if tile_details is None and any((cache / name).exists() for name in
+                                    ('driving-tiles.csv', 'driving-tiles-status.txt')):
+        raise ValueError('Undeclared tile detail artifacts')
     if status.get('cpu_supported_and_enabled') not in ('true', 'false'):
         raise ValueError('Invalid stage CPU availability status')
     completed = _stage_integer(status.get('complete_frames'), 'complete_frames', 1, STAGE_CAPACITY)
@@ -406,13 +414,19 @@ def stage_metrics(cache):
     for group in groups.values():
         for values in group['detail_wall'].values():
             values['mean_per_frame_inclusive_ms'] = values['inclusive_ms'] / group['frames'] if group['frames'] else None
-    return {'complete_frames': completed, 'omitted_incomplete_frames': omitted, 'jfr_chunks': jfr_chunks,
+    result = {'complete_frames': completed, 'omitted_incomplete_frames': omitted, 'jfr_chunks': jfr_chunks,
             'attribution': 'Owner-thread elapsed wall time. Detail timers use an independent stack; inclusive totals are nonadditive.',
             'groups': groups,
             'limits': ['Fog is the whole renderFog method, including its early exits; timing does not establish visible fog.',
                        'Translucent total includes preparation and drawing. Merge includes native profiler and sort argument preparation; sort is the exact doSort call.',
                        'Instrumentation/JFR add overhead. These timings do not establish per-stage CPU cost or optimization gain.',
                        'JFR chunk bounds are validated; JFR event payloads/counts are not decoded. CSV counts agree with the completed-frame status.']}
+    if tile_details is not None:
+        from queue_checks.tile_metrics import tile_metrics
+        result['tile_profile'] = tile_profile
+        result['tile_timings'] = tile_metrics(cache, result)
+    return result
+
 
 
 def verify(root, selection, catalog):
