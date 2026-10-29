@@ -117,7 +117,14 @@ local function fixture(client)
     end}
     -- Load the real shared proof and ACK observer; only the native transport is modeled.
     local loaded = {}
+    getFilenameOfClosure = NativeFilenameOfClosure or function(callback) return debug.getinfo(callback, 'S').source end
     require = function(name)
+        if name == 'PZSurvivorToolkit/SourceProof' or name == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
+            if not loaded[name] then
+                loaded[name] = assert(loadfile(root .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
+            end
+            return loaded[name]
+        end
         if name == 'PZSurvivorToolkit/ActionQueueAcknowledgements' or name == 'PZSurvivorToolkit/ActionQueueSettlement'
             or name == 'PZSurvivorToolkit/ActionQueueTidyIntent' or name == 'PZSurvivorToolkit/ActionQueueLifecycle' then
             if not loaded[name] then

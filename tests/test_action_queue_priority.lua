@@ -1,5 +1,12 @@
 if not NativeActionRoot then print('Automatic queue priority native checks skipped (pass --native-action-root media/lua).'); return end
+getFilenameOfClosure = NativeFilenameOfClosure or function(callback) return debug.getinfo(callback, 'S').source end
 require = function(name)
+    if name == 'PZSurvivorToolkit/SourceProof' then
+        return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
+    end
+    if name == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
+        return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
+    end
     if name == 'PZSurvivorToolkit/ActionQueueSettlement' then
         return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
     end

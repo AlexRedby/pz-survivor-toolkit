@@ -69,7 +69,7 @@ local loaded={}
 require=function(module)
     if loaded[module]then return loaded[module]end
     local path
-    if module=='PZSurvivorToolkit/SourceProof'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
+    if module=='PZSurvivorToolkit/SourceProof' or module=='PZSurvivorToolkit/ActionQueueTransferOutcome'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/ItemAccess' or module=='PZSurvivorToolkit/ItemRetention' or module=='PZSurvivorToolkit/InventoryTransferProtection'then
         path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/ItemRetentionUI' or module=='PZSurvivorToolkit/InventoryClasses'then
@@ -98,8 +98,13 @@ local before={}
 for _,name in ipairs({'onGrabItems','onGrabOneItems','onGrabHalfItems'})do before[name]=ISInventoryPaneContextMenu[name]end
 if latePublication then retention=require 'PZSurvivorToolkit/ItemRetentionUI' end
 -- Install the actual owned wrapper late, outside Compat's existing Tidy closure.
-assert(handlers.OnGameStart and #handlers.OnGameStart==1,'owned retention late installer missing')
-handlers.OnGameStart[1]()
+local installer, installerCount
+installerCount=0
+for _, callback in ipairs(handlers.OnGameStart or {})do
+    if callback==retention.install then installer,installerCount=callback,installerCount+1 end
+end
+assert(installerCount==1,'owned retention late installer missing or duplicated')
+installer()
 for name,callback in pairs(before)do
     local wrapped=ISInventoryPaneContextMenu[name]
     assert(wrapped~=callback and retention.isContextWrapper(ISInventoryPaneContextMenu,name),'actual late wrapper missing: '..name)

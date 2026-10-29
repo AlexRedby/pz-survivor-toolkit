@@ -1,5 +1,5 @@
 -- Shared settlement owns cancellation bookkeeping, never item/equipment effects.
-local function setup(client)
+local function setup(client, outcomeOverride, delayedMetadata)
     local root = {items = {}}
     function root:getItemById(id) return self.items[id] end
     local player = {getInventory = function() return root end, isDead = function(self) return self.dead == true end,
@@ -47,9 +47,19 @@ local function setup(client)
     createItemTransaction = function() error('settlement must never create an item transaction') end
     removeItemTransaction = function() error('settlement must never remove an item transaction') end
     instanceof = function(value, kind) return type(value) == 'table' and value.class == kind end
-    local loaded = {}
-    getFilenameOfClosure = NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    local loaded, actualOutcome = {}, nil
+    local metadataAccessor = NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    getFilenameOfClosure = metadataAccessor
+    if delayedMetadata then getFilenameOfClosure = nil end
     require = function(name)
+        if name == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
+            if not actualOutcome then
+                actualOutcome = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
+                loaded[name] = actualOutcome
+                if outcomeOverride then loaded[name] = outcomeOverride(actualOutcome) end
+            end
+            return loaded[name]
+        end
         if name == 'PZSurvivorToolkit/SourceProof' then
             if not loaded[name]then loaded[name]=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()end
             return loaded[name]
@@ -85,7 +95,8 @@ local function setup(client)
     end
     return {root = root, player = player, token = token, current = current, tail = tail, queue = queue,
         source = source, item = item, action = action, discard = discard, settlement = settlement,
-        acknowledgements = acknowledgements, receipt = receipt, transaction = transaction,
+        acknowledgements = acknowledgements, receipt = receipt, transaction = transaction, outcome = actualOutcome, metadataAccessor = metadataAccessor,
+        sourceProof = loaded['PZSurvivorToolkit/SourceProof'],
         advance = function(ms) clock = clock + ms end,
         counts = function() return constructions, guards, #discards, releases end}
 end
@@ -469,8 +480,8 @@ for _, client in ipairs({false, true}) do
 end
 -- Native inventory transfers use their own item transaction protocol. Observe
 -- one native group's outcome before perform removes it; never execute that payload.
-local function returnFixture(client)
-    local s = setup(client)
+local function returnFixture(client, outcomeOverride, delayedMetadata)
+    local s = setup(client, outcomeOverride, delayedMetadata)
     local value = s.item(81, s.root)
     s.root.items[81] = value
     local scope = s.settlement.deferred(s.player, s.token)
@@ -496,6 +507,146 @@ local function returnFixture(client)
         return observed
     end
     return s
+end
+
+-- Moving evidence into a shared module must not hide an unknown dependency
+-- behind source-owned Settlement wrappers or expose private callbacks/records.
+local outcomeExports = {'sameMember', 'retained', 'authorityReader', 'observer'}
+for _, name in ipairs(outcomeExports) do
+    for _, replacement in ipairs({'missing', 'false', 'foreign'}) do
+        local unknownCalls = 0
+        local s = returnFixture(false, function(actual)
+            local supplied = {}
+            for _, key in ipairs(outcomeExports) do supplied[key] = actual[key] end
+            if replacement == 'missing' then supplied[name] = nil
+            elseif replacement == 'false' then supplied[name] = false
+            else supplied[name] = function()
+                unknownCalls = unknownCalls + 1
+                error('unknown Outcome export received a callback or private record')
+            end end
+            return supplied
+        end)
+        assert(unknownCalls == 0, name .. ': validate all exports before calling factories')
+        assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard),
+            name .. '/' .. replacement .. ': unknown transfer evidence must fail closed')
+        assert(s.settlement.returnState(s.obligation) ~= 'completed' and unknownCalls == 0)
+    end
+end
+for _, shape in ipairs({'inherited-table', 'inherited-getter', 'own-with-metatable'}) do
+    local getters, factories = 0, 0
+    local s = returnFixture(false, function(actual)
+        local supplied = {}
+        if shape == 'own-with-metatable' then
+            for _, name in ipairs(outcomeExports) do supplied[name] = actual[name] end
+        end
+        local inherited = actual
+        if shape ~= 'inherited-table' then inherited = function()
+            getters = getters + 1
+            return function() factories = factories + 1; error('unknown Outcome factory') end
+        end end
+        return setmetatable(supplied, {__index = inherited})
+    end)
+    assert(getters == 0 and factories == 0, shape .. ': reject metadata before reading fields')
+    assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+        and s.settlement.returnState(s.obligation) ~= 'completed', shape .. ': inherited evidence cannot grant a return')
+    assert(getters == 0 and factories == 0, shape .. ': unknown getters/factories must remain untouched')
+end
+for _, client in ipairs({false, true}) do
+    local s = returnFixture(client)
+    for _, name in ipairs(outcomeExports) do
+        s.outcome[name] = function() error('captured Outcome exports must not be reread') end
+    end
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.current.transactionId = 0; s.observeDestination()
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed',
+        'later public export reassignment must not replace the verified private bindings')
+    assert(s.counts() == 0, 'captured transfer evidence must not execute or replay an item effect')
+end
+
+-- Metadata can appear after the module loaded. Only successful, complete
+-- validation may replace the bootstrap bindings with direct evidence methods.
+do
+    local s = returnFixture(false, nil, true)
+    assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+        and s.settlement.returnState(s.obligation) == nil,
+        'missing closure metadata must neither bind nor capture a return')
+    local metadataCalls = 0
+    getFilenameOfClosure = function(callback)
+        metadataCalls = metadataCalls + 1
+        return s.metadataAccessor(callback)
+    end
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 4,
+        'late metadata must validate every actual Outcome export exactly once')
+    s.current.transactionId = 0; s.observeDestination()
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed')
+    assert(metadataCalls == 4, 'successful binding must keep direct methods without metadata polling')
+end
+do
+    local factoryCalls = {authority = 0, observer = 0}
+    local s = returnFixture(true, function(actual)
+        -- Test-only source-owned delegates make factory entry observable while
+        -- retaining the actual factory bodies and actual SourceProof metadata.
+        local delegate = assert(loadstring([[
+            local factory, calls, key = ...
+            return function(...)
+                calls[key] = calls[key] + 1
+                return factory(...)
+            end
+        ]], '@fixture/ActionQueueTransferOutcome.lua'))
+        actual.authorityReader = delegate(actual.authorityReader, factoryCalls, 'authority')
+        actual.observer = delegate(actual.observer, factoryCalls, 'observer')
+        return actual
+    end, true)
+    local metadataCalls = 0
+    getFilenameOfClosure = function(callback)
+        metadataCalls = metadataCalls + 1
+        assert(factoryCalls.authority == 0 and factoryCalls.observer == 0,
+            'all source checks must finish before factories receive private arguments')
+        assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+            and s.settlement.returnState(s.obligation) == nil,
+            'metadata reentry must not expose a partially bound private attempt')
+        return s.metadataAccessor(callback)
+    end
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 4)
+    assert(factoryCalls.authority == 1 and factoryCalls.observer == 1,
+        'metadata reentry must not repeat either factory')
+    s.current.transactionId = 0; s.observeDestination()
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed')
+    assert(s.settlement.returnState(s.obligation) == 'completed' and metadataCalls == 4
+        and factoryCalls.authority == 1 and factoryCalls.observer == 1,
+        'successful direct bindings must not reenter metadata or repeat factories')
+end
+
+do
+    local foreignFactories, foreignObservations, fakeChecks = 0, 0, 0
+    local s = returnFixture(false, function(actual)
+        actual.observer = function()
+            foreignFactories = foreignFactories + 1
+            return function() foreignObservations = foreignObservations + 1; return 'completed' end
+        end
+        return actual
+    end, true)
+    local realClosure = s.sourceProof.closure
+    local metadataCalls = 0
+    getFilenameOfClosure = function(callback)
+        local filename = s.metadataAccessor(callback)
+        metadataCalls = metadataCalls + 1
+        if metadataCalls == 1 then
+            s.sourceProof.closure = function() fakeChecks = fakeChecks + 1; return true end
+        end
+        return filename
+    end
+    assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard),
+        'metadata callback cannot replace source checks and admit a foreign observer')
+    assert(s.settlement.returnState(s.obligation) == nil and foreignFactories == 0
+        and foreignObservations == 0 and fakeChecks == 0 and metadataCalls > 0,
+        'captured source checks must never call the replacement or expose private arguments')
+    local reads = metadataCalls
+    s.sourceProof.closure = realClosure
+    assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+        and s.settlement.returnState(s.obligation) == nil and metadataCalls == reads
+        and foreignFactories == 0 and foreignObservations == 0,
+        'a failed source binding must stay closed after the accessor restores its helper')
 end
 
 for _, client in ipairs({false, true}) do

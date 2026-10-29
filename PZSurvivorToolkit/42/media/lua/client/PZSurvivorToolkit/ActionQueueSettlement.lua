@@ -4,6 +4,44 @@ local Settlement = {}
 Toolkit.ActionQueueSettlement = Settlement
 local providers, byId = {}, {}
 local executionProof = require "PZSurvivorToolkit/SourceProof"
+-- Keep the new dependency inside the existing source-owned wrapper boundary.
+-- Unknown factories must never receive private callbacks or attempt records.
+local function transferOutcomes(module)
+    if type(module) ~= "table" or getmetatable(module) ~= nil or not executionProof
+        or type(executionProof.own) ~= "function" or type(executionProof.closure) ~= "function" then return end
+    local own, origin = executionProof.own, executionProof.closure
+    local member = own(module, "sameMember")
+    local retained = own(module, "retained")
+    local authority = own(module, "authorityReader")
+    local observer = own(module, "observer")
+    local file = "ActionQueueTransferOutcome.lua"
+    if origin(member, file) and origin(retained, file) and origin(authority, file) and origin(observer, file)
+        and executionProof.own == own and executionProof.closure == origin then
+        return member, retained, authority, observer
+    end
+end
+local outcomeModule = require "PZSurvivorToolkit/ActionQueueTransferOutcome"
+local bindTransferOutcomes
+local sameMember, retainedTransfer, returnAuthority, observeAttempt
+-- Some native-source fixtures and delayed loaders expose metadata only later.
+-- Bootstrap once when it becomes available; verified hot calls use the direct
+-- captured functions and unsupported modules never receive private arguments.
+sameMember = function(item, member)
+    if bindTransferOutcomes and bindTransferOutcomes() then return sameMember(item, member) end
+    return false
+end
+retainedTransfer = function(action, execution)
+    if bindTransferOutcomes and bindTransferOutcomes() then return retainedTransfer(action, execution) end
+    return false
+end
+returnAuthority = function(client, transaction)
+    if bindTransferOutcomes and bindTransferOutcomes() then return returnAuthority(client, transaction) end
+    return "unavailable"
+end
+observeAttempt = function(proof, attempt)
+    if bindTransferOutcomes and bindTransferOutcomes() then return observeAttempt(proof, attempt) end
+    return "unavailable"
+end
 local returnFailures, failureSerial = {}, 0
 local MAX_RETURN_FAILURES = 32
 local MAX_EXECUTION_MEMBERS, MAX_EXECUTION_BORROWING_WORK = 32, 128
@@ -562,11 +600,6 @@ local function returnGroups(action, empty)
     return result
 end
 
-local function sameMember(item, member)
-    return item and member and type(item.getID) == "function" and type(item.getFullType) == "function"
-        and item:getID() == member.id and item:getFullType() == member.fullType
-end
-
 local function findMember(members, item)
     for _, member in ipairs(members or {}) do if sameMember(item, member) then return member end end
 end
@@ -653,46 +686,34 @@ local function cursorValid(proof)
         and (not proof.client or action.transactionId == attempt.transaction or action.transactionId == 0)
 end
 
-local function returnAuthority(client, transaction)
-    if not client then return "native" end
-    if type(transaction) ~= "number" or transaction == 0 or transaction % 1 ~= 0
-        or type(itemTransactionDone) ~= "function" or type(itemTransactionRejected) ~= "function"
-        or isItemTransactionDone ~= itemTransactionDone or isItemTransactionRejected ~= itemTransactionRejected then return "unavailable" end
-    local done, rejected = itemTransactionDone(transaction), itemTransactionRejected(transaction)
-    -- Both predicates are true for an absent transaction (empty allMatch).
-    if done == true and rejected == false then return "completed" end
-    if done == false and rejected == true then return "rejected" end
-    return "unavailable"
-end
-
-local function observeAttempt(proof, attempt)
-    if attempt.terminal then return attempt.terminal end
-    if not attempt.finished then return "waiting" end
-    if attempt.invalid or not attempt.succeeded or attempt.authority == "unavailable" then attempt.terminal = "unavailable"
-    elseif attempt.authority == "rejected" then attempt.terminal = "rejected"
-    elseif not attempt.deadline or type(getTimestampMs) ~= "function" or getTimestampMs() >= attempt.deadline
-        or not proof.destination:isExistYet() then attempt.terminal = "unavailable"
-    else
-        local completed = 0
-        for _, member in ipairs(attempt.members) do
-            if not member.completed then
-                local item, sourceItem = proof.destination:getItemById(member.id), proof.source:getItemById(member.id)
-                if sameMember(item, member) and item:getContainer() == proof.destination and not item:getIsCraftingConsumed()
-                    and not (sourceItem and sourceItem:getContainer() == proof.source) then
-                    member.completed = true
-                    local candidate = member.borrowed
-                    if proof.direction ~= "pickup" and candidate and not candidate.ambiguous then
-                        member.shared = member.shared or sharedBorrowing(proof.scope, candidate)
-                        candidate.phase = "completed"
-                    end
-                end
+local outcomeAttempted, outcomeBinding
+bindTransferOutcomes = function()
+    if outcomeAttempted or outcomeBinding or type(getFilenameOfClosure) ~= "function" then return false end
+    outcomeBinding = true
+    local function prepare()
+        local member, retained, authority, observer = transferOutcomes(outcomeModule)
+        if not member then return end
+        local readAuthority = authority(itemTransactionDone, itemTransactionRejected)
+        local observe = observer(function(proof, value)
+            -- Physical arrival is common evidence; only this owner settles
+            -- the corresponding private borrowing/cleanup obligation.
+            local candidate = value.borrowed
+            if proof.direction ~= "pickup" and candidate and not candidate.ambiguous then
+                value.shared = value.shared or sharedBorrowing(proof.scope, candidate)
+                candidate.phase = "completed"
             end
-            if member.completed then completed = completed + 1 end
+        end)
+        if type(readAuthority) == "function" and type(observe) == "function" then
+            return member, retained, readAuthority, observe
         end
-        if completed == #attempt.members then attempt.terminal = "completed" end
     end
-    return attempt.terminal or "waiting"
+    local ok, member, retained, authority, observer = pcall(prepare)
+    outcomeBinding, outcomeAttempted = false, true
+    if not ok or not member then return false end
+    sameMember, retainedTransfer, returnAuthority, observeAttempt = member, retained, authority, observer
+    return true
 end
+bindTransferOutcomes()
 
 -- This capability is only for observation at the already-owned native cursor.
 -- Ordinary source matching and policy permissions keep their original item.
@@ -1684,13 +1705,7 @@ function Settlement.prepareReturnExecution(action, guard)
     return true
 end
 local function unmovedReturn(action, planned)
-    local execution = planned.execution
-    local root = action.character:getInventory()
-    local item = root:getItemById(execution.id)
-    local destinationItem = execution.destination:getItemById(execution.id)
-    return root == execution.source and sameMember(item, execution) and item == action.item
-        and item:getContainer() == root and not item:getIsCraftingConsumed()
-        and not (destinationItem and destinationItem:getContainer() == execution.destination)
+    return retainedTransfer(action, planned.execution)
 end
 function Settlement.rejectReturnExecution(action, reason, guard)
     if not approvedExecutionGuard(guard) then return false end
