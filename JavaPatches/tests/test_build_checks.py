@@ -244,7 +244,7 @@ class BuildChecks(unittest.TestCase):
                     self.assertEqual(compilations, [])
 
     def test_workshop_source_check_remains_explicitly_selectable(self):
-        for name in ('WashWaterRuleChecks', 'QueueOwnershipChecks'):
+        for name in ('DamnLibraryBatteryRecipeChecks', 'WashWaterRuleChecks', 'QueueOwnershipChecks'):
             with self.subTest(name=name):
                 self.run_build('--check', '--test', name)
                 self.assertEqual([call.args[0][-1] for call in self.java_calls()],
