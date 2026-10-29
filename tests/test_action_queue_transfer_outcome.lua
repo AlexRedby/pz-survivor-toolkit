@@ -186,14 +186,77 @@ test('same ID does not replace retained action object identity', function()
     equalTrace(trace, 'inventory,root:81,destination:81,id,type')
 end)
 
+local function sourceFixture()
+    local s = fixture('native')
+    s.actor = {}
+    s.action = {character = s.actor, srcContainer = s.source, destContainer = s.destination}
+    s.action.item = s.put(81, s.source)
+    s.expected = {actor = s.actor, source = s.source, destination = s.destination, id = 81, fullType = 'Base.Book'}
+    return s
+end
+
+test('fresh source evidence is bounded and invokes no native admission or mutation', function()
+    local s = sourceFixture()
+    local function forbidden() error('source evidence must not execute native work') end
+    s.action.isValid, s.action.checkQueueList, s.action.transferItem = forbidden, forbidden, forbidden
+    s.source.isExistYet, s.destination.isExistYet = forbidden, forbidden
+    assert(Outcome.atSource(s.action, s.expected) == true)
+    equalTrace(s.trace, 'source:81,destination:81,id,type,container,consumed')
+    assert(not s.attempt.members[1].completed and not s.attempt.terminal and s.clock == 0,
+        'at-source evidence must not mark an arrival, query time or imply admission')
+end)
+for _, invalid in ipairs({'actor', 'source', 'destination', 'same-endpoint', 'missing', 'proxy', 'id', 'type',
+    'location', 'consumed', 'duplicate'}) do
+    test('fresh source rejection: ' .. invalid, function()
+        local s = sourceFixture()
+        if invalid == 'actor' then s.action.character = {}
+        elseif invalid == 'source' then s.action.srcContainer = {}
+        elseif invalid == 'destination' then s.action.destContainer = {}
+        elseif invalid == 'same-endpoint' then s.expected.destination = s.source; s.action.destContainer = s.source
+        elseif invalid == 'missing' then s.source.items[81] = nil
+        elseif invalid == 'proxy' then s.action.item = item(81, 'Base.Book', s.source)
+        elseif invalid == 'id' then s.action.item.id = 82
+        elseif invalid == 'type' then s.action.item.kind = 'Base.Other'
+        elseif invalid == 'location' then s.action.item.container = s.destination
+        elseif invalid == 'consumed' then s.action.item.consumed = true
+        elseif invalid == 'duplicate' then s.put(81, s.destination) end
+        assert(not Outcome.atSource(s.action, s.expected), invalid)
+        assert(not s.attempt.terminal and not s.attempt.members[1].completed)
+    end)
+end
+test('fresh source evidence is never cached and ignores a stale opposite index', function()
+    local s = sourceFixture()
+    s.destination.items[81] = item(81, 'Base.Book', {})
+    assert(Outcome.atSource(s.action, s.expected))
+    s.action.item.consumed = true
+    assert(not Outcome.atSource(s.action, s.expected))
+    s.action.item.consumed = false
+    assert(Outcome.atSource(s.action, s.expected), 'a previous refusal must not reserve or retire an item')
+end)
+for _, invalid in ipairs({'actor', 'source', 'destination', 'item'}) do
+    test('source getters cannot rebind ' .. invalid .. ' unnoticed', function()
+        local s = sourceFixture()
+        s.action.item.getIsCraftingConsumed = function()
+            if invalid == 'item' then s.action.item = item(81, 'Base.Book', s.source)
+            elseif invalid == 'actor' then s.action.character = {}
+            elseif invalid == 'source' then s.action.srcContainer = {}
+            else s.action.destContainer = {} end
+            return false
+        end
+        assert(not Outcome.atSource(s.action, s.expected))
+    end)
+end
+
 -- Optional private-host counter; no runtime hook is required by this suite.
 if type(NativeTableCount) == 'function' then
     test('hot observations allocate no Lua tables', function()
         local waiting = fixture('native')
         local observed = fixture('native'); observed.put(81, observed.destination)
         local terminal = fixture('native'); terminal.attempt.terminal = 'completed'
+        local source = sourceFixture()
         local before = NativeTableCount()
         for _ = 1, 32 do
+            assert(Outcome.atSource(source.action, source.expected))
             assert(waiting.observe(waiting.proof, waiting.attempt) == 'waiting')
             observed.attempt.terminal = nil; observed.attempt.members[1].completed = nil
             assert(observed.observe(observed.proof, observed.attempt) == 'completed')
@@ -203,4 +266,4 @@ if type(NativeTableCount) == 'function' then
     end)
 end
 
-print('Action transfer outcome: ' .. checked .. ' focused authority/effect, sticky-prefix, getter-order and stateless-observer cases passed.')
+print('Action transfer outcome: ' .. checked .. ' focused source/authority/effect, sticky-prefix, getter-order and stateless-observer cases passed.')

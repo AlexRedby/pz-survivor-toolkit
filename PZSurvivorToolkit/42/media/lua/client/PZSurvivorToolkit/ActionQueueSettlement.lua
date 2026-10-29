@@ -14,15 +14,16 @@ local function transferOutcomes(module)
     local retained = own(module, "retained")
     local authority = own(module, "authorityReader")
     local observer = own(module, "observer")
+    local source = own(module, "atSource")
     local file = "ActionQueueTransferOutcome.lua"
     if origin(member, file) and origin(retained, file) and origin(authority, file) and origin(observer, file)
-        and executionProof.own == own and executionProof.closure == origin then
-        return member, retained, authority, observer
+        and origin(source, file) and executionProof.own == own and executionProof.closure == origin then
+        return member, retained, authority, observer, source
     end
 end
 local outcomeModule = require "PZSurvivorToolkit/ActionQueueTransferOutcome"
 local bindTransferOutcomes
-local sameMember, retainedTransfer, returnAuthority, observeAttempt
+local sameMember, retainedTransfer, returnAuthority, observeAttempt, sourceEvidence
 -- Some native-source fixtures and delayed loaders expose metadata only later.
 -- Bootstrap once when it becomes available; verified hot calls use the direct
 -- captured functions and unsupported modules never receive private arguments.
@@ -41,6 +42,10 @@ end
 observeAttempt = function(proof, attempt)
     if bindTransferOutcomes and bindTransferOutcomes() then return observeAttempt(proof, attempt) end
     return "unavailable"
+end
+sourceEvidence = function(action, expected)
+    if bindTransferOutcomes and bindTransferOutcomes() then return sourceEvidence(action, expected) end
+    return false
 end
 local returnFailures, failureSerial = {}, 0
 local MAX_RETURN_FAILURES = 32
@@ -691,7 +696,7 @@ bindTransferOutcomes = function()
     if outcomeAttempted or outcomeBinding or type(getFilenameOfClosure) ~= "function" then return false end
     outcomeBinding = true
     local function prepare()
-        local member, retained, authority, observer = transferOutcomes(outcomeModule)
+        local member, retained, authority, observer, source = transferOutcomes(outcomeModule)
         if not member then return end
         local readAuthority = authority(itemTransactionDone, itemTransactionRejected)
         local observe = observer(function(proof, value)
@@ -704,13 +709,13 @@ bindTransferOutcomes = function()
             end
         end)
         if type(readAuthority) == "function" and type(observe) == "function" then
-            return member, retained, readAuthority, observe
+            return member, retained, readAuthority, observe, source
         end
     end
-    local ok, member, retained, authority, observer = pcall(prepare)
+    local ok, member, retained, authority, observer, source = pcall(prepare)
     outcomeBinding, outcomeAttempted = false, true
     if not ok or not member then return false end
-    sameMember, retainedTransfer, returnAuthority, observeAttempt = member, retained, authority, observer
+    sameMember, retainedTransfer, returnAuthority, observeAttempt, sourceEvidence = member, retained, authority, observer, source
     return true
 end
 bindTransferOutcomes()
@@ -1616,14 +1621,18 @@ local function makeReturn(queue, id, expected, containers)
     return action
 end
 
-local function bindPlannedReturn(action, scope, candidate)
-    local step = stepProof(Settlement.track(action, "cleanup"))
+local function bindPlannedReturn(action, scope, candidate, entry, preparedStep)
+    -- A freshly checked entry commits only captured facts and private fields;
+    -- tracking/settings and item getters must not run again after that read.
+    local step = preparedStep or stepProof(Settlement.track(action, "cleanup"))
+    if preparedStep and step.state == "pending" then step.phase = "cleanup" end
     local owner, obligation = action.toolkitQueueOperation, {token = action.toolkitQueueOperation}
     obligation[obligationScope] = function(value) if value == obligation then return scope, owner end end
-    step.returning = {obligation = obligation, item = {id = action.item:getID(), fullType = action.item:getFullType()},
-        source = action.srcContainer, destination = action.destContainer, owner = candidate.sourceOwner,
-        scope = scope, candidate = candidate, waivable = candidate.executionOptional == true}
-    candidate.plannedReturn, candidate.returnDestination = action, action.destContainer
+    step.returning = {obligation = obligation,
+        item = entry and {id = entry.id, fullType = entry.fullType} or {id = action.item:getID(), fullType = action.item:getFullType()},
+        source = entry and entry.source or action.srcContainer, destination = entry and entry.destination or action.destContainer,
+        owner = candidate.sourceOwner, scope = scope, candidate = candidate, waivable = candidate.executionOptional == true}
+    candidate.plannedReturn, candidate.returnDestination = action, entry and entry.destination or action.destContainer
 end
 
 -- A descriptor never executes validation or reserves capacity. Only exact earned
@@ -1695,13 +1704,28 @@ function Settlement.prepareReturnExecution(action, guard)
     local candidate, scope, record, step = executionCandidate(action, guard)
     if not candidate or record.queue.current ~= action or record.queue.queue[1] ~= action
         or action.action or action.started then return false end
+    -- Owner liveness may call settings/adapter code too; finish it before the
+    -- final source read rather than invalidating that evidence afterward.
+    if not operationLive(record) or not borrowingLive(scope) then return false end
+    local planned, plannedAction = step.returning, candidate.plannedReturn
+    if planned and planned.execution then return false end
+    -- Source/tail callbacks above can invalidate facts. Bind to the private
+    -- adapter's identity/endpoints, preserving an already reviewed bag rebind.
+    local execution = {guard = guard, actor = record.character, queue = record.queue,
+        generation = record.queue.toolkitOperationGeneration or 0,
+        source = planned and planned.source or candidate.destination,
+        destination = planned and planned.destination or candidate.source,
+        id = candidate.id, fullType = candidate.fullType}
+    local ok, present = pcall(sourceEvidence, action, execution)
+    if not ok or present ~= true or ISTimedActionQueue.queues[record.character] ~= record.queue
+        or record.queue.character ~= record.character or not generationMatches(record.character, record.queue, record.generation, action)
+        or record.queue.toolkitCancel or record.queue.toolkitGroupCancel
+        or step.returning ~= planned or planned and planned.execution or candidate.plannedReturn ~= plannedAction
+        or action.toolkitQueueOperation ~= record.token or record.queue.current ~= action or record.queue.queue[1] ~= action
+        or action.action or action.started or (record.queue.toolkitOperationGeneration or 0) ~= execution.generation then return false end
     candidate.executionOptional = true
-    if not step.returning then bindPlannedReturn(action, scope, candidate) end
-    local planned = step.returning
-    if planned.execution then return false end
-    planned.execution = {guard = guard, queue = record.queue, generation = record.queue.toolkitOperationGeneration or 0,
-        source = action.srcContainer, destination = action.destContainer,
-        id = action.item:getID(), fullType = action.item:getFullType()}
+    if not planned then bindPlannedReturn(action, scope, candidate, execution, step); planned = step.returning end
+    planned.execution = execution
     return true
 end
 local function unmovedReturn(action, planned)

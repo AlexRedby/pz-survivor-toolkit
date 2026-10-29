@@ -44,6 +44,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.326
 
+- Recheck exact earned-return items and container bindings after queue eligibility callbacks, before optional execution is bound. Decline stale, consumed or duplicated inputs and preserve a nested execution binding; native admission and transfer outcomes remain authoritative.
 - Share exact-item outcome observation across native pickups and returns. Preserve partial effects, authoritative transaction evidence and retained-item failure checks; private cleanup ownership and existing queue permissions remain with their current owners.
 - Reduce temporary allocations while comparing queued resources. Absent dependencies no longer create empty maps; static inspection fields are reused and boolean container checks avoid building unused ancestry lists. Keep live binding checks, full capacity ancestry and native transfer effects.
 - Borrowed reading can cross independent equipment through a shared execution contract for a confirmed single automatic return. Native live capacity checks and exact item outcomes remain authoritative; unknown dependencies and merged transfers stay protected.

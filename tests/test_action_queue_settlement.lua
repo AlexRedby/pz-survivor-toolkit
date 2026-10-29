@@ -511,7 +511,7 @@ end
 
 -- Moving evidence into a shared module must not hide an unknown dependency
 -- behind source-owned Settlement wrappers or expose private callbacks/records.
-local outcomeExports = {'sameMember', 'retained', 'authorityReader', 'observer'}
+local outcomeExports = {'sameMember', 'retained', 'authorityReader', 'observer', 'atSource'}
 for _, name in ipairs(outcomeExports) do
     for _, replacement in ipairs({'missing', 'false', 'foreign'}) do
         local unknownCalls = 0
@@ -575,11 +575,11 @@ do
         metadataCalls = metadataCalls + 1
         return s.metadataAccessor(callback)
     end
-    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 4,
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 5,
         'late metadata must validate every actual Outcome export exactly once')
     s.current.transactionId = 0; s.observeDestination()
     assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed')
-    assert(metadataCalls == 4, 'successful binding must keep direct methods without metadata polling')
+    assert(metadataCalls == 5, 'successful binding must keep direct methods without metadata polling')
 end
 do
     local factoryCalls = {authority = 0, observer = 0}
@@ -607,12 +607,12 @@ do
             'metadata reentry must not expose a partially bound private attempt')
         return s.metadataAccessor(callback)
     end
-    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 4)
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 5)
     assert(factoryCalls.authority == 1 and factoryCalls.observer == 1,
         'metadata reentry must not repeat either factory')
     s.current.transactionId = 0; s.observeDestination()
     assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed')
-    assert(s.settlement.returnState(s.obligation) == 'completed' and metadataCalls == 4
+    assert(s.settlement.returnState(s.obligation) == 'completed' and metadataCalls == 5
         and factoryCalls.authority == 1 and factoryCalls.observer == 1,
         'successful direct bindings must not reenter metadata or repeat factories')
 end
@@ -2674,6 +2674,110 @@ do
     local supported,reason=s.settlement.returnExecutionSupported(action,s.executionGuard)
     assert(not supported and reason=='unsupported_borrowing_work','private ledger work must be bounded and fail closed')
 end
+-- Eligibility callbacks can change the world after the private loan was read.
+-- Fresh entry evidence must reject without binding a planned return/episode.
+for _, client in ipairs({false, true}) do
+    for _, changed in ipairs({'missing', 'proxy', 'consumed', 'duplicate', 'actor', 'source', 'destination', 'type', 'token', 'generation', 'lookup-error', 'settings-mutation'}) do
+        local s = returnExecutionFixture(client)
+        local action, original = s.pendingReturn, s.pendingReturn.item
+        local originalType, originalLookup = original.getFullType, s.root.getItemById
+        local originalToken, originalGeneration = action.toolkitQueueOperation, s.queue.toolkitOperationGeneration
+        local originalEnabled = PZSurvivorToolkit.Settings.actionQueue
+        s.queue.current, s.queue.queue = action, {action, s.tail}
+        QueueReturnExecutionMutation = function()
+            if changed == 'missing' then s.root.items[181] = nil
+            elseif changed == 'proxy' then
+                local proxy = {}; for key, value in pairs(original) do proxy[key] = value end
+                action.item = proxy
+            elseif changed == 'consumed' then original.consumed = true
+            elseif changed == 'duplicate' then
+                s.source.items[181] = {getContainer = function() return s.source end}
+            elseif changed == 'actor' then action.character = {}
+            elseif changed == 'source' then action.srcContainer = {}
+            elseif changed == 'destination' then action.destContainer = {getItemById = function() return nil end}
+            elseif changed == 'type' then original.getFullType = function() return 'Base.Other' end
+            elseif changed == 'token' then action.toolkitQueueOperation = {}
+            elseif changed == 'generation' then s.queue.toolkitOperationGeneration = 91
+            elseif changed == 'lookup-error' then s.root.getItemById = function() error('unavailable source lookup') end
+            elseif changed == 'settings-mutation' then
+                PZSurvivorToolkit.Settings.actionQueue = function() original.consumed = true; return true end
+            end
+        end
+        PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent = assert(loadstring([[return function()
+            QueueReturnExecutionMutation(); return true
+        end]], '@fixture/ActionQueuePolicy.lua'))()
+        assert(not s.settlement.prepareReturnExecution(action, s.executionGuard),
+            changed .. ': callback changed the source binding before execution preparation')
+        assert(not s.settlement.blockedReturnInfo(s.player), 'declining entry must not fabricate a failed-return debt')
+        assert(s.queue.queue[1] == action and s.queue.queue[2] == s.tail and s.counts() == 0,
+            'declining optional evidence must not mutate native work or the independent tail')
+        -- A failed evidence read must not consume/bind the private episode.
+        PZSurvivorToolkit.Settings.actionQueue = originalEnabled
+        original.consumed, original.getFullType = false, originalType
+        s.root.items[181], s.root.getItemById, s.source.items[181] = original, originalLookup, nil
+        action.character, action.item, action.srcContainer, action.destContainer = s.player, original, s.root, s.source
+        action.toolkitQueueOperation, s.queue.toolkitOperationGeneration = originalToken, originalGeneration
+        QueueReturnExecutionMutation = function() end
+        assert(s.settlement.prepareReturnExecution(action, s.executionGuard),
+            changed .. ': declined source evidence must leave a later fresh preparation available')
+        QueueReturnExecutionMutation = nil
+    end
+end
+
+-- Once source facts are confirmed, committing the private entry must not
+-- reopen tracking/settings callbacks or reread IDs from the action item.
+for _, client in ipairs({false, true}) do
+    local s = returnExecutionFixture(client)
+    local action, original = s.pendingReturn, s.pendingReturn.item
+    local enabled, id, kind, consumed = PZSurvivorToolkit.Settings.actionQueue,
+        original.getID, original.getFullType, original.getIsCraftingConsumed
+    s.queue.current, s.queue.queue = action, {action, s.tail}
+    QueueReturnExecutionMutation = function()
+        local function forbidden() error('callback/getter after final source evidence') end
+        original.getIsCraftingConsumed = function()
+            original.getID, original.getFullType = forbidden, forbidden
+            PZSurvivorToolkit.Settings.actionQueue = forbidden
+            return false
+        end
+    end
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent = assert(loadstring([[return function()
+        QueueReturnExecutionMutation(); return true
+    end]], '@fixture/ActionQueuePolicy.lua'))()
+    s.outcome.atSource = function() error('late public helper replacement') end
+    assert(s.settlement.prepareReturnExecution(action, s.executionGuard),
+        'fresh entry must commit without reopening callbacks or live item getters')
+    PZSurvivorToolkit.Settings.actionQueue = enabled
+    original.getID, original.getFullType, original.getIsCraftingConsumed = id, kind, consumed
+    QueueReturnExecutionMutation = function() end
+    local state = s.settlement.operationState(action)
+    assert(state and state.steps[#state.steps].phase == 'cleanup', 'captured entry must retain native cleanup tracking')
+    assert(not s.settlement.prepareReturnExecution(action, s.executionGuard))
+    QueueReturnExecutionMutation = nil
+end
+
+-- A nested fresh preparation owns its binding; an outer stale visit cannot
+-- overwrite that obligation after a source getter returns.
+for _, client in ipairs({false, true}) do
+    local s = returnExecutionFixture(client)
+    local action, lookup, nested = s.pendingReturn, s.root.getItemById, nil
+    s.queue.current, s.queue.queue = action, {action, s.tail}
+    QueueReturnExecutionMutation = function()
+        QueueReturnExecutionMutation = function() end
+        s.root.getItemById = function(self, id)
+            self.getItemById = lookup
+            nested = s.settlement.prepareReturnExecution(action, s.executionGuard)
+            return lookup(self, id)
+        end
+    end
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent = assert(loadstring([[return function()
+        QueueReturnExecutionMutation(); return true
+    end]], '@fixture/ActionQueuePolicy.lua'))()
+    assert(not s.settlement.prepareReturnExecution(action, s.executionGuard) and nested == true,
+        'outer source visit must not overwrite a nested execution binding')
+    assert(not s.settlement.prepareReturnExecution(action, s.executionGuard), 'the nested binding must still be single-use')
+    QueueReturnExecutionMutation = nil
+end
+
 for _,client in ipairs({false,true})do
     local s=returnExecutionFixture(client);local action=s.pendingReturn;local guard=s.executionGuard
     assert(s.settlement.returnExecutionSupported(action,guard),'earned pending return lacks execution descriptor')

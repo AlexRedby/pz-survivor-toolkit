@@ -9,6 +9,24 @@ local function sameMember(item, member)
 end
 Outcome.sameMember = sameMember
 
+-- Fresh source evidence at an owner-validated execution entry. Expected facts
+-- must come from that owner's earned adapter, not a copy of current action
+-- fields. This is neither a native admission result nor a capacity reservation.
+-- Read both indexes once, then item identity/location and the opposite endpoint;
+-- reread action bindings after getters. No native validation/mutation callback,
+-- inventory scan, clock polling or per-visit table is introduced.
+function Outcome.atSource(action, expected)
+    if type(action) ~= "table" or type(expected) ~= "table" or getmetatable(expected) ~= nil then return false end
+    local actor, source, destination = expected.actor, expected.source, expected.destination
+    if not actor or not source or not destination or source == destination
+        or action.character ~= actor or action.srcContainer ~= source or action.destContainer ~= destination then return false end
+    local item, destinationItem = source:getItemById(expected.id), destination:getItemById(expected.id)
+    return sameMember(item, expected) and item == action.item and item:getContainer() == source
+        and not item:getIsCraftingConsumed()
+        and not (destinationItem and destinationItem:getContainer() == destination)
+        and action.character == actor and action.srcContainer == source and action.destContainer == destination and action.item == item
+end
+
 -- Capture the existing native API bindings once per owner, not per attempt.
 -- In SP neither predicate is required. An absent MP transaction can make both
 -- predicates true, which is deliberately not a successful result.
