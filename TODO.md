@@ -1,3 +1,7 @@
+# Rebase driving research onto fresh main
+
+- [ ] Save pre-rebase local/remote refs and rebase driving-benchmark onto freshly fetched origin/main; preserve upstream and research changes, reconcile outstanding TODO items and component versions/CHANGELOG, run focused combined checks, then recheck remote main and publish with an explicit remote-head lease. Do not install or publish a gameplay package as part of this integration.
+
 # Follow up the recorded Optimized run
 
 - [ ] Use the [main-thread performance plan](tests/optimizer_trial/PERFORMANCE-PLAN.md) to investigate a concrete behavior-preserving `renderFog` operation: the complete full-selected-pack route with explicit 3072 MiB heap has no recorded allocation stalls, 1.155 ms fog/frame and recurring object-loop samples in all thirds. Preserve `getRenderInfo` initialization, `renderEndOnly`, iterator progression and image order; retain the rejected unconditional traversal skip. If equivalence cannot be proved, inspect specific chunk/occlusion leaves from the same capture instead of collecting another broad run.
