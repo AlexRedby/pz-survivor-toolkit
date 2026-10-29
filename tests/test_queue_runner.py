@@ -117,6 +117,8 @@ class NativeRunnerTests(unittest.TestCase):
         result, kills = self.invoke()
         self.assertEqual(result["status"], "completed")
         self.assertIn("-novoip", self.commands[1])
+        self.assertIn('-Xmx3072m', self.commands[1])
+        self.assertEqual(result['resources']['budget']['memory'], 4 * 1024**3)
         self.assertIn('-Dorg.lwjgl.glfw.libname=/owned/native/libglfw.dylib', self.commands[1])
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)

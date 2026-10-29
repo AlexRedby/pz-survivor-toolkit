@@ -19,7 +19,7 @@ from . import adapters, host
 MIB = 1024 ** 2
 STATE = Path('/tmp') / ('pz-native-' + str(os.getuid() if hasattr(os, 'getuid') else 'unsupported'))
 LEGACY_LOCK = Path('/tmp/pz-queue-native-launch.lock')
-DEFAULTS = {'heap_mib': 2048, 'native_mib': 1024, 'cpu_per_instance': 1.0, 'exclusive': False}
+DEFAULTS = {'heap_mib': 3072, 'native_mib': 1024, 'cpu_per_instance': 1.0, 'exclusive': False}
 DISK_MARGIN = 1024 ** 3
 DISK_PER_ROLE = 1024 ** 3
 
