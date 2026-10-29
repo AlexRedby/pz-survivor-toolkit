@@ -69,15 +69,17 @@ public final class StageProfiler {
             candidate.enable("jdk.FileRead").withThreshold(Duration.ofMillis(1));
             candidate.enable(FrameEvent.class).withThreshold(Duration.ZERO).withoutStackTrace();
             candidate.enable(SwapEvent.class).withThreshold(Duration.ZERO).withoutStackTrace();
+            candidate.enable(TileProfiler.TileFrameEvent.class).withThreshold(Duration.ZERO).withoutStackTrace();
             cache=outputCache.toRealPath(); owner=ownerThread;
             cpu=ManagementFactory.getThreadMXBean();
             cpuAvailable=cpu.isCurrentThreadCpuTimeSupported() && cpu.isThreadCpuTimeEnabled();
             timer=new Timer(); details=new Timer(DETAILS); rows=new Rows(); frameEvent=new FrameEvent();
             DetailHooks.install();
+            TileProfiler.start(ownerThread);
             LuaCallbacks.start(ownerThread);
             candidate.start(); recording=candidate; started=true; enabled=true;
         } catch (Exception | Error failure) {
-            DetailHooks.remove(); LuaCallbacks.abort();
+            DetailHooks.remove(); TileProfiler.abort(); LuaCallbacks.abort();
             candidate.close();
             throw failure;
         }
@@ -88,14 +90,14 @@ public final class StageProfiler {
     private static void error(String message) { if (diagnostic==null) diagnostic=message; }
 
     public static void frameBegin(int phase, int contacts, double speed) {
-        if (!owns() || phase<1 || phase>3 || diagnostic!=null || timer.error!=null || details.error!=null) return;
-        if (frameOpen) { error("Frame began before previous frame ended"); timer.cancel(); details.cancel(); return; }
+        if (!owns() || phase<1 || phase>3 || diagnostic!=null || timer.error!=null || details.error!=null || TileProfiler.diagnostic()!=null) return;
+        if (frameOpen) { error("Frame began before previous frame ended"); timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); return; }
         if (completed==CAPACITY) { error("Stage frame buffer overflow"); return; }
         framePhase=phase; frameContacts=contacts; frameSpeed=speed;
         lastFrameId++;
         cpuStart=cpuNow();
         long now=System.nanoTime();
-        timer.begin(now); details.begin(now);
+        timer.begin(now); details.begin(now); TileProfiler.frameBegin(now);
         LuaCallbacks.frameBegin(lastFrameId,now);
         frameOpen=true; frameEvent.begin();
     }
@@ -104,7 +106,9 @@ public final class StageProfiler {
         if (!owns() || !frameOpen) return;
         long now=System.nanoTime(), cpuEnd=cpuNow();
         frameOpen=false;
-        if (!timer.complete(now) || !details.complete(now)) { LuaCallbacks.frameEnd(now,false); omitted++; return; }
+        if (!timer.complete(now) || !details.complete(now) || !TileProfiler.frameEnd(lastFrameId,now)) {
+            TileProfiler.cancelFrame(); LuaCallbacks.frameEnd(now,false); omitted++; return;
+        }
         LuaCallbacks.frameEnd(now,true);
         long cpuNs=cpuStart<0 || cpuEnd<cpuStart ? -1 : cpuEnd-cpuStart;
         rows.capture(completed, lastFrameId, framePhase, frameContacts, frameSpeed, timer, details, cpuNs);
@@ -165,40 +169,48 @@ public final class StageProfiler {
         synchronized (swapLock) { enabled=false; finished=true; }
         // OnTick may finish inside logic/Lua. Its trailing exits must be harmless; no partial frame is emitted.
         if (frameOpen) { omitted++; frameOpen=false; }
-        timer.cancel(); details.cancel(); DetailHooks.remove();
+        timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); DetailHooks.remove();
         if (details.error!=null) error(details.error);
         if (timer.error!=null) error(timer.error);
         if (completed==0) error("No complete stage frames");
         try {
-            recording.stop(); recording.dump(cache.resolve("driving-stages.jfr"));
-        } finally { recording.close(); }
-        try (BufferedWriter out=Files.newBufferedWriter(cache.resolve("driving-stages.csv"))) {
-            out.write("frame_id,phase,contacts,speed_kmh,nano_start,nano_end,wall_ns,cpu_ns");
-            for (String name:NAMES) out.write(","+name+"_inclusive_ns,"+name+"_exclusive_ns,"+name+"_calls");
-            out.write(",other_exclusive_ns");
-            for (String name:DETAIL_NAMES) out.write(","+name+"_inclusive_ns,"+name+"_exclusive_ns,"+name+"_calls");
-            out.write("\n");
-            for (int i=0; i<completed; i++) {
-                out.write(rows.ids[i]+","+rows.phases[i]+","+rows.contacts[i]+","+rows.speeds[i]+","
-                        +rows.starts[i]+","+rows.ends[i]+","+rows.wall[i]+","+rows.cpu[i]);
-                for (int stage=0; stage<STAGES; stage++)
-                    out.write(","+rows.inclusive[stage][i]+","+rows.exclusive[stage][i]+","+rows.calls[stage][i]);
-                out.write(","+rows.other[i]);
-                for (int stage=0;stage<DETAILS;stage++)
-                    out.write(","+rows.detailInclusive[stage][i]+","+rows.detailExclusive[stage][i]+","+rows.detailCalls[stage][i]);
-                out.write("\n");
+            try (Recording active=recording) {
+                active.stop(); active.dump(cache.resolve("driving-stages.jfr"));
             }
+            TileProfiler.finish(cache);
+            if (TileProfiler.diagnostic()!=null) error(TileProfiler.diagnostic());
+            try (BufferedWriter out=Files.newBufferedWriter(cache.resolve("driving-stages.csv"))) {
+                out.write("frame_id,phase,contacts,speed_kmh,nano_start,nano_end,wall_ns,cpu_ns");
+                for (String name:NAMES) out.write(","+name+"_inclusive_ns,"+name+"_exclusive_ns,"+name+"_calls");
+                out.write(",other_exclusive_ns");
+                for (String name:DETAIL_NAMES) out.write(","+name+"_inclusive_ns,"+name+"_exclusive_ns,"+name+"_calls");
+                out.write("\n");
+                for (int i=0; i<completed; i++) {
+                    out.write(rows.ids[i]+","+rows.phases[i]+","+rows.contacts[i]+","+rows.speeds[i]+","
+                            +rows.starts[i]+","+rows.ends[i]+","+rows.wall[i]+","+rows.cpu[i]);
+                    for (int stage=0; stage<STAGES; stage++)
+                        out.write(","+rows.inclusive[stage][i]+","+rows.exclusive[stage][i]+","+rows.calls[stage][i]);
+                    out.write(","+rows.other[i]);
+                    for (int stage=0;stage<DETAILS;stage++)
+                        out.write(","+rows.detailInclusive[stage][i]+","+rows.detailExclusive[stage][i]+","+rows.detailCalls[stage][i]);
+                    out.write("\n");
+                }
+            }
+            String status="complete_frames="+completed+" omitted_incomplete_frames="+omitted
+                    +" cpu_supported_and_enabled="+cpuAvailable+" diagnostic="+(diagnostic==null ? "none" : diagnostic)
+                    +" phase_contacts_speed=snapshot-at-frame-begin exclusive_plus_other=wall inclusive=category-union-nonadditive"
+                    +" detail=independent-nonadditive fog=renderFog-whole translucent_total=whole-method"
+                    +" translucent_merge=after-tempSquares-clear-to-doSort-including-profiler-and-sort-arguments"
+                    +" translucent_sort=TimSort.doSort-call partial-details-on-throwable=included"
+                    +" tile_details=method-boundaries-v1 tile_profile="+TileProfiler.profile();
+            Files.writeString(cache.resolve("driving-stages-status.txt"), status+"\n");
+            System.out.println("[DRIVING_STAGES] "+status);
+            LuaCallbacks.finish(cache);
+            if (diagnostic!=null) throw new IllegalStateException("Invalid stage profile: "+diagnostic);
+        } finally {
+            // Failed JFR/CSV export must not leave retransformation hooks installed.
+            TileProfiler.abort(); LuaCallbacks.abort();
         }
-        String status="complete_frames="+completed+" omitted_incomplete_frames="+omitted
-                +" cpu_supported_and_enabled="+cpuAvailable+" diagnostic="+(diagnostic==null ? "none" : diagnostic)
-                +" phase_contacts_speed=snapshot-at-frame-begin exclusive_plus_other=wall inclusive=category-union-nonadditive"
-                +" detail=independent-nonadditive fog=renderFog-whole translucent_total=whole-method"
-                +" translucent_merge=after-tempSquares-clear-to-doSort-including-profiler-and-sort-arguments"
-                +" translucent_sort=TimSort.doSort-call partial-details-on-throwable=included";
-        Files.writeString(cache.resolve("driving-stages-status.txt"), status+"\n");
-        System.out.println("[DRIVING_STAGES] "+status);
-        LuaCallbacks.finish(cache);
-        if (diagnostic!=null) throw new IllegalStateException("Invalid stage profile: "+diagnostic);
     }
 
     /** Primitive, deterministic state machine; timestamps are supplied for focused checks. */
