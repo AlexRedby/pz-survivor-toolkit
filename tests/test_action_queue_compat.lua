@@ -18,6 +18,9 @@ local function derive(self, name)
 end
 local craftContainers
 require = function(name)
+    if name == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
+        return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
+    end
     if name == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
         return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
     end
@@ -323,6 +326,9 @@ local Gather = {build = function() return {} end, find = function(_, descriptor)
 local projectCookUiOriginal = {}
 local loaded = {}
 require = function(module)
+    if module == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
+        return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
+    end
     if module == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
         return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. module .. '.lua'))()
     end

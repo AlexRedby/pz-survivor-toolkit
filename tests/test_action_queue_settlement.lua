@@ -52,6 +52,9 @@ local function setup(client, outcomeOverride, delayedMetadata)
     getFilenameOfClosure = metadataAccessor
     if delayedMetadata then getFilenameOfClosure = nil end
     require = function(name)
+        if name == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
+            return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
+        end
         if name == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
             if not actualOutcome then
                 actualOutcome = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
@@ -96,7 +99,7 @@ local function setup(client, outcomeOverride, delayedMetadata)
     return {root = root, player = player, token = token, current = current, tail = tail, queue = queue,
         source = source, item = item, action = action, discard = discard, settlement = settlement,
         acknowledgements = acknowledgements, receipt = receipt, transaction = transaction, outcome = actualOutcome, metadataAccessor = metadataAccessor,
-        sourceProof = loaded['PZSurvivorToolkit/SourceProof'],
+        sourceProof = loaded['PZSurvivorToolkit/SourceProof'], requests = PZSurvivorToolkit.ActionQueueTransferRequests,
         advance = function(ms) clock = clock + ms end,
         counts = function() return constructions, guards, #discards, releases end}
 end
@@ -2708,6 +2711,7 @@ for _, client in ipairs({false, true}) do
         end]], '@fixture/ActionQueuePolicy.lua'))()
         assert(not s.settlement.prepareReturnExecution(action, s.executionGuard),
             changed .. ': callback changed the source binding before execution preparation')
+        assert(s.requests.pending[s.player] == nil, 'a declined entry published a native request watch')
         assert(not s.settlement.blockedReturnInfo(s.player), 'declining entry must not fabricate a failed-return debt')
         assert(s.queue.queue[1] == action and s.queue.queue[2] == s.tail and s.counts() == 0,
             'declining optional evidence must not mutate native work or the independent tail')
@@ -2784,10 +2788,14 @@ for _,client in ipairs({false,true})do
     assert(not s.settlement.prepareReturnExecution(action,guard),'preview/pending membership cannot start an episode')
     s.queue.current,s.queue.queue=action,{action,s.tail}
     assert(s.settlement.prepareReturnExecution(action,guard),'current earned return must bind before allocation')
+    assert(s.requests.pending[s.player] == action, 'confirmed entry did not publish its staged request watch')
+    action.toolkitNativeRequest = {phase='submitted',transaction=71,sourceExact=true}
+    assert(not s.settlement.nativeRequestState(action), 'public flags fabricated a native request observation')
     assert(not s.settlement.prepareReturnExecution(action,guard),'one episode cannot bind twice')
     s.settlement.started(action)
     action.action={isStarted=function()return false end};s.stack=false
     assert(s.settlement.rejectReturnExecution(action,'admission',guard),'never-started refusal must isolate exact return')
+    assert(s.requests.pending[s.player] == nil, 'a known native refusal retained the request watch')
     assert(not s.settlement.rejectReturnExecution(action,'admission',guard),'rejection must publish at most one debt')
     local info=s.settlement.blockedReturnInfo(s.player);local debts=s.settlement.blockedReturns(s.player)
     assert(info.count==1 and #debts==1 and debts[1].itemId==181 and debts[1].reason=='admission')
@@ -2818,7 +2826,7 @@ for _,moved in ipairs({false,true})do
     assert(s.settlement.beginPlannedReturn(action,guard))
     if moved then s.root.items[181],s.source.items[181],action.item.container=nil,action.item,s.source end
     action.queueList={};action.started=false
-    assert(s.settlement.finishPlannedReturn(action,true));s.stack=false
+    assert(s.settlement.finishPlannedReturn(action,true));assert(s.requests.pending[s.player] == nil);s.stack=false
     assert(s.settlement.rejectReturnExecution(action,'unmoved',guard)==not moved)
     assert(s.settlement.completionState(s.queue,action)=='ready')
     if moved then assert(not s.settlement.blockedReturnInfo(s.player),'confirmed native return created a debt')end

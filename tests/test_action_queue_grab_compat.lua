@@ -72,6 +72,7 @@ require=function(module)
     if module=='PZSurvivorToolkit/SourceProof' or module=='PZSurvivorToolkit/ActionQueueTransferOutcome'then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/ItemAccess' or module=='PZSurvivorToolkit/ItemRetention' or module=='PZSurvivorToolkit/InventoryTransferProtection'then
         path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..module..'.lua'
+    elseif module=='PZSurvivorToolkit/ActionQueueTransferRequests' then path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/ItemRetentionUI' or module=='PZSurvivorToolkit/InventoryClasses'then
         path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'
     elseif module=='PZSurvivorToolkit/QuartermasterCraftContainers'

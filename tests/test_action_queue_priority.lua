@@ -4,6 +4,9 @@ require = function(name)
     if name == 'PZSurvivorToolkit/SourceProof' then
         return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
     end
+    if name == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
+        return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
+    end
     if name == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
         return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
     end

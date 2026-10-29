@@ -140,6 +140,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'zombie.core.BuildChecks': 'BUILD_CHECKS_PASS',
           'zombie.core.QueueManagerChecks': 'QUEUE_MANAGER_CHECKS_PASS',
           'zombie.core.ItemBatchAdmissionChecks': 'ITEM_BATCH_ADMISSION_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.NativeTransferRequestsChecks': 'NATIVE_TRANSFER_REQUESTS_CHECKS_PASS',
           'zombie.core.ActionAcknowledgementChecks': 'ACTION_ACKNOWLEDGEMENT_CHECKS_PASS',
           'zombie.characters.CharacterTimedActions.ActionCompletionChecks': 'ACTION_COMPLETION_CHECKS_PASS',
           'zombie.characters.CharacterTimedActions.ActionValidityChecks': 'ACTION_VALIDITY_CHECKS_PASS',

@@ -22,6 +22,29 @@ local function transferOutcomes(module)
     end
 end
 local outcomeModule = require "PZSurvivorToolkit/ActionQueueTransferOutcome"
+local requestModule = require "PZSurvivorToolkit/ActionQueueTransferRequests"
+local requestMethods, requestAttempted, requestBinding
+local function transferRequests()
+    if requestMethods then return requestMethods end
+    if requestAttempted or requestBinding or type(getFilenameOfClosure) ~= "function" then return end
+    requestBinding = true
+    local ok, methods = pcall(function()
+        if type(requestModule) ~= "table" or getmetatable(requestModule) ~= nil or not executionProof then return end
+        local own, origin = executionProof.own, executionProof.closure
+        if type(own) ~= "function" or type(origin) ~= "function" then return end
+        local result = {}
+        for _, name in ipairs({"prepare", "clear", "reset", "observe"}) do
+            local method = own(requestModule, name)
+            if not origin(method, "ActionQueueTransferRequests.lua") then return end
+            result[name] = method
+        end
+        if executionProof.own == own and executionProof.closure == origin then return result end
+    end)
+    requestBinding, requestAttempted = false, true
+    if ok then requestMethods = methods end
+    return requestMethods
+end
+
 local bindTransferOutcomes
 local sameMember, retainedTransfer, returnAuthority, observeAttempt, sourceEvidence
 -- Some native-source fixtures and delayed loaders expose metadata only later.
@@ -770,6 +793,16 @@ function Settlement.beginReturn(action, obligation, guard)
     local attempt = {ordinal = ordinal, phase = "perform", members = groups[1].members, before = groups,
         transaction = transaction, authority = returnAuthority(proof.client, transaction),
         deadline = type(getTimestampMs) == "function" and getTimestampMs() + 30000}
+    local owner = operation(action.character, action.toolkitQueueOperation)
+    local step = owner and owner.actions[action]
+    local planned = step and step.returning
+    local request = planned and planned.obligation == obligation and planned.execution and planned.execution.request
+    if request and not request.paired and not request.ambiguous and request.phase == "submitted"
+        and request.native == action.action and request.transaction == transaction and request.dispatcher == createItemTransaction then
+        -- This is historical source evidence, not a capacity promise or physical
+        -- completion. The existing authoritative/effect observer still decides.
+        attempt.sourceRequest, request.paired = request, true
+    end
     for _, member in ipairs(attempt.members) do member.attempt = ordinal end
     proof.active, proof.next = attempt, nil
     proof.attempts[ordinal] = attempt
@@ -832,6 +865,7 @@ end
 -- Observe before native stop retires its transaction. An unconfirmed cancel is
 -- unavailable, never a fabricated server cancellation. Native stop still owns all effects.
 function Settlement.stopReturn(action, obligation, guard)
+    if requestMethods then requestMethods.clear(action) end
     local proof = returnProof(obligation)
     if proof and proof.active and not proof.active.finished then return false end
     if proof then Settlement.returnState(obligation) end
@@ -1594,7 +1628,10 @@ end
 
 function Settlement.finishPlannedReturn(action, succeeded)
     local planned = plannedReturn(action)
-    return planned and Settlement.finishReturn(planned.obligation, succeeded) or false
+    local result = planned and Settlement.finishReturn(planned.obligation, succeeded) or false
+    local proof = planned and returnProof(planned.obligation)
+    if requestMethods and proof and proof.ended then requestMethods.clear(action) end
+    return result
 end
 
 local function makeReturn(queue, id, expected, containers)
@@ -1700,6 +1737,47 @@ function Settlement.authorizeReturnRetention(action, guard)
     candidate.executionOptional = true
     return true
 end
+-- The bridge proves the actual stock caller; this guard only selects our
+-- private owner. Facts do not grant permissions, so do not repeat the full
+-- planner/native-capability inspector here. Existing outcome guards retain it.
+local function requestGuard(action)
+    local planned = plannedReturn(action)
+    local execution = planned and planned.execution
+    -- A new observed call invalidates the previous unpaired observation even
+    -- when its shape/source is now unsupported. Never recycle it by byte ID.
+    if execution then execution.request = nil end
+    return execution and execution.queue.current == action and execution.queue.queue[1] == action
+        and action.srcContainer == execution.source and action.destContainer == execution.destination
+        and action.character == execution.actor
+        and (execution.queue.toolkitOperationGeneration or 0) == execution.generation or false
+end
+local function requestBefore(action, receipt)
+    local planned = plannedReturn(action)
+    local execution = planned and planned.execution
+    local group = action.queueList and action.queueList[1]
+    if not execution or receipt:getSource() ~= execution.source or receipt:getDestination() ~= execution.destination
+        or not group or receipt:getItems() ~= group.items or #group.items ~= 1 or group.items[1] ~= action.item then return end
+    local request = {native = action.action, boundary = receipt:getBoundary(), phase = "before", dispatcher = createItemTransaction,
+        id = execution.id, fullType = execution.fullType}
+    request.sourceExact = sourceEvidence(action, execution) == true
+    execution.request = request
+    return request
+end
+local function requestAfter(action, request, receipt, ambiguous)
+    local planned = plannedReturn(action)
+    local execution = planned and planned.execution
+    if not request or not execution or execution.request ~= request or request.native ~= action.action then return end
+    request.phase, request.transaction, request.ambiguous = receipt:getPhase(), receipt:getTransaction(), ambiguous == true
+end
+-- Last observed supported call, not current transaction/admission authority.
+-- Explicit diagnostics for native verification; no UI polling or permissions.
+function Settlement.nativeRequestState(action)
+    local planned = plannedReturn(action)
+    local request = planned and planned.execution and planned.execution.request
+    if not request then return end
+    return {phase = request.phase, boundary = request.boundary, sourceExact = request.sourceExact, ambiguous = request.ambiguous,
+        paired = request.paired == true, transaction = request.transaction, id = request.id, fullType = request.fullType}
+end
 function Settlement.prepareReturnExecution(action, guard)
     local candidate, scope, record, step = executionCandidate(action, guard)
     if not candidate or record.queue.current ~= action or record.queue.queue[1] ~= action
@@ -1709,6 +1787,8 @@ function Settlement.prepareReturnExecution(action, guard)
     if not operationLive(record) or not borrowingLive(scope) then return false end
     local planned, plannedAction = step.returning, candidate.plannedReturn
     if planned and planned.execution then return false end
+    local methods = transferRequests()
+    local commitRequest = methods and methods.prepare(action, requestGuard, requestBefore, requestAfter)
     -- Source/tail callbacks above can invalidate facts. Bind to the private
     -- adapter's identity/endpoints, preserving an already reviewed bag rebind.
     local execution = {guard = guard, actor = record.character, queue = record.queue,
@@ -1726,6 +1806,7 @@ function Settlement.prepareReturnExecution(action, guard)
     candidate.executionOptional = true
     if not planned then bindPlannedReturn(action, scope, candidate, execution, step); planned = step.returning end
     planned.execution = execution
+    if commitRequest then commitRequest() end
     return true
 end
 local function unmovedReturn(action, planned)
@@ -1782,6 +1863,7 @@ function Settlement.rejectReturnExecution(action, reason, guard)
     end
     bucket.activeCount = bucket.activeCount + 1
     bucket.count, bucket.revision = bucket.count + 1, bucket.revision + 1
+    if requestMethods then requestMethods.clear(action) end
     return true
 end
 -- A source-reviewed restoration producer may ask whether its exact return
@@ -1876,6 +1958,7 @@ function Settlement.blockedReturns(character)
     return result
 end
 function Settlement.resetReturnFailures(queue)
+    if requestMethods and queue then requestMethods.reset(queue.character) end
     local bucket = queue and returnFailures[queue.character]
     if not bucket then return end
     for _, failure in ipairs(bucket.entries) do

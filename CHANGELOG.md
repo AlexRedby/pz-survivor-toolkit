@@ -44,6 +44,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.326
 
+- Record fresh per-call native request observations for earned automatic returns, with advisory outcome links. Preserve native authority, exact physical outcomes and existing editing permissions; source observations do not promise capacity or trigger replay.
 - Recheck exact earned-return items and container bindings after queue eligibility callbacks, before optional execution is bound. Decline stale, consumed or duplicated inputs and preserve a nested execution binding; native admission and transfer outcomes remain authoritative.
 - Share exact-item outcome observation across native pickups and returns. Preserve partial effects, authoritative transaction evidence and retained-item failure checks; private cleanup ownership and existing queue permissions remain with their current owners.
 - Reduce temporary allocations while comparing queued resources. Absent dependencies no longer create empty maps; static inspection fields are reused and boolean container checks avoid building unused ancestry lists. Keep live binding checks, full capacity ancestry and native transfer effects.
@@ -1517,6 +1518,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.76
 
+- Observe the reviewed native item-transfer request boundaries, including continuations, with opaque per-call receipts. Preserve native arguments, results and throws, require the Lua VM owner thread, reject unknown dispatchers and mask nested calls; prepare receipt metadata during Lua-owner loading.
 - Preserve native syntax-error and read-error ordering when queue or CleanUI compiler hooks inspect Lua input. Replay incomplete reads through the original lexer and keep stream closure with the native loader.
 - Reduce repeated action-queue binding and constant-map comparisons for the reviewed Toolkit source and native VM. Preserve every ownership observation and original Lua fallback, keep input readers with their native owner, and serialize original bytecode without retaining old Lua environments.
 

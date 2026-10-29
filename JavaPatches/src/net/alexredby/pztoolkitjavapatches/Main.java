@@ -31,6 +31,7 @@ public final class Main {
         public static void exit(@Patch.Argument(0) String file, @Patch.Argument(1) boolean rewrite,
                 @Patch.Local("toolkitQueueBindingSource") QueueBindingSource.Scope previous) {
             QueueBindingSource.end(previous);
+            NativeTransferRequests.prepareLibrary(file);
         }
     }
 

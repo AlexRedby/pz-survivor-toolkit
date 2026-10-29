@@ -126,7 +126,7 @@ local function fixture(client)
             return loaded[name]
         end
         if name == 'PZSurvivorToolkit/ActionQueueAcknowledgements' or name == 'PZSurvivorToolkit/ActionQueueSettlement'
-            or name == 'PZSurvivorToolkit/ActionQueueTidyIntent' or name == 'PZSurvivorToolkit/ActionQueueLifecycle' then
+            or name == 'PZSurvivorToolkit/ActionQueueTransferRequests' or name == 'PZSurvivorToolkit/ActionQueueTidyIntent' or name == 'PZSurvivorToolkit/ActionQueueLifecycle' then
             if not loaded[name] then
                 loaded[name] = assert(loadfile(root .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
             end
