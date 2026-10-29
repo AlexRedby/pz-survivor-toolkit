@@ -18,7 +18,7 @@ public final class LuaCallbackDetailsChecks {
     private static final String SETUP="""
         require=function(name)
             assert(name=='QueueTestSelection')
-            return {options={callback_profile=true,callback_detail_profile=true}}
+            return {options={callback_profile=true,callback_detail_profile=true,callback_chain_profile=chainProfile}}
         end
         Events={OnGameStart={Add=function(fn) installCallback=fn end}}
         print=function(message) lastPrint=message end
@@ -90,6 +90,20 @@ public final class LuaCallbackDetailsChecks {
             check(capture.detailSpans,"property did not enable spans");
             call(caller,thread,closure(SETUP,env));call(caller,thread,closure(helper,env));
             call(caller,thread,closure("installCallback(); installCallback(); assert(lastPrint=='[DRIVING_PERF] CALLBACK_DETAILS_INSTALLED functions=6')",env));
+            KahluaTable chainEnv=environment(platform);KahluaThread chainThread=thread(platform,chainEnv);
+            call(caller,chainThread,closure(SETUP+"""
+                chainProfile=true
+                local function pass(...) return ... end
+                PZSurvivorToolkit.VehicleDoorDashboard={update=pass}
+                YourDash.GetVehicleProfile=pass;YourDash.GetScaleKey=pass
+                for _,name in ipairs({'_applyLidMode','_updateStainLayer','_updateCrackLayer',
+                    '_YourDashUpdateVoltage','_YourDashUpdateSideButtons','_updateACControls',
+                    '_yourDashUpdateRoutedRadio','_YourDashSportRefreshCaches'}) do
+                    ISVehicleDashboard[name]=pass
+                end
+                """,chainEnv));
+            call(caller,chainThread,closure(helper,chainEnv));
+            call(caller,chainThread,closure("installCallback(); assert(lastPrint=='[DRIVING_PERF] CALLBACK_DETAILS_INSTALLED functions=17'); assert(YourDash.GetScaleKey(12)==12)",chainEnv));
             LuaClosure root=closure(SEMANTICS,env);
             call(caller,thread,root);
             check(capture.identities==0 && capture.depth==0,"outside-frame wrapper captured work");

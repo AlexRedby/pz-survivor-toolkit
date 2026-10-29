@@ -25,6 +25,7 @@ if (-not (Test-Path -LiteralPath $jfrHelper)) { $jfrHelper = Join-Path $PSScript
 . (Join-Path $PSScriptRoot 'TrialDiagnostics.ps1')
 . (Join-Path $PSScriptRoot 'TrialDownload.ps1')
 . (Join-Path $PSScriptRoot 'TrialProcess.ps1')
+. (Join-Path $PSScriptRoot 'TrialStorage.ps1')
 
 function Assert-TrialStrings($Values, [string]$Name) {
     if ($Values -isnot [Array]) { throw "$Name must be an array of strings." }
@@ -469,7 +470,26 @@ function New-TrialPlan([string]$Game, [string]$Cache, [string]$TrialMode, $Confi
         $vm += @(('@' + $profileArgs), '-Dpz.optimizerTrial.prewarm=true', ('-Dpz.optimizerTrial.sourceZip=' + $Candidate.Zip), ('-Dpz.optimizerTrial.cachedir=' + $Cache), ('-Dpz.optimizerTrial.overlay=' + $Candidate.Overlay), ('-Dpz.optimizerTrial.mode=' + $SessionType.ToLowerInvariant()))
     } else { $vm += '-Dpz.optimizerTrial.prewarm=false' }
     $arguments = @($vm) + @('-cp', ($classpath -join ';'), $Config.MainClass, ('-cachedir=' + $Cache), '-novoip')
-    return [pscustomobject]@{ Mode = $TrialMode; Session = $SessionType; Java = (Join-Path $Game 'jre64/bin/java.exe'); WorkingDirectory = $Game; Cache = $Cache; OptimizerProfile = $profile; OptimizerArguments = $profileArgs; WindowsVmVersion = $Config.WindowsVersion; VmArgs = $vm; Classpath = $classpath; MainClass = $Config.MainClass; Arguments = $arguments; CommandLine = (($arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '); Pid = $null; JavaExitCode = $null; Activation = 'CheckedOnly'; Logs = $null; Readiness = $null; ProcessStartUtc = $null; FinishedUtc = $null; Diagnostics = $null; LogCapture = $null; automaticCapFrameX = $true; gameContextPolicy = 'BufferedWorldExitV2'; TrialWorld = $null }
+    return [pscustomobject]@{ Mode = $TrialMode; Session = $SessionType; Java = (Join-Path $Game 'jre64/bin/java.exe'); WorkingDirectory = $Game; Cache = $Cache; OptimizerProfile = $profile; OptimizerArguments = $profileArgs; WindowsVmVersion = $Config.WindowsVersion; VmArgs = $vm; Classpath = $classpath; MainClass = $Config.MainClass; Arguments = $arguments; CommandLine = (($arguments | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '); Pid = $null; JavaExitCode = $null; Activation = 'CheckedOnly'; Logs = $null; Readiness = $null; ProcessStartUtc = $null; FinishedUtc = $null; Diagnostics = $null; Storage = $null; LogCapture = $null; automaticCapFrameX = $true; gameContextPolicy = 'BufferedWorldExitV2'; TrialWorld = $null }
+}
+
+function Get-TrialStoragePaths([string]$Game, [string]$Workshop, [string]$Cache, $Sources) {
+    # Workshop stays in place; packaged/private mods are copied into the trial cache.
+    # Keep provenance and actual runtime paths distinct in the launch receipt.
+    $paths=@(
+        [pscustomobject]@{Role='Game';Id='directory';Path=$Game},
+        [pscustomobject]@{Role='Game';Id='archive';Path=(Join-Path $Game 'projectzomboid.jar')},
+        [pscustomobject]@{Role='Game';Id='java';Path=(Join-Path $Game 'jre64/bin/java.exe')},
+        [pscustomobject]@{Role='Game';Id='physics';Path=(Join-Path $Game 'PZBullet64.dll')},
+        [pscustomobject]@{Role='Workshop';Id='root';Path=$Workshop},
+        [pscustomobject]@{Role='ProfileAndLogs';Id='cache';Path=$Cache})
+    foreach ($source in $Sources) {
+        $paths+=,[pscustomobject]@{Role='SelectedSource';Id=$source.Id;Path=$source.Root}
+        $runtimePath=$source.Root
+        if ($source.Kind -ne 'Workshop') { $runtimePath=Join-Path $Cache ('mods/'+$source.Id) }
+        $paths+=,[pscustomobject]@{Role='RuntimeSource';Id=$source.Id;Path=$runtimePath}
+    }
+    return $paths
 }
 
 function New-TrialRunName {
@@ -634,6 +654,12 @@ function Invoke-OptimizerTrial {
         $plan | Add-Member -NotePropertyName Pack -NotePropertyValue ([pscustomobject]@{ MainRevision = $resolved.Pack.main_revision; ModIds = $resolved.Ids; Sources = @($resolved.Sources | Select-Object Id, Kind, Root, Info, Version, WorkshopId) })
         Write-Host ("Pinned candidate pack {0}: {1} active mods; session={2}." -f $resolved.Pack.main_revision, $resolved.Ids.Count, $Session)
         foreach ($sourceMod in $resolved.Sources) { Write-Host ("  {0}: {1}, version={2}, Workshop={3}, source={4}" -f $sourceMod.Id, $sourceMod.Kind, $sourceMod.Version, $sourceMod.WorkshopId, $sourceMod.Root) }
+        # One bounded probe before the game starts, never during the recording loop.
+        Write-Host '[Storage] Resolving game/mod storage (15-second worker timeout)...'
+        $storagePaths=@(Get-TrialStoragePaths $game $workshop $cache $resolved.Sources)
+        $plan.Storage=Get-TrialStorageReport -Paths $storagePaths
+        $mapped=@($plan.Storage.Paths | Where-Object { $_.MappingStatus -eq 'Available' }).Count
+        Write-Host ("[Storage] {0}: {1}/{2} paths mapped. Disk models/bus and unresolved reasons are in launch.json -> Storage; media type may remain Unknown." -f $plan.Storage.Status,$mapped,$storagePaths.Count)
         $log = Join-Path $cache ('launch-' + $Mode.ToLowerInvariant() + '.json')
         Save-TrialPlan $plan $log
         Write-Host "Checked $Mode trial. Profile and logs: $cache"

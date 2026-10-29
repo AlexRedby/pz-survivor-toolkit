@@ -90,6 +90,15 @@ class CallbackDetailStagingTests(unittest.TestCase):
             benchmark.validate(selection)
             selection['options']['callback_detail_profile'] = False
             benchmark.validate(selection)
+            selection['options']['callback_chain_profile'] = True
+            with self.assertRaisesRegex(ValueError, 'callback_chain_profile'):
+                benchmark.validate(selection)
+            selection['options']['callback_detail_profile'] = True
+            benchmark.validate(selection)
+            for value in (1, 'true', None):
+                selection['options']['callback_chain_profile'] = value
+                with self.assertRaisesRegex(ValueError, 'callback_chain_profile'):
+                    benchmark.validate(selection)
             source = Path('project/tests/native_queue/optimizer-benchmark/CallbackDetails.lua')
             self.assertIn(source, benchmark.sources(Path('project'), selection))
 

@@ -106,6 +106,17 @@ $explicit=& {{ . {ps(LAUNCHER)} -SourceProfile {ps(self.base / 'source')} -Sessi
         result = self.powershell(f"@({literal}) | ForEach-Object {{ ConvertTo-WindowsArgument $_ }} | ConvertTo-Json")
         self.assertEqual(result, ['""', '"-cachedir=C:\\Trial Folder\\\\"', '"inside\\"quote"', '"plain"'])
 
+    def test_storage_records_distinguish_workshop_from_copied_runtime_sources(self):
+        sources = [{"Id": "workshop-mod", "Kind": "Workshop", "Root": str(self.base / "workshop/mod")},
+                   {"Id": "private-mod", "Kind": "Local", "Root": str(self.base / "private/mod")}]
+        records = self.powershell(f"$sources={ps(json.dumps(sources))} | ConvertFrom-Json; @(Get-TrialStoragePaths {ps(self.base / 'game')} {ps(self.base / 'workshop')} {ps(self.base / 'cache')} $sources) | ConvertTo-Json -Depth 5")
+        by_key = {(row["Role"], row["Id"]): row["Path"] for row in records}
+        self.assertEqual(by_key["RuntimeSource", "workshop-mod"], sources[0]["Root"])
+        self.assertEqual(by_key["SelectedSource", "private-mod"], sources[1]["Root"])
+        self.assertEqual(Path(by_key["RuntimeSource", "private-mod"]), self.base / "cache/mods/private-mod")
+        self.assertEqual(Path(by_key["Game", "physics"]), self.base / "game/PZBullet64.dll")
+        self.assertEqual(Path(by_key["ProfileAndLogs", "cache"]), self.base / "cache")
+
     def test_optimized_and_control_share_base_settings_and_profile(self):
         path = self.config()
         result = self.powershell(f"""
