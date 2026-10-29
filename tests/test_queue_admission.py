@@ -479,6 +479,21 @@ assert report.matrix({'suites': {}})['rows'] == []
         self.assertEqual(value['running'], [])
         self.assertFalse(value['legacy_lock']['busy'])
 
+    def test_default_heap_is_reserved_for_every_sp_and_host_process(self):
+        for selection, instances in (({'kind': 'sp'}, 1),
+                                     ({'kind': 'mp', 'clients': 1, 'options': {'mp_host': True}}, 2),
+                                     ({'kind': 'mp', 'clients': 2}, 3)):
+            with self.subTest(selection=selection):
+                budget = admission.budget(selection)
+                self.assertEqual(budget['heap_mib'], 3072)
+                self.assertEqual(budget['native_mib'], 1024)
+                self.assertEqual(budget['instances'], instances)
+                self.assertEqual(budget['memory'], instances * 4 * GIB)
+        # Previously prepared snapshots and explicit experiments retain their chosen value.
+        old = admission.budget({'kind': 'sp', 'resources': {'heap_mib': 2048}})
+        self.assertEqual(old['heap_mib'], 2048)
+        self.assertEqual(old['memory'], 3 * GIB)
+
     def test_invalid_resource_budgets_and_wait_are_rejected(self):
         for resources in ({'heap_mib': 0}, {'heap_mib': True}, {'native_mib': -1},
                           {'native_mib': 1.5}, {'cpu_per_instance': 0},

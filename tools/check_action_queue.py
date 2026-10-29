@@ -375,7 +375,8 @@ def main(argv=None):
         command.add_argument("--workshop", action="append", type=Path, default=[], help="Repeatable installed Workshop roots")
         command.add_argument("--timeout", type=int, default=3600, help="Total gameplay deadline seconds")
         command.add_argument("--ports", nargs=2, type=int, help='Explicit UDP ports; omitted allocates an isolated adjacent pair')
-        command.add_argument('--heap-mib', type=int, default=2048, help='Maximum Java heap per game process')
+        command.add_argument('--heap-mib', type=int, default=admission.DEFAULTS['heap_mib'],
+                             help='Maximum Java heap per game process (default: %(default)s MiB)')
         command.add_argument('--native-mib', type=int, default=1024, help='Estimated native/graphics/encoder memory per process, beyond heap')
         command.add_argument('--cpu-per-instance', type=float, default=1.0, help='Estimated logical CPU budget per game process')
         command.add_argument('--exclusive', action='store_true', help='Reserve the desktop exclusively for physical input or timing measurements')

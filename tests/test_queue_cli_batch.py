@@ -155,6 +155,16 @@ class BatchTests(unittest.TestCase):
         self.assertTrue(self.calls[0][1]['ports_auto'])
         self.assertEqual(waits, [15])
 
+    def test_cli_and_batch_share_the_admission_heap_default(self):
+        # A changed shared default must not leave a hidden CLI-only heap value behind.
+        with patch.dict(cli.admission.DEFAULTS, heap_mib=4096), patch.object(cli.native, 'prepare') as prepare:
+            self.assertEqual(cli.main(['prepare', str(self.root / 'fresh'), '--game', '/game',
+                                       '--jdk', '/jdk', '--suite', 'video-recording']), 0)
+            self.assertEqual(prepare.call_args.args[4]['resources']['heap_mib'], 4096)
+            self.write_plan([{'id': 'default-budget', 'suite': 'video-recording'}])
+            self.assertEqual(self.invoke(), 0)
+            self.assertEqual(self.calls[0][1]['resources']['heap_mib'], 4096)
+
     def test_prepare_cli_parses_budget_and_exclusive_without_launching(self):
         with patch.object(cli.native, 'prepare') as prepare:
             result = cli.main(['prepare', str(self.root / 'fresh'), '--game', '/game', '--jdk', '/jdk',
