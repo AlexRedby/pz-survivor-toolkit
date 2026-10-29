@@ -1,5 +1,8 @@
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassTransform;
+import java.lang.classfile.Opcode;
+import java.lang.classfile.instruction.FieldInstruction;
+import java.lang.constant.MethodTypeDesc;
 import java.lang.classfile.instruction.InvokeInstruction;
 import java.lang.constant.ClassDesc;
 import java.lang.instrument.ClassFileTransformer;
@@ -91,6 +94,50 @@ public final class ToolkitWindowBootstrap {
         return result[0];
     }
 
+    /** Initialize creation caches from actual geometry after the owned routing transition. */
+    public static int[] creationViewport(long window) {
+        // Reject identity/thread mistakes before touching native GLFW.
+        if (!enabled() || !agentInstalled || !displayTransformed || Thread.currentThread() != glfwOwnerThread
+                || window == 0 || window != routedWindow || routedCreationSize(window) == null) {
+            throw new IllegalStateException("Creation viewport requires the owned routed GLFW thread/window");
+        }
+        requireCreationContext(window);
+        // Routing can change backing density without changing logical dimensions. A callback
+        // need not be replayed, so pumping alone cannot initialize Display's pixel cache.
+        GLFW.glfwPollEvents();
+        requireCreationContext(window);
+        int[] first = readCreationGeometry(window), second = readCreationGeometry(window);
+        requireCreationContext(window);
+        if (!java.util.Arrays.equals(first, second)) throw new IllegalStateException("Creation viewport changed during observation");
+        validateCreationViewport(routedCreationSize(window), second);
+        System.out.println("[QUEUE_TEST] WINDOW_CREATION_VIEWPORT pid=" + ProcessHandle.current().pid() + " glfw=" + window
+            + " window=" + second[0] + "x" + second[1] + " framebuffer=" + second[2] + "x" + second[3]);
+        return second;
+    }
+
+    private static void requireCreationContext(long window) {
+        if (window != routedWindow || window != Display.getWindow() || GLFW.glfwGetCurrentContext() != window
+                || GLFW.glfwGetWindowMonitor(window) != 0) {
+            throw new IllegalStateException("Creation viewport requires the routed windowed context");
+        }
+    }
+
+    private static int[] readCreationGeometry(long window) {
+        int[] width = new int[1], height = new int[1], fw = new int[1], fh = new int[1];
+        GLFW.glfwGetWindowSize(window, width, height);
+        GLFW.glfwGetFramebufferSize(window, fw, fh);
+        return new int[] {width[0], height[0], fw[0], fh[0]};
+    }
+
+    static void validateCreationViewport(int[] requested, int[] observed) {
+        if (requested == null || observed == null || requested.length != 2 || observed.length != 4
+                || java.util.Arrays.stream(requested).anyMatch(value -> value <= 0)
+                || java.util.Arrays.stream(observed).anyMatch(value -> value <= 0)
+                || observed[0] != requested[0] || observed[1] != requested[1]) {
+            throw new IllegalStateException("Creation viewport differs from owned logical request or has invalid dimensions");
+        }
+    }
+
     static void validateViewport(boolean framebufferContract, int expectedWidth, int expectedHeight, int[] values) {
         if (expectedWidth <= 0 || expectedHeight <= 0 || values.length != 8
                 || java.util.Arrays.stream(values).anyMatch(value -> value <= 0)
@@ -163,6 +210,32 @@ public final class ToolkitWindowBootstrap {
                 } else builder.with(element);
             }));
         if (!expected.equals(calls)) throw new IllegalStateException("Unexpected Display lifecycle: " + calls);
+        int[] publications = {0};
+        // Both pinned Display versions snapshot pixel dimensions before show/routing,
+        // but their original create tail refreshes only logical dimensions. Initialize
+        // the owning caches before publication/Core.init; getters keep their contracts.
+        patched = classFile.transformClass(classFile.parse(patched), ClassTransform.transformingMethodBodies(
+            method -> method.methodName().equalsString("create") && method.methodType().equalsString("()V"),
+            (builder, element) -> {
+                if (element instanceof FieldInstruction field && field.opcode() == Opcode.PUTSTATIC
+                        && field.owner().asInternalName().equals(DISPLAY)
+                        && field.name().equalsString("displayCreated") && field.type().equalsString("Z")) {
+                    publications[0]++;
+                    var display = ClassDesc.of("org.lwjglx.opengl.Display");
+                    builder.invokestatic(display, "getWindow", MethodTypeDesc.of(ClassDesc.ofDescriptor("J")))
+                        .invokestatic(ClassDesc.of("ToolkitWindowBootstrap"), "creationViewport",
+                            MethodTypeDesc.of(ClassDesc.ofDescriptor("[I"), ClassDesc.ofDescriptor("J")));
+                    String[] fields = {"latestWidth", "latestHeight", "displayWidth", "displayHeight",
+                        "displayFramebufferWidth", "displayFramebufferHeight"};
+                    int[] indices = {0, 1, 0, 1, 2, 3};
+                    for (int index = 0; index < fields.length; index++) {
+                        builder.dup().ldc(indices[index]).iaload().putstatic(display, fields[index], ClassDesc.ofDescriptor("I"));
+                    }
+                    builder.pop(); // The original publication boolean remains on the stack.
+                }
+                builder.with(element);
+            }));
+        if (publications[0] != 1) throw new IllegalStateException("Unexpected Display creation publication: " + publications[0]);
         var errors = classFile.verify(patched);
         if (!errors.isEmpty()) throw new IllegalStateException("Invalid patched Display: " + errors);
         return patched;
