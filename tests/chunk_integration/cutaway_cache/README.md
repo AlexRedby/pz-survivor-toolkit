@@ -86,3 +86,55 @@ including JNI lighting ordering, remains unresolved. `occlusionRetain=true`
 preserves dirt already raised and does not prove this dependency. Keep that
 prerequisite open before any runtime adoption; this focused check changes none of
 the measured cache Java sources or timing semantics.
+
+## Deferred construction: repeated dirty calls
+
+The separate `deferred.py` experiment retains the earlier measured sources and
+receipts. It clears a player's slot before a dirty native call and skips the
+extra exact-mask scan. A later clean miss executes native, preserves its
+invalidation, and publishes a mask only after the optional build succeeds.
+Native exceptions preserve native partial output; a failure in the extra
+unclipped scan leaves the slot invalid without losing native invalidation.
+
+```sh
+python3 tests/chunk_integration/cutaway_cache/deferred.py \
+  --game "$GAME_JAVA" --jdk "$JDK_HOME" \
+  --official-overlay "$OFFICIAL_OVERLAY" --output "$OUTPUT" --measure
+```
+
+The focused checks pass 17,028 ordered comparisons, including dirty-to-clean,
+repeated dirty, clipping/player/reset sequences, native miss exceptions and
+optional-helper failure. A stale-validity negative control fails as intended.
+A fully dirty cold one-level call allocates no cache. Changed-input scenarios
+still explicitly dirty the required level; they do not establish producer closure.
+
+Three exclusive forks retained 1,134 windows, with all three complete methods at
+non-OSR C2 before timing, equal checksums and no relevant JIT/GC/safepoint overlap.
+Same-capture medians below are CPU nanoseconds per complete 32-chunk operation:
+
+| World | Native fallback | Earlier repaired | Deferred |
+| --- | ---: | ---: | ---: |
+| Dense, all dirty | 7,126 | 10,985 | 7,359 |
+| Sparse, all dirty | 2,280 | 3,950 | 2,810 |
+| Empty, all dirty | 1,438 | 2,402 | 1,643 |
+| Dense, clean validity miss | 7,184 | 10,787 | 10,480 |
+| Dense, four-call cycle | 7,446 | 7,308 | 7,498 |
+| Dense, eight-call cycle | 7,370 | 6,610 | 6,758 |
+
+Each cycle has one dirty call, one first-clean miss, then clean hits. The redundant
+all-dirty scan is removed; residual overhead is about 3% dense, 23% sparse and 14%
+empty in these medians. First-clean misses still pay both scans. Dense four-call
+cycles are approximately native cost. Clean results vary between forks (dense
+spread about 22%), so this is not a precise route-gain estimate.
+
+Every timed mode has symmetric preallocated capacity. A clean validity miss is
+not a first-allocation/GC measurement. The fixture's added native holder field
+excludes production sidecar lookup, synchronization, retention and cleanup costs.
+The measured candidate and benchmark sources remained unchanged when the final
+check was strengthened to require an actual native callback on helper failure;
+the receipt identifies that post-measurement correctness check separately.
+
+The [dependency audit](../cutaway_dependency/README.md) rejects the current narrow
+producer-generation approach: live public aliases and additional native writers
+bypass its proposed hooks. Deferred construction fixes redundant work only; it
+does not make that persistent cache safe. Neither variant is admitted to runtime.
