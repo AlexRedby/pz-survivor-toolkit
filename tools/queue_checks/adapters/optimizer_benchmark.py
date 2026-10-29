@@ -50,6 +50,9 @@ def validate(selection):
     details = options.get('callback_detail_profile', False)
     if type(details) is not bool or details and not callbacks:
         raise ValueError('callback_detail_profile must be an explicit boolean and requires callback_profile')
+    chain = options.get('callback_chain_profile', False)
+    if type(chain) is not bool or chain and not details:
+        raise ValueError('callback_chain_profile must be an explicit boolean and requires callback_detail_profile')
     perf = options.get('driving_perf', {})
     if perf.get('scenario', 'highway') not in ('highway', 'west-point-extinction', 'muldraugh-extinction'):
         raise ValueError('Unknown driving scenario')
@@ -69,6 +72,7 @@ def sources(project, selection):
     root = Path(project)
     return [*sorted((root / 'tests/native_queue/optimizer-benchmark/java').glob('*')),
             root / 'tests/native_queue/optimizer-benchmark/CallbackDetails.lua',
+            root / 'tools/queue_checks/callback_chain.py',
             *sorted((root / 'tests/driving_benchmark/mods').rglob('*.lua')),
             root / 'tests/optimizer_trial/java/Main.java', root / 'tests/optimizer_trial/java/mod.info.template',
             root / 'tests/optimizer_trial/candidate-manifest.json', root / 'tools/prepare_optimizer_trial.py',
@@ -175,6 +179,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             for path in sorted(build.rglob('*.class')): jar.write(path, path.relative_to(build).as_posix())
     if selection['options'].get('callback_detail_profile', False):
         runtime['fixture']['callback_details'] = stage_callback_details(project, cache, mod)
+    if selection['options'].get('callback_chain_profile', False):
+        from queue_checks import callback_chain
+        runtime['fixture']['callback_chain'] = callback_chain.stage(cache)
     runtime['fixture']['mods'].append('PZDrivingPerfProbe')
     # Only the copied test starter changes: the fixture owns native create/load below.
     (cache / 'mods/PZDrivingBench/42/media/lua/client/DrivingBenchStart.lua').write_text('-- World lifecycle owned by isolated benchmark fixture.\n')
@@ -414,10 +421,15 @@ def verify(root, selection, catalog):
     if re.search(r'\[(?:DRIVING_PERF(?:_WORLD)?|PZDrivingBench)\] FAIL ', text): issues.append('Fixture failed')
     if '[PZToolkitJavaPatches] Experimental B42.21 patch:' not in text: issues.append('Toolkit Java patches did not activate')
     if selection['options'].get('callback_detail_profile') is True:
-        if text.count('[DRIVING_PERF] CALLBACK_DETAILS_INSTALLED functions=6') != 1:
+        functions = 17 if selection['options'].get('callback_chain_profile') is True else 6
+        if text.count('[DRIVING_PERF] CALLBACK_DETAILS_INSTALLED functions=' + str(functions)) != 1:
             issues.append('Missing/duplicate diagnostic callback detail installation')
         try: evidence['callback_detail_staging'] = verify_callback_details(root / 'client1')
         except (OSError, ValueError, KeyError): issues.append('Missing/invalid callback detail staging receipt')
+    if selection['options'].get('callback_chain_profile') is True:
+        from queue_checks import callback_chain
+        try: evidence['callback_chain_staging'] = callback_chain.verify(root / 'client1')
+        except (OSError, ValueError, KeyError): issues.append('Missing/invalid callback chain staging receipt')
     if selection['options']['optimizer_enabled']:
         for marker in ('[OptimizerTrial] official cache and preload active', 'anim sets preloaded in ', 'action groups handed to the game'):
             if marker not in text: issues.append('Missing optimizer activation: ' + marker)

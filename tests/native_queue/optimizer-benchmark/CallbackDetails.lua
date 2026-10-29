@@ -32,6 +32,19 @@ local function install()
         { ISVehicleDashboard, "_YourDashFinalizeWearOrder", "ISVehicleDashboard._YourDashFinalizeWearOrder" },
         { ISVehicleDashboard, "checkEngineFull", "ISVehicleDashboard.checkEngineFull" },
     }
+    if config.options.callback_chain_profile then
+        local extra = {
+            { PZSurvivorToolkit.VehicleDoorDashboard, "update", "Toolkit.VehicleDoorDashboard.update" },
+            { YourDash, "GetVehicleProfile", "YourDash.GetVehicleProfile" },
+            { YourDash, "GetScaleKey", "YourDash.GetScaleKey" },
+        }
+        for _, name in ipairs({"_applyLidMode", "_updateStainLayer", "_updateCrackLayer",
+                "_YourDashUpdateVoltage", "_YourDashUpdateSideButtons", "_updateACControls",
+                "_yourDashUpdateRoutedRadio", "_YourDashSportRefreshCaches"}) do
+            extra[#extra+1] = { ISVehicleDashboard, name, "ISVehicleDashboard." .. name }
+        end
+        for _, target in ipairs(extra) do targets[#targets+1] = target end
+    end
     -- Validate the whole selected pack before changing any function table.
     for _, target in ipairs(targets) do
         assert(type(target[1]) == "table" and type(target[1][target[2]]) == "function",
@@ -44,7 +57,7 @@ local function install()
         end
     end
     installed = true
-    print("[DRIVING_PERF] CALLBACK_DETAILS_INSTALLED functions=6")
+    print("[DRIVING_PERF] CALLBACK_DETAILS_INSTALLED functions=" .. tostring(#targets))
 end
 
 Events.OnGameStart.Add(function()

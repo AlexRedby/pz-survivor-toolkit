@@ -81,13 +81,13 @@ WPR_26100_ADVANCED_HELP = (
 
 
 class WprProfileTests(unittest.TestCase):
-    def test_profile_retains_diagnostic_events_with_only_cpu_and_readying_stacks(self):
+    def test_profile_retains_scheduler_edges_with_only_sampled_cpu_stacks(self):
         root = ET.parse(SCRIPTS / 'PZTrial.wprp').getroot()
         keywords = {node.attrib['Value'] for node in root.findall('./Profiles/SystemProvider/Keywords/Keyword')}
         self.assertTrue({'CSwitch', 'ReadyThread', 'SampledProfile', 'DPC', 'Interrupt',
                          'DiskIO', 'HardFaults', 'ProcessThread', 'Loader'} <= keywords)
         self.assertEqual({node.attrib['Value'] for node in root.findall('./Profiles/SystemProvider/Stacks/Stack')},
-                         {'SampledProfile', 'ReadyThread'})
+                         {'SampledProfile'})
         providers = root.findall('./Profiles/EventProvider')
         self.assertEqual(len(providers), 3)
         self.assertTrue(all(node.attrib['Stack'] == 'false' for node in providers))
