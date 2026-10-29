@@ -95,6 +95,169 @@ object QueueBindingSourceChecks {
         verify(scope() == null, "scope leaked")
     }
 
+    private class DelayedFailureStream(private val source: String) : java.io.InputStream() {
+        val failure = IOException("delayed fixture IO")
+        var position = 0
+        var failures = 0
+        var closes = 0
+
+        private fun failIfReached() {
+            if (position >= 8192 && failures == 0) {
+                failures++
+                throw failure
+            }
+        }
+
+        override fun read(): Int {
+            failIfReached()
+            return if (position == source.length) -1 else source[position++].code
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            if (length == 0) return 0
+            failIfReached()
+            if (position == source.length) return -1
+            val count =
+                minOf(
+                    length,
+                    source.length - position,
+                    if (failures == 0) 8192 - position else Int.MAX_VALUE,
+                )
+            for (index in 0 until count) buffer[offset + index] = source[position++].code.toByte()
+            return count
+        }
+
+        override fun close() {
+            closes++
+        }
+    }
+
+    private data class CompilerObservation(
+        val closure: LuaClosure?,
+        val failure: Throwable?,
+        val ioDiagnostic: Boolean,
+    )
+
+    private fun readerFailureChecks(env: se.krka.kahlua.vm.KahluaTable) {
+        val module = QueueBindingSource.Module.COMPAT
+        fun observe(source: String, scoped: Boolean): CompilerObservation {
+            val stream = DelayedFailureStream(source)
+            val diagnostics = ByteArrayOutputStream()
+            val previousError = System.err
+            var closure: LuaClosure? = null
+            var failure: Throwable? = null
+            System.setErr(java.io.PrintStream(diagnostics))
+            try {
+                java.io.BufferedReader(java.io.InputStreamReader(stream, Charsets.US_ASCII)).use {
+                    reader ->
+                    closure =
+                        if (scoped) {
+                            withRunLua(module.target, true) {
+                                LuaCompiler.loadis(reader, module.compilerName, env)
+                            }
+                        } else LuaCompiler.loadis(reader, module.compilerName, env)
+                }
+            } catch (observed: IOException) {
+                failure = observed
+            } catch (observed: RuntimeException) {
+                failure = observed
+            } finally {
+                System.setErr(previousError)
+            }
+            verify(stream.closes == 1, "delayed-error original stream close count")
+            verify(scope() == null, "delayed-error native compiler scope leaked")
+            val ioDiagnostic =
+                diagnostics.toString().contains("java.io.IOException: delayed fixture IO")
+            return CompilerObservation(closure, failure, ioDiagnostic)
+        }
+        for (prefix in listOf("return ]", "return 1")) {
+            val source = prefix + " ".repeat(20000) + "\n"
+            val ordinary = observe(source, false)
+            val owned = observe(source, true)
+            verify(
+                ordinary.failure?.javaClass == owned.failure?.javaClass &&
+                    ordinary.failure?.message == owned.failure?.message,
+                "capture changed native syntax/IO failure order",
+            )
+            verify(
+                (ordinary.closure == null) == (owned.closure == null),
+                "capture changed native compilation outcome after IO",
+            )
+            verify(
+                ordinary.ioDiagnostic == owned.ioDiagnostic,
+                "capture changed native IO diagnostic reachability",
+            )
+            if (prefix == "return ]") {
+                verify(
+                    ordinary.failure is se.krka.kahlua.vm.KahluaException && !ordinary.ioDiagnostic,
+                    "malformed prefix did not fail before delayed IO",
+                )
+            } else {
+                // This native lexer logs IOException and treats it as EOF; preserve that behavior.
+                verify(
+                    ordinary.closure != null && ordinary.ioDiagnostic,
+                    "valid prefix did not reach native IO-as-EOF handling",
+                )
+                verify(
+                    dump(ordinary.closure!!).contentEquals(dump(owned.closure!!)),
+                    "valid prefix native prototype changed after IO",
+                )
+            }
+        }
+        val source = "return 1" + " ".repeat(20000) + "\n-- unread tail\n"
+        val stream = DelayedFailureStream(source)
+        java.io.BufferedReader(java.io.InputStreamReader(stream, Charsets.US_ASCII)).use { original
+            ->
+            withRunLua(module.target, true) {
+                val prepared = QueueBindingSource.prepare(original, module.compilerName, true)
+                verify(
+                    prepared.text == null && prepared.module == module,
+                    "incomplete capture authorized compilation",
+                )
+                verify(
+                    prepared.reader.read(CharArray(0), 0, 0) == 0,
+                    "pending failure consumed by zero-length read",
+                )
+                val prefix = CharArray(8192)
+                verify(
+                    prepared.reader.read(prefix, 0, prefix.size) == prefix.size &&
+                        String(prefix) == source.substring(0, prefix.size),
+                    "failed capture lost prefix",
+                )
+                verify(
+                    prepared.reader.read(CharArray(0), 0, 0) == 0,
+                    "pending failure consumed at prefix boundary",
+                )
+                var observed: IOException? = null
+                try {
+                    prepared.reader.read()
+                } catch (failure: IOException) {
+                    observed = failure
+                }
+                verify(observed === stream.failure, "pending IO failure was not replayed intact")
+                verify(
+                    prepared.reader.read(CharArray(0), 0, 0) == 0,
+                    "zero-length retry touched tail",
+                )
+                verify(
+                    prepared.reader.readText() == source.substring(prefix.size),
+                    "pending failure was repeated or tail retry lost text",
+                )
+                verify(stream.failures == 1, "tail retry repeated captured failure")
+                prepared.reader.close()
+                verify(stream.closes == 0, "error replay closed borrowed original")
+                verify(
+                    QueueBindingSource.prepare(bomb, module.compilerName, true).reader === bomb,
+                    "incomplete capture allowed repeated claim",
+                )
+            }
+        }
+        verify(stream.closes == 1 && scope() == null, "error replay original owner/TLS cleanup")
+        println(
+            "QUEUE_BINDING_READER_ERROR_ORDER_PASS (native syntax before IO, reachable IO-as-EOF, pending failure once, tail retry, close once)",
+        )
+    }
+
     private fun wovenChecks(
         files: ZomboidFileSystem,
         version: Path,
@@ -119,6 +282,7 @@ object QueueBindingSourceChecks {
             QueueBindingSourceChecks::class.java.classLoader,
         )
 
+        readerFailureChecks(env)
         fun nodes(p: Prototype): List<Prototype> = listOf(p) + p.prototypes.flatMap { nodes(it) }
         for ((module, text) in texts) {
             val ordinary = LuaCompiler.loadstring(text, module.compilerName, env)
@@ -615,7 +779,12 @@ object QueueBindingSourceChecks {
                 withRunLua(carts.target, true) {
                     broken.use {
                         try {
-                            QueueBindingSource.prepare(it, carts.compilerName, true)
+                            val prepared = QueueBindingSource.prepare(it, carts.compilerName, true)
+                            verify(
+                                prepared.text == null,
+                                "failed capture published complete source",
+                            )
+                            prepared.reader.readText()
                         } catch (observed: IOException) {
                             verify(
                                 QueueBindingSource.prepare(bomb, carts.compilerName, true).module ==
