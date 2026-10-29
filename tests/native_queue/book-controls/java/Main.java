@@ -6,6 +6,7 @@ import java.util.IdentityHashMap;
 import me.zed_0xff.zombie_buddy.Patch;
 import se.krka.kahlua.j2se.J2SEPlatform;
 import se.krka.kahlua.j2se.KahluaTableImpl;
+import se.krka.kahlua.stdlib.BaseLib;
 import se.krka.kahlua.stdlib.TableLib;
 import se.krka.kahlua.vm.JavaFunction;
 import se.krka.kahlua.vm.KahluaTable;
@@ -65,9 +66,15 @@ public final class Main {
             Object toolkit = env.delegate.get("PZSurvivorToolkit");
             result.rawset("compatFactories", (double) factories(own(own(toolkit, "ActionQueueCompat"), "isTransferPerform"), "ActionQueueCompat.lua"));
             result.rawset("cartFactories", (double) factories(own(own(toolkit, "ActionQueueCarts"), "status"), "ActionQueueCarts.lua"));
+            result.rawset("policyFactories", (double) factories(own(own(toolkit, "ActionQueuePolicy"), "matchesNative"), "ActionQueuePolicy.lua"));
+            Object radio = own(own(own(own(toolkit, "ActionQueueDefinitions"), "entries"), "native.ISRadioAction"), "behavior");
+            result.rawset("radioFactories", (double) factories(own(radio, "inspect"), "ActionQueuePolicy.lua"));
             KahluaTable canonical = platform.newTable(); TableLib.register(platform, canonical);
             Object pairs = ((KahluaTable) canonical.rawget("table")).rawget("pairs");
             result.rawset("canonicalPairs", env.delegate.get("pairs") == pairs);
+            result.rawset("canonicalIpairs", env.delegate.get("ipairs") == ((KahluaTable) canonical.rawget("table")).rawget("ipairs"));
+            KahluaTable base = platform.newTable(); BaseLib.register(base);
+            result.rawset("canonicalGetmetatable", env.delegate.get("getmetatable") == base.rawget("getmetatable"));
             result.rawset("plainEnvironment", env.getMetatable() == null && env.getRewriteTable() == null
                     && env.delegate.get("_G") == env);
             result.rawset("debugDisabled", !zombie.core.Core.debug);

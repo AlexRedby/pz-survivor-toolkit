@@ -9,7 +9,7 @@ local function makeCompat(own)
  local functions={one=owner.one,two=owner.two}
  local constants={ON={map=owner.ON,values={fridgeoff='fridge',freezeroff='freezer'}},OFF={map=owner.OFF,values={fridge='fridgeoff',freezer='freezeroff'}}}
  EURY_CONTAINERS=helper;TurnOffFridges=owner
- local state={helper=helper,proximity=proximity,methods=methods,owner=owner,functions=functions,priorCalls=0}
+ local state={helper=helper,proximity=proximity,methods=methods,owner=owner,functions=functions,constants=constants,priorCalls=0}
  local factory=own and OwnedCompat or BaseCompat
  state.bc,state.fridge=factory(helper,helper.isStaleVehicleContainer,proximity,methods,owner,functions,constants,owner.MODULE,owner.AUTO_KEY,function()state.priorCalls=state.priorCalls+1;if state.prior then return state.prior()end;return true end)
  return state
@@ -122,6 +122,48 @@ test('foreign-iterator-yield-stays-in-lua',function()
  local ok,value=coroutine.resume(co);assert(ok and value=='iterator-pause')
  ok,value=coroutine.resume(co);assert(ok and value==true and coroutine.status(co)=='dead'and NativeHits()==before)
  pairs=originalPairs
+end)
+local originalMeta=getmetatable
+local function parity(label,change)
+ test(label,function()
+  local outcomes={}
+  for _,owned in ipairs({false,true})do
+   local c=makeCompat(owned);assert(c.fridge());c.priorCalls=0
+   local trace={};change(c,trace)
+   local before=NativeHits();local ok,value=pcall(c.fridge)
+   outcomes[#outcomes+1]=tostring(ok)..'/'..tostring(value)..'/'..c.priorCalls..'/'..table.concat(trace,',')
+   if owned then assert(NativeHits()==before,'uncertain constants must fall back')end
+   getmetatable=originalMeta;pairs=originalPairs
+  end
+  assert(outcomes[1]==outcomes[2],label..': '..outcomes[1]..' vs '..outcomes[2])
+ end)
+end
+parity('constants-added-owner-key',function(c)c.owner.ON.extra='new'end)
+parity('constants-removed-owner-key',function(c)c.owner.OFF.freezer=nil end)
+parity('constants-mutated-both-maps',function(c)c.constants.ON.values.fridgeoff='new';c.owner.ON.fridgeoff='new'end)
+parity('constants-descriptor-getter-order',function(c,trace)
+ local map=c.constants.ON.map;c.constants.ON.map=nil
+ setmetatable(c.constants.ON,{__index=function(_,key)trace[#trace+1]=key;if key=='map'then return map end end})
+end)
+parity('constants-values-getter-order',function(c,trace)
+ local values=c.constants.ON.values;c.constants.ON.values={}
+ setmetatable(c.constants.ON.values,{__index=function(_,key)trace[#trace+1]=key;return values[key]end})
+end)
+parity('constants-map-metatable',function(c)setmetatable(c.owner.ON,{})end)
+parity('constants-new-equal-string-value',function(c)c.owner.ON.fridgeoff=('x'..c.owner.ON.fridgeoff):sub(2)end)
+parity('constants-replaced-descriptor',function(c)c.constants.ON={map=c.owner.ON,values=c.constants.ON.values}end)
+parity('constants-identical-boxed-nan',function(c)local nan=0/0;c.owner.ON.fridgeoff=nan;c.constants.ON.values.fridgeoff=nan end)
+parity('constants-getmetatable-callbacks',function(c,trace)
+ getmetatable=function(value)trace[#trace+1]=value==c.owner and 'owner'or value==c.owner.ON and 'ON'or value==c.owner.OFF and 'OFF'or 'other';return originalMeta(value)end
+end)
+test('constants-getmetatable-yield',function()
+ for _,owned in ipairs({false,true})do
+  local c=makeCompat(owned);assert(c.fridge());local before=NativeHits();local calls=0
+  getmetatable=function(value)calls=calls+1;if value==c.owner.ON then coroutine.yield('constant-map-pause')end;return originalMeta(value)end
+  local co=coroutine.create(function()return c.fridge()end);local ok,value=coroutine.resume(co);assert(ok and value=='constant-map-pause')
+  ok,value=coroutine.resume(co);assert(ok and value==true and coroutine.status(co)=='dead'and calls==3)
+  if owned then assert(NativeHits()==before)end;getmetatable=originalMeta
+ end
 end)
 assert(forged==0)
 Emit('QUEUE_BINDING_TRUST_PASS cases='..checks..' forgedCalls=0 actualCallerClosure=true actualCallerEnvironment=true')

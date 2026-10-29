@@ -67,6 +67,14 @@ internal object QueueBindingHooks {
                 "97c294f5c050c48b901315eaa737f0d12587185554923d01e5c9f25602e51156",
             ) &&
             BytecodeSupport.supports(
+                "se/krka/kahlua/vm/KahluaUtil.class",
+                "5e4d5bea56fedc34a332780aff73bd9abd9c6e3209200aa0bdd1eae3ad029f6e",
+            ) &&
+            BytecodeSupport.supports(
+                "se/krka/kahlua/stdlib/BaseLib.class",
+                "03816f584acbe2ef78e167f3e7ef4773865adc5a68c7ee9732cfa7ba81f4a927",
+            ) &&
+            BytecodeSupport.supports(
                 "zombie/core/Core.class",
                 "8f5c69740c8bf2181123a831ab68d1dfb047453687cca6dc62c77816d76ab360",
             )

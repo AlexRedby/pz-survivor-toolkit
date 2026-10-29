@@ -97,7 +97,7 @@ object QueueBindingCompilerChecks {
         zombie.Lua.LuaManager.env = environment
         for ((text, path, expected) in
             listOf(
-                Triple(compat, "ActionQueueCompat.lua", 2),
+                Triple(compat, "ActionQueueCompat.lua", 4),
                 Triple(carts, "ActionQueueCarts.lua", 1),
             )) {
             check(
@@ -135,9 +135,11 @@ object QueueBindingCompilerChecks {
                 "    local function helpersUnchanged()\n        if TurnOffFridges ~= owner",
                 "\n    local replacement = transferMethods()",
             )
+        val classGuard =
+            section(compat, "local function classUnchanged(class, methods)\n", "\n-- BulkActions")
         val compatFixture =
             "local helpers,staleVehicle,proximity,proximityMethods,owner,functions,constants,module,autoKey,priorGuard=...\n" +
-                "local containerHelpersUnchanged\n$bc\n$fridge\nreturn containerHelpersUnchanged,helpersUnchanged"
+                "local containerHelpersUnchanged\n$bc\n$fridge\n$classGuard\nreturn containerHelpersUnchanged,helpersUnchanged"
         val cartGuard =
             section(carts, "local function unchanged()\n", "\nlocal function transferUnchanged()")
         val cartFixture =
@@ -288,7 +290,8 @@ object QueueBindingCompilerChecks {
         var total = 0
         var failures = 0
         var successes = 0
-        for (file in listOf("ActionQueueCompat.lua", "ActionQueueCarts.lua")) {
+        for (file in
+            listOf("ActionQueueCompat.lua", "ActionQueueCarts.lua", "ActionQueuePolicy.lua")) {
             val path = root.resolve(SOURCE_DIRECTORY + file)
             val text = Files.readString(path)
             val baseline = LuaCompiler.loadstring(text, path.toString(), environment)

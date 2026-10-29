@@ -15,7 +15,8 @@ internal object QueueBindingSource {
 
     enum class Module(val compilerName: String) {
         COMPAT("ActionQueueCompat.lua"),
-        CARTS("ActionQueueCarts.lua");
+        CARTS("ActionQueueCarts.lua"),
+        POLICY("ActionQueuePolicy.lua");
 
         val target: String
             get() = "media/lua/client/PZSurvivorToolkit/$compilerName"

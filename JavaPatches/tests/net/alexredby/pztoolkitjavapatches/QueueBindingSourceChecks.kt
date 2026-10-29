@@ -76,6 +76,13 @@ object QueueBindingSourceChecks {
     private fun factoryCount(p: Prototype): Int =
         p.constants.count { it is JavaFunction } + p.prototypes.sumOf { factoryCount(it) }
 
+    private fun expectedFactoryCount(module: QueueBindingSource.Module): Int =
+        when (module) {
+            QueueBindingSource.Module.COMPAT -> 4
+            QueueBindingSource.Module.CARTS -> 1
+            QueueBindingSource.Module.POLICY -> 3
+        }
+
     private fun dump(c: LuaClosure): ByteArray =
         ByteArrayOutputStream().also { c.prototype.dump(it) }.toByteArray()
 
@@ -290,7 +297,7 @@ object QueueBindingSourceChecks {
             originalReader.use {
                 withRunLua(module.target, true) {
                     val closure = LuaCompiler.loadis(it, module.compilerName, env)
-                    val expectedFactories = if (module == QueueBindingSource.Module.COMPAT) 2 else 1
+                    val expectedFactories = expectedFactoryCount(module)
                     verify(
                         factoryCount(closure.prototype) == expectedFactories,
                         "woven Reader advice did not publish native binding",
@@ -364,6 +371,8 @@ object QueueBindingSourceChecks {
         }
         val compat = QueueBindingSource.Module.COMPAT
         val carts = QueueBindingSource.Module.CARTS
+        val policy = QueueBindingSource.Module.POLICY
+        val policyPath = version.resolve(policy.target)
         val compatPath = version.resolve(compat.target)
         val cartsPath = version.resolve(carts.target)
         val innerName = "media/lua/client/queue-binding-source-inner.lua"
@@ -398,13 +407,16 @@ object QueueBindingSourceChecks {
         Files.writeString(innerPath, "return queueBindingInnerProbe()\n")
         Files.writeString(compatPath, "return queueBindingOuterProbe()\n")
         Files.writeString(cartsPath, "return queueBindingRewriteProbe()\n")
+        Files.writeString(policyPath, "return queueBindingPolicyProbe()\n")
         files.activeFileMap[innerName] = innerPath.toString()
-        for (path in listOf(compatPath, cartsPath, innerPath)) QueueBindingSourceFixture.watch(
-            path.toString(),
-        )
+        for (path in listOf(compatPath, cartsPath, policyPath, innerPath)) QueueBindingSourceFixture
+            .watch(
+                path.toString(),
+            )
         var innerCalls = 0
         var outerCalls = 0
         var rewriteCalls = 0
+        var policyCalls = 0
         env.rawset(
             "queueBindingInnerProbe",
             JavaFunction { frame, _ ->
@@ -467,6 +479,29 @@ object QueueBindingSourceChecks {
             },
         )
         env.rawset(
+            "queueBindingPolicyProbe",
+            JavaFunction { frame, _ ->
+                policyCalls++
+                val active = scope() as? QueueBindingSource.Scope
+                verify(
+                    active != null && active.module == policy && active.claimed,
+                    "native Policy provider/Reader scope was not claimed",
+                )
+                val reader = QueueBindingSourceFixture.latest(policyPath.toString())
+                verify(
+                    reader != null && reader.closes == 1 && reader.reads > 0,
+                    "native Policy original Reader not closed once before execution",
+                )
+                verify(
+                    zombie.Lua.LuaManager.RunLua(innerName, false) == 19.0,
+                    "native Policy nested RunLua result",
+                )
+                verify(scope() === active, "native Policy nested scope failed restoration")
+                frame.push(97.0)
+                1
+            },
+        )
+        env.rawset(
             "queueBindingRewriteProbe",
             JavaFunction { frame, _ ->
                 rewriteCalls++
@@ -505,6 +540,27 @@ object QueueBindingSourceChecks {
             "native rewrite result",
         )
         verify(scope() == null, "native rewrite scope leaked")
+        verify(
+            zombie.Lua.LuaManager.RunLua(policy.target, false) == 97.0,
+            "native Policy provider RunLua result",
+        )
+        val policyReader = QueueBindingSourceFixture.latest(policyPath.toString())
+        verify(
+            zombie.Lua.LuaManager.RunLua(policy.target, false) == 97.0 && policyCalls == 1,
+            "native cached Policy RunLua reran source",
+        )
+        verify(
+            QueueBindingSourceFixture.latest(policyPath.toString()) === policyReader &&
+                policyReader.closes == 1,
+            "native cached Policy RunLua reopened/closed original source",
+        )
+        val policyPublished =
+            (registry.get(null) as Map<*, *>)[policyPath.toString()] as? LuaClosure
+        verify(
+            policyPublished != null && factoryCount(policyPublished.prototype) == 0,
+            "native unknown Policy source acquired factory constants",
+        )
+        verify(scope() == null, "native Policy RunLua scope leaked")
         LuaCompiler.rewriteEvents = false
         // Fixture source files live only in the isolated native cache.
         for ((module, text) in texts) Files.writeString(version.resolve(module.target), text)
@@ -621,6 +677,22 @@ object QueueBindingSourceChecks {
             )
         }
         for (module in QueueBindingSource.Module.entries) {
+            val moduleKey = module.target.lowercase(java.util.Locale.ENGLISH)
+            val activeProvider = files.activeFileMap.remove(moduleKey)!!
+            unowned(module.target, module.compilerName)
+            unowned(version.resolve(module.target).toString(), module.compilerName)
+            val foreignProvider = work.resolve("foreign-provider").resolve(module.compilerName)
+            Files.createDirectories(foreignProvider.parent)
+            Files.writeString(foreignProvider, texts.getValue(module))
+            files.activeFileMap[moduleKey] = foreignProvider.toString()
+            unowned(module.target, module.compilerName)
+            unowned(version.resolve(module.target).toString(), module.compilerName)
+            files.activeFileMap[moduleKey] = activeProvider
+            files.modIDs.remove("PZSurvivorToolkit")
+            unowned(module.target, module.compilerName)
+            files.modIDs.add("PZSurvivorToolkit")
+            unowned(module.target, module.compilerName, false)
+            unowned("media/lua/client/Other/" + module.compilerName, module.compilerName)
             for (runFile in
                 listOf(
                     module.target,
@@ -637,6 +709,13 @@ object QueueBindingSourceChecks {
                             bomb,
                         "unsupported compiler claimed",
                     )
+                    for (other in QueueBindingSource.Module.entries.filter { it != module }) {
+                        verify(
+                            QueueBindingSource.prepare(bomb, other.compilerName, true).reader ===
+                                bomb,
+                            "different module compiler name borrowed scope",
+                        )
+                    }
                     val text = texts.getValue(module)
                     val reader = OwnedReader(text)
                     reader.use {
@@ -644,7 +723,7 @@ object QueueBindingSourceChecks {
                         verify(p.module == module && p.text == text, "known capture incomplete")
                         verify(
                             factoryCount(compiled(p, module.compilerName).prototype) ==
-                                if (module == compat) 2 else 1,
+                                expectedFactoryCount(module),
                             "exact compiler binding",
                         )
                         p.reader.close()
@@ -857,7 +936,7 @@ object QueueBindingSourceChecks {
         )
         wovenChecks(files, version, texts, platform, env)
         println(
-            "QUEUE_BINDING_SOURCE_CHECKS_PASS assertions=$assertions native_provider=true known_factories=3 unknown_unchanged=true reader_bound=${SOURCE_LIMIT} nested_cleanup=true native_close_owner=true weaving=true",
+            "QUEUE_BINDING_SOURCE_CHECKS_PASS assertions=$assertions native_provider=true known_factories=8 unknown_unchanged=true reader_bound=${SOURCE_LIMIT} nested_cleanup=true native_close_owner=true weaving=true",
         )
         kotlin.system.exitProcess(0)
     }

@@ -522,6 +522,10 @@ Events.OnTick.Add(function()
     assert(type(bindings)=='table'and bindings.readOnly==true and bindings.compatFactories==2 and bindings.cartFactories==1
      and bindings.canonicalPairs==true and bindings.plainEnvironment==true and bindings.debugDisabled==true and not bindings.error,
      'native binding-loop source/environment evidence missing')
+    if config.options.require_extended_native_bindings==true then
+     assert(bindings.policyFactories==2 and bindings.radioFactories==1 and bindings.canonicalIpairs==true and bindings.canonicalGetmetatable==true,
+      'extended native binding-loop source/environment evidence missing')
+    end
     raw('NATIVE_BINDINGS',bindings)
    end
    ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,sourceBound=true,authorityEquipment=true,nativeBindings=bindings or false})

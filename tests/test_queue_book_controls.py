@@ -36,6 +36,24 @@ class BookControlTests(unittest.TestCase):
         self.assertTrue(a.native_binding_errors(changed))
         self.assertTrue(a.native_binding_errors(None))
 
+    def test_extended_binding_evidence_requires_policy_sites_and_canonical_helpers(self):
+        value = dict(compatFactories=2, cartFactories=1, canonicalPairs=True, plainEnvironment=True,
+                     debugDisabled=True, readOnly=True, scope='source-owned-upvalues-no-guard-calls',
+                     policyFactories=2, radioFactories=1, canonicalIpairs=True, canonicalGetmetatable=True)
+        self.assertEqual(a.native_binding_errors(value, extended=True), [])
+        for key in ('policyFactories', 'radioFactories', 'canonicalIpairs', 'canonicalGetmetatable'):
+            changed = dict(value); changed.pop(key)
+            self.assertTrue(a.native_binding_errors(changed, extended=True), key)
+            changed[key] = False
+            self.assertTrue(a.native_binding_errors(changed, extended=True), key)
+        selection = self.selection()
+        selection['options']['require_extended_native_bindings'] = True
+        with self.assertRaises(ValueError): a.validate(selection)
+        selection['options']['require_native_bindings'] = True
+        a.validate(selection)
+        selection['options']['require_extended_native_bindings'] = 1
+        with self.assertRaises(ValueError): a.validate(selection)
+
     def selection(self, kind='mp', mode='toolkit'):
         return dict(suite='book-controls', cases=list(a.CASES), kind=kind, mode=mode, clients=1,
                     languages=['EN'], mods=list(a.MODS), options=dict(book_controls=True, **({'mp_host': True} if kind == 'mp' else {})))

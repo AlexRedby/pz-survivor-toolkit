@@ -1516,7 +1516,7 @@ The older README associates medicine indicators with this label, but no separate
 ### 0.1.76
 
 - Preserve native syntax-error and read-error ordering when queue or CleanUI compiler hooks inspect Lua input. Replay incomplete reads through the original lexer and keep stream closure with the native loader.
-- Reduce repeated action-queue binding comparisons for the reviewed Toolkit source and native VM. Preserve every ownership observation and original Lua fallback, keep input readers with their native owner, and serialize original bytecode without retaining old Lua environments.
+- Reduce repeated action-queue binding and constant-map comparisons for the reviewed Toolkit source and native VM. Preserve every ownership observation and original Lua fallback, keep input readers with their native owner, and serialize original bytecode without retaining old Lua environments.
 
 ### 0.1.75
 

@@ -73,6 +73,9 @@ def validate(selection):
     flag = selection.get('options', {}).get('require_native_bindings', False)
     if type(flag) is not bool:
         raise ValueError('require_native_bindings must be boolean')
+    extended = selection.get('options', {}).get('require_extended_native_bindings', False)
+    if type(extended) is not bool or extended and flag is not True:
+        raise ValueError('require_extended_native_bindings requires boolean true require_native_bindings')
     if (selection.get('cases') != list(CASES) or selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients')) is not int or selection['clients'] != 1
@@ -596,11 +599,13 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
     return errors
 
 
-def native_binding_errors(value):
+def native_binding_errors(value, extended=False):
     if not isinstance(value, dict):
         return ['Missing native binding-loop source/environment evidence']
     expected = dict(compatFactories=2, cartFactories=1, canonicalPairs=True, plainEnvironment=True,
                     debugDisabled=True, readOnly=True, scope='source-owned-upvalues-no-guard-calls')
+    if extended:
+        expected.update(policyFactories=2, radioFactories=1, canonicalIpairs=True, canonicalGetmetatable=True)
     if (value.get('error') or any(type(value.get(k)) is not type(v) or value.get(k) != v for k, v in expected.items())):
         return ['Native binding-loop source/environment evidence differs']
     return []
@@ -622,7 +627,7 @@ def verify(root, selection, catalog):
             issues.append('Missing complete ordered book-controls qualification bank or functional denials remain')
         if selection.get('options', {}).get('require_native_bindings') is True:
             observed = setup[0].get('nativeBindings') if len(setup) == 1 else None
-            issues.extend(native_binding_errors(observed))
+            issues.extend(native_binding_errors(observed, selection.get('options', {}).get('require_extended_native_bindings') is True))
             if raw(text, 'NATIVE_BINDINGS') != [observed]:
                 issues.append('Raw native binding-loop evidence differs from setup')
         prepared, baselines, verified = (raw(authority, marker) for marker in ('PREPARED', 'BASELINE', 'VERIFIED'))
