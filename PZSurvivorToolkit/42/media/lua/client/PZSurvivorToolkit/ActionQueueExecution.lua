@@ -67,6 +67,7 @@ local function itemMatches(item,id,fullType)
     return instanceof(item,'InventoryItem')and item:getID()==id and item:getFullType()==fullType
 end
 local function method(value,name)return value and type(value[name])=='function'end
+local endpointMethodNames = {'getType','getAcceptItemFunction','getOnlyAcceptCategory','getContainingItem','getParent'}
 local function unfilteredEndpoint(container)
     local seen={}
     -- Only endpoint ancestry is inspected. Native admission still owns target
@@ -74,7 +75,7 @@ local function unfilteredEndpoint(container)
     for _=1,64 do
         if not instanceof(container,'ItemContainer')or seen[container]then return false end
         seen[container]=true
-        for _,name in ipairs({'getType','getAcceptItemFunction','getOnlyAcceptCategory','getContainingItem','getParent'})do
+        for _,name in ipairs(endpointMethodNames)do
             if not method(container,name)then return false end
         end
         local kind=container:getType()

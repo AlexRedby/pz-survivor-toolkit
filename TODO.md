@@ -12,6 +12,7 @@ Implementation and migration are conditional on the performance gate in [the des
 
 # Book reading edit regression
 
+- [ ] Qualify allocation-free handling of absent resource maps in the common comparison path. Preserve public inspection/context behavior, source-callback and field-read order, denial diagnostics and both private-loan observations; require result/trace parity and measured allocation improvement, then batch the affected native checks.
 - [ ] Choose and qualify a cheaper implementation of the measured full-pack return/equipment path before release. Preserve both private-loan observations and all source-callback boundaries; locate the remaining complete-decision costs, including repeated cache-hit inspection and allocations, before choosing another runtime design. Require improvement against the current path and rerun the affected bank with instrumentation removed.
 - [ ] Qualify the remaining positive-path performance fixes with the original fresh Execution/Settlement checks: keep cancelled-group and pending-return device projections comparison-local, and check actual borrowed-return equipment alongside them. Do not release the capacity exception until authoritative and advisory budgets pass; simplified CPU observers do not establish that gate.
 - [ ] Capture exact native reading stop and subsequent removal from both action lists in the book bank; generic Lifecycle finish events do not observe ordinary native stop. Preserve source bindings, paid pages and independent work; reject missing/foreign/finished/force-complete or duplicate receipts.

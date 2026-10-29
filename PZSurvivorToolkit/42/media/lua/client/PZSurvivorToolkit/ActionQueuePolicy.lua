@@ -193,8 +193,10 @@ local function sharedItem(a, b, context)
     local left, right = operationItems(a, context), operationItems(b, context)
     for item in pairs(left) do if right[item] then return item end end
     local leftContract, rightContract = inspect(a, context), inspect(b, context)
-    for item in pairs(leftContract and leftContract.containerOwners or {}) do if right[item] then return item end end
-    for item in pairs(rightContract and rightContract.containerOwners or {}) do if left[item] then return item end end
+    local owners = leftContract and leftContract.containerOwners
+    if owners then for item in pairs(owners) do if right[item] then return item end end end
+    owners = rightContract and rightContract.containerOwners
+    if owners then for item in pairs(owners) do if left[item] then return item end end end
 end
 
 local function knownCraftInputs(action, context)
@@ -207,11 +209,14 @@ end
 local function dynamicConflict(a, b, context)
     local left, right = inspect(a, context), inspect(b, context)
     if not left or not right then return false end
-    for kind in pairs(left.dynamicInputsByType or {}) do
-        if right.unknownOutputs or (right.dynamicInputsByType and right.dynamicInputsByType[kind]) then return kind end
-        for _, types in pairs({right.itemTypes, right.dynamicInputs, right.outputTypes}) do
-            for fullType in pairs(types) do
-                if fullType:match("[^.]+$") == kind then return kind end
+    local dynamic = left.dynamicInputsByType
+    if dynamic then
+        for kind in pairs(dynamic) do
+            if right.unknownOutputs or (right.dynamicInputsByType and right.dynamicInputsByType[kind]) then return kind end
+            for _, types in pairs({right.itemTypes, right.dynamicInputs, right.outputTypes}) do
+                for fullType in pairs(types) do
+                    if fullType:match("[^.]+$") == kind then return kind end
+                end
             end
         end
     end
@@ -222,8 +227,11 @@ local function dynamicConflict(a, b, context)
                 or (right.outputTypes and right.outputTypes[kind]) then return kind end
         end
     end
-    for kind in pairs(left.outputTypes or {}) do
-        if (right.itemTypes and right.itemTypes[kind]) or (right.outputTypes and right.outputTypes[kind]) then return kind end
+    local outputs = left.outputTypes
+    if outputs then
+        for kind in pairs(outputs) do
+            if (right.itemTypes and right.itemTypes[kind]) or (right.outputTypes and right.outputTypes[kind]) then return kind end
+        end
     end
     return false
 end
@@ -267,18 +275,28 @@ local function sharedWorldTarget(a, b, context)
     if left and right then
         if sharedEditResource and sharedEditResource(left, right) then return true end
         if not context or (a ~= context.failurePositionPrerequisite and b ~= context.failurePositionPrerequisite) then
-            for actor in pairs(left.positions or {}) do if right.positions and right.positions[actor] then return actor end end
+            local positions = left.positions
+            if positions then
+                for actor in pairs(positions) do if right.positions and right.positions[actor] then return actor end end
+            end
         end
-        for target in pairs(left.targets or {}) do
-            if right.targets and right.targets[target] and not mediaSetterIndependent(a, b, context) then return target end
+        local targets = left.targets
+        if targets then
+            for target in pairs(targets) do
+                if right.targets and right.targets[target] and not mediaSetterIndependent(a, b, context) then return target end
+            end
         end
         if left.hands and left.hands == right.hands then return left.hands end
         if (left.equipment and left.equipment == right.hands) or (right.equipment and right.equipment == left.hands) then return left.equipment or right.equipment end
     end
     local world = Toolkit.ActionQueueWorld
     if world and world.sharesTarget and world.sharesTarget(a, b) then return true end
-    local objects = {a.generator, a.charger, a.object, a.moveProps and a.moveProps.object,
-        a.toolkitWorldTarget, a.isoObject}
+    -- Capture every source field before any object callback, as the original
+    -- sparse array did. Most comparisons have no spatial fields at all.
+    local generator, charger, object, moveObject, worldTarget, isoObject =
+        a.generator, a.charger, a.object, a.moveProps and a.moveProps.object, a.toolkitWorldTarget, a.isoObject
+    if not (generator or charger or object or moveObject or worldTarget or isoObject) then return end
+    local objects = {generator, charger, object, moveObject, worldTarget, isoObject}
     for i = 1, 6 do
         local object = objects[i]
         if object and instanceof(object, "IsoObject") and (object == b.generator or object == b.charger
@@ -407,14 +425,17 @@ local snapshots = {}
 local transferFloorHelper
 local transferMethodsAdopted = false
 local transferHelperGuards = {}
-local function carriedContainers(container, character)
+local function carriedContainers(container, character, presenceOnly)
     if not instanceof(character, "IsoPlayer") then return end
-    local chain, seen = {}, {}
-    while instanceof(container, "ItemContainer") and not seen[container] do
+    local chain = not presenceOnly and {}
+    local seen
+    while instanceof(container, "ItemContainer") and (not seen or not seen[container]) do
         local kind = container:getType()
         if kind == "floor" or kind == "proximityInv" or kind == "twistInv_corpses" then return end
-        chain[#chain + 1], seen[container] = container, true
-        if container == character:getInventory() then return chain end
+        if chain then chain[#chain + 1] = container end
+        if container == character:getInventory() then return chain or true end
+        seen = seen or {}
+        seen[container] = true
         local bag = container:getContainingItem()
         if not instanceof(bag, "InventoryContainer") then return end
         container = bag:getContainer()
@@ -426,7 +447,7 @@ local function ordinaryTransferContainer(container, character)
     if kind == "floor" or kind == "proximityInv" or kind == "twistInv_corpses" then return false end
     local bag = container:getContainingItem()
     if not bag then return true end
-    return carriedContainers(container, character) ~= nil
+    return carriedContainers(container, character, true) ~= nil
         or ItemEditAdapters and type(ItemEditAdapters.worldContainer) == "function"
             and ItemEditAdapters.worldContainer(container, character) ~= nil
 end
@@ -512,9 +533,10 @@ function Policy.matchesCleanupPickupBinding(action)
         and action.destContainer == action.character:getInventory()
         and nativeMatches(action, snapshot, true)
 end
+local resourceItemFields = {"item", "gun", "magazine", "weapon", "primary", "secondary", "secondaryItem", "recipeItem", "device", "battery"}
 local function resources(action)
     local result = {items = {}, itemTypes = {}, targets = {}, cancelWaiting = true, interrupt = "finish-step"}
-    for _, field in ipairs({"item", "gun", "magazine", "weapon", "primary", "secondary", "secondaryItem", "recipeItem", "device", "battery"}) do
+    for _, field in ipairs(resourceItemFields) do
         local item = action[field]
         if item and instanceof(item, "InventoryItem") then
             result.items[itemKey(item)] = true
@@ -729,8 +751,8 @@ local function transferResources(action, context)
     end
     if ItemEditAdapters then
         result.edit = ItemEditAdapters.transfer(action)
-        if result.edit and (not carriedContainers(action.srcContainer,action.character)
-            or not carriedContainers(action.destContainer,action.character)) then result.positions={[action.character]=true} end
+        if result.edit and (not carriedContainers(action.srcContainer,action.character,true)
+            or not carriedContainers(action.destContainer,action.character,true)) then result.positions={[action.character]=true} end
     end
     return result
 end
@@ -1254,7 +1276,7 @@ end
 
 local capacityNeutral = {ISReadABook = true, ISWalkToTimedAction = true, ISWalkToTimedActionF = true, ISPathFindAction = true}
 local function carriedContainer(container, character)
-    return carriedContainers(container, character) ~= nil
+    return carriedContainers(container, character, true) ~= nil
 end
 Policy.isCarriedContainer = carriedContainer
 

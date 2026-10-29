@@ -413,3 +413,29 @@ do
     assert(not s.execution.inspect(s.action)and callbacks==0,
         'private earned-loan eligibility must precede endpoint/source inspection')
 end
+
+-- A method-presence getter may reenter another return match. The private
+-- endpoint method-name list must not share an iteration cursor between calls.
+do
+    local s=setup();local other=s.actorFactory(1);local sibling=s.actionFactory(other,912)
+    local endpoint=s.action.destContainer
+    local names={'getType','getAcceptItemFunction','getOnlyAcceptCategory','getContainingItem','getParent'}
+    local getters={};for _,name in ipairs(names)do getters[name]=endpoint[name];endpoint[name]=nil end
+    local trace={};local entered=false
+    setmetatable(endpoint,{__index=function(_,name)
+        local getter=getters[name]
+        if getter then
+            trace[#trace+1]=name
+            if name=='getType'and not entered then
+                entered=true;trace[#trace+1]='nested'
+                assert(s.execution.matches(sibling),'reentrant sibling endpoint must remain supported')
+            end
+            return getter
+        end
+    end})
+    assert(s.execution.matches(s.action)and entered)
+    assert(table.concat({trace[1],trace[2],trace[3],trace[4],trace[5],trace[6]},',')==
+        'getType,nested,getAcceptItemFunction,getOnlyAcceptCategory,getContainingItem,getParent',
+        'reentrant endpoint validation skipped or reordered a method-presence check')
+end
+print('PASS Execution endpoint method checks retain their order across reentrant matching')
