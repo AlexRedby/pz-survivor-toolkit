@@ -1,7 +1,3 @@
-# Rebase driving research onto fresh main
-
-- [ ] Save pre-rebase local/remote refs and rebase driving-benchmark onto freshly fetched origin/main; preserve upstream and research changes, reconcile outstanding TODO items and component versions/CHANGELOG, run focused combined checks, then recheck remote main and publish with an explicit remote-head lease. Do not install or publish a gameplay package as part of this integration.
-
 # Follow up the recorded Optimized run
 
 - [ ] Use the [main-thread performance plan](tests/optimizer_trial/PERFORMANCE-PLAN.md) to investigate a concrete behavior-preserving `renderFog` operation: the complete full-selected-pack route with explicit 3072 MiB heap has no recorded allocation stalls, 1.155 ms fog/frame and recurring object-loop samples in all thirds. Preserve `getRenderInfo` initialization, `renderEndOnly`, iterator progression and image order; retain the rejected unconditional traversal skip. If equivalence cannot be proved, inspect specific chunk/occlusion leaves from the same capture instead of collecting another broad run.
@@ -10,7 +6,7 @@
 
 # Windows capture reliability
 
-- [ ] Diagnose exceptional presentation stalls separately from gameplay chunk/FBO work. Use diagnostics 3.3 with a supported installed WPR after its standalone save check, and only when a further recording answers a concrete unresolved question; no rerun is requested now. Preserve clock uncertainty and distinguish native SwapBuffers waiting from GPU, driver, scheduler and capture interference; never infer CPU saturation from PresentMon CpuActive equalling whole-frame duration.
+- [ ] Diagnose exceptional presentation stalls separately from gameplay chunk/FBO work. Use the current diagnostics with a supported installed WPR after its standalone save check, and only when a further recording answers a concrete unresolved question; no rerun is requested now. Preserve clock uncertainty and distinguish native SwapBuffers waiting from GPU, driver, scheduler and capture interference; never infer CPU saturation from PresentMon CpuActive equalling whole-frame duration.
 
 # Optimizer functional fixture
 
@@ -27,7 +23,6 @@
 
 - [ ] Identify the oversized white character outline already present in the local diagnostic screenshots before calling the route visually qualified. Preserve the successful route/source/viewport evidence separately; clean runtime logs do not resolve this visual observation.
 - [ ] Classify the early native menu-Host child exit if it recurs: the first resource-preparation Host attempt exited before creating `coop-console.txt`, leaving only `CoopMaster.readServer: Stream closed`. The launcher now preserves the exact exited child's bounded stderr and exit code; use those diagnostics to establish the cause. A fresh Host reached both resource phases, so the original cause remains unclassified.
-- [ ] Make cumulative-memory CLI recall report sandbox database restrictions clearly: read-only recall currently raises `PermissionError` while opening `agent.sqlite` read/write. The memory MCP write also returned `Memory MCP is from an older release; reconnect the server`. Reconnect the server or use approved scoped CLI execution; finish when recall/write provide useful diagnostics without an unhandled traceback.
 - [ ] Keep full-pack source locks usable after source worktrees are cleaned: the previous union lock points to a removed ImmersiveSnow download directory. Provide a stable source store or actionable missing-source diagnostic before reusing locks across worktree cleanup; sealed native snapshots currently supply the explicit replacement sources.
 - [ ] Classify the existing `111ERROR: not adding suspicious zone "" "Nav" 8343,12316,0 2244x18` message, present in both the earlier viewport SP control and the translucent-union full-pack SP launch. Identify its source and whether the rejected zone affects navigation before treating the noisy startup as a clean diagnostic baseline; do not attribute it to the union patch.
 - [ ] Qualify the creation-cache correction under naturally occurring auto asleep-display fallback before claiming that specific desktop state is reliable. The stale-cache cause also occurred during awake AeroSpace routing; owned post-routing GLFW observation now initializes the caches before Core reads them, with awake full-pack SP/menu Host and native/optimized bytecode regressions verified. Retain earlier rejected viewport snapshots. Do not change the user display/focus or weaken routing, ownership or viewport checks to manufacture this qualification; it does not block awake attribution.
@@ -297,7 +292,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 - [ ] Align the no-game shared-wishlist fixture in `tests/native_queue/contributions/shared-wishlist/protocol.lua` with the `InventoryRows` contract used by `InventoryPresentation`. Running `python3 tests/native_queue/contributions/shared-wishlist/check.py` reaches highlight rendering and fails because the fixture's generic module stub lacks `captureAnchor`. Update the fixture dependencies without bypassing native row/anchor behavior; require the full protocol check, including highlight and cleanup assertions, to pass.
 
 - [ ] Repair the required-input check for `test_bc_inventory_classes` with `--pack-lock`: integration binding resolves both selected mods, but `tools/run_tests.py` still rejects the complete lock as missing `--bc-filter-source` / `--cleanui-inventory-pane`. The same current sources pass when supplied explicitly. Align the guard with its declared integration variables and add a focused locked-input regression without weakening source validation.
-
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.
 
