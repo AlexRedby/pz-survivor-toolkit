@@ -144,8 +144,8 @@ class LocalCandidatePackage(unittest.TestCase):
             self.assertEqual(hashlib.sha256(shipped_dashboard.read_bytes()).hexdigest(), receipt['dashboard_sha256'])
             self.assertEqual(profile_revision, receipt['optimizer_candidate']['profile_source_revision'])
             self.assertNotEqual(profile_revision, receipt['source_revision'])
-            self.assertEqual('3.5', receipt['diagnostics_revision'])
-            for name in ('TrialProcess.cs','TrialProcess.ps1','TrialWprTools.ps1','TrialWprWorker.ps1','Test-WPR.ps1','Test-WPR.cmd'):
+            self.assertEqual('3.6', receipt['diagnostics_revision'])
+            for name in ('TrialProcess.cs','TrialProcess.ps1','TrialStorage.ps1','TrialWprTools.ps1','TrialWprWorker.ps1','Test-WPR.ps1','Test-WPR.cmd'):
                 self.assertEqual(hashlib.sha256((output / name).read_bytes()).hexdigest(), receipt['diagnostics_files_sha256'][name])
             self.assertEqual(hashlib.sha256((output / 'PZTrial.wprp').read_bytes()).hexdigest(),
                              receipt['wpr_profile']['sha256'])

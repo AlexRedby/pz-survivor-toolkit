@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Limited file capture: sampled CPU + readying stacks; CSwitch/DPC/ISR/IO
+<!-- Limited file capture: sampled CPU stacks; CSwitch/ReadyThread/DPC/ISR/IO
      events have no stacks. No general diagnostic providers.
+     Keep scheduling edges for Running/Ready/Wait durations, but omit ReadyThread
+     stacks: the recorded drive had 4.43M ready events and 8.46M StackWalk records.
+     This deliberately gives up the readying call stack; it retains the readying
+     thread identity, scheduler events and CPU sample stacks. Do not claim a measured
+     volume or FPS reduction before observing a new trace.
+     CPU table semantics: https://learn.microsoft.com/windows-hardware/test/wpt/cpu-analysis
      Schema: https://learn.microsoft.com/windows-hardware/test/wpt/3-profile-definitions
      Keywords/stacks: https://learn.microsoft.com/windows-hardware/test/wpt/systemprovider
      Graphics settings: Microsoft's MF_TRACE.WPRP (DxgKrnl, DXGI, Dwm-Core):
@@ -33,7 +39,6 @@
       </Keywords>
       <Stacks>
         <Stack Value="SampledProfile"/>
-        <Stack Value="ReadyThread"/>
       </Stacks>
     </SystemProvider>
     <EventProvider Id="DxgKrnl" Name="Microsoft-Windows-DxgKrnl" Level="5" NonPagedMemory="true" Stack="false">
