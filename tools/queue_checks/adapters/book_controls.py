@@ -70,6 +70,9 @@ def definitions():
 
 
 def validate(selection):
+    requests = selection.get('options', {}).get('require_native_requests', False)
+    if type(requests) is not bool:
+        raise ValueError('require_native_requests must be boolean')
     flag = selection.get('options', {}).get('require_native_bindings', False)
     if type(flag) is not bool:
         raise ValueError('require_native_bindings must be boolean')
@@ -244,6 +247,117 @@ def _nonfinite_case_errors(row, ids, enabled):
     return errors
 
 
+def native_request_errors(row, case, selection, ids):
+    """Local request evidence never substitutes for the independent effect audit."""
+    if selection.get('options', {}).get('require_native_requests') is not True:
+        return []
+    errors = []
+    source, control_name = case.split('.', 1)
+    negative = (selection['mode'] == 'native' or selection['kind'] != 'mp'
+                or source == 'root' or base_control(control_name) == 'return-child-cancel')
+    failed = capacity_case(control_name)
+    candidates = [r for r in row.get('records', []) if r.get('role') == ('front' if source == 'root' else 'return')]
+    if not candidates:
+        return ['Missing explicit native request positive/negative observation target']
+    positive = False
+    phases = {'pending', 'started', 'perform-begin', 'perform-finish', 'terminal'}
+    sample_fields = {'case', 'sequence', 'actor', 'item', 'itemType', 'token', 'actionRef',
+                     'nativeRef', 'point', 'at', 'current', 'transaction', 'observation', 'watchPending'}
+    state_fields = {'phase', 'boundary', 'sourceExact', 'ambiguous', 'paired', 'nativeHandle',
+                    'wireAmbiguous', 'transaction', 'id', 'fullType'}
+    def transaction(value):
+        return _number(value) and value == int(value) and -128 <= value <= 127 and value != 0
+    for record in candidates:
+        samples = record.get('requestStates')
+        if not isinstance(samples, list) or not 2 <= len(samples) <= 16:
+            errors.append('Missing bounded native request observation history'); continue
+        points, seen, anchored, paired, last_at, request_id = set(), set(), False, False, -1, None
+        submitted_binding = None
+        for sample in samples:
+            if not isinstance(sample, dict) or set(sample) != sample_fields:
+                errors.append('Malformed native request observation'); continue
+            point, at = sample.get('point'), sample.get('at')
+            value, token, native_ref = sample['transaction'], sample['token'], sample['nativeRef']
+            if (value is not False and not (_number(value) and value == int(value) and -128 <= value <= 127)
+                    or token is not False and not (_number(token) and token == int(token) and token > 0)
+                    or native_ref is not False and not _same_action(native_ref, record.get('nativeRef'))):
+                errors.append('Malformed scalar native request cursor/token/native identity'); continue
+
+            if (sample.get('case') != case or sample.get('sequence') != record.get('sequence')
+                    or type(sample.get('sequence')) is not int or not _number(sample.get('actor')) or sample.get('actor') != ids['actor']
+                    or not _number(sample.get('item')) or sample.get('item') != ids['front']['id'] or sample.get('itemType') != ids['front']['type']
+                    or (type(sample.get('token')) is bool) != (type(record.get('token')) is bool)
+                    or sample.get('token') != record.get('token') or not _same_action(sample.get('actionRef'), record.get('actionRef'))
+                    or point not in phases or not _number(at) or at < last_at
+                    or type(sample.get('current')) is not bool or type(sample.get('watchPending')) is not bool):
+                errors.append('Native request case/actor/item/token/action/time binding differs'); continue
+            last_at = at; points.add(point)
+            key = copy.deepcopy(sample); key.pop('at', None)
+            key['actionRef'] = _action_identity(key.get('actionRef'))
+            key['nativeRef'] = _action_identity(key.get('nativeRef')) if key.get('nativeRef') else False
+            try: signature = json.dumps(key, sort_keys=True, allow_nan=False)
+            except (ValueError, TypeError):
+                errors.append('Non-scalar native request evidence'); continue
+            if signature in seen: errors.append('Duplicate native request transition')
+            seen.add(signature)
+            state = sample.get('observation')
+            if state is False:
+                continue
+            if negative:
+                errors.append('Private request state appeared on an absent-owner control'); continue
+            if (not isinstance(state, dict) or set(state) - state_fields
+                    or any(type(v) not in (str, int, float, bool) for v in state.values())
+                    or state.get('phase') not in ('before', 'submitted', 'failed') or state.get('boundary') != 'start'
+                    or not _number(state.get('id')) or state.get('id') != ids['front']['id'] or state.get('fullType') != ids['front']['type']
+                    or any(type(state.get(k)) is not bool for k in ('sourceExact', 'paired', 'nativeHandle', 'wireAmbiguous'))
+                    or 'ambiguous' in state and type(state['ambiguous']) is not bool
+                    or not _same_action(sample.get('nativeRef'), record.get('nativeRef'))):
+                errors.append('Malformed or foreign private native request state'); continue
+            if state['phase'] == 'submitted':
+                binding = tuple(state.get(k) for k in ('boundary', 'sourceExact', 'id', 'fullType', 'nativeHandle', 'ambiguous', 'transaction'))
+                if submitted_binding is not None and binding != submitted_binding:
+                    errors.append('Contradictory singleton submitted request history')
+                submitted_binding = binding
+            value = state.get('transaction')
+            if value is not None and value != 0 and not transaction(value):
+                errors.append('Native request transaction is not a signed nonzero byte'); continue
+            if transaction(value):
+                if request_id is not None and value != request_id:
+                    errors.append('Singleton native request changed transaction')
+                request_id = value
+                if value != record.get('transaction'):
+                    errors.append('Native request transaction differs from native transfer record')
+                if sample.get('transaction') != value and not (point in ('perform-finish', 'terminal') and sample.get('transaction') == 0):
+                    errors.append('Native request transaction differs from current/historical cursor')
+            exact = (state.get('phase') == 'submitted' and state.get('sourceExact') is True
+                     and state.get('nativeHandle') is True and state.get('wireAmbiguous') is False
+                     and state.get('ambiguous') is False and transaction(value))
+            if exact and sample.get('current') is True and state.get('paired') is False:
+                anchored = True
+            if state.get('paired') is True:
+                # Pairing links an attempt, including a stopped/rejected attempt;
+                # it never asserts that a perform succeeded or an item arrived.
+                debt = row.get('blockedReturn')
+                rejected_stop = (failed and point == 'terminal' and row.get('returnSucceeded') is False
+                    and isinstance(debt, dict) and debt.get('reason') == 'server' and debt.get('state') == 'blocked'
+                    and debt.get('itemId') == ids['front']['id'] and debt.get('itemType') == ids['front']['type']
+                    and row.get('server', {}).get('books', {}).get('front', {}).get('container') == 'root')
+                if not exact or not anchored or (not paired and point != 'perform-finish' and not rejected_stop):
+                    errors.append('Paired native request lacks its prior exact current owner or supported terminal attempt')
+                else: paired = True
+            elif paired:
+                errors.append('Paired singleton request reverted to unpaired evidence')
+        if not {'pending', 'terminal'} <= points:
+            errors.append('Native request pending/terminal absence controls missing')
+        if not negative and not failed and record.get('started') is True:
+            if not anchored or not paired:
+                errors.append('Started earned return lacks exact native request capture and pairing')
+            else: positive = True
+    if not negative and not failed and not positive:
+        errors.append('No qualified singleton earned-return native request was observed')
+    return errors
+
+
 def _record_errors(record, kind, case, actor, acks, capacity_lost=False):
     errors = []
     role = record.get('role')
@@ -366,6 +480,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         keep = enabled and control == 'return-child-cancel'
         ids, boundary, records = row['ids'], row['boundary'], row['records']
         errors.extend(_nonfinite_case_errors(row, ids, enabled))
+        errors.extend(native_request_errors(row, case, selection, ids))
         errors.extend(performance_errors(row.get('performance'), case, enabled))
         if isinstance(row.get('performance'), dict) and row['performance'].get('queueCount') != len(boundary.get('queue', [])):
             errors.append('Timing queue shape differs from the real edit boundary')
@@ -625,6 +740,9 @@ def verify(root, selection, catalog):
                 or len(final) != 1 or final[0].get('cases') != list(CASES) or final[0].get('performed') != len(CASES)
                 or final[0].get('failed') != 0 or final[0].get('skipped') != 0 or any(r.get('event') == 'fatal' for r in events)):
             issues.append('Missing complete ordered book-controls qualification bank or functional denials remain')
+        if selection.get('options', {}).get('require_native_requests') is True:
+            if len(setup) != 1 or setup[0].get('nativeRequestsObserved') is not True:
+                issues.append('Native request diagnostics were not source-bound at setup')
         if selection.get('options', {}).get('require_native_bindings') is True:
             observed = setup[0].get('nativeBindings') if len(setup) == 1 else None
             issues.extend(native_binding_errors(observed, selection.get('options', {}).get('require_extended_native_bindings') is True))
@@ -652,6 +770,14 @@ def verify(root, selection, catalog):
                 baselines[i] if i < len(baselines) else None, verified[i] if i < len(verified) else None,
                 [r for r in admissions if r.get('case') == case], [r for r in boundaries if r.get('case') == case], [r for r in drains if r.get('case') == case], [r for r in acks if r.get('case') == case], next((r for r in capacities if r.get('case') == case), None),
                 [r for r in stop_rows if r.get('case') == case])
+            if selection.get('options', {}).get('require_native_requests') is True:
+                observed = [r for r in raw(text, 'NATIVE_REQUEST') if r.get('case') == case]
+                expected_requests = [sample for record in row.get('records', []) for sample in record.get('requestStates', [])]
+                if len(observed) != len(expected_requests):
+                    errors.append('Raw native request observation count differs')
+                for record in row.get('records', []):
+                    if [sample for sample in observed if sample.get('sequence') == record.get('sequence')] != record.get('requestStates', []):
+                        errors.append('Raw native request observations differ from their exact owner record')
             gap_rows = [r for r in raw(text, 'REPLICA_GAP') if r.get('case') == case]
             converged = [r for r in raw(text, 'REPLICA_CONVERGED') if r.get('case') == case]
             expected_gaps = row.get('replicaGaps', [])

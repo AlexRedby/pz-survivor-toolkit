@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.328
+
+- Preserve native request observations when Host replaces the carried Java item instance while retaining its original queue member. Reuse the existing exact-ID/type detached-member proof and fresh source checks without changing native arguments, transfers or queue permissions.
+
 ### 0.1.327
 
 - Pair earned-return source observations only with their captured native transaction object and current actor request. Decline missing, replaced, nested or reused-ID evidence without changing native execution or editing permissions.

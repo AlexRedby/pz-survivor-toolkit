@@ -752,13 +752,115 @@ os.exit(0)
         selection = self.selection(); selection['options']['world_template'] = 'fixture'
         with self.assertRaises(ValueError): a.validate(selection)
 
-    def log_bank(self, kind='mp', mode='toolkit'):
+    def request_evidence(self, case='worn-bag.move-equip', kind='mp', mode='toolkit'):
+        evidence = self.evidence(case, kind, mode)
+        row, ids = evidence[:2]
+        source, name = case.split('.', 1)
+        negative = mode == 'native' or kind != 'mp' or source == 'root' or a.base_control(name) == 'return-child-cancel' or a.capacity_case(name)
+        targets = [r for r in row['records'] if r['role'] == ('front' if source == 'root' else 'return')]
+        for record in targets:
+            def sample(point, at, observation=False, current=False, transaction=0, allocated=False):
+                return dict(case=case,sequence=record['sequence'],actor=ids['actor'],item=ids['front']['id'],itemType=ids['front']['type'],
+                    token=record['token'],actionRef=record['actionRef'],nativeRef=record.get('nativeRef',False) if allocated else False,
+                    point=point,at=at,current=current,transaction=transaction,observation=copy.deepcopy(observation),watchPending=observation is not False)
+            record['requestStates'] = [sample('pending',1)]
+            if not negative:
+                tx=record['transaction']
+                state=dict(phase='submitted',boundary='start',sourceExact=True,ambiguous=False,paired=False,
+                    nativeHandle=True,wireAmbiguous=False,transaction=tx,id=ids['front']['id'],fullType=ids['front']['type'])
+                record['requestStates'].append(sample('started',2,state,True,tx,True))
+                record['requestStates'].append(sample('perform-begin',3,state,True,tx,True))
+                state['paired']=True
+                record['requestStates'].append(sample('perform-finish',4,state,False,0,True))
+            record['requestStates'].append(sample('terminal',5))
+        return evidence
+
+    def test_native_requests_require_exact_capture_and_explicit_absence_controls(self):
+        for kind,mode,case in [('mp','toolkit','worn-bag.move-equip'),('mp','toolkit','world.header-cancel'),
+                ('mp','toolkit','root.move-volume'),('mp','native','worn-bag.move-equip'),
+                ('sp','toolkit','world.header-cancel'),('mp','toolkit','worn-bag.return-child-cancel'),
+                ('mp','toolkit','world.header-cancel-capacity-lost')]:
+            evidence=self.request_evidence(case,kind,mode);selection=self.selection(kind,mode)
+            selection['options']['require_native_requests']=True
+            self.assertEqual(a.native_request_errors(evidence[0],case,selection,evidence[1]),[],(kind,mode,case))
+        selection=self.selection();selection['options']['require_native_requests']=1
+        with self.assertRaises(ValueError):a.validate(selection)
+
+    def test_native_request_pairing_can_describe_a_rejected_stop_without_success(self):
+        evidence=self.request_evidence('worn-bag.header-cancel-capacity-lost');row,ids=evidence[:2]
+        record=next(r for r in row['records']if r['role']=='return'and r['started'])
+        state=dict(phase='submitted',boundary='start',sourceExact=True,ambiguous=False,paired=False,
+            nativeHandle=True,wireAmbiguous=False,transaction=record['transaction'],id=ids['front']['id'],fullType=ids['front']['type'])
+        first=copy.deepcopy(record['requestStates'][0]);first.update(point='started',at=2,current=True,
+            nativeRef=record['nativeRef'],transaction=record['transaction'],observation=copy.deepcopy(state))
+        state['paired']=True
+        terminal=copy.deepcopy(first);terminal.update(point='terminal',at=3,current=False,observation=state)
+        record['requestStates']=[record['requestStates'][0],first,terminal]
+        record['finishes']=[];record.pop('performedAt',None)
+        selection=self.selection();selection['options']['require_native_requests']=True
+        self.assertEqual(a.native_request_errors(row,row['id'],selection,ids),[])
+        for mutate in [lambda r:r.update(returnSucceeded=True),lambda r:r.update(blockedReturn=False),
+                lambda r:r['blockedReturn'].update(reason='unmoved'),lambda r:r['server']['books']['front'].update(container='world')]:
+            changed=copy.deepcopy(row);mutate(changed)
+            self.assertTrue(a.native_request_errors(changed,changed['id'],selection,ids))
+
+    def test_native_request_negative_evidence_has_strict_scalar_schema(self):
+        selection=self.selection();selection['options']['require_native_requests']=True
+        base=self.request_evidence('root.header-cancel')
+        changes=[lambda s:s.pop('transaction'),lambda s:s.update(transaction={'object':'bad'}),
+            lambda s:s.update(transaction=True),lambda s:s.update(nativeRef='foreign'),
+            lambda s:s.update(extra={'unbounded':['object']}),lambda s:s.update(token=True)]
+        for mutate in changes:
+            changed=copy.deepcopy(base);mutate(changed[0]['records'][0]['requestStates'][0])
+            self.assertTrue(a.native_request_errors(changed[0],changed[0]['id'],selection,changed[1]))
+
+    def test_native_request_causal_mutations_reject_false_pairing(self):
+        base=self.request_evidence();selection=self.selection();selection['options']['require_native_requests']=True
+        mutations={
+            'foreign actor':lambda r:r['requestStates'][1].update(actor=999),
+            'boolean actor alias':lambda r:r['requestStates'][1].update(actor=False),
+            'foreign item':lambda r:r['requestStates'][1].update(item=999),
+            'foreign action':lambda r:r['requestStates'][1].update(actionRef='foreign'),
+            'foreign native':lambda r:r['requestStates'][1].update(nativeRef='foreign'),
+            'missing source':lambda r:r['requestStates'][1]['observation'].update(sourceExact=False),
+            'no handle':lambda r:r['requestStates'][1]['observation'].update(nativeHandle=False),
+            'byte reuse':lambda r:r['requestStates'][3]['observation'].update(wireAmbiguous=True),
+            'ambiguous nested':lambda r:r['requestStates'][3]['observation'].update(ambiguous=True),
+            'foreign byte':lambda r:r['requestStates'][3]['observation'].update(transaction=-127),
+            'wrong boundary':lambda r:r['requestStates'][3]['observation'].update(boundary='continuation'),
+            'early pair':lambda r:r['requestStates'][1]['observation'].update(paired=True),
+            'missing final pair':lambda r:r['requestStates'][3]['observation'].update(paired=False),
+            'no current anchor':lambda r:[v.update(current=False)for v in r['requestStates']],
+            'missing terminal':lambda r:r['requestStates'].pop(),
+            'duplicate':lambda r:r['requestStates'].insert(2,copy.deepcopy(r['requestStates'][1])),
+            'unbounded':lambda r:r.update(requestStates=r['requestStates']*4),
+        }
+        for reason,mutate in mutations.items():
+            changed=copy.deepcopy(base);record=next(r for r in changed[0]['records']if r['role']=='return');mutate(record)
+            self.assertTrue(a.native_request_errors(changed[0],changed[0]['id'],selection,changed[1]),reason)
+        state=next(r for r in base[0]['records']if r['role']=='return')['requestStates'][1]['observation']
+        negative=self.request_evidence('root.header-cancel');negative[0]['records'][0]['requestStates'][0]['observation']=state
+        self.assertTrue(a.native_request_errors(negative[0],negative[0]['id'],selection,negative[1]))
+
+    def test_native_request_raw_and_setup_binding_cannot_be_fabricated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);selection,client,server=self.log_bank(requests=True)
+            (root/'server-launch.log').write_text(server);(root/'client1-launch.log').write_text(client)
+            self.assertEqual(a.verify(root,selection,{})['issues'],[])
+            lines=client.splitlines();request=next(v for v in lines if 'NATIVE_REQUEST 'in v)
+            for changed in [client.replace('"nativeRequestsObserved": true','"nativeRequestsObserved": false'),
+                    '\n'.join(v for v in lines if v!=request),client+'\n'+request]:
+                (root/'client1-launch.log').write_text(changed)
+                self.assertTrue(a.verify(root,selection,{})['issues'])
+
+    def log_bank(self, kind='mp', mode='toolkit', requests=False):
         selection = self.selection(kind, mode); client, server = [], []
+        if requests: selection['options']['require_native_requests']=True
         def raw(marker, value): return a.PREFIX + marker + ' ' + json.dumps(value)
         def event(value): return '[QUEUE_CHECK] ' + json.dumps(value)
-        client.append(event(dict(event='setup', suite='book-controls', cases=list(a.CASES), queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True)))
+        client.append(event(dict(event='setup', suite='book-controls', cases=list(a.CASES), queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests)))
         for case in a.CASES:
-            row, spec, baseline, final, admissions, boundaries, drains, acks = self.evidence(case, kind, mode)
+            row, spec, baseline, final, admissions, boundaries, drains, acks = (self.request_evidence if requests else self.evidence)(case, kind, mode)
             authority = server if kind == 'mp' else client
             authority.extend([raw('PREPARED', spec), raw('BASELINE', baseline), raw('VERIFIED', final)])
             if row.get('capacity') is not False: authority.append(raw('CAPACITY_LOST', row['capacity']))
@@ -769,6 +871,7 @@ os.exit(0)
                 client.extend(raw(marker, value) for value in values)
             for record in row['records']:
                 if 'stopReturned' in record:client.append(raw('STOP_RETURNED',record['stopReturned']))
+                for sample in record.get('requestStates',[]):client.append(raw('NATIVE_REQUEST',sample))
             client.append(raw('PERFORMANCE',row['performance']))
             client.append(event(row))
         client.append(event(dict(event='complete', suite='book-controls', cases=list(a.CASES), performed=len(a.CASES), skipped=0, failed=0)))

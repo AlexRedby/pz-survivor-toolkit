@@ -10,6 +10,8 @@ local capacityReceipt,capacityRequestedAt,blockedEvidence,failureUI,nativeDebtAb
 local performance,tickSpacing,lastTick,transferEpisode,replicaGaps
 local failures=0;local serial,tokenSerial=0,0;local tokens={};local classes={}
 local producer,readProducer,volumeProducer,equipProducer
+local requestsEnabled=config.options and config.options.require_native_requests==true
+local requestSettlement,nativeRequestState,requestSample,requestModule,requestPending,requestObserver
 local function now()return getTimestampMs()end
 local function case()return config.cases[index]end
 local function control()return ids and F.parseControl(ids.control)end
@@ -56,12 +58,50 @@ local function register(action)
  tracks[action]=row;records[#records+1]=row
  local class=getmetatable(action)
  if not classes[class]then local saved={};for _,method in ipairs({'new','getDuration','isValid','start','stop','update','perform','complete','animEvent'})do saved[method]=class[method]end;classes[class]=saved end
+ if requestsEnabled then requestSample(action,row,'pending')end
  return row
+end
+-- Observe the public scalar diagnostics without replacing the source-owned
+-- bridge, its dispatcher or any native producer. Root readers are explicit
+-- negative controls because their producer has no borrowed return action.
+requestSample=function(action,row,point)
+ if not requestsEnabled or not row or not(row.role=='return'or ids.source=='root'and row.role=='front')then return end
+ assert(T.ActionQueueSettlement==requestSettlement and requestSettlement.nativeRequestState==nativeRequestState,
+  'native request diagnostic binding changed')
+ assert(T.ActionQueueTransferRequests==requestModule and requestModule.pending==requestPending and requestModule.observe==requestObserver,
+  'native request watch diagnostic binding changed')
+ local observation=nativeRequestState(action)or false
+ assert(observation==false or type(observation)=='table','native request diagnostic is not scalar data')
+ if observation then for _,value in pairs(observation)do
+  assert(type(value)=='boolean'or type(value)=='string'or type(value)=='number','native request diagnostic retained an object')
+ end end
+ local q=queue()
+ local sample={case=case(),sequence=row.sequence,actor=ids.actor,item=action.item and action.item:getID()or false,
+  itemType=action.item and action.item:getFullType()or false,token=tokenID(action.toolkitQueueOperation),
+  actionRef=row.actionRef,nativeRef=ref(action.action),point=point,current=q.current==action and q.queue[1]==action,
+  transaction=action.transactionId or false,observation=observation,
+  -- Public pending is only a lookup hint; this never proves an earned owner.
+  watchPending=requestPending[action.character]==action}
+ row.requestStates=row.requestStates or{}
+ -- Compare without timestamps; recurring ticks cannot grow a retained history.
+ for _,previous in ipairs(row.requestStates)do
+  local same=true
+  for key,value in pairs(sample)do if not F.same(value,previous[key])then same=false;break end end
+  if same then return end
+ end
+ assert(#row.requestStates<16,'native request diagnostic exceeded bounded transitions')
+ sample.at=now();row.requestStates[#row.requestStates+1]=sample;raw('NATIVE_REQUEST',sample)
 end
 local function intact()
  assert(ISInventoryPaneContextMenu.onLiteratureItems==producer and ISInventoryPaneContextMenu.readItem==readProducer and RWMVolume.onVolumeChange==volumeProducer and ISInventoryPaneContextMenu.equipWeapon==equipProducer,'native producer callback changed after setup')
  assert(Proof.closure(producer,'ISInventoryPaneContextMenu.lua')and Proof.closure(readProducer,'ActionQueueOperations.lua')and Proof.closure(equipProducer,'ISInventoryPaneContextMenu.lua'),'native literature/equip producer source changed')
  assert(Proof.closure(ISReadABook.new,'ISReadABook.lua')and Proof.closure(ISReadABook.getDuration,'ISReadABook.lua')and Proof.closure(ISRadioAction.new,'ISRadioAction.lua'),'native constructors/timers replaced')
+ if requestsEnabled then
+  assert(T.ActionQueueSettlement==requestSettlement and requestSettlement.nativeRequestState==nativeRequestState,
+   'native request diagnostic binding changed')
+  assert(T.ActionQueueTransferRequests==requestModule and requestModule.pending==requestPending and requestModule.observe==requestObserver,
+   'native request watch diagnostic binding changed')
+ end
  for class,saved in pairs(classes)do for method,callback in pairs(saved)do assert(class[method]==callback,'native lifecycle changed '..tostring(class.Type)..'.'..method)end end
 end
 local function updateTransferEpisode(action,row)
@@ -139,6 +179,7 @@ local function observe()
    end
    local delta=action:getJobDelta();row.firstDelta=row.firstDelta or delta;row.maxDelta=math.max(row.maxDelta or delta,delta)
    row.progress=row.maxDelta>row.firstDelta+.00000001
+   if requestsEnabled then requestSample(action,row,'started')end
   end
   if row.type=='ISInventoryTransferAction'and action.transactionId and action.transactionId~=0 then
    row.transaction=action.transactionId;row.transactionDone=isClient()and isItemTransactionDone(action.transactionId)==true or not isClient()
@@ -151,6 +192,7 @@ local function observe()
 end
 local function lifecycleBegin(action,step)
  local row=register(action)
+ if requestsEnabled and row and step=='perform'then requestSample(action,row,'perform-begin')end
  if row and step=='perform'and row.type=='ISInventoryTransferAction'and action.transactionId then
   row.transaction=action.transactionId;row.transactionDone=isClient()and isItemTransactionDone(action.transactionId)==true or not isClient()
   row.transactionRejected=isClient()and isItemTransactionRejected(action.transactionId)==true or false
@@ -159,7 +201,10 @@ local function lifecycleBegin(action,step)
 end
 local function lifecycleFinish(action,step,succeeded)
  if transferEpisode and transferEpisode.action==action and(step=='perform'or step=='stop')then transferEpisode.live=false;transferEpisode.terminalAt=now();transferEpisode.observedAt=now();transferEpisode.done=isItemTransactionDone(transferEpisode.transaction)==true;transferEpisode.rejected=isItemTransactionRejected(transferEpisode.transaction)==true end
- local row=register(action);if row then row.finishes[#row.finishes+1]={phase=step,succeeded=succeeded,at=now()};if step=='perform'and succeeded then row.performedAt=now()end end
+ local row=register(action);if row then
+  if requestsEnabled and step=='perform'then requestSample(action,row,'perform-finish')end
+  row.finishes[#row.finishes+1]={phase=step,succeeded=succeeded,at=now()};if step=='perform'and succeeded then row.performedAt=now()end
+ end
 end
 local function request(command)
  if isClient()then sendClientCommand('BookControlsTest',command,{case=case(),expected=command=='Verify'and F.snapshot(state)or false,requestedAt=capacityRequestedAt,acceptedAt=boundary and boundary.ui and boundary.ui.acceptedAt or false});return end
@@ -475,6 +520,7 @@ local function keepBlocked()
 end
 local function finish()
  local actual=F.snapshot(state)
+ if requestsEnabled then for action,record in pairs(tracks)do requestSample(action,record,'terminal')end end
  assert(not state.replicaGap,'unresolved exact transfer replica gap at final verification')
  if not failure and performance then
   for _,result in ipairs({performance,performance.probe32})do for _,metric in ipairs(result.metrics)do if not metric.passed then failure='frozen timing budget exceeded: '..result.queueCount..'/'..metric.name;break end
@@ -516,6 +562,15 @@ Events.OnTick.Add(function()
    assert(T.ActionQueueOperations.installVolumeProducer(),'source-bound native RWM producer unavailable');producer,readProducer,volumeProducer,equipProducer=ISInventoryPaneContextMenu.onLiteratureItems,ISInventoryPaneContextMenu.readItem,RWMVolume.onVolumeChange,ISInventoryPaneContextMenu.equipWeapon
    PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native)
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
+   if requestsEnabled then
+    requestSettlement=T.ActionQueueSettlement;nativeRequestState=requestSettlement and requestSettlement.nativeRequestState
+    assert(type(nativeRequestState)=='function'and Proof.closure(nativeRequestState,'ActionQueueSettlement.lua'),
+     'source-owned native request diagnostic API missing')
+    requestModule=T.ActionQueueTransferRequests;requestPending=requestModule and requestModule.pending;requestObserver=requestModule and requestModule.observe
+    assert(type(requestModule)=='table'and getmetatable(requestModule)==nil and type(requestPending)=='table'and getmetatable(requestPending)==nil
+     and type(requestObserver)=='function'and Proof.closure(requestObserver,'ActionQueueTransferRequests.lua'),
+     'source-owned native request watch diagnostic missing')
+   end
    assert(T.ActionQueueLifecycle.registerObserver('fixture.book-controls',{started=register,begin=lifecycleBegin,finish=lifecycleFinish}),'read-only native observer missing')
    local bindings=bookControlsNativeBindings
    if config.options and config.options.require_native_bindings==true then
@@ -528,7 +583,8 @@ Events.OnTick.Add(function()
     end
     raw('NATIVE_BINDINGS',bindings)
    end
-   ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,sourceBound=true,authorityEquipment=true,nativeBindings=bindings or false})
+   ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,sourceBound=true,authorityEquipment=true,
+    nativeRequestsObserved=requestsEnabled or nil,nativeBindings=bindings or false})
   end
   local elapsed=now()-since
   if elapsed>180000 and(phase=='boundary'or phase=='drain')then resetFailure('native functional timeout '..phase);since=now()

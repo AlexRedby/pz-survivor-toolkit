@@ -38,7 +38,10 @@ local function transferRequests()
             if not origin(method, "ActionQueueTransferRequests.lua") then return end
             result[name] = method
         end
-        if executionProof.own == own and executionProof.closure == origin then return result end
+        if executionProof.own == own and executionProof.closure == origin then
+            result.proofOwn, result.proofOrigin = own, origin
+            return result
+        end
     end)
     requestBinding, requestAttempted = false, true
     if ok then requestMethods = methods end
@@ -1753,12 +1756,34 @@ local function requestGuard(action)
         and action.character == execution.actor
         and (execution.queue.toolkitOperationGeneration or 0) == execution.generation or false
 end
+local requestMemberBinding
+local function requestMember(action, member)
+    if member == action.item then return true end
+    local methods, owner = requestMethods, Toolkit.ActionQueueItemEditAdapters
+    local own, origin = methods and methods.proofOwn, methods and methods.proofOrigin
+    if not own or not origin or executionProof.own ~= own or executionProof.closure ~= origin
+        or type(owner) ~= "table" or getmetatable(owner) ~= nil then return false end
+    local binding = requestMemberBinding
+    if not binding then
+        local checker = own(owner, "matchesTransferMember")
+        if not origin(checker, "ActionQueueItemEditAdapters.lua") then return false end
+        binding = {owner = owner, checker = checker}
+        requestMemberBinding = binding
+    end
+    if binding.owner ~= owner or own(owner, "matchesTransferMember") ~= binding.checker then return false end
+    -- Native Host may rebind action.item while retaining an older same-ID group
+    -- member. Reuse the source-owned alias proof; native arguments stay intact.
+    local accepted = binding.checker(action, member) == true
+    return accepted and Toolkit.ActionQueueItemEditAdapters == owner
+        and own(owner, "matchesTransferMember") == binding.checker
+        and executionProof.own == own and executionProof.closure == origin
+end
 local function requestBefore(action, receipt)
     local planned = plannedReturn(action)
     local execution = planned and planned.execution
     local group = action.queueList and action.queueList[1]
     if not execution or receipt:getSource() ~= execution.source or receipt:getDestination() ~= execution.destination
-        or not group or receipt:getItems() ~= group.items or #group.items ~= 1 or group.items[1] ~= action.item then return end
+        or not group or receipt:getItems() ~= group.items or #group.items ~= 1 or not requestMember(action, group.items[1]) then return end
     local request = {native = action.action, boundary = receipt:getBoundary(), phase = "before", dispatcher = createItemTransaction,
         id = execution.id, fullType = execution.fullType}
     request.sourceExact = sourceEvidence(action, execution) == true
