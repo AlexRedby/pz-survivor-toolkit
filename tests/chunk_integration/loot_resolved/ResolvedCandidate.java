@@ -120,10 +120,17 @@ public final class ResolvedCandidate {
             mv.visitInsn(Opcodes.FRETURN);
             mv.visitMaxs(0, 0); mv.visitEnd();
         }
-        // Identical public bridge in both overlays: first resolve + one native roll draw + whole chance.
-        // This is a calculation fixture, not the full native fallback/creation loop.
-        MethodVisitor mv = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
-            "pztest$iteration", CHANCE, null, null);
+        // Both direct-call targets coexist in the candidate class. Shared generator
+        // keeps the initial lookup/Rand prefix byte-identical; only chance target differs.
+        iterationBridge(writer, "pztest$iterationNative", false);
+        iterationBridge(writer, "pztest$iterationResolved", candidate);
+        iterationBridge(writer, "pztest$iteration", candidate); // legacy semantic fixtures
+        writer.visitEnd();
+        return writer.toByteArray();
+    }
+    static void iterationBridge(ClassWriter writer, String name, boolean resolved) {
+        MethodVisitor mv = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+            name, CHANCE, null, null);
         mv.visitCode();
         mv.visitFieldInsn(Opcodes.GETSTATIC, "zombie/scripting/ScriptManager", "instance", "Lzombie/scripting/ScriptManager;");
         mv.visitVarInsn(Opcodes.ALOAD, 0);
@@ -134,14 +141,13 @@ public final class ResolvedCandidate {
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, "zombie/core/random/Rand", "Next", "(I)I", false);
         mv.visitInsn(Opcodes.POP);
         loadChance(mv);
-        if (candidate) mv.visitVarInsn(Opcodes.ALOAD, 5);
+        if (resolved) mv.visitVarInsn(Opcodes.ALOAD, 5);
         mv.visitMethodInsn(Opcodes.INVOKESTATIC, OWNER,
-            candidate ? "pztest$resolvedOrNative" : "getActualSpawnChance", candidate ? RESOLVED : CHANCE, false);
+            resolved ? "pztest$resolvedOrNative" : "getActualSpawnChance", resolved ? RESOLVED : CHANCE, false);
         mv.visitInsn(Opcodes.FRETURN);
         mv.visitMaxs(0, 0); mv.visitEnd();
-        writer.visitEnd();
-        return writer.toByteArray();
     }
+
     static void loadChance(MethodVisitor mv) {
         for (int i = 0; i < 3; i++) mv.visitVarInsn(Opcodes.ALOAD, i);
         mv.visitVarInsn(Opcodes.FLOAD, 3); mv.visitVarInsn(Opcodes.ILOAD, 4);
