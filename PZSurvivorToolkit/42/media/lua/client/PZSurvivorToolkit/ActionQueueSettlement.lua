@@ -798,7 +798,9 @@ function Settlement.beginReturn(action, obligation, guard)
     local planned = step and step.returning
     local request = planned and planned.obligation == obligation and planned.execution and planned.execution.request
     if request and not request.paired and not request.ambiguous and request.phase == "submitted"
-        and request.native == action.action and request.transaction == transaction and request.dispatcher == createItemTransaction then
+        and request.native == action.action and request.transaction == transaction and request.dispatcher == createItemTransaction
+        and request.receipt and type(request.receipt.matchesTransaction) == "function"
+        and request.receipt:matchesTransaction(action, transaction) then
         -- This is historical source evidence, not a capacity promise or physical
         -- completion. The existing authoritative/effect observer still decides.
         attempt.sourceRequest, request.paired = request, true
@@ -1768,6 +1770,7 @@ local function requestAfter(action, request, receipt, ambiguous)
     local execution = planned and planned.execution
     if not request or not execution or execution.request ~= request or request.native ~= action.action then return end
     request.phase, request.transaction, request.ambiguous = receipt:getPhase(), receipt:getTransaction(), ambiguous == true
+    request.receipt = receipt
 end
 -- Last observed supported call, not current transaction/admission authority.
 -- Explicit diagnostics for native verification; no UI polling or permissions.
@@ -1776,7 +1779,11 @@ function Settlement.nativeRequestState(action)
     local request = planned and planned.execution and planned.execution.request
     if not request then return end
     return {phase = request.phase, boundary = request.boundary, sourceExact = request.sourceExact, ambiguous = request.ambiguous,
-        paired = request.paired == true, transaction = request.transaction, id = request.id, fullType = request.fullType}
+        paired = request.paired == true, nativeHandle = request.receipt and type(request.receipt.hasNativeHandle) == "function"
+            and request.receipt:hasNativeHandle() == true or false,
+        wireAmbiguous = not (request.receipt and type(request.receipt.isWireAmbiguous) == "function")
+            or request.receipt:isWireAmbiguous() ~= false,
+        transaction = request.transaction, id = request.id, fullType = request.fullType}
 end
 function Settlement.prepareReturnExecution(action, guard)
     local candidate, scope, record, step = executionCandidate(action, guard)

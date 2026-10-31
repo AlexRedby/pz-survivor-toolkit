@@ -5,6 +5,8 @@ import java.io.DataOutputStream
 import java.security.MessageDigest
 import java.util.HexFormat
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
+import me.zed_0xff.zombie_buddy.Accessor
 import se.krka.kahlua.integration.expose.LuaJavaInvoker
 import se.krka.kahlua.integration.expose.MultiLuaJavaInvoker
 import se.krka.kahlua.integration.expose.caller.MethodCaller
@@ -14,14 +16,21 @@ import se.krka.kahlua.vm.LuaClosure
 import se.krka.kahlua.vm.Prototype
 import zombie.Lua.LuaManager
 import zombie.characters.IsoPlayer
+import zombie.core.Transaction
+import zombie.core.TransactionManager
+import zombie.core.raknet.UdpConnection
+import zombie.inventory.InventoryItem
 import zombie.inventory.ItemContainer
 import zombie.network.GameClient
+import zombie.network.fields.character.PlayerID
+import zombie.network.packets.ItemTransactionPacket
 
 /** Passive direct-call evidence. Never skips, retries or modifies a native request. */
 internal object NativeTransferRequestsLogic {
     @JvmField
     val SUPPORTED =
         QueueBindingHooks.SUPPORTED &&
+            QueueManagers.ITEM_SUPPORTED &&
             BytecodeSupport.supports(
                 "zombie/Lua/LuaManager\$GlobalObject.class",
                 "80ecbd3bd702db2f992db6cba7cb09c32d775fa6f2a3297e0460874ff5ba20c7",
@@ -88,6 +97,209 @@ internal object NativeTransferRequestsLogic {
     }
 
     private val active = ThreadLocal<NativeTransferRequests.Scope>()
+    private val manager = ThreadLocal<NativeTransferRequests.ManagerScope>()
+    private val cursorLock = Any()
+    private val cursors =
+        WeakHashMap<IsoPlayer, java.lang.ref.WeakReference<NativeTransferRequestReceipt>>()
+    // The patch must observe the connection from its beginning; late attachment
+    // cannot establish that an apparently fresh byte has never been on the wire.
+    private val historyArmed = GameClient.connection == null
+
+    internal class ConnectionHistory(val known: Boolean) {
+        val uses = IntArray(256)
+    }
+
+    private val histories = WeakHashMap<UdpConnection, ConnectionHistory>()
+
+    private fun invalidate(actor: IsoPlayer?) {
+        if (actor != null) synchronized(cursorLock) { cursors.remove(actor) }
+    }
+
+    private fun selected(receipt: NativeTransferRequestReceipt): Boolean =
+        synchronized(cursorLock) {
+            cursors[receipt.actor]?.get() === receipt
+        }
+
+    @JvmStatic
+    fun allocated(transaction: Transaction?) {
+        if (!SUPPORTED || !GameClient.client || transaction == null) return
+        val scope = manager.get()
+        val actor = Accessor.tryGet<PlayerID>(transaction, "playerId", null)?.getPlayer()
+        if (scope != null) {
+            scope.allocations++
+            if (scope.allocations == 1) scope.allocated = transaction
+            if (scope.connection !== GameClient.connection) scope.nested = true
+            if (scope.receipt?.actor !== actor || scope.allocations != 1) invalidate(actor)
+        } else invalidate(actor)
+        val connection = GameClient.connection ?: return
+        val id = Accessor.tryGet<Byte>(transaction, "id", null) ?: return
+        synchronized(cursorLock) {
+            val history = histories.getOrPut(connection) { ConnectionHistory(historyArmed) }
+            val index = id.toInt() and 255
+            history.uses[index] = minOf(2, history.uses[index] + 1)
+        }
+    }
+
+    private fun sameItems(
+        receipt: NativeTransferRequestReceipt,
+        items: kotlin.collections.List<InventoryItem>?,
+    ): Boolean {
+        val table = plain(receipt.items) ?: return false
+        if (
+            items == null ||
+                items.isEmpty() ||
+                items.size > 128 ||
+                table.delegate.size != items.size
+        )
+            return false
+        for (index in items.indices) {
+            if (table.delegate[(index + 1).toDouble()] !== items[index]) return false
+        }
+        return true
+    }
+
+    @JvmStatic
+    fun beginManager(
+        actor: IsoPlayer?,
+        items: kotlin.collections.List<InventoryItem>?,
+        source: ItemContainer?,
+        destination: ItemContainer?,
+    ): NativeTransferRequests.ManagerScope? {
+        if (!SUPPORTED || !GameClient.client) return null
+        val parent = manager.get()
+        val outer = active.get()
+        val receipt = outer?.receipt
+        if (parent != null) {
+            parent.nested = true
+            parent.receipt?.nested = true
+        }
+        val eligible =
+            parent == null &&
+                receipt != null &&
+                !outer.notifying &&
+                receipt.actor === actor &&
+                receipt.source === source &&
+                receipt.destination === destination &&
+                receipt.connection != null &&
+                receipt.connection === GameClient.connection &&
+                current(receipt, receipt.action) &&
+                selected(receipt) &&
+                sameItems(receipt, items) &&
+                receipt.action.delegate["action"] === receipt.nativeAction
+        if (!eligible) invalidate(actor)
+        if (parent == null && !eligible) return null
+        return NativeTransferRequests.ManagerScope(parent, if (eligible) receipt else null).also {
+            manager.set(it)
+        }
+    }
+
+    @JvmStatic
+    fun added(transaction: Transaction?) {
+        val scope = manager.get()
+        if (scope == null) {
+            // A direct add can bypass native allocation entirely. Conservatively
+            // taint its byte even when its packet omits an identifiable actor.
+            allocated(transaction)
+            return
+        }
+        if (scope.connection !== GameClient.connection) scope.nested = true
+        scope.added++
+        if (scope.added == 1) scope.transaction = transaction
+    }
+
+    @JvmStatic
+    fun endManager(scope: NativeTransferRequests.ManagerScope?, result: Byte, failure: Throwable?) {
+        if (scope == null) return
+        try {
+            val receipt = scope.receipt ?: return
+            val transaction = scope.transaction
+            if (
+                manager.get() !== scope ||
+                    scope.nested ||
+                    scope.added != 1 ||
+                    scope.allocations != 1 ||
+                    scope.allocated !== transaction ||
+                    failure != null ||
+                    result == 0.toByte() ||
+                    transaction?.javaClass != ItemTransactionPacket::class.java ||
+                    receipt.nested ||
+                    !selected(receipt) ||
+                    Accessor.tryGet<Byte>(transaction, "id", null) != result ||
+                    Accessor.tryGet<PlayerID>(transaction, "playerId", null)?.getPlayer() !==
+                        receipt.actor
+            )
+                return
+            val connection = scope.connection ?: return
+            if (connection !== GameClient.connection || connection !== receipt.connection) return
+            val history = synchronized(cursorLock) { histories[connection] } ?: return
+            receipt.nativeTransaction = transaction
+            receipt.connection = connection
+            receipt.history = history
+            receipt.wireAmbiguous =
+                synchronized(cursorLock) {
+                    !history.known || history.uses[result.toInt() and 255] != 1
+                }
+        } finally {
+            if (scope.previous == null) manager.remove() else manager.set(scope.previous)
+        }
+    }
+
+    @JvmStatic
+    fun wireAmbiguous(receipt: NativeTransferRequestReceipt): Boolean {
+        val history = receipt.history ?: return true
+        return synchronized(cursorLock) {
+            receipt.wireAmbiguous ||
+                !history.known ||
+                history.uses[receipt.transaction.toInt() and 255] != 1
+        }
+    }
+
+    @JvmStatic
+    fun matchesTransaction(
+        receipt: NativeTransferRequestReceipt,
+        action: KahluaTableImpl?,
+        value: Int,
+    ): Boolean {
+        val thread = LuaManager.thread ?: return false
+        if (
+            !SUPPORTED ||
+                thread.debugOwnerThread !== Thread.currentThread() ||
+                thread !== receipt.ownerThread ||
+                LuaManager.env !== receipt.environment ||
+                !GameClient.client ||
+                receipt.phase != "submitted" ||
+                receipt.nested ||
+                receipt.action !== action ||
+                !selected(receipt) ||
+                receipt.transaction.toInt() != value ||
+                receipt.nativeAction == null ||
+                receipt.action.delegate["action"] !== receipt.nativeAction ||
+                receipt.connection !== GameClient.connection ||
+                wireAmbiguous(receipt)
+        )
+            return false
+        val transaction = receipt.nativeTransaction ?: return false
+        if (Accessor.tryGet<Byte>(transaction, "id", null)?.toInt() != value) return false
+        val transactions =
+            Accessor.tryGet<ConcurrentLinkedQueue<Transaction>>(
+                TransactionManager::class.java,
+                "transactions",
+                null,
+            ) ?: return false
+        var count = 0
+        var found = false
+        var visited = 0
+        // One bounded request-pairing read, never a per-frame inventory scan.
+        for (candidate in transactions) {
+            if (++visited > 128) return false
+            if (Accessor.tryGet<Byte>(candidate, "id", null)?.toInt() == value) {
+                count++
+                if (candidate === transaction) found = true
+            }
+        }
+        return found && count == 1 && selected(receipt) && !wireAmbiguous(receipt)
+    }
+
     private val failedObservers = WeakHashMap<LuaClosure, Boolean>()
     private const val START = "5bd3355b4c043217dbab7a860872949147b889ced24fa8ae53592cd565224a4d"
     private const val CONTINUATION =
@@ -240,6 +452,7 @@ internal object NativeTransferRequestsLogic {
         source: ItemContainer?,
         destination: ItemContainer?,
     ): NativeTransferRequests.Scope? {
+        if (SUPPORTED && GameClient.client) invalidate(actor)
         val previous = active.get()
         // A foreign nested native call masks its parent's receipt as well.
         if (previous != null) {
@@ -279,6 +492,11 @@ internal object NativeTransferRequestsLogic {
                     boundary,
                 )
             val scope = NativeTransferRequests.Scope(previous, receipt, thread, observer)
+            receipt.nativeAction = action.delegate["action"]
+            receipt.ownerThread = thread
+            receipt.environment = env
+            receipt.connection = GameClient.connection
+            synchronized(cursorLock) { cursors[actor] = java.lang.ref.WeakReference(receipt) }
             active.set(scope)
             notify(scope)
             return scope
@@ -293,8 +511,13 @@ internal object NativeTransferRequestsLogic {
         if (failedObservers[observer] == true) return
         // Kahlua may reuse this argument array for Boolean success results.
         // A Receipt[] would throw ArrayStoreException after a successful callback.
-        val result = scope.thread.pcall(observer, arrayOf<Any?>(scope.receipt))
-        if (result.isEmpty() || result[0] != true) failedObservers[observer] = true
+        scope.notifying = true
+        try {
+            val result = scope.thread.pcall(observer, arrayOf<Any?>(scope.receipt))
+            if (result.isEmpty() || result[0] != true) failedObservers[observer] = true
+        } finally {
+            scope.notifying = false
+        }
     }
 
     @JvmStatic
@@ -325,7 +548,9 @@ internal object NativeTransferRequestsLogic {
     fun current(receipt: NativeTransferRequestReceipt, action: KahluaTableImpl?): Boolean =
         active.get()?.receipt === receipt &&
             receipt.action === action &&
-            LuaManager.thread === active.get()?.thread
+            LuaManager.thread === active.get()?.thread &&
+            LuaManager.thread.debugOwnerThread === Thread.currentThread() &&
+            LuaManager.env === active.get()?.observer?.env
 
     @JvmStatic
     fun claim(receipt: NativeTransferRequestReceipt, action: KahluaTableImpl?): Boolean {

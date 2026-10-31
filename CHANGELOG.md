@@ -44,6 +44,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.327
+
+- Pair earned-return source observations only with their captured native transaction object and current actor request. Decline missing, replaced, nested or reused-ID evidence without changing native execution or editing permissions.
+
 ### 0.1.326
 
 - Record fresh per-call native request observations for earned automatic returns, with advisory outcome links. Preserve native authority, exact physical outcomes and existing editing permissions; source observations do not promise capacity or trigger replay.
@@ -1517,6 +1521,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.78
+
+- Capture native item transaction objects at their original manager boundary. Track allocated wire IDs in bounded connection histories, invalidate intervening actor requests and preserve unknown results after ID reuse or late attachment.
 
 ### 0.1.77
 

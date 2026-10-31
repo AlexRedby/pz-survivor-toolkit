@@ -16,6 +16,13 @@ public final class NativeTransferRequestReceipt {
     byte transaction;
     boolean claimed;
     boolean nested;
+    Object nativeAction;
+    se.krka.kahlua.vm.KahluaThread ownerThread;
+    KahluaTableImpl environment;
+    zombie.core.Transaction nativeTransaction;
+    zombie.core.raknet.UdpConnection connection;
+    NativeTransferRequestsLogic.ConnectionHistory history;
+    boolean wireAmbiguous = true;
     private NativeTransferRequestReceipt(KahluaTableImpl action, IsoPlayer actor, KahluaTableImpl items,
             ItemContainer source, ItemContainer destination, String boundary) {
         this.action=action; this.actor=actor; this.items=items; this.source=source;
@@ -33,6 +40,12 @@ public final class NativeTransferRequestReceipt {
     public String getBoundary() { return boundary; }
     public String getPhase() { return phase; }
     public int getTransaction() { return transaction; }
+    public boolean hasNativeHandle() { return nativeTransaction != null; }
+    public boolean isWireAmbiguous() { return NativeTransferRequestsLogic.wireAmbiguous(this); }
+    public boolean matchesTransaction(KahluaTableImpl candidate, int value) {
+        try { return NativeTransferRequestsLogic.matchesTransaction(this,candidate,value); }
+        catch (Throwable ignored) { return false; }
+    }
     public boolean hasNestedRequest() { return nested; }
     public boolean isCurrent(KahluaTableImpl candidate) { return NativeTransferRequestsLogic.current(this, candidate); }
     public boolean claim(KahluaTableImpl candidate) { return NativeTransferRequestsLogic.claim(this, candidate); }
