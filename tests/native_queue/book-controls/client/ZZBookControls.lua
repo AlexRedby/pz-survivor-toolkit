@@ -444,7 +444,7 @@ local function performanceAtBoundary()
  local function input(count,limits)
   return{case=case(),timer=preciseTiming and'System.nanoTime'or'getTimestampMs',units='ms',coarse=not preciseTiming,
    clockEvidence=preciseTiming and performanceClockInfo or nil,queueEnabled=not native,queueCount=count,warmup=3,samples=20,limits=limits,metrics={},
-   measurementScope='isolated-entrypoint-bank',completeEditMeasured=false,frameLoadMeasured=false,budgetBasis='initial-engineering-targets',
+   measurementScope='isolated-entrypoint-bank',completeEditMeasured=false,frameLoadMeasured=false,assessmentPolicy='correctness-work-complexity-and-impact',performanceAssessment='not-assessed',
    firstUseScope='first-sample-of-this-bank-not-cold-process',tailEstimate='20-samples-p95-order19-p99-sample-maximum',timerOverhead='included-not-subtracted'}
  end
  local function measure(result)
@@ -490,18 +490,17 @@ local function performanceAtBoundary()
    else row.firstDecision=false;row.lastDecision=false;row.decisionClass='not-decision'end
    local sorted={};for i,value in ipairs(row.rawMs)do sorted[i]=value end;table.sort(sorted)
    row.p95Ms=sorted[math.ceil(#sorted*.95)];row.p99Ms=sorted[math.ceil(#sorted*.99)]
-   row.p95BudgetMs=entry.kind=='authoritative'and 2 or 1;row.p99BudgetMs=entry.kind=='authoritative'and 4 or 2
-   row.passed=row.p95Ms<=row.p95BudgetMs and row.p99Ms<=row.p99BudgetMs
    result.metrics[#result.metrics+1]=row
   end
   result.pathClass=native and'nativeoff-denial-baseline'or'toolkit-observed-decisions'
-  result.authorityAllowed=true;local timingPassed=true
+  result.authorityAllowed=true
   for index,metric in ipairs(result.metrics)do
    if index<=2 and(metric.decisionClass~='allowed'or not metric.decisionStable)then result.authorityAllowed=false end
-   if not metric.passed or not metric.decisionStable then timingPassed=false end
   end
   result.diagnosticProfile=liveProfile~=nil
-  result.positiveTimingClaim=not liveProfile and not native and result.authorityAllowed and timingPassed
+  -- Useful raw measurements do not accept or reject a design. Cost needs a
+  -- separate assessment of equivalent work, scaling and actual runtime impact.
+  result.positiveTimingClaim=false
  end
  local private,privateSet={},{}
  local ok,problem=pcall(function()
@@ -611,14 +610,14 @@ local function finish()
  if requestsEnabled then for action,record in pairs(tracks)do requestSample(action,record,'terminal')end end
  assert(not state.replicaGap,'unresolved exact transfer replica gap at final verification')
  if not failure and performance then
-  for _,result in ipairs({performance,performance.probe32})do for _,metric in ipairs(result.metrics)do if not metric.passed then failure='frozen timing budget exceeded: '..result.queueCount..'/'..metric.name;break end
+  for _,result in ipairs({performance,performance.probe32})do for _,metric in ipairs(result.metrics)do
    if not metric.decisionStable then failure='unstable read-only decision: '..result.queueCount..'/'..metric.name;break end end end
  end
  if not failure then
   local expected=F.expected(state,boundary,native)
   if not F.same(actual,expected)or not F.same(authorityFinal,expected)then failure='native final effect/inventory/Pen intent differs from exact requested result' end
  end
- if not failure and not native and performance and not performance.probe32.authorityAllowed then failure='Toolkit32 intended edit denied; no positive performance claim'end
+ if not failure and not native and performance and not performance.probe32.authorityAllowed then failure='Toolkit32 intended edit denied'end
  local passed=not failure
  local row={event='case',id=case(),status=passed and'passed'or'failed',reason=failure or false,ids=ids,baseline=baseline,authorityBaseline=authorityBaseline,
   boundary=boundary,records=records,starts=starts,resume=resume or false,tailSnapshot=tailSnapshot or false,volumeSnapshot=volumeSnapshot or false,equipSnapshot=equipSnapshot or false,

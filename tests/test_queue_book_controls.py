@@ -318,7 +318,7 @@ class BookControlTests(unittest.TestCase):
             self.assertEqual(native[0]['starts'], [1]); self.assertIs(native[0]['blockedReturn'], False)
             self.assertEqual(native[0]['client']['books']['tail']['pages'], native[1]['tail']['initial'])
 
-    def test_timing_samples_quantiles_and_frozen_design_budgets(self):
+    def test_historical_timing_integrity_is_separate_from_design_acceptance(self):
         self.assertEqual(self.check(self.evidence()), [])  # Slow first-use is separate from warmed samples.
         mutations = {
             'no evidence': lambda r: r.update(performance=False),
@@ -338,7 +338,10 @@ class BookControlTests(unittest.TestCase):
                 evidence=self.evidence();mutate(evidence[0]);self.assertTrue(self.check(evidence))
         evidence=self.evidence();metric=evidence[0]['performance']['metrics'][0]
         metric['rawMs'][-1]=5;metric.update(p99Ms=5,passed=False)
-        self.assertTrue(any('Frozen performance budget exceeded' in e for e in self.check(evidence)))
+        evidence[0]['performance']['positiveTimingClaim']=False
+        self.assertEqual(self.check(evidence), [])
+        evidence[0].update(status='failed',reason='frozen timing budget exceeded')
+        self.assertTrue(any('Fixture case failed' in e for e in self.check(evidence)))
 
     def test_actual_cli_catalog_selection_and_native_preflight_accept_safe_case_ids(self):
         catalog = cli.load_catalog(['book-controls'])
@@ -391,7 +394,7 @@ os.exit(0)
             'shortened native duration': lambda r: r['performance']['probe32']['temporary'][0].update(duration=1),
             'missing constructor': lambda r: r['performance']['probe32']['temporary'].pop(),
             'budget raised': lambda r: r['performance']['probe32']['metrics'][0].update(p99BudgetMs=99),
-            'slow32 edit': lambda r: r['performance']['probe32']['metrics'][0]['rawMs'].__setitem__(-1,5),
+            'sample changed without updating quantile': lambda r: r['performance']['probe32']['metrics'][0]['rawMs'].__setitem__(-1,5),
         }
         for name, mutate in mutations.items():
             with self.subTest(name=name):
@@ -451,7 +454,7 @@ for _,scenario in ipairs({'success','failure','unstable','absent-options','false
   assert(not performance.diagnosticProfile and not performance.probe32.diagnosticProfile,'absent/false/nonnested option enabled profiling')
   local metric=performance.probe32.metrics[1]
   if unstable then assert(not metric.decisionStable and metric.decisionClass=='unstable'and metric.firstDecision.allowed and metric.lastDecision.allowed and not performance.probe32.positiveTimingClaim,'intermediate denial hidden by equal first/last samples')
-  else assert(metric.decisionStable and metric.decisionClass=='allowed'and performance.probe32.positiveTimingClaim)end
+  else assert(metric.decisionStable and metric.decisionClass=='allowed'and not performance.probe32.positiveTimingClaim)end
  end
 end
 -- Explicit nested opt-in must fail before touching the queue if the private
@@ -499,15 +502,28 @@ assert(pcall(run),'precise diagnostic probe failed')
 for _,result in ipairs({performance,performance.probe32})do
  assert(result.timer=='System.nanoTime'and result.coarse==false and result.clockEvidence==performanceClockInfo)
  assert(result.measurementScope=='isolated-entrypoint-bank'and result.completeEditMeasured==false and result.frameLoadMeasured==false)
- assert(result.budgetBasis=='initial-engineering-targets'and result.tailEstimate=='20-samples-p95-order19-p99-sample-maximum')
+ assert(result.assessmentPolicy=='correctness-work-complexity-and-impact'and result.performanceAssessment=='not-assessed')
+ assert(result.budgetBasis==nil and not result.positiveTimingClaim and result.tailEstimate=='20-samples-p95-order19-p99-sample-maximum')
+ for _,metric in ipairs(result.metrics)do assert(metric.passed==nil and metric.p95BudgetMs==nil and metric.p99BudgetMs==nil)end
  for _,metric in ipairs(result.metrics)do assert(metric.rawMs[1]==.03125 and metric.p95Ms==.03125 and metric.p99Ms==.03125)end
 end
 os.exit(0)
 """
         subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
 
+    @staticmethod
+    def current_measurements(evidence):
+        # Legacy fixtures above remain useful for auditing old captured reports.
+        row=evidence[0]
+        for value in (row['performance'],row['performance']['probe32']):
+            value.update(positiveTimingClaim=False,**a.ASSESSMENT_POLICY,**a.PERFORMANCE_SCOPE)
+            for index,metric in enumerate(value['metrics']):
+                metric['workScope']='policy-decision-call'if index<2 else 'policy-preview-call'if index<4 else 'panel-update-only'
+                for key in ('p95BudgetMs','p99BudgetMs','passed'):metric.pop(key,None)
+        return evidence
+
     def precise_evidence(self, case='worn-bag.move-equip', kind='mp', mode='toolkit', requests=False):
-        evidence=(self.request_evidence if requests else self.evidence)(case,kind,mode);row=evidence[0]
+        evidence=self.current_measurements((self.request_evidence if requests else self.evidence)(case,kind,mode));row=evidence[0]
         for value in (row['performance'],row['performance']['probe32']):
             value.update(timer='System.nanoTime',coarse=False,clockEvidence=copy.deepcopy(a.CLOCK_INFO),**a.PERFORMANCE_SCOPE)
             for index,metric in enumerate(value['metrics']):
@@ -518,6 +534,96 @@ os.exit(0)
                 includesAsyncSettlement=False,warmState='after-readonly-bank-and-diagnostic-decision',completeEditQualified=False,timerOverhead='included-not-subtracted')
             for boundary in evidence[5]:boundary['ui']=copy.deepcopy(row['boundary']['ui'])
         return evidence
+
+    def test_current_observations_preserve_correctness_without_numerical_acceptance(self):
+        for kind in ('sp','mp'):
+            for mode in ('native','toolkit'):
+                for case in a.CASES:
+                    with self.subTest(kind=kind,mode=mode,case=case):
+                        evidence=self.current_measurements(self.evidence(case,kind,mode))
+                        for bank in (evidence[0]['performance'],evidence[0]['performance']['probe32']):
+                            for metric in bank['metrics']:
+                                metric.update(rawMs=[50]*20,p95Ms=50,p99Ms=50)
+                        self.assertEqual(self.check(evidence,kind,mode),[])
+                        evidence[0]['performance']['metrics'][0]['decisionStable']=False
+                        self.assertTrue(self.check(evidence,kind,mode))
+        for mutate in (lambda r:r.update(performanceAssessment='accepted'),
+                       lambda r:r.update(performanceAssessment='rejected'),
+                       lambda r:r.update(positiveTimingClaim=True),
+                       lambda r:r.pop('assessmentPolicy'),
+                       lambda r:r.pop('measurementScope'),
+                       lambda r:r['metrics'][0].pop('workScope'),
+                       lambda r:r['metrics'][0].update(passed=True),
+                       lambda r:r['metrics'][0].update(p95BudgetMs=1)):
+            row=self.current_measurements(self.evidence())[0];mutate(row['performance'])
+            self.assertTrue(a.performance_errors(row['performance'],row['id'],True))
+        evidence=self.current_measurements(self.evidence())
+        evidence[0]['client']['books']['tail']['pages']-=1
+        self.assertTrue(self.check(evidence))  # Removing timing gates cannot hide a wrong physical outcome.
+
+    def test_legacy_reference_provenance_and_malformed_summary_are_not_reinterpreted(self):
+        row=self.evidence()[0];bank=row['performance']
+        for value in (bank,bank['probe32']):
+            value.update(timer='System.nanoTime',coarse=False,clockEvidence=copy.deepcopy(a.CLOCK_INFO),
+                         budgetBasis='initial-engineering-targets',**a.PERFORMANCE_SCOPE)
+            for index,metric in enumerate(value['metrics']):
+                metric['workScope']='policy-decision-call'if index<2 else 'policy-preview-call'if index<4 else 'panel-update-only'
+        self.assertEqual(a.performance_errors(bank,row['id'],True,precise=True),[])
+        bank['budgetBasis']='fabricated-empirical-baseline'
+        self.assertTrue(a.performance_errors(bank,row['id'],True,precise=True))
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory)
+            for field in ('rawMs','firstUseMs'):
+                row=self.current_measurements(self.evidence())[0]
+                row['performance']['metrics'][0][field]=[10**309]if field=='rawMs'else 10**309
+                self.assertTrue(a.performance_errors(row['performance'],row['id'],True))
+                (root/'client1-launch.log').write_text('[QUEUE_CHECK] '+json.dumps(row))
+                (root/'server-launch.log').write_text('')
+                result=a.verify(root,self.selection(),{})
+                self.assertTrue(result['issues'])
+                self.assertEqual(result['evidence']['performance']['performanceAssessment'],'not-assessed')
+
+    def test_actual_fixture_completion_rejects_instability_without_timing_gate(self):
+        lua=shutil.which('luajit')
+        if not lua:self.skipTest('LuaJIT not installed')
+        text=(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua').read_text()
+        first=text.index(' if not failure and performance then')
+        body=text[first:text.index(' if not failure then\n  local expected=',first)]
+        source="""
+local check=assert(loadstring('return function(performance) local failure; '..arg[1]..' return failure end'))()
+local metric={name='previewMove',p95Ms=50,p99Ms=50,passed=false,decisionStable=true}
+local bank={queueCount=32,metrics={metric}};bank.probe32={queueCount=32,metrics={metric}}
+assert(check(bank)==nil,'duration alone became a functional failure')
+metric.decisionStable=false
+assert(check(bank):find('unstable read-only decision',1,true),'unstable decisions silently accepted')
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',body],check=True)
+
+    def test_current_full_bank_reports_cost_unassessed_and_preserves_raw_integrity(self):
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory)
+            for mode in ('toolkit','native'):
+                selection,client,server=self.log_bank(mode=mode,current=True,sample_ms=50)
+                (root/'client1-launch.log').write_text(client);(root/'server-launch.log').write_text(server)
+                result=a.verify(root,selection,{})
+                self.assertEqual(result['issues'],[])
+                cost=result['evidence']['performance']
+                self.assertEqual(cost['performanceAssessment'],'not-assessed')
+                self.assertEqual(cost['runtimeImpact'],'not-established')
+                self.assertEqual(len(cost['observations']),len(a.CASES)*10)
+                self.assertTrue(all(r['p95Ms']==50 and r['maxMs']==50 for r in cost['observations']))
+                changed=client.replace('"p95Ms": 50','"p95Ms": 0',1)
+                (root/'client1-launch.log').write_text(changed)
+                self.assertTrue(a.verify(root,selection,{})['issues'])
+        with tempfile.TemporaryDirectory()as directory:
+            result=a.verify(Path(directory),self.selection(),{})
+            self.assertTrue(result['issues'])
+            self.assertEqual(result['evidence']['performance']['performanceAssessment'],'not-assessed')
+        self.assertEqual(a.performance_observations([None,dict(performance={},boundary=None)])['handlers'],[])
+        row=self.current_measurements(self.evidence())[0]
+        row['performance']['metrics'][0]['rawMs']=list(range(20))
+        self.assertEqual(a.performance_observations([row])['observations'][0]['medianMs'],9.5)
 
     def test_precise_scope_and_clock_do_not_qualify_complete_input_latency(self):
         for mode in ('toolkit','native'):
@@ -1073,7 +1179,7 @@ os.exit(0)
                     (root/'client1-launch.log').write_text(changed)
                     self.assertTrue(a.verify(root,selection,{})['issues'])
 
-    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False):
+    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False, current=False, sample_ms=None):
         selection = self.selection(kind, mode); client, server = [], []
         if requests: selection['options']['require_native_requests']=True
         if precise: selection['options']['precise_timing']=True
@@ -1082,6 +1188,10 @@ os.exit(0)
         client.append(event(dict(event='setup', suite='book-controls', cases=list(a.CASES), queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests,timingClock=copy.deepcopy(a.CLOCK_INFO)if precise else False)))
         for case in a.CASES:
             evidence=self.precise_evidence(case,kind,mode,requests=requests)if precise else(self.request_evidence if requests else self.evidence)(case,kind,mode)
+            if current:evidence=self.current_measurements(evidence)
+            if sample_ms is not None:
+                for bank in (evidence[0]['performance'],evidence[0]['performance']['probe32']):
+                    for metric in bank['metrics']:metric.update(rawMs=[sample_ms]*20,p95Ms=sample_ms,p99Ms=sample_ms)
             row, spec, baseline, final, admissions, boundaries, drains, acks = evidence
             authority = server if kind == 'mp' else client
             authority.extend([raw('PREPARED', spec), raw('BASELINE', baseline), raw('VERIFIED', final)])

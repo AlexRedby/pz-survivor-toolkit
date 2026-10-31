@@ -10,7 +10,16 @@ import re
 import shutil
 
 from .. import report
-from .tv_controls import MODS, _number
+from .tv_controls import MODS, _number as _base_number
+
+
+def _number(value):
+    # JSON integers may exceed the float range used by math.isfinite.
+    try:
+        return _base_number(value)
+    except OverflowError:
+        return False
+
 
 SOURCES = ('root', 'worn-bag', 'world')
 CONTROLS = ('header-cancel', 'reader-child-cancel', 'move-equip', 'move-volume')
@@ -23,8 +32,9 @@ PREFIX = '[BOOK_CONTROLS] '
 CLOCK_INFO = dict(schema=1, timer='System.nanoTime', units='ms', monotonic=True, relativeOrigin=True,
                   source='disposable-jvm-probe', functionClass='net.alexredby.bookcontrolsprobe.Main$MonotonicClock', nativeClock=True)
 PERFORMANCE_SCOPE = dict(measurementScope='isolated-entrypoint-bank', completeEditMeasured=False, frameLoadMeasured=False,
-                         budgetBasis='initial-engineering-targets', firstUseScope='first-sample-of-this-bank-not-cold-process',
+                         firstUseScope='first-sample-of-this-bank-not-cold-process',
                          tailEstimate='20-samples-p95-order19-p99-sample-maximum', timerOverhead='included-not-subtracted')
+ASSESSMENT_POLICY = dict(assessmentPolicy='correctness-work-complexity-and-impact', performanceAssessment='not-assessed')
 
 
 def clock_errors(value):
@@ -516,7 +526,14 @@ def performance_errors(value, case, enabled, probe=False, precise=False):
         errors.extend(clock_errors(value.get('clockEvidence')))
     elif 'clockEvidence' in value:
         errors.append('Unbound monotonic clock evidence in a coarse-clock bank')
-    scoped = precise or any(k in value for k in PERFORMANCE_SCOPE)
+    modern = any(k in value for k in ASSESSMENT_POLICY)
+    if modern and any(value.get(k) != v for k, v in ASSESSMENT_POLICY.items()):
+        errors.append('Measurements cannot assert design acceptance or rejection')
+    if modern and 'budgetBasis' in value:
+        errors.append('Current observations must not restore a numerical acceptance gate')
+    scoped = modern or precise or any(k in value for k in PERFORMANCE_SCOPE)
+    if not modern and (scoped or 'budgetBasis' in value) and value.get('budgetBasis') != 'initial-engineering-targets':
+        errors.append('Historical timing-reference provenance differs')
     if scoped and (any(value.get(k) != v for k, v in PERFORMANCE_SCOPE.items())
                    or any(value.get(k) is not False for k in ('completeEditMeasured', 'frameLoadMeasured'))):
         errors.append('Isolated call timings cannot qualify complete edit or frame load')
@@ -532,12 +549,18 @@ def performance_errors(value, case, enabled, probe=False, precise=False):
         if scoped and metric.get('workScope') != scope:
             errors.append('Timing entrypoint work scope differs: ' + expected_names[index])
         raw = metric.get('rawMs')
-        budgets = (2, 4) if index < 2 else (1, 2)
+        legacy_reference = (2, 4) if index < 2 else (1, 2)
         if (metric.get('kind') != kind or not _number(metric.get('firstUseMs')) or metric['firstUseMs'] < 0
-                or any(not _number(metric.get(k)) for k in ('p95Ms', 'p99Ms', 'p95BudgetMs', 'p99BudgetMs'))
+                or any(not _number(metric.get(k)) for k in ('p95Ms', 'p99Ms'))
                 or not isinstance(raw, list) or len(raw) != 20 or any(not _number(v) or v < 0 for v in raw)
-                or (metric.get('p95BudgetMs'), metric.get('p99BudgetMs')) != budgets):
-            errors.append('Malformed raw timings/warmup separation/frozen budget: ' + expected_names[index]); continue
+                ):
+            errors.append('Malformed raw timings/warmup separation: ' + expected_names[index]); continue
+        if modern:
+            if any(k in metric for k in ('p95BudgetMs', 'p99BudgetMs', 'passed')):
+                errors.append('Current measurement claimed a numerical pass/fail: ' + expected_names[index])
+        elif (any(not _number(metric.get(k)) for k in ('p95BudgetMs', 'p99BudgetMs'))
+                or (metric.get('p95BudgetMs'), metric.get('p99BudgetMs')) != legacy_reference):
+            errors.append('Malformed historical reference fields: ' + expected_names[index])
         first, last = metric.get('firstDecision'), metric.get('lastDecision')
         if index < 4:
             valid_observations = all(isinstance(observation, dict) and set(observation) == {'allowed', 'reason', 'mode'}
@@ -553,21 +576,23 @@ def performance_errors(value, case, enabled, probe=False, precise=False):
                 or first is not False or last is not False or metric.get('decisionClass') != 'not-decision'):
             errors.append('Panel update incorrectly claims an edit decision')
         ordered = sorted(raw); p95, p99 = ordered[18], ordered[19]
-        if metric.get('p95Ms') != p95 or metric.get('p99Ms') != p99 or metric.get('passed') is not (p95 <= budgets[0] and p99 <= budgets[1]):
-            errors.append('Timing quantile or pass claim differs from raw samples: ' + expected_names[index])
-        if p95 > budgets[0] or p99 > budgets[1]:
-            errors.append('Frozen performance budget exceeded: ' + expected_names[index])
+        if metric.get('p95Ms') != p95 or metric.get('p99Ms') != p99:
+            errors.append('Timing quantile differs from raw samples: ' + expected_names[index])
+        # Preserve the integrity of old data without retaining its acceptance policy.
+        if not modern and metric.get('passed') is not (p95 <= legacy_reference[0] and p99 <= legacy_reference[1]):
+            errors.append('Historical numerical comparison differs from raw samples: ' + expected_names[index])
     actual_allowed = all(isinstance(metric.get('firstDecision'), dict) and metric['firstDecision'].get('allowed') is True
         and metric.get('decisionStable') is True and metric.get('decisionClass') == 'allowed' for metric in metrics[:2])
-    actual_timing_passed = all(metric.get('passed') is True and metric.get('decisionStable') is True for metric in metrics)
+    historical_numerical_match = all(metric.get('passed') is True and metric.get('decisionStable') is True for metric in metrics)
+    expected_claim = False if modern else enabled and actual_allowed and historical_numerical_match
     if (value.get('pathClass') != ('toolkit-observed-decisions' if enabled else 'nativeoff-denial-baseline')
             or value.get('authorityAllowed') is not actual_allowed
-            or value.get('positiveTimingClaim') is not (enabled and actual_allowed and actual_timing_passed)):
+            or value.get('positiveTimingClaim') is not expected_claim):
         errors.append('Timing path/positive claim differs from actual scalar decision observations')
     if probe and enabled and not actual_allowed:
         denied = ', '.join(metric.get('name', '?') + ':' + str(metric.get('firstDecision', {}).get('reason'))
                            for metric in metrics[:2] if isinstance(metric.get('firstDecision'), dict) and metric['firstDecision'].get('allowed') is not True)
-        errors.append('Intended Toolkit32 authority edit denied; no positive timing qualification: ' + denied)
+        errors.append('Intended Toolkit32 authority edit denied: ' + denied)
     if not probe:
         bounded = value.get('probe32')
         errors.extend('32-member probe: ' + reason for reason in performance_errors(bounded, case, enabled, True, precise))
@@ -833,6 +858,38 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
     return errors
 
 
+def performance_observations(rows):
+    observations, handlers = [], []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        outer = row.get('performance')
+        if not isinstance(outer, dict):
+            continue
+        for scope, bank in (('natural', outer), ('probe32', outer.get('probe32'))):
+            if not isinstance(bank, dict) or not isinstance(bank.get('metrics'), list):
+                continue
+            for metric in bank['metrics']:
+                if not isinstance(metric, dict):
+                    continue
+                raw = metric.get('rawMs')
+                valid = isinstance(raw, list) and bool(raw) and all(_number(v) and v >= 0 for v in raw)
+                entry = dict(case=row.get('id'), scope=scope, metric=metric.get('name'), queueCount=bank.get('queueCount'),
+                             timer=bank.get('timer'), validSamples=valid)
+                if valid:
+                    ordered = sorted(raw)
+                    entry.update(samples=len(raw), minMs=ordered[0], medianMs=ordered[(len(raw)-1)//2]/2 + ordered[len(raw)//2]/2, maxMs=ordered[-1])
+                    for key in ('firstUseMs', 'p95Ms', 'p99Ms'):
+                        if _number(metric.get(key)): entry[key] = metric[key]
+                observations.append(entry)
+        boundary = row.get('boundary')
+        ui = boundary.get('ui') if isinstance(boundary, dict) else None
+        if isinstance(ui, dict) and isinstance(ui.get('handlerTiming'), dict):
+            handlers.append(dict(case=row.get('id'), measurement=ui['handlerTiming']))
+    return dict(ASSESSMENT_POLICY, observations=observations, handlers=handlers,
+                runtimeImpact='not-established', historicalThresholds='not-an-acceptance-criterion')
+
+
 def native_binding_errors(value, extended=False):
     if not isinstance(value, dict):
         return ['Missing native binding-loop source/environment evidence']
@@ -846,7 +903,7 @@ def native_binding_errors(value, extended=False):
 
 
 def verify(root, selection, catalog):
-    root = Path(root); issues, outcomes = [], []
+    root = Path(root); issues, outcomes, rows = [], [], []
     try:
         validate(selection)
         text = (root / 'client1-launch.log').read_text(errors='replace')
@@ -933,9 +990,10 @@ def verify(root, selection, catalog):
         if not complete(selection, 'client1', text): issues.append('Missing unique diagnostic-bank completion')
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         issues.append('Book controls verifier ' + type(error).__name__ + ': ' + str(error))
-    return dict(issues=issues, outcomes=outcomes, evidence={'limits': [
+    return dict(issues=issues, outcomes=outcomes, evidence={'performance': performance_observations(rows), 'limits': [
         'Programmatic real widget hit tests and handlers with an injected drag-threshold state; no physical pointer or rendering claim.',
-        'Policy timings cover isolated calls; panelUpdate excludes hover rebuilds. Initial engineering thresholds and 20-sample quantiles do not establish complete input/frame cost or an empirical budget basis.',
+        'Policy timings cover isolated calls; panelUpdate excludes hover rebuilds. Durations and 20-sample quantiles are diagnostic observations, not design acceptance criteria or complete input/frame cost.',
         'Optional monotonic handler timings observe one actual press/release pair after the diagnostic call bank, without replay; they exclude human pause, rendering and asynchronous settlement.',
+        'Performance remains not-assessed until correctness, useful-work cost, complexity, scaling and actual runtime impact are reviewed; a functional pass is not performance approval.',
         'Root singleton cross has no fabricated header; bag/world exercise actual operation/reader/optional-return controls. Four after-edit capacity failures retain an exact visible optional-return obligation, then explicitly Keep the item. Queue-off controls retain native rejected-return/tail-reset behavior.',
         'World normal/capacity books are nonfavorite to isolate eligible return; separate favorite-world SP no-effect/Host native-success probes preserve native protection. No magazine/comic or older-build claim.']})
