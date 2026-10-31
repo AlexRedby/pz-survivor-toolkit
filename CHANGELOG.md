@@ -11,6 +11,8 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Added:** Standardized Experience (`STEXPERIENCE_B42`, Workshop `3792836384`) with required MVXIVY utils (`MVXIVY_UTILS`, `3630174904`), bringing the selection to 65 Mod IDs / 60 Workshop items. Use the Fitness/Strength-only setup in `MOD_INSTALL.md`; the INI selects mods but does not apply SP options or Host sandbox settings.
+
 - **Removed:** The unavailable ABBA Gold (`NMBJABBA`, Workshop `3784065691`), Queen (`NMBJQ`, `3777937059`) and Fleetwood Mac (`NMBJFM`, `3751236222`) packs from the active selection (63 Mod IDs / 58 Workshop items). Keep base New Music (`NewMusic`, `3739256725`), its devices and Zomboid OST, and Toolkit's existing conversion compatibility.
 
 - **Deferred:** Custom Light Switch is no longer in the active selection (66 Mod IDs / 61 Workshop items). Its background world scan runs even without built switches; retain its catalog entry for possible future use.

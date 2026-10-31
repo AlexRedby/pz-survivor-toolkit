@@ -45,6 +45,10 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 | Controls and external environments | Compatible controls within each unchanged mode/platform | Native/queue-disabled modes, loader inheritance controls, macOS/Linux qualification and real WAN reproduction remain distinct. |
 | Conditional mod/manual checks | Source-resolved installed additions, visual inspections and catalogue browsing | Keep installation decisions and missing inputs explicit. The normal silent runner cannot prove audible music playback; use an appropriate requested audio-check session. |
 
+## Physical progression block
+
+- [ ] Verify the selected Standardized Experience Fitness/Strength-only configuration with the complete B42.21 pack in isolated SP/menu Host saves: actual run/carry/melee/tree XP, unchanged other skills, Host settings after reopening/reloading, and joining-client synchronization.
+
 ## Inventory, crafting, food and storage block
 
 ### Warehouse client workload
