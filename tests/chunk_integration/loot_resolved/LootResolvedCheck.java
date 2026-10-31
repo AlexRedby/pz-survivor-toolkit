@@ -1,7 +1,4 @@
 import com.sun.management.ThreadMXBean;
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
 import java.lang.reflect.Method;
 import zombie.core.random.Rand;
 import zombie.core.random.RandAbstract;
@@ -45,21 +42,15 @@ public final class LootResolvedCheck {
     private static final List<Vector> vectors = new ArrayList<>();
     private static volatile long sink;
     private static int reportedVectors;
-    private static MethodHandle iteration;
 
     private record Vector(String label, ItemPickerItem picker, float density, boolean junk) {
         float run() {
-            try {
-                return (float)iteration.invokeExact(picker, (zombie.characters.IsoGameCharacter)null, container, density, junk);
-            } catch (Throwable error) { throw new AssertionError("Iteration bridge failed", error); }
+            return ItemPickerJava.pztest$iteration(picker, null, container, density, junk);
         }
     }
 
     public static void main(String[] args) throws Exception {
         boolean measure = List.of(args).contains("--measure");
-        iteration = MethodHandles.publicLookup().findStatic(ItemPickerJava.class, "pztest$iteration",
-            MethodType.methodType(float.class, ItemPickerItem.class, zombie.characters.IsoGameCharacter.class,
-                ItemContainer.class, float.class, boolean.class));
         resetRandom();
         String cacheProperty = System.getProperty("pz.test.cache");
         require(cacheProperty != null && Path.of(cacheProperty).isAbsolute(),
@@ -191,7 +182,9 @@ public final class LootResolvedCheck {
         nativeRolls(manager, base, ordinary);
         exceptions();
         resetRandom();
-        if (measure) measure();
+        Group[] groups = benchmarkGroups(manager, base, imports);
+        verifyGroups(groups);
+        if (measure) measure(groups);
     }
 
     private static void add(String label, String name, float chance, float density, boolean junk) {
@@ -332,7 +325,110 @@ public final class LootResolvedCheck {
         ordinary.obsolete = false;
     }
 
-    private static void measure() {
+    private record Group(String label, Vector[] inputs, String scope) { }
+
+    private static Group[] benchmarkGroups(ScriptManager manager, ScriptModule base, ScriptModule imported)
+            throws Exception {
+        // Deliberately synthetic equal-coverage data. These weights are NOT gameplay frequencies.
+        String[] categories = {null, "Memento", "FirstAid", "VehicleMaintenance", "Material", "Gardening",
+            "Tool", "Cooking", "Fishing", "Food", "Ammo", "Bag", "SkillBook", "RecipeResource"};
+        ItemTag[] tagKinds = {ItemTag.GENERATOR, ItemTag.IS_MEMENTO, ItemTag.FARMING_LOOT, ItemTag.AMMO_CASE,
+            ItemTag.FIREARM_LOOT, ItemTag.KEY_RING, ItemTag.IGNORE_ZOMBIE_DENSITY, ItemTag.MORE_WHEN_NO_ZOMBIES};
+        float[] chances = {0f, 0.01f, 0.05f, 0.137f, 0.5f, 1f, 2.5f, 10f};
+        String[] modifierFields = {"otherLootModifier", "mementoLootModifier", "medicalLootModifier",
+            "mechanicsLootModifier", "materialLootModifier", "farmingLootModifier", "toolLootModifier",
+            "cookwareLootModifier", "survivalGearsLootModifier", "cannedFoodLootModifier", "foodLootModifier",
+            "ammoLootModifier", "weaponLootModifier", "rangedWeaponLootModifier", "keyLootModifier",
+            "containerLootModifier", "skillBookLootModifier", "recipeResourceLootModifier",
+            "literatureLootModifier", "clothingLootModifier", "mediaLootModifier"};
+        for (int i = 0; i < modifierFields.length; i++)
+            field(ItemPickerJava.class, modifierFields[i]).setFloat(null, 0.25f + i * 0.0625f);
+        SandboxOptions.instance.lootItemRemovalList.setValue("");
+        SandboxOptions.instance.maximumDiminishedLoot.setValue(0);
+        SandboxOptions.instance.zombies.setValue(3);
+        SandboxOptions.instance.zombieConfig.populationMultiplier.setValue(1.0);
+        Vector[] shortNames = new Vector[64], fullNames = new Vector[64], stress = new Vector[64];
+        for (int i = 0; i < 64; i++) {
+            String name = String.format(Locale.ROOT, "BenchItem%02d", i);
+            Item script = item(manager, base, name, true);
+            script.displayCategory = categories[i % categories.length];
+            script.medical = i % 11 == 0;
+            script.mechanicsItem = i % 13 == 0;
+            script.survivalGear = i % 17 == 0;
+            for (int tag = 0; tag < i % 4; tag++) tags(script).add(tagKinds[(i + tag) % tagKinds.length]);
+            ItemType type = switch (i % 8) {
+                case 1 -> ItemType.FOOD;
+                case 2 -> ItemType.WEAPON;
+                case 3 -> ItemType.CLOTHING;
+                case 4 -> ItemType.LITERATURE;
+                default -> ItemType.NORMAL;
+            };
+            field(Item.class, "itemType").set(script, type);
+            require(items(manager).hasFullType("Base." + name), "loaded fulltype map fixture");
+            float chance = chances[i % chances.length], density = (i % 5) * 1.375f;
+            boolean junk = i % 4 == 0;
+            shortNames[i] = new Vector(name, picker(name, chance), density, junk);
+            fullNames[i] = new Vector("Base." + name, picker("Base." + name, chance), density, junk);
+            String stressName;
+            if (i % 4 < 2) stressName = i % 4 == 0 ? "Base." + name : name;
+            else {
+                Item copy = item(manager, imported, name, true);
+                copy.displayCategory = script.displayCategory;
+                copy.medical = script.medical;
+                copy.mechanicsItem = script.mechanicsItem;
+                copy.survivalGear = script.survivalGear;
+                tags(copy).addAll(tags(script));
+                field(Item.class, "itemType").set(copy, type);
+                stressName = (i % 4 == 2 ? "Alias." : "Consumer.") + name;
+            }
+            stress[i] = new Vector(stressName, picker(stressName, chance), density, junk);
+        }
+        String[] absent = {"AbsentBench", "Base.AbsentBench", "BenchItem11Empty", "Base.BenchItem11Empty",
+            "Base.BenchItem00Empty", "Base.FluidFixtureEmpty", "Base.NoSuchBenchEmpty", "NoSuchBenchEmpty"};
+        Vector[] fallback = new Vector[64];
+        for (int i = 0; i < fallback.length; i++) {
+            String name = absent[i % absent.length];
+            require(manager.FindItem(name) == null, "fallback control must have null original: " + name);
+            fallback[i] = new Vector(name, picker(name, chances[(i / absent.length) % chances.length]),
+                (i % 5) * 1.375f, i % 4 == 0);
+        }
+        return new Group[]{
+            new Group("varied-unqualified-base", shortNames, "primary-synthetic-short-name-coverage"),
+            new Group("single-unqualified-base", new Vector[]{shortNames[20]}, "constant-input-control"),
+            new Group("varied-fulltype", fullNames, "qualified-lookup-control"),
+            new Group("lookup-stress", stress, "artificial-equal-four-way-lookup-stress"),
+            new Group("missing-empty-control", fallback, "unchanged-original-null-paths")};
+    }
+
+    private static void verifyGroups(Group[] groups) throws Exception {
+        for (Group group : groups) {
+            System.out.println("GROUP " + group.label + " " + group.inputs.length + " " + group.scope);
+            for (int i = 0; i < group.inputs.length; i++) {
+                Vector vector = group.inputs[i];
+                int expected = Float.floatToRawIntBits(ItemPickerJava.getActualSpawnChance(
+                    vector.picker, null, container, vector.density, vector.junk));
+                resetRandom();
+                int nativeBits = Float.floatToRawIntBits(ItemPickerJava.pztest$iterationNative(
+                    vector.picker, null, container, vector.density, vector.junk));
+                int nativeNext = Rand.Next(1_000_000);
+                resetRandom();
+                int resolvedBits = Float.floatToRawIntBits(ItemPickerJava.pztest$iterationResolved(
+                    vector.picker, null, container, vector.density, vector.junk));
+                int resolvedNext = Rand.Next(1_000_000);
+                require(expected == nativeBits && expected == resolvedBits && nativeNext == resolvedNext,
+                    "same-JVM input/RNG parity: " + group.label + "/" + i);
+                Item script = ScriptManager.instance.FindItem(vector.picker.itemName);
+                String loot = script == null ? "missing" : ItemPickerJava.getLootType(script);
+                int tagCount = script == null ? -1 : script.getTags().size();
+                System.out.printf(Locale.ROOT, "INPUT %s %d %s %08x %08x %s %s %d %08x %d%n",
+                    group.label, i, vector.picker.itemName, Float.floatToRawIntBits(vector.picker.chance),
+                    Float.floatToRawIntBits(vector.density), vector.junk, loot, tagCount, nativeBits, nativeNext);
+            }
+        }
+        resetRandom();
+    }
+
+    private static void measure(Group[] groups) throws Exception {
         var runtime = ManagementFactory.getRuntimeMXBean();
         ThreadMXBean bean = (ThreadMXBean)ManagementFactory.getThreadMXBean();
         require(bean.isCurrentThreadCpuTimeSupported(), "thread CPU timing unavailable");
@@ -340,75 +436,107 @@ public final class LootResolvedCheck {
         bean.setThreadCpuTimeEnabled(true);
         bean.setThreadAllocatedMemoryEnabled(true);
         long id = Thread.currentThread().threadId();
-        String[] names = {"Base.Ordinary", "Base.Fallback", "Alias.ImportedItem", "Consumer.ImportedItem"};
-        String[] labels = {"whole-fulltype", "whole-module", "whole-alias", "whole-import"};
         int iterations = Integer.getInteger("loot.iterations", 200_000);
-        require(iterations > 0, "loot.iterations must be positive");
-        Vector[][] groups = new Vector[names.length][];
-        for (int kind = 0; kind < names.length; kind++) {
-            String name = names[kind];
-            groups[kind] = vectors.stream().filter(v -> v.picker.itemName.equals(name))
-                .toArray(Vector[]::new);
-            require(groups[kind].length > 0, "Missing measurement input: " + name);
-        }
-        // ZGC can first link the native notifyAll wrapper during a timed collection.
-        // Warm the same ordinary Java entrypoint on a private monitor before timing;
-        // no game object, other thread, GC flag or overlap exclusion is involved.
+        int pairs = Integer.getInteger("loot.pairs", 12);
+        int fork = Integer.getInteger("loot.fork", 0);
+        require(iterations > 0 && pairs >= 2 && pairs % 2 == 0, "positive iterations and even pairs >=2 required");
+        // Every fork contains BOTH modes. The same method has two symmetric direct-call
+        // loops, not two MethodHandles or a per-iteration polymorphic dispatch.
         Object warmMonitor = new Object();
+        long[][][][] measured = new long[groups.length][pairs][2][7];
         for (int warmup = 0; warmup < 20_000; warmup++) {
             synchronized (warmMonitor) { warmMonitor.notifyAll(); }
-        }
-        // Preallocate all report storage and prewarm the timing APIs before any windows.
-        long[][][] measured = new long[names.length][7][5];
-        long[] consumed = new long[names.length];
-        for (int warmup = 0; warmup < 20_000; warmup++) {
             sink = runtime.getUptime() + bean.getThreadAllocatedBytes(id)
                 + bean.getCurrentThreadCpuTime() + System.nanoTime();
         }
-        // Link/prewarm the same nonbusy separation path before any timed windows.
         separateReporting();
-        // Exercise all lookup shapes before timing any one shape. Sequential first-use
-        // warmup otherwise specializes shared lookup methods and later shapes deopt them
-        // inside measured windows. The runner still rejects any observed JIT overlap.
-        for (int warmup = 0; warmup < 8; warmup++) {
-            for (Vector[] group : groups) loop(group, iterations);
-        }
-        for (int kind = 0; kind < names.length; kind++) {
-            Vector[] group = groups[kind];
-            for (int warmup = 0; warmup < 5; warmup++) loop(group, iterations);
-            for (int round = 0; round < 7; round++) {
-                long beganAt = runtime.getUptime();
-                long alloc = bean.getThreadAllocatedBytes(id);
-                long cpu = bean.getCurrentThreadCpuTime();
-                long start = System.nanoTime();
-                loop(group, iterations);
-                long elapsed = System.nanoTime() - start;
-                cpu = bean.getCurrentThreadCpuTime() - cpu;
-                alloc = bean.getThreadAllocatedBytes(id) - alloc;
-                long endedAt = runtime.getUptime();
-                long[] row = measured[kind][round];
-                row[0] = beganAt; row[1] = endedAt; row[2] = elapsed; row[3] = cpu; row[4] = alloc;
+        // Warm the timer wrapper/reset itself enough times, separately from long loops,
+        // so its invocation threshold is not first crossed in a retained half.
+        // Continue the existing RNG stream here; pair resets are exercised below.
+        long[] scratch = new long[7];
+        for (int warmup = 0; warmup < 1000; warmup++) {
+            for (Group group : groups) {
+                measuredHalf(group.inputs, group.inputs.length, false, false, runtime, bean, id, scratch);
+                measuredHalf(group.inputs, group.inputs.length, true, false, runtime, bean, id, scratch);
             }
-            consumed[kind] = sink;
         }
-        // Keep first-use reporting work outside the conservative +/-1ms JIT gate.
+        // Warm the actual timer wrapper, RNG reset, all groups and both loop branches.
+        // Balanced AB/BA order prevents one bridge from being the only trained target.
+        for (int warmup = 0; warmup < 16; warmup++) {
+            for (int group = 0; group < groups.length; group++) {
+                boolean firstResolved = (warmup + group + fork) % 2 != 0;
+                measuredHalf(groups[group].inputs, iterations, firstResolved, true, runtime, bean, id, scratch);
+                measuredHalf(groups[group].inputs, iterations, !firstResolved, true, runtime, bean, id, scratch);
+            }
+        }
+        for (int pair = 0; pair < pairs; pair++) {
+            // Rotate group position as well as AB/BA order; pair each identical input.
+            for (int position = 0; position < groups.length; position++) {
+                int group = (position + pair) % groups.length;
+                boolean firstResolved = (pair + group + fork) % 2 != 0;
+                int first = firstResolved ? 1 : 0, second = 1 - first;
+                measuredHalf(groups[group].inputs, iterations, firstResolved, true, runtime, bean, id, measured[group][pair][first]);
+                measuredHalf(groups[group].inputs, iterations, !firstResolved, true, runtime, bean, id, measured[group][pair][second]);
+                long[] nativeRow = measured[group][pair][0], resolvedRow = measured[group][pair][1];
+                require(nativeRow[5] == resolvedRow[5] && nativeRow[6] == resolvedRow[6], "pair checksum/RNG mismatch");
+            }
+        }
+        long lastWindowEnd = 0;
+        for (long[][][] group : measured) for (long[][] pair : group) for (long[] row : pair)
+            lastWindowEnd = Math.max(lastWindowEnd, row[1]);
         long waitStarted = System.nanoTime();
         separateReporting();
-        long waitedNanos = System.nanoTime() - waitStarted;
-        long reportAt = runtime.getUptime();
-        long lastWindowEnd = measured[names.length - 1][6][1];
+        long waitedNanos = System.nanoTime() - waitStarted, reportAt = runtime.getUptime();
         require(reportAt - lastWindowEnd >= 10, "reporting separation too short");
         System.out.printf(Locale.ROOT, "REPORT_GAP %d %d %d%n", lastWindowEnd, reportAt, waitedNanos);
-        // Printing/linkage happens only after every timed group and the separation.
-        for (int kind = 0; kind < names.length; kind++) {
-            for (int round = 0; round < 7; round++) {
-                long[] row = measured[kind][round];
-                System.out.printf(Locale.ROOT, "WINDOW %s %d %d %d%n", labels[kind], round, row[0], row[1]);
-                System.out.printf(Locale.ROOT, "MEASURE %s %d %d %d %d %d%n",
-                    labels[kind], round, iterations, row[2], row[3], row[4]);
+        for (int group = 0; group < groups.length; group++) {
+            for (int pair = 0; pair < pairs; pair++) {
+                String order = (pair + group + fork) % 2 == 0 ? "AB" : "BA";
+                for (int mode = 0; mode < 2; mode++) {
+                    String name = mode == 0 ? "native" : "candidate";
+                    long[] row = measured[group][pair][mode];
+                    System.out.printf(Locale.ROOT, "WINDOW %s %d %s %s %d %d%n",
+                        groups[group].label, pair, order, name, row[0], row[1]);
+                    System.out.printf(Locale.ROOT, "PAIR %s %d %s %s %d %d %d %d %d %d%n",
+                        groups[group].label, pair, order, name, iterations, row[2], row[3], row[4], row[5], row[6]);
+                }
             }
-            System.out.println("CONSUMED " + labels[kind] + " " + consumed[kind]);
         }
+    }
+
+    private static void measuredHalf(Vector[] group, int count, boolean resolved, boolean resetSeed,
+            java.lang.management.RuntimeMXBean runtime, ThreadMXBean bean, long id, long[] row) throws Exception {
+        // Short timer-wrapper warmup opts out of expensive CA reconstruction.
+        // Long warmup and EVERY measured half restore identical native CA state.
+        if (resetSeed) resetRandom(); // Outside the measured unit.
+        long beganAt = runtime.getUptime(), allocated = bean.getThreadAllocatedBytes(id);
+        long cpu = bean.getCurrentThreadCpuTime(), start = System.nanoTime();
+        long checksum = pairedLoop(group, count, resolved);
+        long elapsed = System.nanoTime() - start;
+        cpu = bean.getCurrentThreadCpuTime() - cpu;
+        allocated = bean.getThreadAllocatedBytes(id) - allocated;
+        long endedAt = runtime.getUptime();
+        row[0] = beganAt; row[1] = endedAt; row[2] = elapsed; row[3] = cpu; row[4] = allocated;
+        row[5] = checksum; row[6] = Rand.Next(1_000_000);
+    }
+
+    private static long pairedLoop(Vector[] group, int count, boolean resolved) {
+        long sum = 0;
+        if (resolved) {
+            for (int i = 0; i < count; i++) {
+                Vector vector = group[i % group.length];
+                sum += Float.floatToRawIntBits(ItemPickerJava.pztest$iterationResolved(
+                    vector.picker, null, container, vector.density, vector.junk));
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                Vector vector = group[i % group.length];
+                sum += Float.floatToRawIntBits(ItemPickerJava.pztest$iterationNative(
+                    vector.picker, null, container, vector.density, vector.junk));
+            }
+        }
+        sink = sum;
+        return sum;
     }
 
     private static void separateReporting() {
@@ -422,11 +550,4 @@ public final class LootResolvedCheck {
         }
     }
 
-    private static void loop(Vector[] group, int count) {
-        long sum = 0;
-        for (int i = 0; i < count; i++) {
-            sum += Float.floatToRawIntBits(group[i % group.length].run());
-        }
-        sink = sum;
-    }
 }
