@@ -1,0 +1,9 @@
+name=Test-only Resolved Loot Runtime
+id=PZLootResolvedRuntime
+version=0.0.1
+versionMin=42.21
+versionMax=42.21
+require=\ZombieBuddy
+javaJarFile=media/java/PZLootResolvedRuntime.jar
+javaPkgName=toolkit.lootresolved.runtime
+ZBVersionMin=2.3.4
