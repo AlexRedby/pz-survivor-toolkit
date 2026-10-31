@@ -17,11 +17,13 @@ BOOT = '42/media/bootstrap/PZLootResolvedBootstrap.jar'
 RUNTIME = '42/media/java/PZLootResolvedRuntime.jar'
 PACKAGE = 'toolkit.lootresolved.bootstrap'
 TOKEN = 'loot-resolved-runtime.opt-in'
+HOST_AUTHORITY = 'loot-resolved-runtime.host-authority'
 DIAGNOSTIC = 'LOOT_RESOLVED_EXPECTED_ACCEPT_ERROR'
 MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit', MOD]
 ROOT = Path(__file__).resolve().parents[3]
 CASE = 'bank'
 SEED = 'PZ-Loot-Resolved-42.21'
+WORLD = 'PZDrivingBench-OptimizerTrial-LootResolved'
 SANDBOX = {'Zombies': 3, 'StartYear': 1, 'StartMonth': 7, 'StartDay': 9, 'StartTime': 2}
 
 
@@ -61,11 +63,14 @@ def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _sources(project):
+def _sources(project, selection):
     base = Path(project) / 'tests/chunk_integration/loot_resolved_runtime'
     result = {p.name: _sha(p) for p in base.iterdir() if p.is_file() or p.is_symlink()}
     result['ResolvedCandidate.java'] = _sha(base.parent / 'loot_resolved/ResolvedCandidate.java')
     result['../loot_resolved/run.py'] = _sha(base.parent / 'loot_resolved/run.py')
+    if selection['options'].get('optimizer_archive'):
+        result['../../optimizer_trial/candidate-manifest.json'] = _sha(
+            Path(project) / 'tests/optimizer_trial/candidate-manifest.json')
     return result
 
 
@@ -79,6 +84,26 @@ def _guards(project):
     result = ast.literal_eval(matches[0])
     result.update(json.loads((base / 'loot_resolved_runtime/success-native-hashes.json').read_text()))
     return result
+
+
+def _runtime_receipt(project, selection, native):
+    archive = selection['options'].get('optimizer_archive')
+    if archive is None:
+        return dict(runtime_hashes=dict(native), optimizer_manifest_sha256=None,
+                    optimizer_archive_sha256=None, optimizer_profile=None)
+    path = Path(project) / 'tests/optimizer_trial/candidate-manifest.json'
+    manifest_sha = _sha(path)
+    manifest = receipts.decode_object(path.read_text())
+    if _sha(Path(archive)) != manifest['release_sha256']:
+        raise ValueError('Loot optimizer archive differs from current reviewed release')
+    # A changed overlap requires explicit source review, even if a new manifest pins it.
+    overlap = {name: digest for name, digest in manifest['selected_files'].items() if name in native}
+    if overlap != {'zombie/Lua/LuaEventManager.class':
+                   'd786c342e563fb735727beb268e39a9a40726c2e83a8ac15ec06c753580b524b'}:
+        raise ValueError('Loot optimizer guarded resource overlap changed')
+    return dict(runtime_hashes={**native, **overlap}, optimizer_manifest_sha256=manifest_sha,
+                optimizer_archive_sha256=manifest['release_sha256'],
+                optimizer_profile={key: manifest['profile'][key] for key in ('id', 'properties')})
 
 
 def bundle(cache, selection, project=ROOT):
@@ -120,9 +145,12 @@ def bundle(cache, selection, project=ROOT):
             'success_path_checked': False, 'entry_point': 'lootResolvedRuntimeRun',
             'terminal_marker': '[LOOT_RESOLVED_RUNTIME] FINISH status=', 'required_preload': BOOT}.items()):
         raise ValueError('Loot runtime embedded receipt mismatch')
-    if (value.get('sources') != _sources(project) or value.get('native_hashes') != _guards(project)
+    if (value.get('sources') != _sources(project, selection) or value.get('native_hashes') != _guards(project)
             or value.get('headless_checks') != ['missing-token', 'already-loaded', 'initial-definition', 'preload']):
         raise ValueError('Foreign/stale loot runtime source or native receipt')
+    expected_runtime = _runtime_receipt(project, selection, _guards(project))
+    if any(key not in value or value[key] != expected for key, expected in expected_runtime.items()):
+        raise ValueError('Loot runtime effective optimizer receipt mismatch')
     return token, value
 
 
@@ -164,13 +192,20 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             raise ValueError('Loot token requires actual owned cache/Lua/smoke-user.txt')
         token, value = bundle(cache, selection, project)
         target = cache / TOKEN
-        if target.exists() or target.is_symlink():
-            raise ValueError('Loot opt-in must be fresh')
+        host_marker = cache / HOST_AUTHORITY
+        if target.exists() or target.is_symlink() or host_marker.exists() or host_marker.is_symlink():
+            raise ValueError('Loot opt-in and Host authority must be fresh')
         staged.append((target, token))
+        if selection['kind'] == 'mp':
+            staged.append((host_marker, token))
         lua = cache / 'mods/ActionQueueTest/42/media/lua'
         for side in ('client', 'server', 'shared'):
             (lua / side).mkdir(parents=True, exist_ok=True)
         starter = (base / 'startup/client/ZZStartup.lua').read_text()
+        world_anchor = "getWorld():setWorld('QueueStartup')"
+        if starter.count(world_anchor) != 1:
+            raise ValueError('Common startup world name changed')
+        starter = starter.replace(world_anchor, "getWorld():setWorld('" + WORLD + "')")
         anchor = "getSandboxOptions():getOptionByName('Zombies'):setValue(6);getSandboxOptions():toLua()"
         if starter.count(anchor) != 1:
             raise ValueError('Common startup Zombies line changed')
@@ -226,12 +261,13 @@ def _compare(project):
     return module
 
 
-def _activation(compare, cache, pid, mode, native_hash):
+def _activation(compare, cache, pid, mode, native_hash, resource_profile, manifest_sha, checked):
     value = compare.values(cache / ('loot-resolved-runtime-activation-' + str(pid) + '.txt'))
-    if (any(value.get(k) != v for k, v in dict(state='active', mode=mode, pid=str(pid), definitions='1', rng_audit_definitions='1', input=native_hash).items())
+    if (any(value.get(k) != v for k, v in dict(state='active', mode=mode, pid=str(pid), definitions='1', input=native_hash, resource_profile=resource_profile, optimizer_manifest_sha256=manifest_sha,
+                                                    runtime_profile_checked=str(checked).lower(), **compare.RNG_ACTIVATION).items())
             or not re.fullmatch('[0-9a-f]{64}', value.get('output', ''))
             or (value['input'] == value['output']) != (mode == 'control')):
-        raise ValueError('Missing/failed/PID-mismatched loot activation')
+        raise ValueError('Missing/failed/PID/profile-mismatched loot activation')
     return value
 
 
@@ -243,7 +279,13 @@ def verify(root, selection, catalog):
         execution = json.loads((root / 'execution.json').read_text())
         cache = root / 'client1'
         project = Path(runtime['project'])
-        _, inputs = bundle(cache, selection, project)
+        token, inputs = bundle(cache, selection, project)
+        host_marker = cache / HOST_AUTHORITY
+        if selection['kind'] == 'mp':
+            if host_marker.is_symlink() or not host_marker.is_file() or host_marker.read_text() != token + '\n':
+                raise ValueError('Missing/foreign owned Host authority marker')
+        elif host_marker.exists() or host_marker.is_symlink():
+            raise ValueError('SP must not arm Host authority')
         compare = _compare(project)
         mode = selection['options']['loot_runtime_mode']
         authority = 'server' if selection['kind'] == 'mp' else 'client1'
@@ -256,9 +298,17 @@ def verify(root, selection, catalog):
                 or Path(runtime.get('host_cache', '')).resolve() != cache.resolve()):
             raise ValueError('Loot Host authority must be the owned child sharing client1 cache')
         native_hash = inputs['native_hashes']['zombie/inventory/ItemPickerJava.class']
-        activation = _activation(compare, cache, pid, mode, native_hash)
-        _activation(compare, cache, client_pid, mode, native_hash)
+        optimized = bool(selection['options'].get('optimizer_archive'))
+        client_profile = 'optimized-client' if optimized else 'native'
+        authority_profile = 'native-host' if optimized and selection['kind'] == 'mp' else client_profile
+        manifest_sha = inputs['optimizer_manifest_sha256'] or 'none'
+        activation = _activation(compare, cache, pid, mode, native_hash, authority_profile, manifest_sha, True)
+        client_activation = _activation(compare, cache, client_pid, mode, native_hash, client_profile,
+                                        manifest_sha, selection['kind'] == 'sp')
         status, _, rows = compare.read(cache, mode)
+        if any(status.get(key) != value for key, value in dict(resource_profile=authority_profile,
+                optimizer_manifest_sha256=manifest_sha, runtime_profile_checked='true').items()):
+            raise ValueError('Loot authority runtime profile/status mismatch')
         if status['pid'] != str(pid) or status.get('reason') or any(status.get(k) != 'uncovered' for k in ('source_square', 'live_script_reload', 'module_item_replacement')):
             raise ValueError('Loot bank PID/status/uncovered gates mismatch')
         text = (root / 'client1-launch.log').read_text(errors='replace')
@@ -289,8 +339,9 @@ def verify(root, selection, catalog):
                 raise ValueError('Selected Optimized client profile kind/session did not become ready')
             if selection['kind'] == 'mp' and ('[OptimizerTrialProbe] native server resources=' not in auth or 'overlayAbsent=true' not in auth):
                 raise ValueError('Optimizer Host child isolation not proved')
-        evidence = dict(authority_pid=pid, runtime_mode=mode, status=status, activation=activation,
-                        ordered_rows=len(rows)-1, expected_protected_diagnostic=DIAGNOSTIC, requires_review=True,
+        evidence = dict(authority_pid=pid, runtime_mode=mode, status=status, activation=activation, client_activation=client_activation,
+                        ordered_rows=len(rows)-1, rng_scope=compare.rng(cache,pid), clock_proofs=compare.clock_rows(rows)[1],
+                        expected_protected_diagnostic=DIAGNOSTIC, requires_review=True,
                         limits=['Captured actual bank; matching control/candidate comparator and full log audit still required.',
                                 'Source-square, live reload, module replacement and later Java transformations remain uncovered.'])
     except (OSError, ValueError, KeyError, TypeError, AttributeError, zipfile.BadZipFile) as error:
