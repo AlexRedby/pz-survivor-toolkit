@@ -351,6 +351,13 @@ public final class LootResolvedCheck {
                 .toArray(Vector[]::new);
             require(groups[kind].length > 0, "Missing measurement input: " + name);
         }
+        // ZGC can first link the native notifyAll wrapper during a timed collection.
+        // Warm the same ordinary Java entrypoint on a private monitor before timing;
+        // no game object, other thread, GC flag or overlap exclusion is involved.
+        Object warmMonitor = new Object();
+        for (int warmup = 0; warmup < 20_000; warmup++) {
+            synchronized (warmMonitor) { warmMonitor.notifyAll(); }
+        }
         // Preallocate all report storage and prewarm the timing APIs before any windows.
         long[][][] measured = new long[names.length][7][5];
         long[] consumed = new long[names.length];

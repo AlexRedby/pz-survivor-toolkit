@@ -112,12 +112,17 @@ def main():
                     work, out / ("splice-" + mode + ".log"))
         if "RESOLVED_SPLICE_READY" not in patch:
             raise RuntimeError("Splice guard check did not finish")
+    common_jvm_flags = ["-Xms256m", "-Xmx256m", "-XX:+UseZGC", "-Xbatch", "-Djava.awt.headless=true",
+                        "-Duser.home=" + str(out / "home"), "-Dpz.test.cache=" + str(out / "client1"),
+                        "-Dloot.iterations=" + str(args.iterations)]
     receipt = {"format": 1, "research_only": True, "native_guards": GUARDS,
                "sources": fingerprints, "game_jar_sha256": sha(native.read_bytes()),
                "buddy_jar_sha256": sha(buddy.read_bytes()),
                "patched_class_sha256": {mode: sha((out / ("overlay-" + mode) / "zombie/inventory/ItemPickerJava.class").read_bytes()) for mode in ("stock", "candidate")},
                "scope": "headless calculation + native no-creation roll paths; not gameplay/SP/Host", "runtime_java_sha256": sha(java.read_bytes()),
                "runtime_selection": "explicit caller-supplied binary; Zulu vendor check does not establish bundled identity",
+               "common_jvm_flags": common_jvm_flags, "jvm_invocations": {},
+               "gc_policy": "ZGC; allocations and GC remain part of the synthetic workload, without FPS extrapolation",
                "measure": args.measure, "forks": args.forks if args.measure else 1,
                "iterations": args.iterations if args.measure else 0}
     receipt["java_version"] = run([java, "-version"], work, out / "java-version.log").strip()
@@ -134,13 +139,15 @@ def main():
         tag = f"{fork}-{mode}"
         classpath = [classes, out / ("overlay-" + mode)]
         classpath.extend((native, buddy))
-        command = [java, "-Xms256m", "-Xmx256m", "-Xbatch", "-Djava.awt.headless=true",
-                   "-Duser.home=" + str(out / "home"), "-Dpz.test.cache=" + str(out / "client1"),
-                   "-Dloot.iterations=" + str(args.iterations),
-                   "-Xlog:jit+compilation=debug:file=" + str(out / (tag + "-jit.log")),
-                   "-cp", os.pathsep.join(map(str, classpath)), "LootResolvedCheck"]
-        if measure:
-            command.append("--measure")
+        jvm_flags = common_jvm_flags + [
+            "-Xlog:jit+compilation=debug:file=" + str(out / (tag + "-jit.log")),
+            "-Xlog:gc*,safepoint:file=" + str(out / (tag + "-gc-safepoint.log")) + ":uptime,level,tags"]
+        main_arguments = ["--measure"] if measure else []
+        exact_classpath = os.pathsep.join(map(str, classpath))
+        receipt["jvm_invocations"][tag] = {"jvm_flags": jvm_flags, "classpath": exact_classpath,
+                                           "main_class": "LootResolvedCheck", "main_arguments": main_arguments}
+        (out / "input-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        command = [java, *jvm_flags, "-cp", exact_classpath, "LootResolvedCheck", *main_arguments]
         log = run(command, work, out / (tag + ".log"))
         actual = [line for line in log.splitlines() if line.startswith("VECTOR ")]
         if len(actual) != 190:
