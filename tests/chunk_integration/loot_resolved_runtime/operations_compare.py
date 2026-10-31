@@ -22,6 +22,12 @@ CONTRACT={'scope':'owner-window-paired-roll-v1','warmup_pairs':64,'measured_pair
 GROUPS={g['id']:g for g in CONTRACT['groups']}
 FIELDS='phase group pair order variant batch window_id wall_start wall_end cpu_start cpu_end allocated selections created increments null_returns digest next_rng created_types cold_types cleanup'.split()
 EVENT_FIELDS='kind start_ns end_ns thread_id method level compile_id window_id detail'.split()
+# Exact measured callers. A similarly named overload is not evidence for these entries.
+REQUIRED_ENTRIES=(
+ 'zombie.inventory.ItemPickerJava.doRollItemInternal(Lzombie/inventory/ItemPickInfo;Lzombie/inventory/ItemPickerJava$ItemPickerContainer;Lzombie/inventory/ItemContainer;FLzombie/characters/IsoGameCharacter;ZLzombie/inventory/ItemPickerJava$ItemPickerRoom;Z)V',
+ 'zombie.inventory.ItemPickerJava.rollContainerItemInternal(Lzombie/inventory/ItemPickInfo;Lzombie/inventory/types/InventoryContainer;Lzombie/characters/IsoGameCharacter;Lzombie/inventory/ItemPickerJava$ItemPickerContainer;Z)V',
+ 'toolkit.lootresolved.runtime.OperationsMain.half(Ltoolkit/lootresolved/runtime/OperationsMain$Group;Lzombie/iso/IsoGridSquare;Ljava/lang/String;ILjava/lang/String;ZILcom/sun/management/ThreadMXBean;)Ltoolkit/lootresolved/runtime/OperationsMain$Result;',
+)
 EVENTS={'jdk.Compilation','jdk.Deoptimization','jdk.GarbageCollection','jdk.GCPhasePause','jdk.SafepointBegin','jdk.DataLoss','pz.loot.RollWindow'}
 
 
@@ -89,9 +95,6 @@ def parse_windows(path):
  for first,second in zip(rows[::2],rows[1::2]):
   for key in ('digest','next_rng','selections','created','increments','null_returns','created_types'):
    if first[key]!=second[key]:raise ValueError('Operations paired actual contents/RNG/observer mismatch: '+key)
- for group in GROUPS:
-  actual=[r for r in rows if r['group']==group and r['phase']=='measure']
-  if not any(r['created']>0 for r in actual):raise ValueError('Operations selected graph never reached successful creation')
  return rows
 
 
@@ -122,12 +125,42 @@ def parse_events(path,windows,owner):
   marker=markers[row['window_id']]
   row['jit_events']=[event for event in jit if overlaps(event,marker)]
   row['gc_safepoint_events']=[event for event in gc if overlaps(event,marker)]
- first=next(markers[row['window_id']]['start_ns'] for row in windows if row['phase']=='measure')
+ measured_markers=[markers[row['window_id']] for row in windows if row['phase']=='measure']
+ span=dict(start_ns=measured_markers[0]['start_ns'],end_ns=measured_markers[-1]['end_ns'])
+ # A transition in an untimed cleanup gap still changes the code used by the next leg.
+ span_jit=[event for event in jit if overlaps(event,span)]
+ first=span['start_ns']
  compiled=[e for e in jit if e['kind']=='jdk.Compilation' and e['end_ns']<first and e['detail'].startswith('success=true,')]
- prefixes=('zombie.inventory.ItemPickerJava.doRollItemInternal(', 'zombie.inventory.ItemPickerJava.rollContainerItemInternal(', 'toolkit.lootresolved.runtime.OperationsMain.half(')
- entries={prefix:[e for e in compiled if e['method'].startswith(prefix) and e['level']>=1 and e['detail']=='success=true,osr=false'] for prefix in prefixes}
- return dict(sentinel=sentinel[0],data_loss=loss,compiled_before_measure=compiled,compiled_normal_entries=entries,
-             note='literal observed successful compilation levels/OSR, not universal C2 entry or lazy-path warmth')
+ pre_deopts=[e for e in jit if e['kind']=='jdk.Deoptimization' and e['end_ns']<first]
+ all_compiles=[e for e in jit if e['kind']=='jdk.Compilation']
+ entries={method:[] for method in REQUIRED_ENTRIES};evidence=[]
+ for method in REQUIRED_ENTRIES:
+  normal=[e for e in compiled if e['method']==method and e['detail']=='success=true,osr=false']
+  if not normal:
+   evidence.append(dict(method=method,state='missing-successful-normal-entry'));continue
+  # Do not fall back to an older C1 event after a newer C2 record was invalidated.
+  latest_end=max(e['end_ns'] for e in normal)
+  latest=[e for e in normal if e['end_ns']==latest_end]
+  if len(latest)!=1:
+   evidence.append(dict(method=method,state='ambiguous-latest-compilation',candidates=latest));continue
+  candidate=latest[0];compile_id=candidate['compile_id']
+  same_id=[e for e in all_compiles if e['compile_id']==compile_id]
+  if compile_id==0 or candidate['level']<1 or len(same_id)!=1:
+   evidence.append(dict(method=method,state='unknown-or-ambiguous-compile-id-or-level',compilation=candidate,records=same_id));continue
+  # A deopt may name an inlined callee rather than the compiled root. Compile ID
+  # is authoritative for rejection; all actions are conservative invalidations.
+  invalidators=[e for e in pre_deopts if e['compile_id']==compile_id]
+  unknown=[e for e in pre_deopts if e['compile_id']==0 and e['end_ns']>=candidate['start_ns']]
+  if invalidators or unknown:
+   evidence.append(dict(method=method,state='recorded-deoptimization-or-unknown-id',compilation=candidate,
+                        invalidations=invalidators,unknown_invalidations=unknown));continue
+  entries[method]=[candidate]
+  evidence.append(dict(method=method,state='latest-observed-with-no-recorded-invalidation',compilation=candidate))
+ return dict(sentinel=sentinel[0],data_loss=loss,jit_events=jit,gc_safepoint_events=gc,
+             capture_span=span,capture_span_jit_events=span_jit,
+             compiled_before_measure=compiled,compiled_normal_entries=entries,entry_evidence=evidence,
+             note='literal latest observed normal-entry levels/OSR with no recorded invalidation; not proof of current entrant state, universal C2, inlining or lazy-path warmth')
+
 
 
 def read(cache,mode='candidate'):
@@ -164,7 +197,7 @@ def report(cache):
  empty={key:_integer(inputs.get(key,'')) for key in ('empty1000_cpu_ns','empty1000_wall_ns')}
  windows=parse_windows(cache/'loot-operations.tsv');events=parse_events(cache/'loot-operations-events.tsv',windows,owner)
  measured=[row for row in windows if row['phase']=='measure'];contaminated=[r['window_id'] for r in measured if r['jit_events']]
- cold=[r['window_id'] for r in measured if r['cold_types']!='-'];summary={}
+ cold=[r['window_id'] for r in measured if r['cold_types']!='-'];summary={};insertion={}
  for group in GROUPS:
   pairs=[]
   for a,b in zip(measured[::2],measured[1::2]):
@@ -172,9 +205,16 @@ def report(cache):
    native,resolved=(a,b) if a['variant']=='native' else (b,a)
    pairs.append(dict(pair=a['pair'],order=a['order'],native_cpu_ns_per_roll=native['cpu_ns']/native['batch'],resolved_cpu_ns_per_roll=resolved['cpu_ns']/resolved['batch'],
                      saved_cpu_ns_per_roll=(native['cpu_ns']-resolved['cpu_ns'])/native['batch'],native_wall_ns_per_roll=native['wall_ns']/native['batch'],resolved_wall_ns_per_roll=resolved['wall_ns']/resolved['batch']))
+  made=[r for r in measured if r['group']==group and r['variant']=='native' and r['created']>0]
+  inserted=[r for r in made if r['increments']>0]
+  insertion[group]=dict(created_pairs=[r['pair'] for r in made],inserted_pairs=[r['pair'] for r in inserted],
+                        creation_and_insertion_observed=bool(inserted))
   summary[group]=dict(pairs=pairs,median_saved_cpu_ns_per_roll=statistics.median(p['saved_cpu_ns_per_roll'] for p in pairs),
                       positive_pairs=sum(p['saved_cpu_ns_per_roll']>0 for p in pairs),total_pairs=len(pairs))
- return dict(format=1,scope=CONTRACT['scope'],capture='paired-equivalent',timing_qualified=not(events['data_loss'] or contaminated or cold or any(not v for v in events['compiled_normal_entries'].values())),
+ return dict(format=2,qualification='whole-capture-span-latest-entry-and-insertion-v2',scope=CONTRACT['scope'],capture='paired-equivalent',
+             timing_qualified=not(events['data_loss'] or events['capture_span_jit_events'] or cold or any(not v for v in events['compiled_normal_entries'].values())
+                                  or any(not v['creation_and_insertion_observed'] for v in insertion.values())),
+             successful_insertion_evidence=insertion,
              timing_scope='literal observed compiled entry levels; never universal C2 or lazy-path warmth',
              jit_contaminated_windows=contaminated,cold_created_type_windows=cold,events=events,empty_timer_baseline=empty,
              inputs=inputs,summary=summary,windows=windows,limits=limits())
