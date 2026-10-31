@@ -267,6 +267,8 @@ def verify(root):
     for role in ('client1', 'client2'):
         _client(rows[role], role, descriptors, originals, phases, restored)
     return {'phases': 2, 'peers': 2, 'steps': list(STEPS), 'authority': phases,
+            'craft_controls': sorted({row['craftDispatch']['controlType'] for event, row in rows['client2']
+                                      if event == 'ACTIONS' and row['step'] == 'peer-craft'}),
             'limits': ['Sparse functional native UI callbacks, not a performance or physical-input measurement.']}
 
 
@@ -318,6 +320,7 @@ def _client(rows, role, descriptors, originals, phases, restored):
             snapshot(observed['native'], phase, step, descriptors, originals, role)
             if step != 'initial':
                 ensure(observed['authority'] == authority, 'client referenced another server result')
+            ensure(set(ids(hidden['after']['rawAggregateIds'])) == set(ids(observed['aggregateBefore']['actualIds'])), 'hidden cache observation differs from pre-open evidence')
             _reopen(observed, phase, step, role)
             actor = 'client1' if step == 'hidden-loot' else 'client2'
             if step != 'initial' and role == actor:
@@ -336,18 +339,31 @@ def _client(rows, role, descriptors, originals, phases, restored):
 
 
 def _reopen(row, phase, step, role):
+    expected = endpoints(phase, step)
+    meta = {item['id']: item for item in phase['items']}
+    before = row['aggregateBefore']
+    require(before, nativeAggregate=True)
+    before_slots = set(ids(before['discoveredSlots']))
+    ensure(before_slots and before_slots <= set(range(1, 13)), 'invalid pre-open discovered sources')
+    before_sources = {'crate'+str(slot) for slot in before_slots}
+    before_expected = {key for key, where in expected.items() if where in before_sources}
+    before_actual = set(ids(before['actualIds']))
+    ensure(set(ids(before['expectedIds'])) == before_expected, 'pre-open physical expectation differs from authority')
+    ensure(before_actual <= set(meta), 'pre-open aggregate contains foreign identities')
+    require(before, fresh=before_actual == before_expected)
+    if step == 'initial':
+        require(before, fresh=True)
+    ensure(set(ids(row['reopen']['before']['rawAggregateIds'])) == before_actual, 'pre-open cache observation changed before lifecycle consumer')
     aggregate = row['aggregateProof']
     require(aggregate, nativeAggregate=True)
     slots = ids(aggregate['discoveredSlots'])
     ensure(slots and set(slots) <= set(range(1, 13)), 'invalid discovered crate sources')
     if role == 'client1':
         ensure({1, 2, 3, 4, 5} <= set(slots), 'observer omitted an exercised shared crate')
-    expected = endpoints(phase, step)
     source_names = {'crate'+str(slot) for slot in slots}
     expected_ids = {key for key, where in expected.items() if where in source_names}
     actual_ids = set(ids(aggregate['actualIds']))
     ensure(actual_ids == set(ids(aggregate['expectedIds'])) == expected_ids, 'native aggregate is stale or has foreign items')
-    meta = {item['id']: item for item in phase['items']}
     ensure(set(ids([item['id'] for item in aggregate['identities']])) == actual_ids, 'aggregate payload cohort differs')
     for item in aggregate['identities']:
         require(item, key=meta[item['id']]['key'], cat=meta[item['id']]['cat'])
@@ -394,10 +410,21 @@ def _actions(row, phase, step, mode):
             ensure(type(action.get('transactionId')) is int and action['transactionId'] > 0, 'invalid native transaction')
     transfers = [action for action in current if action['type'] == 'ISInventoryTransferAction']
     crafts = [action for action in current if action['type'] == 'ISHandcraftAction']
+    craft_transfers = []
+    if step == 'peer-craft':
+        dispatch = row['craftDispatch']
+        require(dispatch, callbackBound=True)
+        control = dispatch['controlType']
+        ensure(control in ('NC_CraftActionPanel', 'ISWidgetHandCraftControl'), 'unsupported native craft control')
+        # Neat Crafting passes the exact source containers to the handcraft
+        # action; the native control first picks up this recipe's ingredient.
+        # Mod presence alone cannot identify the active control (toggle/fallback).
+        if control == 'ISWidgetHandCraftControl':
+            craft_transfers = [(phase['craftInputId'], 'crate4', 'client2')]
     expected = {
         'peer-transfer': [(phase['transferId'], 'crate1', 'client2'), (phase['transferId'], 'client2', 'crate2')],
         'peer-replace': [(phase['replacementSourceId'], 'crate3', 'client2'), (phase['replacementId'], 'client2', 'crate3')],
-        'peer-craft': [(phase['craftInputId'], 'crate4', 'client2')],
+        'peer-craft': craft_transfers,
         'hidden-loot': [(phase['quickId'], 'crate5', 'client1')],
     }[step]
     ensure([(a['id'], a['source'], a['destination']) for a in transfers] == expected, 'native transfer batch changed item/order/endpoint')

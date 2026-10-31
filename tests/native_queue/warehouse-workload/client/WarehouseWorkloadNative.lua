@@ -103,11 +103,18 @@ function N.craft(run)
  assert(selectedId,'native recipe data omitted the declared input ID')
  local owner=panel.craftActionPanel or panel.recipePanel and panel.recipePanel.craftControl
  assert(owner,'installed native craft control absent')
- local button=owner.craftButton or owner.buttonCraft;assert(button and button.target==owner and type(button.onclick)=='function','installed craft button binding differs')
- if owner.quantityInput then owner.quantityInput:setText('1');owner:updateCraftAction()
+ local controlType,button,callback
+ if NC_CraftActionPanel and getmetatable(owner)==NC_CraftActionPanel then
+  controlType='NC_CraftActionPanel';button=owner.craftButton;callback=NC_CraftActionPanel.onCraftButtonClick
+ elseif ISWidgetHandCraftControl and getmetatable(owner)==ISWidgetHandCraftControl then
+  controlType='ISWidgetHandCraftControl';button=owner.buttonCraft;callback=ISWidgetHandCraftControl.onButtonClick
+ else error('unsupported installed craft control')end
+ assert(button and button.target==owner and type(callback)=='function'and button.onclick==callback
+  and owner[controlType=='NC_CraftActionPanel'and'onCraftButtonClick'or'onButtonClick']==callback,'installed craft button binding differs')
+ if controlType=='NC_CraftActionPanel'then owner.quantityInput:setText('1');owner:updateCraftAction()
  else owner:setCraftQuantity(1);owner:prerender()end
  assert(not player:isTimedActionInstant(),'native action timing is instant')
- run.craftDispatch={inputId=input:getID(),source='crate4',nativeMaterials=true,recipe='OpenHotdogPack',outputType='Base.Hotdog_single',outputCount=4,recipeTime=recipe:getTime(player),nativeDuration=recipe:getTime(player)*5,callback=tostring(button.onclick)}
+ run.craftDispatch={inputId=input:getID(),source='crate4',nativeMaterials=true,recipe='OpenHotdogPack',outputType='Base.Hotdog_single',outputCount=4,recipeTime=recipe:getTime(player),nativeDuration=recipe:getTime(player)*5,controlType=controlType,callbackBound=true,callback=tostring(button.onclick)}
  button:forceClick();N.observe(run)
  local count=0;for action,record in pairs(run.actions)do if record.step==run.step and action.Type=='ISHandcraftAction'then
   count=count+1;assert(action.craftRecipe==recipe and action:getDuration()==recipe:getTime(player)*5,'native OpenHotdogPack duration/recipe changed')
@@ -142,19 +149,46 @@ function N.hide(run)
  local snapshot=N.hidden(run)
  assert(not snapshot.visible and snapshot.rowsPending,'hidden native details did not enter deferred state');return snapshot
 end
-function N.reopen(run,preOpen)
- -- Selection is deliberately after the pre-open membership proof. Opening or
- -- selecting a button may perform native discovery and cannot prove propagation.
- assert(preOpen and preOpen.nativeAggregate and sameIds(preOpen.actualIds,preOpen.expectedIds)
-  and sameIds(preOpen.actualIds,N.ids(N.aggregate(run.player))),'pre-open native aggregate proof missing or changed')
- local loot=getPlayerLoot(run.player:getPlayerNum());local before=N.hidden(run);loot:setVisible(true)
- local selectedKind=run.step=='hidden-loot'and'crate5'or'aggregate'
- local target=selectedKind=='crate5'and run.state.stores[5]or N.aggregate(run.player);local button
+local function reopenButton(loot,target)
+ local button
  for _,entry in ipairs(loot.backpacks or {})do if entry.inventory==target then assert(not button,'duplicate native reopen target button');button=entry end end
  assert(button and button.target==loot and type(button.onclick)=='function','intended native reopen target button unavailable')
+ return button
+end
+local function holdDeadline(loot)
+ if not loot.forceSelectedContainer then return nil end
+ local value=loot.forceSelectedContainerTime
+ assert(type(value)=='number'and value==value and value>-math.huge and value<math.huge,'native transfer container hold deadline unavailable')
+ return value
+end
+function N.reopenReady(run)
+ local loot=getPlayerLoot(run.player:getPlayerNum())
+ local deadline=holdDeadline(loot)
+ local target=run.step=='hidden-loot'and run.state.stores[5]or N.aggregate(run.player)
+ -- Transfer actions hold their physical container while turning. Native
+ -- refreshBackpacks honours that hold even after an explicit button click.
+ -- Wait hidden for natural expiry instead of cancelling the native hold.
+ return not deadline or loot.forceSelectedContainer==target or deadline<=getTimestampMs()
+end
+function N.reopen(run,preOpen)
+ -- Preserve the raw hidden cache observation before visibility/click can run
+ -- discovery. Remote physical replicas can legitimately precede this UI cache.
+ local observed=N.aggregateObservation(run)
+ assert(preOpen and preOpen.nativeAggregate and preOpen.fresh==observed.fresh
+  and sameIds(preOpen.actualIds,observed.actualIds)and sameIds(preOpen.expectedIds,observed.expectedIds)
+  and sameIds(preOpen.discoveredSlots,observed.discoveredSlots),'pre-open native aggregate observation missing or changed')
+ assert(N.reopenReady(run),'native reopen still held by a transfer container')
+ local loot=getPlayerLoot(run.player:getPlayerNum());local before=N.hidden(run);loot:setVisible(true)
+ local selectedKind=run.step=='hidden-loot'and'crate5'or'aggregate'
+ local target=selectedKind=='crate5'and run.state.stores[5]or N.aggregate(run.player);local button=reopenButton(loot,target)
  local callback=button.onclick;callback(button.target,button)
- assert(button.onclick==callback and button.inventory==target,'native reopen target callback/binding changed')
+ -- Native selectContainer refreshes backpacks: the pool can rebind this button
+ -- to another inventory, and BC installs a fresh onclick closure per rebuild.
+ -- Validate the live target binding rather than retaining the old UI object's
+ -- lifetime as part of the selection contract.
+ reopenButton(loot,target)
  assert(loot.inventory==target and loot.inventoryPane.inventory==target,'native reopen selected another container')
+ local postProof=assert(N.aggregateProof(run),'native reopened aggregate differs from physical discovered containers')
  local pane=loot.inventoryPane;local pending=loot.toolkitRefreshState
  assert(not pending or not pending.rowsPending and not pending.countPending and not pending.tooltipsPending,'native reopen left pending presentation')
  local physical={};for i=0,pane.inventory:getItems():size()-1 do local item=pane.inventory:getItems():get(i);physical[item:getID()]=item end
@@ -189,14 +223,18 @@ function N.reopen(run,preOpen)
  local count=luautils.countItemsRecursive({luautils.findRootInventory(pane.inventory)})
  assert(loot.totalItems==count,'native reopened title count differs')
  if before.rowsPending then assert(nativeBuilds(pane)>before.nativeBuilds,'native reopen did not run the installed class row builder')end
- return {nativeRows=true,selectedBound=true,selectedKind=selectedKind,rowIds=actual,containerIds=expected,totalItems=loot.totalItems,expectedTotal=count,groups=groups,before=before,after=N.hidden(run)}
+ return {nativeRows=true,selectedBound=true,selectedKind=selectedKind,rowIds=actual,containerIds=expected,totalItems=loot.totalItems,expectedTotal=count,groups=groups,before=before,after=N.hidden(run)},postProof
 end
 function N.diagnostics(run)
  local loot=getPlayerLoot(run.player:getPlayerNum());local pane=loot.inventoryPane;local refresh=loot.toolkitRefreshState or {}
+ local deadline=holdDeadline(loot)
  local row={nativeRefreshCount=nativeBuilds(pane),visible=loot:getIsVisible(),rowsPending=refresh.rowsPending==true,
   countPending=refresh.countPending==true,tooltipsPending=refresh.tooltipsPending==true,
   selectedType=pane.inventory and pane.inventory:getType(),selectedIds=pane.inventory and N.ids(pane.inventory)or {},
   aggregateIds=N.ids(N.aggregate(run.player)),paneClass=tostring(getmetatable(pane).Type),
+  forceSelectedType=loot.forceSelectedContainer and loot.forceSelectedContainer:getType(),
+  forceSelectedIds=loot.forceSelectedContainer and N.ids(loot.forceSelectedContainer)or {},
+  forceSelectedRemainingMs=deadline and math.max(0,deadline-getTimestampMs())or 0,
   classRefresh=tostring(getmetatable(pane).refreshContainer),paneRefresh=tostring(pane.refreshContainer),buttons={}}
  for i,button in ipairs(loot.backpacks or {})do local container=button.inventory;local slot
   for j,owned in ipairs(run.state.stores)do if container==owned then slot=j end end
@@ -204,7 +242,7 @@ function N.diagnostics(run)
  end
  return row
 end
-function N.aggregateProof(run)
+local function observeAggregate(run)
  local loot=getPlayerLoot(run.player:getPlayerNum());local physical={};local slots={};local expected={}
  for _,button in ipairs(loot.backpacks or {})do
   for i,container in ipairs(run.state.stores)do if button.inventory==container and not physical[container]then
@@ -213,14 +251,23 @@ function N.aggregateProof(run)
   end end
  end
  local aggregate=N.aggregate(run.player);local actual=N.ids(aggregate);local expectedIds=sortedKeys(expected)
- if not sameIds(actual,expectedIds)then return nil end
+ table.sort(slots)
+ return {nativeAggregate=true,actualIds=actual,expectedIds=expectedIds,discoveredSlots=slots,fresh=sameIds(actual,expectedIds)},physical
+end
+function N.aggregateObservation(run)
+ local observation=observeAggregate(run);return observation
+end
+function N.aggregateProof(run)
+ local observation,physical=observeAggregate(run)
+ if not observation.fresh then return nil end
+ local aggregate=N.aggregate(run.player)
  local identities={}
  for i=0,aggregate:getItems():size()-1 do local item=aggregate:getItems():get(i);local id=item:getID()
   assert(physical[item:getContainer()],'native aggregate item lost its physical discovered source')
   local meta=assert(Model.item(item));identities[#identities+1]={id=id,key=meta.key,cat=meta.cat}
  end
- table.sort(slots);table.sort(identities,function(a,b)return a.id<b.id end)
- return {nativeAggregate=true,actualIds=actual,expectedIds=expectedIds,discoveredSlots=slots,identities=identities}
+ table.sort(identities,function(a,b)return a.id<b.id end)
+ observation.identities=identities;return observation
 end
 function N.quick(run)
  local loot=getPlayerLoot(run.player:getPlayerNum());assert(not loot:getIsVisible(),'quick transfer requires the observer loot page hidden')

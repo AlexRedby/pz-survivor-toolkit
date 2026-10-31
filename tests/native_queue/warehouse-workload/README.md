@@ -8,10 +8,17 @@ crafting UI. Client1 observes with loot hidden, walks away and back during the
 transfer, then invokes the installed quick-transfer button callback while hidden.
 
 Each step requires server-confirmed item IDs/endpoints and both clients' own
-visibility projections. The checks compare the cached proximity aggregate before
-reopening, then native rows, counts and categories after reopening. Cleanup checks
+visibility projections. The checks record the cached proximity aggregate before reopening without
+requiring an unused hidden cache to refresh. They require authoritative physical
+replicas before opening, then fresh aggregate identities, native rows, counts
+and categories after the installed reopen callback. No fixture refresh is added
+to manufacture convergence. Cleanup checks
 original items/equipment, UI/options, player placement and removal of only owned
-items and crates. Abort cleanup waits for both native action queues to drain.
+items and crates. The craft receipt binds the actual control and callback: Neat
+Crafting consumes directly from source containers; the native control first
+queues an ingredient pickup. Selection alone does not identify the active
+control because its toggle or dependency fallback can restore vanilla. Abort
+cleanup waits for both native action queues to drain.
 
 Use the current complete pack and prepared Java Patches. The config contains
 `mp_host: true`, `patch_jar` and any explicit `mod_sources`; no imported world or

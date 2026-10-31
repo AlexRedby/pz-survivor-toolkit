@@ -87,11 +87,38 @@ local diagnostic=N.diagnostics(run)
 assert(diagnostic.aggregateIds[1]==2 and diagnostic.buttons[2].ownedSlot==1 and diagnostic.buttons[2].itemIds[1]==2)
 assert(stats.rows==beforeDiagnostic.rows and stats.discoveries==beforeDiagnostic.discoveries and Pane.refreshContainer==beforeDiagnostic.callback and pane.refreshContainer==beforeDiagnostic.gate,'wait diagnostic mutated native discovery or callback ownership')
 -- A native movement/transfer may auto-select a physical crate. The reopen
--- callback selects the intended aggregate only after its freshness proof.
+-- callback selects the intended aggregate after recording its raw cache state.
 loot.inventory=source;pane.inventory=source
 local selectionBefore=selections
 local reopened=N.reopen(run,assert(N.aggregateProof(run)));assert(reopened.nativeRows and reopened.rowIds[1]==2 and reopened.totalItems==1)
 assert(selections==selectionBefore+1 and reopened.selectedBound and reopened.selectedKind=='aggregate'and loot.inventory==aggregate and pane.inventory==aggregate,'reopen did not use the installed aggregate button callback')
+-- Remote physical replication need not emit a discovery event. Record a stale
+-- hidden cache without touching it; the actual setVisible flush must discover
+-- current physical contents before a successful UI/aggregate receipt.
+do
+ N.hide(run);aggregate.values={old}
+ local before={rows=stats.rows,discoveries=stats.discoveries,selections=selections}
+ local observation=N.aggregateObservation(run)
+ assert(observation.nativeAggregate and not observation.fresh and observation.actualIds[1]==1 and observation.expectedIds[1]==2 and observation.discoveredSlots[1]==1,'stale hidden cache observation lost raw or physical IDs')
+ assert(not N.aggregateProof(run),'strict aggregate proof accepted a stale hidden cache')
+ assert(stats.rows==before.rows and stats.discoveries==before.discoveries and selections==before.selections and not loot.visible,'cache observation performed discovery or exposed hidden UI')
+ local ui,proof=N.reopen(run,observation)
+ assert(ui.rowIds[1]==2 and proof.fresh and proof.actualIds[1]==2 and proof.identities[1].id==2 and stats.discoveries>before.discoveries,'actual opening failed to publish current rows and strict post-open aggregate proof')
+ -- Even fresh-looking old rows matching the stale cache cannot pass when
+ -- discovery itself leaves that cache behind the physical inventory.
+ N.hide(run);aggregate.values={old};observation=N.aggregateObservation(run)
+ local nativeRefresh=Page.refreshBackpacks
+ Page.refreshBackpacks=function(self)local result=nativeRefresh(self);aggregate.values={old};return result end
+ local accepted,problem=pcall(N.reopen,run,observation)
+ assert(not accepted and tostring(problem):find('native reopened aggregate differs',1,true),'stale post-open aggregate was accepted')
+ Page.refreshBackpacks=nativeRefresh;N.hide(run);N.reopen(run,N.aggregateObservation(run))
+ -- A cached observation cannot be reused after physical membership changes.
+ N.hide(run);observation=N.aggregateObservation(run);source.values={old}
+ local beforeSelections=selections
+ accepted,problem=pcall(N.reopen,run,observation)
+ assert(not accepted and tostring(problem):find('pre-open native aggregate observation',1,true)and selections==beforeSelections and not loot.visible,'changed physical IDs passed the pre-open observation guard')
+ source.values={replacement};N.reopen(run,N.aggregateObservation(run))
+end
 local category=reopened.groups[1]
 assert(category.category=='FirstAid'and category.groupCategory=='BCMappedFirstAid'and category.expectedGroupCategory=='BCMappedFirstAid','raw identity was conflated with the installed BC row category')
 assert(category.itemCategories[1].id==2 and category.itemCategories[1].rawCategory=='FirstAid'and category.itemCategories[1].modelCategory=='FirstAid'and category.itemCategories[1].resolvedCategory=='BCMappedFirstAid')
@@ -100,6 +127,77 @@ language='RU';N.hide(run);reopened=N.reopen(run,assert(N.aggregateProof(run)))
 assert(reopened.groups[1].category=='FirstAid'and reopened.groups[1].groupCategory=='BCMappedFirstAid'and reopened.groups[1].rawLocalizedCategory=='RU:IGUI_ItemCat_FirstAid','locale changed physical/resolved category identity')
 language='EN'
 assert(not reopened.after.rowsPending and stats.rows>initialRows,'native setVisible callback failed to flush fresh rows')
+-- Native selectContainer ends in refreshBackpacks. Its button pool can assign
+-- the clicked object to another inventory; BC also creates a new onclick
+-- closure on every addContainerButton, even when that object keeps its slot.
+do
+ local nativeClick,nativeRefresh=Page.onBackpackClick,Page.refreshBackpacks
+ local rebuilds=0;local dispatch
+ local function liveClick()return function(owner,button)Page.onBackpackClick(owner,button)end end
+ Page.refreshBackpacks=function(self)
+  local result=nativeRefresh(self)
+  local first,second=self.backpacks[1],self.backpacks[2]
+  first.inventory,second.inventory=second.inventory,first.inventory
+  first.onclick,second.onclick=liveClick(),liveClick()
+  rebuilds=rebuilds+1;return result
+ end
+ Page.onBackpackClick=function(self,button)
+  dispatch={button=button,inventory=button.inventory,callback=button.onclick,rebuilds=rebuilds}
+  nativeClick(self,button);self:refreshBackpacks()
+ end
+ for _,step in ipairs({'initial','hidden-loot'})do
+  run.step=step;run.state.stores[5]=source;N.hide(run)
+  local target=step=='hidden-loot'and source or aggregate;local beforeSelections=selections
+  local result=N.reopen(run,assert(N.aggregateProof(run)))
+  assert(rebuilds==dispatch.rebuilds+1 and selections==beforeSelections+1 and dispatch.inventory==target,'reopen did not dispatch the exact native rebuilding callback once')
+  assert(dispatch.button.inventory~=target and dispatch.button.onclick~=dispatch.callback,'regression did not exercise native button recycling and closure replacement')
+  assert(result.selectedBound and result.rowIds[1]==2 and loot.inventory==target and pane.inventory==target,'native rebuild lost the exact selected container or row identity')
+ end
+ -- A real callback that selects another container still fails, even if the
+ -- clicked object is rebound during its normal native rebuild.
+ run.step='initial';N.hide(run)
+ Page.onBackpackClick=function(self)nativeClick(self,{inventory=source});self:refreshBackpacks()end
+ local accepted,problem=pcall(N.reopen,run,assert(N.aggregateProof(run)))
+ assert(not accepted and tostring(problem):find('native reopen selected another container',1,true),'button recycling hid a wrong page/pane selection')
+ Page.onBackpackClick,Page.refreshBackpacks=nativeClick,nativeRefresh
+ aggregateButton.inventory,sourceButton.inventory=aggregate,source
+ aggregateButton.onclick,sourceButton.onclick=liveClick(),liveClick()
+ loot.backpacks={aggregateButton,sourceButton};N.hide(run);N.reopen(run,assert(N.aggregateProof(run)))
+end
+-- Native transfers renew a one-second container hold while turning. Reopening
+-- waits hidden for natural expiry; it neither cancels the hold nor invokes a
+-- callback that native refreshBackpacks would immediately override.
+do
+ local nativeRefresh=Page.refreshBackpacks
+ Page.refreshBackpacks=function(self)
+  if self.forceSelectedContainer then
+   if self.forceSelectedContainerTime>clock then
+    self.inventory=self.forceSelectedContainer;self.inventoryPane.inventory=self.forceSelectedContainer
+   else self.forceSelectedContainer=nil end
+  end
+  return nativeRefresh(self)
+ end
+ run.step='peer-transfer';loot.forceSelectedContainer=source;loot.forceSelectedContainerTime=clock+1000;N.hide(run)
+ local before={rows=stats.rows,discoveries=stats.discoveries,selections=selections}
+ assert(not N.reopenReady(run),'active native transfer hold was ignored')
+ for _,invalid in ipairs({false,0/0,math.huge,-math.huge})do
+  loot.forceSelectedContainerTime=invalid
+  assert(not pcall(N.reopenReady,run),'invalid native hold deadline was accepted')
+ end
+ loot.forceSelectedContainerTime=nil;assert(not pcall(N.reopenReady,run),'absent native hold deadline was accepted')
+ loot.forceSelectedContainerTime=clock+1000
+ local diag=N.diagnostics(run)
+ assert(diag.forceSelectedIds[1]==2 and diag.forceSelectedRemainingMs==1000,'native hold diagnostic omitted its physical identity or deadline')
+ local accepted,problem=pcall(N.reopen,run,assert(N.aggregateProof(run)))
+ assert(not accepted and tostring(problem):find('native reopen still held by a transfer container',1,true),'conflicting native hold reached the reopen callback')
+ assert(not loot.visible and loot.forceSelectedContainer==source and stats.rows==before.rows and stats.discoveries==before.discoveries and selections==before.selections,'native hold wait mutated hidden presentation, discovery, or selection')
+ clock=clock+999;assert(not N.reopenReady(run),'native hold expired early')
+ clock=clock+1;assert(N.reopenReady(run),'expired native hold blocked reopening')
+ local result=N.reopen(run,assert(N.aggregateProof(run)))
+ assert(result.selectedBound and result.rowIds[1]==2 and loot.inventory==aggregate and pane.inventory==aggregate,'post-transfer reopen failed exact selection after native hold expiry')
+ assert(not loot.forceSelectedContainer,'fixture bypassed natural native hold cleanup')
+ Page.refreshBackpacks=nativeRefresh;run.step='initial'
+end
 -- Stale rendered identity remains an error even when counts match.
 N.hide(run);local raw=Pane.refreshContainer
 Pane.refreshContainer=function(self)raw(self);self.itemslist={{name='stale',cat=old.cat,items={old,old},count=2}}end
@@ -114,10 +212,10 @@ for _,wrong in ipairs({'WrongCategory','RU:IGUI_ItemCat_FirstAid'})do
  assert(not accepted and tostring(problem):find('observedGroup=',1,true)and tostring(problem):find('resolvedCategory=BCMappedFirstAid',1,true),'wrong group category passed or omitted raw diagnostic values')
  Pane.refreshContainer=raw;loot:setVisible(false);loot:refreshBackpacks();N.reopen(run,assert(N.aggregateProof(run)))
 end
--- Reopening cannot manufacture a missing pre-open propagation proof, and an
+-- Reopening cannot manufacture a missing pre-open observation, and an
 -- unavailable or foreign target callback cannot produce a successful receipt.
 N.hide(run);local selectionBefore=selections
-assert(not pcall(N.reopen,run,nil)and selections==selectionBefore,'reopen selected before receiving the pre-open aggregate proof')
+assert(not pcall(N.reopen,run,nil)and selections==selectionBefore,'reopen selected before receiving the pre-open aggregate observation')
 loot.backpacks={sourceButton}
 assert(not pcall(N.reopen,run,assert(N.aggregateProof(run)))and selections==selectionBefore,'unavailable aggregate button was accepted')
 loot.backpacks={aggregateButton,sourceButton};aggregateButton.target={}
@@ -159,6 +257,7 @@ queue.queue={action(item(900),source,root)};assert(not pcall(N.observe,run),'for
 -- observes the native recipe duration multiplier without editing action costs.
 queue.queue={};queue.current=nil;run.actions={};run.records={};run.step='peer-craft'
 local pack=item(4,'HotdogPack');local craftSource=container({pack});run.state.stores[4]=craftSource
+run.state.stores[2]=container({});run.state.stores[3]=container({})
 run.phase.craftInputId=4;run.owned[4]=true;run.phase.mode='clean'
 local recipe={getInputs=function()return list({{}})end,getName=function()return 'OpenHotdogPack'end,getTime=function()return 15 end}
 getScriptManager=function()return {getCraftRecipe=function(_,name)assert(name=='OpenHotdogPack');return recipe end}end
@@ -167,25 +266,54 @@ local logic={setContainers=function(_,v)usedContainers=v end,setRecipe=function(
  setManualSelectInputs=function(_,v)assert(v)end,clearManualInputs=function()end,
  setManualInputsFor=function(_,input,v)chosen=v:get(0);return true end,canPerformCurrentRecipe=function()return true end,
  getRecipeData=function()return {getAllInputItems=function()return list({pack})end}end}
-local owner={quantityInput={setText=function(_,v)assert(v=='1')end},updateCraftAction=function()end}
+NC_CraftActionPanel={Type='NC_CraftActionPanel'};NC_CraftActionPanel.__index=NC_CraftActionPanel
+ISWidgetHandCraftControl={Type='ISWidgetHandCraftControl'};ISWidgetHandCraftControl.__index=ISWidgetHandCraftControl
+local owner=setmetatable({quantityInput={setText=function(_,v)assert(v=='1')end},updateCraftAction=function()end},NC_CraftActionPanel)
 local button={target=owner};owner.craftButton=button
-button.onclick=function()
+local function dispatchCraft(selectedOwner,selectedButton,pickup)
+ assert(selectedOwner==owner and selectedButton==button,'craft button lost exact callback target/argument')
  dispatchCount=dispatchCount+1
  local native=action(nil,nil,nil,'ISHandcraftAction',recipe:getTime(player)*5)
  native.craftRecipe=recipe;native.onStartTarget=owner;native.onCompleteTarget=owner
- queue.queue={native};queue.current=native
+ queue.queue=pickup and {action(pack,craftSource,root),native}or {native};queue.current=queue.queue[1]
 end
-function button:forceClick()self.onclick()end
+NC_CraftActionPanel.onCraftButtonClick=function(target,selected)dispatchCraft(target,selected,false)end
+ISWidgetHandCraftControl.onButtonClick=function(target,selected)dispatchCraft(target,selected,true)end
+button.onclick=NC_CraftActionPanel.onCraftButtonClick
+function button:forceClick()self.onclick(self.target,self)end
 local window={HandCraftPanel={logic=logic,craftActionPanel=owner},close=function()end};local opened=false
 ISEntityUI={GetWindowInstance=function()return opened and window or nil end,OpenHandcraftWindow=function()opened=true end}
 ISInventoryPaneContextMenu={getContainers=function()return list({root,craftSource})end}
 N.craft(run)
 assert(chosen==pack and usedContainers:get(1)==craftSource and dispatchCount==1,'native material picker lost exact shared input')
 assert(run.craftDispatch.nativeDuration==75 and run.craftDispatch.recipeTime==15 and run.records[1].duration==75,'native craft baseline was accelerated')
+assert(run.craftDispatch.controlType=='NC_CraftActionPanel'and run.craftDispatch.callbackBound and #run.records==1,'Neat control receipt did not bind the actual direct-crafting consumer')
 queue.queue={};queue.current=nil;N.closeCraft(run);opened=false
 local missing=ISInventoryPaneContextMenu.getContainers;ISInventoryPaneContextMenu.getContainers=function()return list({root})end
 assert(not pcall(N.craft,run)and dispatchCount==1,'absent native source still dispatched crafting')
 ISInventoryPaneContextMenu.getContainers=missing;opened=false
+-- Class names and function-shaped callbacks do not establish an installed
+-- consumer. Reject impostors and binding changes before the button can run.
+for _,fault in ipairs({'class','callback','owner-method','target'})do
+ local originalMetatable=getmetatable(owner);local originalCallback=button.onclick
+ if fault=='class'then setmetatable(owner,{Type='NC_CraftActionPanel',__index=NC_CraftActionPanel})
+ elseif fault=='callback'then button.onclick=function()dispatchCount=dispatchCount+1 end
+ elseif fault=='owner-method'then owner.onCraftButtonClick=function()end
+ else button.target={}end
+ local accepted,problem=pcall(N.craft,run)
+ assert(not accepted and dispatchCount==1,'impostor craft class or changed callback binding dispatched: '..fault)
+ assert(tostring(problem):find(fault=='class'and'unsupported installed craft control'or'installed craft button binding differs',1,true),'craft consumer rejection omitted its failed contract')
+ setmetatable(owner,originalMetatable);button.onclick=originalCallback;button.target=owner;owner.onCraftButtonClick=nil;opened=false
+end
+-- The vanilla owner uses a different installed button and native pickup path.
+setmetatable(owner,ISWidgetHandCraftControl);owner.craftButton=nil;owner.buttonCraft=button;owner.quantityInput=nil
+owner.setCraftQuantity=function(_,v)assert(v==1)end;owner.prerender=function()end
+button.onclick=ISWidgetHandCraftControl.onButtonClick
+window.HandCraftPanel=nil;window.handCraftPanel={logic=logic,recipePanel={craftControl=owner}}
+run.actions={};run.records={};N.craft(run)
+assert(dispatchCount==2 and run.craftDispatch.controlType=='ISWidgetHandCraftControl'and run.craftDispatch.callbackBound,'vanilla control receipt was inferred from the Neat-style owner fields')
+assert(#run.records==2 and run.records[1].type=='ISInventoryTransferAction'and run.records[1].id==4 and run.records[1].source=='crate4'and run.records[1].destination=='client1'and run.records[2].type=='ISHandcraftAction','supported native control lost its exact pickup/craft actions')
+queue.queue={};queue.current=nil;N.closeCraft(run);opened=false
 
 -- A later legitimate decorator remains owned by that installer. Counter
 -- observations never replace or restore a foreign callback.
@@ -230,7 +358,7 @@ root.values={originalItem};assert(U.originalProof(player,originals).equipment)
 -- replicas and BC discovery are independent readiness conditions: the setup
 -- refresh must wait for replicas, occur once, and never retry a stale aggregate.
 do
- local stamp,nativeReady,aggregateReady=0,false,false
+ local stamp,nativeReady,aggregateReady=0,false,false;local holdUntil=0
  local tick,command;local sent,emitted,hides,reopens={},{},0,0
  local waits,waitLines={},{}
  local fixturePlayer={getUsername=function()return 'client1'end,getPlayerNum=function()return 0 end,getSquare=function()return {}end}
@@ -243,16 +371,23 @@ do
  local phase={token='session',index=1,mode='clean',phaseToken='session:1',items={},replacementSourceId=1,craftInputId=2}
  local ids={token='session',actorOrigin={x=10,y=10,z=0},crates={}}
  local state={stores={}}
+ local function nativeSnapshot()return {token=phase.token,phaseToken=phase.phaseToken,crates={},rootIds={client1={}},items={}}end
  local fakeF={module='WarehouseWorkloadTest',modes={'clean','vanilla'},emit=function(event,row)emitted[#emitted+1]={event=event,row=row}end,
   resolve=function()return state end,attachPhase=function(_,p)phase=p end,
-  native=function()if nativeReady then return {}end end,expected=function(_,step)return {[77]=step..':expected'}end,snapshot=function()return {source='native snapshot'}end,
+  native=function()if nativeReady then return nativeSnapshot()end end,expected=function(_,step)return {[77]=step..':expected'}end,snapshot=function()return {source='native snapshot'}end,
   find=function()return nil,nil,0 end}
  local hidden={visible=false,rowsPending=true,nativeBuilds=0}
- local fakeN={idle=function()return true end,selectAggregate=function()return true end,startObservation=function()return {}end,
+ local function aggregateObservation()return {nativeAggregate=true,actualIds=aggregateReady and {1,2}or {1},expectedIds={1,2},discoveredSlots={},fresh=aggregateReady}end
+ local fakeN={sameIds=N.sameIds,idle=function()return true end,selectAggregate=function()return true end,startObservation=function()return {}end,
   observe=function()end,hidden=function()return hidden end,closeCraft=function()end,
-  aggregateProof=function()if aggregateReady then return {actualIds={1,2}}end end,
+  aggregateObservation=aggregateObservation,
+  aggregateProof=function()if aggregateReady then return aggregateObservation()end end,
+  reopenReady=function()return stamp>=holdUntil end,
   hide=function()assert(nativeReady,'setup discovery preceded native seed replicas');hides=hides+1;return hidden end,
-  reopen=function()reopens=reopens+1;return {rowIds={1,2}}end,
+  reopen=function(_,before)
+   assert(before and before.fresh==aggregateReady,'runner discarded or changed the raw pre-open aggregate observation')
+   reopens=reopens+1;aggregateReady=true;return {rowIds={2}},aggregateObservation()
+  end,
   diagnostics=function()return {}end}
  local fakeU={pages=function()return pages end,normalize=function()end,save=function()return {}end,
   original=function()return {}end,originalProof=function()return {}end,position=function()return {}end,
@@ -260,7 +395,7 @@ do
  local modules={QueueTestSelection={kind='mp',cases={'peer-edits'}},WarehouseWorkloadFixture=fakeF,
   WarehouseWorkloadUI=fakeU,WarehouseWorkloadNative=fakeN,QueueHealthEvents={encode=function(row)waits[#waits+1]=row;return '{}'end}}
  local env=setmetatable({require=function(name)return assert(modules[name],name)end,
-  print=function(line)assert(line:find('[WAREHOUSE_WORKLOAD_WAIT] ',1,true)==1,'unexpected runner failure or accepted diagnostic lifecycle');waitLines[#waitLines+1]=line end,
+  print=function(line)assert(line:find('[WAREHOUSE_WORKLOAD_WAIT] ',1,true)==1,'unexpected runner failure or accepted diagnostic lifecycle: '..line);waitLines[#waitLines+1]=line end,
   getTimestampMs=function()return stamp end,isClient=function()return true end,isIngameState=function()return true end,
   getPlayer=function()return fixturePlayer end,getPlayerInventory=function()return pages[1]end,getPlayerLoot=function()return pages[2]end,
   sendClientCommand=function(module,name,args)sent[#sent+1]={command=name,args=args}end,
@@ -294,9 +429,10 @@ do
   else
    -- The same once-only diagnostic resets for a working peer step. Native
    -- replicas can be current while the pre-open BC aggregate remains stale.
-   nativeReady=true;aggregateReady=false
+   -- Only the native selection hold delays opening; cache freshness cannot.
+   nativeReady=true;aggregateReady=false;holdUntil=stamp+20000;phase.replacementId=2
    command(fakeF.module,'Go',{phase=phase,step='peer-replace',actor='client2'});step()
-   command(fakeF.module,'Observed',{phase=phase,step='peer-replace',receipt={}})
+   command(fakeF.module,'Observed',{phase=phase,step='peer-replace',receipt=nativeSnapshot()})
    local hiddenBefore,openBefore,eventsBefore=hides,reopens,#emitted
    stamp=stamp+5000;step()
    assert(#waits==3 and waits[3].step=='peer-replace'and waits[3].nativeReady and not waits[3].aggregateReady,'working observer wait omitted native/aggregate distinction or dispatch latch reset')
@@ -304,6 +440,12 @@ do
    for _=1,3 do step()end
    assert(#waits==3 and #waitLines==3,'working wait diagnostic repeated')
    assert(hides==hiddenBefore and reopens==openBefore and #emitted==eventsBefore,'working diagnostic refreshed, selected, reopened, or emitted accepted evidence')
+   holdUntil=stamp+600
+   step();step()
+   assert(hides==hiddenBefore and reopens==openBefore and #emitted==eventsBefore,'runner reopened or emitted accepted evidence while the native transfer hold remained active')
+   step()
+   assert(stamp==holdUntil and reopens==openBefore+1 and hides==hiddenBefore+1 and sent[#sent].command=='Seen','runner did not reopen and acknowledge after native hold expiry')
+   local snapshot=emitted[#emitted];assert(snapshot.event=='SNAPSHOT'and not snapshot.row.aggregateBefore.fresh and snapshot.row.aggregateBefore.actualIds[1]==1 and snapshot.row.aggregateProof.fresh and snapshot.row.aggregateProof.actualIds[2]==2,'working runner required a fresh hidden cache or mislabeled pre/post aggregate evidence')
   end
  end
 end

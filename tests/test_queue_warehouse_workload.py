@@ -97,21 +97,25 @@ def fixture():
                     records[actor].append(dict(type='ISHandcraftAction',step=step,recipe='OpenHotdogPack',duration=75,
                                               started=True,progressSamples=5,sourceMethodsUnchanged=True))
                     extra['craftDispatch']=dict(recipe='OpenHotdogPack',inputId=offset+4,source='crate4',nativeMaterials=True,
+                                                controlType='ISWidgetHandCraftControl',callbackBound=True,
                                                 outputType='Base.Hotdog_single',outputCount=4,recipeTime=15,nativeDuration=75)
                 if step=='hidden-loot':
                     extra['quick']=dict(installedButton=True,hiddenBefore=True,hiddenAfter=True,id=offset+5,source='crate5',destination='client1',
                                         callback='ISInventoryPage.onTransferByNameClick' if mode=='clean' else 'ISInventoryPage.lootAll')
                 emit(actor,'ACTIONS',dict(current,records=records[actor],**extra))
             for role in ('client1','client2'):
-                hidden=dict(visible=False,rowsPending=True,countPending=True,tooltipsPending=True,nativeBuilds=2)
+                aggregate_ids=[key for key,where in places.items() if where.startswith('crate')]
+                hidden=dict(visible=False,rowsPending=True,countPending=True,tooltipsPending=True,nativeBuilds=2,
+                            rawAggregateIds=aggregate_ids)
                 walker=dict(progress=True,returned=True,target=descriptors['walkTarget'],from_=None)
                 walker['from']=position()['target'];walker['reached']=position(9.5)['actual'];del walker['from_']
                 emit(role,'HIDDEN',dict(current,before=copy.deepcopy(hidden),after=hidden,samples=5,elapsedMs=100,walker=walker))
-                aggregate_ids=[key for key,where in places.items() if where.startswith('crate')]
                 displayed=[key for key,where in places.items() if where=='crate5'] if step=='hidden-loot' else aggregate_ids
                 meta={item['id']:item for item in phase['items']}
                 aggregate=dict(nativeAggregate=True,actualIds=aggregate_ids,expectedIds=aggregate_ids,discoveredSlots=list(range(1,13)),
                                identities=[dict(id=key,key=meta[key]['key'],cat=meta[key]['cat']) for key in aggregate_ids])
+                aggregate_before=dict(nativeAggregate=True,actualIds=aggregate_ids,expectedIds=aggregate_ids,
+                                      discoveredSlots=list(range(1,13)),fresh=True)
                 reopen=dict(nativeRows=True,selectedBound=True,selectedKind='crate5' if step=='hidden-loot' else 'aggregate',
                             rowIds=displayed,containerIds=displayed,totalItems=len(displayed),expectedTotal=len(displayed),
                             groups=[dict(name=meta[key]['key'],category=meta[key]['cat'],ids=[key],count=1,nativeCount=2,
@@ -119,7 +123,7 @@ def fixture():
                                          itemCategories=[dict(id=key,rawCategory=meta[key]['cat'],modelCategory=meta[key]['cat'],resolvedCategory='BCMapped')]) for key in displayed],
                             before=hidden,after=dict(visible=True,rowsPending=False,countPending=False,tooltipsPending=False,nativeBuilds=3))
                 emit(role,'SNAPSHOT',dict(current,native=snapshot(phase,places,role),authority=authority if step!='initial' else None,
-                                        reopen=reopen,aggregateProof=aggregate))
+                                        reopen=reopen,aggregateBefore=aggregate_before,aggregateProof=aggregate))
                 emit('server','SEEN',dict(current,observer=role))
         release=dict(token=token,index=index,phaseToken=phase['phaseToken'],removedIds=list(places),consumedIds=[offset+4],
                      ownedRemaining=0,originalRootIds=originals,snapshot=snapshot(None,{},'server'))
@@ -176,6 +180,52 @@ class WarehouseWorkloadTests(unittest.TestCase):
 
     def test_complete_independent_two_mode_proof_passes(self):
         self.assertEqual(self.result(fixture())['issues'],[])
+
+    def test_actual_craft_control_requires_its_exact_native_transfer_path(self):
+        neat=fixture()
+        for event,row in neat['client2']:
+            if event=='ACTIONS' and row['step']=='peer-craft':
+                row['craftDispatch']['controlType']='NC_CraftActionPanel'
+                row['records']=[action for action in row['records']
+                                if not(action['step']=='peer-craft' and action['type']=='ISInventoryTransferAction')]
+        result=self.result(neat)
+        self.assertEqual(result['issues'],[])
+        self.assertEqual(result['evidence']['craft_controls'],['NC_CraftActionPanel'])
+        wrong_native=copy.deepcopy(neat)
+        find(wrong_native,'client2','ACTIONS','peer-craft')['craftDispatch']['controlType']='ISWidgetHandCraftControl'
+        self.assertTrue(self.result(wrong_native)['issues'],'native control must retain its pickup')
+        wrong_neat=fixture()
+        find(wrong_neat,'client2','ACTIONS','peer-craft')['craftDispatch']['controlType']='NC_CraftActionPanel'
+        self.assertTrue(self.result(wrong_neat)['issues'],'Neat control must not invent a pickup')
+        for mutation in (lambda row:row['craftDispatch'].update(controlType='UnknownControl'),
+                         lambda row:row['craftDispatch'].update(callbackBound=False),
+                         lambda row:row['craftDispatch'].pop('controlType')):
+            rows=fixture();mutation(find(rows,'client2','ACTIONS','peer-craft'))
+            with self.subTest(mutation=mutation):self.assertTrue(self.result(rows)['issues'])
+
+    def test_hidden_cache_lag_is_observed_but_reopen_must_be_fresh(self):
+        rows=fixture()
+        row=find(rows,'client1','SNAPSHOT','peer-replace')
+        before=row['aggregateBefore']
+        old_ids=[103 if key==113 else key for key in before['actualIds']]
+        before.update(actualIds=list(old_ids),fresh=False)
+        row['reopen']['before']['rawAggregateIds']=list(old_ids)
+        find(rows,'client1','HIDDEN','peer-replace')['after']['rawAggregateIds']=list(old_ids)
+        self.assertEqual(self.result(rows)['issues'],[])
+        # Reading an old unused cache is permitted; presenting that cache after
+        # the real reopen lifecycle is still a failure even with equal counts.
+        stale=copy.deepcopy(rows)
+        find(stale,'client1','SNAPSHOT','peer-replace')['aggregateProof']['actualIds']=old_ids
+        self.assertTrue(self.result(stale)['issues'])
+        for mutation in (
+            lambda r:find(r,'client1','SNAPSHOT','peer-replace')['aggregateBefore'].update(fresh=True),
+            lambda r:find(r,'client1','SNAPSHOT','peer-replace')['aggregateBefore']['expectedIds'].pop(),
+            lambda r:find(r,'client1','SNAPSHOT','peer-replace')['aggregateBefore']['actualIds'].append(999),
+            lambda r:find(r,'client1','HIDDEN','peer-replace')['after']['rawAggregateIds'].pop(),
+            lambda r:find(r,'client1','SNAPSHOT','peer-replace')['reopen']['before']['rawAggregateIds'].pop(),
+        ):
+            changed=copy.deepcopy(rows);mutation(changed)
+            with self.subTest(mutation=mutation):self.assertTrue(self.result(changed)['issues'])
 
     def test_authority_and_projection_reject_wrong_or_foreign_items(self):
         mutations=[lambda r:find(r,'server','AUTHORITY','peer-transfer')['snapshot']['crates'][1]['itemIds'].pop(),

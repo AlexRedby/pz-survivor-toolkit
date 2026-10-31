@@ -88,16 +88,19 @@ local function checkProjection(native,authority)
  local expectedCount=0;for _ in pairs(physical)do expectedCount=expectedCount+1 end;assert(n==expectedCount,'replicated projected item count differs from authority')
 end
 local function observerReady(authority)
- local native=F.native(R.state,R.step);local aggregate=N.aggregateProof(R.run)
- readinessWait(native,aggregate);if not native or not aggregate then return end
+ local native=F.native(R.state,R.step);local aggregateBefore=N.aggregateObservation(R.run)
+ readinessWait(native,aggregateBefore.fresh and aggregateBefore or nil);if not native then return end
  checkProjection(native,authority)
  if R.role=='client1'and R.step=='peer-transfer'then
   local target=R.ids.actorOrigin;local pos=U.position(R.player)
   if not N.idle(R.player)or math.floor(pos.x)~=target.x or math.floor(pos.y)~=target.y then return end
   assert(R.walked and R.walked.progress,'hidden observer never walked through the native aisle')
  end
+ -- Native transfers briefly hold their destination tab. Keep the loot hidden
+ -- and let that hold expire before asking the real button to select a view.
+ if not N.reopenReady(R.run)then return end
  if R.hidden then sampleHidden();emit('HIDDEN',{before=R.hidden,after=R.lastHidden,samples=R.hiddenSamples,elapsedMs=now()-R.hiddenAt,walker=R.walked})end
- local reopened=N.reopen(R.run,aggregate)
+ local reopened,aggregate=N.reopen(R.run,aggregateBefore)
  if R.step=='peer-replace'and R.role=='client1'then
   local ids={};for _,id in ipairs(reopened.rowIds)do ids[id]=true end
   assert(ids[R.phase.replacementId]and not ids[R.phase.replacementSourceId],'same-count peer replacement retained stale native rows')
@@ -106,7 +109,7 @@ local function observerReady(authority)
   local ids={};for _,id in ipairs(reopened.rowIds)do ids[id]=true end
   assert(not ids[R.phase.craftInputId],'consumed native crafting input survived reopened rows')
  end
- emit('SNAPSHOT',{native=native,authority=authority,reopen=reopened,aggregateProof=aggregate})
+ emit('SNAPSHOT',{native=native,authority=authority,reopen=reopened,aggregateBefore=aggregateBefore,aggregateProof=aggregate})
  if R.step=='peer-craft'then N.closeCraft(R.run)end
  if R.step=='peer-craft'then
   -- Bind the exact physical quick source while visible; its callback must later
