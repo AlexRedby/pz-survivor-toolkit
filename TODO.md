@@ -47,7 +47,7 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ## Physical progression block
 
-- [ ] Verify the selected Standardized Experience Fitness/Strength-only configuration with the complete B42.21 pack in isolated SP/menu Host saves: actual run/carry/melee/tree XP, unchanged other skills, Host settings after reopening/reloading, and joining-client synchronization.
+- [ ] Verify Standardized Experience with all seven features at upstream defaults and the complete B42.21 pack in isolated SP/menu Host saves: actual physical/movement XP, Aiming and Reloading replacement rewards below/above level 5, Host settings after reopening/reloading, and joining-client synchronization.
 
 ## Inventory, crafting, food and storage block
 
