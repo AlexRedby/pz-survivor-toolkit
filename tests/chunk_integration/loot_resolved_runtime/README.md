@@ -39,7 +39,7 @@ For the current reviewed optimizer classpath, add
 `--optimizer-archive "$PZ_OPTIMIZER_ARCHIVE"`. The builder validates the exact
 archive digest/size and all 888 selected resource digests against the current
 `tests/optimizer_trial/candidate-manifest.json`, plus its native guards/absences.
-The reviewed differing overlaps with this fixture's 71-class closure are
+The reviewed differing overlaps with this fixture's 72-class closure are
 `zombie/Lua/LuaEventManager.class` and `zombie/iso/IsoGridSquare.class`. The latter
 retains the reviewed Region-zone lookup and literal `General` fallback used by
 the source-square cases. Any additional differing overlap rejects the build. The receipt retains unchanged `native_hashes`, effective `runtime_hashes`,
@@ -303,3 +303,13 @@ build/headless pass proves admission, native RNG isolation and parser/cleanup
 contracts only; it does not execute these initialized-game cases. No runtime
 adoption, gameplay settings change or end-to-end stutter claim follows from a
 successful bank.
+
+The terminal reload field proof checks the stored native `actualWeight` separately
+from the public getter. For the pinned normal ComboItem, native
+`getActualWeightUnmodded()` returns zero when its actual display name equals its
+full type (an untranslated probe), otherwise `max(actualWeight, 0)`. Each
+`RELOAD_ITEM` row binds both values, this name predicate, script identity and
+initialization to an exact roll path/index/item ID. The stored field must contain
+the reloaded script weight; a zero public weight never substitutes for that proof.
+The constructor-only headless check covers both name branches without claiming
+factory or initialized-world coverage.

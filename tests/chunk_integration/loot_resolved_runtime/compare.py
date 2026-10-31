@@ -170,7 +170,7 @@ def semantic_rows(lines, bank):
     rows = [line.rstrip("\n").split("\t") for line in lines[1:]]
     if any(len(row) != 3 for row in rows): raise ValueError("Malformed semantic row")
     names = BANK_CASES[bank]
-    allowed = {"SETTINGS", "SOURCE", "REBIND", "RESTORE", "REPLACEMENT", "RELOAD_INPUT", "RELOAD", "RELOAD_ROLL", "RELOAD_RESTORE", "DISPOSE"}
+    allowed = {"SETTINGS", "SOURCE", "REBIND", "RESTORE", "REPLACEMENT", "RELOAD_INPUT", "RELOAD", "RELOAD_ITEM", "RELOAD_ROLL", "RELOAD_RESTORE", "DISPOSE"}
     extra = [(kind, case, detail) for kind, case, detail in rows if kind in allowed]
     expected_extra_cases = set(names[8:] if bank == "semantics" else names if bank == "reload" else ())
     if any(case not in expected_extra_cases for _, case, _ in extra):
@@ -267,12 +267,30 @@ def semantic_rows(lines, bank):
                 if (len(items) != count or len(containers) != 1 or int(_props(containers[0].split(":",1)[1])["count"]) != count
                         or any(":Base.PZLootRuntimeProbe:" not in d or ":initialized=true" not in d for d in items)):
                     raise ValueError("Reload roll not bound to actual native items")
+            factory = [(i,_props(d)) for i,(k,d) in enumerate(selected) if k == "RELOAD_ITEM"]
+            if [(v.get("phase"),v.get("path"),v.get("index")) for _,v in factory] != [
+                    ("after",path,str(index)) for path in ("direct","bag") for index in range(2)]:
+                raise ValueError("Reload factory field cardinality/order differs")
+            for position,value in factory:
+                if (set(value) != {"phase","path","index","fulltype","id","stored_weight","public_weight","display_fallback","script_identity","initialized"}
+                        or value["fulltype"] != "Base.PZLootRuntimeProbe" or value["stored_weight"] != _float_bits(.125)
+                        or value["display_fallback"] not in ("true","false") or value["script_identity"] != "true" or value["initialized"] != "true"
+                        or value["public_weight"] != ("0" if value["display_fallback"] == "true" else _float_bits(.125))):
+                    raise ValueError("Reload native stored/public weight proof differs")
+                prefix="after-"+value["path"]+"/"+value["index"]+":"
+                bound=[d for k,d in selected if k == "ITEM" and d.startswith(prefix)
+                       and ":Base.PZLootRuntimeProbe:id="+value["id"]+":" in d]
+                roll_position=next(i for i,(k,d) in enumerate(selected) if k == "RELOAD_ROLL"
+                                   and _props(d).get("phase") == "after" and _props(d).get("path") == value["path"])
+                reload_position=next(i for i,(k,_) in enumerate(selected) if k == "RELOAD")
+                if len(bound)!=1 or not reload_position < position < roll_position:
+                    raise ValueError("Reload field witness is not bound to its native item/roll")
             kinds = [k for k,_ in selected]
             positions = [i for i,k in enumerate(kinds) if k == "RELOAD_ROLL"]
             if not positions[1] < kinds.index("RELOAD_INPUT") < kinds.index("RELOAD") < positions[2] < positions[3] < kinds.index("RELOAD_RESTORE"):
                 raise ValueError("Reload before/API/after/restore ordering differs")
             if (sum(k == "DISPOSE" for k in kinds) != 4 or not kinds.index("RELOAD_INPUT") < kinds.index("RELOAD") < kinds.index("RELOAD_RESTORE")
-                    or any(k in allowed-{"SETTINGS","RELOAD_INPUT","RELOAD","RELOAD_ROLL","RELOAD_RESTORE","DISPOSE"} for k in kinds)):
+                    or any(k in allowed-{"SETTINGS","RELOAD_INPUT","RELOAD","RELOAD_ITEM","RELOAD_ROLL","RELOAD_RESTORE","DISPOSE"} for k in kinds)):
                 raise ValueError("Reload terminal/restore/disposal ordering differs")
             proofs[case] = dict(inputs=inp, rolls=rolls)
     return proofs
