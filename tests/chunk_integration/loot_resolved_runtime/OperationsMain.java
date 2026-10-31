@@ -22,7 +22,8 @@ import zombie.scripting.objects.*;
 
 /** Two bounded whole-roll groups. All proof, serialization and disposal occur outside clocks. */
 final class OperationsMain {
-    private static final int WARMUP=64, PAIRS=24, LIMIT=4096;
+    private static final int WARMUP=256, PAIRS=24, MEASURED_SEED_BASE=64, GROUP_SEED_STRIDE=32, LIMIT=4096;
+    private static final String SCHEDULE_VERSION="fixed-warmup256-measured-seed64-v1";
     private static String status="not-run",failure="";
     private static long windowId;
     private static final StringBuilder rows=new StringBuilder("phase\tgroup\tpair\torder\tvariant\tbatch\twindow_id\twall_start\twall_end\tcpu_start\tcpu_end\tallocated\tselections\tcreated\tincrements\tnull_returns\tdigest\tnext_rng\tcreated_types\tcold_types\tcleanup\n");
@@ -240,7 +241,10 @@ final class OperationsMain {
             input("spawn_with_admission","empty");
             input("source_region",ItemPickerJava.getSquareRegion(square));input("source_x",square.x);input("source_y",square.y);input("source_z",square.z);input("owner_thread_id",Thread.currentThread().threadId());
             input("container_identity","detached-no-native-world-object-id");input("native_identity_logger","unchanged-diagnostics-included-if-emitted");
-            input("direct_public_calls",(WARMUP+PAIRS)*2*2);input("bag_public_calls",(WARMUP+PAIRS)*2*4);
+            input("schedule_version",SCHEDULE_VERSION);input("warmup_pairs",WARMUP);input("measured_pairs",PAIRS);
+            input("measured_seed_base",MEASURED_SEED_BASE);input("group_seed_stride",GROUP_SEED_STRIDE);
+            input("first_measured_window",WARMUP*groups.length*2);input("total_windows",(WARMUP+PAIRS)*groups.length*2);
+            for(Group group:groups)input(group.bag?"bag_public_calls":"direct_public_calls",(WARMUP+PAIRS)*2*group.batch);
             input("direct_arguments","density:0f;character:null;boolean:true;room:null");input("bag_arguments","character:null");
             // API-only warmup, not repeated loot; cannot establish compilation of any loot path.
             long sink=0;for(int i=0;i<20_000;i++)sink+=bean.getCurrentThreadCpuTime()+System.nanoTime()+bean.getThreadAllocatedBytes(Thread.currentThread().threadId());input("timer_warmup_sink",sink);
@@ -248,7 +252,7 @@ final class OperationsMain {
             Bootstrap.beginRng();rng=true;
             for(String phase:new String[]{"warmup","measure"})for(int pair=0;pair<(phase.equals("warmup")?WARMUP:PAIRS);pair++)for(int position=0;position<groups.length;position++){
                 int index=(position+pair)%groups.length;Group group=groups[index];boolean first=((pair+index)&1)!=0;String order=first?"BA":"AB";
-                int seed=(phase.equals("warmup")?pair:pair+64)+index*32;
+                int seed=(phase.equals("warmup")?pair:pair+MEASURED_SEED_BASE)+index*GROUP_SEED_STRIDE;
                 Result a=half(group,square,phase,pair,order,first,seed,bean),b=half(group,square,phase,pair,order,!first,seed,bean);
                 require(a.equals(b),"paired-native-resolved-outputs-RNG-observers-differ");
             }

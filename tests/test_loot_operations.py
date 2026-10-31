@@ -3,6 +3,7 @@ import copy
 import csv
 import hashlib
 import importlib.util
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -33,11 +34,51 @@ class OperationsBoundary(unittest.TestCase):
   source=self.cache/'mods'/A.MOD/'42/media/lua/shared/ZZLootResolvedRuntime.lua';source.write_text((F/'ZZLootResolvedRuntime.lua').read_text())
   with self.assertRaisesRegex(ValueError,'Lua differs'):A.bundle(self.cache,self.selection)
   source.write_text((F/'operations-bridge.lua').read_text())
-  for key,value in [('warmup_pairs',63),('storage_limit',0),('semantic_accept_observer',True),('headless_operations_checks',False)]:
+  for key,value in [('warmup_pairs',64),('storage_limit',0),('semantic_accept_observer',True),('headless_operations_checks',False)]:
    saved=copy.deepcopy(self.fixture.receipt);self.fixture.receipt['operations_contract'][key]=value;self.fixture.mod(self.cache)
    source.write_text((F/'operations-bridge.lua').read_text())
    with self.subTest(key=key),self.assertRaisesRegex(ValueError,'paired window'):A.bundle(self.cache,self.selection)
    self.fixture.receipt=saved
+
+ def test_fixed_final_screen_preserves_measured_schedule_and_java_contract(self):
+  self.assertEqual((O.CONTRACT['warmup_pairs'],O.CONTRACT['measured_pairs'],O.CONTRACT['measured_seed_base'],O.CONTRACT['group_seed_stride']),(256,24,64,32))
+  self.assertEqual((O.CONTRACT['first_measured_window'],O.CONTRACT['total_windows']),(1024,1120))
+  self.assertEqual(list(O.CONTRACT['public_calls'].values()),[1120,2240])
+  source=(F/'OperationsMain.java').read_text()
+  for java,key in [('WARMUP','warmup_pairs'),('PAIRS','measured_pairs'),('MEASURED_SEED_BASE','measured_seed_base'),('GROUP_SEED_STRIDE','group_seed_stride')]:
+   self.assertEqual(int(re.search(r'\b'+java+r'=(\d+)',source).group(1)),O.CONTRACT[key])
+  self.assertIn('SCHEDULE_VERSION="'+O.CONTRACT['schedule_version']+'"',source)
+  # Protect the measured workload independently from the increased warmup count.
+  self.assertIn('(phase.equals("warmup")?pair:pair+MEASURED_SEED_BASE)+index*GROUP_SEED_STRIDE',source)
+  rows,_=self.receipts();measured=rows[1024:];expected=[]
+  for pair in range(24):
+   for position in range(2):
+    index=(position+pair)%2;first=bool((pair+index)&1)
+    for candidate in (first,not first):
+     expected.append((list(O.GROUPS)[index],str(pair),'BA' if first else 'AB','resolved' if candidate else 'native',64+pair+index*32))
+  actual=[(r['group'],r['pair'],r['order'],r['variant'],O.CONTRACT['measured_seed_base']+int(r['pair'])+list(O.GROUPS).index(r['group'])*O.CONTRACT['group_seed_stride']) for r in measured]
+  self.assertEqual(actual,expected)
+  self.assertEqual([r['window_id'] for r in measured],list(map(str,range(1024,1120))))
+
+ def test_old_count_or_changed_measured_seed_contract_is_rejected(self):
+  self.receipts();path=self.cache/'loot-operations-inputs.properties';original=path.read_text()
+  for key,value in [('warmup_pairs','64'),('measured_seed_base','256'),('first_measured_window','256'),('total_windows','352'),('schedule_version','owner-window-paired-roll-v1')]:
+   prior=str(O.CONTRACT[key]);path.write_text(original.replace(key+'='+prior+'\n',key+'='+value+'\n'))
+   with self.subTest(key=key),self.assertRaisesRegex(ValueError,'fixed schedule'):O.report(self.cache)
+  path.write_text(original)
+  rows,events=self.receipts()
+  old=rows[:256]+rows[1024:]
+  self.write('loot-operations.tsv',O.FIELDS,old)
+  with self.assertRaisesRegex(ValueError,'missing/duplicate'):O.report(self.cache)
+
+ def test_old_measurement_offset_is_now_retained_warmup_not_capture_span(self):
+  _,events=self.receipts()
+  marker=next(e for e in events if e['window_id']=='256')
+  event=self.jit_event('jdk.Compilation',int(marker['end_ns'])+1,int(marker['end_ns'])+2,99)
+  self.write('loot-operations-events.tsv',O.EVENT_FIELDS,events+[event]);result=O.report(self.cache)
+  self.assertTrue(result['timing_qualified']);self.assertEqual(len(result['events']['jit_events']),4)
+  self.assertEqual(result['events']['capture_span']['start_ns'],2024000)
+  self.assertEqual(len(result['windows']),1120)
 
  def write(self,name,fields,rows):
   with (self.cache/name).open('w',newline='') as out:
@@ -45,7 +86,7 @@ class OperationsBoundary(unittest.TestCase):
 
  def receipts(self):
   rows=[];markers=[];warm=set()
-  for phase,count in [('warmup',64),('measure',24)]:
+  for phase,count in [('warmup',O.CONTRACT['warmup_pairs']),('measure',O.CONTRACT['measured_pairs'])]:
    for pair in range(count):
     for position in range(2):
      index=(position+pair)%2;group=list(O.GROUPS)[index];first=bool((pair+index)&1);order='BA' if first else 'AB'
@@ -61,7 +102,8 @@ class OperationsBoundary(unittest.TestCase):
    comp.append(dict(kind='jdk.Compilation',start_ns=str(10+i*10),end_ns=str(15+i*10),thread_id='2',method=name,level='4',compile_id=str(i+1),window_id='-1',detail='success=true,osr=false'))
   events=[sentinel,*comp,*markers]
   self.write('loot-operations.tsv',O.FIELDS,rows);self.write('loot-operations-events.tsv',O.EVENT_FIELDS,events)
-  inputs=dict(owner_thread_id='123',spawn_with_admission='empty',callback_admission=O.CONTRACT['callback_admission'],callback_binding='native:ItemCodeOnCreate.onCreateGasMask(Clothing)',ordinary_options='{medicalLootNew=1.0,mementoLootNew=1.0,rollsMultiplier=1.0}',empty1000_cpu_ns='100',empty1000_wall_ns='50',container_identity='detached-no-native-world-object-id',native_identity_logger='unchanged-diagnostics-included-if-emitted',direct_public_calls='352',bag_public_calls='704')
+  inputs=dict(owner_thread_id='123',spawn_with_admission='empty',callback_admission=O.CONTRACT['callback_admission'],callback_binding='native:ItemCodeOnCreate.onCreateGasMask(Clothing)',ordinary_options='{medicalLootNew=1.0,mementoLootNew=1.0,rollsMultiplier=1.0}',empty1000_cpu_ns='100',empty1000_wall_ns='50',container_identity='detached-no-native-world-object-id',native_identity_logger='unchanged-diagnostics-included-if-emitted',direct_public_calls=str(O.CONTRACT['public_calls']['direct-CrateTools-main']),bag_public_calls=str(O.CONTRACT['public_calls']['bag-FirstAidKit-with-native-junk']))
+  inputs.update({k:str(O.CONTRACT[k]) for k in ('schedule_version','warmup_pairs','measured_pairs','measured_seed_base','group_seed_stride','first_measured_window','total_windows')})
   inputs['ordinary_options_sha256']=hashlib.sha256(inputs['ordinary_options'].encode()).hexdigest()
   for group in O.GROUPS:
    inputs[group+'.graph']='rolls:40800000;Nails:3f800000;';inputs[group+'.sha256']=hashlib.sha256(inputs[group+'.graph'].encode()).hexdigest()
@@ -75,7 +117,7 @@ class OperationsBoundary(unittest.TestCase):
   h=self.fixture.receipt['native_hashes']['zombie/inventory/ItemPickerJava.class']
   activation.write_text(text.replace('output='+h,'output='+'1'*64)+'operations_factory_definitions=1\noperations_spawner_definitions=1\n')
   status=self.cache/'loot-resolved-runtime-status.txt'
-  status.write_text(status.read_text().replace('mode=control','mode=candidate').replace('bank=base','bank=operations').replace('cases=8','cases=2')+'operations_scope='+O.CONTRACT['scope']+'\nwindows=352\n')
+  status.write_text(status.read_text().replace('mode=control','mode=candidate').replace('bank=base','bank=operations').replace('cases=8','cases=2')+'operations_scope='+O.CONTRACT['scope']+'\nwindows='+str(O.CONTRACT['total_windows'])+'\n')
   self.fixture.write(self.root/'runtime.json',__import__('json').dumps({'project':str(N.ROOT),'roles':{'client1':{'cache':str(self.cache)}}}))
   self.fixture.write(self.root/'execution.json',__import__('json').dumps({'processes':{'client1':{'pid':100}}}))
   auth=dict(role='client1',case='operations',runtimeMode='candidate',status='complete',cases=2,source='sp-main-tick')
@@ -90,7 +132,7 @@ class OperationsBoundary(unittest.TestCase):
 
  def test_balanced_complete_same_jvm_raw_pairs_and_literal_compilation(self):
   self.receipts();result=O.report(self.cache)
-  self.assertTrue(result['timing_qualified']);self.assertEqual(len(result['windows']),352)
+  self.assertTrue(result['timing_qualified']);self.assertEqual(len(result['windows']),O.CONTRACT['total_windows'])
   for group in O.GROUPS:self.assertEqual(result['summary'][group]['positive_pairs'],24)
   self.assertIn('universal C2',result['events']['note'])
 
@@ -114,7 +156,7 @@ class OperationsBoundary(unittest.TestCase):
 
  def test_native_jfr_thread_sentinel_is_retained_without_weakening_owner_identity(self):
   _,original=self.receipts()
-  start=next(e for e in original if e['window_id']=='256')['start_ns']
+  start=next(e for e in original if e['window_id']==str(O.CONTRACT['first_measured_window']))['start_ns']
   event=dict(kind='jdk.GCPhasePause',start_ns=start,end_ns=start,thread_id='-1',method='none',level='0',compile_id='0',window_id='-1',detail='none')
   self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+[event]);result=O.report(self.cache)
   self.assertTrue(result['timing_qualified'])
@@ -126,11 +168,11 @@ class OperationsBoundary(unittest.TestCase):
   with self.assertRaises(ValueError):O.report(self.cache)
 
  def test_compile_deopt_data_loss_osr_and_cold_type_never_hidden(self):
-  rows,original=self.receipts();start=next(e for e in original if e['window_id']=='256')['start_ns']
+  rows,original=self.receipts();start=next(e for e in original if e['window_id']==str(O.CONTRACT['first_measured_window']))['start_ns']
   for kind,method,detail in [('jdk.Compilation','test.M()V','success=true,osr=false'),('jdk.Deoptimization','test.M()V','reason=unstable,action=reinterpret'),('jdk.DataLoss','none','amount=1')]:
    event=dict(kind=kind,start_ns=start,end_ns=start,thread_id='2',method=method,level='4',compile_id='10',window_id='-1',detail=detail)
    self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+[event]);result=O.report(self.cache)
-   self.assertFalse(result['timing_qualified']);self.assertEqual(len(result['windows']),352)
+   self.assertFalse(result['timing_qualified']);self.assertEqual(len(result['windows']),O.CONTRACT['total_windows'])
   events=copy.deepcopy(original)
   for e in events:
    if e['kind']=='jdk.Compilation':e['detail']='success=true,osr=true'
@@ -148,21 +190,21 @@ class OperationsBoundary(unittest.TestCase):
 
  def test_all_jit_in_cleanup_gaps_invalidates_whole_capture_without_dropping_windows(self):
   _,original=self.receipts()
-  a=next(e for e in original if e['window_id']=='256');b=next(e for e in original if e['window_id']=='257')
+  a=next(e for e in original if e['window_id']==str(O.CONTRACT['first_measured_window']));b=next(e for e in original if e['window_id']==str(O.CONTRACT['first_measured_window']+1))
   start=int(a['end_ns'])+1;end=int(b['start_ns'])-1
   for kind in ('jdk.Compilation','jdk.Deoptimization'):
    event=self.jit_event(kind,start,end,99)
    self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+[event]);result=O.report(self.cache)
    self.assertEqual(result['capture'],'paired-equivalent');self.assertFalse(result['timing_qualified'])
-   self.assertEqual(len(result['windows']),352);self.assertEqual(result['jit_contaminated_windows'],[])
+   self.assertEqual(len(result['windows']),O.CONTRACT['total_windows']);self.assertEqual(result['jit_contaminated_windows'],[])
    self.assertEqual(len(result['events']['capture_span_jit_events']),1)
    self.assertEqual(result['events']['capture_span_jit_events'][0]['method'],'unrelated.Method()V')
    self.assertEqual(len(result['events']['jit_events']),4)
 
  def test_capture_span_boundaries_are_inclusive_and_outside_events_are_retained(self):
   _,original=self.receipts()
-  first=int(next(e for e in original if e['window_id']=='256')['start_ns'])
-  last=int(next(e for e in original if e['window_id']=='351')['end_ns'])
+  first=int(next(e for e in original if e['window_id']==str(O.CONTRACT['first_measured_window']))['start_ns'])
+  last=int(next(e for e in original if e['window_id']==str(O.CONTRACT['total_windows']-1))['end_ns'])
   for at,qualified in [(first,False),(last,False),(first-1,True),(last+1,True)]:
    event=self.jit_event('jdk.Deoptimization',at,at,99)
    self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+[event]);result=O.report(self.cache)
@@ -221,7 +263,7 @@ class OperationsBoundary(unittest.TestCase):
    self.write('loot-operations.tsv',O.FIELDS,rows);result=O.report(self.cache)
    with self.subTest(all_miss=all_miss):
     self.assertEqual(result['capture'],'paired-equivalent');self.assertFalse(result['timing_qualified'])
-    self.assertEqual(len(result['windows']),352)
+    self.assertEqual(len(result['windows']),O.CONTRACT['total_windows'])
     self.assertFalse(result['successful_insertion_evidence'][group]['creation_and_insertion_observed'])
     self.assertEqual(result['successful_insertion_evidence'][group]['inserted_pairs'],[])
     self.assertEqual(result['successful_insertion_evidence'][group]['created_pairs'],[] if all_miss else list(range(24)))
@@ -235,7 +277,7 @@ class OperationsBoundary(unittest.TestCase):
 
  def test_input_graph_callback_and_identity_diagnostic_scope_cannot_disappear(self):
   self.receipts();path=self.cache/'loot-operations-inputs.properties';original=path.read_text()
-  for old,new in [('spawn_with_admission=empty','spawn_with_admission=allowed'),('callback_binding=native:','callback_binding=foreign:'),('container_identity=detached','container_identity=real'),('direct_public_calls=352','direct_public_calls=351'),('ordinary_options_sha256=','ordinary_options_sha256=0')]:
+  for old,new in [('spawn_with_admission=empty','spawn_with_admission=allowed'),('callback_binding=native:','callback_binding=foreign:'),('container_identity=detached','container_identity=real'),('direct_public_calls='+str(O.CONTRACT['public_calls']['direct-CrateTools-main']),'direct_public_calls=351'),('ordinary_options_sha256=','ordinary_options_sha256=0')]:
    path.write_text(original.replace(old,new))
    with self.subTest(old=old),self.assertRaises(ValueError):O.report(self.cache)
 

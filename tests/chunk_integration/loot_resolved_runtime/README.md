@@ -384,8 +384,15 @@ actual output/owned-item fields, IDs, fluids/moddata, following RNG and observer
 trace must match its pair; generated-only entity/queue/counter disposal uses the
 same reviewed native lifecycle outside the clocks.
 
-The bounded schedule has 64 balanced warmup pairs and 24 measured pairs per
-group, rotating AB/BA and group order. One half seeds once and runs its batch;
+The bounded schedule has 256 balanced warmup pairs and 24 measured pairs per
+group, rotating the same AB/BA and group order. Contract
+`fixed-warmup256-measured-seed64-v1` fixes the measured seed base at 64
+(group stride 32), retaining the previous 24 measured inputs after the longer
+warmup. Counts derive from this schedule: first measured window 1024, 1120 total
+halves, 1120 direct calls (batch 2) and 2240 bag calls (batch 4).
+This is one final exploratory warmup screen; an unstable result ends this
+per-roll direction. The iteration count does not promise compilation stability.
+One half seeds once and runs its batch;
 arrays, outputs, proof/digest/RNG reads, logging and cleanup are outside the
 measured public-call loop. Native logging and actual item/callback work remain
 inside. Current-thread CPU and wall timestamps are raw; empty timer baseline is
@@ -396,7 +403,7 @@ Sparse JFR starts during bootstrap, before any real loot invocation. It retains
 an initial sentinel and every warmup/measured owner window; missing history or
 normal recording-chunk rotation cannot silently pass. Same-clock exported JFR
 intervals bind Compilation/Deoptimization/GC/pause/safepoint/data-loss events to
-window IDs. The analyzer retains all 352 halves, requires literal observed normal
+window IDs. The analyzer retains all 1120 halves, requires literal observed normal
 compiled-entry evidence for exact method descriptors and rejects any compilation
 or deoptimization across the entire measured span, including untimed cleanup
 gaps. It uses only the latest observed successful normal entry and rejects a

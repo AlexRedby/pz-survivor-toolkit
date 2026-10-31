@@ -10,6 +10,13 @@ public final class OperationsChecks {
     private static void refused(Runnable work){try{work.run();throw new AssertionError("unsupported operation accepted");}catch(IllegalStateException expected){}}
     private static InventoryItem item(){return new InventoryItem("Base","OperationsGuard","OperationsGuard","Item_None");}
     public static void run() throws Exception {
+        Class<?> driver=Class.forName("toolkit.lootresolved.runtime.OperationsMain");
+        for(var entry:java.util.Map.of("WARMUP",256,"PAIRS",24,"MEASURED_SEED_BASE",64,"GROUP_SEED_STRIDE",32).entrySet()) {
+            var field=driver.getDeclaredField(entry.getKey());field.setAccessible(true);
+            require(field.getInt(null)==entry.getValue(),"fixed schedule differs:"+entry.getKey());
+        }
+        var version=driver.getDeclaredField("SCHEDULE_VERSION");version.setAccessible(true);
+        require(version.get(null).equals("fixed-warmup256-measured-seed64-v1"),"fixed schedule version differs");
         require(!OperationsScope.resolved(),"outside owner candidate");
         OperationsScope.Session owner=OperationsScope.begin(true,2);
         require(!OperationsScope.resolved(),"candidate during setup");OperationsScope.beginWindow();
