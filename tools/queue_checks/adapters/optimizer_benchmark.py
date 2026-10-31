@@ -15,6 +15,7 @@ import optimizer_profile
 # Reviewed native B42.21 inputs for disposable stage-timing hooks only.
 STAGE_PROFILE_INPUTS = {'zombie/GameWindow.class': 'c3a3583923191b6aea23a74e6b05e2b53302bbcded7f89cae930e364a409dfb2',
  'zombie/iso/IsoChunk.class': '5048becc3f46f746686513d4dcadb137e6e11bfd44617075f41923b3db11650a',
+ 'zombie/util/CappedConcurrentQueue.class': 'c8a224cd7ee47b4611adbfc9717411951edc4921f9ce8fe3a14bd8277638c2db',
  'zombie/inventory/ItemPickerJava.class': '5c8cf626e46a52cdbd9d73e9de10766dece3388ee3e4f4d8d071df5e44d68522',
  'se/krka/kahlua/vm/KahluaThread.class': '25f4c0dea91800dcb3fadd3d482ed5f7d5cf17908bf167afd308b85c99856bb6',
  'zombie/iso/fboRenderChunk/FBORenderCell.class': 'd5c46201d60cff36397ee46c56b53dbaee6e26e8733836f27bf56ad871eedf94',
@@ -363,6 +364,12 @@ def stage_metrics(cache):
         'translucent_sort': 'TimSort.doSort-call', 'partial-details-on-throwable': 'included'}
     if any(status.get(key) != value for key, value in required_status.items()):
         raise ValueError('Incomplete/invalid stage profile status or detail boundaries')
+    chunk_details = status.get('chunk_details')
+    if chunk_details is not None and chunk_details != 'invocations-v1':
+        raise ValueError('Invalid chunk detail declaration')
+    if chunk_details is None and any((cache / name).exists() for name in
+                                     ('driving-chunks.csv', 'driving-chunks-status.txt')):
+        raise ValueError('Undeclared chunk detail artifacts')
     tile_details = status.get('tile_details')
     tile_profile = status.get('tile_profile')
     if (tile_details is not None or tile_profile is not None) and (
@@ -448,6 +455,9 @@ def stage_metrics(cache):
         from queue_checks.tile_metrics import tile_metrics
         result['tile_profile'] = tile_profile
         result['tile_timings'] = tile_metrics(cache, result)
+    if chunk_details is not None:
+        from queue_checks.chunk_metrics import chunk_metrics
+        result['chunk_timings'] = chunk_metrics(cache, result)
     return result
 
 

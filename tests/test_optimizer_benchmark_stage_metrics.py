@@ -61,6 +61,24 @@ class StageMetricsTests(unittest.TestCase):
             self.assertEqual(total['detail_wall'][stage]['calls'], 3)
             self.assertAlmostEqual(report['groups']['phase2']['detail_wall'][stage]['inclusive_ms'], nanoseconds / 1e6)
 
+    def test_chunk_declaration_requires_artifacts_and_rejects_unknown_schema(self):
+        self.status = self.status.rstrip() + ' chunk_details=invocations-v1\n'
+        self.write()
+        with self.assertRaisesRegex(ValueError, 'Missing chunk'):
+            benchmark.stage_metrics(self.cache)
+        self.status = self.status.replace('invocations-v1', 'invocations-v2')
+        self.write()
+        with self.assertRaisesRegex(ValueError, 'chunk detail declaration'):
+            benchmark.stage_metrics(self.cache)
+
+    def test_undeclared_chunk_artifacts_cannot_silently_escape_validation(self):
+        for name in ('driving-chunks.csv', 'driving-chunks-status.txt'):
+            path = self.cache / name
+            path.write_text('unvalidated')
+            with self.assertRaisesRegex(ValueError, 'Undeclared chunk'):
+                benchmark.stage_metrics(self.cache)
+            path.unlink()
+
     def test_zero_fog_and_early_return_only_translucent_are_valid(self):
         for row in self.rows:
             for stage in ('fog', 'translucent_merge', 'translucent_sort'):

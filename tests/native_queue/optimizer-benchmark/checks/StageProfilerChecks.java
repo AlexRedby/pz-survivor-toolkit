@@ -118,7 +118,8 @@ public final class StageProfilerChecks {
     private static void recordingChecks(Path cache) throws Exception {
         System.clearProperty("pz.drivingPerf.stageProfile");
         StageProfiler.start(null,null); StageProfiler.frameBegin(1,0,0); StageProfiler.frameEnd();
-        eq(0,StageProfiler.enter(StageProfiler.LOGIC),"default off"); StageProfiler.finish();
+        eq(0,StageProfiler.enter(StageProfiler.LOGIC),"default off");
+        eq(0,StageProfiler.chunkEnter(null),"inactive chunk does not read game object/queue"); StageProfiler.finish();
         System.setProperty("pz.drivingPerf.stageProfile","true");
         System.setProperty("pz.drivingPerf.cachedir",Files.createDirectory(cache.resolve("wrong")).toString());
         boolean rejected=false;
@@ -128,6 +129,7 @@ public final class StageProfilerChecks {
         StageProfiler.start(cache,Thread.currentThread());
         check(StageProfiler.DetailHooks.woven,"real JVM accepted guarded detail bytecode");
         check(!Files.exists(cache.resolve("driving-stages.csv")),"no CSV output during capture");
+        check(!Files.exists(cache.resolve("driving-chunks.csv")),"no chunk output during capture");
         StageProfiler.frameBegin(0,0,0); eq(0,StageProfiler.enter(StageProfiler.LOGIC),"inactive phase");
         StageProfiler.frameBegin(1,2,12.5);
         int logic=StageProfiler.enter(StageProfiler.LOGIC), lua=StageProfiler.enter(StageProfiler.LUA);
@@ -135,6 +137,8 @@ public final class StageProfilerChecks {
         Thread foreign=new Thread(() -> {
             StageProfiler.frameBegin(2,99,99); foreignToken.set(StageProfiler.enter(StageProfiler.CHUNK));
             eq(0,StageProfiler.detailEnter(StageProfiler.FOG),"foreign detail no-op");
+            eq(0,StageProfiler.chunkEnter(null),"foreign chunk does not read game object/queue");
+            StageProfiler.chunkExit(123);
             StageProfiler.detailBegin(StageProfiler.MERGE); StageProfiler.detailEnd(StageProfiler.MERGE);
             StageProfiler.exit(123); StageProfiler.frameEnd(); StageProfiler.swapped(1,2);
         });
@@ -148,10 +152,16 @@ public final class StageProfilerChecks {
         translucent=StageProfiler.detailEnter(StageProfiler.TRANSLUCENT);
         StageProfiler.detailBegin(StageProfiler.MERGE); StageProfiler.detailExit(translucent);
         StageProfiler.exit(lua); StageProfiler.exit(logic); StageProfiler.frameEnd();
-        StageProfiler.frameBegin(2,3,20); int ui=StageProfiler.enter(StageProfiler.UI); StageProfiler.exit(ui); StageProfiler.frameEnd();
+        StageProfiler.frameBegin(2,3,20); int ui=StageProfiler.enter(StageProfiler.UI); StageProfiler.exit(ui);
+        int chunk=StageProfiler.chunkEnter(-2,17,4);
+        int loot=StageProfiler.enter(StageProfiler.LOOT); StageProfiler.exit(loot);
+        StageProfiler.chunkExit(chunk,3);
+        chunk=StageProfiler.chunkEnter(-1,17,3); StageProfiler.chunkExit(chunk,-1);
+        StageProfiler.frameEnd();
         StageProfiler.frameBegin(3,4,45); StageProfiler.frameEnd();
         StageProfiler.frameBegin(3,5,46); int incomplete=StageProfiler.enter(StageProfiler.LUA);
-        StageProfiler.finish(); StageProfiler.exit(incomplete); StageProfiler.frameEnd();
+        int partialChunk=StageProfiler.chunkEnter(0,17,0);
+        StageProfiler.finish(); StageProfiler.chunkExit(partialChunk); StageProfiler.exit(incomplete); StageProfiler.frameEnd();
         List<String> csv=Files.readAllLines(cache.resolve("driving-stages.csv"));
         eq(4,csv.size(),"only complete frames emitted");
         String[] header=csv.getFirst().split(",");
@@ -182,6 +192,29 @@ public final class StageProfilerChecks {
                         +Long.parseLong(fields.get("translucent_sort_inclusive_ns")),"translucent children partition parent");
             } else eq(0,Long.parseLong(fields.get("translucent_total_calls")),"details reset each frame");
         }
+        List<String> chunkCsv=Files.readAllLines(cache.resolve("driving-chunks.csv"));
+        eq(3,chunkCsv.size(),"only two chunks in complete frames exported");
+        String[] chunkColumns=chunkCsv.getFirst().split(",");
+        long chunkWall=0;
+        for (int i=1;i<chunkCsv.size();i++) {
+            String[] values=chunkCsv.get(i).split(",");
+            Map<String,Long> row=new HashMap<>();
+            for (int j=0;j<chunkColumns.length;j++) row.put(chunkColumns[j],Long.parseLong(values[j]));
+            eq(2,row.get("frame_id"),"chunk and frame IDs match");
+            eq(i,row.get("chunk_index"),"committed chunk order");
+            eq(i-3,row.get("wx"),"signed coordinates preserved");
+            eq(1,row.get("depth"),"sequential chunks");
+            chunkWall+=row.get("wall_ns");
+            long partition=0;
+            for (String stage:List.of("logic","render","chunk","loot","lua","tiles","ui"))
+                partition+=row.get(stage+"_exclusive_ns");
+            eq(row.get("wall_ns"),partition,"per-chunk exact partition");
+        }
+        String[] stageValues=csv.get(2).split(",");
+        for (int i=0;i<header.length;i++) if (header[i].equals("chunk_inclusive_ns"))
+            eq(Long.parseLong(stageValues[i]),chunkWall,"chunk rows partition complete-frame chunk time");
+        check(Files.readString(cache.resolve("driving-chunks-status.txt")).contains("omitted_chunks=1"),"partial chunk omitted");
+        check(Files.readString(cache.resolve("driving-stages-status.txt")).contains("chunk_details=invocations-v1"),"chunk details declared");
         List<RecordedEvent> events=RecordingFile.readAllEvents(cache.resolve("driving-stages.jfr"));
         List<RecordedEvent> frames=events.stream().filter(e -> e.getEventType().getName().equals("pz.driving.Frame")).toList();
         List<RecordedEvent> swaps=events.stream().filter(e -> e.getEventType().getName().equals("pz.driving.Swap")).toList();
@@ -207,6 +240,7 @@ public final class StageProfilerChecks {
         check(instrumentation!=null,"--weave requires the real ZombieBuddy javaagent with a disposable config_dir");
         Map<String,String> targets=Map.of(
                 "zombie/inventory/ItemPickerJava","fillContainer(Lzombie/inventory/ItemContainer;Lzombie/characters/IsoPlayer;)V",
+                "zombie/iso/IsoChunk","doLoadGridsquare()V",
                 "zombie/iso/fboRenderChunk/FBORenderCell","RenderTiles(II)V");
         PatchEngine.applyPatches("net.alexredby.drivingperf",StageProfilerChecks.class.getClassLoader());
         Map<String,Boolean> observed=new HashMap<>();
@@ -220,8 +254,9 @@ public final class StageProfilerChecks {
                         return new MethodVisitor(Opcodes.ASM9) {
                             @Override public void visitMethodInsn(int opcode,String owner,String method,String descriptor,boolean itf) {
                                 if (!owner.equals("net/alexredby/drivingperf/StageProfiler")) return;
-                                if (method.equals("enter") && descriptor.equals("(I)I")) calls[0]++;
-                                if (method.equals("exit") && descriptor.equals("(I)V")) calls[1]++;
+                                if ((method.equals("enter") && descriptor.equals("(I)I"))
+                                        || (method.equals("chunkEnter") && descriptor.equals("(Lzombie/iso/IsoChunk;)I"))) calls[0]++;
+                                if ((method.equals("exit") || method.equals("chunkExit")) && descriptor.equals("(I)V")) calls[1]++;
                             }
                         };
                     }
@@ -238,7 +273,7 @@ public final class StageProfilerChecks {
                 check(Boolean.TRUE.equals(observed.get(name)),"No enter/exit woven into exact native method "+name);
             }
         } finally { instrumentation.removeTransformer(observer); }
-        System.out.println("STAGE_PROFILER_NATIVE_WEAVING_PASS targets=2 gameMethodsInvoked=0");
+        System.out.println("STAGE_PROFILER_NATIVE_WEAVING_PASS targets=3 gameMethodsInvoked=0");
     }
     public static void main(String[] args) throws Exception {
         boolean weave=List.of(args).contains("--weave");
