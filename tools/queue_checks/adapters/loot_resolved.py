@@ -22,7 +22,7 @@ DIAGNOSTIC = 'LOOT_RESOLVED_EXPECTED_ACCEPT_ERROR'
 MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit', MOD]
 ROOT = Path(__file__).resolve().parents[3]
 CASE = 'bank'
-BANKS = {'bank': ('base', 8), 'semantics': ('semantics', 12), 'reload': ('reload', 1)}
+BANKS = {'bank': ('base', 8), 'semantics': ('semantics', 12), 'reload': ('reload', 1), 'operations': ('operations', 2)}
 SCRIPT = '42/media/scripts/loot-runtime-probes.txt'
 SEED = 'PZ-Loot-Resolved-42.21'
 WORLD = 'PZDrivingBench-OptimizerTrial-LootResolved'
@@ -37,7 +37,7 @@ def bank(selection):
 
 
 def sandbox(selection):
-    return dict(SANDBOX, **({} if bank(selection)[1] == 'base' else
+    return dict(SANDBOX, **({} if bank(selection)[1] in ('base', 'operations') else
                 {'RollsMultiplier': 1, 'MementoLootNew': 0, 'MedicalLootNew': 1.0}))
 
 
@@ -60,6 +60,8 @@ def validate(s):
             or s['kind'] == 'sp' and o.get('mp_host')
             or any(o.get(k) for k in ('world_template', 'seed_run', 'startup_connection'))):
         raise ValueError('Loot resolved requires fresh exclusive toolkit SP/menu Host, one EN client, explicit mode and font preload')
+    if bank(s)[1] == 'operations' and o.get('loot_runtime_mode') != 'candidate':
+        raise ValueError('Operations requires one candidate artifact containing both native/resolved owner paths')
     source = o.get('mod_sources', {}).get(MOD)
     if not isinstance(source, str) or not Path(source).is_absolute():
         raise ValueError('Loot resolved requires an explicit absolute PZLootResolvedRuntime mod source')
@@ -132,7 +134,7 @@ def bundle(cache, selection, project=ROOT):
     expected = Path(project) / 'tests/chunk_integration/loot_resolved_runtime'
     if _sha(info) != _sha(expected / 'mod.info.template'):
         raise ValueError('Loot runtime metadata differs from current fixture')
-    if _sha(layer / '42/media/lua/shared/ZZLootResolvedRuntime.lua') != _sha(expected / 'ZZLootResolvedRuntime.lua'):
+    if _sha(layer / '42/media/lua/shared/ZZLootResolvedRuntime.lua') != _sha(expected / ('operations-bridge.lua' if selected_bank == 'operations' else 'ZZLootResolvedRuntime.lua')):
         raise ValueError('Loot runtime Lua differs from current fixture')
     values = []
     token = None
@@ -170,7 +172,7 @@ def bundle(cache, selection, project=ROOT):
     if (value.get('sources') != _sources(project, selection) or value.get('native_hashes') != _guards(project)
             or value.get('headless_checks') != ['missing-token', 'already-loaded', 'initial-definition', 'preload']):
         raise ValueError('Foreign/stale loot runtime source or native receipt')
-    expected_scripts = {} if selected_bank == 'base' else {SCRIPT: _sha(expected / 'loot-runtime-probes.txt')}
+    expected_scripts = {} if selected_bank in ('base', 'operations') else {SCRIPT: _sha(expected / 'loot-runtime-probes.txt')}
     if value.get('scripts') != expected_scripts:
         raise ValueError('Loot runtime script receipt differs')
     scripts = layer / '42/media/scripts'
@@ -182,6 +184,11 @@ def bundle(cache, selection, project=ROOT):
     expected_runtime = _runtime_receipt(project, selection, _guards(project))
     if any(key not in value or value[key] != expected for key, expected in expected_runtime.items()):
         raise ValueError('Loot runtime effective optimizer receipt mismatch')
+    if selected_bank == 'operations':
+        if value.get('operations_contract') != _operations(project).CONTRACT:
+            raise ValueError('Operations paired window/callback/observer contract differs')
+    elif 'operations_contract' in value:
+        raise ValueError('Foreign operations contract in semantic bank')
     return token, value
 
 
@@ -293,6 +300,11 @@ def _compare(project):
     return module
 
 
+def _operations(project):
+    spec = importlib.util.spec_from_file_location('_loot_operations_receipts', Path(project) / 'tests/chunk_integration/loot_resolved_runtime/operations_compare.py')
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); return module
+
+
 def _activation(compare, cache, pid, mode, native_hash, resource_profile, manifest_sha, checked, selected_bank):
     value = compare.values(cache / ('loot-resolved-runtime-activation-' + str(pid) + '.txt'))
     if (any(value.get(k) != v for k, v in dict(state='active', mode=mode, bank=selected_bank, pid=str(pid), definitions='1', input=native_hash, resource_profile=resource_profile, optimizer_manifest_sha256=manifest_sha,
@@ -300,6 +312,8 @@ def _activation(compare, cache, pid, mode, native_hash, resource_profile, manife
             or not re.fullmatch('[0-9a-f]{64}', value.get('output', ''))
             or (value['input'] == value['output']) != (mode == 'control')):
         raise ValueError('Missing/failed/PID/profile-mismatched loot activation')
+    if selected_bank == 'operations' and any(value.get(k) != '1' for k in ('operations_factory_definitions','operations_spawner_definitions')):
+        raise ValueError('Missing observed operations observer definitions')
     return value
 
 
@@ -319,7 +333,7 @@ def verify(root, selection, catalog):
                 raise ValueError('Missing/foreign owned Host authority marker')
         elif host_marker.exists() or host_marker.is_symlink():
             raise ValueError('SP must not arm Host authority')
-        compare = _compare(project)
+        compare = _operations(project) if selected_bank == 'operations' else _compare(project)
         mode = selection['options']['loot_runtime_mode']
         authority = 'server' if selection['kind'] == 'mp' else 'client1'
         pid = execution['processes'][authority]['pid']
@@ -347,7 +361,7 @@ def verify(root, selection, catalog):
         text = (root / 'client1-launch.log').read_text(errors='replace')
         auth = (root / (authority + '-launch.log')).read_text(errors='replace')
         finishes = re.findall(r'\[LOOT_RESOLVED_RUNTIME\] FINISH status=(\S+) cases=(\d+) reason=([^\r\n]*)', auth)
-        if finishes != [('complete', str(count), '')] or auth.count(DIAGNOSTIC) != (0 if selected_bank == 'reload' else 1):
+        if finishes != [('complete', str(count), '')] or auth.count(DIAGNOSTIC) != (0 if selected_bank in ('reload', 'operations') else 1):
             raise ValueError('Missing/failed bank terminal or expected protected Lua diagnostic count differs')
         if not complete(selection, 'client1', text):
             raise ValueError('Loot completion missing authority handshake')
@@ -372,10 +386,12 @@ def verify(root, selection, catalog):
                 raise ValueError('Selected Optimized client profile kind/session did not become ready')
             if selection['kind'] == 'mp' and ('[OptimizerTrialProbe] native server resources=' not in auth or 'overlayAbsent=true' not in auth):
                 raise ValueError('Optimizer Host child isolation not proved')
-        evidence = dict(authority_pid=pid, runtime_mode=mode, status=status, activation=activation, client_activation=client_activation,
-                        ordered_rows=len(rows)-1, rng_scope=compare.rng(cache,pid), clock_proofs=compare.clock_rows(rows, selected_bank != 'reload')[1],
-                        bank=selected_bank, semantic_proofs=compare.semantic_rows(rows, selected_bank),
-                        expected_protected_diagnostic=None if selected_bank == 'reload' else DIAGNOSTIC, requires_review=True,
+        identity_diagnostics = auth.count('cannot get ID for container:') if selected_bank == 'operations' else None
+        evidence = dict(native_identity_diagnostics_total_in_authority_log=identity_diagnostics,
+                        authority_pid=pid, runtime_mode=mode, status=status, activation=activation, client_activation=client_activation,
+                        ordered_rows=len(rows)-1, rng_scope=compare.rng(cache,pid), clock_proofs=[] if selected_bank == 'operations' else compare.clock_rows(rows, selected_bank != 'reload')[1],
+                        bank=selected_bank, semantic_proofs=compare.report(cache) if selected_bank == 'operations' else compare.semantic_rows(rows, selected_bank),
+                        expected_protected_diagnostic=None if selected_bank in ('reload', 'operations') else DIAGNOSTIC, requires_review=True,
                         limits=['Captured actual bank; matching control/candidate comparator and full log audit still required.',
                                 *compare.limits(selected_bank)])
     except (OSError, ValueError, KeyError, TypeError, AttributeError, zipfile.BadZipFile) as error:

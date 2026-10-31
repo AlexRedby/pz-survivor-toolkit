@@ -1,0 +1,2 @@
+-- Operations artifact deliberately registers no acceptance function or OnFillContainer observer.
+-- The normal owned authority handshake calls the Java bridge explicitly.

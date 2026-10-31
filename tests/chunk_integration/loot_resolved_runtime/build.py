@@ -81,11 +81,13 @@ def main():
     for name in ("game", "jdk", "output", "cache"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--mode", required=True, choices=("control", "candidate"))
-    parser.add_argument("--bank", choices=("base", "semantics", "reload"), default="base",
-                        help="Qualified base8, additional finite-source/replacement12, or terminal live-reload1")
+    parser.add_argument("--bank", choices=("base", "semantics", "reload", "operations"), default="base",
+                        help="Base8, semantics12, terminal reload1, or paired whole-roll operations2")
     parser.add_argument("--optimizer-archive", type=Path, help="Explicit current pinned optimizer archive; exact complete profile required at invocation")
     parser.add_argument("--check", action="store_true", help="Headless initial-definition/token/RNG-ownership guards only")
     args = parser.parse_args()
+    if args.bank == "operations" and args.mode != "candidate":
+        parser.error("operations requires one candidate artifact with both owner-scoped paths")
     for name in ("game", "jdk", "output", "cache"):
         setattr(args, name, getattr(args, name).resolve())
     if args.output.exists() or args.output == args.game or args.game in args.output.parents:
@@ -140,7 +142,7 @@ def main():
         cp = os.pathsep.join(map(str, (native, buddy)))
         javac, java = args.jdk / "bin/javac", args.jdk / "bin/java"
         subprocess.run([str(javac), "--release", "25", "-cp", cp, "-d", str(classes),
-                        *map(str, (src / name for name in ("ResolvedCandidate.java", "Bootstrap.java", "RngScope.java", "PreMain.java", "Main.java", "SemanticGates.java")))], check=True)
+                        *map(str, (src / name for name in ("ResolvedCandidate.java", "Bootstrap.java", "RngScope.java", "PreMain.java", "Main.java", "SemanticGates.java", "OperationsScope.java", "OperationsCandidate.java", "OperationsTelemetry.java", "OperationsMain.java")))], check=True)
         resource = classes / "toolkit/lootresolved/bootstrap"
         (resource / "token.txt").write_text(token + "\n", encoding="ascii")
         (resource / "mode.txt").write_text(args.mode + "\n", encoding="ascii")
@@ -157,7 +159,7 @@ def main():
         if args.check:
             check_cp = os.pathsep.join([str(classes), *([str(overlay)] if overlay else []), cp])
             subprocess.run([str(javac), "--release", "25", "-cp", check_cp, "-d", str(checks),
-                            str(src / "BootstrapChecks.java"), str(src / "RuntimeCleanupChecks.java"), str(src / "RngScopeChecks.java")],check=True)
+                            str(src / "BootstrapChecks.java"), str(src / "RuntimeCleanupChecks.java"), str(src / "RngScopeChecks.java"), str(src / "OperationsChecks.java")],check=True)
             preload_jar = stage / "preload-check.jar"
             with zipfile.ZipFile(preload_jar, "w", zipfile.ZIP_DEFLATED) as archive:
                 archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\nZB-Preload: true\n\n")
@@ -180,9 +182,9 @@ def main():
         fixture = stage / MOD_ID / "42"
         for folder in ("media/java", "media/bootstrap", "media/lua/shared"): (fixture / folder).mkdir(parents=True)
         (fixture / "mod.info").write_bytes(sources["mod.info.template"])
-        (fixture / "media/lua/shared/ZZLootResolvedRuntime.lua").write_bytes(sources["ZZLootResolvedRuntime.lua"])
+        (fixture / "media/lua/shared/ZZLootResolvedRuntime.lua").write_bytes(sources["operations-bridge.lua" if args.bank=="operations" else "ZZLootResolvedRuntime.lua"])
         scripts = {}
-        if args.bank != "base":
+        if args.bank in ("semantics", "reload"):
             (fixture / "media/scripts").mkdir()
             (fixture / "media/scripts/loot-runtime-probes.txt").write_bytes(sources["loot-runtime-probes.txt"])
             scripts["42/media/scripts/loot-runtime-probes.txt"] = fingerprints["loot-runtime-probes.txt"]
@@ -196,6 +198,12 @@ def main():
                    "success_path_checked":False, "entry_point":"lootResolvedRuntimeRun" if args.bank=="base" else "lootResolvedRuntimeRunFor",
                    "terminal_marker":"[LOOT_RESOLVED_RUNTIME] FINISH status=",
                    "required_preload":"42/media/bootstrap/PZLootResolvedBootstrap.jar"}
+        if args.bank == "operations":
+            receipt["operations_contract"] = {"scope":"owner-window-paired-roll-v1", "warmup_pairs":64, "measured_pairs":24,
+                "storage_limit":4096, "groups":[{"id":"direct-CrateMetalwork-main","batch":2,"distribution":"CrateMetalwork","path":"public-doRollItem-main-only"},
+                {"id":"bag-FirstAidKit-with-native-junk","batch":4,"distribution":"FirstAidKit","path":"public-rollContainerItem-with-junk"}],
+                "callback_admission":"itemconfig-null;LuaCreate-empty-or-exact-native-gasmask", "semantic_accept_observer":False,
+                "headless_operations_checks":bool(args.check)}
         for jar_name, package, preload in (("media/bootstrap/PZLootResolvedBootstrap.jar", "toolkit/lootresolved/bootstrap", True),
                                            ("media/java/PZLootResolvedRuntime.jar", "toolkit/lootresolved/runtime", False)):
             with zipfile.ZipFile(fixture / jar_name,"w",zipfile.ZIP_DEFLATED) as archive:

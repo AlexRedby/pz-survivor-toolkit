@@ -79,6 +79,7 @@ public final class BootstrapChecks {
             selectorChecks(cache);
             RngScopeChecks.run();
             toolkit.lootresolved.runtime.RuntimeCleanupChecks.run();
+            if (Bootstrap.bank().equals("operations")) OperationsChecks.run();
         }
         System.out.println("LOOT_RESOLVED_BOOTSTRAP_CHECK_PASS " + Bootstrap.mode() + " " + scenario);
     }
