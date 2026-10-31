@@ -15,6 +15,16 @@ public final class RuntimeCleanupChecks {
     public static void run() throws Exception {
         zombie.ZomboidFileSystem.instance.setCacheDir(toolkit.lootresolved.bootstrap.Bootstrap.cache().toString());
         zombie.ZomboidFileSystem.instance.init(); // Native filesystem only; empty scratch cwd, no world.
+        // Source-backed regression: untranslated probe getters hide a correctly copied field.
+        for (String name:List.of("Base.WeightProbe", "Named weight probe")) {
+            InventoryItem probe=new zombie.inventory.types.ComboItem("Base",name,"WeightProbe","Item_None");
+            probe.setActualWeight(0.125f);
+            boolean fallback=probe.getDisplayName().equals(probe.getFullType());
+            Field stored=InventoryItem.class.getDeclaredField("actualWeight"); stored.setAccessible(true);
+            if (fallback!=name.equals("Base.WeightProbe") || stored.getFloat(probe)!=0.125f
+                    || probe.getActualWeight()!=(fallback?0f:0.125f))
+                throw new AssertionError("native stored/public weight name-fallback contract changed");
+        }
         ItemContainer root = new ItemContainer("cleanup-check",null,null); root.setCapacity(100);
         InventoryContainer bag = new InventoryContainer("Base","FixtureBag","FixtureBag","Item_None");
         InventoryItem child = new InventoryItem("Base","FixtureChild","FixtureChild","Item_None");

@@ -504,6 +504,8 @@ class LootResolvedNative(unittest.TestCase):
                     row('RELOAD','native_api=ReloadScripts(Item):same_identity=true:qualified=true:unqualified=true:category=FirstAid:weight=3e000000:load_errors=false:owned_source=true')
                 for path in ('direct','bag'):
                     hit=phase=='after';count=2 if hit else 0
+                    for index in range(count):
+                        row('RELOAD_ITEM',f'phase={phase}:path={path}:index={index}:fulltype=Base.PZLootRuntimeProbe:id={index}:stored_weight=3e000000:public_weight=0:display_fallback=true:script_identity=true:initialized=true')
                     row('RELOAD_ROLL',f'phase={phase}:path={path}:count={count}:weight={COMPARE._float_bits(.125 if hit else .05)}:script_field_proof=true:factory_proof={str(hit).lower()}:picker_chance=469c4000:native_chance={"461c4000" if hit else "0"}:draw_min=0:draw_max_exclusive=10000:next_rng=42')
                     snapshot(phase+'-'+path,count,'Base.PZLootRuntimeProbe');row('DISPOSE','done')
             row('RELOAD_RESTORE','disk=true:original='+hashlib.sha256((F/'loot-runtime-probes.txt').read_bytes()).hexdigest()+':runtime_restored=false:terminal=true')
@@ -583,11 +585,14 @@ class LootResolvedNative(unittest.TestCase):
         path=self.cache/'loot-resolved-runtime.tsv';original=path.read_text()
         for old,new in [('disk=true','disk=false'),('runtime_restored=false','runtime_restored=true'),('terminal=true','terminal=false'),
                         ('same_identity=true','same_identity=false'),('owned_source=true','owned_source=false'),('factory_proof=true','factory_proof=false'),
-                        ('native_chance=461c4000','native_chance=7f800000'),('phase=before:path=bag','phase=before:path=direct')]:
+                        ('native_chance=461c4000','native_chance=7f800000'),('phase=before:path=bag','phase=before:path=direct'),
+                        ('stored_weight=3e000000','stored_weight=3d4ccccd'),('public_weight=0','public_weight=3e000000'),
+                        ('display_fallback=true','display_fallback=false'),('script_identity=true','script_identity=false'),
+                        ('fulltype=Base.PZLootRuntimeProbe:id=0','fulltype=Base.PZLootRuntimeProbe:id=99')]:
             with self.subTest(new=new):
                 path.write_text(original.replace(old,new));self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
         path.write_text(original)
-        for kind in ('RELOAD_INPUT','RELOAD','RELOAD_ROLL','RELOAD_RESTORE','DISPOSE'):
+        for kind in ('RELOAD_INPUT','RELOAD','RELOAD_ITEM','RELOAD_ROLL','RELOAD_RESTORE','DISPOSE'):
             path.write_text(''.join(line for line in original.splitlines(keepends=True) if not line.startswith(kind+'\t')))
             self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
         lines=original.splitlines(keepends=True)

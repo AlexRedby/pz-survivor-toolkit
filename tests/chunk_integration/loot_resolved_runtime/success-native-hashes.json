@@ -18,6 +18,7 @@
   "zombie/inventory/ItemPickerJava$ItemPickerItem.class": "90aefedf38c3c7acdfdb02a7d573a681a002e0512b81ef1e0e0d753e46daf631",
   "zombie/inventory/ItemPickerJava$ItemPickerRoom.class": "230dbd120937738f7b041c1b77ae2ecad288d7a03b8770cbb6175aa691b9ffec",
   "zombie/inventory/ItemSpawner.class": "1cef57bbdfd28fe1772e96cb3f2b7d9950b862b8d5e8452252d9779396a48544",
+  "zombie/inventory/types/ComboItem.class": "161277cc8fab2aa4c4bbf634a237f28cdb5a583565df36612159ef3bd4e129d1",
   "zombie/inventory/types/Food.class": "14a5b02878a5608e3a28d3e91110961b3576694badf127dc7fe2749b8393d8b1",
   "zombie/inventory/types/InventoryContainer.class": "891cb2f37a7d13de869edf05909de493a55ef90aa8665368b36bff7fa6b2555e",
   "zombie/iso/InstanceTracker.class": "7991fd0d7d530021185c42dceb220a68dee53f4df40868c5549fe3920626362c",
