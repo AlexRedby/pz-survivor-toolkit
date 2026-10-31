@@ -79,7 +79,11 @@ def font_preload(cache, selection, game=None):
         manifest = archive.read('META-INF/MANIFEST.MF').decode('utf-8')
         if not re.search(r'^ZB-Preload: true\r?$', manifest, re.M):
             raise ValueError('Font preload requires ZB-Preload manifest')
-    return ',patches_jar=' + jar_argument + ':' + package
+    entries = [jar_argument + ':' + package]
+    if loot:
+        entries.append(adapters.get('loot-resolved').early_preload(cache, selection, game,
+            Path(project) if project is not None else Path(__file__).resolve().parents[2]))
+    return ',patches_jar=' + ';'.join(entries)
 
 
 def _approvals(cache, identifiers):
@@ -87,7 +91,9 @@ def _approvals(cache, identifiers):
             for id in identifiers for jar in sorted((cache / 'mods' / id).rglob('*.jar'))
             # This separate bootstrap is loaded only by explicit patches_jar, never as the ordinary mod.
             if not (id == 'PZToolkitJavaPatches' and jar.relative_to(cache / 'mods' / id).as_posix()
-                    == '42/media/bootstrap/PZToolkitFonts.jar')]
+                    == '42/media/bootstrap/PZToolkitFonts.jar')
+            and not (id == 'PZLootResolvedRuntime' and jar.relative_to(cache / 'mods' / id).as_posix()
+                     == '42/media/bootstrap/PZLootResolvedBootstrap.jar')]
 
 
 def _validate_overrides(identifiers, overrides):
