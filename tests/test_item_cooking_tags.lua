@@ -1,3 +1,6 @@
+package.path = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/?.lua;" .. package.path
+local catalogRevision = 1
+toolkitRecipeCatalogRevision = function() return catalogRevision end
 local scans, boot = 0
 Events = {OnGameBoot = {Add = function(fn) boot = fn end}}
 ItemType = {FOOD = "food", NORMAL = "normal"}
@@ -121,6 +124,38 @@ local before = scans
 for _ = 1, 100 do expect(peanuts, true) end
 assert(scans == before, "repeated classification must not rescan recipe catalogs")
 
+-- Native reloads mutate the shared Java lists without changing their identity
+-- or count. Both recipe families must follow the lifecycle revision.
+do
+    local previousCraft, previousEvolved = craft, evolvedRecipes
+    local craftEntries = {recipe({input({batter})}, {output({dish})})}
+    local evolvedEntries = {evolved(pot, {peanuts})}
+    craft, evolvedRecipes = list(craftEntries), list(evolvedEntries)
+    expect(batter, true)
+    expect(peanuts, true)
+    craftEntries[1] = recipe({input({hops})}, {output({dish})})
+    evolvedEntries[1] = evolved(pot, {meat})
+    catalogRevision = catalogRevision + 1
+    expect(batter, false)
+    expect(peanuts, false)
+    expect(hops, true)
+    expect(meat, true)
+
+    -- Resolution may update metadata on an existing recipe, not replace it.
+    local options = {cooking = false, xp = 3}
+    craftEntries[1] = recipe({input({hops})}, {output({dish})}, options)
+    catalogRevision = catalogRevision + 1
+    expect(hops, true)
+    options.xp = 0
+    catalogRevision = catalogRevision + 1
+    expect(hops, false)
+    options.xp = 3
+    catalogRevision = catalogRevision + 1
+    expect(hops, true)
+    craft, evolvedRecipes = previousCraft, previousEvolved
+    catalogRevision = catalogRevision + 1
+end
+
 -- Cooking XP can prove a cooking recipe without its UI tag; category alone cannot.
 craft = list({recipe({input({hops})}, {output({dish})}, {cooking = false, xp = 3})})
 expect(hops, true)
@@ -143,6 +178,18 @@ for _, name in ipairs({"MakeMilkFromPowderBucket", "MakeMilkFromPowderBottle"}) 
     expect(powder, true)
     craft = list({recipe({input({powder})}, {}, {name = name, onCreate = "Mod.ReplacedMilkRecipe"})})
     expect(powder, false)
+end
+do
+    local resolved = recipe({input({powder})}, {},
+        {name = "MakeMilkFromPowderBottle", onCreate = "RecipeCodeOnCreate.makeMilkFromPowder"})
+    craft = list({resolved})
+    expect(powder, true)
+    resolved.onCreate = "Mod.ReplacedMilkRecipe"
+    catalogRevision = catalogRevision + 1
+    expect(powder, false)
+    resolved.onCreate = "RecipeCodeOnCreate.makeMilkFromPowder"
+    catalogRevision = catalogRevision + 1
+    expect(powder, true)
 end
 craft = list({recipe({input({powder})}, {},
     {name = "ModMilkFromPowder", onCreate = "RecipeCodeOnCreate.makeMilkFromPowder"})})
@@ -223,6 +270,56 @@ ModData = {getOrCreate = function() return world end}
 PZSurvivorToolkit = {Settings = {itemTags = function() return true end}}
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Custom = require "PZSurvivorToolkit/TagCustomization"
+
+-- Unsupported revisions permit one synchronous batch, but cannot certify reuse
+-- between reads. Replacing or restoring the bridge must not revive old data.
+do
+    local previousCraft, previousEvolved = craft, evolvedRecipes
+    local bridge = toolkitRecipeCatalogRevision
+    local entries = {recipe({input({batter})}, {output({dish})})}
+    craft, evolvedRecipes = list(entries), list({})
+    expect(batter, true)
+    entries[1] = recipe({input({hops})}, {output({dish})})
+    toolkitRecipeCatalogRevision = function() return catalogRevision end
+    expect(batter, false)
+    expect(hops, true) -- A new bridge can report the same epoch.
+    for _, mode in ipairs({"missing", "unsupported"}) do
+        toolkitRecipeCatalogRevision = mode == "unsupported" and function() return nil end or nil
+        entries[1] = recipe({input({batter})}, {output({dish})})
+        expect(batter, true)
+        entries[1] = recipe({input({hops})}, {output({dish})})
+        local beforeRead = scans
+        expect(batter, false)
+        expect(hops, true)
+        assert(scans > beforeRead, "unsupported revision reused a prior operation's index")
+        local context = Tags.newProjectionContext()
+        assert(cooking.read(hops, nil, false, context) == true)
+        local beforeBatch = scans
+        assert(cooking.read(hops, nil, false, context) == true)
+        assert(scans == beforeBatch, "unsupported revision lost operation-local batching")
+        entries[1] = recipe({input({batter})}, {output({dish})})
+        assert(cooking.read(hops, nil, false, context) == true,
+            "one projection batch must keep its resolved recipe index")
+        expect(hops, false)
+        expect(batter, true)
+    end
+    entries[1] = recipe({input({hops})}, {output({dish})})
+    toolkitRecipeCatalogRevision = bridge
+    expect(batter, false)
+    expect(hops, true)
+    local calls = 0
+    toolkitRecipeCatalogRevision = function() calls = calls + 1; return catalogRevision end
+    local context = Tags.newProjectionContext()
+    assert(cooking.read(hops, nil, false, context) == true)
+    assert(cooking.read(hops, nil, false, context) == true)
+    assert(calls == 1, "revision bridge must be read once per projection batch")
+    assert(cooking.read(hops, nil, false, Tags.newProjectionContext()) == true)
+    assert(calls == 2, "a new batch must read the native lifecycle revision")
+    toolkitRecipeCatalogRevision = bridge
+    craft, evolvedRecipes = previousCraft, previousEvolved
+    catalogRevision = catalogRevision + 1
+end
+
 local function physical(definition, delta)
     return {getScriptItem = function() return definition end,
         getFullType = function() return definition:getFullName() end,

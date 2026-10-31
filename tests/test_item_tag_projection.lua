@@ -64,6 +64,18 @@ current.evolved={nextRecipe}
 assert(Tags.matches(Tags.forScriptItem(script),{'ingredient'}),'ordinary projection hid changed live recipes')
 expectCalls(before,2)
 
+-- Older or unsupported Java Patches provide no trustworthy catalog epoch.
+-- Fresh list reads alone cannot validate a same-count shared-list index.
+current.evolved={{getFullResultItem=function() return 'Mod.Meal' end,isCookable=function() return true end,
+    getBaseItem=function() return 'Mod.Pot' end,
+    getPossibleItems=function() return list({{getUse=function() return 1 end,
+        getFullType=function() return 'Mod.Other' end}}) end}}
+assert(not Tags.matches(Tags.forScriptItem(script),{'ingredient'}),
+    'unversioned same-count replacement retained the former ingredient')
+current.evolved={nextRecipe}
+assert(Tags.matches(Tags.forScriptItem(script),{'ingredient'}),
+    'unversioned same-count replacement omitted the new ingredient')
+
 -- Physical batches share metadata only, even for instances of the same script.
 local Custom=require 'PZSurvivorToolkit/TagCustomization'
 world=Custom.empty()
@@ -165,6 +177,8 @@ assert(Tags.newProjectionContext():recipes(missingMethod,'getAllRecipes')==share
 
 -- UI discovery retains no partial global IDs and creates a recipe context for
 -- each synchronous step, rather than keeping mutable native lists over frames.
+local catalogEpoch = 1
+toolkitRecipeCatalogRevision = function() return catalogEpoch end
 local toScan, enumerations = {}, 0
 for index=1,120 do
     local category='Mod.Scan'..index
@@ -222,4 +236,33 @@ mixed=Tags.allIds(physicalItems)
 assert(contains(mixed,'category:Mod.AfterMixed') and not contains(mixed,'category:Mod.Changed'),
     'mixed catalog retained physical categories between operations')
 expectCalls(before,1)
+
+-- Recipe changes also invalidate published choice IDs and the public revision
+-- used by already open editors, manifest views and distribution catalogues.
+local previousScan = toScan
+local previousCategory = script.getDisplayCategory
+script.getDisplayCategory = function() return 'Mod.CatalogBefore' end
+toScan = {script}
+current.evolved = {nextRecipe}
+catalogEpoch = catalogEpoch + 1
+local oldRevision = Tags.revision()
+assert(contains(Tags.allIds(), 'category:Mod.CatalogBefore'), 'catalog omitted the current script category')
+current.evolved = {{getFullResultItem=function() return 'Mod.Meal' end,isCookable=function() return true end,
+    getBaseItem=function() return 'Mod.Pot' end,
+    getPossibleItems=function() return list({}) end}}
+catalogEpoch = catalogEpoch + 1
+script.getDisplayCategory = function() return 'Mod.CatalogAfter' end
+assert(Tags.revision() ~= oldRevision, 'native reload did not invalidate open tag consumers')
+assert(not contains(Tags.cachedIds(), 'category:Mod.CatalogBefore'), 'cached IDs retained an invalidated script category')
+local updated = Tags.allIds()
+assert(contains(updated, 'category:Mod.CatalogAfter') and not contains(updated, 'category:Mod.CatalogBefore'),
+    'same-count native reload retained published automatic IDs')
+assert(not Tags.matches(Tags.forScriptItem(script), {'ingredient'}), 'catalog refresh retained the old recipe role')
+catalogEpoch = catalogEpoch + 1
+local interrupted = assert(Tags.newAutomaticIdScan())
+catalogEpoch = catalogEpoch + 1
+assert(interrupted:step(4) and interrupted.cancelled, 'old discovery survived a native reload between frames')
+assert(not contains(Tags.cachedIds(), 'category:Mod.CatalogAfter'), 'cancelled discovery published invalidated IDs')
+script.getDisplayCategory = previousCategory
+toScan = previousScan
 print('Tag projection: bounded recipe getters, fresh operations, live physical instances and per-frame script catalogs passed')

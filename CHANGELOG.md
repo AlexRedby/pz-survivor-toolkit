@@ -48,6 +48,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.329
 
+- Refresh ingredient, disassembly, repair, smelting and wear-preview tags after native script reload or deferred input resolution, including changes that keep the same recipe lists and counts. Retain batching within each operation; unavailable native revision metadata permits operation-local cache reuse only.
 - Reuse recipe catalogue reads within each inventory grouping, tag rendering, filter, tag-menu and distribution-planning pass, reducing repeated work in large visible stacks. Keep item categories, freshness, damage, retention and custom tags live for each physical item; refresh recipe reads on the next operation.
 
 ### 0.1.327
@@ -1530,6 +1531,7 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.78
 
+- Expose the native script-catalogue revision for item-tag indexes. Track loading, reload, deferred resolution and reset, including partial failures; ordinary catalogue reads preserve the revision.
 - Capture native item transaction objects at their original manager boundary. Track allocated wire IDs in bounded connection histories, invalidate intervening actor requests and preserve unknown results after ID reuse or late attachment.
 
 ### 0.1.77

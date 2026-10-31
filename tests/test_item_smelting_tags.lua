@@ -1,3 +1,6 @@
+package.path = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/?.lua;" .. package.path
+local catalogRevision = 1
+toolkitRecipeCatalogRevision = function() return catalogRevision end
 local scans, boot = 0
 Events = {OnGameBoot = {Add = function(fn) boot = fn end}}
 ResourceType = {Item = "item", Fluid = "fluid"}
@@ -102,6 +105,29 @@ expect(sand, nil, {})
 local before = scans
 for _ = 1, 100 do expect(bell, true, {}) end
 assert(scans == before, "repeated classification must not rescan recipes")
+
+-- Reload preserves Java manager/list identities and count; resolution can
+-- also change the subject choices and callback on the same recipe object.
+do
+    local previous = recipes
+    local entries = {recipe("ExtractIronFromSmallItem", furnace(input({bell})))}
+    recipes = list(entries)
+    expect(bell, true)
+    local resolvedInput = input({other})
+    entries[1] = recipe("ExtractIronFromSmallItem", furnace(resolvedInput))
+    catalogRevision = catalogRevision + 1
+    expect(bell, nil)
+    expect(other, true)
+    resolvedInput.choices = {bell}
+    catalogRevision = catalogRevision + 1
+    expect(other, nil)
+    expect(bell, true)
+    entries[1].create = "Mod.ReplacedSmelting"
+    catalogRevision = catalogRevision + 1
+    expect(bell, nil)
+    recipes = previous
+    catalogRevision = catalogRevision + 1
+end
 
 -- Unknown overrides and unusable input roles must not establish a capability.
 recipes = list({recipe("ExtractIronFromSmallItem", furnace(input({charcoal})), nil, false, true)})

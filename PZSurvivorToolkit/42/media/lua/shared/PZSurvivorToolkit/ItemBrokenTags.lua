@@ -1,6 +1,7 @@
 -- Native broken state, independent of remaining uses, food quality or damage.
 -- In B42 isBroken reads the stored flag; condition is not its replacement.
 local Broken = {}
+local RecipeCatalog = require "PZSurvivorToolkit/ItemRecipeCatalog"
 local catalog
 local wearFlags = {"mayDegrade", "mayDegradeLight", "mayDegradeVeryLight", "mayDegradeHeavy"}
 
@@ -20,12 +21,13 @@ local function indexRecipes(context)
     if not ResourceType or not ResourceType.Item then return nil end
     local manager = getScriptManager and getScriptManager()
     if not manager or not manager.getAllCraftRecipes then return nil end
-    local recipes
-    if context then recipes = context:recipes(manager, "getAllCraftRecipes")
-    else recipes = manager:getAllCraftRecipes() end
+    context = context or RecipeCatalog.newContext()
+    local recipes = context:recipes(manager, "getAllCraftRecipes")
     if not recipes then return nil end
+    local revision, revisionBridge = context:revision()
     local count = recipes:size()
-    if catalog and catalog.manager == manager and catalog.recipes == recipes and catalog.count == count then
+    if catalog and catalog.manager == manager and catalog.recipes == recipes and catalog.count == count
+        and catalog.revision == revision and catalog.revisionBridge == revisionBridge then
         return catalog.byType
     end
     local byType, ready = {}, count > 0
@@ -52,7 +54,8 @@ local function indexRecipes(context)
             end
         end
     end
-    if ready then catalog = {manager = manager, recipes = recipes, count = count, byType = byType} end
+    if ready then catalog = {manager = manager, recipes = recipes, count = count, byType = byType,
+        revision = revision, revisionBridge = revisionBridge} end
     return byType
 end
 

@@ -1,3 +1,6 @@
+package.path = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/?.lua;" .. package.path
+local catalogRevision = 1
+toolkitRecipeCatalogRevision = function() return catalogRevision end
 local scans, boot = 0
 Events = {OnGameBoot = {Add = function(fn) boot = fn end}}
 ItemType = {NORMAL = "normal", DRAINABLE = "drainable"}
@@ -85,6 +88,26 @@ for _, definition in ipairs({bat, scissors, file, stone, gun, other}) do expect(
 local before = scans
 for _ = 1, 100 do expect(glue, true, physical(1)) end
 assert(scans == before, "repeated repair tagging must not rescan the recipe catalog")
+
+-- Reloads and resolution update shared lists and recipe objects in place.
+do
+    local previous = recipes
+    local entries = {recipe("FixWithGlue", {subject(), input({tape})}, "genericFixing")}
+    recipes = list(entries)
+    expect(tape, true)
+    entries[1] = recipe("FixWithGlue", {subject(), input({ties})}, "genericFixing")
+    catalogRevision = catalogRevision + 1
+    expect(tape, nil)
+    expect(ties, true)
+    entries[1].create = "Mod.ReplacedHandler"
+    catalogRevision = catalogRevision + 1
+    expect(ties, nil)
+    entries[1].create = "RecipeCodeOnCreate.genericFixing"
+    catalogRevision = catalogRevision + 1
+    expect(ties, true)
+    recipes = previous
+    catalogRevision = catalogRevision + 1
+end
 
 -- Current callback metadata controls native semantics; names and category alone
 -- cannot prove arbitrary overridden or mod callbacks are repair operations.

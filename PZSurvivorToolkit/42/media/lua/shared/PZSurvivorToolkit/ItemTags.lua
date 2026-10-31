@@ -8,6 +8,7 @@ local cooking = require "PZSurvivorToolkit/ItemCookingTags"
 local cookingStates = require "PZSurvivorToolkit/ItemCookingStates"
 local usage = require "PZSurvivorToolkit/ItemUsageTags"
 local Custom = require "PZSurvivorToolkit/TagCustomization"
+local RecipeCatalog = require "PZSurvivorToolkit/ItemRecipeCatalog"
 PZSurvivorToolkit = PZSurvivorToolkit or {}
 local Tags = {}
 PZSurvivorToolkit.ItemTags = Tags
@@ -242,15 +243,7 @@ end
 -- index is cached. Share only recipe metadata within one synchronous projection
 -- operation; instance state stays live and the next operation rereads catalogs.
 function Tags.newProjectionContext()
-    local managers = {}
-    return {recipes = function(_, manager, method)
-        local values = managers[manager]
-        if not values then values = {}; managers[manager] = values end
-        if values[method] == nil then
-            values[method] = manager[method] and manager[method](manager) or false
-        end
-        return values[method] or nil
-    end}
+    return RecipeCatalog.newContext()
 end
 
 function Tags.automaticForScriptItem(script, context)
@@ -321,7 +314,7 @@ function Tags.forSnapshot(script, fullType, category, recording, tagDelta, ingre
 end
 
 -- Cache only automatic script tags. World custom definitions are merged live.
-local automaticIds, automaticManager, automaticCount
+local automaticIds, automaticManager, automaticCount, automaticRevision
 -- UI discovery owns a stable list of script references and publishes only a
 -- complete ID set. Recipe snapshots belong to one synchronous step, never to
 -- the interval between frames where native catalogs may be rebuilt.
@@ -330,7 +323,9 @@ function Tags.newAutomaticIdScan()
     local scripts = manager and manager.getAllItems and manager:getAllItems()
     if not scripts or not scripts.size or not scripts.get then return end
     local count = scripts:size()
-    if automaticIds and automaticManager == manager and automaticCount == count then return end
+    local revision = Tags.revision()
+    if RecipeCatalog.currentRevision() ~= nil and automaticIds and automaticManager == manager
+        and automaticCount == count and automaticRevision == revision then return end
     local snapshot = {}
     for index = 0, count - 1 do
         local script = scripts:get(index)
@@ -344,6 +339,7 @@ function Tags.newAutomaticIdScan()
     end
     function scan:step(budgetMs)
         if self.done then return true end
+        if Tags.revision() ~= revision then self:cancel(); return true end
         local clock = getTimestampMs
         local started = clock and clock() or 0
         local context, processed = Tags.newProjectionContext(), 0
@@ -354,7 +350,7 @@ function Tags.newAutomaticIdScan()
             if budgetMs and clock and clock() - started >= budgetMs then break end
         end
         if self.index > #snapshot then
-            automaticIds, automaticManager, automaticCount = ids, manager, count
+            automaticIds, automaticManager, automaticCount, automaticRevision = ids, manager, count, revision
             self.done = true
             snapshot, ids = nil, nil
         end
@@ -370,13 +366,15 @@ local function loadedAutomaticIds(context)
     local scripts = manager:getAllItems()
     if not scripts or not scripts.size or not scripts.get then return {} end
     local count = scripts:size()
-    if automaticIds and automaticManager == manager and automaticCount == count then return automaticIds end
+    local revision = Tags.revision()
+    if RecipeCatalog.currentRevision() ~= nil and automaticIds and automaticManager == manager
+        and automaticCount == count and automaticRevision == revision then return automaticIds end
     local ids = {}
     for index = 0, count - 1 do
         local script = scripts:get(index)
         for _, id in ipairs(Tags.choices(Tags.automaticForScriptItem(script, context))) do ids[id] = true end
     end
-    automaticIds, automaticManager, automaticCount = ids, manager, count
+    automaticIds, automaticManager, automaticCount, automaticRevision = ids, manager, count, revision
     return ids
 end
 
@@ -404,13 +402,28 @@ end
 -- This path never enumerates or projects the loaded script catalog.
 function Tags.cachedIds(items)
     local manager = getScriptManager and getScriptManager()
-    return collectIds(manager == automaticManager and automaticIds or nil, items, Tags.newProjectionContext())
+    local automatic = manager == automaticManager and automaticRevision == Tags.revision() and automaticIds or nil
+    return collectIds(automatic, items, Tags.newProjectionContext())
 end
 function Tags.allIds(items)
     local context = Tags.newProjectionContext()
     return collectIds(loadedAutomaticIds(context), items, context)
 end
-function Tags.revision() return Custom.cacheRevision() end
+local lastCustomRevision, lastRecipeRevision, lastRecipeBridge, projectionRevision
+local projectionGeneration = 0
+function Tags.revision()
+    local custom = Custom.cacheRevision()
+    local revision, bridge = RecipeCatalog.currentRevision()
+    if not projectionRevision or custom ~= lastCustomRevision or revision ~= lastRecipeRevision
+        or bridge ~= lastRecipeBridge then
+        lastCustomRevision, lastRecipeRevision, lastRecipeBridge = custom, revision, bridge
+        -- Consumers compare this opaque key. Keep it stable between native or
+        -- custom changes, including unavailable native metadata during startup.
+        projectionGeneration = projectionGeneration + 1
+        projectionRevision = custom .. ":recipes:" .. tostring(projectionGeneration)
+    end
+    return projectionRevision
+end
 function Tags.signature(tags)
     local ids = {}
     for _, id in ipairs(tags) do ids[#ids + 1] = id end

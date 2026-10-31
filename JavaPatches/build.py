@@ -110,6 +110,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.pztoolkitjavapatches.GroundHighlightChecks': 'GROUND_HIGHLIGHT_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ItemLaundryPropertiesChecks': 'ITEM_LAUNDRY_PROPERTIES_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.RecipeItemPropertiesChecks': 'RECIPE_ITEM_PROPERTIES_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.RecipeCatalogRevisionChecks': 'RECIPE_CATALOG_REVISION_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.FluidScriptPropertiesChecks': 'FLUID_SCRIPT_PROPERTIES_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.RadioDeviceLookupChecks': 'RADIO_DEVICE_LOOKUP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.WormCompostChecks': 'WORM_COMPOST_CHECKS_PASS',

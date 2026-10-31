@@ -1,6 +1,7 @@
 -- Native furnace subjects. Classification reads recipe metadata and pure input
 -- status predicates; it never creates items or executes recipe Lua callbacks.
 local Smelting = {}
+local RecipeCatalog = require "PZSurvivorToolkit/ItemRecipeCatalog"
 local catalog
 local nativeRecipes = {
     ExtractIronBloom = {2, 2},
@@ -49,12 +50,13 @@ local function indexRecipes(context)
     local manager = getScriptManager and getScriptManager()
     if not manager or not manager.getAllCraftRecipes
         or not toolkitRecipeOnCreate or not toolkitRecipeHasItemTest then return end
-    local recipes
-    if context then recipes = context:recipes(manager, "getAllCraftRecipes")
-    else recipes = manager:getAllCraftRecipes() end
+    context = context or RecipeCatalog.newContext()
+    local recipes = context:recipes(manager, "getAllCraftRecipes")
     if not recipes then return end
+    local revision, revisionBridge = context:revision()
     local count = recipes:size()
     if catalog and catalog.manager == manager and catalog.recipes == recipes and catalog.count == count
+        and catalog.revision == revision and catalog.revisionBridge == revisionBridge
         and catalog.create == toolkitRecipeOnCreate and catalog.test == toolkitRecipeHasItemTest then
         return catalog.byType
     end
@@ -80,6 +82,7 @@ local function indexRecipes(context)
     end
     if ready and found then
         catalog = {manager = manager, recipes = recipes, count = count,
+            revision = revision, revisionBridge = revisionBridge,
             create = toolkitRecipeOnCreate, test = toolkitRecipeHasItemTest, byType = byType}
     end
     return byType

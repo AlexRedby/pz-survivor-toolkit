@@ -1,3 +1,6 @@
+package.path = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/?.lua;" .. package.path
+local catalogRevision = 1
+toolkitRecipeCatalogRevision = function() return catalogRevision end
 ItemType = {WEAPON = "base:weapon", CLOTHING = "base:clothing",
     ALARM_CLOCK_CLOTHING = "base:alarmclockclothing", NORMAL = "base:normal",
     FOOD = "base:food", DRAINABLE = "base:drainable", CONTAINER = "base:container"}
@@ -140,6 +143,25 @@ boot()
 expect(ordinary, nil, nil)
 choices[1] = ordinary
 expect(ordinary, nil, nil, true)
+-- Native reload can replace one recipe with one recipe in the same Java
+-- list, while resolution can mutate the same input's selected script types.
+do
+    local previous = recipes
+    local firstChoices, secondChoices = {ordinary}, {unrelated}
+    local entries = {recipe({input(list(firstChoices), "mayDegradeHeavy")})}
+    recipes = list(entries)
+    expect(ordinary, nil, nil, true)
+    entries[1] = recipe({input(list(secondChoices), "mayDegradeLight")})
+    catalogRevision = catalogRevision + 1
+    expect(ordinary, nil, nil)
+    expect(unrelated, nil, nil, true)
+    secondChoices[1] = ordinary
+    catalogRevision = catalogRevision + 1
+    expect(unrelated, nil, nil)
+    expect(ordinary, nil, nil, true)
+    recipes = previous
+    catalogRevision = catalogRevision + 1
+end
 -- Manager identity and recipe count both bound the cache, even when the Java
 -- list itself stays the same object.
 local values = {recipe({input(list({ordinary}), "mayDegradeHeavy")})}

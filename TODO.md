@@ -244,12 +244,12 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Profile the remaining physical-item tag projection cost inside `InventoryCategoryGroups.split`. Dense both-open walking intervals still spend about 2.9-3.1 seconds in this callback per roughly 16 seconds after per-operation recipe metadata reuse. First qualify comparable original actor inventories as described under Process friction, then register source/line-resolved spans for individual tag readers and allocation work before choosing another optimization. Preserve live instance state, exact selection/weight, retention and anchors; require matched exclusive `warehouse-dense-sp`/`warehouse-dense-host` captures with the same 4,800 warehouse items, 1,200 selected nearby items, routes, UI and dependency lock. Keep registered-child exclusive cost, observer overhead and GPU/FPS limits explicit.
 
-- [ ] Invalidate item-tag recipe indexes when native catalog contents change without changing the shared list identity or count. Replacing one evolved recipe with a different one leaves `ItemCookingTags` ingredient classification stale even after a fresh native getter read; explicit reader invalidation corrects it. Review the same identity/count guards in ItemDisassemblyTags, ItemRepairTags, ItemSmeltingTags and ItemBrokenTags, choose a verified revision/invalidation boundary, and add same-count replacement regressions. Per-operation recipe batching does not fix this pre-existing index boundary.
-
 - [ ] Defer Smart Deposit actor-identity cache hardening until a real consumer replaces the actor within a slot while retaining its pane, drag object and selection without normal lifecycle events. Current game respawn and CleanUI mode switching recreate the inventory UI. If such a consumer is found, reproduce hint reuse within the cache lifetime, add actor identity to the cache key and qualify that path, including fresh admission/execution and recreated UI. Do not treat an artificially retained UI or ordinary respawn as a demonstrated gameplay bug.
 
 
 # Process friction
+
+- [ ] Verify native evolved-recipe boolean parsing before relying on `Cookable=false`. B42.21's loader sets the cookable flag to true whenever the `Cookable` key is present, even with a false value. Add an isolated native absent/true/false regression and decide the intended compatibility behavior before changing recipes or the parser.
 
 - [ ] Expose exclusive admission for snapshot preparation through the native CLI. Walking captures require builds/copies to stay outside measurement, but `prepare` only checks capacity; coordinated preparation currently needs a separate call to the common admission API. Queue hashing, copying and JVM preparation with the normal FIFO/resource budgets while retaining source, port and owned-process guards.
 

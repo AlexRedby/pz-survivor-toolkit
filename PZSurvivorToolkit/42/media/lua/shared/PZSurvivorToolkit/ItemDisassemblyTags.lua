@@ -1,4 +1,5 @@
 local Disassembly = {}
+local RecipeCatalog = require "PZSurvivorToolkit/ItemRecipeCatalog"
 
 -- B42.21 has no dismantling flag. These are the native dismantling, manual
 -- metal salvage and textile teardown recipes, including ones without XP.
@@ -95,16 +96,13 @@ end
 local function indexRecipes(context)
     local manager = getScriptManager and getScriptManager()
     if not manager then return {} end
-    local craft, legacy
-    if context then
-        craft = context:recipes(manager, "getAllCraftRecipes")
-        legacy = context:recipes(manager, "getAllRecipes")
-    else
-        craft = manager.getAllCraftRecipes and manager:getAllCraftRecipes()
-        legacy = manager.getAllRecipes and manager:getAllRecipes()
-    end
+    context = context or RecipeCatalog.newContext()
+    local craft = context:recipes(manager, "getAllCraftRecipes")
+    local legacy = context:recipes(manager, "getAllRecipes")
+    local revision, revisionBridge = context:revision()
     local craftCount, legacyCount = craft and craft:size() or 0, legacy and legacy:size() or 0
     if catalog and catalog.manager == manager and catalog.bridge == toolkitRecipeHasItemTest
+        and catalog.revision == revision and catalog.revisionBridge == revisionBridge
         and catalog.craft == craft and catalog.legacy == legacy
         and catalog.craftCount == craftCount and catalog.legacyCount == legacyCount then return catalog.byType end
     local byType = {}
@@ -130,6 +128,7 @@ local function indexRecipes(context)
         end
     end
     catalog = {manager = manager, bridge = toolkitRecipeHasItemTest, craft = craft, legacy = legacy,
+        revision = revision, revisionBridge = revisionBridge,
         craftCount = craftCount, legacyCount = legacyCount, byType = byType}
     return byType
 end

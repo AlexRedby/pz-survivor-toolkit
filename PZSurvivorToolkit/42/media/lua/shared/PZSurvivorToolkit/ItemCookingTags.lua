@@ -1,6 +1,7 @@
 -- Structural cooking capability. Reading tags never constructs inventory items,
 -- evaluates recipe callbacks, or tests a player, tools, freshness or quantity.
 local Cooking = {}
+local RecipeCatalog = require "PZSurvivorToolkit/ItemRecipeCatalog"
 local catalog
 local nativeMilkRecipes = {MakeMilkFromPowderBucket = true, MakeMilkFromPowderBottle = true}
 
@@ -80,16 +81,14 @@ end
 local function indexRecipes(context)
     local manager = getScriptManager and getScriptManager()
     if not manager or not manager.getAllEvolvedRecipesList or not manager.getAllCraftRecipes then return end
-    local evolved, craft
-    if context then
-        evolved = context:recipes(manager, "getAllEvolvedRecipesList")
-        craft = context:recipes(manager, "getAllCraftRecipes")
-    else
-        evolved, craft = manager:getAllEvolvedRecipesList(), manager:getAllCraftRecipes()
-    end
+    context = context or RecipeCatalog.newContext()
+    local evolved = context:recipes(manager, "getAllEvolvedRecipesList")
+    local craft = context:recipes(manager, "getAllCraftRecipes")
     if not evolved or not craft then return end
+    local revision, revisionBridge = context:revision()
     local evolvedCount, craftCount = evolved and evolved:size() or 0, craft and craft:size() or 0
     if catalog and catalog.manager == manager and catalog.evolved == evolved and catalog.craft == craft
+        and catalog.revision == revision and catalog.revisionBridge == revisionBridge
         and catalog.bridge == toolkitRecipeOnCreate
         and catalog.evolvedCount == evolvedCount and catalog.craftCount == craftCount then return catalog end
     local byType, fluids = {}, {}
@@ -138,6 +137,7 @@ local function indexRecipes(context)
         end
     end
     catalog = {manager = manager, evolved = evolved, craft = craft, bridge = toolkitRecipeOnCreate,
+        revision = revision, revisionBridge = revisionBridge,
         evolvedCount = evolvedCount, craftCount = craftCount, byType = byType, fluids = fluids}
     return catalog
 end

@@ -1,5 +1,10 @@
+package.path = ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/?.lua;" .. package.path
+local catalogRevision = 1
+toolkitRecipeCatalogRevision = function() return catalogRevision end
 local nativeRequire = require
-require = function() end
+require = function(name)
+    if name:match("^PZSurvivorToolkit/") then return nativeRequire(name) end
+end
 local boot
 Events = {OnGameBoot = {Add = function(fn) boot = fn end}}
 ResourceType = {Item = 1}
@@ -116,6 +121,28 @@ local before = scans
 for i = 1, 100 do expect(cd, nil, true, 'electrical') end
 assert(scans == before, 'repeated item classification rescanned the recipe catalog')
 
+-- Reload replaces entries inside the same catalog list at the same count.
+do
+    local previous = recipes
+    local entries = {recipe('DismantleMiscElectronics', {input({cd}, false)}, 'Electricity')}
+    recipes = list(entries)
+    expect(cd, nil, true, 'electrical')
+    entries[1] = recipe('DismantleMiscElectronics', {input({radio}, false)}, 'Electricity')
+    catalogRevision = catalogRevision + 1
+    expect(cd, nil, false)
+    expect(radio, nil, true, 'electrical')
+    entries[1].getXPAward = function()
+        return {getPerk = function() return perk('Woodwork') end, getAmount = function() return 2 end}
+    end
+    catalogRevision = catalogRevision + 1
+    expect(radio, nil, true, 'carpentry')
+    entries[1].itemTest = true
+    catalogRevision = catalogRevision + 1
+    expect(radio, nil, false)
+    recipes = previous
+    catalogRevision = catalogRevision + 1
+end
+
 -- A name/animation/required skill never substitutes for a consumed subject.
 recipes = list({recipe('DismantleElectronics', {input({screwdriver}, true)}, 'Electricity'),
     recipe('DismantleMiscElectronics', {input({cd}, false), input({wire}, false)}, 'Electricity'),
@@ -150,6 +177,24 @@ expect(legacyTarget, nil, true, 'carpentry')
 expect(screwdriver, nil, false)
 expect(legacyOther, nil, false)
 expect(legacyTarget, {isBroken = function() return true end}, false)
+-- Generated legacy movable recipes also live in a reused Java list.
+do
+    local previous = legacy
+    local entries = {old}
+    legacy = list(entries)
+    expect(legacyTarget, nil, true, 'carpentry')
+    entries[1] = {getOriginalname = old.getOriginalname,
+        getSource = function() return list({oldSource('Test.LegacyUnknown', false)}) end,
+        hasXpPerk = old.hasXpPerk, getXpPerk = old.getXpPerk, isValid = old.isValid}
+    catalogRevision = catalogRevision + 1
+    expect(legacyTarget, nil, false)
+    expect(legacyOther, nil, true, 'carpentry')
+    entries[1].getXpPerk = function() return perk('Electricity') end
+    catalogRevision = catalogRevision + 1
+    expect(legacyOther, nil, true, 'electrical')
+    legacy = previous
+    catalogRevision = catalogRevision + 1
+end
 for _, sources in ipairs({{oldSource('Test.LegacyMovable', false, 2)},
     {oldSource('Test.LegacyMovable', false, 1, 1)},
     {oldSource('Test.LegacyMovable', false), oldSource('Test.LegacyUnknown', false)}}) do
