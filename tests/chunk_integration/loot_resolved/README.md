@@ -32,9 +32,10 @@ python3 tests/chunk_integration/loot_resolved/run.py \
 The default runs semantics only. `--measure` reserves the common exclusive
 resource slot, then runs five independent JVMs. **Every measured JVM contains
 both native and candidate bridges**, with twelve alternating AB/BA pairs per
-group. `--forks`, `--pairs` (even, at least two) and `--iterations` control the
-replications and calculation count per half. No comparison pairs two different
-JVMs. Do not overlap timing with builds, game clients or other timing work, and
+group, where A is native and B is candidate. The tested default is 50,000
+calculations per half. `--forks`, `--pairs` (even, at least two) and `--iterations`
+control replications and count. The 200,000 trial exceeded its bounded run time;
+its retained failure is not a performance verdict. No comparison pairs two different JVMs. Do not overlap timing with builds, game clients or other timing work, and
 do not bypass admission failures.
 
 Each JVM uses explicit `-Xms256m -Xmx256m -XX:+UseZGC -Xbatch`. The receipt records
@@ -58,10 +59,15 @@ One common Java loop method has two symmetric static-call branches, selected
 once per half. There is no MethodHandle or polymorphic dispatch per iteration;
 the runner verifies compiled `invokestatic` callsites and absence of MethodHandle
 usage in the harness. Both branches, every input group, the actual timer wrapper,
-RNG reset and timing APIs are warmed before any retained window. Short repeated
-timer-wrapper warmup continues the existing RNG stream to avoid thousands of
-expensive CA RNG reconstructions; long warmup and every retained half reset the
-native seed. This policy is explicit in the receipt. Group position
+RNG reset, timing APIs and their CPU/allocation-enabled predicates are warmed
+before any retained window. Direct predicate warmup addresses a retained late
+C2 timer-getter compilation; it does not exclude any JIT events. The rejected
+50k trial observed the wrapper's first C1 compilation inside measured call ~256;
+128 balanced single-calculation seeded halves now cross that threshold before
+long warmup. No JVM thresholds are changed and wrapper C2 is not forced. `PHASE`
+milestones outside retained windows identify timer warmup, real-unit warmup and
+measurement readiness/completion. A nonbusy separation follows the readiness
+milestone before the first retained window. Group position
 rotates across pairs; AB/BA order also changes across pairs and JVMs.
 
 Before each half, outside timing, the native CellularAutomatonRNG is restored to
@@ -95,6 +101,9 @@ printing between halves/groups. A prewarmed, nonbusy `LockSupport.parkNanos` pat
 waits at least 20ms after the final window before any reporting; interruption
 fails instead of spinning. `REPORT_GAP` verifies the final window and separation.
 A subprocess timeout retains partial stdout and explicit timeout metadata.
+Each completed JVM is checked and its partial result persisted before the next
+fork starts. The first rejected JVM stops the run with every failed row/event
+retained; failed forks are never discarded from an otherwise qualified set.
 The result retains individual halves/pairs, per-JVM median deltas, AB/BA deltas,
 sign counts, complete windows and any rejected JIT events. A qualified result
 only applies to this synthetic calculation unit and exact JVM setup.

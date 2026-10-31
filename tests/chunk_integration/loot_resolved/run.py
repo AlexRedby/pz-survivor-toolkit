@@ -89,7 +89,7 @@ def main():
     parser.add_argument("--measure", action="store_true", help="Reserve the exclusive test slot before timing")
     parser.add_argument("--forks", type=int, default=5, help="Independent JVMs, each containing BOTH modes")
     parser.add_argument("--pairs", type=int, default=12, help="Even AB/BA pair count per group inside each JVM")
-    parser.add_argument("--iterations", type=int, default=200000)
+    parser.add_argument("--iterations", type=int, default=50000)
     parser.add_argument("--resource-wait", type=int, default=900)
     args = parser.parse_args()
     if args.forks < 1 or args.pairs < 2 or args.pairs % 2 or args.iterations < 1 or args.resource_wait < 0:
@@ -153,7 +153,7 @@ def main():
                "common_jvm_flags": common_flags, "jvm_invocations": {},
                "scope": "synthetic first resolution + one Rand draw + chance; no creation/gameplay/SP/Host",
                "design": "both direct bridges in candidate overlay; within each JVM alternating AB/BA pairs",
-               "warmup_seed_policy": "short timer-wrapper warmup continues RNG; long warmup and measured halves reset native CA seed",
+               "warmup_seed_policy": "128 balanced single-calculation seeded halves before long warmup; every real half resets native CA seed",
                "input_weighting": "synthetic equal predicate coverage, not observed gameplay frequencies",
                "gc_policy": "ZGC; allocation and GC retained as workload; no FPS extrapolation",
                "measure": args.measure, "forks": args.forks if args.measure else 0,
@@ -165,6 +165,14 @@ def main():
     vectors = inputs = groups = None
     rows, windows, overlaps, log_receipts = [], [], [], {}
 
+    def save_partial(qualification, error=None):
+        data = dict(receipt=receipt, vectors=vectors, groups=groups, inputs=inputs, measurements=rows,
+                    windows=windows, paired=[], summary=[], log_sha256=log_receipts,
+                    all_compilation_in_measurement=overlaps, qualification=qualification)
+        if error is not None:
+            data["error"] = str(error)
+        (out / "result.json").write_text(json.dumps(data, indent=2) + "\n")
+
     def invoke(tag, overlay, measure=False, fork=0):
         nonlocal vectors, inputs, groups
         classpath = os.pathsep.join(map(str, (classes, out / ("overlay-" + overlay), native, buddy)))
@@ -175,7 +183,11 @@ def main():
         receipt["jvm_invocations"][tag] = {"jvm_flags": flags, "classpath": classpath,
                                            "main_class": "LootResolvedCheck", "main_arguments": main_args}
         (out / "input-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-        log = run([java, *flags, "-cp", classpath, "LootResolvedCheck", *main_args], work, out / (tag + ".log"))
+        try:
+            log = run([java, *flags, "-cp", classpath, "LootResolvedCheck", *main_args], work, out / (tag + ".log"))
+        except RuntimeError as error:
+            save_partial("unqualified-subprocess-failure", error)
+            raise
         actual = [line for line in log.splitlines() if line.startswith("VECTOR ")]
         if len(actual) != 190:
             raise RuntimeError(f"Expected 190 semantic rows, got {len(actual)}: {tag}")
@@ -232,6 +244,7 @@ def main():
             if int(report_at) - int(last_end) < 10 or int(waited) < 20_000_000:
                 raise RuntimeError("Insufficient reporting separation: " + tag)
             # Preserve EVERY compilation event, with the same conservative +/-1ms margin.
+            previous_overlap_count = len(overlaps)
             for line in (out / (tag + "-jit.log")).read_text().splitlines():
                 at = re.match(r"\[([0-9.]+)s\]", line)
                 if at:
@@ -240,6 +253,12 @@ def main():
                         overlaps.append(dict(run=tag, line=line, windows=hit))
             rows.extend(local_rows)
             windows.extend(local_windows)
+            if len(overlaps) > previous_overlap_count:
+                save_partial("unqualified-jit-overlap", "First rejected JVM stops remaining forks; no failed fork is dropped")
+                raise RuntimeError("All-JIT gate rejected this JVM (+/-1ms); retained all rows and events")
+            save_partial("partial-qualified-paired-unit-only")
+        else:
+            save_partial("semantics-only")
         print(f"PASS {tag} vectors={len(actual)} varied_inputs={len(actual_inputs)}", flush=True)
 
     for mode in ("stock", "candidate"):
