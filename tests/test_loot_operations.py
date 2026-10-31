@@ -57,8 +57,8 @@ class OperationsBoundary(unittest.TestCase):
       markers.append(dict(kind='pz.loot.RollWindow',start_ns=str(1_000_000+i*1000),end_ns=str(1_000_000+i*1000+110),thread_id='123',method='none',level='0',compile_id='0',window_id=str(i),detail='group='+group+',variant='+variant+',phase='+phase+',pair='+str(pair)+',batch='+str(batch)))
   sentinel=dict(kind='pz.loot.RollWindow',start_ns='0',end_ns='1',thread_id='1',method='none',level='0',compile_id='0',window_id='-2',detail='group=none,variant=none,phase=admission,pair=-1,batch=0')
   comp=[]
-  for i,name in enumerate(('zombie.inventory.ItemPickerJava.doRollItemInternal(','zombie.inventory.ItemPickerJava.rollContainerItemInternal(','toolkit.lootresolved.runtime.OperationsMain.half(')):
-   comp.append(dict(kind='jdk.Compilation',start_ns=str(10+i*10),end_ns=str(15+i*10),thread_id='2',method=name+')V',level='4',compile_id=str(i+1),window_id='-1',detail='success=true,osr=false'))
+  for i,name in enumerate(O.REQUIRED_ENTRIES):
+   comp.append(dict(kind='jdk.Compilation',start_ns=str(10+i*10),end_ns=str(15+i*10),thread_id='2',method=name,level='4',compile_id=str(i+1),window_id='-1',detail='success=true,osr=false'))
   events=[sentinel,*comp,*markers]
   self.write('loot-operations.tsv',O.FIELDS,rows);self.write('loot-operations-events.tsv',O.EVENT_FIELDS,events)
   inputs=dict(owner_thread_id='123',callback_admission=O.CONTRACT['callback_admission'],callback_binding='native:ItemCodeOnCreate.onCreateGasMask(Clothing)',ordinary_options='{medicalLootNew=1.0,mementoLootNew=1.0,rollsMultiplier=1.0}',empty1000_cpu_ns='100',empty1000_wall_ns='50',container_identity='detached-no-native-world-object-id',native_identity_logger='unchanged-diagnostics-included-if-emitted',direct_public_calls='352',bag_public_calls='704')
@@ -92,7 +92,7 @@ class OperationsBoundary(unittest.TestCase):
   self.receipts();result=O.report(self.cache)
   self.assertTrue(result['timing_qualified']);self.assertEqual(len(result['windows']),352)
   for group in O.GROUPS:self.assertEqual(result['summary'][group]['positive_pairs'],24)
-  self.assertIn('not universal C2',result['events']['note'])
+  self.assertIn('universal C2',result['events']['note'])
 
  def test_window_identity_omission_contents_rng_and_disposal_fail(self):
   original,_=self.receipts()
@@ -128,6 +128,97 @@ class OperationsBoundary(unittest.TestCase):
    if row['phase']=='measure':row['created_types']='Base.Nails,Base.NewCold';row['cold_types']='Base.NewCold'
   self.write('loot-operations.tsv',O.FIELDS,rows)
   result=O.report(self.cache);self.assertFalse(result['timing_qualified']);self.assertEqual(len(result['cold_created_type_windows']),96)
+
+ def jit_event(self,kind,start,end,compile_id,method='unrelated.Method()V',level=4,detail=None):
+  if detail is None:detail='success=true,osr=false' if kind=='jdk.Compilation' else 'reason=test,action=none'
+  return dict(kind=kind,start_ns=str(start),end_ns=str(end),thread_id='999',method=method,level=str(level),compile_id=str(compile_id),window_id='-1',detail=detail)
+
+ def test_all_jit_in_cleanup_gaps_invalidates_whole_capture_without_dropping_windows(self):
+  _,original=self.receipts()
+  a=next(e for e in original if e['window_id']=='256');b=next(e for e in original if e['window_id']=='257')
+  start=int(a['end_ns'])+1;end=int(b['start_ns'])-1
+  for kind in ('jdk.Compilation','jdk.Deoptimization'):
+   event=self.jit_event(kind,start,end,99)
+   self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+[event]);result=O.report(self.cache)
+   self.assertEqual(result['capture'],'paired-equivalent');self.assertFalse(result['timing_qualified'])
+   self.assertEqual(len(result['windows']),352);self.assertEqual(result['jit_contaminated_windows'],[])
+   self.assertEqual(len(result['events']['capture_span_jit_events']),1)
+   self.assertEqual(result['events']['capture_span_jit_events'][0]['method'],'unrelated.Method()V')
+   self.assertEqual(len(result['events']['jit_events']),4)
+
+ def test_capture_span_boundaries_are_inclusive_and_outside_events_are_retained(self):
+  _,original=self.receipts()
+  first=int(next(e for e in original if e['window_id']=='256')['start_ns'])
+  last=int(next(e for e in original if e['window_id']=='351')['end_ns'])
+  for at,qualified in [(first,False),(last,False),(first-1,True),(last+1,True)]:
+   event=self.jit_event('jdk.Deoptimization',at,at,99)
+   self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+[event]);result=O.report(self.cache)
+   with self.subTest(at=at):
+    self.assertEqual(result['timing_qualified'],qualified)
+    self.assertEqual(result['events']['capture_span'],{'start_ns':first,'end_ns':last})
+    self.assertEqual(len(result['events']['jit_events']),4)
+  # A compile crossing a boundary is a transition in the span even if it started earlier.
+  self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+[self.jit_event('jdk.Compilation',first-10,first+1,99)])
+  self.assertFalse(O.report(self.cache)['timing_qualified'])
+
+ def test_latest_deoptimized_compile_id_cannot_fall_back_to_older_entry_or_ignore_inline_method(self):
+  _,original=self.receipts();method=O.REQUIRED_ENTRIES[0]
+  original[1]['level']='1'  # Older normal C1 remains in history, not proof of being entrant.
+  newest=self.jit_event('jdk.Compilation',50,60,7,method)
+  deopt=self.jit_event('jdk.Deoptimization',80,80,7,'inlined.Callee()V')
+  events=original+[newest,deopt];self.write('loot-operations-events.tsv',O.EVENT_FIELDS,events)
+  result=O.report(self.cache)
+  self.assertFalse(result['timing_qualified']);self.assertEqual(result['events']['compiled_normal_entries'][method],[])
+  evidence=next(e for e in result['events']['entry_evidence'] if e['method']==method)
+  self.assertEqual(evidence['compilation']['compile_id'],7)
+  self.assertEqual(evidence['invalidations'][0]['method'],'inlined.Callee()V')
+  self.assertTrue(any(e['compile_id']==1 for e in result['events']['compiled_before_measure']))
+  # A genuinely later normal entry with another ID is literal new evidence, at its actual level.
+  events.append(self.jit_event('jdk.Compilation',90,95,8,method,level=2))
+  self.write('loot-operations-events.tsv',O.EVENT_FIELDS,events);result=O.report(self.cache)
+  self.assertTrue(result['timing_qualified'])
+  self.assertEqual(result['events']['compiled_normal_entries'][method][0]['compile_id'],8)
+  self.assertEqual(result['events']['compiled_normal_entries'][method][0]['level'],2)
+  self.assertIn('not proof of current entrant',result['events']['note'])
+
+ def test_unknown_ambiguous_ids_levels_and_wrong_required_descriptors_fail_closed(self):
+  _,original=self.receipts();method=O.REQUIRED_ENTRIES[0]
+  alternatives=[
+   [self.jit_event('jdk.Compilation',50,60,0,method)],
+   [self.jit_event('jdk.Compilation',50,60,7,method,level=0)],
+   [self.jit_event('jdk.Compilation',50,60,7,method),self.jit_event('jdk.Compilation',51,60,8,method)],
+   [self.jit_event('jdk.Compilation',50,60,1,'another.Root()V')],
+   [self.jit_event('jdk.Deoptimization',80,80,0,'unknown.Inline()V')],
+  ]
+  for extra in alternatives:
+   self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+extra)
+   with self.subTest(extra=extra):self.assertFalse(O.report(self.cache)['timing_qualified'])
+  wrong=copy.deepcopy(original);wrong[1]['method']='zombie.inventory.ItemPickerJava.doRollItemInternal()V'
+  self.write('loot-operations-events.tsv',O.EVENT_FIELDS,wrong)
+  self.assertFalse(O.report(self.cache)['timing_qualified'])
+
+ def test_creation_without_insertion_and_all_miss_groups_preserve_capture_but_not_success_qualification(self):
+  original,events=self.receipts();group=list(O.GROUPS)[0]
+  for all_miss in (False,True):
+   rows=copy.deepcopy(original)
+   for row in rows:
+    if row['phase']=='measure' and row['group']==group:
+     row['increments']='0'
+     if all_miss:row.update(created='0',created_types='-')
+   self.write('loot-operations.tsv',O.FIELDS,rows);result=O.report(self.cache)
+   with self.subTest(all_miss=all_miss):
+    self.assertEqual(result['capture'],'paired-equivalent');self.assertFalse(result['timing_qualified'])
+    self.assertEqual(len(result['windows']),352)
+    self.assertFalse(result['successful_insertion_evidence'][group]['creation_and_insertion_observed'])
+    self.assertEqual(result['successful_insertion_evidence'][group]['inserted_pairs'],[])
+    self.assertEqual(result['successful_insertion_evidence'][group]['created_pairs'],[] if all_miss else list(range(24)))
+  # Legitimate miss pairs remain in statistics when other measured pairs demonstrate insertion.
+  rows=copy.deepcopy(original)
+  for row in rows:
+   if row['phase']=='measure' and row['group']==group and row['pair']=='0':row.update(created='0',increments='0',created_types='-')
+  self.write('loot-operations.tsv',O.FIELDS,rows);result=O.report(self.cache)
+  self.assertTrue(result['timing_qualified']);self.assertEqual(result['summary'][group]['total_pairs'],24)
+  self.assertEqual(result['successful_insertion_evidence'][group]['inserted_pairs'],list(range(1,24)))
 
  def test_input_graph_callback_and_identity_diagnostic_scope_cannot_disappear(self):
   self.receipts();path=self.cache/'loot-operations-inputs.properties';original=path.read_text()
