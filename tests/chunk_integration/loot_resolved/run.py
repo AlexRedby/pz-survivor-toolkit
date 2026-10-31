@@ -63,8 +63,18 @@ def sha(data):
 
 
 def run(args, cwd, log):
-    result = subprocess.run(list(map(str, args)), cwd=cwd, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+    try:
+        result = subprocess.run(list(map(str, args)), cwd=cwd, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
+    except subprocess.TimeoutExpired as error:
+        partial = error.stdout or ""
+        if isinstance(partial, bytes):
+            partial = partial.decode(errors="replace")
+        log.write_text(partial)
+        log.with_name(log.name + ".timeout.json").write_text(json.dumps(
+            {"status": "timeout", "timeout_seconds": 180, "partial_stdout_bytes": len(partial.encode()),
+             "log": log.name}, indent=2) + "\n")
+        raise RuntimeError(f"Command timed out; retained partial stdout and metadata: {log}") from error
     log.write_text(result.stdout)
     if result.returncode:
         raise RuntimeError(f"Command failed ({result.returncode}); see {log}")
@@ -75,14 +85,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for key in ("game", "jdk", "output"):
         parser.add_argument("--" + key, type=Path, required=True)
-    parser.add_argument("--java", type=Path, required=True, help="Runtime Java binary; use the bundled Zulu runtime for timing")
-    parser.add_argument("--measure", action="store_true", help="Reserve the common exclusive test slot before timing")
-    parser.add_argument("--forks", type=int, default=5)
+    parser.add_argument("--java", type=Path, required=True, help="Explicit bundled Zulu25 Java binary")
+    parser.add_argument("--measure", action="store_true", help="Reserve the exclusive test slot before timing")
+    parser.add_argument("--forks", type=int, default=5, help="Independent JVMs, each containing BOTH modes")
+    parser.add_argument("--pairs", type=int, default=12, help="Even AB/BA pair count per group inside each JVM")
     parser.add_argument("--iterations", type=int, default=200000)
     parser.add_argument("--resource-wait", type=int, default=900)
     args = parser.parse_args()
-    if args.forks < 1 or args.iterations < 1 or args.resource_wait < 0:
-        parser.error("forks/iterations must be positive and resource-wait nonnegative")
+    if args.forks < 1 or args.pairs < 2 or args.pairs % 2 or args.iterations < 1 or args.resource_wait < 0:
+        parser.error("positive forks/iterations, even pairs >=2, nonnegative resource-wait required")
+    if any(os.environ.get(key) for key in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")):
+        parser.error("Unset injected JVM option variables so the receipt contains every JVM flag")
     game, jdk, out = (getattr(args, key).resolve() for key in ("game", "jdk", "output"))
     if out.exists() or out == game or game in out.parents:
         parser.error("Output must be a new directory outside the game installation")
@@ -99,148 +112,187 @@ def main():
     for folder in (classes, sources, work, out / "client1", out / "home"):
         folder.mkdir()
     fingerprints = {}
-    for name in ("ResolvedCandidate.java", "LootResolvedCheck.java", "run.py"):
+    for name in ("ResolvedCandidate.java", "LootResolvedCheck.java", "run.py", "README.md"):
         data = (SOURCE / name).read_bytes()
         (sources / name).write_bytes(data)
         fingerprints[name] = sha(data)
     cp = os.pathsep.join(map(str, (native, buddy)))
+    # Build the overlay first so javac can bind DIRECT static bridge calls. No timed MH dispatch.
     run([jdk / "bin/javac", "--release", "25", "-cp", cp, "-d", classes,
-         sources / "ResolvedCandidate.java", sources / "LootResolvedCheck.java"], work, out / "compile.log")
+         sources / "ResolvedCandidate.java"], work, out / "compile-builder.log")
     build_cp = os.pathsep.join((str(classes), cp))
     for mode in ("stock", "candidate"):
         patch = run([jdk / "bin/java", "-cp", build_cp, "ResolvedCandidate", native, out / ("overlay-" + mode), mode],
                     work, out / ("splice-" + mode + ".log"))
         if "RESOLVED_SPLICE_READY" not in patch:
             raise RuntimeError("Splice guard check did not finish")
-    common_jvm_flags = ["-Xms256m", "-Xmx256m", "-XX:+UseZGC", "-Xbatch", "-Djava.awt.headless=true",
-                        "-Duser.home=" + str(out / "home"), "-Dpz.test.cache=" + str(out / "client1"),
-                        "-Dloot.iterations=" + str(args.iterations)]
-    receipt = {"format": 1, "research_only": True, "native_guards": GUARDS,
-               "sources": fingerprints, "game_jar_sha256": sha(native.read_bytes()),
-               "buddy_jar_sha256": sha(buddy.read_bytes()),
-               "patched_class_sha256": {mode: sha((out / ("overlay-" + mode) / "zombie/inventory/ItemPickerJava.class").read_bytes()) for mode in ("stock", "candidate")},
-               "scope": "headless calculation + native no-creation roll paths; not gameplay/SP/Host", "runtime_java_sha256": sha(java.read_bytes()),
-               "runtime_selection": "explicit caller-supplied binary; Zulu vendor check does not establish bundled identity",
-               "common_jvm_flags": common_jvm_flags, "jvm_invocations": {},
-               "gc_policy": "ZGC; allocations and GC remain part of the synthetic workload, without FPS extrapolation",
-               "measure": args.measure, "forks": args.forks if args.measure else 1,
-               "iterations": args.iterations if args.measure else 0}
+    compile_cp = os.pathsep.join(map(str, (out / "overlay-candidate", native, buddy)))
+    run([jdk / "bin/javac", "--release", "25", "-cp", compile_cp, "-d", classes,
+         sources / "LootResolvedCheck.java"], work, out / "compile-harness.log")
+    bytecode = run([jdk / "bin/javap", "-c", "-p", "-l", "-cp", str(classes), "LootResolvedCheck"],
+                   work, out / "harness-bytecode.txt")
+    loop = bytecode.split("private static long pairedLoop(", 1)[1].split("private static void separateReporting(", 1)[0]
+    for name in ("pztest$iterationNative", "pztest$iterationResolved"):
+        direct = [line for line in loop.splitlines() if "invokestatic" in line and name + ":" in line]
+        if len(direct) != 1:
+            raise RuntimeError("Expected one direct static bridge call in symmetric pairedLoop: " + name)
+    if "MethodHandle" in bytecode or "invokeExact" in bytecode:
+        raise RuntimeError("MethodHandle dispatch must not be present in the paired harness")
+    run([jdk / "bin/javap", "-c", "-p", "-l", "-cp", str(out / "overlay-candidate"),
+         "zombie.inventory.ItemPickerJava"], work, out / "candidate-bytecode.txt")
+    common_flags = ["-Xms256m", "-Xmx256m", "-XX:+UseZGC", "-Xbatch", "-Djava.awt.headless=true",
+                    "-Duser.home=" + str(out / "home"), "-Dpz.test.cache=" + str(out / "client1"),
+                    "-Dloot.iterations=" + str(args.iterations), "-Dloot.pairs=" + str(args.pairs)]
+    receipt = {"format": 2, "research_only": True, "native_guards": GUARDS, "sources": fingerprints,
+               "game_jar_sha256": sha(native.read_bytes()), "buddy_jar_sha256": sha(buddy.read_bytes()),
+               "overlay_sha256": {mode: sha((out / ("overlay-" + mode) / "zombie/inventory/ItemPickerJava.class").read_bytes())
+                                  for mode in ("stock", "candidate")},
+               "harness_class_sha256": sha((classes / "LootResolvedCheck.class").read_bytes()),
+               "runtime_java_sha256": sha(java.read_bytes()),
+               "runtime_selection": "explicit binary; Zulu vendor check alone does not establish bundled identity",
+               "common_jvm_flags": common_flags, "jvm_invocations": {},
+               "scope": "synthetic first resolution + one Rand draw + chance; no creation/gameplay/SP/Host",
+               "design": "both direct bridges in candidate overlay; within each JVM alternating AB/BA pairs",
+               "warmup_seed_policy": "short timer-wrapper warmup continues RNG; long warmup and measured halves reset native CA seed",
+               "input_weighting": "synthetic equal predicate coverage, not observed gameplay frequencies",
+               "gc_policy": "ZGC; allocation and GC retained as workload; no FPS extrapolation",
+               "measure": args.measure, "forks": args.forks if args.measure else 0,
+               "pairs_per_group_per_jvm": args.pairs if args.measure else 0,
+               "iterations_per_half": args.iterations if args.measure else 0}
     receipt["java_version"] = run([java, "-version"], work, out / "java-version.log").strip()
     if args.measure and "Zulu" not in receipt["java_version"]:
-        raise RuntimeError("Timing requires the bundled Zulu runtime")
-    (out / "input-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    vectors = None
-    consumed = None
-    rows = []
-    compilation_overlap = []
+        raise RuntimeError("Timing requires caller-supplied bundled Zulu runtime")
+    vectors = inputs = groups = None
+    rows, windows, overlaps, log_receipts = [], [], [], {}
 
-    def invoke(mode, fork, measure):
-        nonlocal vectors, consumed
-        tag = f"{fork}-{mode}"
-        classpath = [classes, out / ("overlay-" + mode)]
-        classpath.extend((native, buddy))
-        jvm_flags = common_jvm_flags + [
+    def invoke(tag, overlay, measure=False, fork=0):
+        nonlocal vectors, inputs, groups
+        classpath = os.pathsep.join(map(str, (classes, out / ("overlay-" + overlay), native, buddy)))
+        flags = common_flags + ["-Dloot.fork=" + str(fork),
             "-Xlog:jit+compilation=debug:file=" + str(out / (tag + "-jit.log")),
             "-Xlog:gc*,safepoint:file=" + str(out / (tag + "-gc-safepoint.log")) + ":uptime,level,tags"]
-        main_arguments = ["--measure"] if measure else []
-        exact_classpath = os.pathsep.join(map(str, classpath))
-        receipt["jvm_invocations"][tag] = {"jvm_flags": jvm_flags, "classpath": exact_classpath,
-                                           "main_class": "LootResolvedCheck", "main_arguments": main_arguments}
+        main_args = ["--measure"] if measure else []
+        receipt["jvm_invocations"][tag] = {"jvm_flags": flags, "classpath": classpath,
+                                           "main_class": "LootResolvedCheck", "main_arguments": main_args}
         (out / "input-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-        command = [java, *jvm_flags, "-cp", exact_classpath, "LootResolvedCheck", *main_arguments]
-        log = run(command, work, out / (tag + ".log"))
+        log = run([java, *flags, "-cp", classpath, "LootResolvedCheck", *main_args], work, out / (tag + ".log"))
         actual = [line for line in log.splitlines() if line.startswith("VECTOR ")]
         if len(actual) != 190:
             raise RuntimeError(f"Expected 190 semantic rows, got {len(actual)}: {tag}")
-        required = ("VECTOR fulltype-replaced ", "VECTOR existing-empty-original-wins ",
-                    "VECTOR live-tag/", "VECTOR precedence-generator-over-medical ",
-                    "VECTOR native-doRoll/Base.FluidFixtureEmpty/", "VECTOR native-bagRoll/Base.FluidFixtureEmpty/",
-                    "VECTOR exception/null java.lang.NullPointerException")
+        required = ("VECTOR fulltype-replaced ", "VECTOR existing-empty-original-wins ", "VECTOR live-tag/",
+                    "VECTOR precedence-generator-over-medical ", "VECTOR native-doRoll/Base.FluidFixtureEmpty/",
+                    "VECTOR native-bagRoll/Base.FluidFixtureEmpty/", "VECTOR exception/null java.lang.NullPointerException")
         if any(not any(line.startswith(prefix) for line in actual) for prefix in required):
             raise RuntimeError("Missing required semantic coverage: " + tag)
+        actual_groups = [line for line in log.splitlines() if line.startswith("GROUP ")]
+        actual_inputs = [line for line in log.splitlines() if line.startswith("INPUT ")]
+        if len(actual_groups) != 5 or len(actual_inputs) != 257:
+            raise RuntimeError("Missing varied paired inputs: " + tag)
         if vectors is None:
-            vectors = actual
-        if vectors != actual:
-            raise RuntimeError("Native/candidate result mismatch: " + tag)
-        sums = [line for line in log.splitlines() if line.startswith("CONSUMED ")]
+            vectors, groups, inputs = actual, actual_groups, actual_inputs
+        if (vectors, groups, inputs) != (actual, actual_groups, actual_inputs):
+            raise RuntimeError("Native/candidate or same-JVM varied semantic/RNG mismatch: " + tag)
+        gc_text = (out / (tag + "-gc-safepoint.log")).read_text()
+        if "Initializing The Z Garbage Collector" not in gc_text:
+            raise RuntimeError("ZGC initialization missing: " + tag)
+        for suffix in (".log", "-jit.log", "-gc-safepoint.log"):
+            file = out / (tag + suffix)
+            log_receipts[file.name] = sha(file.read_bytes())
         if measure:
-            if len(sums) != 4:
-                raise RuntimeError("Missing consumed benchmark outputs: " + tag)
-            if consumed is None:
-                consumed = sums
-            if consumed != sums:
-                raise RuntimeError("Benchmark result mismatch: " + tag)
-            gaps = [line.split() for line in log.splitlines() if line.startswith("REPORT_GAP ")]
-            if len(gaps) != 1:
-                raise RuntimeError("Missing reporting separation receipt: " + tag)
-            _, last_end, report_at, waited_ns = gaps[0]
-            if int(report_at) - int(last_end) < 10 or int(waited_ns) < 20_000_000:
-                raise RuntimeError("Insufficient reporting separation: " + tag)
-            windows = []
+            local_windows, local_rows = [], []
             for line in log.splitlines():
                 if line.startswith("WINDOW "):
-                    _, label, round_, began, ended = line.split()
-                    windows.append((int(began), int(ended)))
+                    _, label, pair, order, mode, begin, end = line.split()
+                    local_windows.append(dict(run=tag, fork=fork, label=label, pair=int(pair), order=order,
+                                              mode=mode, begin_ms=int(begin), end_ms=int(end)))
+                elif line.startswith("PAIR "):
+                    _, label, pair, order, mode, count, wall, cpu, allocation, checksum, rng = line.split()
+                    local_rows.append(dict(run=tag, fork=fork, label=label, pair=int(pair), order=order, mode=mode,
+                                           iterations=int(count), wall_ns=int(wall), cpu_ns=int(cpu),
+                                           allocated_bytes=int(allocation), checksum=int(checksum), next_rng=int(rng)))
+            expected = 5 * args.pairs * 2
+            if len(local_rows) != expected or len(local_windows) != expected:
+                raise RuntimeError("Incomplete same-JVM pair rows/windows: " + tag)
+            for label in sorted({row['label'] for row in local_rows}):
+                for pair in range(args.pairs):
+                    half = [row for row in local_rows if row['label'] == label and row['pair'] == pair]
+                    if len(half) != 2 or {row['mode'] for row in half} != {"native", "candidate"}:
+                        raise RuntimeError("Incomplete pair: " + tag)
+                    if len({(row['order'], row['iterations'], row['checksum'], row['next_rng']) for row in half}) != 1:
+                        raise RuntimeError("Paired count/checksum/RNG mismatch: " + tag)
+                orders = [row['order'] for row in local_rows if row['label'] == label and row['mode'] == 'native']
+                if orders.count('AB') != args.pairs // 2 or orders.count('BA') != args.pairs // 2:
+                    raise RuntimeError("Unbalanced AB/BA order: " + tag)
+            gaps = [line.split() for line in log.splitlines() if line.startswith("REPORT_GAP ")]
+            if len(gaps) != 1:
+                raise RuntimeError("Missing reporting separation: " + tag)
+            _, last_end, report_at, waited = gaps[0]
+            if int(last_end) != max(w['end_ms'] for w in local_windows):
+                raise RuntimeError("Reporting separation does not match final window: " + tag)
+            if int(report_at) - int(last_end) < 10 or int(waited) < 20_000_000:
+                raise RuntimeError("Insufficient reporting separation: " + tag)
+            # Preserve EVERY compilation event, with the same conservative +/-1ms margin.
             for line in (out / (tag + "-jit.log")).read_text().splitlines():
                 at = re.match(r"\[([0-9.]+)s\]", line)
-                # Conservative: retain/reject every logged compilation event, including
-                # inlined dependencies, method handles, Java collections and strings.
-                # Uptime and JIT timestamps have millisecond boundary uncertainty.
-                if at and any(begin - 1 <= float(at[1]) * 1000 <= end + 1 for begin, end in windows):
-                    compilation_overlap.append(dict(run=tag, line=line))
-        for line in log.splitlines():
-            if line.startswith("MEASURE "):
-                _, label, round_, count, wall, cpu, allocation = line.split()
-                rows.append(dict(mode=mode, fork=fork, label=label, round=int(round_),
-                                 iterations=int(count), wall_ns=int(wall), cpu_ns=int(cpu),
-                                 allocated_bytes=int(allocation)))
-        if measure and not any(row['mode'] == mode and row['fork'] == fork for row in rows):
-            raise RuntimeError("No timing rows: " + tag)
-        print("PASS " + tag + " vectors=" + str(len(actual)), flush=True)
+                if at:
+                    hit = [w for w in local_windows if w['begin_ms'] - 1 <= float(at[1]) * 1000 <= w['end_ms'] + 1]
+                    if hit:
+                        overlaps.append(dict(run=tag, line=line, windows=hit))
+            rows.extend(local_rows)
+            windows.extend(local_windows)
+        print(f"PASS {tag} vectors={len(actual)} varied_inputs={len(actual_inputs)}", flush=True)
 
-    # Validate cold actual-source behavior before acquiring a potentially contended timing slot.
     for mode in ("stock", "candidate"):
-        invoke(mode, "check", False)
+        invoke("check-" + mode, mode)
     context = nullcontext(None)
     if args.measure:
         sys.path.insert(0, str(ROOT / "tools"))
         from queue_checks import admission
-        selection = {"kind": "sp", "clients": 1, "suite": "loot-resolved-headless",
-                     "resources": {"heap_mib": 256, "native_mib": 256,
-                                   "cpu_per_instance": 1.0, "exclusive": True}}
+        selection = {"kind": "sp", "clients": 1, "suite": "loot-resolved-paired-headless",
+                     "resources": {"heap_mib": 256, "native_mib": 256, "cpu_per_instance": 1.0, "exclusive": True}}
         runtime = {"roles": {"client1": {"cache": str(out / "client1")}}}
         context = admission.acquire(out, selection, runtime, args.resource_wait)
-    with context as resources:
+    with context as resource_receipt:
         if args.measure:
-            (out / "admission.json").write_text(json.dumps(resources, indent=2) + "\n")
+            (out / "admission.json").write_text(json.dumps(resource_receipt, indent=2) + "\n")
             for fork in range(args.forks):
-                for mode in (("stock", "candidate") if fork % 2 == 0 else ("candidate", "stock")):
-                    invoke(mode, fork, True)
-    summary = []
-    paired = []
+                invoke(f"{fork}-paired", "candidate", True, fork)
+    metrics = ("wall_ns", "cpu_ns", "allocated_bytes")
+    paired, summary = [], []
     for label in sorted({row['label'] for row in rows}):
-        for mode in ("stock", "candidate"):
-            selected = [row for row in rows if row['label'] == label and row['mode'] == mode]
-            forks = []
-            for fork in range(args.forks):
-                subset = [row for row in selected if row['fork'] == fork]
-                if not subset:
-                    raise RuntimeError("Missing paired fork: " + label)
-                forks.append({key: statistics.median(row[key] / row['iterations'] for row in subset)
-                              for key in ("wall_ns", "cpu_ns", "allocated_bytes")})
-            summary.append(dict(label=label, mode=mode, fork_medians=forks,
-                                median={key: statistics.median(row[key] for row in forks)
-                                        for key in forks[0]}))
-        stock, candidate = [row for row in summary if row['label'] == label]
-        deltas = [{key: after[key] - before[key] for key in before}
-                  for before, after in zip(stock['fork_medians'], candidate['fork_medians'])]
-        paired.append(dict(label=label, candidate_minus_stock= deltas,
-                           median_delta={key: statistics.median(row[key] for row in deltas) for key in deltas[0]}))
-    (out / "result.json").write_text(json.dumps(dict(receipt=receipt, vectors=vectors, consumed=consumed,
-                                                    measurements=rows, summary=summary, paired=paired,
-                                                    all_compilation_in_measurement=compilation_overlap), indent=2) + "\n")
-    if compilation_overlap:
-        raise RuntimeError("JIT compilation overlapped timed rounds (+/-1ms boundary); retain result as unqualified")
+        selected = [row for row in rows if row['label'] == label]
+        for fork in range(args.forks):
+            for pair in range(args.pairs):
+                halves = {row['mode']: row for row in selected if row['fork'] == fork and row['pair'] == pair}
+                if set(halves) != {"native", "candidate"}:
+                    raise RuntimeError("Missing paired result")
+                native_row, candidate_row = halves['native'], halves['candidate']
+                delta = {key: candidate_row[key] / candidate_row['iterations'] - native_row[key] / native_row['iterations']
+                         for key in metrics}
+                paired.append(dict(label=label, fork=fork, pair=pair, order=native_row['order'],
+                                   candidate_minus_native_per_iteration=delta))
+        deltas = [row for row in paired if row['label'] == label]
+        fork_rows = []
+        for fork in range(args.forks):
+            subset = [row for row in deltas if row['fork'] == fork]
+            fork_rows.append(dict(fork=fork, median_delta={key: statistics.median(
+                row['candidate_minus_native_per_iteration'][key] for row in subset) for key in metrics}))
+        modes = {mode: {key: statistics.median(row[key] / row['iterations'] for row in selected if row['mode'] == mode)
+                        for key in metrics} for mode in ('native', 'candidate')}
+        summary.append(dict(label=label, modes=modes, fork_medians=fork_rows,
+                            median_fork_delta={key: statistics.median(f['median_delta'][key] for f in fork_rows) for key in metrics},
+                            order_median_delta={order: {key: statistics.median(row['candidate_minus_native_per_iteration'][key]
+                                for row in deltas if row['order'] == order) for key in metrics} for order in ('AB', 'BA')},
+                            negative_pair_counts={key: sum(row['candidate_minus_native_per_iteration'][key] < 0 for row in deltas)
+                                                  for key in metrics}, pair_count=len(deltas)))
+    result = dict(receipt=receipt, vectors=vectors, groups=groups, inputs=inputs, measurements=rows,
+                  windows=windows, paired=paired, summary=summary, log_sha256=log_receipts,
+                  all_compilation_in_measurement=overlaps,
+                  qualification=("semantics-only" if not args.measure else
+                                 "unqualified-jit-overlap" if overlaps else "synthetic-paired-unit-only"))
+    (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    if overlaps:
+        raise RuntimeError("All-JIT gate rejected timed windows (+/-1ms); retain unqualified result")
     print("LOOT_RESOLVED_CHECK_PASS " + str(out / "result.json"))
 
 
