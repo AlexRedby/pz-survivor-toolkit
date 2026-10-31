@@ -13,7 +13,17 @@ local producer,readProducer,volumeProducer,equipProducer
 local requestsEnabled=config.options and config.options.require_native_requests==true
 local requestSettlement,nativeRequestState,requestSample,requestModule,requestPending,requestObserver
 local requestPolicy,nativeStopMatcher
+local preciseTiming=config.options and config.options.precise_timing==true
+local performanceClock,performanceClockInfo
 local function now()return getTimestampMs()end
+local function timingNow()
+ if not preciseTiming then return now()end
+ assert(performanceClock and bookControlsMonotonicMs==performanceClock,'monotonic clock binding changed')
+ local value=performanceClock()
+ assert(bookControlsMonotonicMs==performanceClock and type(value)=='number'and value==value and value>=0 and value<math.huge,
+  'monotonic clock returned an invalid value')
+ return value
+end
 local function case()return config.cases[index]end
 local function control()return ids and F.parseControl(ids.control)end
 local function capacityLost()if not ids then return false end;local _,lost=F.parseControl(ids.control);return lost end
@@ -327,6 +337,15 @@ local function diagnostic(decision,action)
   adapter=adapter or false,resource=decision.resource and tostring(decision.resource)or false,first=decision.first or false,last=decision.last or false,
   contract={knownInputs=contract and contract.knownInputs==true or false,cancelOperation=contract and contract.cancelOperation or false,cancelWaiting=contract and contract.cancelWaiting or false},at=now()}
 end
+-- Measure each actual mutating handler once; no replay or rollback. Dispatch
+-- preparation and diagnostic Policy calls are outside these handler intervals.
+local function timedHandler(list,name,x,y)
+ local callback=list[name]
+ if not preciseTiming then callback(list,x,y);return end
+ local started=timingNow();callback(list,x,y);local finished=timingNow();local elapsed=finished-started
+ assert(elapsed>=0,'monotonic handler clock moved backwards')
+ return elapsed,started,finished
+end
 local function realGesture()
  local panel=T.ActionQueuePanel:new(80,80,460,640);panel.queue,panel.playerNum=queue(),state.player:getPlayerNum();panel:initialise();panel:addToUIManager();panel:update()
  local list=panel.list;list:setYScroll(0);assert(not list:isVScrollBarVisible(),'owned real queue panel must fit all rows')
@@ -353,22 +372,30 @@ local function realGesture()
  local decision=moving and T.ActionQueuePolicy.evaluateMove(queue(),movingAction,front,false)or T.ActionQueuePolicy.evaluateCancel(queue(),target.item,whole)
  local ui={source='ActionQueuePanel.List',input=moving and'programmatic-drag'or'programmatic-press-release',header=whole,singleton=not grouped,
   target=ref(target.item),operation=tokenID(target.operation),hitTested=true,decision=diagnostic(decision,moving and movingAction or target.item),at=now()}
+ local pressMs,releaseMs,pressStartedMs,pressFinishedMs,releaseStartedMs,releaseFinishedMs
  if moving then
   local from=rowFor(movingAction,false)or rowFor(movingAction,true)
   if not from then for _,row in ipairs(list.items)do if row.operation==movingAction.toolkitQueueOperation and row.header then from=row;break end end end
   assert(from,'real pending operation row missing');ui.movingAction=ref(movingAction);ui.movingAnchor=ref(from.item);ui.movingToken=tokenID(from.operation)
   local x,fromY=35,list:topOfItem(from.index)+from.height/2;local toY=list:topOfItem(target.index)+2
   assert(list:rowUnderMouse(x,fromY)==from and list:rowUnderMouse(x,toY)==target,'real drag hit targets differ')
-  list:onMouseDown(x,fromY);ui.pressCaptured=list.dragAction==from.item
+  pressMs,pressStartedMs,pressFinishedMs=timedHandler(list,'onMouseDown',x,fromY);ui.pressCaptured=list.dragAction==from.item
   -- The actual list onMouseMove reads native pointer coordinates. Use release's
   -- real hit testing with a captured programmatic drag; no pointer getter override.
   list.dragging=ui.pressCaptured and math.abs(fromY-toY)>5;ui.dragging=list.dragging==true
-  list:onMouseUp(x,toY);ui.x,ui.fromY,ui.toY=x,fromY,toY
+  releaseMs,releaseStartedMs,releaseFinishedMs=timedHandler(list,'onMouseUp',x,toY);ui.x,ui.fromY,ui.toY=x,fromY,toY
  else
   local x,y=list:cancelX()+12,list:topOfItem(target.index)+target.height/2
   assert(list:rowUnderMouse(x,y)==target,'real cancel hit target differs')
-  list:onMouseDown(x,y);ui.pressCaptured=whole and list.pressedOperation~=nil or not whole and list.pressedCancel==target.item
-  list:onMouseUp(x,y);ui.x,ui.y=x,y
+  pressMs,pressStartedMs,pressFinishedMs=timedHandler(list,'onMouseDown',x,y);ui.pressCaptured=whole and list.pressedOperation~=nil or not whole and list.pressedCancel==target.item
+  releaseMs,releaseStartedMs,releaseFinishedMs=timedHandler(list,'onMouseUp',x,y);ui.x,ui.y=x,y
+ end
+ if preciseTiming then
+  ui.handlerTiming={timer='System.nanoTime',units='ms',scope='actual-list-handler-work',samples=1,
+   pressMs=pressMs,releaseMs=releaseMs,handlerWorkMs=pressMs+releaseMs,
+   pressStartedMs=pressStartedMs,pressFinishedMs=pressFinishedMs,releaseStartedMs=releaseStartedMs,releaseFinishedMs=releaseFinishedMs,replayed=false,
+   includesHumanPause=false,includesRender=false,includesAsyncSettlement=false,
+   warmState='after-readonly-bank-and-diagnostic-decision',completeEditQualified=false,timerOverhead='included-not-subtracted'}
  end
  ui.feedback=list.cancelFeedback and list.cancelFeedback.text or false;ui.gestureCleared=not list.pressedOperation and not list.pressedCancel and not list.dragAction
  if keep then
@@ -387,8 +414,8 @@ local function resetFailure(reason)
  ISTimedActionQueue.clear(state.player);raw('RESET',{case=case(),entrypoint='ISTimedActionQueue.clear',reason=reason,at=now()});phase='reset-drain'
 end
 -- Test-only observations of real read-only production entrypoints. The
--- millisecond clock is deliberately reported as coarse; no render/Host-contention
--- or full-queue regression claim follows from these tiny scenario timings.
+-- isolated calls and panel update are diagnostics, not complete input/frame work.
+-- The optional monotonic clock improves resolution without changing that scope.
 local function performanceAtBoundary()
  local profileRequested=type(config.options)=='table'and config.options.profileCounts==true
  local liveProfile=profileRequested and PZSurvivorToolkitBookProfile or nil
@@ -415,7 +442,10 @@ local function performanceAtBoundary()
   {name='panelUpdate',kind='advisory',call=function()panel:update()end},
  }
  local function input(count,limits)
-  return{case=case(),timer='getTimestampMs',units='ms',coarse=true,queueEnabled=not native,queueCount=count,warmup=3,samples=20,limits=limits,metrics={}}
+  return{case=case(),timer=preciseTiming and'System.nanoTime'or'getTimestampMs',units='ms',coarse=not preciseTiming,
+   clockEvidence=preciseTiming and performanceClockInfo or nil,queueEnabled=not native,queueCount=count,warmup=3,samples=20,limits=limits,metrics={},
+   measurementScope='isolated-entrypoint-bank',completeEditMeasured=false,frameLoadMeasured=false,budgetBasis='initial-engineering-targets',
+   firstUseScope='first-sample-of-this-bank-not-cold-process',tailEstimate='20-samples-p95-order19-p99-sample-maximum',timerOverhead='included-not-subtracted'}
  end
  local function measure(result)
   for _,entry in ipairs(entries)do
@@ -438,13 +468,14 @@ local function performanceAtBoundary()
     decisionSamples=decisionSamples+1;lastAllowed,lastReason,lastMode=allowed,reason,mode
    end
    local function sample()
-    local started=now();local decision=entry.call();local elapsed=now()-started
+    local started=timingNow();local decision=entry.call();local elapsed=timingNow()-started
     assert(elapsed>=0,'benchmark wall clock moved backwards')
     -- Scalar comparison is outside the timed call; authority snapshots and
     -- execution descriptors never survive this local observation.
     observe(decision);return elapsed
    end
-   local row={name=entry.name,kind=entry.kind,firstUseMs=sample(),rawMs={}}
+   local row={name=entry.name,kind=entry.kind,firstUseMs=sample(),rawMs={},
+    workScope=entry.name=='panelUpdate'and'panel-update-only'or entry.kind=='authoritative'and'policy-decision-call'or'policy-preview-call'}
    for i=1,result.warmup do observe(entry.call())end
    for i=1,result.samples do row.rawMs[i]=sample()end
    if liveProfile then
@@ -632,6 +663,17 @@ Events.OnTick.Add(function()
      'source-owned native request watch diagnostic missing')
    end
    assert(T.ActionQueueLifecycle.registerObserver('fixture.book-controls',{started=register,begin=lifecycleBegin,finish=lifecycleFinish}),'read-only native observer missing')
+   if preciseTiming then
+    local info=bookControlsTimingClockInfo
+    assert(type(bookControlsMonotonicMs)=='function'and type(info)=='table'and getmetatable(info)==nil
+     and info.schema==1 and info.timer=='System.nanoTime'and info.units=='ms'and info.monotonic==true and info.relativeOrigin==true
+     and info.source=='disposable-jvm-probe'and info.nativeClock==true
+     and info.functionClass=='net.alexredby.bookcontrolsprobe.Main$MonotonicClock','native monotonic clock evidence missing')
+    performanceClock=bookControlsMonotonicMs
+    performanceClockInfo={schema=info.schema,timer=info.timer,units=info.units,monotonic=info.monotonic,relativeOrigin=info.relativeOrigin,
+     source=info.source,functionClass=info.functionClass,nativeClock=info.nativeClock}
+    timingNow()
+   end
    local bindings=bookControlsNativeBindings
    if config.options and config.options.require_native_bindings==true then
     assert(type(bindings)=='table'and bindings.readOnly==true and bindings.compatFactories==2 and bindings.cartFactories==1
@@ -644,7 +686,7 @@ Events.OnTick.Add(function()
     raw('NATIVE_BINDINGS',bindings)
    end
    ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,sourceBound=true,authorityEquipment=true,
-    nativeRequestsObserved=requestsEnabled or nil,nativeBindings=bindings or false})
+    nativeRequestsObserved=requestsEnabled or nil,nativeBindings=bindings or false,timingClock=performanceClockInfo or false})
   end
   local elapsed=now()-since
   if elapsed>180000 and(phase=='boundary'or phase=='drain')then resetFailure('native functional timeout '..phase);since=now()

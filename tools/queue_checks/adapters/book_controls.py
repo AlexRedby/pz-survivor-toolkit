@@ -1,6 +1,7 @@
 """Opt-in native book control bank: exact source, real Panel gesture and authority effects."""
 import copy
 import json
+import math
 import os
 import subprocess
 import zipfile
@@ -18,6 +19,45 @@ CAPACITY_CASES = tuple(source + '.' + control + '-capacity-lost' for source in S
 FAVORITE_CASES = ('world.header-cancel-favorite', 'world.move-volume-favorite')
 CASES += CAPACITY_CASES + FAVORITE_CASES
 PREFIX = '[BOOK_CONTROLS] '
+
+CLOCK_INFO = dict(schema=1, timer='System.nanoTime', units='ms', monotonic=True, relativeOrigin=True,
+                  source='disposable-jvm-probe', functionClass='net.alexredby.bookcontrolsprobe.Main$MonotonicClock', nativeClock=True)
+PERFORMANCE_SCOPE = dict(measurementScope='isolated-entrypoint-bank', completeEditMeasured=False, frameLoadMeasured=False,
+                         budgetBasis='initial-engineering-targets', firstUseScope='first-sample-of-this-bank-not-cold-process',
+                         tailEstimate='20-samples-p95-order19-p99-sample-maximum', timerOverhead='included-not-subtracted')
+
+
+def clock_errors(value):
+    if (not isinstance(value, dict) or set(value) != set(CLOCK_INFO)
+            or type(value.get('schema')) is not int or value != CLOCK_INFO
+            or any(value.get(k) is not True for k in ('monotonic', 'relativeOrigin', 'nativeClock'))):
+        return ['Missing source-bound monotonic millisecond clock evidence']
+    return []
+
+
+def handler_timing_errors(ui, precise, enabled):
+    value = ui.get('handlerTiming') if isinstance(ui, dict) else None
+    if not precise:
+        return ['Unexpected unbound handler timing'] if value is not None else []
+    if not enabled:
+        return ['Queue-off control claimed an editor handler'] if value is not None else []
+    fixed = dict(timer='System.nanoTime', units='ms', scope='actual-list-handler-work', samples=1, replayed=False,
+                 includesHumanPause=False, includesRender=False, includesAsyncSettlement=False,
+                 warmState='after-readonly-bank-and-diagnostic-decision', completeEditQualified=False, timerOverhead='included-not-subtracted')
+    times = ('pressMs', 'releaseMs', 'handlerWorkMs', 'pressStartedMs', 'pressFinishedMs', 'releaseStartedMs', 'releaseFinishedMs')
+    fields = set(fixed) | set(times)
+    if (not isinstance(value, dict) or set(value) != fields or type(value.get('samples')) is not int
+            or any(value.get(k) != v for k, v in fixed.items())
+            or any(value.get(k) is not False for k in ('replayed', 'includesHumanPause', 'includesRender', 'includesAsyncSettlement', 'completeEditQualified'))
+            or any(not _number(value.get(k)) or value[k] < 0 for k in times)):
+        return ['Malformed single-use actual handler timing or unsupported latency claim']
+    if (not value['pressStartedMs'] <= value['pressFinishedMs'] <= value['releaseStartedMs'] <= value['releaseFinishedMs']
+            or not math.isclose(value['pressMs'], value['pressFinishedMs'] - value['pressStartedMs'], rel_tol=1e-12, abs_tol=1e-6)
+            or not math.isclose(value['releaseMs'], value['releaseFinishedMs'] - value['releaseStartedMs'], rel_tol=1e-12, abs_tol=1e-6)):
+        return ['Handler durations differ from their monotonic time intervals']
+    if not math.isclose(value['handlerWorkMs'], value['pressMs'] + value['releaseMs'], rel_tol=1e-12, abs_tol=1e-9):
+        return ['Handler work total differs from the single press/release observations']
+    return []
 
 
 def _action_identity(value):
@@ -70,6 +110,8 @@ def definitions():
 
 
 def validate(selection):
+    if type(selection.get('options', {}).get('precise_timing', False)) is not bool:
+        raise ValueError('precise_timing must be boolean')
     requests = selection.get('options', {}).get('require_native_requests', False)
     if type(requests) is not bool:
         raise ValueError('require_native_requests must be boolean')
@@ -462,22 +504,37 @@ def _record_errors(record, kind, case, actor, acks, capacity_lost=False):
     return errors
 
 
-def performance_errors(value, case, enabled, probe=False):
+def performance_errors(value, case, enabled, probe=False, precise=False):
     errors = []
-    if (not isinstance(value, dict) or value.get('case') != case or value.get('timer') != 'getTimestampMs'
-            or value.get('units') != 'ms' or value.get('coarse') is not True or value.get('readOnly') is not True
+    timer, coarse = ('System.nanoTime', False) if precise else ('getTimestampMs', True)
+    if (not isinstance(value, dict) or value.get('case') != case or value.get('timer') != timer
+            or value.get('units') != 'ms' or value.get('coarse') is not coarse or value.get('readOnly') is not True
             or value.get('queueEnabled') is not enabled or type(value.get('queueCount')) is not int or not 1 <= value['queueCount'] <= 32
             or value.get('warmup') != 3 or value.get('samples') != 20 or not isinstance(value.get('limits'), str)):
-        return ['Missing bounded read-only coarse-clock performance evidence']
+        return ['Missing bounded read-only performance evidence for the selected clock']
+    if precise:
+        errors.extend(clock_errors(value.get('clockEvidence')))
+    elif 'clockEvidence' in value:
+        errors.append('Unbound monotonic clock evidence in a coarse-clock bank')
+    scoped = precise or any(k in value for k in PERFORMANCE_SCOPE)
+    if scoped and (any(value.get(k) != v for k, v in PERFORMANCE_SCOPE.items())
+                   or any(value.get(k) is not False for k in ('completeEditMeasured', 'frameLoadMeasured'))):
+        errors.append('Isolated call timings cannot qualify complete edit or frame load')
+    if value.get('completeEditQualified', False) is not False:
+        errors.append('Isolated call bank claimed complete edit qualification')
     metrics = value.get('metrics', [])
     expected_names = ['evaluateMove', 'evaluateCancel', 'previewMove', 'previewCancel', 'panelUpdate']
     if not isinstance(metrics, list) or [m.get('name') for m in metrics if isinstance(m, dict)] != expected_names:
         return ['Missing/duplicate actual Policy/Panel timing entrypoints']
     for index, metric in enumerate(metrics):
         kind = 'authoritative' if index < 2 else 'advisory'
+        scope = 'policy-decision-call' if index < 2 else 'policy-preview-call' if index < 4 else 'panel-update-only'
+        if scoped and metric.get('workScope') != scope:
+            errors.append('Timing entrypoint work scope differs: ' + expected_names[index])
         raw = metric.get('rawMs')
         budgets = (2, 4) if index < 2 else (1, 2)
         if (metric.get('kind') != kind or not _number(metric.get('firstUseMs')) or metric['firstUseMs'] < 0
+                or any(not _number(metric.get(k)) for k in ('p95Ms', 'p99Ms', 'p95BudgetMs', 'p99BudgetMs'))
                 or not isinstance(raw, list) or len(raw) != 20 or any(not _number(v) or v < 0 for v in raw)
                 or (metric.get('p95BudgetMs'), metric.get('p99BudgetMs')) != budgets):
             errors.append('Malformed raw timings/warmup separation/frozen budget: ' + expected_names[index]); continue
@@ -513,7 +570,7 @@ def performance_errors(value, case, enabled, probe=False):
         errors.append('Intended Toolkit32 authority edit denied; no positive timing qualification: ' + denied)
     if not probe:
         bounded = value.get('probe32')
-        errors.extend('32-member probe: ' + reason for reason in performance_errors(bounded, case, enabled, True))
+        errors.extend('32-member probe: ' + reason for reason in performance_errors(bounded, case, enabled, True, precise))
         if isinstance(bounded, dict):
             temporary = bounded.get('temporary')
             if (bounded.get('queueCount') != 32 or bounded.get('originalQueueCount') != value.get('queueCount')
@@ -542,7 +599,8 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         errors.extend(_nonfinite_case_errors(row, ids, enabled))
         errors.extend(native_request_errors(row, case, selection, ids))
         errors.extend(native_transfer_stop_errors(row, case, selection, ids))
-        errors.extend(performance_errors(row.get('performance'), case, enabled))
+        errors.extend(performance_errors(row.get('performance'), case, enabled, precise=selection.get('options', {}).get('precise_timing') is True))
+        errors.extend(handler_timing_errors(boundary.get('ui'), selection.get('options', {}).get('precise_timing') is True, enabled))
         if isinstance(row.get('performance'), dict) and row['performance'].get('queueCount') != len(boundary.get('queue', [])):
             errors.append('Timing queue shape differs from the real edit boundary')
         spacing = row.get('tickSpacingMs')
@@ -801,6 +859,11 @@ def verify(root, selection, catalog):
                 or len(final) != 1 or final[0].get('cases') != list(CASES) or final[0].get('performed') != len(CASES)
                 or final[0].get('failed') != 0 or final[0].get('skipped') != 0 or any(r.get('event') == 'fatal' for r in events)):
             issues.append('Missing complete ordered book-controls qualification bank or functional denials remain')
+        if selection.get('options', {}).get('precise_timing') is True:
+            if len(setup) != 1:
+                issues.append('Monotonic timing setup missing')
+            else:
+                issues.extend(clock_errors(setup[0].get('timingClock')))
         if selection.get('options', {}).get('require_native_requests') is True:
             if len(setup) != 1 or setup[0].get('nativeRequestsObserved') is not True:
                 issues.append('Native request diagnostics were not source-bound at setup')
@@ -872,5 +935,7 @@ def verify(root, selection, catalog):
         issues.append('Book controls verifier ' + type(error).__name__ + ': ' + str(error))
     return dict(issues=issues, outcomes=outcomes, evidence={'limits': [
         'Programmatic real widget hit tests and handlers with an injected drag-threshold state; no physical pointer or rendering claim.',
+        'Policy timings cover isolated calls; panelUpdate excludes hover rebuilds. Initial engineering thresholds and 20-sample quantiles do not establish complete input/frame cost or an empirical budget basis.',
+        'Optional monotonic handler timings observe one actual press/release pair after the diagnostic call bank, without replay; they exclude human pause, rendering and asynchronous settlement.',
         'Root singleton cross has no fabricated header; bag/world exercise actual operation/reader/optional-return controls. Four after-edit capacity failures retain an exact visible optional-return obligation, then explicitly Keep the item. Queue-off controls retain native rejected-return/tail-reset behavior.',
         'World normal/capacity books are nonfavorite to isolate eligible return; separate favorite-world SP no-effect/Host native-success probes preserve native protection. No magazine/comic or older-build claim.']})

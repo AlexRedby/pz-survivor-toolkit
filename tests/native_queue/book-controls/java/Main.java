@@ -10,12 +10,44 @@ import se.krka.kahlua.stdlib.BaseLib;
 import se.krka.kahlua.stdlib.TableLib;
 import se.krka.kahlua.vm.JavaFunction;
 import se.krka.kahlua.vm.KahluaTable;
+import se.krka.kahlua.vm.LuaCallFrame;
 import se.krka.kahlua.vm.LuaClosure;
 import zombie.Lua.LuaManager;
 import zombie.characters.CharacterTimedActions.LuaTimedActionNew;
 
 /** Observe the unchanged native stop after its Lua cleanup, before engine removal. */
 public final class Main {
+    /** Disposable measurement clock; no game state or native initialization. */
+    public static final class MonotonicClock implements JavaFunction {
+        private static final long ORIGIN_NANOS = System.nanoTime();
+        private static final MonotonicClock INSTANCE = new MonotonicClock();
+        private MonotonicClock() {}
+
+        @Override public int call(LuaCallFrame frame, int arguments) {
+            // Subtract before converting to double, preserving short interval precision.
+            return frame.push((System.nanoTime() - ORIGIN_NANOS) / 1_000_000.0);
+        }
+    }
+
+    /** Shared identity also makes the actual Lua callback directly testable. */
+    public static JavaFunction timingClock() { return MonotonicClock.INSTANCE; }
+
+    /** Safe to exercise in a standalone Kahlua VM without touching LuaManager. */
+    public static void installTimingClock(KahluaTable environment) {
+        environment.rawset("bookControlsMonotonicMs", timingClock());
+        Object callback = environment.rawget("bookControlsMonotonicMs");
+        KahluaTable info = new J2SEPlatform().newTable();
+        info.rawset("schema", 1.0);
+        info.rawset("timer", "System.nanoTime");
+        info.rawset("units", "ms");
+        info.rawset("monotonic", true);
+        info.rawset("relativeOrigin", true);
+        info.rawset("source", "disposable-jvm-probe");
+        info.rawset("functionClass", callback.getClass().getName());
+        info.rawset("nativeClock", callback == timingClock() && callback.getClass() == MonotonicClock.class);
+        environment.rawset("bookControlsTimingClockInfo", info);
+    }
+
     public static void stopped(LuaTimedActionNew nativeAction, Throwable failure) {
         if (LuaManager.env == null || nativeAction == null) return;
         var action = nativeAction.getTable();
@@ -72,6 +104,7 @@ public final class Main {
     }
     public static void bindings() {
         if (!(LuaManager.env instanceof KahluaTableImpl env)) return;
+        installTimingClock(env);
         var platform = new J2SEPlatform();
         KahluaTable result = platform.newTable();
         try {

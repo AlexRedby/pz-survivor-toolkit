@@ -415,7 +415,7 @@ local list={};for i,a in ipairs(original)do list[i]=a end
 local q={queue=list,current=original[1],toolkitOperationGeneration=17}
 front,equip,volume=original[1],original[3],original[4];ids={source='worn-bag'}
 queue=function()return q end;control=function()return'move-volume'end;case=function()return'worn-bag.move-volume'end
-now=function()return 1000 end;ref=function(value)return tostring(value)end;raw=function()end
+now=function()return 1000 end;timingNow=now;ref=function(value)return tostring(value)end;raw=function()end
 F={snapshot=function()return{itemId=101,pages=219,container='root',volume=.5}end,same=function(a,b)for k,v in pairs(a)do if b[k]~=v then return false end end;return true end}
 local ctor=function(_,mode,player,device,value)
  local action={Type='ISRadioAction',character=player,device=device,deviceData=data,mode=mode,secondaryItem=value,maxTime=30}
@@ -490,6 +490,129 @@ ok,problem=pcall(run)
 assert(not ok and tostring(problem):find('deliberate read-only inspection failure',1,true),'diagnostic hid original callback failure')
 assert(not profile.active and #constructed==27 and #removed==oldRemoved+1 and q.queue==list and #list==5,'failed diagnostic leaked active scope or suffix')
 assert(calls>0,'actual entrypoints were not exercised')
+-- Fractional-clock diagnostics keep the same source/queue guards and scopes.
+preciseTiming=true;config={options={precise_timing=true}};fail=false;unstable=false
+performanceClockInfo={schema=1,timer='System.nanoTime',units='ms',monotonic=true,relativeOrigin=true,source='disposable-jvm-probe',
+ functionClass='net.alexredby.bookcontrolsprobe.Main$MonotonicClock',nativeClock=true}
+local precise=0;timingNow=function()precise=precise+.03125;return precise end
+assert(pcall(run),'precise diagnostic probe failed')
+for _,result in ipairs({performance,performance.probe32})do
+ assert(result.timer=='System.nanoTime'and result.coarse==false and result.clockEvidence==performanceClockInfo)
+ assert(result.measurementScope=='isolated-entrypoint-bank'and result.completeEditMeasured==false and result.frameLoadMeasured==false)
+ assert(result.budgetBasis=='initial-engineering-targets'and result.tailEstimate=='20-samples-p95-order19-p99-sample-maximum')
+ for _,metric in ipairs(result.metrics)do assert(metric.rawMs[1]==.03125 and metric.p95Ms==.03125 and metric.p99Ms==.03125)end
+end
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
+
+    def precise_evidence(self, case='worn-bag.move-equip', kind='mp', mode='toolkit', requests=False):
+        evidence=(self.request_evidence if requests else self.evidence)(case,kind,mode);row=evidence[0]
+        for value in (row['performance'],row['performance']['probe32']):
+            value.update(timer='System.nanoTime',coarse=False,clockEvidence=copy.deepcopy(a.CLOCK_INFO),**a.PERFORMANCE_SCOPE)
+            for index,metric in enumerate(value['metrics']):
+                metric['workScope']='policy-decision-call'if index<2 else 'policy-preview-call'if index<4 else 'panel-update-only'
+        if mode=='toolkit':
+            row['boundary']['ui']['handlerTiming']=dict(timer='System.nanoTime',units='ms',scope='actual-list-handler-work',samples=1,
+                pressMs=.125,releaseMs=.75,handlerWorkMs=.875,pressStartedMs=10,pressFinishedMs=10.125,releaseStartedMs=10.5,releaseFinishedMs=11.25,replayed=False,includesHumanPause=False,includesRender=False,
+                includesAsyncSettlement=False,warmState='after-readonly-bank-and-diagnostic-decision',completeEditQualified=False,timerOverhead='included-not-subtracted')
+            for boundary in evidence[5]:boundary['ui']=copy.deepcopy(row['boundary']['ui'])
+        return evidence
+
+    def test_precise_scope_and_clock_do_not_qualify_complete_input_latency(self):
+        for mode in ('toolkit','native'):
+            row=self.precise_evidence(mode=mode)[0]
+            self.assertEqual(a.performance_errors(row['performance'],row['id'],mode=='toolkit',precise=True),[])
+            self.assertEqual(a.handler_timing_errors(row['boundary']['ui'],True,mode=='toolkit'),[])
+        row=self.precise_evidence()[0]
+        mutations=[lambda r:r.update(coarse=True),lambda r:r.update(timer='getTimestampMs'),
+            lambda r:r.update(completeEditMeasured=True),lambda r:r.update(frameLoadMeasured=True),
+            lambda r:r.update(completeEditQualified=True),lambda r:r.update(budgetBasis='baseline-measured'),
+            lambda r:r['clockEvidence'].update(schema=True),lambda r:r['clockEvidence'].update(nativeClock=False),
+            lambda r:r['clockEvidence'].update(extra={'object':'bad'}),lambda r:r['metrics'][0].update(workScope='complete-edit'),
+            lambda r:r['metrics'][0].update(p95BudgetMs=99),lambda r:r['probe32'].update(completeEditMeasured=True)]
+        for i,mutate in enumerate(mutations):
+            value=copy.deepcopy(row['performance']);mutate(value)
+            self.assertTrue(a.performance_errors(value,row['id'],True,precise=True),i)
+        timing=row['boundary']['ui']['handlerTiming']
+        for key,value in [('samples',True),('replayed',True),('includesRender',True),('includesHumanPause',True),
+                ('includesAsyncSettlement',True),('completeEditQualified',True),('handlerWorkMs',9),('pressMs',float('nan')),
+                ('releaseMs',-1),('releaseStartedMs',0),('pressFinishedMs',11),('scope','end-to-end-click'),('warmState','cold-process')]:
+            changed=copy.deepcopy(timing);changed[key]=value
+            self.assertTrue(a.handler_timing_errors({'handlerTiming':changed},True,True),key)
+        self.assertTrue(a.handler_timing_errors({'handlerTiming':timing},False,True))
+        self.assertTrue(a.handler_timing_errors({'handlerTiming':timing},True,False))
+        selection=self.selection();selection['options']['precise_timing']=1
+        with self.assertRaises(ValueError):a.validate(selection)
+
+    def test_timing_quantiles_and_budgets_cannot_alias_boolean_values(self):
+        for precise in (False,True):
+            row=(self.precise_evidence if precise else self.evidence)()[0]
+            for key,index,value in [('p95Ms',0,False),('p99Ms',0,False),('p95BudgetMs',2,True)]:
+                bank=copy.deepcopy(row['performance']);bank['metrics'][index][key]=value
+                self.assertTrue(a.performance_errors(bank,row['id'],True,precise=precise),(key,precise))
+
+    def test_precise_timing_full_bank_needs_setup_and_actual_handler_evidence(self):
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory)
+            for mode in ('toolkit','native'):
+                selection,client,server=self.log_bank(mode=mode,requests=True,precise=True)
+                (root/'client1-launch.log').write_text(client);(root/'server-launch.log').write_text(server)
+                self.assertEqual(a.verify(root,selection,{})['issues'],[],mode)
+                # Corrupt only the source-bound setup row; samples stay intact.
+                changed=client.replace('"nativeClock": true','"nativeClock": false',1)
+                (root/'client1-launch.log').write_text(changed)
+                self.assertTrue(a.verify(root,selection,{})['issues'])
+                (root/'client1-launch.log').write_text(client)
+                selection['options'].pop('precise_timing')
+                self.assertTrue(a.verify(root,selection,{})['issues'])
+
+    def test_actual_fixture_times_one_mutating_handler_pair_without_replay(self):
+        lua=shutil.which('luajit')
+        if not lua:self.skipTest('LuaJIT not installed')
+        source=r"""
+local file=assert(io.open(arg[1]));local text=file:read('*a');file:close()
+local first=assert(text:find('local function timedHandler(',1,true))
+local last=assert(text:find('\nlocal function resetFailure(',first,true))
+local run,handler=assert(loadstring(text:sub(first,last-1)..'\nreturn realGesture,timedHandler'))()
+preciseTiming=true;local clock=0
+-- Clock double isolates the fixture's wiring, not native time accuracy.
+timingNow=function()clock=clock+.125;return clock end
+now=function()return 100 end
+local down,up,removed=0,0,0
+for _,moving in ipairs({false,true})do
+ local token={};oldNative={};front={toolkitQueueOperation=token,action=oldNative}
+ equip={toolkitQueueOperation={}};volume={toolkitQueueOperation={}}
+ state={player={getPlayerNum=function()return 0 end}};ids={source='root'}
+ local q={current=front,queue={front,equip,volume}}
+ queue=function()return q end;control=function()return moving and'move-equip'or'reader-child-cancel'end
+ diagnostic=function()return{reason=false}end;ref=tostring;tokenID=function()return 1 end
+ local rows={{item=front,operation=token,header=false,index=1,height=40},
+  {item=equip,operation=equip.toolkitQueueOperation,header=false,index=2,height=40}}
+ local list={items=rows,setYScroll=function()end,isVScrollBarVisible=function()return false end,
+  cancelX=function()return 400 end,topOfItem=function(_,i)return(i-1)*40 end,
+  rowUnderMouse=function(_,x,y)return rows[math.floor(y/40)+1]end}
+ list.onMouseDown=function(self,x,y)
+  down=down+1;if moving then self.dragAction=equip else self.pressedCancel=front end
+ end
+ list.onMouseUp=function(self,x,y)
+  up=up+1;q.toolkitCancel=front;self.dragAction=nil;self.dragging=nil;self.pressedCancel=nil
+ end
+ local panel={list=list,initialise=function()end,addToUIManager=function()end,update=function()end,
+  removeFromUIManager=function()removed=removed+1 end}
+ T={ActionQueuePanel={new=function()return panel end},ActionQueuePolicy={evaluateCancel=function()return{}end,evaluateMove=function()return{}end}}
+ local oldDown,oldUp=down,up;local ui=run()
+ assert(down==oldDown+1 and up==oldUp+1 and removed==(moving and 2 or 1),'handler was replayed or not called')
+ assert(ui.accepted and ui.handlerTiming.pressMs==.125 and ui.handlerTiming.releaseMs==.125 and ui.handlerTiming.handlerWorkMs==.25)
+ assert(ui.handlerTiming.samples==1 and ui.handlerTiming.replayed==false and ui.handlerTiming.completeEditQualified==false)
+ assert(ui.handlerTiming.pressStartedMs<=ui.handlerTiming.pressFinishedMs and ui.handlerTiming.pressFinishedMs<=ui.handlerTiming.releaseStartedMs and ui.handlerTiming.releaseStartedMs<=ui.handlerTiming.releaseFinishedMs)
+ assert(list.onMouseDown~=nil and list.onMouseUp~=nil,'callback binding was replaced')
+end
+local effects,payload=0,{}
+local list={onMouseUp=function()effects=effects+1;error(payload,0)end}
+local original=list.onMouseUp
+local ok,reason=pcall(handler,list,'onMouseUp',0,0)
+assert(not ok and reason==payload and effects==1 and list.onMouseUp==original,'timing swallowed an error, replayed mutation or replaced callback')
 os.exit(0)
 """
         subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
@@ -950,14 +1073,16 @@ os.exit(0)
                     (root/'client1-launch.log').write_text(changed)
                     self.assertTrue(a.verify(root,selection,{})['issues'])
 
-    def log_bank(self, kind='mp', mode='toolkit', requests=False):
+    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False):
         selection = self.selection(kind, mode); client, server = [], []
         if requests: selection['options']['require_native_requests']=True
+        if precise: selection['options']['precise_timing']=True
         def raw(marker, value): return a.PREFIX + marker + ' ' + json.dumps(value)
         def event(value): return '[QUEUE_CHECK] ' + json.dumps(value)
-        client.append(event(dict(event='setup', suite='book-controls', cases=list(a.CASES), queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests)))
+        client.append(event(dict(event='setup', suite='book-controls', cases=list(a.CASES), queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests,timingClock=copy.deepcopy(a.CLOCK_INFO)if precise else False)))
         for case in a.CASES:
-            row, spec, baseline, final, admissions, boundaries, drains, acks = (self.request_evidence if requests else self.evidence)(case, kind, mode)
+            evidence=self.precise_evidence(case,kind,mode,requests=requests)if precise else(self.request_evidence if requests else self.evidence)(case,kind,mode)
+            row, spec, baseline, final, admissions, boundaries, drains, acks = evidence
             authority = server if kind == 'mp' else client
             authority.extend([raw('PREPARED', spec), raw('BASELINE', baseline), raw('VERIFIED', final)])
             if row.get('capacity') is not False: authority.append(raw('CAPACITY_LOST', row['capacity']))
