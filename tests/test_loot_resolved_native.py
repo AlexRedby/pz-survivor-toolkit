@@ -614,7 +614,7 @@ class LootLuaHandshake(unittest.TestCase):
 local root=arg[1]
 local JSON=assert(loadfile(root..'/tests/native_queue/health/shared/QueueHealthEvents.lua'))()
 local function state(host,server,case)
- case=case or 'bank';local count=({bank=8,semantics=12,reload=1})[case]
+ case=case or 'bank';local count=({bank=8,semantics=12,reload=1,operations=2})[case]
  local e=setmetatable({outputs={},handlers={},sent={},bankRuns=0,bankStatus='not-run'},{__index=_G})
  e.selection={suite='loot-resolved',cases={case},kind=host and 'mp' or 'sp',options={loot_runtime_mode='control'}}
  e.Events=setmetatable({}, {__index=function(t,k)local v={Add=function(f)e.handlers[k]=e.handlers[k]or{};table.insert(e.handlers[k],f)end};rawset(t,k,v);return v end})
@@ -664,7 +664,7 @@ c.fire('OnServerCommand',s.sent.module,s.sent.command,s.sent.args);assert(log(c)
 
     def test_semantic_and_reload_banks_bind_actual_actor_api_and_response_counts(self):
         self.run_lua("""
-for _,case in ipairs({'semantics','reload'}) do
+for _,case in ipairs({'semantics','reload','operations'}) do
  local e=state(false,false,case);e.fire('OnGameStart');e.fire('OnTick');assert(e.bankRuns==1 and log(e):find('COMPLETE',1,true))
  local c,s=state(true,false,case),state(true,true,case)
  c.fire('OnGameStart');c.fire('OnTick');assert(c.bankRuns==0 and c.sent.args.case==case)

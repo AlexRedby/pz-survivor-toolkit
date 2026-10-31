@@ -36,7 +36,7 @@ public final class Main {
         System.out.println("[LOOT_RESOLVED_RUNTIME] BRIDGE mode=" + Bootstrap.mode() + " state=" + Bootstrap.state());
     }
     @LuaMethod(name="lootResolvedRuntimeStatus", global=true)
-    public static String status() { return status; }
+    public static String status() { return Bootstrap.bank().equals("operations") ? OperationsMain.status() : status; }
     @LuaMethod(name="lootResolvedRuntimeBank", global=true)
     public static String bank() { return Bootstrap.bank(); }
     static int caseSeed() { return cases; }
@@ -267,6 +267,13 @@ public final class Main {
         row(terminal ? "CLEANUP" : "DISPOSE", "items=" + created.size() + ":inserted=" + inserted.size() + ":spawn-counters=verified:process-queues=clear");
         roots.clear(); created.clear(); inserted.clear(); spawnBaselines.clear();
     }
+    /** Operations ownership was observed natively; reuse only the reviewed disposal algorithm. */
+    static void disposeOperations(List<ItemContainer> containers, Set<InventoryItem> items,
+            Set<InventoryItem> incremented, Map<String,Integer> baselines) throws Exception {
+        require(!status.equals("running") && roots.isEmpty() && created.isEmpty() && inserted.isEmpty(),"operations-cleanup-overlap");
+        roots.addAll(containers); created.addAll(items); inserted.addAll(incremented); spawnBaselines.putAll(baselines);
+        cleanup();
+    }
     private static void seeded(int number) throws Exception {
         Bootstrap.seedRng(number);
     }
@@ -283,9 +290,9 @@ public final class Main {
         } finally { cleanup(); }
     }
     @LuaMethod(name="lootResolvedRuntimeRun", global=true)
-    public static synchronized boolean run() { return perform(null); }
+    public static synchronized boolean run() { return Bootstrap.bank().equals("operations") ? OperationsMain.run(null) : perform(null); }
     @LuaMethod(name="lootResolvedRuntimeRunFor", global=true)
-    public static synchronized boolean runFor(zombie.characters.IsoPlayer actor) { return perform(actor); }
+    public static synchronized boolean runFor(zombie.characters.IsoPlayer actor) { return Bootstrap.bank().equals("operations") ? OperationsMain.run(actor) : perform(actor); }
     private static boolean perform(zombie.characters.IsoPlayer actor) {
         if (!status.equals("not-run")) return status.equals("complete");
         String savedRemoval = null;

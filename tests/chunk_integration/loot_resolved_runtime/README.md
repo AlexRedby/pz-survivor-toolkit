@@ -313,3 +313,98 @@ initialization to an exact roll path/index/item ID. The stored field must contai
 the reloaded script weight; a zero public weight never substitutes for that proof.
 The constructor-only headless check covers both name branches without claiming
 factory or initialized-world coverage.
+
+
+## Paired whole-roll screen (operations)
+
+Build one separate `--mode candidate --bank operations --check` artifact; an
+operations control artifact is rejected. Select native suite case
+`"cases": ["operations"]` with `loot_runtime_mode="candidate"`. This **single**
+artifact contains native-chance and resolved-chance paths selected only during
+its measuring owner's window. Outside that window and on all foreign threads,
+the original native public chance helper runs. The reviewed initial FindItem,
+Rand prefix and null-original fallback remain. This test-only dispatch adds
+shared overhead; it is not an uninstrumented game-class baseline.
+
+The bank stages no probe scripts, acceptance callback or OnFillContainer
+observer. It uses ordinary native initial loot options; the semantic banks'
+MementoLootNew/MedicalLootNew overrides are absent. The existing owned full-pack,
+font preload, exact optimizer/native-host profile, actor and private RNG gates
+still apply. Five additional pinned classes bind the narrow callback admission
+(native ItemCodeOnCreate/Clothing and the native method invokers); both new
+observer targets must be undefined at bootstrap and observed exactly once.
+
+Two actual parsed distribution objects are measured without changing chances,
+roll counts or their flags:
+
+- `ProceduralDistributions["CrateMetalwork"]`: public `doRollItem` regular main
+  pass, two fresh detached native-capacity-50 outputs per half. Outer procedural
+  selection, separate junk pass and outer fill callback are excluded. The public
+  arguments are density 0, character null, boolean true and room null; these are
+  declared roll inputs, not a census of actual driving densities/characters.
+- `containers["FirstAidKit"]`: public `rollContainerItem` on four real fresh
+  `Base.FirstAidKit` bags with native capacity 4. This public call includes its
+  native junk pass. Root containers are detached and use the actual actor square.
+
+The observed scope is **whole roll calls**, not complete fillContainer, vehicle
+population or driving. Detached public direct calls may emit native
+`ItemPickInfo -> cannot get ID for container: crate` diagnostics. The logger is
+unchanged, its cost stays inside the call and the native adapter reports the
+actual total identity-diagnostic count in the authority log. Thus measured
+percentages must not be described as ordinary world-container fill speedups.
+
+Preflight retains the full ordered actual parsed fields/chance bits and their
+SHA, actual sandbox values and exact callback binding. Food, map, nested bag and
+unknown ItemConfig/LuaCreate graphs are unsupported. The admitted scripts must
+have `ItemConfig == null`; the only allowed nonempty OnCreate is the exact
+source-reviewed native `ItemCodeOnCreate.onCreateGasMask(Clothing)` Method through
+its pinned game-loader invoker. It changes only the owned mask/moddata through
+native Rand. All selected mods stay loaded and handlers enabled; this admitted
+graph does not fabricate an outer OnFillContainer call or claim to measure every
+selected Lua handler. Callback globals or escaped world/player items invalidate
+the disposable profile.
+
+Fixed storage observes successful native factory returns before acceptance can
+discard them, and records actual native ItemSpawner increment calls. It appends
+only item references/primitive deltas on the owner, with no per-item maps,
+formatting or added Lua callbacks. Foreign calls remain native and don't enter
+owned cleanup. Overflow and exceptional native factory/increment exits poison
+the scope even if protected callers swallow the exception. A factory exception
+before returned-item observation can leave an unobservable partial identity:
+the profile is failed/discarded, never reset and continued. After every half,
+actual output/owned-item fields, IDs, fluids/moddata, following RNG and observer
+trace must match its pair; generated-only entity/queue/counter disposal uses the
+same reviewed native lifecycle outside the clocks.
+
+The bounded schedule has 64 balanced warmup pairs and 24 measured pairs per
+group, rotating AB/BA and group order. One half seeds once and runs its batch;
+arrays, outputs, proof/digest/RNG reads, logging and cleanup are outside the
+measured public-call loop. Native logging and actual item/callback work remain
+inside. Current-thread CPU and wall timestamps are raw; empty timer baseline is
+reported without subtraction. Owned creation-type coverage flags a measured type
+not observed during warmup. Counts alone never imply compiled or lazy-path warmth.
+
+Sparse JFR starts during bootstrap, before any real loot invocation. It retains
+an initial sentinel and every warmup/measured owner window; missing history or
+normal recording-chunk rotation cannot silently pass. Same-clock exported JFR
+intervals bind Compilation/Deoptimization/GC/pause/safepoint/data-loss events to
+window IDs. The analyzer retains all 352 halves, requires literal observed normal
+compiled-entry evidence, flags all JIT-overlap/cold-type/data-loss windows and
+keeps GC rather than dropping slow samples. It reports actual levels and OSR;
+no universal C2 claim follows from an event for one method or an iteration count.
+Current-thread CPU excludes background GC/Host CPU; cleanup-induced GC remains
+a disclosed test lifecycle limitation.
+
+```sh
+python3 tests/chunk_integration/loot_resolved_runtime/operations_compare.py \
+  --cache "$PZ_LOOT_OPERATIONS_CACHE" --output "$PZ_LOOT_OPERATIONS_REPORT"
+```
+
+The authority cache retains `loot-operations.tsv`, actual inputs,
+`loot-operations-PID.jfr` and `loot-operations-events.tsv`, plus normal activation,
+status and RNG receipts. Capture/equivalence success and `timing_qualified` are
+separate results. Failed or contaminated windows are not removed or retried.
+The first run is one exploratory SP screen owned by the normal native runner;
+only a useful result warrants confirmation/Host work. Headless tests establish
+selector/observer/parser contracts, never actual gameplay timing. No production
+hook, installation, FPS extrapolation or new user drive is authorized by this bank.

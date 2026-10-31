@@ -28,5 +28,10 @@
   "zombie/iso/zones/Zone.class": "41faa20ceed9764ba0aa32d8fa81f0329d40a1f5da575beb65601e077346e91c",
   "zombie/scripting/ScriptLoadMode.class": "3b2c6d008150566081bc5db98bf95b62f2244349df63db0b967fac6d628eecf3",
   "zombie/scripting/ScriptType.class": "ed05efd72d87dbfa5e8bfc5831121290a0b377acdbb1cb694eb2d8f8e4b2bfdd",
-  "zombie/scripting/objects/BaseScriptObject.class": "65d5f2bae0552d7a4ceaf24fb1124a57b93ae33b98d5afa8e0f5766d9bcbf666"
+  "zombie/scripting/objects/BaseScriptObject.class": "65d5f2bae0552d7a4ceaf24fb1124a57b93ae33b98d5afa8e0f5766d9bcbf666",
+  "zombie/scripting/logic/ItemCodeOnCreate.class": "389d0f7cb961acf437a3f363eb53597208b56fc3e1bc627ed99c0daad7f27d58",
+  "zombie/inventory/types/Clothing.class": "a32e0ffb3f15b2dca12b17556ca5dbc9d515bd02efdc83ac24ba6e31dd598f1d",
+  "se/krka/kahlua/integration/expose/LuaJavaInvoker.class": "2c431080d2ce2b94966012e982e64b6d66cd1ae67af2eccd23e163fdfea24457",
+  "se/krka/kahlua/integration/expose/MultiLuaJavaInvoker.class": "ff446aca11076e954a84bc9a0d320d8a1939686c979d5b8ef7988842ed844155",
+  "se/krka/kahlua/integration/expose/caller/MethodCaller.class": "511ba515b1d0e6acd1671aea0195d37e3302eb7e992c73543a5844d6a5a6d098"
 }

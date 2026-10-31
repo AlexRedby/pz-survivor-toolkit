@@ -4,8 +4,8 @@ local JSON=require 'QueueHealthEvents'
 local module='LootResolvedNativeTest'
 local mode=config.options.loot_runtime_mode
 local case=config.cases and config.cases[1] or 'bank'
-local counts={bank=8,semantics=12,reload=1}
-local banks={bank='base',semantics='semantics',reload='reload'}
+local counts={bank=8,semantics=12,reload=1,operations=2}
+local banks={bank='base',semantics='semantics',reload='reload',operations='operations'}
 local count=assert(counts[case],'Unknown loot bank case')
 local function run(player)
  assert(type(lootResolvedRuntimeBank)=='function' and lootResolvedRuntimeBank()==banks[case],'Runtime bank differs')

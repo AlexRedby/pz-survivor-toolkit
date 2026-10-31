@@ -25,7 +25,7 @@ public final class Bootstrap {
     private static volatile String resourceProfile = "unknown", optimizerManifest = "none";
     private static volatile boolean runtimeProfileChecked;
     private static boolean attempted;
-    private static int definitions, randDefinitions;
+    private static int definitions, randDefinitions, factoryDefinitions, spawnerDefinitions;
     private static int abstractDefinitions, standardDefinitions, interfaceDefinitions;
     private static Path ownedCache;
 
@@ -108,7 +108,8 @@ public final class Bootstrap {
             mode = text("mode.txt");
             bank = text("bank.txt");
             if (!Set.of("control", "candidate").contains(mode)) throw new IllegalArgumentException("mode");
-            if (!Set.of("base", "semantics", "reload").contains(bank)) throw new IllegalArgumentException("bank");
+            if (!Set.of("base", "semantics", "reload", "operations").contains(bank)) throw new IllegalArgumentException("bank");
+            if (bank.equals("operations") && !mode.equals("candidate")) throw new IllegalArgumentException("operations-requires-dual-candidate-artifact");
             try (InputStream in = Bootstrap.class.getResourceAsStream("native-hashes.properties")) { nativeHashes.load(in); }
             optimizerManifest = text("optimizer-manifest.sha256");
             boolean optimized = !optimizerManifest.equals("none");
@@ -130,8 +131,9 @@ public final class Bootstrap {
             if (instrumentation == null) throw new IllegalStateException("no-instrumentation");
             // These are the candidate's skipped APIs or RNG audit target. Do not infer their
             // already-defined in-memory bytes from the corresponding disk resources.
-            Set<String> early = Set.of(TARGET, RAND, RAND_ABSTRACT, RAND_STANDARD, RAND_INTERFACE, "zombie/scripting/ScriptManager",
-                "zombie/scripting/objects/Item", "zombie/SandboxOptions");
+            Set<String> early = new HashSet<>(Set.of(TARGET, RAND, RAND_ABSTRACT, RAND_STANDARD, RAND_INTERFACE, "zombie/scripting/ScriptManager",
+                "zombie/scripting/objects/Item", "zombie/SandboxOptions"));
+            if (bank.equals("operations")) { early.addAll(Set.of(OperationsCandidate.FACTORY,OperationsCandidate.SPAWNER)); early.addAll(OperationsCandidate.CALLBACKS); }
             for (Class<?> type : instrumentation.getAllLoadedClasses())
                 if (type.getClassLoader() == GAME && early.contains(type.getName().replace('.', '/')))
                     throw new IllegalStateException("already-loaded:" + type.getName());
@@ -146,10 +148,13 @@ public final class Bootstrap {
                         if (!inputHash.equals(hashes.getProperty(name))) { fail("definition-byte-mismatch:" + name); return null; }
                         if (TARGET.equals(name)) {
                             definitions++;
-                            byte[] result = mode.equals("candidate") ? ResolvedCandidate.transform(bytes, true) : bytes;
+                            byte[] result = bank.equals("operations") ? OperationsCandidate.picker(bytes)
+                                : mode.equals("candidate") ? ResolvedCandidate.transform(bytes, true) : bytes;
                             outputHash = ResolvedCandidate.sha(result);
                             return mode.equals("candidate") ? result : null;
                         }
+                        if (bank.equals("operations") && OperationsCandidate.FACTORY.equals(name)) { factoryDefinitions++; return OperationsCandidate.observer(bytes,name); }
+                        if (bank.equals("operations") && OperationsCandidate.SPAWNER.equals(name)) { spawnerDefinitions++; return OperationsCandidate.observer(bytes,name); }
                         if (RAND.equals(name)) { randDefinitions++; return auditRand(bytes); }
                         if (RAND_ABSTRACT.equals(name)) { abstractDefinitions++; return auditReceivers(bytes,name); }
                         if (RAND_STANDARD.equals(name)) { standardDefinitions++; return auditReceivers(bytes,name); }
@@ -164,10 +169,20 @@ public final class Bootstrap {
             Class.forName(RAND_STANDARD.replace('/', '.'), false, GAME);
             Class.forName(RAND.replace('/', '.'), false, GAME);
             Class<?> picker = Class.forName(TARGET.replace('/', '.'), false, GAME);
+            if (bank.equals("operations")) {
+                Class.forName(OperationsCandidate.FACTORY.replace('/','.'),false,GAME);
+                Class.forName(OperationsCandidate.SPAWNER.replace('/','.'),false,GAME);
+                for (String name:OperationsCandidate.CALLBACKS) {
+                    Class<?> callback=Class.forName(name.replace('/','.'),false,GAME);
+                    if (callback.getClassLoader()!=GAME || !hashes.getProperty(name).equals(observed.get(name))) throw new IllegalStateException("operations-callback-definition:"+name);
+                }
+                if (factoryDefinitions!=1 || spawnerDefinitions!=1) throw new IllegalStateException("operations-observer-definitions");
+            }
             boolean bridge = Arrays.stream(picker.getDeclaredMethods()).anyMatch(m -> m.getName().equals("pztest$resolvedOrNative"));
             if (definitions != 1 || randDefinitions != 1 || abstractDefinitions != 1 || standardDefinitions != 1 || interfaceDefinitions != 1
                     || bridge != mode.equals("candidate") || state.startsWith("disabled:"))
                 throw new IllegalStateException("initial-definition-contract:" + definitions + ":" + randDefinitions + ":" + bridge);
+            if (bank.equals("operations")) OperationsTelemetry.start();
             state = "active";
             writeActivation();
             System.out.println("[LOOT_RESOLVED_RUNTIME] ACTIVATION active mode=" + mode + " resource_profile=" + resourceProfile + " definitions=1 rng_audit=1 input="
@@ -249,7 +264,9 @@ public final class Bootstrap {
             .append("rng_scope=").append(RNG_SCOPE).append('\n')
             .append("rng_abstract_definitions=").append(abstractDefinitions).append('\n')
             .append("rng_standard_definitions=").append(standardDefinitions).append('\n')
-            .append("rng_interface_definitions=").append(interfaceDefinitions).append('\n');
+            .append("rng_interface_definitions=").append(interfaceDefinitions).append('\n')
+            .append("operations_factory_definitions=").append(factoryDefinitions).append('\n')
+            .append("operations_spawner_definitions=").append(spawnerDefinitions).append('\n');
         for (String name : new TreeSet<>(observed.keySet())) out.append("observed=").append(name).append(':').append(observed.get(name)).append('\n');
         Files.writeString(ownedCache.resolve("loot-resolved-runtime-activation-" + ProcessHandle.current().pid() + ".txt"), out);
     }
