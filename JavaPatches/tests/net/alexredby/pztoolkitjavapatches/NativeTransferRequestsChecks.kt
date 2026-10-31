@@ -1,7 +1,9 @@
 package net.alexredby.pztoolkitjavapatches
 
+import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentLinkedQueue
 import net.alexredby.native_transfer_request_fixture.NativeTransferSenderStub
 import se.krka.kahlua.converter.KahluaConverterManager
 import se.krka.kahlua.integration.expose.LuaJavaInvoker
@@ -17,16 +19,70 @@ import zombie.characters.BaseCharacterSoundEmitter
 import zombie.characters.DummyCharacterSoundEmitter
 import zombie.characters.IsoGameCharacter
 import zombie.characters.IsoPlayer
+import zombie.core.Transaction
+import zombie.core.TransactionManager
+import zombie.core.network.ByteBufferWriter
+import zombie.core.raknet.UdpConnection
 import zombie.inventory.InventoryItem
 import zombie.inventory.ItemContainer
 import zombie.network.GameClient
 import zombie.network.GameServer
+import zombie.network.PacketTypes
+import zombie.network.packets.ItemTransactionPacket
 
 /** Real native Lua request sites and real LuaJavaInvoker; no game/world or copied action bodies. */
 object NativeTransferRequestsChecks {
     private var calls = 0
     private val sentinel = IllegalStateException("native request sentinel")
     private var lastThrown: Throwable? = null
+    private var addFault: String? = null
+    private var consistencyCalls = 0
+
+    /** A socket-free transport; packet construction/serialization and manager add stay native. */
+    class Connection : UdpConnection(null, 0, 0) {
+        lateinit var bytes: ByteBuffer
+        var packets = 0
+        var onSend: (() -> Unit)? = null
+
+        override fun startPacket(): ByteBufferWriter {
+            bytes.clear()
+            return ByteBufferWriter(bytes)
+        }
+
+        override fun isLimitExceeded(type: PacketTypes.PacketType): Boolean = false
+
+        override fun cancelPacket() = error("native handle fixture unexpectedly cancelled a packet")
+
+        override fun endPacket(priority: Int, reliability: Int, channel: Byte) {
+            packets++
+            val callback = onSend
+            onSend = null
+            callback?.invoke()
+        }
+    }
+
+    @JvmStatic fun useNativeManager(): Boolean = LuaManager.env?.rawget("UseNativeManager") == true
+
+    @JvmStatic
+    fun nativeConsistency(): Byte {
+        consistencyCalls++
+        if (LuaManager.env.rawget("NativeConsistencyFailure") == true) {
+            lastThrown = sentinel
+            throw sentinel
+        }
+        return if (LuaManager.env.rawget("NativeConsistencyReject") == true) 1 else 0
+    }
+
+    @JvmStatic
+    fun afterNativeAdd(transaction: Transaction) {
+        val fault = addFault ?: return
+        addFault = null
+        when (fault) {
+            "duplicate" -> TransactionManager.add(transaction)
+            "multiple" -> TransactionManager.add(ItemTransactionPacket())
+            else -> error("unknown native add fault")
+        }
+    }
 
     class Player : IsoPlayer(null) {
         lateinit var probeEmitter: BaseCharacterSoundEmitter
@@ -142,6 +198,8 @@ object NativeTransferRequestsChecks {
             NativeTransferRequestsChecks::class.java.classLoader,
         )
         var captured: ByteArray? = null
+        var capturedManager: ByteArray? = null
+        var capturedTransaction: ByteArray? = null
         val transformer =
             object : java.lang.instrument.ClassFileTransformer {
                 override fun transform(
@@ -152,12 +210,18 @@ object NativeTransferRequestsChecks {
                     bytes: ByteArray?,
                 ): ByteArray? {
                     if (name == "zombie/Lua/LuaManager\$GlobalObject") captured = bytes?.clone()
+                    if (name == "zombie/core/TransactionManager") capturedManager = bytes?.clone()
+                    if (name == "zombie/core/Transaction") capturedTransaction = bytes?.clone()
                     return null
                 }
             }
         instrumentation.addTransformer(transformer, true)
         try {
-            instrumentation.retransformClasses(LuaManager.GlobalObject::class.java)
+            instrumentation.retransformClasses(
+                LuaManager.GlobalObject::class.java,
+                TransactionManager::class.java,
+                Transaction::class.java,
+            )
         } finally {
             instrumentation.removeTransformer(transformer)
         }
@@ -203,6 +267,53 @@ object NativeTransferRequestsChecks {
         check(enters == 1 && exits >= 1) {
             "actual native API advice missing or duplicated: $enters/$exits"
         }
+        fun calls(bytes: ByteArray?, method: String, helper: String): Int {
+            var count = 0
+            net.bytebuddy.jar.asm
+                .ClassReader(bytes ?: error("native $method transform not captured"))
+                .accept(
+                    object :
+                        net.bytebuddy.jar.asm.ClassVisitor(net.bytebuddy.jar.asm.Opcodes.ASM9) {
+                        override fun visitMethod(
+                            access: Int,
+                            name: String?,
+                            descriptor: String?,
+                            signature: String?,
+                            exceptions: Array<out String>?,
+                        ): net.bytebuddy.jar.asm.MethodVisitor? {
+                            if (name != method) return null
+                            return object :
+                                net.bytebuddy.jar.asm.MethodVisitor(
+                                    net.bytebuddy.jar.asm.Opcodes.ASM9,
+                                ) {
+                                override fun visitMethodInsn(
+                                    opcode: Int,
+                                    owner: String?,
+                                    name: String?,
+                                    descriptor: String?,
+                                    isInterface: Boolean,
+                                ) {
+                                    if (
+                                        owner ==
+                                            "net/alexredby/pztoolkitjavapatches/NativeTransferRequestsLogic" &&
+                                            name == helper
+                                    )
+                                        count++
+                                }
+                            }
+                        }
+                    },
+                    net.bytebuddy.jar.asm.ClassReader.SKIP_DEBUG or
+                        net.bytebuddy.jar.asm.ClassReader.SKIP_FRAMES,
+                )
+            return count
+        }
+        check(calls(capturedManager, "createItemTransaction", "beginManager") == 1)
+        check(calls(capturedManager, "createItemTransaction", "endManager") >= 1)
+        check(calls(capturedManager, "add", "added") == 1)
+        check(calls(capturedTransaction, "set", "allocated") == 1) {
+            "actual native allocation observer missing or duplicated"
+        }
         check(
             LuaManager.GlobalObject.createItemTransaction(null, items, null, null) == 0.toByte(),
         ) {
@@ -217,6 +328,474 @@ object NativeTransferRequestsChecks {
             "woven native API swallowed/replaced its original iterator throwable"
         }
         println("NATIVE_TRANSFER_REQUESTS_WOVEN_PASS enter=$enters exit=$exits")
+    }
+
+    private fun nativeHandleChecks(unsafe: Unsafe, actor: IsoPlayer, source: ItemContainer) {
+        fun field(type: Class<*>, name: String) =
+            type.getDeclaredField(name).apply { isAccessible = true }
+        val nativeQueue =
+            field(TransactionManager::class.java, "transactions").get(null)
+                as ConcurrentLinkedQueue<Transaction>
+        val nextId = field(Transaction::class.java, "lastId")
+        val savedId = nextId.getByte(null)
+        val savedConnection = GameClient.connection
+        val savedDestination = LuaManager.env.rawget("Destination")
+        val owner =
+            (LuaManager.env.rawget("PZSurvivorToolkit") as KahluaTableImpl).rawget(
+                "ActionQueueTransferRequests",
+            ) as KahluaTableImpl
+        val savedObserver = owner.rawget("observe")
+        val secondActor = unsafe.allocateInstance(Player::class.java) as Player
+        field(zombie.iso.IsoObject::class.java, "ecsComponentMap")
+            .set(actor, java.util.HashMap<Any, Any>())
+        field(zombie.iso.IsoObject::class.java, "ecsComponentMap")
+            .set(secondActor, java.util.HashMap<Any, Any>())
+        secondActor.probeEmitter = DummyCharacterSoundEmitter(secondActor)
+        secondActor.onlineId = 32
+        val secondSource = ItemContainer("inventory", null, secondActor)
+        field(IsoGameCharacter::class.java, "inventory").set(secondActor, secondSource)
+        val destination = ItemContainer("crate", null, secondActor)
+        val item = LuaManager.env.rawget("FirstItem") as InventoryItem
+        fun connection(): Connection =
+            (unsafe.allocateInstance(Connection::class.java) as Connection).apply {
+                bytes = ByteBuffer.allocate(4096)
+                GameClient.connection = this
+                nativeQueue.clear()
+            }
+        fun start(id: Int, tag: String): Pair<KahluaTableImpl, NativeTransferRequestReceipt> {
+            nextId.setByte(null, id.toByte())
+            execute(
+                "resetEvents();NativeAction=makeAction('$tag');selectAction(NativeAction);StockStart(NativeAction)",
+                "native-handle-$tag",
+            )
+            val action = LuaManager.env.rawget("NativeAction") as KahluaTableImpl
+            val receipts = LuaManager.env.rawget("Receipts") as KahluaTableImpl
+            val receipt = receipts.rawget(1.0) as NativeTransferRequestReceipt
+            check(receipts.rawget(2.0) === receipt) { "$tag lost the original request receipt" }
+            return action to receipt
+        }
+        fun matches(value: Pair<KahluaTableImpl, NativeTransferRequestReceipt>, id: Int): Boolean =
+            value.second.matchesTransaction(value.first, id)
+        try {
+            LuaManager.env.rawset("UseNativeManager", true)
+            LuaManager.env.rawset("Destination", destination)
+            execute(
+                "PZSurvivorToolkit.ActionQueueTransferRequests.observe=function(r) " +
+                    "assert(r:isCurrent(r:getAction()));Events[#Events+1]=r:getPhase();Receipts[#Receipts+1]=r;" +
+                    "if r:getPhase()=='before' and NativeBefore then NativeBefore(r)end end",
+                "ActionQueueTransferRequests.lua",
+            )
+            var wire = connection()
+            val preflight = runCatching {
+                ItemTransactionPacket()
+                    .set(
+                        actor,
+                        listOf(item),
+                        source,
+                        destination,
+                        null,
+                        zombie.iso.IsoDirections.N,
+                        0f,
+                        0f,
+                        0f,
+                    )
+            }
+                .exceptionOrNull()
+            check(preflight == null) {
+                "native packet fixture cannot set its endpoints: $preflight"
+            }
+            wire = connection()
+            val consistencyBefore = consistencyCalls
+            val positive = start(41, "positive")
+            check(wire.packets == 1 && nativeQueue.size == 1) {
+                "original native create/write/add did not run once: packets=${wire.packets} queued=${nativeQueue.size} result=${positive.first.rawget("transactionId")} stubCalls=$calls consistencyCalls=${consistencyCalls-consistencyBefore}"
+            }
+            check(positive.second.hasNativeHandle() && matches(positive, 41)) {
+                "exact native packet did not produce a handle"
+            }
+            check(matches(positive, 41) && !matches(positive, 42)) {
+                "handle match changed identity or consumed evidence"
+            }
+            check(
+                !positive.second.matchesTransaction(
+                    LuaManager.platform.newTable() as KahluaTableImpl,
+                    41,
+                ),
+            )
+            check(!positive.second.isWireAmbiguous())
+            val originalEnv = LuaManager.env
+            val originalThread = LuaManager.thread
+            val replacedEnvironmentMatches =
+                try {
+                    LuaManager.env = LuaManager.platform.newEnvironment()
+                    matches(positive, 41)
+                } finally {
+                    LuaManager.env = originalEnv
+                }
+            val replacedVmMatches =
+                try {
+                    LuaManager.thread =
+                        KahluaThread(LuaManager.platform, originalEnv).apply {
+                            debugOwnerThread = Thread.currentThread()
+                        }
+                    matches(positive, 41)
+                } finally {
+                    LuaManager.thread = originalThread
+                }
+            println(
+                "NATIVE_TRANSFER_HANDLE_VM_PROBE environment_match=$replacedEnvironmentMatches vm_match=$replacedVmMatches",
+            )
+            val firstPacket = nativeQueue.single()
+            val packetId = field(Transaction::class.java, "id")
+            val packetEntries =
+                field(Transaction::class.java, "entries").get(firstPacket) as List<*>
+            val entry = packetEntries.single()!!
+            val entrySource =
+                entry.javaClass.getField("sourceId").get(entry) as zombie.network.fields.ContainerID
+            val entryDestination =
+                entry.javaClass.getField("destinationId").get(entry)
+                    as zombie.network.fields.ContainerID
+            check(
+                packetId.getByte(firstPacket) == 41.toByte() &&
+                    entry.javaClass.getField("itemId").get(entry) == item.getID(),
+            )
+            check(
+                entrySource.getContainer() === source &&
+                    entryDestination.getContainer() === destination,
+            )
+            val playerId =
+                field(Transaction::class.java, "playerId").get(firstPacket)
+                    as zombie.network.fields.character.PlayerID
+            check(playerId.getPlayer() === actor) {
+                "captured packet owner differs from native input"
+            }
+            val collision = ItemTransactionPacket()
+            packetId.setByte(collision, 41)
+            TransactionManager.add(collision)
+            check(!matches(positive, 41)) {
+                "a live same-byte collision retained authoritative correlation"
+            }
+            nativeQueue.remove(collision)
+            check(!matches(positive, 41)) {
+                "removing a transient byte collision revived historical correlation"
+            }
+            nativeQueue.clear()
+            check(!matches(positive, 41)) { "removed native packet retained a current handle" }
+            val replacement = ItemTransactionPacket()
+            packetId.setByte(replacement, 41)
+            TransactionManager.add(replacement)
+            check(!matches(positive, 41)) { "same-byte replacement revived an old native handle" }
+
+            wire = connection()
+            val continuationStart = start(60, "continuation-start")
+            val savedRemove = LuaManager.env.rawget("removeItemTransaction")
+            try {
+                LuaManager.env.rawset("removeItemTransaction", null)
+                LuaManager.exposer.exposeGlobalClassFunction(
+                    LuaManager.env,
+                    LuaManager.GlobalObject::class.java,
+                    LuaManager.GlobalObject::class
+                        .java
+                        .getMethod(
+                            "removeItemTransaction",
+                            Byte::class.javaPrimitiveType,
+                            Boolean::class.javaPrimitiveType,
+                        ),
+                    "removeItemTransaction",
+                )
+                check(LuaManager.env.rawget("removeItemTransaction") is LuaJavaInvoker)
+                nextId.setByte(null, 61)
+                execute(
+                    "resetEvents();NativeAction.queueList={{items={FirstItem},time=1},{items={SecondItem},time=2}};StockPerform(NativeAction)",
+                    "native-handle-continuation",
+                )
+                val continuationReceipt =
+                    (LuaManager.env.rawget("Receipts") as KahluaTableImpl).rawget(1.0)
+                        as NativeTransferRequestReceipt
+                check(
+                    continuationReceipt.getBoundary() == "continuation" &&
+                        continuationReceipt.hasNativeHandle(),
+                )
+                check(
+                    continuationReceipt.matchesTransaction(continuationStart.first, 61) &&
+                        !matches(continuationStart, 60),
+                )
+                check(
+                    wire.packets == 2 &&
+                        nativeQueue.size == 1 &&
+                        packetId.getByte(nativeQueue.single()) == 61.toByte(),
+                ) {
+                    "native continuation did not retire its previous packet and add exactly one new packet: packets=${wire.packets} queue=${nativeQueue.size} ids=${nativeQueue.map { packetId.getByte(it) }}"
+                }
+            } finally {
+                LuaManager.env.rawset("removeItemTransaction", savedRemove)
+            }
+
+            wire = connection()
+            val independent = start(42, "independent")
+            nextId.setByte(null, 43)
+            TransactionManager.createItemTransaction(
+                secondActor,
+                listOf(item),
+                secondSource,
+                destination,
+            )
+            check(matches(independent, 42)) {
+                "a different actor invalidated an independent cursor"
+            }
+            nextId.setByte(null, 44)
+            TransactionManager.createItemTransaction(actor, listOf(item), source, destination)
+            check(!matches(independent, 42)) {
+                "unknown direct manager call retained the previous actor cursor"
+            }
+            val directSet = start(54, "direct-set")
+            ItemTransactionPacket()
+                .set(
+                    actor,
+                    listOf(item),
+                    source,
+                    destination,
+                    null,
+                    zombie.iso.IsoDirections.N,
+                    0f,
+                    0f,
+                    0f,
+                )
+            check(!matches(directSet, 54)) {
+                "direct native allocation retained the previous actor cursor"
+            }
+            val prepared = ItemTransactionPacket()
+            prepared.set(
+                actor,
+                listOf(item),
+                source,
+                destination,
+                null,
+                zombie.iso.IsoDirections.N,
+                0f,
+                0f,
+                0f,
+            )
+            val directAdd = start(57, "direct-add")
+            TransactionManager.add(prepared)
+            check(!matches(directAdd, 57)) {
+                "direct native add retained the previous actor cursor"
+            }
+            val foreign = start(45, "foreign-global")
+            nextId.setByte(null, 46)
+            LuaManager.GlobalObject.createItemTransaction(
+                actor,
+                LuaManager.platform.newTable() as KahluaTableImpl,
+                source,
+                destination,
+            )
+            check(!matches(foreign, 45)) { "unsupported Global request retained a previous cursor" }
+
+            connection()
+            val reusedOld = start(47, "reuse-old")
+            nativeQueue.clear()
+            val reusedNew = start(47, "reuse-new")
+            check(
+                !matches(reusedOld, 47) &&
+                    !matches(reusedNew, 47) &&
+                    reusedNew.second.isWireAmbiguous(),
+            ) {
+                "byte reuse granted authoritative native correlation"
+            }
+            // A late result changes the real manager's replacement object by byte;
+            // it must not make either receipt authoritative again.
+            val late = ItemTransactionPacket()
+            packetId.setByte(late, 47)
+            field(Transaction::class.java, "state").set(late, Transaction.TransactionState.Done)
+            TransactionManager.instance.setStateFromPacket(late)
+            TransactionManager.instance.setStateFromPacket(late)
+            check(!matches(reusedOld, 47) && !matches(reusedNew, 47)) {
+                "late duplicate results revived reused-byte evidence"
+            }
+            connection()
+            val disconnected = start(48, "connection-old")
+            connection()
+            check(!matches(disconnected, 48)) { "connection replacement retained a handle" }
+            val warmConnection = connection()
+            start(62, "connection-warm")
+            wire = connection()
+            wire.onSend = { GameClient.connection = warmConnection }
+            val switchedDuringSend = start(62, "connection-during-send")
+            check(!matches(switchedDuringSend, 62)) {
+                "a connection change during send borrowed another connection's one-use byte history"
+            }
+            val observerConnection = connection()
+            // Mint on a fresh connection, then switch inside the source observer.
+            connection()
+            LuaManager.env.rawset(
+                "NativeBefore",
+                se.krka.kahlua.vm.JavaFunction { _, _ ->
+                    GameClient.connection = observerConnection
+                    0
+                },
+            )
+            val switchedInObserver = start(63, "connection-in-observer")
+            LuaManager.env.rawset("NativeBefore", null)
+            check(!matches(switchedInObserver, 63)) {
+                "a before-observer connection switch changed the minted request connection"
+            }
+
+            for (mode in listOf("duplicate", "multiple")) {
+                connection()
+                addFault = mode
+                val ambiguous = start(49, mode)
+                check(!matches(ambiguous, 49)) { "$mode native adds granted one exact handle" }
+            }
+            wire = connection()
+            wire.onSend = {
+                TransactionManager.createItemTransaction(actor, listOf(item), source, destination)
+            }
+            val nested = start(50, "nested-manager")
+            check(wire.packets == 2 && nested.second.hasNestedRequest() && !matches(nested, 50)) {
+                "nested native manager call borrowed the outer handle"
+            }
+            wire = connection()
+            wire.onSend = {
+                ItemTransactionPacket()
+                    .set(
+                        actor,
+                        listOf(item),
+                        source,
+                        destination,
+                        null,
+                        zombie.iso.IsoDirections.N,
+                        0f,
+                        0f,
+                        0f,
+                    )
+            }
+            val extraAllocation = start(58, "extra-allocation")
+            check(wire.packets == 1 && nativeQueue.size == 1 && !matches(extraAllocation, 58)) {
+                "an extra native allocation inside the manager retained a single-object handle"
+            }
+
+            connection()
+            LuaManager.env.rawset("NativeConsistencyReject", true)
+            val rejected = start(51, "zero")
+            check(
+                rejected.first.rawget("transactionId") == 0.0 && !rejected.second.hasNativeHandle(),
+            )
+            LuaManager.env.rawset("NativeConsistencyReject", false)
+            wire = connection()
+            wire.onSend = { throw sentinel }
+            val failedSend = start(52, "send-failed")
+            check(
+                failedSend.first.rawget("transactionId") == 0.0 &&
+                    !failedSend.second.hasNativeHandle() &&
+                    nativeQueue.isEmpty(),
+            ) {
+                "failed native send fabricated a submitted native handle"
+            }
+            val afterFailedSend = start(52, "send-failed-reuse")
+            check(!matches(afterFailedSend, 52) && afterFailedSend.second.isWireAmbiguous()) {
+                "a sent allocation lost to failure was revived by byte reuse"
+            }
+            connection()
+            LuaManager.env.rawset("Destination", savedDestination)
+            val failedSet = start(53, "set-failed")
+            check(
+                failedSet.first.rawget("transactionId") == 0.0 &&
+                    !failedSet.second.hasNativeHandle() &&
+                    nativeQueue.isEmpty(),
+            )
+            LuaManager.env.rawset("Destination", destination)
+            val afterFailedSet = start(53, "after-set-failed")
+            check(matches(afterFailedSet, 53)) {
+                "a set failure before ID allocation fabricated a consumed byte"
+            }
+
+            connection()
+            LuaManager.env.rawset("NativeConsistencyFailure", true)
+            val failure = runCatching {
+                TransactionManager.createItemTransaction(actor, listOf(item), source, destination)
+            }
+                .exceptionOrNull()
+            check(failure === sentinel) {
+                "manager advice replaced an original native consistency throwable"
+            }
+            execute(
+                "resetEvents();local control=makeAction('throw-control');" +
+                    "PZSurvivorToolkit.ActionQueueTransferRequests.pending[Actor]=nil;" +
+                    "local controlOk,controlError=pcall(StockStart,control);" +
+                    "NativeAction=makeAction('throw');selectAction(NativeAction);" +
+                    "local ok,err=pcall(StockStart,NativeAction);" +
+                    "assert(ok==controlOk and tostring(err)==tostring(controlError) and NativeAction.transactionId==control.transactionId);" +
+                    "assert(table.concat(Events,',')=='before,failed' and not Receipts[1]:hasNativeHandle())",
+                "native-handle-original-throwable",
+            )
+            check(lastThrown === sentinel)
+            LuaManager.env.rawset("NativeConsistencyFailure", false)
+            LuaManager.env.rawset("NativeBefore", null)
+            check(!replacedEnvironmentMatches && !replacedVmMatches) {
+                "replaced Lua environment/VM retained native correlation"
+            }
+            val nativeBenchmark =
+                execute(
+                    "local a=makeAction('native-request-cost');return function(enabled) " +
+                        "PZSurvivorToolkit.ActionQueueTransferRequests.pending[Actor]=enabled and a or nil;StockStart(a)end",
+                    "native-request-cost-fixture",
+                )
+                    as LuaClosure
+            fun nativeSample(enabled: Boolean): Long {
+                // Connection/queue/byte and diagnostic table preparation are not timed.
+                connection()
+                nextId.setByte(null, 71)
+                LuaManager.env.rawset("Events", LuaManager.platform.newTable())
+                LuaManager.env.rawset("Receipts", LuaManager.platform.newTable())
+                val started = System.nanoTime()
+                LuaManager.thread.call(nativeBenchmark, arrayOf<Any?>(enabled))
+                return System.nanoTime() - started
+            }
+            repeat(300) {
+                nativeSample(false)
+                nativeSample(true)
+            }
+            val nativeInactive = LongArray(600)
+            val nativeObserved = LongArray(600)
+            for (index in nativeInactive.indices) {
+                if (index % 2 == 0) {
+                    nativeInactive[index] = nativeSample(false)
+                    nativeObserved[index] = nativeSample(true)
+                } else {
+                    nativeObserved[index] = nativeSample(true)
+                    nativeInactive[index] = nativeSample(false)
+                }
+            }
+            nativeInactive.sort()
+            nativeObserved.sort()
+            println(
+                "NATIVE_TRANSFER_MANAGER_COST inactive_median_ns=${nativeInactive[300]} observed_median_ns=${nativeObserved[300]} observed_p95_ns=${nativeObserved[569]} samples=600 original_manager=true fake_socket=true qualified_live=false",
+            )
+            check(nativeObserved[569] <= 1_000_000) {
+                "native manager fixture p95 exceeded frozen 1 ms CPU gate"
+            }
+            check(nativeObserved[300] - nativeInactive[300] <= 250_000) {
+                "native manager fixture median overhead exceeded frozen 0.25 ms CPU gate"
+            }
+            GameClient.client = false
+            execute(
+                "resetEvents();NativeAction=makeAction('off');selectAction(NativeAction);StockStart(NativeAction);" +
+                    "assert(NativeAction.transactionId==0 and #Receipts==0)",
+                "native-handle-sp-off",
+            )
+            println("NATIVE_TRANSFER_HANDLES_CHECKS_PASS original_manager=true socket_free=true")
+        } finally {
+            addFault = null
+            GameClient.client = true
+            LuaManager.env.rawset("UseNativeManager", false)
+            LuaManager.env.rawset("NativeConsistencyReject", false)
+            LuaManager.env.rawset("NativeConsistencyFailure", false)
+            LuaManager.env.rawset("Destination", savedDestination)
+            owner.rawset("observe", savedObserver)
+            GameClient.connection = savedConnection
+            nativeQueue.clear()
+            nextId.setByte(null, savedId)
+        }
     }
 
     private fun filename(prototype: Prototype, path: String) {
@@ -566,6 +1145,7 @@ object NativeTransferRequestsChecks {
             "request-unknown-multi-invoker",
         )
         LuaManager.env.rawset("createItemTransaction", single)
+        nativeHandleChecks(unsafe, actor, source)
 
         // Run the real shared Lua owner and source/effect readers at those same
         // native boundaries. Only the downstream Java sender is stubbed.

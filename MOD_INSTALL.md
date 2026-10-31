@@ -104,6 +104,67 @@ The INI includes the main `TVRadio_ReInvented` mod. Toolkit fixes device recogni
 - **macOS:** install the complete TV mod, including `.bik` files in `42/media/videos/`. A matching Toolkit Java Patches build resolves requests from the active mod directory before native caching, so no separate `Project Zomboid.app/workshop` symlink is needed.
 - **Linux/SteamOS:** the former external fix describes a `steamapps/common/workshop` link in its [path instructions](https://steamcommunity.com/sharedfiles/filedetails/?id=3796050675). Toolkit's automatic path fix targets macOS; playback on Linux/SteamOS and Windows/Proton was not verified in that scenario.
 
+## Standardized Experience
+
+Subscribe to [MVXIVY utils](https://steamcommunity.com/sharedfiles/filedetails/?id=3630174904) and [Standardized Experience](https://steamcommunity.com/sharedfiles/filedetails/?id=3792836384) on the gaming PC and every Host/client. Enable `MVXIVY_UTILS` before `STEXPERIENCE_B42`; both are included in the selected INI. Disable the legacy `STFITNESS_B42` mod if present. No new local mod folder or Java approval is required for these Workshop additions.
+
+For an existing Host profile, copy only the updated `Mods=` and `WorkshopItems=` lines into its INI. Preserve the rest of the INI and its existing `_SandboxVars.lua`. For single-player, add both mods to the intended save's mod selection before loading it.
+
+Use **all seven features at upstream defaults**: Fitness/Strength, Aiming, Lightfooted, Nimble, Reloading, Sneaking and Sprinting. In single-player use **Options > Mod Options**; in Host use the **Standardized Experience** sandbox page. New mod settings already use these defaults. If the earlier Fitness/Strength-only setup was applied, re-enable the other six features and restore any changed amounts, intervals and chances to the defaults below. The selected INI supplies neither these options nor XP rates; check the settings before loading the gameplay world and after reopening Host settings.
+
+These are the complete upstream 1.1.2 Host defaults. Set these fields in the existing `SandboxVars.STEXPERIENCE_B42` group; add the group inside the existing `SandboxVars` table if absent. Patch only this mod's fields, preserving other world settings; do not replace the complete file or duplicate an existing group.
+
+```lua
+STEXPERIENCE_B42 = {
+    AimingEnabled = true,
+    AimingXPPerHit = 3,
+    FitnessEnabled = true,
+    FitnessRunXP = 1,
+    FitnessRunIntervalSeconds = 10,
+    FitnessSwingXP = 1,
+    StrengthCarryXP = 1,
+    StrengthCarryIntervalSeconds = 10,
+    StrengthHitXP = 1,
+    StrengthTreeXP = 2,
+    StrengthTreesNeedWeapon = true,
+    LightfootEnabled = true,
+    LightfootXPPerPulse = 5,
+    LightfootMinIntervalSeconds = 10,
+    NimbleEnabled = true,
+    NimbleXPPerPulse = 10,
+    NimbleMinIntervalSeconds = 10,
+    ReloadingEnabled = true,
+    ReloadingMagazineXP = 1.0,
+    ReloadingMagazineChance = 2,
+    ReloadingMagazineKeepVanillaCut = true,
+    ReloadingGunXP = 1.0,
+    ReloadingGunChance = 1,
+    ReloadingGunKeepVanillaCut = true,
+    SneakEnabled = true,
+    SneakXPPerPulse = 5,
+    SneakMinIntervalSeconds = 10,
+    SprintingEnabled = true,
+    SprintingXPPerPulse = 5,
+    SprintingMinIntervalSeconds = 10,
+},
+```
+
+Single-player uses Mod Options instead of the sandbox switches. Enable the seven options below and use the matching default XP amounts, real-second intervals and one-in-X chances shown above. Keep both Reloading level-5 reductions enabled and require a weapon for tree XP. Change only Standardized Experience preferences; preserve other mods' settings.
+
+| Mod Options namespace | Enable option | Selected value |
+|---|---|---|
+| `STFITNESS_B42` | `ST_Fitness_Enabled` | `true` |
+| `STAIMING_B42` | `ST_Aiming_Enabled` | `true` |
+| `STLIGHTFOOT_B42` | `ST_Lightfoot_Enabled` | `true` |
+| `STEXPERIENCE_NIMBLE_B42` | `ST_Nimble_Enabled` | `true` |
+| `STRELOAD_B42` | `ST_Reloading_Enabled` | `true` |
+| `STSNEAK_B42` | `ST_Sneak_Enabled` | `true` |
+| `STSPRINT_B42` | `ST_Sprinting_Enabled` | `true` |
+
+`STFITNESS_B42` here is an option namespace retained by the current mod, not an instruction to enable the legacy mod with that ID. Fitness/Strength and movement modules add awards alongside native XP; Aiming and Reloading replace their affected native awards. Configured amounts are not a cap on total XP. The selected defaults retain Nimble at 10 XP per 10 real seconds and both Reloading level-5 reductions; no custom balance values are applied.
+
+The author declares B42.20+ SP/MP support. Full-pack B42.21 gameplay and persistence of Host settings remain unverified; see the [catalogue entry](docs/MODPACK.md#61-standardized-experience--mvxivy-utils).
+
 ## Third-party setup and troubleshooting
 
 - For dependency IDs, load order, controls and known caveats, use the [selected mod catalog](docs/MODPACK.md). The supplied INI already selects the required modules.

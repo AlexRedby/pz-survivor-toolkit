@@ -17,6 +17,8 @@ This is the project’s selected set, not a general recommendation list. The INI
 
 **Toolkit and media:** [TV & Radio ReInvented](#30-tv--radio-reinvented), [New Music](#56-new-music), [Toolkit Action Queues and Context Menus](#37-toolkit-action-queues-and-context-menus), [Survivor Wishlist](#38-survivor-wishlist), [Toolkit Java Patches](#39-toolkit-java-patches).
 
+**Physical progression:** [Standardized Experience + MVXIVY utils](#61-standardized-experience--mvxivy-utils).
+
 **Deferred / disabled:** [Custom Light Switch](#deferred--disabled-mods).
 
 
@@ -430,6 +432,21 @@ Adds Push/Pull to move supported floor furniture by one tile, including multi-ti
 
 Attached sinks and other unsafe fixtures are protected, and plant-drying racks are excluded. Recent Workshop reports still describe disappearing crates in mixed mod sets; comments suggesting particular causes do not establish the cause in this pack. Before moving valuable storage, verify exact container/item identities, contents and Quartermaster designations, appearance and reload persistence in an isolated full-pack macOS B42.21 SP/Host save. Also check multi-tile geometry, doors, ground loot, competing players and remote state. Toolkit context-menu/queue compatibility and conservation of storage settings remain unverified.
 
+
+## 61 Standardized Experience + MVXIVY utils
+
+| Selected mod | Workshop ID | Mod ID |
+|---|---|---|
+| [MVXIVY utils](https://steamcommunity.com/sharedfiles/filedetails/?id=3630174904) | `3630174904` | `MVXIVY_UTILS` |
+| [Standardized Experience](https://steamcommunity.com/sharedfiles/filedetails/?id=3792836384) | `3792836384` | `STEXPERIENCE_B42` |
+
+The required library loads before Standardized Experience. Both come unchanged from Workshop on the Host and every client. The selected use is **all seven features at upstream defaults**: Fitness/Strength, Aiming, Lightfooted, Nimble, Reloading, Sneaking and Sprinting. Keep the original XP amounts, intervals and chances, including Nimble at 10 XP per 10 real seconds and both Reloading level-5 reductions. The separate Sprinting skill is not Fitness. See [complete defaults and existing-profile migration](../MOD_INSTALL.md#standardized-experience).
+
+The official packages inspected on 31 October 2026 select `STEXPERIENCE_B42` 1.1.2 (`versionMin=42.20.0`, `require=\MVXIVY_UTILS`) and `MVXIVY_UTILS` 1.2.0. All seven features default to enabled. SP reads per-feature Mod Options; Host reads `SandboxVars.STEXPERIENCE_B42`. The INI alone does not reset existing settings. Source inspection found that Fitness/Strength and movement modules retain native XP and add awards alongside it. Aiming and Reloading replace their affected native grants; configured amounts are minimum awards, and native modifiers may increase payouts. Reloading defaults retain randomness and can reduce magazine-insertion XP below level 5 compared with vanilla.
+
+Focused macOS Lua checks loaded the actual upstream modules and native B42.21 XP/Mod Options sources. Fitness-only rewards, disabled-feature preservation, SP versus MP configuration, client reports and server payouts passed with mocked clocks, characters and networking. Other feature defaults were checked against their option definitions and reward handlers. These checks do not establish all-enabled runtime behavior, engine synchronization or full-pack gameplay.
+
+The author declares B42.20+ SP/MP support and permits adding the mod to an existing save. Removing it restores vanilla payouts while retaining earned XP. These are upstream claims; full-pack B42.21 SP/Host progression, save/reload and joining-client settings remain unverified. Workshop comments report MP sandbox-setting resets. Do not load the legacy `STFITNESS_B42` predecessor alongside this replacement or combine overlapping XP modifiers without checking their interaction.
 
 ## Deferred / disabled mods
 

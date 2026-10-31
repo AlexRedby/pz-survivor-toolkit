@@ -11,6 +11,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Changed:** Standardized Experience setup now uses all seven features at upstream defaults. Existing profiles using the earlier Fitness/Strength-only setup should re-enable the other six features and restore default values using `MOD_INSTALL.md`; unrelated world/mod preferences are preserved.
+
+- **Added:** Standardized Experience (`STEXPERIENCE_B42`, Workshop `3792836384`) with required MVXIVY utils (`MVXIVY_UTILS`, `3630174904`), bringing the selection to 65 Mod IDs / 60 Workshop items. Use the setup in `MOD_INSTALL.md`; the INI selects mods but does not apply SP options or Host sandbox settings.
+
 - **Removed:** The unavailable ABBA Gold (`NMBJABBA`, Workshop `3784065691`), Queen (`NMBJQ`, `3777937059`) and Fleetwood Mac (`NMBJFM`, `3751236222`) packs from the active selection (63 Mod IDs / 58 Workshop items). Keep base New Music (`NewMusic`, `3739256725`), its devices and Zomboid OST, and Toolkit's existing conversion compatibility.
 
 - **Deferred:** Custom Light Switch is no longer in the active selection (66 Mod IDs / 61 Workshop items). Its background world scan runs even without built switches; retain its catalog entry for possible future use.
@@ -41,6 +45,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - **Added:** Vanilla Vehicles Animated and its ZombieBuddy-based Animated Vehicle Parts Fix to the B42.21 selection (47 Mod IDs / 44 Workshop items). Optional VVA submods and the outdated multiplayer synchronization addon remain disabled. SP visuals, lighting coexistence and Host animation synchronization are not yet verified.
 
 ## PZ Survivor Toolkit
+
+### 0.1.327
+
+- Pair earned-return source observations only with their captured native transaction object and current actor request. Decline missing, replaced, nested or reused-ID evidence without changing native execution or editing permissions.
 
 ### 0.1.326
 
@@ -1515,6 +1523,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.78
+
+- Capture native item transaction objects at their original manager boundary. Track allocated wire IDs in bounded connection histories, invalidate intervening actor requests and preserve unknown results after ID reuse or late attachment.
 
 ### 0.1.77
 
