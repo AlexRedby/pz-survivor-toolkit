@@ -12,16 +12,24 @@ function getPlayerLoot()return pages[2]end
 for _,name in ipairs({'BetterContainers/Nested','BetterContainers/Proximity','BetterContainers/_Options',
  'PZSurvivorToolkit/InventoryRows','PZSurvivorToolkit/InventoryRefresh',
  'PZSurvivorToolkit/InventorySearch','PZSurvivorToolkit/InventoryCategoryGroups','PZSurvivorToolkit/InventoryOrder',
- 'PZSurvivorToolkit/InventoryDetailSort','PZSurvivorToolkit/ItemCategoryRules','PZSurvivorToolkit/ItemCategories'})do
+ 'PZSurvivorToolkit/InventoryDetailSort','PZSurvivorToolkit/ItemCategoryRules','PZSurvivorToolkit/ItemCategories',
+ 'PZSurvivorToolkit/ItemRetention','PZSurvivorToolkit/ItemTagProperties','PZSurvivorToolkit/PlantingTags',
+ 'PZSurvivorToolkit/ItemUsageTags','PZSurvivorToolkit/ItemFluidTags','PZSurvivorToolkit/ItemBaitTags',
+ 'PZSurvivorToolkit/ItemRepairTags','PZSurvivorToolkit/ItemLaundryTags','PZSurvivorToolkit/ItemSmeltingTags',
+ 'PZSurvivorToolkit/ItemSharpeningTags','PZSurvivorToolkit/ItemBrokenTags','PZSurvivorToolkit/ItemCookingTags',
+ 'PZSurvivorToolkit/ItemCookingStates','PZSurvivorToolkit/ItemDisassemblyTags','PZSurvivorToolkit/ItemMediaTags',
+ 'PZSurvivorToolkit/TagCustomization','PZSurvivorToolkit/ItemRecipeCatalog'})do
  local module={consume=function()end};modules[name]=module;package.preload[name]=function()return module end
 end
 -- Execute the real side-effect module: it publishes Toolkit.InventoryFilter,
 -- registers its installer and returns nil; stock require then returns true.
 PZSurvivorToolkit={}
 Events={OnGameStart={Add=function()end}}
-for _,name in ipairs({'InventoryClasses','InventoryMembership','Settings','UIStyle','ItemTags','TagVisuals','TagRulePicker','TagFilterPresetsMenu'})do
+for _,name in ipairs({'InventoryClasses','InventoryMembership','Settings','UIStyle','TagVisuals','TagRulePicker','TagFilterPresetsMenu'})do
  package.preload['PZSurvivorToolkit/'..name]=function()return {}end
 end
+local tags={};for _,key in ipairs({'signature','automaticForItem','forItem','newProjectionContext'})do tags[key]=function()end end
+package.preload['PZSurvivorToolkit/ItemTags']=function()return tags end
 package.preload['PZSurvivorToolkit/InventoryFilter']=function()
  local value=dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryFilter.lua')
  assert(value==nil and type(PZSurvivorToolkit.InventoryFilter.choices)=='function','actual side-effect contract changed')
@@ -36,6 +44,10 @@ local classRefresh,paneRefresh,instanceRefresh=pageClass.refreshBackpacks,paneCl
 for index=1,16 do
  Profile.begin(index,0)
  assert(active and #bindings>20)
+ local found={};for _,entry in ipairs(bindings)do found[entry[1]]=entry[2]end
+ for key,value in pairs(tags)do assert(found['tags.'..key]==value,'missing public tag reader: '..key)end
+ assert(found['tagProperties.consume']==modules['PZSurvivorToolkit/ItemTagProperties'].consume)
+ assert(found['recipeCatalog.consume']==modules['PZSurvivorToolkit/ItemRecipeCatalog'].consume)
  assert(pageClass.refreshBackpacks==classRefresh and paneClass.refreshContainer==paneRefresh and pages[1].inventoryPane.refreshContainer==instanceRefresh)
  assert(not pcall(Profile.begin,index,0),'nested measurement admitted')
  local result=Profile.finish();assert(result.phase==index and result.identities_unchanged)

@@ -3,7 +3,8 @@ local tagMode=false
 local contexts, projectionContext = 0
 local fakeTags={enabled=function()return tagMode end,
  newProjectionContext=function()contexts=contexts+1;projectionContext={};return projectionContext end,
- forItem=function(item,context)
+ forItem=function()error('stack grouping requested unused full tag metadata')end,
+ membershipForItem=function(item,context)
   assert(context and context==projectionContext,'group split lost its shared projection context')
   return item.tags or {}
  end,

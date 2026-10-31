@@ -215,19 +215,33 @@ function C.allIds()
     table.sort(out)
     return out
 end
-function C.typeDelta(fullType)
-    local data, key = C.catalog(), C.normalizeType(fullType)
+function C.typeDelta(fullType, context)
+    local data, key = C.catalog()
+    if context and type(fullType) == "string" then
+        -- Only the pure string transformation is shared. Read the current
+        -- catalogue/delta on every item, even when its type key is unchanged.
+        local cache = context.tagTypeKeys
+        if not cache or cache.normalizer ~= C.normalizeType then
+            cache = {normalizer = C.normalizeType, values = {}}
+            context.tagTypeKeys = cache
+        end
+        key = cache.values[fullType]
+        if key == nil then key = C.normalizeType(fullType) or false; cache.values[fullType] = key end
+        key = key or nil
+    else key = C.normalizeType(fullType) end
     return C.normalizeChanges(data and key and data.types[key] or {}, true) or {}
 end
 function C.itemDelta(item)
     if not item or not item.hasModData or not item.getModData or not item:hasModData() then return {} end
     return C.normalizeChanges(item:getModData()[C.FIELD] or {}, true) or {}
 end
-local function project(baseTags, fullType, delta, metadata)
+local function project(baseTags, fullType, delta, metadata, context)
     local result, present = {}, {}
     -- Preserve classification provenance used by lossless legacy projections.
-    if metadata then
+    if metadata == true then
         for key, value in pairs(baseTags or {}) do if type(key) ~= "number" then result[key] = copy(value) end end
+    elseif metadata == "membership" and baseTags and baseTags.legacyTags then
+        result.legacyTags = copy(baseTags.legacyTags)
     end
     local retired = schema.retiredTags or {}
     local function legacy(id, value)
@@ -242,7 +256,7 @@ local function project(baseTags, fullType, delta, metadata)
             else result[#result + 1], present[id] = id, true end
         end
     end
-    local changes = {C.typeDelta(fullType)}
+    local changes = {C.typeDelta(fullType, context)}
     if delta ~= nil then changes[#changes + 1] = C.normalizeChanges(delta, true) or {} end
     for _, delta in ipairs(changes) do
         for index = #result, 1, -1 do
@@ -267,6 +281,11 @@ end
 function C.projectIds(baseTags, fullType) return project(baseTags, fullType, nil, false) end
 function C.project(baseTags, fullType, item)
     return C.projectSnapshot(baseTags, fullType, C.itemDelta(item))
+end
+-- Immediate comparisons need the same current membership and retired-rule
+-- semantics, without an owned copy of unused preview/provenance tables.
+function C.projectMembership(baseTags, fullType, item, context)
+    return project(baseTags, fullType, C.itemDelta(item), "membership", context)
 end
 function C.changeDelta(current, changes, reset)
     local delta = reset and {} or C.normalizeChanges(current, true) or {}

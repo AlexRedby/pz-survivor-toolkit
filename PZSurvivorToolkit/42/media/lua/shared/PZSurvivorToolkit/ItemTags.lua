@@ -145,7 +145,7 @@ local function applyUsage(tags, roles, base, snapshot, present)
     return changed
 end
 
-local function itemTags(category, fullType, script, item, context, recording, snapshot, snapshotIngredient, snapshotCookingState, snapshotFluidState, snapshotUsageState)
+local function itemTags(category, fullType, script, item, context, membershipOnly, recording, snapshot, snapshotIngredient, snapshotCookingState, snapshotFluidState, snapshotUsageState)
     local tags = Tags.forCategory(category)
     local override = fullType and schema.items[string.lower(tostring(fullType))]
     if override then
@@ -235,7 +235,7 @@ local function itemTags(category, fullType, script, item, context, recording, sn
     refined = put("experience", experience) or refined
     refined = put("recipe", recipe) or refined
     tags.mediaStates = mediaStates
-    if override or role or refined then tags.itemCategory, tags.itemSignature = category, signature(tags) end
+    if not membershipOnly and (override or role or refined) then tags.itemCategory, tags.itemSignature = category, signature(tags) end
     return tags
 end
 
@@ -251,12 +251,12 @@ function Tags.automaticForScriptItem(script, context)
     return itemTags(categories.forScript(script), script:getFullName(), script, nil, context or Tags.newProjectionContext())
 end
 
-function Tags.automaticForItem(item, context)
+function Tags.automaticForItem(item, context, membershipOnly)
     if not item then return {} end
     -- Import the current instance category every time: fluids and other mods can change it.
     local category = item:getDisplayCategory() or (item.getCategory and item:getCategory())
     return itemTags(category, item.getFullType and item:getFullType(), item.getScriptItem and item:getScriptItem(), item,
-        context or Tags.newProjectionContext())
+        context or Tags.newProjectionContext(), membershipOnly)
 end
 
 -- Menu availability is distinct from actual item matching. A player can choose
@@ -306,10 +306,20 @@ function Tags.forItem(item, context)
     return Custom.project(Tags.automaticForItem(item, context), item.getFullType and item:getFullType(), item)
 end
 
+-- Stack comparison consumes numeric IDs and retired membership immediately.
+-- Keep the ordinary producer's owned preview/provenance metadata for its other
+-- consumers; this path still reads every physical item's live state and edits.
+function Tags.membershipForItem(item, context)
+    if not item then return {} end
+    context = context or Tags.newProjectionContext()
+    return Custom.projectMembership(Tags.automaticForItem(item, context, true),
+        item.getFullType and item:getFullType(), item, context)
+end
+
 -- Serialized rows have no InventoryItem. Use script capabilities and the captured
 -- recording, without invoking predicates that require a live native item.
 function Tags.forSnapshot(script, fullType, category, recording, tagDelta, ingredient, cookingState, fluidState, usageState)
-    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, Tags.newProjectionContext(), recording, true,
+    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, Tags.newProjectionContext(), nil, recording, true,
         ingredient, cookingState, fluidState, usageState), fullType, tagDelta)
 end
 

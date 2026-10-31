@@ -1,6 +1,8 @@
 """Synthetic authority/replica receipts validate rejection gates, not game speed."""
 import copy
 import json
+import hashlib
+import zipfile
 from pathlib import Path
 import sys
 import tempfile
@@ -25,10 +27,13 @@ def selection(kind='mp'):
 
 def profile(index):
     names = ('page.refreshBackpacks', 'pane.refreshContainer', 'pane.restoreSelection', 'pane.itemSortFunc',
-             'rows.captureAnchor', 'filter.active', 'categoryRules.get', 'categories.get')
+             'rows.captureAnchor', 'filter.active', 'categoryRules.get', 'categories.get',
+             'tags.forItem', 'tags.automaticForItem', 'tags.signature', 'retention.isRetained',
+             'categoryGroups.split', 'recipeCatalog.newContext')
     return dict(SCOPE_DETAILS, index=index, phase=index, elapsed_ms=13000, clock='nanoTime', scope='registered-native-lua-calls',
                 identities_unchanged=True, observer_overhead_included=True, hooks=dict(init=100, shrink=100),
-                metrics=[dict(name=name, source=name+'.lua', first_line=1, calls=20,
+                allocation=dict(available=False, scope='owner-thread-whole-interval', includes_observer=True),
+                metrics=[dict(name=name, aliases=[name], source=name+'.lua', first_line=1, calls=20,
                               inclusive_ms=20, exclusive_ms=10, max_ms=2) for name in names])
 
 
@@ -50,7 +55,12 @@ def fixture(kind='mp'):
               for n, (dx, dy) in enumerate(V.itertools.product(range(-3, 3), (-1, 1)), 1)]
     actor_origins = {role: dict(x=10, y=18 if role == 'client1' else 22, z=0) for role in roles}
     route_origins = {role: dict(point, x=12) for role, point in actor_origins.items()}
-    descriptors = dict(token=token, crates=crates, origin=origin, actorOrigins=actor_origins,
+    actor_loads = {role: dict(token=token+':actor:'+role, itemIds=list(range(200+i*8,208+i*8)),
+                             itemType='Base.Nails',count=8,weight=.4,equipment='empty') for i,role in enumerate(roles)}
+    measured_loads = {role: {**{k:v for k,v in load.items() if k != 'token'}, 'originalsStashed':True} for role,load in actor_loads.items()}
+    equipment = {role: dict(primaryEmpty=True,secondaryEmpty=True,attachedCount=0,
+                           worn=[dict(location='base:Shirt',id=originals[role][0],fullType='Base.Shirt_FormalWhite')]) for role in roles}
+    descriptors = dict(originalEquipment=equipment,actorLoads=actor_loads, token=token, crates=crates, origin=origin, actorOrigins=actor_origins,
                        routeOrigins=route_origins, originalRootIds=originals)
     online = {role: i for i, role in enumerate(roles)}
     old = peer_fixture()
@@ -58,10 +68,18 @@ def fixture(kind='mp'):
     baselines = {role: dict(ids=originals[role], identity=True, payload=True, equipment=True) for role in roles}
     def emit(role, event, row):
         value = dict(suite=A.SUITE, case='walk', kind=kind, mode='toolkit', role=role, token=token, **row)
+        if event in V.INITIAL_EVENTS:value['initialTransport']='native-reliable-ordered-channel0' if kind=='mp' else 'in-process-shared-authority'
+        if event=='SETUP':value['materializationTransport']='native-reliable-ordered-channel1' if kind=='mp' else 'in-process-shared-authority'
         rows[role].append((event, value)); return value
+    emit('server','READY',dict(index=1,onlineIds=online))
+    for role in roles:emit('server','BASELINE_SEEN',dict(index=1,observer=role))
+    emit('server','BASELINES',dict(index=1,originalRootIds=originals,originalEquipment=equipment))
+    proof=dict(rootEmpty=True,equipmentEmpty=True,originalsStashed=True)
+    for role in roles:emit('server','NORMALIZED',dict(index=1,observer=role,proof=proof))
     emit('server', 'SETUP', dict(ids=descriptors, onlineIds=online))
     for role in roles:
-        emit(role, 'BASELINE', dict(original=baselines[role], position=restoration[role]['positionProof']['target'], stableSamples=3))
+        emit(role, 'BASELINE', dict(index=1,original=baselines[role], originalEquipment=equipment[role], position=restoration[role]['positionProof']['target'], stableSamples=3))
+        emit(role,'NORMALIZED',dict(index=1,proof=proof))
         emit(role, 'SETUP', dict(ids=descriptors))
     for index, (density, pane, state) in enumerate(V.PHASES, 1):
         ctx = dict(index=index, phaseToken=f'{token}:{index}', density=density, paneMode=pane, paneState=state)
@@ -70,7 +88,8 @@ def fixture(kind='mp'):
         phase = dict(ctx, token=token, itemType='Base.Nails', itemsPerCrate=count, crateIds=cohort)
         def snapshot(role):
             return dict(ctx, token=token, originals=True, identities=True, itemType='Base.Nails',
-                        rootIds=originals if role == 'server' else {role: originals[role]},
+                        rootIds={name:load['itemIds'] for name,load in actor_loads.items() if role=='server' or role==name},
+                        actorLoads=measured_loads if role=='server' else {role:measured_loads[role]},
                         crates=[dict(slot=i, id=point['id'], capacity=100, effectiveCapacity=100,
                                      weight=.05*count, itemIds=cohort[i-1]) for i, point in enumerate(crates, 1)])
         authority = snapshot('server')
@@ -96,7 +115,7 @@ def fixture(kind='mp'):
             emit(role, 'MODE', dict(ctx, placement=placed, paneStateProof=view))
             emit(role, 'ADMIT', dict(ctx, stage='before', snapshot=native, authority=authority))
             env = dict(width=1280, height=900, gameSpeed=1, language='RU' if role == 'client2' else 'EN',
-                       originX=12, originY=route_origins[role]['y'], originZ=0, actorRootItems=1, aggregateItems=3*count)
+                       originX=12, originY=route_origins[role]['y'], originZ=0, actorRootItems=8, actorRootWeight=.4, actorWornItems=0, actorPrimaryEmpty=True, actorSecondaryEmpty=True, aggregateItems=3*count)
             motion = dict(elapsedMs=13000, legs=6, nativeActions=6, distance=24, tileChanges=24, movementTicks=700,
                           sourceMethodsUnchanged=True, uiIdentityUnchanged=True, actualPaneMode=pane, teleports=0,
                           manualAggregateLock=True, lockMethodUnchanged=True,
@@ -104,12 +123,12 @@ def fixture(kind='mp'):
             emit(role, 'INTERVAL', dict(ctx, before=native, after=native, beforeState=view, afterState=view,
                                        environmentInitial=env, environmentFinal=env, motion=motion, profile=profile(index), warmupMs=2000))
             emit(role, 'ADMIT', dict(ctx, stage='after', snapshot=native, authority=authority))
-            emit(role, 'RELEASE', dict(ctx, receipt=release, absent=True, original=baselines[role]))
-    cleanup = emit('server', 'RESTORED', dict(index=16, removedCrates=12, ownedAbsent=True, ownedRemaining=0,
-                       originalRootIds=originals, crates=[dict(point, afterIndex=-1) for point in crates]))
+            emit(role, 'RELEASE', dict(ctx, receipt=release, absent=True, originalStash=baselines[role],actorLoad=measured_loads[role]))
+    cleanup = emit('server', 'RESTORED', dict(cleanupTransport='native-reliable-ordered-channel1' if kind=='mp' else 'in-process-shared-authority',index=16, removedCrates=12, ownedAbsent=True, ownedRemaining=0,
+                       originalRootIds=originals, originalEquipment=equipment, actorRestored=baselines, crates=[dict(point, afterIndex=-1) for point in crates]))
     emit('server', 'COMPLETE', dict(phases=16, restored=True))
     for role in roles:
-        emit(role, 'RESTORED', dict(original=baselines[role], uiProof=restoration[role]['uiProof'],
+        emit(role, 'RESTORED', dict(original=baselines[role], originalEquipment=equipment[role], uiProof=restoration[role]['uiProof'],
                                   positionProof=restoration[role]['positionProof'], ownedAbsent=True, authority=cleanup,
                                   lockProof=lock_proof()))
         emit(role, 'COMPLETE', dict(phases=16, restored=True))
@@ -122,9 +141,19 @@ class WarehouseWalkingTests(unittest.TestCase):
             root = Path(folder)
             roles = ['client1'] if kind == 'sp' else ['client1', 'client2']
             inputs = dict(SCOPE_DETAILS, test_only=True, observer_mod=observer.MOD_ID, callback_replacement=False,
-                          native_jvm_check=observer.PASS, scope='registered-native-lua-calls', native_hashes=observer.NATIVE_HASHES,
-                          java_sources={name:'a'*64 for name in ('Main.java','Profile.java','ProfileChecks.java')},
+                          native_jvm_check=observer.PASS, ordered_jvm_check=observer.ORDERED_PASS, scope='registered-native-lua-calls', native_hashes=observer.NATIVE_HASHES,
+                          java_sources={name:'a'*64 for name in observer.JAVA_SOURCES},
+                          ordered_transport=observer.ORDERED_TRANSPORT,ordered_cache_markers={},java_entries={},
                           client_properties={role:{'pz.warehouseWalking.cache':str((root/role).resolve())} for role in roles})
+            classes={name:b'fixture-class-bytes:'+name.encode() for name in ('Main','Profile','OrderedCommands')}
+            inputs['java_entries']={'toolkit/warehousewalking/'+name+'.class':hashlib.sha256(content).hexdigest() for name,content in classes.items()}
+            for role in (['server',*roles] if kind=='mp' else roles):
+                marker=root/role/'Lua/warehouse-walking-ordered.txt';marker.parent.mkdir(parents=True)
+                text='PZWarehouseWalkingProfile/ordered-command-v1\n'+str((root/role).resolve())+'\n'+role+'\n'+inputs['java_entries']['toolkit/warehousewalking/OrderedCommands.class']+'\n'
+                marker.write_text(text);inputs['ordered_cache_markers'][role]=hashlib.sha256(marker.read_bytes()).hexdigest()
+                jar=root/role/('mods/'+observer.MOD_ID+'/42/media/java/'+observer.MOD_ID+'.jar');jar.parent.mkdir(parents=True)
+                with zipfile.ZipFile(jar,'w') as output:
+                    for name,content in classes.items():output.writestr('toolkit/warehousewalking/'+name+'.class',content)
             (root/'warehouse-walking-observer-inputs.json').write_text(json.dumps(inputs))
             for role, values in rows.items():
                 if kind == 'sp' and role == 'server': continue
@@ -191,7 +220,7 @@ class WarehouseWalkingTests(unittest.TestCase):
         self.assertTrue(self.result(rows)['issues'])
 
     def test_static_membership_and_capacity_cannot_be_relaxed(self):
-        rows = fixture(); setup=V.one(rows['server'],'SETUP'); seed=V.one(rows['server'][1:3],'SEED')
+        rows = fixture(); setup=V.one(rows['server'],'SETUP'); seed=next(row for event,row in rows['server'] if event=='SEED')
         for mutate in (lambda row: row['crates'][0]['itemIds'].clear(),
                        lambda row: row['crates'][0].update(capacity=10000),
                        lambda row: row['crates'][0].update(weight=101),
@@ -199,6 +228,51 @@ class WarehouseWalkingTests(unittest.TestCase):
                        lambda row: row.update(identities=False)):
             bad=copy.deepcopy(seed['snapshot']);mutate(bad)
             with self.assertRaises(ValueError): V.snapshot(bad,seed['phase'],setup['ids'],setup['ids']['originalRootIds'],'server')
+
+    def test_actor_composition_weight_equipment_and_restore_are_required(self):
+        for mutate in (lambda load: load.update(count=7),
+                       lambda load: load.update(itemType='Base.Bandage'),
+                       lambda load: load.update(weight=.5),
+                       lambda load: load.update(equipment='worn'),
+                       lambda load: load.update(originalsStashed=False),
+                       lambda load: load['itemIds'].pop()):
+            rows = fixture(); seed = next(row for event,row in rows['server'] if event=='SEED')
+            changed = copy.deepcopy(seed['snapshot']); mutate(changed['actorLoads']['client1'])
+            with self.assertRaises(ValueError):
+                V.snapshot(changed, seed['phase'], V.one(rows['server'],'SETUP')['ids'],
+                           V.one(rows['server'],'SETUP')['ids']['originalRootIds'], 'server')
+        rows=fixture(); V.one(rows['server'],'RESTORED')['actorRestored']={}
+        self.assertTrue(self.result(rows)['issues'])
+        rows=fixture(); interval=next(row for event,row in rows['client1'] if event=='INTERVAL')
+        interval['environmentFinal']['actorWornItems']=1
+        self.assertTrue(self.result(rows)['issues'])
+
+    def test_original_equipment_requires_correlated_slots_and_ids(self):
+        for mutate in (lambda rows: V.one(rows['server'],'SETUP')['ids'].pop('originalEquipment'),
+                       lambda rows: V.one(rows['client1'],'BASELINE').update(originalEquipment=dict(primaryEmpty=True,secondaryEmpty=True,attachedCount=0,worn=[])),
+                       lambda rows: V.one(rows['client1'],'RESTORED').update(originalEquipment=dict(primaryEmpty=True,secondaryEmpty=True,attachedCount=0,worn=[])),
+                       lambda rows: V.one(rows['server'],'RESTORED').update(originalEquipment={})):
+            rows=fixture();mutate(rows);self.assertTrue(self.result(rows)['issues'])
+        original_equipment = dict(primaryEmpty=True,secondaryEmpty=True,attachedCount=0,
+                                  worn=[dict(location='base:Shirt',id=1,fullType='Base.Shirt_FormalWhite')])
+        V.original_equipment(original_equipment, [1])
+        for key,value in [('primaryEmpty',False),('secondaryEmpty',False),('attachedCount',1)]:
+            bad=copy.deepcopy(original_equipment);bad[key]=value
+            with self.assertRaises(ValueError):V.original_equipment(bad,[1])
+        with self.assertRaises(ValueError):V.original_equipment(original_equipment,[2])
+
+    def test_initial_native_barriers_are_complete_and_token_bound(self):
+        for mutate in (lambda rows: rows['server'].pop(0),
+                       lambda rows: rows['server'].insert(2,copy.deepcopy(rows['server'][1])),
+                       lambda rows: V.one(rows['server'],'BASELINES').update(token='foreign'),
+                       lambda rows: V.one(rows['client1'],'NORMALIZED')['proof'].update(rootEmpty=False),
+                       lambda rows: V.one(rows['client1'],'BASELINE').update(token='foreign'),
+                       lambda rows: V.one(rows['server'],'READY').update(initialTransport='unordered'),
+                       lambda rows: V.one(rows['client1'],'NORMALIZED').pop('initialTransport'),
+                       lambda rows: V.one(rows['server'],'RESTORED').pop('cleanupTransport'),
+                       lambda rows: V.one(rows['client1'],'SETUP').update(materializationTransport='native-reliable-ordered-channel0'),
+                       lambda rows: V.one(rows['server'],'RESTORED').update(cleanupTransport='native-reliable-ordered-channel0')):
+            rows=fixture();mutate(rows);self.assertTrue(self.result(rows)['issues'])
 
     def test_motion_and_ui_drift_cannot_pass(self):
         for mutate in (lambda row: row['motion'].update(teleports=1),

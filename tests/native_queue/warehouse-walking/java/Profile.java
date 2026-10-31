@@ -1,6 +1,7 @@
 package toolkit.warehousewalking;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import se.krka.kahlua.vm.*;
 
@@ -10,6 +11,8 @@ public final class Profile {
     final IdentityHashMap<Prototype,Integer> labels=new IdentityHashMap<>();
     final IdentityHashMap<LuaClosure,Boolean> visited=new IdentityHashMap<>();
     final String[] names=new String[MAX_LABELS], sources=new String[MAX_LABELS];
+    final ArrayList<ArrayList<String>> aliases=new ArrayList<>();
+    final boolean[] publicRoots=new boolean[MAX_LABELS];
     final int[] lines=new int[MAX_LABELS], ids=new int[MAX_DEPTH], frameDepths=new int[MAX_DEPTH];
     final LuaCallFrame[] frames=new LuaCallFrame[MAX_DEPTH];
     final long[] starts=new long[MAX_DEPTH], children=new long[MAX_DEPTH];
@@ -21,22 +24,42 @@ public final class Profile {
 
     void bind(String name, LuaClosure closure) {
         if (active) throw new IllegalStateException("Cannot register during measurement");
-        visit(name,closure,0);
+        visit(name,closure,0,true);
     }
-    private void visit(String name,LuaClosure closure,int nesting) {
+    private void visit(String name,LuaClosure closure,int nesting,boolean publicRoot) {
+        register(name,closure.prototype,publicRoot,nesting);
         if (visited.put(closure,Boolean.TRUE)!=null) return;
         if (visited.size()>MAX_LABELS || nesting>32) throw new IllegalStateException("Closure registration bound exceeded");
-        Prototype p=closure.prototype;
+        if (closure.upvalues!=null) for (int i=0;i<closure.upvalues.length;i++) {
+            UpValue up=closure.upvalues[i];
+            if (up!=null && up.getValue() instanceof LuaClosure child) visit(name+".upvalue"+i,child,nesting+1,false);
+        }
+    }
+    private void register(String name,Prototype p,boolean publicRoot,int nesting) {
+        if(nesting>32)throw new IllegalStateException("Prototype registration depth exceeded");
+        Integer existing=labels.get(p);
+        if(existing!=null) {
+            // A public alias must not disappear merely because an upvalue or
+            // nested template reached this prototype before its public root.
+            var values=aliases.get(existing);
+            if(!values.contains(name)) {
+                if(values.size()==128)throw new IllegalStateException("Prototype alias bound exceeded");
+                values.add(name);
+            }
+            if(publicRoot&&!publicRoots[existing]){names[existing]=name;publicRoots[existing]=true;}
+            return;
+        }
         if (!labels.containsKey(p)) {
             if (count==MAX_LABELS) throw new IllegalStateException("Prototype registration bound exceeded");
             int id=count++; labels.put(p,id); names[id]=name;
+            publicRoots[id]=publicRoot;var values=new ArrayList<String>();values.add(name);aliases.add(values);
             sources[id]=p.filename!=null?p.filename:p.file!=null?p.file:"<unknown>";
             lines[id]=p.lines!=null&&p.lines.length>0?p.lines[0]:0;
         }
-        if (closure.upvalues!=null) for (int i=0;i<closure.upvalues.length;i++) {
-            UpValue up=closure.upvalues[i];
-            if (up!=null && up.getValue() instanceof LuaClosure child) visit(name+".upvalue"+i,child,nesting+1);
-        }
+        // Returned table methods and per-call local helpers have no live
+        // closure to bind during setup. The VM still uses these exact shared
+        // templates when it creates them; registration never creates a closure.
+        if(p.prototypes!=null)for(int i=0;i<p.prototypes.length;i++)register(name+".prototype"+i,p.prototypes[i],false,nesting+1);
     }
     void begin() {
         if (active || error!=null || depth!=0) throw new IllegalStateException("Invalid observer state: "+error);

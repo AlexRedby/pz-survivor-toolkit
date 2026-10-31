@@ -1,6 +1,7 @@
 package toolkit.warehousewalking;
 
 import java.nio.file.*;
+import java.lang.management.ManagementFactory;
 import me.zed_0xff.zombie_buddy.Patch;
 import se.krka.kahlua.integration.annotations.LuaMethod;
 import se.krka.kahlua.vm.*;
@@ -14,6 +15,8 @@ public final class Main {
     static Thread owner;
     private static int phase;
     private static long start;
+    private static com.sun.management.ThreadMXBean allocationBean;
+    private static long allocationStart=-1;
     public static void main(String[] args) {}
     private static void gate() throws Exception {
         String path=System.getProperty("pz.warehouseWalking.cache","");
@@ -29,6 +32,12 @@ public final class Main {
     public static void reset() throws Exception {
         gate();if(profile!=null&&profile.active)throw new IllegalStateException("Observer already active");
         owner=Thread.currentThread();profile=new Profile();
+        prepareAllocation();
+    }
+    static void prepareAllocation() {
+        var bean=ManagementFactory.getThreadMXBean();
+        allocationBean=bean instanceof com.sun.management.ThreadMXBean allocated
+            && allocated.isThreadAllocatedMemorySupported()&&allocated.isThreadAllocatedMemoryEnabled()?allocated:null;
     }
     @LuaMethod(name="warehouseWalkingProfileBind",global=true)
     public static void bind(String name,Object function) {
@@ -39,22 +48,29 @@ public final class Main {
     @LuaMethod(name="warehouseWalkingProfileBegin",global=true)
     public static void begin(int index) {
         if(Thread.currentThread()!=owner || profile==null || index<1||index>16)throw new IllegalStateException("Invalid phase");
-        phase=index;profile.begin();start=System.nanoTime();
+        phase=index;allocationStart=allocationBytes();profile.begin();start=System.nanoTime();
     }
+    static long allocationBytes(){return allocationBean==null?-1:allocationBean.getThreadAllocatedBytes(Thread.currentThread().threadId());}
     private static KahluaTable table(){return LuaManager.platform.newTable();}
     @LuaMethod(name="warehouseWalkingProfileFinish",global=true)
     public static KahluaTable finish() {
         if(Thread.currentThread()!=owner||profile==null)throw new IllegalStateException("Owned observer required");
-        long end=System.nanoTime();profile.finish();
+        long end=System.nanoTime(),allocationEnd=allocationBytes();profile.finish();
         KahluaTable result=table(),metrics=table(),hooks=table();
         result.rawset("phase",(double)phase);result.rawset("index",(double)phase);result.rawset("clock","nanoTime");
         result.rawset("elapsed_ms",(end-start)/1e6);
         result.rawset("scope","registered-native-lua-calls");
         result.rawset("tail_calls","separate-frame-spans");result.rawset("exclusive_scope","registered-children");
-        result.rawset("registration","public-roots-and-direct-upvalues");result.rawset("receiver_scope","shared-prototypes");result.rawset("observer_overhead_included",true);
+        result.rawset("registration","public-roots-direct-upvalues-and-nested-prototypes");result.rawset("receiver_scope","shared-prototypes");result.rawset("observer_overhead_included",true);
+        KahluaTable allocation=table();boolean allocated=allocationStart>=0&&allocationEnd>=allocationStart;
+        allocation.rawset("available",allocated);allocation.rawset("scope","owner-thread-whole-interval");allocation.rawset("includes_observer",true);
+        if(allocated)allocation.rawset("bytes",(double)(allocationEnd-allocationStart));result.rawset("allocation",allocation);
         hooks.rawset("init",(double)profile.initHooks);hooks.rawset("shrink",(double)profile.shrinkHooks);result.rawset("hooks",hooks);
         for(int i=0;i<profile.count;i++) {
             KahluaTable row=table();row.rawset("name",profile.names[i]);row.rawset("source",profile.sources[i]);row.rawset("first_line",(double)profile.lines[i]);
+            KahluaTable aliases=table();int aliasIndex=0;
+            for(String alias:profile.aliases.get(i))aliases.rawset((double)++aliasIndex,alias);
+            row.rawset("aliases",aliases);
             row.rawset("calls",(double)profile.calls[i]);row.rawset("inclusive_ms",profile.inclusive[i]/1e6);
             row.rawset("exclusive_ms",profile.exclusive[i]/1e6);row.rawset("max_ms",profile.max[i]/1e6);
             metrics.rawset((double)i+1,row);

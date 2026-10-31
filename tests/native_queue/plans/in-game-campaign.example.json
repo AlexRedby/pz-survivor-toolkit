@@ -711,7 +711,7 @@
       ],
       "gates": [
         "Reproduce the visible personal-page quick-transfer callback after a peer changes hidden loot item type/category; raw hidden-cache staleness alone does not establish a gameplay failure.",
-        "Before further dense timing comparisons, qualify comparable original actor inventories and source-resolved profiling in TODO.md#measured-stabilization-candidates; preserve exclusive warehouse-dense-sp/warehouse-dense-host admission, exact workload, source lock, observer scope and identity/authority/restoration checks.",
+        "For further dense timing comparisons, preserve the fixed eight-item actor load, source-resolved nested observer, exclusive warehouse-dense-sp/warehouse-dense-host admission and exact source/workload/authority/restoration checks. Exclude failed captures; transactional duplicate-ID-safe seeding remains tracked in TODO.md#process-friction.",
         "Keep GPU/FPS and actual user-save stutter conclusions separate from Lua/UI timings."
       ]
     },

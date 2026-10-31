@@ -48,6 +48,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.329
 
+- Reduce work when grouping inventory stacks by projecting only tag membership, skipping unused preview/provenance copies and a duplicate signature calculation. Keep physical item state, custom tags and retention live.
 - Refresh ingredient, disassembly, repair, smelting and wear-preview tags after native script reload or deferred input resolution, including changes that keep the same recipe lists and counts. Retain batching within each operation; unavailable native revision metadata permits operation-local cache reuse only.
 - Reuse recipe catalogue reads within each inventory grouping, tag rendering, filter, tag-menu and distribution-planning pass, reducing repeated work in large visible stacks. Keep item categories, freshness, damage, retention and custom tags live for each physical item; refresh recipe reads on the next operation.
 

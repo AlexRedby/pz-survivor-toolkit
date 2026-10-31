@@ -6,7 +6,7 @@ function getGameSpeed()return 1 end
 function getCore()return {getScreenWidth=function()return 1280 end,getScreenHeight=function()return 900 end}end
 Translator={getLanguage=function()return {name=function()return 'EN'end}end}
 BehaviorResult={Failed='failed',Succeeded='succeeded'}
-local inventory={getItems=function()assert(not measuring,'item enumeration/read in measured loop');return {size=function()return 1 end}end}
+local inventory={getItems=function()assert(not measuring,'item enumeration/read in measured loop');return {size=function()return 8 end}end,getCapacityWeight=function()assert(not measuring);return .4 end}
 local aggregate={getItems=function()assert(not measuring,'aggregate scan/read in measured loop');return {size=function()return 3 end}end}
 local pages={}
 CleanUI_Clean_ISInventoryPage={};CleanUI_Clean_ISInventoryPane={}
@@ -52,6 +52,9 @@ package.preload['TimedActions/ISTimedActionQueue']=function()return true end
 local player={x=98.5,y=100.5,z=0}
 function player:getPlayerNum()return 0 end
 function player:getInventory()return inventory end
+function player:getWornItems()return {size=function()return 0 end}end
+function player:getPrimaryHandItem()return nil end
+function player:getSecondaryHandItem()return nil end
 function player:getX()return self.x end
 function player:getY()return self.y end
 function player:getZ()return self.z end

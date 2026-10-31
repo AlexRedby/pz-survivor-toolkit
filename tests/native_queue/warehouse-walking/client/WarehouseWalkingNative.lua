@@ -113,7 +113,9 @@ end
 function N.environment(player,origin,phase)
  local core=getCore();local row={width=core:getScreenWidth(),height=core:getScreenHeight(),gameSpeed=getGameSpeed(),
   language=Translator.getLanguage():name(),originX=origin.x,originY=origin.y,originZ=origin.z,actorRootItems=player:getInventory():getItems():size(),
-  aggregateItems=Proximity.itemContainer[player:getPlayerNum()]:getItems():size()}
+  aggregateItems=Proximity.itemContainer[player:getPlayerNum()]:getItems():size(),actorRootWeight=player:getInventory():getCapacityWeight(),
+  actorWornItems=player:getWornItems():size(),actorPrimaryEmpty=player:getPrimaryHandItem()==nil,actorSecondaryEmpty=player:getSecondaryHandItem()==nil}
+ assert(row.actorRootItems==8 and row.actorWornItems==0 and row.actorPrimaryEmpty and row.actorSecondaryEmpty,'walking deterministic actor load differs')
  assert(row.aggregateItems==3*phase.itemsPerCrate,'walking endpoint nearby aggregate load differs: expected='..tostring(3*phase.itemsPerCrate)..' actual='..tostring(row.aggregateItems))
  assert(row.width==1280 and row.height==900 and row.gameSpeed==1,'walking viewport/game speed differs')
  return row

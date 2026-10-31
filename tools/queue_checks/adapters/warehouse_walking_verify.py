@@ -1,5 +1,7 @@
 """Reject incomplete or mismatched walking captures; timings are not acceptance."""
 import itertools
+import hashlib
+import zipfile
 import json
 import math
 from pathlib import Path
@@ -8,8 +10,9 @@ from .. import receipts
 from .warehouse_workload_verify import restored_ui, position
 
 MARKER = '[WAREHOUSE_WALKING] '
-EVENTS = {'BASELINE', 'SETUP', 'SEED', 'ADMIT', 'MODE', 'GO', 'INTERVAL',
+EVENTS = {'READY', 'BASELINE_SEEN', 'BASELINES', 'NORMALIZED', 'BASELINE', 'SETUP', 'SEED', 'ADMIT', 'MODE', 'GO', 'INTERVAL',
           'AUTHORITY', 'SEEN', 'RELEASE', 'RESTORED', 'COMPLETE'}
+INITIAL_EVENTS={'READY','BASELINE_SEEN','BASELINES','NORMALIZED','BASELINE'}
 PHASES = list(itertools.product(('sparse', 'dense'), ('clean', 'vanilla'),
                               ('own-only', 'both-hidden', 'loot-collapsed', 'both-open')))
 
@@ -53,6 +56,10 @@ def records(text, kind, allowed_roles):
         ensure(name in EVENTS and separator and 0 < len(body) <= 524288, 'failed/unknown/malformed event')
         row = receipts.decode_object(body)
         require(row, suite='warehouse-walking', case='walk', kind=kind, mode='toolkit')
+        if name in INITIAL_EVENTS:
+            require(row,initialTransport='native-reliable-ordered-channel0' if kind=='mp' else 'in-process-shared-authority')
+        if name=='SETUP':
+            require(row,materializationTransport='native-reliable-ordered-channel1' if kind=='mp' else 'in-process-shared-authority')
         ensure(row.get('role') in result, 'unexpected native role')
         result[row['role']].append((name, row))
     return result
@@ -62,6 +69,19 @@ def context(row, token, index):
     density, pane, state = PHASES[index-1]
     require(row, token=token, index=index, phaseToken=token+':'+str(index),
             density=density, paneMode=pane, paneState=state)
+
+
+def original_equipment(row, original_ids=None):
+    require(row, primaryEmpty=True, secondaryEmpty=True, attachedCount=0)
+    ensure(type(row.get('worn')) is list, 'missing original worn equipment descriptors')
+    seen=set()
+    for entry in row['worn']:
+        ensure(type(entry) is dict and type(entry.get('id')) is int, 'invalid original worn identity')
+        ensure(type(entry.get('location')) is str and 0<len(entry['location'])<256, 'invalid original worn slot')
+        ensure(type(entry.get('fullType')) is str and 0<len(entry['fullType'])<256, 'invalid original worn fullType')
+        ensure(entry['id'] not in seen, 'duplicate original worn identity'); seen.add(entry['id'])
+    if original_ids is not None:
+        ensure(seen <= set(original_ids), 'original worn descriptor aliases nonoriginal item')
 
 
 def snapshot(row, phase, descriptors, originals, role):
@@ -76,8 +96,16 @@ def snapshot(row, phase, descriptors, originals, role):
         number(crate['effectiveCapacity'], weight, 100)
         ensure(not all_ids.intersection(expected), 'same item in two crates')
         all_ids.update(expected)
-    visible = originals if role == 'server' else {role: originals[role]}
-    ensure(row.get('rootIds') == visible, 'original root identities changed')
+    loads = descriptors['actorLoads']
+    visible = loads if role == 'server' else {role: loads[role]}
+    ensure(row.get('rootIds') == {name: load['itemIds'] for name, load in visible.items()}, 'deterministic actor identities changed')
+    ensure(set(row.get('actorLoads', {})) == set(visible), 'actor load projection differs')
+    for name, load in visible.items():
+        actual = row['actorLoads'][name]
+        require(actual, itemType='Base.Nails', count=8, equipment='empty', originalsStashed=True)
+        ensure(ids(actual['itemIds'], 8) == load['itemIds'] and actual['weight'] == load['weight'], 'actor composition/weight changed')
+        ensure(not all_ids.intersection(actual['itemIds']), 'actor item aliases crate stock')
+        all_ids.update(actual['itemIds'])
     for original in originals.values():
         ensure(not all_ids.intersection(original), 'owned item aliases original')
 
@@ -139,16 +167,36 @@ def restored_lock(proof):
         value(page['tempForceSelectUnlock'], bool)
 
 
+def compiled_entries(path):
+    try:
+        with zipfile.ZipFile(path) as jar:
+            names=jar.namelist(); ensure(len(names)==len(set(names)),'duplicate observer jar entry')
+            return {name:hashlib.sha256(jar.read(name)).hexdigest() for name in names}
+    except zipfile.BadZipFile as error:
+        raise ValueError('Warehouse walking: malformed observer jar') from error
+
+
 def verify(root, selection):
     root = Path(root)
     roles = ['client1'] if selection['kind'] == 'sp' else ['client1', 'client2']
     from . import warehouse_walking_profile as observer
     inputs = json.loads((root/'warehouse-walking-observer-inputs.json').read_text())
     require(inputs, test_only=True, observer_mod=observer.MOD_ID, callback_replacement=False,
-            native_jvm_check=observer.PASS, scope='registered-native-lua-calls', **observer.SCOPE_DETAILS)
+            native_jvm_check=observer.PASS, ordered_jvm_check=observer.ORDERED_PASS, scope='registered-native-lua-calls', **observer.SCOPE_DETAILS)
     ensure(inputs.get('native_hashes') == observer.NATIVE_HASHES, 'observer native inputs differ')
-    ensure(set(inputs.get('java_sources', {})) == {'Main.java', 'Profile.java', 'ProfileChecks.java'}, 'observer sources missing')
-    for digest in inputs['java_sources'].values():
+    ensure(set(inputs.get('java_sources', {})) == observer.JAVA_SOURCES, 'observer sources missing')
+    ensure(inputs.get('ordered_transport') == observer.ORDERED_TRANSPORT, 'native ordered transport differs')
+    entries=inputs.get('java_entries', {})
+    ensure(type(entries) is dict and {'toolkit/warehousewalking/Main.class','toolkit/warehousewalking/Profile.class','toolkit/warehousewalking/OrderedCommands.class'}<=set(entries),'compiled observer/ordered sender missing')
+    ensure(all(type(key) is str and key.startswith('toolkit/warehousewalking/') and key.endswith('.class') and '/' not in key.removeprefix('toolkit/warehousewalking/') and 'Checks' not in key for key in entries),'compiled observer entry scope differs')
+    native_roles=['server',*roles] if selection['kind']=='mp' else roles
+    ensure(set(inputs.get('ordered_cache_markers', {}))==set(native_roles),'ordered sender owned cache cohort differs')
+    for role in native_roles:
+        marker=root/role/'Lua/warehouse-walking-ordered.txt'
+        expected='PZWarehouseWalkingProfile/ordered-command-v1\n'+str((root/role).resolve())+'\n'+role+'\n'+entries['toolkit/warehousewalking/OrderedCommands.class']+'\n'
+        ensure(marker.read_text()==expected and hashlib.sha256(marker.read_bytes()).hexdigest()==inputs['ordered_cache_markers'][role],'ordered sender owned cache marker differs')
+        ensure(compiled_entries(root/role/('mods/'+observer.MOD_ID+'/42/media/java/'+observer.MOD_ID+'.jar'))==entries,'compiled observer jar entry fingerprints differ')
+    for digest in [*inputs['java_sources'].values(), *entries.values(), *inputs['ordered_cache_markers'].values()]:
         ensure(type(digest) is str and len(digest) == 64 and set(digest) <= set('0123456789abcdef'), 'invalid observer source hash')
     ensure(set(inputs.get('client_properties', {})) == set(roles), 'observer client cohort differs')
     for role in roles:
@@ -165,8 +213,20 @@ def verify(root, selection):
     descriptors = setup['ids']; token = descriptors['token']; originals = descriptors['originalRootIds']
     ensure(type(token) is str and 0 < len(token) < 256, 'invalid session token')
     ensure(set(originals) == set(roles) and set(setup['onlineIds']) == set(roles), 'wrong real-peer cohort')
+    ensure(set(descriptors.get('originalEquipment', {})) == set(roles), 'missing correlated original equipment baselines')
+    for equipment in descriptors['originalEquipment'].values():
+        original_equipment(equipment)
     for role in roles:
         ids(originals[role]); number(setup['onlineIds'][role], -1, integer=True)
+    ensure(set(descriptors.get('actorLoads', {})) == set(roles), 'missing deterministic actor descriptors')
+    actor_ids = set()
+    for role, load in descriptors['actorLoads'].items():
+        require(load, token=token+':actor:'+role, itemType='Base.Nails', count=8, equipment='empty')
+        cohort = ids(load['itemIds'], 8); number(load['weight'], .001)
+        ensure(not actor_ids.intersection(cohort), 'actors share cohort IDs'); actor_ids.update(cohort)
+        for original in originals.values():
+            ensure(not set(cohort).intersection(original), 'actor cohort aliases originals')
+    ensure(len({load['weight'] for load in descriptors['actorLoads'].values()}) == 1, 'actor weights differ')
     ensure(len(set(setup['onlineIds'].values())) == len(roles), 'peers share online ID')
     ensure(len(descriptors['crates']) == 12, 'wrong crate topology')
     origin = descriptors['origin']
@@ -183,14 +243,27 @@ def verify(root, selection):
         number(point['index'], integer=True)
         require(point, object=point['index'], key=f"{point['x']},{point['y']},{point['z']}")
         require(point, id=point['key']+'/'+str(point['index'])+'/0')
-    expected_server = ['SETUP']
+    expected_server = ['READY'] + ['BASELINE_SEEN']*len(roles) + ['BASELINES'] + ['NORMALIZED']*len(roles) + ['SETUP']
     for _ in PHASES:
         expected_server += ['SEED', 'ADMIT'] + ['SEEN']*len(roles) + ['GO', 'AUTHORITY'] + ['SEEN']*len(roles) + ['RELEASE']
     expected_server += ['RESTORED', 'COMPLETE']
     ensure([name for name, _ in server] == expected_server, 'authority lifecycle/barrier order differs')
+    for event,row in server:
+        if event in ('READY','BASELINE_SEEN','BASELINES','NORMALIZED'):
+            require(row,token=token,index=1)
+    ready=one(server,'READY'); require(ready,token=token,index=1)
+    ensure(ready['onlineIds']==setup['onlineIds'],'initial native peer readiness differs')
+    baseline_seen=[row['observer'] for event,row in server if event=='BASELINE_SEEN']
+    ensure(sorted(baseline_seen)==roles,'duplicate/missing initial baseline capture')
+    captured=one(server,'BASELINES')
+    ensure(captured['originalRootIds']==originals and captured['originalEquipment']==descriptors['originalEquipment'],'authority baseline capture differs')
+    normalized={row['observer']:row for event,row in server if event=='NORMALIZED'}
+    ensure(set(normalized)==set(roles),'missing native normalization acknowledgements')
+    for row in normalized.values():
+        require(row['proof'],rootEmpty=True,equipmentEmpty=True,originalsStashed=True)
     phases = {}
     for index in range(1, 17):
-        rows = [(name, row) for name, row in server if name not in ('SETUP', 'RESTORED', 'COMPLETE') and row.get('index') == index]
+        rows = [(name, row) for name, row in server if name not in ('READY','BASELINE_SEEN','BASELINES','NORMALIZED','SETUP', 'RESTORED', 'COMPLETE') and row.get('index') == index]
         seed = one(rows, 'SEED'); phase = seed['phase']; context(phase, token, index)
         require(phase, itemType='Base.Nails', itemsPerCrate=1 if index <= 8 else 400)
         ensure(type(phase['crateIds']) is list and len(phase['crateIds']) == 12, 'seed lacks exact IDs')
@@ -213,8 +286,13 @@ def verify(root, selection):
         ensure(release['originalRootIds'] == originals, 'release changed originals')
         phases[index] = (phase, seed['snapshot'], release)
     cleanup = one(server, 'RESTORED')
-    require(cleanup, token=token, index=16, removedCrates=12, ownedAbsent=True, ownedRemaining=0)
+    require(cleanup, token=token, index=16, removedCrates=12, ownedAbsent=True, ownedRemaining=0,
+            cleanupTransport='native-reliable-ordered-channel1' if selection['kind']=='mp' else 'in-process-shared-authority')
     ensure(cleanup['originalRootIds'] == originals and len(cleanup['crates']) == 12, 'cleanup cohort differs')
+    ensure(cleanup.get('originalEquipment') == descriptors['originalEquipment'], 'authority original equipment slots/IDs not restored')
+    ensure(set(cleanup.get('actorRestored', {})) == set(roles), 'missing authority actor restoration')
+    for proof in cleanup['actorRestored'].values():
+        require(proof, identity=True, payload=True, equipment=True)
     for before, after in zip(descriptors['crates'], cleanup['crates']):
         ensure(all(after.get(key) == value for key, value in before.items()), 'cleanup changed object identity')
         number(after['afterIndex'], -100000, -1, integer=True)
@@ -222,12 +300,16 @@ def verify(root, selection):
     evidence = {}
     for role in roles:
         rows = grouped[role]
-        expected_client = ['BASELINE', 'SETUP'] + ['MODE', 'ADMIT', 'INTERVAL', 'ADMIT', 'RELEASE']*16 + ['RESTORED', 'COMPLETE']
+        expected_client = ['BASELINE', 'NORMALIZED', 'SETUP'] + ['MODE', 'ADMIT', 'INTERVAL', 'ADMIT', 'RELEASE']*16 + ['RESTORED', 'COMPLETE']
         ensure([name for name, _ in rows] == expected_client, role+' incomplete client lifecycle')
-        baseline = one(rows, 'BASELINE'); number(baseline['stableSamples'], 3, integer=True)
+        baseline = one(rows, 'BASELINE'); require(baseline,token=token,index=1); number(baseline['stableSamples'], 3, integer=True)
         require(baseline['original'], identity=True, payload=True, equipment=True)
+        original_equipment(baseline['originalEquipment'], baseline['original']['ids'])
+        ensure(baseline['originalEquipment'] == descriptors['originalEquipment'][role], 'authority baseline equipment differed before normalization')
         ensure(set(originals[role]) <= set(ids(baseline['original']['ids'])), 'baseline root missing')
         ensure(one(rows, 'SETUP')['ids'] == descriptors, 'client setup descriptors differ')
+        require(one(rows,'NORMALIZED'),token=token,index=1)
+        ensure(one(rows,'NORMALIZED')['proof']==normalized[role]['proof'],'native normalization proof/ack differs')
         intervals = []
         for index in range(1, 17):
             selected = [(name, row) for name, row in rows if name in ('MODE', 'ADMIT', 'INTERVAL', 'RELEASE') and row.get('index') == index]
@@ -265,7 +347,9 @@ def verify(root, selection):
             for key in ('environmentInitial', 'environmentFinal'):
                 environment(interval[key])
                 ensure(interval[key]['language'] == ('RU' if role == 'client2' else 'EN'), 'client locale differs')
-                ensure(interval[key]['actorRootItems'] == len(originals[role]), 'environment original root count differs')
+                ensure(interval[key]['actorRootItems'] == 8, 'environment deterministic root count differs')
+                require(interval[key], actorWornItems=0, actorPrimaryEmpty=True, actorSecondaryEmpty=True)
+                ensure(abs(number(interval[key]['actorRootWeight'], .001)-descriptors['actorLoads'][role]['weight']) < .000001, 'environment actor weight differs')
                 ensure(interval[key]['aggregateItems'] == 3*phase['itemsPerCrate'], 'nearby aggregate workload differs')
                 ensure(all(interval[key]['origin'+axis.upper()] == descriptors['routeOrigins'][role][axis]
                            for axis in ('x', 'y', 'z')), 'environment route differs')
@@ -274,10 +358,12 @@ def verify(root, selection):
                    'observer and walking intervals differ')
             client_release = selected[4][1]
             require(client_release, absent=True)
-            ensure(client_release['receipt'] == release and client_release['original'] == baseline['original'], 'client release differs')
+            ensure(client_release['receipt'] == release and client_release['originalStash'] == baseline['original'] and client_release['actorLoad'] == before['snapshot']['actorLoads'][role], 'client release differs')
             intervals.append(interval)
         restored = one(rows, 'RESTORED'); require(restored, ownedAbsent=True)
         ensure(restored['authority'] == cleanup and restored['original'] == baseline['original'], 'final client originals/cleanup differ')
+        ensure(restored.get('originalEquipment') == baseline['originalEquipment'], 'final client worn slots/IDs not restored')
+        ensure(cleanup['actorRestored'][role] == baseline['original'], 'authority originals differ from client baseline')
         restored_ui(restored['uiProof']); position(restored['positionProof'], baseline['position'])
         restored_lock(restored['lockProof'])
         require(one(rows, 'COMPLETE'), token=token, phases=16, restored=True)

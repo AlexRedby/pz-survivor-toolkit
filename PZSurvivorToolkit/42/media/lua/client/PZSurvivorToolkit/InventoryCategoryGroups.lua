@@ -59,7 +59,7 @@ function Groups.split(pane, saved)
                 local item = group.items[index]
                 local category = tostring(item:getDisplayCategory() or item:getCategory() or '')
                 local key = category
-                if Tags.enabled() then key = key..string.char(30)..Tags.signature(Tags.forItem(item, tagContext)) end
+                if Tags.enabled() then key = key..string.char(30)..Tags.signature(Tags.membershipForItem(item, tagContext)) end
                 if Retention.isRetained(item) then key = key..string.char(29).."retained" end
                 if not buckets[key] then
                     buckets[key]={};order[#order + 1]=key;categories[key]=category

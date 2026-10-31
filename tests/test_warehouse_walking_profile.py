@@ -10,14 +10,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def receipt():
-    metrics = [dict(name=name, source='consumer.lua', first_line=index+1,
+    metrics = [dict(name=name, aliases=[name], source='consumer.lua', first_line=index+1,
                     calls=1, inclusive_ms=1, exclusive_ms=.5, max_ms=1)
                for index, name in enumerate(('page.refreshBackpacks', 'pane.refreshContainer',
                    'pane.restoreSelection', 'pane.itemSortFunc', 'rows.restoreSelection',
-                   'filter.choices', 'categoryRules.forItem', 'categories.prepareContainer'))]
+                   'filter.choices', 'categoryRules.forItem', 'categories.prepareContainer',
+                   'categoryGroups.split', 'tags.forItem', 'tags.automaticForItem', 'tags.signature',
+                   'retention.isRetained', 'recipeCatalog.newContext'))]
     return dict(**observer.SCOPE_DETAILS, phase=1, index=1, clock='nanoTime', elapsed_ms=100,
                 scope='registered-native-lua-calls', identities_unchanged=True,
-                observer_overhead_included=True, hooks=dict(init=20, shrink=20), metrics=metrics)
+                observer_overhead_included=True, hooks=dict(init=20, shrink=20), metrics=metrics,
+                allocation=dict(available=False, scope='owner-thread-whole-interval', includes_observer=True))
 
 
 class WarehouseWalkingObserverChecks(unittest.TestCase):
@@ -63,13 +66,13 @@ class WarehouseWalkingObserverChecks(unittest.TestCase):
         value = receipt(); value['metrics'][0].update(inclusive_ms=2, exclusive_ms=0, max_ms=1)
         with self.assertRaisesRegex(ValueError, 'calls times maximum'):
             observer.verify_profile(value)
-        value = receipt(); value['elapsed_ms'] = 3.5
+        value = receipt(); value['elapsed_ms'] = len(value['metrics']) * .5 - .5
         with self.assertRaisesRegex(ValueError, 'exclusive durations'):
             observer.verify_profile(value)
         # Inclusive spans can overlap across registered ancestors and descendants.
         value = receipt(); value['elapsed_ms'] = 10
         for row in value['metrics']:
-            row.update(inclusive_ms=10, exclusive_ms=1, max_ms=10)
+            row.update(inclusive_ms=10, exclusive_ms=.5, max_ms=10)
         observer.verify_profile(value)
 
     def test_nanosecond_rounding_allowance_is_absolute(self):
@@ -79,9 +82,9 @@ class WarehouseWalkingObserverChecks(unittest.TestCase):
         value['metrics'][0]['inclusive_ms'] = 1 + epsilon * 2
         with self.assertRaises(ValueError):
             observer.verify_profile(value)
-        value = receipt(); value['elapsed_ms'] = 4 - epsilon / 2
+        value = receipt(); total = len(value['metrics']) * .5; value['elapsed_ms'] = total - epsilon / 2
         observer.verify_profile(value)
-        value['elapsed_ms'] = 4 - epsilon * 2
+        value['elapsed_ms'] = total - epsilon * 2
         with self.assertRaises(ValueError):
             observer.verify_profile(value)
         value = receipt(); value['elapsed_ms'] = 100 - epsilon / 2
@@ -90,6 +93,27 @@ class WarehouseWalkingObserverChecks(unittest.TestCase):
         value['elapsed_ms'] = 100 - epsilon * 2
         with self.assertRaises(ValueError):
             observer.verify_profile(value)
+
+    def test_public_aliases_and_reader_registration(self):
+        value = receipt()
+        row = next(row for row in value['metrics'] if row['name'] == 'tags.signature')
+        row['name'] = 'shared.signature'; row['aliases'].append(row['name'])
+        observer.verify_profile(value)
+        for bad in ([], ['shared.signature', 'shared.signature'], ['tags.signature'], ['shared.signature', 1]):
+            with self.subTest(aliases=bad):
+                row['aliases'] = bad
+                with self.assertRaises(ValueError):
+                    observer.verify_profile(value)
+
+    def test_whole_interval_allocation_scope(self):
+        value = receipt(); value['allocation'].update(available=True, bytes=12345)
+        observer.verify_profile(value)
+        for patch in (dict(bytes=-1), dict(bytes=True), dict(bytes=1.5), dict(scope='per-reader'),
+                      dict(available=False), dict(includes_observer=False)):
+            with self.subTest(patch=patch):
+                bad = copy.deepcopy(value); bad['allocation'].update(patch)
+                with self.assertRaisesRegex(ValueError, 'allocation'):
+                    observer.verify_profile(bad)
 
     @unittest.skipUnless(os.environ.get('PZ_GAME') and os.environ.get('PZ_JDK'),
                          'PZ_GAME/PZ_JDK required for installed native Kahlua/ZombieBuddy test')
