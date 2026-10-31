@@ -218,8 +218,22 @@ final class SemanticGates {
             Main.require(Float.isFinite(chance) && (hit?chance>=10000:chance==0),"reload-finite-classification-chance");
             roll(bag,out,dist);
             Main.require(out.getItems().size()==(hit?2:0),"reload-native-roll-count");
-            for (InventoryItem item:out.getItems()) Main.require(item.getScriptItem()==expected
-                && item.isInitialised() && Float.floatToRawIntBits(item.getActualWeight())==Float.floatToRawIntBits(weight),"reload-factory-field-proof");
+            for (int index=0;index<out.getItems().size();index++) {
+                InventoryItem item=out.getItems().get(index);
+                // Native InstanceItem copies the script weight, but the public getter returns
+                // zero for an untranslated name equal to its full type. Verify both contracts.
+                float stored=Main.field(InventoryItem.class,"actualWeight").getFloat(item);
+                boolean fallback=item.getDisplayName().equals(item.getFullType());
+                float publicWeight=item.getActualWeight(), expectedPublic=fallback?0f:Math.max(stored,0f);
+                Main.row("RELOAD_ITEM","phase="+phase+":path="+(bag?"bag":"direct")+":index="+index
+                    +":fulltype="+item.getFullType()+":id="+item.getID()+":stored_weight="+Main.bits(stored)
+                    +":public_weight="+Main.bits(publicWeight)+":display_fallback="+fallback
+                    +":script_identity="+(item.getScriptItem()==expected)+":initialized="+item.isInitialised());
+                Main.require(item.getClass()==zombie.inventory.types.ComboItem.class && item.getFullType().equals(TARGET) && item.getScriptItem()==expected && item.isInitialised()
+                    && Float.floatToRawIntBits(stored)==Float.floatToRawIntBits(weight)
+                    && Float.floatToRawIntBits(publicWeight)==Float.floatToRawIntBits(expectedPublic),
+                    "reload-factory-field-proof:index="+index+":stored="+Main.bits(stored)+":public="+Main.bits(publicWeight)+":fallback="+fallback);
+            }
             Main.row("RELOAD_ROLL","phase="+phase+":path="+(bag?"bag":"direct")+":count="+(hit?2:0)+":weight="+Main.bits(weight)+":script_field_proof=true:factory_proof="+hit+":picker_chance="+Main.bits(20000f)+":native_chance="+Main.bits(chance)+":draw_min=0:draw_max_exclusive=10000:next_rng="+Rand.Next(1_000_000));
             Main.snapshot(out,phase+(bag?"-bag":"-direct"),0); Main.disposeTrial();
         }
