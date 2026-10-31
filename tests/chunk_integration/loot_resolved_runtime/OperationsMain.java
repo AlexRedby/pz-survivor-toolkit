@@ -55,6 +55,7 @@ final class OperationsMain {
         Item item=ScriptManager.instance.FindItem(name);
         require(item!=null,"missing-registered-script:"+name);
         require(item.getItemConfig()==null,"unsupported-itemconfig:"+name);
+        require(item.getSpawnWith()==null || item.getSpawnWith().isEmpty(),"unsupported-SpawnWith:"+name);
         require(item.getItemType()!=ItemType.FOOD && item.getItemType()!=ItemType.MAP
             && (setup || item.getItemType()!=ItemType.CONTAINER),"unsupported-food-map-nested-container:"+name);
         String create=item.getLuaCreate();
@@ -230,12 +231,13 @@ final class OperationsMain {
             require(bean.isCurrentThreadCpuTimeSupported() && bean.isThreadAllocatedMemorySupported(),"thread-CPU-allocation-unavailable");
             if(!bean.isThreadCpuTimeEnabled())bean.setThreadCpuTimeEnabled(true);if(!bean.isThreadAllocatedMemoryEnabled())bean.setThreadAllocatedMemoryEnabled(true);
             String initialOptions=options();admit("Base.FirstAidKit",true);
-            Group[] groups={new Group("direct-CrateMetalwork-main",false,2,ItemPickerJava.ProceduralDistributions.get("CrateMetalwork")),
+            Group[] groups={new Group("direct-CrateTools-main",false,2,ItemPickerJava.ProceduralDistributions.get("CrateTools")),
                 new Group("bag-FirstAidKit-with-native-junk",true,4,ItemPickerJava.containers.get("FirstAidKit"))};
             Map<String,String> graphs=new TreeMap<>();
             for(Group group:groups){String graph=graph(group.distribution,0);graphs.put(group.name,graph);input(group.name+".graph",graph);input(group.name+".sha256",sha(graph));}
             input("ordinary_options",initialOptions);input("ordinary_options_sha256",sha(initialOptions));input("callback_admission","itemconfig-null;LuaCreate-empty-or-exact-native-gasmask");
             input("callback_binding",gasMaskBinding==null?"none":"native:ItemCodeOnCreate.onCreateGasMask(Clothing)");
+            input("spawn_with_admission","empty");
             input("source_region",ItemPickerJava.getSquareRegion(square));input("source_x",square.x);input("source_y",square.y);input("source_z",square.z);input("owner_thread_id",Thread.currentThread().threadId());
             input("container_identity","detached-no-native-world-object-id");input("native_identity_logger","unchanged-diagnostics-included-if-emitted");
             input("direct_public_calls",(WARMUP+PAIRS)*2*2);input("bag_public_calls",(WARMUP+PAIRS)*2*4);

@@ -200,9 +200,9 @@ def main():
                    "required_preload":"42/media/bootstrap/PZLootResolvedBootstrap.jar"}
         if args.bank == "operations":
             receipt["operations_contract"] = {"scope":"owner-window-paired-roll-v1", "warmup_pairs":64, "measured_pairs":24,
-                "storage_limit":4096, "groups":[{"id":"direct-CrateMetalwork-main","batch":2,"distribution":"CrateMetalwork","path":"public-doRollItem-main-only"},
+                "storage_limit":4096, "groups":[{"id":"direct-CrateTools-main","batch":2,"distribution":"CrateTools","path":"public-doRollItem-main-only"},
                 {"id":"bag-FirstAidKit-with-native-junk","batch":4,"distribution":"FirstAidKit","path":"public-rollContainerItem-with-junk"}],
-                "callback_admission":"itemconfig-null;LuaCreate-empty-or-exact-native-gasmask", "semantic_accept_observer":False,
+                "callback_admission":"itemconfig-null;LuaCreate-empty-or-exact-native-gasmask", "spawn_with_admission":"empty", "semantic_accept_observer":False,
                 "headless_operations_checks":bool(args.check)}
         for jar_name, package, preload in (("media/bootstrap/PZLootResolvedBootstrap.jar", "toolkit/lootresolved/bootstrap", True),
                                            ("media/java/PZLootResolvedRuntime.jar", "toolkit/lootresolved/runtime", False)):

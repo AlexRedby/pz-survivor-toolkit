@@ -337,7 +337,7 @@ observer targets must be undefined at bootstrap and observed exactly once.
 Two actual parsed distribution objects are measured without changing chances,
 roll counts or their flags:
 
-- `ProceduralDistributions["CrateMetalwork"]`: public `doRollItem` regular main
+- `ProceduralDistributions["CrateTools"]`: public `doRollItem` regular main
   pass, two fresh detached native-capacity-50 outputs per half. Outer procedural
   selection, separate junk pass and outer fill callback are excluded. The public
   arguments are density 0, character null, boolean true and room null; these are
@@ -356,13 +356,21 @@ percentages must not be described as ordinary world-container fill speedups.
 Preflight retains the full ordered actual parsed fields/chance bits and their
 SHA, actual sandbox values and exact callback binding. Food, map, nested bag and
 unknown ItemConfig/LuaCreate graphs are unsupported. The admitted scripts must
-have `ItemConfig == null`; the only allowed nonempty OnCreate is the exact
+have `ItemConfig == null` and empty `SpawnWith`; the only allowed nonempty OnCreate is the exact
 source-reviewed native `ItemCodeOnCreate.onCreateGasMask(Clothing)` Method through
 its pinned game-loader invoker. It changes only the owned mask/moddata through
 native Rand. All selected mods stay loaded and handlers enabled; this admitted
 graph does not fabricate an outer OnFillContainer call or claim to measure every
 selected Lua handler. Callback globals or escaped world/player items invalidate
 the disposable profile.
+
+The initial `CrateMetalwork` attempt was rejected before measurement: native
+`SpawnWith` created paired clothing and called a global Lua clothing-copy path
+outside the admitted graph. That failed profile is retained. `CrateTools` uses
+its original distribution and selected-mod additions; no entries or chances are
+filtered. Empty live `SpawnWith` is checked again with script identity before
+each half, and the receipt requires this admission. The excluded clothing-copy
+path remains unsupported.
 
 Fixed storage observes successful native factory returns before acceptance can
 discard them, and records actual native ItemSpawner increment calls. It appends
@@ -389,9 +397,15 @@ an initial sentinel and every warmup/measured owner window; missing history or
 normal recording-chunk rotation cannot silently pass. Same-clock exported JFR
 intervals bind Compilation/Deoptimization/GC/pause/safepoint/data-loss events to
 window IDs. The analyzer retains all 352 halves, requires literal observed normal
-compiled-entry evidence, flags all JIT-overlap/cold-type/data-loss windows and
-keeps GC rather than dropping slow samples. It reports actual levels and OSR;
-no universal C2 claim follows from an event for one method or an iteration count.
+compiled-entry evidence for exact method descriptors and rejects any compilation
+or deoptimization across the entire measured span, including untimed cleanup
+gaps. It uses only the latest observed successful normal entry and rejects a
+matching compile-ID deoptimization even when it names an inlined callee; missing
+or ambiguous evidence cannot qualify timing. Cold types and data loss also
+reject timing, while GC and every raw window remain. Each group must demonstrate
+measured creation and insertion; all-miss pairs remain in the capture. Actual
+levels and OSR are reported without claiming current entrant state, universal
+C2, inlining or lazy-path warmth from one event or an iteration count.
 Current-thread CPU excludes background GC/Host CPU; cleanup-induced GC remains
 a disclosed test lifecycle limitation.
 

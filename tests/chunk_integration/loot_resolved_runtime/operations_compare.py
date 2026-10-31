@@ -16,9 +16,9 @@ values=base.values
 rng=base.rng
 RNG_ACTIVATION=base.RNG_ACTIVATION
 CONTRACT={'scope':'owner-window-paired-roll-v1','warmup_pairs':64,'measured_pairs':24,'storage_limit':4096,
- 'groups':[{'id':'direct-CrateMetalwork-main','batch':2,'distribution':'CrateMetalwork','path':'public-doRollItem-main-only'},
+ 'groups':[{'id':'direct-CrateTools-main','batch':2,'distribution':'CrateTools','path':'public-doRollItem-main-only'},
  {'id':'bag-FirstAidKit-with-native-junk','batch':4,'distribution':'FirstAidKit','path':'public-rollContainerItem-with-junk'}],
- 'callback_admission':'itemconfig-null;LuaCreate-empty-or-exact-native-gasmask','semantic_accept_observer':False,'headless_operations_checks':True}
+ 'callback_admission':'itemconfig-null;LuaCreate-empty-or-exact-native-gasmask','spawn_with_admission':'empty','semantic_accept_observer':False,'headless_operations_checks':True}
 GROUPS={g['id']:g for g in CONTRACT['groups']}
 FIELDS='phase group pair order variant batch window_id wall_start wall_end cpu_start cpu_end allocated selections created increments null_returns digest next_rng created_types cold_types cleanup'.split()
 EVENT_FIELDS='kind start_ns end_ns thread_id method level compile_id window_id detail'.split()
@@ -186,7 +186,7 @@ def read(cache,mode='candidate'):
 
 def report(cache):
  cache=Path(cache);inputs=values(cache/'loot-operations-inputs.properties');owner=_integer(inputs.get('owner_thread_id',''),1)
- if inputs.get('callback_admission')!=CONTRACT['callback_admission'] or inputs.get('callback_binding') not in ('none','native:ItemCodeOnCreate.onCreateGasMask(Clothing)'):
+ if inputs.get('spawn_with_admission')!=CONTRACT['spawn_with_admission'] or inputs.get('callback_admission')!=CONTRACT['callback_admission'] or inputs.get('callback_binding') not in ('none','native:ItemCodeOnCreate.onCreateGasMask(Clothing)'):
   raise ValueError('Operations reviewed callback binding admission missing')
  for group in GROUPS:
   graph=inputs.get(group+'.graph','');digest=inputs.get(group+'.sha256','')
