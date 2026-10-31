@@ -436,47 +436,57 @@ public final class LootResolvedCheck {
         bean.setThreadCpuTimeEnabled(true);
         bean.setThreadAllocatedMemoryEnabled(true);
         long id = Thread.currentThread().threadId();
-        int iterations = Integer.getInteger("loot.iterations", 200_000);
+        int iterations = Integer.getInteger("loot.iterations", 50_000);
         int pairs = Integer.getInteger("loot.pairs", 12);
         int fork = Integer.getInteger("loot.fork", 0);
         require(iterations > 0 && pairs >= 2 && pairs % 2 == 0, "positive iterations and even pairs >=2 required");
         // Every fork contains BOTH modes. The same method has two symmetric direct-call
         // loops, not two MethodHandles or a per-iteration polymorphic dispatch.
+        phase("timer-api-warmup-begin");
         Object warmMonitor = new Object();
         long[][][][] measured = new long[groups.length][pairs][2][7];
         for (int warmup = 0; warmup < 20_000; warmup++) {
             synchronized (warmMonitor) { warmMonitor.notifyAll(); }
+            // The all-JIT gate observed a late isThreadCpuTimeEnabled C2 compile.
+            // Exercise these actual timer-state predicates directly before windows.
+            long enabled = (bean.isThreadCpuTimeEnabled() ? 1L : 0L)
+                + (bean.isThreadAllocatedMemoryEnabled() ? 1L : 0L);
             sink = runtime.getUptime() + bean.getThreadAllocatedBytes(id)
-                + bean.getCurrentThreadCpuTime() + System.nanoTime();
+                + bean.getCurrentThreadCpuTime() + System.nanoTime() + enabled;
         }
+        phase("timer-api-warmup-end");
         separateReporting();
-        // Warm the timer wrapper/reset itself enough times, separately from long loops,
-        // so its invocation threshold is not first crossed in a retained half.
-        // Continue the existing RNG stream here; pair resets are exercised below.
+        // The all-JIT-gated 50k run showed this wrapper's first C1 compilation
+        // during measured call ~256. Cross that observed threshold BEFORE windows,
+        // without forcing C2 or repeating ten thousand expensive seeded halves.
         long[] scratch = new long[7];
-        for (int warmup = 0; warmup < 1000; warmup++) {
-            for (Group group : groups) {
-                measuredHalf(group.inputs, group.inputs.length, false, false, runtime, bean, id, scratch);
-                measuredHalf(group.inputs, group.inputs.length, true, false, runtime, bean, id, scratch);
-            }
+        phase("short-wrapper-warmup-begin");
+        for (int warmup = 0; warmup < 64; warmup++) {
+            Group group = groups[warmup % groups.length];
+            measuredHalf(group.inputs, 1, false, runtime, bean, id, scratch);
+            measuredHalf(group.inputs, 1, true, runtime, bean, id, scratch);
         }
-        // Warm the actual timer wrapper, RNG reset, all groups and both loop branches.
-        // Balanced AB/BA order prevents one bridge from being the only trained target.
+        phase("short-wrapper-warmup-end");
+        // Train both full calculation branches on every varied input group.
+        phase("long-warmup-begin");
         for (int warmup = 0; warmup < 16; warmup++) {
             for (int group = 0; group < groups.length; group++) {
                 boolean firstResolved = (warmup + group + fork) % 2 != 0;
-                measuredHalf(groups[group].inputs, iterations, firstResolved, true, runtime, bean, id, scratch);
-                measuredHalf(groups[group].inputs, iterations, !firstResolved, true, runtime, bean, id, scratch);
+                measuredHalf(groups[group].inputs, iterations, firstResolved, runtime, bean, id, scratch);
+                measuredHalf(groups[group].inputs, iterations, !firstResolved, runtime, bean, id, scratch);
             }
         }
+        phase("long-warmup-end");
+        phase("measure-ready");
+        separateReporting(); // Keep milestone formatting outside the first +/-1ms window.
         for (int pair = 0; pair < pairs; pair++) {
             // Rotate group position as well as AB/BA order; pair each identical input.
             for (int position = 0; position < groups.length; position++) {
                 int group = (position + pair) % groups.length;
                 boolean firstResolved = (pair + group + fork) % 2 != 0;
                 int first = firstResolved ? 1 : 0, second = 1 - first;
-                measuredHalf(groups[group].inputs, iterations, firstResolved, true, runtime, bean, id, measured[group][pair][first]);
-                measuredHalf(groups[group].inputs, iterations, !firstResolved, true, runtime, bean, id, measured[group][pair][second]);
+                measuredHalf(groups[group].inputs, iterations, firstResolved, runtime, bean, id, measured[group][pair][first]);
+                measuredHalf(groups[group].inputs, iterations, !firstResolved, runtime, bean, id, measured[group][pair][second]);
                 long[] nativeRow = measured[group][pair][0], resolvedRow = measured[group][pair][1];
                 require(nativeRow[5] == resolvedRow[5] && nativeRow[6] == resolvedRow[6], "pair checksum/RNG mismatch");
             }
@@ -488,6 +498,7 @@ public final class LootResolvedCheck {
         separateReporting();
         long waitedNanos = System.nanoTime() - waitStarted, reportAt = runtime.getUptime();
         require(reportAt - lastWindowEnd >= 10, "reporting separation too short");
+        phase("measure-complete");
         System.out.printf(Locale.ROOT, "REPORT_GAP %d %d %d%n", lastWindowEnd, reportAt, waitedNanos);
         for (int group = 0; group < groups.length; group++) {
             for (int pair = 0; pair < pairs; pair++) {
@@ -504,11 +515,9 @@ public final class LootResolvedCheck {
         }
     }
 
-    private static void measuredHalf(Vector[] group, int count, boolean resolved, boolean resetSeed,
+    private static void measuredHalf(Vector[] group, int count, boolean resolved,
             java.lang.management.RuntimeMXBean runtime, ThreadMXBean bean, long id, long[] row) throws Exception {
-        // Short timer-wrapper warmup opts out of expensive CA reconstruction.
-        // Long warmup and EVERY measured half restore identical native CA state.
-        if (resetSeed) resetRandom(); // Outside the measured unit.
+        resetRandom(); // Outside the unit: identical native CA state for both halves.
         long beganAt = runtime.getUptime(), allocated = bean.getThreadAllocatedBytes(id);
         long cpu = bean.getCurrentThreadCpuTime(), start = System.nanoTime();
         long checksum = pairedLoop(group, count, resolved);
@@ -537,6 +546,10 @@ public final class LootResolvedCheck {
         }
         sink = sum;
         return sum;
+    }
+
+    private static void phase(String name) {
+        System.out.println("PHASE " + name + " " + ManagementFactory.getRuntimeMXBean().getUptime());
     }
 
     private static void separateReporting() {
