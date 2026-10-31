@@ -1,5 +1,6 @@
 {
   "se/krka/kahlua/integration/LuaCaller.class": "0443930027e8f312ae9cb192c628f4b6c10743204597c508f8693cfd7bd79d0b",
+  "zombie/GameTime.class": "ec030ac26790d8c06712c3e1d5935bb29cc816ac3b6f1ea55b06ebeccb7e7125",
   "zombie/Lua/Event.class": "cf4b0ba953b8f965fbcacb73ebb5d1a173dc3ed140656e15b90ad932eff0e952",
   "zombie/Lua/LuaEventManager.class": "9706f17e9b5e095a0e24230dc944de5d552fa62c997214636c4deb4957cf354b",
   "zombie/Lua/LuaManager.class": "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d",

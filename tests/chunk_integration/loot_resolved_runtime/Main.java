@@ -3,7 +3,6 @@ package toolkit.lootresolved.runtime;
 import java.lang.reflect.*;
 import java.nio.file.*;
 import java.util.*;
-import org.uncommons.maths.random.CellularAutomatonRNG;
 import se.krka.kahlua.integration.annotations.LuaMethod;
 import toolkit.lootresolved.bootstrap.Bootstrap;
 import zombie.SandboxOptions;
@@ -51,6 +50,42 @@ public final class Main {
             .append(text.replace('\t',' ').replace('\r',' ').replace('\n',' ')).append('\n');
     }
     private static String bits(float value) { return Integer.toHexString(Float.floatToRawIntBits(value)); }
+    private static String doubleBits(double value) { return Long.toHexString(Double.doubleToRawLongBits(value)); }
+    private record Clock(double days, double hours, int timeSinceApo, int rotOption) { }
+    private static Clock clock() {
+        var time = zombie.GameTime.getInstance();
+        Clock result = new Clock(time.getWorldAgeDaysSinceBegin(),time.getWorldAgeHours(),
+            SandboxOptions.instance.getTimeSinceApo(),SandboxOptions.instance.foodRotSpeed.getValue());
+        require(Double.isFinite(result.days) && Double.isFinite(result.hours) && result.days >= 0 && result.hours >= 0,"unsupported-direct-food-clock");
+        return result;
+    }
+    private static void appleClockProof(ItemContainer out, Clock before, Clock after) throws Exception {
+        require(Double.doubleToRawLongBits(before.days) == Double.doubleToRawLongBits(after.days)
+            && Double.doubleToRawLongBits(before.hours) == Double.doubleToRawLongBits(after.hours),"direct-food-clock-moved");
+        require(before.timeSinceApo == after.timeSinceApo && before.rotOption == after.rotOption,"direct-food-clock-options-moved");
+        require(out.getParent() == null && out.getSourceGrid() == null && !out.isFridge() && !out.isFreezer(),"direct-food-container-scope");
+        Method rot = Food.class.getDeclaredMethod("getFoodRotSpeed"); rot.setAccessible(true);
+        int apples = 0;
+        for (int index = 0; index < out.getItems().size(); index++) {
+            InventoryItem item = out.getItems().get(index);
+            if (!item.getFullType().equals("Base.Apple")) continue;
+            require(item instanceof Food,"direct-apple-subtype"); Food food = (Food)item;
+            require(food.getOutermostContainer() == out,"direct-apple-outermost-container");
+            float factor = (Float)rot.invoke(food);
+            require(Float.isFinite(factor) && factor >= 0,"unsupported-direct-food-rot-factor");
+            float expected = (float)before.days * factor;
+            require(Float.floatToRawIntBits(expected) == Float.floatToRawIntBits(food.getAge()),"direct-food-age-oracle");
+            row("CLOCK","direct/" + index + ":fulltype=Base.Apple:id=" + food.getID()
+                + ":days_before=" + doubleBits(before.days) + ":days_after=" + doubleBits(after.days)
+                + ":hours_before=" + doubleBits(before.hours) + ":hours_after=" + doubleBits(after.hours)
+                + ":time_since_apo_before=" + before.timeSinceApo + ":time_since_apo_after=" + after.timeSinceApo
+                + ":rot_option_before=" + before.rotOption + ":rot_option_after=" + after.rotOption
+                + ":rot_factor=" + bits(factor) + ":expected_age=" + bits(expected) + ":actual_age=" + bits(food.getAge())
+                + ":is_fridge=false:is_freezer=false");
+            apples++;
+        }
+        require(apples > 0,"missing-direct-apple-clock-proof");
+    }
     private static void onOwner() { require(Thread.currentThread() == owner, "foreign-thread-fixture-callback"); }
     private static ItemContainer container(int capacity) {
         ItemContainer container = new ItemContainer("lootResolvedRuntime", null, null);
@@ -224,9 +259,7 @@ public final class Main {
         roots.clear(); created.clear(); inserted.clear(); spawnBaselines.clear();
     }
     private static void seeded(int number) throws Exception {
-        field(RandAbstract.class, "rand").set(RandStandard.INSTANCE,
-            new CellularAutomatonRNG(new byte[]{7,19,31,(byte)(43 + number)}));
-        field(RandAbstract.class, "id").setInt(RandStandard.INSTANCE, 0);
+        Bootstrap.seedRng(number);
     }
     private interface Work { void run() throws Exception; }
     private static void test(String name, String mode, Work work) throws Exception {
@@ -243,8 +276,6 @@ public final class Main {
     @LuaMethod(name="lootResolvedRuntimeRun", global=true)
     public static synchronized boolean run() {
         if (!status.equals("not-run")) return status.equals("complete");
-        Object savedRandom = null;
-        int savedId = 0;
         String savedRemoval = null;
         Set<ItemTag> savedTags = null;
         Item pen = null;
@@ -255,21 +286,23 @@ public final class Main {
             require(Path.of(zombie.ZomboidFileSystem.instance.getCacheDir()).toRealPath().equals(Bootstrap.cache()), "actual-cache-mismatch");
             require(Files.isRegularFile(Bootstrap.cache().resolve("Lua/smoke-user.txt"), LinkOption.NOFOLLOW_LINKS), "actual-cache-owned-marker");
             require(!GameClient.client || GameServer.server, "authority-required");
+            Bootstrap.verifyRuntimeProfile(GameServer.server,GameClient.client);
             require(!GameEntityManager.isEngineProcessing(), "entity-engine-processing");
             double rolls = SandboxOptions.instance.rollsMultiplier.getValue();
             require(Double.isFinite(rolls) && rolls >= 0 && rolls <= 16, "unsupported-rolls-multiplier");
             for (String name : new String[]{"Base.Nails", "Base.Bandage", "Base.Pen", "Base.Apple", "Base.WaterBottle", "Base.Bag_Schoolbag"})
                 require(ScriptManager.instance.FindItem(name) != null, "missing-real-script:" + name);
-            savedRandom = field(RandAbstract.class,"rand").get(RandStandard.INSTANCE);
-            savedId = field(RandAbstract.class,"id").getInt(RandStandard.INSTANCE);
             savedRemoval = SandboxOptions.instance.lootItemRemovalList.getValue();
             pen = ScriptManager.instance.FindItem("Base.Pen"); savedTags = new HashSet<>(pen.getTags());
             Bootstrap.beginRng(); rngStarted = true;
             row("ENV", "authority=" + (GameServer.server ? "server" : "singleplayer") + ":thread=" + owner.getName());
             test("direct-real-items", "", () -> {
                 ItemContainer out = container(1000);
+                Clock before = clock();
                 direct(distribution("Nails", "Base.Bandage", "Base.Apple", "Base.WaterBottle"), out);
+                Clock after = clock();
                 require(out.getItems().size() >= 4 && accepts >= 4, "direct-success-count");
+                appleClockProof(out,before,after);
                 snapshot(out,"direct",0);
             });
             test("bag-real-items", "", () -> {
@@ -327,21 +360,18 @@ public final class Main {
                 if (savedRemoval != null) SandboxOptions.instance.lootItemRemovalList.setValue(savedRemoval);
             } catch (Throwable problem) { failure += ";script-option-restore:" + problem; status = "failed"; }
             try {
-                if (savedRandom != null && created.isEmpty() && roots.isEmpty()) {
-                    field(RandAbstract.class,"rand").set(RandStandard.INSTANCE,savedRandom);
-                    field(RandAbstract.class,"id").setInt(RandStandard.INSTANCE,savedId);
-                }
-                else if (savedRandom != null) throw new IllegalStateException("RNG restore withheld: generated item cleanup failed");
-            } catch (Throwable problem) { failure += ";rng-restore:" + problem; status = "failed"; }
-            try {
                 if (rngStarted) Bootstrap.endRng();
             } catch (Throwable problem) { failure += ";rng-ownership:" + problem; status = "failed"; }
             try {
                 require(Bootstrap.cache() != null && Bootstrap.owned(Bootstrap.cache()), "receipt-cache-guard");
+                if (rngStarted) Bootstrap.writeRngReceipt();
                 Bootstrap.writeActivation();
                 Files.writeString(Bootstrap.cache().resolve("loot-resolved-runtime.tsv"),rows);
                 Files.writeString(Bootstrap.cache().resolve("loot-resolved-runtime-status.txt"),
                     "status=" + status + "\nmode=" + Bootstrap.mode() + "\npid=" + ProcessHandle.current().pid() + "\ncases=" + cases + "\nreason=" + failure.replace('\n',' ') + "\n"
+                    + "resource_profile=" + Bootstrap.resourceProfile() + "\noptimizer_manifest_sha256=" + Bootstrap.optimizerManifest()
+                    + "\nruntime_profile_checked=" + Bootstrap.runtimeProfileChecked() + "\n"
+                    + "rng_scope=" + Bootstrap.RNG_SCOPE + "\nrng_scope_complete=" + (rngStarted && Bootstrap.rngComplete()) + "\n"
                     + "source_square=uncovered\nlive_script_reload=uncovered\nmodule_item_replacement=uncovered\n");
             } catch (Throwable problem) { status = "failed"; failure += ";receipt:" + problem; }
             owner = null;
