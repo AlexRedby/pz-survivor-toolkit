@@ -68,11 +68,33 @@ function Tags.forCategory(category)
     return result
 end
 
-local function setTag(tags, id, value)
+local function membership(tags)
+    local present = {}
+    for _, id in ipairs(tags) do present[id] = true end
+    return present
+end
+
+local function setTag(tags, id, value, present)
     if value == nil then return false end
+    if present then
+        if value then
+            if present[id] then return false end
+            tags[#tags + 1], present[id] = id, true
+            return true
+        elseif not present[id] then return false end
+    end
     for i, existing in ipairs(tags) do
         if existing == id then
-            if not value then table.remove(tags, i); return true end
+            if not value then
+                table.remove(tags, i)
+                if present then
+                    present[id] = nil
+                    -- Keep the public helper's first-occurrence behavior even
+                    -- when an imported definition contains duplicate IDs.
+                    for index = i, #tags do if tags[index] == id then present[id] = true; break end end
+                end
+                return true
+            end
             return false
         end
     end
@@ -92,9 +114,9 @@ local function usageBase(tags, roles, states)
     return base
 end
 
-local function applyUsage(tags, roles, base, snapshot)
+local function applyUsage(tags, roles, base, snapshot, present)
     local changed = false
-    local function put(id, value) changed = setTag(tags, id, value) or changed end
+    local function put(id, value) changed = setTag(tags, id, value, present) or changed end
     for _, id in ipairs(usageIds) do
         local value = roles[id]
         if value == nil then
@@ -122,7 +144,7 @@ local function applyUsage(tags, roles, base, snapshot)
     return changed
 end
 
-local function itemTags(category, fullType, script, item, recording, snapshot, snapshotIngredient, snapshotCookingState, snapshotFluidState, snapshotUsageState)
+local function itemTags(category, fullType, script, item, context, recording, snapshot, snapshotIngredient, snapshotCookingState, snapshotFluidState, snapshotUsageState)
     local tags = Tags.forCategory(category)
     local override = fullType and schema.items[string.lower(tostring(fullType))]
     if override then
@@ -137,21 +159,23 @@ local function itemTags(category, fullType, script, item, recording, snapshot, s
         if not farming then tags[#tags + 1] = "farming" end
         if role == "seed" then tags[#tags + 1] = "seed" end
     end
+    local present = membership(tags)
+    local function put(id, value) return setTag(tags, id, value, present) end
     local wearable, container, furniture, fluid = properties.read(script, item)
-    local refined = setTag(tags, "wearable", wearable)
-    if container then refined = setTag(tags, "container", true) or refined end
-    if furniture then refined = setTag(tags, "furniture", true) or refined end
-    if fluid then refined = setTag(tags, "liquid", true) or refined end
+    local refined = put("wearable", wearable)
+    if container then refined = put("container", true) or refined end
+    if furniture then refined = put("furniture", true) or refined end
+    if fluid then refined = put("liquid", true) or refined end
     if properties.tailoringMaterial(script, item) then
         for _, id in ipairs({"crafting", "tailoring", "material"}) do
-            refined = setTag(tags, id, true) or refined
+            refined = put(id, true) or refined
         end
     end
     if properties.fitness(script, item) then
-        refined = setTag(tags, "fitness", true) or refined
-        if category == "characterHygieneFitness" then refined = setTag(tags, "hygiene", false) or refined end
+        refined = put("fitness", true) or refined
+        if category == "characterHygieneFitness" then refined = put("hygiene", false) or refined end
     end
-    local roles, usageStates, isFluid = usage.read(script, item)
+    local roles, usageStates, isFluid = usage.read(script, item, context)
     local base = usageBase(tags, roles, usageStates)
     if snapshot then
         roles, usageStates = usage.decode(snapshotUsageState), nil
@@ -160,43 +184,43 @@ local function itemTags(category, fullType, script, item, recording, snapshot, s
     end
     if isFluid or fluid or snapshotFluidState ~= nil then
         -- Unknown snapshot contents cannot inherit a factory-filled bottle label.
-        refined = setTag(tags, "beverage", roles.beverage == true) or refined
-        refined = setTag(tags, "alcoholic", roles.alcoholic == true) or refined
+        refined = put("beverage", roles.beverage == true) or refined
+        refined = put("alcoholic", roles.alcoholic == true) or refined
     end
-    refined = applyUsage(tags, roles, base, snapshot) or refined
+    refined = applyUsage(tags, roles, base, snapshot, present) or refined
     tags.usageStates = usageStates
     if not item and not snapshot then tags.usageBase = base end
-    refined = setTag(tags, "edible", properties.edible(script, item)) or refined
+    refined = put("edible", properties.edible(script, item)) or refined
     local seasoning = properties.seasoning(script, item)
-    refined = setTag(tags, "seasoning", seasoning) or refined
+    refined = put("seasoning", seasoning) or refined
     local ingredient
     if snapshot and type(snapshotIngredient) == "boolean" then ingredient = snapshotIngredient
-    else ingredient = cooking.read(script, item, snapshot) end
-    refined = setTag(tags, "ingredient", seasoning == true or ingredient) or refined
+    else ingredient = cooking.read(script, item, snapshot, context) end
+    refined = put("ingredient", seasoning == true or ingredient) or refined
     local cookingState, possibleCookingStates
     if snapshot then cookingState = snapshotCookingState
     else cookingState, possibleCookingStates = cookingStates.read(script, item) end
     if cookingState ~= nil then
         for _, id in ipairs({"raw", "cooked", "burnt"}) do
-            refined = setTag(tags, id, cookingState == id) or refined
+            refined = put(id, cookingState == id) or refined
         end
     end
     tags.cookingStates = possibleCookingStates
-    local canDismantle, skills = disassembly.read(script, item)
-    refined = setTag(tags, "dismantle", canDismantle) or refined
-    for _, id in ipairs(skills or {}) do refined = setTag(tags, id, true) or refined end
+    local canDismantle, skills = disassembly.read(script, item, context)
+    refined = put("dismantle", canDismantle) or refined
+    for _, id in ipairs(skills or {}) do refined = put(id, true) or refined end
     local readable, recreational, writeable = properties.reading(script, item)
     if fullType and schema.readableItems[string.lower(tostring(fullType))] then readable = true end
-    refined = setTag(tags, "readable", readable) or refined
-    refined = setTag(tags, "literature", recreational) or refined
-    refined = setTag(tags, "writeable", writeable) or refined
+    refined = put("readable", readable) or refined
+    refined = put("literature", recreational) or refined
+    refined = put("writeable", writeable) or refined
     -- Unreadable papers must not fall back to the old Literature category text.
-    if readable == false and #tags == 0 then refined = setTag(tags, "miscellaneous", true) or refined end
+    if readable == false and #tags == 0 then refined = put("miscellaneous", true) or refined end
     local freshness, perishable, foodStates = properties.food(script, item)
     if perishable ~= nil then
-        refined = setTag(tags, "perishable", perishable) or refined
-        refined = setTag(tags, "nonperishable", not perishable) or refined
-        if freshness then refined = setTag(tags, freshness, true) or refined end
+        refined = put("perishable", perishable) or refined
+        refined = put("nonperishable", not perishable) or refined
+        if freshness then refined = put(freshness, true) or refined end
         tags.foodStates = foodStates
     end
     local experience, recipe, mediaStates
@@ -207,16 +231,31 @@ local function itemTags(category, fullType, script, item, recording, snapshot, s
             if carrier and tostring(carrier) ~= "" then experience, recipe = false, false end
         end
     else experience, recipe, mediaStates = media.read(script, item) end
-    refined = setTag(tags, "experience", experience) or refined
-    refined = setTag(tags, "recipe", recipe) or refined
+    refined = put("experience", experience) or refined
+    refined = put("recipe", recipe) or refined
     tags.mediaStates = mediaStates
     if override or role or refined then tags.itemCategory, tags.itemSignature = category, signature(tags) end
     return tags
 end
 
-function Tags.automaticForScriptItem(script)
+-- Native recipe getters rebuild their shared lists even when the consumer's
+-- index is cached. Share each getter's result within one synchronous script
+-- projection; the next operation reads the current native catalogs again.
+function Tags.newScriptProjectionContext()
+    local managers = {}
+    return {recipes = function(_, manager, method)
+        local values = managers[manager]
+        if not values then values = {}; managers[manager] = values end
+        if values[method] == nil then
+            values[method] = manager[method] and manager[method](manager) or false
+        end
+        return values[method] or nil
+    end}
+end
+
+function Tags.automaticForScriptItem(script, context)
     if not script then return {} end
-    return itemTags(categories.forScript(script), script:getFullName(), script)
+    return itemTags(categories.forScript(script), script:getFullName(), script, nil, context)
 end
 
 function Tags.automaticForItem(item)
@@ -228,34 +267,44 @@ end
 
 -- Menu availability is distinct from actual item matching. A player can choose
 -- Rotten before any food has spoiled, without labelling fresh items as rotten.
-function Tags.choices(tags)
-    local result = {}
+local function choices(tags, states)
+    local result, present = {}, membership(tags)
     for _, id in ipairs(tags) do result[#result + 1] = id end
-    for _, id in ipairs(tags.foodStates or {}) do setTag(result, id, true) end
-    for _, id in ipairs(tags.cookingStates or {}) do setTag(result, id, true) end
-    for _, state in ipairs(tags.usageStates or {}) do
-        for _, id in ipairs(usageIds) do if state[id] then setTag(result, id, true) end end
-        if state.beverage then setTag(result, "beverage", true) end
-        if state.alcoholic then setTag(result, "alcoholic", true) end
+    for _, id in ipairs(states.foodStates or {}) do setTag(result, id, true, present) end
+    for _, id in ipairs(states.cookingStates or {}) do setTag(result, id, true, present) end
+    for _, state in ipairs(states.usageStates or {}) do
+        for _, id in ipairs(usageIds) do if state[id] then setTag(result, id, true, present) end end
+        if state.beverage then setTag(result, "beverage", true, present) end
+        if state.alcoholic then setTag(result, "alcoholic", true, present) end
         if state.bandage or state.disinfectant then
-            setTag(result, "medical", true); setTag(result, "firstaid", true)
+            setTag(result, "medical", true, present); setTag(result, "firstaid", true, present)
         end
-        if state.fishBait or state.trapBait then setTag(result, "bait", true) end
-        if state.fishBait then setTag(result, "fishing", true) end
-        if state.trapBait then setTag(result, "trapping", true) end
-        if state.repair then setTag(result, "maintenance", true) end
-        if state.spentBattery then setTag(result, "junk", true) end
+        if state.fishBait or state.trapBait then setTag(result, "bait", true, present) end
+        if state.fishBait then setTag(result, "fishing", true, present) end
+        if state.trapBait then setTag(result, "trapping", true, present) end
+        if state.repair then setTag(result, "maintenance", true, present) end
+        if state.spentBattery then setTag(result, "junk", true, present) end
     end
-    for _, state in ipairs(tags.mediaStates or {}) do
-        if state.experience then setTag(result, "experience", true) end
-        if state.recipe then setTag(result, "recipe", true) end
+    for _, state in ipairs(states.mediaStates or {}) do
+        if state.experience then setTag(result, "experience", true, present) end
+        if state.recipe then setTag(result, "recipe", true, present) end
     end
     return result
 end
 
-function Tags.forScriptItem(script)
+function Tags.choices(tags) return choices(tags, tags) end
+
+function Tags.choicesForScriptItem(script, context)
     if not script then return {} end
-    return Custom.project(Tags.automaticForScriptItem(script), script:getFullName())
+    local tags = Tags.automaticForScriptItem(script, context)
+    local result = choices(Custom.projectIds(tags, script:getFullName()), tags)
+    result.legacyCategory = tags.legacyCategory
+    return result
+end
+
+function Tags.forScriptItem(script, context)
+    if not script then return {} end
+    return Custom.project(Tags.automaticForScriptItem(script, context), script:getFullName())
 end
 
 function Tags.forItem(item)
@@ -266,11 +315,52 @@ end
 -- Serialized rows have no InventoryItem. Use script capabilities and the captured
 -- recording, without invoking predicates that require a live native item.
 function Tags.forSnapshot(script, fullType, category, recording, tagDelta, ingredient, cookingState, fluidState, usageState)
-    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, recording, true, ingredient, cookingState, fluidState, usageState), fullType, tagDelta)
+    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, nil, recording, true, ingredient, cookingState, fluidState, usageState), fullType, tagDelta)
 end
 
 -- Cache only automatic script tags. World custom definitions are merged live.
 local automaticIds, automaticManager, automaticCount
+-- UI discovery owns a stable list of script references and publishes only a
+-- complete ID set. Recipe snapshots belong to one synchronous step, never to
+-- the interval between frames where native catalogs may be rebuilt.
+function Tags.newAutomaticIdScan()
+    local manager = getScriptManager and getScriptManager()
+    local scripts = manager and manager.getAllItems and manager:getAllItems()
+    if not scripts or not scripts.size or not scripts.get then return end
+    local count = scripts:size()
+    if automaticIds and automaticManager == manager and automaticCount == count then return end
+    local snapshot = {}
+    for index = 0, count - 1 do
+        local script = scripts:get(index)
+        if script then snapshot[#snapshot + 1] = script end
+    end
+    local scan = {index = 1, total = #snapshot}
+    local ids = {}
+    function scan:cancel()
+        self.cancelled, self.done = true, true
+        snapshot, ids = nil, nil
+    end
+    function scan:step(budgetMs)
+        if self.done then return true end
+        local clock = getTimestampMs
+        local started = clock and clock() or 0
+        local context, processed = Tags.newScriptProjectionContext(), 0
+        local limit = budgetMs and 48 or math.huge
+        while self.index <= #snapshot and processed < limit do
+            for _, id in ipairs(Tags.choices(Tags.automaticForScriptItem(snapshot[self.index], context))) do ids[id] = true end
+            self.index, processed = self.index + 1, processed + 1
+            if budgetMs and clock and clock() - started >= budgetMs then break end
+        end
+        if self.index > #snapshot then
+            automaticIds, automaticManager, automaticCount = ids, manager, count
+            self.done = true
+            snapshot, ids = nil, nil
+        end
+        return self.done == true
+    end
+    return scan
+end
+
 local function loadedAutomaticIds()
     if not getScriptManager then return {} end
     local manager = getScriptManager()
@@ -279,16 +369,20 @@ local function loadedAutomaticIds()
     if not scripts or not scripts.size or not scripts.get then return {} end
     local count = scripts:size()
     if automaticIds and automaticManager == manager and automaticCount == count then return automaticIds end
-    local ids = {}
+    local ids, context = {}, Tags.newScriptProjectionContext()
     for index = 0, count - 1 do
         local script = scripts:get(index)
-        for _, id in ipairs(Tags.choices(Tags.automaticForScriptItem(script))) do ids[id] = true end
+        for _, id in ipairs(Tags.choices(Tags.automaticForScriptItem(script, context))) do ids[id] = true end
     end
     automaticIds, automaticManager, automaticCount = ids, manager, count
     return ids
 end
 
-function Tags.allIds(items)
+-- Selection views already project their source items. Only unassigned custom
+-- definitions need adding; discovering automatic IDs here would rescan scripts.
+function Tags.customIds() return Custom.customIds() end
+
+local function collectIds(automatic, items)
     local ids, seen = {}, {}
     local function add(id)
         id = canonical(id)
@@ -297,13 +391,20 @@ function Tags.allIds(items)
         end
     end
     for _, id in ipairs(Custom.allIds()) do add(id) end
-    for id in pairs(loadedAutomaticIds()) do add(id) end
+    for id in pairs(automatic or {}) do add(id) end
     for _, item in ipairs(items or {}) do
         for _, id in ipairs(Tags.choices(Tags.automaticForItem(item))) do add(id) end
     end
     table.sort(ids)
     return ids
 end
+-- Already published discovery is enough for an immediately usable tag editor.
+-- This path never enumerates or projects the loaded script catalog.
+function Tags.cachedIds(items)
+    local manager = getScriptManager and getScriptManager()
+    return collectIds(manager == automaticManager and automaticIds or nil, items)
+end
+function Tags.allIds(items) return collectIds(loadedAutomaticIds(), items) end
 function Tags.revision() return Custom.cacheRevision() end
 function Tags.signature(tags)
     local ids = {}
@@ -376,15 +477,15 @@ function Tags.matches(categoryOrTags, selected, mode)
     return matchesSelection(tagSet(categoryOrTags), selected, mode)
 end
 
-function Tags.normalizeRule(value)
-    if value == nil then return {mode = "all", include = {}, exclude = {}} end
-    if type(value) ~= "table" then return nil, "invalid rule" end
+Tags.MAX_RULE_GROUPS = 64
+Tags.MAX_RULE_TERMS = 64
+
+local function normalizeGroup(value)
+    if type(value) ~= "table" then return nil, "invalid group" end
     for key in pairs(value) do
-        if key ~= "mode" and key ~= "include" and key ~= "exclude" then return nil, "unknown rule field" end
+        if key ~= "include" and key ~= "exclude" then return nil, "unknown group field" end
     end
-    local mode = value.mode == nil and "all" or value.mode
-    if mode ~= "all" and mode ~= "any" then return nil, "invalid match mode" end
-    local result, included = {mode = mode}, {}
+    local result, included = {}, {}
     for _, field in ipairs({"include", "exclude"}) do
         local source, seen, list, count = value[field], {}, {}, 0
         if source == nil then source = {} end
@@ -405,7 +506,7 @@ function Tags.normalizeRule(value)
         result[field] = list
         if field == "include" then included = seen end
     end
-    local migrated, migratedIncludes = {mode=mode}, {}
+    local migrated, migratedIncludes = {}, {}
     for _, field in ipairs({"include", "exclude"}) do
         local list, seen = {}, {}
         for _, id in ipairs(result[field]) do
@@ -422,19 +523,119 @@ function Tags.normalizeRule(value)
     return migrated
 end
 
+function Tags.normalizeRule(value)
+    if value == nil then return {mode = "all", include = {}, exclude = {}} end
+    if type(value) ~= "table" then return nil, "invalid rule" end
+    if value.groups ~= nil then
+        for key in pairs(value) do if key ~= "groups" then return nil, "unknown rule field" end end
+        if type(value.groups) ~= "table" then return nil, "invalid groups" end
+        local count, groups = 0, {}
+        for index, group in pairs(value.groups) do
+            count = count + 1
+            if count > 64 or type(index) ~= "number" or index % 1 ~= 0 or index < 1 or index > 64 then
+                return nil, "invalid group index"
+            end
+            local normalized, err = normalizeGroup(group)
+            if not normalized then return nil, err end
+            groups[index] = normalized
+        end
+        if count == 0 then return nil, "empty groups" end
+        for index = 1, count do if value.groups[index] == nil then return nil, "sparse groups" end end
+        return {groups = groups}
+    end
+    for key in pairs(value) do
+        if key ~= "mode" and key ~= "include" and key ~= "exclude" then return nil, "unknown rule field" end
+    end
+    local mode = value.mode == nil and "all" or value.mode
+    if mode ~= "all" and mode ~= "any" then return nil, "invalid match mode" end
+    local group, err = normalizeGroup({include = value.include, exclude = value.exclude})
+    if not group then return nil, err end
+    group.mode = mode
+    return group
+end
+
+-- Expand legacy ANY without moving its global exclusions outside their branches.
+function Tags.ruleGroups(rule)
+    local normalized, err = Tags.normalizeRule(rule)
+    if not normalized then return nil, err end
+    if normalized.groups then return normalized.groups end
+    if normalized.mode ~= "any" or #normalized.include == 0 then
+        return {{include = normalized.include, exclude = normalized.exclude}}
+    end
+    local groups = {}
+    for _, id in ipairs(normalized.include) do
+        local excludes = {}
+        for index, excluded in ipairs(normalized.exclude) do excludes[index] = excluded end
+        groups[#groups + 1] = {include = {id}, exclude = excludes}
+    end
+    return groups
+end
+
+function Tags.fromRuleGroups(groups)
+    local normalized, err = Tags.normalizeRule({groups = groups})
+    if not normalized then return nil, err end
+    groups = normalized.groups
+    if #groups == 1 then
+        return {mode = "all", include = groups[1].include, exclude = groups[1].exclude}
+    end
+    local includes, common = {}, signature(groups[1].exclude)
+    for _, group in ipairs(groups) do
+        if #group.include ~= 1 or signature(group.exclude) ~= common then return normalized end
+        includes[#includes + 1] = group.include[1]
+    end
+    return Tags.normalizeRule({mode = "any", include = includes, exclude = groups[1].exclude})
+end
+
+function Tags.ruleIncludes(rule, id)
+    local normalized = Tags.normalizeRule(rule)
+    if not normalized then return false end
+    for _, group in ipairs(normalized.groups or {normalized}) do
+        for _, included in ipairs(group.include) do if canonical(included) == canonical(id) then return true end end
+    end
+    return false
+end
+
+local function groupShape(group)
+    return type(group) == "table" and type(group.include) == "table" and type(group.exclude) == "table"
+end
+
+local function groupsShape(groups)
+    if type(groups) ~= "table" or #groups < 1 or #groups > Tags.MAX_RULE_GROUPS then return false end
+    for index = 1, #groups do if not groupShape(groups[index]) then return false end end
+    return true
+end
+
+-- Rules are validated at persistence and authority boundaries; matching keeps the
+-- existing cheap shape guards and does not copy/sort a rule for every item.
 function Tags.ruleActive(rule)
-    return type(rule) == "table" and type(rule.include) == "table" and type(rule.exclude) == "table"
-        and (#rule.include > 0 or #rule.exclude > 0)
+    if type(rule) ~= "table" then return false end
+    if rule.groups == nil then
+        return groupShape(rule) and (#rule.include > 0 or #rule.exclude > 0)
+    end
+    if not groupsShape(rule.groups) then return false end
+    for _, group in ipairs(rule.groups) do
+        if #group.include == 0 and #group.exclude == 0 then return false end
+    end
+    return true
+end
+
+local function matchesGroup(present, group, mode)
+    for _, id in ipairs(group.exclude) do if present[canonical(id)] then return false end end
+    return matchesSelection(present, group.include, mode)
 end
 
 local function validRule(rule)
-    return type(rule) == "table" and (rule.mode == "all" or rule.mode == "any")
-        and type(rule.include) == "table" and type(rule.exclude) == "table"
+    if type(rule) ~= "table" then return false end
+    if rule.groups ~= nil then return groupsShape(rule.groups) end
+    return (rule.mode == "all" or rule.mode == "any") and groupShape(rule)
 end
 
 local function matchesRule(present, rule)
-    for _, id in ipairs(rule.exclude) do if present[canonical(id)] then return false end end
-    return #rule.include == 0 or matchesSelection(present, rule.include, rule.mode)
+    if rule.groups == nil then return matchesGroup(present, rule, rule.mode) end
+    for _, group in ipairs(rule.groups) do
+        if matchesGroup(present, group, "all") then return true end
+    end
+    return false
 end
 
 function Tags.matchesScriptRule(script, rule)

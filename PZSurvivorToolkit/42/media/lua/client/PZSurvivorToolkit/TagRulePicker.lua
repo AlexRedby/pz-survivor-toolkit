@@ -1,139 +1,304 @@
 require "ISUI/ISCollapsableWindowJoypad"
 require "ISUI/ISScrollingListBox"
-require "ISUI/ISComboBox"
-require "ISUI/ISTextEntryBox"
+require "ISUI/ISPanel"
 require "ISUI/ISButton"
-require "ISUI/ISLabel"
 local Tags = require "PZSurvivorToolkit/ItemTags"
 local Schema = require "PZSurvivorToolkit/ItemTagSchema"
 local Visuals = require "PZSurvivorToolkit/TagVisuals"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
+local Choice = require "PZSurvivorToolkit/TagRuleTagPicker"
 local Picker = ISCollapsableWindowJoypad:derive("PZSTTagRulePicker")
 PZSurvivorToolkit.TagRulePicker = Picker
-
 local function text(key) return getText("UI_PZST_TagRule" .. key) end
-local fit = UIStyle.fit
-local buildEntries
-local function categoryName(category) return getTextOrNull("IGUI_ItemCat_" .. category) or category end
 local function closed(owner)
     return owner and (owner.removed or (owner.isReallyVisible and not owner:isReallyVisible())
         or (owner.getIsVisible and not owner:getIsVisible()))
 end
--- Keep the native list viewport guard when replacing doDrawItem. The base
--- prerender supplies the stencil for rows crossing the top/bottom edge.
-local function rowVisible(list, y, item)
-    return item.height > 0 and y + list:getYScroll() + item.height > 0
-        and y + list:getYScroll() < list.height
-end
-local function contains(values, id)
-    for index, value in ipairs(values) do if value == id then return index end end
-end
 
-function Picker:state(id)
-    if contains(self.rule.include, id) then return "Include" end
-    if contains(self.rule.exclude, id) then return "Exclude" end
-    return "Neutral"
-end
-
-function Picker:cycle(row, reverse)
-    if not row.id then return end
-    local state = self:state(row.id)
-    local nextState = state == (reverse and "Exclude" or "Neutral") and "Include"
-        or state == (reverse and "Neutral" or "Include") and "Exclude" or "Neutral"
-    local values = nextState == "Include" and self.rule.include or nextState == "Exclude" and self.rule.exclude
-    if values and #values >= 64 then self.validationMessage = text("Limit"); return end
-    self.validationMessage = nil
-    local include, exclude = contains(self.rule.include, row.id), contains(self.rule.exclude, row.id)
-    if include then table.remove(self.rule.include, include) end
-    if exclude then table.remove(self.rule.exclude, exclude) end
-    local selected = contains(self.selectionOrder, row.id)
-    if selected then table.remove(self.selectionOrder, selected) end
-    if nextState == "Include" then
-        self.rule.include[#self.rule.include + 1] = row.id
-        self.selectionOrder[#self.selectionOrder + 1] = row.id
-    elseif nextState == "Exclude" then self.rule.exclude[#self.rule.exclude + 1] = row.id end
-    self:refreshPreview()
-end
-
-function Picker:refreshPreview()
-    self.preview:clear()
-    local names = {}
-    if self.sourceItems then
-        for _, item in ipairs(self.sourceItems) do
-            if Tags.matchesRule(Tags.forItem(item), self.rule) then names[#names + 1] = item:getName() end
+function Picker.summary(rule)
+    if not Tags.ruleActive(rule) then return text("NoRule") end
+    local groups = Tags.ruleGroups(rule)
+    local parts, size = {}, 0
+    -- Keep the single-line caption cheap to measure even for large legacy ANY
+    -- rules, whose global exclusions are repeated in every editable branch.
+    local function append(value)
+        local remaining = 320 - size
+        if #value > remaining then
+            if #"é" > 1 then
+                local byte = value:byte(remaining + 1)
+                while remaining > 0 and byte and byte >= 128 and byte < 192 do
+                    remaining = remaining - 1; byte = value:byte(remaining + 1)
+                end
+            end
+            parts[#parts + 1] = value:sub(1, remaining) .. "..."
+            return false
         end
-    elseif self.sourceScriptItems then
-        for _, script in ipairs(self.sourceScriptItems) do
-            if Tags.matchesScriptRule(script, self.rule) then names[#names + 1] = script:getDisplayName() end
-        end
-    else
-        for _, category in ipairs(self.categories) do
-            if Tags.matchesRule(category, self.rule) then names[#names + 1] = categoryName(category) end
-        end
+        parts[#parts + 1], size = value, size + #value
+        return true
     end
-    table.sort(names)
-    for _, name in ipairs(names) do self.preview:addItem(name, name, name) end
-    self.matchCount = #names
-    if #names == 0 then self.preview:addItem(text("Empty"), false) end
+    for index, group in ipairs(groups or {}) do
+        if index > 1 and not append(" " .. text("Or") .. " ") then break end
+        local bracket = #groups > 1 and #group.include + #group.exclude > 1
+        if bracket and not append("(") then break end
+        local first = true
+        for _, field in ipairs({"include", "exclude"}) do
+            for _, id in ipairs(group[field]) do
+                if not first and not append(" " .. text("And") .. " ") then return table.concat(parts) end
+                first = false
+                if not append((field == "exclude" and text("Not") .. " " or "") .. Tags.label(id)) then
+                    return table.concat(parts)
+                end
+            end
+        end
+        if bracket and not append(")") then break end
+    end
+    return table.concat(parts)
 end
 
-function Picker:reload()
+function Picker:groupsFromConditions()
+    local groups = {}
+    for _, conditions in ipairs(self.conditions) do
+        local group = {include={}, exclude={}}
+        for _, condition in ipairs(conditions) do
+            local list = condition.excluded and group.exclude or group.include
+            list[#list + 1] = condition.id
+        end
+        groups[#groups + 1] = group
+    end
+    return groups
+end
+
+function Picker:refreshRule()
+    local previousIndex = self.list.selected or 1
+    local previousItem = self.list.items[previousIndex]
+    local previous = previousItem and previousItem.item
+    local selectedCondition = self.pendingConditionSelection or (previous and previous.condition)
+    local previousScroll = self.list:getYScroll()
+    self.pendingConditionSelection = nil
+    local rule, err
+    if #self.conditions == 0 then rule = Tags.normalizeRule(nil)
+    else rule, err = Tags.fromRuleGroups(self:groupsFromConditions()) end
+    self.rule, self.validationMessage = rule, err and text("Conflict") or nil
+    local included = {}
+    for _, conditions in ipairs(self.conditions) do
+        for _, condition in ipairs(conditions) do if not condition.excluded then included[condition.id] = true end end
+    end
+    for index = #self.selectionOrder, 1, -1 do
+        if not included[self.selectionOrder[index]] then table.remove(self.selectionOrder, index) end
+    end
+    self.applyButton:setEnable(rule ~= nil)
     self.list:clear()
-    local query = self.search:getText():lower()
-    local family = self.group:getOptionData(self.group.selected)
-    local buckets = {{label=text("Roots")}, {label=text("Qualifiers")}, {label=text("Categories")}}
-    for _, row in ipairs(self.entries) do
-        if (not family or row.families[family]) and row.label:lower():find(query, 1, true) then
-            local bucket = buckets[row.bucket]
-            bucket[#bucket + 1] = row
+    for gi, conditions in ipairs(self.conditions) do
+        self.list:addItem(gi == 1 and text("Group") or text("Or"), {kind="group", group=gi, conditions=conditions})
+        for ri, condition in ipairs(conditions) do
+            self.list:addItem(Tags.label(condition.id), {kind="condition", group=gi, index=ri, condition=condition})
+        end
+        self.list:addItem(text("AddAnd"), {kind="add", group=gi, conditions=conditions})
+    end
+    if #self.conditions == 0 then self.list:addItem(text("AddCondition"), {kind="add", group=1}) end
+    local selectedIndex = math.max(1, math.min(previousIndex, #self.list.items))
+    for index, item in ipairs(self.list.items) do
+        local row = item.item
+        if (selectedCondition and row.condition == selectedCondition)
+            or (not selectedCondition and previous and row.kind == previous.kind
+                and row.conditions and row.conditions == previous.conditions) then
+            selectedIndex = index; break
         end
     end
-    for _, bucket in ipairs(buckets) do
-        if #bucket > 0 then
-            self.list:addItem(bucket.label, {label=bucket.label})
-            for _, row in ipairs(bucket) do self.list:addItem(row.label, row, row.label) end
-        end
+    -- Native clear resets selection but leaves scroll height and smooth-scroll state.
+    -- Restore the old viewport, then reveal the edited/new row only if necessary.
+    self.list.selected = selectedIndex
+    self.list:setScrollHeight(#self.list.items * self.list.itemheight)
+    local scroll = math.min(0, math.max(previousScroll, self.list.height - #self.list.items * self.list.itemheight))
+    self.list.smoothScrollTargetY, self.list.smoothScrollY = nil, scroll
+    self.list:setYScroll(scroll)
+    self.list:ensureVisible(selectedIndex)
+    self.validationMessage = err and text("Conflict") or nil
+end
+
+function Picker:rememberSelection(id)
+    for _, selected in ipairs(self.selectionOrder) do if selected == id then return end end
+    self.selectionOrder[#self.selectionOrder + 1] = id
+end
+
+function Picker:addCondition(groupIndex, id, excluded)
+    if not id then
+        return self:chooseTag(function(value) self:addCondition(groupIndex, value, excluded) end)
     end
-    self.lastQuery, self.lastGroup = query, self.group.selected
+    if groupIndex < 1 or groupIndex > #self.conditions + 1 or groupIndex > 64 then
+        self.validationMessage = text("Limit"); return false
+    end
+    local conditions = self.conditions[groupIndex] or {}
+    local count = 0
+    for _, condition in ipairs(conditions) do
+        if condition.id == id then self.validationMessage = text("Duplicate"); return false end
+        if condition.excluded == (excluded == true) then count = count + 1 end
+    end
+    if count >= 64 or not Tags.normalizeRule({include=excluded and {} or {id},exclude=excluded and {id} or {}}) then
+        self.validationMessage = text("Limit"); return false
+    end
+    self.conditions[groupIndex] = conditions
+    conditions[#conditions + 1] = {id=id, excluded=excluded == true}
+    self.pendingConditionSelection = conditions[#conditions]
+    if not excluded then self:rememberSelection(id) end
+    self:refreshRule()
+    return true
+end
+
+function Picker:addGroup(id, excluded)
+    if #self.conditions >= 64 then self.validationMessage = text("Limit"); return false end
+    return self:addCondition(#self.conditions + 1, id, excluded)
+end
+
+function Picker:changeCondition(groupIndex, rowIndex, id)
+    local conditions = self.conditions[groupIndex]
+    local condition = conditions and conditions[rowIndex]
+    if not condition then return end
+    if not id then
+        return self:chooseTag(function(value) self:changeCondition(groupIndex, rowIndex, value) end)
+    end
+    for index, other in ipairs(conditions) do
+        if index ~= rowIndex and other.id == id then self.validationMessage = text("Duplicate"); return false end
+    end
+    if not Tags.normalizeRule({include={id}}) then return false end
+    condition.id = id
+    if not condition.excluded then self:rememberSelection(id) end
+    self:refreshRule()
+    return true
+end
+
+function Picker:toggleCondition(groupIndex, rowIndex)
+    local conditions = self.conditions[groupIndex]
+    local condition = conditions and conditions[rowIndex]
+    if not condition then return end
+    local count = 0
+    for _, other in ipairs(conditions) do if other.excluded ~= condition.excluded then count = count + 1 end end
+    if count >= 64 then self.validationMessage = text("Limit"); return false end
+    condition.excluded = not condition.excluded
+    if not condition.excluded then self:rememberSelection(condition.id) end
+    self:refreshRule()
+    return true
+end
+
+function Picker:removeCondition(groupIndex, rowIndex)
+    local conditions = self.conditions[groupIndex]
+    if not conditions or not conditions[rowIndex] then return end
+    table.remove(conditions, rowIndex)
+    if #conditions == 0 then table.remove(self.conditions, groupIndex) end
+    self:refreshRule()
 end
 
 function Picker:clearRule()
-    self.rule = Tags.normalizeRule(nil)
-    self.selectionOrder = {}
-    self.validationMessage = nil
-    self:updateMode()
-    self:refreshPreview()
+    self.conditions, self.selectionOrder = {}, {}
+    self:refreshRule()
 end
 
-function Picker:updateMode()
-    self.modeButton:setTitle(text(self.rule.mode == "all" and "All" or "Any"))
+-- Script choices are prepared lazily once. Live inventory references are re-read when
+-- opening the chooser; their categories can change while the rule editor stays open.
+function Picker:catalogEntries()
+    local revision = Tags.revision and Tags.revision() or 0
+    if self.entries and not self.options.items and self.tagRevision == revision then return self.entries, self.families end
+    local entries, byId, families, familySet, roots = {}, {}, {}, {}, {}
+    for _, definition in pairs(Schema.categories) do if definition[1] then roots[definition[1]] = true end end
+    local function add(id, sourceFamilies)
+        local row = byId[id]
+        if not row then
+            local label = Tags.label(id)
+            row = {id=id, label=label, search=(label .. " " .. id):lower(), families={}}
+            byId[id], entries[#entries + 1] = row, row
+        end
+        for _, family in ipairs(sourceFamilies) do
+            row.families[family] = true
+            if not familySet[family] then familySet[family], families[#families + 1] = true, family end
+        end
+    end
+    local function addSource(ids, prepared)
+        if not prepared then ids = Tags.choices and Tags.choices(ids) or ids end
+        local sourceFamilies = {}
+        for _, id in ipairs(ids) do if roots[id] then sourceFamilies[#sourceFamilies + 1] = id end end
+        if #sourceFamilies == 0 and ids[1] then sourceFamilies[1] = ids[1] end
+        for _, id in ipairs(ids) do add(id, sourceFamilies) end
+    end
+    local options = self.options
+    if options.tagSources then
+        for _, ids in ipairs(options.tagSources()) do addSource(ids) end
+    else
+        local context = options.scriptItems and Tags.newScriptProjectionContext()
+        local prepared = not options.items and options.scriptItems ~= nil
+        for _, source in ipairs(options.items or options.scriptItems or options.categories or {}) do
+            addSource(options.items and Tags.forItem(source)
+                or options.scriptItems and Tags.choicesForScriptItem(source, context) or Tags.forCategory(source), prepared)
+        end
+    end
+    for _, id in ipairs(Tags.customIds()) do add(id, {}) end
+    for _, conditions in ipairs(self.conditions) do
+        for _, condition in ipairs(conditions) do add(condition.id, {}) end
+    end
+    table.sort(entries, function(a,b) if a.label == b.label then return a.id < b.id end; return a.label < b.label end)
+    table.sort(families, function(a,b) return Tags.label(a) < Tags.label(b) end)
+    self.entries, self.families, self.tagRevision = entries, families, revision
+    return entries, families
 end
 
-function Picker:toggleMode()
-    self.rule.mode = self.rule.mode == "all" and "any" or "all"
-    self:updateMode()
-    self:refreshPreview()
+function Picker:chooseTag(onPick)
+    local entries, families = self:catalogEntries()
+    return Choice.open(self, entries, families, onPick)
+end
+
+function Picker:activate(row)
+    if row.kind == "add" then self:addCondition(row.group)
+    elseif row.kind == "condition" then self:changeCondition(row.group, row.index) end
+end
+
+function Picker:clickRow(row)
+    if row.kind ~= "condition" then self:activate(row); return end
+    local x = self.list:getMouseX()
+    if x < 108 then self:toggleCondition(row.group, row.index)
+    elseif x >= self.list.width - 56 then self:removeCondition(row.group, row.index)
+    else self:changeCondition(row.group, row.index) end
+end
+
+function Picker.drawRow(list, y, item)
+    local h, w, row = item.height, list.width, item.item
+    local scroll = list:getYScroll()
+    if y + scroll + h < 0 or y + scroll >= list:getHeight() then return y + h end
+    if row.kind == "group" then
+        list:drawText(row.group == 1 and text("Group") or text("Or"), 10, y + 8, 0.9, 0.72, 0.45, 1, UIFont.Small)
+        return y + h
+    end
+    if list.selected == item.index then list:drawRect(0, y, w - 18, h, 0.25, 0.3, 0.5, 0.7) end
+    if row.kind == "add" then
+        list:drawText(item.text, 32, y + 8, 0.85, 0.85, 0.8, 1, UIFont.Small)
+        return y + h
+    end
+    local condition = row.condition
+    local r, g, b = condition.excluded and 1 or 0.8, condition.excluded and 0.55 or 0.85, 0.55
+    if row.index > 1 then list:drawText(text("And"), 4, y + 8, 0.75, 0.75, 0.75, 1, UIFont.Small) end
+    list:drawRectBorder(32, y + 2, 70, h - 4, 0.8, r, g, b)
+    list:drawText(UIStyle.fit(text(condition.excluded and "Absent" or "Present"), 58), 38, y + 8, r, g, b, 1, UIFont.Small)
+    list:drawRectBorder(108, y + 2, w - 170, h - 4, 0.6, 0.6, 0.6, 0.6)
+    local style = Visuals.get(condition.id)
+    if style.texture then list:drawTextureScaledAspect(style.texture, 114, y + 6, 20, 20, 1, style.r, style.g, style.b) end
+    list:drawText(UIStyle.fit(Tags.label(condition.id), w - 204), 138, y + 8, 1, 1, 1, 1, UIFont.Small)
+    list:drawRectBorder(w - 56, y + 2, 30, h - 4, 0.6, 0.6, 0.6, 0.6)
+    list:drawText("x", w - 46, y + 8, 1, 1, 1, 1, UIFont.Small)
+    return y + h
 end
 
 function Picker:apply()
     if not Tags.enabled() or closed(self.owner) then self:close(); return end
-    local rule = Tags.normalizeRule(self.rule)
+    local rule = self.rule and Tags.normalizeRule(self.rule)
     if not rule then return end
-    self.onApply(rule, self.selectionOrder[1])
+    local first
+    for _, id in ipairs(self.selectionOrder) do if Tags.ruleIncludes(rule, id) then first = id; break end end
+    self.onApply(rule, first)
     self:close()
 end
 
 function Picker:close()
-    self.search:unfocus()
-    if self.group.expanded and self.group.popup and self.group.popup.parentCombo == self.group then
-        self.group:hidePopup()
-        self.group.expanded = false
-    end
-    for _, list in ipairs({self.list, self.preview}) do
-        if list.tooltipUI then list.tooltipUI:setVisible(false); list.tooltipUI:removeFromUIManager() end
-    end
-    self:setVisible(false)
-    self:removeFromUIManager()
+    if self.tagChoice then self.tagChoice:close() end
+    if self.list.tooltipUI then self.list.tooltipUI:setVisible(false); self.list.tooltipUI:removeFromUIManager() end
+    self:setVisible(false); self:removeFromUIManager()
     if self.owner and self.owner.toolkitRulePicker == self then
         self.owner.toolkitRulePicker = nil
         if self.owner.dimmer and self.owner.dimmer.setVisible then
@@ -151,217 +316,96 @@ end
 
 function Picker:createChildren()
     ISCollapsableWindowJoypad.createChildren(self)
-    local width, height = self.width, self.height
     local fontHeight = getTextManager():getFontHeight(UIFont.Small)
-    local controlHeight = math.max(26, fontHeight + 8)
-    local searchLabelY = math.max(34, self:titleBarHeight() + 8)
-    local searchY = searchLabelY + fontHeight + 8
-    local groupY, modeY = searchY + controlHeight + 6, searchY + (controlHeight + 6) * 2
-    local footerY = height - controlHeight - 16
-    self.hintY = footerY - fontHeight - 26
-    local function button(x, y, w, label, callback)
-        local result = ISButton:new(x, y, w, controlHeight, label, self, callback)
-        result:initialise(); result:instantiate(); UIStyle.button(result); self:addChild(result)
-        return result
+    local controlHeight = math.max(28, fontHeight + 10)
+    local top = math.max(32, self:titleBarHeight() + 8)
+    local footerY = self.height - controlHeight - 12
+    self.hintY = footerY - fontHeight - 10
+    local groupY = self.hintY - controlHeight - 10
+    local function button(x, y, w, title, callback)
+        local b = ISButton:new(x, y, w, controlHeight, title, self, callback)
+        b:initialise(); b:instantiate(); UIStyle.button(b); self:addChild(b); return b
     end
-    self.searchLabel = ISLabel:new(12, searchLabelY, fontHeight + 4, text("Search"), 0.9, 0.9, 0.9, 1, UIFont.Small, true)
-    self.searchLabel:initialise(); self.searchLabel:instantiate(); self:addChild(self.searchLabel)
-    self.search = ISTextEntryBox:new("", 12, searchY, width - 24, controlHeight)
-    self.search:setFont(UIFont.Small)
-    self.search:initialise(); self.search:instantiate(); self.search:setTooltip(text("Search")); self:addChild(self.search)
-    self.group = ISComboBox:new(12, groupY, width - 24, controlHeight)
-    self.group:initialise(); self.group:instantiate()
-    self.group:addOptionWithData(text("AllGroups"), false)
-    for _, family in ipairs(self.families) do self.group:addOptionWithData(Tags.label(family), family) end
-    self:addChild(self.group)
-    self.modeButton = button(12, modeY, width - 24, "", Picker.toggleMode)
-    self:updateMode()
-    self.modeButton:setTooltip(text("Hint"))
-    local top, bottom = modeY + controlHeight + 26, self.hintY - fontHeight - 24
-    local previewGap = fontHeight + 10
-    local listWidth = width >= 620 and math.floor((width - 36) * 0.55) or width - 24
-    local listHeight = width >= 620 and bottom - top or math.floor((bottom - top - previewGap) * 0.6)
-    self.list = ISScrollingListBox:new(12, top, listWidth, math.max(40, listHeight))
-    self.list:initialise(); self.list:instantiate(); self.list.itemheight = fontHeight + 10
-    self.list:setOnMouseDownFunction(self, Picker.cycle)
-    self.list.doDrawItem = function(list, y, item)
-        if not rowVisible(list, y, item) then return y + item.height end
-        local row, x = item.item, 8
-        local textY = y + (item.height - fontHeight) / 2
-        if list.selected == item.index then list:drawRectBorder(1, y, list.width - 18, item.height, 0.9, 0.65, 0.8, 1) end
-        if row.id then
-            local state, style = self:state(row.id), Visuals.get(row.id)
-            if state ~= "Neutral" then list:drawRect(0, y, list.width, item.height, 0.3,
-                state == "Exclude" and 0.7 or 0.2, 0.3, state == "Exclude" and 0.2 or 0.6) end
-            if style.texture then
-                list:drawTextureScaledAspect(style.texture, x, y + (item.height - 18) / 2, 18, 18, 1, style.r, style.g, style.b)
-            end
-            x = x + 24
-            list:drawText(fit(text(state) .. ": " .. row.label, list.width - x - 20), x, textY, 1, 1, 1, 1, UIFont.Small)
-        else list:drawText(fit(row.label, list.width - x - 20), x, textY, 0.9, 0.72, 0.45, 1, UIFont.Small) end
-        return y + item.height
-    end
-    self.list.onRightMouseUp = function(list)
-        local row = list.items[list.mouseoverselected]
-        if row then self:cycle(row.item, true) end
-    end
-    self.list.joypadParent = self
-    self.list.setJoypadFocused = function(list, focused) list.joypadFocused = focused end
-    self.list.onJoypadDownInParent = function(list, key, joypadData)
-        if key ~= Joypad.AButton then return false end
-        joypadData.focus = list; updateJoypadFocus(joypadData)
-        if (list.selected or 0) < 1 then list.selected = 1 end
-        return true
-    end
-    self.list.onJoypadDirUp = function(list)
-        list.selected = list:prevVisibleIndex(list.selected)
-        if list.selected <= 0 then list.selected = list:prevVisibleIndex(list.count + 1) end
-        list:ensureVisible(list.selected)
-    end
-    self.list.onJoypadDirDown = function(list)
-        list.selected = list:nextVisibleIndex(list.selected)
-        if list.selected == -1 then list.selected = list:nextVisibleIndex(0) end
-        list:ensureVisible(list.selected)
-    end
-    self.list.onJoypadDown = function(list, key, joypadData)
-        if key == Joypad.AButton then
-            local row = list.items[list.selected]
-            if row then self:cycle(row.item) end
-        elseif key == Joypad.BButton then
-            joypadData.focus = self; updateJoypadFocus(joypadData)
-        else ISScrollingListBox.onJoypadDown(list, key, joypadData) end
+    self.list = ISScrollingListBox:new(12, top, self.width - 24, math.max(40, groupY - top - 8))
+    self.list:initialise(); self.list:instantiate()
+    self.list.itemheight = math.max(34, getTextManager():getFontHeight(UIFont.Small) + 16)
+    self.list.doDrawItem = Picker.drawRow
+    self.list:setOnMouseDownFunction(self, Picker.clickRow)
+    Choice.configureList(self.list, self, Picker.activate)
+    local onJoypadDown = self.list.onJoypadDown
+    self.list.onJoypadDown = function(list, key, data)
+        local row = list.items[list.selected]
+        if row and row.item.kind == "condition" and key == Joypad.XButton then
+            self:toggleCondition(row.item.group, row.item.index)
+        elseif row and row.item.kind == "condition" and key == Joypad.YButton then
+            self:removeCondition(row.item.group, row.item.index)
+        else onJoypadDown(list, key, data) end
     end
     self:addChild(self.list)
-    local previewX = width >= 620 and listWidth + 24 or 12
-    local previewY = width >= 620 and top or top + self.list.height + previewGap
-    self.preview = ISScrollingListBox:new(previewX, previewY, width - previewX - 12, math.max(40, bottom - previewY))
-    self.preview:initialise(); self.preview:instantiate(); self.preview.itemheight = fontHeight + 10
-    self.preview.doDrawItem = function(list, y, item)
-        if not rowVisible(list, y, item) then return y + item.height end
-        list:drawText(fit(item.text, list.width - 28), 8, y + (item.height - fontHeight) / 2, 0.9, 0.9, 0.9, 1, UIFont.Small)
-        return y + item.height
-    end
-    self.preview.joypadParent = self
-    self.preview.setJoypadFocused = self.list.setJoypadFocused
-    self.preview.onJoypadDownInParent = self.list.onJoypadDownInParent
-    self.preview.onJoypadDirUp, self.preview.onJoypadDirDown = self.list.onJoypadDirUp, self.list.onJoypadDirDown
-    self:addChild(self.preview)
-    self.clearButton = button(12, footerY, 100, text("Clear"), Picker.clearRule)
-    self.cancelButton = button(width - 224, footerY, 100, text("Cancel"), Picker.close)
-    self.applyButton = button(width - 112, footerY, 100, text("Apply"), Picker.apply)
-    self:reload(); self:refreshPreview()
+    self.addGroupButton = button(12, groupY, self.width - 24, text("AddOr"), function(owner) owner:addGroup() end)
+    local w = (self.width - 48) / 3
+    self.clearButton = button(12, footerY, w, text("Clear"), Picker.clearRule)
+    self.cancelButton = button(24 + w, footerY, w, text("Cancel"), Picker.close)
+    self.applyButton = button(36 + w * 2, footerY, w, text("Apply"), Picker.apply)
+    self.dimmer = ISPanel:new(0, 0, self.width, self.height)
+    self.dimmer:initialise(); self.dimmer:instantiate()
+    self.dimmer.backgroundColor = {r=0,g=0,b=0,a=0.65}
+    self.dimmer.onMouseDown = function() if self.tagChoice then self.tagChoice.reassertTop = true end; return true end
+    self:addChild(self.dimmer); self.dimmer:setVisible(false)
+    self:refreshRule()
 end
 
-function Picker:onGainJoypadFocus(joypadData)
-    ISCollapsableWindowJoypad.onGainJoypadFocus(self, joypadData)
+function Picker:onGainJoypadFocus(data)
+    ISCollapsableWindowJoypad.onGainJoypadFocus(self, data)
     if self.joypadConfigured then return end
     self.joypadConfigured = true
-    self:insertNewLineOfButtons(self.search)
-    self:insertNewLineOfButtons(self.group)
-    self:insertNewLineOfButtons(self.modeButton)
     self:insertNewLineOfButtons(self.list)
-    self:insertNewLineOfButtons(self.preview)
+    self:insertNewLineOfButtons(self.addGroupButton)
     self:insertNewLineOfButtons(self.clearButton, self.cancelButton, self.applyButton)
     self.joypadIndexY, self.joypadIndex = 1, 1
-    self:restoreJoypadFocus(joypadData)
+    self:restoreJoypadFocus(data)
 end
 
-function Picker:onJoypadDown(key, joypadData)
-    if key == Joypad.BButton and not self.group.expanded then self:close(); return end
-    ISCollapsableWindowJoypad.onJoypadDown(self, key, joypadData)
+function Picker:onJoypadDown(key, data)
+    if key == Joypad.BButton then self:close(); return end
+    ISCollapsableWindowJoypad.onJoypadDown(self, key, data)
 end
 
 function Picker:prerender()
-    if not Tags.enabled() or closed(self.owner) then
-        self:close(); return
+    if not Tags.enabled() or closed(self.owner) then self:close(); return end
+    if self.reassertTop then
+        self.reassertTop = false; self:bringToTop()
+        if self.tagChoice then self.tagChoice:bringToTop(); self.tagChoice.reassertTop = true end
     end
-    if self.reassertTop then self.reassertTop = false; self:bringToTop() end
-    local revision = Tags.revision and Tags.revision() or 0
-    if self.tagRevision ~= revision then
-        local family = self.group:getOptionData(self.group.selected)
-        self.entries, self.families, self.categories = buildEntries(self.sourceOptions, self.rule)
-        self.group:clear(); self.group:addOptionWithData(text("AllGroups"), false); self.group.selected = 1
-        for _, id in ipairs(self.families) do
-            self.group:addOptionWithData(Tags.label(id), id)
-            if id == family then self.group.selected = #self.group.options end
-        end
-        self.tagRevision = revision
-        self:reload(); self:refreshPreview()
-    end
-    if self.search:getText():lower() ~= self.lastQuery or self.group.selected ~= self.lastGroup then self:reload() end
     ISCollapsableWindowJoypad.prerender(self)
-    self:drawText(text(self.sourceScriptItems and "PreviewTypes" or "Preview") .. " (" .. self.matchCount .. ")", self.preview.x, self.preview.y - getTextManager():getFontHeight(UIFont.Small) - 5,
-        0.9, 0.9, 0.9, 1, UIFont.Small)
-    local y = self.hintY
-    self:drawText(fit(self.validationMessage or text("Hint"), self.width - 24), 12, y, 0.8, 0.8, 0.8, 1, UIFont.Small)
-end
-
-buildEntries = function(options, rule)
-    local entries, families, roots, seen = {}, {}, {}, {}
-    for _, definition in pairs(Schema.categories) do
-        if definition[1] then roots[definition[1]] = true end
-    end
-    local categories = {}
-    for _, category in ipairs(options.categories or {}) do
-        if not seen[category] then categories[#categories + 1], seen[category] = category, true end
-    end
-    local byId, familySet = {}, {}
-    for _, source in ipairs(options.items or options.scriptItems or categories) do
-        local ids = options.items and Tags.forItem(source)
-            or options.scriptItems and Tags.forScriptItem(source) or Tags.forCategory(source)
-        ids = Tags.choices(ids)
-        local sourceFamilies = {}
-        for _, id in ipairs(ids) do if roots[id] then sourceFamilies[#sourceFamilies + 1] = id end end
-        if #sourceFamilies == 0 and ids[1] then sourceFamilies[1] = ids[1] end
-        for _, family in ipairs(sourceFamilies) do
-            if not familySet[family] then families[#families + 1], familySet[family] = family, true end
-        end
-        for _, id in ipairs(ids) do
-            local row = byId[id]
-            if not row then
-                row = {id=id, label=Tags.label(id), families={}, bucket=id:sub(1, 9) == "category:" and 3 or roots[id] and 1 or 2}
-                byId[id], entries[#entries + 1] = row, row
-            end
-            for _, family in ipairs(sourceFamilies) do row.families[family] = true end
-        end
-    end
-    for _, id in ipairs(Tags.allIds and Tags.allIds() or {}) do
-        if id:sub(1, 7) == 'custom:' and not byId[id] then
-            local row = {id=id,label=Tags.label(id),families={},bucket=2}
-            byId[id],entries[#entries+1]=row,row
-        end
-    end
-    -- Keep saved selections editable even if their last matching item disappeared.
-    for _, values in ipairs({rule.include, rule.exclude}) do
-        for _, id in ipairs(values) do
-            if not byId[id] then entries[#entries + 1] = {id=id, label=Tags.label(id), families={}, bucket=3}; byId[id]=true end
-        end
-    end
-    table.sort(entries, function(a, b) return a.label < b.label end)
-    table.sort(families, function(a, b) return Tags.label(a) < Tags.label(b) end)
-    return entries, families, categories
+    local hint = self.validationMessage or (self.grabbedJoypad and text("ControllerHint") or "")
+    self:drawText(UIStyle.fit(hint, self.width - 24), 12, self.hintY, 0.9, 0.75, 0.55, 1, UIFont.Small)
 end
 
 function Picker.open(options)
     if not Tags.enabled() then return end
-    local rule, error = Tags.normalizeRule(options.rule)
-    if not rule then return nil, error end
+    local rule, err = Tags.normalizeRule(options.rule)
+    if not rule then return nil, err end
     if options.owner and options.owner.toolkitRulePicker then options.owner.toolkitRulePicker:close() end
-    local entries, families, categories = buildEntries(options, rule)
-    local width, height = math.min(760, getCore():getScreenWidth() - 24), math.min(650, getCore():getScreenHeight() - 24)
-    local picker = Picker:new((getCore():getScreenWidth() - width) / 2, (getCore():getScreenHeight() - height) / 2, width, height)
-    picker.sourceOptions, picker.tagRevision = options, Tags.revision and Tags.revision() or 0
-    picker.rule, picker.categories, picker.sourceItems = rule, categories, options.items
-    picker.selectionOrder = options.selectedTag and {options.selectedTag} or {}
-    picker.sourceScriptItems = options.scriptItems
-    picker.entries, picker.families = entries, families
-    picker.owner, picker.onApply, picker.player = options.owner, options.onApply, options.player
+    local w = math.min(700, getCore():getScreenWidth() - 24)
+    local h = math.min(570, getCore():getScreenHeight() - 24)
+    local picker = Picker:new((getCore():getScreenWidth() - w) / 2, (getCore():getScreenHeight() - h) / 2, w, h)
+    picker.options, picker.conditions, picker.selectionOrder = options, {}, options.selectedTag and {options.selectedTag} or {}
+    if Tags.ruleActive(rule) then
+        for _, group in ipairs(Tags.ruleGroups(rule)) do
+            local conditions = {}
+            for _, id in ipairs(group.include) do conditions[#conditions + 1] = {id=id, excluded=false} end
+            for _, id in ipairs(group.exclude) do conditions[#conditions + 1] = {id=id, excluded=true} end
+            picker.conditions[#picker.conditions + 1] = conditions
+        end
+    end
+    picker.owner, picker.onApply = options.owner, options.onApply
     picker.title, picker.resizable = options.title or text(""), false
-    picker.background = true
-    picker.backgroundColor = {r = 0.04, g = 0.04, b = 0.04, a = 1}
+    picker.background, picker.backgroundColor = true, {r=0.04,g=0.04,b=0.04,a=1}
+    picker.playerNum = type(options.player) == "number" and options.player or options.player and options.player:getPlayerNum()
     picker:initialise(); picker:instantiate(); picker:addToUIManager()
     picker:bringToTop()
-    -- The opening mouse event can still raise the owner after its button callback.
+    -- The native opening mouse event may raise the owner after this callback.
     picker.reassertTop = true
     if picker.owner then
         picker.owner.toolkitRulePicker = picker
@@ -372,8 +416,6 @@ function Picker.open(options)
             picker.owner.dimmer:setVisible(true)
         end
     end
-    picker.playerNum = type(options.player) == "number" and options.player
-        or options.player and options.player:getPlayerNum()
     local joypad = picker.playerNum and JoypadState and JoypadState.players[picker.playerNum + 1]
     if joypad and setJoypadFocus then
         picker.previousFocus, picker.grabbedJoypad = joypad.focus, true

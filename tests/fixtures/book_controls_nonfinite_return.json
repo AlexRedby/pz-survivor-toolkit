@@ -1,0 +1,143 @@
+{
+  "source": {
+    "case": "worn-bag.header-cancel-capacity-lost",
+    "rawInvalidEventSha256": "57916415625a0a88accb0fa60bea2c38df64eed39f59bb776589e0616a378a4e",
+    "sourceManifestSha256": "9adb49408b7d2fd05343c018f67767af797d84f4c1d387d3636c0b2f2fc7c66f",
+    "diagnosticExtractionOnly": true,
+    "transformation": "bare nan numeric tokens represented by the codec tag; no finite value replacement"
+  },
+  "record": {
+    "sequence": 117,
+    "role": "return",
+    "type": "ISInventoryTransferAction",
+    "mode": false,
+    "item": 1689283169,
+    "actionRef": "ISInventoryTransferAction 0x144503585{ character=IsoPlayer{  Name:null,  ID:3 }, item=Base.BookCarpentry1:zombie.inventory.types.Literature@2e5c23aa, dontAdd=false, started=false, transactionId=0, srcContainer=ItemContainer:[type:none, parent:IsoPlayer{  Name:null,  ID:3 }], destContainer=ItemContainer:[type:Bag_Military, parent:null], startTime=1793207078935, stopOnWalk=false, stopOnRun=true, maxTime=nan, queueList=table 0x952126933, loopedAction=true, isTransferIntoVehicleSeatFromOutside=false, onCompleteFunc=closure 0x82831593, onCompleteArgs=table 0x1983639924, toolkitQueueSafeOnComplete=closure 0x82831593, stop=closure 0x433127785, toolkitTransferGuard=table 0x1652693530, allowMissingItems=true, toolkitQueueReturn=table 0x832408861, toolkitQueueOperation=table 0x1486249338 }",
+    "token": 63,
+    "duration": {
+      "__queueNonfiniteNumber": "nan"
+    },
+    "started": false,
+    "progress": false,
+    "finishes": [],
+    "receipts": [],
+    "nativeSource": true,
+    "nativeRef": "zombie.characters.CharacterTimedActions.LuaTimedActionNew@718fa74d",
+    "allocatedAt": 1793207078938,
+    "durationAfter": {
+      "__queueNonfiniteNumber": "nan"
+    },
+    "effectiveDuration": {
+      "__queueNonfiniteNumber": "nan"
+    }
+  },
+  "ids": {
+    "front": {
+      "id": 1689283169,
+      "type": "Base.BookCarpentry1",
+      "total": 220,
+      "initial": 218
+    }
+  },
+  "row": {
+    "starts": [
+      110,
+      111,
+      113,
+      115,
+      116
+    ],
+    "blockedReturn": {
+      "id": 1,
+      "itemId": 1689283169,
+      "itemType": "Base.BookCarpentry1",
+      "title": "Carpentry I: \"A Guide to Nailing\"",
+      "reason": "admission",
+      "state": "blocked"
+    },
+    "failureUI": {
+      "case": "worn-bag.header-cancel-capacity-lost",
+      "source": "ActionQueuePanel.KeepReturn",
+      "input": "programmatic-press-callback",
+      "id": 1,
+      "itemId": 1689283169,
+      "revision": 1,
+      "count": 1,
+      "visible": true,
+      "idle": true,
+      "bookRoot": true,
+      "at": 1793207089696,
+      "pressCaptured": true,
+      "cleared": true,
+      "bookRetained": true
+    },
+    "returnSucceeded": false,
+    "client": {
+      "books": {
+        "front": {
+          "id": 1689283169,
+          "type": "Base.BookCarpentry1",
+          "pages": 219,
+          "characterPages": 219,
+          "total": 220,
+          "container": "root",
+          "favorite": true
+        }
+      }
+    },
+    "server": {
+      "books": {
+        "front": {
+          "id": 1689283169,
+          "type": "Base.BookCarpentry1",
+          "pages": 219,
+          "characterPages": 219,
+          "total": 220,
+          "container": "root",
+          "favorite": true
+        }
+      }
+    },
+    "capacity": {
+      "case": "worn-bag.header-cancel-capacity-lost",
+      "actor": 0,
+      "source": "worn-bag",
+      "itemId": 1689283169,
+      "itemType": "Base.BookCarpentry1",
+      "before": 18,
+      "roomBefore": true,
+      "frontFavorite": true,
+      "after": 0,
+      "roomAfter": false,
+      "bookRoot": true,
+      "requestedAt": 1793207078920,
+      "acceptedAt": 1793207078919,
+      "at": 1793207078920,
+      "authority": true
+    },
+    "boundary": {
+      "at": 1793207078909,
+      "token": 59,
+      "queue": [
+        {
+          "sequence": 111
+        },
+        {
+          "sequence": 112
+        },
+        {
+          "sequence": 113
+        },
+        {
+          "sequence": 114
+        },
+        {
+          "sequence": 115
+        },
+        {
+          "sequence": 116
+        }
+      ]
+    }
+  }
+}

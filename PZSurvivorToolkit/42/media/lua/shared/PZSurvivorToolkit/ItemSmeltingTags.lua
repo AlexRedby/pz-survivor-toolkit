@@ -45,11 +45,13 @@ local function subject(recipe)
     return input
 end
 
-local function indexRecipes()
+local function indexRecipes(context)
     local manager = getScriptManager and getScriptManager()
     if not manager or not manager.getAllCraftRecipes
         or not toolkitRecipeOnCreate or not toolkitRecipeHasItemTest then return end
-    local recipes = manager:getAllCraftRecipes()
+    local recipes
+    if context then recipes = context:recipes(manager, "getAllCraftRecipes")
+    else recipes = manager:getAllCraftRecipes() end
     if not recipes then return end
     local count = recipes:size()
     if catalog and catalog.manager == manager and catalog.recipes == recipes and catalog.count == count
@@ -103,10 +105,10 @@ end
 -- reject this physical item's state. nil preserves unrelated imported families
 -- and arbitrary mod recipes. Partial drainable subjects (native sandbags) need
 -- remaining material; script previews expose both empty/nonempty alternatives.
-function Smelting.read(script, item)
+function Smelting.read(script, item, context)
     script = script or item and item.getScriptItem and item:getScriptItem()
     if not script or not script.getFullName then return nil end
-    local index = indexRecipes()
+    local index = indexRecipes(context)
     local entries = index and index[script:getFullName()]
     if not entries then return nil end
     local unknown = false

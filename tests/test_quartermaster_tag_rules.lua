@@ -209,6 +209,23 @@ box=target(); assert(Rules.matches(box,record('FutureFood')), 'rule required a m
 assert(Rules.applyBox(player,args({mode='all',include={},exclude={}}))=='ok')
 box=target(); assert(not Rules.matches(box,record('FutureFood')), 'cleared rule stayed in routing')
 mode='server'
+do
+ local previous=object.md;object.md={}
+ local grouped={groups={{include={'mechanics'},exclude={'vehiclepart'}},{include={'perishable'},exclude={}}}}
+ assert(Rules.applyBox(player,args(grouped))=='ok')
+ grouped.groups[1].include[1]='food'
+ local stored=assert(Rules.getBox(object,0))
+ assert(stored.groups[1].include[1]=='mechanics' and Rules.getBoxRevision(object,0)==1,
+  'Host authority lost or aliased grouped rule')
+ assert(Tags.matchesRule({'perishable','vehiclepart'},stored))
+ local excess={};for index=1,65 do excess[index]={include={'food'}} end
+ for _,bad in ipairs({{groups=excess},{groups={}},{groups={[2]={include={'food'}}}},
+  {groups={{include={'food'},exclude={'food'}}}}, {groups={{include={'food'},extra=true}}}}) do
+  assert(Rules.applyBox(player,args(bad))=='invalid' and Rules.getBoxRevision(object,0)==1,
+   'Host authority accepted malformed groups or advanced revision')
+ end
+ object.md=previous
+end
 assert(Rules.applyBox(nil,args())=='invalid', 'unauthenticated write allowed')
 local bad=args(); bad.object=1; assert(Rules.applyBox(player,bad)=='missing')
 bad=args(); bad.ci=1; assert(Rules.applyBox(player,bad)=='missing')
@@ -239,6 +256,32 @@ assert(Rules.getPreset('Either',presets().Either).mode=='any', 'SP any-rule mode
 local either={cats={},rules=Rules.forBox(nil,0,{Either=presets().Either.gen},presets())}
 assert(Rules.matches(either,record('Food')) and Rules.matches(either,record('Electronics'))
     and not Rules.matches(either,record('foodPerishable')), 'saved any+excluded rule changed semantics')
+do
+ local grouped={groups={{include={'mechanics'},exclude={'vehiclepart'}},{include={'perishable'},exclude={}}}}
+ assert(put(player,{name='Grouped',cats={},items={},pzstTagRule=grouped})=='ok')
+ grouped.groups[1].include[1]='food'
+ local service=require('PZSurvivorToolkit/QuartermasterPresets')
+ service.load()
+ local restored=Rules.getPreset('Grouped',presets().Grouped)
+ assert(restored.groups[1].include[1]=='mechanics','SP grouped preset lost or aliased its branch')
+ assert(Tags.matchesRule({'mechanics'},restored) and not Tags.matchesRule({'mechanics','vehiclepart'},restored))
+ assert(Tags.matchesRule({'vehiclepart','perishable'},restored),'grouped storage changed branch-local exclusion')
+ local load=Storage.load
+ for _,bad in ipairs({
+  {cats={},items={['__PZST_GROUPS_V1__:0']=true}},
+  {cats={},items={['__PZST_GROUPS_V1__:65']=true}},
+  {cats={},items={['__PZST_GROUPS_V1__:01']=true}},
+  {cats={['2:food']=true},items={['__PZST_GROUPS_V1__:1']=true}},
+  {cats={['01:food']=true},items={['__PZST_GROUPS_V1__:1']=true}},
+  {cats={['__PZST_GROUPS_V1__:1']=true},items={['__PZST_GROUPS_V1__:1']=true}},
+  {cats={['1:food']=true},items={['__PZST_GROUPS_V1__:1']=true,__PZST_ANY__=true}},
+  {cats={},items={['__PZST_GROUPS_V1__:1']=true,['__PZST_GROUPS_V1__:2']=true}},
+ }) do
+  Storage.load=function() return {nativeVersion=1,native={},rules={Bad=bad}} end
+  assert(not pcall(service.load),'malformed grouped storage marker accepted')
+ end
+ Storage.load=load;service.load()
+end
 local rev=presets().Pantry.rev
 assert(put(player,{name='Pantry',expectExisting=true,baseRev=0,cats={},items={},pzstTagRule={mode='any',include={'electrical'},exclude={}}})=='stale')
 assert(presets().Pantry.rev==rev and Rules.getPreset('Pantry',presets().Pantry).include[1]=='food')
@@ -371,6 +414,17 @@ local function reply(verdict, revision)
     for _, fn in ipairs(Events.OnServerCommand.handlers) do
         fn('Quartermaster','rpcResult',{rpcToken=sent.rpcToken,verdict=verdict,detail={revision=revision}})
     end
+end
+do
+ local previous=object.md;object.md={}
+ local grouped={groups={{include={'mechanics'},exclude={'vehiclepart'}},{include={'perishable'},exclude={}}}}
+ Rules.saveBox(object,0,grouped,player,function(verdict) callback=verdict end)
+ assert(sent.rule.groups and sent.rule.groups[1].include[1]=='mechanics')
+ grouped.groups[1].include[1]='food'
+ reply('ok',sent.baseRevision+1)
+ assert(callback=='ok' and Rules.getBox(object,0).groups[1].include[1]=='mechanics',
+  'client acknowledgement lost grouped rule or aliased caller draft')
+ object.md=previous;callback=nil
 end
 Rules.saveBox(object,0,rule,player,function(verdict) callback=verdict end)
 assert(sent and callback==nil)

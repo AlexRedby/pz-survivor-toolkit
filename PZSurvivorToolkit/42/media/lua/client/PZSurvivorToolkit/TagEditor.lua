@@ -56,6 +56,8 @@ end
 function Editor.finish(window)
     if window.toolkitTagClosed then return end
     window.toolkitTagClosed = true
+    if window.toolkitTagCatalogScan then window.toolkitTagCatalogScan:cancel() end
+    window.toolkitTagCatalogScan, window.toolkitTagCatalogPending = nil, false
     for _, field in ipairs({"toolkitTagEditor", "toolkitItemTagEditor"}) do
         if window[field] then window[field]:close() end
     end
@@ -83,6 +85,22 @@ function Editor.finish(window)
     end
     if window.grabbedJoypad then setJoypadFocus(window.playerNum, window.previousFocus) end
     window.previousFocus, window.grabbedJoypad = nil, false
+end
+
+-- Each window owns only its bounded discovery cursor. Completed automatic IDs
+-- are published by ItemTags; filters and draft controls never force discovery.
+function Editor.beginCatalogDiscovery(window)
+    window.toolkitTagCatalogScan = Tags.newAutomaticIdScan()
+    window.toolkitTagCatalogPending = window.toolkitTagCatalogScan ~= nil
+end
+
+function Editor.advanceCatalogDiscovery(window)
+    local scan = window.toolkitTagCatalogScan
+    if scan and scan:step(4) then
+        window.toolkitTagCatalogScan, window.toolkitTagCatalogPending = nil, false
+        window:reloadList()
+        if window.refreshControls then window:refreshControls() end
+    end
 end
 
 function Editor.ownerClosed(window)
@@ -184,19 +202,24 @@ function Editor:refreshControls()
     self.saveButton:setEnable(not self.pending)
     self.reloadButton:setEnable(not self.pending and draft.id ~= nil)
     self.newButton:setEnable(not self.pending)
-    self.iconButton:setEnable(not self.pending and not draft.deleted)
+    self.iconButton:setEnable(not self.pending and not draft.deleted and not self.toolkitTagCatalogPending)
     self.colorButton:setEnable(not self.pending and not draft.deleted)
     self.nameEntry:setEditable(not self.pending and not draft.deleted)
 end
 
 function Editor:reloadList()
     local query = (self.search:getInternalText() or ""):lower()
+    local selected = self.list.items[self.list.selected or 0]
+    local selectedId = selected and selected.item.id
     self.list:clear()
     local entries = {}
-    for _, id in ipairs(Tags.allIds(self.tagItems)) do entries[#entries+1] = {id=id,label=Tags.label(id)} end
+    for _, id in ipairs(Tags.cachedIds(self.tagItems)) do entries[#entries+1] = {id=id,label=Tags.label(id)} end
     table.sort(entries, function(a,b) return a.label < b.label end)
     for _, row in ipairs(entries) do
-        if row.label:lower():find(query,1,true) then self.list:addItem(row.label,row) end
+        if row.label:lower():find(query,1,true) then
+            self.list:addItem(row.label,row)
+            if row.id == selectedId then self.list.selected = #self.list.items end
+        end
     end
     self.lastQuery = query
 end
@@ -211,7 +234,7 @@ function Editor:reloadDraft()
 end
 
 function Editor:chooseIcon()
-    if self.toolkitTagClosed or self.pending or self.draft.deleted then return end
+    if self.toolkitTagClosed or self.pending or self.draft.deleted or self.toolkitTagCatalogPending then return end
     local draft=self.draft
     require("PZSurvivorToolkit/TagIconPicker").open(self, function(icon)
         if self.toolkitTagClosed or self.pending or self.draft ~= draft then return end
@@ -351,6 +374,7 @@ function Editor:prerender()
     if self.lastRevision ~= Tags.revision() then
         self.lastRevision=Tags.revision(); self:reloadList()
     end
+    Editor.advanceCatalogDiscovery(self)
     ISCollapsableWindowJoypad.prerender(self)
     self:drawText(text("Name"),12,self.height-238,1,1,1,1,UIFont.Small)
     local draft=self.draft
@@ -360,7 +384,7 @@ function Editor:prerender()
         self:drawText(UIStyle.fit(self.nameEntry:getInternalText() or "",self.width-56),44,self.height-143,
             draft.color.r,draft.color.g,draft.color.b,1,UIFont.Small)
     end
-    self:drawText(UIStyle.fit(self.status or text("CatalogHint"),self.width-24),12,self.height-106,0.9,0.8,0.6,1,UIFont.Small)
+    self:drawText(UIStyle.fit(self.status or text(self.toolkitTagCatalogPending and "LoadingCatalog" or "CatalogHint"),self.width-24),12,self.height-106,0.9,0.8,0.6,1,UIFont.Small)
     self:drawText(UIStyle.fit(text("Shared"),self.width-24),12,self.height-78,0.8,0.8,0.8,1,UIFont.Small)
 end
 
@@ -387,6 +411,7 @@ function Editor.open(options)
     local window=Editor:new((getCore():getScreenWidth()-w)/2,(getCore():getScreenHeight()-h)/2,w,h)
     window.tagItems = options.items
     window.drafts,window.title,window.lastRevision = {},text("Catalog"),Tags.revision()
+    Editor.beginCatalogDiscovery(window)
     return Editor.attach(window,options,"toolkitTagEditor")
 end
 

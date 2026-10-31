@@ -2,7 +2,14 @@
 local function json(value)
  local kind=type(value)
  if kind=='nil' then return 'null' end
- if kind=='boolean' or kind=='number' then return tostring(value) end
+ if kind=='number' then
+  -- Observation only: never substitute a finite duration for a native value.
+  if value~=value then return '{"__queueNonfiniteNumber":"nan"}' end
+  if value==math.huge then return '{"__queueNonfiniteNumber":"+inf"}' end
+  if value==-math.huge then return '{"__queueNonfiniteNumber":"-inf"}' end
+  return tostring(value)
+ end
+ if kind=='boolean' then return tostring(value) end
  if kind=='string' then
   return '"'..value:gsub('[%z\1-\31\\"]',function(char)
    if char=='"' then return '\\"' elseif char=='\\' then return '\\\\' end

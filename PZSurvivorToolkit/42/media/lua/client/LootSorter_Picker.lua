@@ -56,7 +56,9 @@ end
 function Picker:activeList()
     if self.mode == "items" then return LootSorter.getItemNames()
     elseif self.mode == "presets" then return LootSorter.presetNames(LootSorter.getPresetStore())
-    elseif Tags.enabled() then return TagPicker.categories(LootSorter.getCategories(), self.selectedCats)
+    elseif Tags.enabled() then
+        local catalog = TagPicker.catalog(self)
+        return catalog and TagPicker.categories(catalog.visibleCategories, self.selectedCats) or {}
     else return LootSorter.getCategories() end
 end
 
@@ -321,6 +323,9 @@ function Picker:createChildren()
 
     self:layout()
     self:rebuild()
+    self.toolkitTagsEnabled = Tags.enabled()
+    self.toolkitTagRevision = Tags.revision and Tags.revision() or 0
+    self._lw, self._lh = self:getWidth(), self:getHeight()
 end
 
 -- position every control from the CURRENT window size, so resizing stays aligned and nothing clips
@@ -465,6 +470,11 @@ end
 
 function Picker:rebuild()
     local text = string.lower(self:currentFilter())
+    if self.mode == "cats" and Tags.enabled() and not TagPicker.catalogReady(self) then
+        self.listbox:clear()
+        self.emptyListKey, self.lastFilter, self.needRebuild = "LoadingTags", text, false
+        return
+    end
     local contents = self.onlyContents and self:contentsSet() or nil
     local tagView = TagPicker.isTagView(self)
     local entries = self:activeList()
@@ -518,6 +528,7 @@ function Picker.prerenderList(list)
 end
 
 function Picker:prerender()
+    if self.toolkitTagClosed then return end
     GroupControls.refresh(self)
     self:resolvePresetSelection()
     local tagRevision = Tags.revision and Tags.revision() or 0
@@ -525,6 +536,7 @@ function Picker:prerender()
         self.toolkitTagRevision, self.needRebuild = tagRevision, true
     end
     local enabled = Tags.enabled()
+    if enabled then TagPicker.stepCatalog(self) else TagPicker.cancelCatalog(self) end
     if self.toolkitTagsEnabled ~= enabled then
         self.toolkitTagsEnabled, self.needRebuild = enabled, true
         self:layout()
@@ -533,6 +545,9 @@ function Picker:prerender()
     local ruleActive = Tags.ruleActive(self.toolkitTagRule)
     self.toolkitTagRuleButton:setTitle(ui(ruleActive and "EditRule" or "AddRule"))
     self.toolkitTagRuleButton.backgroundColor = ruleActive and ACTIVE_BG or IDLE_BG
+    local ready = not enabled or TagPicker.catalogReady(self)
+    self.toolkitTagRuleButton:setEnable(ready)
+    self.btnAll:setEnable(self.mode ~= "cats" or ready)
     self.toolkitTagSwitch:setTitle(getText(self.toolkitTagView and "UI_PZST_QMShowCategories" or "UI_PZST_QMShowTags"))
     ISCollapsableWindow.prerender(self)
     if self.configJoypadLater then self.configJoypadLater = false; self:configJoypad() end
@@ -635,6 +650,7 @@ end
 
 function Picker.onRowClick(picker, itemData)
     if not itemData then return end
+    if picker.mode == "cats" and Tags.enabled() and not TagPicker.catalogReady(picker) then return end
     if TagPicker.isTagView(picker) and itemData.toolkitTagRow then
         local checked, total = TagPicker.state(picker.selectedCats, itemData, picker.toolkitTagRule)
         TagPicker.select(picker, itemData, checked ~= total)
@@ -652,6 +668,7 @@ function Picker.onRowClick(picker, itemData)
 end
 
 function Picker:onSelectFiltered()
+    if self.mode == "cats" and Tags.enabled() and not TagPicker.catalogReady(self) then return end
     if TagPicker.isTagView(self) then
         for _, entry in ipairs(self.listbox.items) do
             TagPicker.select(self, entry.item, true)
@@ -927,6 +944,7 @@ end
 
 function Picker:closePicker()
     self.toolkitTagClosed = true
+    TagPicker.cancelCatalog(self)
     AppearanceControls.close(self)
     -- Restore joypad focus to whatever had it before we opened (the inventory/loot window), NOT nil.
     -- Handing focus to nil leaves the controller focused on nothing, so the still-open inventory goes
@@ -1067,6 +1085,7 @@ function Picker:new(x, y, w, h)
     o.selectedPresets = {}
     o.mode = "cats"
     o.toolkitTagView = true
+    o.toolkitTagCatalogAsync = true
     o.selection = o.selectedCats
     o.targetKind = "box"
     o.onlyChecked = false

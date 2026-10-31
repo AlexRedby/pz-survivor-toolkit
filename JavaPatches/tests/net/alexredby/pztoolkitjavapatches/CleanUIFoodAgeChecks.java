@@ -1,10 +1,15 @@
 package net.alexredby.pztoolkitjavapatches;
 
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -85,6 +90,81 @@ public final class CleanUIFoodAgeChecks {
         ByteArrayOutputStream result = new ByteArrayOutputStream();
         closure.prototype.dump(result);
         return result.toByteArray();
+    }
+
+    private static final class DelayedFailureStream extends InputStream {
+        private final String source;
+        private boolean failed;
+        private int position;
+        private int closes;
+        private DelayedFailureStream(String source) { this.source = source; }
+        private void failIfReached() throws IOException {
+            if (position >= 8192 && !failed) {
+                failed = true;
+                throw new IOException("delayed fixture IO");
+            }
+        }
+        @Override public int read() throws IOException {
+            failIfReached();
+            return position == source.length() ? -1 : source.charAt(position++);
+        }
+        @Override public int read(byte[] buffer, int offset, int length) throws IOException {
+            if (length == 0) return 0;
+            failIfReached();
+            if (position == source.length()) return -1;
+            int count = Math.min(length, Math.min(source.length() - position,
+                failed ? Integer.MAX_VALUE : 8192 - position));
+            for (int index = 0; index < count; index++) buffer[offset + index] = (byte) source.charAt(position++);
+            return count;
+        }
+        @Override public void close() { closes++; }
+    }
+
+    private record CompilerObservation(LuaClosure closure, Throwable failure, boolean ioDiagnostic) { }
+
+    private static CompilerObservation observeReaderFailure(String source, boolean scoped) throws Exception {
+        DelayedFailureStream stream = new DelayedFailureStream(source);
+        ByteArrayOutputStream diagnostics = new ByteArrayOutputStream();
+        PrintStream previousError = System.err;
+        LuaClosure closure = null;
+        Throwable failure = null;
+        System.setErr(new PrintStream(diagnostics, true, StandardCharsets.UTF_8));
+        try (Reader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.US_ASCII))) {
+            CleanUIFoodAge.Scope previous = scoped ? CleanUIFoodAge.begin(CleanUIFoodAge.TARGET, true) : null;
+            try { closure = LuaCompiler.loadis(reader, "ISInventoryPane.lua", LuaManager.env); }
+            finally { if (scoped) CleanUIFoodAge.end(previous); }
+        } catch (IOException | RuntimeException observed) {
+            failure = observed;
+        } finally { System.setErr(previousError); }
+        require(stream.closes == 1 && scope() == null, "error-order original Reader close/TLS cleanup");
+        return new CompilerObservation(closure, failure,
+            diagnostics.toString(StandardCharsets.UTF_8).contains("java.io.IOException: delayed fixture IO"));
+    }
+
+    private static void readerErrorOrderChecks() throws Exception {
+        for (String prefix : new String[]{"return ]", "return 1"}) {
+            String source = prefix + " ".repeat(20000) + "\n";
+            CompilerObservation ordinary = observeReaderFailure(source, false);
+            CompilerObservation owned = observeReaderFailure(source, true);
+            require((ordinary.failure == null) == (owned.failure == null), "capture changed native syntax/IO outcome");
+            if (ordinary.failure != null) {
+                require(ordinary.failure.getClass() == owned.failure.getClass()
+                    && java.util.Objects.equals(ordinary.failure.getMessage(), owned.failure.getMessage()),
+                    "capture changed native syntax/IO failure order");
+            }
+            require((ordinary.closure == null) == (owned.closure == null)
+                && ordinary.ioDiagnostic == owned.ioDiagnostic, "capture changed native IO reachability");
+            if (prefix.equals("return ]")) {
+                require(ordinary.failure instanceof se.krka.kahlua.vm.KahluaException && !ordinary.ioDiagnostic,
+                    "malformed prefix did not fail before delayed IO");
+            } else {
+                // The native lexer logs reached IOException and treats it as EOF.
+                require(ordinary.closure != null && ordinary.ioDiagnostic, "native valid-prefix IO-as-EOF not reached");
+                require(Arrays.equals(dump(ordinary.closure), dump(owned.closure)),
+                    "capture changed the native valid-prefix prototype after IO");
+            }
+        }
+        System.out.println("CLEANUI_READER_ERROR_ORDER_PASS (woven native syntax-before-IO and reachable IO-as-EOF parity)");
     }
 
     public static void main(String[] args) throws Exception {
@@ -186,12 +266,15 @@ public final class CleanUIFoodAgeChecks {
                 @Override public void close() { throw new AssertionError("reader closed before native owner"); }
             };
             try {
-                CleanUIFoodAge.compilerInput(broken, "ISInventoryPane.lua", true);
-                throw new AssertionError("read failure swallowed after consuming source");
+                Reader prepared = CleanUIFoodAge.compilerInput(broken, "ISInventoryPane.lua", true);
+                require(prepared.read(new char[0], 0, 0) == 0, "zero-length replay consumed read failure");
+                prepared.read();
+                throw new AssertionError("read failure swallowed after consuming replay");
             } catch (IOException observed) { require(observed == failure, "read failure replaced"); }
         } finally { CleanUIFoodAge.end(previous); }
 
         PatchEngine.applyPatches("net.alexredby.pztoolkitjavapatches", CleanUIFoodAgeChecks.class.getClassLoader());
+        readerErrorOrderChecks();
         Path inner = version.resolve("media/lua/client/inner.lua");
         Files.writeString(inner, "return innerProbe()\n");
         files.activeFileMap.put("media/lua/client/inner.lua", inner.toString());

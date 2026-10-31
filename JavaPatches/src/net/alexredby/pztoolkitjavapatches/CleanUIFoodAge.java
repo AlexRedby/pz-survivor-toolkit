@@ -149,41 +149,12 @@ public final class CleanUIFoodAge {
         if (!supported || scope == null || !scope.candidate || scope.claimed
                 || !scope.target.substring(scope.target.lastIndexOf('/') + 1).equals(name)) return reader;
         scope.claimed = true;
-        StringBuilder source = new StringBuilder();
-        char[] buffer = new char[8192];
-        while (source.length() <= MAX_SOURCE_CHARS) {
-            int count = reader.read(buffer, 0, Math.min(buffer.length, MAX_SOURCE_CHARS + 1 - source.length()));
-            if (count < 0) {
-                String original = source.toString();
-                String transformed = transformSource(scope.target, original);
-                if (transformed != original) System.out.println("[PZToolkitJavaPatches] CleanUI food-age compiler input corrected");
-                // An unknown complete source must be replayed from its beginning, too.
-                return new StringReader(transformed);
-            }
-            if (count == 0) {
-                int next = reader.read();
-                if (next < 0) return new StringReader(transformSource(scope.target, source.toString()));
-                source.append((char) next);
-            } else source.append(buffer, 0, count);
-        }
-        // A larger future source is not a patch candidate. Replay what we read before its tail.
-        return new ReplayReader(source.toString(), reader);
-    }
-
-    private static final class ReplayReader extends Reader {
-        private final StringReader prefix;
-        private final Reader tail;
-        private boolean prefixDone;
-        private ReplayReader(String prefix, Reader tail) { this.prefix = new StringReader(prefix); this.tail = tail; }
-        @Override public int read(char[] buffer, int offset, int length) throws IOException {
-            if (!prefixDone) {
-                int count = prefix.read(buffer, offset, length);
-                if (count >= 0) return count;
-                prefixDone = true;
-            }
-            return tail.read(buffer, offset, length);
-        }
-        @Override public void close() throws IOException { tail.close(); }
+        CompilerReaderInput.Captured captured = CompilerReaderInput.capture(reader, MAX_SOURCE_CHARS);
+        String original = captured.getText();
+        if (original == null) return captured.getReader();
+        String transformed = transformSource(scope.target, original);
+        if (transformed != original) System.out.println("[PZToolkitJavaPatches] CleanUI food-age compiler input corrected");
+        return transformed == original ? captured.getReader() : new StringReader(transformed);
     }
 
     @Patch(className="zombie.Lua.LuaManager", methodName="RunLua", warmUp=true, strictMatch=true)

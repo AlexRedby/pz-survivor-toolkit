@@ -11,7 +11,32 @@ local started,done,since,nextAt,phase=false,false,0,0,'prepare'
 local packet,obj,picker,role,go,observe,finished,localReceipt
 local menuClasses=0
 local tagRows={}
+local openingProfile
+local choiceParityChecked=false
 local function emit(event,value) print('[CONTAINER_CONFIG] '..event..' '..JSON.encode(value))end
+local function checkScriptChoiceParity()
+ assert(type(Tags.choicesForScriptItem)=='function','Script choice API absent')
+ local scripts=assert(getAllItems())
+ local count=scripts:size();assert(count>0,'No native script items for choice parity')
+ local reference,context={},Tags.newScriptProjectionContext()
+ for index=0,count-1 do
+  local script=assert(scripts:get(index),'Native script entry absent')
+  local tags=Tags.forScriptItem(script,context)
+  reference[index+1]={choices=Tags.choices(tags),category=tags.legacyCategory}
+ end
+ context=Tags.newScriptProjectionContext()
+ for index=0,count-1 do
+  local script=assert(scripts:get(index),'Native script entry absent')
+  local actual=Tags.choicesForScriptItem(script,context)
+  local expected=reference[index+1]
+  assert(#actual==#expected.choices and actual.legacyCategory==expected.category,
+   'Script choice count/category differs: '..script:getFullName())
+  for choice,id in ipairs(expected.choices)do
+   assert(actual[choice]==id,'Script choice order differs: '..script:getFullName())
+  end
+ end
+ emit('CHOICEPARITY',{scripts=count})
+end
 local function close()if LootSorter._picker then LootSorter._picker:closePicker()end end
 local function shot(name)
  local list=assert(picker.listbox);local scroll=assert(list.vscroll)
@@ -48,9 +73,7 @@ local function checkSemanticClick(row)
  local checked,total=TagPicker.state(picker.selectedCats,row,picker.toolkitTagRule)
  assert(checked==1 and total==1 and not picker.toolkitRulePicker,'Semantic checkbox did not directly select a live rule')
  assert(sameSet(cats,picker.selectedCats),'Semantic checkbox broadened exact category assignments')
- local found=false
- for _,id in ipairs(picker.toolkitTagRule.include)do if id==row.tag then found=true end end
- assert(found,'Semantic checkbox did not include the selected tag')
+ assert(Tags.ruleIncludes(picker.toolkitTagRule,row.tag),'Semantic checkbox did not include the selected tag')
 end
 local function clickRow(key,tag)
  picker:rebuild()
@@ -67,25 +90,28 @@ local function clickRow(key,tag)
  end
  error('Actual sorting row missing: '..tostring(tag or key))
 end
+local function assertGroupedConditions(advanced)
+ local groups=assert(advanced.conditions)
+ assert(#groups==3 and #groups[1]==3 and #groups[2]==2 and #groups[3]==1,'Grouped condition rows differ')
+ local expected={{{F.tag,false},{'perishable',false},{'meat',true}},
+                 {{'mechanics',false},{'vehiclepart',true}},{{packet.customId,false}}}
+ for gi,group in ipairs(groups)do for ri,row in ipairs(group)do
+  assert(row.id==expected[gi][ri][1] and row.excluded==expected[gi][ri][2],
+   'Grouped condition order or polarity differs')
+ end end
+ local rule=assert(advanced.rule)
+ assert(rule.groups and #rule.groups==3 and rule.groups[1].include[1]==F.tag
+  and rule.groups[1].include[2]=='perishable' and rule.groups[1].exclude[1]=='meat'
+  and rule.groups[2].include[1]=='mechanics' and rule.groups[2].exclude[1]=='vehiclepart'
+  and rule.groups[3].include[1]==packet.customId and #rule.groups[3].exclude==0,
+  'Grouped expression differs')
+end
 local function configureFinalRule()
  picker.toolkitTagRuleButton.onclick(picker)
  local advanced=assert(picker.toolkitRulePicker)
  advanced:clearRule()
- assert(advanced.rule.mode=='all','Cleared rule did not use All mode')
- for _,choice in ipairs({{F.tag,'Include'},{'perishable','Include'},{'meat','Exclude'}})do
-  local id,state=choice[1],choice[2]
-  local found
-  for _,row in ipairs(advanced.entries)do if row.id==id then found=row;break end end
-  assert(found,'Actual advanced rule row missing: '..id)
-  advanced:cycle(found)
-  if state=='Exclude'then advanced:cycle(found)end
-  assert(advanced:state(id)==state,'Advanced callback selected the wrong state: '..id)
- end
- advanced:apply()
- local rule=picker.toolkitTagRule
- assert(not picker.toolkitRulePicker and rule.mode=='all' and #rule.include==2
-  and rule.include[1]==F.tag and rule.include[2]=='perishable'
-  and #rule.exclude==1 and rule.exclude[1]=='meat','Advanced Apply lost the final rule')
+ local chooser=assert(advanced:addCondition(1),'Tag chooser absent')
+ chooser.search:setText(Tags.label(F.tag))
 end
 local function pickColor()
  Controls.chooseColor(picker)
@@ -139,6 +165,7 @@ Events.OnGameStart.Add(function()
 end)
 local function tick()
  local player=getPlayer()
+ if picker and picker.toolkitTagCatalogPending then return end
  if phase=='prepare'then
   if isClient() then sendClientCommand(F.module,'Prepare',{})else obj,packet=F.prepare(player);emit('PREPARED',packet);go=true end
   phase='resolve'
@@ -149,15 +176,25 @@ local function tick()
    player:teleportTo(packet.x+1.5,packet.y+0.5,packet.z);return
   end
   obj=obj or F.resolve(packet);if not obj then return end
+  if not F.customReady(packet)then return end
+  assert(obj:getModData().PZSTContainerConfigurationCustomTag==packet.customId,'Owned crate custom identity differs')
   if not F.blankRead(obj,player)then return end
   if isClient()then sendClientCommand(F.module,'Ready',{})end
   phase=role=='client1' and 'start' or 'observe'
  elseif phase=='start'then
   if not go then return end
+  if selection.options.profile_container_open and not openingProfile then
+   openingProfile=require 'ContainerConfigurationTiming';openingProfile.begin();phase='opening-profile';return
+  end
+  if selection.options.check_script_choice_parity and not choiceParityChecked then
+   checkScriptChoiceParity();choiceParityChecked=true
+  end
   print('[CONTAINER_CONFIG_DIAG] editing local='..tostring(player:getUsername())..' specific='..tostring(getSpecificPlayer(0):getUsername())..' role='..tostring(role))
   probeMenus()
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker);checkControls()
   phase='empty';nextAt=getTimestampMs()+1200
+ elseif phase=='opening-profile'then
+  if openingProfile.step(obj)then phase='start' end
  elseif phase=='empty'then
   shot('empty')
   picker.filter:setText(Tags.label(F.tag))
@@ -225,22 +262,28 @@ local function tick()
   picker.toolkitTagRuleButton.onclick(picker)
   local advanced=assert(picker.toolkitRulePicker)
   picker:bringToTop() -- reproduce the owner's mouse-event tail after the opening callback
-  advanced.list:setYScroll(-180);advanced.preview:setYScroll(-60)
+  local chooser=assert(advanced:addCondition(1))
+  advanced:bringToTop() -- reproduce the rule owner's mouse-event tail as well
+  chooser.list:setYScroll(-180)
   phase='tag-scroll';nextAt=getTimestampMs()+1200
  elseif phase=='tag-scroll'then
   local advanced=assert(picker.toolkitRulePicker)
-  local stack=UIManager.getUI();local ownerIndex,childIndex
+  local chooser=assert(advanced.tagChoice)
+  local stack=UIManager.getUI();local ownerIndex,childIndex,choiceIndex
   for i=0,stack:size()-1 do
    if stack:get(i)==picker.javaObject then ownerIndex=i end
    if stack:get(i)==advanced.javaObject then childIndex=i end
+   if stack:get(i)==chooser.javaObject then choiceIndex=i end
   end
-  assert(ownerIndex and childIndex and childIndex>ownerIndex,'Rule editor remained behind its owner')
+  assert(ownerIndex and childIndex and choiceIndex and childIndex>ownerIndex and choiceIndex>childIndex,
+   'Rule editor or chooser remained behind its owner')
   shot('tag-scroll')
-  advanced.group:forceClick()
+  chooser.group:forceClick()
   phase='tag-dropdown';nextAt=getTimestampMs()+1200
  elseif phase=='tag-dropdown'then
   shot('tag-dropdown')
   local advanced=assert(picker.toolkitRulePicker)
+  advanced.tagChoice:close()
   advanced:apply()
   local checked,total=TagPicker.state(picker.selectedCats,tagRows.seed,picker.toolkitTagRule)
   assert(checked==total and total==1 and not picker.toolkitRulePicker,'Apply lost checked rule tag or retained popup')
@@ -276,6 +319,8 @@ local function tick()
   picker.appearanceName:setText('Cancelled item draft');pickColor()
   picker:closePicker();assert(F.blankRead(obj,player),'Item draft Cancel persisted appearance')
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker);checkControls()
+  phase='choose-first-tag'
+ elseif phase=='choose-first-tag'then
   clickRow(nil,F.tag)
   assert(picker.appearanceName:getInternalText()==Tags.label(F.tag)
    and sameColor(picker.toolkitAppearance.color,Visuals.get(F.tag)),'First tag did not seed label/color')
@@ -293,6 +338,35 @@ local function tick()
   clickRow(packet.category)
   picker.toolkitTagSwitch.onclick(picker)
   configureFinalRule()
+  phase='final-tags';nextAt=getTimestampMs()+1200
+ elseif phase=='final-tags'then
+  local advanced=assert(picker.toolkitRulePicker)
+  local chooser=assert(advanced.tagChoice)
+  chooser:reload();shot('tags')
+  local selected
+  for _,row in ipairs(chooser.list.items)do if row.item.id==F.tag then selected=row.item;break end end
+  assert(selected,'Filtered chooser did not contain the requested tag')
+  chooser:choose(selected)
+  advanced:addCondition(1,'perishable');advanced:addCondition(1,'meat',true)
+  advanced:addGroup('mechanics');advanced:addCondition(2,'vehiclepart',true)
+  local customChoice=assert(advanced:addGroup(),'Custom tag chooser absent')
+  customChoice.search:setText(packet.customName)
+  phase='custom-tags';nextAt=getTimestampMs()+1200
+ elseif phase=='custom-tags'then
+  local advanced=assert(picker.toolkitRulePicker)
+  local chooser=assert(advanced.tagChoice)
+  chooser:reload();shot('custom-tags')
+  local selected
+  for _,row in ipairs(chooser.list.items)do
+   if row.item.id==packet.customId and row.item.label==packet.customName then selected=row.item;break end
+  end
+  assert(selected and Tags.label(packet.customId)==packet.customName,'Real chooser omitted the synchronized custom tag')
+  chooser:choose(selected)
+  assertGroupedConditions(advanced)
+  phase='final-rules';nextAt=getTimestampMs()+1200
+ elseif phase=='final-rules'then
+  shot('rules')
+  local advanced=assert(picker.toolkitRulePicker);assertGroupedConditions(advanced);advanced:apply()
   assert(picker.selectedCats[packet.category] and emptySet(picker.selectedItems)
    and emptySet(picker.selectedPresets),'Rule Apply changed exact selections')
   checkTagIcon()
@@ -318,10 +392,15 @@ local function tick()
   localReceipt=F.receipt(obj,player,packet.category)
   if not F.matches(localReceipt)then return end
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker)
+  phase='reopened'
+ elseif phase=='reopened'then
   assert(picker.appearanceName:getInternalText()==F.name and picker.selectedCats[packet.category]
    and picker.toolkitAppearance.icon.value==F.tag and picker.toolkitAppearance.color.r==F.color.r
-   and picker.priority==6 and picker.toolkitTagRule.include[2]=='perishable','Reopen lost unified fields')
+   and picker.priority==6 and picker.toolkitTagRule.groups,'Reopen lost unified fields')
   checkTagIcon()
+  picker:onTagRule()
+  local advanced=assert(picker.toolkitRulePicker);assertGroupedConditions(advanced)
+  advanced:toggleCondition(1,1);advanced:close()
   picker.appearanceName:setText('Cancelled draft');picker:setPriority(99);picker.selectedCats={}
   picker.toolkitAppearance={};picker.toolkitAppearanceTouched=true;picker:closePicker()
   localReceipt=F.receipt(obj,player,packet.category);assert(F.matches(localReceipt),'Cancel changed stored fields')
@@ -334,9 +413,12 @@ local function tick()
   if not observe then return end
   local result=F.receipt(obj,player,packet.category);if not F.matches(result)then return end
   LootSorter.openPicker(obj,0,0);picker=assert(LootSorter._picker)
+  phase='observer-rule'
+ elseif phase=='observer-rule'then
   assert(picker.appearanceName:getInternalText()==F.name and picker.selectedCats[packet.category]
    and picker.toolkitAppearance.icon.value==F.tag and picker.toolkitAppearance.color.b==F.color.b,'Observer editor differs')
   checkTagIcon()
+  picker:onTagRule();assertGroupedConditions(assert(picker.toolkitRulePicker));picker.toolkitRulePicker:close()
   phase='observer-shot';nextAt=getTimestampMs()+1200
  elseif phase=='observer-shot'then
   shot('observer')

@@ -2,9 +2,16 @@ local Config=require 'PZSurvivorToolkit/QuartermasterContainerConfig'
 local Appearance=require 'PZSurvivorToolkit/ContainerAppearance'
 local Rules=require 'PZSurvivorToolkit/QuartermasterTagRules'
 local Categories=require 'PZSurvivorToolkit/ItemCategories'
+local Custom=require 'PZSurvivorToolkit/TagCustomization'
 local F={module='ContainerConfigurationTest',name='QM supplies',tag='edible',item='Base.Hammer'}
+F.customName='Fixture custom supplies'
 F.color={r=0.25,g=0.5,b=0.75,a=1}
 function F.prepare(player)
+ local authority=require 'PZSurvivorToolkit/TagCustomizationAuthority'
+ local status,result=authority.applyRequest(player,'Edit',{
+  request=1,baseRevision=Custom.getRevision(),definition={name=F.customName}})
+ assert(status=='accepted' and Custom.customId(result.id),'Production custom tag creation failed')
+ local customId=result.id
  local origin=assert(player:getSquare())
  local square
  for dx=-1,1 do for dy=-1,1 do
@@ -17,11 +24,18 @@ function F.prepare(player)
  obj:setBlockAllTheSquare(true);obj:setIsContainer(true)
  local container=assert(obj:getContainer());container:setType('crate');container:setCapacity(100);container:setExplored(true)
  obj:getModData().PZSTContainerConfigurationFixture=true
+ obj:getModData().PZSTContainerConfigurationCustomTag=customId
  square:AddSpecialObject(obj)
  local script=assert(getScriptManager():FindItem(F.item))
  local category=assert(Categories.forScript(script))
  if isServer() then obj:transmitCompleteItemToClients();obj:transmitModData() end
- return obj,{x=square:getX(),y=square:getY(),z=square:getZ(),index=obj:getObjectIndex(),category=category}
+ return obj,{x=square:getX(),y=square:getY(),z=square:getZ(),index=obj:getObjectIndex(),category=category,
+  customId=customId,customName=F.customName}
+end
+function F.customReady(packet)
+ local definition=Custom.definition(packet.customId)
+ return Custom.synced() and Custom.customId(packet.customId) and definition
+  and not definition.deleted and definition.name==packet.customName and packet.customName==F.customName
 end
 function F.resolve(packet)
  local square=getCell():getGridSquare(packet.x,packet.y,packet.z)
@@ -37,19 +51,28 @@ local function count(set) local n=0;for _ in pairs(set or {})do n=n+1 end;return
 function F.receipt(obj,player,category)
  local value=assert(Config.read(obj,0,player));local a=value.appearance or {};local icon=a.icon or {};local color=a.color or {}
  local rule=Rules.getBox(obj,0) or {}
+ local customId=obj:getModData().PZSTContainerConfigurationCustomTag
+ local definition=Custom.definition(customId) or {}
  return {name=a.name or '',iconKind=icon.kind or '',iconValue=icon.value or '',
+  customId=customId or '',customName=definition.name or '',
   r=color.r or -1,g=color.g or -1,b=color.b or -1,a=color.a or -1,
   category=category,categorySelected=value.cats[category]==true,categoryCount=count(value.cats),
   itemCount=count(value.items),presetCount=count(value.presets),priority=value.priority,
-  ruleMode=rule.mode or '',include=rule.include or {},exclude=rule.exclude or {},revision=Rules.getBoxRevision(obj,0)}
+  ruleMode=rule.mode or '',include=rule.include or {},exclude=rule.exclude or {},groups=rule.groups or {},revision=Rules.getBoxRevision(obj,0)}
 end
 function F.matches(receipt)
  return receipt.name==F.name and receipt.iconKind=='pzst-tag' and receipt.iconValue==F.tag
+  and Custom.customId(receipt.customId) and receipt.customName==F.customName
   and receipt.r==F.color.r and receipt.g==F.color.g and receipt.b==F.color.b and receipt.a==1
   and receipt.categorySelected and receipt.categoryCount==1 and receipt.itemCount==0 and receipt.presetCount==0
-  and receipt.priority==6 and receipt.ruleMode=='all' and #receipt.include==2
-  and receipt.include[1]==F.tag and receipt.include[2]=='perishable' and #receipt.exclude==1
-  and receipt.exclude[1]=='meat' and receipt.revision==1
+  and receipt.priority==6 and receipt.ruleMode=='' and #receipt.include==0 and #receipt.exclude==0
+  and #receipt.groups==3 and #receipt.groups[1].include==2
+  and receipt.groups[1].include[1]==F.tag and receipt.groups[1].include[2]=='perishable'
+  and #receipt.groups[1].exclude==1 and receipt.groups[1].exclude[1]=='meat'
+  and #receipt.groups[2].include==1 and receipt.groups[2].include[1]=='mechanics'
+  and #receipt.groups[2].exclude==1 and receipt.groups[2].exclude[1]=='vehiclepart'
+  and #receipt.groups[3].include==1 and receipt.groups[3].include[1]==receipt.customId
+  and #receipt.groups[3].exclude==0 and receipt.revision==1
 end
 function F.cleanup(obj)
  assert(obj and obj:getModData().PZSTContainerConfigurationFixture,'Refusing foreign object cleanup')

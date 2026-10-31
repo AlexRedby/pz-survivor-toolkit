@@ -3,7 +3,7 @@ local Presets = {}
 PZSurvivorToolkit.TagFilterPresets = Presets
 
 local files = {"PZSurvivorToolkit_TagFilters_a.txt", "PZSurvivorToolkit_TagFilters_b.txt"}
-local MAGIC, VERSION, MAX_GENERATION = "PZST_TAG_FILTERS", "1", 2147483647
+local MAGIC, MAX_GENERATION = "PZST_TAG_FILTERS", 2147483647
 local MAX_PRESETS, MAX_LINE, MAX_BYTES = 32, 62000, 2000000
 
 local function name(value)
@@ -60,7 +60,7 @@ local function parse(reader)
     if type(header) ~= "string" or #header > MAX_LINE then return nil, "Corrupt" end
     bytes = #header + 1
     local version = header:match("^" .. MAGIC .. "|([^|]+)")
-    if version and version ~= VERSION then return nil, "Version" end
+    if version and version ~= "1" and version ~= "2" then return nil, "Version" end
     if #header > 100 then return nil, "Corrupt" end
     local _, generation, count = header:match("^" .. MAGIC .. "|([^|]+)|([^|]+)|([^|]+)$")
     generation, count = integer(generation, MAX_GENERATION), integer(count, MAX_PRESETS)
@@ -68,14 +68,30 @@ local function parse(reader)
     local entries, seen = {}, {}
     for index = 1, count do
         local record = line()
-        local encodedName, mode, include, exclude
+        local encodedName, mode, include, exclude, rule
         if record then encodedName, mode, include, exclude = record:match("^P|([^|]*)|([^|]*)|([^|]*)|([^|]*)$") end
+        if encodedName then
+            include, exclude = tagList(include), tagList(exclude)
+            if include and exclude then rule = Tags.normalizeRule({mode = mode, include = include, exclude = exclude}) end
+        elseif record and version == "2" then
+            local groupCount
+            encodedName, groupCount = record:match("^G|([^|]*)|([^|]*)$")
+            groupCount = integer(groupCount, Tags.MAX_RULE_GROUPS)
+            if not encodedName or not groupCount or groupCount < 1 then return nil, "Corrupt" end
+            local groups = {}
+            for groupIndex = 1, groupCount do
+                local groupLine = line()
+                local positive, negative
+                if groupLine then positive, negative = groupLine:match("^C|([^|]*)|([^|]*)$") end
+                positive, negative = positive and tagList(positive), negative and tagList(negative)
+                if not positive or not negative then return nil, "Corrupt" end
+                groups[groupIndex] = {include = positive, exclude = negative}
+            end
+            rule = Tags.normalizeRule({groups = groups})
+        end
         local decodedName = encodedName and decode(encodedName)
         local normalizedName = name(decodedName)
-        include, exclude = include and tagList(include), exclude and tagList(exclude)
-        if not normalizedName or normalizedName ~= decodedName or seen[normalizedName]
-            or not include or not exclude then return nil, "Corrupt" end
-        local rule = Tags.normalizeRule({mode = mode, include = include, exclude = exclude})
+        if not normalizedName or normalizedName ~= decodedName or seen[normalizedName] then return nil, "Corrupt" end
         if not rule or not Tags.ruleActive(rule) then return nil, "Corrupt" end
         entries[#entries + 1], seen[normalizedName] = {name = normalizedName, rule = rule}, true
     end
@@ -95,15 +111,25 @@ local function readSlot(index)
 end
 
 local function serialize(entries, generation)
-    local lines = {MAGIC .. "|" .. VERSION .. "|" .. generation .. "|" .. #entries}
-    for _, entry in ipairs(entries) do
-        local lists = {}
+    local version = "1"
+    for _, entry in ipairs(entries) do if entry.rule.groups then version = "2"; break end end
+    local lines = {MAGIC .. "|" .. version .. "|" .. generation .. "|" .. #entries}
+    local function lists(group)
+        local result = {}
         for _, field in ipairs({"include", "exclude"}) do
             local values = {}
-            for _, id in ipairs(entry.rule[field]) do values[#values + 1] = encode(id) end
-            lists[#lists + 1] = table.concat(values, ",")
+            for _, id in ipairs(group[field]) do values[#values + 1] = encode(id) end
+            result[#result + 1] = table.concat(values, ",")
         end
-        lines[#lines + 1] = "P|" .. encode(entry.name) .. "|" .. entry.rule.mode .. "|" .. lists[1] .. "|" .. lists[2]
+        return result[1] .. "|" .. result[2]
+    end
+    for _, entry in ipairs(entries) do
+        if entry.rule.groups then
+            lines[#lines + 1] = "G|" .. encode(entry.name) .. "|" .. #entry.rule.groups
+            for _, group in ipairs(entry.rule.groups) do lines[#lines + 1] = "C|" .. lists(group) end
+        else
+            lines[#lines + 1] = "P|" .. encode(entry.name) .. "|" .. entry.rule.mode .. "|" .. lists(entry.rule)
+        end
     end
     lines[#lines + 1] = "END|" .. generation .. "|" .. #entries
     return table.concat(lines, "\n") .. "\n"

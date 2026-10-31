@@ -115,8 +115,8 @@ do
     inspections,collections={},{}
     result=policy.evaluatePriority(queue,independent,true)
     assert(result.allowed and result.to==2 and result.after and result.target==head)
-    assert(inspections[independent]==1 and inspections[head]==1 and inspections[transfer]==1,
-        'priority fallback shares analysis with the failed preemption attempt')
+    assert(inspections[independent]==2 and inspections[head]==1 and inspections[transfer]==1,
+        'priority fallback rebuilds fresh facts at each public decision boundary')
     inspections,collections={},{}
     result=policy.evaluateCancel(queue,independent)
     assert(result.allowed and result.first==3 and result.last==3)
@@ -1178,3 +1178,50 @@ for _,variant in ipairs({'foreign-force-cancel','changed-base-source','missing-s
 end
 changedBaseSource=false
 print('Pending cancellation provenance: preinstalled foreign forceCancel, changed base source and unavailable readers remain closed.')
+
+-- First-slice return failure proof has explicit cheap unsupported boundaries.
+-- Contract fixtures count dispatch; no native action/effect callback is run.
+do
+    local fresh=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+    fresh.project('ActionQueueOperations');fresh.project('ActionQueueDefinitions')
+    local bounded=fresh.project('ActionQueuePolicy')
+    local toolkit=PZSurvivorToolkit
+    toolkit.ActionQueueCraft=nil
+    local inspections,targetCalls=0,0
+    toolkit.ActionQueueDefinitions.inspect=function(action)
+        inspections=inspections+1
+        return {knownInputs=true,items={[action.item:getID()]=true},targets={}}
+    end
+    local original={Type='ISInventoryTransferAction',character=fresh.player,item=fresh.item('Base.Book')}
+    local function members(size)
+        local values={original}
+        for i=2,size do values[i]=fresh.action(ISReadABook,{item=fresh.item('Base.OtherBook')})end
+        return {queue=values,indexOf=function(self,action)
+            for i,member in ipairs(self.queue)do if member==action then return i end end;return -1
+        end}
+    end
+    for _,size in ipairs({1,32,33,200,1000})do
+        local queue=members(size);inspections=0
+        if size>32 then queue.indexOf=function()error('oversized proof must not scan membership')end end
+        local supported,reason=bounded.returnFailureIndependent(queue,original)
+        assert(supported==(size<=32))
+        assert(size<=32 and inspections==size or size>32 and inspections==0 and reason=='unsupported_queue_size')
+    end
+    local trusted=function()targetCalls=targetCalls+1 end
+    local world={sharesTarget=trusted};toolkit.ActionQueueWorld=world
+    assert(bounded.registerTargetChecker('world',world,trusted))
+    assert(bounded.returnFailureIndependent(members(2),original)and targetCalls>0)
+    world.sharesTarget=function()error('foreign target checker must not run')end
+    inspections=0
+    local supported,reason=bounded.returnFailureIndependent(members(2),original)
+    assert(not supported and reason=='unsupported_target_checker'and inspections==0)
+    world.sharesTarget=trusted
+    local foreign=members(2);foreign.queue[2].perform=function()error('foreign native effect must not run')end
+    supported,reason=bounded.returnFailureIndependent(foreign,original)
+    assert(not supported and reason=='unsupported_tail_binding','type alone must not grant failure-isolation permission')
+    local queue=members(2);queue.queue[2].Type='ISHandcraftAction';inspections=0
+    supported,reason=bounded.returnFailureIndependent(queue,original)
+    assert(not supported and reason=='unsupported_tail_kind'and inspections==1,
+        'unsupported complex suffix must not invoke its input/effect contract')
+end
+print('Return isolation: 32-member queue bound, closed complex suffix and unchanged target-checker identity passed.')

@@ -42,9 +42,30 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.326
+
+- Record fresh per-call native request observations for earned automatic returns, with advisory outcome links. Preserve native authority, exact physical outcomes and existing editing permissions; source observations do not promise capacity or trigger replay.
+- Recheck exact earned-return items and container bindings after queue eligibility callbacks, before optional execution is bound. Decline stale, consumed or duplicated inputs and preserve a nested execution binding; native admission and transfer outcomes remain authoritative.
+- Share exact-item outcome observation across native pickups and returns. Preserve partial effects, authoritative transaction evidence and retained-item failure checks; private cleanup ownership and existing queue permissions remain with their current owners.
+- Reduce temporary allocations while comparing queued resources. Absent dependencies no longer create empty maps; static inspection fields are reused and boolean container checks avoid building unused ancestry lists. Keep live binding checks, full capacity ancestry and native transfer effects.
+- Borrowed reading can cross independent equipment through a shared execution contract for a confirmed single automatic return. Native live capacity checks and exact item outcomes remain authoritative; unknown dependencies and merged transfers stay protected.
+- A proven never-started refusal, explicit Host rejection or completed SP transfer with no item movement keeps the borrowed item carried and preserves an independent queue tail. The Actions window retains the failed return with an explicit Keep item control and fences the corresponding TidyUpMeister retry until the choice; reset notices can be forgotten without replaying transfers.
+
+### 0.1.325
+
+- Open container configuration and tag management immediately, preparing their tag catalogues in small steps between frames with a loading indicator. Reduce the remaining work by sharing recipe reads within each step, avoiding redundant script scans, and collecting chooser IDs without copying unused state metadata. Fresh windows and ordinary live item classification retain current data and tag order.
+- Extend the native container scenario to create a real custom tag and verify its grouped rule through save/reopen/cancel and Host owner/server/observer agreement; require exclusive admission for opening measurements.
+
+### 0.1.324
+
+- Replace the tag-rule catalogue and match preview with visible condition rows, explicit Has/Not controls, AND conditions and OR groups. Add or replace tags through a searchable chooser without a duplicate expression header.
+- Preserve legacy all/any rules, semantic and custom tags, saved filters, Quartermaster presets and context-menu profiles. Grouped rules round-trip through storage and Host authority.
+- Build visible categories and tag projections in one fresh pass per container window, collapse duplicate chooser sources and avoid repeating list construction/layout on the first frame. Skip offscreen selection counting and drawing; keep live instance categories current.
+
 ### 0.1.323
 
 - Reduce refresh work while the personal inventory window is fully hidden and idle. Keep container discovery and item categories current, and rebuild the visible contents when the window opens. Explicit refreshes and visible collapsed windows retain their normal behavior.
+
 
 ### 0.1.322
 
@@ -1495,9 +1516,15 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
-### 0.1.76
+### 0.1.77
 
 - Reduce repeated food-age work in CleanUI's vanilla inventory mode. Collapsed stacks share the full-stack one-second updater while keeping ordinary row updates, offscreen ageing and freshness regrouping. The change applies only to reviewed source versions; unknown sources retain the original behavior.
+
+### 0.1.76
+
+- Observe the reviewed native item-transfer request boundaries, including continuations, with opaque per-call receipts. Preserve native arguments, results and throws, require the Lua VM owner thread, reject unknown dispatchers and mask nested calls; prepare receipt metadata during Lua-owner loading.
+- Preserve native syntax-error and read-error ordering when queue or CleanUI compiler hooks inspect Lua input. Replay incomplete reads through the original lexer and keep stream closure with the native loader.
+- Reduce repeated action-queue binding and constant-map comparisons for the reviewed Toolkit source and native VM. Preserve every ownership observation and original Lua fallback, keep input readers with their native owner, and serialize original bytecode without retaining old Lua environments.
 
 ### 0.1.75
 

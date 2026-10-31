@@ -43,6 +43,8 @@ local nativeTransferItem = ISTransferAction and ISTransferAction.transferItem
 local nativeDropItemOffset = ISTransferAction and ISTransferAction.GetDropItemOffset
 local transferItemGuard
 local inspect
+-- Private, synchronous decision lifetime; never stored on an action or descriptor.
+local activeDecision
 local ordinaryTransfer
 -- Record evidence only at an existing rejecting gate. Raw reason APIs and their
 -- tuple layout stay compatible; public decisions can explain the same denial.
@@ -191,8 +193,10 @@ local function sharedItem(a, b, context)
     local left, right = operationItems(a, context), operationItems(b, context)
     for item in pairs(left) do if right[item] then return item end end
     local leftContract, rightContract = inspect(a, context), inspect(b, context)
-    for item in pairs(leftContract and leftContract.containerOwners or {}) do if right[item] then return item end end
-    for item in pairs(rightContract and rightContract.containerOwners or {}) do if left[item] then return item end end
+    local owners = leftContract and leftContract.containerOwners
+    if owners then for item in pairs(owners) do if right[item] then return item end end end
+    owners = rightContract and rightContract.containerOwners
+    if owners then for item in pairs(owners) do if left[item] then return item end end end
 end
 
 local function knownCraftInputs(action, context)
@@ -205,11 +209,14 @@ end
 local function dynamicConflict(a, b, context)
     local left, right = inspect(a, context), inspect(b, context)
     if not left or not right then return false end
-    for kind in pairs(left.dynamicInputsByType or {}) do
-        if right.unknownOutputs or (right.dynamicInputsByType and right.dynamicInputsByType[kind]) then return kind end
-        for _, types in pairs({right.itemTypes, right.dynamicInputs, right.outputTypes}) do
-            for fullType in pairs(types) do
-                if fullType:match("[^.]+$") == kind then return kind end
+    local dynamic = left.dynamicInputsByType
+    if dynamic then
+        for kind in pairs(dynamic) do
+            if right.unknownOutputs or (right.dynamicInputsByType and right.dynamicInputsByType[kind]) then return kind end
+            for _, types in pairs({right.itemTypes, right.dynamicInputs, right.outputTypes}) do
+                for fullType in pairs(types) do
+                    if fullType:match("[^.]+$") == kind then return kind end
+                end
             end
         end
     end
@@ -220,8 +227,11 @@ local function dynamicConflict(a, b, context)
                 or (right.outputTypes and right.outputTypes[kind]) then return kind end
         end
     end
-    for kind in pairs(left.outputTypes or {}) do
-        if (right.itemTypes and right.itemTypes[kind]) or (right.outputTypes and right.outputTypes[kind]) then return kind end
+    local outputs = left.outputTypes
+    if outputs then
+        for kind in pairs(outputs) do
+            if (right.itemTypes and right.itemTypes[kind]) or (right.outputTypes and right.outputTypes[kind]) then return kind end
+        end
     end
     return false
 end
@@ -264,17 +274,29 @@ local function sharedWorldTarget(a, b, context)
     local left, right = inspect and inspect(a, context), inspect and inspect(b, context)
     if left and right then
         if sharedEditResource and sharedEditResource(left, right) then return true end
-        for actor in pairs(left.positions or {}) do if right.positions and right.positions[actor] then return actor end end
-        for target in pairs(left.targets or {}) do
-            if right.targets and right.targets[target] and not mediaSetterIndependent(a, b, context) then return target end
+        if not context or (a ~= context.failurePositionPrerequisite and b ~= context.failurePositionPrerequisite) then
+            local positions = left.positions
+            if positions then
+                for actor in pairs(positions) do if right.positions and right.positions[actor] then return actor end end
+            end
+        end
+        local targets = left.targets
+        if targets then
+            for target in pairs(targets) do
+                if right.targets and right.targets[target] and not mediaSetterIndependent(a, b, context) then return target end
+            end
         end
         if left.hands and left.hands == right.hands then return left.hands end
         if (left.equipment and left.equipment == right.hands) or (right.equipment and right.equipment == left.hands) then return left.equipment or right.equipment end
     end
     local world = Toolkit.ActionQueueWorld
     if world and world.sharesTarget and world.sharesTarget(a, b) then return true end
-    local objects = {a.generator, a.charger, a.object, a.moveProps and a.moveProps.object,
-        a.toolkitWorldTarget, a.isoObject}
+    -- Capture every source field before any object callback, as the original
+    -- sparse array did. Most comparisons have no spatial fields at all.
+    local generator, charger, object, moveObject, worldTarget, isoObject =
+        a.generator, a.charger, a.object, a.moveProps and a.moveProps.object, a.toolkitWorldTarget, a.isoObject
+    if not (generator or charger or object or moveObject or worldTarget or isoObject) then return end
+    local objects = {generator, charger, object, moveObject, worldTarget, isoObject}
     for i = 1, 6 do
         local object = objects[i]
         if object and instanceof(object, "IsoObject") and (object == b.generator or object == b.charger
@@ -403,14 +425,17 @@ local snapshots = {}
 local transferFloorHelper
 local transferMethodsAdopted = false
 local transferHelperGuards = {}
-local function carriedContainers(container, character)
+local function carriedContainers(container, character, presenceOnly)
     if not instanceof(character, "IsoPlayer") then return end
-    local chain, seen = {}, {}
-    while instanceof(container, "ItemContainer") and not seen[container] do
+    local chain = not presenceOnly and {}
+    local seen
+    while instanceof(container, "ItemContainer") and (not seen or not seen[container]) do
         local kind = container:getType()
         if kind == "floor" or kind == "proximityInv" or kind == "twistInv_corpses" then return end
-        chain[#chain + 1], seen[container] = container, true
-        if container == character:getInventory() then return chain end
+        if chain then chain[#chain + 1] = container end
+        if container == character:getInventory() then return chain or true end
+        seen = seen or {}
+        seen[container] = true
         local bag = container:getContainingItem()
         if not instanceof(bag, "InventoryContainer") then return end
         container = bag:getContainer()
@@ -422,7 +447,7 @@ local function ordinaryTransferContainer(container, character)
     if kind == "floor" or kind == "proximityInv" or kind == "twistInv_corpses" then return false end
     local bag = container:getContainingItem()
     if not bag then return true end
-    return carriedContainers(container, character) ~= nil
+    return carriedContainers(container, character, true) ~= nil
         or ItemEditAdapters and type(ItemEditAdapters.worldContainer) == "function"
             and ItemEditAdapters.worldContainer(container, character) ~= nil
 end
@@ -508,9 +533,10 @@ function Policy.matchesCleanupPickupBinding(action)
         and action.destContainer == action.character:getInventory()
         and nativeMatches(action, snapshot, true)
 end
+local resourceItemFields = {"item", "gun", "magazine", "weapon", "primary", "secondary", "secondaryItem", "recipeItem", "device", "battery"}
 local function resources(action)
     local result = {items = {}, itemTypes = {}, targets = {}, cancelWaiting = true, interrupt = "finish-step"}
-    for _, field in ipairs({"item", "gun", "magazine", "weapon", "primary", "secondary", "secondaryItem", "recipeItem", "device", "battery"}) do
+    for _, field in ipairs(resourceItemFields) do
         local item = action[field]
         if item and instanceof(item, "InventoryItem") then
             result.items[itemKey(item)] = true
@@ -532,7 +558,11 @@ local function registerNative(name, inspector, helpers, applies)
     Definitions.registerBehavior("native." .. name, {
         types = {name},
         -- Family-owned native cleanup must not claim unrelated uses of the same class.
-        matches = function(action) return nativeMatches(action, snapshot) and (not applies or applies(action)) end,
+        matches = function(action)
+            local scope = activeDecision
+            local proven = scope and scope.native[action] == snapshot
+            return (proven or nativeMatches(action, snapshot)) and (not applies or applies(action))
+        end,
         inspect = inspector,
     })
 end
@@ -704,7 +734,7 @@ function Policy.addContainerResources(result, container)
     if container then result.knownInputs = false end
 end
 
-local function transferResources(action)
+local function transferResources(action, context)
     local result = itemResources(action)
     if not result then return end
     if instanceof(action.item, "InventoryContainer") then result.knownInputs = false end
@@ -721,8 +751,8 @@ local function transferResources(action)
     end
     if ItemEditAdapters then
         result.edit = ItemEditAdapters.transfer(action)
-        if result.edit and (not carriedContainers(action.srcContainer,action.character)
-            or not carriedContainers(action.destContainer,action.character)) then result.positions={[action.character]=true} end
+        if result.edit and (not carriedContainers(action.srcContainer,action.character,true)
+            or not carriedContainers(action.destContainer,action.character,true)) then result.positions={[action.character]=true} end
     end
     return result
 end
@@ -767,13 +797,13 @@ local function fluidResources(action)
     end
     return result
 end
-local function radioResources(action)
+local function radioResources(action, projectionIndependent)
     if not radioModes[action.mode] then return end
     for name, method in pairs(radioMethods) do if (action[name] or false) ~= method then return end end
     local result = resources(action)
     local target = action.device or action.deviceData
     if target and not instanceof(target, "InventoryItem") then result.targets[target] = true end
-    if EditAdapters then result.edit = EditAdapters.radio(action) end
+    if EditAdapters and projectionIndependent ~= true then result.edit = EditAdapters.radio(action) end
     return result
 end
 local function dryItem(item)
@@ -1012,6 +1042,8 @@ end, inspect = function(action)
 end})
 
 inspect = function(action, context)
+    local override = context and context.failureOverrides and context.failureOverrides[action]
+    if override then return unpack(override, 1, 3) end
     local cached = context and context.contracts[action]
     if cached then return unpack(cached, 1, 3) end
     if action._isAddingActions or (Operations.isContinuationPending and Operations.isContinuationPending(action.toolkitQueueOperation)) then
@@ -1244,7 +1276,7 @@ end
 
 local capacityNeutral = {ISReadABook = true, ISWalkToTimedAction = true, ISWalkToTimedActionF = true, ISPathFindAction = true}
 local function carriedContainer(container, character)
-    return carriedContainers(container, character) ~= nil
+    return carriedContainers(container, character, true) ~= nil
 end
 Policy.isCarriedContainer = carriedContainer
 
@@ -1292,7 +1324,21 @@ local function fixedWorldContainer(container)
     end
 end
 
-local function transferCapacityConflict(queue, a, b, last, check, context)
+local function returnCapacityCapability(action, contract, context)
+    if not contract or contract.knownInputs == false then return end
+    local execution = Toolkit.ActionQueueExecution
+    if not execution or type(execution.inspect) ~= "function" then return end
+    local scope = activeDecision
+    local cached = scope and scope.context == context and scope.executions[action]
+    if cached and cached.owner == execution and cached.inspect == execution.inspect then return cached[1], execution end
+    local capability = execution.inspect(action)
+    if scope and scope.context == context then
+        scope.executions[action] = {capability, owner = execution, inspect = execution.inspect}
+    end
+    return capability, execution
+end
+
+local function transferCapacityConflict(queue, a, b, last, check, context, comparison)
     local carts = Toolkit.ActionQueueCarts
     local function transfer(action)
         return action.Type == "ISInventoryTransferAction"
@@ -1300,9 +1346,17 @@ local function transferCapacityConflict(queue, a, b, last, check, context)
     end
     local aTransfer, bTransfer = transfer(a), transfer(b)
     if (aTransfer and not bTransfer) or (bTransfer and not aTransfer) then
-        local equipment = inspect(aTransfer and b or a, context)
+        local equipment = inspect(aTransfer and b or a, comparison or context)
         -- Hand/slot changes can alter carried weight or move heavy items out of external containers.
-        if equipment and equipment.hands == queue.character then return queue.character:getInventory() end
+        if equipment and equipment.hands == queue.character then
+            local transferAction = aTransfer and a or b
+            local contract = inspect(transferAction, context)
+            local capability, execution = returnCapacityCapability(transferAction, contract, context)
+            -- Native live admission and exact outcome handling own this earned
+            -- single return. No equipment-neutrality or future-space claim.
+            if not capability or not execution or not execution.capacityDeferred
+                or not execution.capacityDeferred(transferAction, capability) then return queue.character:getInventory() end
+        end
     end
     if not aTransfer or not bTransfer then return end
     if check.done then return check.blocker end
@@ -1483,23 +1537,68 @@ pendingReturnGuard = function(action, reference)
     end
     return count == 1
 end
+local returnRadioInspector = EditAdapters and EditAdapters.radio
+local returnRadioClosure = Proof and Proof.closure
+local function returnRadioProjectionIndependent(own)
+    if not EditAdapters or Toolkit.ActionQueueEditAdapters ~= EditAdapters
+        or EditAdapters.radio ~= returnRadioInspector or type(returnRadioInspector) ~= "function"
+        or not Proof or Proof.closure ~= returnRadioClosure
+        or not returnRadioClosure(returnRadioInspector, "ActionQueueEditAdapters.lua") then return false end
+    -- The owned radio adapter adds only domain=device. The exact return has
+    -- item/container edits; its plain resource footprint is otherwise unchanged.
+    local edit = own.edit
+    if edit ~= nil and (type(edit) ~= "table" or getmetatable(edit)
+        or type(edit.resources) ~= "table" or getmetatable(edit.resources)) then return false end
+    for _, resource in pairs(edit and edit.resources or {}) do
+        if type(resource) ~= "table" or getmetatable(resource) or resource.domain == "device" then return false end
+    end
+    return true
+end
+-- A comparison-only view may omit an optional, source-owned device edit only
+-- after every changed member's complete contract proves that domain absent.
+-- Full planner/forecast caches retain their complete contracts.
+local function cancellationComparisons(queue, first, last, context)
+    if #queue.queue > 32 or not targetCheckersUnchanged() then return context end
+    for index = first, last do
+        local own = inspect(queue.queue[index], context)
+        if not own or not returnRadioProjectionIndependent(own) then return context end
+    end
+    return {contracts = context.contracts, items = context.items, failureOverrides = {}}
+end
+local function cancellationComparison(other, context)
+    if not context.failureOverrides or other.Type ~= "ISRadioAction" or not mediaSetterModes[other.mode]
+        or other._isAddingActions or other.action
+        or (Operations.isContinuationPending and Operations.isContinuationPending(other.toolkitQueueOperation))
+        or context.contracts[other] or context.failureOverrides[other] then return context end
+    local snapshot = snapshots[getmetatable(other)]
+    local scope = activeDecision
+    local proven = scope and scope.native[other] == snapshot
+    if not snapshot or not (proven or nativeMatches(other, snapshot)) then return context end
+    local behavior, source = Definitions.behavior(other)
+    if behavior and source == "native.ISRadioAction" and behavior.inspect == radioResources then
+        context.failureOverrides[other] = {radioResources(other, true), source, behavior}
+    end
+    return context
+end
 pendingReturnReason = function(queue, action, context)
     local settlement = Toolkit.ActionQueueSettlement
     if not settlement or not settlement.canWaivePendingReturn
         or not settlement.canWaivePendingReturn(action, pendingReturnGuard) then return "dependent" end
     local index = queue:indexOf(action)
     local capacity = {first = index, last = index}
+    local comparisons = cancellationComparisons(queue, index, index, context)
     for otherIndex, other in ipairs(queue.queue) do
         if other ~= action then
-            if not knownCraftInputs(other, context) then return "operation_dependent", nil, nil, other end
+            local comparison = cancellationComparison(other, comparisons)
+            if not knownCraftInputs(other, comparison) then return "operation_dependent", nil, nil, other end
             if otherIndex > index then
-                local shared = sharedItem(action, other, context)
+                local shared = sharedItem(action, other, comparison)
                 if shared then return "operation_shared_item", nil, nil, other, shared end
-                local conflict = sharedWorldTarget(action, other, context)
-                    or dynamicConflict(action, other, context) or dynamicConflict(other, action, context)
+                local conflict = sharedWorldTarget(action, other, comparison)
+                    or dynamicConflict(action, other, comparison) or dynamicConflict(other, action, comparison)
                 if conflict then return "operation_dependent", nil, nil, other, conflict end
             end
-            local blocker = transferCapacityConflict(queue, action, other, #queue.queue, capacity, context)
+            local blocker = transferCapacityConflict(queue, action, other, #queue.queue, capacity, context, comparison)
             if blocker then return "container_capacity", nil, nil, other, blocker end
         end
     end
@@ -1588,29 +1687,31 @@ function Policy.cancelOperationReason(queue, action, context)
     end
     for item in pairs(type(token) == "table" and token.toolkitPickups or {}) do inputs[itemKey(item)] = true end
     local capacityCheck = {first = first, last = last}
+    local comparisons = cancellationComparisons(queue, first, last, context)
     local groupItems = plainGroupItems(queue, first, last, context)
     for i, other in ipairs(queue.queue) do
         if i > last or (i < first and not pendingRemovalOnly) then
-            if other._isAddingActions or not knownCraftInputs(other, context) then
+            local comparison = cancellationComparison(other, comparisons)
+            if other._isAddingActions or not knownCraftInputs(other, comparison) then
                 return unknownDenial(context, "operation_dependent", other), nil, nil, other
             end
-            for item in pairs(operationItems(other, context)) do
+            for item in pairs(operationItems(other, comparison)) do
                 if inputs[item] then return "operation_shared_item", nil, nil, other, item end
             end
-            if mayShareGroupResource(groupItems, other, context) then
+            if mayShareGroupResource(groupItems, other, comparison) then
                 for j = first, last do
-                    local item = sharedItem(queue.queue[j], other, context)
+                    local item = sharedItem(queue.queue[j], other, comparison)
                     if item then return "operation_shared_item", nil, nil, other, item end
-                    local conflict = sharedWorldTarget(queue.queue[j], other, context) or dynamicConflict(queue.queue[j], other, context)
-                        or dynamicConflict(other, queue.queue[j], context)
+                    local conflict = sharedWorldTarget(queue.queue[j], other, comparison) or dynamicConflict(queue.queue[j], other, comparison)
+                        or dynamicConflict(other, queue.queue[j], comparison)
                     if conflict then return "operation_dependent", nil, nil, other, conflict end
-                    local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck, context)
+                    local capacity = transferCapacityConflict(queue, queue.queue[j], other, #queue.queue, capacityCheck, context, comparison)
                     if capacity then return "container_capacity", nil, nil, other, capacity end
                 end
             end
             -- shortcut: output requirements of arbitrary later actions are unknown; add verified adapters to allow them.
             if output and i > last then
-                local independentCraft = craft(other) and knownCraftInputs(other, context)
+                local independentCraft = craft(other) and knownCraftInputs(other, comparison)
                 if ((other.onStartFunc or other.onCancelFunc) and not independentCraft) or other.retriggerLastAction
                     or (other.onCompleteFunc and other.onCompleteFunc ~= other.toolkitQueueSafeOnComplete and not independentCraft)
                     or (not independentCraft and not other.toolkitIndependentBulk and not other.toolkitBulkPreparation
@@ -1764,6 +1865,84 @@ Policy.live, Policy.stoppable = live, stoppable
 Policy.resumableWorld, Policy.preparationCanFinish = resumableWorld, preparationCanFinish
 Policy.operationItems = operationItems
 
+-- Failure isolation never guesses that an unknown or resource-dependent suffix
+-- is independent. Capacity-sharing future transfers remain on their native path
+-- until their own admission/outcome contracts are migrated. No inventory scan.
+local MAX_RETURN_EXECUTION_MEMBERS = 32
+local returnFailureSuffix = {ISReadABook = true, ISWalkToTimedAction = true,
+    ISWalkToTimedActionF = true, ISPathFindAction = true, ISEquipWeaponAction = true, ISUnequipAction = true,
+    ISRadioAction = true}
+local returnApproachBinding
+local returnApproachClosure = Proof and Proof.closure
+local function returnFailureApproach(action)
+    local owner = Toolkit.ActionQueueApproach
+    local checker = owner and owner.isAction
+    if type(checker) ~= "function" or not Proof or Proof.closure ~= returnApproachClosure
+        or type(returnApproachClosure) ~= "function" or not returnApproachClosure(checker, "ActionQueueApproach.lua") then return false end
+    if not returnApproachBinding then returnApproachBinding = {owner = owner, checker = checker} end
+    return owner == returnApproachBinding.owner and checker == returnApproachBinding.checker and checker(action) == true
+end
+local function returnFailureIndependent(queue, action, scope)
+    -- Unsupported is a closed result, never permission on budget exhaustion.
+    -- The first slice intentionally has no large-queue or recipe-input forecast.
+    if not queue or #queue.queue > MAX_RETURN_EXECUTION_MEMBERS then return false, "unsupported_queue_size" end
+    if not targetCheckersUnchanged() then return false, "unsupported_target_checker" end
+    local index = queue and queue:indexOf(action)
+    if not index or index < 1 then return false end
+    local outer = scope and scope.context
+    local context = {contracts = outer and outer.contracts or {}, items = outer and outer.items or {},
+        executionProbe = true, failurePositionPrerequisite = action}
+    local own = inspect(action, context)
+    if not own or own.knownInputs == false or own.unknownOutputs then return false end
+    local radioProjectionIndependent = returnRadioProjectionIndependent(own)
+    context.failureOverrides = {}
+    -- Transfer reachability is a position prerequisite, not a position effect.
+    -- A later walk remains independent of its terminal no-effect rejection.
+    for i = index + 1, #queue.queue do
+        local other = queue.queue[i]
+        local approach = other.Type == "ISQueueActionsAction" and returnFailureApproach(other)
+        if not returnFailureSuffix[other.Type] and not approach
+            or other.Type == "ISRadioAction" and not mediaSetterModes[other.mode] then
+            return false, "unsupported_tail_kind"
+        end
+        if other._isAddingActions or other.action then return false end
+        local snapshot = snapshots[getmetatable(other)]
+        if not approach and (not snapshot or not nativeMatches(other, snapshot)) then return false, "unsupported_tail_binding" end
+        if scope and not approach then scope.native[other] = snapshot end
+        if other.Type == "ISRadioAction" and radioProjectionIndependent and not context.contracts[other] then
+            local behavior, source = Definitions.behavior(other)
+            if behavior and source == "native.ISRadioAction" and behavior.inspect == radioResources then
+                -- Tail-only override: never publish a partial device edit into
+                -- the outer decision's full planner contract cache.
+                context.failureOverrides[other] = {radioResources(other, true), source, behavior}
+            end
+        end
+        local contract, source = inspect(other, context)
+        if approach and (source ~= "toolkit.approach" or not contract or not contract.deferred
+            or not contract.preparation or contract.capacityNonIncreasing ~= true) then
+            return false, "unsupported_tail_binding"
+        end
+        if not contract or contract.knownInputs == false or contract.unknownOutputs
+            or sharedItem(action, other, context) or sharedWorldTarget(action, other, context)
+            or dynamicConflict(action, other, context) or dynamicConflict(other, action, context) then return false end
+    end
+    return true
+end
+
+function Policy.returnFailureIndependent(queue, action)
+    local scope = activeDecision
+    if scope and scope.queue == queue then
+        -- Reuse only inside the current synchronous source-owned decision. A new
+        -- decision, admission, rejection or click always starts with fresh facts.
+        local cached = scope.failures[action]
+        if cached then return cached[1], cached[2] end
+        local result, reason = returnFailureIndependent(queue, action, scope)
+        scope.failures[action] = {result, reason}
+        return result, reason
+    end
+    return returnFailureIndependent(queue, action)
+end
+
 function Policy.replaceStop(previous, replacement)
     if type(adoptGroomingBase) == "function" and Toolkit.ActionQueueGrooming == Grooming and Grooming.adoptBase == adoptGroomingBase then adoptGroomingBase("stop", previous, replacement) end
     if Firearms then Firearms.adoptBase("stop", previous, replacement) end
@@ -1838,8 +2017,8 @@ function Policy.previewMove(queue, action, target, after, context)
         to = to, first = first, last = last, preempt = preempt}
 end
 
-function Policy.previewCancel(queue, action, whole)
-    local context = {contracts = {}, items = {}}
+function Policy.previewCancel(queue, action, whole, context)
+    context = context or {contracts = {}, items = {}}
     local reason, first, last, blocker, resource
     if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
     else reason, first, last, blocker, resource = Policy.cancelReason(queue, action, context) end
@@ -1858,8 +2037,8 @@ function Policy.evaluateMove(queue, action, target, after, context)
         blocker = blocker, resource = resource, snapshot = snapshot}
 end
 
-function Policy.evaluateCancel(queue, action, whole)
-    local context = {contracts = {}, items = {}}
+function Policy.evaluateCancel(queue, action, whole, context)
+    context = context or {contracts = {}, items = {}}
     local snapshot = editSnapshot(queue)
     local reason, first, last, blocker, resource
     if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
@@ -1874,6 +2053,44 @@ function Policy.evaluateCancel(queue, action, whole)
     return {allowed = reason == nil, reason = reason, first = first, last = last,
         mode = returnWaiver and "pending-return" or queue and action == queue.current and "active" or "pending",
         returnWaiver = returnWaiver, blocker = blocker, resource = resource, snapshot = snapshot}
+end
+
+-- A caller's table is bounded output only. Each public invocation owns its
+-- actual analysis maps, including reentrant calls using the same output table.
+local decisionContextMarker = {}
+local decisionContextFields = {"contracts", "items", "denialGate", "denialReason", "denialBlocker",
+    "editFallback", "failureOverrides", "failurePositionPrerequisite", "executionProbe"}
+local function freshDecisionContext(output)
+    if type(output) ~= "table" or getmetatable(output) or output[decisionContextMarker] then output = nil end
+    if output then for _, name in ipairs(decisionContextFields) do output[name] = nil end end
+    return {contracts = {}, items = {}, [decisionContextMarker] = true}, output
+end
+local function inDecision(queue, context, output, callback, ...)
+    local previous = activeDecision
+    activeDecision = {queue = queue, context = context, failures = {}, executions = {}, native = {}}
+    local result = {pcall(callback, ...)}
+    activeDecision = previous
+    if output then for _, name in ipairs(decisionContextFields) do output[name] = context[name] end end
+    if not result[1] then error(result[2], 0) end
+    return result[2]
+end
+local previewMove, previewCancel = Policy.previewMove, Policy.previewCancel
+local evaluateMove, evaluateCancel = Policy.evaluateMove, Policy.evaluateCancel
+function Policy.previewMove(queue, action, target, after, context)
+    local fresh, output = freshDecisionContext(context)
+    return inDecision(queue, fresh, output, previewMove, queue, action, target, after, fresh)
+end
+function Policy.evaluateMove(queue, action, target, after, context)
+    local fresh, output = freshDecisionContext(context)
+    return inDecision(queue, fresh, output, evaluateMove, queue, action, target, after, fresh)
+end
+function Policy.previewCancel(queue, action, whole)
+    local context = freshDecisionContext()
+    return inDecision(queue, context, nil, previewCancel, queue, action, whole, context)
+end
+function Policy.evaluateCancel(queue, action, whole)
+    local context = freshDecisionContext()
+    return inDecision(queue, context, nil, evaluateCancel, queue, action, whole, context)
 end
 
 local function priorityDecision(queue, action, preempt, decide)

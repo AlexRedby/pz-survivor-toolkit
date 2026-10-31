@@ -1,6 +1,8 @@
 require "Hotbar/ISHotbar"
 require "PZSurvivorToolkit/ActionQueueAcknowledgements"
 local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
+local Proof = require "PZSurvivorToolkit/SourceProof"
+local proofClosure = Proof and Proof.closure
 local Intent = {}
 PZSurvivorToolkit.ActionQueueTidyIntent = Intent
 local states, watching = setmetatable({}, {__mode='k'}), setmetatable({}, {__mode='k'})
@@ -86,6 +88,38 @@ local function keptReturn(player,value,action)
         elseif holder:getContainer()~=player:getInventory() then return false end
     end
     return action.destContainer==destination
+end
+local blockedReturnBinding
+local function blockedReturnMethods()
+    local checker,hint=Settlement.returnRestorationBlocked,Settlement.hasActiveBlockedReturn
+    if PZSurvivorToolkit.ActionQueueSettlement~=Settlement or not Proof or Proof.closure~=proofClosure
+        or type(proofClosure)~='function'or type(checker)~='function' or type(hint)~='function'
+        or not proofClosure(checker,'ActionQueueSettlement.lua')or not proofClosure(hint,'ActionQueueSettlement.lua')then return end
+    if not blockedReturnBinding then blockedReturnBinding={checker=checker,hint=hint}end
+    if checker==blockedReturnBinding.checker and hint==blockedReturnBinding.hint then return blockedReturnBinding end
+end
+local function blockedReturn(action)
+    local methods=blockedReturnMethods()
+    if not methods then return false end
+    local ok,result=pcall(methods.checker,action)
+    return ok and result==true
+end
+local function mayHaveBlockedReturn(player)
+    if not PZSurvivorToolkit.Settings.actionQueue()then return false end
+    local methods=blockedReturnMethods()
+    if not methods then return false end
+    local ok,present=pcall(methods.hint,player)
+    -- Active current-generation debt only enables read-only buffering. Every
+    -- suppressed action still needs the separate exact episode proof.
+    return ok and present==true
+end
+
+local function consumeKeptReturns(value,consumed)
+    local count=0
+    for id in pairs(consumed)do
+        if value.returnIntents[id]then value.returnIntents[id]=nil;count=count+1 end
+    end
+    return count
 end
 local function confirm(record)
     local action,player=record.executor or record.action,record.player
@@ -396,8 +430,12 @@ function Intent.install(valid,approvedWrapper)
     if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() states=setmetatable({}, {__mode='k'});watching=setmetatable({}, {__mode='k'});transfers=setmetatable({}, {__mode='k'}) end) end
 end
 function Intent.update(player,callback,...)
+    local activeBlocked=mayHaveBlockedReturn(player)
     local value=states[player]
-    if not value then return callback(...) end
+    if not value then
+        if not activeBlocked then return callback(...)end
+        value=state(player)
+    end
     if player:isDead() or ISTimedActionQueue.queues[player]~=value.queue or not guard() then
         clear(player);return callback(...)
     end
@@ -424,9 +462,11 @@ function Intent.update(player,callback,...)
         if action.character==player and value.queue:indexOf(action)==-1 then transfers[action]=nil end
     end
     for id,ref in pairs(value.pickups) do if not resolve(player,ref) then value.pickups[id]=nil end end
+    local keptPending=0
     for id,retained in pairs(value.returnIntents) do
         if retained.generation~=(value.queue.toolkitOperationGeneration or 0)
-            or retained.source~=player:getInventory() or not resolve(player,retained.item) then value.returnIntents[id]=nil end
+            or retained.source~=player:getInventory() or not resolve(player,retained.item) then value.returnIntents[id]=nil
+        else keptPending=keptPending+1 end
     end
     local empty=#value.queue.queue==0 and not player:hasTimedActions()
     -- P4 may construct restoration on its first idle callback. Hold that idle
@@ -434,7 +474,11 @@ function Intent.update(player,callback,...)
     if empty and waiting then return end
     value.idle=empty and value.idle+1 or 0
     local phase=not value.restoring and value.idle>=2
-    if not phase then
+    -- A later failed loan can arrive before the previous Intent state retires.
+    -- Observe its first idle callback even when explicit restoration is already
+    -- complete, without applying the old hand/clothing overlays again.
+    local fenceOnly=empty and (activeBlocked or keptPending>0) and not phase
+    if not phase and not fenceOnly then
         local results=pack(callback(...))
         if value.restoring and value.idle>=2 and #value.queue.queue==0 then clear(player) end
         return unpack(results,1,results.n)
@@ -444,6 +488,32 @@ function Intent.update(player,callback,...)
     ISTimedActionQueue.add=function(action) actions[#actions+1]=action;return value.queue end
     local results=pack(pcall(callback,...));ISTimedActionQueue.add=add
     if not results[1] then error(results[2],0) end
+    -- Reviewed P4 queueRestore retires its session before this synchronous
+    -- batch; later OnPlayerUpdate calls only drain its restoring marker. Consume
+    -- Keep after classifying a matching batch, never from an idle count, so a
+    -- duplicate entry cannot escape and no-output callbacks retain the intent.
+    local retainedReturns,retainedFloors,consumedKept={},{},{}
+    for _,action in ipairs(actions)do
+        if action.character==player and getmetatable(action)==ISInventoryTransferAction and guard(action)then
+            local kept=keptReturn(player,value,action)
+            if kept or activeBlocked and blockedReturn(action)then
+                retainedReturns[action]=true
+                if kept then consumedKept[action.item:getID()]=true end
+                if type(action.destContainer.getType)=='function'and action.destContainer:getType()=='floor'then
+                    retainedFloors[action.item:getID()]=action.item
+                end
+            end
+        end
+    end
+    if fenceOnly then
+        for _,action in ipairs(actions)do
+            if not retainedReturns[action]and not (action.character==player and getmetatable(action)==P4RestoreFloorAction
+                and action.item and guard(action)and retainedFloors[action.item:getID()]==action.item)then add(action)end
+        end
+        keptPending=keptPending-consumeKeptReturns(value,consumedKept)
+        if value.restoring and value.idle>=2 and #value.queue.queue==0 and keptPending==0 then clear(player)end
+        return unpack(results,2,results.n)
+    end
     local primary,secondary=player:getPrimaryHandItem(),player:getSecondaryHandItem()
     local hands={primary=identity(primary),secondary=identity(secondary)}
     local override=false
@@ -481,25 +551,14 @@ function Intent.update(player,callback,...)
         if item.IsClothing and item:IsClothing() then return item:getBodyLocation() end
         return item.canBeEquipped and item:canBeEquipped()
     end
-    -- Only the exact guarded P4 return produced in this idle batch can pair
-    -- with a floor relocation. Keep unrelated returns and native equipment work.
-    local retainedReturns,retainedFloors={},{}
-    for _,action in ipairs(actions) do
-        if action.character==player and getmetatable(action)==ISInventoryTransferAction
-            and guard(action) and keptReturn(player,value,action) then
-            retainedReturns[action]=true
-            if type(action.destContainer.getType)=='function' and action.destContainer:getType()=='floor' then
-                retainedFloors[action.item:getID()]=action.item
-            end
-        end
-    end
     local buffered={}
     for _,action in ipairs(actions) do
         local class=getmetatable(action)
         if action.character~=player or not guard(action) then buffered[#buffered+1]=action
         elseif retainedReturns[action] or class==P4RestoreFloorAction and action.item
             and retainedFloors[action.item:getID()]==action.item then
-            -- The committed exact return and its paired floor placement were waived.
+            -- A committed Keep or private undecided failed episode fences only
+            -- this exact return and its paired floor placement; no retry is run.
         elseif override and (class==ISEquipWeaponAction or class==ISUnequipAction
             and (same(action.item,identity(primary)) or same(action.item,identity(secondary)))) then
             -- Rebuild the validated hand group with only the explicit slots overlaid.
@@ -545,6 +604,7 @@ function Intent.update(player,callback,...)
         if not (override and getmetatable(action)==P4RestoreAction and guard(action)
             and (activation and same(action.item,activation.item) or not same(action.item,hands.primary) and not same(action.item,hands.secondary))) then add(action) end
     end
+    consumeKeptReturns(value,consumedKept)
     value.restoring,value.idle=true,0
     return unpack(results,2,results.n)
 end

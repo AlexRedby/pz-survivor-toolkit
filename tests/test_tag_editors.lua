@@ -36,6 +36,7 @@ function Base:setEditable(value) self.editable=value end
 function Base:unfocus() self.focused=false end
 function Base:hidePopup() self.popup.visible=false end
 function Base:drawText() end
+function Base:drawTextureScaledAspect() end
 function Base:bringToTop() self.raised=true end
 function Base:getAbsoluteX() return self.x end
 function Base:getAbsoluteY() return self.y end
@@ -81,7 +82,10 @@ function Custom.customIds() return {'custom:one'} end
 function Custom.isActive(id) for _,value in ipairs(active) do if value==id then return true end end return id:sub(1,9)=='category:' end
 function Custom.typeDelta(fullType) return typeDeltas[fullType] or {} end
 function Custom.itemDelta(item) return item.delta or {} end
-local Tags={enabled=function() return true end,allIds=function(items) local out={};for _,id in ipairs(active)do out[#out+1]=id end;for _,item in ipairs(items or {})do for _,id in ipairs(item.base)do local found=false;for _,saved in ipairs(out)do if saved==id then found=true end end;if not found then out[#out+1]=id end end end;return out end}
+local Tags={enabled=function() return true end,cachedIds=function(items) local out={};for _,id in ipairs(active)do out[#out+1]=id end;for _,item in ipairs(items or {})do for _,id in ipairs(item.base)do local found=false;for _,saved in ipairs(out)do if saved==id then found=true end end;if not found then out[#out+1]=id end end end;return out end}
+local allIdReads=0
+Tags.allIds=function(items)allIdReads=allIdReads+1;return Tags.cachedIds(items)end
+Tags.newAutomaticIdScan=function()return nil end
 function Tags.label(id) return definitions[id] and definitions[id].name or id end
 function Tags.defaultLabel(id) return id end
 function Tags.automaticForItem(item) return item.base end
@@ -119,6 +123,7 @@ local Assignment=require('PZSurvivorToolkit/ItemTagEditor')
 local Icons=require('PZSurvivorToolkit/TagIconPicker')
 local catalog=Catalog.open({playerNum=0})
 assert(catalog.added and catalog.width<=1600 and catalog.height<=900)
+assert(allIdReads==0,'Catalog opening forced synchronous automatic discovery')
 catalog:select({id='custom:one'})
 catalog.nameEntry:setText('Draft name');catalog.draft.color.r=.95
 assert(definitions['custom:one'].name=='My tag' and definitions['custom:one'].color.r==.2,'draft mutated live definition')
@@ -162,6 +167,7 @@ local selected=Assignment.itemsIn(rows)
 assert(#selected==3 and selected[1]==a and selected[2]==b and selected[3]==c,'native/CleanUI rows lost physical identity or duplicated items')
 assert(#Assignment.itemsIn({{items={a,b,c},cleanUIFirstActualIndex=3}})==1,'CleanUI explicit first index ignored')
 local window=Assignment.open({items={a,b}})
+assert(allIdReads==0,'Assignment opening forced synchronous automatic discovery')
 assert(window:scope()=='item' and window:state('food')=='mixed' and window:presence('food')=='Mixed')
 window:cycle({id='tool'})
 assert(window:draft().changes.tool=='add' and a.delta.food=='remove' and a.delta['custom:one']=='add' and a.delta.tool==nil,
@@ -267,3 +273,90 @@ assert(parent.baseRevision==20 and parent.drafts.item==itemDraft and itemDraft.c
     'catalog save silently rebased an already-stale parent assignment')
 parent:close()
 print('Tag editors: own catalog acceptance advances only a fresh parent revision and preserves assignment drafts')
+
+-- Discovery yields across native UI frames without taking ownership of drafts.
+Tags.allIds=function()error('Editor forced synchronous automatic tag discovery')end
+local cachedIds=Tags.cachedIds
+local published,scans={},{}
+local nextDiscovered='category:myDiscovered'
+Tags.cachedIds=function(items)
+    local ids=cachedIds(items)
+    for _,id in ipairs(published)do ids[#ids+1]=id end
+    return ids
+end
+Tags.newAutomaticIdScan=function()
+    local scan={steps=0,id=nextDiscovered}
+    function scan:step(budget)
+        assert(not self.cancelled and budget>=4 and budget<=6,'Discovery ignored its frame budget or cancellation')
+        self.steps=self.steps+1
+        if self.steps==2 then published[#published+1]=self.id;return true end
+        return false
+    end
+    function scan:cancel()self.cancelled=true end
+    scans[#scans+1]=scan
+    return scan
+end
+local function selectedId(window)
+    local row=window.list.items[window.list.selected or 0]
+    return row and row.item.id
+end
+catalog=Catalog.open()
+local scan=scans[#scans]
+assert(catalog.toolkitTagCatalogPending and scan.steps==0 and #catalog.list.items>0,
+    'Catalog opening blocked on discovery instead of showing known rows')
+catalog:select({id='custom:one'});catalog.nameEntry:setText('Pending catalog draft')
+local draft=catalog.draft
+catalog:chooseIcon()
+assert(not catalog.toolkitIconPicker and catalog.iconButton.enable==false
+    and not Icons.open(catalog,function()end),'Pending discovery opened a partial icon catalog')
+catalog.search:setText('my');catalog:reloadList();catalog.list.selected=1
+local reloads,reload=0,catalog.reloadList
+catalog.reloadList=function(self)reloads=reloads+1;return reload(self)end
+catalog:prerender()
+assert(catalog.toolkitTagCatalogPending and reloads==0 and scan.steps==1,
+    'Incomplete catalog discovery rebuilt rows or failed to yield')
+catalog:prerender()
+assert(not catalog.toolkitTagCatalogPending and catalog.toolkitTagCatalogScan==nil and reloads==1
+    and catalog.search.value=='my' and catalog.draft==draft and catalog.nameEntry.value=='Pending catalog draft'
+    and selectedId(catalog)=='custom:one' and #catalog.list.items==2,
+    'Discovery completion lost query/selection/draft or failed to publish rows exactly once')
+catalog:prerender();assert(reloads==1,'Completed catalog scan continued rebuilding rows')
+catalog:chooseIcon()
+assert(catalog.iconButton.enable and catalog.toolkitIconPicker,'Completed discovery left icon choices blocked')
+catalog.toolkitIconPicker:close()
+catalog:close();assert(not scan.cancelled,'Completed scan remained owned by the closed window')
+
+nextDiscovered='category:toolDiscovered'
+window=Assignment.open({items={a}});scan=scans[#scans]
+assert(window.toolkitTagCatalogPending and scan.steps==0 and #window.list.items>0,
+    'Assignment opening forced discovery before rendering known rows')
+window:cycle({id='tool'});itemDraft=window.drafts.item
+window.scopeCombo.selected=2;window:changeScope();window:cycle({id='food'});typeDraft=window.drafts.type
+window.scopeCombo.selected=1;window:changeScope()
+window.search:setText('tool');window:reloadList();window.list.selected=1
+window:prerender();window:prerender()
+assert(not window.toolkitTagCatalogPending and window.search.value=='tool' and selectedId(window)=='tool'
+    and #window.list.items==2 and window.drafts.item==itemDraft and window.drafts.type==typeDraft
+    and itemDraft.changes.tool=='add' and typeDraft.changes.food=='remove',
+    'Assignment discovery completion reset scope drafts, query or selection')
+window:close()
+
+window=Assignment.open({items={a}});local parentScan=scans[#scans]
+catalog=window:openCatalog();local childScan=scans[#scans]
+window:close()
+assert(parentScan.cancelled and childScan.cancelled and not window.toolkitTagCatalogPending
+    and not catalog.toolkitTagCatalogPending and not window.toolkitTagCatalogScan and not catalog.toolkitTagCatalogScan,
+    'Closing a discovery owner leaked its cursor or child readiness')
+catalog=Catalog.open();scan=scans[#scans]
+catalog:select({id='custom:one'});catalog.nameEntry:setText('Retained through revision')
+revision=revision+1;active[#active+1]='custom:later';definitions['custom:later']={name='Later definition'}
+catalog:prerender()
+local later=false
+for _,row in ipairs(catalog.list.items)do if row.item.id=='custom:later'then later=true end end
+assert(later and catalog.toolkitTagCatalogPending and catalog.nameEntry.value=='Retained through revision',
+    'Live custom revision waited for automatic discovery or discarded the current draft')
+catalog:close();assert(scan.cancelled and not catalog.toolkitTagCatalogPending)
+Tags.newAutomaticIdScan=function()return nil end
+catalog=Catalog.open();assert(catalog.toolkitTagCatalogPending==false,'Warm catalog falsely remained pending')
+catalog:close()
+print('Tag editors: bounded discovery, cancellation, warm readiness and query/draft retention OK')

@@ -199,6 +199,41 @@ local function classUnchanged(class, methods)
     return true
 end
 
+-- BulkActions adds only its owned stop delegate and an empty completion used to
+-- prevent merging. Validate that exact owner before admitting those differences
+-- into Tidy's source proof; never call Policy.inspect from this binding check.
+local bulkTransferBinding
+local function ownedBulkStop(action, original)
+    if getmetatable(action)~=ISInventoryTransferAction or action.Type~='ISInventoryTransferAction'then return false end
+    local guard=action.toolkitTransferGuard
+    if type(guard)~='table'or action.stop~=guard.stop or guard.original~=original then return false end
+    local bulk,policy=Toolkit.BulkActions,Toolkit.ActionQueuePolicy
+    if not bulk or not policy or not Proof.closure(bulk.guardTransfer,'BulkActions.lua')
+        or not Proof.closure(bulk.isGuardedTransfer,'BulkActions.lua')
+        or not Proof.closure(policy.matchesNative,'ActionQueuePolicy.lua')
+        or not Proof.closure(policy.isOrdinaryTransfer,'ActionQueuePolicy.lua')then return false end
+    if not bulkTransferBinding then
+        bulkTransferBinding={bulk=bulk,policy=policy,guard=bulk.guardTransfer,guarded=bulk.isGuardedTransfer,
+            native=policy.matchesNative,ordinary=policy.isOrdinaryTransfer}
+    end
+    local saved=bulkTransferBinding
+    return bulk==saved.bulk and policy==saved.policy and bulk.guardTransfer==saved.guard
+        and bulk.isGuardedTransfer==saved.guarded and policy.matchesNative==saved.native
+        and policy.isOrdinaryTransfer==saved.ordinary and saved.guarded(action,original)==true
+        and Proof.closure(action.stop,'BulkActions.lua')and saved.ordinary(action)==true
+end
+local function ownedBulkCompletion(action)
+    if not action.onCompleteFunc or action.onCompleteFunc~=action.toolkitQueueSafeOnComplete
+        or not Proof.closure(action.onCompleteFunc,'BulkActions.lua')
+        or type(action.onCompleteArgs)~='table'or getmetatable(action.onCompleteArgs)then return false end
+    for _ in pairs(action.onCompleteArgs)do return false end
+    return true
+end
+local function ownedNativeBulkTransfer(action)
+    return ownedBulkStop(action,ISInventoryTransferAction.stop)and ownedBulkCompletion(action)
+        and bulkTransferBinding.native(action)==true
+end
+
 local function sourceClassUnchanged(id, class, methods, clothingTransfer)
     if id == "WashFix" and class == ISWashClothing and washWaterComplete and methods.complete == washWaterComplete
         and (WashWaterRule.matchesComplete ~= washWaterMatches or not washWaterMatches(methods.complete)) then return false end
@@ -655,13 +690,19 @@ local function sourceMatches(action, record, observedItem)
     if record.tidyClothingWear and (not nativeClothingMethods() or ordinaryClothingWear(action, record.clothingDisplaced) ~= record.clothingLocation
         or action.fromHotbar ~= record.fromHotbar or action.clothingAction ~= record.clothingAction
         or action.stopOnWalk ~= record.stopOnWalk or action.stopOnRun ~= record.stopOnRun) then return false end
-    for _, name in ipairs(lifecycle) do if action[name] ~= record.methods[name] then return false end end
-    for name, method in pairs(record.methods) do if action[name] ~= method then return false end end
+    local bulkStop=record.class==ISInventoryTransferAction and ownedBulkStop(action,record.methods.stop)
+    local bulkComplete=bulkStop and record.onCompleteFunc==nil and record.onCompleteArgs==nil
+        and ownedBulkCompletion(action)
+    local function bulkMethod(name)
+        return name=='stop'and bulkStop or (name=='onCompleteFunc'or name=='toolkitQueueSafeOnComplete')and bulkComplete
+    end
+    for _, name in ipairs(lifecycle) do if action[name] ~= record.methods[name]and not bulkMethod(name)then return false end end
+    for name, method in pairs(record.methods) do if action[name] ~= method and not bulkMethod(name)then return false end end
     for name, method in pairs(action) do
-        if type(method) == "function" and method ~= record.methods[name] then return false end
+        if type(method) == "function" and method ~= record.methods[name]and not bulkMethod(name)then return false end
     end
     for _, name in ipairs({"onStartFunc", "onCancelFunc", "onCompleteFunc", "onCompleteTarget", "onCompleteArgs"}) do
-        if action[name] ~= record[name] then return false end
+        if action[name] ~= record[name]and not ((name=='onCompleteFunc'or name=='onCompleteArgs')and bulkComplete)then return false end
     end
     for name, value in pairs(record.fields) do
         local identity = name == "item" and observedItem or record.itemIdentities[name]
@@ -1761,6 +1802,7 @@ function Compat.install()
             local baseline=classes.P4TidyUpMeister[getmetatable(action)]
             if not baseline then return false end
             local record=records[action]
+            if not record and ownedNativeBulkTransfer(action)then return true end
             if not record and (action.onStartFunc or action.onCompleteFunc or action.onCancelFunc
                 or action.retriggerLastAction or action.onFailFunc or action.additionalTest) then return false end
             return record and (sourceOnly and sourceMatches(action,record) or not sourceOnly and matches(action,record))

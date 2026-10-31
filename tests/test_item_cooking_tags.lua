@@ -270,24 +270,25 @@ local ingredientRule = assert(Tags.normalizeRule({include = {"ingredient"}}))
 assert(Tags.matchesScriptRule(peanuts, ingredientRule) and not Tags.matchesScriptRule(hops, ingredientRule),
     "ingredient rule preview differs from automatic script capability")
 
--- The real picker must preview script capabilities, rather than broad imported
--- categories (both scripts deliberately have the same native Food category).
+-- The grouped editor prepares available tags from actual script capabilities.
 local nativeRequire = require
 ISCollapsableWindowJoypad = {derive = function() return {} end}
 getText = function(key) return key end
 require = function(name)
     if name:sub(1, 5) == "ISUI/" then return true end
-    if name == "PZSurvivorToolkit/TagVisuals" or name == "PZSurvivorToolkit/UIStyle" then return {} end
+    if name == "PZSurvivorToolkit/TagVisuals" or name == "PZSurvivorToolkit/UIStyle"
+        or name == "PZSurvivorToolkit/TagRuleTagPicker" then return {} end
     return nativeRequire(name)
 end
 local Picker = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/TagRulePicker.lua")
-local rows = {}
-local preview = {clear = function() rows = {} end, addItem = function(_, name) rows[#rows + 1] = name end}
-local picker = {sourceScriptItems = {peanuts, hops}, rule = ingredientRule, preview = preview}
-Picker.refreshPreview(picker)
-assert(picker.matchCount == 1 and rows[1] == "Base.Peanuts", "ingredient picker preview selected wrong scripts")
+local function hasIngredient(scripts)
+    local picker = {options = {scriptItems = scripts}, conditions = {}}
+    for _, row in ipairs(Picker.catalogEntries(picker)) do if row.id == "ingredient" then return true end end
+    return false
+end
+assert(hasIngredient({peanuts}) and not hasIngredient({hops}), "ingredient picker choices ignored script capabilities")
 require = nativeRequire
-print("ingredient script/live/snapshot overrides and rule preview passed")
+print("ingredient script/live/snapshot overrides and rule choices passed")
 
 -- Optional native declaration check follows the installed B42.21 item-to-evolved
 -- links and an ordinary baking recipe. The fixture adapter never creates items

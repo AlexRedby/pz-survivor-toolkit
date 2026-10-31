@@ -4,6 +4,12 @@ local function hasEntry(value)
 end
 -- Native Lua queue/base/book callbacks; Java lifecycle is exercised by the MP smoke.
 require = function(name)
+    if name == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
+        return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
+    end
+    if name == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
+        return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
+    end
     if name == 'PZSurvivorToolkit/ActionQueueSettlement' then
         return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
     end

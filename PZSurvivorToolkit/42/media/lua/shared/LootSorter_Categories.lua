@@ -12,7 +12,7 @@ LootSorter._catItems = nil
 
 -- Vanilla skips hidden/obsolete items wherever it enumerates them (forageSystem, ISItemsListViewer).
 -- Fails open: an item that cannot answer stays listed, since hiding real ones is the worse failure.
-local function isListable(scriptItem)
+function LootSorter.isListableScriptItem(scriptItem)
     local listable = true
     pcall(function()
         if scriptItem:isHidden() or scriptItem:getObsolete() then listable = false end
@@ -46,7 +46,7 @@ function LootSorter.getCategories()
         for i = 1, items:size() do
             local it = items:get(i - 1)
             local cat
-            if isListable(it) then pcall(function() cat = Categories.forScript(it) end) end
+            if LootSorter.isListableScriptItem(it) then pcall(function() cat = Categories.forScript(it) end) end
             if cat and cat ~= "" and not set[cat] then
                 set[cat] = true
                 list[#list + 1] = cat
@@ -69,7 +69,7 @@ function LootSorter.getItemNames()
         for i = 1, items:size() do
             local it = items:get(i - 1)
             local nm, fullType
-            if isListable(it) then
+            if LootSorter.isListableScriptItem(it) then
                 pcall(function()
                     nm = it:getDisplayName()
                     fullType = it:getFullName()
@@ -122,7 +122,7 @@ function LootSorter.getItemsInCategory(category)
             for i = 1, items:size() do
                 local it = items:get(i - 1)
                 local cat, name, fullType
-                if isListable(it) then
+                if LootSorter.isListableScriptItem(it) then
                     pcall(function()
                         cat = Categories.forScript(it)
                         name = it:getDisplayName()

@@ -700,6 +700,19 @@ do
     expect(combined, broken, false, 'All skipped its absent Smelting requirement')
     expect(smeltingAny, broken, false, 'nonmatching Smelting alternative bypassed the tool guard')
     expect(negativeOnly, broken, false, 'Broken exclusion was ignored')
+    local matchingGroup = box({groups={
+        {include={'broken','tool'},exclude={}}, {include={'food'},exclude={}}
+    }})
+    local falseBrokenGroup = box({groups={
+        {include={'broken','food'},exclude={}}, {include={'tool'},exclude={}}
+    }}, {toolCarpentry=true})
+    local excludedBrokenGroup = box({groups={
+        {include={'broken'},exclude={'tool'}}, {include={'tool'},exclude={}}
+    }})
+    expect(matchingGroup, broken, true, 'matching Broken conjunction lost its routing exception')
+    expect(falseBrokenGroup, broken, false, 'nonmatching Broken group opened another Tool branch')
+    expect(excludedBrokenGroup, broken, false, 'group-local exclusion lost the Broken admission guard')
+
 
     delta.broken = 'remove'
     expect(brokenBox, broken, false, 'manual Broken removal was ignored')
@@ -708,6 +721,12 @@ do
     delta.smelting = 'add'
     expect(smeltingBox, broken, true, 'manual Smelting addition could not collect a broken tool')
     expect(smeltingAny, broken, true, 'Any lost its matching Smelting arm')
+    expect(matchingGroup, broken, false, 'manually removed Broken left a grouped exception')
+    expect(box({groups={{include={'smelting','food'}},{include={'tool'}}}}), broken, false,
+        'nonmatching Smelting group opened another Tool branch')
+    expect(box({groups={{include={'smelting','tool'}},{include={'food'}}}}), broken, true,
+        'matching Smelting conjunction could not collect a broken tool')
+
     expect(combined, broken, false, 'All ignored manually removed Broken')
     expect(excludesBroken, broken, true, 'Broken removal did not update an explicit exclusion')
     delta.broken = nil

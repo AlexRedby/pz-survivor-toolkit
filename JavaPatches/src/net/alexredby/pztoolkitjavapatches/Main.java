@@ -20,6 +20,48 @@ import zombie.vehicles.VehicleInterpolation;
 public final class Main {
     public static final boolean VIDEO_SUPPORTED = MainPolicy.videoSupported();
 
+    @Patch(className="zombie.Lua.LuaManager", methodName="RunLua", warmUp=true, strictMatch=true)
+    public static class QueueBindingLoading {
+        @Patch.OnEnter
+        public static void enter(@Patch.Argument(0) String file, @Patch.Argument(1) boolean rewrite,
+                @Patch.Local("toolkitQueueBindingSource") QueueBindingSource.Scope previous) {
+            previous = QueueBindingSource.begin(file, QueueBindingHooks.SUPPORTED);
+        }
+        @Patch.OnExit(onThrowable=Throwable.class)
+        public static void exit(@Patch.Argument(0) String file, @Patch.Argument(1) boolean rewrite,
+                @Patch.Local("toolkitQueueBindingSource") QueueBindingSource.Scope previous) {
+            QueueBindingSource.end(previous);
+            NativeTransferRequests.prepareLibrary(file);
+        }
+    }
+
+    @Patch(className="se.krka.kahlua.luaj.compiler.LuaCompiler", methodName="loadis", warmUp=true, strictMatch=true)
+    public static class QueueBindingCompiling {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.Argument(value=0, readOnly=false) java.io.Reader reader,
+                @Patch.Argument(1) String name, @Patch.Argument(2) se.krka.kahlua.vm.KahluaTable environment,
+                @Patch.Local("toolkitQueueBindingCompiled") se.krka.kahlua.vm.LuaClosure compiled) throws java.io.IOException {
+            QueueBindingHooks.Compilation result = QueueBindingHooks.compilerInput(reader, name, environment, QueueBindingHooks.SUPPORTED);
+            reader = result.getReader();
+            compiled = result.getClosure();
+            return compiled != null;
+        }
+        @Patch.OnExit
+        public static void exit(@Patch.Local("toolkitQueueBindingCompiled") se.krka.kahlua.vm.LuaClosure compiled,
+                @Patch.Return(readOnly=false) se.krka.kahlua.vm.LuaClosure result) {
+            if (compiled != null) result = compiled;
+        }
+    }
+
+    @Patch(className="se.krka.kahlua.vm.Prototype", methodName="dump", warmUp=true, strictMatch=true)
+    public static class QueueBindingDump {
+        @Patch.OnEnter(skipOn=true)
+        public static boolean enter(@Patch.This se.krka.kahlua.vm.Prototype prototype,
+                @Patch.Argument(0) java.io.OutputStream output) throws java.io.IOException {
+            return QueueBindingHooks.SUPPORTED && QueueBindingCompiler.dumpOriginal(prototype, output);
+        }
+    }
+
     @Patch(className="org.lwjglx.opengl.Display", methodName="swapBuffers", warmUp=true)
     public static class VideoPresented {
         @Patch.OnExit

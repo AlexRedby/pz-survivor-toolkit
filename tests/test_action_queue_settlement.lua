@@ -1,5 +1,5 @@
 -- Shared settlement owns cancellation bookkeeping, never item/equipment effects.
-local function setup(client)
+local function setup(client, outcomeOverride, delayedMetadata)
     local root = {items = {}}
     function root:getItemById(id) return self.items[id] end
     local player = {getInventory = function() return root end, isDead = function(self) return self.dead == true end,
@@ -47,8 +47,26 @@ local function setup(client)
     createItemTransaction = function() error('settlement must never create an item transaction') end
     removeItemTransaction = function() error('settlement must never remove an item transaction') end
     instanceof = function(value, kind) return type(value) == 'table' and value.class == kind end
-    local loaded = {}
+    local loaded, actualOutcome = {}, nil
+    local metadataAccessor = NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    getFilenameOfClosure = metadataAccessor
+    if delayedMetadata then getFilenameOfClosure = nil end
     require = function(name)
+        if name == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
+            return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
+        end
+        if name == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
+            if not actualOutcome then
+                actualOutcome = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
+                loaded[name] = actualOutcome
+                if outcomeOverride then loaded[name] = outcomeOverride(actualOutcome) end
+            end
+            return loaded[name]
+        end
+        if name == 'PZSurvivorToolkit/SourceProof' then
+            if not loaded[name]then loaded[name]=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()end
+            return loaded[name]
+        end
         if name == 'PZSurvivorToolkit/ActionQueueAcknowledgements' then
             if not loaded[name] then
                 loaded[name] = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
@@ -80,7 +98,8 @@ local function setup(client)
     end
     return {root = root, player = player, token = token, current = current, tail = tail, queue = queue,
         source = source, item = item, action = action, discard = discard, settlement = settlement,
-        acknowledgements = acknowledgements, receipt = receipt, transaction = transaction,
+        acknowledgements = acknowledgements, receipt = receipt, transaction = transaction, outcome = actualOutcome, metadataAccessor = metadataAccessor,
+        sourceProof = loaded['PZSurvivorToolkit/SourceProof'], requests = PZSurvivorToolkit.ActionQueueTransferRequests,
         advance = function(ms) clock = clock + ms end,
         counts = function() return constructions, guards, #discards, releases end}
 end
@@ -464,8 +483,8 @@ for _, client in ipairs({false, true}) do
 end
 -- Native inventory transfers use their own item transaction protocol. Observe
 -- one native group's outcome before perform removes it; never execute that payload.
-local function returnFixture(client)
-    local s = setup(client)
+local function returnFixture(client, outcomeOverride, delayedMetadata)
+    local s = setup(client, outcomeOverride, delayedMetadata)
     local value = s.item(81, s.root)
     s.root.items[81] = value
     local scope = s.settlement.deferred(s.player, s.token)
@@ -491,6 +510,146 @@ local function returnFixture(client)
         return observed
     end
     return s
+end
+
+-- Moving evidence into a shared module must not hide an unknown dependency
+-- behind source-owned Settlement wrappers or expose private callbacks/records.
+local outcomeExports = {'sameMember', 'retained', 'authorityReader', 'observer', 'atSource'}
+for _, name in ipairs(outcomeExports) do
+    for _, replacement in ipairs({'missing', 'false', 'foreign'}) do
+        local unknownCalls = 0
+        local s = returnFixture(false, function(actual)
+            local supplied = {}
+            for _, key in ipairs(outcomeExports) do supplied[key] = actual[key] end
+            if replacement == 'missing' then supplied[name] = nil
+            elseif replacement == 'false' then supplied[name] = false
+            else supplied[name] = function()
+                unknownCalls = unknownCalls + 1
+                error('unknown Outcome export received a callback or private record')
+            end end
+            return supplied
+        end)
+        assert(unknownCalls == 0, name .. ': validate all exports before calling factories')
+        assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard),
+            name .. '/' .. replacement .. ': unknown transfer evidence must fail closed')
+        assert(s.settlement.returnState(s.obligation) ~= 'completed' and unknownCalls == 0)
+    end
+end
+for _, shape in ipairs({'inherited-table', 'inherited-getter', 'own-with-metatable'}) do
+    local getters, factories = 0, 0
+    local s = returnFixture(false, function(actual)
+        local supplied = {}
+        if shape == 'own-with-metatable' then
+            for _, name in ipairs(outcomeExports) do supplied[name] = actual[name] end
+        end
+        local inherited = actual
+        if shape ~= 'inherited-table' then inherited = function()
+            getters = getters + 1
+            return function() factories = factories + 1; error('unknown Outcome factory') end
+        end end
+        return setmetatable(supplied, {__index = inherited})
+    end)
+    assert(getters == 0 and factories == 0, shape .. ': reject metadata before reading fields')
+    assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+        and s.settlement.returnState(s.obligation) ~= 'completed', shape .. ': inherited evidence cannot grant a return')
+    assert(getters == 0 and factories == 0, shape .. ': unknown getters/factories must remain untouched')
+end
+for _, client in ipairs({false, true}) do
+    local s = returnFixture(client)
+    for _, name in ipairs(outcomeExports) do
+        s.outcome[name] = function() error('captured Outcome exports must not be reread') end
+    end
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.current.transactionId = 0; s.observeDestination()
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed',
+        'later public export reassignment must not replace the verified private bindings')
+    assert(s.counts() == 0, 'captured transfer evidence must not execute or replay an item effect')
+end
+
+-- Metadata can appear after the module loaded. Only successful, complete
+-- validation may replace the bootstrap bindings with direct evidence methods.
+do
+    local s = returnFixture(false, nil, true)
+    assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+        and s.settlement.returnState(s.obligation) == nil,
+        'missing closure metadata must neither bind nor capture a return')
+    local metadataCalls = 0
+    getFilenameOfClosure = function(callback)
+        metadataCalls = metadataCalls + 1
+        return s.metadataAccessor(callback)
+    end
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 5,
+        'late metadata must validate every actual Outcome export exactly once')
+    s.current.transactionId = 0; s.observeDestination()
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed')
+    assert(metadataCalls == 5, 'successful binding must keep direct methods without metadata polling')
+end
+do
+    local factoryCalls = {authority = 0, observer = 0}
+    local s = returnFixture(true, function(actual)
+        -- Test-only source-owned delegates make factory entry observable while
+        -- retaining the actual factory bodies and actual SourceProof metadata.
+        local delegate = assert(loadstring([[
+            local factory, calls, key = ...
+            return function(...)
+                calls[key] = calls[key] + 1
+                return factory(...)
+            end
+        ]], '@fixture/ActionQueueTransferOutcome.lua'))
+        actual.authorityReader = delegate(actual.authorityReader, factoryCalls, 'authority')
+        actual.observer = delegate(actual.observer, factoryCalls, 'observer')
+        return actual
+    end, true)
+    local metadataCalls = 0
+    getFilenameOfClosure = function(callback)
+        metadataCalls = metadataCalls + 1
+        assert(factoryCalls.authority == 0 and factoryCalls.observer == 0,
+            'all source checks must finish before factories receive private arguments')
+        assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+            and s.settlement.returnState(s.obligation) == nil,
+            'metadata reentry must not expose a partially bound private attempt')
+        return s.metadataAccessor(callback)
+    end
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 5)
+    assert(factoryCalls.authority == 1 and factoryCalls.observer == 1,
+        'metadata reentry must not repeat either factory')
+    s.current.transactionId = 0; s.observeDestination()
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'completed')
+    assert(s.settlement.returnState(s.obligation) == 'completed' and metadataCalls == 5
+        and factoryCalls.authority == 1 and factoryCalls.observer == 1,
+        'successful direct bindings must not reenter metadata or repeat factories')
+end
+
+do
+    local foreignFactories, foreignObservations, fakeChecks = 0, 0, 0
+    local s = returnFixture(false, function(actual)
+        actual.observer = function()
+            foreignFactories = foreignFactories + 1
+            return function() foreignObservations = foreignObservations + 1; return 'completed' end
+        end
+        return actual
+    end, true)
+    local realClosure = s.sourceProof.closure
+    local metadataCalls = 0
+    getFilenameOfClosure = function(callback)
+        local filename = s.metadataAccessor(callback)
+        metadataCalls = metadataCalls + 1
+        if metadataCalls == 1 then
+            s.sourceProof.closure = function() fakeChecks = fakeChecks + 1; return true end
+        end
+        return filename
+    end
+    assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard),
+        'metadata callback cannot replace source checks and admit a foreign observer')
+    assert(s.settlement.returnState(s.obligation) == nil and foreignFactories == 0
+        and foreignObservations == 0 and fakeChecks == 0 and metadataCalls > 0,
+        'captured source checks must never call the replacement or expose private arguments')
+    local reads = metadataCalls
+    s.sourceProof.closure = realClosure
+    assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+        and s.settlement.returnState(s.obligation) == nil and metadataCalls == reads
+        and foreignFactories == 0 and foreignObservations == 0,
+        'a failed source binding must stay closed after the accessor restores its helper')
 end
 
 for _, client in ipairs({false, true}) do
@@ -1204,8 +1363,14 @@ end
 local savedNext = next
 next = nil
 -- Pickup claims are candidates until the exact native attempt earns an effect.
-local function pickupFixture(client, ids)
+local function pickupFixture(client, ids, carried)
     local s = setup(client)
+    if carried then
+        local owner=s.item(901,s.root);owner.class='InventoryContainer'
+        owner.getInventory=function()return s.source end
+        s.source.class='ItemContainer';s.source.getContainingItem=function()return owner end
+        s.root.items[901]=owner;s.sourceOwner=owner
+    end
     s.root.isExistYet = function() return true end
     s.scope = s.settlement.deferred(s.player, s.token)
     s.pickups, s.members, s.owners = {}, {}, {}
@@ -1270,8 +1435,8 @@ local function pickupFixture(client, ids)
 end
 -- Explicitly cancelling one pending return retains the exact earned item while
 -- the body keeps running. Later body cancellation cannot recreate that return.
-local function pendingReturnFixture(client, unearned)
-    local s = pickupFixture(client)
+local function pendingReturnFixture(client, unearned, carried)
+    local s = pickupFixture(client,nil,carried)
     assert(s.settlement.beginPickup(s.scope, s.pickup, s.guard))
     s.movePickup(1)
     if not unearned then assert(s.finishPickup(true)) end
@@ -2451,3 +2616,357 @@ end
 
 print('Native cleanup receipt generations: second toggle retains only its allocated native episode; replacement revokes it.')
 print('Shared settlement: persistent phases, earned-only cleanup, late isolation and exact native P4 returns passed.')
+
+-- Exact earned return execution uses the same private borrowing and outcome
+-- records as cancellation, including no-effect admission/server/SP results.
+local function returnExecutionFixture(client,unearned,carried)
+    local s=pendingReturnFixture(client,unearned,carried)
+    local action=s.pendingReturn
+    s.player.isPlayerMoving=function()return false end
+    s.player.pressedMovement=function()return false end
+    s.stack=true
+    s.player.getCharacterActions=function()return {contains=function(_,native)return s.stack and native==action.action end}end
+    s.queue.indexOf=function(self,member)for index,value in ipairs(self.queue)do if value==member then return index end end;return -1 end
+    action.queueList={{items={action.item}}};action.transactionId=0;action.started=false
+    action.item.getDisplayName=function()return 'Borrowed test book'end
+    QueueReturnExecutionFixture=s
+    local guard=assert(loadstring([[return function(action,reference)
+        local s=QueueReturnExecutionFixture
+        return action==s.pendingReturn and s.nativeLive~=false
+            and (not reference or reference.id==action.item:getID()and reference.fullType==action.item:getFullType())
+    end]],'@fixture/ActionQueueExecution.lua'))()
+    PZSurvivorToolkit.ActionQueueExecution={matches=guard}
+    s.executionGuard=guard
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent=assert(loadstring([[return function(queue,action)
+        return not QueueReturnExecutionFixture.unsafeTail
+    end]],'@fixture/ActionQueuePolicy.lua'))()
+    return s
+end
+-- Candidate-shaped work without a private earned loan must not inspect the
+-- suffix or invoke an action guard, even for large queues. Queue bounds also
+-- reject earned candidates before membership or inventory lookup.
+for _,size in ipairs({1,32,33,200,1000})do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn
+    local values={}
+    for i=1,size do values[i]={character=s.player,Type='ISInventoryTransferAction',allowMissingItems=true,
+        toolkitQueueOperation={},item=action.item,srcContainer=s.root,destContainer=s.source}end
+    s.queue.queue=values;s.queue.current=values[1]
+    for _,member in ipairs(values)do s.settlement.track(member,'body')end
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent=assert(loadstring([[return function()
+        error('ineligible candidates must not inspect the suffix')
+    end]],'@fixture/ActionQueuePolicy.lua'))()
+    s.root.getItemById=function()error('ineligible candidates must not inspect inventory')end
+    for _,member in ipairs(values)do
+        local supported,reason=s.settlement.returnExecutionSupported(member,s.executionGuard)
+        assert(not supported and (size<=32 or reason=='unsupported_queue_size'))
+    end
+end
+do
+    local s=returnExecutionFixture(false,true)
+    PZSurvivorToolkit.ActionQueuePolicy.matchesNative=function()error('unearned loan must not inspect source binding')end
+    s.root.getItemById=function()error('unearned loan must not inspect inventory')end
+    assert(not s.settlement.returnExecutionSupported(s.pendingReturn,s.executionGuard),
+        'an existing unearned private borrowing must be rejected before source/endpoint proof')
+end
+do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn
+    for i=1,129 do s.scope.tasks[{}]={pickups={},actions={},items={}}end
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent=assert(loadstring([[return function()
+        error('exhausted borrowing budget must not inspect the suffix')
+    end]],'@fixture/ActionQueuePolicy.lua'))()
+    local supported,reason=s.settlement.returnExecutionSupported(action,s.executionGuard)
+    assert(not supported and reason=='unsupported_borrowing_work','private ledger work must be bounded and fail closed')
+end
+-- Eligibility callbacks can change the world after the private loan was read.
+-- Fresh entry evidence must reject without binding a planned return/episode.
+for _, client in ipairs({false, true}) do
+    for _, changed in ipairs({'missing', 'proxy', 'consumed', 'duplicate', 'actor', 'source', 'destination', 'type', 'token', 'generation', 'lookup-error', 'settings-mutation'}) do
+        local s = returnExecutionFixture(client)
+        local action, original = s.pendingReturn, s.pendingReturn.item
+        local originalType, originalLookup = original.getFullType, s.root.getItemById
+        local originalToken, originalGeneration = action.toolkitQueueOperation, s.queue.toolkitOperationGeneration
+        local originalEnabled = PZSurvivorToolkit.Settings.actionQueue
+        s.queue.current, s.queue.queue = action, {action, s.tail}
+        QueueReturnExecutionMutation = function()
+            if changed == 'missing' then s.root.items[181] = nil
+            elseif changed == 'proxy' then
+                local proxy = {}; for key, value in pairs(original) do proxy[key] = value end
+                action.item = proxy
+            elseif changed == 'consumed' then original.consumed = true
+            elseif changed == 'duplicate' then
+                s.source.items[181] = {getContainer = function() return s.source end}
+            elseif changed == 'actor' then action.character = {}
+            elseif changed == 'source' then action.srcContainer = {}
+            elseif changed == 'destination' then action.destContainer = {getItemById = function() return nil end}
+            elseif changed == 'type' then original.getFullType = function() return 'Base.Other' end
+            elseif changed == 'token' then action.toolkitQueueOperation = {}
+            elseif changed == 'generation' then s.queue.toolkitOperationGeneration = 91
+            elseif changed == 'lookup-error' then s.root.getItemById = function() error('unavailable source lookup') end
+            elseif changed == 'settings-mutation' then
+                PZSurvivorToolkit.Settings.actionQueue = function() original.consumed = true; return true end
+            end
+        end
+        PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent = assert(loadstring([[return function()
+            QueueReturnExecutionMutation(); return true
+        end]], '@fixture/ActionQueuePolicy.lua'))()
+        assert(not s.settlement.prepareReturnExecution(action, s.executionGuard),
+            changed .. ': callback changed the source binding before execution preparation')
+        assert(s.requests.pending[s.player] == nil, 'a declined entry published a native request watch')
+        assert(not s.settlement.blockedReturnInfo(s.player), 'declining entry must not fabricate a failed-return debt')
+        assert(s.queue.queue[1] == action and s.queue.queue[2] == s.tail and s.counts() == 0,
+            'declining optional evidence must not mutate native work or the independent tail')
+        -- A failed evidence read must not consume/bind the private episode.
+        PZSurvivorToolkit.Settings.actionQueue = originalEnabled
+        original.consumed, original.getFullType = false, originalType
+        s.root.items[181], s.root.getItemById, s.source.items[181] = original, originalLookup, nil
+        action.character, action.item, action.srcContainer, action.destContainer = s.player, original, s.root, s.source
+        action.toolkitQueueOperation, s.queue.toolkitOperationGeneration = originalToken, originalGeneration
+        QueueReturnExecutionMutation = function() end
+        assert(s.settlement.prepareReturnExecution(action, s.executionGuard),
+            changed .. ': declined source evidence must leave a later fresh preparation available')
+        QueueReturnExecutionMutation = nil
+    end
+end
+
+-- Once source facts are confirmed, committing the private entry must not
+-- reopen tracking/settings callbacks or reread IDs from the action item.
+for _, client in ipairs({false, true}) do
+    local s = returnExecutionFixture(client)
+    local action, original = s.pendingReturn, s.pendingReturn.item
+    local enabled, id, kind, consumed = PZSurvivorToolkit.Settings.actionQueue,
+        original.getID, original.getFullType, original.getIsCraftingConsumed
+    s.queue.current, s.queue.queue = action, {action, s.tail}
+    QueueReturnExecutionMutation = function()
+        local function forbidden() error('callback/getter after final source evidence') end
+        original.getIsCraftingConsumed = function()
+            original.getID, original.getFullType = forbidden, forbidden
+            PZSurvivorToolkit.Settings.actionQueue = forbidden
+            return false
+        end
+    end
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent = assert(loadstring([[return function()
+        QueueReturnExecutionMutation(); return true
+    end]], '@fixture/ActionQueuePolicy.lua'))()
+    s.outcome.atSource = function() error('late public helper replacement') end
+    assert(s.settlement.prepareReturnExecution(action, s.executionGuard),
+        'fresh entry must commit without reopening callbacks or live item getters')
+    PZSurvivorToolkit.Settings.actionQueue = enabled
+    original.getID, original.getFullType, original.getIsCraftingConsumed = id, kind, consumed
+    QueueReturnExecutionMutation = function() end
+    local state = s.settlement.operationState(action)
+    assert(state and state.steps[#state.steps].phase == 'cleanup', 'captured entry must retain native cleanup tracking')
+    assert(not s.settlement.prepareReturnExecution(action, s.executionGuard))
+    QueueReturnExecutionMutation = nil
+end
+
+-- A nested fresh preparation owns its binding; an outer stale visit cannot
+-- overwrite that obligation after a source getter returns.
+for _, client in ipairs({false, true}) do
+    local s = returnExecutionFixture(client)
+    local action, lookup, nested = s.pendingReturn, s.root.getItemById, nil
+    s.queue.current, s.queue.queue = action, {action, s.tail}
+    QueueReturnExecutionMutation = function()
+        QueueReturnExecutionMutation = function() end
+        s.root.getItemById = function(self, id)
+            self.getItemById = lookup
+            nested = s.settlement.prepareReturnExecution(action, s.executionGuard)
+            return lookup(self, id)
+        end
+    end
+    PZSurvivorToolkit.ActionQueuePolicy.returnFailureIndependent = assert(loadstring([[return function()
+        QueueReturnExecutionMutation(); return true
+    end]], '@fixture/ActionQueuePolicy.lua'))()
+    assert(not s.settlement.prepareReturnExecution(action, s.executionGuard) and nested == true,
+        'outer source visit must not overwrite a nested execution binding')
+    assert(not s.settlement.prepareReturnExecution(action, s.executionGuard), 'the nested binding must still be single-use')
+    QueueReturnExecutionMutation = nil
+end
+
+for _,client in ipairs({false,true})do
+    local s=returnExecutionFixture(client);local action=s.pendingReturn;local guard=s.executionGuard
+    assert(s.settlement.returnExecutionSupported(action,guard),'earned pending return lacks execution descriptor')
+    assert(not s.settlement.prepareReturnExecution(action,guard),'preview/pending membership cannot start an episode')
+    s.queue.current,s.queue.queue=action,{action,s.tail}
+    assert(s.settlement.prepareReturnExecution(action,guard),'current earned return must bind before allocation')
+    assert(s.requests.pending[s.player] == action, 'confirmed entry did not publish its staged request watch')
+    action.toolkitNativeRequest = {phase='submitted',transaction=71,sourceExact=true}
+    assert(not s.settlement.nativeRequestState(action), 'public flags fabricated a native request observation')
+    assert(not s.settlement.prepareReturnExecution(action,guard),'one episode cannot bind twice')
+    s.settlement.started(action)
+    action.action={isStarted=function()return false end};s.stack=false
+    assert(s.settlement.rejectReturnExecution(action,'admission',guard),'never-started refusal must isolate exact return')
+    assert(s.requests.pending[s.player] == nil, 'a known native refusal retained the request watch')
+    assert(not s.settlement.rejectReturnExecution(action,'admission',guard),'rejection must publish at most one debt')
+    local info=s.settlement.blockedReturnInfo(s.player);local debts=s.settlement.blockedReturns(s.player)
+    assert(info.count==1 and #debts==1 and debts[1].itemId==181 and debts[1].reason=='admission')
+    debts[1].itemId=999
+    assert(s.settlement.blockedReturns(s.player)[1].itemId==181,'UI copies must not mutate proof')
+    assert(s.settlement.completionState(s.queue,action)=='ready','known refusal must not stall independent work')
+    assert(s.settlement.keepReturn(s.player,info and s.settlement.blockedReturns(s.player)[1].id))
+    assert(s.settlement.blockedReturnInfo(s.player).count==0 and s.root.items[181]==action.item
+        and s.queue.queue[2]==s.tail and s.counts()==0,'keeping debt must not transfer, rebuild or drop independent work')
+end
+for _,state in ipairs({'rejected','absent','completed','unresolved','duplicated-effect'})do
+    local s=returnExecutionFixture(true);local action=s.pendingReturn;local guard=s.executionGuard
+    s.queue.current,s.queue.queue=action,{action,s.tail}
+    assert(s.settlement.prepareReturnExecution(action,guard))
+    action.action={isStarted=function()return true end};action.started=true;action.transactionId=71
+    s.transaction.byId[71]={done=state=='absent'or state=='completed',rejected=state=='absent'or state=='rejected'or state=='duplicated-effect'}
+    if state=='duplicated-effect'then s.source.items[181]={container=s.source,getContainer=function(self)return self.container end}end
+    local rejected=s.settlement.rejectReturnExecution(action,'server',guard)
+    assert(rejected==(state=='rejected'),state..': only positive rejection with no observed effects may isolate')
+    local info=s.settlement.blockedReturnInfo(s.player)
+    assert((info and info.count or 0)==(rejected and 1 or 0))
+    if rejected then assert(s.settlement.completionState(s.queue,action)=='ready')end
+end
+for _,moved in ipairs({false,true})do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn;local guard=s.executionGuard
+    s.queue.current,s.queue.queue=action,{action,s.tail};assert(s.settlement.prepareReturnExecution(action,guard))
+    action.action={isStarted=function()return true end};action.started=true
+    assert(s.settlement.beginPlannedReturn(action,guard))
+    if moved then s.root.items[181],s.source.items[181],action.item.container=nil,action.item,s.source end
+    action.queueList={};action.started=false
+    assert(s.settlement.finishPlannedReturn(action,true));assert(s.requests.pending[s.player] == nil);s.stack=false
+    assert(s.settlement.rejectReturnExecution(action,'unmoved',guard)==not moved)
+    assert(s.settlement.completionState(s.queue,action)=='ready')
+    if moved then assert(not s.settlement.blockedReturnInfo(s.player),'confirmed native return created a debt')end
+end
+for _,changed in ipairs({'native-started','transaction','still-stacked','generation','source','consumed','dependent-tail'})do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn;local guard=s.executionGuard
+    s.queue.current,s.queue.queue=action,{action,s.tail};assert(s.settlement.prepareReturnExecution(action,guard))
+    action.action={isStarted=function()return changed=='native-started'end};s.stack=false
+    if changed=='transaction'then action.transactionId=5
+    elseif changed=='still-stacked'then s.stack=true
+    elseif changed=='generation'then s.queue.toolkitOperationGeneration=1
+    elseif changed=='source'then action.srcContainer={}
+    elseif changed=='consumed'then action.item.consumed=true
+    elseif changed=='dependent-tail'then s.unsafeTail=true end
+    assert(not s.settlement.rejectReturnExecution(action,'admission',guard),changed..': unsafe admission cannot create a debt')
+end
+-- Cancelling the reader creates a required native cleanup step, but its
+-- original exact optional-return intent must survive that scheduling boundary.
+for _,client in ipairs({false,true})do
+    local s=returnExecutionFixture(client);local old=s.pendingReturn;local guard=s.executionGuard
+    PZSurvivorToolkit.ActionQueuePolicy.editUnchanged=function()return true end
+    PZSurvivorToolkit.ActionQueueExecution.admitEditMember=function(action)
+        return s.settlement.authorizeReturnRetention(action,guard)
+    end
+    local request={action=s.current,token=s.token}
+    assert(s.settlement.admitCancellation(s.queue,request,{allowed=true,first=1,last=2,snapshot={}}))
+    s.queue.toolkitGroupCancel=request;s.token.toolkitCancelled=true
+    assert(s.settlement.finish(s.queue,request,s.discard))
+    local returning=s.queue.queue[2]
+    assert(returning~=old and returning.Type=='ISInventoryTransferAction','fixture must use the scheduled native cleanup')
+    s.queue.toolkitGroupCancel=nil;s.queue.current,s.queue.queue=returning,{returning,s.tail}
+    s.pendingReturn=returning;returning.queueList={{items={returning.item}}};returning.transactionId=0;returning.started=false
+    assert(s.settlement.returnExecutionSupported(returning,guard),'scheduled optional return lost its isolation contract')
+    assert(s.settlement.prepareReturnExecution(returning,guard),'scheduled optional return cannot bind')
+    returning.action={isStarted=function()return false end};s.stack=false
+    assert(s.settlement.rejectReturnExecution(returning,'admission',guard),'scheduled cleanup failure cancelled independent work')
+    assert(s.settlement.completionState(s.queue,returning)=='ready')
+    local failure=s.settlement.blockedReturns(s.player)[1]
+    assert(failure and s.settlement.keepReturn(s.player,failure.id),'scheduled debt cannot retain the exact item')
+    assert(s.root.items[181]==returning.item and s.queue.queue[2]==s.tail)
+end
+-- Reset revokes execution rights, while a historical notice can be explicitly
+-- forgotten without looking up or mutating any current item/borrow state.
+do
+    local s=returnExecutionFixture(false);local action=s.pendingReturn;local guard=s.executionGuard
+    s.queue.current,s.queue.queue=action,{action,s.tail};assert(s.settlement.prepareReturnExecution(action,guard))
+    action.action={isStarted=function()return false end};s.stack=false
+    assert(s.settlement.rejectReturnExecution(action,'admission',guard))
+    local failure=s.settlement.blockedReturns(s.player)[1]
+    s.settlement.resetReturnFailures(s.queue)
+    s.root.getItemById=function()error('forgetting history must not inspect inventory')end
+    assert(s.settlement.keepReturn(s.player,failure.id))
+    assert(s.settlement.blockedReturnInfo(s.player).count==0)
+end
+print('Shared return execution: earned-only binding, native admission/rejection/no-effect outcomes, private debts and no replay passed.')
+
+-- A private failed episode fences only the same source-reviewed idle return.
+-- It is not Keep, a transferable descriptor or permission to replay the item.
+local function blockedRestorationFixture(carried)
+    local s=returnExecutionFixture(false,false,carried);local action=s.pendingReturn
+    if not carried then s.source.getContainingItem=function()end end
+    s.player.hasTimedActions=function()return false end
+    s.queue.current,s.queue.queue=action,{action,s.tail}
+    assert(s.settlement.prepareReturnExecution(action,s.executionGuard))
+    action.action={isStarted=function()return false end};s.stack=false
+    assert(s.settlement.rejectReturnExecution(action,'admission',s.executionGuard))
+    s.queue.current,s.queue.queue=nil,{}
+    ISInventoryTransferAction={Type='ISInventoryTransferAction'};ISInventoryTransferAction.__index=ISInventoryTransferAction
+    s.restoring=setmetatable({Type='ISInventoryTransferAction',character=s.player,item=action.item,
+        srcContainer=s.root,destContainer=s.source,queueList={{items={action.item}}}},ISInventoryTransferAction)
+    return s
+end
+for _,carried in ipairs({false,true})do
+    local s=blockedRestorationFixture(carried)
+    assert(s.settlement.returnRestorationBlocked(s.restoring))
+    assert(s.settlement.returnRestorationBlocked(s.restoring),'fence must remain stable while a choice is pending')
+    assert(s.settlement.operationState(s.pendingReturn).borrowings[1].state=='active'
+        and s.settlement.blockedReturns(s.player)[1].state=='blocked'and s.counts()==0,
+        'suppression must not waive, transfer or publish Keep')
+    local id=s.settlement.blockedReturns(s.player)[1].id
+    assert(s.settlement.keepReturn(s.player,id))
+    assert(not s.settlement.returnRestorationBlocked(s.restoring),'committed Keep must consume the debt fence')
+end
+for _,change in ipairs({'generation','queue','item','destination','native','complete','stop','guard','consumed','started','batched','reset','dead','owner','ancestry-cycle'})do
+    local s=blockedRestorationFixture(true);local action=s.restoring
+    if change=='generation'then s.queue.toolkitOperationGeneration=1
+    elseif change=='queue'then ISTimedActionQueue.queues[s.player]={character=s.player,queue={}}
+    elseif change=='item'then action.item=s.item(action.item:getID(),s.root);action.queueList[1].items[1]=action.item
+    elseif change=='destination'then action.destContainer={}
+    elseif change=='native'then s.pendingReturn.action={}
+    elseif change=='complete'then s.pendingReturn.onCompleteFunc=function()end
+    elseif change=='stop'then s.pendingReturn.stop=function()end
+    elseif change=='guard'then s.pendingReturn.toolkitTransferGuard={}
+    elseif change=='consumed'then action.item.consumed=true
+    elseif change=='started'then action.action={}
+    elseif change=='batched'then action.queueList[1].items[2]=s.item(902,s.root)
+    elseif change=='reset'then s.settlement.resetReturnFailures(s.queue)
+    elseif change=='dead'then s.player.dead=true
+    elseif change=='owner'then s.root.items[901]=s.item(901,s.root)
+    elseif change=='ancestry-cycle'then s.sourceOwner.container=s.source end
+    assert(not s.settlement.returnRestorationBlocked(action),change..': changed restoration borrowed the fence')
+end
+print('Blocked return fence: exact native episode/item/endpoints/owner, idle scope, no waiver and reset/death denial passed.')
+
+-- Editor off revokes only optional failure notice authority. Re-enable exposes
+-- Forget, which must not read the item or publish an old Keep intent.
+do
+    local s=blockedRestorationFixture(false)
+    local notice=assert(s.settlement.blockedReturns(s.player)[1])
+    PZSurvivorToolkit.ActionQueueOperations.invalidateQueue=function(queue)
+        queue.toolkitOperationGeneration=(queue.toolkitOperationGeneration or 0)+1
+    end
+    s.player.queueEnabled=false;s.settlement.invalidateEditor(s.queue)
+    assert(s.settlement.blockedReturns(s.player)[1].state=='revoked')
+    s.player.queueEnabled=true
+    s.root.getItemById=function()error('Forget after editor toggle must not inspect old inventory')end
+    PZSurvivorToolkit.ActionQueueTidyIntent={keepReturn=function()error('Forget must not publish old Keep intent')end}
+    assert(s.settlement.keepReturn(s.player,notice.id))
+    assert(s.settlement.blockedReturnInfo(s.player).count==0)
+end
+print('Editor invalidation revokes failed-return rights; re-enabled Forget has no item lookup or waiver.')
+
+-- The hot hint must ignore history/off/stale contexts without walking debt or
+-- inventory, while the UI continues to expose the same historical notices.
+for _,mode in ipairs({'active','off','generation','queue','revoked','kept'})do
+    local s=blockedRestorationFixture(false)
+    local before=s.settlement.blockedReturnInfo(s.player)
+    local id=s.settlement.blockedReturns(s.player)[1].id
+    if mode=='off'then s.player.queueEnabled=false
+    elseif mode=='generation'then s.queue.toolkitOperationGeneration=1
+    elseif mode=='queue'then ISTimedActionQueue.queues[s.player]={character=s.player,queue={}}
+    elseif mode=='revoked'then s.settlement.resetReturnFailures(s.queue)
+    elseif mode=='kept'then assert(s.settlement.keepReturn(s.player,id))end
+    local info=s.settlement.blockedReturnInfo(s.player)
+    assert(info.count==(mode=='kept'and 0 or before.count),'active hint must not alter UI history count')
+    s.player.getInventory=function()error('active hint must not read inventory')end
+    local original=ipairs;ipairs=function()error('active hint must not traverse debt')end
+    local ok,present=pcall(s.settlement.hasActiveBlockedReturn,s.player)
+    ipairs=original
+    assert(ok and present==(mode=='active'),mode..': wrong O(1) blocked return hint')
+    assert(s.settlement.blockedReturnInfo(s.player).revision==info.revision,'read-only hint changed UI revision')
+end
+print('Active failure hint: O(1), current queue/generation only, no historical/off scan or inventory lookup.')

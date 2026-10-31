@@ -197,3 +197,24 @@ disk[legacy] = string.rep(string.rep('x', 8192) .. '\n', 2442)
 fails(Storage.load)
 assert(opens == closes)
 print('Context menu profile storage passed: raw Unicode/legacy records, empty payload, alternating recovery, stale/ambiguous commits, bounds and I/O failures.')
+
+-- Grouped payloads opt into v2; legacy raw records and v1 remain readable.
+disk[a],disk[b],disk[legacy],fault='','','',{}
+local groupedLines={'F|tags:1|Grouped|groups|2','B|tags:1|1|include|mechanics',
+ 'B|tags:1|1|exclude|vehiclepart','B|tags:1|2|include|perishable','R|drop|hidden'}
+local groupedSnapshot=Storage.save(Storage.load(),groupedLines,2)
+assert(groupedSnapshot.version==2 and disk[a]:find('PZST_CONTEXT|2|',1,true))
+equal(Storage.load().lines,groupedLines)
+assert(Storage.load().version==2)
+local beforeWrites=writes
+fails(Storage.save,groupedSnapshot,groupedLines,3)
+assert(writes==beforeWrites,'unsupported write version opened a writer')
+disk[b]='PZST_CONTEXT|3|future|shape\n'
+fails(Storage.load)
+fails(Storage.save,groupedSnapshot,baseline)
+assert(writes==beforeWrites,'future profile snapshot was overwritten')
+disk[b]=''
+local withoutGroups=Storage.save(Storage.load(),baseline,1)
+assert(withoutGroups.version==1)
+equal(Storage.load().lines,baseline)
+print('PASS context storage v1/v2 payloads, explicit write versions and unsupported-version overwrite guard')

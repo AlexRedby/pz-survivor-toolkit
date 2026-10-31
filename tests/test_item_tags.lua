@@ -122,6 +122,50 @@ do
  assert(not Tags.matchesRule(tags,rule),'rule matching retained an earlier tag-set cache')
 end
 
+-- Grouped conditions use OR between branches and AND within each branch.
+do
+ local grouped=assert(Tags.normalizeRule({groups={
+  {include={'mechanics'},exclude={'vehiclepart'}}, {include={'perishable'},exclude={}}
+ }}))
+ assert(Tags.matchesRule({'mechanics'},grouped))
+ assert(not Tags.matchesRule({'mechanics','vehiclepart'},grouped))
+ assert(Tags.matchesRule({'perishable','vehiclepart'},grouped),'exclusion escaped its own branch')
+ assert(not Tags.matchesRule({'food'},grouped))
+ assert(Tags.ruleActive(grouped) and Tags.ruleIncludes(grouped,'mechanics') and not Tags.ruleIncludes(grouped,'vehiclepart'))
+ local draft=Tags.ruleGroups(grouped);draft[1].include[1]='food'
+ assert(grouped.groups[1].include[1]=='mechanics','group draft aliases saved rule')
+ assert(Tags.fromRuleGroups({{include={'food','perishable'},exclude={'meat'}}}).mode=='all')
+ local legacy={mode='any',include={'food','mechanics'},exclude={'vehiclepart'}}
+ local branches=assert(Tags.ruleGroups(legacy))
+ assert(#branches==2 and branches[1].exclude~=branches[2].exclude)
+ local collapsed=assert(Tags.fromRuleGroups(branches));assert(collapsed.mode=='any')
+ for _,itemTags in ipairs({{}, {'food'}, {'mechanics'}, {'food','vehiclepart'}, {'mechanics','perishable'}}) do
+  assert(Tags.matchesRule(itemTags,legacy)==Tags.matchesRule(itemTags,{groups=branches}))
+  assert(Tags.matchesRule(itemTags,legacy)==Tags.matchesRule(itemTags,collapsed))
+ end
+ local large={mode='any',include={},exclude={}}
+ for i=1,64 do large.include[i]='category:Include'..i;large.exclude[i]='category:Exclude'..i end
+ local roundtrip=assert(Tags.fromRuleGroups(assert(Tags.ruleGroups(large))))
+ assert(roundtrip.mode=='any' and #roundtrip.include==64 and #roundtrip.exclude==64)
+ assert(Tags.matchesRule({'category:Include64'},roundtrip))
+ assert(not Tags.matchesRule({'category:Include64','category:Exclude64'},roundtrip))
+ local negative=assert(Tags.fromRuleGroups({{exclude={'vehiclepart'}},{include={'perishable'}}}))
+ assert(Tags.matchesRule({},negative) and not Tags.matchesRule({'vehiclepart'},negative))
+ assert(Tags.matchesRule({'vehiclepart','perishable'},negative))
+ local unconditional=assert(Tags.normalizeRule({groups={{include={'food'}},{}}}))
+ assert(Tags.matchesRule({},unconditional) and not Tags.ruleActive(unconditional),'empty branch truth changed')
+ assert(Tags.matchesRule({},Tags.fromRuleGroups(Tags.ruleGroups({mode='any',exclude={'food'}}))))
+ for _,bad in ipairs({{groups={}}, {groups=false}, {groups={[2]={}}}, {groups={extra={}}},
+  {groups={{mode='all'}}}, {groups={{include={'food'},exclude={'food'}}}},
+  {groups={{include={[2]='food'}}}}, {groups={{include={'unknown'}}}},
+  {groups={{}},mode='all'}, {groups={{}},include={}}, {groups={{}},extra=true}}) do
+  assert(not Tags.normalizeRule(bad) and not Tags.matchesRule({},bad),'malformed grouped rule accepted')
+ end
+ local tooMany={};for i=1,65 do tooMany[i]={include={'food'}} end
+ assert(not Tags.fromRuleGroups(tooMany))
+ assert(not Tags.fromRuleGroups({{include=huge}}))
+end
+
 -- Prepared matchers reuse a private membership snapshot across destination rules.
 do
  local values=Tags.forCategory('FurnitureDoor')
@@ -317,13 +361,36 @@ local exact={getFullType=function()return 'Base.Fixture' end,
 assert(Tags.label('food')=='Edited food' and Tags.defaultLabel('food')=='Еда')
 assert(Tags.matches(Tags.forItem(exact),{customId,'perishable','fruit'})
  and not Tags.matches(Tags.forItem(exact),{'food'}),'type override replaced dynamic base tags')
+-- Grouped rules retain effective world/instance tags and prepared membership.
+local customGrouped=assert(Tags.normalizeRule({groups={
+ {include={customId,'perishable'},exclude={'rotten'}},
+ {include={'condiment'},exclude={'food'}}
+}}))
+assert(customGrouped.groups[2].include[1]=='seasoning','group normalization lost canonical alias migration')
+assert(Tags.ruleIncludes(customGrouped,'condiment'),'group include lookup lost the saved alias')
+local effective=Tags.forItem(exact)
+local prepared=Tags.ruleMatcher(effective)
+assert(Tags.matchesRule(effective,customGrouped) and prepared(customGrouped),
+ 'grouped custom and semantic conjunction lost effective item tags')
+assert(prepared(customGrouped)==Tags.matchesRule(effective,customGrouped),
+ 'prepared grouped matcher differs from direct matching')
+assert(Tags.matchesScriptRule(scriptItem('Base.Fixture','foodPerishable_fruit'),customGrouped),
+ 'script-state matching lost grouped semantic and custom tags')
+local opposing=assert(Tags.normalizeRule({groups={{include={'condiment'},exclude={'seasoning'}}}}))
+assert(not Tags.ruleMatcher({'seasoning'})(opposing),
+ 'canonical opposing aliases widened a grouped saved rule')
+assert(Tags.matchesRule({'seasoning'},customGrouped),
+ 'the alternative branch inherited another group exclusion')
 delta.food='add';delta[customId]='remove'
 assert(Tags.matches(Tags.forItem(exact),{'food'}) and not Tags.matches(Tags.forItem(exact),{customId}),
  'exact instance did not override type delta')
+assert(not Tags.matchesRule(Tags.forItem(exact),customGrouped) and prepared(customGrouped),
+ 'grouped matching reused stale instance tags or mutated the private prepared snapshot')
 delta.food=nil;delta[customId]=nil
 customizationWorld.definitions[customId]={deleted=true}
 local retired=assert(Tags.normalizeRule({include={customId}}))
 assert(not Tags.matchesRule(Tags.forItem(exact),retired),'deleted tag widened a saved rule')
+assert(not Tags.matchesRule(Tags.forItem(exact),customGrouped),'deleted custom tag widened a grouped saved rule')
 print('Tag consumer: sparse world/type/instance deltas, default label and retired rules passed.')
 
 -- Loaded fallback categories and instance-only automatic categories remain
@@ -349,5 +416,24 @@ customizationWorld.definitions[customId]={name='World one'}
 assert(hasId(Tags.allIds(),customId))
 customizationWorld=C.empty()
 assert(not hasId(Tags.allIds(),customId),'automatic script tag cache retained a prior world custom identity')
+-- Source selection views must add unassigned custom definitions without a
+-- second automatic projection of every loaded script.
+getScriptManager=function() error('custom-only catalog requested script enumeration') end
+local oldAutomatic=Tags.automaticForScriptItem
+Tags.automaticForScriptItem=function() error('custom-only catalog projected automatic tags') end
+local secondCustom='custom:aaaaaaaa-1234-1234-1234-123456789abc'
+customizationWorld.definitions[customId]={name='Unassigned'}
+customizationWorld.definitions[secondCustom]={name='Removed',deleted=true}
+customizationWorld.definitions.food={name='Builtin label'}
+local customOnly=Tags.customIds()
+assert(#customOnly==1 and customOnly[1]==customId,'custom-only catalog lost unassigned or retained deleted/builtin tags')
+customOnly[1]='changed by caller'
+assert(Tags.customIds()[1]==customId,'caller changed custom-only catalog')
+customizationWorld.definitions[customId].deleted=true
+customizationWorld.definitions[secondCustom]={name='Replacement'}
+assert(#Tags.customIds()==1 and Tags.customIds()[1]==secondCustom,'custom-only catalog ignored live definition changes')
+customizationWorld=C.empty()
+assert(#Tags.customIds()==0,'custom-only catalog retained a previous world')
+Tags.automaticForScriptItem=oldAutomatic
 getScriptManager=oldManager
 print('Tag catalog: loaded/instance fallback tags editable and removable, custom identities remain world-local')

@@ -77,11 +77,16 @@ local function evolvedMeal(recipe, manager)
         or result.getThirstChange and result:getThirstChange() < 0
 end
 
-local function indexRecipes()
+local function indexRecipes(context)
     local manager = getScriptManager and getScriptManager()
     if not manager or not manager.getAllEvolvedRecipesList or not manager.getAllCraftRecipes then return end
-    local evolved = manager.getAllEvolvedRecipesList and manager:getAllEvolvedRecipesList()
-    local craft = manager.getAllCraftRecipes and manager:getAllCraftRecipes()
+    local evolved, craft
+    if context then
+        evolved = context:recipes(manager, "getAllEvolvedRecipesList")
+        craft = context:recipes(manager, "getAllCraftRecipes")
+    else
+        evolved, craft = manager:getAllEvolvedRecipesList(), manager:getAllCraftRecipes()
+    end
     if not evolved or not craft then return end
     local evolvedCount, craftCount = evolved and evolved:size() or 0, craft and craft:size() or 0
     if catalog and catalog.manager == manager and catalog.evolved == evolved and catalog.craft == craft
@@ -165,10 +170,10 @@ end
 -- A supplied item supplies authoritative current contents. Script-only callers
 -- use declared initial fluid types; this is capability, not current availability.
 -- nil means native metadata is unavailable or random defaults disagree.
-function Cooking.read(script, item, noInitialFluids)
+function Cooking.read(script, item, noInitialFluids, context)
     script = script or item and item.getScriptItem and item:getScriptItem()
     if not script or not script.getFullName then return nil end
-    local index = indexRecipes()
+    local index = indexRecipes(context)
     if not index then return nil end
     if index.byType[script:getFullName()] then return true end
     -- Old warehouse rows did not capture their mutable fluid contents. Their

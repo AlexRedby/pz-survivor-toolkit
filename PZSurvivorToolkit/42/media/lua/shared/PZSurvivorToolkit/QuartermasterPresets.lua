@@ -3,6 +3,9 @@ local Tags = require "PZSurvivorToolkit/ItemTags"
 local Presets = {}
 local ANY = "__PZST_ANY__"
 Presets.STORE = "LootSorter_Presets"
+-- Reuse the strict selection-set codec. This non-tag marker cannot collide with
+-- legacy tag IDs; every term carries its branch index without escaping the ID.
+local GROUPED = "__PZST_GROUPS_V1__:"
 local LEGACY_RULES = "PZSTQuartermasterTagRules"
 
 local function translate(presets, convert)
@@ -22,9 +25,39 @@ end
 local function decodeRules(records)
     local result = {}
     for name, entry in pairs(records) do
-        local rule = {mode = entry.items[ANY] and "any" or "all", include = {}, exclude = {}}
-        for id in pairs(entry.cats) do rule.include[#rule.include + 1] = id end
-        for id in pairs(entry.items) do if id ~= ANY then rule.exclude[#rule.exclude + 1] = id end end
+        local rule, count, marker
+        for id in pairs(entry.items) do
+            if id:sub(1, #GROUPED) == GROUPED then
+                if marker then error("Invalid saved Quartermaster group marker") end
+                marker = id
+                local digits = id:sub(#GROUPED + 1)
+                count = digits:match("^[1-9]%d*$") and tonumber(digits)
+                if not count or count > Tags.MAX_RULE_GROUPS or tostring(count) ~= digits then
+                    error("Invalid saved Quartermaster group count")
+                end
+            end
+        end
+        if count then
+            rule = {groups = {}}
+            for index = 1, count do rule.groups[index] = {include = {}, exclude = {}} end
+            for _, field in ipairs({"cats", "items"}) do
+                for id in pairs(entry[field]) do
+                    if field ~= "items" or id ~= marker then
+                        local digits, tag = id:match("^([1-9]%d*):(.*)$")
+                        local index = digits and tonumber(digits)
+                        if not index or index > count or tostring(index) ~= digits then
+                            error("Invalid saved Quartermaster group index")
+                        end
+                        local list = rule.groups[index][field == "cats" and "include" or "exclude"]
+                        list[#list + 1] = tag
+                    end
+                end
+            end
+        else
+            rule = {mode = entry.items[ANY] and "any" or "all", include = {}, exclude = {}}
+            for id in pairs(entry.cats) do rule.include[#rule.include + 1] = id end
+            for id in pairs(entry.items) do if id ~= ANY then rule.exclude[#rule.exclude + 1] = id end end
+        end
         rule = Tags.normalizeRule(rule)
         if not rule then error("Invalid saved Quartermaster tag rule") end
         result[name] = {rule = rule, gen = entry.gen}
@@ -39,9 +72,17 @@ local function encodeRules(presets)
         if not rule then error("Invalid Quartermaster tag rule") end
         if Tags.ruleActive(rule) then
             local record = {cats = {}, items = {}, gen = entry.gen}
-            for _, id in ipairs(rule.include) do record.cats[id] = true end
-            for _, id in ipairs(rule.exclude) do record.items[id] = true end
-            if rule.mode == "any" then record.items[ANY] = true end
+            if rule.groups then
+                record.items[GROUPED .. #rule.groups] = true
+                for index, group in ipairs(rule.groups) do
+                    for _, id in ipairs(group.include) do record.cats[index .. ":" .. id] = true end
+                    for _, id in ipairs(group.exclude) do record.items[index .. ":" .. id] = true end
+                end
+            else
+                for _, id in ipairs(rule.include) do record.cats[id] = true end
+                for _, id in ipairs(rule.exclude) do record.items[id] = true end
+                if rule.mode == "any" then record.items[ANY] = true end
+            end
             records[name] = record
         end
     end

@@ -72,6 +72,14 @@ local function itemState(item)
 end
 
 local function acceptsBrokenTool(state, rule, matchRule)
+    if rule.groups then
+        -- A role in a different, nonmatching OR branch cannot authorize this item.
+        for _, group in ipairs(rule.groups) do
+            local branch = {mode = "all", include = group.include, exclude = group.exclude}
+            if matchRule(branch) and acceptsBrokenTool(state, branch, matchRule) then return true end
+        end
+        return false
+    end
     for _, id in ipairs(rule.include) do
         local role = brokenDestinations[id]
         if role then

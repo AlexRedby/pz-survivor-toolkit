@@ -446,6 +446,8 @@ function Lifecycle.flush(queue)
         if not enabled(action) then pending[queue] = nil; return end
         return "waiting", action
     end
+    local execution = Toolkit.ActionQueueExecution
+    if execution then execution.completionState(queue, action) end
     local settlement = Toolkit.ActionQueueSettlement
     local cancellation = settlement and settlement.completionState(queue, action)
     if cancellation == "waiting" then return "waiting", action end

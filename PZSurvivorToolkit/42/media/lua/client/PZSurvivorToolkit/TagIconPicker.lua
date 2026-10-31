@@ -12,7 +12,7 @@ function Icons.entries()
             search=(label .. " " .. key):lower()}
         seen[key]=entries[#entries]
     end
-    for _, id in ipairs(Tags.allIds()) do
+    for _, id in ipairs(Tags.cachedIds()) do
         local style = Visuals.get(id)
         add(style.icon, Tags.label(id), style.texture)
         local original = Visuals.defaults(id)
@@ -32,6 +32,7 @@ function Icons.entries()
 end
 
 function Icons.open(owner, onPick)
+    if owner.toolkitTagCatalogPending then return end
     return Picker.openEntries(owner, onPick, Icons.entries(), {
         title=getText("UI_PZST_TagEdit_Icon"), search=getText("UI_PZST_TagEdit_SearchIcons"),
         default=getText("UI_PZST_TagEdit_Default"), select=getText("UI_PZST_TagEdit_Select")})
