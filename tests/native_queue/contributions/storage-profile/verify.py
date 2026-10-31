@@ -118,7 +118,7 @@ def verify(root,text):
     def receipts(kind):
         return [json.loads(value) for value in re.findall(r'\[STORAGE_PROFILE\] '+kind+r' (\{[^\r\n]+\})',text)]
     setup=receipts('SETUP')
-    if len(setup)!=1 or setup[0]!={'native':True,'crates':12,'itemType':'Base.Nails','clock':'getTimestampMs',
+    if len(setup)!=1 or setup[0]!={'native':True,'crates':12,'crateCapacity':100,'itemType':'Base.Nails','clock':'getTimestampMs',
                                   'resolutionMs':1,'movement':'ISWalkToTimedAction','setupTeleport':True,'video':False,
                                   'proximity':True,'discoveryScope':'native-begin-end-events'}:
         raise ValueError('Missing native storage setup proof')

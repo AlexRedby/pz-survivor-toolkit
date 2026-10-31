@@ -61,7 +61,7 @@ def rows():
 
 def receipts(data=None):
     data=rows() if data is None else data
-    result=[('SETUP',{'native':True,'crates':12,'itemType':'Base.Nails','clock':'getTimestampMs','resolutionMs':1,
+    result=[('SETUP',{'native':True,'crates':12,'crateCapacity':100,'itemType':'Base.Nails','clock':'getTimestampMs','resolutionMs':1,
                       'movement':'ISWalkToTimedAction','setupTeleport':True,'video':False,'proximity':True,'discoveryScope':'native-begin-end-events'}),
             ('STARTUP',{'untoggled':True,'mode':'clean','physical':{'raw':6,'rows':6,'exact':True},'presentation':state()})]
     for row in data:
@@ -117,6 +117,8 @@ class StorageProfileTests(unittest.TestCase):
 
     def test_capture_requires_actual_native_walk_complete_counts_and_unchanged_identity(self):
         self.assertEqual(len(V.verify(Path('/unused'),text(receipts()))['phases']),21)
+        unsupported=receipts();unsupported[0][1]['crateCapacity']=10000
+        with self.assertRaises(ValueError):V.verify(Path('/unused'),text(unsupported))
         mutations=[('distance',0),('movementTicks',0),('tileChanges',0),('reached',0),('nativeActions',2),
                    ('teleportsDuringMeasurement',1),('elapsedMs',1000),('stateViolations',1),('discoveryPending',1),
                    ('sourceItems',400),('warmupMs',0),('nativeBuildDelta',999)]

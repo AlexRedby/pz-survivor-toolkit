@@ -215,7 +215,10 @@ local function exactRows(oldItem,newItem)
 end
 local function sourceCounts()
     local count=0
-    for _,container in ipairs(containers) do count=count+container:getItems():size() end
+    for _,container in ipairs(containers) do
+        assert(container:getCapacity()==100 and container:getCapacityWeight()<=100,'native walking crate capacity exceeded')
+        count=count+container:getItems():size()
+    end
     return count
 end
 local function area(player)
@@ -311,11 +314,12 @@ local function setup()
         local square=assert(getCell():getGridSquare(origin.x+x,origin.y+y,origin.z))
         local object=IsoThumpable.new(getCell(),square,'carpentry_01_16',false,{})
         object:setIsContainer(true)
-        local container=assert(object:getContainer()); container:setType('crate'); container:setCapacity(10000); container:setExplored(true)
+        local container=assert(object:getContainer()); container:setType('crate'); container:setCapacity(100); container:setExplored(true)
+        assert(container:getCapacity()==100,'native walking crate capacity differs')
         square:AddSpecialObject(object)
         objects[#objects+1]=object; containers[#containers+1]=container
     end end
-    log('SETUP',{native=true,crates=12,itemType='Base.Nails',clock='getTimestampMs',resolutionMs=1,
+    log('SETUP',{native=true,crates=12,crateCapacity=100,itemType='Base.Nails',clock='getTimestampMs',resolutionMs=1,
         movement='ISWalkToTimedAction',setupTeleport=true,video=false,proximity=true,discoveryScope='native-begin-end-events'})
 end
 local function fill()

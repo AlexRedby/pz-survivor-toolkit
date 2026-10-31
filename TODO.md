@@ -54,7 +54,6 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 ### Warehouse client workload
 
 - [ ] Reproduce visible personal-page quick transfer while loot is hidden after a peer changes a source item type/category. CleanUI quick-transfer affinity reads the hidden selected aggregate before physical Smart Deposit routing; the existing same-type Bandage replacement does not establish a user-visible failure. Use the installed callback and exact transferred IDs to determine whether an invalidation fix is needed.
-- [ ] Extend `warehouse-peer-host` to measured walking in both inventory modes, sparse/dense loads and the four existing window states under exclusive admission with the current complete source lock. Resolve the unsupported SP walking-crate capacity setup recorded under Process friction, retaining exact contents. Preserve two-client authority/convergence and exact cleanup; keep measured walking intervals separate from mutation/setup checks, retain a matched SP control and report captures without claiming FPS or the user's stutter cause.
 
 ### Item catalogue test world
 
@@ -243,14 +242,17 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Measured stabilization candidates
 
+- [ ] Reduce dense visible-stack category projection cost in `InventoryCategoryGroups.split`. Matched exclusive SP/two-client Host captures with 4,800 warehouse items and 1,200 selected nearby items attribute 3.6-3.95 seconds per roughly 17-second open-loot interval to this function in both inventory modes; maximum tick gaps are 164-183 ms. Hidden/collapsed-loot intervals spend at most 2.31 ms in the shared split prototype. These observer-inclusive timings identify the containing hotspot, not individual recipe-getter cost or GPU FPS.
+  - Share recipe metadata through a fresh context scoped to one synchronous physical-item batch, using the existing script projection context. Thread it through `ItemTags.forItem`/`automaticForItem` and migrate InventoryCategoryGroups, InventoryFilter, ContextMenus, TagRulePicker and ItemTags.collectIds. Recompute per-instance live/custom tags and retention; do not cache mutable tags across items or calls.
+  - Require each recipe getter at most once per batch and refresh on the next batch after recipe/item changes. Preserve tag/category order, heterogeneous stacks, exact selection/weight, headerless groups, merge/membership changes, collapse/Shift anchors and callback contracts.
+  - Rerun matched exclusive `warehouse-dense-sp`/`warehouse-dense-host` before accepting the optimization, preserving the same load, outer lanes, manual proximity lock, UI geometry, source lock and observer scope. Keep exact identity/authority/restoration gates and distinguish registered-child exclusive cost from nested inclusive time.
+
 - [ ] Defer Smart Deposit actor-identity cache hardening until a real consumer replaces the actor within a slot while retaining its pane, drag object and selection without normal lifecycle events. Current game respawn and CleanUI mode switching recreate the inventory UI. If such a consumer is found, reproduce hint reuse within the cache lifetime, add actor identity to the cache key and qualify that path, including fresh admission/execution and recreated UI. Do not treat an artificially retained UI or ordinary respawn as a demonstrated gameplay bug.
 
 
 # Process friction
 
 - [ ] Validate the required Kotlin 2.4.21 toolchain during cart campaign preflight. Cart campaign `--dry-run` passed with no compiler configured, but each cart preparation then copied sources before failing with `Kotlin 2.4.21 compiler distribution is required`. A previously used temporary distribution later retained its directory/stdlib but lost `lib/kotlin-compiler.jar`; directory existence alone is insufficient. Resolve and validate the selected compiler/runtime version and required files before profile creation; the documented `KOTLIN_HOME` remains necessary until this guard is added.
-
-- [ ] Remove unsupported capacity setup from the warehouse walking fixture: `ZZStorageProfileNative.lua` calls `setCapacity(10000)` for each crate, and B42.21 emits repeated warnings about exceeding its maximum capacity of 100 during full-pack warehouse walking. Use an engine-supported capacity and verify both density levels retain their exact contents and workload coverage.
 
 - [ ] Make the Lua runner reject game-unsupported globals such as `next` before native qualification. An experimental dashboard regression passed under LuaJIT but failed on vehicle exit in real Kahlua because `next` is absent; the Smart Deposit Host fixture also reached native setup before the same missing global was detected. Its callback observers additionally needed the native `rawget` metatable behavior, which standard Lua doubles did not model. Add a shared game-environment compatibility check or profile without breaking test-harness-only helpers, and require a missing-global regression to fail before launching the game. Include actual game-compiler checks: standard Lua accepted a native fixture closure above Kahlua's 60-upvalue limit; the retained Smart Deposit `java/KahluaCompileCheck.java` demonstrates compile-only validation and the source limit without launching the game.
 

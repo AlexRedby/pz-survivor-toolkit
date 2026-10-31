@@ -159,6 +159,37 @@
       }
     },
     {
+      "id": "warehouse-dense-sp",
+      "suite": "warehouse-walking",
+      "case": "walk",
+      "kind": "sp",
+      "language": "EN",
+      "timeout": 1800,
+      "boundary": "Matched fresh-world walking capture with 12/4,800 warehouse items, three nearby crates at interval endpoints, fixed UI and separate mirrored outer lanes; exclusive measurement separate from peer edits and other workloads.",
+      "resources": {
+        "exclusive": true
+      },
+      "options": {
+        "preload_toolkit_fonts": true
+      }
+    },
+    {
+      "id": "warehouse-dense-host",
+      "suite": "warehouse-walking",
+      "case": "walk",
+      "kind": "mp",
+      "language": "EN",
+      "timeout": 1800,
+      "boundary": "Matched fresh-world walking capture with 12/4,800 warehouse items, three nearby crates at interval endpoints, fixed UI and separate mirrored outer lanes; exclusive measurement separate from peer edits and other workloads.",
+      "resources": {
+        "exclusive": true
+      },
+      "options": {
+        "mp_host": true,
+        "preload_toolkit_fonts": true
+      }
+    },
+    {
       "id": "inventory-work-sp",
       "suite": "storage-profile",
       "case": "inventory-work",
@@ -537,7 +568,9 @@
       "food-age-sp",
       "food-age-host",
       "food-cooling-sp",
-      "food-cooling-host"
+      "food-cooling-host",
+      "warehouse-dense-sp",
+      "warehouse-dense-host"
     ],
     "carts": [
       "wooden-wheelbarrow-injury",
@@ -565,7 +598,9 @@
       "dashboard-controls-host",
       "warehouse-sp",
       "warehouse-host",
-      "warehouse-peer-host"
+      "warehouse-peer-host",
+      "warehouse-dense-sp",
+      "warehouse-dense-host"
     ],
     "sp": [
       "warehouse-sp",
@@ -586,7 +621,8 @@
       "shopping-cart-speed-parity",
       "cart-controls-sp",
       "dashboard-controls-sp",
-      "door-icon-sp"
+      "door-icon-sp",
+      "warehouse-dense-sp"
     ],
     "host": [
       "retention-host",
@@ -606,7 +642,8 @@
       "shopping-view-host",
       "dashboard-controls-host",
       "food-cooling-host",
-      "food-age-host"
+      "food-age-host",
+      "warehouse-dense-host"
     ],
     "full": [
       "retention-host",
@@ -645,7 +682,9 @@
       "shopping-view-host",
       "dashboard-controls-sp",
       "dashboard-controls-host",
-      "door-icon-sp"
+      "door-icon-sp",
+      "warehouse-dense-sp",
+      "warehouse-dense-host"
     ]
   },
   "campaign": [
@@ -666,11 +705,13 @@
         "warehouse-peer-host",
         "warehouse-walk-sp",
         "inventory-work-sp",
-        "inventory-freshness-sp"
+        "inventory-freshness-sp",
+        "warehouse-dense-sp",
+        "warehouse-dense-host"
       ],
       "gates": [
         "Reproduce the visible personal-page quick-transfer callback after a peer changes hidden loot item type/category; raw hidden-cache staleness alone does not establish a gameplay failure.",
-        "Extend to both inventory modes and the existing sparse/dense window-state matrix under exclusive admission; keep mutation/setup checks separate from measured walking intervals and retain a matched SP control.",
+        "Qualify the physical-item batch recipe-context optimization in TODO.md#measured-stabilization-candidates with matched exclusive warehouse-dense-sp/warehouse-dense-host captures; preserve exact workload, source lock, observer scope, identity/authority/restoration checks and focused live-state/selection regressions.",
         "Keep GPU/FPS and actual user-save stutter conclusions separate from Lua/UI timings."
       ]
     },
