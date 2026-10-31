@@ -104,11 +104,12 @@ function Filter.choices(pane, includeTags)
     local categories, tags, result = {}, {}, {}
     if not Toolkit.Settings.inventoryFilters() then return result, tags end
     local tagsEnabled = includeTags ~= false and Tags.enabled()
+    local tagContext = tagsEnabled and Tags.newProjectionContext()
     for _, item in ipairs(filterItems(pane)) do
         local category = item:getDisplayCategory() or item:getCategory()
         if category then categories[category] = true end
         if tagsEnabled then
-            for _, id in ipairs(Tags.choices(Tags.forItem(item))) do tags[id] = true end
+            for _, id in ipairs(Tags.choices(Tags.forItem(item, tagContext))) do tags[id] = true end
         end
     end
     for category in pairs(categories) do
@@ -133,8 +134,9 @@ local function applyFilter(pane, selected)
     local filterTags = tagFilterActive(pane)
     if not pane.toolkitCategory and not filterTags and not search then return end
     local itemTags = {}
+    local tagContext = filterTags and Tags.newProjectionContext()
     local function tagsFor(item)
-        if not itemTags[item] then itemTags[item] = Tags.forItem(item) end
+        if not itemTags[item] then itemTags[item] = Tags.forItem(item, tagContext) end
         return itemTags[item]
     end
     local kept, visible, equipped = {}, {}, false

@@ -18,13 +18,13 @@ local function checkScriptChoiceParity()
  assert(type(Tags.choicesForScriptItem)=='function','Script choice API absent')
  local scripts=assert(getAllItems())
  local count=scripts:size();assert(count>0,'No native script items for choice parity')
- local reference,context={},Tags.newScriptProjectionContext()
+ local reference,context={},Tags.newProjectionContext()
  for index=0,count-1 do
   local script=assert(scripts:get(index),'Native script entry absent')
   local tags=Tags.forScriptItem(script,context)
   reference[index+1]={choices=Tags.choices(tags),category=tags.legacyCategory}
  end
- context=Tags.newScriptProjectionContext()
+ context=Tags.newProjectionContext()
  for index=0,count-1 do
   local script=assert(scripts:get(index),'Native script entry absent')
   local actual=Tags.choicesForScriptItem(script,context)

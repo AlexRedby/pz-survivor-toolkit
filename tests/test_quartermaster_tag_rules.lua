@@ -135,6 +135,31 @@ do
     note.ref.written=false
     assert(not Rules.matcher()(readingBox,note),'a new plan retained previously written content')
 end
+-- A standalone rule check owns no planning snapshot and reads the physical item afresh.
+do
+ local Tags=require 'PZSurvivorToolkit/ItemTags'
+ local newContext,forItem=Tags.newProjectionContext,Tags.forItem
+ local contexts,reads={},0
+ Tags.newProjectionContext=function()
+  local context=newContext();contexts[#contexts+1]=context;return context
+ end
+ Tags.forItem=function(ref,context)
+  assert(context==nil,'standalone matching inherited a planning context')
+  reads=reads+1;return forItem(ref,context)
+ end
+ local readingBox={cats={},rules={{mode='all',include={'readable'},exclude={}}}}
+ local note=record('literatureWriteable','Base.FreshStandaloneNote')
+ note.ref.IsLiterature=function() return true end
+ note.ref.canBeWrite=function() return true end
+ note.ref.isEmptyPages=function(self) return not self.written end
+ note.ref.written=true
+ assert(Rules.matches(readingBox,note))
+ note.ref.written=false
+ assert(not Rules.matches(readingBox,note))
+ assert(reads==2 and #contexts==2 and contexts[1]~=contexts[2],
+  'independent rule checks reused an earlier physical classification context')
+ Tags.newProjectionContext,Tags.forItem=newContext,forItem
+end
 local rule={mode='all',include={'food'},exclude={'perishable'}}
 local function args(value) return {x=10,y=20,z=0,object=0,ci=0,rule=value or rule,baseRevision=Rules.getBoxRevision(object,0)} end
 local nativeLootSorter = LootSorter

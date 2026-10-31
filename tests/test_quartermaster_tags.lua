@@ -65,7 +65,7 @@ require = function(name)
     return {enabled = function() return enabled end,
         revision = function() return tagRevision end, customIds = function() return customIds end,
         allIds = function() error('selection view scanned the automatic script tag catalog') end,
-        newScriptProjectionContext = function()
+        newProjectionContext = function()
             projectionContexts = projectionContexts + 1
             return {id = projectionContexts}
         end,

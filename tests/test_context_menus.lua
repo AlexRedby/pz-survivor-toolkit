@@ -704,6 +704,30 @@ assert(previewHasDrop(Organizer.getLayout('Base.Pot','root','Base.Pot')),'previe
 tagsEnabled=true;Organizer.reset()
 print('PASS preview preserves opaque/inherited mod option fields without foreign writes and invalidates disabled-tag cache')
 
+-- Selection capture and a later menu revalidation own separate projection batches.
+do
+ local Tags=require 'PZSurvivorToolkit/ItemTags'
+ local newContext,forItem=Tags.newProjectionContext,Tags.forItem
+ local contexts,reads={},{}
+ Tags.newProjectionContext=function()
+  local context=newContext();contexts[#contexts+1]=context;reads[context]=0;return context
+ end
+ Tags.forItem=function(item,context)
+  assert(context and reads[context]~=nil,'context menu lost its batch projection context')
+  reads[context]=reads[context]+1;return forItem(item,context)
+ end
+ local selected=wrapper(0,true,{pot,bowl})
+ assert(#contexts==1 and reads[contexts[1]]==2,'selection did not share one physical projection context')
+ local selectionContext=contexts[1]
+ -- Settle the independently captured preview samples before checking this menu's batch.
+ Organizer.refreshTagSamples()
+ contexts,reads={},{}
+ selected:prerender()
+ assert(#contexts==1 and contexts[1]~=selectionContext and reads[contexts[1]]==2,
+  'menu revalidation reused selection metadata or failed to share its fresh batch context')
+ Tags.newProjectionContext,Tags.forItem=newContext,forItem
+end
+
 local stateProfile=assert(Organizer.createTagProfile('State cooking',{include={'cooking'}}))
 Organizer.setOverride('callback:ISInventoryPaneContextMenu.onDropItems','hidden',stateProfile)
 local changedPot={getFullType=function() return 'Base.Pot' end,getDisplayCategory=function() return 'Tool' end}

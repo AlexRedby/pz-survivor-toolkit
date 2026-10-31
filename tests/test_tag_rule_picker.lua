@@ -76,13 +76,18 @@ require=function(name)
 end
 local Tags=require 'PZSurvivorToolkit/ItemTags'
 local forScript=Tags.choicesForScriptItem
-local newContext, contexts, projectionContext = Tags.newScriptProjectionContext, 0
-Tags.newScriptProjectionContext=function()
+local newContext, contexts, projectionContext = Tags.newProjectionContext, 0
+Tags.newProjectionContext=function()
     contexts=contexts+1;projectionContext=newContext();return projectionContext
 end
 Tags.choicesForScriptItem=function(script,context)
     assert(context==projectionContext and context,'script chooser lost its projection context')
     projections=projections+1;return forScript(script,context)
+end
+local forItem=Tags.forItem
+Tags.forItem=function(item,context)
+    assert(context and context==projectionContext,'physical chooser lost its shared projection context')
+    return forItem(item,context)
 end
 Tags.forScriptItem=function() error('script chooser copied owned script metadata') end
 Tags.allIds=function() error('chooser scanned the automatic script tag catalog') end
@@ -167,10 +172,14 @@ assert(not chooser.added and not chooser.search.focused and not chooser.group.po
 picker=open({scriptItems=scripts});picker:catalogEntries();assert(projections==before+2*#scripts,'reopen reused a stale script projection');picker:close()
 assert(contexts==2,'script chooser reused the previous opening projection context')
 local item={category='Tool',getDisplayCategory=function(self) return self.category end}
-picker=open({items={item}});entries=picker:catalogEntries();assert(entries[1])
+local other={category='Cooking',getDisplayCategory=function(self) return self.category end}
+picker=open({items={item,other}});entries=picker:catalogEntries();assert(entries[1])
+assert(contexts==3,'physical chooser did not share one batch projection context')
+local physicalContext=projectionContext
 item.category='medicalTreatment';entries=picker:catalogEntries()
 byId={};for _,entry in ipairs(entries)do byId[entry.id]=true end
-assert(byId.medical and not byId.tool,'chooser reused stale live instance categories');picker:close()
+assert(byId.medical and byId.cooking and not byId.tool,'chooser reused stale live instance categories')
+assert(contexts==4 and projectionContext~=physicalContext,'physical chooser reused the previous batch context');picker:close()
 picker=open({scriptItems={},rule=original});entries=picker:catalogEntries()
 assert(#entries==2,'saved missing tags cannot be edited');picker:close()
 

@@ -3,7 +3,13 @@ local enabled, starts, toggles = true, {}, {}
 local tags = {'Food', 'Cooking', 'Perishable'}
 local labels = {Food='Food', Cooking='Cooking', Perishable='Perishable'}
 PZSurvivorToolkit = {}
-local Tags = {enabled=function() return enabled end, forItem=function(item) return item.tags end,
+local contexts, tagReads = {}, {}
+local Tags = {enabled=function() return enabled end,
+    newProjectionContext=function() local context={};contexts[#contexts+1]=context;return context end,
+    forItem=function(item,context)
+        assert(context, 'inventory render omitted its projection context')
+        tagReads[#tagReads+1]={item=item,context=context};return item.tags
+    end,
     label=function(id) return labels[id] end}
 local foodIcon, clockIcon = {}, {}
 local styles = {Food={r=0.4,g=0.8,b=0.3,texture=foodIcon}, Cooking={r=0.5,g=0.4,b=0.2},
@@ -95,6 +101,7 @@ local function class(clean)
         self.items = {}
         for index,group in ipairs(self.itemslist) do
             self.items[index] = group
+            if self.beforeCategory then self:beforeCategory() end
             local value, y = group.items[1], index-1
             local textY = y*self.itemHgt+self.headerHgt+(self.itemHgt-self.fontHgt)/2
             self:drawText(getText('IGUI_ItemCat_'..(value.key or 'Food')), self.column2+8, textY)
@@ -200,6 +207,47 @@ for _,case in ipairs({{native,false},{enhanced,true},{vanilla,false}}) do
     p.fail=true
     assert(not pcall(p.renderdetails,p,false))
     assert(p.drawText == originalText and p.drawTextRight == originalRight, 'error leaked draw wrappers')
+end
+-- One render shares recipe metadata while live tags and nested render ownership stay local.
+do
+    local p=pane(native,false)
+    contexts,tagReads={},{}
+    p:renderdetails(false)
+    assert(#contexts==1 and #tagReads==2 and tagReads[1].context==contexts[1]
+        and tagReads[2].context==contexts[1], 'visible category rows did not share one render context')
+    local previous=contexts[1]
+    itemA.tags={'Cooking'};reset(p);contexts,tagReads={},{}
+    p:renderdetails(false)
+    assert(#contexts==1 and contexts[1]~=previous and #tagReads==2
+        and not has(p,'Food') and has(p,'Cooking'), 'next render reused stale context or physical tags')
+    itemA.tags=tags
+    itemB.tags={'Cooking'}
+    contexts,tagReads={},{}
+    p.beforeCategory=function(self)
+        self.beforeCategory=nil
+        local outerText,outerRight=self.drawText,self.drawTextRight
+        self:renderdetails(false)
+        assert(self.drawText==outerText and self.drawTextRight==outerRight,
+            'nested render did not restore outer draw wrappers')
+    end
+    p:renderdetails(false)
+    assert(#contexts==2 and #tagReads==4 and tagReads[1].context==contexts[2]
+        and tagReads[2].context==contexts[2] and tagReads[3].context==contexts[1]
+        and tagReads[4].context==contexts[1], 'nested render replaced the outer lexical projection context')
+    assert(rawget(p,'drawText')==nil and rawget(p,'drawTextRight')==nil, 'nested render leaked own methods')
+    contexts,tagReads={},{}
+    p.beforeCategory=function(self)
+        self.beforeCategory=nil
+        local outerText,outerRight=self.drawText,self.drawTextRight
+        self.fail=true;local ok=pcall(self.renderdetails,self,false);self.fail=nil
+        assert(not ok and self.drawText==outerText and self.drawTextRight==outerRight,
+            'failed nested render did not restore outer draw wrappers')
+    end
+    p:renderdetails(false)
+    assert(#contexts==2 and #tagReads==2 and tagReads[1].context==contexts[1]
+        and tagReads[2].context==contexts[1], 'failed nested render corrupted the outer projection context')
+    assert(rawget(p,'drawText')==nil and rawget(p,'drawTextRight')==nil, 'failed nested render leaked own methods')
+    itemB.tags={}
 end
 -- A later class and repeated live CleanUI swaps get exactly one wrapper each.
 ISInventoryPane=class(false)

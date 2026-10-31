@@ -31,13 +31,13 @@ local function parity(changes)
     world.definitions[unassigned]={name='Unassigned'}
     world.definitions[deleted]={deleted=true}
     world.types[name:lower()]=changes
-    local owned=Tags.forScriptItem(script,Tags.newScriptProjectionContext())
+    local owned=Tags.forScriptItem(script,Tags.newProjectionContext())
     local expected=Tags.choices(owned)
     -- Ordinary producers still own all nested metadata.
     assert(owned.usageStates~=lastAutomatic.usageStates and owned.usageStates[1]~=lastAutomatic.usageStates[1])
     owned.usageStates[1].fuel=false
     assert(lastAutomatic.usageStates[1].fuel==true,'owned projection shared state metadata')
-    local context=Tags.newScriptProjectionContext()
+    local context=Tags.newProjectionContext()
     local actual=Tags.choicesForScriptItem(script,context)
     assert(lastContext==context,'choice producer discarded its operation context')
     assert(#actual==#expected and actual.legacyCategory==owned.legacyCategory,'choice producer changed count/category')

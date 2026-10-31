@@ -171,9 +171,9 @@ print('Admitted owner receives semantic and authority-created custom branches an
 
 -- The optional native audit compares complete batches with separate shared contexts.
 local originalProjection,originalChoices,originalContext,originalFast=
- Tags.forScriptItem,Tags.choices,Tags.newScriptProjectionContext,Tags.choicesForScriptItem
+ Tags.forScriptItem,Tags.choices,Tags.newProjectionContext,Tags.choicesForScriptItem
 local contexts,referenceCalls,fastCalls={},0,0
-Tags.newScriptProjectionContext=function()local context={};contexts[#contexts+1]=context;return context end
+Tags.newProjectionContext=function()local context={};contexts[#contexts+1]=context;return context end
 local scripts={{getFullName=function()return 'Fixture.First'end},{getFullName=function()return 'Fixture.Second'end}}
 getAllItems=function()return {size=function()return #scripts end,get=function(_,index)return scripts[index+1]end}end
 Tags.forScriptItem=function(script,context)
@@ -198,6 +198,6 @@ for _,kind in ipairs({'count','order','category'})do
  local accepted=pcall(probe.parity)
  assert(not accepted and #encoded==1,'Native parity audit accepted a '..kind..' mismatch')
 end
-Tags.forScriptItem,Tags.choices,Tags.newScriptProjectionContext,Tags.choicesForScriptItem=
+Tags.forScriptItem,Tags.choices,Tags.newProjectionContext,Tags.choicesForScriptItem=
  originalProjection,originalChoices,originalContext,originalFast
 print('Native script parity compares count, order and category with independent batch contexts.')

@@ -48,7 +48,7 @@ local function pill(pane, draw, text, x, y, width, height, textY, font, style, i
     draw(pane, text, textX, textY, 0.94, 0.94, 0.94, 1, font)
 end
 
-local function drawTags(pane, draw, text, x, y, font, rightAligned)
+local function drawTags(pane, draw, text, x, y, font, rightAligned, context)
     local left, right = categoryBounds(pane)
     if pane._cleanUICategoryCollapsed or x ~= (rightAligned and right or left) then return false end
     local row = math.floor((y - pane.headerHgt) / pane.itemHgt) + 1
@@ -60,7 +60,7 @@ local function drawTags(pane, draw, text, x, y, font, rightAligned)
     local cached = group._cleanUICategoryTextCache
     local categoryText = cached and cached.value or getText("IGUI_ItemCat_" .. key)
     if text ~= categoryText then return false end
-    local tags = Tags.forItem(item)
+    local tags = Tags.forItem(item, context)
     if not tags or #tags == 0 then return false end
     local top = pane.headerHgt + (row - 1) * pane.itemHgt
     local height = math.min(pane.itemHgt - 2, pane.fontHgt + 4)
@@ -165,13 +165,14 @@ local function install(class)
             elseif name == "drawTextRight" then savedRight = callback end
         end
         local draw, drawRight = pane.drawText, pane.drawTextRight
+        local context = Tags.newProjectionContext()
         pane.drawText = function(self, text, x, y, r, g, b, a, font)
-            if not drawTags(self, draw, text, x, y, font or self.font, false) then
+            if not drawTags(self, draw, text, x, y, font or self.font, false, context) then
                 return draw(self, text, x, y, r, g, b, a, font)
             end
         end
         pane.drawTextRight = function(self, text, x, y, r, g, b, a, font)
-            if not drawTags(self, draw, text, x, y, font or self.font, true) then
+            if not drawTags(self, draw, text, x, y, font or self.font, true, context) then
                 return drawRight(self, text, x, y, r, g, b, a, font)
             end
         end

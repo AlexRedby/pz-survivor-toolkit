@@ -1,7 +1,7 @@
 isClient=function()return false end
 ModData={getOrCreate=function()return {} end}
 local pickerOptions, presetMenuOptions
-local tagReads = 0
+local tagReads, tagContexts, projectionContext = 0, 0
 require = function(name)
     if name == "PZSurvivorToolkit/InventoryClasses" or name == "PZSurvivorToolkit/InventoryRows"
         or name == "PZSurvivorToolkit/InventorySearch" then
@@ -30,8 +30,14 @@ require = function(name)
         or name == "PZSurvivorToolkit/InventoryMembership" or name == "PZSurvivorToolkit/ItemTagProperties" then
         local module = dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/shared/" .. name .. ".lua")
         if name == "PZSurvivorToolkit/ItemTags" then
-            local forItem = module.forItem
-            module.forItem = function(item) tagReads = tagReads + 1; return forItem(item) end
+            local forItem, newContext = module.forItem, module.newProjectionContext
+            module.newProjectionContext = function()
+                tagContexts=tagContexts+1;projectionContext=newContext();return projectionContext
+            end
+            module.forItem = function(item, context)
+                assert(context and context==projectionContext, 'filter lost its shared projection context')
+                tagReads = tagReads + 1; return forItem(item, context)
+            end
         end
         return module
     end
@@ -146,19 +152,22 @@ do
         originals[item] = getter
         item.getDisplayCategory = function(value) categoryReads = categoryReads + 1; return getter(value) end
     end
-    tagsEnabled, tagReads = true, 0
+    tagsEnabled, tagReads, tagContexts = true, 0, 0
     pane:refreshContainer()
     for pass=1,5 do pane:restoreSelection({}) end
-    assert(categoryReads == 0 and tagReads == 0, 'inactive restores still classified inventory for closed menus')
+    assert(categoryReads == 0 and tagReads == 0 and tagContexts == 0, 'inactive restores still classified inventory for closed menus')
     local categories, tags = PZSurvivorToolkit.InventoryFilter.choices(pane)
     assert(#categories == 3 and not tags.food and tags.tool and tagReads == 4,
         'on-demand choices resurfaced retired Food or classified duplicated group headers')
+    assert(tagContexts==1, 'choice batch did not share one projection context')
+    local choiceContext=projectionContext
     categoryReads, tagReads = 0, 0
     categoryChoices(pane)
-    assert(categoryReads == 4 and tagReads == 0, 'category-only choices unnecessarily classified tags')
+    assert(categoryReads == 4 and tagReads == 0 and tagContexts==1, 'category-only choices unnecessarily classified tags')
     pane.toolkitCategory, pane.toolkitTag, tagReads = 'Tool', 'food', 0
     pane:refreshContainer()
     assert(#pane.itemslist == 0 and tagReads == 2, 'active tag predicate classified category-rejected items')
+    assert(tagContexts==2 and projectionContext~=choiceContext, 'active filter reused a previous batch context')
     pane.toolkitCategory, pane.toolkitTag = nil, nil
     for item, getter in pairs(originals) do item.getDisplayCategory = getter end
     tagsEnabled = false

@@ -15,10 +15,11 @@ local tagRevision
 Organizer.captureRevision = 0
 
 local function currentTagRevision() return Tags.revision and Tags.revision() or 0 end
-local function refreshMenuTags(menu)
+local function refreshMenuTags(menu, context)
     if menu.toolkitContextTagItems then
-        local sets={}
-        for _,item in ipairs(menu.toolkitContextTagItems) do sets[#sets+1]=Tags.forItem(item) end
+        local sets = {}
+        context = context or Tags.newProjectionContext()
+        for _,item in ipairs(menu.toolkitContextTagItems) do sets[#sets+1]=Tags.forItem(item, context) end
         menu.toolkitContextTagSets=sets
     end
     menu.toolkitContextTagScopes=Tags.enabled() and Organizer.matchingTagProfiles(menu.toolkitContextTagSets or {}) or {}
@@ -30,8 +31,9 @@ function Organizer.refreshTagSamples()
     local revision=currentTagRevision()
     if revision == tagRevision then return false end
     tagRevision,previews=revision,{}
+    local context = Tags.newProjectionContext()
     for itemType,source in pairs(examples) do
-        local sets=refreshMenuTags(source)
+        local sets=refreshMenuTags(source, context)
         local first=source.toolkitContextTagItems and source.toolkitContextTagItems[1]
         if first and sets and sets[1] then Organizer.rememberItem(itemType,Organizer.items[itemType] or itemType,sets[1]) end
     end
@@ -649,6 +651,7 @@ local function markContext(menu, kind, items)
         menu.toolkitContextKind, menu.toolkitContextItemType, menu.toolkitContextTagScopes,
             menu.toolkitContextTagSets, menu.toolkitContextTagItems = kind, nil, {}, {}, {}
         local itemType, mixed, tagSets,seen = nil, false, {},{}
+        local tagContext = Tags.newProjectionContext()
         for _, selection in ipairs(items or {}) do
             local selected = type(selection) == "table" and selection.type == "separator" and {}
                 or type(selection) == "table" and selection.items or {selection}
@@ -662,7 +665,7 @@ local function markContext(menu, kind, items)
                     local fullType = item:getFullType()
                     if itemType and itemType ~= fullType then mixed = true end
                     itemType = fullType
-                    local tags = Tags.forItem(item)
+                    local tags = Tags.forItem(item, tagContext)
                     if capturing then
                         local script = item.getScriptItem and item:getScriptItem()
                         Organizer.rememberItem(fullType, script and script:getDisplayName() or fullType, tags)

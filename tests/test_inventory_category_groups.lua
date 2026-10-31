@@ -1,6 +1,12 @@
 package.path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/?.lua;'..package.path
 local tagMode=false
-local fakeTags={enabled=function()return tagMode end,forItem=function(item)return item.tags or {} end,
+local contexts, projectionContext = 0
+local fakeTags={enabled=function()return tagMode end,
+ newProjectionContext=function()contexts=contexts+1;projectionContext={};return projectionContext end,
+ forItem=function(item,context)
+  assert(context and context==projectionContext,'group split lost its shared projection context')
+  return item.tags or {}
+ end,
  signature=function(tags)local ids={};for _,id in ipairs(tags)do ids[#ids+1]=id end;table.sort(ids);return table.concat(ids,'|')end}
 package.loaded['PZSurvivorToolkit/ItemTags']=fakeTags
 package.loaded['PZSurvivorToolkit/ItemRetention']={isRetained=function(item)return item.retained==true or item.legacyRetained==true end}
@@ -73,9 +79,12 @@ local x,y=item('same',1),item('same',2);x.tags={'tool'};y.tags={'tool','custom'}
 local function raw()return {name='same',cat='same',items={x,x,y}}end
 local pane={itemslist={raw()},collapsed={},selected={}}
 assert(Groups.split(pane,{}) and #pane.itemslist==2,'different instance tags merged')
+assert(contexts==1,'group split did not share one context across physical items')
+local previousContext=projectionContext
 local selected={[pane.itemslist[1].items[1]]='group'}
 x.tags=y.tags;pane.itemslist={raw()}
 assert(not Groups.split(pane,selected) and #pane.itemslist==1)
+assert(contexts==2 and projectionContext~=previousContext,'fresh grouping reused the previous batch context')
 Rows.restoreSelection(pane,selected)
 assert(pane.selected[2]==x and not pane.selected[1] and not pane.selected[3],
  'tag merge widened previously selected instances')

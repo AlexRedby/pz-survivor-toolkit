@@ -35,6 +35,7 @@ function Groups.split(pane, saved)
     local source = pane.itemslist
     if not source or source == pane.toolkitCategoryGroupRows then return false end
     local result, changed = {}, false
+    local tagContext = Tags.enabled() and Tags.newProjectionContext()
     local selectedGroups = saved and saved._cleanUISelectedGroups
     local priorSplit, selectedPrevious = {}, {}
     -- Vanilla saves only a physical header marker. Recover the previous split
@@ -58,7 +59,7 @@ function Groups.split(pane, saved)
                 local item = group.items[index]
                 local category = tostring(item:getDisplayCategory() or item:getCategory() or '')
                 local key = category
-                if Tags.enabled() then key = key..string.char(30)..Tags.signature(Tags.forItem(item)) end
+                if Tags.enabled() then key = key..string.char(30)..Tags.signature(Tags.forItem(item, tagContext)) end
                 if Retention.isRetained(item) then key = key..string.char(29).."retained" end
                 if not buckets[key] then
                     buckets[key]={};order[#order + 1]=key;categories[key]=category

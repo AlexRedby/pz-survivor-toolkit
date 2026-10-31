@@ -415,7 +415,7 @@ assertFailureRestored(function()
     LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, function() error('routing test failure') end, Rules.matches)
 end)
 local originalForItem = Tags.forItem
-Tags.forItem = function(ref) if ref == candy.ref then error('routing test failure') end; return originalForItem(ref) end
+Tags.forItem = function(ref,context) if ref == candy.ref then error('routing test failure') end; return originalForItem(ref,context) end
 assertFailureRestored(function() LootSorter.planTrips({sunflower, candy}, {seeds}, {carrier}, 100, nil, Rules.matches) end)
 Tags.forItem = originalForItem
 local originalMatcher, matchCalls = Tags.ruleMatcher, 0
@@ -437,7 +437,15 @@ do
     for index=1,100 do records[index]=item('Base.Candy','Food','Candy '..index) end
     for index=1,40 do alternatives[index]=box(seedRule) end
     local classify, prepare, reads, preparations, evaluations = Tags.forItem, Tags.ruleMatcher, 0, 0, 0
-    Tags.forItem=function(ref) reads=reads+1; return classify(ref) end
+    local newContext,contexts,contextReads=Tags.newProjectionContext,{},{}
+    Tags.newProjectionContext=function()
+        local context=newContext();contexts[#contexts+1]=context;contextReads[context]=0;return context
+    end
+    Tags.forItem=function(ref,context)
+        assert(context and contextReads[context]~=nil,'plan omitted its private projection context')
+        contextReads[context]=contextReads[context]+1
+        reads=reads+1; return classify(ref,context)
+    end
     Tags.ruleMatcher=function(tags)
         preparations=preparations+1
         local match=prepare(tags)
@@ -447,6 +455,8 @@ do
     assert(#failed.leftover==100 and failed.leftoverReasons.nomatch==100 and reads==100 and preparations==100,
         'routing rebuilt item classification/membership for alternative destinations')
     assert(evaluations==4000,'unsuccessful routing repeated rule evaluations for the refusal reason')
+    assert(#contexts==1 and contextReads[contexts[1]]==100, 'plan did not share one context across physical items')
+    local firstContext=contexts[1]
     reads,preparations=0,0
     checkPlan({candy},{box(nil,{[candy.cat]=true})})
     checkPlan({candy},{box(seedRule,{}, {[candy.name]=true})})
@@ -455,6 +465,8 @@ do
     brokenFood.ref.isBroken=function() return true end
     checkPlan({brokenFood},alternatives)
     assert(reads==1 and preparations==1,'broken non-tool rebuilt its prepared membership for rules')
+    assert(#contexts==4 and contexts[4]~=firstContext and contextReads[contexts[4]]==1,
+        'later plan reused an earlier projection context')
     local brokenTool=item('Base.Hammer','toolCarpentry','Broken hammer')
     brokenTool.ref.isBroken=function() return true end
     reads,preparations=0,0
@@ -467,7 +479,7 @@ do
     end
     checkPlan({brokenTool},brokenAlternatives)
     assert(reads==1 and preparations==1,'Broken destination exceptions reclassified each alternative')
-    Tags.forItem,Tags.ruleMatcher=classify,prepare
+    Tags.forItem,Tags.ruleMatcher,Tags.newProjectionContext=classify,prepare,newContext
 
     local state={category='Food',broken=false}
     local record={cat='Food',name='Mutable',weight=1,ref={

@@ -58,13 +58,13 @@ local brokenDestinations = {
 }
 
 local function itemMatcher(state)
-    if not state.matchRule then state.matchRule = Tags.ruleMatcher(Tags.forItem(state.ref)) end
+    if not state.matchRule then state.matchRule = Tags.ruleMatcher(Tags.forItem(state.ref, state.context)) end
     return state.matchRule
 end
 
-local function itemState(item)
+local function itemState(item, context)
     local ref = item.ref
-    local state = {ref = ref}
+    local state = {ref = ref, context = context}
     if ref and ref.isBroken and ref:isBroken() then
         state.blocked = itemMatcher(state)(toolRule)
     end
@@ -118,9 +118,10 @@ end
 
 function Rules.matcher()
     local enabled, states = Tags.enabled(), {}
+    local context = enabled and Tags.newProjectionContext()
     return function(box, item)
         local state = states[item]
-        if enabled and not state then state = itemState(item); states[item] = state end
+        if enabled and not state then state = itemState(item, context); states[item] = state end
         return matches(box, item, enabled, state)
     end
 end

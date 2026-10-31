@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.329
+
+- Reuse recipe catalogue reads within each inventory grouping, tag rendering, filter, tag-menu and distribution-planning pass, reducing repeated work in large visible stacks. Keep item categories, freshness, damage, retention and custom tags live for each physical item; refresh recipe reads on the next operation.
+
 ### 0.1.327
 
 - Pair earned-return source observations only with their captured native transaction object and current actor request. Decline missing, replaced, nested or reused-ID evidence without changing native execution or editing permissions.

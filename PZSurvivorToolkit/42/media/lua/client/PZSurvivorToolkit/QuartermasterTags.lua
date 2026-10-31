@@ -174,7 +174,7 @@ local function newCatalogScan(revision)
         if self.done then return self.result end
         local clock = getTimestampMs
         local started = clock and clock() or 0
-        local context, processed = Tags.newScriptProjectionContext(), 0
+        local context, processed = Tags.newProjectionContext(), 0
         local limit = budgetMs and CATALOG_STEP_LIMIT or math.huge
         while self.index <= #snapshot and processed < limit do
             project(snapshot[self.index], context)

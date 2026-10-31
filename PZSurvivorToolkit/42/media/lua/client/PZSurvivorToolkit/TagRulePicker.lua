@@ -223,10 +223,10 @@ function Picker:catalogEntries()
     if options.tagSources then
         for _, ids in ipairs(options.tagSources()) do addSource(ids) end
     else
-        local context = options.scriptItems and Tags.newScriptProjectionContext()
+        local context = (options.items or options.scriptItems) and Tags.newProjectionContext()
         local prepared = not options.items and options.scriptItems ~= nil
         for _, source in ipairs(options.items or options.scriptItems or options.categories or {}) do
-            addSource(options.items and Tags.forItem(source)
+            addSource(options.items and Tags.forItem(source, context)
                 or options.scriptItems and Tags.choicesForScriptItem(source, context) or Tags.forCategory(source), prepared)
         end
     end

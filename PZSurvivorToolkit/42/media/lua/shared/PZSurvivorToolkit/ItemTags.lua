@@ -239,9 +239,9 @@ local function itemTags(category, fullType, script, item, context, recording, sn
 end
 
 -- Native recipe getters rebuild their shared lists even when the consumer's
--- index is cached. Share each getter's result within one synchronous script
--- projection; the next operation reads the current native catalogs again.
-function Tags.newScriptProjectionContext()
+-- index is cached. Share only recipe metadata within one synchronous projection
+-- operation; instance state stays live and the next operation rereads catalogs.
+function Tags.newProjectionContext()
     local managers = {}
     return {recipes = function(_, manager, method)
         local values = managers[manager]
@@ -255,14 +255,15 @@ end
 
 function Tags.automaticForScriptItem(script, context)
     if not script then return {} end
-    return itemTags(categories.forScript(script), script:getFullName(), script, nil, context)
+    return itemTags(categories.forScript(script), script:getFullName(), script, nil, context or Tags.newProjectionContext())
 end
 
-function Tags.automaticForItem(item)
+function Tags.automaticForItem(item, context)
     if not item then return {} end
     -- Import the current instance category every time: fluids and other mods can change it.
     local category = item:getDisplayCategory() or (item.getCategory and item:getCategory())
-    return itemTags(category, item.getFullType and item:getFullType(), item.getScriptItem and item:getScriptItem(), item)
+    return itemTags(category, item.getFullType and item:getFullType(), item.getScriptItem and item:getScriptItem(), item,
+        context or Tags.newProjectionContext())
 end
 
 -- Menu availability is distinct from actual item matching. A player can choose
@@ -307,15 +308,16 @@ function Tags.forScriptItem(script, context)
     return Custom.project(Tags.automaticForScriptItem(script, context), script:getFullName())
 end
 
-function Tags.forItem(item)
+function Tags.forItem(item, context)
     if not item then return {} end
-    return Custom.project(Tags.automaticForItem(item), item.getFullType and item:getFullType(), item)
+    return Custom.project(Tags.automaticForItem(item, context), item.getFullType and item:getFullType(), item)
 end
 
 -- Serialized rows have no InventoryItem. Use script capabilities and the captured
 -- recording, without invoking predicates that require a live native item.
 function Tags.forSnapshot(script, fullType, category, recording, tagDelta, ingredient, cookingState, fluidState, usageState)
-    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, nil, recording, true, ingredient, cookingState, fluidState, usageState), fullType, tagDelta)
+    return Custom.projectSnapshot(itemTags(category, fullType, script, nil, Tags.newProjectionContext(), recording, true,
+        ingredient, cookingState, fluidState, usageState), fullType, tagDelta)
 end
 
 -- Cache only automatic script tags. World custom definitions are merged live.
@@ -344,7 +346,7 @@ function Tags.newAutomaticIdScan()
         if self.done then return true end
         local clock = getTimestampMs
         local started = clock and clock() or 0
-        local context, processed = Tags.newScriptProjectionContext(), 0
+        local context, processed = Tags.newProjectionContext(), 0
         local limit = budgetMs and 48 or math.huge
         while self.index <= #snapshot and processed < limit do
             for _, id in ipairs(Tags.choices(Tags.automaticForScriptItem(snapshot[self.index], context))) do ids[id] = true end
@@ -361,7 +363,7 @@ function Tags.newAutomaticIdScan()
     return scan
 end
 
-local function loadedAutomaticIds()
+local function loadedAutomaticIds(context)
     if not getScriptManager then return {} end
     local manager = getScriptManager()
     if not manager or not manager.getAllItems then return {} end
@@ -369,7 +371,7 @@ local function loadedAutomaticIds()
     if not scripts or not scripts.size or not scripts.get then return {} end
     local count = scripts:size()
     if automaticIds and automaticManager == manager and automaticCount == count then return automaticIds end
-    local ids, context = {}, Tags.newScriptProjectionContext()
+    local ids = {}
     for index = 0, count - 1 do
         local script = scripts:get(index)
         for _, id in ipairs(Tags.choices(Tags.automaticForScriptItem(script, context))) do ids[id] = true end
@@ -382,7 +384,7 @@ end
 -- definitions need adding; discovering automatic IDs here would rescan scripts.
 function Tags.customIds() return Custom.customIds() end
 
-local function collectIds(automatic, items)
+local function collectIds(automatic, items, context)
     local ids, seen = {}, {}
     local function add(id)
         id = canonical(id)
@@ -393,7 +395,7 @@ local function collectIds(automatic, items)
     for _, id in ipairs(Custom.allIds()) do add(id) end
     for id in pairs(automatic or {}) do add(id) end
     for _, item in ipairs(items or {}) do
-        for _, id in ipairs(Tags.choices(Tags.automaticForItem(item))) do add(id) end
+        for _, id in ipairs(Tags.choices(Tags.automaticForItem(item, context))) do add(id) end
     end
     table.sort(ids)
     return ids
@@ -402,9 +404,12 @@ end
 -- This path never enumerates or projects the loaded script catalog.
 function Tags.cachedIds(items)
     local manager = getScriptManager and getScriptManager()
-    return collectIds(manager == automaticManager and automaticIds or nil, items)
+    return collectIds(manager == automaticManager and automaticIds or nil, items, Tags.newProjectionContext())
 end
-function Tags.allIds(items) return collectIds(loadedAutomaticIds(), items) end
+function Tags.allIds(items)
+    local context = Tags.newProjectionContext()
+    return collectIds(loadedAutomaticIds(context), items, context)
+end
 function Tags.revision() return Custom.cacheRevision() end
 function Tags.signature(tags)
     local ids = {}
