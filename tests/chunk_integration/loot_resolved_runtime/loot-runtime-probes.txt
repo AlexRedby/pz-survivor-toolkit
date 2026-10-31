@@ -1,0 +1,24 @@
+module Base
+{
+    item PZLootRuntimeProbe
+    {
+        ItemType = base:normal,
+        DisplayCategory = Memento,
+        Weight = 0.05,
+        Icon = Nails,
+    }
+    item PZLootRuntimeSource
+    {
+        ItemType = base:normal,
+        DisplayCategory = Material,
+        Weight = 0.05,
+        Icon = Nails,
+    }
+    item PZLootRuntimeAlternate
+    {
+        ItemType = base:normal,
+        DisplayCategory = FirstAid,
+        Weight = 0.15,
+        Icon = Bandage,
+    }
+}

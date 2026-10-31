@@ -37,20 +37,23 @@ public final class Main {
     }
     @LuaMethod(name="lootResolvedRuntimeStatus", global=true)
     public static String status() { return status; }
+    @LuaMethod(name="lootResolvedRuntimeBank", global=true)
+    public static String bank() { return Bootstrap.bank(); }
+    static int caseSeed() { return cases; }
 
-    private static void require(boolean value, String message) {
+    static void require(boolean value, String message) {
         if (!value) throw new IllegalStateException(message);
     }
-    private static Field field(Class<?> type, String name) throws Exception {
+    static Field field(Class<?> type, String name) throws Exception {
         Field field = type.getDeclaredField(name); field.setAccessible(true); return field;
     }
-    private static void row(String kind, String text) {
+    static void row(String kind, String text) {
         require(rows.length() < 1_000_000, "receipt-limit");
         rows.append(kind).append('\t').append(scenario).append('\t')
             .append(text.replace('\t',' ').replace('\r',' ').replace('\n',' ')).append('\n');
     }
-    private static String bits(float value) { return Integer.toHexString(Float.floatToRawIntBits(value)); }
-    private static String doubleBits(double value) { return Long.toHexString(Double.doubleToRawLongBits(value)); }
+    static String bits(float value) { return Integer.toHexString(Float.floatToRawIntBits(value)); }
+    static String doubleBits(double value) { return Long.toHexString(Double.doubleToRawLongBits(value)); }
     private record Clock(double days, double hours, int timeSinceApo, int rotOption) { }
     private static Clock clock() {
         var time = zombie.GameTime.getInstance();
@@ -87,26 +90,26 @@ public final class Main {
         require(apples > 0,"missing-direct-apple-clock-proof");
     }
     private static void onOwner() { require(Thread.currentThread() == owner, "foreign-thread-fixture-callback"); }
-    private static ItemContainer container(int capacity) {
+    static ItemContainer container(int capacity) {
         ItemContainer container = new ItemContainer("lootResolvedRuntime", null, null);
         container.setCapacity(capacity);
         container.setAcceptItemFunction("LootResolvedRuntimeAccept");
         roots.add(container);
         return container;
     }
-    private static ItemPickerItem picker(String name) {
+    static ItemPickerItem picker(String name) {
         ItemPickerItem item = new ItemPickerItem(); item.itemName = name; item.chance = Float.POSITIVE_INFINITY; return item;
     }
-    private static ItemPickerContainer distribution(String... names) {
+    static ItemPickerContainer distribution(String... names) {
         ItemPickerContainer dist = new ItemPickerContainer();
         dist.rolls = 1; dist.ignoreZombieDensity = true;
         dist.items = Arrays.stream(names).map(Main::picker).toArray(ItemPickerItem[]::new);
         return dist;
     }
-    private static void direct(ItemPickerContainer dist, ItemContainer out) {
+    static void direct(ItemPickerContainer dist, ItemContainer out) {
         ItemPickerJava.doRollItem(dist, out, 0f, null, true, null);
     }
-    private static InventoryContainer bag() {
+    static InventoryContainer bag() {
         InventoryItem item = InventoryItemFactory.CreateItem("Base.Bag_Schoolbag");
         require(item instanceof InventoryContainer, "native-bag-factory");
         created.add(item);
@@ -114,7 +117,7 @@ public final class Main {
         InventoryContainer bag = (InventoryContainer)item;
         require(bag.isInitialised(), "native-bag-not-initialised");
         bag.getInventory().setAcceptItemFunction("LootResolvedRuntimeAccept");
-        bag.getInventory().setCapacity(1000);
+        bag.getInventory().setCapacity(100);
         roots.add(bag.getInventory());
         return bag;
     }
@@ -133,6 +136,7 @@ public final class Main {
         require(item.isInitialised(), "native-created-item-not-initialised");
         if (item instanceof InventoryContainer bag)
             bag.getInventory().setAcceptItemFunction("LootResolvedRuntimeAccept");
+        SemanticGates.onAccept(item);
         if (!mutated && nextPicker != null) {
             if (callbackMode.equals("name")) {
                 nextPicker.itemName = "Base.Bandage"; mutated = true;
@@ -167,7 +171,7 @@ public final class Main {
             nesting = true; nestedDone = true;
             try {
                 row("NEST", "begin");
-                ItemContainer inside = container(1000);
+                ItemContainer inside = container(100);
                 direct(distribution("Base.Bandage"), inside);
                 require(!inside.getItems().isEmpty(), "reentrant-native-roll-empty");
                 snapshot(inside, "reentrant", 0);
@@ -178,9 +182,12 @@ public final class Main {
     @LuaMethod(name="lootResolvedRuntimeWantsAcceptError", global=true)
     public static boolean wantsAcceptError() { return "running".equals(status) && callbackMode.equals("error"); }
 
-    private static void snapshot(ItemContainer container, String prefix, int depth) {
+    static void snapshot(ItemContainer container, String prefix, int depth) {
         require(depth <= 8, "nested-content-depth");
-        row("CONTAINER", prefix + ":count=" + container.getItems().size() + ":explored=" + container.isExplored());
+        float weight = container.getCapacityWeight();
+        require(Float.isFinite(weight) && weight >= 0 && weight <= container.getEffectiveCapacity(null),"snapshot-container-weight");
+        row("CONTAINER", prefix + ":count=" + container.getItems().size() + ":capacity=" + container.getCapacity()
+            + ":effective_capacity=" + container.getEffectiveCapacity(null) + ":weight=" + bits(weight) + ":explored=" + container.isExplored());
         int i = 0;
         for (InventoryItem item : container.getItems()) {
             created.add(item);
@@ -211,7 +218,9 @@ public final class Main {
             if (item instanceof InventoryContainer bag) collect(bag.getInventory(),depth + 1);
         }
     }
-    private static void cleanup() throws Exception {
+    private static void cleanup() throws Exception { cleanup(true); }
+    static void disposeTrial() throws Exception { cleanup(false); }
+    private static void cleanup(boolean terminal) throws Exception {
         // Gather and detach every child before resetting any InventoryContainer: its reset invokes
         // reset recursively on children, which must first have their own identities unregistered.
         for (ItemContainer container : roots) collect(container,0);
@@ -255,14 +264,14 @@ public final class Main {
             InstanceTracker.adj("Item Spawns",entry.getKey(),-entry.getValue());
             require(InstanceTracker.get("Item Spawns",entry.getKey()) == spawnBaselines.get(entry.getKey()),"spawn-counter-restore");
         }
-        row("CLEANUP", "items=" + created.size() + ":inserted=" + inserted.size() + ":spawn-counters=verified:process-queues=clear");
+        row(terminal ? "CLEANUP" : "DISPOSE", "items=" + created.size() + ":inserted=" + inserted.size() + ":spawn-counters=verified:process-queues=clear");
         roots.clear(); created.clear(); inserted.clear(); spawnBaselines.clear();
     }
     private static void seeded(int number) throws Exception {
         Bootstrap.seedRng(number);
     }
-    private interface Work { void run() throws Exception; }
-    private static void test(String name, String mode, Work work) throws Exception {
+    interface Work { void run() throws Exception; }
+    static void test(String name, String mode, Work work) throws Exception {
         scenario = name; callbackMode = mode; accepts = fills = 0; mutated = nestedDone = false; nextPicker = null;
         seeded(cases);
         row("BEGIN", "seed-index=" + cases + ":rolls-multiplier=" + SandboxOptions.instance.rollsMultiplier.getValue());
@@ -274,7 +283,10 @@ public final class Main {
         } finally { cleanup(); }
     }
     @LuaMethod(name="lootResolvedRuntimeRun", global=true)
-    public static synchronized boolean run() {
+    public static synchronized boolean run() { return perform(null); }
+    @LuaMethod(name="lootResolvedRuntimeRunFor", global=true)
+    public static synchronized boolean runFor(zombie.characters.IsoPlayer actor) { return perform(actor); }
+    private static boolean perform(zombie.characters.IsoPlayer actor) {
         if (!status.equals("not-run")) return status.equals("complete");
         String savedRemoval = null;
         Set<ItemTag> savedTags = null;
@@ -292,12 +304,15 @@ public final class Main {
             require(Double.isFinite(rolls) && rolls >= 0 && rolls <= 16, "unsupported-rolls-multiplier");
             for (String name : new String[]{"Base.Nails", "Base.Bandage", "Base.Pen", "Base.Apple", "Base.WaterBottle", "Base.Bag_Schoolbag"})
                 require(ScriptManager.instance.FindItem(name) != null, "missing-real-script:" + name);
-            savedRemoval = SandboxOptions.instance.lootItemRemovalList.getValue();
-            pen = ScriptManager.instance.FindItem("Base.Pen"); savedTags = new HashSet<>(pen.getTags());
+            if (!Bootstrap.bank().equals("reload")) {
+                savedRemoval = SandboxOptions.instance.lootItemRemovalList.getValue();
+                pen = ScriptManager.instance.FindItem("Base.Pen"); savedTags = new HashSet<>(pen.getTags());
+            }
             Bootstrap.beginRng(); rngStarted = true;
             row("ENV", "authority=" + (GameServer.server ? "server" : "singleplayer") + ":thread=" + owner.getName());
+            if (!Bootstrap.bank().equals("reload")) {
             test("direct-real-items", "", () -> {
-                ItemContainer out = container(1000);
+                ItemContainer out = container(100);
                 Clock before = clock();
                 direct(distribution("Nails", "Base.Bandage", "Base.Apple", "Base.WaterBottle"), out);
                 Clock after = clock();
@@ -312,14 +327,14 @@ public final class Main {
                 snapshot(bag.getInventory(),"bag",0);
             });
             test("accept-mutates-next-name", "name", () -> {
-                ItemContainer out = container(1000); ItemPickerContainer dist = distribution("Base.Nails", "Base.Pen"); nextPicker = dist.items[1];
+                ItemContainer out = container(100); ItemPickerContainer dist = distribution("Base.Nails", "Base.Pen"); nextPicker = dist.items[1];
                 direct(dist,out);
                 require(mutated && out.getItems().stream().anyMatch(i -> i.getFullType().equals("Base.Bandage")), "next-name-mutation-not-observed");
                 require(out.getItems().stream().noneMatch(i -> i.getFullType().equals("Base.Pen")), "stale-next-name");
                 snapshot(out,"mutated",0);
             });
             test("accept-mutates-tags-options", "tags-options", () -> {
-                ItemContainer out = container(1000); ItemPickerContainer dist = distribution("Base.Nails", "Base.Pen"); nextPicker = dist.items[1];
+                ItemContainer out = container(100); ItemPickerContainer dist = distribution("Base.Nails", "Base.Pen"); nextPicker = dist.items[1];
                 direct(dist,out);
                 require(mutated && out.getItems().stream().noneMatch(i -> i.getFullType().equals("Base.Pen")), "live-removal-not-observed");
                 snapshot(out,"removed",0);
@@ -327,7 +342,7 @@ public final class Main {
             SandboxOptions.instance.lootItemRemovalList.setValue(savedRemoval);
             pen.getTags().clear(); pen.getTags().addAll(savedTags);
             test("native-nested-fill-reentrant", "nested", () -> {
-                ItemContainer out = container(1000);
+                ItemContainer out = container(100);
                 ItemPickerContainer dist = distribution("Base.Bag_Schoolbag"); dist.bags = distribution("Base.Nails");
                 direct(dist,out);
                 require(fills > 0 && nestedDone, "actual-native-fill-event-not-observed");
@@ -335,7 +350,7 @@ public final class Main {
                 snapshot(out,"nested",0);
             });
             test("native-denied", "deny", () -> {
-                ItemContainer out = container(1000); direct(distribution("Base.Nails", "Base.Pen"),out);
+                ItemContainer out = container(100); direct(distribution("Base.Nails", "Base.Pen"),out);
                 require(out.getItems().isEmpty() && accepts == 1, "denied-native-order"); snapshot(out,"denied",0);
             });
             test("native-full", "", () -> {
@@ -343,9 +358,12 @@ public final class Main {
                 require(out.getItems().isEmpty() && accepts == 0, "full-native-order"); snapshot(out,"full",0);
             });
             test("native-accept-error", "error", () -> {
-                ItemContainer out = container(1000); direct(distribution("Base.Nails", "Base.Pen"),out);
+                ItemContainer out = container(100); direct(distribution("Base.Nails", "Base.Pen"),out);
                 require(out.getItems().isEmpty() && accepts == 1, "error-native-order"); snapshot(out,"error",0);
             });
+            }
+            if (Bootstrap.bank().equals("semantics")) SemanticGates.runSemantics(actor);
+            if (Bootstrap.bank().equals("reload")) SemanticGates.runReload();
             require(Bootstrap.active(), "bootstrap-invalidated-during-bank:" + Bootstrap.state());
             status = "complete";
         } catch (Throwable problem) {
@@ -368,11 +386,11 @@ public final class Main {
                 Bootstrap.writeActivation();
                 Files.writeString(Bootstrap.cache().resolve("loot-resolved-runtime.tsv"),rows);
                 Files.writeString(Bootstrap.cache().resolve("loot-resolved-runtime-status.txt"),
-                    "status=" + status + "\nmode=" + Bootstrap.mode() + "\npid=" + ProcessHandle.current().pid() + "\ncases=" + cases + "\nreason=" + failure.replace('\n',' ') + "\n"
+                    "status=" + status + "\nmode=" + Bootstrap.mode() + "\nbank=" + Bootstrap.bank() + "\npid=" + ProcessHandle.current().pid() + "\ncases=" + cases + "\nreason=" + failure.replace('\n',' ') + "\n"
                     + "resource_profile=" + Bootstrap.resourceProfile() + "\noptimizer_manifest_sha256=" + Bootstrap.optimizerManifest()
                     + "\nruntime_profile_checked=" + Bootstrap.runtimeProfileChecked() + "\n"
                     + "rng_scope=" + Bootstrap.RNG_SCOPE + "\nrng_scope_complete=" + (rngStarted && Bootstrap.rngComplete()) + "\n"
-                    + "source_square=uncovered\nlive_script_reload=uncovered\nmodule_item_replacement=uncovered\n");
+                    + SemanticGates.coverage());
             } catch (Throwable problem) { status = "failed"; failure += ";receipt:" + problem; }
             owner = null;
             System.out.println("[LOOT_RESOLVED_RUNTIME] FINISH status=" + status + " cases=" + cases + " reason=" + failure);

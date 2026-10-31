@@ -39,9 +39,10 @@ For the current reviewed optimizer classpath, add
 `--optimizer-archive "$PZ_OPTIMIZER_ARCHIVE"`. The builder validates the exact
 archive digest/size and all 888 selected resource digests against the current
 `tests/optimizer_trial/candidate-manifest.json`, plus its native guards/absences.
-The sole reviewed differing overlap with this fixture's 65-class closure is
-`zombie/Lua/LuaEventManager.class`; any additional differing overlap rejects the
-build. The receipt retains unchanged `native_hashes`, effective `runtime_hashes`,
+The reviewed differing overlaps with this fixture's 71-class closure are
+`zombie/Lua/LuaEventManager.class` and `zombie/iso/IsoGridSquare.class`. The latter
+retains the reviewed Region-zone lookup and literal `General` fallback used by
+the source-square cases. Any additional differing overlap rejects the build. The receipt retains unchanged `native_hashes`, effective `runtime_hashes`,
 the current `optimizer_manifest_sha256`, archive hash and complete declared
 profile. Native builds use null optimizer receipt fields. Optimizer headless
 checks use that exact overlay and test the profile after the early preload,
@@ -98,7 +99,9 @@ local ok = lootResolvedRuntimeRun()
 local status = lootResolvedRuntimeStatus()
 ```
 
-The bank is synchronous, once per JVM and bounded. Status is `not-run`, `running`,
+The default `--bank base` bank is synchronous, once per JVM and bounded.
+`lootResolvedRuntimeBank()` returns the embedded bank. Additional banks require
+an explicit matching artifact and native selection, as described below. Status is `not-run`, `running`,
 `complete` or `failed`. A multiplayer client cannot claim the authority pass.
 The final log line is `[LOOT_RESOLVED_RUNTIME] FINISH status=complete|failed`.
 Only an explicit `complete` plus all receipt checks qualifies the bank.
@@ -107,7 +110,7 @@ The cache contains:
 
 - `loot-resolved-runtime-activation-PID.txt`: per-process initial-load proof;
 - `loot-resolved-runtime-status.txt`: authority PID, mode, terminal status, eight
-  completed cases and uncovered gates;
+  completed cases, selected bank and coverage gates;
 - `loot-resolved-runtime.tsv`: ordered cases, callback traces, item/container
   snapshots, following native RNG draws and cleanup receipts.
 - `loot-resolved-runtime-rng-PID.txt`: owner-only native RNG scope proof,
@@ -196,7 +199,8 @@ reversing the fixture's inserted-item spawn counters. Acceptance alone is not
 accepted as proof that the native counter increment happened; an unexpected
 delta fails cleanup before any counter is reversed.
 These are historical InstanceTracker counters, not an item-identity registry.
-The live tags/removal option are restored. Arbitrary third-party callback side
+For banks running the base eight cases, the live tags/removal option are restored.
+The terminal reload bank does not capture or write those pre-reload Item fields. Arbitrary third-party callback side
 effects are subject to the disposable-profile boundary and full log audit.
 
 Run control/candidate from equivalent separate fresh saves/settings, with the
@@ -211,13 +215,91 @@ python3 tests/chunk_integration/loot_resolved_runtime/compare.py \
   --output "$PZ_LOOT_COMPARISON_JSON"
 ```
 
-The comparator requires PID-bound activation, complete ordered eight-case
-receipts and exact row equality. It writes differences before failing. Compare
+The comparator requires PID-bound activation, matching embedded/status bank,
+complete ordered case receipts and exact row equality. It validates finite
+chance/output bindings, callback replacement/finally order and terminal reload
+input/API/output/disk-restore order before accepting the additional banks. It writes differences before failing. Compare
 the build/native/mod/config receipts and audit logs as well; matching fixture
 rows alone do not establish the complete full-pack game state.
 
-Non-null source-square regional multiplier, actual live script reload and module
-item replacement remain explicit uncovered gates. No claim of successful native
-execution follows from this fixture's existence or headless check. No runtime
+## Additional explicitly selected banks
+
+Build a separate artifact with `--bank semantics` or `--bank reload`. Select the
+matching single native suite case (`semantics` or `reload`, rather than default
+`bank`). The builder embeds the selected bank in both receipts and bootstrap;
+the adapter rejects a different selection. Only these two artifacts stage
+`42/media/scripts/loot-runtime-probes.txt` before native game initialization.
+The adapter seals its exact bytes and rejects missing, changed or extra scripts.
+Base artifacts stage no scripts. A terminal run must restore these exact disk
+bytes to satisfy the ordinary final provenance seal; no file is exempted.
+
+The two new banks declare initial **owned-test-only** sandbox inputs
+`RollsMultiplier=1`, `MementoLootNew=0`, `MedicalLootNew=1.0`, in addition to the
+existing fresh world/clock inputs. They do not edit the user's settings, change
+the world clock or alter any shipped mod. Java checks these native options and
+requires actual finite old/new chance observations. They call
+`lootResolvedRuntimeRunFor(actualOwnedPlayer)` on the SP/server main tick; the
+menu Host client still never runs the authoritative bank.
+
+`semantics` runs twelve cases: the original eight plus:
+
+- `finite-source-direct` and `finite-source-bag` use the actual owned actor's
+  loaded square, verified against `IsoCell.getGridSquare`. Each runs four seeded
+  finite trials: null-source hit/miss and actual-source hit/miss. Native unit
+  chance determines picker chances just above/below the same native draw. Both
+  exact native chance and observed initialized contents, following RNG draw,
+  source identity, region and multiplier bits are recorded. The actual factory
+  bag is in a detached root with that source; its roll inventory has the same
+  real source. Coordinates stay in the owned cache's `loot-source-PID-path.txt`.
+- `callback-module-replacement-direct` and `callback-module-replacement-bag`
+  replace only the test probe's Base module and fulltype-map entries during the
+  first actual Nails acceptance callback. The next qualified and unqualified
+  names must resolve to the distinct preloaded Alternate Item. With finite
+  picker chance 20000, the old Memento script has native chance zero and the new
+  FirstAid script must have finite native chance at least 10000. Thus every
+  native draw in `[0,10000)` changes guaranteed miss to hit, independently of
+  factory re-resolution. Both created items must actually use the Alternate
+  script/fulltype. Exact prior entries are checked and restored in finally,
+  including when native protected Lua swallows a callback exception.
+
+These source cases qualify **finite nonnull source plumbing**, not differential
+regional influence. Exact B42.21 `IsoGridSquare.getSquareRegion()` returns a
+named Region or literal `General`; it does not return null for an ordinary
+square without a Region. Sandbox's ruralLooted branch specifically requires
+null. The bank requires positive equal actual null/source factors and records
+`regional_multiplier=uncovered-no-differential`; it neither fabricates a null
+Region nor edits zones/scans for an outcome. A named equal-factor Region remains
+recorded as that actual name. The general differential regional gate is retained
+as uncovered; this is not a claim that every reachable profile has equal factors.
+
+`reload` runs **one terminal disposable case**, without running the base eight.
+It binds the already preloaded probe's native `getFileAbsPath()` and active
+filesystem-resolved filename to the exact owned cache script, requires regular
+non-symlink parents and exact original bytes, and bounds the native reload input
+list (1..4096 files, each at most 8 MiB, total at most 128 MiB). It records the
+aggregate ordered content digest before touching any file. Direct/bag pre-rolls
+with both name spellings prove finite zero-chance misses and current script
+fields; they do not claim pre-reload factory creation. It changes only the unique
+probe category/weight anchor from Memento/0.05 to FirstAid/0.125, verifies the
+written SHA, and calls actual `ScriptManager.ReloadScripts(ScriptType.Item)`.
+
+Post-reload the native registry must reuse the same Item identity, resolve both
+spellings to it, retain the exact owned source, have no native script load error,
+and expose the changed category/weight. Direct/bag finite rolls then must each
+create two actual initialized items with that script and weight. All generated
+items are disposed between phases. Finally, independent of reload success, the
+owned path/parents are checked again and exact original disk bytes restored and
+verified. The native **runtime registry stays reload-changed**: no runtime
+rollback is attempted or claimed, and no later fixture case is permitted. Native
+reload processes the selected Item type across the real full input list, so the
+whole profile/world is disposable and full logs remain required.
+
+All non-full test containers use capacity 100; snapshots retain count, effective
+capacity and finite weight within that capacity. The deliberate full case keeps
+capacity zero. These are detached fixture capacities, not gameplay changes.
+
+The new banks still need real full-pack SP/menu Host control/candidate runs. A
+build/headless pass proves admission, native RNG isolation and parser/cleanup
+contracts only; it does not execute these initialized-game cases. No runtime
 adoption, gameplay settings change or end-to-end stutter claim follows from a
 successful bank.

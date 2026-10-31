@@ -21,7 +21,7 @@ public final class Bootstrap {
     private static final Properties hashes = new Properties();
     private static final Properties nativeHashes = new Properties(), optimizerProperties = new Properties();
     private static final Map<String,String> observed = new ConcurrentHashMap<>();
-    private static volatile String state = "not-installed", mode = "unknown", outputHash = "";
+    private static volatile String state = "not-installed", mode = "unknown", bank = "unknown", outputHash = "";
     private static volatile String resourceProfile = "unknown", optimizerManifest = "none";
     private static volatile boolean runtimeProfileChecked;
     private static boolean attempted;
@@ -31,6 +31,7 @@ public final class Bootstrap {
 
     public static String state() { return state; }
     public static String mode() { return mode; }
+    public static String bank() { return bank; }
     public static Path cache() { return ownedCache; }
     public static boolean active() { return "active".equals(state); }
     public static String resourceProfile() { return resourceProfile; }
@@ -105,7 +106,9 @@ public final class Bootstrap {
             if (!owned(cache)) { fail("owned-cache-opt-in"); return false; }
             ownedCache = cache.toRealPath();
             mode = text("mode.txt");
+            bank = text("bank.txt");
             if (!Set.of("control", "candidate").contains(mode)) throw new IllegalArgumentException("mode");
+            if (!Set.of("base", "semantics", "reload").contains(bank)) throw new IllegalArgumentException("bank");
             try (InputStream in = Bootstrap.class.getResourceAsStream("native-hashes.properties")) { nativeHashes.load(in); }
             optimizerManifest = text("optimizer-manifest.sha256");
             boolean optimized = !optimizerManifest.equals("none");
@@ -237,7 +240,7 @@ public final class Bootstrap {
     public static void writeRngReceipt() throws Exception { if (!owned(ownedCache)) throw new IllegalStateException("RNG receipt ownership"); RngScope.writeReceipt(ownedCache); }
     public static void writeActivation() throws Exception {
         if (ownedCache == null || !owned(ownedCache)) return;
-        StringBuilder out = new StringBuilder("state=" + state + "\nmode=" + mode + "\npid=" + ProcessHandle.current().pid() + "\ndefinitions=" + definitions
+        StringBuilder out = new StringBuilder("state=" + state + "\nmode=" + mode + "\nbank=" + bank + "\npid=" + ProcessHandle.current().pid() + "\ndefinitions=" + definitions
             + "\nrng_audit_definitions=" + randDefinitions + "\ninput=" + hashes.getProperty(TARGET, "") + "\noutput=" + outputHash + "\n");
         out.append("native_target_input=").append(nativeHashes.getProperty(TARGET,"")).append('\n')
             .append("resource_profile=").append(resourceProfile).append('\n')

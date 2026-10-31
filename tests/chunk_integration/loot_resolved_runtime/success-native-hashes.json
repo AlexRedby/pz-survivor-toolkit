@@ -21,5 +21,11 @@
   "zombie/inventory/types/Food.class": "14a5b02878a5608e3a28d3e91110961b3576694badf127dc7fe2749b8393d8b1",
   "zombie/inventory/types/InventoryContainer.class": "891cb2f37a7d13de869edf05909de493a55ef90aa8665368b36bff7fa6b2555e",
   "zombie/iso/InstanceTracker.class": "7991fd0d7d530021185c42dceb220a68dee53f4df40868c5549fe3920626362c",
-  "zombie/iso/IsoCell.class": "5e9a88e1cd9a3f370e31ae0152c9de381d649caea7cab750ebc82a91b4e1f767"
+  "zombie/iso/IsoCell.class": "5e9a88e1cd9a3f370e31ae0152c9de381d649caea7cab750ebc82a91b4e1f767",
+  "zombie/iso/IsoGridSquare.class": "e8192f87d88da607abe0293228c84efbd822ed4ac0a331102c030bc3eeaba467",
+  "zombie/iso/IsoMetaGrid.class": "cdd50bb0a393c766d25c9dcbc5f7e929d7e10a6b9c9b95e22c3bae94b3b5b1f9",
+  "zombie/iso/zones/Zone.class": "41faa20ceed9764ba0aa32d8fa81f0329d40a1f5da575beb65601e077346e91c",
+  "zombie/scripting/ScriptLoadMode.class": "3b2c6d008150566081bc5db98bf95b62f2244349df63db0b967fac6d628eecf3",
+  "zombie/scripting/ScriptType.class": "ed05efd72d87dbfa5e8bfc5831121290a0b377acdbb1cb694eb2d8f8e4b2bfdd",
+  "zombie/scripting/objects/BaseScriptObject.class": "65d5f2bae0552d7a4ceaf24fb1124a57b93ae33b98d5afa8e0f5766d9bcbf666"
 }

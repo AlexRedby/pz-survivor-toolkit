@@ -38,7 +38,7 @@ class LootResolvedNative(unittest.TestCase):
         for name, path in [('ResolvedCandidate.java', F.parent/'loot_resolved/ResolvedCandidate.java'),
                            ('../loot_resolved/run.py', F.parent/'loot_resolved/run.py')]:
             source[name] = hashlib.sha256(path.read_bytes()).hexdigest()
-        self.receipt = dict(format=1, test_only=True, mode='control', sources=source,
+        self.receipt = dict(format=1, test_only=True, mode='control', bank='base', scripts={}, sources=source,
             native_hashes=BUILD.load_guards(), runtime_hashes=BUILD.load_guards(),
             optimizer_manifest_sha256=None, optimizer_archive_sha256=None, optimizer_profile=None, headless_checks=['missing-token','already-loaded','initial-definition','preload'],
             success_path_checked=False, entry_point='lootResolvedRuntimeRun',
@@ -62,6 +62,7 @@ class LootResolvedNative(unittest.TestCase):
                     jar.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nZB-Preload: '+str(manifest).lower()+'\n\n')
                     jar.writestr('toolkit/lootresolved/bootstrap/token.txt', 'a'*32+'\n')
                     jar.writestr('toolkit/lootresolved/bootstrap/mode.txt', value['mode']+'\n')
+                    jar.writestr('toolkit/lootresolved/bootstrap/bank.txt', value['bank']+'\n')
         fonts = cache/'mods/PZToolkitJavaPatches/42'
         self.write(fonts/'mod.info', 'id=PZToolkitJavaPatches\njavaPkgName=net.alexredby.pztoolkitjavapatches\njavaJarFile=media/java/PZToolkitJavaPatches.jar\n')
         self.write(fonts/'media/java/PZToolkitJavaPatches.jar', 'ordinary runtime')
@@ -79,7 +80,8 @@ class LootResolvedNative(unittest.TestCase):
         archive = self.root / 'official.zip'; archive.write_bytes(b'pinned-synthetic-optimizer')
         self.manifest = dict(release_sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
             selected_files={'zombie/Lua/LuaEventManager.class':
-                'd786c342e563fb735727beb268e39a9a40726c2e83a8ac15ec06c753580b524b'},
+                'd786c342e563fb735727beb268e39a9a40726c2e83a8ac15ec06c753580b524b',
+                'zombie/iso/IsoGridSquare.class': '557646359c35a309c786c24c7d7fd522d2877f9ad64aea1315a29052d76920a6'},
             profile={'id':'test-profile', 'properties':{'feature':'false'}})
         path = self.project / 'tests/optimizer_trial/candidate-manifest.json'
         self.write(path, json.dumps(self.manifest))
@@ -94,12 +96,12 @@ class LootResolvedNative(unittest.TestCase):
     def event(self, kind, value): return A.MARKER+kind+' '+json.dumps(value)+'\n'
 
     def authority(self, source, role='client1'):
-        return self.event('AUTHORITY', dict(role=role, case='bank', runtimeMode='control', status='complete',cases=8,source=source))
+        return self.event('AUTHORITY', dict(role=role, case=self.selection['cases'][0], runtimeMode='control', status='complete',cases=A.bank(self.selection)[2],source=source))
 
     def completed(self):
-        return self.event('COMPLETE', dict(role='client1',case='bank',runtimeMode='control',status='complete',authority=True))
+        return self.event('COMPLETE', dict(role='client1',case=self.selection['cases'][0],runtimeMode='control',status='complete',authority=True))
 
-    def finish(self): return '[LOOT_RESOLVED_RUNTIME] FINISH status=complete cases=8 reason=\n'
+    def finish(self): return '[LOOT_RESOLVED_RUNTIME] FINISH status=complete cases='+str(A.bank(self.selection)[2])+' reason=\n'
 
     def apple_rows(self, hours=2.0, apo=1, rot=3):
         # Test data generation is separate from the parser; every receipt field remains mutable
@@ -116,18 +118,18 @@ class LootResolvedNative(unittest.TestCase):
         return [f'ITEM\tdirect-real-items\tdirect/2:zombie.inventory.types.Food:Base.Apple:id=42:condition=10:age={age}:uses=1:initialized=true:heat=3f800000:frozen=false\n',
                 'CLOCK\tdirect-real-items\tdirect/2:'+':'.join(k+'='+v for k,v in fields.items())+'\n']
 
-    def bank(self, pid=100):
+    def base_bank(self, pid=100):
         h=self.receipt['native_hashes']['zombie/inventory/ItemPickerJava.class']
         manifest_sha=self.receipt['optimizer_manifest_sha256'] or 'none'
         for process in ({100,pid}):
             profile = ('native-host' if process != 100 else 'optimized-client') if self.selection['options'].get('optimizer_archive') else 'native'
             checked='true' if pid==100 or process==pid else 'false'
             self.write(self.cache/f'loot-resolved-runtime-activation-{process}.txt',
-                f'state=active\nmode=control\npid={process}\ndefinitions=1\ninput={h}\noutput={h}\nresource_profile={profile}\noptimizer_manifest_sha256={manifest_sha}\nruntime_profile_checked={checked}\n'+''.join(k+'='+v+'\n' for k,v in COMPARE.RNG_ACTIVATION.items()))
+                f'state=active\nmode=control\nbank=base\npid={process}\ndefinitions=1\ninput={h}\noutput={h}\nresource_profile={profile}\noptimizer_manifest_sha256={manifest_sha}\nruntime_profile_checked={checked}\n'+''.join(k+'='+v+'\n' for k,v in COMPARE.RNG_ACTIVATION.items()))
         authority_profile=('native-host' if pid!=100 else 'optimized-client') if self.selection['options'].get('optimizer_archive') else 'native'
-        self.write(self.cache/'loot-resolved-runtime-status.txt',f'resource_profile={authority_profile}\noptimizer_manifest_sha256={manifest_sha}\nruntime_profile_checked=true\nstatus=complete\nmode=control\npid={pid}\ncases=8\nreason=\nsource_square=uncovered\nlive_script_reload=uncovered\nmodule_item_replacement=uncovered\n')
+        self.write(self.cache/'loot-resolved-runtime-status.txt',f'bank=base\nresource_profile={authority_profile}\noptimizer_manifest_sha256={manifest_sha}\nruntime_profile_checked=true\nstatus=complete\nmode=control\npid={pid}\ncases=8\nreason=\nsource_square=uncovered\nlive_script_reload=uncovered\nmodule_item_replacement=uncovered\n')
         with (self.cache/'loot-resolved-runtime-status.txt').open('a') as stream:
-            stream.write(f'rng_scope={COMPARE.RNG_SCOPE}\nrng_scope_complete=true\n')
+            stream.write(f'rng_scope={COMPARE.RNG_SCOPE}\nrng_scope_complete=true\n'+''.join(k+'='+v+'\n' for k,v in COMPARE.coverage('base').items() if k not in ('source_square','live_script_reload','module_item_replacement')))
         self.write(self.cache/f'loot-resolved-runtime-rng-{pid}.txt',
             f'rng_scope={COMPARE.RNG_SCOPE}\nrng_scope_complete=true\nreason=null\nowner_wrapper_selections=123\n'
             'owner_receiver_entries=246\nowner_bypass_rejections=0\nowner_unseeded_float_bool_rejections=0\n'
@@ -155,11 +157,11 @@ class LootResolvedNative(unittest.TestCase):
             self.selection['kind']='mp';self.selection['options']['mp_host']=True
             runtime['host_cache']=str(self.cache)
             processes['server']=dict(pid=200,parent_role='client1',cache=str(self.cache))
-            request=dict(role='client1',case='bank',runtimeMode='control',onlineID=3)
+            request=dict(role='client1',case=self.selection['cases'][0],runtimeMode='control',onlineID=3)
             self.write(self.root/'client1-launch.log',self.event('REQUEST',request)+self.authority('server-response')+self.completed())
             request['role']='server'
-            self.write(self.root/'server-launch.log',self.event('REQUEST',request)+A.DIAGNOSTIC+'\n'+self.finish()+self.authority('server-main-tick','server'))
-        else:self.write(self.root/'client1-launch.log',A.DIAGNOSTIC+'\n'+self.finish()+self.authority('sp-main-tick')+self.completed())
+            self.write(self.root/'server-launch.log',self.event('REQUEST',request)+('' if self.receipt['bank']=='reload' else A.DIAGNOSTIC+'\n')+self.finish()+self.authority('server-main-tick','server'))
+        else:self.write(self.root/'client1-launch.log',('' if self.receipt['bank']=='reload' else A.DIAGNOSTIC+'\n')+self.finish()+self.authority('sp-main-tick')+self.completed())
         self.write(self.root/'runtime.json',json.dumps(runtime));self.write(self.root/'execution.json',json.dumps({'processes':processes}))
 
     def test_strict_selection_and_optimizer_opt_in(self):
@@ -462,15 +464,154 @@ class LootResolvedNative(unittest.TestCase):
         self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
 
 
+    def select_bank(self, case):
+        self.selection['cases'] = [case]
+        selected = A.bank(self.selection)[1]
+        self.receipt.update(bank=selected, scripts={} if selected == 'base' else {A.SCRIPT: hashlib.sha256((F/'loot-runtime-probes.txt').read_bytes()).hexdigest()},
+                            entry_point='lootResolvedRuntimeRun' if selected == 'base' else 'lootResolvedRuntimeRunFor')
+        self.mod(self.cache)
+        if selected != 'base':
+            self.write(self.cache/'mods'/A.MOD/A.SCRIPT, (F/'loot-runtime-probes.txt').read_text())
+
+    def extra_case_rows(self, case):
+        rows=[]
+        def row(kind, detail): rows.append(f'{kind}\t{case}\t{detail}\n')
+        def snapshot(prefix, count, name):
+            row('CONTAINER', f'{prefix}:count={count}:capacity=100:effective_capacity=100:weight=0:explored=false')
+            for i in range(count): row('ITEM',f'{prefix}/{i}:zombie.inventory.InventoryItem:{name}:id={i}:initialized=true')
+        row('BEGIN','seed-index=8:rolls-multiplier=1.0')
+        row('SETTINGS','rolls=1.0:memento=0.0:medical=1.0:scope=initial-owned-test-only')
+        if case.startswith('finite-source-'):
+            path=case.removeprefix('finite-source-')
+            for source in (False,True):
+                for hit in (True,False):
+                    trial=('source' if source else 'null')+('-hit' if hit else '-miss')
+                    chance=COMPARE._float_bits(5001 if hit else 4999)
+                    row('SOURCE',f'path={path}:trial={trial}:source={str(source).lower()}:region={"General" if source else "none"}:global_factor=3f800000:square_factor=3f800000:draw=5000:picker_chance={chance}:native_chance={chance}:expected={int(hit)}:actual={int(hit)}:next_rng=42:regional_differential=false')
+                    snapshot(trial,int(hit),'Base.PZLootRuntimeSource');row('DISPOSE','done')
+        elif case.startswith('callback-module-replacement-'):
+            row('ACCEPT','1:Base.Nails:initialized=true')
+            row('REBIND','callback=true:qualified_new=true:unqualified_new=true:old_distinct=true:old_chance=0:new_chance=461c4000:picker_chance=469c4000:draw_min=0:draw_max_exclusive=10000')
+            row('ACCEPT','2:Base.PZLootRuntimeAlternate:initialized=true');row('ACCEPT','3:Base.PZLootRuntimeAlternate:initialized=true')
+            row('REPLACEMENT',f'path={case.removeprefix("callback-module-replacement-")}:qualified_factory=true:unqualified_factory=true:count=3')
+            row('ITEM','replacement/0:zombie.inventory.InventoryItem:Base.Nails:id=1:initialized=true')
+            for i in (1,2):row('ITEM',f'replacement/{i}:zombie.inventory.InventoryItem:Base.PZLootRuntimeAlternate:id={i+1}:initialized=true')
+            row('RESTORE','module=true:fulltype=true:qualified_old=true:unqualified_old=true')
+        else:
+            for phase in ('before','after'):
+                if phase=='after':
+                    row('RELOAD_INPUT','files=2:bytes=1000:input_digest='+'a'*64+':original='+hashlib.sha256((F/'loot-runtime-probes.txt').read_bytes()).hexdigest()+':changed='+hashlib.sha256((F/'loot-runtime-probes.txt').read_bytes().replace(b'DisplayCategory = Memento,\n        Weight = 0.05,',b'DisplayCategory = FirstAid,\n        Weight = 0.125,')).hexdigest())
+                    row('RELOAD','native_api=ReloadScripts(Item):same_identity=true:qualified=true:unqualified=true:category=FirstAid:weight=3e000000:load_errors=false:owned_source=true')
+                for path in ('direct','bag'):
+                    hit=phase=='after';count=2 if hit else 0
+                    row('RELOAD_ROLL',f'phase={phase}:path={path}:count={count}:weight={COMPARE._float_bits(.125 if hit else .05)}:script_field_proof=true:factory_proof={str(hit).lower()}:picker_chance=469c4000:native_chance={"461c4000" if hit else "0"}:draw_min=0:draw_max_exclusive=10000:next_rng=42')
+                    snapshot(phase+'-'+path,count,'Base.PZLootRuntimeProbe');row('DISPOSE','done')
+            row('RELOAD_RESTORE','disk=true:original='+hashlib.sha256((F/'loot-runtime-probes.txt').read_bytes()).hexdigest()+':runtime_restored=false:terminal=true')
+        row('END','next-rng=42:accepts=3:fills=0');row('CLEANUP','done')
+        return rows
+
+    def bank(self, pid=100):
+        self.base_bank(pid)
+        selected=A.bank(self.selection)[1]
+        if selected=='base':return
+        status=self.cache/'loot-resolved-runtime-status.txt';text=status.read_text().replace('bank=base','bank='+selected).replace('cases=8','cases='+str(len(COMPARE.BANK_CASES[selected])))
+        for key,value in COMPARE.coverage(selected).items():
+            old=COMPARE.coverage('base')[key];text=text.replace(key+'='+old+'\n',key+'='+value+'\n')
+        status.write_text(text)
+        for activation in self.cache.glob('loot-resolved-runtime-activation-*.txt'):
+            activation.write_text(activation.read_text().replace('bank=base','bank='+selected))
+        path=self.cache/'loot-resolved-runtime.tsv'
+        rows=path.read_text().splitlines(keepends=True) if selected=='semantics' else ['kind\tcase\tdetail\n']
+        for case in COMPARE.BANK_CASES[selected][8:] if selected=='semantics' else COMPARE.BANK_CASES[selected]:
+            rows.extend(self.extra_case_rows(case))
+        path.write_text(''.join(rows))
+
+    def test_explicit_bank_and_owned_script_seal_admission(self):
+        for case in ('semantics','reload'):
+            self.select_bank(case);A.validate(self.selection)
+            self.assertEqual(A.bundle(self.cache,self.selection)[1]['bank'],case)
+            wrong=dict(self.selection,cases=['bank'])
+            with self.assertRaisesRegex(ValueError,'bank'):A.bundle(self.cache,wrong)
+            script=self.cache/'mods'/A.MOD/A.SCRIPT;original=script.read_text();script.write_text(original+'\n')
+            with self.assertRaisesRegex(ValueError,'script source'):A.bundle(self.cache,self.selection)
+            script.write_text(original)
+            other=script.with_name('foreign.txt');other.write_text(original)
+            with self.assertRaisesRegex(ValueError,'script source'):A.bundle(self.cache,self.selection)
+            other.unlink()
+            self.assertEqual(A.sandbox(self.selection),dict(A.SANDBOX,RollsMultiplier=1,MementoLootNew=0,MedicalLootNew=1.0))
+        for cases in ([],['bank','reload'],['unknown'],[{}]):
+            with self.subTest(cases=cases),self.assertRaises(ValueError):A.validate(dict(self.selection,cases=cases))
+
+    def test_semantic_and_terminal_receipts_bind_authority_and_case_counts(self):
+        for case in ('semantics','reload'):
+            self.select_bank(case)
+            for host in (False,True):
+                self.run_files(host)
+                result=A.verify(self.root,self.selection,{})
+                self.assertEqual(result['issues'],[],result)
+                self.assertEqual(result['evidence']['bank'],case)
+                self.assertEqual(len(result['evidence']['semantic_proofs']),4 if case=='semantics' else 1)
+                status=self.cache/'loot-resolved-runtime-status.txt';original=status.read_text()
+                for old,new in [('cases='+str(A.bank(self.selection)[2]),'cases=8'),('bank='+case,'bank=base'),('reload_runtime_restored=false','reload_runtime_restored=true')]:
+                    status.write_text(original.replace(old,new));self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
+                status.write_text(original)
+                self.selection['kind']='sp';self.selection['options'].pop('mp_host',None)
+
+    def test_finite_source_and_replacement_missing_or_forged_witnesses_fail(self):
+        self.select_bank('semantics');self.run_files()
+        path=self.cache/'loot-resolved-runtime.tsv';original=path.read_text()
+        mutations=[('native_chance=459c4800','native_chance=7f800000'),('regional_differential=false','regional_differential=true'),
+                   ('source=true','source=false'),('expected=1:actual=1','expected=1:actual=0'),('old_chance=0','old_chance=1'),
+                   ('new_chance=461c4000','new_chance=0'),('qualified_factory=true','qualified_factory=false'),
+                   ('qualified_old=true','qualified_old=false'),('1:Base.Nails:initialized=true','1:Base.Bandage:initialized=true')]
+        for old,new in mutations:
+            self.assertIn(old,original)
+            with self.subTest(new=new):
+                path.write_text(original.replace(old,new));self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
+        for kind in ('SOURCE','REBIND','RESTORE','DISPOSE'):
+            path.write_text(''.join(line for line in original.splitlines(keepends=True) if not line.startswith(kind+'\t')))
+            self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
+        # A callback witness after the target's acceptance is too late, even when values match.
+        lines=original.splitlines(keepends=True)
+        index=next(i for i,line in enumerate(lines) if line.startswith('REBIND\t'))
+        witness=lines.pop(index);lines.insert(index+1,witness);path.write_text(''.join(lines))
+        self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
+        path.write_text(original)
+
+    def test_terminal_reload_requires_finite_post_factory_and_exact_disk_restore(self):
+        self.select_bank('reload');self.run_files()
+        path=self.cache/'loot-resolved-runtime.tsv';original=path.read_text()
+        for old,new in [('disk=true','disk=false'),('runtime_restored=false','runtime_restored=true'),('terminal=true','terminal=false'),
+                        ('same_identity=true','same_identity=false'),('owned_source=true','owned_source=false'),('factory_proof=true','factory_proof=false'),
+                        ('native_chance=461c4000','native_chance=7f800000'),('phase=before:path=bag','phase=before:path=direct')]:
+            with self.subTest(new=new):
+                path.write_text(original.replace(old,new));self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
+        path.write_text(original)
+        for kind in ('RELOAD_INPUT','RELOAD','RELOAD_ROLL','RELOAD_RESTORE','DISPOSE'):
+            path.write_text(''.join(line for line in original.splitlines(keepends=True) if not line.startswith(kind+'\t')))
+            self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
+        lines=original.splitlines(keepends=True)
+        index=next(i for i,line in enumerate(lines) if line.startswith('RELOAD\t'))
+        witness=lines.pop(index)
+        # All before/after trial rows still exist in order, but are on the wrong side of the native API.
+        after=next(i for i,line in enumerate(lines) if line.startswith('RELOAD_ROLL\t') and 'phase=after' in line)
+        lines.insert(after+1,witness);path.write_text(''.join(lines))
+        self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
+        path.write_text(original)
+        script=self.cache/'mods'/A.MOD/A.SCRIPT;script.write_text(script.read_text().replace('Weight = 0.05,','Weight = 0.125,'))
+        self.assertTrue(A.verify(self.root,self.selection,{})['issues'])
+
+
 @unittest.skipUnless(LUAJIT, 'LuaJIT is unavailable')
 class LootLuaHandshake(unittest.TestCase):
     def run_lua(self, body):
         harness = r"""
 local root=arg[1]
 local JSON=assert(loadfile(root..'/tests/native_queue/health/shared/QueueHealthEvents.lua'))()
-local function state(host,server)
+local function state(host,server,case)
+ case=case or 'bank';local count=({bank=8,semantics=12,reload=1})[case]
  local e=setmetatable({outputs={},handlers={},sent={},bankRuns=0,bankStatus='not-run'},{__index=_G})
- e.selection={suite='loot-resolved',kind=host and 'mp' or 'sp',options={loot_runtime_mode='control'}}
+ e.selection={suite='loot-resolved',cases={case},kind=host and 'mp' or 'sp',options={loot_runtime_mode='control'}}
  e.Events=setmetatable({}, {__index=function(t,k)local v={Add=function(f)e.handlers[k]=e.handlers[k]or{};table.insert(e.handlers[k],f)end};rawset(t,k,v);return v end})
  e.fire=function(name,...)for _,f in ipairs(e.handlers[name]or{})do f(...)end end
  e.print=function(v)table.insert(e.outputs,v)end
@@ -480,8 +621,10 @@ local function state(host,server)
  e.player={isDead=function()return false end,getSquare=function()return{}end,getOnlineID=function()return 3 end,getUsername=function()return 'client1'end}
  e.getPlayer=function()return e.player end
  e.getFileReader=function()return{readLine=function()return 'client1'end,close=function()end}end
+ e.lootResolvedRuntimeBank=function()return case=='bank' and 'base' or case end
  e.lootResolvedRuntimeStatus=function()return e.bankStatus end
- e.lootResolvedRuntimeRun=function()e.bankRuns=e.bankRuns+1;e.bankStatus='complete';e.print('[LOOT_RESOLVED_RUNTIME] FINISH status=complete cases=8 reason=');return true end
+ e.lootResolvedRuntimeRun=function()e.bankRuns=e.bankRuns+1;e.bankStatus='complete';e.print('[LOOT_RESOLVED_RUNTIME] FINISH status=complete cases='..count..' reason=');return true end
+ e.lootResolvedRuntimeRunFor=function(player)assert(player==e.player);return e.lootResolvedRuntimeRun()end
  e.sendClientCommand=function(m,c,a)e.sent={module=m,command=c,args=a}end
  e.sendServerCommand=function(p,m,c,a)e.sent={module=m,command=c,args=a}end
  local side=server and 'server/ZZLootResolvedServer.lua'or'client/ZZLootResolved.lua'
@@ -512,6 +655,18 @@ s.fire('OnTick');assert(s.bankRuns==1 and s.sent.command=='BankStatus')
 c.fire('OnServerCommand',s.sent.module,s.sent.command,s.sent.args)
 assert(c.bankRuns==0 and log(c):find('COMPLETE',1,true))
 c.fire('OnServerCommand',s.sent.module,s.sent.command,s.sent.args);assert(log(c):find('FAIL',1,true))
+""")
+
+    def test_semantic_and_reload_banks_bind_actual_actor_api_and_response_counts(self):
+        self.run_lua("""
+for _,case in ipairs({'semantics','reload'}) do
+ local e=state(false,false,case);e.fire('OnGameStart');e.fire('OnTick');assert(e.bankRuns==1 and log(e):find('COMPLETE',1,true))
+ local c,s=state(true,false,case),state(true,true,case)
+ c.fire('OnGameStart');c.fire('OnTick');assert(c.bankRuns==0 and c.sent.args.case==case)
+ s.fire('OnClientCommand',c.sent.module,c.sent.command,s.player,c.sent.args);s.fire('OnTick');assert(s.bankRuns==1)
+ c.fire('OnServerCommand',s.sent.module,s.sent.command,s.sent.args);assert(log(c):find('COMPLETE',1,true))
+ local bad=state(false,false,case);bad.lootResolvedRuntimeRunFor=false;bad.fire('OnGameStart');bad.fire('OnTick');assert(bad.bankRuns==0 and log(bad):find('FAIL',1,true))
+end
 """)
 
     def test_foreign_actor_or_missing_api_never_completes(self):
