@@ -81,14 +81,15 @@ def main(argv=None):
         manifest_path = ROOT / 'tests/optimizer_trial/candidate-manifest.json'
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
         runtime_sources = sorted((source / 'java').glob('*.java'))
-        check_sources = [source / 'checks' / (name + '.java') for name in ('StageProfilerChecks', 'TileProfilerChecks')]
+        check_sources = [source / 'checks' / (name + '.java') for name in ('StageProfilerChecks', 'TileProfilerChecks', 'ChunkProfilerChecks')]
         source_paths = [*runtime_sources, *check_sources, Path(__file__).resolve(), manifest_path,
                         ROOT / 'JavaPatches/build.py', ROOT / 'tools/check_driving_callbacks.py',
                         ROOT / 'tools/check_optimizer_compatibility.py', ROOT / 'tools/queue_checks/tile_metrics.py',
-                        ROOT / 'tools/queue_checks/adapters/optimizer_benchmark.py']
+                        ROOT / 'tools/queue_checks/adapters/optimizer_benchmark.py', ROOT / 'tools/queue_checks/chunk_metrics.py']
         fingerprints = {path.relative_to(ROOT).as_posix(): digest(path) for path in source_paths}
         overlay = prepare_overlay(manifest, archive, game, output)
-        resources = ('zombie/iso/fboRenderChunk/FBORenderCell.class',
+        resources = ('zombie/util/CappedConcurrentQueue.class', 'zombie/iso/IsoChunk.class',
+                     'zombie/iso/fboRenderChunk/FBORenderCell.class',
                      'zombie/iso/fboRenderChunk/FBORenderChunkManager.class')
         with ZipFile(game_jar) as bundle:
             native = {name: hashlib.sha256(bundle.read(name)).hexdigest() for name in resources}
@@ -126,6 +127,7 @@ def main(argv=None):
                        '-Dzomboid.steam=0', '-cp', os.pathsep.join(map(str, cp)), main_class, *arguments]
             return result
 
+        run('chunk-ledger', command('chunk-ledger', PACKAGE + 'ChunkProfilerChecks'), ('ChunkProfilerChecks PASS',))
         # Every case runs in a fresh JVM, with its own classpath, home and agent configuration.
         captures = []
         for official in (False, True):

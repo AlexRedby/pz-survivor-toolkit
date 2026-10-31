@@ -125,7 +125,13 @@ public final class TileProfilerChecks {
         if (failure.get()!=null) throw new AssertionError(failure.get());
         StageProfiler.frameEnd();
         StageProfiler.frameBegin(1,0,0);
+        int chunk=StageProfiler.chunkEnter(-1,0,5);
+        int nestedChunk=StageProfiler.chunkEnter(-2,0,4);
+        StageProfiler.chunkExit(nestedChunk,4);
+        int loot=StageProfiler.enter(StageProfiler.LOOT);
         check(Boolean.TRUE.equals(actual.getMethod("probe",int.class).invoke(null,1)),"Outside-root return intact");
+        StageProfiler.exit(loot); StageProfiler.chunkExit(chunk,3);
+        chunk=StageProfiler.chunkEnter(0,0,3); StageProfiler.chunkExit(chunk,-1);
         StageProfiler.frameEnd();
         StageProfiler.frameBegin(1,0,0); // Intentionally partial; no tile row/event must escape.
         if (List.of(args).contains("--export-failure")) {

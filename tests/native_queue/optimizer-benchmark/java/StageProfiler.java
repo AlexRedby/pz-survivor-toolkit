@@ -27,6 +27,7 @@ import me.zed_0xff.zombie_buddy.Loader;
 import net.bytebuddy.jar.asm.*;
 import zombie.characters.IsoPlayer;
 import zombie.inventory.ItemContainer;
+import zombie.iso.IsoChunk;
 
 /** Explicitly enabled, disposable benchmark instrumentation; never changes game behavior. */
 public final class StageProfiler {
@@ -51,6 +52,7 @@ public final class StageProfiler {
     private static Instrumentation instrumentation;
     private static ClassFileTransformer detailTransformer;
     private static Rows rows;
+    private static ChunkProfiler chunks;
     private static volatile String diagnostic;
 
     private StageProfiler() {}
@@ -63,6 +65,7 @@ public final class StageProfiler {
                 || !Path.of(expected).toRealPath().equals(outputCache.toRealPath()))
             throw new IllegalStateException("Stage profile requires the explicit owned benchmark cache/thread");
         DetailHooks.requireNativeInput();
+        requireChunkQueueInput();
         Recording candidate=new Recording(Configuration.getConfiguration("profile"));
         try {
             candidate.setName("PZ driving stages");
@@ -74,6 +77,7 @@ public final class StageProfiler {
             cpu=ManagementFactory.getThreadMXBean();
             cpuAvailable=cpu.isCurrentThreadCpuTimeSupported() && cpu.isThreadCpuTimeEnabled();
             timer=new Timer(); details=new Timer(DETAILS); rows=new Rows(); frameEvent=new FrameEvent();
+            chunks=new ChunkProfiler();
             DetailHooks.install();
             TileProfiler.start(ownerThread);
             LuaCallbacks.start(ownerThread);
@@ -85,20 +89,29 @@ public final class StageProfiler {
         }
     }
 
+    private static void requireChunkQueueInput() throws Exception {
+        String name="zombie/util/CappedConcurrentQueue.class";
+        try (var input=StageProfiler.class.getClassLoader().getResourceAsStream(name)) {
+            if (input==null || !DetailHooks.digest(input.readAllBytes()).equals(
+                    "c8a224cd7ee47b4611adbfc9717411951edc4921f9ce8fe3a14bd8277638c2db"))
+                throw new IllegalStateException("Unreviewed chunk queue snapshot input: "+name);
+        }
+    }
+
     private static boolean owns() { return enabled && Thread.currentThread()==owner; }
     private static long cpuNow() { return cpuAvailable ? cpu.getCurrentThreadCpuTime() : -1; }
     private static void error(String message) { if (diagnostic==null) diagnostic=message; }
 
     public static void frameBegin(int phase, int contacts, double speed) {
-        if (!owns() || phase<1 || phase>3 || diagnostic!=null || timer.error!=null || details.error!=null || TileProfiler.diagnostic()!=null) return;
-        if (frameOpen) { error("Frame began before previous frame ended"); timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); return; }
+        if (!owns() || phase<1 || phase>3 || diagnostic!=null || timer.error!=null || details.error!=null || chunks.diagnostic()!=null || TileProfiler.diagnostic()!=null) return;
+        if (frameOpen) { error("Frame began before previous frame ended"); timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); chunks.cancelFrame(); return; }
         if (completed==CAPACITY) { error("Stage frame buffer overflow"); return; }
         framePhase=phase; frameContacts=contacts; frameSpeed=speed;
         lastFrameId++;
         cpuStart=cpuNow();
         long now=System.nanoTime();
         timer.begin(now); details.begin(now); TileProfiler.frameBegin(now);
-        LuaCallbacks.frameBegin(lastFrameId,now);
+        LuaCallbacks.frameBegin(lastFrameId,now); chunks.frameBegin(lastFrameId);
         frameOpen=true; frameEvent.begin();
     }
 
@@ -107,9 +120,9 @@ public final class StageProfiler {
         long now=System.nanoTime(), cpuEnd=cpuNow();
         frameOpen=false;
         if (!timer.complete(now) || !details.complete(now) || !TileProfiler.frameEnd(lastFrameId,now)) {
-            TileProfiler.cancelFrame(); LuaCallbacks.frameEnd(now,false); omitted++; return;
+            TileProfiler.cancelFrame(); LuaCallbacks.frameEnd(now,false); chunks.frameEnd(false); omitted++; return;
         }
-        LuaCallbacks.frameEnd(now,true);
+        LuaCallbacks.frameEnd(now,true); chunks.frameEnd(true);
         long cpuNs=cpuStart<0 || cpuEnd<cpuStart ? -1 : cpuEnd-cpuStart;
         rows.capture(completed, lastFrameId, framePhase, frameContacts, frameSpeed, timer, details, cpuNs);
         completed++;
@@ -126,6 +139,29 @@ public final class StageProfiler {
     public static void exit(int token) {
         if (token==0 || !owns() || !frameOpen || !timer.active) return;
         timer.exit(token, System.nanoTime());
+    }
+
+    /** Integration starts after dequeue/publication. Queue size is an O(1), approximate snapshot. */
+    public static int chunkEnter(IsoChunk chunk) {
+        if (!owns() || !frameOpen || !timer.active) return 0;
+        return chunkEnter(chunk.wx, chunk.wy, IsoChunk.loadGridSquare.size());
+    }
+    static int chunkEnter(int wx, int wy, int queueDepth) {
+        if (!owns() || !frameOpen || !timer.active) return 0;
+        long now=System.nanoTime();
+        int token=timer.enter(CHUNK,now);
+        if (token!=0) chunks.begin(token,wx,wy,queueDepth,now,timer.exclusive);
+        return token;
+    }
+    public static void chunkExit(int token) {
+        if (token==0 || !owns() || !frameOpen || !timer.active) return;
+        chunkExit(token,IsoChunk.loadGridSquare.size());
+    }
+    static void chunkExit(int token, int queueDepth) {
+        if (token==0 || !owns() || !frameOpen || !timer.active) return;
+        long now=System.nanoTime();
+        timer.exit(token,now);
+        chunks.end(token,queueDepth,now,timer.exclusive);
     }
 
     /** Separate detail stack leaves all existing exclusive buckets and their partition unchanged. */
@@ -169,15 +205,16 @@ public final class StageProfiler {
         synchronized (swapLock) { enabled=false; finished=true; }
         // OnTick may finish inside logic/Lua. Its trailing exits must be harmless; no partial frame is emitted.
         if (frameOpen) { omitted++; frameOpen=false; }
-        timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); DetailHooks.remove();
+        timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); chunks.cancelFrame(); DetailHooks.remove();
         if (details.error!=null) error(details.error);
         if (timer.error!=null) error(timer.error);
+        if (chunks.diagnostic()!=null) error(chunks.diagnostic());
         if (completed==0) error("No complete stage frames");
         try {
             try (Recording active=recording) {
                 active.stop(); active.dump(cache.resolve("driving-stages.jfr"));
             }
-            TileProfiler.finish(cache);
+            TileProfiler.finish(cache); chunks.finish(cache);
             if (TileProfiler.diagnostic()!=null) error(TileProfiler.diagnostic());
             try (BufferedWriter out=Files.newBufferedWriter(cache.resolve("driving-stages.csv"))) {
                 out.write("frame_id,phase,contacts,speed_kmh,nano_start,nano_end,wall_ns,cpu_ns");
@@ -202,7 +239,8 @@ public final class StageProfiler {
                     +" detail=independent-nonadditive fog=renderFog-whole translucent_total=whole-method"
                     +" translucent_merge=after-tempSquares-clear-to-doSort-including-profiler-and-sort-arguments"
                     +" translucent_sort=TimSort.doSort-call partial-details-on-throwable=included"
-                    +" tile_details=method-boundaries-v1 tile_profile="+TileProfiler.profile();
+                    +" tile_details=method-boundaries-v1 tile_profile="+TileProfiler.profile()
+                    +" chunk_details=invocations-v1";
             Files.writeString(cache.resolve("driving-stages-status.txt"), status+"\n");
             System.out.println("[DRIVING_STAGES] "+status);
             LuaCallbacks.finish(cache);
@@ -475,8 +513,9 @@ public final class StageProfiler {
 
     @Patch(className="zombie.iso.IsoChunk", methodName="doLoadGridsquare", strictMatch=true)
     public static class Chunk {
-        @Patch.OnEnter public static void enter(@Patch.Local("drivingStageToken") int token) { token=StageProfiler.enter(CHUNK); }
-        @Patch.OnExit(onThrowable=Throwable.class) public static void exit(@Patch.Local("drivingStageToken") int token) { StageProfiler.exit(token); }
+        @Patch.OnEnter public static void enter(@Patch.This IsoChunk chunk,
+                @Patch.Local("drivingStageToken") int token) { token=StageProfiler.chunkEnter(chunk); }
+        @Patch.OnExit(onThrowable=Throwable.class) public static void exit(@Patch.Local("drivingStageToken") int token) { StageProfiler.chunkExit(token); }
     }
 
     @Patch(className="zombie.inventory.ItemPickerJava", methodName="fillContainer", strictMatch=true)
