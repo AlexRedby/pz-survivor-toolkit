@@ -15,7 +15,7 @@ public final class RuntimeCleanupChecks {
     public static void run() throws Exception {
         zombie.ZomboidFileSystem.instance.setCacheDir(toolkit.lootresolved.bootstrap.Bootstrap.cache().toString());
         zombie.ZomboidFileSystem.instance.init(); // Native filesystem only; empty scratch cwd, no world.
-        ItemContainer root = new ItemContainer("cleanup-check",null,null); root.setCapacity(1000);
+        ItemContainer root = new ItemContainer("cleanup-check",null,null); root.setCapacity(100);
         InventoryContainer bag = new InventoryContainer("Base","FixtureBag","FixtureBag","Item_None");
         InventoryItem child = new InventoryItem("Base","FixtureChild","FixtureChild","Item_None");
         Map<String,Integer> baselines = (Map<String,Integer>)value("spawnBaselines");

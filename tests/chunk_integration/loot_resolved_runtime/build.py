@@ -19,7 +19,11 @@ PROJECT = SOURCE.parents[2]
 OPTIMIZER_MANIFEST = PROJECT / "tests/optimizer_trial/candidate-manifest.json"
 # This is a reviewed native-closure overlap, admitted only with the current complete pinned
 # archive/profile. Any additional differing overlap requires a separate source review.
-OPTIMIZER_CLOSURE = {"zombie/Lua/LuaEventManager.class": "d786c342e563fb735727beb268e39a9a40726c2e83a8ac15ec06c753580b524b"}
+OPTIMIZER_CLOSURE = {
+    "zombie/Lua/LuaEventManager.class": "d786c342e563fb735727beb268e39a9a40726c2e83a8ac15ec06c753580b524b",
+    # Reviewed getSquareRegion has equivalent Region-zone lookup and General fallback.
+    "zombie/iso/IsoGridSquare.class": "557646359c35a309c786c24c7d7fd522d2877f9ad64aea1315a29052d76920a6",
+}
 
 
 def sha(data):
@@ -77,6 +81,8 @@ def main():
     for name in ("game", "jdk", "output", "cache"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--mode", required=True, choices=("control", "candidate"))
+    parser.add_argument("--bank", choices=("base", "semantics", "reload"), default="base",
+                        help="Qualified base8, additional finite-source/replacement12, or terminal live-reload1")
     parser.add_argument("--optimizer-archive", type=Path, help="Explicit current pinned optimizer archive; exact complete profile required at invocation")
     parser.add_argument("--check", action="store_true", help="Headless initial-definition/token/RNG-ownership guards only")
     args = parser.parse_args()
@@ -134,10 +140,13 @@ def main():
         cp = os.pathsep.join(map(str, (native, buddy)))
         javac, java = args.jdk / "bin/javac", args.jdk / "bin/java"
         subprocess.run([str(javac), "--release", "25", "-cp", cp, "-d", str(classes),
-                        *map(str, (src / name for name in ("ResolvedCandidate.java", "Bootstrap.java", "RngScope.java", "PreMain.java", "Main.java")))], check=True)
+                        *map(str, (src / name for name in ("ResolvedCandidate.java", "Bootstrap.java", "RngScope.java", "PreMain.java", "Main.java", "SemanticGates.java")))], check=True)
         resource = classes / "toolkit/lootresolved/bootstrap"
         (resource / "token.txt").write_text(token + "\n", encoding="ascii")
         (resource / "mode.txt").write_text(args.mode + "\n", encoding="ascii")
+        (resource / "bank.txt").write_text(args.bank + "\n", encoding="ascii")
+        for name in ("loot-runtime-probes.txt",):
+            (classes / "toolkit/lootresolved/runtime" / name).write_bytes(sources[name])
         (resource / "native-hashes.properties").write_text("".join(name.removesuffix(".class") + "=" + digest + "\n" for name,digest in sorted(guards.items())))
         (resource / "runtime-hashes.properties").write_text("".join(name.removesuffix(".class") + "=" + digest + "\n" for name,digest in sorted(runtime_guards.items())))
         (resource / "optimizer-manifest.sha256").write_text((optimizer["manifest_sha256"] if optimizer else "none") + "\n")
@@ -172,14 +181,19 @@ def main():
         for folder in ("media/java", "media/bootstrap", "media/lua/shared"): (fixture / folder).mkdir(parents=True)
         (fixture / "mod.info").write_bytes(sources["mod.info.template"])
         (fixture / "media/lua/shared/ZZLootResolvedRuntime.lua").write_bytes(sources["ZZLootResolvedRuntime.lua"])
-        receipt = {"format":1, "test_only":True, "mode":args.mode, "sources":fingerprints,
+        scripts = {}
+        if args.bank != "base":
+            (fixture / "media/scripts").mkdir()
+            (fixture / "media/scripts/loot-runtime-probes.txt").write_bytes(sources["loot-runtime-probes.txt"])
+            scripts["42/media/scripts/loot-runtime-probes.txt"] = fingerprints["loot-runtime-probes.txt"]
+        receipt = {"format":1, "test_only":True, "mode":args.mode, "bank":args.bank, "scripts":scripts, "sources":fingerprints,
                    "native_hashes":guards, "runtime_hashes":runtime_guards,
                    "optimizer_manifest_sha256":optimizer["manifest_sha256"] if optimizer else None,
                    "optimizer_archive_sha256":optimizer["archive_sha256"] if optimizer else None,
                    "optimizer_profile":optimizer["manifest"]["profile"] if optimizer else None,
                    "rng_scope":"owner-thread-private-native-randstandard-v1",
                    "headless_checks":list(logs),
-                   "success_path_checked":False, "entry_point":"lootResolvedRuntimeRun",
+                   "success_path_checked":False, "entry_point":"lootResolvedRuntimeRun" if args.bank=="base" else "lootResolvedRuntimeRunFor",
                    "terminal_marker":"[LOOT_RESOLVED_RUNTIME] FINISH status=",
                    "required_preload":"42/media/bootstrap/PZLootResolvedBootstrap.jar"}
         for jar_name, package, preload in (("media/bootstrap/PZLootResolvedBootstrap.jar", "toolkit/lootresolved/bootstrap", True),
