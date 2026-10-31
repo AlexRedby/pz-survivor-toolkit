@@ -112,6 +112,19 @@ class OperationsBoundary(unittest.TestCase):
    events=copy.deepcopy(original);events[-1][key]=value;self.write('loot-operations-events.tsv',O.EVENT_FIELDS,events)
    with self.subTest(key=key),self.assertRaises(ValueError):O.report(self.cache)
 
+ def test_native_jfr_thread_sentinel_is_retained_without_weakening_owner_identity(self):
+  _,original=self.receipts()
+  start=next(e for e in original if e['window_id']=='256')['start_ns']
+  event=dict(kind='jdk.GCPhasePause',start_ns=start,end_ns=start,thread_id='-1',method='none',level='0',compile_id='0',window_id='-1',detail='none')
+  self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+[event]);result=O.report(self.cache)
+  self.assertTrue(result['timing_qualified'])
+  self.assertEqual(result['events']['gc_safepoint_events'][-1]['thread_id'],-1)
+  event['thread_id']='-2';self.write('loot-operations-events.tsv',O.EVENT_FIELDS,original+[event])
+  with self.assertRaises(ValueError):O.report(self.cache)
+  events=copy.deepcopy(original);events[-1]['thread_id']='-1'
+  self.write('loot-operations-events.tsv',O.EVENT_FIELDS,events)
+  with self.assertRaises(ValueError):O.report(self.cache)
+
  def test_compile_deopt_data_loss_osr_and_cold_type_never_hidden(self):
   rows,original=self.receipts();start=next(e for e in original if e['window_id']=='256')['start_ns']
   for kind,method,detail in [('jdk.Compilation','test.M()V','success=true,osr=false'),('jdk.Deoptimization','test.M()V','reason=unstable,action=reinterpret'),('jdk.DataLoss','none','amount=1')]:
