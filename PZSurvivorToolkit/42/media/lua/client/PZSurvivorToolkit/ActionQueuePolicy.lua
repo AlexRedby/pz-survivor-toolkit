@@ -2068,11 +2068,11 @@ end
 local function inDecision(queue, context, output, callback, ...)
     local previous = activeDecision
     activeDecision = {queue = queue, context = context, failures = {}, executions = {}, native = {}}
-    local result = {pcall(callback, ...)}
+    local ok, result = pcall(callback, ...)
     activeDecision = previous
     if output then for _, name in ipairs(decisionContextFields) do output[name] = context[name] end end
-    if not result[1] then error(result[2], 0) end
-    return result[2]
+    if not ok then error(result, 0) end
+    return result
 end
 local previewMove, previewCancel = Policy.previewMove, Policy.previewCancel
 local evaluateMove, evaluateCancel = Policy.evaluateMove, Policy.evaluateCancel

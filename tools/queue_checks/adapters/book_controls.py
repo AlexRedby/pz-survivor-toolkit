@@ -264,7 +264,7 @@ def native_request_errors(row, case, selection, ids):
     sample_fields = {'case', 'sequence', 'actor', 'item', 'itemType', 'token', 'actionRef',
                      'nativeRef', 'point', 'at', 'current', 'transaction', 'observation', 'watchPending'}
     state_fields = {'phase', 'boundary', 'sourceExact', 'ambiguous', 'paired', 'nativeHandle',
-                    'wireAmbiguous', 'transaction', 'id', 'fullType'}
+                    'wireAmbiguous', 'transaction', 'id', 'fullType', 'currentHandle'}
     def transaction(value):
         return _number(value) and value == int(value) and -128 <= value <= 127 and value != 0
     for record in candidates:
@@ -309,7 +309,7 @@ def native_request_errors(row, case, selection, ids):
                     or any(type(v) not in (str, int, float, bool) for v in state.values())
                     or state.get('phase') not in ('before', 'submitted', 'failed') or state.get('boundary') != 'start'
                     or not _number(state.get('id')) or state.get('id') != ids['front']['id'] or state.get('fullType') != ids['front']['type']
-                    or any(type(state.get(k)) is not bool for k in ('sourceExact', 'paired', 'nativeHandle', 'wireAmbiguous'))
+                    or any(type(state.get(k)) is not bool for k in ('sourceExact', 'paired', 'nativeHandle', 'wireAmbiguous', 'currentHandle'))
                     or 'ambiguous' in state and type(state['ambiguous']) is not bool
                     or not _same_action(sample.get('nativeRef'), record.get('nativeRef'))):
                 errors.append('Malformed or foreign private native request state'); continue
@@ -332,7 +332,7 @@ def native_request_errors(row, case, selection, ids):
             exact = (state.get('phase') == 'submitted' and state.get('sourceExact') is True
                      and state.get('nativeHandle') is True and state.get('wireAmbiguous') is False
                      and state.get('ambiguous') is False and transaction(value))
-            if exact and sample.get('current') is True and state.get('paired') is False:
+            if exact and state.get('currentHandle') is True and sample.get('current') is True and state.get('paired') is False:
                 anchored = True
             if state.get('paired') is True:
                 # Pairing links an attempt, including a stopped/rejected attempt;
@@ -355,6 +355,66 @@ def native_request_errors(row, case, selection, ids):
             else: positive = True
     if not negative and not failed and not positive:
         errors.append('No qualified singleton earned-return native request was observed')
+    return errors
+
+
+def native_transfer_stop_errors(row, case, selection, ids):
+    if selection.get('options', {}).get('require_native_requests') is not True:
+        return []
+    errors, rejected = [], False
+    entry_fields = {'case', 'sequence', 'actor', 'item', 'itemType', 'actionRef', 'nativeRef',
+                    'transaction', 'at', 'point', 'current', 'nativePresent', 'endpointsExact', 'nativeSource',
+                    'done', 'rejected', 'observation', 'guarded'}
+    exit_fields = {'case', 'sequence', 'actor', 'item', 'itemType', 'actionRef', 'nativeRef',
+                   'transaction', 'at', 'point', 'returned', 'sameNative'}
+    for record in row.get('records', []):
+        entry, returned = record.get('nativeStopEntry'), record.get('nativeStopReturned')
+        if entry is None and returned is None:
+            continue
+        if (selection['kind'] != 'mp' or record.get('role') not in ('pickup', 'return')
+                or not isinstance(entry, dict) or set(entry) != entry_fields
+                or not isinstance(returned, dict) or set(returned) != exit_fields):
+            errors.append('Missing paired exact native transfer stop boundaries'); continue
+        for value in (entry, returned):
+            if (value['case'] != case or type(value['sequence']) is not int or value['sequence'] != record.get('sequence')
+                    or not _number(value['actor']) or value['actor'] != ids['actor']
+                    or not _number(value['item']) or value['item'] != ids['front']['id'] or value['itemType'] != ids['front']['type']
+                    or not _same_action(value['actionRef'], record.get('actionRef'))
+                    or not _same_action(value['nativeRef'], record.get('nativeRef'))
+                    or not _number(value['at'])):
+                errors.append('Native transfer stop case/actor/item/action binding differs')
+        tx = entry['transaction']
+        if (not _number(tx) or tx != int(tx) or tx == 0 or not -128 <= tx <= 127 or tx != record.get('transaction')
+                or entry['point'] != 'entry' or returned['point'] != 'returned'
+                or any(entry[k] is not True for k in ('current', 'nativePresent', 'endpointsExact', 'nativeSource'))
+                or type(entry['done']) is not bool or type(entry['rejected']) is not bool or type(entry['guarded']) is not bool
+                or returned['returned'] is not True or returned['sameNative'] is not True
+                or not _number(returned['transaction']) or returned['transaction'] != (0 if entry['guarded'] else tx)
+                or not _number(entry['at']) or not _number(returned['at']) or entry['at'] > returned['at']
+                or not _number(record.get('startedAt')) or entry['at'] < record['startedAt']
+                or not _number(row.get('finishedAt')) or returned['at'] > row['finishedAt']
+                or record.get('transactionDone') is not entry['done'] or record.get('transactionRejected') is not entry['rejected']):
+            errors.append('Native stop is not the live unchanged transaction before cleanup')
+        state = entry['observation']
+        if selection['mode'] == 'native':
+            if entry['guarded'] is not False or returned['transaction'] != tx:
+                errors.append('Native stop control used guarded Toolkit cleanup')
+            if state is not False: errors.append('Native stop control acquired a private request owner')
+        elif record.get('role') == 'return':
+            if (entry['guarded'] is not True or not isinstance(state, dict) or set(state) != {'phase', 'boundary', 'sourceExact', 'ambiguous', 'paired',
+                    'nativeHandle', 'wireAmbiguous', 'transaction', 'id', 'fullType', 'currentHandle'}
+                    or state.get('phase') != 'submitted' or state.get('boundary') != 'start'
+                    or any(state.get(k) is not True for k in ('sourceExact', 'nativeHandle', 'currentHandle'))
+                    or any(state.get(k) is not False for k in ('wireAmbiguous', 'ambiguous', 'paired'))
+                    or not _number(state.get('transaction')) or state['transaction'] != tx
+                    or not _number(state.get('id')) or state['id'] != ids['front']['id'] or state.get('fullType') != ids['front']['type']):
+                errors.append('Native stop lacks its unreused exact current request object')
+        elif state is not False:
+            errors.append('Pickup stop acquired an earned-return request owner')
+        if record.get('role') == 'return' and entry['rejected'] is True and entry['done'] is False:
+            rejected = True
+    if selection['kind'] == 'mp' and capacity_case(case.split('.', 1)[1]) and not rejected:
+        errors.append('Capacity loss lacks native rejection before transaction removal')
     return errors
 
 
@@ -481,6 +541,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         ids, boundary, records = row['ids'], row['boundary'], row['records']
         errors.extend(_nonfinite_case_errors(row, ids, enabled))
         errors.extend(native_request_errors(row, case, selection, ids))
+        errors.extend(native_transfer_stop_errors(row, case, selection, ids))
         errors.extend(performance_errors(row.get('performance'), case, enabled))
         if isinstance(row.get('performance'), dict) and row['performance'].get('queueCount') != len(boundary.get('queue', [])):
             errors.append('Timing queue shape differs from the real edit boundary')
@@ -778,6 +839,14 @@ def verify(root, selection, catalog):
                 for record in row.get('records', []):
                     if [sample for sample in observed if sample.get('sequence') == record.get('sequence')] != record.get('requestStates', []):
                         errors.append('Raw native request observations differ from their exact owner record')
+            if selection.get('options', {}).get('require_native_requests') is True:
+                for marker, field in (('TRANSFER_STOP_ENTRY', 'nativeStopEntry'), ('TRANSFER_STOP_RETURNED', 'nativeStopReturned')):
+                    actual = [r for r in raw(text, marker) if r.get('case') == case]
+                    expected_stops = [r[field] for r in row.get('records', []) if field in r]
+                    if len(actual) != len(expected_stops) or any(value not in actual for value in expected_stops):
+                        errors.append('Raw native transfer stop boundaries differ from exact records')
+                    if any(r.get('case') not in CASES for r in raw(text, marker)):
+                        errors.append('Foreign native transfer stop case')
             gap_rows = [r for r in raw(text, 'REPLICA_GAP') if r.get('case') == case]
             converged = [r for r in raw(text, 'REPLICA_CONVERGED') if r.get('case') == case]
             expected_gaps = row.get('replicaGaps', [])

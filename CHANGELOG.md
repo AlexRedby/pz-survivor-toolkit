@@ -46,6 +46,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.329
+
+- Expose a fresh native-object match in explicit transfer diagnostics so tests can distinguish a live request from historical transaction data. Add paired native-stop probes before rejected transfers are removed; queue execution and edit permissions stay unchanged.
+- Remove one temporary Lua result table from every common cancel/move decision, preserving callback results, errors, nested contexts and all source checks. This allocation reduction does not establish that live timing budgets pass.
+
 ### 0.1.328
 
 - Preserve native request observations when Host replaces the carried Java item instance while retaining its original queue member. Reuse the existing exact-ID/type detached-member proof and fresh source checks without changing native arguments, transfers or queue permissions.
@@ -1527,6 +1532,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.80
+
+- Refresh the exact queue Policy source fingerprint after its temporary-result allocation reduction, preserving the existing compiler eligibility checks and fallback behavior.
 
 ### 0.1.79
 

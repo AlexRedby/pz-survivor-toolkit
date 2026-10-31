@@ -12,6 +12,7 @@ local failures=0;local serial,tokenSerial=0,0;local tokens={};local classes={}
 local producer,readProducer,volumeProducer,equipProducer
 local requestsEnabled=config.options and config.options.require_native_requests==true
 local requestSettlement,nativeRequestState,requestSample,requestModule,requestPending,requestObserver
+local requestPolicy,nativeStopMatcher
 local function now()return getTimestampMs()end
 local function case()return config.cases[index]end
 local function control()return ids and F.parseControl(ids.control)end
@@ -101,11 +102,16 @@ local function intact()
    'native request diagnostic binding changed')
   assert(T.ActionQueueTransferRequests==requestModule and requestModule.pending==requestPending and requestModule.observe==requestObserver,
    'native request watch diagnostic binding changed')
+  assert(T.ActionQueuePolicy==requestPolicy and requestPolicy.matchesNative==nativeStopMatcher,
+   'native transfer source matcher binding changed')
  end
  for class,saved in pairs(classes)do for method,callback in pairs(saved)do assert(class[method]==callback,'native lifecycle changed '..tostring(class.Type)..'.'..method)end end
 end
 local function updateTransferEpisode(action,row)
  if not isClient()or row.type~='ISInventoryTransferAction'or(row.role~='pickup'and row.role~='return')then return end
+ -- A native stop entry is the final live transaction observation; its byte
+ -- can remain on an unguarded stopped action after native removal.
+ if row.nativeStopEntry then return end
  if transferEpisode and transferEpisode.action==action then transferEpisode.live=false end
  local tx=action.transactionId
  local root=state.player:getInventory();local from=row.role=='pickup'and state.source or root;local to=row.role=='pickup'and root or state.source
@@ -133,6 +139,54 @@ function bookControlsNativeStopped(action,episode,returned)
   nativeSource=Proof.closure(ISReadABook.stop,'ISReadABook.lua')and T.ActionQueueLifecycle.hasNativeStopBridge()==true,
   finished=episode:finished(),forceComplete=episode:isForceComplete(),pages=action.item:getAlreadyReadPages()}
  raw('STOP_RETURNED',row.stopReturned)
+end
+-- The disposable JVM probe enters the real native stop before guarded Lua
+-- cleanup removes its transaction. Historical Done/Reject queries after removal
+-- are intentionally absent: native considers a missing transaction terminal.
+function bookControlsNativeTransferStop(action,episode,point,returned)
+ if not requestsEnabled or not state then return end
+ local row=tracks[action]
+ if not row or(row.role~='pickup'and row.role~='return')then return end
+ intact()
+ local q=queue()
+ if point=='entry'then
+  assert(not row.nativeStopEntry,'duplicate native transfer stop entry')
+  local tx=action.transactionId
+  assert(type(tx)=='number'and tx%1==0 and tx~=0 and tx>=-128 and tx<=127,'missing live transfer byte at native stop')
+  local guard=action.toolkitTransferGuard
+  local guarded=type(guard)=='table'and action.stop==guard.stop
+  local root=state.player:getInventory()
+  local from=row.role=='pickup'and state.source or root
+  local to=row.role=='pickup'and root or state.source
+  local entry={case=case(),sequence=row.sequence,actor=ids.actor,item=action.item:getID(),itemType=action.item:getFullType(),
+   actionRef=row.actionRef,nativeRef=ref(episode),transaction=tx,at=now(),point=point,
+   current=q.current==action and q.queue[1]==action and action.action==episode,
+   nativePresent=state.player:getCharacterActions():contains(episode),
+   endpointsExact=action.character==state.player and action.srcContainer==from and action.destContainer==to,
+   guarded=guarded,
+   -- Match the complete reviewed native/BC/fridge/cart delegate chain;
+   -- an approved delegate need not have the stock file's name.
+   nativeSource=nativeStopMatcher(action)==true,
+   done=isItemTransactionDone(tx)==true,rejected=isItemTransactionRejected(tx)==true,
+   observation=nativeRequestState(action)or false}
+  assert(row.nativeRef==entry.nativeRef and row.transaction==tx,'native stop lost the observed transfer episode')
+  row.nativeStopEntry=entry;row.transactionDone=entry.done;row.transactionRejected=entry.rejected
+  if transferEpisode and transferEpisode.action==action then
+   assert(transferEpisode.transaction==tx,'native stop changed the exact transfer episode')
+   transferEpisode.done,transferEpisode.rejected,transferEpisode.observedAt=entry.done,entry.rejected,entry.at
+  end
+  raw('TRANSFER_STOP_ENTRY',entry)
+ elseif point=='returned'then
+  local entry=assert(row.nativeStopEntry,'native stop returned without entry')
+  assert(not row.nativeStopReturned,'duplicate native transfer stop return')
+  row.nativeStopReturned={case=case(),sequence=row.sequence,actor=ids.actor,item=action.item:getID(),itemType=action.item:getFullType(),
+   actionRef=row.actionRef,nativeRef=ref(episode),transaction=action.transactionId,at=now(),point=point,returned=returned,
+   sameNative=action.action==episode and entry.nativeRef==ref(episode)}
+  raw('TRANSFER_STOP_RETURNED',row.nativeStopReturned)
+  if transferEpisode and transferEpisode.action==action then
+   transferEpisode.live=false;transferEpisode.terminalAt=now()
+  end
+ else error('unknown native transfer stop boundary')end
 end
 local function observeStoppedRemoval()
  if native or not boundary or not oldNative or control()=='return-child-cancel'then return end
@@ -181,7 +235,7 @@ local function observe()
    row.progress=row.maxDelta>row.firstDelta+.00000001
    if requestsEnabled then requestSample(action,row,'started')end
   end
-  if row.type=='ISInventoryTransferAction'and action.transactionId and action.transactionId~=0 then
+  if row.type=='ISInventoryTransferAction'and not row.nativeStopEntry and action.transactionId and action.transactionId~=0 then
    row.transaction=action.transactionId;row.transactionDone=isClient()and isItemTransactionDone(action.transactionId)==true or not isClient()
    row.transactionRejected=isClient()and isItemTransactionRejected(action.transactionId)==true or false
   end
@@ -196,11 +250,14 @@ local function lifecycleBegin(action,step)
  if row and step=='perform'and row.type=='ISInventoryTransferAction'and action.transactionId then
   row.transaction=action.transactionId;row.transactionDone=isClient()and isItemTransactionDone(action.transactionId)==true or not isClient()
   row.transactionRejected=isClient()and isItemTransactionRejected(action.transactionId)==true or false
+  if transferEpisode and transferEpisode.action==action then
+   transferEpisode.done,transferEpisode.rejected,transferEpisode.observedAt=row.transactionDone,row.transactionRejected,now()
+  end
  end
  return row~=nil
 end
 local function lifecycleFinish(action,step,succeeded)
- if transferEpisode and transferEpisode.action==action and(step=='perform'or step=='stop')then transferEpisode.live=false;transferEpisode.terminalAt=now();transferEpisode.observedAt=now();transferEpisode.done=isItemTransactionDone(transferEpisode.transaction)==true;transferEpisode.rejected=isItemTransactionRejected(transferEpisode.transaction)==true end
+ if transferEpisode and transferEpisode.action==action and(step=='perform'or step=='stop')then transferEpisode.live=false;transferEpisode.terminalAt=now() end
  local row=register(action);if row then
   if requestsEnabled and step=='perform'then requestSample(action,row,'perform-finish')end
   row.finishes[#row.finishes+1]={phase=step,succeeded=succeeded,at=now()};if step=='perform'and succeeded then row.performedAt=now()end
@@ -566,6 +623,9 @@ Events.OnTick.Add(function()
     requestSettlement=T.ActionQueueSettlement;nativeRequestState=requestSettlement and requestSettlement.nativeRequestState
     assert(type(nativeRequestState)=='function'and Proof.closure(nativeRequestState,'ActionQueueSettlement.lua'),
      'source-owned native request diagnostic API missing')
+    requestPolicy=T.ActionQueuePolicy;nativeStopMatcher=requestPolicy and requestPolicy.matchesNative
+    assert(type(requestPolicy)=='table'and getmetatable(requestPolicy)==nil and type(nativeStopMatcher)=='function'
+     and Proof.closure(nativeStopMatcher,'ActionQueuePolicy.lua'),'source-owned native transfer matcher missing')
     requestModule=T.ActionQueueTransferRequests;requestPending=requestModule and requestModule.pending;requestObserver=requestModule and requestModule.observe
     assert(type(requestModule)=='table'and getmetatable(requestModule)==nil and type(requestPending)=='table'and getmetatable(requestPending)==nil
      and type(requestObserver)=='function'and Proof.closure(requestObserver,'ActionQueueTransferRequests.lua'),

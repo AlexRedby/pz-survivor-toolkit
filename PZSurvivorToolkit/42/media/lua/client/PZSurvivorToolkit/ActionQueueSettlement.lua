@@ -1804,7 +1804,12 @@ function Settlement.nativeRequestState(action)
     local request = planned and planned.execution and planned.execution.request
     if not request then return end
     return {phase = request.phase, boundary = request.boundary, sourceExact = request.sourceExact, ambiguous = request.ambiguous,
-        paired = request.paired == true, nativeHandle = request.receipt and type(request.receipt.hasNativeHandle) == "function"
+        paired = request.paired == true,
+        -- Explicit diagnostics only: resolve the captured native object while it
+        -- still exists, rather than treating a historical byte as a live request.
+        currentHandle = request.receipt and type(request.receipt.matchesTransaction) == "function"
+            and type(action.transactionId) == "number" and request.receipt:matchesTransaction(action, action.transactionId) == true or false,
+        nativeHandle = request.receipt and type(request.receipt.hasNativeHandle) == "function"
             and request.receipt:hasNativeHandle() == true or false,
         wireAmbiguous = not (request.receipt and type(request.receipt.isWireAmbiguous) == "function")
             or request.receipt:isWireAmbiguous() ~= false,

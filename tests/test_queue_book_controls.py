@@ -767,12 +767,25 @@ os.exit(0)
             if not negative:
                 tx=record['transaction']
                 state=dict(phase='submitted',boundary='start',sourceExact=True,ambiguous=False,paired=False,
-                    nativeHandle=True,wireAmbiguous=False,transaction=tx,id=ids['front']['id'],fullType=ids['front']['type'])
+                    nativeHandle=True,currentHandle=True,wireAmbiguous=False,transaction=tx,id=ids['front']['id'],fullType=ids['front']['type'])
                 record['requestStates'].append(sample('started',2,state,True,tx,True))
                 record['requestStates'].append(sample('perform-begin',3,state,True,tx,True))
                 state['paired']=True
                 record['requestStates'].append(sample('perform-finish',4,state,False,0,True))
             record['requestStates'].append(sample('terminal',5))
+        if kind=='mp' and a.capacity_case(name):
+            record=next(r for r in row['records'] if r['role']=='return')
+            if mode=='native':
+                record.update(started=True,startedAt=17,allocatedAt=16,nativeRef='java:7',transaction=7,transactionDone=False,transactionRejected=True)
+            entry=dict(case=case,sequence=record['sequence'],actor=ids['actor'],item=ids['front']['id'],itemType=ids['front']['type'],
+                actionRef=record['actionRef'],nativeRef=record['nativeRef'],transaction=record['transaction'],at=18,point='entry',
+                current=True,nativePresent=True,endpointsExact=True,nativeSource=True,guarded=mode=='toolkit',done=False,rejected=True,observation=False)
+            if mode=='toolkit':
+                entry['observation']=dict(phase='submitted',boundary='start',sourceExact=True,ambiguous=False,paired=False,
+                    nativeHandle=True,currentHandle=True,wireAmbiguous=False,transaction=record['transaction'],id=ids['front']['id'],fullType=ids['front']['type'])
+            record['nativeStopEntry']=entry
+            record['nativeStopReturned']=dict(case=case,sequence=record['sequence'],actor=ids['actor'],item=ids['front']['id'],itemType=ids['front']['type'],
+                actionRef=record['actionRef'],nativeRef=record['nativeRef'],transaction=0 if mode=='toolkit' else record['transaction'],at=19,point='returned',returned=True,sameNative=True)
         return evidence
 
     def test_native_requests_require_exact_capture_and_explicit_absence_controls(self):
@@ -790,7 +803,7 @@ os.exit(0)
         evidence=self.request_evidence('worn-bag.header-cancel-capacity-lost');row,ids=evidence[:2]
         record=next(r for r in row['records']if r['role']=='return'and r['started'])
         state=dict(phase='submitted',boundary='start',sourceExact=True,ambiguous=False,paired=False,
-            nativeHandle=True,wireAmbiguous=False,transaction=record['transaction'],id=ids['front']['id'],fullType=ids['front']['type'])
+            nativeHandle=True,currentHandle=True,wireAmbiguous=False,transaction=record['transaction'],id=ids['front']['id'],fullType=ids['front']['type'])
         first=copy.deepcopy(record['requestStates'][0]);first.update(point='started',at=2,current=True,
             nativeRef=record['nativeRef'],transaction=record['transaction'],observation=copy.deepcopy(state))
         state['paired']=True
@@ -803,6 +816,39 @@ os.exit(0)
                 lambda r:r['blockedReturn'].update(reason='unmoved'),lambda r:r['server']['books']['front'].update(container='world')]:
             changed=copy.deepcopy(row);mutate(changed)
             self.assertTrue(a.native_request_errors(changed,changed['id'],selection,ids))
+
+    def test_native_transfer_rejection_requires_live_paired_stop_evidence(self):
+        for mode in ('toolkit','native'):
+            selection=self.selection(mode=mode);selection['options']['require_native_requests']=True
+            for case in a.CAPACITY_CASES:
+                row,ids=self.request_evidence(case,mode=mode)[:2]
+                self.assertEqual(a.native_transfer_stop_errors(row,case,selection,ids),[])
+                mutations=[lambda r:r.pop('nativeStopEntry'),lambda r:r.pop('nativeStopReturned'),
+                    lambda r:r['nativeStopEntry'].update(done=True),lambda r:r['nativeStopEntry'].update(rejected=False),
+                    lambda r:r['nativeStopEntry'].update(current=False),lambda r:r['nativeStopEntry'].update(nativePresent=False),
+                    lambda r:r['nativeStopEntry'].update(guarded=1),lambda r:r['nativeStopEntry'].update(endpointsExact=False),lambda r:r['nativeStopEntry'].update(nativeSource=False),
+                    lambda r:r['nativeStopEntry'].update(sequence=True),lambda r:r['nativeStopEntry'].update(actor=True),
+                    lambda r:r['nativeStopEntry'].update(item=True),lambda r:r['nativeStopEntry'].update(transaction=True),
+                    lambda r:r['nativeStopEntry'].update(nativeRef='foreign'),lambda r:r['nativeStopEntry'].update(actionRef='foreign'),
+                    lambda r:r['nativeStopEntry'].update(case='root.header-cancel'),lambda r:r['nativeStopEntry'].update(at=float('nan')),
+                    lambda r:r['nativeStopEntry'].update(extra={'unbounded':'object'}),lambda r:r['nativeStopReturned'].update(transaction=99),
+                    lambda r:r['nativeStopReturned'].update(at=1),lambda r:r['nativeStopReturned'].update(returned=False),
+                    lambda r:r['nativeStopReturned'].update(sameNative=False)]
+                if mode=='toolkit':
+                    mutations += [lambda r:r['nativeStopEntry']['observation'].update(currentHandle=False),
+                        lambda r:r['nativeStopEntry']['observation'].update(wireAmbiguous=True),
+                        lambda r:r['nativeStopEntry']['observation'].update(paired=True),
+                        lambda r:r['nativeStopEntry']['observation'].update(id=True),
+                        lambda r:r['nativeStopEntry']['observation'].update(transaction=True),
+                        lambda r:r['nativeStopEntry'].update(observation=False)]
+                else: mutations += [lambda r:r['nativeStopEntry'].update(observation={'sourceExact':True}),
+                    lambda r:(r['nativeStopEntry'].update(guarded=True),r['nativeStopReturned'].update(transaction=0))]
+                for index,mutate in enumerate(mutations):
+                    changed=copy.deepcopy(row);record=next(r for r in changed['records']if r['role']=='return');mutate(record)
+                    self.assertTrue(a.native_transfer_stop_errors(changed,case,selection,ids),(case,mode,index))
+        selection=self.selection(kind='sp');selection['options']['require_native_requests']=True
+        row,ids=self.request_evidence(a.CAPACITY_CASES[0],kind='sp')[:2]
+        self.assertEqual(a.native_transfer_stop_errors(row,row['id'],selection,ids),[])
 
     def test_native_request_negative_evidence_has_strict_scalar_schema(self):
         selection=self.selection();selection['options']['require_native_requests']=True
@@ -853,6 +899,57 @@ os.exit(0)
                 (root/'client1-launch.log').write_text(changed)
                 self.assertTrue(a.verify(root,selection,{})['issues'])
 
+    def test_native_request_current_anchor_requires_live_object(self):
+        row,ids=self.request_evidence()[:2];selection=self.selection();selection['options']['require_native_requests']=True
+        for record in row['records']:
+            for sample in record.get('requestStates',[]):
+                if isinstance(sample['observation'],dict):sample['observation']['currentHandle']=False
+        self.assertTrue(a.native_request_errors(row,row['id'],selection,ids))
+
+    def test_native_transfer_finish_preserves_pre_removal_episode_without_query(self):
+        lua=shutil.which('luajit')
+        if not lua:self.skipTest('LuaJIT not installed')
+        source=r"""
+local file=assert(io.open(arg[1]));local text=file:read('*a');file:close()
+local first=assert(text:find('local function lifecycleFinish(',1,true))
+local last=assert(text:find('\nlocal function request(command)',first,true))
+local finish=assert(loadstring(text:sub(first,last-1)..'\nreturn lifecycleFinish'))()
+local epFirst=assert(text:find('local function updateTransferEpisode(',1,true))
+local epLast=assert(text:find('\n-- The disposable Java probe',epFirst,true))
+local update=assert(loadstring(text:sub(epFirst,epLast-1)..'\nreturn updateTransferEpisode'))()
+isClient=function()return true end
+local retained={live=false,done=false,rejected=true,observedAt=10}
+transferEpisode=retained
+update({}, {type='ISInventoryTransferAction',role='return',nativeStopEntry={}})
+assert(transferEpisode==retained and retained.observedAt==10 and retained.rejected==true)
+now=function()return 12 end
+requestsEnabled=false
+isItemTransactionDone=function()error('queried a removed native transaction')end
+isItemTransactionRejected=isItemTransactionDone
+for _,step in ipairs({'stop','perform'})do
+ local action={};local row={finishes={}}
+ register=function(value)assert(value==action);return row end
+ transferEpisode={action=action,transaction=7,live=true,done=step=='perform',rejected=step=='stop',observedAt=10}
+ finish(action,step,true)
+ assert(transferEpisode.live==false and transferEpisode.terminalAt==12 and transferEpisode.observedAt==10)
+ assert(transferEpisode.done==(step=='perform')and transferEpisode.rejected==(step=='stop'))
+ assert(#row.finishes==1 and row.finishes[1].phase==step and row.finishes[1].succeeded==true)
+end
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
+
+    def test_native_transfer_stop_raw_pair_cannot_be_dropped_or_duplicated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);selection,client,server=self.log_bank(requests=True)
+            (root/'server-launch.log').write_text(server);(root/'client1-launch.log').write_text(client)
+            self.assertEqual(a.verify(root,selection,{})['issues'],[])
+            for marker in ('TRANSFER_STOP_ENTRY ','TRANSFER_STOP_RETURNED '):
+                line=next(value for value in client.splitlines()if marker in value)
+                for changed in [client.replace(line,'',1),client+'\n'+line,client+'\n'+line.replace('worn-bag.header-cancel-capacity-lost','foreign.case')]:
+                    (root/'client1-launch.log').write_text(changed)
+                    self.assertTrue(a.verify(root,selection,{})['issues'])
+
     def log_bank(self, kind='mp', mode='toolkit', requests=False):
         selection = self.selection(kind, mode); client, server = [], []
         if requests: selection['options']['require_native_requests']=True
@@ -871,6 +968,8 @@ os.exit(0)
                 client.extend(raw(marker, value) for value in values)
             for record in row['records']:
                 if 'stopReturned' in record:client.append(raw('STOP_RETURNED',record['stopReturned']))
+                for marker,field in [('TRANSFER_STOP_ENTRY','nativeStopEntry'),('TRANSFER_STOP_RETURNED','nativeStopReturned')]:
+                    if field in record: client.append(raw(marker,record[field]))
                 for sample in record.get('requestStates',[]):client.append(raw('NATIVE_REQUEST',sample))
             client.append(raw('PERFORMANCE',row['performance']))
             client.append(event(row))

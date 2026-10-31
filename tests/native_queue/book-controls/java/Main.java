@@ -27,6 +27,18 @@ public final class Main {
             System.err.println("[QUEUE_TEST] FAIL book-controls-stop-observer rejected native stop evidence");
     }
 
+    /** Before Lua cleanup can remove the exact native transfer transaction. */
+    public static void transferStop(LuaTimedActionNew nativeAction, String phase, Throwable failure) {
+        if (LuaManager.env == null || nativeAction == null) return;
+        var action = nativeAction.getTable();
+        if (action == null || !"ISInventoryTransferAction".equals(action.rawget("Type"))) return;
+        Object observer = LuaManager.env.rawget("bookControlsNativeTransferStop");
+        if (observer == null) return;
+        Object[] result = LuaManager.caller.pcall(LuaManager.thread, observer, action, nativeAction, phase, failure == null);
+        if (result.length == 0 || !Boolean.TRUE.equals(result[0]))
+            System.err.println("[QUEUE_TEST] FAIL book-controls-transfer-stop-observer rejected native stop evidence");
+    }
+
     private static Object own(Object value, String key) {
         return value instanceof KahluaTableImpl table ? table.delegate.get(key) : null;
     }
@@ -93,8 +105,16 @@ public final class Main {
 
     @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="stop", warmUp=true, strictMatch=true)
     public static class Stopped {
+        @Patch.OnEnter
+        public static void enter(@Patch.This LuaTimedActionNew action) {
+            try { Main.transferStop(action, "entry", null); }
+            catch (Throwable failure) {
+                System.err.println("[QUEUE_TEST] FAIL book-controls-transfer-stop-observer entry failed");
+            }
+        }
         @Patch.OnExit(onThrowable=Throwable.class, suppress=Throwable.class)
         public static void exit(@Patch.This LuaTimedActionNew action, @Patch.Thrown Throwable failure) {
+            Main.transferStop(action, "returned", failure);
             Main.stopped(action, failure);
         }
     }
