@@ -37,7 +37,10 @@ Do not run timing alongside builds, game clients or other timing work. Admission
 failure must not be bypassed. Timing requires the supplied runtime to identify
 itself as Zulu; that vendor check does not establish exact game-runtime identity.
 The caller supplies the bundled binary explicitly; the receipt records its byte
-digest and complete version. Compile with JDK25.
+digest and complete version. Every semantics and timing JVM uses the same explicit
+`-Xms256m -Xmx256m -XX:+UseZGC -Xbatch` settings. The receipt retains exact flags,
+classpath and main arguments per JVM, and each JVM retains unified GC/safepoint
+logs alongside its JIT log. Compile with JDK25.
 
 Both modes use the same added calculation bridge and MethodHandle invocation.
 One measured unit is the first original-name resolution, one native
@@ -51,7 +54,9 @@ prewarmed, and primitive report buffers are printed only after all timed groups.
 A prewarmed `LockSupport.parkNanos` path then waits at least 20ms before printing;
 spurious wakeups re-park for the remaining duration, while interruption fails
 the run. A `REPORT_GAP` receipt verifies separation from the last timing window.
-The all-event JIT gate and its +/-1ms margin remain unchanged.
+The all-event JIT gate and its +/-1ms margin remain unchanged. Allocations and
+GC remain part of this synthetic workload; GC events are retained, rather than
+being rejected as a class. These measurements do not support FPS extrapolation.
 
 ## Guards and semantic scope
 
@@ -88,3 +93,32 @@ pack, gameplay, or menu Host networking. Those remain separate delivery gates.
 The experiment does not prove a driving-frame improvement. In particular,
 mandatory GENERATOR/IS_MEMENTO tag probes remain native; resolver savings cannot
 be inferred from aggregate JFR classification samples.
+
+Timing setup also exercises `Object.notifyAll` on a private monitor before the
+windows, avoiding first-use native wrapper linkage during ZGC. This changes no
+game state and does not suppress compilation events or collections.
+
+## Current result and remaining decision
+
+The checked macOS run used five alternating JVM pairs, seven rounds per shape,
+200,000 calculations per round, bundled Zulu25 and explicit ZGC with a 256 MiB
+heap. All 190 semantic rows and consumed checksums matched, all ten JVMs reached
+C2 for the loop before timing, and no compilation/deoptimization log entry fell
+within a measured window including the +/-1ms margin. Concurrent GC was retained;
+actual allocation-stall events were absent (zero-valued `Allocation Stalls:`
+summary rows are not stall events).
+
+Allocations per calculation were stable: fulltype 56 -> 56 bytes, module 280
+-> 112 bytes, alias/import 320 -> 128 bytes. CPU timing is **inconclusive for
+runtime adoption**: fulltype regressed in two of five pairs (approximately 17%
+and 22%), and module regressed in two (approximately 3% and 14%). Alias and import
+improved in all pairs, but absolute CPU costs varied substantially across JVMs.
+Do not select only the favourable median or translate this into FPS.
+
+Before another runtime candidate, use an alternating within-JVM comparison and
+representative distributions to separate the change from cross-process timing
+variation. Cover the unchanged missing-original paths as well. Successful item
+creation, callback order, full-pack SP/menu Host and observer-free end-to-end
+benefit remain required. These added test methods are usable at initial class
+definition; they are not a schema-preserving retransformation for an already
+loaded game class.
