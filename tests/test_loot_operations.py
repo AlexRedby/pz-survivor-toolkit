@@ -61,7 +61,7 @@ class OperationsBoundary(unittest.TestCase):
    comp.append(dict(kind='jdk.Compilation',start_ns=str(10+i*10),end_ns=str(15+i*10),thread_id='2',method=name,level='4',compile_id=str(i+1),window_id='-1',detail='success=true,osr=false'))
   events=[sentinel,*comp,*markers]
   self.write('loot-operations.tsv',O.FIELDS,rows);self.write('loot-operations-events.tsv',O.EVENT_FIELDS,events)
-  inputs=dict(owner_thread_id='123',callback_admission=O.CONTRACT['callback_admission'],callback_binding='native:ItemCodeOnCreate.onCreateGasMask(Clothing)',ordinary_options='{medicalLootNew=1.0,mementoLootNew=1.0,rollsMultiplier=1.0}',empty1000_cpu_ns='100',empty1000_wall_ns='50',container_identity='detached-no-native-world-object-id',native_identity_logger='unchanged-diagnostics-included-if-emitted',direct_public_calls='352',bag_public_calls='704')
+  inputs=dict(owner_thread_id='123',spawn_with_admission='empty',callback_admission=O.CONTRACT['callback_admission'],callback_binding='native:ItemCodeOnCreate.onCreateGasMask(Clothing)',ordinary_options='{medicalLootNew=1.0,mementoLootNew=1.0,rollsMultiplier=1.0}',empty1000_cpu_ns='100',empty1000_wall_ns='50',container_identity='detached-no-native-world-object-id',native_identity_logger='unchanged-diagnostics-included-if-emitted',direct_public_calls='352',bag_public_calls='704')
   inputs['ordinary_options_sha256']=hashlib.sha256(inputs['ordinary_options'].encode()).hexdigest()
   for group in O.GROUPS:
    inputs[group+'.graph']='rolls:40800000;Nails:3f800000;';inputs[group+'.sha256']=hashlib.sha256(inputs[group+'.graph'].encode()).hexdigest()
@@ -222,7 +222,7 @@ class OperationsBoundary(unittest.TestCase):
 
  def test_input_graph_callback_and_identity_diagnostic_scope_cannot_disappear(self):
   self.receipts();path=self.cache/'loot-operations-inputs.properties';original=path.read_text()
-  for old,new in [('callback_binding=native:','callback_binding=foreign:'),('container_identity=detached','container_identity=real'),('direct_public_calls=352','direct_public_calls=351'),('ordinary_options_sha256=','ordinary_options_sha256=0')]:
+  for old,new in [('spawn_with_admission=empty','spawn_with_admission=allowed'),('callback_binding=native:','callback_binding=foreign:'),('container_identity=detached','container_identity=real'),('direct_public_calls=352','direct_public_calls=351'),('ordinary_options_sha256=','ordinary_options_sha256=0')]:
    path.write_text(original.replace(old,new))
    with self.subTest(old=old),self.assertRaises(ValueError):O.report(self.cache)
 
