@@ -5,6 +5,7 @@ import ast
 import hashlib
 import json
 import os
+import runpy
 from pathlib import Path
 import shutil
 import subprocess
@@ -199,11 +200,8 @@ def main():
                    "terminal_marker":"[LOOT_RESOLVED_RUNTIME] FINISH status=",
                    "required_preload":"42/media/bootstrap/PZLootResolvedBootstrap.jar"}
         if args.bank == "operations":
-            receipt["operations_contract"] = {"scope":"owner-window-paired-roll-v1", "warmup_pairs":64, "measured_pairs":24,
-                "storage_limit":4096, "groups":[{"id":"direct-CrateTools-main","batch":2,"distribution":"CrateTools","path":"public-doRollItem-main-only"},
-                {"id":"bag-FirstAidKit-with-native-junk","batch":4,"distribution":"FirstAidKit","path":"public-rollContainerItem-with-junk"}],
-                "callback_admission":"itemconfig-null;LuaCreate-empty-or-exact-native-gasmask", "spawn_with_admission":"empty", "semantic_accept_observer":False,
-                "headless_operations_checks":bool(args.check)}
+            receipt["operations_contract"] = dict(runpy.run_path(str(SOURCE / "operations_compare.py"))["CONTRACT"],
+                                                  headless_operations_checks=bool(args.check))
         for jar_name, package, preload in (("media/bootstrap/PZLootResolvedBootstrap.jar", "toolkit/lootresolved/bootstrap", True),
                                            ("media/java/PZLootResolvedRuntime.jar", "toolkit/lootresolved/runtime", False)):
             with zipfile.ZipFile(fixture / jar_name,"w",zipfile.ZIP_DEFLATED) as archive:

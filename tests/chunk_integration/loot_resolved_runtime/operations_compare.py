@@ -15,11 +15,14 @@ base=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(base)
 values=base.values
 rng=base.rng
 RNG_ACTIVATION=base.RNG_ACTIVATION
-CONTRACT={'scope':'owner-window-paired-roll-v1','warmup_pairs':64,'measured_pairs':24,'storage_limit':4096,
+CONTRACT={'scope':'owner-window-paired-roll-v1','schedule_version':'fixed-warmup256-measured-seed64-v1','warmup_pairs':256,'measured_pairs':24,'measured_seed_base':64,'group_seed_stride':32,'storage_limit':4096,
  'groups':[{'id':'direct-CrateTools-main','batch':2,'distribution':'CrateTools','path':'public-doRollItem-main-only'},
  {'id':'bag-FirstAidKit-with-native-junk','batch':4,'distribution':'FirstAidKit','path':'public-rollContainerItem-with-junk'}],
  'callback_admission':'itemconfig-null;LuaCreate-empty-or-exact-native-gasmask','spawn_with_admission':'empty','semantic_accept_observer':False,'headless_operations_checks':True}
 GROUPS={g['id']:g for g in CONTRACT['groups']}
+CONTRACT['first_measured_window']=CONTRACT['warmup_pairs']*len(GROUPS)*2
+CONTRACT['total_windows']=(CONTRACT['warmup_pairs']+CONTRACT['measured_pairs'])*len(GROUPS)*2
+CONTRACT['public_calls']={g['id']:(CONTRACT['warmup_pairs']+CONTRACT['measured_pairs'])*2*g['batch'] for g in GROUPS.values()}
 FIELDS='phase group pair order variant batch window_id wall_start wall_end cpu_start cpu_end allocated selections created increments null_returns digest next_rng created_types cold_types cleanup'.split()
 EVENT_FIELDS='kind start_ns end_ns thread_id method level compile_id window_id detail'.split()
 # Exact measured callers. A similarly named overload is not evidence for these entries.
@@ -68,10 +71,10 @@ def _types(value):
 def parse_windows(path):
  rows=_rows(path,FIELDS)
  expected=[]
- for phase,count in [('warmup',64),('measure',24)]:
+ for phase,count in [('warmup',CONTRACT['warmup_pairs']),('measure',CONTRACT['measured_pairs'])]:
   for pair in range(count):
-   for position in range(2):
-    index=(position+pair)%2;group=list(GROUPS)[index];first=bool((pair+index)&1);order='BA' if first else 'AB'
+   for position in range(len(GROUPS)):
+    index=(position+pair)%len(GROUPS);group=list(GROUPS)[index];first=bool((pair+index)&1);order='BA' if first else 'AB'
     for candidate in (first,not first):expected.append((phase,group,pair,order,'resolved' if candidate else 'native'))
  if len(rows)!=len(expected):raise ValueError('Operations missing/duplicate warmup/measured windows')
  numeric=set(FIELDS)-{'phase','group','order','variant','digest','created_types','cold_types','cleanup'}
@@ -169,7 +172,7 @@ def parse_events(path,windows,owner):
 def read(cache,mode='candidate'):
  cache=Path(cache);status=values(cache/'loot-resolved-runtime-status.txt');pid=status.get('pid','')
  required=dict(status='complete',mode='candidate',bank='operations',cases='2',reason='',runtime_profile_checked='true',
-               rng_scope=base.RNG_SCOPE,rng_scope_complete='true',operations_scope=CONTRACT['scope'],windows='352')
+               rng_scope=base.RNG_SCOPE,rng_scope_complete='true',operations_scope=CONTRACT['scope'],windows=str(CONTRACT['total_windows']))
  if mode!='candidate' or any(status.get(k)!=v for k,v in required.items()) or not pid.isdecimal():raise ValueError('Unqualified operations capture status')
  activation=values(cache/f'loot-resolved-runtime-activation-{pid}.txt')
  expected=dict(state='active',mode='candidate',bank='operations',pid=pid,definitions='1',runtime_profile_checked='true',
@@ -196,7 +199,8 @@ def report(cache):
   if not graph or hashlib.sha256(graph.encode()).hexdigest()!=digest:raise ValueError('Operations actual parsed graph digest differs')
  options=inputs.get('ordinary_options','')
  if not options or hashlib.sha256(options.encode()).hexdigest()!=inputs.get('ordinary_options_sha256'):raise ValueError('Operations ordinary option proof missing')
- if any(inputs.get(k)!=v for k,v in {'container_identity':'detached-no-native-world-object-id','native_identity_logger':'unchanged-diagnostics-included-if-emitted','direct_public_calls':'352','bag_public_calls':'704'}.items()):raise ValueError('Operations detached native-identity/logging scope missing')
+ if any(inputs.get(k)!=v for k,v in {'container_identity':'detached-no-native-world-object-id','native_identity_logger':'unchanged-diagnostics-included-if-emitted','direct_public_calls':str(CONTRACT['public_calls']['direct-CrateTools-main']),'bag_public_calls':str(CONTRACT['public_calls']['bag-FirstAidKit-with-native-junk'])}.items()):raise ValueError('Operations detached native-identity/logging scope missing')
+ if any(inputs.get(k)!=str(CONTRACT[k]) for k in ('schedule_version','warmup_pairs','measured_pairs','measured_seed_base','group_seed_stride','first_measured_window','total_windows')):raise ValueError('Operations fixed schedule contract differs')
  empty={key:_integer(inputs.get(key,'')) for key in ('empty1000_cpu_ns','empty1000_wall_ns')}
  windows=parse_windows(cache/'loot-operations.tsv');events=parse_events(cache/'loot-operations-events.tsv',windows,owner)
  measured=[row for row in windows if row['phase']=='measure'];contaminated=[r['window_id'] for r in measured if r['jit_events']]
@@ -214,7 +218,7 @@ def report(cache):
                         creation_and_insertion_observed=bool(inserted))
   summary[group]=dict(pairs=pairs,median_saved_cpu_ns_per_roll=statistics.median(p['saved_cpu_ns_per_roll'] for p in pairs),
                       positive_pairs=sum(p['saved_cpu_ns_per_roll']>0 for p in pairs),total_pairs=len(pairs))
- return dict(format=2,qualification='whole-capture-span-latest-entry-and-insertion-v2',scope=CONTRACT['scope'],capture='paired-equivalent',
+ return dict(format=2,qualification='whole-capture-span-latest-entry-and-insertion-v2',scope=CONTRACT['scope'],schedule={k:CONTRACT[k] for k in ('schedule_version','warmup_pairs','measured_pairs','measured_seed_base','group_seed_stride','first_measured_window','total_windows','public_calls')},capture='paired-equivalent',
              timing_qualified=not(events['data_loss'] or events['capture_span_jit_events'] or cold or any(not v for v in events['compiled_normal_entries'].values())
                                   or any(not v['creation_and_insertion_observed'] for v in insertion.values())),
              successful_insertion_evidence=insertion,
