@@ -669,7 +669,7 @@
         "inventory-freshness-sp"
       ],
       "gates": [
-        "Qualify the sparse two-client warehouse-peer-host functional job before extending it to dense timing captures; require server authority, both-client convergence and exact cleanup.",
+        "Reproduce the visible personal-page quick-transfer callback after a peer changes hidden loot item type/category; raw hidden-cache staleness alone does not establish a gameplay failure.",
         "Extend to both inventory modes and the existing sparse/dense window-state matrix under exclusive admission; keep mutation/setup checks separate from measured walking intervals and retain a matched SP control.",
         "Keep GPU/FPS and actual user-save stutter conclusions separate from Lua/UI timings."
       ]
