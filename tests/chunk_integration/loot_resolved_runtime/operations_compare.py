@@ -102,7 +102,10 @@ def parse_events(path,windows,owner):
  events=_rows(path,EVENT_FIELDS);markers={};sentinel=[];jit=[];gc=[];loss=[]
  for event in events:
   if event['kind'] not in EVENTS:raise ValueError('Operations unreviewed JFR event')
-  for key in ('start_ns','end_ns','thread_id','level','compile_id'):event[key]=_integer(event[key])
+  for key in ('start_ns','end_ns','level','compile_id'):event[key]=_integer(event[key])
+  # RecordedThread.getJavaThreadId() returns -1 for a native JVM thread.
+  # Preserve that sentinel on native events; owned Java markers still require IDs.
+  event['thread_id']=-1 if event['thread_id']=='-1' and event['kind']!='pz.loot.RollWindow' else _integer(event['thread_id'])
   if event['end_ns']<event['start_ns']:raise ValueError('Operations JFR interval backwards')
   if event['kind']=='pz.loot.RollWindow':
    if event['window_id']=='-2':sentinel.append(event);continue
