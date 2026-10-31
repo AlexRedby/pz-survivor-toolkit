@@ -1524,6 +1524,11 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.79
+
+- Fix CleanUI food-age correction and action-queue compiler binding on Windows. Accept the native compiler label from the verified provider, including backslash and mixed-separator paths, without admitting foreign same-basename paths or changing reader ownership and source validation.
+- Keep owned Lua sources at LF line endings on checkout so Windows Git settings cannot disable exact-source compiler bindings. Packaging rejects leftover CRLF sources in older checkouts without changing local files or the previous publication.
+
 ### 0.1.78
 
 - Capture native item transaction objects at their original manager boundary. Track allocated wire IDs in bounded connection histories, invalidate intervening actor requests and preserve unknown results after ID reuse or late attachment.

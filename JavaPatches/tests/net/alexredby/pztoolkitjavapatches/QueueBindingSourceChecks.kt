@@ -19,6 +19,42 @@ object QueueBindingSourceChecks {
     private var assertions = 0
     private const val SOURCE_LIMIT = 1024 * 1024
 
+    private fun providerPaths(path: Path): List<String> {
+        val forward = path.toString().replace('\\', '/')
+        return buildList {
+                add(path.toString())
+                add(forward)
+                if (java.io.File.separatorChar == '\\') {
+                    add(forward.replace('/', '\\'))
+                    add(forward.take(3) + forward.drop(3).replace('/', '\\'))
+                }
+            }
+            .distinct()
+    }
+
+    private fun compilerNameChecks() {
+        val bare = "ActionQueueCompat.lua"
+        for ((resolved, nativeName) in
+            listOf(
+                "/mods/Toolkit/$bare" to bare,
+                "C:\\mods\\Toolkit\\$bare" to "C:\\mods\\Toolkit\\$bare",
+                "C:/mods/Toolkit\\$bare" to "Toolkit\\$bare",
+            )) {
+            verify(CompilerInputName.matches(bare, bare, resolved), "bare compiler name rejected")
+            verify(
+                CompilerInputName.matches(nativeName, bare, resolved),
+                "native compiler label rejected",
+            )
+            for (foreign in
+                listOf(null, "Other.lua", "C:\\foreign\\$bare", "C:/foreign\\$bare", "/foreign/$bare")) {
+                verify(
+                    !CompilerInputName.matches(foreign, bare, resolved),
+                    "foreign compiler label admitted",
+                )
+            }
+        }
+    }
+
     private fun <T> withRunLua(file: String?, supported: Boolean, action: () -> T): T {
         val previous = QueueBindingSource.begin(file, supported)
         try {
@@ -404,6 +440,31 @@ object QueueBindingSourceChecks {
             "known native original Reader close count",
         )
         verify(scope() == null, "known native RunLua scope leaked")
+        for (resolved in providerPaths(cartsPath)) {
+            files.activeFileMap[carts.target.lowercase(java.util.Locale.ENGLISH)] = resolved
+            zombie.Lua.LuaManager.loaded.remove(carts.target)
+            // Native filenameToClosure uses platform separators, unlike the compiler label.
+            val registryKey = Path.of(resolved).toString()
+            (registry.get(null) as MutableMap<*, *>).remove(registryKey)
+            zombie.Lua.LuaManager.RunLua(carts.target, false)
+            val closure = (registry.get(null) as Map<*, *>)[registryKey] as? LuaClosure
+            verify(
+                closure != null && factoryCount(closure.prototype) == 1,
+                "native provider compiler label did not bind: $resolved",
+            )
+            verify(
+                closure!!.prototype.name == resolved.substringAfterLast('/'),
+                "native compiler prototype name changed",
+            )
+            val reader = QueueBindingSourceFixture.latest(resolved)
+            verify(
+                reader != null && reader.closes == 1 && reader.reads > 0,
+                "native provider original Reader close count",
+            )
+            verify(scope() == null, "native provider label scope leaked")
+        }
+        files.activeFileMap[carts.target.lowercase(java.util.Locale.ENGLISH)] = cartsPath.toString()
+        zombie.Lua.LuaManager.loaded.remove(carts.target)
         Files.writeString(innerPath, "return queueBindingInnerProbe()\n")
         Files.writeString(compatPath, "return queueBindingOuterProbe()\n")
         Files.writeString(cartsPath, "return queueBindingRewriteProbe()\n")
@@ -571,6 +632,7 @@ object QueueBindingSourceChecks {
 
     @JvmStatic
     fun main(args: Array<String>) {
+        compilerNameChecks()
         val root = Path.of(System.getProperty("pz.test.project"))
         val work = Path.of(System.getProperty("pz.test.cache"))
         val files = ZomboidFileSystem.instance
@@ -645,11 +707,11 @@ object QueueBindingSourceChecks {
         unowned(compat.target, compat.compilerName)
         unowned(selected, compat.compilerName)
         files.ignoreActiveFileMap.set(false)
-        // Native provider identity, not string equality (symlink is the same underlying file).
+        // Native provider identity, not string equality; a hard link needs no Windows symlink privilege.
         val alias = work.resolve("alias/ActionQueueCompat.lua")
         Files.createDirectories(alias.parent)
         Files.deleteIfExists(alias)
-        Files.createSymbolicLink(alias, Path.of(selected))
+        Files.createLink(alias, Path.of(selected))
         files.activeFileMap[key] = alias.toString()
         withRunLua(compat.target, true) {
             verify(
@@ -687,6 +749,35 @@ object QueueBindingSourceChecks {
             files.activeFileMap[moduleKey] = foreignProvider.toString()
             unowned(module.target, module.compilerName)
             unowned(version.resolve(module.target).toString(), module.compilerName)
+            files.activeFileMap[moduleKey] = activeProvider
+            for (resolved in providerPaths(version.resolve(module.target))) {
+                files.activeFileMap[moduleKey] = resolved
+                for (name in listOf(module.compilerName, resolved.substringAfterLast('/')).distinct()) {
+                    withRunLua(module.target, true) {
+                        for (foreignName in
+                            listOf(
+                                "C:\\foreign\\${module.compilerName}",
+                                "C:/foreign\\${module.compilerName}",
+                                "/foreign/${module.compilerName}",
+                            )) {
+                            verify(
+                                QueueBindingSource.prepare(bomb, foreignName, true).reader === bomb,
+                                "foreign same-basename compiler claimed scope",
+                            )
+                        }
+                        val prepared =
+                            QueueBindingSource.prepare(StringReader(texts.getValue(module)), name, true)
+                        verify(
+                            prepared.module == module && prepared.text == texts.getValue(module),
+                            "validated native compiler label rejected: $name",
+                        )
+                        verify(
+                            QueueBindingSource.prepare(bomb, name, true).reader === bomb,
+                            "native compiler label claimed twice",
+                        )
+                    }
+                }
+            }
             files.activeFileMap[moduleKey] = activeProvider
             files.modIDs.remove("PZSurvivorToolkit")
             unowned(module.target, module.compilerName)

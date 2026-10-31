@@ -13,7 +13,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicReference;
 import me.zed_0xff.zombie_buddy.PatchEngine;
 import se.krka.kahlua.converter.KahluaConverterManager;
 import se.krka.kahlua.integration.LuaCaller;
@@ -53,6 +56,18 @@ public final class CleanUIFoodAgeChecks {
     }
 
     private static String basename(String target) { return target.substring(target.lastIndexOf('/') + 1); }
+
+    private static List<String> providerPaths(Path path) {
+        String forward = path.toString().replace('\\', '/');
+        var paths = new LinkedHashSet<String>();
+        paths.add(path.toString());
+        paths.add(forward);
+        if (java.io.File.separatorChar == '\\') {
+            paths.add(forward.replace('/', '\\'));
+            paths.add(forward.substring(0, 3) + forward.substring(3).replace('/', '\\'));
+        }
+        return List.copyOf(paths);
+    }
 
     private static String collapsedBlock(String source) {
         int start = source.indexOf("            if count == 1 and self.collapsed ~= nil and v.name ~= nil and self.collapsed[v.name] then\n");
@@ -206,6 +221,26 @@ public final class CleanUIFoodAgeChecks {
         require(CleanUIFoodAge.compilerInput(bomb, "ISInventoryPane.lua", true) == bomb, "unscoped reader changed");
         for (String target : new String[] {CleanUIFoodAge.TARGET, CleanUIFoodAge.VANILLA_TARGET}) {
             String name = basename(target);
+            String key = target.toLowerCase(Locale.ROOT);
+            for (String resolved : providerPaths(version.resolve(target))) {
+                files.activeFileMap.put(key, resolved);
+                for (String compilerName : new String[] {name, basename(resolved)}) {
+                    var prior = CleanUIFoodAge.begin(target, true);
+                    try {
+                        require(CleanUIFoodAge.compilerInput(bomb, "C:\\foreign\\" + name, true) == bomb,
+                            "foreign Windows same-basename compiler claimed scope");
+                        require(CleanUIFoodAge.compilerInput(bomb, "C:/foreign\\" + name, true) == bomb,
+                            "foreign mixed-separator compiler claimed scope");
+                        require(CleanUIFoodAge.compilerInput(bomb, "/foreign/" + name, true) == bomb,
+                            "foreign POSIX same-basename compiler claimed scope");
+                        require(text(CleanUIFoodAge.compilerInput(new StringReader(unknown), compilerName, true)).equals(unknown),
+                            "validated native compiler label rejected: " + compilerName);
+                        require(field(CleanUIFoodAge.Scope.class, "claimed").getBoolean(scope()), "native label not claimed");
+                        require(CleanUIFoodAge.compilerInput(bomb, compilerName, true) == bomb, "native label claimed twice");
+                    } finally { CleanUIFoodAge.end(prior); }
+                }
+            }
+            files.activeFileMap.put(key, version.resolve(target).toString());
             require(CleanUIFoodAge.transformSource(target, unknown) == unknown, "unknown target input changed");
             var parent = CleanUIFoodAge.begin(target, true);
             try {
@@ -278,12 +313,13 @@ public final class CleanUIFoodAgeChecks {
         Path inner = version.resolve("media/lua/client/inner.lua");
         Files.writeString(inner, "return innerProbe()\n");
         files.activeFileMap.put("media/lua/client/inner.lua", inner.toString());
+        AtomicReference<Throwable> probeFailure = new AtomicReference<>();
         LuaManager.env.rawset("innerProbe", (JavaFunction) (frame, count) -> {
             try {
                 require(scope() != null && !field(CleanUIFoodAge.Scope.class, "candidate").getBoolean(scope()), "unrelated nested load inherited candidate scope");
                 frame.push(19.0);
                 return 1;
-            } catch (Exception error) { throw new RuntimeException(error); }
+            } catch (Throwable error) { probeFailure.set(error); throw new RuntimeException(error); }
         });
         LuaManager.env.rawset("verifyScope", (JavaFunction) (frame, count) -> {
             try {
@@ -297,13 +333,19 @@ public final class CleanUIFoodAgeChecks {
                 require(CleanUIFoodAge.compilerInput(bomb, "ISInventoryPane.lua", true) == bomb, "dynamic compiler reused consumed load scope");
                 frame.push(71.0);
                 return 1;
-            } catch (Exception error) { throw new RuntimeException(error); }
+            } catch (Throwable error) { probeFailure.set(error); throw new RuntimeException(error); }
         });
         for (String target : new String[] {CleanUIFoodAge.TARGET, CleanUIFoodAge.VANILLA_TARGET}) {
-            require(Double.valueOf(71).equals(LuaManager.RunLua(target, false)), "woven native RunLua fixture failed: " + target);
-            require(scope() == null, "native RunLua leaked thread scope");
-            require(Double.valueOf(71).equals(LuaManager.RunLua(target, false)), "cached RunLua result changed: " + target);
-            require(scope() == null, "cached RunLua leaked scope");
+            for (String resolved : providerPaths(version.resolve(target))) {
+                files.activeFileMap.put(target.toLowerCase(Locale.ROOT), resolved);
+                LuaManager.loaded.remove(target);
+                require(Double.valueOf(71).equals(LuaManager.RunLua(target, false)),
+                    "woven native RunLua fixture failed: " + resolved + "; probe failure=" + probeFailure.get());
+                require(scope() == null, "native RunLua leaked thread scope");
+                require(Double.valueOf(71).equals(LuaManager.RunLua(target, false)), "cached RunLua result changed: " + target);
+                require(scope() == null, "cached RunLua leaked scope");
+            }
+            files.activeFileMap.put(target.toLowerCase(Locale.ROOT), version.resolve(target).toString());
         }
 
         String external = System.getenv("PZ_CLEANUI_SOURCE");
@@ -345,6 +387,25 @@ public final class CleanUIFoodAgeChecks {
             }
             System.out.println("CLEANUI_FOOD_AGE_REVIEWED_SOURCE_PASS (woven Reader prototype, unscoped unchanged, Workshop unchanged)");
         } else System.out.println("CLEANUI_FOOD_AGE_REVIEWED_SOURCE_SKIP (set PZ_CLEANUI_SOURCE for installed reviewed-source prototype check)");
+        String unreviewed = System.getenv("PZ_CLEANUI_UNREVIEWED_SOURCE");
+        if (unreviewed != null && !unreviewed.isBlank()) {
+            Path externalPane = Path.of(unreviewed).resolve("42.19").resolve(CleanUIFoodAge.TARGET);
+            byte[] before = Files.readAllBytes(externalPane);
+            String original = Files.readString(externalPane);
+            require(CleanUIFoodAge.transformSource(original) == original, "unreviewed fixture must not be a reviewed source");
+            for (String resolved : providerPaths(pane)) {
+                files.activeFileMap.put(CleanUIFoodAge.TARGET.toLowerCase(Locale.ROOT), resolved);
+                String name = basename(resolved);
+                byte[] expected = compiled(original, name);
+                previous = CleanUIFoodAge.begin(CleanUIFoodAge.TARGET, true);
+                try {
+                    require(Arrays.equals(compiled(original, name), expected), "unreviewed native-label prototype changed");
+                    require(field(CleanUIFoodAge.Scope.class, "claimed").getBoolean(scope()), "unreviewed native-label input not claimed");
+                } finally { CleanUIFoodAge.end(previous); }
+            }
+            require(Arrays.equals(before, Files.readAllBytes(externalPane)), "unreviewed Workshop source changed");
+            System.out.println("CLEANUI_FOOD_AGE_UNREVIEWED_SOURCE_PASS (native-label compiler fallback and Workshop bytes unchanged)");
+        }
         System.out.println("CLEANUI_FOOD_AGE_CHECKS_PASS (native RunLua and Reader hooks, nested/cached/throwing scope cleanup, unknown/oversized replay, read failure)");
     }
 }

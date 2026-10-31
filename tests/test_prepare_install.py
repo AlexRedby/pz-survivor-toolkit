@@ -85,6 +85,24 @@ class PrepareInstall(unittest.TestCase):
         self.build.assert_not_called()
         self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
 
+    def test_crlf_owned_lua_is_rejected_without_changing_source_or_publication(self):
+        mod = self.root / 'PZSurvivorToolkit'
+        source = mod / '42/media/lua/client/PZSurvivorToolkit/ActionQueueCarts.lua'
+        crlf = source.read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n')
+        source.write_bytes(crlf)
+        errors = package_mod.validate(mod)
+        self.assertEqual(1, len(errors))
+        self.assertIn('owned Lua source must use LF line endings', errors[0])
+        with self.assertRaisesRegex(ValueError, 'owned Lua source must use LF line endings'):
+            prepare_install.prepare(self.root)
+        archive = self.root / 'dist/toolkit.zip'
+        with self.assertRaisesRegex(ValueError, 'owned Lua source must use LF line endings'):
+            package_mod.package(archive, mod)
+        self.assertEqual(source.read_bytes(), crlf)
+        self.assertEqual(self.sentinel.read_text(), 'previous prepared set')
+        self.assertFalse(archive.exists())
+        self.build.assert_not_called()
+
     def test_kotlin_home_is_forwarded_as_an_absolute_path(self):
         kotlin_home = Path('compiler folder/kotlinc')
         prepare_install.prepare(self.root, kotlin_home=kotlin_home)
