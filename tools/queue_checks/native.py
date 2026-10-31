@@ -40,8 +40,11 @@ def _json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def font_preload(cache, selection, game=None):
+def font_preload(cache, selection, game=None, project=None):
     """Explicit local-JAR opt-in; ordinary approvals do not grant signed early loading."""
+    loot = selection.get('suite') == 'loot-resolved'
+    if loot:
+        adapters.get('loot-resolved').validate(selection)
     enabled = selection.get('options', {}).get('preload_toolkit_fonts', False)
     if type(enabled) is not bool:
         raise ValueError('preload_toolkit_fonts must be boolean')
@@ -67,7 +70,11 @@ def font_preload(cache, selection, game=None):
         manifest = archive.read('META-INF/MANIFEST.MF').decode('utf-8')
         if not re.search(r'^ZB-Preload: true\r?$', manifest, re.M):
             raise ValueError('Font preload requires ZB-Preload manifest')
-    return ',patches_jar=' + jar_argument + ':' + package
+    entries = [jar_argument + ':' + package]
+    if loot:
+        entries.append(adapters.get('loot-resolved').early_preload(cache, selection, game,
+            Path(project) if project is not None else Path(__file__).resolve().parents[2]))
+    return ',patches_jar=' + ';'.join(entries)
 
 
 def _approvals(cache, identifiers):
@@ -75,7 +82,9 @@ def _approvals(cache, identifiers):
             for id in identifiers for jar in sorted((cache / 'mods' / id).rglob('*.jar'))
             # This separate bootstrap is loaded only by explicit patches_jar, never as the ordinary mod.
             if not (id == 'PZToolkitJavaPatches' and jar.relative_to(cache / 'mods' / id).as_posix()
-                    == '42/media/bootstrap/PZToolkitFonts.jar')]
+                    == '42/media/bootstrap/PZToolkitFonts.jar')
+            and not (id == 'PZLootResolvedRuntime' and jar.relative_to(cache / 'mods' / id).as_posix()
+                     == '42/media/bootstrap/PZLootResolvedBootstrap.jar')]
 
 
 def _locations(project, workshop, identifiers, overrides=None):
@@ -370,7 +379,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         _json(cache / "zombie-buddy/mod_approvals.json", {"formatVersion": 2, "mods": approvals})
         runtime["roles"][role] = {"cache": str(cache), "language": language}
         if role != "server":
-            font_preload(cache, selection, game if os.name == 'nt' else None)
+            font_preload(cache, selection, game if os.name == 'nt' else None, project)
             for name in ("ToolkitWindowBootstrap.java", "ToolkitSmokeLauncher.java"):
                 shutil.copy2(support / name, cache / "classes")
             subprocess.run([str(jdk_binary(jdk, 'javac')), "--release", "25", "-cp", str(game / "projectzomboid.jar"),
