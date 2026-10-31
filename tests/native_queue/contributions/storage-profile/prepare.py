@@ -37,6 +37,11 @@ def prepare(toolkit_source, output, case='walk', cases=None):
                    'inventory-freshness': 'ZZInventoryFreshness.lua',
                    'inventory-food-age': 'ZZFoodAgeNative.lua'}[case]
         (client / fixture).write_bytes((HERE / fixture).read_bytes())
+        if case == 'inventory-food-age':
+            for side, name in (('shared', 'QueueFoodAgeFixture.lua'), ('server', 'ZZFoodAgeServer.lua')):
+                destination = output / '42/media/lua' / side
+                destination.mkdir(parents=True, exist_ok=True)
+                (destination / name).write_bytes((HERE / name).read_bytes())
         if case not in ('inventory-freshness', 'inventory-food-age'):
             helper='StorageFairnessNative.lua' if case == 'walk' else 'ReceiptLookupNative.lua'
             (client / helper).write_bytes((HERE / helper).read_bytes())

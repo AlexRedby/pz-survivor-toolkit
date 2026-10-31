@@ -19,18 +19,40 @@ def distribution(value, minimum=1):
         raise ValueError('Invalid render cost distribution')
     if not math.isclose(number(value.get('meanMs')), total/calls, rel_tol=1e-5, abs_tol=1e-6):
         raise ValueError('Render mean differs')
+    age = number(value.get('updateAgeCalls'), integer=True)
+    age_min = number(value.get('minUpdateAgeCalls'), integer=True)
+    age_max = number(value.get('maxUpdateAgeCalls'), integer=True)
+    if age_min > age_max or not calls*age_min <= age <= calls*age_max:
+        raise ValueError('Native updateAge counter distribution differs')
 
 
-def verify(root, text):
+def verify(root, text, selection=None):
+    options = (selection or {}).get('options', {})
+    renderer = options.get('inventory_work_renderer')
+    if 'inventory_work_renderer' in options and (renderer not in ('clean', 'vanilla')
+            or selection.get('suite') != 'storage-profile' or selection.get('cases') != ['inventory-work']
+            or selection.get('kind') != 'sp' or type(selection.get('clients', 1)) is not int
+            or selection.get('clients', 1) != 1
+            or any(options.get(key) for key in ('seed_run', 'world_template', 'startup_connection', 'mp_host'))):
+        raise ValueError('Invalid renderer-specific inventory-work selection')
+    modes = (renderer,) if renderer else ('clean', 'vanilla')
+    specs = [(*spec, True) for spec in itertools.product((100, 10000), modes,
+             ('collapsed-visible', 'collapsed-clipped', 'expanded-visible', 'expanded-clipped'))]
+    specs += [(10000, mode, view, False) for mode, view in itertools.product(modes, ('collapsed-visible', 'collapsed-clipped'))]
     if '[STORAGE_PROFILE] FAIL' in text:
         raise ValueError('Native inventory-work fixture failed')
     events = [(kind, json.loads(body)) for kind, body in re.findall(r'\[STORAGE_PROFILE\] (WORK_\w+) (\{[^\n]+\})', text)]
-    expected = ['WORK_SETUP']+['WORK_LOOKUP']*4+['WORK_FOOD']*14+['WORK_FRESHNESS']*2+['WORK_RESTORED']
+    expected = ['WORK_SETUP']+['WORK_LOOKUP']*4+['WORK_FOOD']*len(specs)+['WORK_FRESHNESS']*len(modes)+['WORK_RESTORED']
     if [kind for kind, _ in events] != expected or text.count('[STORAGE_PROFILE] COMPLETE') != 1:
         raise ValueError('Missing, duplicate or reordered inventory-work evidence')
     setup = events[0][1]
-    if setup != dict(native=True, clock='getTimestampMs', resolutionMs=1, spacers=60, foodType='Base.Apple',
-                     lookupType='Base.Nails', phases=14, physicalInput=False, fpsMeasurement=False):
+    expected_setup = dict(native=True, clock='getTimestampMs', resolutionMs=1, spacers=60, foodType='Base.Apple',
+                     lookupType='Base.Nails', phases=len(specs), physicalInput=False, fpsMeasurement=False,
+                     renderClock='System.nanoTime', renderResolutionMs=0.000001,
+                     nativeAgeMethod='Food.updateAge()', observer='scoped-entry-counter')
+    if renderer:
+        expected_setup['renderer'] = renderer
+    if setup != expected_setup:
         raise ValueError('Native workload setup differs')
     lookups = [value for kind, value in events if kind == 'WORK_LOOKUP']
     if [row.get('case') for row in lookups] != ['missing', 'first-present', 'last-nested', 'empty-control']:
@@ -58,22 +80,21 @@ def verify(root, text):
         if row['requestedId'] != expected_id or len({row['firstId'],row['lastId'],-2147483648}) != 3:
             raise ValueError('Lookup requested item differs')
     food = [value for kind, value in events if kind == 'WORK_FOOD']
-    specs = [(*spec,True) for spec in itertools.product((100,10000), ('clean','vanilla'),
-             ('collapsed-visible','collapsed-clipped','expanded-clipped'))]
-    specs += [(10000,'clean',view,False) for view in ('collapsed-visible','collapsed-clipped')]
     for index,(row,spec) in enumerate(zip(food,specs),1):
         if (row.get('index'), row.get('size'), row.get('mode'), row.get('view')) != (index,*spec[:3]):
             raise ValueError('Native food workload differs')
         if row.get('freshnessBar') is not spec[3] or row.get('freshnessPercentage') is not spec[3]:
             raise ValueError('Native freshness feature control differs')
-        if row.get('native') is not True or row.get('groupObjects') != spec[0] or row.get('clockResolutionMs') != 1:
+        if row.get('native') is not True or row.get('groupObjects') != spec[0] or row.get('clockResolutionMs') != 0.000001:
             raise ValueError('Native food cardinality/clock differs')
+        if (row.get('clock'), row.get('nativeAgeMethod'), row.get('observer')) != ('System.nanoTime', 'Food.updateAge()', 'scoped-entry-counter'):
+            raise ValueError('Native renderer observer differs')
         expected_class = 'CleanUI_Clean_ISInventoryPane' if spec[1] == 'clean' else 'CleanUI_Vanilla_ISInventoryPane'
         if row.get('paneClass') != expected_class or row.get('rendererMatchesClass') is not True:
             raise ValueError('Selected native pane class/renderer differs')
         if not 3000 <= number(row.get('elapsedMs')) < 30000 or row.get('warmupMs') != 1500:
             raise ValueError('Food observation window differs')
-        if (number(row.get('foodIcons'),integer=True)>0) != (spec[2]=='collapsed-visible'):
+        if (number(row.get('foodIcons'),integer=True)>0) != (spec[2].endswith('-visible')):
             raise ValueError('Actual native food visibility differs')
         number(row.get('groups'),40,True);number(row.get('rawItems'),spec[0]+60,True)
         number(row.get('width'),1);number(row.get('height'),1);number(row.get('scrollY'),-1000000)
@@ -85,8 +106,8 @@ def verify(root, text):
         if not refresh_calls and refresh_total:
             raise ValueError('Refresh cost without observed refresh calls')
     freshness = [value for kind,value in events if kind=='WORK_FRESHNESS']
-    if [row.get('mode') for row in freshness] != ['clean','vanilla']:
-        raise ValueError('Both pane freshness checks required')
+    if [row.get('mode') for row in freshness] != list(modes):
+        raise ValueError('Selected native pane freshness checks differ')
     for row in freshness:
         expected_class = 'CleanUI_Clean_ISInventoryPane' if row['mode'] == 'clean' else 'CleanUI_Vanilla_ISInventoryPane'
         if row.get('paneClass') != expected_class or row.get('rendererMatchesClass') is not True:
@@ -97,14 +118,17 @@ def verify(root, text):
             raise ValueError('Freshness control did not change age')
     restored = events[-1][1]
     if any(restored.get(key) != value for key,value in dict(ownedRemoved=10060,foodRemoved=10000,observers=True,
-                                                           mode=True,freshnessOptions=True,phases=14,lookupObjectsPreserved=True).items()):
+                                                           mode=True,freshnessOptions=True,phases=len(specs),lookupObjectsPreserved=True).items()):
         raise ValueError('Owned objects/observers not restored')
     number(restored.get('originalItems'),integer=True)
     return {'lookup':lookups,'food':food,'freshness':freshness,'limits':[
         'Observational SP timings around actual Java lookups and selected native pane renderers; not an FPS/performance pass.',
         '1ms clock; raw lookup batches use512calls, interleaved controls,2warmup and9measured rounds.',
-        'Renderer timings are inclusive and grouped by real icon visibility; setup and1500ms warmup are excluded.',
-        'First12phases force both BC freshness options on; final2enhanced dense phases turn both off without persisting config.',
+        'Renderer timings use System.nanoTime (nominal1ns units, not measured precision), are inclusive and grouped by real icon visibility; setup and1500ms warmup are excluded.',
+        'Native Food.updateAge() entry counts are scoped to delegated renderdetails, separate primary/drag; boolean overload and background updates are excluded.',
+        'Counter advice adds observer overhead per native updateAge entry; renderer times include counter and Lua/Java scope-boundary overhead; individual updateAge calls are not timed.',
+        f'First{len(modes)*8}phases force both BC freshness options on; final{len(modes)*2}dense phases cover the selected panes with both options off without persisting config.',
         'Refresh counts/times cover calls during measurement only, including calls outside rendering; nested times are inclusive.',
         'No physical input, Host receipt latency/event ordering or original-user-save stutter claim.',
-        'Freshness checks change a tail item age and require native regrouping in both panes; they do not establish time-to-regroup after natural expiry.']}
+        'Freshness checks change a tail item age and require native regrouping in every selected pane; they do not establish time-to-regroup after natural expiry.',
+        'Renderer-specific runs retain one mode through dense phases/freshness; default runs retain the full two-renderer20phase matrix.']}

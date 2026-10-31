@@ -2,6 +2,7 @@ import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -22,6 +23,8 @@ public final class FoodAgeChecks {
     static Unsafe unsafe;
     static Field lastFrozenUpdate;
     static int cases;
+
+    static final IdentityHashMap<Food, Integer> delegatedCalls = new IdentityHashMap<>();
 
     static void require(boolean condition, String message) {
         if (!condition) throw new AssertionError(message);
@@ -181,15 +184,117 @@ public final class FoodAgeChecks {
         }
     }
 
+    static int calls(List<Food> items) {
+        int result = 0;
+        for (Food item : items) result += delegatedCalls.getOrDefault(item, 0);
+        return result;
+    }
+
+    static KahluaTable countedGroup(List<Food> items) {
+        KahluaTable group = LuaManager.platform.newTable(), rows = LuaManager.platform.newTable();
+        // Only this headless harness uses proxies; each observed dispatch calls
+        // the real native Food method. Live inventory-work counts woven entries.
+        for (int i = 0; i < items.size(); i++) {
+            Food item = items.get(i);
+            KahluaTable proxy = LuaManager.platform.newTable();
+            proxy.rawset("nativeFood", item);
+            proxy.rawset("updateAge", (JavaFunction) (frame, count) -> {
+                delegatedCalls.merge(item, 1, Integer::sum);
+                item.updateAge();
+                return 0;
+            });
+            if (i == 0) rows.rawset(1, proxy);
+            rows.rawset(i + 2, proxy);
+        }
+        group.rawset("items", rows);
+        return group;
+    }
+
+    static String collapsedBody(String source) {
+        String guard = "            if count == 1 and self.collapsed ~= nil and v.name ~= nil and self.collapsed[v.name] then\n";
+        int start = source.indexOf(guard);
+        require(start >= 0 && start == source.lastIndexOf(guard), "vanilla collapsed guard changed");
+        start += guard.length();
+        int end = source.indexOf("                break\n", start);
+        require(end > start, "vanilla collapsed boundary changed");
+        return source.substring(start, end);
+    }
+
+    static void vanillaControls(String original, String corrected, String helperSource) throws Exception {
+        // Execute the exact original/transformed collapsed branch in real Kahlua.
+        // Whole-renderer primary/drag counts and timings belong to inventory-work.
+        LuaManager.env.rawset("instanceof", (JavaFunction) (frame, count) -> {
+            Object item = frame.get(0);
+            if (item instanceof KahluaTable table) item = table.rawget("nativeFood");
+            frame.push(item instanceof Food && "Food".equals(frame.get(1)));
+            return 1;
+        });
+        for (boolean fixed : List.of(false, true)) {
+            loadHelper(helperSource);
+            LuaManager.env.rawset("collapsed", lua("return function(v) local item=v.items[1]\n"
+                + collapsedBody(fixed ? corrected : original) + "\nend"));
+            for (int size : List.of(1, 100, 199, 200, 10000)) {
+                clock(100);
+                ItemContainer container = new ItemContainer(); container.setType("crate");
+                ArrayList<Food> items = new ArrayList<>();
+                for (int i = 0; i < size; i++) items.add(food(container, i == size - 1 ? 4.99f : .1f));
+                KahluaTable group = countedGroup(items);
+                LuaManager.env.rawset("Group", group);
+                LuaManager.env.rawset("Now", 1000.0);
+                LuaManager.env.rawset("AgeEvents", 0.0);
+                clock(104.8f);
+                lua("collapsed(Group)");
+                int first = calls(items);
+                require(first == (fixed ? size : size + 1), "collapsed real member/dummy count");
+                require(events() == 1 && !items.get(size - 1).isFresh(), "collapsed native tail freshness");
+                for (int i = 0; i < 119; i++) lua("collapsed(Group)");
+                require(calls(items) == (fixed ? size : (size + 1) * 120), "repeated primary/drag collapsed calls");
+                LuaManager.env.rawset("Now", 2000.0);
+                lua("collapsed(Group)");
+                require(calls(items) == (fixed ? size * 2 : (size + 1) * 121), "collapsed interval boundary");
+                LuaManager.env.rawset("Now", 500.0);
+                lua("collapsed(Group)");
+                require(calls(items) == (fixed ? size * 3 : (size + 1) * 122), "collapsed backwards clock");
+                require(events() == 1, "repeated collapsed updates duplicated freshness event");
+                KahluaTable rebuilt = countedGroup(items);
+                LuaManager.env.rawset("Group", rebuilt);
+                int before = calls(items); lua("collapsed(Group)");
+                require(calls(items) - before == (fixed ? size : size + 1), "rebuilt group inherited stale throttle");
+                cases++;
+            }
+        }
+        // A known vanilla input must still retain native ageing when the enhanced
+        // source is unknown, absent, or has not published the exact protocol.
+        for (String unsupported : List.of("nil", "false", "{}", "{protocol=2}",
+                "{protocol=1,enhancedSourceSha256='foreign',updateCollapsedStack=function() error('foreign') end}")) {
+            loadHelper(helperSource);
+            lua("CleanUI_ToolkitFoodAge=" + unsupported);
+            LuaManager.env.rawset("collapsed", lua("return function(v) local item=v.items[1]\n"
+                + collapsedBody(corrected) + "\nend"));
+            clock(100);
+            ItemContainer container = new ItemContainer(); container.setType("crate");
+            List<Food> items = List.of(food(container, .1f), food(container, 4.99f));
+            LuaManager.env.rawset("Group", countedGroup(items));
+            LuaManager.env.rawset("AgeEvents", 0.0); clock(104.8f);
+            lua("collapsed(Group)");
+            require(calls(items) == 3 && events() == 1 && !items.get(1).isFresh(), "unknown shared updater lost native fallback");
+            cases++;
+        }
+        loadHelper(helperSource);
+    }
+
     public static void main(String[] args) throws Exception {
-        require(args.length == 2, "expected original pane and private cache");
+        require(args.length == 3, "expected original enhanced pane, vanilla pane and private cache");
         String original = Files.readString(Path.of(args[0]));
         String corrected = CleanUIFoodAge.transformSource(original);
         require(!corrected.equals(original), "reviewed original CleanUI input was not corrected by the shipped patch");
+        String vanilla = Files.readString(Path.of(args[1]));
+        String correctedVanilla = CleanUIFoodAge.transformSource(CleanUIFoodAge.VANILLA_TARGET, vanilla);
+        require(!correctedVanilla.equals(vanilla), "reviewed vanilla renderer was not corrected by the shipped patch");
         Field field = Unsafe.class.getDeclaredField("theUnsafe"); field.setAccessible(true);
         unsafe = (Unsafe) field.get(null);
         lastFrozenUpdate = Food.class.getDeclaredField("lastFrozenUpdate"); lastFrozenUpdate.setAccessible(true);
-        zombie.ZomboidFileSystem.instance.setCacheDir(args[1]);
+        zombie.ZomboidFileSystem.instance.setCacheDir(args[2]);
         zombie.core.random.RandStandard.INSTANCE.init(); zombie.core.random.RandLua.INSTANCE.init();
         GameTime.setInstance(new GameTime()); clock(100);
         LuaManager.platform = new J2SEPlatform(); LuaManager.env = LuaManager.platform.newEnvironment();
@@ -212,6 +317,7 @@ public final class FoodAgeChecks {
             for (int size : List.of(200, 10000)) for (String kind : List.of("crate", "fridge")) freshness(fixed, size, kind);
             if (fixed) nativeControls();
         }
+        vanillaControls(vanilla, correctedVanilla, corrected);
         System.out.println("FOOD_AGE_NATIVE_PASS {\"cases\":" + cases + ",\"scope\":\"real_Food_Kahlua_no_game_loop_or_network\"}");
     }
 }

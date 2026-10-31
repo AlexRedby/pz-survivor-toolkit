@@ -11,13 +11,17 @@ local owned,food,foodSet,phases,restores={},{},{},{},{}
 local player,inventory,page,pane,group,active,lookup,lookupBag,emptyBag,nested,first,last
 local originalMode,initialIds,iconOriginal,iconWrapper,rendererFailure,renderObserver,originalFreshnessOptions
 local fillVisibility
-local sizes,modes,views={100,10000},{'clean','vanilla'},{'collapsed-visible','collapsed-clipped','expanded-clipped'}
+local renderer=selection.options and selection.options.inventory_work_renderer
+assert(renderer==nil or((renderer=='clean'or renderer=='vanilla')and #selection.cases==1
+ and selection.kind=='sp'and(selection.clients or 1)==1),'invalid standalone inventory-work renderer')
+local sizes,modes,views={100,10000},{'clean','vanilla'},{'collapsed-visible','collapsed-clipped','expanded-visible','expanded-clipped'}
+if renderer then modes={renderer}end
 for _,size in ipairs(sizes)do for _,mode in ipairs(modes)do for _,view in ipairs(views)do
  phases[#phases+1]={size=size,mode=mode,view=view,freshness=true}
 end end end
-for _,view in ipairs({'collapsed-visible','collapsed-clipped'})do
- phases[#phases+1]={size=10000,mode='clean',view=view,freshness=false}
-end
+for _,mode in ipairs(modes)do for _,view in ipairs({'collapsed-visible','collapsed-clipped'})do
+ phases[#phases+1]={size=10000,mode=mode,view=view,freshness=false}
+end end
 local function now()return getTimestampMs()end
 local function pack(...)return {n=select('#',...),...}end
 local function json(value)
@@ -67,12 +71,19 @@ local function beginFill()
  stage='fill'
  log('FILL_BEGIN',{index=phaseIndex,from=#food,target=fillVisibility.target,measurement=false,paneHidden=true})
 end
-local function summary(values)
+local function summary(values,ageCalls)
  local sorted,total,zeros={},0,0
  for i,v in ipairs(values)do sorted[i]=v;total=total+v;if v==0 then zeros=zeros+1 end end
  table.sort(sorted);assert(#sorted>0,'missing native draw samples')
- return {calls=#sorted,totalMs=total,meanMs=total/#sorted,p50=sorted[math.ceil(#sorted*.5)],
+ local result={calls=#sorted,totalMs=total,meanMs=total/#sorted,p50=sorted[math.ceil(#sorted*.5)],
   p95=sorted[math.ceil(#sorted*.95)],maxMs=sorted[#sorted],zeroMsCalls=zeros}
+ if ageCalls then
+  assert(#ageCalls==#values,'native updateAge sample count differs')
+  local totalAge,minAge,maxAge=0,math.huge,0
+  for _,v in ipairs(ageCalls)do totalAge=totalAge+v;minAge=math.min(minAge,v);maxAge=math.max(maxAge,v)end
+  result.updateAgeCalls=totalAge;result.minUpdateAgeCalls=minAge;result.maxUpdateAgeCalls=maxAge
+ end
+ return result
 end
 local function identity()
  local seen={};local items=inventory:getItems()
@@ -83,8 +94,15 @@ local function observe()
  local original,raw=pane.renderdetails,own(pane,'renderdetails')
  local wrapper=function(self,dragged,...)
   local measurement=active
-  local startedAt=measurement and now()
+  local opened=measurement and pack(pcall(inventoryWorkProbeBegin))
   local result=pack(pcall(original,self,dragged,...))
+  -- Close the Java counter scope even if the delegated renderer throws.
+  -- An observer error must never replace the original renderer error.
+  local timed,closed
+  if opened and opened[1]then
+   timed=pack(pcall(inventoryWorkProbeClockMs))
+   closed=pack(pcall(inventoryWorkProbeEnd))
+  end
   if not result[1]then
    -- UI callbacks run outside tick's protected call. Retain the failure until
    -- the next tick can emit FAIL and clean up, then preserve the UI error itself.
@@ -92,9 +110,14 @@ local function observe()
    error(result[2],0)
   end
   if measurement then
-   local elapsed=now()-startedAt
+   if not opened[1]then rendererFailure=rendererFailure or {error=opened[2]};error(opened[2],0)end
+   if not timed[1]then rendererFailure=rendererFailure or {error=timed[2]};error(timed[2],0)end
+   if not closed[1]then rendererFailure=rendererFailure or {error=closed[2]};error(closed[2],0)end
+   local elapsed=timed[2]-opened[2]
    if elapsed<0 then rendererFailure=rendererFailure or {error='clock moved backwards'};error('clock moved backwards',0)end
    local values=dragged and measurement.dragged or measurement.primary;values[#values+1]=elapsed
+   local key=dragged and 'draggedAgeCalls'or'primaryAgeCalls'
+   measurement[key]=measurement[key]or{};measurement[key][#measurement[key]+1]=closed[2]
   end
   return unpack(result,2,result.n)
  end
@@ -137,13 +160,22 @@ local function findFoodGroup()
  assert(found and actualCount(found)==#food,'native food stack cardinality differs')
  return found
 end
+local function selectMode(mode)
+ local enabled=mode=='clean'
+ if renderer then
+  assert(mode==renderer,'renderer-specific run changed renderer')
+  if CleanUI_isCleanInventoryUIEnabled()==enabled then return end
+  assert(#food<=100,'renderer-specific run cannot change mode over a dense food inventory')
+ end
+ CleanUI_setCleanInventoryUIEnabled(enabled)
+end
 local function configure()
  restorePane()
  local phase=phases[phaseIndex]
  freshnessOptions.showFoodFreshnessBar=phase.freshness
  freshnessOptions.showFoodFreshnessPercentage=phase.freshness
  phaseOptions(phase)
- CleanUI_setCleanInventoryUIEnabled(phase.mode=='clean')
+ selectMode(phase.mode)
  page=getPlayerInventory(0);pane=page.inventoryPane
  paneClass(phase.mode,pane.renderdetails)
  page:setVisible(true);page.isCollapsed=false;page:clearMaxDrawHeight();page:setPinned()
@@ -153,10 +185,10 @@ local function configure()
  assert(pane.inventory==inventory,'native inventory selection changed')
  group=findFoodGroup();assert(#pane.itemslist>=40,'native spacer groups missing')
  for _,row in ipairs(pane.itemslist)do pane.collapsed[row.name]=true end
- pane.collapsed[group.name]=phase.view~='expanded-clipped'
+ pane.collapsed[group.name]=not string.find(phase.view,'expanded',1,true)
  pane:refreshContainer();group=findFoodGroup()
  pane.smoothScrollY=nil;pane.smoothScrollTargetY=nil
- pane:setYScroll(phase.view=='collapsed-visible'and 0 or -100000)
+ pane:setYScroll(string.find(phase.view,'visible',1,true)and 0 or -100000)
  observe();stage='warm';since=now()
 end
 local function beginPhase()
@@ -173,14 +205,15 @@ local function endPhase()
  assert(pane.renderdetails==observer.wrapper,'native renderer observer changed')
  local className=paneClass(phase.mode,observer.original)
  findFoodGroup()
- local visible=phase.view=='collapsed-visible'
+ local visible=string.find(phase.view,'visible',1,true)~=nil
  assert((measurement.foodIcons>0)==visible,'actual food visibility differs '..phase.view..' icons='..measurement.foodIcons)
  log('WORK_FOOD',{index=phaseIndex,size=phase.size,mode=phase.mode,view=phase.view,
   native=true,paneClass=className,rendererMatchesClass=true,
   freshnessBar=freshnessOptions.showFoodFreshnessBar,freshnessPercentage=freshnessOptions.showFoodFreshnessPercentage,
-  elapsedMs=now()-measurement.started,warmupMs=1500,clockResolutionMs=1,
+  elapsedMs=now()-measurement.started,warmupMs=1500,clockResolutionMs=0.000001,
+  clock='System.nanoTime',nativeAgeMethod='Food.updateAge()',observer='scoped-entry-counter',
   foodIcons=measurement.foodIcons,groups=#pane.itemslist,rawItems=inventory:getItems():size(),
-  primary=summary(measurement.primary),dragged=#measurement.dragged>0 and summary(measurement.dragged)or {calls=0},refresh=measurement.refresh,
+  primary=summary(measurement.primary,measurement.primaryAgeCalls),dragged=#measurement.dragged>0 and summary(measurement.dragged,measurement.draggedAgeCalls)or {calls=0},refresh=measurement.refresh,
   scrollY=pane:getYScroll(),width=pane:getWidth(),height=pane:getHeight(),groupObjects=actualCount(group)})
  restorePane();phaseIndex=phaseIndex+1
  if not phases[phaseIndex]then stage='freshness';since=now()
@@ -204,6 +237,11 @@ local function cleanup()
 end
 local function setup()
  assert(not isClient()and not isServer(),'SP profile required')
+ assert(inventoryWorkProbeInit(),'owned native updateAge observer unavailable')
+ local calibration=assert(instanceItem('Base.Apple'))
+ inventoryWorkProbeBegin();local calibrated=pack(pcall(function()calibration:updateAge()end))
+ local count=inventoryWorkProbeEnd()
+ assert(calibrated[1]and count==1,'zero-argument native updateAge observer calibration failed')
  player=getPlayer();player:setGodMod(true);player:setGhostMode(true)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
  inventory=player:getInventory();initialIds=identity();originalMode=CleanUI_isCleanInventoryUIEnabled()
@@ -219,7 +257,8 @@ local function setup()
  end
  ISInventoryItem.renderItemIcon=iconWrapper
  log('WORK_SETUP',{native=true,clock='getTimestampMs',resolutionMs=1,spacers=60,
-  foodType='Base.Apple',lookupType='Base.Nails',phases=#phases,physicalInput=false,fpsMeasurement=false})
+  foodType='Base.Apple',lookupType='Base.Nails',phases=#phases,renderer=renderer,physicalInput=false,fpsMeasurement=false,
+  renderClock='System.nanoTime',renderResolutionMs=0.000001,nativeAgeMethod='Food.updateAge()',observer='scoped-entry-counter'})
  stage='lookup-fill'
 end
 local function tick()
@@ -250,12 +289,12 @@ local function tick()
    configure()
   end
  elseif stage=='warm'then
-  if phases[phaseIndex].view~='collapsed-visible'then pane:setYScroll(-pane:getScrollHeight())end
+  if string.find(phases[phaseIndex].view,'clipped',1,true)then pane:setYScroll(-pane:getScrollHeight())end
   if now()-since>=1500 then beginPhase()end
  elseif stage=='measure'and now()-active.started>=3000 and #active.primary>=60 then endPhase()
  elseif stage=='freshness'then
   -- A changed tail item must split from its former native stack after refresh.
-  local mode=modes[freshnessIndex];CleanUI_setCleanInventoryUIEnabled(mode=='clean')
+  local mode=modes[freshnessIndex];selectMode(mode)
   pane=getPlayerInventory(0).inventoryPane
   local className=paneClass(mode,pane.renderdetails)
   local item=food[#food];local before=item:getAge();item:setAge(item:getOffAgeMax()+1)

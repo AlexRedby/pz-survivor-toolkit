@@ -174,6 +174,31 @@ class Desktop:
         observation['windows'] = result
         return result
 
+    def incident_window_query(self, pid, *args):
+        """Independent read-only comparison; never updates the routing command/verdict."""
+        observation = {'started': timestamp(), 'command': list(args)}
+        stdout, stderr = '', ''
+        try:
+            result = subprocess.run([self.binary, *args], check=True, capture_output=True,
+                                    text=True, timeout=5)
+            stdout, stderr = result.stdout or '', getattr(result, 'stderr', '') or ''
+            observation.update(status='returned', returncode=getattr(result, 'returncode', 0))
+        except (OSError, subprocess.SubprocessError) as error:
+            stdout, stderr = getattr(error, 'stdout', '') or '', getattr(error, 'stderr', '') or ''
+            observation.update(status='cli-timeout' if isinstance(error, subprocess.TimeoutExpired) else 'cli-failure',
+                               returncode=getattr(error, 'returncode', None), error=excerpt(str(error)))
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors='replace')
+        clean, count = owned_output(stdout, str(pid))
+        # --all cannot be PID-filtered by AeroSpace. Do not persist foreign
+        # metadata, even when it precedes owned rows beyond the output bound.
+        clean = ''.join(line for line in clean.splitlines(keepends=True)
+                        if not line.startswith('[unverified window row redacted]'))
+        observation.update(stdout=excerpt(clean), stdout_redacted_rows=count,
+                           stdout_truncated=len(clean) > 4096, stderr=excerpt(stderr),
+                           stderr_truncated=len(stderr) > 4096, finished=timestamp())
+        return observation
+
     def capture_incident(self, process, error, phase):
         """Collect independent evidence once; never authorize recovery from a diagnostic."""
         pid = str(process.pid)
@@ -193,6 +218,18 @@ class Desktop:
                 incident['native'] = desktop_diagnostics.capture(process.pid)
             except Exception as diagnostic_error:
                 incident['native'] = {'status': 'error', 'reason': excerpt(str(diagnostic_error))}
+        if incident['kind'] in ('window-undiscoverable', 'window-identity-changed') and incident['expected_windows']:
+            comparisons = incident['aerospace_queries'] = {}
+            for label, args in (
+                    ('all', ('list-windows', '--all', '--format', '%{window-id}|%{app-pid}|%{workspace}')),
+                    ('workspace', ('list-windows', '--workspace', self.workspace, '--pid', pid,
+                                   '--format', '%{window-id}|%{app-pid}|%{workspace}'))):
+                if process.poll() is not None:
+                    comparisons[label] = {'status': 'skipped', 'reason': 'owned-process-exited'}
+                else:
+                    comparisons[label] = self.incident_window_query(pid, *args)
+                    if process.poll() is not None:
+                        comparisons[label] = {'status': 'discarded', 'reason': 'owned-process-exited-during-probe'}
         incident['process_after_probe'] = process.poll()
         if incident['process_before_probe'] is None and incident['process_after_probe'] is not None:
             # A reused numeric PID cannot establish that these windows belong to our Popen.

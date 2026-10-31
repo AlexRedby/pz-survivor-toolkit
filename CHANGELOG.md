@@ -1495,6 +1495,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.76
+
+- Reduce repeated food-age work in CleanUI's vanilla inventory mode. Collapsed stacks share the full-stack one-second updater while keeping ordinary row updates, offscreen ageing and freshness regrouping. The change applies only to reviewed source versions; unknown sources retain the original behavior.
+
 ### 0.1.75
 
 - Correct freshness for every member of a visible collapsed food stack in the reviewed CleanUI version, including items beyond its former first-50 limit. Preserve native ageing, freshness events and the one-second update interval, and recover after a backward clock change. The correction runs in memory before Lua compilation; Workshop files stay unchanged and unreviewed source versions retain their original behavior.

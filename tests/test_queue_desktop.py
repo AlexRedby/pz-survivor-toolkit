@@ -60,6 +60,8 @@ class DesktopTests(unittest.TestCase):
         elif argv[1] == 'list-windows' and '--pid' in argv:
             self.assertEqual(argv[argv.index('--pid') + 1], '123')
             value = self.rows.replace('|C', '|PZ-TEST') if self.moved else self.rows
+        elif argv[1] == 'list-windows' and '--all' in argv:
+            value = getattr(self, 'all_rows', self.rows.replace('|C', '|PZ-TEST') if self.moved else self.rows)
         elif argv[1] == 'list-windows':
             value = self.focused if argv[-1] == '%{app-pid}' else '55'
         elif argv[1] == 'move-node-to-workspace':
@@ -707,8 +709,95 @@ class DesktopTests(unittest.TestCase):
         self.assertLessEqual(verified['at']['monotonic_ns'], incident['at']['monotonic_ns'])
         self.assertEqual(incident['expected_windows'], ['789'])
         self.assertEqual(manager.evidence['glfw_handles'], {'123': '456'})
-        self.assertEqual([command[0] for command in self.commands[count:]], ['list-windows'])
+        self.assertEqual(self.commands[count:], [
+            ['list-windows','--monitor','all','--pid','123','--format','%{window-id}|%{app-pid}|%{workspace}'],
+            ['list-windows','--all','--format','%{window-id}|%{app-pid}|%{workspace}'],
+            ['list-windows','--workspace','PZ-TEST','--pid','123','--format','%{window-id}|%{app-pid}|%{workspace}']])
+        self.assertIs(manager.last_command, incident['last_command'])
+        self.assertIs(incident['last_command'], incident['observation']['command'])
         self.assertEqual(manager.evidence['incidents'], [incident])
+
+    def test_incident_all_and_workspace_queries_keep_only_owned_rows_and_original_failure(self):
+        manager = desktop.prepare({})
+        manager.route(self.process, self.root, self.log)
+        self.rows = ''
+        with self.assertRaises(desktop.IsolationError) as caught:
+            manager.check(self.process)
+        failing = manager.last_command
+        self.all_rows = '991|888|PRIVATE-WORKSPACE\n789|123|PZ-TEST\nbroken PRIVATE-ROW\n'
+        self.rows = '789|123|PZ-TEST\n992|889|OTHER-PRIVATE\n'
+        count = len(self.commands)
+        with patch.object(desktop.desktop_diagnostics, 'capture', return_value={'status':'unavailable'}):
+            incident = manager.capture_incident(self.process, caught.exception, 'check')
+        for label, redacted in (('all',2),('workspace',1)):
+            query = incident['aerospace_queries'][label]
+            self.assertEqual(query['stdout'], '789|123|PZ-TEST\n')
+            self.assertEqual(query['stdout_redacted_rows'], redacted)
+            self.assertEqual(query['status'], 'returned')
+        encoded = json.dumps(incident)
+        self.assertNotIn('PRIVATE', encoded)
+        self.assertNotIn('991|888', encoded)
+        self.assertIs(manager.last_command, failing)
+        self.assertIs(incident['last_command'], failing)
+        self.assertEqual(incident['error'], str(caught.exception))
+        self.assertEqual(manager.evidence['observations']['123']['windows'], {})
+        self.assertEqual([args[0] for args in self.commands[count:]], ['list-windows','list-windows'])
+        self.assertNotIn('--pid', self.commands[count])
+
+    def test_incident_queries_bound_outputs_redact_full_stream_and_capture_errors(self):
+        manager = desktop.prepare({})
+        manager.route(self.process, self.root, self.log)
+        self.rows = ''
+        with self.assertRaises(desktop.IsolationError) as caught:
+            manager.check(self.process)
+        failed = manager.last_command
+        foreign = '999|888|PRIVATE-WORKSPACE\n' * 300
+        owned = ''.join(str(i)+'|123|PZ-TEST\n' for i in range(1000,1400))
+        def diagnostics(argv, **kwargs):
+            self.assertEqual(kwargs, dict(check=True,capture_output=True,text=True,timeout=5))
+            if '--all' in argv:
+                raise subprocess.TimeoutExpired(argv, 5, output=(foreign+owned).encode(), stderr=b'AX timeout' * 1000)
+            raise subprocess.CalledProcessError(2, argv, output=foreign+'789|123|PZ-TEST\n', stderr='unsupported workspace')
+        with patch.object(desktop.subprocess, 'run', side_effect=diagnostics), \
+                patch.object(desktop.desktop_diagnostics, 'capture', side_effect=OSError('native unavailable')):
+            incident = manager.capture_incident(self.process, caught.exception, 'check')
+        all_query, workspace = (incident['aerospace_queries'][key] for key in ('all','workspace'))
+        self.assertEqual(all_query['status'], 'cli-timeout')
+        self.assertEqual(all_query['stdout_redacted_rows'], 300)
+        self.assertTrue(all_query['stdout_truncated'] and all_query['stderr_truncated'])
+        self.assertEqual(len(all_query['stdout']), 4096)
+        self.assertEqual(len(all_query['stderr']), 4096)
+        self.assertTrue(all_query['stdout'].startswith('1000|123|PZ-TEST'))
+        self.assertEqual(workspace['status'], 'cli-failure')
+        self.assertEqual(workspace['returncode'], 2)
+        self.assertEqual(workspace['stdout'], '789|123|PZ-TEST\n')
+        self.assertEqual(workspace['stderr'], 'unsupported workspace')
+        self.assertNotIn('PRIVATE', json.dumps(incident))
+        self.assertIs(manager.last_command, failed)
+        self.assertEqual(incident['error'], str(caught.exception))
+
+    def test_incident_comparisons_skip_dead_process_and_discard_exit_during_query(self):
+        manager = desktop.prepare({})
+        manager.route(self.process, self.root, self.log)
+        self.rows = ''
+        with self.assertRaises(desktop.IsolationError) as caught:
+            manager.check(self.process)
+        def dies(argv, **kwargs):
+            self.process.poll = lambda: -11
+            return SimpleNamespace(stdout='999|123|REUSED-PID-WINDOW\n')
+        with patch.object(desktop.subprocess, 'run', side_effect=dies) as cli, \
+                patch.object(desktop.desktop_diagnostics, 'capture', return_value={'status':'returned'}):
+            incident = manager.capture_incident(self.process, caught.exception, 'check')
+        self.assertEqual(cli.call_count, 1)
+        self.assertEqual(incident['aerospace_queries']['all']['status'], 'discarded')
+        self.assertEqual(incident['aerospace_queries']['workspace']['status'], 'skipped')
+        self.assertNotIn('REUSED-PID-WINDOW', json.dumps(incident))
+        self.assertEqual(incident['native']['status'], 'discarded')
+        with patch.object(desktop.subprocess, 'run') as cli, \
+                patch.object(desktop.desktop_diagnostics, 'capture') as native:
+            incident = manager.capture_incident(self.process, caught.exception, 'check')
+        cli.assert_not_called();native.assert_not_called()
+        self.assertTrue(all(value['status']=='skipped' for value in incident['aerospace_queries'].values()))
 
     def test_cli_timeout_retains_partial_output_and_original_error_when_probe_fails(self):
         manager = desktop.prepare({})

@@ -43,8 +43,42 @@ public final class CleanUIFoodAgeChecks {
         return result.toString();
     }
 
-    private static byte[] compiled(String source) throws IOException {
-        return dump(LuaCompiler.loadis(new StringReader(source), "ISInventoryPane.lua", LuaManager.env));
+    private static byte[] compiled(String source, String name) throws IOException {
+        return dump(LuaCompiler.loadis(new StringReader(source), name, LuaManager.env));
+    }
+
+    private static String basename(String target) { return target.substring(target.lastIndexOf('/') + 1); }
+
+    private static String collapsedBlock(String source) {
+        int start = source.indexOf("            if count == 1 and self.collapsed ~= nil and v.name ~= nil and self.collapsed[v.name] then\n");
+        int end = source.indexOf("            if count == CleanUI_Vanilla_ISInventoryPane.MAX_ITEMS_IN_STACK_TO_RENDER + 1 then\n", start);
+        require(start >= 0 && end > start, "reviewed vanilla collapsed block boundary changed");
+        return source.substring(start, end);
+    }
+
+    private static Object lua(String source) throws IOException {
+        return LuaManager.thread.call(LuaCompiler.loadstring(source, "food-age-dispatch-check", LuaManager.env), new Object[0]);
+    }
+
+    private static void dispatchChecks(String original, String fixed) throws IOException {
+        String before = collapsedBlock(original), after = collapsedBlock(fixed);
+        require(original.replace(before, after).equals(fixed), "vanilla transform changed unrelated renderer side effects");
+        String setup = "local Calls=0; local item={updateAge=function() Calls=Calls+1 end}; "
+            + "local v={name='food',items={item,item,item}}; local self={collapsed={food=true}}; "
+            + "local count=1; local function instanceof() return true end; ";
+        String dispatch = " for pass=1,1 do " + after + " end; return Calls";
+        for (String namespace : new String[] {"nil", "function() error('foreign global') end", "{}",
+                "{protocol=2,enhancedSourceSha256='" + CleanUIFoodAge.INPUT_SHA256 + "',updateCollapsedStack=function() error('protocol') end}",
+                "{protocol=1,enhancedSourceSha256='unknown',updateCollapsedStack=function() error('source') end}",
+                "{protocol=1,enhancedSourceSha256='" + CleanUIFoodAge.INPUT_SHA256 + "',updateCollapsedStack=false}"}) {
+            require(Double.valueOf(3).equals(lua(setup + "CleanUI_ToolkitFoodAge=" + namespace + ";" + dispatch)),
+                "unknown/absent updater did not retain original vanilla duplicate-header loop: " + namespace);
+        }
+        require(Double.valueOf(10).equals(lua(setup + "CleanUI_ToolkitFoodAge={protocol=1,enhancedSourceSha256='"
+            + CleanUIFoodAge.INPUT_SHA256 + "',updateCollapsedStack=function(group,admitted) "
+            + "if group~=v or admitted~=true then error('vanilla admission changed') end; Calls=Calls+10 end};" + dispatch)),
+            "reviewed public updater did not receive exact group and conservative admission");
+        LuaManager.env.rawset("CleanUI_ToolkitFoodAge", null);
     }
 
     private static byte[] dump(LuaClosure closure) throws IOException {
@@ -62,15 +96,19 @@ public final class CleanUIFoodAgeChecks {
         Path root = Path.of(System.getProperty("pz.test.cache"), "mods/CleanUI");
         Path version = root.resolve("42");
         Path pane = version.resolve(CleanUIFoodAge.TARGET);
+        Path vanillaPane = version.resolve(CleanUIFoodAge.VANILLA_TARGET);
         Files.createDirectories(pane.getParent());
+        Files.createDirectories(vanillaPane.getParent());
         Files.createDirectories(root.resolve("common"));
         Files.writeString(root.resolve("common/mod.info"), "id=CleanUI\n");
         Files.writeString(version.resolve("mod.info"), "id=CleanUI\nmodversion=fixture\n");
         Files.writeString(pane, "return verifyScope()\n");
+        Files.writeString(vanillaPane, "return verifyScope()\n");
         files.setModIdToDir("CleanUI", root.toString());
         require(Path.of(ChooseGameInfo.getModDetails("CleanUI").getVersionDir()).equals(version), "native active version not selected");
         files.getModIDs().add("CleanUI");
         files.activeFileMap.put(CleanUIFoodAge.TARGET.toLowerCase(Locale.ROOT), pane.toString());
+        files.activeFileMap.put(CleanUIFoodAge.VANILLA_TARGET.toLowerCase(Locale.ROOT), vanillaPane.toString());
         require(CleanUIFoodAge.SUPPORTED, "unsupported installed loader/compiler bytecode");
         LuaManager.platform = new J2SEPlatform();
         LuaManager.env = LuaManager.platform.newEnvironment();
@@ -86,6 +124,25 @@ public final class CleanUIFoodAgeChecks {
             @Override public void close() { throw new AssertionError("borrowed reader closed"); }
         };
         require(CleanUIFoodAge.compilerInput(bomb, "ISInventoryPane.lua", true) == bomb, "unscoped reader changed");
+        for (String target : new String[] {CleanUIFoodAge.TARGET, CleanUIFoodAge.VANILLA_TARGET}) {
+            String name = basename(target);
+            require(CleanUIFoodAge.transformSource(target, unknown) == unknown, "unknown target input changed");
+            var parent = CleanUIFoodAge.begin(target, true);
+            try {
+                require(target.equals(field(CleanUIFoodAge.Scope.class, "target").get(scope())), "candidate target identity lost");
+                String other = target.equals(CleanUIFoodAge.TARGET) ? basename(CleanUIFoodAge.VANILLA_TARGET) : basename(CleanUIFoodAge.TARGET);
+                require(CleanUIFoodAge.compilerInput(bomb, other, true) == bomb, "other target compiler claimed scope");
+                require(text(CleanUIFoodAge.compilerInput(new StringReader(unknown), name, true)).equals(unknown), "target replay failed");
+                require(CleanUIFoodAge.compilerInput(bomb, name, true) == bomb, "target scope claimed twice");
+            } finally { CleanUIFoodAge.end(parent); }
+        }
+        files.activeFileMap.put(CleanUIFoodAge.VANILLA_TARGET.toLowerCase(Locale.ROOT), pane.toString());
+        var wrongVanillaProvider = CleanUIFoodAge.begin(CleanUIFoodAge.VANILLA_TARGET, true);
+        try {
+            require(CleanUIFoodAge.compilerInput(bomb, basename(CleanUIFoodAge.VANILLA_TARGET), true) == bomb,
+                "vanilla foreign provider consumed source");
+        } finally { CleanUIFoodAge.end(wrongVanillaProvider); }
+        files.activeFileMap.put(CleanUIFoodAge.VANILLA_TARGET.toLowerCase(Locale.ROOT), vanillaPane.toString());
         var unsupported = CleanUIFoodAge.begin(CleanUIFoodAge.TARGET, false);
         try {
             require(CleanUIFoodAge.compilerInput(bomb, "ISInventoryPane.lua", true) == bomb, "unsupported native loader consumed source");
@@ -159,30 +216,50 @@ public final class CleanUIFoodAgeChecks {
                 return 1;
             } catch (Exception error) { throw new RuntimeException(error); }
         });
-        require(Double.valueOf(71).equals(LuaManager.RunLua(CleanUIFoodAge.TARGET, false)), "woven native RunLua fixture failed");
-        require(scope() == null, "native RunLua leaked thread scope");
-        require(Double.valueOf(71).equals(LuaManager.RunLua(CleanUIFoodAge.TARGET, false)), "cached RunLua result changed");
-        require(scope() == null, "cached RunLua leaked scope");
+        for (String target : new String[] {CleanUIFoodAge.TARGET, CleanUIFoodAge.VANILLA_TARGET}) {
+            require(Double.valueOf(71).equals(LuaManager.RunLua(target, false)), "woven native RunLua fixture failed: " + target);
+            require(scope() == null, "native RunLua leaked thread scope");
+            require(Double.valueOf(71).equals(LuaManager.RunLua(target, false)), "cached RunLua result changed: " + target);
+            require(scope() == null, "cached RunLua leaked scope");
+        }
 
         String external = System.getenv("PZ_CLEANUI_SOURCE");
         if (external != null && !external.isBlank()) {
             Path externalRoot = Path.of(external);
-            Path externalPane = externalRoot.resolve("42.19").resolve(CleanUIFoodAge.TARGET);
-            String original = Files.readString(externalPane);
-            String fixed = CleanUIFoodAge.transformSource(original);
-            require(fixed != original, "external CleanUI source differs from reviewed input");
-            require(CleanUIFoodAge.transformSource(fixed) == fixed, "already-corrected input changed");
-            byte[] originalCode = compiled(original);
-            byte[] expectedCode = compiled(fixed);
-            require(!Arrays.equals(originalCode, expectedCode), "correction did not alter compiled prototype");
-            Files.writeString(pane, original);
-            previous = CleanUIFoodAge.begin(CleanUIFoodAge.TARGET, true);
-            try {
-                LuaClosure actual = LuaCompiler.loadis(new StringReader(original), "ISInventoryPane.lua", LuaManager.env);
-                require(Arrays.equals(dump(actual), expectedCode), "woven compiler did not write back corrected Reader argument");
-            } finally { CleanUIFoodAge.end(previous); }
-            require(Arrays.equals(compiled(original), originalCode), "compiler transformed input outside native load scope");
-            require(Files.readString(externalPane).equals(original), "Workshop source changed");
+            String enhancedOriginal = Files.readString(externalRoot.resolve("42.19").resolve(CleanUIFoodAge.TARGET));
+            String enhancedFixed = CleanUIFoodAge.transformSource(enhancedOriginal);
+            require(enhancedFixed.contains("updateCollapsedStack = CleanUI_updateCollapsedFoodStackAge,"), "export is not the exact enhanced helper");
+            for (String target : new String[] {CleanUIFoodAge.TARGET, CleanUIFoodAge.VANILLA_TARGET}) {
+                Path externalPane = externalRoot.resolve("42.19").resolve(target);
+                Path localPane = version.resolve(target);
+                String name = basename(target);
+                String original = Files.readString(externalPane);
+                String fixed = CleanUIFoodAge.transformSource(target, original);
+                String otherTarget = target.equals(CleanUIFoodAge.TARGET) ? CleanUIFoodAge.VANILLA_TARGET : CleanUIFoodAge.TARGET;
+                require(fixed != original, "external CleanUI source differs from reviewed input: " + target);
+                require(CleanUIFoodAge.transformSource(otherTarget, original) == original, "source crossed target scope");
+                require(CleanUIFoodAge.transformSource("unknown", original) == original, "unknown target transformed source");
+                require(CleanUIFoodAge.transformSource(target, fixed) == fixed, "already-corrected input changed");
+                String modified = original + "\n";
+                require(CleanUIFoodAge.transformSource(target, modified) == modified, "modified source accepted");
+                byte[] originalCode = compiled(original, name);
+                byte[] expectedCode = compiled(fixed, name);
+                require(!Arrays.equals(originalCode, expectedCode), "correction did not alter compiled prototype");
+                Files.writeString(localPane, original);
+                previous = CleanUIFoodAge.begin(target, true);
+                try {
+                    LuaClosure actual = LuaCompiler.loadis(new StringReader(original), name, LuaManager.env);
+                    require(Arrays.equals(dump(actual), expectedCode), "woven compiler did not write back corrected Reader argument");
+                } finally { CleanUIFoodAge.end(previous); }
+                previous = CleanUIFoodAge.begin(otherTarget, true);
+                try {
+                    require(text(CleanUIFoodAge.compilerInput(new StringReader(original), basename(otherTarget), true)).equals(original),
+                        "reviewed source transformed under other target identity");
+                } finally { CleanUIFoodAge.end(previous); }
+                require(Arrays.equals(compiled(original, name), originalCode), "compiler transformed input outside native load scope");
+                require(Files.readString(externalPane).equals(original), "Workshop source changed");
+                if (target.equals(CleanUIFoodAge.VANILLA_TARGET)) dispatchChecks(original, fixed);
+            }
             System.out.println("CLEANUI_FOOD_AGE_REVIEWED_SOURCE_PASS (woven Reader prototype, unscoped unchanged, Workshop unchanged)");
         } else System.out.println("CLEANUI_FOOD_AGE_REVIEWED_SOURCE_SKIP (set PZ_CLEANUI_SOURCE for installed reviewed-source prototype check)");
         System.out.println("CLEANUI_FOOD_AGE_CHECKS_PASS (native RunLua and Reader hooks, nested/cached/throwing scope cleanup, unknown/oversized replay, read failure)");

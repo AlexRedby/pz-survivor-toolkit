@@ -16,8 +16,11 @@ import zombie.gameStates.ChooseGameInfo;
 /** Amend the reviewed compiler input, preserving Workshop files and the original renderer. */
 public final class CleanUIFoodAge {
     public static final String INPUT_SHA256 = "f5992aaebc4f629fd6ebb7b049be86a3e0995ea82276b23f22cf921a18bb7cc0";
-    public static final String OUTPUT_SHA256 = "2b9401f5cfc32c79b834cbd9e874fa406018bf978e2009a92bcf88a8b4d966d8";
+    public static final String OUTPUT_SHA256 = "a0e001a7de8cd908c1e0e95d06e551bfb8f9cc4dac7f12ed74becfd8c2cb1a74";
     public static final String TARGET = "media/lua/client/ISUI/ISInventoryPane.lua";
+    public static final String VANILLA_TARGET = "media/lua/client/CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua";
+    public static final String VANILLA_INPUT_SHA256 = "a122ffd45d91e87a367cfa352385ff6092774a949f494e220dd91f62c4ae9c57";
+    public static final String VANILLA_OUTPUT_SHA256 = "89b5d3ba7383caccce32408d93fe26c51f1d7c83e6adb75feadb5c3d03a22411";
     private static final int MAX_SOURCE_CHARS = 1024 * 1024;
     public static final boolean SUPPORTED =
         BytecodeSupport.supports("zombie/Lua/LuaManager.class", "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d")
@@ -31,14 +34,15 @@ public final class CleanUIFoodAge {
 
     public static final class Scope {
         private final boolean candidate;
+        private final String target;
         private boolean claimed;
-        private Scope(boolean candidate) { this.candidate = candidate; }
+        private Scope(String target) { this.target = target; this.candidate = target != null; }
     }
 
     /** Each nested load, including unrelated loads, temporarily owns its own compiler scope. */
     public static Scope begin(String file, boolean supported) {
         Scope previous = LOADING.get();
-        LOADING.set(new Scope(candidate(file, supported)));
+        LOADING.set(new Scope(candidateTarget(file, supported)));
         return previous;
     }
 
@@ -47,24 +51,36 @@ public final class CleanUIFoodAge {
         else LOADING.set(previous);
     }
 
-    private static boolean candidate(String file, boolean supported) {
-        if (!supported || file == null || !file.replace('\\', '/').endsWith("/ISUI/ISInventoryPane.lua")) return false;
+    private static String candidateTarget(String file, boolean supported) {
+        if (!supported || file == null) return null;
+        String normalized = file.replace('\\', '/');
+        String target;
+        if (normalized.equals(TARGET) || normalized.endsWith("/" + TARGET)) target = TARGET;
+        else if (normalized.equals(VANILLA_TARGET) || normalized.endsWith("/" + VANILLA_TARGET)) target = VANILLA_TARGET;
+        else return null;
         try {
             ZomboidFileSystem files = ZomboidFileSystem.instance;
-            if (!files.getModIDs().contains("CleanUI")) return false;
+            if (!files.getModIDs().contains("CleanUI")) return null;
             ChooseGameInfo.Mod mod = ChooseGameInfo.getModDetails("CleanUI");
-            if (mod == null || mod.getVersionDir() == null) return false;
-            Path expected = Path.of(mod.getVersionDir()).resolve(TARGET);
-            Path resolved = Path.of(files.getString(file.replace('\\', '/')));
-            return Files.isRegularFile(expected) && Files.isSameFile(expected, resolved);
+            if (mod == null || mod.getVersionDir() == null) return null;
+            Path expected = Path.of(mod.getVersionDir()).resolve(target);
+            Path resolved = Path.of(files.getString(normalized));
+            return Files.isRegularFile(expected) && Files.isSameFile(expected, resolved) ? target : null;
         } catch (IOException | RuntimeException error) {
-            return false;
+            return null;
         }
     }
 
     /** Pure source gate shared with the native Food differential regression. */
     public static String transformSource(String source) {
-        if (source == null || !INPUT_SHA256.equals(sha256(source))) return source;
+        return transformSource(TARGET, source);
+    }
+
+    /** The target and its reviewed digest must agree; a source alone cannot cross target scopes. */
+    public static String transformSource(String target, String source) {
+        if (source == null) return null;
+        if (VANILLA_TARGET.equals(target)) return transformVanillaSource(source);
+        if (!TARGET.equals(target) || !INPUT_SHA256.equals(sha256(source))) return source;
         String result = replaceOnce(source, "local CLEANUI_COLLAPSED_FOOD_AGE_UPDATE_LIMIT = 50\n", "");
         result = replaceOnce(result,
             "    -- Large collapsed food stacks used to update dozens of items every render, even off-screen.\n"
@@ -80,7 +96,36 @@ public final class CleanUIFoodAge {
             "    if itemGroup.cleanUILargeStackOptimized and maxIndex - startIndex + 1 > CLEANUI_COLLAPSED_FOOD_AGE_UPDATE_LIMIT then\n"
             + "        maxIndex = math.min(maxIndex, startIndex + CLEANUI_COLLAPSED_FOOD_AGE_UPDATE_LIMIT - 1)\n"
             + "    end\n", "");
+        result = replaceOnce(result,
+            "\nlocal function CleanUI_truncateForWeightColumn(text, width, font)\n",
+            "\nCleanUI_ToolkitFoodAge = {\n"
+            + "    protocol = 1,\n"
+            + "    enhancedSourceSha256 = \"" + INPUT_SHA256 + "\",\n"
+            + "    updateCollapsedStack = CleanUI_updateCollapsedFoodStackAge,\n"
+            + "}\n\nlocal function CleanUI_truncateForWeightColumn(text, width, font)\n");
         return result != null && OUTPUT_SHA256.equals(sha256(result)) ? result : source;
+    }
+
+    private static String transformVanillaSource(String source) {
+        if (!VANILLA_INPUT_SHA256.equals(sha256(source))) return source;
+        String result = replaceOnce(source,
+            "                    -- Update all food items in a collapsed stack so they separate when freshness changes.\n"
+            + "                    for k3,v3 in ipairs(v.items) do\n"
+            + "                        v3:updateAge()\n"
+            + "                    end\n",
+            "                    -- Preserve off-screen ageing while sharing CleanUI's one-second full-stack updater.\n"
+            + "                    local foodAge = CleanUI_ToolkitFoodAge\n"
+            + "                    if type(foodAge) == \"table\" and foodAge.protocol == 1\n"
+            + "                            and foodAge.enhancedSourceSha256 == \"" + INPUT_SHA256 + "\"\n"
+            + "                            and type(foodAge.updateCollapsedStack) == \"function\" then\n"
+            + "                        foodAge.updateCollapsedStack(v, true)\n"
+            + "                    else\n"
+            + "                        -- Unknown or unpatched enhanced sources retain the original vanilla work.\n"
+            + "                        for k3,v3 in ipairs(v.items) do\n"
+            + "                            v3:updateAge()\n"
+            + "                        end\n"
+            + "                    end\n");
+        return result != null && VANILLA_OUTPUT_SHA256.equals(sha256(result)) ? result : source;
     }
 
     private static String replaceOnce(String source, String before, String after) {
@@ -101,7 +146,8 @@ public final class CleanUIFoodAge {
     /** The native RunLua owner still closes its original reader, including on compilation failure. */
     public static Reader compilerInput(Reader reader, String name, boolean supported) throws IOException {
         Scope scope = LOADING.get();
-        if (!supported || scope == null || !scope.candidate || scope.claimed || !"ISInventoryPane.lua".equals(name)) return reader;
+        if (!supported || scope == null || !scope.candidate || scope.claimed
+                || !scope.target.substring(scope.target.lastIndexOf('/') + 1).equals(name)) return reader;
         scope.claimed = true;
         StringBuilder source = new StringBuilder();
         char[] buffer = new char[8192];
@@ -109,14 +155,14 @@ public final class CleanUIFoodAge {
             int count = reader.read(buffer, 0, Math.min(buffer.length, MAX_SOURCE_CHARS + 1 - source.length()));
             if (count < 0) {
                 String original = source.toString();
-                String transformed = transformSource(original);
-                if (transformed != original) System.out.println("[PZToolkitJavaPatches] CleanUI collapsed food-age compiler input corrected");
+                String transformed = transformSource(scope.target, original);
+                if (transformed != original) System.out.println("[PZToolkitJavaPatches] CleanUI food-age compiler input corrected");
                 // An unknown complete source must be replayed from its beginning, too.
                 return new StringReader(transformed);
             }
             if (count == 0) {
                 int next = reader.read();
-                if (next < 0) return new StringReader(transformSource(source.toString()));
+                if (next < 0) return new StringReader(transformSource(scope.target, source.toString()));
                 source.append((char) next);
             } else source.append(buffer, 0, count);
         }

@@ -41,13 +41,17 @@ def definitions():
     result['item-tags']['window_size'] = [1280, 900]
     result['inventory-presentation']['window_size'] = [1280, 900]
     result['smart-deposit']['window_size'] = [1280, 900]
+    result['smart-deposit']['cases'][0]['kinds'] = ['sp', 'mp']
     result['storage-profile']['window_size'] = [1280, 900]
+    result['storage-profile']['default_mods'].insert(0, 'ZombieBuddy')
     result['storage-profile']['shared_session'] = True
     result['storage-profile']['limits'] = [
         'Shared SP sessions require inventory-work first in a fresh world, followed by inventory-freshness.',
         'Walking performance and natural food-age baselines stay isolated; shared runtime qualification remains a native gate.']
     for case in result['storage-profile']['cases']:
         case['capability'] = 'effect' if case['id'] in ('inventory-freshness', 'inventory-food-age') else 'capture'
+        if case['id'] == 'inventory-food-age':
+            case['kinds'] = ['sp', 'mp']
     result['inventory-tooltips']['window_size'] = [1280, 900]
     return result
 
@@ -79,15 +83,30 @@ def validate(selection):
         raise ValueError('Unsupported auxiliary queue mode')
     spec = definitions()[suite]
     cases = selection['cases']
+    if 'inventory_work_renderer' in selection.get('options', {}):
+        options = selection['options']
+        if (options['inventory_work_renderer'] not in ('clean', 'vanilla')
+                or suite != 'storage-profile' or cases != ['inventory-work'] or selection.get('kind') != 'sp'
+                or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
+                or any(options.get(key) for key in ('seed_run', 'world_template', 'startup_connection', 'mp_host'))):
+            raise ValueError('inventory_work_renderer requires clean/vanilla in standalone fresh one-client SP inventory-work')
     storage_session = suite == 'storage-profile' and cases == ['inventory-work', 'inventory-freshness']
     if not cases or len(set(cases)) != len(cases) or any(case not in [row['id'] for row in spec['cases']] for case in cases) or suite != 'animal-trailer' and len(cases) != 1 and not storage_session:
         raise ValueError('Auxiliary fixtures require exactly one supported case per fresh run')
     if storage_session and (type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
                             or any(selection.get('options', {}).get(key) for key in ('seed_run', 'world_template', 'startup_connection', 'mp_host'))):
         raise ValueError('Storage shared session requires fresh one-client SP with inventory-work first')
-    case = spec['cases'][0]
-    if selection['kind'] not in case['kinds'] or len(selection['languages']) != 1 or selection['languages'][0] not in case['languages']:
+    selected_specs = [row for row in spec['cases'] if row['id'] in cases]
+    if any(selection['kind'] not in case['kinds'] or len(selection['languages']) != 1
+           or selection['languages'][0] not in case['languages'] for case in selected_specs):
         raise ValueError('Unsupported kind/language for ' + suite)
+    if suite == 'storage-profile' and cases == ['inventory-food-age'] or suite == 'smart-deposit':
+        options = selection.get('options', {})
+        if (type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
+                or any(options.get(key) for key in ('seed_run', 'world_template', 'startup_connection'))
+                or selection['kind'] == 'mp' and options.get('mp_host') is not True
+                or selection['kind'] == 'sp' and options.get('mp_host')):
+            raise ValueError(suite + ' requires a fresh one-client SP or menu-Host lifecycle')
     required = set(ITEM_MODS if suite == 'item-tags' else ['ZombieBuddy', 'PZSurvivorToolkit'])
     if suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
         required = set(INVENTORY_MODS)
@@ -96,6 +115,8 @@ def validate(selection):
         forbidden = {'ContainerCapacityIndicator', 'BravoItemDetails', 'Quartermaster', 'HasResearch', 'SeedSeasonIndicator'} & set(selection['mods'])
         if forbidden:
             raise ValueError('External inventory owners must be omitted: ' + ', '.join(sorted(forbidden)))
+    if suite == 'storage-profile' and 'inventory-work' in cases:
+        required.add('ZombieBuddy')
     if suite == 'video-recording':
         required.add('PZToolkitJavaPatches')
         for key in ('ffmpeg', 'ffprobe'):
@@ -126,6 +147,15 @@ def validate(selection):
             raise ValueError('Item-tag dependencies must retain the manifest load order')
 
 
+def environment(selection, role, cache):
+    if (selection.get('suite') == 'storage-profile' and selection.get('kind') == 'sp'
+            and role == 'client1' and type(selection.get('clients', 1)) is int
+            and selection.get('clients', 1) == 1
+            and selection.get('cases') in (['inventory-work'], ['inventory-work', 'inventory-freshness'])):
+        return {'PZ_INVENTORY_WORK_TEST_CACHE': Path(cache)}
+    return {}
+
+
 def sources(project, selection):
     paths = [path for path in _intake(project, selection['suite']).rglob('*')
              if path.is_file() and path.suffix in ('.py', '.java', '.lua', '.json', '.md')]
@@ -137,6 +167,11 @@ def sources(project, selection):
             paths.append(Path(project) / 'tests/native_queue/support/QueueFixtureSession.lua')
     if selection['suite'] == 'storage-profile' and len(selection['cases']) > 1:
         paths.append(Path(project) / 'tests/native_queue/support/QueueFixtureSession.lua')
+    if (selection['suite'] == 'storage-profile' and selection['cases'] == ['inventory-food-age']
+            or selection['suite'] == 'smart-deposit' and selection['kind'] == 'mp'):
+        root = Path(project) / 'tests/native_queue'
+        paths.extend([root / 'startup/client/ZZStartup.lua', root / 'startup/server/ZZStartupServer.lua',
+                      root / 'health/shared/QueueHealthEvents.lua'])
     return paths
 
 
@@ -173,10 +208,32 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                     prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, cases=selection['cases'])
                 else:
                     prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, case=selection['cases'][0])
+            elif suite == 'smart-deposit':
+                prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, host=selection['kind'] == 'mp')
             else:
                 prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier)
+        if suite == 'storage-profile' and 'inventory-work' in selection['cases']:
+            _load(intake / 'stage_inventory_probe.py').stage(output, game, jdk, runtime)
+            for role, settings in runtime['roles'].items():
+                settings.setdefault('env', {}).update(
+                    {name: str(value) for name, value in environment(selection, role, settings['cache']).items()})
         if suite == 'storage-profile' and len(selection['cases']) > 1:
             fixture['failure_markers'].append('[QUEUE_SESSION] QUARANTINE ')
+        if (suite == 'storage-profile' and selection['cases'] == ['inventory-food-age']
+                or suite == 'smart-deposit' and selection['kind'] == 'mp'):
+            fixture['server_ready'] = '[STARTUP_TEST] SERVER_READY'
+            fixture['sandbox'] = {'Zombies': 6}
+            root = Path(project) / 'tests/native_queue'
+            for cache in caches:
+                lua = cache / 'mods' / identifier / '42/media/lua'
+                for relative in ('startup/client/ZZStartup.lua', 'startup/server/ZZStartupServer.lua',
+                                 'health/shared/QueueHealthEvents.lua'):
+                    source = root / relative
+                    destination = lua / source.parent.name / source.name
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, destination)
+            if suite == 'smart-deposit':
+                fixture['failure_markers'].append('[SMART_DEPOSIT_HOST] FAIL ')
     elif suite == 'item-tags':
         fixture['mods'] = ['QuartermasterScreens']
         prepare = _load(intake / 'prepare.py')
@@ -228,6 +285,12 @@ Events.OnGameStart.Add(function() Events.OnTick.Add(setup) end)
 
 
 def complete(selection, role, text):
+    if selection['suite'] == 'smart-deposit' and selection['kind'] == 'mp':
+        intake = _intake(Path(__file__).resolve().parents[3], 'smart-deposit')
+        return _load(intake / 'host_verify.py').complete(text, selection, role)
+    if selection['suite'] == 'storage-profile' and selection['cases'] == ['inventory-food-age']:
+        intake = _intake(Path(__file__).resolve().parents[3], 'storage-profile')
+        return _load(intake / 'food_age_verify.py').complete(text, selection, role)
     if selection['suite'] in ('animal-trailer', 'storage-profile') and len(selection['cases']) > 1:
         return bool(re.search(r'\[QUEUE_SESSION\] COMPLETE case=' + re.escape(selection['cases'][-1]) + ' epoch=' +
                               str(len(selection['cases'])) + ' actor=' + re.escape(role) + r' cases=' + str(len(selection['cases'])) + r'(?:\s|$)', text))
@@ -393,10 +456,15 @@ def verify(root, selection, catalog):
         if suite == 'video-recording':
             evidence['clips'] = _load(intake / 'verify.py').verify(root / 'client1', _path(selection, 'ffmpeg', True), _path(selection, 'ffprobe', True))
         elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
-            verifier = ({'inventory-work': 'inventory_work_verify.py', 'inventory-freshness': 'freshness_verify.py',
-                         'inventory-food-age': 'food_age_verify.py'}
-                        .get(selection['cases'][0], 'verify.py') if suite == 'storage-profile' else 'verify.py')
-            evidence.update(_load(intake / verifier).verify(root, text))
+            verifier = 'verify.py'
+            if suite == 'storage-profile':
+                verifier = {'inventory-work': 'inventory_work_verify.py', 'inventory-freshness': 'freshness_verify.py',
+                            'inventory-food-age': 'food_age_verify.py'}.get(selection['cases'][0], verifier)
+            elif suite == 'smart-deposit' and selection['kind'] == 'mp':
+                verifier = 'host_verify.py'
+            module = _load(intake / verifier)
+            evidence.update(module.verify(root, text, selection) if selection['cases'] in (['inventory-food-age'], ['inventory-work']) or verifier == 'host_verify.py'
+                            else module.verify(root, text))
         elif suite == 'item-tags':
             manifest = json.loads((intake / 'manifest.json').read_text())
             if '[QM_SCREEN] FAIL' in text or 'KahluaException' in text:

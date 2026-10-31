@@ -60,6 +60,17 @@
       }
     },
     {
+      "id": "warehouse-peer-host",
+      "suite": "warehouse-workload",
+      "case": "peer-edits",
+      "kind": "mp",
+      "language": "EN",
+      "boundary": "Two actual EN/RU menu-Host clients, sparse server-owned crates, peer actions and hidden inventory checks in CleanUI and vanilla modes; separate from performance captures.",
+      "options": {
+        "mp_host": true
+      }
+    },
+    {
       "id": "deposit-host",
       "suite": "quartermaster-distribution",
       "case": "deposit",
@@ -99,6 +110,17 @@
       "kind": "sp",
       "language": "EN",
       "boundary": "One SP case with a partially occupied destination and native drop assertions."
+    },
+    {
+      "id": "smart-deposit-host",
+      "suite": "smart-deposit",
+      "case": "partial",
+      "kind": "mp",
+      "language": "EN",
+      "boundary": "Fresh one-client menu Host verifies partial native transactions, retained overflow and full rejection in both inventory modes with independent server authority and exact owned cleanup.",
+      "options": {
+        "mp_host": true
+      }
     },
     {
       "id": "wishlist-host-control",
@@ -186,7 +208,49 @@
       "kind": "sp",
       "language": "EN",
       "timeout": 1800,
-      "boundary": "Natural expiry needs a fresh independent world-time baseline; never append it to inventory/video work."
+      "boundary": "Visible, hidden-page and offscreen-row expiry share one fresh natural-age lifecycle; keep it separate from accelerated cooling and timing work."
+    },
+    {
+      "id": "food-age-host",
+      "suite": "storage-profile",
+      "case": "inventory-food-age",
+      "kind": "mp",
+      "language": "EN",
+      "timeout": 1800,
+      "boundary": "Visible, hidden-page and offscreen-row expiry share one fresh natural-age lifecycle; keep it separate from accelerated cooling and timing work.",
+      "options": {
+        "mp_host": true
+      },
+      "resources": {
+        "heap_mib": 3072
+      }
+    },
+    {
+      "id": "food-cooling-sp",
+      "suite": "food-cooling",
+      "case": "collapsed-stacks",
+      "kind": "sp",
+      "language": "EN",
+      "timeout": 1800,
+      "resources": {
+        "heap_mib": 4096
+      },
+      "boundary": "One owned fridge/freezer/generator lifecycle checks 199/200-item collapsed tails, native transfers and power-off thaw; its accelerated clock stays separate from natural-expiry and timing cases."
+    },
+    {
+      "id": "food-cooling-host",
+      "suite": "food-cooling",
+      "case": "collapsed-stacks",
+      "kind": "mp",
+      "language": "EN",
+      "timeout": 1800,
+      "resources": {
+        "heap_mib": 3072
+      },
+      "boundary": "One owned fridge/freezer/generator lifecycle checks 199/200-item collapsed tails, native transfers and power-off thaw; its accelerated clock stays separate from natural-expiry and timing cases.",
+      "options": {
+        "mp_host": true
+      }
     },
     {
       "id": "wooden-wheelbarrow-injury",
@@ -457,10 +521,12 @@
       "deposit-sp",
       "supply-units-sp",
       "warehouse-host",
+      "warehouse-peer-host",
       "deposit-host",
       "supply-units-host",
       "deposit-batch-host",
       "smart-deposit-sp",
+      "smart-deposit-host",
       "wishlist-host-control",
       "wishlist-host",
       "warehouse-walk-sp",
@@ -468,7 +534,10 @@
       "inventory-freshness-sp",
       "container-ui-sp",
       "container-ui-host",
-      "food-age-sp"
+      "food-age-sp",
+      "food-age-host",
+      "food-cooling-sp",
+      "food-cooling-host"
     ],
     "carts": [
       "wooden-wheelbarrow-injury",
@@ -495,7 +564,8 @@
       "dashboard-controls-sp",
       "dashboard-controls-host",
       "warehouse-sp",
-      "warehouse-host"
+      "warehouse-host",
+      "warehouse-peer-host"
     ],
     "sp": [
       "warehouse-sp",
@@ -507,6 +577,7 @@
       "inventory-freshness-sp",
       "container-ui-sp",
       "food-age-sp",
+      "food-cooling-sp",
       "wooden-wheelbarrow-injury",
       "wooden-wheelbarrow-speed-parity",
       "metal-wheelbarrow-injury",
@@ -520,9 +591,11 @@
     "host": [
       "retention-host",
       "warehouse-host",
+      "warehouse-peer-host",
       "deposit-host",
       "supply-units-host",
       "deposit-batch-host",
+      "smart-deposit-host",
       "wishlist-host-control",
       "wishlist-host",
       "container-ui-host",
@@ -531,7 +604,9 @@
       "cart-host-right-mild",
       "cart-host-right-heavy",
       "shopping-view-host",
-      "dashboard-controls-host"
+      "dashboard-controls-host",
+      "food-cooling-host",
+      "food-age-host"
     ],
     "full": [
       "retention-host",
@@ -539,10 +614,12 @@
       "deposit-sp",
       "supply-units-sp",
       "warehouse-host",
+      "warehouse-peer-host",
       "deposit-host",
       "supply-units-host",
       "deposit-batch-host",
       "smart-deposit-sp",
+      "smart-deposit-host",
       "wishlist-host-control",
       "wishlist-host",
       "warehouse-walk-sp",
@@ -551,6 +628,9 @@
       "container-ui-sp",
       "container-ui-host",
       "food-age-sp",
+      "food-age-host",
+      "food-cooling-sp",
+      "food-cooling-host",
       "wooden-wheelbarrow-injury",
       "wooden-wheelbarrow-speed-parity",
       "metal-wheelbarrow-injury",
@@ -579,36 +659,18 @@
       "gates": []
     },
     {
-      "id": "full-pack-follow-up-checks",
-      "title": "Full-pack follow-up checks",
-      "todo": "TODO.md#full-pack-follow-up-checks",
-      "jobs": [
-        "warehouse-sp",
-        "deposit-sp",
-        "supply-units-sp",
-        "warehouse-host",
-        "deposit-host",
-        "supply-units-host",
-        "deposit-batch-host",
-        "smart-deposit-sp",
-        "wishlist-host-control",
-        "wishlist-host"
-      ],
-      "gates": [
-        "Smart Deposit has no Host partial-drop fixture; SP cannot establish its Host behavior."
-      ]
-    },
-    {
       "id": "warehouse-client-workload",
       "title": "Warehouse client workload",
       "todo": "TODO.md#warehouse-client-workload",
       "jobs": [
+        "warehouse-peer-host",
         "warehouse-walk-sp",
         "inventory-work-sp",
         "inventory-freshness-sp"
       ],
       "gates": [
-        "Extend the workload fixture to concurrent Host edits, crafting inputs and quick transfers with loot hidden; existing SP timings do not prove this.",
+        "Qualify the sparse two-client warehouse-peer-host functional job before extending it to dense timing captures; require server authority, both-client convergence and exact cleanup.",
+        "Extend to both inventory modes and the existing sparse/dense window-state matrix under exclusive admission; keep mutation/setup checks separate from measured walking intervals and retain a matched SP control.",
         "Keep GPU/FPS and actual user-save stutter conclusions separate from Lua/UI timings."
       ]
     },
@@ -635,14 +697,14 @@
     {
       "id": "food-age-and-cooling",
       "title": "Food age and cooling",
-      "todo": "TODO.md#food-age-and-cooling",
+      "todo": "tests/native_queue/contributions/storage-profile/FOOD_AGE.md",
       "jobs": [
-        "food-age-sp"
+        "food-age-sp",
+        "food-age-host",
+        "food-cooling-sp",
+        "food-cooling-host"
       ],
-      "gates": [
-        "Existing food-age case is the 199/200-item baseline in both UI modes; extend clipped/hidden expiry, later expansion, repeated regrouping and Host replication.",
-        "Add real refrigeration/freezing, power and transfer fixtures with native Food.updateAge observations; headless configured-state checks are insufficient."
-      ]
+      "gates": []
     },
     {
       "id": "cart-motion-full-pack-compatibility",
@@ -835,10 +897,12 @@
         "deposit-sp",
         "supply-units-sp",
         "warehouse-host",
+        "warehouse-peer-host",
         "deposit-host",
         "supply-units-host",
         "deposit-batch-host",
         "smart-deposit-sp",
+        "smart-deposit-host",
         "wishlist-host-control",
         "wishlist-host",
         "warehouse-walk-sp",
@@ -847,6 +911,9 @@
         "container-ui-sp",
         "container-ui-host",
         "food-age-sp",
+        "food-age-host",
+        "food-cooling-sp",
+        "food-cooling-host",
         "wooden-wheelbarrow-injury",
         "wooden-wheelbarrow-speed-parity",
         "metal-wheelbarrow-injury",

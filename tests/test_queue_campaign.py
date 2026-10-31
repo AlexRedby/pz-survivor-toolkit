@@ -132,10 +132,23 @@ class CampaignTests(unittest.TestCase):
                   and line!='### Remaining campaign migration'}
         self.assertLessEqual(expected,{item['title'] for item in plan['campaign']})
         items={item['title']:item for item in plan['campaign']}
-        for title in ('Food age and cooling','Vehicle ownership desync','Medical visual packet reproduction',
+        for title in ('Vehicle ownership desync','Medical visual packet reproduction',
                       'Item catalogue test world','Legacy Host launchers','New Music selection'):
             self.assertTrue(items[title]['gates'],title)
         self.assertEqual(next(job for job in plan['jobs'] if job['id']=='wishlist-host')['control_job'],'wishlist-host-control')
+        smart = next(job for job in plan['jobs'] if job['id']=='smart-deposit-host')
+        self.assertEqual((smart['kind'], smart['case'], smart['options']), ('mp', 'partial', {'mp_host': True}))
+        self.assertIn('smart-deposit-host', plan['sets']['inventory'])
+        self.assertIn('smart-deposit-host', plan['sets']['host'])
+        self.assertNotIn('smart-deposit-host', plan['sets']['sp'])
+        peer = next(job for job in plan['jobs'] if job['id']=='warehouse-peer-host')
+        self.assertEqual((peer['suite'], peer['case'], peer['kind'], peer['options']),
+                         ('warehouse-workload', 'peer-edits', 'mp', {'mp_host': True}))
+        for name in ('inventory', 'qualification', 'host', 'full'):
+            self.assertIn('warehouse-peer-host', plan['sets'][name])
+        self.assertNotIn('warehouse-peer-host', plan['sets']['sp'])
+        self.assertIn('warehouse-peer-host', items['Warehouse client workload']['jobs'])
+        self.assertTrue(items['Warehouse client workload']['gates'])
 
     def test_full_example_preflights_and_keeps_subset_report_without_launching(self):
         plan=json.loads((ROOT/'tests/native_queue/plans/in-game-campaign.example.json').read_text())

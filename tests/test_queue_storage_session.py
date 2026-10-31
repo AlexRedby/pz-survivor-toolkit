@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from lupa.lua51 import LuaRuntime
 
@@ -18,7 +19,7 @@ class StorageSessionTests(unittest.TestCase):
     def selection(self):
         return dict(suite='storage-profile', cases=['inventory-work', 'inventory-freshness'],
                     kind='sp', clients=1, languages=['EN'], mode='toolkit',
-                    mods=list(adapter.INVENTORY_MODS), options={})
+                    mods=['ZombieBuddy', *adapter.INVENTORY_MODS], options={})
 
     def runtime(self, fault=None, pane_methods=None, pane_setup=None):
         lua = LuaRuntime(unpack_returned_tuples=True)
@@ -320,7 +321,14 @@ assert(invPage.capacity==(nonroot and 75 or 100)and invPage.title==(nonroot and 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); cache = root / 'client1';cache.mkdir()
             runtime = {'roles': {'client1': {'cache': str(cache)}}}
-            adapter.stage(ROOT, root, root, root, selection, {'PZSurvivorToolkit': ROOT / 'PZSurvivorToolkit'}, runtime)
+            def compile_probe(command, **kwargs):
+                classes=Path(command[6])/'toolkit/inventorywork';classes.mkdir(parents=True)
+                for name in ('Main.class','Main$FoodAge.class'):(classes/name).write_bytes(b'fixture')
+            with mock.patch('subprocess.run', side_effect=compile_probe):
+                adapter.stage(ROOT, root, root, root, selection, {'PZSurvivorToolkit': ROOT / 'PZSurvivorToolkit'}, runtime)
+            self.assertIn('InventoryWorkProbe', runtime['fixture']['mods'])
+            self.assertEqual(runtime['roles']['client1']['env'],
+                             {'PZ_INVENTORY_WORK_TEST_CACHE': str(cache)})
             lua = cache / 'mods/StorageProfileNative/42/media/lua'
             self.assertEqual({p.name for p in (lua / 'client').iterdir()}, {'ZZStorageSession.lua'})
             self.assertIn('[QUEUE_SESSION] QUARANTINE ', runtime['fixture']['failure_markers'])

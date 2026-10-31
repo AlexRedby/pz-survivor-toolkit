@@ -72,8 +72,62 @@ actions or changed source. The other UI mode repeats with fresh owned items.
 Require `[SMART_DEPOSIT] COMPLETE`, every verifier receipt exactly once, two PNG
 screenshots and a successful common full-log audit. These are programmatic UI
 callbacks in English single-player on the platform actually run. They do not
-cover physical mouse/controller dispatch, Host, Windows, other game builds,
+cover physical mouse/controller dispatch, Windows, other game builds,
 corpse-only mode, every container permission or pixel-level screenshot quality.
 Queue-disabled `--mode native` changes the queue setting only; it does not
 remove the owned Smart Deposit implementation or constitute a pre-fix control.
 Store generated profiles, saves, screenshots and logs outside Git.
+
+## One-client menu Host
+
+Use the same suite/case with `--kind mp`, a fresh complete `--pack-lock`, and
+`{"mp_host":true}` in the explicit config. The common startup helper launches the
+owned native CoopServer. The SP fixture remains an independent control; Host
+stages `ZZSmartDepositHost.lua`, `QueueSmartDepositHostFixture.lua` and
+`ZZSmartDepositHostServer.lua` instead.
+
+The Host server creates and replicates the three crates and all samples, stock
+and fillers. The client supplies only the observed order of those owned crates
+and the native sorted sample IDs. Both roles independently record every owned
+ID and endpoint, crate contents/weights/capacities and the preserved original
+root inventory. Each UI mode requires three real native transactions, one
+retained overflow, then four fully rejected items and no queued action. Native
+Host transfer constructors begin at `-1`; the fixture passively observes native
+transaction duration and delegated callbacks without changing action times.
+A light item may complete between frames, so rendered progress alone is not the
+timing authority.
+
+`host_verify.py` requires ordered, role/session/phase-bound JSON receipts from
+both logs, exact endpoints and conservation, unmodified stock and fillers,
+per-item drag feedback, native transaction timing, both screenshots, per-phase
+item removal and final owned-crate removal. Native Host packets deserialize
+replacement client item objects: transferred-item proof uses stable native IDs,
+unique endpoints and unchanged type/name/weight rather than Java object references.
+Untouched original inventory and equipment retain their identity checks. The client restores its original
+fractional position, native square, equipment, UI and changed options. Cleanup
+is limited to owned IDs and token-bearing objects. A partial cleanup or missing
+server receipt cannot pass. Run `tests.test_queue_smart_deposit_host` and
+`test_smart_deposit_host_fixture` for the offline receipt/ownership regressions.
+Position transitions wait for stationary coordinates and zero native deferred
+animation movement before a single placement; queue drain alone does not mean
+the transfer animation has stopped moving the character.
+
+Host coverage is one actual client through installed Lua drag/drop callbacks;
+physical mouse dispatch, contention and a separate remote client remain outside
+this scenario. Inspect both screenshots as well as the common runtime audit.
+
+Before launching a changed fixture, compile it with the installed game's Kahlua
+compiler as well as running the focused behavioral checks. Standard Lua accepts
+some closures that exceed Kahlua's 60-upvalue limit. This check only compiles; it
+does not execute Lua or initialize a game:
+
+```sh
+check_classes="$(mktemp -d)"
+javac_source=tests/native_queue/contributions/smart-deposit/java/KahluaCompileCheck.java
+"$PZ_JDK/bin/javac" -cp "$PZ_GAME/projectzomboid.jar" -d "$check_classes" "$javac_source"
+"$PZ_JDK/bin/java" -cp "$check_classes:$PZ_GAME/projectzomboid.jar" KahluaCompileCheck \
+  tests/native_queue/contributions/smart-deposit/ZZSmartDepositHost.lua \
+  tests/native_queue/contributions/smart-deposit/QueueSmartDepositHostFixture.lua \
+  tests/native_queue/contributions/smart-deposit/ZZSmartDepositHostServer.lua \
+  tests/native_queue/contributions/smart-deposit/ZZSmartDepositNative.lua
+```

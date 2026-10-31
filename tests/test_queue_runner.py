@@ -233,6 +233,51 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertTrue(environments)
         self.assertTrue(all('PZ_CART_INVENTORY_EQUIP' not in env for env in environments))
 
+    def test_inventory_work_probe_environment_scope_and_cache_admission(self):
+        adapter=runner.adapters.get('storage-profile')
+        cache=self.root/'client1'
+        selection=dict(suite='storage-profile',kind='sp',clients=1,cases=['inventory-work'])
+        key='PZ_INVENTORY_WORK_TEST_CACHE'
+        self.assertEqual(adapter.environment(selection,'client1',cache),{key:cache})
+        for cases in (['inventory-work'],['inventory-work','inventory-freshness']):
+            selected=dict(selection,cases=cases)
+            with self.subTest(cases=cases):
+                admitted=runner._fixture_environment(selected,'client1',cache,{key:str(cache)})
+                self.assertEqual(admitted[key],str(cache))
+                for value in (str(self.root/'foreign'),'client1',42):
+                    with self.assertRaisesRegex(ValueError,'Invalid fixture-owned client environment'):
+                        runner._fixture_environment(selected,'client1',cache,{key:value})
+        foreign=[(dict(selection,suite='health'),'client1'),
+                 (dict(selection,kind='mp'),'client1'),(dict(selection,clients=2),'client1'),
+                 (dict(selection,clients=True),'client1'),(selection,'client2'),(selection,'server')]
+        foreign.extend((dict(selection,cases=cases),'client1') for cases in (
+            ['walk'],['inventory-freshness'],['inventory-food-age'],[],
+            ['inventory-work','walk'],['inventory-freshness','inventory-work']))
+        for selected,role in foreign:
+            with self.subTest(selection=selected,role=role):
+                self.assertEqual(adapter.environment(selected,role,cache),{})
+                with self.assertRaisesRegex(ValueError,'Invalid fixture-owned client environment'):
+                    runner._fixture_environment(selected,role,cache,{key:str(cache)})
+
+    def test_inventory_work_staged_environment_reaches_owned_mock_process(self):
+        adapter=runner.adapters.get('storage-profile')
+        cache=self.root/'client1'
+        self.selection.update(suite='storage-profile',kind='sp',clients=1,mode='native',languages=['EN'],
+                              cases=['inventory-work'],mods=adapter.definitions()['storage-profile']['default_mods'],options={})
+        self.runtime['roles']['client1']['env']={name:str(value) for name,value in
+            adapter.environment(self.selection,'client1',cache).items()}
+        self.content='[STORAGE_PROFILE] COMPLETE\n'
+        environments=[];original_popen=self.popen
+        def launch(command,**kwargs):
+            if 'env' in kwargs:environments.append(kwargs['env'])
+            return original_popen(command,**kwargs)
+        self.popen=launch
+        for name,value in [('selection',self.selection),('runtime',self.runtime)]:
+            (self.root/(name+'.json')).write_text(json.dumps(value))
+        result,_=self.invoke()
+        self.assertEqual('completed',result['status'],result)
+        self.assertEqual(environments[-1]['PZ_INVENTORY_WORK_TEST_CACHE'],str(cache))
+
     def test_basement_hall_cache_environment_requires_exact_suite_and_owned_role_cache(self):
         self.selection.update(mode='toolkit', languages=['EN'],
                               mods=['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'],
