@@ -30,7 +30,7 @@ def definitions():
         ('item-tags', ['scenes'], 'sp', ['RU'], ITEM_MODS),
         ('inventory-presentation', ['scenes'], 'sp', ['EN'], INVENTORY_MODS),
         ('smart-deposit', ['partial'], 'sp', ['EN'], INVENTORY_MODS),
-        ('storage-profile', ['walk', 'inventory-work', 'inventory-freshness', 'inventory-food-age'], 'sp', ['EN'], INVENTORY_MODS),
+        ('storage-profile', ['walk', 'inventory-work', 'inventory-selection', 'inventory-freshness', 'inventory-food-age'], 'sp', ['EN'], INVENTORY_MODS),
         ('inventory-tooltips', ['scenes'], 'sp', ['EN'], INVENTORY_MODS + ['VHSSkillNameInTooltip', 'EURY_CLOTHINGINFO']),
         ('animal-trailer', list(ANIMAL_CASES), 'mp', ['EN'], ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']),
     ):
@@ -91,6 +91,10 @@ def validate(selection):
                 or any(options.get(key) for key in ('seed_run', 'world_template', 'startup_connection', 'mp_host'))):
             raise ValueError('inventory_work_renderer requires clean/vanilla in standalone fresh one-client SP inventory-work')
     storage_session = suite == 'storage-profile' and cases == ['inventory-work', 'inventory-freshness']
+    if suite == 'storage-profile' and cases == ['inventory-selection']:
+        if (selection.get('resources', {}).get('exclusive') is not True
+                or any(selection.get('options', {}).get(key) for key in ('seed_run', 'world_template', 'mp_host'))):
+            raise ValueError('Selection timing requires exclusive admission and fresh standalone SP')
     if not cases or len(set(cases)) != len(cases) or any(case not in [row['id'] for row in spec['cases']] for case in cases) or suite != 'animal-trailer' and len(cases) != 1 and not storage_session:
         raise ValueError('Auxiliary fixtures require exactly one supported case per fresh run')
     if storage_session and (type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
@@ -115,7 +119,7 @@ def validate(selection):
         forbidden = {'ContainerCapacityIndicator', 'BravoItemDetails', 'Quartermaster', 'HasResearch', 'SeedSeasonIndicator'} & set(selection['mods'])
         if forbidden:
             raise ValueError('External inventory owners must be omitted: ' + ', '.join(sorted(forbidden)))
-    if suite == 'storage-profile' and 'inventory-work' in cases:
+    if suite == 'storage-profile' and any(case in cases for case in ('inventory-work', 'inventory-selection')):
         required.add('ZombieBuddy')
     if suite == 'video-recording':
         required.add('PZToolkitJavaPatches')
@@ -151,7 +155,7 @@ def environment(selection, role, cache):
     if (selection.get('suite') == 'storage-profile' and selection.get('kind') == 'sp'
             and role == 'client1' and type(selection.get('clients', 1)) is int
             and selection.get('clients', 1) == 1
-            and selection.get('cases') in (['inventory-work'], ['inventory-work', 'inventory-freshness'])):
+            and selection.get('cases') in (['inventory-work'], ['inventory-selection'], ['inventory-work', 'inventory-freshness'])):
         return {'PZ_INVENTORY_WORK_TEST_CACHE': Path(cache)}
     return {}
 
@@ -212,11 +216,14 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, host=selection['kind'] == 'mp')
             else:
                 prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier)
-        if suite == 'storage-profile' and 'inventory-work' in selection['cases']:
+        if suite == 'storage-profile' and any(case in selection['cases'] for case in ('inventory-work', 'inventory-selection')):
             _load(intake / 'stage_inventory_probe.py').stage(output, game, jdk, runtime)
             for role, settings in runtime['roles'].items():
                 settings.setdefault('env', {}).update(
                     {name: str(value) for name, value in environment(selection, role, settings['cache']).items()})
+            if selection['cases'] == ['inventory-selection']:
+                from ..mod_selection import selected_mod_version
+                _load(intake / 'stage_selection_probe.py').stage(output, runtime, selected_mod_version)
         if suite == 'storage-profile' and len(selection['cases']) > 1:
             fixture['failure_markers'].append('[QUEUE_SESSION] QUARANTINE ')
         if (suite == 'storage-profile' and selection['cases'] == ['inventory-food-age']
@@ -458,12 +465,12 @@ def verify(root, selection, catalog):
         elif suite in ('inventory-presentation', 'smart-deposit', 'inventory-tooltips', 'storage-profile'):
             verifier = 'verify.py'
             if suite == 'storage-profile':
-                verifier = {'inventory-work': 'inventory_work_verify.py', 'inventory-freshness': 'freshness_verify.py',
+                verifier = {'inventory-work': 'inventory_work_verify.py', 'inventory-selection': 'selection_verify.py', 'inventory-freshness': 'freshness_verify.py',
                             'inventory-food-age': 'food_age_verify.py'}.get(selection['cases'][0], verifier)
             elif suite == 'smart-deposit' and selection['kind'] == 'mp':
                 verifier = 'host_verify.py'
             module = _load(intake / verifier)
-            evidence.update(module.verify(root, text, selection) if selection['cases'] in (['inventory-food-age'], ['inventory-work']) or verifier == 'host_verify.py'
+            evidence.update(module.verify(root, text, selection) if selection['cases'] in (['inventory-food-age'], ['inventory-work'], ['inventory-selection']) or verifier == 'host_verify.py'
                             else module.verify(root, text))
         elif suite == 'item-tags':
             manifest = json.loads((intake / 'manifest.json').read_text())
