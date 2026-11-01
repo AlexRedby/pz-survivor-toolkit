@@ -2,6 +2,7 @@
 local selection=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
 local A=require 'WarehouseWalkingActor'
+local Items=require 'WarehouseWalkingItems'
 local F={module='WarehouseWalkingTest',phases={},initialTransport=selection.kind=='mp'and'native-reliable-ordered-channel0'or'in-process-shared-authority',
  materializationTransport=selection.kind=='mp'and'native-reliable-ordered-channel1'or'in-process-shared-authority',
  cleanupTransport=selection.kind=='mp'and'native-reliable-ordered-channel1'or'in-process-shared-authority'}
@@ -50,14 +51,14 @@ function F.sessionToken(player)return 'warehouse-walking:'..getTimestampMs()..':
 function F.capture(players,actors,baselines,token)
  assert(players.client1 and(selection.kind~='mp'or players.client2),'walking actors absent')
  if players.client2 then assert(players.client1:getOnlineID()~=players.client2:getOnlineID(),'walking actors share online ID')end
- local origin=F.chooseOrigin(players.client1);local s={players=players,crates={},stores={},owned={},initial={},actors=actors or {},nextIndex=1}
+ local origin=F.chooseOrigin(players.client1);local s={players=players,crates={},stores={},owned={},actors=actors or {},nextIndex=1}
  s.token=token or F.sessionToken(players.client1);F.preparing=s
  s.ids={token=s.token,crates={},origin={x=origin:getX(),y=origin:getY(),z=origin:getZ()},
   actorOrigins={},routeOrigins={},originalRootIds={},originalEquipment={},actorLoads={}}
  -- Capture and correlate every authority baseline before either actor changes.
  for role,player in pairs(players)do
   if not s.actors[role]then s.actors[role]=A.save(player)end
-  local actor=s.actors[role];s.initial[role]=actor.original;s.ids.originalRootIds[role]=actor.rootIds;s.ids.originalEquipment[role]=actor.equipment
+  local actor=s.actors[role];s.ids.originalRootIds[role]=actor.rootIds;s.ids.originalEquipment[role]=actor.equipment
   if baselines then A.matchBaseline(s.actors[role],assert(baselines[role],'missing owning actor baseline'),role)end
  end
  return s
@@ -72,12 +73,13 @@ function F.materialize(s)
   else A.equipmentProof(actor)end
  end
  local players=s.players;local origin=getCell():getGridSquare(s.ids.origin.x,s.ids.origin.y,s.ids.origin.z)
+ local reserved={};for _,actor in pairs(s.actors)do A.reserveIds(actor,reserved)end
  for role,player in pairs(players)do
   local laneY=origin:getY()+(role=='client1'and -2 or 2)
   s.ids.actorOrigins[role]={x=origin:getX()-2,y=laneY,z=origin:getZ()}
   s.ids.routeOrigins[role]={x=origin:getX(),y=laneY,z=origin:getZ()}
   local actor=s.actors[role];if not actor.detached then A.detach(actor)end
-  s.ids.actorLoads[role]=A.seed(actor,s.token..':actor:'..role)
+  s.ids.actorLoads[role]=A.seed(actor,s.token..':actor:'..role,reserved)
   local weight=s.ids.actorLoads[role].weight;assert(not s.actorWeight or math.abs(s.actorWeight-weight)<.000001,'walking actor cohort weights differ');s.actorWeight=weight
  end
  for i,square in ipairs(assert(F.placementAt(origin)))do
@@ -96,7 +98,7 @@ function F.resolve(player,packet,role,actor)
  assert(actor and F.same(actor.rootIds,assert(packet.originalRootIds[role])),'replica original root IDs differ')
  A.matchBaseline(actor,{rootIds=packet.originalRootIds[role],equipment=packet.originalEquipment[role]})
  A.bind(actor,assert(packet.actorLoads[role]))
- local s={player=player,role=role,ids=packet,token=packet.token,crates={},stores={},actors={[role]=actor},initial={[role]=actor.original}}
+ local s={player=player,role=role,ids=packet,token=packet.token,crates={},stores={},actors={[role]=actor}}
  if not A.snapshot(actor)then return end
  for i,point in ipairs(packet.crates)do
   local square=getCell():getGridSquare(point.x,point.y,point.z)
@@ -118,21 +120,31 @@ function F.seed(s,index)
  assert(s.players and not s.phase and index==s.nextIndex and F.phases[index],'out-of-order walking seed');preserved(s)
  local spec=F.phases[index];local p={token=s.token,index=index,phaseToken=s.token..':'..index,itemType='Base.Nails',crateIds={}}
  for k,v in pairs(spec)do p[k]=v end;s.phase=p
+ -- Stage the whole cohort before any container mutation or packet. Native
+ -- IDs are random; only this phase's live reservations survive staging.
+ for _,c in ipairs(s.stores)do assert(c:getItems():isEmpty(),'walking crate not empty')end
+ local reserved={};for _,actor in pairs(s.actors)do A.reserveIds(actor,reserved)end
+ local staged=Items.stage(p.itemType,#s.stores*p.itemsPerCrate,reserved);local slot=0
  for i,c in ipairs(s.stores)do
-  assert(c:getItems():isEmpty(),'walking crate not empty');p.crateIds[i]={}
+  p.crateIds[i]={}
   for _=1,p.itemsPerCrate do
-   local item=assert(c:AddItem('Base.Nails'));local id=item:getID()
-   assert(integer(id)and not s.owned[id],'invalid walking owned ID')
-   for _,initial in pairs(s.initial)do assert(not initial[id],'walking owned ID aliases original')end
-   item:getModData()[owner]=p.phaseToken;s.owned[id]={item=item,container=c,ft='Base.Nails'};p.crateIds[i][#p.crateIds[i]+1]=id
-   if isServer()then sendAddItemToContainer(c,item)end
+   slot=slot+1;local item=staged[slot];local id=item:getID()
+   s.owned[id]={item=item,id=id,container=c,ft=p.itemType,state='staged'}
+   item:getModData()[owner]=p.phaseToken;p.crateIds[i][#p.crateIds[i]+1]=id
   end;table.sort(p.crateIds[i])
- end;return p
+ end
+ for _,item in ipairs(staged)do local entry=s.owned[item:getID()];entry.state='inserting'
+  local added=entry.container:AddItem(item)
+  assert(added==item and item:getContainer()==entry.container and item:getID()==entry.id,'native walking insertion changed identity/endpoint')
+  entry.state='inserted'
+  if isServer()then sendAddItemToContainer(entry.container,item)end
+ end;p.seedComplete=true;return p
 end
 -- Returns nil only while a replica has not yet received the declared cohort.
 -- Once admitted, the caller requires this result instead of retrying a mutation.
 function F.snapshot(s)
- preserved(s);local p=assert(s.phase);local row=F.context(s,{crates={},rootIds={},actorLoads={},originals=true,identities=true,itemType='Base.Nails'})
+ preserved(s);local p=assert(s.phase);assert(p.seedComplete,'walking cohort insertion is incomplete')
+ local row=F.context(s,{crates={},rootIds={},actorLoads={},originals=true,identities=true,itemType='Base.Nails'})
  local seen={};local actor=s.players and s.players.client1 or s.player
  for i,c in ipairs(s.stores)do
   local object=s.crates[i];assert(object:getModData()[owner]==s.token..':'..i and object:getContainer()==c,'foreign walking crate')
@@ -164,17 +176,23 @@ local function cleanupEntries(s)
  for i,c in ipairs(s.stores)do
   assert(s.crates[i]:getModData()[owner]==s.token..':'..i and s.crates[i]:getContainer()==c,'refusing foreign walking crate cleanup')
   for _,item in ipairs(array(c:getItems()))do local id=item:getID();local entry=s.owned[id]
-   assert(entry and not seen[id]and item==entry.item and c==entry.container and item:getContainer()==c and item:getFullType()==entry.ft
+   assert(entry and entry.state~='staged'and not seen[id]and item==entry.item and c==entry.container and item:getContainer()==c and item:getFullType()==entry.ft
     and s.phase and item:getModData()[owner]==s.phase.phaseToken,'refusing foreign walking item cleanup')
    seen[id]=true;entries[#entries+1]=entry
   end
  end
- for id in pairs(s.owned)do assert(seen[id],'refusing missing walking identity cleanup')end;return entries
+ for id,entry in pairs(s.owned)do
+  assert(entry.id==id and entry.item:getID()==id and entry.item:getFullType()==entry.ft,'refusing changed walking identity cleanup')
+  local endpoint=entry.item:getContainer()
+  assert((entry.state=='staged'and endpoint==nil)or(entry.state=='inserting'and(endpoint==nil or endpoint==entry.container))
+   or(entry.state=='inserted'and endpoint==entry.container),'refusing missing/moved walking identity cleanup')
+  assert(endpoint==nil or seen[id],'refusing unlisted walking identity cleanup')
+ end;return entries
 end
 local function removeItems(s)
  local entries=cleanupEntries(s);local removed={}
  for _,entry in ipairs(entries)do local id=entry.item:getID();entry.container:Remove(entry.item)
-  if isServer()then sendRemoveItemFromContainer(entry.container,entry.item)end;removed[#removed+1]=id
+  if isServer() then sendRemoveItemFromContainer(entry.container,entry.item)end;removed[#removed+1]=id
  end;table.sort(removed);s.owned={};return removed
 end
 function F.release(s,index)

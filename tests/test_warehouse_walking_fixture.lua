@@ -16,8 +16,9 @@ function isServer()return true end
 function isClient()return false end
 local clock=1234
 function getTimestampMs()return clock end
-function sendAddItemToContainer()end
-function sendRemoveItemFromContainer()end
+local additions,removals={},{}
+function sendAddItemToContainer(c,item)additions[#additions+1]={container=c,item=item,id=item:getID()}end
+function sendRemoveItemFromContainer(c,item)removals[#removals+1]={container=c,item=item,id=item:getID()}end
 function sendServerCommand(player,module,command,row)assert(command~='CaptureBaseline'and command~='Normalize'and command~='Prepared'and command~='Abortd'and command~='Done','initial/terminal command used unordered server sender');replies[#replies+1]={role=player:getUsername(),command=command,row=row}end
 function warehouseWalkingOrderedServer(player,module,command,row)
  assert(command=='CaptureBaseline'or command=='Normalize'or command=='Prepared'or command=='Abortd'or command=='Done','noninitial/terminal server command changed transport')
@@ -27,28 +28,30 @@ local nextId,squares,failKind=0,{},nil
 local function list(values)
  return {size=function()return #values end,get=function(_,i)return values[i+1]end,isEmpty=function()return #values==0 end,contains=function(_,wanted)for _,value in ipairs(values)do if value==wanted then return true end end;return false end}
 end
+function instanceItem(value)
+ assert(value~=failKind,'simulated native item creation failure')
+ nextId=nextId+1;local item={id=nextId,kind='InventoryItem',fullType=value,weight=value=='Base.Apple'and .1 or .05}
+ function item:getID()return self.id end
+ function item:getFullType()return self.fullType end
+ function item:getName()return self.name or self.fullType end
+ function item:getCondition()return self.condition or 100 end
+ function item:isFavorite()return self.favorite or false end
+ function item:getUnequippedWeight()return self.weight end
+ function item:getContainer()return self.container end
+ function item:setName(v)self.name=v end
+ function item:setCustomName(v)self.custom=v end
+ function item:getModData()self.data=self.data or {};return self.data end
+ function item:setCustomWeight()end
+ function item:setActualWeight(v)self.weight=v end
+ function item:setWeight(v)self.weight=v end
+ return item
+end
 local function container()
  local c={values={},capacity=10}
  function c:getItems()return list(self.values)end
  function c:AddItem(value)
-  assert(value~=failKind,'simulated native item creation failure')
-  local item=value
-  if type(value)=='string'then
-   nextId=nextId+1;item={id=nextId,kind='InventoryItem',fullType=value,weight=value=='Base.Apple'and .1 or .05}
-   function item:getID()return self.id end
-   function item:getFullType()return self.fullType end
-   function item:getName()return self.name or self.fullType end
-   function item:getCondition()return self.condition or 100 end
-   function item:isFavorite()return self.favorite or false end
-   function item:getUnequippedWeight()return self.weight end
-   function item:getContainer()return self.container end
-   function item:setName(v)self.name=v end
-   function item:setCustomName(v)self.custom=v end
-   function item:getModData()self.data=self.data or {};return self.data end
-   function item:setCustomWeight()end
-   function item:setActualWeight(v)self.weight=v end
-   function item:setWeight(v)self.weight=v end
-  end
+  local item=type(value)=='string'and instanceItem(value)or value
+  if type(value)~='string'then for _,existing in ipairs(self.values)do if existing:getID()==item:getID()then return existing end end end
   self.values[#self.values+1]=item;item.container=self;return item
  end
  function c:Remove(item)
@@ -108,6 +111,7 @@ IsoThumpable={new=function()
  function object:transmitModData()end
  return object
 end}
+local Items=dofile(fixtureRoot..'shared/WarehouseWalkingItems.lua');package.preload.WarehouseWalkingItems=function()return Items end
 local A=dofile(fixtureRoot..'shared/WarehouseWalkingActor.lua');package.preload.WarehouseWalkingActor=function()return A end
 function instanceof(item,kind)return item.kind==kind end
 local F=dofile(fixtureRoot..'shared/WarehouseWalkingFixture.lua')
@@ -260,6 +264,123 @@ rejected(F.abort,s);assert(#s.stores[1].values==1);root:Remove(impostor);F.abort
 s=F.prepare(players(300));local add=s.stores[4].AddItem;s.stores[4].AddItem=function()error('allocation failed')end
 rejected(F.seed,s,1);s.stores[4].AddItem=add
 local aborted=F.abort(s);assert(#aborted.removedIds==3 and aborted.removedCrates==12 and F.absent(s.ids))
+-- Detached allocation reserves every original (including nested contents),
+-- both actor cohorts and the current batch before a single native insertion.
+local nativeFactory=instanceItem
+local collisionPeers=players(320)
+local bag=collisionPeers.client2.root:AddItem('Base.Bag_Schoolbag');bag.kind='InventoryContainer';bag.contents=container()
+function bag:getItemContainer()return self.contents end
+local nested=bag.contents:AddItem('Base.Bandage')
+local attempts,firstAccepted=0,nil
+instanceItem=function(ft)
+ local item=nativeFactory(ft);attempts=attempts+1
+ if attempts==1 then item.id=collisionPeers.client1.original.id
+ elseif attempts==2 then item.id=nested.id
+ elseif attempts==3 then firstAccepted=item.id
+ elseif attempts==4 or attempts==12 then item.id=firstAccepted end
+ return item
+end
+s=F.prepare(collisionPeers);instanceItem=nativeFactory
+assert(attempts==20,'actor allocation did not reject original/nested/cohort ID collisions')
+local occupied={};for _,saved in pairs(s.actors)do for _,item in ipairs(saved.cohort)do
+ assert(not occupied[item.id]and item.id~=nested.id and item.id~=collisionPeers.client1.original.id,'actor live IDs alias');occupied[item.id]=true
+end end
+local actorIDs={s.actors.client1.cohort[1].id,s.actors.client2.cohort[1].id}
+local beforeAdds=#additions;attempts=0;s.nextIndex=9
+instanceItem=function(ft)
+ for _,store in ipairs(s.stores)do assert(#store.values==0,'warehouse inserted before whole-batch allocation')end
+ assert(#additions==beforeAdds,'warehouse published before whole-batch allocation')
+ local item=nativeFactory(ft);attempts=attempts+1
+ if attempts<=2 then item.id=actorIDs[attempts]
+ elseif attempts==3 then item.id=nested.id
+ elseif attempts==4 then firstAccepted=item.id
+ elseif attempts==5 then item.id=firstAccepted end
+ return item
+end
+local dense=F.seed(s,9);instanceItem=nativeFactory
+assert(attempts==4804 and dense.seedComplete,'dense detached collision allocation differs')
+for _,store in ipairs(s.stores)do for _,item in ipairs(store.values)do
+ assert(not occupied[item.id]and item.id~=nested.id,'warehouse aliases actor/original IDs');occupied[item.id]=true
+end end
+F.abort(s)
+for _,player in pairs(collisionPeers)do assert(player.root.values[1]==player.original,'collision recovery lost original actor')end
+-- Once a cohort is released, its numeric ID may legitimately recur on a new
+-- exact object; reservations are live-scope, never lifetime-global.
+s=F.prepare(players(330));local first=F.seed(s,1);local oldItem=s.stores[1].values[1];local oldID=first.crateIds[1][1]
+F.release(s,1);local reused=false
+instanceItem=function(ft)local item=nativeFactory(ft);if not reused then item.id=oldID;reused=true end;return item end
+local second=F.seed(s,2);instanceItem=nativeFactory
+assert(second.crateIds[1][1]==oldID and s.stores[1].values[1]~=oldItem and oldItem:getContainer()==nil,'released ID could not recur')
+F.abort(s)
+-- Exhaustion or a late factory failure leaves the complete warehouse detached:
+-- neither an early crate nor its replica may receive a partial allocation.
+for _,mode in ipairs({'exhausted','factory-error'})do
+ s=F.prepare(players(340));s.nextIndex=9;attempts=0;beforeAdds=#additions
+ instanceItem=function(ft)
+  attempts=attempts+1
+  if mode=='factory-error'and attempts==37 then error('injected detached factory failure')end
+  local item=nativeFactory(ft)
+  if mode=='exhausted'then item.id=s.actors.client1.cohort[1].id end
+  return item
+ end
+ rejected(F.seed,s,9);instanceItem=nativeFactory
+ assert(attempts==(mode=='exhausted'and 32 or 37),'allocation failure was retried beyond its bounded policy')
+ assert(#additions==beforeAdds,'failed staging published a partial cohort')
+ for _,store in ipairs(s.stores)do assert(#store.values==0,'failed staging mutated warehouse')end
+ rejected(F.snapshot,s)
+ local result=F.abort(s);assert(#result.removedIds==0 and result.actorRestored.client1.identity and result.actorRestored.client2.equipment,'staging failure lost originals')
+end
+-- Record each insertion before calling the native overload. A throw after its
+-- side effect is still ours; a never-inserted staged object is never published.
+for _,mode in ipairs({'before-insert','after-insert','publication'})do
+ s=F.prepare(players(350));local store=s.stores[4];local nativeAdd=store.AddItem;local nativeSend=sendAddItemToContainer
+ local beforeRemoves=#removals;beforeAdds=#additions;attempts=0
+ if mode=='publication'then
+  sendAddItemToContainer=function(c,item)nativeSend(c,item);attempts=attempts+1;if attempts==4 then error('injected uncertain publication')end end
+ else
+  store.AddItem=function(c,item)
+   if mode=='after-insert'then nativeAdd(c,item)end
+   error('injected native insertion failure')
+  end
+ end
+ rejected(F.seed,s,1);store.AddItem=nativeAdd;sendAddItemToContainer=nativeSend
+ local attached=mode=='before-insert'and 3 or 4
+ assert(#additions-beforeAdds==(mode=='publication'and 4 or 3),'publication advanced past failed insertion')
+ local result=F.abort(s)
+ assert(#result.removedIds==attached and result.ownedAbsent and result.actorRestored.client1.identity and result.actorRestored.client2.equipment,'partial seed did not restore exact originals')
+ -- Two actor cohorts were already published before this fault; include their
+ -- normal removal. Remove every attached owned item even when publication
+ -- failed before its explicit send; detached staged items need no packet.
+ assert(#removals-beforeRemoves==16+attached,'cleanup did not remove exactly the attached owned items')
+end
+for _,mode in ipairs({'before-insert','after-insert','publication'})do
+ local player=actor('client1',360);local saved=A.save(player);A.detach(saved)
+ local nativeAdd=player.root.AddItem;local nativeSend=sendAddItemToContainer
+ local beforeRemoves=#removals;beforeAdds=#additions;attempts=0
+ if mode=='publication'then
+  sendAddItemToContainer=function(c,item)nativeSend(c,item);attempts=attempts+1;if attempts==3 then error('injected actor publication failure')end end
+ else
+  player.root.AddItem=function(c,item)
+   attempts=attempts+1
+   if attempts~=3 then return nativeAdd(c,item)end
+   if mode=='after-insert'then nativeAdd(c,item)end
+   error('injected actor insertion failure')
+  end
+ end
+ rejected(A.seed,saved,'partial-actor');player.root.AddItem=nativeAdd;sendAddItemToContainer=nativeSend
+ assert(not A.snapshot(saved),'partial actor cohort admitted');A.restore(saved,true)
+ assert(player.root.values[1]==player.original and #player.root.values==1,'partial actor seed lost original root')
+ assert(#additions-beforeAdds==(mode=='publication'and 3 or 2)and #removals-beforeRemoves==(mode=='before-insert'and 2 or 3),'actor cleanup ignored attached ownership')
+ A.originalProof(saved)
+end
+-- Missing a committed object remains a failure; staged-prefix support must not
+-- turn loss of an already inserted object into successful cleanup.
+s=F.prepare(players(370));F.seed(s,1);local missing=s.stores[1].values[1];s.stores[1]:Remove(missing)
+rejected(F.abort,s);assert(#s.stores[2].values==1,'missing-item rejection partially cleaned warehouse')
+s.stores[1]:AddItem(missing);F.abort(s)
+local player=actor('client1',380);local saved=A.save(player);A.detach(saved);A.seed(saved,'missing-actor')
+missing=player.root.values[1];player.root:Remove(missing);rejected(A.restore,saved,true)
+assert(#player.root.values==7,'missing actor item allowed partial cleanup');player.root:AddItem(missing);A.restore(saved,true)
 -- Partly built geometry also uses actual objects and counts at cleanup.
 local nativeNew,created=IsoThumpable.new,0
 IsoThumpable.new=function(...)created=created+1;assert(created<5,'object allocation failed');return nativeNew(...)end

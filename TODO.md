@@ -249,7 +249,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Make dense warehouse seeding transactional and collision-safe. Native `InventoryItemFactory.CreateItem` assigns random integer IDs without a uniqueness check; `ItemContainer.AddItem(String)` inserts without checking them. A 4,800-item Host seed rejected a reused ID before phase 12 after `WarehouseWalkingFixture.seed` had already inserted the item but before registering ownership, so abort then refused its cleanup as foreign. Validate fresh native identities before inserting/publishing a cohort and retain exact ownership of every partial mutation. Cover a forced duplicate and partial seed failure without accepting ambiguous wire IDs, removing unknown objects or weakening original-object restoration; qualify the allocation policy and cleanup in SP/Host.
+- [ ] Make warehouse cleanup interruption-safe after removal starts. Source review shows that `removeItems` removes an owned object before retiring its ledger entry; a subsequent removal/send error leaves a retry rejecting that already removed object as missing, which can keep originals detached. Track exact per-object removal progress and uncertain publication, covering failures before/after native removal and during removal sends without weakening foreign-object or genuinely missing-item rejection. This is separate from collision-safe seeding.
 
 - [ ] Verify native evolved-recipe boolean parsing before relying on `Cookable=false`. B42.21's loader sets the cookable flag to true whenever the `Cookable` key is present, even with a false value. Add an isolated native absent/true/false regression and decide the intended compatibility behavior before changing recipes or the parser.
 

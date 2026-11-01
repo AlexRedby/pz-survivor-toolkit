@@ -28,9 +28,18 @@ cohort composition, weight, IDs, authority/replica agreement and retained
 original identities, topology and payload fields.
 Partial setup and abort cleanup use the same ownership checks before removal.
 Native factory IDs are random and are not guaranteed unique. Dense seeding
-currently rejects a duplicate after insertion, which can prevent safe cleanup
-of that partial cohort; transactional seeding remains tracked in `TODO.md`.
-Exclude the entire failed capture from comparisons and retain its report.
+first stages the entire cohort through native `instanceItem`, detached from
+containers. Each slot permits up to 32 collision retries against saved originals,
+both live actor cohorts and the current warehouse cohort. IDs may recur after a
+previous phase is fully released; the fixture never rewrites IDs or changes RNG.
+It inserts the exact staged objects with `AddItem(InventoryItem)`, recording
+each insertion before the native mutation. Allocation failures publish no
+partial cohort; insertion/publication failures retain exact-object ownership
+for cleanup after the normal drain barrier, including native calls that insert
+before throwing. Only a complete seed can reach measurement. Cleanup still
+rejects foreign objects and missing committed items; interrupted cleanup itself
+remains a separate TODO. Exclude the entire failed capture from comparisons and
+retain its report.
 
 The disposable test mod sends the setup and final cleanup commands through the
 unchanged native command serializer with reliable ordered delivery. Initial
@@ -107,6 +116,7 @@ figures do not establish GPU FPS, WAN behavior or the cause of a user's stutter.
 python3 -m unittest tests.test_queue_warehouse_walking tests.test_warehouse_walking_profile \
   tests.test_warehouse_walking_equipment_native
 python3 tools/run_tests.py --test test_warehouse_walking_fixture \
+  --test test_warehouse_walking_items \
   --test test_warehouse_walking_native --test test_warehouse_walking_client \
   --test test_warehouse_walking_profile --test test_warehouse_walking_lock
 ```

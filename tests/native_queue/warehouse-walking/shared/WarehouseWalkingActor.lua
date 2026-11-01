@@ -2,6 +2,7 @@
 -- measured inventory, independently on authority and owning replica. Never send
 -- original item packets: receiving one would replace the replica's saved object.
 local A={count=8,itemType='Base.Nails'}
+local Items=require 'WarehouseWalkingItems'
 local owner='PZSTWarehouseWalkingActor'
 local function array(list)local out={};for i=0,list:size()-1 do out[#out+1]=list:get(i)end;return out end
 local function ids(items)local out={};for _,item in ipairs(items)do out[#out+1]=item:getID()end;table.sort(out);return out end
@@ -110,12 +111,26 @@ function A.normalizedProof(s)
  savedProof(s);assert(s.detached and s.root:getItems():isEmpty()and equipmentEmpty(s.player),'actor normalization barrier not empty')
  return {rootEmpty=true,equipmentEmpty=true,originalsStashed=true}
 end
-function A.seed(s,token)
- assert(s.detached and s.root:getItems():isEmpty(),'actor root not empty before deterministic seed');s.token=token
- for _=1,A.count do local item=assert(s.root:AddItem(A.itemType));s.cohort[#s.cohort+1]=item
-  assert(not s.original[item:getID()],'actor cohort aliases original');item:getModData()[owner]=token
-  if isServer()then sendAddItemToContainer(s.root,item)end
+function A.reserveIds(s,reserved)
+ reserved=reserved or {}
+ for id in pairs(s.original)do Items.reserve(reserved,id)end
+ for _,item in ipairs(s.cohort)do Items.reserve(reserved,item:getID())end
+ return reserved
+end
+function A.seed(s,token,reserved)
+ assert(s.detached and s.root:getItems():isEmpty()and not s.seedEntries,'actor root not empty or already seeded');s.token=token
+ s.cohort=Items.stage(A.itemType,A.count,A.reserveIds(s,reserved));s.seedEntries={}
+ for _,item in ipairs(s.cohort)do
+  s.seedEntries[item]={id=item:getID(),state='staged'}
  end
+ for _,item in ipairs(s.cohort)do item:getModData()[owner]=token end
+ for _,item in ipairs(s.cohort)do
+  local entry=s.seedEntries[item];entry.state='inserting'
+  local added=s.root:AddItem(item)
+  assert(added==item and item:getContainer()==s.root and item:getID()==entry.id,'native actor insertion changed identity/endpoint')
+  entry.state='inserted'
+  if isServer()then sendAddItemToContainer(s.root,item)end
+ end;s.seedComplete=true
  local proof=assert(A.snapshot(s));return {token=token,itemIds=proof.itemIds,itemType=A.itemType,count=A.count,weight=proof.weight,equipment='empty'}
 end
 function A.bind(s,descriptor)
@@ -133,6 +148,7 @@ function A.snapshot(s)
  local itemIds=ids(items);for i=2,#itemIds do assert(itemIds[i]~=itemIds[i-1],'duplicate actor cohort ID')end
  if s.descriptor then if not same(itemIds,s.descriptor.itemIds)then return end;assert(math.abs(weight-s.descriptor.weight)<.000001,'actor cohort weight differs')end
  if #s.cohort>0 then
+  assert(s.seedComplete,'authority actor cohort is incomplete')
   assert(same(itemIds,ids(s.cohort)),'authority actor cohort identity changed')
   local own={};for _,item in ipairs(s.cohort)do own[item]=true end
   for _,item in ipairs(items)do assert(own[item],'authority actor cohort object replaced')end
@@ -144,20 +160,35 @@ function A.validateRestore(s,authority)
  if s.restored or not s.detached then A.equipmentProof(s);return savedProof(s)end
  freshEquipment(s.player)
  if not s.detaching then assert(equipmentEmpty(s.player),'unexpected equipment before actor cleanup')end
- local items=array(s.root:getItems());local own,seen={},{};for _,item in ipairs(s.cohort)do own[item]=true end
+ local items=array(s.root:getItems());local own,seen={},{}
+ if authority then
+  for _,item in ipairs(s.cohort)do
+   local entry=assert(s.seedEntries and s.seedEntries[item],'missing actor insertion ledger');own[item]=entry
+   assert(item:getID()==entry.id and item:getFullType()==A.itemType,'owned actor identity/type changed')
+   local endpoint=item:getContainer()
+   assert((entry.state=='staged'and endpoint==nil)or(entry.state=='inserting'and(endpoint==nil or endpoint==s.root))
+    or(entry.state=='inserted'and endpoint==s.root),'owned actor insertion endpoint changed/missing')
+  end
+ end
  for _,item in ipairs(items)do
   assert(not seen[item:getID()],'duplicate actor identity before cleanup');seen[item:getID()]=true
   local original=s.original[item:getID()]
-  assert((s.detaching and original and original.item==item and original.container==s.root)or(item:getFullType()==A.itemType and item:getModData()[owner]==s.token and(not authority or own[item])),'refusing foreign actor cleanup')
+  assert((s.detaching and original and original.item==item and original.container==s.root)or(item:getFullType()==A.itemType and item:getModData()[owner]==s.token
+   and(not authority or own[item]and own[item].state~='staged')),'refusing foreign actor cleanup')
  end
- if authority and not s.detaching then assert(#items==#s.cohort,'owned actor item missing before cleanup')end
+ if authority then for item,entry in pairs(own)do
+  if item:getContainer()==s.root then assert(seen[entry.id],'owned actor item missing from root')end
+ end end
  savedProof(s)
  return items
 end
 function A.restore(s,authority)
  if s.restored or not s.detached then A.equipmentProof(s);return savedProof(s)end
  local items=A.validateRestore(s,authority)
- for _,item in ipairs(items)do if not s.original[item:getID()]then s.root:Remove(item);if authority and isServer()then sendRemoveItemFromContainer(s.root,item)end end end
+ for _,item in ipairs(items)do if not s.original[item:getID()]then
+  s.root:Remove(item)
+  if authority and isServer() then sendRemoveItemFromContainer(s.root,item)end
+ end end
  -- A partly failed detach may leave a suffix in the root. Reinsert every
  -- original locally in its exact initial order; none of these are network packets.
  for _,item in ipairs(s.roots)do if item:getContainer()==s.root then s.root:Remove(item)else assert(item:getContainer()==nil,'original root unexpectedly attached')end end
