@@ -10,6 +10,7 @@ import time
 from .report import events, execution_issues, read_json, verify_manifest, write_json
 from . import adapters, admission, pack, worlds, coop, desktop, glfw
 from .native import font_preload
+from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
@@ -150,6 +151,7 @@ def run(root, resource_wait=300):
         processes, streams, displayed = {}, [], set()
         execution = {"status": "running", "platform": "darwin", "processes": {}, "peer_disconnected": False, 'attachments': [],
                      'resources': resources, 'input_guards': input_guards, 'desktop': window_manager.evidence}
+        fixture_monitor = FixtureLoadMonitor(root, runtime, selection)
         game = Path(runtime["game"])
         base = [runtime["java"], "-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED",
                 "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED", "-Dzomboid.steam=0",
@@ -249,8 +251,14 @@ def run(root, resource_wait=300):
             if selection["kind"] == "mp":
                 launch('client1' if hosted else 'server')
                 deadline = time.monotonic() + (180 if hosted else 120)
-                while (runtime.get('fixture', {}).get('server_ready', '[QUEUE_TEST] SERVER_READY') not in text("server")
-                       or hosted and '[QUEUE_TEST] HOST_CHILD ' not in text('client1')):
+                while True:
+                    current = {role: text(role) for role in processes}
+                    if hosted:
+                        current['server'] = text('server')
+                    check_fixture_loading(fixture_monitor, current, execution, 'readiness')
+                    if (runtime.get('fixture', {}).get('server_ready', '[QUEUE_TEST] SERVER_READY') in current['server']
+                            and (not hosted or '[QUEUE_TEST] HOST_CHILD ' in current['client1'])):
+                        break
                     if processes['client1' if hosted else 'server'].poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError("Server readiness failed")
                     time.sleep(1)
@@ -266,6 +274,7 @@ def run(root, resource_wait=300):
             deadline = time.monotonic() + selection["timeout_seconds"]
             while time.monotonic() < deadline:
                 current = {role: text(role) for role in adapters.roles(selection)}
+                check_fixture_loading(fixture_monitor, current, execution, 'execution')
                 for role in clients:
                     if processes[role].poll() is None:
                         window_action(role, 'check')
@@ -330,14 +339,14 @@ def run(root, resource_wait=300):
                             except (OSError, subprocess.SubprocessError, RuntimeError) as error:
                                 execution.setdefault('cleanup_errors', []).append('Probe close failed: ' + str(error))
                 for role, process in reversed(list(processes.items())):
-                    if hosted and role == 'client1' and 'server' in execution['processes']:
+                    if hosted and role == 'client1' and 'server' in execution['processes'] and not execution.get('fixture_load_error'):
                         try:
                             saved = coop.save_host(process, execution['processes']['server']['pid'], lambda: text('client1'))
                             execution['host_save'] = saved
                             execution['processes']['server']['exit_code'] = saved['exit_code']
                         except (OSError, RuntimeError) as error:
                             execution.setdefault('cleanup_errors', []).append('Host save: ' + str(error))
-                    if role == 'server' and process.poll() is None:
+                    if role == 'server' and process.poll() is None and not execution.get('fixture_load_error'):
                         try:
                             process.stdin.write('save\nquit\n'); process.stdin.flush()
                             process.wait(timeout=30)

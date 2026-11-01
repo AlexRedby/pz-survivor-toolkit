@@ -63,6 +63,15 @@ def mod_layers(folder, version=(42, 21)):
     return [path for path in (folder / "common", selected) if path.is_dir()]
 
 
+def lua_sources(folder):
+    """Effective Lua files: a selected version replaces the same common path."""
+    effective = {}
+    for layer in mod_layers(folder):
+        lua = layer / 'media/lua'
+        effective.update({path.relative_to(lua): path for path in lua.rglob('*.lua') if path.is_file()})
+    return sorted(effective.values())
+
+
 def mod_info(folder, version=(42, 21)):
     # ChooseGameInfo probes the selected version, then common; root metadata
     # belongs to the legacy loader and cannot make a B42 mod discoverable.

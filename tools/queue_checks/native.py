@@ -16,7 +16,7 @@ except ImportError:
     import lua_compatibility
 from .mod_selection import (
     MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots,
-    mod_layers, mod_info, selected_mod_version,
+    mod_layers, mod_info, selected_mod_version, lua_sources,
 )
 
 
@@ -237,20 +237,20 @@ def source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None
     return locations, template, world
 
 
-def runtime_lua_sources(runtime, selection):
+def runtime_lua_sources(runtime, selection, *, fixtures_only=False):
     """Effective owned runtime files, including generated fixtures; never offline harnesses."""
     owned = {'ActionQueueTest', *runtime['fixture'].get('mods', [])}
-    owned.update({'PZSurvivorToolkit', 'PZToolkitJavaPatches'}.intersection(selection['mods']))
+    if not fixtures_only:
+        owned.update({'PZSurvivorToolkit', 'PZToolkitJavaPatches'}.intersection(selection['mods']))
     sources = set()
     for role in runtime['roles'].values():
         cache = Path(role['cache'])
         for identifier in sorted(owned):
-            effective = {}
-            for layer in mod_layers(cache / 'mods' / identifier):
-                lua = layer / 'media/lua'
-                effective.update({path.relative_to(lua): path for path in lua.rglob('*.lua') if path.is_file()})
-            sources.update(effective.values())
-        sources.update((cache / 'Server').glob('*.lua'))
+            if fixtures_only and not (cache / 'mods' / identifier).is_dir():
+                continue
+            sources.update(lua_sources(cache / 'mods' / identifier))
+        if not fixtures_only:
+            sources.update((cache / 'Server').glob('*.lua'))
     return sorted(sources)
 
 

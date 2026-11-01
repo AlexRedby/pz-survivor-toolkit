@@ -121,6 +121,105 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
 
+    def fixture_source(self, role='client1'):
+        source = self.root / role / 'mods/ActionQueueTest/42/media/lua/shared/ZZBrokenFixture.lua'
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('error("fixture initialization")\n')
+        return source
+
+    def fixture_failure(self, source, kind='runtime', closed=True):
+        header = 'Oct 29, 2026 4:52:47 PM zombie.Lua.LuaManager RunLuaInternal\n'
+        if kind == 'compile':
+            text = (header + 'SEVERE: Error found in LUA file: ' + str(source) + '\n'
+                    'ERROR: General > LuaManager.RunLuaInternal> Exception thrown\n'
+                    '\tse.krka.kahlua.vm.KahluaException: fixture syntax\n\tStack trace:\n')
+        else:
+            text = header + 'SEVERE: fixture initialization failed\n' + header + 'SEVERE: at ' + source.name + ':1\n'
+        return text + ('LOG: Lua > next complete record\n' if closed else '')
+
+    def test_fixture_load_failure_precedes_completion_and_retains_owned_cleanup(self):
+        self.content = self.fixture_failure(self.fixture_source()) + self.content
+        result, kills = self.invoke(sleep=AssertionError('must stop before sleeping'))
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('execution', result['fixture_load_error']['phase'])
+        self.assertEqual('runtime', result['fixture_load_error']['kind'])
+        self.assertIn('ZZBrokenFixture.lua', result['error'])
+        self.assertIn('SEVERE: fixture initialization failed', result['fixture_load_error']['block'])
+        self.assertEqual(self.content, (self.root / 'client1-launch.log').read_text())
+        self.assertEqual(result, json.loads((self.root / 'execution.json').read_text()))
+        self.assertEqual([101], [call.args[0] for call in kills])
+        self.assertTrue(all(stream.closed for stream in self.streams))
+
+    def test_partial_fixture_error_waits_for_a_complete_record_then_stops(self):
+        complete = self.content
+        self.content = self.fixture_failure(self.fixture_source(), closed=False)
+        waits = []
+        def finish_log(seconds):
+            waits.append(seconds)
+            self.streams[-1].write('LOG: Lua > complete boundary\n' + complete)
+            self.streams[-1].flush()
+        result, _ = self.invoke(sleep=finish_log)
+        self.assertEqual([2], waits)
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('runtime', result['fixture_load_error']['kind'])
+
+    def test_unrelated_require_warning_does_not_abort_completed_fixture(self):
+        self.fixture_source()
+        self.content = ('WARN : Lua > require("Foreign/Optional") failed\n' + self.content)
+        result, _ = self.invoke()
+        self.assertEqual('completed', result['status'])
+        self.assertNotIn('fixture_load_error', result)
+
+    def test_dedicated_server_fixture_error_prevents_client_launch_even_if_ready(self):
+        self.selection.update(kind='mp', ports=[])
+        self.runtime.update(server_name='owned')
+        for role in ('server', 'client2'):
+            cache = self.root / role
+            cache.mkdir()
+            (cache / 'options.ini').write_text('voiceEnable=false\n')
+            self.runtime['roles'][role] = {'cache': str(cache), 'classes': str(self.root / 'classes')}
+        (self.root / 'server/Server').mkdir()
+        (self.root / 'server/Server/owned.ini').write_text('VoiceEnable=false\n')
+        self.content = self.fixture_failure(self.fixture_source('server'), 'compile') + '[QUEUE_TEST] SERVER_READY\n'
+        for name, value in [('selection', self.selection), ('runtime', self.runtime)]:
+            (self.root / (name + '.json')).write_text(json.dumps(value))
+        result, kills = self.invoke(sleep=AssertionError('must fail in readiness'))
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('readiness', result['fixture_load_error']['phase'])
+        self.assertEqual('server', result['fixture_load_error']['role'])
+        self.assertEqual({'server'}, result['processes'].keys())
+        self.assertEqual(2, len(self.commands))  # guard and the owned server, no clients
+        self.assertEqual([101], [call.args[0] for call in kills])
+
+    def test_host_fixture_failure_during_readiness_stops_owner_group(self):
+        self.prepare_host()
+        source = self.fixture_source()
+        (self.root / 'client1/coop-console.txt').write_text(self.fixture_failure(source, 'compile'))
+        result, kills = self.invoke(sleep=AssertionError('must fail in readiness'))
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('readiness', result['fixture_load_error']['phase'])
+        self.assertEqual('server', result['fixture_load_error']['role'])
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
+        self.assertEqual((self.root / 'client1/coop-console.txt').read_text(),
+                         (self.root / 'server-launch.log').read_text())
+
+    def test_host_load_failure_skips_unavailable_save_handshake_after_child_proof(self):
+        self.prepare_host()
+        source = self.fixture_source()
+        child = coop.child
+        def proven_child(text, parent):
+            pid = child(text, parent)
+            (self.root / 'client1/coop-console.txt').write_text(self.fixture_failure(source))
+            return pid
+        self.host_save = Mock(side_effect=AssertionError('load failure must not wait for save callbacks'))
+        with patch.object(coop, 'child', side_effect=proven_child):
+            result, kills = self.invoke()
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('execution', result['fixture_load_error']['phase'])
+        self.host_save.assert_not_called()
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
+        self.assertEqual([], result['host_cleanup']['remaining_pids'])
+
     def test_unavailable_gui_access_does_not_start_caffeinate_or_java(self):
         with patch.object(runner.desktop, 'require_gui_access', side_effect=RuntimeError('GUI access unavailable; outside the sandbox')):
             with self.assertRaisesRegex(RuntimeError, 'outside the sandbox'):

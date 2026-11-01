@@ -12,6 +12,7 @@ import subprocess
 import time
 from . import adapters, admission, coop
 from .report import read_json, verify_manifest, write_json
+from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 
 
 def loader_agent(game, cache, selection):
@@ -35,6 +36,7 @@ def run(root, resource_wait=300):
     if (root / 'execution.json').exists() or list(root.glob('*-launch.log')):
         raise ValueError('Fresh prepared invocation required')
     _verify_live_inputs(root, selection, runtime)
+    fixture_monitor = FixtureLoadMonitor(root, runtime, selection)
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateMutexW.argtypes = [W.LPVOID, W.BOOL, W.LPCWSTR];kernel.CreateMutexW.restype = W.HANDLE
     kernel.WaitForSingleObject.argtypes = [W.HANDLE, W.DWORD];kernel.WaitForSingleObject.restype = W.DWORD
@@ -111,6 +113,11 @@ def run(root, resource_wait=300):
             while time.monotonic() < deadline:
                 coop.mirror_logs(root)
                 text = (root / 'client1-launch.log').read_text(errors='replace')
+                server_log = root / 'server-launch.log'
+                check_fixture_loading(fixture_monitor, {
+                    'client1': text,
+                    'server': server_log.read_text(errors='replace') if server_log.is_file() else '',
+                }, execution, 'execution')
                 if '[QUEUE_TEST] HOST_CHILD ' in text and 'server' not in execution['processes']:
                     execution['processes']['server'] = {'pid': coop.child(text, process.pid), 'parent_role': 'client1',
                                                         'cache': str(root / 'client1')}
