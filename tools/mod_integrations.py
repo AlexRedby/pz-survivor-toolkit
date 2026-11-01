@@ -181,7 +181,8 @@ def has_required_input(name, option, args):
 def bind_sources(lua, name, args):
     """Use the same per-test declarations for explicit inputs and locked files."""
     locked = getattr(args, 'integration_sources', {}).get(name, {})
-    for spec in INTEGRATIONS.values():
+    inputs = []
+    for identifier, spec in INTEGRATIONS.items():
         value = getattr(args, spec['option'], None)
         for source in spec['tests'].get(name, ()):
             if source.variable in locked:
@@ -189,11 +190,15 @@ def bind_sources(lua, name, args):
             elif value is not None:
                 path = manual_source(spec, value, source)
                 if source.optional and not path.is_file():
-                    continue
+                    path = None
             else:
-                continue
+                path = None
             if path is not None:
                 lua.globals()[source.variable] = path.read_text(encoding='utf-8')
+            inputs.append({'integration': identifier, 'variable': source.variable,
+                           'required': not source.optional,
+                           'status': 'bound' if path is not None else 'not-applicable' if source.optional else 'missing'})
+    return inputs
 
 
 def configure(args, project, requested):

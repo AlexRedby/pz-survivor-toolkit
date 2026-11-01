@@ -53,6 +53,15 @@ DEFAULT_NATIVE_ONLY = {
     "native_tags/check_placement.lua",
 }
 
+# Completion receipts are separate from input availability. A supplied source
+# cannot prove that its conditional assertions actually ran.
+SOURCE_CHECKS = {
+    'test_inventory_refresh.lua': (
+        'native-page', 'bc-proximity', 'cleanui-page', 'cleanui-vanilla-page',
+        'cleanui-bc-discovery', 'cleanui-bc-player', 'bc-pane-selection',
+    ),
+}
+
 
 def discover_tests(root):
     """Top-level test_*.lua files are runnable without a second registration."""
@@ -82,7 +91,7 @@ def configure_game_sources(args):
 
 def configure_test_sources(lua, name, args):
     """Give every isolated runtime the same paths; read only this test's inputs."""
-    mod_integrations.bind_sources(lua, name, args)
+    inputs = mod_integrations.bind_sources(lua, name, args)
     lua.globals().ProjectRoot = str(ROOT)
     lua.globals().NativeQuartermasterLuaRoot = str(ROOT / "PZSurvivorToolkit/42/media/lua")
     for option, variable in (
@@ -169,6 +178,7 @@ def configure_test_sources(lua, name, args):
             lua.globals().NativeTextBoxSource = (args.native_inventory_context_menu.parent / "ISTextBox.lua").read_text(encoding="utf-8")
     if name in ("test_inventory_tags.lua", "test_inventory_filter.lua", "test_inventory_layout.lua", "test_inventory_interaction.lua") and args.native_inventory_pane:
         lua.globals().NativeInventoryPaneSource = args.native_inventory_pane.read_text(encoding="utf-8")
+    return inputs
 
 
 def test_variants(name, args):
@@ -199,19 +209,48 @@ class _Tee:
         return self.target.flush()
 
 
+class _Coverage:
+    def __init__(self, name):
+        self.expected = SOURCE_CHECKS.get(name, ())
+        self.completed = {}
+        self.errors = []
+
+    def record(self, check, status, reason=None):
+        if (check not in self.expected or check in self.completed
+                or status not in ('passed', 'skipped')
+                or reason is not None and not isinstance(reason, str)
+                or status == 'skipped' and (not reason or not reason.strip())):
+            error = f'Invalid or duplicate coverage receipt: {check!r}, {status!r}, {reason!r}'
+            self.errors.append(error)
+            raise ValueError(error)
+        self.completed[check] = {'id': check, 'status': status, 'reason': reason}
+
+    def results(self):
+        return [self.completed.get(check, {'id': check, 'status': 'not-run',
+                                          'reason': 'No completion receipt; source assertions did not finish.'})
+                for check in self.expected]
+
+
 def _run_variant(name, flag, args, LuaRuntime):
     started = time.perf_counter()
+    inputs = []
+    coverage = _Coverage(name)
     try:
         lua = LuaRuntime(unpack_returned_tuples=True)
-        configure_test_sources(lua, name, args)
+        inputs = configure_test_sources(lua, name, args)
+        if coverage.expected:
+            lua.globals()['TestCoverage'] = coverage.record
         if flag:
             lua.globals()[flag] = True
     except Exception as error:
+        result = {"test": name, "variant": flag or "default", "status": "failed",
+                  "elapsed_seconds": round(time.perf_counter() - started, 6),
+                  "error": str(error) or type(error).__name__, "skip_reasons": [],
+                  "source_inputs": inputs, "checks": coverage.results()}
         if not args.keep_going:
+            error._lua_runner_result = result
             raise
-        return {"test": name, "variant": flag or "default", "status": "failed",
-                "elapsed_seconds": round(time.perf_counter() - started, 6),
-                "error": str(error) or type(error).__name__, "skip_reasons": []}
+        return result
     try:
         captured = _Tee(sys.stdout)
         if hasattr(lua, "eval"):
@@ -220,31 +259,44 @@ def _run_variant(name, flag, args, LuaRuntime):
                 captured.write("\t".join(to_string(value) for value in values) + "\n")
             lua.globals()["print"] = lua_print
         lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
+        if coverage.errors:
+            raise ValueError('; '.join(coverage.errors))
         output = "".join(captured.parts)
         partial = [line.strip() for line in output.splitlines()
                    if re.search(r"(?<![A-Za-z0-9_])SKIP(?:PED)?(?![A-Za-z0-9_])", line)
-                   or re.search(r"\b(?:checks?|tests?|contracts?) skipped\s*\(", line)]
+                   or re.search(r"\b(?:checks?|tests?|contracts?) skipped\b", line)]
+        partial.extend(f"Missing {item['integration']} source: {item['variable']}"
+                       for item in inputs if item['status'] == 'missing')
+        checks = coverage.results()
+        partial.extend(f"{item['id']}: {item['reason']}" for item in checks if item['status'] != 'passed')
         return {"test": name, "variant": flag or "default",
                 "status": "partial" if partial else "passed",
                 "elapsed_seconds": round(time.perf_counter() - started, 6),
-                "error": None, "partial_reasons": partial}
+                "error": None, "partial_reasons": partial,
+                "source_inputs": inputs, "checks": checks}
     except Exception as error:
         result = {"test": name, "variant": flag or "default", "status": "failed",
                   "elapsed_seconds": round(time.perf_counter() - started, 6),
-                  "error": str(error) or type(error).__name__, "skip_reasons": []}
+                  "error": str(error) or type(error).__name__, "skip_reasons": [],
+                  "source_inputs": inputs, "checks": coverage.results()}
         if not args.keep_going:
             error._lua_runner_result = result
             raise
         return result
 
 
-def _write_report(path, results):
-    counts = {status: sum(result["status"] == status for result in results)
-              for status in ("passed", "partial", "failed", "skipped")}
+def _counts(results):
+    return {status: sum(result['status'] == status for result in results)
+            for status in ('passed', 'partial', 'failed', 'skipped')}
+
+
+def _write_report(path, results, require_complete=False):
+    counts = _counts(results)
     report = {"status": "failed" if counts["failed"] else "partial" if counts["partial"] or counts["skipped"] else "passed",
               "counts": {**counts, "total": len(results)}, "results": results,
+              "require_complete": require_complete,
               "scope": "Offline Lua assertions; this report does not establish live gameplay or exhaustive branch coverage.",
-              "limitations": (["Some checks completed with partial coverage because optional source checks reported SKIP."]
+              "limitations": (["Some source checks did not run or did not report completion; partial results are not full integration coverage."]
                               if counts["partial"] else []) +
                              (["Skipped results indicate optional source checks did not run; this report does not claim full source coverage."]
                               if counts["skipped"] else [])}
@@ -260,6 +312,8 @@ def main() -> None:
     parser.add_argument("--list", action="store_true", help="list available test names without running checks")
     parser.add_argument("--keep-going", action="store_true", help="continue after an offline Lua test or variant fails")
     parser.add_argument("--report", type=Path, metavar="PATH", help="write per-test JSON results to PATH")
+    parser.add_argument('--require-complete', action='store_true',
+                        help='fail on partial/skipped coverage; automatic with --integration or --pack-lock')
     parser.add_argument('--integration', action='append', default=[], choices=mod_integrations.INTEGRATIONS,
                         help='run this integration against its locked upstream sources; repeatable')
     parser.add_argument('--list-integrations', action='store_true', help='show upstream inputs, Toolkit owners and focused checks')
@@ -297,6 +351,7 @@ def main() -> None:
     parser.add_argument("--saucedcarts-source", type=Path, help="SaucedCarts shared module directory for server hook checks")
     parser.add_argument("--wheelbarrow-source", type=Path, help="SaucedWheelbarrow registration init.lua for spawn checks")
     args = parser.parse_args()
+    args.require_complete = bool(args.require_complete or args.integration or args.pack_lock)
     available = discover_tests(ROOT)
     requested = {name if name.endswith(".lua") else name + ".lua" for name in args.test}
     for group in args.group:
@@ -351,6 +406,14 @@ def main() -> None:
             options = (option,) if isinstance(option, str) else option
             if any(not mod_integrations.has_required_input(name, item, args) for item in options):
                 parser.error(name.removesuffix(".lua") + " requires " + help_text)
+    if args.require_complete:
+        missing = []
+        for name in sorted(requested or available):
+            for identifier, spec in mod_integrations.INTEGRATIONS.items():
+                if name in spec['tests'] and not mod_integrations.has_required_input(name, spec['option'], args):
+                    missing.append(f"{name}: {identifier} requires --{spec['option'].replace('_', '-')} or --pack-lock")
+        if missing:
+            parser.error('Complete source coverage requires inputs before execution:\n' + '\n'.join(missing))
 
     # Lua 5.1 character classes inspect bytes; host UTF-8 locales can misclassify them.
     locale.setlocale(locale.LC_CTYPE, "C")
@@ -358,6 +421,14 @@ def main() -> None:
         from lupa.lua51 import LuaRuntime
     except ImportError as error:
         raise SystemExit("Set up the project Python with: uv sync --locked; then run uv run --locked python tools/run_tests.py") from error
+    if args.require_complete:
+        # Use the normal binder, including native paths, before any selected
+        # assertions run. Presence of a manual option alone is not a valid file.
+        for name in sorted(requested or available):
+            try:
+                configure_test_sources(LuaRuntime(unpack_returned_tuples=True), name, args)
+            except (OSError, ValueError, KeyError) as error:
+                parser.error(f'{name}: source preparation failed: {error}')
     if not requested:
         syntax = LuaRuntime(unpack_returned_tuples=True)
         for path in sorted((ROOT / "PZSurvivorToolkit").rglob("*.lua")):
@@ -371,6 +442,7 @@ def main() -> None:
             results.append({"test": name, "variant": "default", "status": "skipped",
                             "elapsed_seconds": 0, "error": None,
                             "skip_reasons": ["optional native source checks unavailable; pass --native-action-root"]})
+            print(f'SKIPPED {name}: requires --game or --native-action-root', file=sys.stderr)
             continue
         for flag in test_variants(name, args):
             try:
@@ -378,18 +450,26 @@ def main() -> None:
             except Exception as error:
                 result = getattr(error, "_lua_runner_result", None)
                 if result is not None and args.report:
-                    _write_report(args.report, results + [result])
+                    _write_report(args.report, results + [result], args.require_complete)
                 raise
             results.append(result)
             if result["status"] == "failed":
                 print(f"FAILED {result['test']} [{result['variant']}]: {result['error']}", file=sys.stderr)
+            elif result['status'] == 'partial':
+                print(f"PARTIAL {result['test']} [{result['variant']}]: "
+                      + '; '.join(result['partial_reasons']), file=sys.stderr)
             if result["status"] == "failed" and not args.keep_going:
                 if args.report:
-                    _write_report(args.report, results)
+                    _write_report(args.report, results, args.require_complete)
                 raise SystemExit(1)
     if args.report:
-        _write_report(args.report, results)
-    if any(result["status"] == "failed" for result in results):
+        _write_report(args.report, results, args.require_complete)
+    counts = _counts(results)
+    print('Lua results: ' + ', '.join(f'{count} {status}' for status, count in counts.items()), file=sys.stderr)
+    incomplete = counts['partial'] or counts['skipped']
+    if args.require_complete and incomplete:
+        print('Complete coverage required; partial/skipped results do not pass this run.', file=sys.stderr)
+    if counts['failed'] or args.require_complete and incomplete:
         raise SystemExit(1)
 
 

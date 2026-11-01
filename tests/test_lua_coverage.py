@@ -1,0 +1,271 @@
+"""Exercise source coverage and its exit gate through real isolated Lua states."""
+from contextlib import redirect_stderr, redirect_stdout
+import io
+import json
+from pathlib import Path
+from types import SimpleNamespace
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from lupa.lua51 import LuaRuntime
+
+from tools import mod_integrations, run_tests
+
+
+class LuaCoverageTests(unittest.TestCase):
+    name = 'test_coverage_fixture.lua'
+
+    def setUp(self):
+        temporary = self.enterContext(tempfile.TemporaryDirectory())
+        self.root = Path(temporary)
+        (self.root / 'tests').mkdir()
+        self.sources = self.root / 'upstream'
+        self.sources.mkdir()
+        (self.sources / 'source.lua').write_text('return {fixture = true}\n', encoding='utf-8')
+        self.report = self.root / 'report.json'
+        self.registry = {
+            'FixtureIntegration': {
+                'owners': ['fixture.lua'],
+                'option': 'cleanui_inventory_pane',
+                'root': '.',
+                'tests': {self.name: (mod_integrations.Source('FixtureSource', 'source.lua'),)},
+            },
+        }
+        self.enterContext(patch.object(run_tests, 'ROOT', self.root))
+        self.enterContext(patch.object(run_tests, 'NATIVE_TAG_TESTS', ()))
+        self.enterContext(patch.object(run_tests, 'SOURCE_CHECKS', {self.name: ('upstream',)}, create=True))
+        self.enterContext(patch.object(mod_integrations, 'INTEGRATIONS', self.registry))
+
+    def write_lua(self, source):
+        (self.root / 'tests' / self.name).write_text(source, encoding='utf-8')
+
+    def invoke(self, *arguments, selected=True):
+        options = ['--keep-going', '--report', str(self.report)]
+        if selected:
+            options += ['--test', self.name]
+        options += list(map(str, arguments))
+        output, errors = io.StringIO(), io.StringIO()
+        code = 0
+        with patch.object(sys, 'argv', ['run_tests.py', *options]), \
+                redirect_stdout(output), redirect_stderr(errors):
+            try:
+                run_tests.main()
+            except SystemExit as error:
+                code = error.code
+        report = json.loads(self.report.read_text(encoding='utf-8')) if self.report.exists() else None
+        return code, report, output.getvalue() + errors.getvalue()
+
+    def with_sources(self):
+        return ('--cleanui-inventory-pane', self.sources)
+
+    def test_absent_sources_are_partial_without_a_printed_skip(self):
+        self.write_lua("if FixtureSource then TestCoverage('upstream', 'passed') end")
+        code, report, output = self.invoke()
+        self.assertEqual(0, code)
+        self.assertEqual('partial', report['status'])
+        result = report['results'][0]
+        self.assertEqual('partial', result['status'])
+        self.assertEqual('missing', result['source_inputs'][0]['status'])
+        self.assertTrue(result['source_inputs'][0]['required'])
+        self.assertEqual('not-run', result['checks'][0]['status'])
+        self.assertIn('PARTIAL', output)
+
+    def test_required_source_omission_remains_partial_after_completion_callback(self):
+        self.write_lua("TestCoverage('upstream', 'passed')")
+        code, report, _ = self.invoke()
+        self.assertEqual(0, code)
+        self.assertEqual('partial', report['results'][0]['status'])
+        self.assertEqual('passed', report['results'][0]['checks'][0]['status'])
+        self.assertEqual('missing', report['results'][0]['source_inputs'][0]['status'])
+
+    def test_bound_input_and_completed_checks_pass_strict_gate(self):
+        self.write_lua("assert(FixtureSource:find('fixture', 1, true)); TestCoverage('upstream', 'passed')")
+        code, report, _ = self.invoke(*self.with_sources(), '--require-complete')
+        self.assertEqual(0, code)
+        self.assertEqual('passed', report['status'])
+        result = report['results'][0]
+        self.assertEqual('passed', result['status'])
+        source = result['source_inputs'][0]
+        self.assertEqual('FixtureIntegration', source['integration'])
+        self.assertEqual('FixtureSource', source['variable'])
+        self.assertEqual('bound', source['status'])
+        self.assertTrue(source['required'])
+        self.assertEqual('passed', result['checks'][0]['status'])
+
+    def test_input_presence_without_callback_is_partial(self):
+        self.write_lua("assert(FixtureSource)")
+        code, report, _ = self.invoke(*self.with_sources(), '--require-complete')
+        self.assertNotEqual(0, code)
+        self.assertEqual('partial', report['results'][0]['status'])
+        self.assertEqual('bound', report['results'][0]['source_inputs'][0]['status'])
+        self.assertEqual('not-run', report['results'][0]['checks'][0]['status'])
+
+    def test_each_declared_check_requires_its_own_completion(self):
+        self.write_lua("TestCoverage('upstream', 'passed')")
+        with patch.object(run_tests, 'SOURCE_CHECKS', {self.name: ('upstream', 'second-path')}):
+            code, report, _ = self.invoke(*self.with_sources(), '--require-complete')
+        self.assertNotEqual(0, code)
+        result = report['results'][0]
+        self.assertEqual('partial', result['status'])
+        self.assertEqual(['passed', 'not-run'], [check['status'] for check in result['checks']])
+
+    def test_structured_skip_survives_a_test_replacing_print(self):
+        self.write_lua("print = function() end; TestCoverage('upstream', 'skipped', 'fixture dependency unavailable')")
+        code, report, _ = self.invoke(*self.with_sources(), '--require-complete')
+        self.assertNotEqual(0, code)
+        result = report['results'][0]
+        self.assertEqual('partial', result['status'])
+        self.assertEqual('skipped', result['checks'][0]['status'])
+        self.assertEqual('fixture dependency unavailable', result['checks'][0]['reason'])
+
+    def test_legacy_printed_skips_still_activate_strict_gate(self):
+        self.registry.clear()
+        with patch.object(run_tests, 'SOURCE_CHECKS', {}):
+            for message in ('SKIP optional dependency', 'source checks skipped (no dependency)',
+                            'Appliance native-contract checks skipped.'):
+                with self.subTest(message=message):
+                    self.write_lua('print(' + json.dumps(message) + ')')
+                    code, report, _ = self.invoke('--require-complete')
+                    self.assertNotEqual(0, code)
+                    self.assertEqual('partial', report['results'][0]['status'])
+                    self.assertIn(message, report['results'][0]['partial_reasons'])
+
+    def test_legacy_partial_is_successful_without_strict_gate(self):
+        self.registry.clear()
+        self.write_lua("print('SKIP optional dependency')")
+        with patch.object(run_tests, 'SOURCE_CHECKS', {}):
+            code, report, output = self.invoke()
+        self.assertEqual(0, code)
+        self.assertEqual('partial', report['status'])
+        self.assertIn('PARTIAL', output)
+
+    def test_assertion_failure_cannot_be_downgraded_to_partial(self):
+        self.write_lua("TestCoverage('upstream', 'skipped', 'optional fixture'); assert(false, 'broken contract')")
+        code, report, _ = self.invoke(*self.with_sources())
+        self.assertNotEqual(0, code)
+        self.assertEqual('failed', report['status'])
+        self.assertEqual('failed', report['results'][0]['status'])
+        self.assertIn('broken contract', report['results'][0]['error'])
+
+    def test_missing_lua_dependency_is_a_failure(self):
+        self.write_lua("require('coverage_fixture_dependency_that_does_not_exist')")
+        code, report, _ = self.invoke(*self.with_sources())
+        self.assertNotEqual(0, code)
+        self.assertEqual('failed', report['results'][0]['status'])
+        self.assertIn('coverage_fixture_dependency_that_does_not_exist', report['results'][0]['error'])
+
+    def test_invalid_and_duplicate_completions_fail(self):
+        invalid_sources = (
+            "TestCoverage('unknown', 'passed')",
+            "TestCoverage('upstream', 'failed')",
+            "TestCoverage('upstream', 'skipped')",
+            "TestCoverage('upstream', 'passed'); TestCoverage('upstream', 'passed')",
+        )
+        for source in invalid_sources:
+            with self.subTest(source=source):
+                self.write_lua(source)
+                code, report, _ = self.invoke(*self.with_sources())
+                self.assertNotEqual(0, code)
+                self.assertEqual('failed', report['results'][0]['status'])
+                self.assertTrue(report['results'][0]['error'])
+
+    def test_lua_pcall_cannot_swallow_invalid_completion(self):
+        invalid_sources = (
+            "pcall(TestCoverage, 'unknown', 'passed'); TestCoverage('upstream', 'passed')",
+            "TestCoverage('upstream', 'passed'); pcall(TestCoverage, 'upstream', 'passed')",
+        )
+        for source in invalid_sources:
+            with self.subTest(source=source):
+                self.write_lua(source)
+                code, report, _ = self.invoke(*self.with_sources())
+                self.assertNotEqual(0, code)
+                self.assertEqual('failed', report['results'][0]['status'])
+                self.assertIn('coverage receipt', report['results'][0]['error'])
+
+    def test_missing_required_strict_source_rejects_before_lua_runs(self):
+        self.write_lua("error('must not run without required input')")
+        with patch.object(run_tests, '_run_variant', wraps=run_tests._run_variant) as variant:
+            code, _, _ = self.invoke('--require-complete')
+        self.assertNotEqual(0, code)
+        variant.assert_not_called()
+
+    def test_explicit_missing_source_file_is_a_failure(self):
+        (self.sources / 'source.lua').unlink()
+        self.write_lua("TestCoverage('upstream', 'passed')")
+        code, report, _ = self.invoke(*self.with_sources())
+        self.assertNotEqual(0, code)
+        self.assertEqual('failed', report['results'][0]['status'])
+
+    def test_strict_missing_file_prevents_even_an_earlier_ready_test_from_running(self):
+        (self.sources / 'source.lua').unlink()
+        (self.root / 'tests/test_aaa_ready.lua').write_text("error('earlier test must not run')")
+        self.write_lua("error('source-backed test must not run')")
+        with patch.object(run_tests, '_run_variant', wraps=run_tests._run_variant) as variant:
+            code, _, output = self.invoke(*self.with_sources(), '--require-complete',
+                                          '--test', 'test_aaa_ready')
+        self.assertEqual(2, code)
+        self.assertIn('source preparation failed', output)
+        variant.assert_not_called()
+
+    def test_integration_and_pack_lock_automatically_require_completion(self):
+        self.write_lua("assert(FixtureSource)")
+        with patch.object(mod_integrations, 'configure'):
+            for option in (('--integration', 'FixtureIntegration'), ('--pack-lock', 'fixture-lock.json')):
+                with self.subTest(option=option):
+                    code, report, _ = self.invoke(*self.with_sources(), *option)
+                    self.assertNotEqual(0, code)
+                    self.assertEqual('partial', report['results'][0]['status'])
+
+    def test_automatic_strict_mode_rejects_missing_inputs_before_lua(self):
+        self.write_lua("error('must not run')")
+        with patch.object(mod_integrations, 'configure'), \
+                patch.object(run_tests, '_run_variant', wraps=run_tests._run_variant) as variant:
+            for option in (('--integration', 'FixtureIntegration'), ('--pack-lock', 'fixture-lock.json')):
+                with self.subTest(option=option):
+                    code, _, _ = self.invoke(*option)
+                    self.assertNotEqual(0, code)
+            variant.assert_not_called()
+
+    def test_skipped_default_selection_fails_only_under_strict_gate(self):
+        self.registry.clear()
+        self.write_lua("error('default native-only check should not execute')")
+        with patch.object(run_tests, 'DEFAULT_NATIVE_ONLY', {self.name}), \
+                patch.object(run_tests, 'SOURCE_CHECKS', {}):
+            for arguments, expected in (((), 0), (('--require-complete',), 1)):
+                with self.subTest(arguments=arguments):
+                    code, report, _ = self.invoke(*arguments, selected=False)
+                    self.assertEqual(expected, code)
+                    self.assertEqual('partial', report['status'])
+                    self.assertEqual('skipped', report['results'][0]['status'])
+
+    def test_binding_reports_optional_locked_absence_without_requiring_it(self):
+        sources = self.registry['FixtureIntegration']['tests']
+        sources[self.name] += (mod_integrations.Source('OptionalFixtureSource', 'optional.lua', optional=True),)
+        args = SimpleNamespace(cleanui_inventory_pane=None, integration_sources={
+            self.name: {'FixtureSource': self.sources / 'source.lua', 'OptionalFixtureSource': None},
+        })
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        bound = mod_integrations.bind_sources(lua, self.name, args)
+        self.assertEqual('return {fixture = true}\n', lua.globals().FixtureSource)
+        self.assertIsNone(lua.globals().OptionalFixtureSource)
+        by_variable = {source['variable']: source for source in bound}
+        self.assertEqual('bound', by_variable['FixtureSource']['status'])
+        self.assertEqual('not-applicable', by_variable['OptionalFixtureSource']['status'])
+        self.assertFalse(by_variable['OptionalFixtureSource']['required'])
+
+    def test_absent_optional_input_does_not_make_completed_checks_partial(self):
+        self.registry['FixtureIntegration']['tests'][self.name] += (
+            mod_integrations.Source('OptionalFixtureSource', 'optional.lua', optional=True),
+        )
+        self.write_lua("assert(FixtureSource); assert(OptionalFixtureSource == nil); TestCoverage('upstream', 'passed')")
+        code, report, _ = self.invoke(*self.with_sources(), '--require-complete')
+        self.assertEqual(0, code)
+        self.assertEqual('passed', report['status'])
+        self.assertEqual(['bound', 'not-applicable'],
+                         [source['status'] for source in report['results'][0]['source_inputs']])
+
+
+if __name__ == '__main__':
+    unittest.main()

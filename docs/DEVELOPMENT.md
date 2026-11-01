@@ -37,7 +37,21 @@ Use `uv run --locked python ...` for Lua, Python and native tools. It checks the
 
 Use `uv run --locked python -m unittest tests.MODULE` for Python tests, or `uv run --locked python -m unittest discover -s tests -t . -p 'test_NAME*.py'` for a scoped group. Package imports work without setting `PYTHONPATH`; use module/discovery commands instead of executing individual Python test files. To update dependencies deliberately, use `uv lock --upgrade-package NAME`, review `uv.lock`, then repeat the affected checks.
 
-List Lua tests with `uv run --locked python tools/run_tests.py --list`. Select one or several with repeatable `--test NAME` (relative to `tests/`, with or without `.lua`). For example, `--test test_tv_controls --test test_vhs_ownership` runs only those tests and their associated variants, without scanning all mod files. Omit `--test` for the existing full Lua checks, including the syntax scan. Quartermaster checks always use the owned `PZSurvivorToolkit/42/media/lua` sources. Explicitly selecting its craft UI or the native tag transfer/placement checks also requires native game sources through `--game` or `--native-action-root`. Other checks retain their existing source-dependent SKIP behavior; a skipped integration check does not validate that integration.
+List Lua tests with `uv run --locked python tools/run_tests.py --list`. Select one or several with repeatable `--test NAME` (relative to `tests/`, with or without `.lua`). For example, `--test test_tv_controls --test test_vhs_ownership` runs only those tests and their associated variants, without scanning all mod files. Omit `--test` for the existing full Lua checks, including the syntax scan. Quartermaster checks always use the owned `PZSurvivorToolkit/42/media/lua` sources. Explicitly selecting its craft UI or the native tag transfer/placement checks also requires native game sources through `--game` or `--native-action-root`.
+
+Autonomous Lua checks may run without third-party inputs, but missing required files from the integration registry make their result `partial`, even if the Lua test prints no `SKIP`. The console shows each limitation and a final count; `--report FILE` writes per-test `source_inputs`, completion `checks` and reasons. Declared optional files that do not apply to that upstream version are recorded as `not-applicable`. A partial result does not establish integration compatibility. Ordinary autonomous runs can return zero with partial coverage; assertions and invalid supplied files always fail.
+
+Use `--require-complete` when every selected check is required. This rejects absent registered integration inputs, validates supplied files before any selected assertions run, and returns nonzero for any partial/skipped result. `--integration` and `--pack-lock` enable this policy automatically. For example, an existing complete selected-pack lock supplies both CleanUI and Better Containers to the inventory-refresh check:
+
+```sh
+uv run --locked python tools/run_tests.py --game "$PZ_GAME" \
+  --pack-lock "$PZ_PACK_LOCK" --test test_inventory_refresh \
+  --report .codex/inventory-refresh.json
+```
+
+For explicit source paths, pass `--cleanui-inventory-pane "$CLEANUI_PANE" --bc-filter-source "$BC_FILTER" --require-complete` instead of `--pack-lock`. `--game` supplies native game files, not Workshop mod files. Inventory refresh requires seven separate completion receipts, including real CleanUI page discovery and Better Containers pane selection; merely binding the source cannot mark those assertions passed. Emulated UI checks are labelled separately. These remain offline checks with world/UI doubles, not live SP/Host qualification.
+
+When adding conditional source checks, declare upstream files in `tools/mod_integrations.py`, register expected check IDs in `tools/run_tests.py`'s `SOURCE_CHECKS`, and call `TestCoverage(id, 'passed')` only after the assertions complete. Use `TestCoverage(id, 'skipped', reason)` for an unavailable branch; a nonempty reason is required. Missing completion, malformed/duplicate receipts and swallowed callback errors cannot produce a full pass. Unmigrated checks still use legacy printed-SKIP detection alongside the shared input registry; the report does not claim exhaustive branch coverage.
 
 Before launching changed runtime Lua, use the installed game's compiler without opening a game window:
 

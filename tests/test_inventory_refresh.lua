@@ -16,6 +16,21 @@ local function method(source,name)
     local normalized=source:gsub('CleanUI_Vanilla_ISInventoryPage','ISInventoryPage')
     return normalized:match('(function ISInventoryPage:'..name..'%b().-)\nfunction ')
 end
+local function sourceCheck(id,...)
+    local missing={}
+    for index=1,select('#',...)do
+        local variable=select(index,...)
+        if type(_G[variable])~='string'then missing[#missing+1]=variable end
+    end
+    if #missing>0 then
+        if TestCoverage then TestCoverage(id,'skipped','Missing source inputs: '..table.concat(missing,', '))end
+        return false
+    end
+    return true
+end
+local function completed(id)
+    if TestCoverage then TestCoverage(id,'passed')end
+end
 local function run(source,label,bcSource)
     local stats={discovery=0,rows=0,count=0,copied=0,events=0}
     local function pack(...)return {n=select('#',...),...}end
@@ -341,10 +356,18 @@ local function run(source,label,bcSource)
     before=stats.discovery;page:update();assert(stats.discovery==before+1)
     print('PASS inventory refresh '..label..': 40 turn/tile changes ->40 raw rebuilds, zero hidden row/count builds; collapsed rows defer/count stays live, hover/pin/drag reopen; BC contents, pane/class rebind, input guards, arity, late hooks and errors remain live')
 end
+local actualBC=sourceCheck('bc-proximity','NativeBCProximitySource')
 run(nil,'doubles',NativeBCProximitySource)
-if NativeInventoryPageSource then run(NativeInventoryPageSource,'native B42',NativeBCProximitySource) end
-if CleanUIInventoryPageSource then run(CleanUIInventoryPageSource,'CleanUI',NativeBCProximitySource) end
-if CleanUIVanillaInventoryPageSource then run(CleanUIVanillaInventoryPageSource,'CleanUI vanilla',NativeBCProximitySource) end
+if actualBC then completed('bc-proximity')end
+if sourceCheck('native-page','NativeInventoryPageSource')then
+    run(NativeInventoryPageSource,'native B42',NativeBCProximitySource);completed('native-page')
+end
+if sourceCheck('cleanui-page','CleanUIInventoryPageSource')then
+    run(CleanUIInventoryPageSource,'CleanUI',NativeBCProximitySource);completed('cleanui-page')
+end
+if sourceCheck('cleanui-vanilla-page','CleanUIVanillaInventoryPageSource')then
+    run(CleanUIVanillaInventoryPageSource,'CleanUI vanilla',NativeBCProximitySource);completed('cleanui-vanilla-page')
+end
 
 -- CleanUI builds capacity tooltip text inside addContainerButton. Suppression
 -- must retain the call contract and keep an independent reopen obligation even
@@ -456,7 +479,7 @@ do
             kind..' path unexpectedly suppressed an immediate tooltip')
         CleanUI_Clean_ISInventoryPage=Page
     end
-    print('PASS CleanUI hidden/collapsed tooltip workload: clipped rows/tooltips defer, title counts stay live; argument/result arity, late hooks, fresh expand, early/failure obligations and immediate fallbacks preserved')
+    print('PASS emulated CleanUI hidden/collapsed tooltip workload: clipped rows/tooltips defer, title counts stay live; argument/result arity, late hooks, fresh expand, early/failure obligations and immediate fallbacks preserved')
 end
 
 -- Execute both Toolkit category owners: displayCategory mutates the actual item
@@ -560,7 +583,7 @@ end
 -- Unlike the scheduling fixture above, execute the entire installed CleanUI
 -- discovery body and the actual BC begin/buttonsAdded handlers. World/UI leaves
 -- are doubles, so this isolates Lua lifecycle from native object side effects.
-if CleanUIInventoryPageSource and NativeBCProximitySource then
+if sourceCheck('cleanui-bc-discovery','CleanUIInventoryPageSource','NativeBCProximitySource')then
     local stats={rows=0,counts=0,weights=0,phases={}}
     local function list(values)
         local result={values=values or {}}
@@ -702,6 +725,7 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
         and not state.rowsPending and not state.countPending and not state.tooltipsPending,
         'full actual CleanUI/BC expanded draw did not flush deferred presentation')
     print('PASS full actual CleanUI refreshBackpacks + BC begin/buttonsAdded: hidden/collapsed rows/tooltips defer, collapsed counts and floor/aggregate remain live, reopen fresh')
+    completed('cleanui-bc-discovery')
     -- Run the actual upstream onCharacter branch as well: inventory/bag
     -- buttons and BC event phases remain live while only presentation defers.
     local carried=inventory('inventory',{item('carried')})
@@ -752,7 +776,8 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
     assert(stats.rows==playerRows+3 and stats.counts==playerCounts+2,
         'actual visible collapsed PLAYER unexpectedly deferred presentation')
     print('PASS full actual CleanUI PLAYER refreshBackpacks + BC: hidden inventory/bag discovery live, rows/count/tooltips defer, direct equip refresh/reopen/collapsed preserve native contracts')
-    if NativeBCProximityPaneSource then
+    completed('cleanui-bc-player')
+    if sourceCheck('bc-pane-selection','CleanUIInventoryPageSource','NativeBCProximitySource','NativeBCProximityPaneSource')then
         -- Actual BC update assumes every group has a duplicate header. A
         -- headerless singleton has no j=2 children, so it selects the header
         -- without mouse/controller input after a rendered baseline.
@@ -792,5 +817,9 @@ if CleanUIInventoryPageSource and NativeBCProximitySource then
             and state.rowsPending and state.countPending and #pane.items==0,
             'same-frame cleared selection did not restore hidden deferral')
         print('PASS actual BC pane.update: headerless singleton auto-selects without input, guard retains immediate rows/count; same-frame cleared selection defers')
+        completed('bc-pane-selection')
     end
+else
+    sourceCheck('cleanui-bc-player','CleanUIInventoryPageSource','NativeBCProximitySource')
+    sourceCheck('bc-pane-selection','CleanUIInventoryPageSource','NativeBCProximitySource','NativeBCProximityPaneSource')
 end
