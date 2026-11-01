@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.330
+
+- Reduce inventory refresh work for large stacks by reusing live usage-tag membership during grouping. Keep current item-state reads, custom rules, retained-item grouping and preview/snapshot metadata behavior.
+
 ### 0.1.329
 
 - Reduce work when grouping inventory stacks by projecting only tag membership, skipping unused preview/provenance copies and a duplicate signature calculation. Keep physical item state, custom tags and retention live.
