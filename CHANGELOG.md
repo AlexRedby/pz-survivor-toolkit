@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.335
+
+- Extend the opt-in active-edit plan with fresh private borrowed-item cleanup facts: distinguish settled debt, an exact future return and unresolved ownership, reconcile covered pickup hints and preserve cleanup-before-tail order. Keep synthetic return effects explicitly unknown until their native contract is qualified; this preparation changes no cancel/reorder permissions. Share endpoint resolution with the existing return executor and validate model sources before reading fresh facts.
+
 ### 0.1.334
 
 - Allow cancelling a pending borrowed-item return in Host when native replication has replaced the queued item proxy with the same exact earned item in the character's main inventory. Preserve the active action, retain the carried item and commit Keep intent only after fresh identity/ownership checks; failed publication leaves the return and debt intact. Native transfer execution and capacity proofs retain their strict path.

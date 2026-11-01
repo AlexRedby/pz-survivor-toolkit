@@ -95,6 +95,54 @@ assert(project(before,'cancel-operation',1,2,nil,ledger).projection.reason=='edi
 ledger.legacyHints=false;ledger.generation=8
 assert(project(before,'cancel-operation',1,2,nil,ledger).projection.reason=='edit_obligation_unknown')
 assert(project(before,'cancel-operation',1,2).projection.reason=='edit_obligation_unknown')
+-- Fresh ownership supplies an exact future return payload, never a resource
+-- permission or an existing executor. Effect compilation is a separate gate.
+do
+    local book,cleanup,prototype,later={},{},{},{}
+    local root,box={},{}
+    local returnEdit={version=1,complete=true,capacity='external',resources={{domain='item',key=4,
+        facts={item=book,location=root},requires={{field='location',oneOf={root,box}}},effects={{field='location',set=box}}}}}
+    local checkpoint=edit({{domain='item',key=4,facts={item=book,location=root},effects={}}})
+    local rows={entry(current,nil,true),entry(cleanup),entry(prototype,returnEdit),entry(later)}
+    local loan={id=4,fullType='Base.Book',state='active',ambiguous=false,returning=false,
+        disposition='synthesize-return',item=book,source=root,destination=box,edit=returnEdit}
+    local fresh={status='observed',fresh=true,generation=7,steps={{action=cleanup,required=true}},
+        borrowings={loan},legacyHints=false,providersPresent=false}
+    local plan=project(rows,'cancel-operation',1,3,checkpoint,fresh)
+    local future=sequence(plan)
+    assert(plan.status=='observed'and plan.allowed==nil and plan.projection.status=='unhandled'
+        and plan.projection.externalCapacity and #plan.unresolved==0)
+    assert(#future==3 and future[1].kind=='cleanup'and future[1].action==cleanup)
+    assert(future[2].kind=='return'and future[2].synthetic and future[2].action==nil and future[2].edit==nil
+        and future[2].item==book and future[2].destination==box and future[2].source==root)
+    assert(future[3].action==later and #plan.removed==2 and plan.removed[2]==prototype,
+        'old optional return must be removed; only a virtual future return may precede the tail')
+    assert(rows[3].edit==returnEdit and loan.edit==returnEdit,'caller descriptors must remain unchanged')
+    for _,phase in ipairs({'completed','waived'})do
+        loan.disposition,loan.state='settled',phase
+        local settled=project(rows,'cancel-operation',1,3,checkpoint,fresh)
+        assert(settled.projection.status=='allowed'and #sequence(settled)==2,'settled loan resurrected its return')
+    end
+    loan.disposition,loan.state='synthesize-return','active'
+    for _,boundary in ipairs({'metadata','hint','provider','shared','ambiguous','returning','planned','unearned','unearned-settled','missing-item','same-endpoint'})do
+        if boundary=='metadata'then fresh.fresh=nil
+        elseif boundary=='hint'then fresh.legacyHints=true
+        elseif boundary=='provider'then fresh.providersPresent=true
+        elseif boundary=='shared'then loan.disposition='unresolved'
+        elseif boundary=='ambiguous'then loan.ambiguous=true
+        elseif boundary=='returning'then loan.returning=true
+        elseif boundary=='planned'then loan.plannedReturn={}
+        elseif boundary=='unearned'then loan.state='prepare'
+        elseif boundary=='unearned-settled'then loan.disposition,loan.state='settled','prepare'
+        elseif boundary=='missing-item'then loan.item=nil
+        elseif boundary=='same-endpoint'then loan.destination=root end
+        local result=project(rows,'cancel-operation',1,3,checkpoint,fresh)
+        assert(result.projection.status=='unhandled'and #result.unresolved>0,boundary..': incomplete ownership was presented as exact')
+        fresh.fresh,fresh.legacyHints,fresh.providersPresent=true,false,false
+        loan.disposition,loan.state,loan.ambiguous,loan.returning='synthesize-return','active',false,false
+        loan.plannedReturn=nil;loan.item=book;loan.destination=box
+    end
+end
 -- Input purity and unavailable schema/binding cases cannot execute arbitrary code.
 local calls=0
 local badMeta={__index=function()calls=calls+1;error('input callback')end}
@@ -105,6 +153,30 @@ assert(project({entry(current,nil,true),entry(current)},'preempt',2,2).status=='
 assert(project(before,'preempt',1,2).status=='unhandled')
 ledger.generation=7;ledger.steps={{action=0/0,required=true}}
 assert(project(before,'cancel-operation',1,2,nil,ledger).status=='unhandled')
+-- The prepared projection validates source before fresh facts and does not
+-- call the metadata accessor afterward, even when that accessor stays live.
+do
+    local accessor=getFilenameOfClosure
+    local armed,reads=false,0
+    getFilenameOfClosure=function(callback)
+        reads=reads+1
+        assert(not armed,'prepared projection invoked late source metadata')
+        return accessor(callback)
+    end
+    local prepared=assert(T.prepare())
+    assert(reads>0)
+    armed=true
+    local count=reads
+    local result=prepared(before,{kind='cancel-body',first=1,last=1,generation=7,checkpoint=edit()})
+    assert(result.status=='observed'and reads==count)
+    assert(prepared(before,{kind='cancel-body',first=1,last=1,generation=7,checkpoint=edit()}).status=='unhandled',
+        'a prepared source lease is one-use, never a cached queue decision')
+    getFilenameOfClosure=accessor
+    local stale=assert(T.prepare())
+    getFilenameOfClosure=function()error('replacement metadata must not execute')end
+    assert(stale(before,{kind='cancel-body',first=1,last=1,generation=7,checkpoint=edit()}).status=='unhandled')
+    getFilenameOfClosure=accessor
+end
 local saved=Model.evaluate
 Model.evaluate=function()calls=calls+1;error('replaced model')end
 assert(project(before,'preempt',3,5).status=='unhandled')

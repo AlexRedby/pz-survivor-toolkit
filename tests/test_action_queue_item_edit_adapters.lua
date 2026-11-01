@@ -224,6 +224,15 @@ local function setup(changed,foreignMerge,alias,missing)
         if name=='PZSurvivorToolkit/ActionQueueEditAdapters'then return radio end
         return previousRequire(name)
     end
+    local transition
+    local beforeTransitionRequire=require
+    require=function(name)
+        if name=='PZSurvivorToolkit/ActionQueueEditTransition'then
+            if not transition then transition=f.project('ActionQueueEditTransition')end
+            return transition
+        end
+        return beforeTransitionRequire(name)
+    end
     local policy=f.project('ActionQueuePolicy')
     local function transfer(value,source,destination)
         local action=ISInventoryTransferAction:new(f.player,value or water,source or bagInventory,destination or root)
@@ -2023,3 +2032,95 @@ do
     assert(not decision.allowed and decision.reason=='container_capacity','in-flight emptying cannot certify an unrelated capacity prefix')
 end
 print('Pending clean-water empty edits: exact native source/wrapper/owner/capture, independent move/cancel, shared drink dependency, transient peak and external capacity passed.')
+
+
+-- Compose the real private observer, Policy and Transition with the real native
+-- item adapter. This seam arranges an already-earned private phase; separate
+-- Settlement tests obtain that phase from real source-backed pickup receipts.
+local function earnedCleanupPlan(client,worldSource)
+    local s=setup()
+    isClient=function()return client end
+    local source=worldSource and s.world()or s.bagInventory
+    local lookup=s.root.getItemById
+    s.root.getItemById=function(self,id)
+        if id==s.bag:getID()then return s.bag end
+        return lookup(self,id)
+    end
+    local function book(kind)
+        local item=s.item();item.container=s.root
+        item.getFullType=function()return kind end
+        item.getNumberOfPages=function()return 100 end
+        item.getAlreadyReadPages=function()return 37 end
+        return item
+    end
+    local item,other=book('Base.BookCarpentry1'),book('Base.BookCooking1')
+    item.container=source
+    local native={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+    local current=s.f.action(ISReadABook,{item=item,action=native,started=true})
+    local returned=s.transfer(item,s.root,source);returned.allowMissingItems=true
+    returned.toolkitQueueOperation=current.toolkitQueueOperation
+    local tail=s.f.action(ISReadABook,{item=other})
+    local q=s.f.queue(current,returned,tail)
+    local settlement=s.f.project('ActionQueueSettlement')
+    local scope=settlement.deferred(s.f.player,current.toolkitQueueOperation)
+    assert(settlement.remember(scope,current,{items={[item:getID()]=true}}))
+    local pickup=s.transfer(item,source,s.root);pickup.toolkitQueueOperation=current.toolkitQueueOperation
+    assert(settlement.preparePickup(scope,pickup))
+    local record
+    for key,seal in pairs(current.toolkitQueueOperation)do
+        if type(key)=='table'and type(seal)=='function'then record=seal(current.toolkitQueueOperation)end
+    end
+    local candidate=assert(record and record.borrowings[1]).candidate
+    candidate.phase,candidate.step.state='active','earned'
+    item.container=s.root
+    current.toolkitQueueOperation.toolkitPickups={[item]=source}
+    return s,q,current,returned,tail,candidate,settlement,item
+end
+for _,client in ipairs({false,true})do for _,worldSource in ipairs({false,true})do
+    local s,q,current,returned,tail,candidate,settlement,item=earnedCleanupPlan(client,worldSource)
+    local before=settlement.editLedger(q,current)
+    assert(before.legacyHints and before.fresh==nil,'metadata ledger must remain a literal observation')
+    local constructors={[ISInventoryTransferAction.new]=true,[ISReadABook.new]=true,[ISInventoryTransferAction.isValid]=true}
+    ISInventoryPaneContextMenu.getContainers=function()error('projection enumerated inventory containers')end
+    debug.sethook(function(event)
+        if event=='call'and constructors[debug.getinfo(2,'f').func]then error('projection executed a constructor/validation')end
+    end,'c')
+    local ok,plan=pcall(s.policy.observeActiveEdit,q,{kind='cancel',action=current,whole=true})
+    debug.sethook();assert(ok,plan)
+    assert(plan.status=='observed'and #plan.unresolved==0 and plan.projection.status=='unhandled'and plan.projection.externalCapacity)
+    assert(#plan.nodes==3 and plan.nodes[2].kind=='return'and plan.nodes[2].item==item
+        and plan.nodes[2].source==s.root and plan.nodes[2].destination==returned.destContainer
+        and plan.nodes[2].edit==nil and plan.nodes[2].action==nil and plan.nodes[3].action==tail)
+    assert(q.current==current and q.queue[2]==returned and q.queue[3]==tail and not q.toolkitCancel
+        and candidate.phase=='active'and item:getContainer()==s.root,'observation mutated queue/loan/item')
+    candidate.phase='waived'
+    local settled=s.policy.observeActiveEdit(q,{kind='cancel',action=current,whole=true})
+    assert(settled.status=='observed'and #settled.unresolved==0 and #settled.nodes==2
+        and settled.projection.status=='allowed','covered hints resurrected waived cleanup in composed plan')
+end end
+for _,change in ipairs({'callback','started','transaction','adding','token-started','class','group-key','group-member'})do
+    local s,q,current,returned,tail,candidate,settlement=earnedCleanupPlan(true,false)
+    local applied=false
+    s.f.player.isDead=function()
+        for level=2,12 do
+            local info=debug.getinfo(level,'f')
+            if not info then break end
+            if not applied and info.func==settlement.observeEditCleanup then
+                applied=true
+                if change=='callback'then returned.onCompleteFunc=function()error('changed callback must not run')end
+                elseif change=='started'then returned.started=true
+                elseif change=='transaction'then returned.transactionId=81
+                elseif change=='adding'then returned._isAddingActions=true
+                elseif change=='token-started'then tail.toolkitQueueOperation.toolkitStarted=true
+                elseif change=='class'then ISInventoryTransferAction.isValid=function()error('changed validator must not run')end
+                elseif change=='group-key'then returned.queueList[1].foreign=true
+                elseif change=='group-member'then returned.queueList[1].items[1]=s.item()end
+            end
+        end
+        return false
+    end
+    local plan=s.policy.observeActiveEdit(q,{kind='cancel',action=current,whole=true})
+    assert(applied and plan.status=='unhandled',change..': late source reentry was accepted')
+    assert(not q.toolkitCancel and candidate.phase=='active','rejected observation performed cancellation')
+end
+print('Composed edit cleanup: SP/Host bag/world facts, covered hints, no effects, explicit unknown native contract and source reentry passed.')

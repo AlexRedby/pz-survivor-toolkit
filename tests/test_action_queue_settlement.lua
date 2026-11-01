@@ -3363,3 +3363,278 @@ for _,scenario in ipairs({'fresh','missing-unstarted','earlier-mutation','earlie
  assert(settlement.rejectedPickupUntouched(s.current,{child})==expected,scenario..': private rejected-pickup ownership differs')
 end
 print('Rejected pickup private ownership: fresh scope only, native completed walk retained, earlier mutation/receipt/cleanup/foreign or started descendants denied.')
+
+-- Fresh edit cleanup reads the native-earned private history without polling it
+-- or turning an observation into a constructor, provider call or edit permission.
+local function editCleanupFixture(client, carried, unearned)
+    local s = pendingReturnFixture(client, unearned, carried)
+    s.current.item = s.members[1]
+    local function tagged(source, file)
+        return assert(loadstring(source, '@fixture/' .. file))()
+    end
+    PZSurvivorToolkit.ActionQueuePolicy.isCarriedContainer = tagged([[return function(container)
+        return container.carried == true
+    end]], 'ActionQueuePolicy.lua')
+    PZSurvivorToolkit.ActionQueueItemEditAdapters = {worldContainer = tagged([[return function(container)
+        return container.reachable and {container} or nil
+    end]], 'ActionQueueItemEditAdapters.lua')}
+    if carried then s.source.carried = true end
+    for key, value in pairs(s.token) do
+        if type(key) == 'table' and type(value) == 'function' then
+            local record = value(s.token)
+            if record and record.borrowings then s.record = record; break end
+        end
+    end
+    s.candidate = assert(s.record and s.record.borrowings[1].candidate)
+    s.observe = function()
+        local result, private = s.settlement.observeEditCleanup(s.queue, s.current)
+        assert(private == nil, 'public observation leaked its private return')
+        return result
+    end
+    return s
+end
+local function cleanupDisposition(s, expected)
+    local result = s.observe()
+    assert(result.status == 'observed' and result.fresh == true, 'fresh cleanup observation unavailable')
+    assert(result.borrowings[1].disposition == expected, expected .. ': unexpected borrowing disposition')
+    return result
+end
+for _, client in ipairs({false, true}) do
+    for _, carried in ipairs({false, true}) do
+        local s = editCleanupFixture(client, carried)
+        local calls, nativeReads = 0, s.transaction.calls
+        local function forbidden() calls = calls + 1; error('fresh observation crossed execution boundary') end
+        ISInventoryTransferUtil.newInventoryTransferAction = forbidden
+        ISInventoryPaneContextMenu.getContainers = forbidden
+        PZSurvivorToolkit.Settings.actionQueue = forbidden
+        PZSurvivorToolkit.ActionQueuePolicy.inspect = forbidden
+        s.settlement.returnState, s.settlement.poll = forbidden, forbidden
+        isItemTransactionDone, isItemTransactionRejected, getTimestampMs = forbidden, forbidden, forbidden
+        local phase, state, stepState = s.record.phase, s.candidate.phase, s.candidate.step.state
+        local first, second = cleanupDisposition(s, 'synthesize-return'), cleanupDisposition(s, 'synthesize-return')
+        local value = first.borrowings[1]
+        assert(value.id == 181 and value.fullType == 'Base.Test' and value.item == s.members[1]
+            and value.source == s.root and value.destination == s.source and not first.legacyHints)
+        assert(first ~= second and first.steps ~= second.steps and value ~= second.borrowings[1])
+        assert(first.allowed == nil and first.capacity == nil and first.record == nil and first.scope == nil)
+        assert(value.scope == nil and value.candidate == nil and value.step == nil and value.proof == nil and value.handle == nil)
+        value.item, value.disposition, value.sourceOwner = {}, 'settled', {}
+        assert(s.candidate.phase == state and s.record.phase == phase and s.candidate.step.state == stepState
+            and s.pendingReturn.item == s.members[1] and s.queue.queue[2] == s.pendingReturn
+            and s.queue.queue[3] == s.tail and s.counts() == 0 and s.transaction.calls == nativeReads and calls == 0)
+        local metadata, leaked = s.settlement.editLedger(s.queue, s.current)
+        assert(metadata.status == 'observed' and metadata.fresh == nil and leaked == nil
+            and metadata.borrowings[1].disposition == nil and metadata.legacyHints,
+            'metadata-only public API acquired fresh semantics or leaked its private record')
+    end
+end
+for _, mode in ipairs({'unearned', 'shared-item', 'unknown-input', 'equipment-input', 'conflicting-pickup',
+    'closed', 'wrong-generation', 'wrong-actor', 'missing-owner-task', 'returning', 'planned', 'ambiguous',
+    'unavailable', 'missing', 'consumed', 'nested', 'type', 'duplicate', 'unreachable', 'removed-source',
+    'foreign-carried', 'foreign-world', 'missing-native'}) do
+    local s = editCleanupFixture(true, false, mode == 'unearned')
+    if mode == 'shared-item' then s.settlement.remember(s.scope, {character = s.player, toolkitQueueOperation = {}}, {items = {[181] = true}})
+    elseif mode == 'unknown-input' then s.settlement.remember(s.scope, {character = s.player, toolkitQueueOperation = {}}, {knownInputs = false})
+    elseif mode == 'equipment-input' then
+        s.scope.equipmentItems[181] = true
+        s.settlement.remember(s.scope, {character = s.player, toolkitQueueOperation = {}}, {items = {}, equipment = s.player})
+    elseif mode == 'conflicting-pickup' then s.scope.tasks[s.token].pickups[181].container = {}
+    elseif mode == 'closed' then s.settlement.close(s.scope)
+    elseif mode == 'wrong-generation' then s.scope.generation = 1
+    elseif mode == 'wrong-actor' then s.scope.character = {}
+    elseif mode == 'missing-owner-task' then s.scope.tasks[s.token] = nil
+    elseif mode == 'returning' then s.candidate.returning = {}
+    elseif mode == 'planned' then s.candidate.plannedReturn = s.pendingReturn
+    elseif mode == 'ambiguous' then s.candidate.ambiguous = true
+    elseif mode == 'unavailable' then s.candidate.phase = 'unavailable'
+    elseif mode == 'missing' then s.root.items[181] = nil
+    elseif mode == 'consumed' then s.members[1].consumed = true
+    elseif mode == 'nested' then s.members[1].container = {}
+    elseif mode == 'type' then s.members[1].fullType = 'Base.Other'
+    elseif mode == 'duplicate' then s.source.items[181] = s.item(181, s.source)
+    elseif mode == 'unreachable' then s.source.reachable = false
+    elseif mode == 'removed-source' then s.source.exists = false
+    elseif mode == 'foreign-carried' then
+        PZSurvivorToolkit.ActionQueuePolicy.isCarriedContainer = function() error('foreign carried checker executed') end
+        PZSurvivorToolkit.ActionQueueItemEditAdapters.worldContainer = nil
+    elseif mode == 'foreign-world' then
+        PZSurvivorToolkit.ActionQueueItemEditAdapters.worldContainer = function() error('foreign world checker executed') end
+    elseif mode == 'missing-native' then s.current.action = nil end
+    local result = s.observe()
+    assert(result.status == 'unhandled' or result.borrowings[1].disposition == 'unresolved', mode .. ': unproved loan became a synthetic return')
+    assert(s.counts() == 0 and s.queue.queue[2] == s.pendingReturn, mode .. ': observation constructed or reordered native work')
+end
+-- Historical receipts cover old enqueue hints in every state. Only a receipt's
+-- own irreversible settled phase can say no new cleanup remains.
+for _, state in ipairs({'prepare', 'active', 'unavailable', 'completed', 'waived'}) do
+    local s = editCleanupFixture(false)
+    s.candidate.phase = state
+    local result = cleanupDisposition(s, (state == 'completed' or state == 'waived') and 'settled'
+        or state == 'active' and 'synthesize-return' or 'unresolved')
+    assert(not result.legacyHints, state .. ': private history did not fence old enqueue hints')
+    s.token.toolkitPickups[s.item(991, nil)] = s.source
+    assert(s.observe().legacyHints, 'uncovered enqueue hint disappeared')
+end
+-- Host can replace both a received item and its carried bag/container replica;
+-- the captured exact owner must still be carried, and the native pending action
+-- keeps its original object until a separate source-reviewed commit.
+for _, client in ipairs({false, true}) do
+    local s = editCleanupFixture(client, true)
+    local oldItem, oldOwner = s.members[1], s.sourceOwner
+    local liveItem, liveOwner = s.item(181, s.root), s.item(901, s.root)
+    liveOwner.class = 'InventoryContainer'
+    local destination = {items = {}, carried = true, isExistYet = function() return true end}
+    destination.getItemById = function(self, id) return self.items[id] end
+    liveOwner.getInventory = function() return destination end
+    s.root.items[181], oldItem.container = liveItem, nil
+    s.root.items[901], oldOwner.container = liveOwner, nil
+    local value = cleanupDisposition(s, 'synthesize-return').borrowings[1]
+    assert(value.item == liveItem and value.destination == destination and s.pendingReturn.item == oldItem)
+    liveOwner.container = nil
+    cleanupDisposition(s, 'unresolved')
+    liveOwner.container, liveOwner.fullType = s.root, 'Base.Other'
+    cleanupDisposition(s, 'unresolved')
+end
+for _, mode in ipairs({'current', 'native', 'list', 'tail', 'generation', 'token', 'scope', 'shared', 'candidate',
+    'step', 'provider', 'world-binding', 'carried-binding', 'root', 'owner', 'late-missing', 'late-consumed', 'late-duplicate'}) do
+    local s = editCleanupFixture(true, mode == 'owner')
+    local original = s.root.getItemById
+    local fired = false
+    s.root.getItemById = function(self, id)
+        local item = original(self, id)
+        if not fired then
+            fired = true
+            if mode == 'current' then s.queue.current = s.tail
+            elseif mode == 'native' then s.current.action = {}
+            elseif mode == 'list' then s.queue.queue = {s.current, s.pendingReturn, s.tail}
+            elseif mode == 'tail' then s.queue.queue[3] = {}
+            elseif mode == 'generation' then s.queue.toolkitOperationGeneration = 9
+            elseif mode == 'token' then s.current.toolkitQueueOperation = {}
+            elseif mode == 'scope' then s.scope.phase = 'retired'
+            elseif mode == 'shared' then s.scope.tasks[{}] = {items = {[181] = true}, pickups = {}}
+            elseif mode == 'candidate' then s.candidate.plannedReturn = s.pendingReturn
+            elseif mode == 'step' then s.candidate.step.state = 'pending'
+            elseif mode == 'provider' then s.settlement.register('reentrant', {retain = function() error('provider ran') end})
+            elseif mode == 'world-binding' then PZSurvivorToolkit.ActionQueueItemEditAdapters.worldContainer = function() error('replacement ran') end
+            elseif mode == 'carried-binding' then PZSurvivorToolkit.ActionQueuePolicy.isCarriedContainer = function() error('replacement ran') end
+            elseif mode == 'root' then s.player.getInventory = function() return {} end
+            elseif mode == 'owner' then s.sourceOwner.container = nil
+            elseif mode == 'late-missing' then s.root.items[181] = nil
+            elseif mode == 'late-consumed' then s.members[1].consumed = true
+            elseif mode == 'late-duplicate' then s.source.items[181] = s.item(181, s.source) end
+        end
+        return item
+    end
+    local result = s.observe()
+    assert(result.status == 'unhandled' or result.borrowings[1].disposition == 'unresolved', mode .. ': getter reentry escaped freshness')
+end
+-- Native getters at the last read still cannot mutate closed bindings unnoticed.
+for _, mode in ipairs({'list', 'scope', 'sharing', 'candidate', 'owner', 'duplicate', 'death', 'actor-slot', 'source-actor'}) do
+    local s = editCleanupFixture(false, mode == 'owner')
+    local item = s.members[1]
+    item.getIsCraftingConsumed = function()
+        if mode == 'list' then s.queue.queue = {s.current, s.pendingReturn, s.tail}
+        elseif mode == 'scope' then s.scope.phase = 'retired'
+        elseif mode == 'sharing' then s.scope.tasks[{}] = {items = {[181] = true}, pickups = {}}
+        elseif mode == 'candidate' then s.candidate.phase = 'waived'
+        elseif mode == 'owner' then s.sourceOwner.container = nil
+        elseif mode == 'duplicate' then s.source.items[181] = s.item(181, s.source)
+        elseif mode == 'death' then s.player.dead = true
+        elseif mode == 'actor-slot' then getSpecificPlayer = function() return {} end
+        elseif mode == 'source-actor' then s.pickup.character = {} end
+        return false
+    end
+    local result = s.observe()
+    assert(result.status == 'unhandled' or result.borrowings[1].disposition == 'unresolved', mode .. ': final getter escaped freshness')
+end
+for _, terminal in ipairs({'returned', 'waived'}) do
+    local s = editCleanupFixture(true)
+    if terminal == 'returned' then
+        s.makeReturn(); s.completeReturn()
+        s.queue.current, s.queue.queue = s.current, {s.current, s.pendingReturn, s.tail}
+    else
+        local waiver = assert(s.settlement.pendingReturnWaiver(s.pendingReturn, s.returnGuard))
+        assert(s.settlement.waivePendingReturn(waiver, s.pendingReturn, s.returnGuard))
+    end
+    local result = cleanupDisposition(s, 'settled')
+    assert(not result.legacyHints and result.borrowings[1].item == nil,
+        terminal .. ': a terminal native-earned episode acquired a new synthetic return')
+end
+do
+    local s = editCleanupFixture(false)
+    s.settlement.register('legacy', {retain = function() error('observation called legacy provider') end,
+        ownsPickup = function() error('observation called legacy provider ownership') end})
+    local result = cleanupDisposition(s, 'synthesize-return')
+    assert(result.providersPresent, 'unknown provider disposition must remain visible to the reducer')
+end
+for _, mode in ipairs({'queue', 'borrowings', 'combined', 'tasks'}) do
+    local s = editCleanupFixture(false)
+    if mode == 'queue' then for _ = 4, 33 do s.queue.queue[#s.queue.queue + 1] = {} end
+    elseif mode == 'borrowings' then
+        for index = 2, 33 do s.record.borrowings[index] = s.record.borrowings[1] end
+    elseif mode == 'combined' then
+        for _ = 4, 32 do s.settlement.track(s.action(), 'body') end
+        s.record.steps[3].prerequisites = {}
+        for index = 1, 40 do s.record.steps[3].prerequisites[index] = s.record.steps[1] end
+        assert(s.settlement.editLedger(s.queue, s.current).status == 'observed',
+            'combined cutoff fixture must remain below each standalone metadata bound')
+    else
+        for _ = 1, 129 do s.scope.tasks[{}] = {items = {}, pickups = {}} end
+    end
+    local result = s.observe()
+    assert(result.status == 'unhandled' and not result.borrowings and not result.steps and not result.fresh,
+        mode .. ': cutoff exposed a partial fresh ledger')
+end
+do
+    local s = editCleanupFixture(false)
+    local value = s.item(182, s.source)
+    s.source.items[182] = value
+    local pickup = {Type = 'ISInventoryTransferAction', character = s.player, toolkitQueueOperation = s.token,
+        item = value, srcContainer = s.source, destContainer = s.root, action = {}, queueList = {{items = {value}}}, transactionId = 22}
+    s.settlement.remember(s.scope, pickup, {knownInputs = true, items = {[182] = true}})
+    assert(s.settlement.preparePickup(s.scope, pickup))
+    s.queue.current, s.queue.queue = pickup, {pickup, s.tail}
+    assert(s.settlement.beginPickup(s.scope, pickup, s.guard))
+    value.container, s.source.items[182], s.root.items[182] = s.root, nil, value
+    pickup.queueList, pickup.transactionId = {}, 0
+    assert(s.settlement.finishPickup(s.scope, pickup, true))
+    s.settlement.poll(s.scope)
+    s.queue.current, s.queue.queue = s.current, {s.current, s.pendingReturn, s.tail}
+    local result = s.observe()
+    assert(result.status == 'observed' and #result.borrowings == 2
+        and result.borrowings[1].disposition == 'unresolved' and result.borrowings[2].disposition == 'unresolved',
+        'multiple outstanding earned loans require a wider fresh dependency contract')
+end
+do
+    local s = editCleanupFixture(false)
+    local equalityCalls = 0
+    local equality = {__eq = function()
+        equalityCalls = equalityCalls + 1
+        return true
+    end}
+    local originalClass, replacementClass = setmetatable({}, equality), setmetatable({}, equality)
+    setmetatable(s.current, originalClass)
+    local item, getContainer = s.members[1], s.members[1].getContainer
+    item.getContainer = function(self)
+        setmetatable(s.current, replacementClass)
+        return getContainer(self)
+    end
+    local result = s.observe()
+    assert(result.status == 'unhandled' and equalityCalls == 0,
+        'fresh final watch must compare class identities without invoking an equality callback')
+end
+for _, duplicateRead in ipairs({1, 2}) do
+    local s = editCleanupFixture(false)
+    local nestedContainer = {}
+    local nestedDuplicate = s.item(181, nestedContainer)
+    local reads = 0
+    s.source.getItemById = function(_, id)
+        assert(id == 181)
+        reads = reads + 1
+        if reads == duplicateRead then return nestedDuplicate end
+    end
+    cleanupDisposition(s, 'unresolved')
+    assert(reads == duplicateRead and s.counts() == 0,
+        'either recursive endpoint lookup must reject a same-ID duplicate nested below the destination')
+end
+print('Fresh edit cleanup: earned native history, exact endpoints, covered hints, replicas, bounded work and mutation-free freshness passed.')

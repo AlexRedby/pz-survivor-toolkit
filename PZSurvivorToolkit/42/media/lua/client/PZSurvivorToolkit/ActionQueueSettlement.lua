@@ -2,7 +2,7 @@
 local Toolkit = PZSurvivorToolkit
 local Settlement = {}
 Toolkit.ActionQueueSettlement = Settlement
-local providers, byId = {}, {}
+local providers, byId, providerRevision = {}, {}, 0
 local executionProof = require "PZSurvivorToolkit/SourceProof"
 -- Keep the new dependency inside the existing source-owned wrapper boundary.
 -- Unknown factories must never receive private callbacks or attempt records.
@@ -407,7 +407,12 @@ end
 -- Avoid operationLive: its cancellation bridge may retire state and invoke
 -- settings/native callbacks. Missing history remains explicitly unknown.
 local editLedgerOrigin = executionProof and executionProof.closure
-function Settlement.editLedger(queue, current)
+local function editLedger(queue, current, budget)
+    local function take()
+        if not budget then return true end
+        budget.remaining = budget.remaining - 1
+        return budget.remaining >= 0
+    end
     local function unknown() return {status = "unhandled", reason = "edit_obligation_unknown"} end
     -- Query-local list freshness only: retaining an old array in the private
     -- operation would also retain unrelated tail actions after replacement.
@@ -442,7 +447,7 @@ function Settlement.editLedger(queue, current)
         if size > maximum then return end
         for key in pairs(values) do
             count = count + 1
-            if count > maximum or type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > size then return end
+            if not take() or count > maximum or type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > size then return end
         end
         if count == size then return size end
     end
@@ -458,6 +463,7 @@ function Settlement.editLedger(queue, current)
         legacyHints = hinted, providersPresent = #providers > 0}
     local visits = 0
     for index = 1, stepCount do
+        if not take() then return unknown() end
         local step = record.steps[index]
         if type(step) ~= "table" or getmetatable(step) ~= nil or step.operation ~= record
             or type(step.action) ~= "table" or rawget(step.action, "character") ~= record.character
@@ -470,6 +476,7 @@ function Settlement.editLedger(queue, current)
             if not count then return unknown() end
             visits = visits + count
             for position = 1, count do
+                if not take() then return unknown() end
                 local previous = step.prerequisites[position]
                 if type(previous) ~= "table" or getmetatable(previous) ~= nil or previous.operation ~= record
                     or not previous.action or record.actions[previous.action] ~= previous then return unknown() end
@@ -480,6 +487,7 @@ function Settlement.editLedger(queue, current)
             started = step.started == true, required = required, returning = step.returning ~= nil}
     end
     for index = 1, borrowingCount do
+        if not take() then return unknown() end
         local binding = record.borrowings[index]
         local candidate = type(binding) == "table" and getmetatable(binding) == nil and binding.candidate
         if type(candidate) ~= "table" or getmetatable(candidate) ~= nil or candidate.owner ~= token
@@ -495,7 +503,11 @@ function Settlement.editLedger(queue, current)
             sourceOwner = owner and {id = owner.id, fullType = owner.fullType} or nil,
             returning = candidate.returning ~= nil, plannedReturn = candidate.plannedReturn}
     end
-    return result
+    return result, record
+end
+function Settlement.editLedger(queue, current)
+    -- Keep private records out of the public multiple-return boundary.
+    return (editLedger(queue, current))
 end
 
 -- Families retain their own identity/effect proofs. Registration grants no edit rights.
@@ -508,6 +520,7 @@ function Settlement.register(id, provider)
         providers[#providers + 1], byId[id] = entry, entry
     end
     entry.retain, entry.ownsPickup = provider.retain, provider.ownsPickup
+    providerRevision = providerRevision + 1
 end
 
 local function retained(action, current, queue)
@@ -1924,7 +1937,7 @@ function Settlement.finishPlannedReturn(action, succeeded)
     return result
 end
 
-local function makeReturn(queue, id, expected, containers)
+local function resolveReturn(queue, id, expected, containers, observation)
     local inventory, destination = queue.character:getInventory(), expected.destination
     local owner = expected.borrowed and expected.borrowed.sourceOwner
     if owner then
@@ -1933,19 +1946,233 @@ local function makeReturn(queue, id, expected, containers)
         -- Rebind only its captured exact owner, still carried by this actor.
         if not sameMember(holder, owner) or type(holder.getInventory) ~= "function" then return end
         destination = holder:getInventory()
-        if not Toolkit.ActionQueuePolicy.isCarriedContainer(destination, queue.character) then return end
+        if observation then
+            if not observation.carried or observation.carried(destination, queue.character) ~= true then return end
+        elseif not Toolkit.ActionQueuePolicy.isCarriedContainer(destination, queue.character) then return end
     end
     local item = not expected.ambiguous and inventory:getItemById(id)
     if not destination or not item or item:getID() ~= id or item:getFullType() ~= expected.fullType
         or item:getContainer() ~= inventory or item:getIsCraftingConsumed()
-        or not destination:isExistYet() or not (containers:contains(destination)
-            or Toolkit.ActionQueuePolicy.isCarriedContainer(destination, queue.character)) then return end
+        or not destination:isExistYet() or not (observation and observation.endpoint(destination, queue.character)
+            or not observation and (containers:contains(destination)
+                or Toolkit.ActionQueuePolicy.isCarriedContainer(destination, queue.character))) then return end
+    if observation then
+        -- Fresh observation never grants construction or native admission. The
+        -- opposite endpoint must not already hold the same physical identity.
+        local duplicate = destination:getItemById(id)
+        if duplicate ~= nil then return end
+        if owner and (inventory:getItemById(owner.id) ~= observation.owner
+            or observation.owner:getContainer() ~= inventory
+            or observation.owner:getInventory() ~= destination) then return end
+        if queue.character:getInventory() ~= inventory or inventory:getItemById(id) ~= item or item:getContainer() ~= inventory
+            or item:getID() ~= id or item:getFullType() ~= expected.fullType or item:getIsCraftingConsumed() then return end
+        duplicate = destination:getItemById(id)
+        if duplicate ~= nil then return end
+        if owner and (observation.owner:getContainer() ~= inventory or observation.owner:getInventory() ~= destination) then return end
+    end
+    return item, inventory, destination
+end
+local function makeReturn(queue, id, expected, containers)
+    local item, inventory, destination = resolveReturn(queue, id, expected, containers)
+    if not item then return end
     local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
     if action.Type ~= "ISInventoryTransferAction"
         and (isClient() or not Toolkit.ActionQueueCarts or not Toolkit.ActionQueueCarts.isTransfer(action)) then return end
     if action.Type == "ISInventoryTransferAction" then Toolkit.BulkActions.guardTransfer(action) end
     action:setAllowMissingItems(true)
     return action
+end
+
+-- Fresh bounded facts for an opt-in edit projection. The metadata ledger above
+-- remains callback-free; this layer reads exact endpoints, never native outcome
+-- state, providers, constructors, validation, or capacity. Nothing here earns debt.
+function Settlement.observeEditCleanup(queue, current)
+    local function unknown() return {status = "unhandled", reason = "edit_obligation_unknown"} end
+    local budget = {remaining = 128}
+    local result, record = editLedger(queue, current, budget)
+    if result.status ~= "observed" or not rawget(current, "action") then return unknown() end
+    local watches, maps = {}, {}
+    local revision = providerRevision
+    local function take()
+        budget.remaining = budget.remaining - 1
+        return budget.remaining >= 0
+    end
+    local function plain(value) return type(value) == "table" and getmetatable(value) == nil end
+    local function watch(owner, key)
+        local value = rawget(owner, key)
+        watches[#watches + 1] = {owner = owner, key = key, value = value, meta = getmetatable(owner)}
+        return value
+    end
+    local function fields(owner, names)
+        if not plain(owner) then return false end
+        for _, key in ipairs(names) do watch(owner, key) end
+        return true
+    end
+    local function array(values, maximum)
+        if not plain(values) then return end
+        local count, size = 0, #values
+        if size > maximum then return end
+        for key in pairs(values) do
+            if not take() or type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > size then return end
+            count = count + 1
+            watch(values, key)
+        end
+        if count ~= size then return end
+        maps[#maps + 1] = {value = values, count = count}
+        return size
+    end
+    local function map(values, visit)
+        if not plain(values) then return false end
+        local count = 0
+        for key, value in pairs(values) do
+            if not take() then return false end
+            count = count + 1
+            watch(values, key)
+            if visit and not visit(key, value) then return false end
+        end
+        maps[#maps + 1] = {value = values, count = count}
+        return true
+    end
+    local list, actor, token, generation = queue.queue, record.character, record.token, record.generation
+    local native = rawget(current, "action")
+    if not array(list, 32) or not fields(record, {"character", "token", "queue", "generation", "phase", "settlement", "steps", "actions", "borrowings"}) then return unknown() end
+    for _, key in ipairs({"character", "current", "queue", "toolkitOperationGeneration", "toolkitCancel", "toolkitGroupCancel",
+        "toolkitResume", "toolkitOutcomeWait", "toolkitStopIntent"}) do watch(queue, key) end
+    watch(token, "toolkitCancelled"); watch(token, "toolkitPickups")
+    for _, key in ipairs({"character", "toolkitQueueOperation", "action", "started", "Type", "item"}) do watch(current, key) end
+    local stepCount = array(record.steps, 32)
+    local borrowingCount = array(record.borrowings, 32)
+    if not stepCount or not borrowingCount then return unknown() end
+    for index = 1, stepCount do
+        local step = record.steps[index]
+        if not fields(step, {"operation", "action", "phase", "state", "started", "required", "returning", "prerequisites", "borrowing"}) then return unknown() end
+        watch(record.actions, step.action)
+        watch(step.action, "character"); watch(step.action, "toolkitQueueOperation"); watch(step.action, "Type")
+        if step.prerequisites and not array(step.prerequisites, 128) then return unknown() end
+        for _, previous in ipairs(step.prerequisites or {}) do
+            if not fields(previous, {"operation", "action", "state"}) then return unknown() end
+        end
+    end
+    local activeIds, covered, scopes, entries, outstanding = {}, {}, {}, {}, 0
+    for index = 1, borrowingCount do
+        local binding, value = record.borrowings[index], result.borrowings[index]
+        local candidate = binding.candidate
+        if not fields(binding, {"scope", "candidate"})
+            or not fields(candidate, {"owner", "id", "fullType", "phase", "ambiguous", "source", "destination", "sourceOwner",
+                "step", "returning", "plannedReturn"}) then return unknown() end
+        if candidate.sourceOwner and not fields(candidate.sourceOwner, {"id", "fullType"}) then return unknown() end
+        covered[candidate.id] = true
+        if candidate.phase ~= "completed" and candidate.phase ~= "waived" then
+            activeIds[candidate.id] = (activeIds[candidate.id] or 0) + 1
+            outstanding = outstanding + 1
+        end
+        entries[index] = {binding = binding, candidate = candidate, scope = binding.scope, value = value}
+        value.disposition = "unresolved"
+        if candidate.phase == "completed" or candidate.phase == "waived" then value.disposition = "settled" end
+    end
+    local hints = rawget(token, "toolkitPickups")
+    result.legacyHints = false
+    if hints ~= nil then
+        if not map(hints, function(item)
+            if not instanceof(item, "InventoryItem") then return false end
+            local ok, id = pcall(function() return item:getID() end)
+            if not ok or type(id) ~= "number" or id % 1 ~= 0 then return false end
+            if not covered[id] then result.legacyHints = true end
+            return true
+        end) then return unknown() end
+    end
+    local policy, adapters = Toolkit.ActionQueuePolicy, Toolkit.ActionQueueItemEditAdapters
+    local carried = type(policy) == "table" and rawget(policy, "isCarriedContainer")
+    local world = type(adapters) == "table" and rawget(adapters, "worldContainer")
+    local origin = editLedgerOrigin
+    local carriedTrusted = type(carried) == "function" and origin(carried, "ActionQueuePolicy.lua")
+    local worldTrusted = type(world) == "function" and origin(world, "ActionQueueItemEditAdapters.lua")
+    local function unchanged()
+        if PZSurvivorToolkit ~= Toolkit or Toolkit.ActionQueueSettlement ~= Settlement
+            or executionProof.closure ~= origin or Toolkit.ActionQueuePolicy ~= policy
+            or Toolkit.ActionQueueItemEditAdapters ~= adapters
+            or type(policy) == "table" and rawget(policy, "isCarriedContainer") ~= carried
+            or type(adapters) == "table" and rawget(adapters, "worldContainer") ~= world
+            or ISTimedActionQueue.queues[actor] ~= queue or queue.current ~= current or queue.queue ~= list
+            or queue.queue[1] ~= current or rawget(current, "action") ~= native or cancellations[queue]
+            or providerRevision ~= revision then return false end
+        for _, entry in ipairs(watches) do
+            if not rawequal(getmetatable(entry.owner), entry.meta) or not rawequal(rawget(entry.owner, entry.key), entry.value) then return false end
+        end
+        for _, entry in ipairs(maps) do
+            local count = 0
+            for _ in pairs(entry.value) do
+                count = count + 1
+                if count > entry.count then return false end
+            end
+            if count ~= entry.count then return false end
+        end
+        return true
+    end
+    local root, alive, localActor
+    local ok = pcall(function()
+        root, alive = actor:getInventory(), not actor:isDead()
+        localActor = getSpecificPlayer(actor:getPlayerNum()) == actor
+    end)
+    if not ok or not root or not alive or not localActor or not unchanged() then return unknown() end
+    for _, entry in ipairs(entries) do
+        local candidate, scope, binding, value = entry.candidate, entry.scope, entry.binding, entry.value
+        local step = candidate.step
+        if step ~= nil and not plain(step) then return unknown() end
+        if outstanding == 1 and candidate.phase == "active" and activeIds[candidate.id] == 1 and not candidate.ambiguous
+            and not candidate.returning and not candidate.plannedReturn and candidate.owner == token
+            and candidate.destination == root and plain(scope) and step and step.operation == record and step.phase == "prepare" and step.state == "earned"
+            and step.borrowing == binding and record.actions[step.action] == step then
+            local scopeState = scopes[scope]
+            if scopeState == nil then
+                scopeState = {valid = deferred(scope) and scope.phase ~= "retired" and scope.character == actor
+                    and scope.queue == queue and scope.generation == generation}
+                scopes[scope] = scopeState
+                if not fields(scope, {"marker", "character", "queue", "generation", "phase", "tasks", "equipmentItems"})
+                    or not plain(scope.tasks) or not plain(scope.equipmentItems) then return unknown() end
+                if not map(scope.tasks, function(taskToken, task)
+                    return type(taskToken) == "table" and fields(task, {"items", "pickups", "unknownInputs", "readsEquipment"})
+                        and plain(task.items) and plain(task.pickups)
+                end) then return unknown() end
+            end
+            local exclusive = scopeState.valid and scope.tasks[token] ~= nil
+            for taskToken, task in pairs(scope.tasks) do
+                if not take() then return unknown() end
+                local pickup = watch(task.pickups, candidate.id)
+                local claimed = watch(task.items, candidate.id)
+                local equipment = watch(scope.equipmentItems, candidate.id)
+                if pickup ~= nil then
+                    if not fields(pickup, {"ambiguous", "fullType", "container"}) then return unknown() end
+                    if pickup.ambiguous or pickup.fullType ~= candidate.fullType or pickup.container ~= candidate.source
+                        or taskToken ~= token then exclusive = false end
+                end
+                if taskToken ~= token and (task.unknownInputs or claimed or task.readsEquipment and equipment) then exclusive = false end
+            end
+            if exclusive and (carriedTrusted or worldTrusted) then
+                local observation = {carried = carriedTrusted and carried or nil, endpoint = function(destination)
+                    if carriedTrusted and carried(destination, actor) == true then return true end
+                    return worldTrusted and world(destination, actor) ~= nil
+                end}
+                local owner = candidate.sourceOwner
+                if owner then
+                    ok, observation.owner = pcall(function() return root:getItemById(owner.id) end)
+                    if not ok then observation.owner = nil end
+                end
+                local present, item, source, destination = pcall(resolveReturn, queue, candidate.id,
+                    {fullType = candidate.fullType, destination = candidate.source, borrowed = candidate}, nil, observation)
+                if not unchanged() then return unknown() end
+                if present and item and source == root then
+                    value.disposition, value.item, value.source, value.destination = "synthesize-return", item, source, destination
+                end
+            end
+        end
+    end
+    local stillLive, valid = pcall(function()
+        return not actor:isDead() and getSpecificPlayer(actor:getPlayerNum()) == actor and actor:getInventory() == root
+    end)
+    if not stillLive or not valid or not unchanged() then return unknown() end
+    result.fresh = true
+    return result
 end
 
 local function bindPlannedReturn(action, scope, candidate, entry, preparedStep)
