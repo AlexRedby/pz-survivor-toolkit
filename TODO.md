@@ -50,7 +50,9 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ### Warehouse client workload
 
-- [ ] Investigate raw category convergence for peer-replicated physical items before extending nearby/category quick-transfer coverage. During a Bandage/Screwdriver Host replacement the carried Screwdriver had Toolkit category `toolElectrical`, while the newly replicated physical stock retained `ToolWeapon`; read-only observations must not call `ManifestModel.item`, which prepares categories and can hide this distinction. Establish whether the actual supported physical/nearby category callback misses the matching item, then fix its shared preparation boundary only if demonstrated.
+- [ ] Qualify and fix destination category preparation for CleanUI quick transfers to new peer-replicated physical stock. `tests/test_warehouse_workload_affinity.lua` characterizes the current callbacks through Toolkit's actual category/filter wrappers: carried Screwdriver `toolElectrical` does not match raw physical stock `ToolWeapon` in single-target or nearby mode; same-type transfer and category transfer after ordinary target refresh admit the exact candidate. The newer tag changes do not prepare these destinations.
+  - [ ] Qualify the actual supported Host callbacks with read-only raw categories, exact admitted/transferred IDs and accepting physical-target controls before changing runtime behavior. Preserve the separate aggregate-insertion restriction coverage. Do not call `ManifestModel.item` in observers: it prepares categories and can hide the distinction.
+  - [ ] Prepare the required physical inputs at the shared category-affinity boundary, including related preview/menu paths; preserve instance overrides, filters and native eligibility without rebuilding hidden UI rows. Update the characterization to require successful category admission and rerun affected source checks and supported Host phases.
 
 ### Item catalogue test world
 

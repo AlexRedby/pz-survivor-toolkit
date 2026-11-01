@@ -252,4 +252,131 @@ local categoryReceipt=categoryControl.A.dispatch(categoryControl.run)
 assert(categoryReceipt.selectedId==categoryControl.new.id and categoryReceipt.before.items[1].id==categoryControl.oldStock.id
  and categoryReceipt.before.items[1].rawCategory=='Tool'and not categoryReceipt.before.fresh,
  'category admission was inferred from stale ID/seed metadata instead of the actual installed predicate')
+
+-- Offline controlled category-preparation boundary, not multiplayer/native proof.
+-- Use the installed toolbar callback/handler and real Toolkit wrappers/rules;
+-- only panes, physical replicas, presentation helpers and action sinks are doubles.
+do
+ local function preparationFixture(method)
+  local boot,start,modules={},{},{}
+  local admitted,queued={},{}
+  local source,target=container('inventorymale'),container('crate')
+  function target:isEmpty()return #self.values==0 end
+  function target:hasRoomFor()return true end
+  local script={getFullName=function()return 'Base.Screwdriver'end,
+   getDisplayCategory=function()return 'ToolWeapon'end,
+   DoParam=function()error('inventory preparation must not mutate ScriptItem categories')end}
+  local function screwdriver(id,c)
+   local value=item(id,'Base.Screwdriver','ToolWeapon',c)
+   value.originalCategory=value.category
+   function value:getScriptItem()return script end
+   function value:hasModData()return false end
+   function value:isFluidContainer()return false end
+   function value:getUnequippedWeight()return 1 end
+   function value:setDisplayCategory(category)self.category=category end
+   return value
+  end
+  local candidate,stock=screwdriver(301,source),screwdriver(302,target)
+  local paneClass={prerender=function()end,restoreSelection=function()end}
+  function paneClass:refreshContainer()
+   self.refreshes=(self.refreshes or 0)+1
+   self.itemslist={};self:restoreSelection({})
+  end
+  function paneClass:transferItemsByWeight(values,destination)
+   assert(destination==target,'single callback selected a nonphysical destination')
+   for _,value in ipairs(values)do admitted[#admitted+1]=value:getID()end
+  end
+  local function page(c,onCharacter)
+   return {player=0,onCharacter=onCharacter,visible=onCharacter,getIsVisible=function(self)return self.visible end,
+    backpacks={{inventory=c}},
+    inventoryPane=setmetatable({inventory=c,mode='details',items={},selected={}}, {__index=paneClass})}
+  end
+  local personal,loot=page(source,true),page(target,false)
+  local player={getPlayerNum=function()return 0 end}
+  local env=setmetatable({PZSurvivorToolkit={Settings={inventoryFilters=function()return true end}},
+   ISInventoryPane=paneClass,ISInventoryPage={},ItemBodyLocation={},
+   table=setmetatable({wipe=function(values)for key in pairs(values)do values[key]=nil end end},{__index=table}),
+   CleanUI_Clean_ISInventoryPane=false,CleanUI_Vanilla_ISInventoryPane=false,
+   CleanUI_RegisterInventoryUiToggleCallback=false,ISInventoryCommonHandler_SortMenu=false,
+   getFileReader=false,getAllItems=false,
+   Events={OnGameBoot={Add=function(fn)boot[#boot+1]=fn end},
+    OnGameStart={Add=function(fn)start[#start+1]=fn end},OnCreatePlayer={Add=function()end}},
+   getPlayerInventory=function()return personal end,getPlayerLoot=function()return loot end,
+   getSpecificPlayer=function()return player end,getPlayerHotbar=function()end,
+   isGamePaused=function()return false end,CleanUI_getTransferMethod=function()return method end,
+   ISTimedActionQueue={add=function(action)
+    assert(action.srcContainer==source and action.destContainer==target,
+     'nearby callback selected incorrect physical containers')
+    queued[#queued+1]=action.item:getID()
+   end},ISInventoryTransferAction={new=function(_,who,value,from,to)
+    assert(who==player);return {item=value,srcContainer=from,destContainer=to}
+   end}}, {__index=_G})
+  local presentation={
+   ['ISUI/ISInventoryPane']=paneClass,['PZSurvivorToolkit/Settings']={},
+   ['PZSurvivorToolkit/UIStyle']={},['PZSurvivorToolkit/TagVisuals']={},
+   ['PZSurvivorToolkit/TagRulePicker']={},['PZSurvivorToolkit/TagFilterPresetsMenu']={},
+   ['PZSurvivorToolkit/InventoryRows']={captureAnchor=function()end,restoreAnchor=function()end,restoreSelection=function()end},
+   ['PZSurvivorToolkit/InventoryCategoryGroups']={split=function()return false end},
+   ['PZSurvivorToolkit/InventoryOrder']={prioritize=function()return false end},
+   ['PZSurvivorToolkit/InventorySearch']={forPane=function()end},
+   ['PZSurvivorToolkit/ItemTags']={enabled=function()return false end}}
+  local real={['PZSurvivorToolkit/InventoryClasses']='client',
+   ['PZSurvivorToolkit/InventoryMembership']='shared',
+   ['PZSurvivorToolkit/ItemCategories']='shared',['PZSurvivorToolkit/ItemCategoryRules']='shared',
+   ['PZSurvivorToolkit/ItemCategoryData']='shared',['PZSurvivorToolkit/LegacyItemCategories']='shared'}
+  env.require=function(name)
+   if presentation[name]then return presentation[name]end
+   if modules[name]then return modules[name]end
+   if real[name]then
+    local path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/'..real[name]..'/'..name..'.lua'
+    local chunk=assert(loadfile(path));setfenv(chunk,env);modules[name]=chunk();return modules[name]
+   end
+   error('unexpected preparation fixture dependency: '..name)
+  end
+  load(CleanUIInventoryTransferHandlerSource,env,'ISUI/ISInventoryPageTransferHandler.lua')
+  for _,name in ipairs({'onTransferByNameClick','onTransferByCategoryClick','cleanUIClearQuickTransferHighlights'})do
+   load(pageMethod(name),env,'ISUI/ISInventoryPage.lua')
+  end
+  setmetatable(personal,{__index=env.ISInventoryPage})
+  for _,name in ipairs({'ToolkitItemCategories','PZSurvivorToolkit/InventoryFilter'})do
+   local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))
+   setfenv(chunk,env);chunk()
+  end
+  for _,fn in ipairs(boot)do fn()end
+  for _,fn in ipairs(start)do fn()end
+  personal.inventoryPane:refreshContainer()
+  assert(candidate.category=='toolElectrical'and stock.category=='ToolWeapon',
+   'fixture did not establish the real prepared-source/raw-target boundary')
+  assert(not candidate:isFavorite()and not candidate:isEquipped()
+   and env.ISInventoryPageTransferHandler.canTransferItem(candidate,target,player)
+   and env.ISInventoryPageTransferHandler.canPlaceItemInContainer(candidate,target,0,player),
+   'physical destination/protection controls did not allow the candidate')
+  return {personal=personal,loot=loot,candidate=candidate,stock=stock,script=script,admitted=admitted,queued=queued}
+ end
+ local function exactIds(w,method,expected)
+  local actual=method=='1'and w.admitted or w.queued
+  local unused=method=='1'and w.queued or w.admitted
+  assert(#actual==#expected and #unused==0,'unexpected admitted/queued item IDs')
+  for index,id in ipairs(expected)do assert(actual[index]==id,'callback selected another physical item ID')end
+  assert(w.script:getDisplayCategory()=='ToolWeapon'and w.candidate.originalCategory=='ToolWeapon'
+   and w.stock.originalCategory=='ToolWeapon','preparation changed original/script categories')
+ end
+ for _,method in ipairs({'1','2'})do
+  local category=preparationFixture(method)
+  category.personal:onTransferByCategoryClick()
+  exactIds(category,method,{})
+  assert(category.stock.category=='ToolWeapon'and not category.loot.inventoryPane.refreshes and not category.loot:getIsVisible(),
+   'category callback/observation prepared the raw physical target')
+  local sameType=preparationFixture(method)
+  sameType.personal:onTransferByNameClick()
+  exactIds(sameType,method,{301})
+  assert(sameType.stock.category=='ToolWeapon','same-type control repaired the target category')
+  local refreshed=preparationFixture(method)
+  refreshed.loot.inventoryPane:refreshContainer()
+  assert(refreshed.stock.category=='toolElectrical','normal target refresh did not prepare the real category')
+  refreshed.personal:onTransferByCategoryClick()
+  exactIds(refreshed,method,{301})
+ end
+ print('PASS offline category boundary: real CleanUI callbacks/Toolkit wrappers reject raw physical target categories for methods 1/2; same-type and normal target-refresh controls admit exact ID 301')
+end
 print('PASS warehouse affinity: installed CleanUI type/category callbacks, native option snapshot/setValue/restore, exact admission IDs and guarded observations; stale aggregate is a controlled dependency demonstration only')
