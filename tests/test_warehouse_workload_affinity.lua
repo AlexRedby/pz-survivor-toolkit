@@ -3,6 +3,7 @@
 -- A stale aggregate below is an explicit dependency control, not evidence of a
 -- naturally stale multiplayer UI or of Smart Deposit routing/native transfers.
 assert(type(CleanUIInventoryTransferHandlerSource)=='string','required installed CleanUI transfer handler missing')
+assert(type(CleanUIInventoryPaneSource)=='string','required installed CleanUI pane missing')
 assert(type(CleanUIInventoryPageSource)=='string','required installed CleanUI page missing')
 assert(type(CleanUIInventoryModOptionsSource)=='string','required installed CleanUI option getters missing')
 assert(type(NativeActionRoot)=='string','required native ModOptions root missing')
@@ -23,6 +24,11 @@ local function getter(name)
 end
 local optionConstants=assert(CleanUIInventoryModOptionsSource:match('local MOD_ID = [^\n]+'))..'\n'
  ..assert(CleanUIInventoryModOptionsSource:match('local TRANSFER_BUTTON_LAYOUT_ID = [^\n]+'))..'\n'
+local pendingStart=assert(CleanUIInventoryPaneSource:find('local CleanUI_pendingTimedActions = {}',1,true),
+ 'installed pane pending action queue missing')
+local pendingEnd=assert(CleanUIInventoryPaneSource:find('local function CleanUI_queueInventoryTransferSafely',pendingStart,true),
+ 'installed pane pending action queue boundary missing')
+local pendingSource=CleanUIInventoryPaneSource:sub(pendingStart,pendingEnd-1)..'\nreturn CleanUI_queueTimedActionSafely'
 local function list(values)return {size=function()return #values end,get=function(_,i)return values[i+1]end}end
 local function container(kind)
  local c={values={},kind=kind}
@@ -50,7 +56,7 @@ local function item(id,ft,category,c)
 end
 local function ids(c)local out={};for _,value in ipairs(c.values)do out[#out+1]=value.id end;table.sort(out);return out end
 local function fixture(kind,fresh)
- local w={now=1000,captures={},observations=0,refreshes=0,highlights=0,frames={}}
+ local w={now=1000,captures={},observations=0,refreshes=0,highlights=0,frames={},ticks={}}
  local root,physical,aggregate=container('inventorymale'),container('crate'),container('proximityInv')
  local old=item(101,'Base.Bandage','FirstAid',root);local new=item(102,'Base.Screwdriver','Tool',root)
  -- The peer owns the removed old stock; the new stock is physically in crate3.
@@ -77,9 +83,19 @@ local function fixture(kind,fresh)
   getPlayerInventory=function(n)assert(n==0);return personal end,
   getPlayerLoot=function(n)assert(n==0);return loot end,
   getTimestampMs=function()return w.now end,
-  Events={OnPostUIDraw={Add=function(fn)w.frames[#w.frames+1]=fn end}},
-  ISInventoryTransferAction={new=function(_,who,value,from,to)assert(who==player and from==root and to==physical);return {item=value}end},
-  ISTimedActionQueue={add=function(action)w.captures[#w.captures+1]={items={action.item},target=physical}end}},{__index=_G})
+  Events={OnPostUIDraw={Add=function(fn)w.frames[#w.frames+1]=fn end},
+   OnTick={Add=function(fn)w.ticks[#w.ticks+1]=fn end,Remove=function(fn)
+    for i=#w.ticks,1,-1 do if w.ticks[i]==fn then table.remove(w.ticks,i)end end
+   end}},
+  CleanUI_logSkippedInventoryTransfer=function()w.skipped=(w.skipped or 0)+1 end,
+  ISInventoryTransferAction={new=function(_,who,value,from,to)
+   assert(who==player and from==root and to==physical)
+   return {Type='ISInventoryTransferAction',item=value,srcContainer=from,destContainer=to,begin=function()end}
+  end},
+  ISTimedActionQueue={add=function(action)
+   w.captures[#w.captures+1]={items={action.item},target=physical,actions={action}}
+  end}},{__index=_G})
+ local queueTimedAction=load(pendingSource,env,'ISUI/ISInventoryPane.lua pending timed actions')
  load(modOptionsSource,env,'PZAPI/ModOptions.lua')
  local options=env.PZAPI.ModOptions:create('CleanUI')
  local method=options:addComboBox('transferMethod','method');method:addItem('single');method:addItem('nearby',true)
@@ -97,6 +113,14 @@ local function fixture(kind,fresh)
  personal.transferByCategoryButton=button(personal.onTransferByCategoryClick)
  function personal.inventoryPane:transferItemsByWeight(values,target)
   assert(self==personal.inventoryPane and(target==aggregate or target==physical),'actual CleanUI handler used another admission target')
+  if w.defer then
+   for _,value in ipairs(values)do
+    local action={Type='ISInventoryTransferAction',item=value,srcContainer=root,destContainer=physical,begin=function()end}
+    if w.deferOverride then w.deferOverride(action)end
+    assert(queueTimedAction(action,'controlled transfer',value,root,target),'installed pending queue rejected the controlled action')
+   end
+   return
+  end
   local admitted={};for _,value in ipairs(values)do admitted[#admitted+1]=value end
   w.captures[#w.captures+1]={items=admitted,target=target}
  end
@@ -112,15 +136,27 @@ local function fixture(kind,fresh)
   assert(observed==run)
   -- This port supplies synthetic action observations from captured admission;
   -- its chosen destination makes no assertion about the real routing layer.
-  for _,capture in ipairs(w.captures)do for _,value in ipairs(capture.items)do
-   local action={Type='ISInventoryTransferAction',item=value,srcContainer=root,destContainer=physical}
-   if w.actionOverride then w.actionOverride(action)end
-   run.actions[action]={step='personal-quick'}
+  for _,capture in ipairs(w.captures)do for index,value in ipairs(capture.items)do
+   capture.actions=capture.actions or {}
+   local action=capture.actions[index]
+   if not action then
+    action={Type='ISInventoryTransferAction',item=value,srcContainer=root,destContainer=physical}
+    capture.actions[index]=action
+   end
+   if not run.actions[action]then
+    if w.actionOverride then w.actionOverride(action)end
+    run.actions[action]={step='personal-quick'}
+   end
   end end
  end
  env.require=function(name)assert(name=='WarehouseWorkloadNative','unexpected affinity dependency: '..name);return N end
  local A=load(affinitySource,env,'WarehouseWorkloadAffinity.lua')
  function w.frame()for _,fn in ipairs(w.frames)do fn()end end
+ function w.tick()
+  local callbacks={};for _,fn in ipairs(w.ticks)do callbacks[#callbacks+1]=fn end
+  for _,fn in ipairs(callbacks)do fn()end
+ end
+ w.observe=function()N.observe(run)end
  w.A=A;w.run=run;w.root=root;w.physical=physical;w.aggregate=aggregate;w.old=old;w.new=new
  w.personal=personal;w.loot=loot;w.method=method;w.layout=layout;w.env=env;w.oldStock=oldStock;w.newStock=newStock
  w.saved=A.save();A.configure();A.begin(run)
@@ -141,9 +177,49 @@ for _,method in ipairs({'1','2'})do for _,kind in ipairs({'type','category'})do
   or(kind=='category'and proof.selectedId==nil and #w.captures==0),'physical callback admission differs')
  assert(not w.A.done(w.run),'physical callback bypassed post-callback settling')
  if kind=='type'then table.remove(w.root.values,2)end
- w.now=1500;w.frame();w.frame();w.frame()
+ w.now=1500;for i=1,3 do w.tick();w.frame()end
  assert(w.A.done(w.run)and proof.completionFrames==3 and proof.completionMs==500)
 end end
+-- Real installed pane queue/process: a toolbar callback can return before the
+-- next OnTick submits its action to ISTimedActionQueue. This remains offline.
+local function deferredFixture()
+ local w=fixture('type',true);w.defer=true;w.run.phase.transferMethod='1';w.A.configure('1')
+ w.run.phase.items={{id=w.newStock.id,cat='Tool'}};w.loot.inventoryPane.inventory=w.physical
+ return w
+end
+local function actionCount(w)local n=0;for _ in pairs(w.run.actions)do n=n+1 end;return n end
+do
+ local w=deferredFixture();local proof=w.A.dispatch(w.run)
+ assert(#w.captures==0 and actionCount(w)==0 and proof.selectedId==nil,
+  'installed private queue was observed as immediate native admission')
+ assert(not w.A.done(w.run),'deferred callback was classified before the real queue tick')
+ w.tick();w.observe();w.observe()
+ assert(#w.captures==1 and actionCount(w)==1,'real pending process did not enqueue one stable action reference')
+ table.remove(w.root.values,2)
+ assert(not w.A.done(w.run),'deferred action bypassed post-callback settling')
+ w.now=1500;w.frame();w.frame();w.frame();w.tick()
+ assert(not w.A.done(w.run),'two native ticks passed physical completion')
+ w.tick()
+ assert(w.A.done(w.run)and proof.selectedId==w.new.id and actionCount(w)==1
+  and proof.completionFrames==3 and proof.completionMs==500 and proof.completionTicks==3,
+  'deferred admission did not complete with the exact physical candidate and settled proof')
+end
+for _,mutation in ipairs({
+ function(w)w.actionOverride=function(action)action.destContainer=container('foreign')end end,
+ function(w)w.actionOverride=function(action)action.item={getID=function()return 999 end}end end,
+ function(w)
+  local original=w.personal.inventoryPane.transferItemsByWeight
+  w.personal.inventoryPane.transferItemsByWeight=function(...)
+   original(...);original(...)
+  end
+ end,
+})do
+ local w=deferredFixture();mutation(w);w.A.dispatch(w.run)
+ assert(actionCount(w)==0,'malformed deferred action was observed before its real tick')
+ w.now=1500;for i=1,3 do w.tick();w.frame()end
+ reject(function()w.A.done(w.run)end)
+end
+print('PASS offline deferred admission: installed CleanUI pending queue/OnTick process, stable observed action identity, three ticks/draws plus 500ms, late foreign/duplicate guards')
 for _,kind in ipairs({'type','category'})do for _,fresh in ipairs({true,false})do
  local blocked=fixture(kind,fresh);blocked.aggregate.allowed=false
  local receipt=blocked.A.dispatch(blocked.run)

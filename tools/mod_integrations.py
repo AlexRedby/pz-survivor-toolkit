@@ -68,6 +68,7 @@ INTEGRATIONS = {
             'test_smart_deposit.lua': CLEAN_PAGES,
             'test_inventory_refresh.lua': CLEAN_PAGES,
             'test_warehouse_workload_affinity.lua': (
+                CLEAN_PANE,
                 Source('CleanUIInventoryPageSource', 'ISUI/ISInventoryPage.lua'),
                 Source('CleanUIInventoryTransferHandlerSource', 'ISUI/ISInventoryPageTransferHandler.lua'),
                 Source('CleanUIInventoryModOptionsSource', 'ISUI/CleanUI_ModOptions.lua')),

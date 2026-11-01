@@ -138,6 +138,7 @@ def actions(row, phase, step, physical=False):
         if physical:
             require(proof, targetMode='physical')
             ensure(proof.get('targetOnlyAcceptCategory') is None, 'physical target category restriction differs')
+            number(proof['completionTicks'], 3)
             number(proof['completionFrames'], 3); number(proof['completionMs'], 500)
             physical_brackets(proof, phase)
         else:

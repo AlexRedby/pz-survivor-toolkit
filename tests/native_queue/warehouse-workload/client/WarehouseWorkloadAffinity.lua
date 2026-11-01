@@ -31,12 +31,13 @@ function A.begin(run)
   assert(old:getFullType()=='Base.Bandage'and new:getFullType()=='Base.Screwdriver','affinity probe candidate types differ')
   if category(old)~=p.oldCategory or category(new)~=p.newCategory then return nil end
  end
- run.affinity={frames=0,kind=p.affinityKind,oldCategory=p.oldCategory,newCategory=p.newCategory,samples={}}
+ run.affinity={frames=0,ticks=0,kind=p.affinityKind,oldCategory=p.oldCategory,newCategory=p.newCategory,samples={}}
  watched=run;return true
 end
 Events.OnPostUIDraw.Add(function()
  if watched and getPlayerInventory(watched.player:getPlayerNum()):getIsVisible()then watched.affinity.frames=watched.affinity.frames+1 end
 end)
+Events.OnTick.Add(function()if watched then watched.affinity.ticks=watched.affinity.ticks+1 end end)
 local function aggregate(run)
  local row=N.aggregateObservation(run);row.items={};local values=N.aggregate(run.player):getItems()
  for i=0,values:size()-1 do local item=values:get(i)
@@ -62,6 +63,16 @@ function A.proof(run)
  return {kind=state.kind,personalVisible=true,lootHidden=true,naturalFrames=state.frames-state.physicalFrame,
   settledMs=getTimestampMs()-state.physicalAt,oldCategory=state.oldCategory,newCategory=state.newCategory,
   samples=state.samples,aggregate=aggregate(run),forcedRefresh=false}
+end
+local function selection(run)
+ local p=run.phase;local root=run.player:getInventory();local selectedId,count=nil,0
+ for action,record in pairs(run.actions)do if record.step=='personal-quick'and action.Type=='ISInventoryTransferAction'then
+  count=count+1;selectedId=action.item:getID()
+  assert((selectedId==p.oldCandidateId or selectedId==p.newCandidateId)and action.srcContainer==root,'personal quick selected another source/item')
+  local owned=false;for _,container in ipairs(run.state.stores)do if action.destContainer==container then owned=true end end
+  assert(owned,'personal quick targeted a foreign endpoint')
+ end end
+ return selectedId,count
 end
 function A.dispatch(run)
  local p=run.phase;local personal=getPlayerInventory(run.player:getPlayerNum());local loot=getPlayerLoot(run.player:getPlayerNum())
@@ -120,14 +131,7 @@ function A.dispatch(run)
  assert(button.target==personal and button.onclick==personal[callbackName]and button:getIsVisible(),'installed visible personal quick binding differs')
  local before=aggregate(run);button.onclick(button.target,button)
  assert(not loot:getIsVisible(),'personal quick exposed hidden loot')
- N.observe(run);local selectedId,count
- count=0
- for action,record in pairs(run.actions)do if record.step=='personal-quick'and action.Type=='ISInventoryTransferAction'then
-  count=count+1;selectedId=action.item:getID()
-  assert((selectedId==p.oldCandidateId or selectedId==p.newCandidateId)and action.srcContainer==root,'personal quick selected another source/item')
-  local owned=false;for _,container in ipairs(run.state.stores)do if action.destContainer==container then owned=true end end
-  assert(owned,'personal quick targeted a foreign endpoint')
- end end
+ N.observe(run);local selectedId,count=selection(run)
  local details={};for _,item in ipairs(before.items)do details[#details+1]=item.ft..'/'..item.rawCategory end
  assert(physicalMode and(count==0 or count==1)or not physicalMode and count==(blocked and 0 or 1),'personal quick admitted '..count..' candidates; source categories='..oldCategory..'/'..newCategory..'; target='..table.concat(details,','))
  local afterRows={};if physicalMode then for i=0,target:getItems():size()-1 do local item=target:getItems():get(i)
@@ -145,12 +149,25 @@ function A.dispatch(run)
   targetMode=physicalMode and'physical'or nil,physicalBefore=physicalMode and physicalRows or nil,physicalAfter=physicalMode and afterRows or nil,
   oldCategory=oldCategory,newCategory=newCategory,personalVisible=true,hiddenBefore=true,hiddenAfter=true,
   transferMethod=CleanUI_getTransferMethod(),buttonLayout=CleanUI_getTransferButtonLayout(),before=before,after=aggregate(run)}
- run.affinity.dispatch={blocked=physicalMode and count==0 or blocked,physical=physicalMode,at=getTimestampMs(),frame=run.affinity.frames,proof=proof};return proof
+ run.affinity.dispatch={blocked=not physicalMode and blocked,physical=physicalMode,at=getTimestampMs(),frame=run.affinity.frames,tick=run.affinity.ticks,proof=proof};return proof
 end
 function A.done(run)
  local p=run.phase;local root=run.player:getInventory()
  local dispatch=assert(run.affinity.dispatch,'personal quick has not been dispatched')
- if dispatch.blocked or dispatch.physical then
+ if dispatch.physical then
+  -- CleanUI constructs transfers in the mouse callback but enqueues on OnTick.
+  -- Classify only after that event has had ordinary opportunities to run.
+  N.observe(run);local selectedId,count=selection(run);assert(count<=1,'personal quick admitted multiple candidates')
+  dispatch.proof.selectedId=selectedId
+  dispatch.proof.completionFrames=run.affinity.frames-dispatch.frame
+  dispatch.proof.completionTicks=run.affinity.ticks-dispatch.tick
+  dispatch.proof.completionMs=getTimestampMs()-dispatch.at
+  if dispatch.proof.completionFrames<3 or dispatch.proof.completionTicks<3 or dispatch.proof.completionMs<500 or not N.idle(run.player)then return false end
+  local old,new=root:getItemById(p.oldCandidateId)~=nil,root:getItemById(p.newCandidateId)~=nil
+  if count==0 then assert(old and new,'unobserved personal quick effect');return true end
+  return old~=new
+ end
+ if dispatch.blocked then
   dispatch.proof.completionFrames=run.affinity.frames-dispatch.frame;dispatch.proof.completionMs=getTimestampMs()-dispatch.at
   if dispatch.blocked then assert(root:getItemById(p.oldCandidateId)and root:getItemById(p.newCandidateId),'blocked callback changed candidate endpoints')end
   local effect=dispatch.blocked or(root:getItemById(p.oldCandidateId)~=nil)~=(root:getItemById(p.newCandidateId)~=nil)

@@ -154,6 +154,7 @@ def fixture(outcomes=None, case='hidden-affinity'):
                         extra['quick'].pop('selectedId')
                     if physical:
                         extra['quick'].update(targetMode='physical', targetType='crate', targetCapacity=100,
+                                              completionTicks=3,
                                               targetOnlyAcceptCategory=None, transferMethod=phase['transferMethod'],
                                               oldEligible=True, newEligible=True, targetOldAllowed=True, targetNewAllowed=True,
                                               physicalNewAffinity=1 if kind == 'type' else 0,
@@ -270,6 +271,7 @@ class WarehousePhysicalAffinityTests(unittest.TestCase):
             lambda q: q.update(physicalOldAllowed=False), lambda q: q.update(oldFavorite=True),
             lambda q: q.update(newEquipped=True), lambda q: q.update(newHotbar=True),
             lambda q: q.update(completionFrames=2), lambda q: q.update(completionMs=499),
+            lambda q: q.pop('completionTicks'), lambda q: q.update(completionTicks=2),
             lambda q: q.update(hiddenBefore=False), lambda q: q.update(personalVisible=False),
             lambda q: q.update(selectedId=114), lambda q: q.update(source='client2'),
         ]
@@ -337,6 +339,7 @@ class WarehousePhysicalAffinityTests(unittest.TestCase):
         changes = [
             lambda q: q.update(selectedId=215), lambda q: q.update(targetNewAllowed=False),
             lambda q: q.update(newEligible=False), lambda q: q.update(completionMs=499),
+            lambda q: q.pop('completionTicks'), lambda q: q.update(completionTicks=2),
             lambda q: q['physicalAfter'][0].update(rawCategory='Tool'),
         ]
         for change in changes:
