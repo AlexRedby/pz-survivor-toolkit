@@ -370,6 +370,12 @@ def stage_metrics(cache):
     if chunk_details is None and any((cache / name).exists() for name in
                                      ('driving-chunks.csv', 'driving-chunks-status.txt')):
         raise ValueError('Undeclared chunk detail artifacts')
+    loot_details = status.get('loot_details')
+    if loot_details is not None and loot_details != 'invocations-v1':
+        raise ValueError('Invalid loot detail declaration')
+    if loot_details is None and any((cache / name).exists() for name in
+                                    ('driving-loot.csv', 'driving-loot-status.txt')):
+        raise ValueError('Undeclared loot detail artifacts')
     tile_details = status.get('tile_details')
     tile_profile = status.get('tile_profile')
     if (tile_details is not None or tile_profile is not None) and (
@@ -458,6 +464,9 @@ def stage_metrics(cache):
     if chunk_details is not None:
         from queue_checks.chunk_metrics import chunk_metrics
         result['chunk_timings'] = chunk_metrics(cache, result)
+    if loot_details is not None:
+        from queue_checks.loot_metrics import loot_metrics
+        result['loot_timings'] = loot_metrics(cache, result)
     return result
 
 

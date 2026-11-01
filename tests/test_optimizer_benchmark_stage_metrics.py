@@ -79,6 +79,24 @@ class StageMetricsTests(unittest.TestCase):
                 benchmark.stage_metrics(self.cache)
             path.unlink()
 
+    def test_loot_declaration_requires_artifacts_and_rejects_unknown_schema(self):
+        self.status = self.status.rstrip() + ' loot_details=invocations-v1\n'
+        self.write()
+        with self.assertRaisesRegex(ValueError, 'Missing loot'):
+            benchmark.stage_metrics(self.cache)
+        self.status = self.status.replace('invocations-v1', 'invocations-v2')
+        self.write()
+        with self.assertRaisesRegex(ValueError, 'loot detail declaration'):
+            benchmark.stage_metrics(self.cache)
+
+    def test_undeclared_loot_artifacts_cannot_escape_validation(self):
+        for name in ('driving-loot.csv', 'driving-loot-status.txt'):
+            path = self.cache / name
+            path.write_text('unvalidated')
+            with self.assertRaisesRegex(ValueError, 'Undeclared loot'):
+                benchmark.stage_metrics(self.cache)
+            path.unlink()
+
     def test_zero_fog_and_early_return_only_translucent_are_valid(self):
         for row in self.rows:
             for stage in ('fog', 'translucent_merge', 'translucent_sort'):

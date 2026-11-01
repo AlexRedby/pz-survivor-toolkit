@@ -26,6 +26,11 @@ import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.Loader;
 import net.bytebuddy.jar.asm.*;
 import zombie.characters.IsoPlayer;
+import zombie.characters.IsoGameCharacter;
+import zombie.inventory.InventoryItem;
+import zombie.inventory.ItemPickInfo;
+import zombie.inventory.ItemPickerJava;
+import zombie.inventory.types.InventoryContainer;
 import zombie.inventory.ItemContainer;
 import zombie.iso.IsoChunk;
 
@@ -53,6 +58,7 @@ public final class StageProfiler {
     private static ClassFileTransformer detailTransformer;
     private static Rows rows;
     private static ChunkProfiler chunks;
+    private static LootProfiler loot;
     private static volatile String diagnostic;
 
     private StageProfiler() {}
@@ -66,6 +72,7 @@ public final class StageProfiler {
             throw new IllegalStateException("Stage profile requires the explicit owned benchmark cache/thread");
         DetailHooks.requireNativeInput();
         requireChunkQueueInput();
+        requireLootInputs();
         Recording candidate=new Recording(Configuration.getConfiguration("profile"));
         try {
             candidate.setName("PZ driving stages");
@@ -77,7 +84,7 @@ public final class StageProfiler {
             cpu=ManagementFactory.getThreadMXBean();
             cpuAvailable=cpu.isCurrentThreadCpuTimeSupported() && cpu.isThreadCpuTimeEnabled();
             timer=new Timer(); details=new Timer(DETAILS); rows=new Rows(); frameEvent=new FrameEvent();
-            chunks=new ChunkProfiler();
+            chunks=new ChunkProfiler(); loot=new LootProfiler();
             DetailHooks.install();
             TileProfiler.start(ownerThread);
             LuaCallbacks.start(ownerThread);
@@ -98,20 +105,32 @@ public final class StageProfiler {
         }
     }
 
+    private static void requireLootInputs() throws Exception {
+        String[][] inputs={
+            {"zombie/inventory/ItemPickerJava.class","5c8cf626e46a52cdbd9d73e9de10766dece3388ee3e4f4d8d071df5e44d68522"},
+            {"zombie/inventory/ItemContainer.class","a2ac7dd6235f91255dc57b91419a2c8609bdb105214cddf7fb445b70507b6f96"},
+            {"zombie/inventory/InventoryItemFactory.class","c01e3b21b9c764d426c1522307f3174363195d5a5a2980b349d70e9e080608f4"},
+            {"zombie/core/Translator.class","b3469b950f35a9213cadcaa8b2af4f6e627c570fd4e0afca3419579b74a72e21"}};
+        for (String[] input:inputs) try (var bytes=StageProfiler.class.getClassLoader().getResourceAsStream(input[0])) {
+            if (bytes==null || !DetailHooks.digest(bytes.readAllBytes()).equals(input[1]))
+                throw new IllegalStateException("Unreviewed loot counter input: "+input[0]);
+        }
+    }
+
     private static boolean owns() { return enabled && Thread.currentThread()==owner; }
     private static long cpuNow() { return cpuAvailable ? cpu.getCurrentThreadCpuTime() : -1; }
     private static void error(String message) { if (diagnostic==null) diagnostic=message; }
 
     public static void frameBegin(int phase, int contacts, double speed) {
-        if (!owns() || phase<1 || phase>3 || diagnostic!=null || timer.error!=null || details.error!=null || chunks.diagnostic()!=null || TileProfiler.diagnostic()!=null) return;
-        if (frameOpen) { error("Frame began before previous frame ended"); timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); chunks.cancelFrame(); return; }
+        if (!owns() || phase<1 || phase>3 || diagnostic!=null || timer.error!=null || details.error!=null || chunks.diagnostic()!=null || loot.diagnostic()!=null || TileProfiler.diagnostic()!=null) return;
+        if (frameOpen) { error("Frame began before previous frame ended"); timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); chunks.cancelFrame(); loot.cancelFrame(); return; }
         if (completed==CAPACITY) { error("Stage frame buffer overflow"); return; }
         framePhase=phase; frameContacts=contacts; frameSpeed=speed;
         lastFrameId++;
         cpuStart=cpuNow();
         long now=System.nanoTime();
         timer.begin(now); details.begin(now); TileProfiler.frameBegin(now);
-        LuaCallbacks.frameBegin(lastFrameId,now); chunks.frameBegin(lastFrameId);
+        LuaCallbacks.frameBegin(lastFrameId,now); chunks.frameBegin(lastFrameId); loot.frameBegin(lastFrameId);
         frameOpen=true; frameEvent.begin();
     }
 
@@ -120,9 +139,9 @@ public final class StageProfiler {
         long now=System.nanoTime(), cpuEnd=cpuNow();
         frameOpen=false;
         if (!timer.complete(now) || !details.complete(now) || !TileProfiler.frameEnd(lastFrameId,now)) {
-            TileProfiler.cancelFrame(); LuaCallbacks.frameEnd(now,false); chunks.frameEnd(false); omitted++; return;
+            TileProfiler.cancelFrame(); LuaCallbacks.frameEnd(now,false); chunks.frameEnd(false); loot.frameEnd(false); omitted++; return;
         }
-        LuaCallbacks.frameEnd(now,true); chunks.frameEnd(true);
+        LuaCallbacks.frameEnd(now,true); chunks.frameEnd(true); loot.frameEnd(true);
         long cpuNs=cpuStart<0 || cpuEnd<cpuStart ? -1 : cpuEnd-cpuStart;
         rows.capture(completed, lastFrameId, framePhase, frameContacts, frameSpeed, timer, details, cpuNs);
         completed++;
@@ -162,6 +181,33 @@ public final class StageProfiler {
         long now=System.nanoTime();
         timer.exit(token,now);
         chunks.end(token,queueDepth,now,timer.exclusive);
+    }
+
+    public static int lootEnter(ItemContainer container) {
+        if (!owns() || !frameOpen || !timer.active) return 0;
+        return lootEnterType(container==null ? null : container.getType());
+    }
+    static int lootEnterType(String type) {
+        if (!owns() || !frameOpen || !timer.active) return 0;
+        long now=System.nanoTime();
+        int token=timer.enter(LOOT,now);
+        if (token!=0) loot.begin(token,type,now,timer.exclusive);
+        return token;
+    }
+    public static void lootExit(int token) {
+        if (token==0 || !owns() || !frameOpen || !timer.active) return;
+        long now=System.nanoTime();
+        timer.exit(token,now);
+        loot.end(token,now,timer.exclusive);
+    }
+    /** Invocation counts only: no timing, object creation, RNG or game state writes. */
+    public static void lootCount(int kind) {
+        if (owns() && frameOpen && timer.active) loot.counter(kind);
+    }
+    public static void lootTranslation(String value,Object[] args) {
+        if (!owns() || !frameOpen || !timer.active || !loot.filling()) return;
+        loot.counter(value!=null && args!=null && args.length==0 && value.indexOf('%')<0
+                ? LootProfiler.TRANSLATION_PLAIN : LootProfiler.TRANSLATION_OTHER);
     }
 
     /** Separate detail stack leaves all existing exclusive buckets and their partition unchanged. */
@@ -205,7 +251,7 @@ public final class StageProfiler {
         synchronized (swapLock) { enabled=false; finished=true; }
         // OnTick may finish inside logic/Lua. Its trailing exits must be harmless; no partial frame is emitted.
         if (frameOpen) { omitted++; frameOpen=false; }
-        timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); chunks.cancelFrame(); DetailHooks.remove();
+        timer.cancel(); details.cancel(); TileProfiler.cancelFrame(); chunks.cancelFrame(); loot.cancelFrame(); DetailHooks.remove();
         if (details.error!=null) error(details.error);
         if (timer.error!=null) error(timer.error);
         if (chunks.diagnostic()!=null) error(chunks.diagnostic());
@@ -214,7 +260,8 @@ public final class StageProfiler {
             try (Recording active=recording) {
                 active.stop(); active.dump(cache.resolve("driving-stages.jfr"));
             }
-            TileProfiler.finish(cache); chunks.finish(cache);
+            TileProfiler.finish(cache); chunks.finish(cache); loot.finish(cache);
+            if (loot.diagnostic()!=null) error(loot.diagnostic());
             if (TileProfiler.diagnostic()!=null) error(TileProfiler.diagnostic());
             try (BufferedWriter out=Files.newBufferedWriter(cache.resolve("driving-stages.csv"))) {
                 out.write("frame_id,phase,contacts,speed_kmh,nano_start,nano_end,wall_ns,cpu_ns");
@@ -240,7 +287,7 @@ public final class StageProfiler {
                     +" translucent_merge=after-tempSquares-clear-to-doSort-including-profiler-and-sort-arguments"
                     +" translucent_sort=TimSort.doSort-call partial-details-on-throwable=included"
                     +" tile_details=method-boundaries-v1 tile_profile="+TileProfiler.profile()
-                    +" chunk_details=invocations-v1";
+                    +" chunk_details=invocations-v1 loot_details=invocations-v1";
             Files.writeString(cache.resolve("driving-stages-status.txt"), status+"\n");
             System.out.println("[DRIVING_STAGES] "+status);
             LuaCallbacks.finish(cache);
@@ -522,8 +569,45 @@ public final class StageProfiler {
     public static class Loot {
         // Explicit native arguments are required by ZombieBuddy strict signature matching.
         @Patch.OnEnter public static void enter(@Patch.Argument(0) ItemContainer container, @Patch.Argument(1) IsoPlayer player,
-                @Patch.Local("drivingStageToken") int token) { token=StageProfiler.enter(LOOT); }
-        @Patch.OnExit(onThrowable=Throwable.class) public static void exit(@Patch.Local("drivingStageToken") int token) { StageProfiler.exit(token); }
+                @Patch.Local("drivingStageToken") int token) { token=StageProfiler.lootEnter(container); }
+        @Patch.OnExit(onThrowable=Throwable.class) public static void exit(@Patch.Local("drivingStageToken") int token) { StageProfiler.lootExit(token); }
+    }
+
+    @Patch(className="zombie.inventory.ItemPickerJava", methodName="getActualSpawnChance", strictMatch=true)
+    public static class LootChance {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) ItemPickerJava.ItemPickerItem item,
+                @Patch.Argument(1) IsoGameCharacter player,@Patch.Argument(2) ItemContainer container,
+                @Patch.Argument(3) float density,@Patch.Argument(4) boolean junk) { lootCount(LootProfiler.CHANCE); }
+    }
+    @Patch(className="zombie.inventory.InventoryItemFactory", methodName="createItemInternal", strictMatch=true)
+    public static class LootFactory {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) String type,@Patch.Argument(1) float uses,
+                @Patch.Argument(2) boolean option,@Patch.Argument(3) boolean initialize) { lootCount(LootProfiler.FACTORY); }
+        @Patch.OnExit public static void exit(@Patch.Return InventoryItem result) {
+            if (result!=null) lootCount(LootProfiler.FACTORY_NONNULL);
+        }
+    }
+    @Patch(className="zombie.inventory.ItemPickerJava", methodName="rollContainerItemInternal", strictMatch=true)
+    public static class LootBag {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) ItemPickInfo info,
+                @Patch.Argument(1) InventoryContainer bag,@Patch.Argument(2) IsoGameCharacter player,
+                @Patch.Argument(3) ItemPickerJava.ItemPickerContainer distribution,@Patch.Argument(4) boolean junk) {
+            lootCount(LootProfiler.BAG);
+        }
+    }
+    @Patch(className="zombie.inventory.ItemPickerJava", methodName="doRollItemInternal", strictMatch=true)
+    public static class LootRoll {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) ItemPickInfo info,
+                @Patch.Argument(1) ItemPickerJava.ItemPickerContainer distribution,@Patch.Argument(2) ItemContainer container,
+                @Patch.Argument(3) float density,@Patch.Argument(4) IsoGameCharacter player,@Patch.Argument(5) boolean densityIgnore,
+                @Patch.Argument(6) ItemPickerJava.ItemPickerRoom room,@Patch.Argument(7) boolean junk) {
+            lootCount(LootProfiler.ROLL);
+        }
+    }
+    @Patch(className="zombie.core.Translator", methodName="reportMissingArgumentsFromPastAbuse", strictMatch=true)
+    public static class LootTranslation {
+        @Patch.OnEnter public static void enter(@Patch.Argument(0) String key,@Patch.Argument(1) String value,
+                @Patch.Argument(2) Object[] args) { lootTranslation(value,args); }
     }
 
     @Patch(className="se.krka.kahlua.vm.KahluaThread", methodName="luaMainloop", strictMatch=true)
