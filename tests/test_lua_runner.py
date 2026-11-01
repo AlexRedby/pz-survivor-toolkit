@@ -97,6 +97,57 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual(bound['NativeBCProximityPaneSource'], 'Proximity/Proximity_ISInventoryPane.lua')
         self.assertEqual(bound['NativeBCProximityPageSource'], 'Proximity/Proximity_ISInventoryPage.lua')
 
+    def locked_bc_class_inputs(self):
+        game = self.root / 'game'
+        game.mkdir()
+        (game / 'projectzomboid.jar').write_bytes(b'game')
+        (self.root / 'SurvivorQoL-selected.ini').write_text('Mods=CleanUI;EURY_CONTAINERS\n')
+        sources = {
+            'CleanUI/common/mod.info': 'id=CleanUI\n',
+            'CleanUI/common/media/lua/client/ISUI/ISInventoryPane.lua': 'common clean pane',
+            'CleanUI/42.21/media/lua/client/ISUI/ISInventoryPane.lua': 'active clean pane',
+            'CleanUI/common/media/lua/client/CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua': 'common vanilla pane',
+            'BetterContainers/42.21/mod.info': 'id=EURY_CONTAINERS\n',
+            'BetterContainers/common/media/lua/client/BetterContainers/Proximity/Proximity_ISInventoryPane.lua': 'common BC pane',
+            'BetterContainers/42.21/media/lua/client/BetterContainers/Proximity/Proximity_ISInventoryPage.lua': 'active BC page',
+        }
+        for relative, content in sources.items():
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content)
+        lock = (self.root / 'pack.json').resolve()
+        pack.create(self.root.resolve(), lock, game)
+        return game, lock
+
+    def test_locked_bc_class_check_accepts_complete_effective_inputs_without_manual_anchors(self):
+        game, lock = self.locked_bc_class_inputs()
+        self.invoke('--test', 'test_bc_inventory_classes', '--pack-lock', str(lock), '--game', str(game))
+        self.assertEqual([name for name, _ in self.executions], ['test_bc_inventory_classes.lua'])
+        bound = self.executions[0][1]
+        self.assertEqual(bound['CleanUIInventoryPaneSource'], 'active clean pane')
+        self.assertEqual(bound['CleanUIVanillaInventoryPaneSource'], 'common vanilla pane')
+        self.assertEqual(bound['NativeBCProximityPaneSource'], 'common BC pane')
+        self.assertEqual(bound['NativeBCProximityPageSource'], 'active BC page')
+
+    def test_locked_bc_class_check_still_rejects_conflicting_missing_and_changed_sources(self):
+        game, lock = self.locked_bc_class_inputs()
+        arguments = ('--test', 'test_bc_inventory_classes', '--pack-lock', str(lock), '--game', str(game))
+        with self.assertRaises(SystemExit):
+            self.invoke(*arguments, '--cleanui-inventory-pane', str(self.root / 'unlocked/ISInventoryPane.lua'))
+        self.assertIn('differs from locked', self.output.getvalue())
+        source = self.root / 'BetterContainers/42.21/media/lua/client/BetterContainers/Proximity/Proximity_ISInventoryPage.lua'
+        source.write_text('changed source')
+        with self.assertRaises(SystemExit):
+            self.invoke(*arguments)
+        self.assertIn('changed locked mod', self.output.getvalue())
+        source.unlink()
+        lock.unlink()
+        pack.create(self.root.resolve(), lock, game)
+        with self.assertRaises(SystemExit):
+            self.invoke(*arguments)
+        self.assertIn('Missing upstream source', self.output.getvalue())
+        self.assertEqual([], self.executions)
+
     def test_default_keeps_all_checks_and_reconnect_variants(self):
         self.invoke()
         names = [name for name, _ in self.executions]

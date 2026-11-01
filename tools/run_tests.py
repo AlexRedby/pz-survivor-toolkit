@@ -346,7 +346,7 @@ def main() -> None:
         if name in REQUIRED_INPUTS:
             option, help_text = REQUIRED_INPUTS[name]
             options = (option,) if isinstance(option, str) else option
-            if any(not getattr(args, item) for item in options):
+            if any(not mod_integrations.has_required_input(name, item, args) for item in options):
                 parser.error(name.removesuffix(".lua") + " requires " + help_text)
 
     # Lua 5.1 character classes inspect bytes; host UTF-8 locales can misclassify them.

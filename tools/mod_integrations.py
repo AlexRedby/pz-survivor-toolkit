@@ -163,6 +163,16 @@ def manual_source(spec, value, source):
     return Path(os.path.normpath(value.parent / relative))
 
 
+def has_required_input(name, option, args):
+    """An explicit anchor or every required locked file satisfies one source option."""
+    if getattr(args, option, None):
+        return True
+    required = [source for spec in INTEGRATIONS.values() if spec['option'] == option
+                for source in spec['tests'].get(name, ()) if not source.optional]
+    locked = getattr(args, 'integration_sources', {}).get(name, {})
+    return bool(required) and all(locked.get(source.variable) is not None for source in required)
+
+
 def bind_sources(lua, name, args):
     """Use the same per-test declarations for explicit inputs and locked files."""
     locked = getattr(args, 'integration_sources', {}).get(name, {})
