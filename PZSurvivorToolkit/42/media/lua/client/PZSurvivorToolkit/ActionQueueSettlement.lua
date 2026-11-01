@@ -1992,6 +1992,18 @@ function Settlement.observeEditCleanup(queue, current)
     local result, record = editLedger(queue, current, budget)
     if result.status ~= "observed" or not rawget(current, "action") then return unknown() end
     local watches, maps = {}, {}
+    local meta, equal, raw, pairsOf, each, kind = getmetatable, rawequal, rawget, pairs, ipairs, type
+    -- Own reads never dispatch __index on a removed field. The global/module
+    -- records are tiny fixed selections, not snapshots of their whole tables.
+    local function own(owner, key)
+        if meta(owner) == nil then return raw(owner, key) end
+        local count = 0
+        for name, value in pairsOf(owner) do
+            count = count + 1
+            if count > 128 then return end
+            if equal(name, key) then return value end
+        end
+    end
     local revision = providerRevision
     local function take()
         budget.remaining = budget.remaining - 1
@@ -1999,8 +2011,8 @@ function Settlement.observeEditCleanup(queue, current)
     end
     local function plain(value) return type(value) == "table" and getmetatable(value) == nil end
     local function watch(owner, key)
-        local value = rawget(owner, key)
-        watches[#watches + 1] = {owner = owner, key = key, value = value, meta = getmetatable(owner)}
+        local value = own(owner, key)
+        watches[#watches + 1] = {owner = owner, key = key, value = value, meta = meta(owner)}
         return value
     end
     local function fields(owner, names)
@@ -2082,33 +2094,48 @@ function Settlement.observeEditCleanup(queue, current)
         end) then return unknown() end
     end
     local policy, adapters = Toolkit.ActionQueuePolicy, Toolkit.ActionQueueItemEditAdapters
+    local nativeFacts = toolkitLeafTransferFacts
+    local binding = type(adapters) == "table" and rawget(adapters, "deferredTransferBinding")
     local carried = type(policy) == "table" and rawget(policy, "isCarriedContainer")
     local world = type(adapters) == "table" and rawget(adapters, "worldContainer")
     local origin = editLedgerOrigin
     local carriedTrusted = type(carried) == "function" and origin(carried, "ActionQueuePolicy.lua")
     local worldTrusted = type(world) == "function" and origin(world, "ActionQueueItemEditAdapters.lua")
+    local bindingTrusted = type(binding) == "function" and origin(binding, "ActionQueueItemEditAdapters.lua")
+    local globals, queueClass, queueMap = _G, ISTimedActionQueue, ISTimedActionQueue.queues
+    for _, key in ipairs({"PZSurvivorToolkit", "ISTimedActionQueue", "toolkitLeafTransferFacts"}) do watch(globals, key) end
+    for _, key in ipairs({"ActionQueueSettlement", "ActionQueuePolicy", "ActionQueueItemEditAdapters"}) do watch(Toolkit, key) end
+    watch(executionProof, "closure"); watch(queueClass, "queues"); watch(queueMap, actor)
+    if kind(policy) == "table" then watch(policy, "isCarriedContainer") end
+    if kind(adapters) == "table" then watch(adapters, "worldContainer"); watch(adapters, "deferredTransferBinding") end
     local function unchanged()
-        if PZSurvivorToolkit ~= Toolkit or Toolkit.ActionQueueSettlement ~= Settlement
-            or executionProof.closure ~= origin or Toolkit.ActionQueuePolicy ~= policy
-            or Toolkit.ActionQueueItemEditAdapters ~= adapters
-            or type(policy) == "table" and rawget(policy, "isCarriedContainer") ~= carried
-            or type(adapters) == "table" and rawget(adapters, "worldContainer") ~= world
-            or ISTimedActionQueue.queues[actor] ~= queue or queue.current ~= current or queue.queue ~= list
-            or queue.queue[1] ~= current or rawget(current, "action") ~= native or cancellations[queue]
-            or providerRevision ~= revision then return false end
-        for _, entry in ipairs(watches) do
-            if not rawequal(getmetatable(entry.owner), entry.meta) or not rawequal(rawget(entry.owner, entry.key), entry.value) then return false end
+        for _, entry in each(watches) do
+            if not equal(meta(entry.owner), entry.meta) or not equal(own(entry.owner, entry.key), entry.value) then return false end
         end
-        for _, entry in ipairs(maps) do
+        for _, entry in each(maps) do
             local count = 0
-            for _ in pairs(entry.value) do
+            for _ in pairsOf(entry.value) do
                 count = count + 1
                 if count > entry.count then return false end
             end
             if count ~= entry.count then return false end
         end
-        return true
+        return equal(own(globals, "PZSurvivorToolkit"), Toolkit)
+            and equal(own(Toolkit, "ActionQueueSettlement"), Settlement)
+            and equal(own(executionProof, "closure"), origin)
+            and equal(own(Toolkit, "ActionQueuePolicy"), policy)
+            and equal(own(Toolkit, "ActionQueueItemEditAdapters"), adapters)
+            and (kind(policy) ~= "table" or equal(own(policy, "isCarriedContainer"), carried))
+            and (kind(adapters) ~= "table" or equal(own(adapters, "worldContainer"), world)
+                and equal(own(adapters, "deferredTransferBinding"), binding))
+            and equal(own(globals, "toolkitLeafTransferFacts"), nativeFacts)
+            and equal(own(globals, "ISTimedActionQueue"), queueClass)
+            and equal(own(queueClass, "queues"), queueMap) and equal(own(queueMap, actor), queue)
+            and equal(own(queue, "current"), current) and equal(own(queue, "queue"), list)
+            and equal(list[1], current) and equal(own(current, "action"), native)
+            and not cancellations[queue] and providerRevision == revision
     end
+
     local root, alive, localActor
     local ok = pcall(function()
         root, alive = actor:getInventory(), not actor:isDead()
@@ -2171,6 +2198,41 @@ function Settlement.observeEditCleanup(queue, current)
         return not actor:isDead() and getSpecificPlayer(actor:getPlayerNum()) == actor and actor:getInventory() == root
     end)
     if not stillLive or not valid or not unchanged() then return unknown() end
+    -- A source lease precedes the final callback-free JVM read. No metadata,
+    -- native getter, provider or helper guard may run after that read. A missing
+    -- contract retains the typed debt, with its physical effect still unknown.
+    if outstanding == 1 and bindingTrusted and type(nativeFacts) == "function" and not result.providersPresent then
+        for _, entry in ipairs(entries) do
+            local value, prototype = entry.value, nil
+            if value.disposition == "synthesize-return" then
+                for index = 2, #list do
+                    local member = list[index]
+                    if rawget(member, "toolkitQueueOperation") ~= token then break end
+                    if rawequal(rawget(member, "item"), value.item)
+                        and rawequal(rawget(member, "srcContainer"), value.source)
+                        and rawequal(rawget(member, "destContainer"), value.destination) then
+                        if prototype then prototype = nil; break end
+                        prototype = member
+                    end
+                end
+                local bound, lease
+                if prototype then bound, lease = pcall(binding, prototype, current) end
+                if not unchanged() then return unknown() end
+                if bound and type(lease) == "function" then
+                    local read, facts = pcall(nativeFacts, actor, value.item, value.source, value.destination, value.id, value.fullType)
+                    -- Only plain DTO fields and private/source identities below.
+                    if not lease() or not unchanged() then return unknown() end
+                    if read and kind(facts) == "table" and meta(facts) == nil and facts.schema == 1
+                        and equal(facts.item, value.item) and equal(facts.source, value.source)
+                        and equal(facts.destination, value.destination) and equal(facts.location, value.source)
+                        and facts.id == value.id and facts.fullType == value.fullType then
+                        value.effect = "native-leaf-location"
+                    end
+                end
+            end
+        end
+    end
+    if not unchanged() then return unknown() end
     result.fresh = true
     return result
 end

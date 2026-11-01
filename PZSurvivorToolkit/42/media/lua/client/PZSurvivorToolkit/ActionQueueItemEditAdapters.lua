@@ -25,6 +25,9 @@ local mergeDelegate=operations and operations.transferMergeDelegate
 local lifecycle = {"new", "begin", "create", "adjustMaxTime", "isValid", "isValidStart", "waitToStart", "start", "update", "stop",
     "perform", "complete", "getDuration", "serverStart", "serverStop", "animEvent", "forceComplete", "forceStop", "forceCancel", "invoke"}
 local snapshots, approved, guards, baseHooks, pins = {}, {}, {}, {}, {}
+local bindingAccessor, bindingOrigin, bindingMatches = getFilenameOfClosure, Proof and Proof.closure, Proof and Proof.matches
+local bindingPairs, bindingType, bindingMeta, bindingEqual = pairs, type, getmetatable, rawequal
+local bindingGlobals, bindingRaw, bindingIpairs, bindingParent = _G, rawget, ipairs, ISBaseObject
 local baseMethods={}
 local ownMethods,ownerSafe,baselineSafe={},{},true
 -- These are the own methods in the pinned native files, including helpers called
@@ -366,6 +369,172 @@ local function singleton(value)
     if type(value)~="table" or getmetatable(value) or value[1]==nil then return false end
     for key in pairs(value) do if key~=1 then return false end end
     return true
+end
+
+-- Observation only, for an existing return behind the current action. Starting
+-- its shared operation does not start this transfer. Keep the ordinary pending
+-- adapter and all runtime permissions unchanged. Generic adopted wrappers need
+-- their own pure dependency lease before they can join this final-read seam.
+function Adapters.deferredTransferBinding(action,current)
+    local function own(owner,key)
+        if bindingType(owner)~="table" then return end
+        if bindingMeta(owner)==nil then return bindingRaw(owner,key) end
+        local count=0
+        for name,value in bindingPairs(owner) do
+            count=count+1
+            if count>128 then return end
+            if name==key then return value end
+        end
+    end
+    local function plain(value)return bindingType(value)=="table" and bindingMeta(value)==nil end
+    if bindingType(action)~="table" or bindingType(current)~="table" or action==current
+        or bindingMeta(action)~=transfer or bindingMeta(bindingGlobals)~=nil
+        or bindingType(bindingAccessor)~="function" or getFilenameOfClosure~=bindingAccessor
+        or not Proof or Proof.closure~=bindingOrigin or Proof.matches~=bindingMatches or bindingType(bindingOrigin)~="function"
+        or not baselineSafe or not ownerSafe[transfer] or not ownerSafe[lowlevel]
+        or #guards[transfer]~=0 or #guards[lowlevel]~=0 then return end
+    -- Base hooks and per-instance BulkActions callbacks are deliberately outside
+    -- this first source contract, as are detached Host queue-member aliases.
+    for _ in bindingPairs(baseHooks) do return end
+    local token,actor,native=own(current,"toolkitQueueOperation"),own(current,"character"),own(current,"action")
+    if not plain(token) or own(token,"toolkitCancelled") or own(token,"toolkitStarted")~=true
+        or native==nil or own(current,"started")~=true
+        or own(action,"toolkitQueueOperation")~=token or own(action,"character")~=actor
+        or own(action,"action")~=nil or own(action,"started") or own(action,"_isAddingActions")
+        or own(action,"transactionId")~=nil and own(action,"transactionId")~=0
+        or own(action,"allowMissingItems")~=true or own(action,"toolkitTransferGuard")~=nil then return end
+    local queueClass=ISTimedActionQueue
+    local queueMap=bindingType(queueClass)=="table" and own(queueClass,"queues")
+    local queue=bindingType(queueMap)=="table" and own(queueMap,actor)
+    local list=bindingType(queue)=="table" and own(queue,"queue")
+    if bindingType(queue)~="table" or bindingMeta(queue)~=queueClass or not plain(list)
+        or own(queue,"character")~=actor or own(queue,"current")~=current
+        or list[1]~=current or #list<2 or #list>32 or own(queue,"toolkitCancel") or own(queue,"toolkitGroupCancel")
+        or own(queue,"toolkitResume") or own(queue,"toolkitOutcomeWait") or own(queue,"toolkitStopIntent") then return end
+    local found,ended=false,false
+    for index=1,#list do
+        local member=list[index]
+        if bindingType(member)~="table" then return end
+        if own(member,"toolkitQueueOperation")==token then
+            if ended or own(member,"character")~=actor then return end
+            if member==action then if found then return end;found=true end
+        else ended=true end
+    end
+    for key in bindingPairs(list) do if bindingType(key)~="number" or key%1~=0 or key<1 or key>#list then return end end
+    if not found then return end
+    local groups=own(action,"queueList")
+    if not singleton(groups) or not plain(groups[1]) or not singleton(own(groups[1],"items")) then return end
+    local group,items=groups[1],own(groups[1],"items")
+    local item=own(action,"item")
+    if items[1]~=item or own(action,"srcContainer")==own(action,"destContainer")
+        or not finite(own(action,"maxTime")) or not finite(group.time) or group.time~=own(action,"maxTime") then return end
+    for key in bindingPairs(group) do if key~="items" and key~="time" and key~="type" then return end end
+    for _,key in ipairs({"onStartFunc","onCompleteFunc","onCancelFunc","onFailFunc","additionalTest","retriggerLastAction"}) do
+        if own(action,key) then return end
+    end
+    -- Capture before file/metadata/member getters. Every table below has a fixed
+    -- role; no item/container state, metatable callbacks or recursive object
+    -- graph is read by the returned validator. Kahlua rawget is not a raw read.
+    local records={}
+    local function capture(owner)
+        local fields,count={},0
+        -- Native class/action records fit well below this existing inspection
+        -- ceiling; oversized extension tables stay outside the narrow contract.
+        for key,value in bindingPairs(owner) do
+            count=count+1
+            if count>128 then return false end
+            fields[key]=value
+        end
+        records[#records+1]={owner=owner,fields=fields,count=count,meta=bindingMeta(owner)}
+        return true
+    end
+    local function inherits(owner,parent)
+        local meta=bindingMeta(owner)
+        if meta==parent then return own(parent,"__index")==parent end
+        -- Standard Lua fixtures encode table inheritance through a plain proxy;
+        -- stock Kahlua uses the parent table directly.
+        if not plain(meta) or own(meta,"__index")~=parent then return false end
+        for key in bindingPairs(meta) do if key~="__index" then return false end end
+        return capture(meta)
+    end
+    if bindingType(bindingParent)~="table" or bindingMeta(bindingParent)~=nil
+        or not inherits(base,bindingParent) or not inherits(lowlevel,bindingParent)
+        or not inherits(transfer,base) or not inherits(queueClass,bindingParent)
+        or own(base,"__index")~=base or own(transfer,"__index")~=transfer
+        or own(queueClass,"__index")~=queueClass then return end
+    for _,owner in ipairs({Proof,Adapters,bindingParent,base,transfer,lowlevel,queueClass,operations,action,current,token,queue,list,groups,group,items}) do
+        if bindingType(owner)~="table" then return end
+        if not capture(owner) then return end
+    end
+    for _,member in ipairs(list) do if member~=action and member~=current and not capture(member) then return end end
+    local generation=own(queue,"toolkitOperationGeneration")
+    local function unchanged()
+        if bindingMeta(bindingGlobals)~=nil or not bindingEqual(own(bindingGlobals,"PZSurvivorToolkit"),Toolkit)
+            or not bindingEqual(own(Toolkit,"ActionQueueItemEditAdapters"),Adapters)
+            or not bindingEqual(own(Toolkit,"ActionQueueOperations"),operations)
+            or not bindingEqual(own(bindingGlobals,"ISBaseTimedAction"),base)
+            or not bindingEqual(own(bindingGlobals,"ISInventoryTransferAction"),transfer)
+            or not bindingEqual(own(bindingGlobals,"ISTransferAction"),lowlevel)
+            or not bindingEqual(own(bindingGlobals,"ISBaseObject"),bindingParent)
+            or not bindingEqual(own(bindingGlobals,"ISTimedActionQueue"),queueClass)
+            or not bindingEqual(own(queueClass,"queues"),queueMap) or not bindingEqual(own(queueMap,actor),queue)
+            or not bindingEqual(own(bindingGlobals,"getFilenameOfClosure"),bindingAccessor)
+            or not bindingEqual(own(queue,"toolkitOperationGeneration"),generation)
+            or #guards[transfer]~=0 or #guards[lowlevel]~=0 then return false end
+        for _ in bindingPairs(baseHooks) do return false end
+        for _,record in bindingIpairs(records) do
+            if not bindingEqual(bindingMeta(record.owner),record.meta) then return false end
+            local count=0
+            for key,value in bindingPairs(record.owner) do
+                count=count+1
+                if count>record.count or not bindingEqual(record.fields[key],value) then return false end
+            end
+            if count~=record.count then return false end
+        end
+        return true
+    end
+    if not pinned("media/lua/shared/TimedActions/ISBaseTimedAction.lua",3104185167)
+        or not pinned("media/lua/client/TimedActions/ISInventoryTransferAction.lua",3739549534)
+        or not pinned("media/lua/shared/TimedActions/ISTransferAction.lua",798240932) then return end
+    for name,callback in bindingPairs(baseMethods) do
+        if own(base,name)~=callback or name~="derive" and not bindingOrigin(callback,"ISBaseTimedAction.lua") then return end
+    end
+    for _,owner in ipairs({transfer,lowlevel}) do
+        local currentOwn={}
+        for name,callback in bindingPairs(owner) do
+            if bindingType(callback)=="function" then
+                if snapshots[owner][name]~=callback then return end
+                currentOwn[name]=callback
+            end
+        end
+        if not ownsRequired(owner,currentOwn,snapshots[owner]) then return end
+        for name,callback in bindingPairs(snapshots[owner]) do
+            if (owner[name] or false)~=callback then return end
+            if owner==transfer and (action[name] or false)~=callback then return end
+            if bindingType(callback)=="function" and name~="derive" then
+                if owner==transfer and name=="canMergeAction" and bindingOrigin(callback,"ActionQueueOperations.lua") then
+                    if own(operations,"transferMergeDelegate")~=mergeDelegate or bindingType(mergeDelegate)~="function"
+                        or not bindingOrigin(mergeDelegate,"ActionQueueOperations.lua") then return end
+                    local ok,delegate=pcall(mergeDelegate,callback)
+                    if not ok or not bindingOrigin(delegate,"ISInventoryTransferAction.lua") then return end
+                elseif not bindingOrigin(callback,ownMethods[owner][name] and files[owner] or "ISBaseTimedAction.lua") then return end
+            end
+        end
+    end
+    for name,value in bindingPairs(action) do
+        if bindingType(value)=="function" and snapshots[transfer][name]~=value then return end
+    end
+    if action.Type~=transfer.Type or not instanceof(actor,"IsoPlayer") or not instanceof(item,"InventoryItem")
+        or not instanceof(action.srcContainer,"ItemContainer") or not instanceof(action.destContainer,"ItemContainer") then return end
+    local id,fullType=item:getID(),item:getFullType()
+    if not finite(id) or id%1~=0 or bindingType(fullType)~="string" or fullType=="" or group.type~=fullType
+        or not unchanged() then return end
+    local used=false
+    return function()
+        if used then return false end
+        used=true
+        return unchanged()
+    end
 end
 Adapters.weightInspectionSafe=Weights.factoryFree
 -- Host item transactions preserve queue member IDs while authority replication

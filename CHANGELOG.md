@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.336
+
+- **Internal:** The opt-in active-edit observer can describe a single earned leaf-item return with a jointly checked native location effect. A bounded source-only transfer lease runs before one callback-free JVM facts read; private ownership and Lua bindings are checked afterward without more native getters. The old return action is never constructed or replayed. Adopted mod wrappers, Toolkit base/instance hooks, detached Host aliases, food and unsupported endpoints retain an unknown effect. This observation does not change cancellation/reordering permissions, native capacity/admission or transfer outcomes; full-pack SP/Host and complete-path performance qualification remain outstanding.
+
 ### 0.1.335
 
 - Extend the opt-in active-edit plan with fresh private borrowed-item cleanup facts: distinguish settled debt, an exact future return and unresolved ownership, reconcile covered pickup hints and preserve cleanup-before-tail order. Keep synthetic return effects explicitly unknown until their native contract is qualified; this preparation changes no cancel/reorder permissions. Share endpoint resolution with the existing return executor and validate model sources before reading fresh facts.
@@ -1559,6 +1563,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.83
+
+- **Internal:** Added a bounded read-only native leaf-transfer facts helper for queue edit observations. It checks exact supported item/actor/container classes, direct-root ownership, equipment, destination identity and adjacent anchored storage on the Lua owner thread, without Lua callbacks, item/action construction, weight/capacity queries or mutation. Unknown bytecode, nested destination bags, food and unsupported/custom state return no facts. This helper grants no execution or queue-edit rights.
 
 ### 0.1.82
 

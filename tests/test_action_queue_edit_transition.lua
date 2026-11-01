@@ -118,6 +118,24 @@ do
     assert(future[3].action==later and #plan.removed==2 and plan.removed[2]==prototype,
         'old optional return must be removed; only a virtual future return may precede the tail')
     assert(rows[3].edit==returnEdit and loan.edit==returnEdit,'caller descriptors must remain unchanged')
+    -- Only a final native/source-qualified marker compiles the location effect;
+    -- arbitrary caller edits above remain ignored. Capacity is still external.
+    loan.effect='native-leaf-location'
+    local exact=project(rows,'cancel-operation',1,3,checkpoint,fresh)
+    local exactFuture=sequence(exact)
+    assert(exact.projection.status=='allowed'and exact.allowed==nil and exact.projection.externalCapacity)
+    local declaration=exactFuture[2].edit
+    assert(declaration.version==1 and declaration.complete and declaration.capacity=='external')
+    local resource=declaration.resources[1]
+    assert(#declaration.resources==1 and resource.domain=='item'and resource.key==4
+        and resource.facts.item==book and resource.facts.location==root
+        and resource.requires[1].equal==root and resource.effects[1].set==box)
+    local dependent=edit({{domain='item',key=4,facts={item=book,location=root},
+        requires={{field='location',equal=root}},effects={}}})
+    rows[4].edit=dependent
+    assert(project(rows,'cancel-operation',1,3,checkpoint,fresh).projection.reason=='edit_required_state',
+        'independent tail requiring the book in root must see the virtual return effect')
+    rows[4].edit=edit();loan.effect=nil
     for _,phase in ipairs({'completed','waived'})do
         loan.disposition,loan.state='settled',phase
         local settled=project(rows,'cancel-operation',1,3,checkpoint,fresh)

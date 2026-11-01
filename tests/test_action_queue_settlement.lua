@@ -1,5 +1,6 @@
 -- Shared settlement owns cancellation bookkeeping, never item/equipment effects.
 local function setup(client, outcomeOverride, delayedMetadata)
+    toolkitLeafTransferFacts = nil
     local root = {items = {}}
     function root:getItemById(id) return self.items[id] end
     local player = {getInventory = function() return root end, isDead = function(self) return self.dead == true end,
@@ -3638,3 +3639,82 @@ for _, duplicateRead in ipairs({1, 2}) do
         'either recursive endpoint lookup must reject a same-ID duplicate nested below the destination')
 end
 print('Fresh edit cleanup: earned native history, exact endpoints, covered hints, replicas, bounded work and mutation-free freshness passed.')
+
+
+-- Composition seam: the Kotlin checks establish the physical DTO/no-callback
+-- contract; these checks establish ordering and private/source freshness here.
+local function jointReturnFixture()
+    local s = editCleanupFixture(false)
+    local binder = assert(loadstring([[return function(action, current)
+        assert(action == JointReturnCase.pendingReturn and current == JointReturnCase.current)
+        JointReturnCase.events[#JointReturnCase.events + 1] = 'binding'
+        if JointReturnCase.bind then JointReturnCase.bind() end
+        return function()
+            JointReturnCase.events[#JointReturnCase.events + 1] = 'lease'
+            return action.item == JointReturnCase.members[1] and action.transactionId == nil
+        end
+    end]], '@fixture/ActionQueueItemEditAdapters.lua'))()
+    JointReturnCase = s
+    s.events = {}
+    PZSurvivorToolkit.ActionQueueItemEditAdapters.deferredTransferBinding = binder
+    toolkitLeafTransferFacts = function(actor, item, source, destination, id, fullType)
+        s.events[#s.events + 1] = 'native'
+        assert(actor == s.player and item == s.members[1] and source == s.root and destination == s.source)
+        if s.native then s.native() end
+        if s.reject then return end
+        return {schema = 1, item = item, source = source, destination = destination,
+            location = source, id = id, fullType = fullType}
+    end
+    return s
+end
+do
+    local s = jointReturnFixture()
+    local metadata = getFilenameOfClosure
+    local armed = false
+    getFilenameOfClosure = function(callback)
+        assert(not armed, 'metadata after final native facts')
+        return metadata(callback)
+    end
+    s.native = function()
+        armed = true
+        local function forbidden() error('getter after final native facts') end
+        s.player.isDead, s.player.getInventory, s.player.getPlayerNum = forbidden, forbidden, forbidden
+        s.root.getItemById, s.source.getItemById, getSpecificPlayer = forbidden, forbidden, forbidden
+        s.members[1].getID, s.members[1].getFullType, s.members[1].getContainer = forbidden, forbidden, forbidden
+        ISInventoryTransferUtil.newInventoryTransferAction = forbidden
+    end
+    local result = cleanupDisposition(s, 'synthesize-return')
+    assert(result.borrowings[1].effect == 'native-leaf-location')
+    assert(table.concat(s.events, ',') == 'binding,native,lease', 'joint return boundary order changed')
+    assert(s.counts() == 0 and s.queue.queue[2] == s.pendingReturn and s.queue.queue[3] == s.tail)
+end
+for _, mode in ipairs({'unsupported', 'source-missing', 'source-replaced', 'native-replaced', 'private-change', 'member-change', 'source-error'}) do
+    local s = jointReturnFixture()
+    if mode == 'unsupported' then s.reject = true
+    elseif mode == 'source-missing' then PZSurvivorToolkit.ActionQueueItemEditAdapters.deferredTransferBinding = nil
+    elseif mode == 'source-replaced' then s.bind = function()
+        PZSurvivorToolkit.ActionQueueItemEditAdapters.deferredTransferBinding = function() error('replacement called') end
+    end
+    elseif mode == 'native-replaced' then s.bind = function() toolkitLeafTransferFacts = function() error('replacement called') end end
+    elseif mode == 'private-change' then s.native = function() s.candidate.phase = 'waived' end
+    elseif mode == 'member-change' then s.native = function() s.pendingReturn.item = {} end
+    else s.bind = function() error('unsupported source lease') end end
+    local result = s.observe()
+    assert(result.status == 'unhandled' or result.borrowings[1].effect == nil, mode .. ': unsupported/stale facts compiled an effect')
+    assert(s.counts() == 0, 'observation constructed a native return')
+end
+for _, mode in ipairs({'policy', 'adapters', 'toolkit'}) do
+    local s = jointReturnFixture()
+    local calls = 0
+    local function forbidden() calls = calls + 1; error('late module lookup callback') end
+    s.native = function()
+        local owner, key = PZSurvivorToolkit.ActionQueuePolicy, 'isCarriedContainer'
+        if mode == 'adapters' then owner, key = PZSurvivorToolkit.ActionQueueItemEditAdapters, 'deferredTransferBinding'
+        elseif mode == 'toolkit' then owner, key = PZSurvivorToolkit, 'ActionQueueSettlement' end
+        owner[key] = nil
+        setmetatable(owner, {__index = forbidden})
+    end
+    local result = s.observe()
+    assert(result.status == 'unhandled' and calls == 0, mode .. ': final freshness dispatched a removed own field')
+end
+print('Joint return composition: final native boundary, source lease, private reentry and conservative fallback passed.')

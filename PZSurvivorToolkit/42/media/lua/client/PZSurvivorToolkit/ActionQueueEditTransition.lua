@@ -126,8 +126,8 @@ local function project(entries,change,prepared)
             end
             if ledger.legacyHints then debts[#debts+1]={kind='unresolved',detail={kind='enqueue-hints'}}end
         end
-        -- Keep existing earned cleanup first. Exact return payloads still lack
-        -- a jointly fresh native effect contract: never recycle an old executor.
+        -- Keep earned cleanup first; a fresh native effect belongs only to the
+        -- virtual return, never to the old executor removed with its operation.
         for i=1,change.last do
             local entry=entries[i]
             if i>1 and retained[entry.action]then node('cleanup',entry.action,entry.edit)
@@ -137,7 +137,14 @@ local function project(entries,change,prepared)
         for _,debt in ipairs(debts)do
             if debt.kind=='return'then
                 local borrowing=debt.borrowing
-                local value=node('return',nil,nil)
+                local descriptor
+                if borrowing.effect=='native-leaf-location'then
+                    descriptor={version=1,complete=true,capacity='external',resources={{domain='item',key=borrowing.id,
+                        facts={item=borrowing.item,location=borrowing.source},
+                        requires={{field='location',equal=borrowing.source}},
+                        effects={{field='location',set=borrowing.destination}}}}}
+                end
+                local value=node('return',nil,descriptor)
                 value.item,value.id,value.fullType=borrowing.item,borrowing.id,borrowing.fullType
                 externalCapacity=true
                 value.source,value.destination=borrowing.source,borrowing.destination

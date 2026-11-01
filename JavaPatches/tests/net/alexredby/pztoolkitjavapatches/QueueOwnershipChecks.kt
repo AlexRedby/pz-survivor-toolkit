@@ -153,10 +153,17 @@ object QueueOwnershipChecks {
                 ?: throw IllegalArgumentException(
                     "Pass -Dpz.test.workshop or PZ_TEST_WORKSHOP with the Workshop content root",
                 )
-        val variants = listOf(
+        val available = listOf(
             null, "OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
             "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops",
         )
+        // Re-run affected native table vectors without repeating every family.
+        // Empty/unrecognized selections are errors, never successful zero-case runs.
+        val requested = System.getenv("PZ_TEST_OWNERSHIP_VARIANTS")?.split(',')?.map { it.trim() }
+        val names = available.map { it ?: "OwnershipLookup" }
+        require(requested == null || requested.isNotEmpty() && requested.distinct().size == requested.size &&
+            requested.all { it in names }) { "PZ_TEST_OWNERSHIP_VARIANTS must contain unique known variant names: ${names.joinToString()}" }
+        val variants = available.filter { requested == null || (it ?: "OwnershipLookup") in requested }
         val failures = mutableListOf<String>()
         for (variant in variants) {
             val label = variant ?: "OwnershipLookup"
