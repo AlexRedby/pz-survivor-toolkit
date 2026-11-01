@@ -381,6 +381,7 @@ internal object MainSupport {
         BarricadedDoorPaths.prepare()
         val fences = FenceValidation.install(FenceValidation.SUPPORTED)
         val itemBatches = ItemBatchAdmission.install(ItemBatchAdmission.SUPPORTED)
+        val itemClock = ItemTransactionClock.install(ItemTransactionClock.SUPPORTED)
         val hostLoader = HostLoader.install()
         // Define before patch registration: recursive loads during another transform bypass
         // instrumentation.
@@ -441,6 +442,8 @@ internal object MainSupport {
                 QueueManagers.ITEM_SUPPORTED +
                 ", itemBatchAdmission=" +
                 itemBatches +
+                ", itemTransactionClock=" +
+                itemClock +
                 ", actionManager=" +
                 QueueManagers.ACTION_SUPPORTED +
                 ", actionCompletion=" +

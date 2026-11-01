@@ -1548,6 +1548,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.82
+
+- Keep client item-transfer timeout accounting stable when server time first synchronizes or changes. Transfers retain the native request lifetime and duration grace period, preventing premature local completion from advancing reading or other dependent work before inventory replication. Server validation, item effects and packet handling are unchanged; unsupported or previously unobserved requests retain the native path.
+
 ### 0.1.81
 
 - Expose the native script-catalogue revision for item-tag indexes. Track loading, reload, deferred resolution and reset, including partial failures; ordinary catalogue reads preserve the revision.
