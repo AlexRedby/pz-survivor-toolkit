@@ -15,6 +15,50 @@ function F.find(container,wanted)
   if instanceof(item,'InventoryContainer')then local found=F.find(item:getItemContainer(),wanted);if found then return found end end
  end
 end
+-- Private fixture snapshot, captured before the first Policy/Panel preview.
+-- Preserve native table/member identities; this is never a serialized capability.
+function F.captureReturnPreview(action)
+ local groups=action.queueList;local group=type(groups)=='table'and groups[1]
+ local items=type(group)=='table'and group.items
+ assert(type(groups)=='table'and #groups==1 and type(items)=='table'and #items==1,'native singleton return group missing')
+ return{item=action.item,groups=groups,group=group,items=items,member=items[1],time=group.time,type=group.type}
+end
+function F.returnGroupUnchanged(action,before)
+ local groups=action.queueList
+ return groups==before.groups and #groups==1 and groups[1]==before.group
+  and groups[1].items==before.items and #groups[1].items==1 and groups[1].items[1]==before.member
+  and groups[1].time==before.time and groups[1].type==before.type
+end
+function F.returnPreviewUnchanged(action,before)
+ return action.item==before.item and F.returnGroupUnchanged(action,before)
+end
+-- Passive identity evidence for the real optional-return cross. Scan exact
+-- replicas without replacing the action item, repairing inventory or admitting a transfer.
+function F.waiverIdentity(s,action)
+ local root=s.player:getInventory();local wanted=s.ids.front.id
+ local carried,rootMatches,directRootMatches,destinationMatches=nil,0,0,0
+ local function scan(container,destination)
+  local items=container:getItems()
+  for i=0,items:size()-1 do local item=items:get(i)
+   if item:getID()==wanted then
+    if destination then destinationMatches=destinationMatches+1
+    else rootMatches=rootMatches+1;carried=item;if container==root then directRootMatches=directRootMatches+1 end end
+   end
+   if instanceof(item,'InventoryContainer')then scan(item:getItemContainer(),destination)end
+  end
+ end
+ scan(root,false)
+ -- A worn source is nested inside root and must still be empty after pickup.
+ scan(s.source,true)
+ local function describe(item)
+  if not item then return false end
+  local container=item:getContainer()
+  return{ref=tostring(item),id=item:getID(),type=item:getFullType(),
+   container=container==root and'root'or container==s.source and s.ids.source or container and'other'or false}
+ end
+ return{requested=describe(action.item),carried=describe(carried),rootMatches=rootMatches,
+  directRootMatches=directRootMatches,destinationMatches=destinationMatches,sameReference=action.item==carried}
+end
 local function object(spec,kind)
  local square=getCell():getGridSquare(spec.x,spec.y,spec.z)
  if not square then return end

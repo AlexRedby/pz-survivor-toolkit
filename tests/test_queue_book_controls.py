@@ -116,8 +116,13 @@ class BookControlTests(unittest.TestCase):
         admission = [dict(sequence=r['sequence'], role=r['role'], type=r['type'], token=r['token'], actionRef=r['actionRef'], nativeRef=False, current=r is original) for r in (original, equip, volume, tail)]
         if source != 'root':
             pickup = record(6, 'pickup', 101, 10); returned = record(7, 'return', 101, 10, started=not keep and not lost)
-            if lost and enabled and kind == 'mp':
+            if lost and kind == 'mp':
                 returned.update(started=True,progress=True,nativeRef='java:7',startedAt=17,allocatedAt=16,transaction=7,transactionDone=False,transactionRejected=True,finishes=[dict(phase='stop',at=19)])
+                returned['nativeStopEntry'] = dict(case=case, sequence=7, actor=spec['actor'], item=spec['front']['id'], itemType=spec['front']['type'],
+                    actionRef=returned['actionRef'], nativeRef=returned['nativeRef'], transaction=7, at=18, point='entry',
+                    current=True, nativePresent=True, endpointsExact=True, nativeSource=True, guarded=enabled, done=False, rejected=True, observation=False)
+                returned['nativeStopReturned'] = dict(case=case, sequence=7, actor=spec['actor'], item=spec['front']['id'], itemType=spec['front']['type'],
+                    actionRef=returned['actionRef'], nativeRef=returned['nativeRef'], transaction=0 if enabled else 7, at=19, point='returned', returned=True, sameNative=True)
             admission.insert(0, dict(sequence=6, role='pickup', type=pickup['type'], token=pickup['token']))
             admission.insert(2, dict(sequence=7, role='return', type=returned['type'], token=returned['token']))
         starts = [1, 2, 5, 3, 4] if moving and control == 'move-equip' else [1, 3, 5, 2, 4] if moving else [1] if lost and not enabled else [1, 2, 3, 4]
@@ -128,6 +133,13 @@ class BookControlTests(unittest.TestCase):
                        bodyContinues=True, returnAbsent=True, bookRoot=True, operationCancelled=False,
                        decision=dict(reason=False, source=source), dragging=True, movingAction=(equip if control == 'move-equip' else volume)['actionRef'],
                        movingAnchor=(equip if control == 'move-equip' else volume)['actionRef'], movingToken=20 if control == 'move-equip' else 30) if enabled else False
+        if keep:
+            carried = dict(ref='Literature@carried', id=101, type=spec['front']['type'], container='root')
+            identity = dict(requested=copy.deepcopy(carried), carried=copy.deepcopy(carried), rootMatches=1,
+                            directRootMatches=1, destinationMatches=0, sameReference=True)
+            b['ui']['waiverIdentity'] = dict(schema=1, case=case, actor=0, source=source,
+                actionRef=returned['actionRef'], token=returned['token'], beforeAt=9, previewCheckedAt=10, afterAt=10, groupUnchangedAfterCommit=True,
+                before=copy.deepcopy(identity), after=copy.deepcopy(identity), previewUnchanged=True, actualReplicaReplacement=False)
         final = a.expected(spec, enabled, b, kind)
         row = dict(event='case', suite='book-controls', kind=kind, mode=mode, actor='client1', id=case, status='passed', reason=False, ids=spec,
                    baseline=copy.deepcopy(seed), authorityBaseline=copy.deepcopy(seed), boundary=b, records=records, starts=starts,
@@ -909,6 +921,7 @@ os.exit(0)
         returned = next(record for record in kept[0]['records'] if record['role'] == 'return')
         returned['actionRef'] = 'ISInventoryTransferAction 0x444{started=false}'
         kept[0]['boundary']['ui']['target'] = 'ISInventoryTransferAction 0x444{started=false, queueList={}}'
+        kept[0]['boundary']['ui']['waiverIdentity']['actionRef'] = 'ISInventoryTransferAction 0x444{started=false, queueList={}}'
         kept[5][0] = dict({k:v for k,v in kept[0]['boundary'].items() if k not in ('drained', 'drainedAt')}, drained=False)
         self.assertEqual(self.check(kept), [])
 
@@ -972,13 +985,143 @@ os.exit(0)
         changed=copy.deepcopy(evidence);changed[0]['boundary']['at']={'__queueNonfiniteNumber':'nan'}
         self.assertTrue(self.check(changed,'sp'))
 
-    def test_selection_is_opt_in_exact_ordered_bank(self):
+    def test_selection_is_opt_in_ordered_nonempty_subset(self):
         a.validate(self.selection())
         self.assertEqual(adapters.get('book-controls'), a)
-        for field, value in [('cases', list(reversed(a.CASES))), ('cases', list(a.CASES[:-1])), ('mods', a.MODS[:-1]), ('languages', ['RU']), ('clients', True), ('options', dict(mp_host=True))]:
+        for field, value in [('cases', list(reversed(a.CASES))), ('cases', []), ('cases', [a.CASES[0], a.CASES[0]]), ('cases', ['unknown.case']), ('mods', a.MODS[:-1]), ('languages', ['RU']), ('clients', True), ('options', dict(mp_host=True))]:
             selection = self.selection(); selection[field] = value
             with self.subTest(field=field), self.assertRaises(ValueError): a.validate(selection)
         selection = self.selection(); selection['options']['world_template'] = 'fixture'
+        with self.assertRaises(ValueError): a.validate(selection)
+
+    def test_passive_waiver_scan_uses_real_locations_without_rebinding(self):
+        lua = shutil.which('luajit')
+        if not lua: self.skipTest('LuaJIT not installed')
+        source = r"""
+local F=assert(loadfile(arg[1]))()
+instanceof=function(item,kind)return kind=='InventoryContainer'and item.nested~=nil end
+local function container()
+ local c={values={}}
+ function c:getItems()local list=self.values;return{size=function()return #list end,get=function(_,i)return list[i+1]end}end
+ return c
+end
+local root,dest=container(),container()
+local function item(label,id,owner,kind)
+ local value={label=label,id=id,owner=owner,kind=kind or'Base.BookCarpentry1'}
+ function value:getID()return self.id end
+ function value:getFullType()return self.kind end
+ function value:getContainer()return self.owner end
+ function value:getItemContainer()return self.nested end
+ return setmetatable(value,{__tostring=function(v)return v.label end})
+end
+local old=item('old',101,dest);local carried=item('carried',101,root)
+root.values={carried};local action={item=old}
+local s={player={getInventory=function()return root end},source=dest,ids={front={id=101},source='world'}}
+action.queueList={{items={old},time=123,type='Base.BookCarpentry1'}}
+local original=F.captureReturnPreview(action)
+assert(F.returnPreviewUnchanged(action,original))
+action.item=carried;assert(not F.returnPreviewUnchanged(action,original)and F.returnGroupUnchanged(action,original));action.item=old
+local group=action.queueList[1];group.items={old};assert(not F.returnGroupUnchanged(action,original));group.items=original.items
+group.items[1]=carried;assert(not F.returnGroupUnchanged(action,original));group.items[1]=old
+action.queueList={{items=group.items,time=group.time,type=group.type}};assert(not F.returnGroupUnchanged(action,original));action.queueList=original.groups
+assert(F.returnPreviewUnchanged(action,original))
+local v=F.waiverIdentity(s,action)
+assert(action.item==old and root.values[1]==carried and #dest.values==0,'passive scan mutated state')
+assert(v.requested.ref=='old'and v.requested.container=='world'and v.carried.ref=='carried'and v.carried.container=='root')
+assert(not v.sameReference and v.rootMatches==1 and v.directRootMatches==1 and v.destinationMatches==0)
+action.item=carried;assert(F.waiverIdentity(s,action).sameReference)
+local bag=item('bag',201,root,'Base.Bag_Military');bag.nested=container();bag.nested.values={carried};carried.owner=bag.nested;root.values={bag}
+v=F.waiverIdentity(s,action);assert(v.rootMatches==1 and v.directRootMatches==0 and v.carried.container=='other')
+root.values={carried};carried.owner=root;dest.values={old}
+v=F.waiverIdentity(s,action);assert(v.destinationMatches==1)
+root.values={carried,item('duplicate',101,root,'Base.Pen')};v=F.waiverIdentity(s,action)
+assert(v.rootMatches==2 and v.directRootMatches==2 and v.carried.type=='Base.Pen')
+assert(action.item==carried,'passive diagnostic rebound the requested action')
+os.exit(0)
+"""
+        subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookControls.lua')], check=True)
+
+    def test_optional_return_waiver_passively_qualifies_same_or_replaced_replica(self):
+        for source in ('world', 'worn-bag'):
+            for kind in ('sp', 'mp'):
+                evidence = self.evidence(source + '.return-child-cancel', kind)
+                self.assertEqual(self.check(evidence, kind), [])
+                identity = evidence[0]['boundary']['ui']['waiverIdentity']
+                identity['before']['requested'].update(ref='Literature@pre-pickup', container=source)
+                identity['before']['sameReference'] = False
+                identity['actualReplicaReplacement'] = True
+                evidence[5][0]['ui']['waiverIdentity'] = copy.deepcopy(identity)
+                self.assertEqual(self.check(evidence, kind), [])
+                # Object.toString diagnostic identity hashes can collide. The
+                # actual Lua reference equality remains the observed authority.
+                identity['before']['requested']['ref'] = identity['before']['carried']['ref']
+                evidence[5][0]['ui']['waiverIdentity'] = copy.deepcopy(identity)
+                self.assertEqual(self.check(evidence, kind), [])
+
+    def test_optional_return_waiver_rejects_inexact_or_mutated_identity(self):
+        mutations = {
+            'no evidence': lambda v: v.clear(),
+            'wrong actor': lambda v: v.update(actor=99),
+            'wrong case': lambda v: v.update(case='root.header-cancel'),
+            'wrong source': lambda v: v.update(source='root'),
+            'wrong action': lambda v: v.update(actionRef='foreign'),
+            'wrong token': lambda v: v.update(token=99),
+            'wrong requested ID': lambda v: v['before']['requested'].update(id=999),
+            'wrong requested type': lambda v: v['before']['requested'].update(type='Base.Pen'),
+            'wrong carried ID': lambda v: v['before']['carried'].update(id=999),
+            'wrong carried type': lambda v: v['after']['carried'].update(type='Base.Pen'),
+            'nested carried book': lambda v: v['before']['carried'].update(container='other'),
+            'not direct root': lambda v: v['before'].update(directRootMatches=0),
+            'duplicate carried': lambda v: v['before'].update(rootMatches=2),
+            'destination duplicate': lambda v: v['after'].update(destinationMatches=1),
+            'boolean root count': lambda v: v['before'].update(rootMatches=True),
+            'preview mutated item': lambda v: v.update(previewUnchanged=False),
+            'invented replacement': lambda v: v.update(actualReplicaReplacement=True),
+            'nonscalar replacement': lambda v: v.update(actualReplicaReplacement=1),
+            'reference contradiction': lambda v: v['before']['requested'].update(ref='Literature@foreign'),
+            'wrong after binding': lambda v: v['after']['requested'].update(ref='Literature@foreign'),
+            'changed carried object': lambda v: v['after']['carried'].update(ref='Literature@foreign'),
+            'initial capture after boundary': lambda v: v.update(beforeAt=11),
+            'preview check before boundary': lambda v: v.update(previewCheckedAt=9),
+            'native group changed at commit': lambda v: v.update(groupUnchangedAfterCommit=False),
+            'observation after gesture': lambda v: v.update(afterAt=11),
+        }
+        for name, mutate in mutations.items():
+            evidence = self.evidence('world.return-child-cancel')
+            identity = evidence[0]['boundary']['ui']['waiverIdentity']; mutate(identity)
+            # Keep the raw boundary aligned, so failure comes from the typed identity proof.
+            evidence[5][0]['ui']['waiverIdentity'] = copy.deepcopy(identity)
+            with self.subTest(name=name):
+                self.assertTrue(any('waiver' in error.lower() or 'replica' in error.lower() for error in self.check(evidence)))
+        evidence = self.evidence('world.header-cancel')
+        evidence[0]['boundary']['ui']['waiverIdentity'] = {}
+        self.assertTrue(self.check(evidence))
+        evidence = self.evidence('world.return-child-cancel')
+        duplicate = copy.deepcopy(next(record for record in evidence[0]['records'] if record['role'] == 'return'))
+        duplicate.update(sequence=900, token=900, actionRef='unexpected-return')
+        evidence[0]['records'].append(duplicate)
+        self.assertTrue(self.check(evidence), 'an unrelated-token extra return must not escape the zero-transfer gate')
+
+    def test_targeted_ordered_bank_has_complete_selected_raw_evidence(self):
+        cases = ['root.header-cancel', 'worn-bag.return-child-cancel', 'world.return-child-cancel']
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                with self.subTest(kind=kind, mode=mode), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory); selection, client, server = self.log_bank(kind, mode, cases=cases)
+                    (root / 'client1-launch.log').write_text(client); (root / 'server-launch.log').write_text(server)
+                    self.assertEqual(a.verify(root, selection, {})['issues'], [])
+                    self.assertEqual(a.selected_cases(selection), cases)
+                    self.assertTrue(a.complete(selection, 'client1', client))
+                    line = next(line for line in client.splitlines() if a.PREFIX + 'ADMISSION ' in line)
+                    for changed in (client + '\n' + line, client.replace(line, '', 1),
+                                    client + '\n' + line.replace('root.header-cancel', 'world.header-cancel')):
+                        (root / 'client1-launch.log').write_text(changed)
+                        self.assertTrue(a.verify(root, selection, {})['issues'])
+        selection = self.selection(); selection['cases'] = list(reversed(cases))
+        with self.assertRaises(ValueError): a.validate(selection)
+        selection['cases'] = [cases[0], cases[0]]
+        with self.assertRaises(ValueError): a.validate(selection)
+        selection['cases'] = ['foreign.case']
         with self.assertRaises(ValueError): a.validate(selection)
 
     def request_evidence(self, case='worn-bag.move-equip', kind='mp', mode='toolkit'):
@@ -1078,6 +1221,83 @@ os.exit(0)
         selection=self.selection(kind='sp');selection['options']['require_native_requests']=True
         row,ids=self.request_evidence(a.CAPACITY_CASES[0],kind='sp')[:2]
         self.assertEqual(a.native_transfer_stop_errors(row,row['id'],selection,ids),[])
+
+    def test_native_transfer_rejection_stays_strict_without_request_diagnostics(self):
+        for mode in ('native', 'toolkit'):
+            selection = self.selection(mode=mode)
+            for case in a.CAPACITY_CASES:
+                row, ids = self.evidence(case, mode=mode)[:2]
+                self.assertEqual(a.native_transfer_stop_errors(row, case, selection, ids), [])
+                for key in ('nativeStopEntry', 'nativeStopReturned'):
+                    changed = copy.deepcopy(row)
+                    next(record for record in changed['records'] if record['role'] == 'return').pop(key)
+                    self.assertTrue(a.native_transfer_stop_errors(changed, case, selection, ids))
+                changed = copy.deepcopy(row)
+                returned = next(record for record in changed['records'] if record['role'] == 'return')
+                returned['nativeStopEntry']['rejected'] = False
+                self.assertTrue(a.native_transfer_stop_errors(changed, case, selection, ids),
+                                'server debt and a historical rejected flag cannot substitute for a live native Reject')
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); selection, client, server = self.log_bank(mode=mode, cases=['world.move-volume-capacity-lost'])
+                (root / 'server-launch.log').write_text(server); (root / 'client1-launch.log').write_text(client)
+                self.assertEqual(a.verify(root, selection, {})['issues'], [])
+                for marker in ('TRANSFER_STOP_ENTRY ', 'TRANSFER_STOP_RETURNED '):
+                    line = next(line for line in client.splitlines() if marker in line)
+                    for changed in (client.replace(line, '', 1), client + '\n' + line,
+                                    client + '\n' + line.replace('world.move-volume-capacity-lost', 'foreign.case')):
+                        (root / 'client1-launch.log').write_text(changed)
+                        self.assertTrue(a.verify(root, selection, {})['issues'])
+
+    def test_actual_native_stop_capture_precedes_removal_with_request_diagnostics_off(self):
+        lua = shutil.which('luajit')
+        if not lua: self.skipTest('LuaJIT not installed')
+        source = r"""
+local file=assert(io.open(arg[1]));local text=file:read('*a');file:close()
+local first=assert(text:find('function bookControlsNativeTransferStop(',1,true))
+local last=assert(text:find('\nlocal function observeStoppedRemoval()',first,true))
+assert(loadstring(text:sub(first,last-1)))()
+local pollFirst=assert(text:find("  if row.type=='ISInventoryTransferAction'and not row.nativeStopEntry",1,true))
+local pollLast=assert(text:find('\n end\n for action,row',pollFirst,true))
+local poll=assert(loadstring('return function(row,action)'..text:sub(pollFirst,pollLast-1)..' end'))()
+requestsEnabled=false
+isClient=function()return true end
+nativeRequestState=function()error('disabled request diagnostic was called')end
+intact=function()end
+now=function()return 100 end
+ref=function(value)return tostring(value)end
+case=function()return 'world.move-volume-capacity-lost'end
+ids={actor=0,source='world',front={id=101,type='Base.BookCarpentry1'}}
+local root,source,episode={},{},{}
+local book={getID=function()return 101 end,getFullType=function()return 'Base.BookCarpentry1'end}
+local player={getInventory=function()return root end,getCharacterActions=function()return{contains=function(_,value)return value==episode end}end}
+state={player=player,source=source}
+for _,guarded in ipairs({false,true})do
+ local live=true;local calls=0
+ isItemTransactionDone=function()assert(live,'queried removed transaction');calls=calls+1;return false end
+ isItemTransactionRejected=function()assert(live,'queried removed transaction');calls=calls+1;return true end
+ local stop=function()end
+ local action={item=book,character=player,srcContainer=root,destContainer=source,transactionId=7,action=episode,stop=stop}
+ if guarded then action.toolkitTransferGuard={stop=stop}end
+ local row={type='ISInventoryTransferAction',role='return',sequence=28,nativeRef=ref(episode),actionRef=ref(action),transaction=7,transactionDone=false,transactionRejected=false}
+ tracks={[action]=row};queue=function()return{current=action,queue={action}}end
+ nativeStopMatcher=function(value)assert(value==action);return true end
+ transferEpisode={action=action,transaction=7,live=true}
+ local emitted={};raw=function(marker,value)emitted[#emitted+1]={marker,value}end
+ bookControlsNativeTransferStop(action,episode,'entry',true)
+ assert(row.nativeStopEntry.rejected and not row.nativeStopEntry.done and row.transactionRejected and not row.transactionDone)
+ assert(row.nativeStopEntry.observation==false and row.nativeStopEntry.guarded==guarded and calls==2)
+ live=false;if guarded then action.transactionId=0 end
+ bookControlsNativeTransferStop(action,episode,'returned',true)
+ poll(row,action)
+ assert(row.transactionRejected and not row.transactionDone and row.transaction==7 and calls==2,
+  'later polling overwrote the positively observed pre-removal terminal state')
+ assert(#emitted==2 and emitted[1][1]=='TRANSFER_STOP_ENTRY'and emitted[2][1]=='TRANSFER_STOP_RETURNED')
+ assert(row.nativeStopReturned.transaction==(guarded and 0 or 7)and row.nativeStopReturned.sameNative)
+ assert(not transferEpisode.live and transferEpisode.rejected and not transferEpisode.done)
+end
+os.exit(0)
+"""
+        subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/client/ZZBookControls.lua')], check=True)
 
     def test_actual_callback_captures_instant_native_episode_without_inventing_start(self):
         lua=shutil.which('luajit')
@@ -1226,14 +1446,15 @@ os.exit(0)
                     (root/'client1-launch.log').write_text(changed)
                     self.assertTrue(a.verify(root,selection,{})['issues'])
 
-    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False, current=False, sample_ms=None):
+    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False, current=False, sample_ms=None, cases=None):
         selection = self.selection(kind, mode); client, server = [], []
+        cases = list(a.CASES) if cases is None else list(cases); selection['cases'] = cases
         if requests: selection['options']['require_native_requests']=True
         if precise: selection['options']['precise_timing']=True
         def raw(marker, value): return a.PREFIX + marker + ' ' + json.dumps(value)
         def event(value): return '[QUEUE_CHECK] ' + json.dumps(value)
-        client.append(event(dict(event='setup', suite='book-controls', cases=list(a.CASES), queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests,timingClock=copy.deepcopy(a.CLOCK_INFO)if precise else False)))
-        for case in a.CASES:
+        client.append(event(dict(event='setup', suite='book-controls', cases=cases, queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests,timingClock=copy.deepcopy(a.CLOCK_INFO)if precise else False)))
+        for case in cases:
             evidence=self.precise_evidence(case,kind,mode,requests=requests)if precise else(self.request_evidence if requests else self.evidence)(case,kind,mode)
             if current:evidence=self.current_measurements(evidence)
             if sample_ms is not None:
@@ -1255,8 +1476,8 @@ os.exit(0)
                 for sample in record.get('requestStates',[]):client.append(raw('NATIVE_REQUEST',sample))
             client.append(raw('PERFORMANCE',row['performance']))
             client.append(event(row))
-        client.append(event(dict(event='complete', suite='book-controls', cases=list(a.CASES), performed=len(a.CASES), skipped=0, failed=0)))
-        client.append(raw('COMPLETE', dict(cases=list(a.CASES), failed=0)))
+        client.append(event(dict(event='complete', suite='book-controls', cases=cases, performed=len(cases), skipped=0, failed=0)))
+        client.append(raw('COMPLETE', dict(cases=cases, failed=0)))
         return selection, '\n'.join(client), '\n'.join(server)
 
     def test_whole_bank_raw_evidence_and_completion(self):

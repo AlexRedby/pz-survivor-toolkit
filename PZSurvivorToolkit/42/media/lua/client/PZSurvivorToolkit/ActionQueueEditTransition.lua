@@ -26,18 +26,19 @@ local function identity(value)
     return kind=='string'or kind=='boolean'or kind=='table'or kind=='userdata'
         or kind=='number'and value==value and math.abs(value)<math.huge
 end
-local function modelReady()
-    return PZSurvivorToolkit==Toolkit and Toolkit.ActionQueueEditTransition==Transition
-        and Toolkit.ActionQueueEditModel==Model and Model and Model.evaluate==evaluate
+local function modelBindingsReady()
+    return rawequal(PZSurvivorToolkit,Toolkit)and rawequal(Toolkit.ActionQueueEditTransition,Transition)
+        and rawequal(Toolkit.ActionQueueEditModel,Model)and Model and Model.evaluate==evaluate
         and Proof and Proof.closure==origin and type(origin)=='function'
-        and origin(evaluate,'ActionQueueEditModel.lua')and Model.evaluate==evaluate
-        and Toolkit.ActionQueueEditModel==Model and Proof.closure==origin
 end
-function Transition.project(entries,change)
+local function modelReady()
+    return modelBindingsReady()and origin(evaluate,'ActionQueueEditModel.lua')and modelBindingsReady()
+end
+local function project(entries,change,prepared)
     local count=array(entries)
     if not count or count==0 or not plain(change)or not plain(change.checkpoint)
         or not integer(change.first,1,count)or not integer(change.last,change.first,count)or not integer(change.generation,0,math.huge)
-        or not modelReady()then return unknown()end
+        or not (prepared and modelBindingsReady()or not prepared and modelReady())then return unknown()end
     if change.kind~='preempt'and change.kind~='cancel-body'and change.kind~='cancel-operation'then return unknown()end
     if change.kind=='preempt'and change.first<2
         or change.kind~='preempt'and change.first~=1
@@ -48,7 +49,7 @@ function Transition.project(entries,change)
         if not plain(entry)or not identity(entry.action)or seen[entry.action]
             or (entry.active~=nil and type(entry.active)~='boolean')then return unknown()end
         if i==1 and entry.active~=true or i>1 and entry.active then return unknown('edit_in_flight')end
-        seen[entry.action]=true
+        seen[entry.action]=i
     end
     local current=entries[1].action
     local plan={status='observed',kind=change.kind,generation=change.generation,nodes={},removed={},unresolved={}}
@@ -58,7 +59,7 @@ function Transition.project(entries,change)
         externalCapacity=externalCapacity or plain(edit)and edit.capacity=='external'
         plan.nodes[#plan.nodes+1]=value
         -- Resume/checkpoint are virtual instructions, never existing native actions to execute.
-        declarations[#declarations+1]={action=(kind=='checkpoint'or kind=='resume')and value or action,
+        declarations[#declarations+1]={action=(kind=='checkpoint'or kind=='resume'or kind=='return')and value or action,
             edit=edit,snapshotOnly=snapshotOnly}
         return value
     end
@@ -81,10 +82,12 @@ function Transition.project(entries,change)
         local steps=plain(ledger)and ledger.status=='observed'and array(ledger.steps)
         local borrowings=steps and array(ledger.borrowings)
         local retained,providerUnknown={},true
+        local debts,loanIds={}, {}
         if not steps or not borrowings or ledger.generation~=change.generation then
-            uncertain('edit_obligation_unknown')
+            debts[#debts+1]={kind='unresolved'}
         else
-            if type(ledger.legacyHints)~='boolean'or type(ledger.providersPresent)~='boolean'then return unknown('edit_obligation_unknown')end
+            if type(ledger.legacyHints)~='boolean'or type(ledger.providersPresent)~='boolean'
+                or ledger.fresh~=nil and type(ledger.fresh)~='boolean'then return unknown('edit_obligation_unknown')end
             providerUnknown=ledger.providersPresent
             for i=1,steps do
                 local step=ledger.steps[i]
@@ -94,38 +97,82 @@ function Transition.project(entries,change)
             for i=1,borrowings do
                 local borrowing=ledger.borrowings[i]
                 if not plain(borrowing)then return unknown('edit_obligation_unknown')end
-                -- Recorded phase is not fresh exclusive ownership or a physical receipt.
-                -- Keep the obligation visible instead of inventing/removing its return.
                 local copy={}
-                for _,key in ipairs({'id','fullType','state','ambiguous','source','destination','returning','plannedReturn'})do
+                for _,key in ipairs({'id','fullType','state','ambiguous','source','destination','returning','plannedReturn','disposition'})do
                     copy[key]=borrowing[key]
                 end
                 if borrowing.sourceOwner then
                     if not plain(borrowing.sourceOwner)then return unknown('edit_obligation_unknown')end
                     copy.sourceOwner={id=borrowing.sourceOwner.id,fullType=borrowing.sourceOwner.fullType}
                 end
-                uncertain('edit_obligation_unknown',copy)
+                if ledger.fresh and borrowing.disposition=='settled'
+                    and (borrowing.state=='completed'or borrowing.state=='waived')then
+                    -- Irreversible private disposition, never enqueue hints.
+                elseif ledger.fresh and borrowing.disposition=='synthesize-return'and not providerUnknown then
+                    if borrowing.state~='active'or borrowing.ambiguous~=false or borrowing.returning~=false
+                        or borrowing.plannedReturn~=nil or type(borrowing.id)~='number'or borrowing.id%1~=0 or loanIds[borrowing.id]
+                        or type(borrowing.fullType)~='string'or borrowing.fullType==''
+                        or not identity(borrowing.item)or not identity(borrowing.source)or not identity(borrowing.destination)
+                        or rawequal(borrowing.source,borrowing.destination) then
+                        debts[#debts+1]={kind='unresolved',detail=copy}
+                    else
+                        loanIds[borrowing.id]=true
+                        debts[#debts+1]={kind='return',borrowing=borrowing}
+                    end
+                else
+                    -- Metadata phase alone is not exclusive ownership or a receipt.
+                    debts[#debts+1]={kind='unresolved',detail=copy}
+                end
             end
-            if ledger.legacyHints then uncertain('edit_obligation_unknown',{kind='enqueue-hints'})end
+            if ledger.legacyHints then debts[#debts+1]={kind='unresolved',detail={kind='enqueue-hints'}}end
         end
-        -- Required cleanup precedes the unrelated tail, matching the native settlement boundary.
-        -- Unknown provider/borrowed returns are placeholders, never constructor calls.
-        local debtNodes=plan.nodes
-        plan.nodes={debtNodes[1]}
+        -- Keep earned cleanup first; a fresh native effect belongs only to the
+        -- virtual return, never to the old executor removed with its operation.
         for i=1,change.last do
             local entry=entries[i]
             if i>1 and retained[entry.action]then node('cleanup',entry.action,entry.edit)
             elseif i>1 and providerUnknown then uncertain('edit_obligation_unknown',{kind='pending-disposition',action=entry.action})
             else plan.removed[#plan.removed+1]=entry.action end
         end
-        for i=2,#debtNodes do plan.nodes[#plan.nodes+1]=debtNodes[i]end
+        for _,debt in ipairs(debts)do
+            if debt.kind=='return'then
+                local borrowing=debt.borrowing
+                local descriptor
+                if borrowing.effect=='native-leaf-location'then
+                    descriptor={version=1,complete=true,capacity='external',resources={{domain='item',key=borrowing.id,
+                        facts={item=borrowing.item,location=borrowing.source},
+                        requires={{field='location',equal=borrowing.source}},
+                        effects={{field='location',set=borrowing.destination}}}}}
+                end
+                local value=node('return',nil,descriptor)
+                value.item,value.id,value.fullType=borrowing.item,borrowing.id,borrowing.fullType
+                externalCapacity=true
+                value.source,value.destination=borrowing.source,borrowing.destination
+                value.synthetic=true
+            else uncertain('edit_obligation_unknown',debt.detail)end
+        end
         for i=change.last+1,count do node('pending',entries[i].action,entries[i].edit)end
     end
     -- The resource model remains pending-only: current effects enter only as a
     -- separately declared snapshot; its original active entry is never evaluated.
-    if not modelReady()then return unknown()end
+    if not (prepared and modelBindingsReady()or not prepared and modelReady())then return unknown()end
     plan.projection=#plan.unresolved>0 and unknown('edit_obligation_unknown')or evaluate(declarations)
     plan.projection.externalCapacity=externalCapacity
     return plan
 end
+-- Source validation can call the live metadata accessor. Prepare it before
+-- reading fresh obligations; the one-use projection then performs only bindings
+-- and plain-data work, never a post-observation metadata callback.
+function Transition.prepare()
+    if not modelReady()then return end
+    local accessor=getFilenameOfClosure
+    local used=false
+    return function(entries,change)
+        if used then return unknown()end
+        used=true
+        if getFilenameOfClosure~=accessor or not modelBindingsReady()then return unknown()end
+        return project(entries,change,true)
+    end
+end
+function Transition.project(entries,change)return project(entries,change,false)end
 return Transition

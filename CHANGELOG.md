@@ -46,9 +46,21 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.1.334
+### 0.1.337
 
 - **Fixed:** CleanUI category quick transfers now prepare fresh physical destination items before matching, including nearby containers, previews and the transfer menu. Items received from another player no longer require reopening or refreshing the loot window to match their carried counterparts. Native eligibility, saved item categories and the aggregate insertion restriction remain in effect.
+
+### 0.1.336
+
+- **Internal:** The opt-in active-edit observer can describe a single earned leaf-item return with a jointly checked native location effect. A bounded source-only transfer lease runs before one callback-free JVM facts read; private ownership and Lua bindings are checked afterward without more native getters. The old return action is never constructed or replayed. Adopted mod wrappers, Toolkit base/instance hooks, detached Host aliases, food and unsupported endpoints retain an unknown effect. This observation does not change cancellation/reordering permissions, native capacity/admission or transfer outcomes; full-pack SP/Host and complete-path performance qualification remain outstanding.
+
+### 0.1.335
+
+- Extend the opt-in active-edit plan with fresh private borrowed-item cleanup facts: distinguish settled debt, an exact future return and unresolved ownership, reconcile covered pickup hints and preserve cleanup-before-tail order. Keep synthetic return effects explicitly unknown until their native contract is qualified; this preparation changes no cancel/reorder permissions. Share endpoint resolution with the existing return executor and validate model sources before reading fresh facts.
+
+### 0.1.334
+
+- Allow cancelling a pending borrowed-item return in Host when native replication has replaced the queued item proxy with the same exact earned item in the character's main inventory. Preserve the active action, retain the carried item and commit Keep intent only after fresh identity/ownership checks; failed publication leaves the return and debt intact. Native transfer execution and capacity proofs retain their strict path.
 
 ### 0.1.333
 
@@ -1555,6 +1567,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.83
+
+- **Internal:** Added a bounded read-only native leaf-transfer facts helper for queue edit observations. It checks exact supported item/actor/container classes, direct-root ownership, equipment, destination identity and adjacent anchored storage on the Lua owner thread, without Lua callbacks, item/action construction, weight/capacity queries or mutation. Unknown bytecode, nested destination bags, food and unsupported/custom state return no facts. This helper grants no execution or queue-edit rights.
 
 ### 0.1.82
 

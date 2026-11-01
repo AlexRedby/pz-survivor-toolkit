@@ -16,6 +16,25 @@ local function reader(text)
         local line=text:sub(position,boundary-1);position=boundary+1;return line
     end}
 end
+-- Kahlua has no debug library. Source-aware getter/factory sentinels below run
+-- in both runtimes; Lua's call hook is an additional check when available.
+local function callGuard(callbacks)
+    if not debug or not debug.sethook then return function()end end
+    debug.sethook(function(event)
+        if event=='call' and callbacks[debug.getinfo(2,'f').func] then error('inspection executed native action callback')end
+    end,'c')
+    return function()debug.sethook()end
+end
+local function assertNoNativeActionCaller()
+    for level=2,12 do
+        local source
+        if NativeCallerSource then source=NativeCallerSource(level)
+        else local info=debug.getinfo(level,'S');source=info and info.source end
+        if not source then break end
+        assert(not source:find('/ISInventoryTransferAction.lua',1,true)
+            and not source:find('/ISReadABook.lua',1,true),'inspection called a native constructor/validator')
+    end
+end
 local function setup(changed,foreignMerge,alias,missing)
     local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
     f.native('shared/TimedActions/ISTransferAction.lua');f.native('shared/TimedActions/ISDrinkFluidAction.lua')
@@ -32,13 +51,20 @@ local function setup(changed,foreignMerge,alias,missing)
     elseif alias=='base' then ISBaseTimedAction.perform=ISBaseTimedAction.stop end
     isClient,isServer=function()return false end,function()return false end
     isDebugEnabled=function()return false end
-    getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    local proofReadsForbidden=false
+    local metadata=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    getFilenameOfClosure=function(callback)
+        assert(not proofReadsForbidden,'proof metadata read after lease')
+        return metadata(callback)
+    end
     getGameFilesInput=function(path)
+        assert(not proofReadsForbidden,'game source read after lease')
         local text=read(NativeActionRoot..'/'..path:gsub('^media/lua/',''))
         if changed and path:find(changed,1,true)then text=text..'-- changed source\n'end
         return reader(text)
     end
     getModFileReader=function(_,path)
+        assert(not proofReadsForbidden,'mod source read after lease')
         local text=read(ProjectRoot..'/PZSurvivorToolkit/42/'..path)
         if changed and path:find(changed,1,true)then text=text..'-- changed source\n'end
         return reader(text)
@@ -228,6 +254,15 @@ local function setup(changed,foreignMerge,alias,missing)
         if name=='PZSurvivorToolkit/ActionQueueEditAdapters'then return radio end
         return previousRequire(name)
     end
+    local transition
+    local beforeTransitionRequire=require
+    require=function(name)
+        if name=='PZSurvivorToolkit/ActionQueueEditTransition'then
+            if not transition then transition=f.project('ActionQueueEditTransition')end
+            return transition
+        end
+        return beforeTransitionRequire(name)
+    end
     local policy=f.project('ActionQueuePolicy')
     local function transfer(value,source,destination)
         local action=ISInventoryTransferAction:new(f.player,value or water,source or bagInventory,destination or root)
@@ -266,8 +301,104 @@ local function setup(changed,foreignMerge,alias,missing)
         return c,parent,tile
     end
     return {f=f,adapters=adapters,model=model,policy=policy,root=root,bag=bag,bagInventory=bagInventory,water=water,fluid=fluid,world=world,container=container,
-        properties=properties,scripts=scripts,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,empty=empty,runTransfer=runTransfer,drinks=function()return drinks end}
+        properties=properties,scripts=scripts,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,empty=empty,runTransfer=runTransfer,drinks=function()return drinks end,
+        forbidProofReads=function()proofReadsForbidden=true end}
 end
+local function deferredReturnFixture(changed)
+    local s=setup(changed)
+    local current=s.f.action(ISReadABook,{item=s.water,action={},started=true})
+    current.toolkitQueueOperation.toolkitStarted=true
+    local action=s.transfer(s.water,s.root,s.bagInventory)
+    action.allowMissingItems=true
+    action.toolkitQueueOperation=current.toolkitQueueOperation
+    local queue=s.f.queue(current,action)
+    return s,current,action,queue
+end
+do
+    local s,current,action=deferredReturnFixture()
+    assert(s.adapters.transfer(action)==nil,'ordinary pending contract still rejects a started operation')
+    local valid=assert(s.adapters.deferredTransferBinding(action,current),'existing same-token deferred native return needs a source lease')
+    local accessor=getFilenameOfClosure
+    getFilenameOfClosure=function()error('final lease invoked metadata')end
+    assert(not valid(),'replaced metadata binding invalidates lease without invoking it')
+    getFilenameOfClosure=accessor
+    valid=assert(s.adapters.deferredTransferBinding(action,current))
+    s.water.getID=function()error('post-lease item getter')end
+    s.water.getFullType=function()error('post-lease type getter')end
+    s.water.getIsCraftingConsumed=function()error('post-lease validation getter')end
+    s.water.getActualWeight=function()error('post-lease weight getter')end
+    s.f.player.getInventory=function()error('post-lease inventory getter')end
+    getTimestampMs=function()error('post-lease constructor timestamp')end
+    PZSurvivorToolkit.Settings.actionQueue=function()error('post-lease merge settings callback')end
+    ISInventoryTransferUtil={newInventoryTransferAction=function()error('post-lease transfer factory')end}
+    s.forbidProofReads()
+    local constructors={[ISInventoryTransferAction.new]=true,[ISInventoryTransferAction.isValid]=true,
+        [ISInventoryTransferAction.canMergeAction]=true,[accessor]=true}
+    local clearGuard=callGuard(constructors)
+    local ok,result=pcall(valid)
+    clearGuard()
+    assert(ok and result and not valid(),'pure read-only lease is one-use')
+end
+for _,mutate in ipairs({
+    function(s,c,a)a.toolkitQueueOperation={}end,
+    function(s,c,a)c.toolkitQueueOperation.toolkitCancelled=true end,
+    function(s,c,a)a.started=true end,
+    function(s,c,a)a.action={}end,
+    function(s,c,a)a.transactionId=1 end,
+    function(s,c,a)a._isAddingActions=true end,
+    function(s,c,a)c.started=false end,
+    function(s,c,a)a.allowMissingItems=false end,
+    function(s,c,a)a.queueList[2]=a.queueList[1]end,
+    function(s,c,a)a.queueList[1].items[2]=a.item end,
+    function(s,c,a)a.queueList[1].items[1]=s.item()end,
+    function(s,c,a)a.queueList[1].extra=true end,
+    function(s,c,a,q)local other=s.f.action(ISReadABook,{item=s.water});q.queue={c,other,a}end,
+    function(s,c,a,q)q.queue[3]=s.f.action(ISReadABook,{item=s.water});q.queue[4]=s.f.action(ISReadABook,{item=s.water});q.queue[4].toolkitQueueOperation=c.toolkitQueueOperation end,
+})do
+    local s,current,action,queue=deferredReturnFixture()
+    mutate(s,current,action,queue)
+    assert(s.adapters.deferredTransferBinding(action,current)==nil,'unsupported deferred return binding must stay unknown')
+end
+for _,mutate in ipairs({
+    function(s,c,a)a.item=s.item()end,
+    function(s,c,a)a.queueList[1].items[1]=s.item()end,
+    function(s,c,a)a.queueList[1].time=a.maxTime+1 end,
+    function(s,c,a)ISInventoryTransferAction.transferItem=function()end end,
+    function(s,c,a)ISTransferAction.transferItem=function()end end,
+    function(s,c,a)PZSurvivorToolkit.ActionQueueOperations.transferMergeDelegate=function()end end,
+    function(s,c,a)ISBaseTimedAction.__index=function()error('class lookup callback')end end,
+    function(s,c,a,q)q.toolkitOperationGeneration=1 end,
+    function(s,c,a,q)q.queue[3]=s.f.action(ISReadABook,{item=s.water})end,
+})do
+    local s,current,action,queue=deferredReturnFixture()
+    local valid=assert(s.adapters.deferredTransferBinding(action,current))
+    mutate(s,current,action,queue)
+    assert(not valid(),'source/action/member changes must revoke a prepared lease')
+end
+do
+    local s,current,action=deferredReturnFixture('ISInventoryTransferAction.lua')
+    assert(s.adapters.deferredTransferBinding(action,current)==nil,'deferred source file pins stay required')
+    s,current,action=deferredReturnFixture()
+    local accessor=getFilenameOfClosure
+    getFilenameOfClosure=function(callback)
+        action.queueList[1].items[1]=s.item()
+        return accessor(callback)
+    end
+    assert(s.adapters.deferredTransferBinding(action,current)==nil,'replacement accessor cannot become a source authority')
+    s,current,action=deferredReturnFixture()
+    local input=getGameFilesInput
+    getGameFilesInput=function(path)
+        action.srcContainer=s.bagInventory
+        return input(path)
+    end
+    assert(s.adapters.deferredTransferBinding(action,current)==nil,'reentrant source pin cannot change earlier action binding')
+    s,current,action=deferredReturnFixture()
+    local original=ISInventoryTransferAction.start
+    ISInventoryTransferAction.start=function()end
+    assert(s.adapters.adoptMethods(ISInventoryTransferAction,{start=original},{start=ISInventoryTransferAction.start},function()return true end))
+    assert(s.adapters.deferredTransferBinding(action,current)==nil,'generic approved source guards have no pure dependency lease')
+end
+print('Deferred return source lease: same started current operation, native singleton, source freshness and callback-free one-use validation passed.')
 -- Native Host transfer lists can retain the detached pre-replication proxy;
 -- the exact current root object alone supplies the modeled item facts/effects.
 local function hostTransferMember()
@@ -2030,5 +2161,105 @@ do
     assert(not decision.allowed and decision.reason=='container_capacity','in-flight emptying cannot certify an unrelated capacity prefix')
 end
 print('Pending clean-water empty edits: exact native source/wrapper/owner/capture, independent move/cancel, shared drink dependency, transient peak and external capacity passed.')
+
+
+-- Compose the real private observer, Policy and Transition with the real native
+-- item adapter. This seam arranges an already-earned private phase; separate
+-- Settlement tests obtain that phase from real source-backed pickup receipts.
+local function earnedCleanupPlan(client,worldSource)
+    local s=setup()
+    isClient=function()return client end
+    local source=worldSource and s.world()or s.bagInventory
+    local lookup=s.root.getItemById
+    s.root.getItemById=function(self,id)
+        if id==s.bag:getID()then return s.bag end
+        return lookup(self,id)
+    end
+    local function book(kind)
+        local item=s.item();item.container=s.root
+        item.getFullType=function()return kind end
+        item.getNumberOfPages=function()return 100 end
+        item.getAlreadyReadPages=function()return 37 end
+        return item
+    end
+    local item,other=book('Base.BookCarpentry1'),book('Base.BookCooking1')
+    item.container=source
+    local native={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+    local current=s.f.action(ISReadABook,{item=item,action=native,started=true})
+    local returned=s.transfer(item,s.root,source);returned.allowMissingItems=true
+    returned.toolkitQueueOperation=current.toolkitQueueOperation
+    local tail=s.f.action(ISReadABook,{item=other})
+    local q=s.f.queue(current,returned,tail)
+    local settlement=s.f.project('ActionQueueSettlement')
+    local scope=settlement.deferred(s.f.player,current.toolkitQueueOperation)
+    assert(settlement.remember(scope,current,{items={[item:getID()]=true}}))
+    local pickup=s.transfer(item,source,s.root);pickup.toolkitQueueOperation=current.toolkitQueueOperation
+    assert(settlement.preparePickup(scope,pickup))
+    local record
+    for key,seal in pairs(current.toolkitQueueOperation)do
+        if type(key)=='table'and type(seal)=='function'then record=seal(current.toolkitQueueOperation)end
+    end
+    local candidate=assert(record and record.borrowings[1]).candidate
+    candidate.phase,candidate.step.state='active','earned'
+    item.container=s.root
+    current.toolkitQueueOperation.toolkitPickups={[item]=source}
+    return s,q,current,returned,tail,candidate,settlement,item
+end
+for _,client in ipairs({false,true})do for _,worldSource in ipairs({false,true})do
+    local s,q,current,returned,tail,candidate,settlement,item=earnedCleanupPlan(client,worldSource)
+    local before=settlement.editLedger(q,current)
+    assert(before.legacyHints and before.fresh==nil,'metadata ledger must remain a literal observation')
+    local constructors={[ISInventoryTransferAction.new]=true,[ISReadABook.new]=true,[ISInventoryTransferAction.isValid]=true}
+    ISInventoryPaneContextMenu.getContainers=function()error('projection enumerated inventory containers')end
+    ISInventoryTransferUtil={newInventoryTransferAction=function()error('projection executed transfer factory')end}
+    local timestamp,inventory,consumed=getTimestampMs,s.f.player.getInventory,item.getIsCraftingConsumed
+    getTimestampMs=function(...)assertNoNativeActionCaller();return timestamp(...)end
+    s.f.player.getInventory=function(...)assertNoNativeActionCaller();return inventory(...)end
+    item.getIsCraftingConsumed=function(...)assertNoNativeActionCaller();return consumed(...)end
+    local clearGuard=callGuard(constructors)
+    local ok,plan=pcall(s.policy.observeActiveEdit,q,{kind='cancel',action=current,whole=true})
+    clearGuard();assert(ok,plan)
+    assert(plan.status=='observed'and #plan.unresolved==0 and plan.projection.status=='unhandled'and plan.projection.externalCapacity)
+    assert(#plan.nodes==3 and plan.nodes[2].kind=='return'and plan.nodes[2].item==item
+        and plan.nodes[2].source==s.root and plan.nodes[2].destination==returned.destContainer
+        and plan.nodes[2].edit==nil and plan.nodes[2].action==nil and plan.nodes[3].action==tail)
+    assert(q.current==current and q.queue[2]==returned and q.queue[3]==tail and not q.toolkitCancel
+        and candidate.phase=='active'and item:getContainer()==s.root,'observation mutated queue/loan/item')
+    candidate.phase='waived'
+    local settled=s.policy.observeActiveEdit(q,{kind='cancel',action=current,whole=true})
+    assert(settled.status=='observed'and #settled.unresolved==0 and #settled.nodes==2
+        and settled.projection.status=='allowed','covered hints resurrected waived cleanup in composed plan')
+end end
+for _,change in ipairs({'callback','started','transaction','adding','token-started','class','group-key','group-member'})do
+    local s,q,current,returned,tail,candidate,settlement=earnedCleanupPlan(true,false)
+    local applied=false
+    local active=false
+    local original=settlement.observeEditCleanup
+    CleanupSourceReentry={original=original,enter=function()active=true end,leave=function()active=false end}
+    settlement.observeEditCleanup=assert(loadstring([[return function(queue,current)
+        CleanupSourceReentry.enter()
+        local result=CleanupSourceReentry.original(queue,current)
+        CleanupSourceReentry.leave()
+        return result
+    end]],'@fixture/ActionQueueSettlement.lua'))()
+    s.f.player.isDead=function()
+        if not applied and active then
+            applied=true
+            if change=='callback'then returned.onCompleteFunc=function()error('changed callback must not run')end
+            elseif change=='started'then returned.started=true
+            elseif change=='transaction'then returned.transactionId=81
+            elseif change=='adding'then returned._isAddingActions=true
+            elseif change=='token-started'then tail.toolkitQueueOperation.toolkitStarted=true
+            elseif change=='class'then ISInventoryTransferAction.isValid=function()error('changed validator must not run')end
+            elseif change=='group-key'then returned.queueList[1].foreign=true
+            elseif change=='group-member'then returned.queueList[1].items[1]=s.item()end
+        end
+        return false
+    end
+    local plan=s.policy.observeActiveEdit(q,{kind='cancel',action=current,whole=true})
+    assert(applied and plan.status=='unhandled',change..': late source reentry was accepted')
+    assert(not q.toolkitCancel and candidate.phase=='active','rejected observation performed cancellation')
+end
+print('Composed edit cleanup: SP/Host bag/world facts, covered hints, no effects, explicit unknown native contract and source reentry passed.')
 
 if TestCoverage then TestCoverage('native-contracts','passed') end

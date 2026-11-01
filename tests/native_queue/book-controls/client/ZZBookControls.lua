@@ -112,6 +112,8 @@ local function intact()
    'native request diagnostic binding changed')
   assert(T.ActionQueueTransferRequests==requestModule and requestModule.pending==requestPending and requestModule.observe==requestObserver,
    'native request watch diagnostic binding changed')
+ end
+ if requestsEnabled or config.kind=='mp'then
   assert(T.ActionQueuePolicy==requestPolicy and requestPolicy.matchesNative==nativeStopMatcher,
    'native transfer source matcher binding changed')
  end
@@ -154,7 +156,7 @@ end
 -- cleanup removes its transaction. Historical Done/Reject queries after removal
 -- are intentionally absent: native considers a missing transaction terminal.
 function bookControlsNativeTransferStop(action,episode,point,returned)
- if not requestsEnabled or not state then return end
+ if not isClient()or not state then return end
  local row=tracks[action]
  if not row or(row.role~='pickup'and row.role~='return')then return end
  intact()
@@ -178,7 +180,7 @@ function bookControlsNativeTransferStop(action,episode,point,returned)
    -- an approved delegate need not have the stock file's name.
    nativeSource=nativeStopMatcher(action)==true,
    done=isItemTransactionDone(tx)==true,rejected=isItemTransactionRejected(tx)==true,
-   observation=nativeRequestState(action)or false}
+   observation=requestsEnabled and nativeRequestState(action)or false}
   assert(row.nativeRef==entry.nativeRef and row.transaction==tx,'native stop lost the observed transfer episode')
   row.nativeStopEntry=entry;row.transactionDone=entry.done;row.transactionRejected=entry.rejected
   if transferEpisode and transferEpisode.action==action then
@@ -354,7 +356,7 @@ local function timedHandler(list,name,x,y)
  assert(elapsed>=0,'monotonic handler clock moved backwards')
  return elapsed,started,finished
 end
-local function realGesture()
+local function realGesture(preview)
  local panel=T.ActionQueuePanel:new(80,80,460,640);panel.queue,panel.playerNum=queue(),state.player:getPlayerNum();panel:initialise();panel:addToUIManager();panel:update()
  local list=panel.list;list:setYScroll(0);assert(not list:isVScrollBarVisible(),'owned real queue panel must fit all rows')
  local function rowFor(action,header)
@@ -380,6 +382,14 @@ local function realGesture()
  local decision=moving and T.ActionQueuePolicy.evaluateMove(queue(),movingAction,front,false)or T.ActionQueuePolicy.evaluateCancel(queue(),target.item,whole)
  local ui={source='ActionQueuePanel.List',input=moving and'programmatic-drag'or'programmatic-press-release',header=whole,singleton=not grouped,
   target=ref(target.item),operation=tokenID(target.operation),hitTested=true,decision=diagnostic(decision,moving and movingAction or target.item),at=now()}
+ if keep then
+  ui.waiverIdentity={schema=1,case=case(),actor=state.player:getOnlineID(),source=ids.source,
+   actionRef=ref(targetAction),token=tokenID(targetAction.toolkitQueueOperation),beforeAt=preview.at,
+   before=preview.identity,previewCheckedAt=now(),
+   previewUnchanged=preview.action==targetAction and F.returnPreviewUnchanged(targetAction,preview.native)
+    and F.same(preview.identity,F.waiverIdentity(state,targetAction))}
+  ui.waiverIdentity.actualReplicaReplacement=not preview.identity.sameReference
+ end
  local pressMs,releaseMs,pressStartedMs,pressFinishedMs,releaseStartedMs,releaseFinishedMs
  if moving then
   local from=rowFor(movingAction,false)or rowFor(movingAction,true)
@@ -407,6 +417,8 @@ local function realGesture()
  end
  ui.feedback=list.cancelFeedback and list.cancelFeedback.text or false;ui.gestureCleared=not list.pressedOperation and not list.pressedCancel and not list.dragAction
  if keep then
+  ui.waiverIdentity.after=F.waiverIdentity(state,targetAction);ui.waiverIdentity.afterAt=now()
+  ui.waiverIdentity.groupUnchangedAfterCommit=F.returnGroupUnchanged(targetAction,preview.native)
   ui.bodyContinues=queue().current==front and front.action==oldNative and queue().toolkitCancel==nil
   ui.returnAbsent=queue():indexOf(targetAction)==-1
   ui.bookRoot=F.snapshot(state).books.front.container=='root'
@@ -556,7 +568,17 @@ local function atBoundary()
  if queue().current~=front or not record.started or not record.progress then return end
  local actual=F.snapshot(state)
  if actual.books.front.pages<=ids.front.initial or actual.books.front.pages>=ids.front.total then return end
+ local preview
+ if not native and control()=='return-child-cancel'then
+  local target
+  for _,action in ipairs(queue().queue)do
+   if role(action)=='return'and action.toolkitQueueOperation==front.toolkitQueueOperation then assert(not target,'ambiguous native pending return');target=action end
+  end
+  assert(target,'native optional return missing before first preview')
+  preview={action=target,native=F.captureReturnPreview(target),identity=F.waiverIdentity(state,target),at=now()}
+ end
  performanceAtBoundary()
+ if preview then assert(F.returnPreviewUnchanged(preview.action,preview.native),'read-only performance/preview changed native return item/group')end
  -- A paid native page leaves one unread page: a precise stop/resume checkpoint.
  oldNative=front.action
  boundary={case=case(),at=now(),before=actual,reader=ref(front),native=ref(oldNative),token=tokenID(front.toolkitQueueOperation),
@@ -568,7 +590,7 @@ local function atBoundary()
   if capacityLost()then capacityRequestedAt=now();request('CapacityLost')end
   phase='drain';return
  end
- boundary.ui=realGesture();raw('BOUNDARY',boundary)
+ boundary.ui=realGesture(preview);raw('BOUNDARY',boundary)
  if not boundary.ui.accepted then resetFailure('real panel control denied: '..tostring(boundary.ui.decision.reason));return end
  assert(queue():indexOf(tail)~=-1,'real UI edit discarded independent tail')
  if capacityLost()then capacityRequestedAt=now();request('CapacityLost')end
@@ -661,13 +683,17 @@ Events.OnTick.Add(function()
     requestSettlement=T.ActionQueueSettlement;nativeRequestState=requestSettlement and requestSettlement.nativeRequestState
     assert(type(nativeRequestState)=='function'and Proof.closure(nativeRequestState,'ActionQueueSettlement.lua'),
      'source-owned native request diagnostic API missing')
-    requestPolicy=T.ActionQueuePolicy;nativeStopMatcher=requestPolicy and requestPolicy.matchesNative
-    assert(type(requestPolicy)=='table'and getmetatable(requestPolicy)==nil and type(nativeStopMatcher)=='function'
-     and Proof.closure(nativeStopMatcher,'ActionQueuePolicy.lua'),'source-owned native transfer matcher missing')
     requestModule=T.ActionQueueTransferRequests;requestPending=requestModule and requestModule.pending;requestObserver=requestModule and requestModule.observe
     assert(type(requestModule)=='table'and getmetatable(requestModule)==nil and type(requestPending)=='table'and getmetatable(requestPending)==nil
      and type(requestObserver)=='function'and Proof.closure(requestObserver,'ActionQueueTransferRequests.lua'),
      'source-owned native request watch diagnostic missing')
+   end
+   -- Rejection can arrive and its byte be removed inside one native stop,
+   -- between ticks. The pre-removal probe is independent of request diagnostics.
+   if requestsEnabled or config.kind=='mp'then
+    requestPolicy=T.ActionQueuePolicy;nativeStopMatcher=requestPolicy and requestPolicy.matchesNative
+    assert(type(requestPolicy)=='table'and getmetatable(requestPolicy)==nil and type(nativeStopMatcher)=='function'
+     and Proof.closure(nativeStopMatcher,'ActionQueuePolicy.lua'),'source-owned native transfer matcher missing')
    end
    assert(T.ActionQueueLifecycle.registerObserver('fixture.book-controls',{started=register,begin=lifecycleBegin,finish=lifecycleFinish}),'read-only native observer missing')
    if preciseTiming then

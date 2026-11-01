@@ -2176,6 +2176,51 @@ function Policy.evaluateCancel(queue, action, whole)
     return inDecision(queue, context, nil, evaluateCancel, queue, action, whole, context)
 end
 
+local activeCleanupBinding
+-- Query-local Lua bindings only, not an inventory/world snapshot. Native getters
+-- happen later; finish with raw comparisons so late inspection cannot replace a
+-- reviewed action, callback, class or singleton group without invalidating it.
+local function editSourceShape(members)
+    local seen,records={},{}
+    local function capture(value,depth)
+        if value==nil or seen[value]then return true end
+        if type(value)~="table"or depth>8 then return false end
+        local record={owner=value,meta=getmetatable(value),fields={},count=0}
+        seen[value]=record;records[#records+1]=record
+        for key,field in pairs(value)do
+            record.count=record.count+1
+            if record.count>128 then return false end
+            record.fields[key]=field
+        end
+        if type(record.fields.__index)=="function"then return false end
+        return record.meta==nil or capture(record.meta,depth+1)
+    end
+    for _,member in ipairs(members)do
+        if not capture(member,1)then return end
+        local fields=seen[member].fields
+        local groups=fields.queueList
+        if groups~=nil then
+            if not capture(groups,1)then return end
+            for _,group in ipairs(groups)do
+                if not capture(group,1)or not capture(seen[group].fields.items,1)then return end
+            end
+        end
+        if fields.toolkitTransferGuard~=nil and not capture(fields.toolkitTransferGuard,1)then return end
+    end
+    return function()
+        for _,record in ipairs(records)do
+            if not rawequal(getmetatable(record.owner),record.meta)then return false end
+            local count=0
+            for key,value in pairs(record.owner)do
+                count=count+1
+                if count>record.count or not rawequal(record.fields[key],value)then return false end
+            end
+            if count~=record.count then return false end
+        end
+        return true
+    end
+end
+
 -- Opt-in observation only. No UI/tick/commit path calls this while migration
 -- is incomplete; a resource projection is never an edit permission.
 function Policy.observeActiveEdit(queue, intent)
@@ -2192,6 +2237,11 @@ function Policy.observeActiveEdit(queue, intent)
         or not Proof.closure(EditTransition.project,"ActionQueueEditTransition.lua")then return unknown()end
     for _,member in ipairs(queue.queue)do if type(member)~="table"then return unknown()end end
     local snapshot=editSnapshot(queue)
+    local sourceUnchanged=editSourceShape(queue.queue)
+    local preparer=EditTransition.prepare
+    if not sourceUnchanged or type(preparer)~="function"or not Proof.closure(preparer,"ActionQueueEditTransition.lua")then return unknown()end
+    local projector=preparer()
+    if type(projector)~="function"then return unknown()end
     local current=queue.current
     local currentItem=current.item
     local fields={"Type","item","srcContainer","destContainer","mode","device","deviceData","secondaryItem","primary","twoHands"}
@@ -2258,17 +2308,35 @@ function Policy.observeActiveEdit(queue, intent)
     if type(pages)~="number"or pages~=pages or pages<0 or pages==math.huge
         or type(total)~="number"or total~=total or total==0 or math.abs(total)==math.huge
         or total>0 and pages>total then return unknown()end
-    local ledger
-    if kind=="cancel-operation"then
-        local settlement=Toolkit.ActionQueueSettlement
-        if settlement and Proof.closure(settlement.editLedger,"ActionQueueSettlement.lua")then
-            ledger=settlement.editLedger(queue,current)
-        end
-    end
-    local result=EditTransition.project(entries,{kind=kind,first=rangeFirst,last=rangeLast,
-        generation=queue.toolkitOperationGeneration or 0,checkpoint=checkpoint,ledger=ledger})
+    -- Run callback-bearing settings/freshness checks before the fresh private
+    -- observation. No settings/native/provider getter runs after that boundary.
     if current.item~=item or not Policy.editUnchanged(queue,snapshot)then return unknown("unavailable")end
-    for index,member in ipairs(queue.queue)do
+    local ledger,cleanupOwner,cleanupObserver
+    if kind=="cancel-operation"then
+        cleanupOwner=Toolkit.ActionQueueSettlement
+        cleanupObserver=cleanupOwner and cleanupOwner.observeEditCleanup
+        if type(cleanupObserver)~="function"or not Proof.closure(cleanupObserver,"ActionQueueSettlement.lua")
+            or activeCleanupBinding and (activeCleanupBinding.owner~=cleanupOwner or activeCleanupBinding.observe~=cleanupObserver)then
+            return unknown("edit_obligation_unknown")
+        end
+        activeCleanupBinding=activeCleanupBinding or {owner=cleanupOwner,observe=cleanupObserver}
+        ledger=cleanupObserver(queue,current)
+    end
+    if not rawequal(Toolkit.ActionQueueEditTransition,EditTransition)or EditTransition.prepare~=preparer then return unknown("unavailable")end
+    local result=projector(entries,{kind=kind,first=rangeFirst,last=rangeLast,
+        generation=queue.toolkitOperationGeneration or 0,checkpoint=checkpoint,ledger=ledger})
+    if cleanupOwner and (not rawequal(Toolkit.ActionQueueSettlement,cleanupOwner) or cleanupOwner.observeEditCleanup~=cleanupObserver)
+        or not sourceUnchanged()or not rawequal(current.item,item)
+        or not rawequal(queue.queue,snapshot.list) or not rawequal(queue.current,snapshot.current) or not rawequal(queue.character,snapshot.owner)
+        or queue.toolkitOperationGeneration~=snapshot.generation or not rawequal(queue.toolkitCancel,snapshot.cancel)
+        or not rawequal(queue.toolkitGroupCancel,snapshot.groupCancel) or #queue.queue~=#snapshot.members
+        or queue.toolkitResume or queue.toolkitOutcomeWait or queue.toolkitStopIntent
+        or not rawequal(ISTimedActionQueue.queues[queue.character],queue) then return unknown("unavailable")end
+    for index,record in ipairs(snapshot.members)do
+        local member,token=queue.queue[index],record.token
+        if not rawequal(member,record.member) or not rawequal(member.action,record.action) or not rawequal(member.character,record.owner)
+            or not rawequal(member.toolkitQueueOperation,token)
+            or type(token)=="table"and(token.toolkitStarted~=record.started or token.toolkitCancelled~=record.cancelled)then return unknown("unavailable")end
         for _,field in ipairs(fields)do
             if not rawequal(member[field],observed[index][field])then return unknown("unavailable")end
         end

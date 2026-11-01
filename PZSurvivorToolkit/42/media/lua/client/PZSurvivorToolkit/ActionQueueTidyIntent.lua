@@ -50,11 +50,15 @@ function Intent.keepReturn(action,handle)
     local player=action.character
     local queue=ISTimedActionQueue.queues[player]
     local inventory=player:getInventory()
+    local requested=retained and (retained.requestedItem or retained.item)
     if not retained or retained.character~=player or retained.queue~=queue
         or retained.generation~=(queue.toolkitOperationGeneration or 0)
         or retained.source~=inventory or retained.source~=action.srcContainer
-        or retained.destination~=action.destContainer or retained.item~=action.item
-        or not instanceof(retained.item,'InventoryItem') or retained.item:getContainer()~=inventory
+        or retained.destination~=action.destContainer or requested~=action.item
+        or not instanceof(requested,'InventoryItem') or not instanceof(retained.item,'InventoryItem')
+        or (retained.item~=requested and (not isClient()
+            or retained.item:getID()~=requested:getID() or retained.item:getFullType()~=requested:getFullType()))
+        or retained.item:getContainer()~=inventory
         or inventory:getItemById(retained.item:getID())~=retained.item then return false end
     local owner=retained.owner
     if owner and (type(owner.id)~='number' or type(owner.fullType)~='string') then return false end
