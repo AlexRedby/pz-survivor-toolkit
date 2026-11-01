@@ -111,6 +111,7 @@ IsoThumpable={new=function()
  function object:transmitModData()end
  return object
 end}
+local Cleanup=dofile(ProjectRoot..'/tests/native_queue/support/QueueFixtureItemCleanup.lua');package.preload.QueueFixtureItemCleanup=function()return Cleanup end
 local Items=dofile(fixtureRoot..'shared/WarehouseWalkingItems.lua');package.preload.WarehouseWalkingItems=function()return Items end
 local A=dofile(fixtureRoot..'shared/WarehouseWalkingActor.lua');package.preload.WarehouseWalkingActor=function()return A end
 function instanceof(item,kind)return item.kind==kind end
@@ -381,6 +382,112 @@ s.stores[1]:AddItem(missing);F.abort(s)
 local player=actor('client1',380);local saved=A.save(player);A.detach(saved);A.seed(saved,'missing-actor')
 missing=player.root.values[1];player.root:Remove(missing);rejected(A.restore,saved,true)
 assert(#player.root.values==7,'missing actor item allowed partial cleanup');player.root:AddItem(missing);A.restore(saved,true)
+-- Shared cleanup journal recovery: completed local effects are never replayed,
+-- and uncertain inventory notices stay within the frozen generation.
+for _,mode in ipairs({'remove-before','remove-after','notice-before','notice-after'})do
+ local current=F.prepare(players(1100));F.seed(current,1)
+ local store=current.stores[4];local remove=store.Remove;local send=sendRemoveItemFromContainer
+ local faulted=false;local noticeCalls=0
+ if mode=='remove-before'or mode=='remove-after'then
+  store.Remove=function(c,item)
+   if not faulted then faulted=true;if mode=='remove-after'then remove(c,item)end;error('injected cleanup removal')end
+   return remove(c,item)
+  end
+ else
+  sendRemoveItemFromContainer=function(c,item)
+   noticeCalls=noticeCalls+1
+   if noticeCalls==4 and not faulted then faulted=true;if mode=='notice-after'then send(c,item)end;error('injected cleanup notice')end
+   return send(c,item)
+  end
+ end
+ local receipt=F.release(current,1);store.Remove=remove;sendRemoveItemFromContainer=send
+ assert(#receipt.removedIds==12 and #receipt.cleanupJournal.recoveries==1,'recovered cleanup was not recorded')
+ assert(receipt.cleanupJournal.removalCalls==(mode=='remove-before'and 13 or 12),'completed local removal replayed')
+ assert(receipt.cleanupJournal.noticeAttempts==((mode=='notice-before'or mode=='notice-after')and 13 or 12),'notice uncertainty not retained')
+ local before=#removals;assert(F.release(current,1)==receipt and #removals==before,'completed release replayed native calls')
+ F.seed(current,2);rejected(F.release,current,1);F.abort(current)
+end
+for _,mode in ipairs({'remove-before','remove-after','notice-before','notice-after'})do
+ local player=actor('client1',1120);local saved=A.save(player);A.detach(saved);A.seed(saved,'cleanup-actor')
+ local remove=player.root.Remove;local send=sendRemoveItemFromContainer;local calls,faulted=0,false
+ player.root.Remove=function(c,item)
+  calls=calls+1
+  if(mode=='remove-before'or mode=='remove-after')and calls==4 and not faulted then
+   faulted=true;if mode=='remove-after'then remove(c,item)end;error('injected actor cleanup')
+  end;return remove(c,item)
+ end
+ local notices=0
+ sendRemoveItemFromContainer=function(c,item)
+  notices=notices+1
+  if(mode=='notice-before'or mode=='notice-after')and notices==4 and not faulted then
+   faulted=true;if mode=='notice-after'then send(c,item)end;error('injected actor notice')
+  end;return send(c,item)
+ end
+ local proof=A.restore(saved,true);player.root.Remove=remove;sendRemoveItemFromContainer=send
+ assert(proof.identity and player.root.values[1]==player.original and #player.root.values==1,'actor journal failed exact original restoration')
+ assert(#A.cleanupReceipt(saved).recoveries==1,'actor recovery diagnostics lost')
+ local before=#removals;A.restore(saved,true);assert(#removals==before,'restored actor replayed removal notices')
+end
+-- Completion revalidates lease and exact original root, not just a cached bit.
+local completePlayer=actor('client1',1130);local completeActor=A.save(completePlayer);A.detach(completeActor);A.seed(completeActor,'complete-scope');A.restore(completeActor,true)
+local alien=completePlayer.root:AddItem('Base.Hammer');rejected(A.restore,completeActor,true);completePlayer.root:Remove(alien)
+completeActor.token='rebound';rejected(A.restore,completeActor,true);completeActor.token='complete-scope';A.restore(completeActor,true)
+-- Inventory notice retries must keep the native network descriptor, not just
+-- the same Java container object. Refuse a moved crate or rebound player ID.
+for _,kind in ipairs({'square','index','online'})do
+ local moved=F.prepare(players(kind=='square'and 1240 or kind=='index'and 1260 or 1280));F.seed(moved,1)
+ local send=sendRemoveItemFromContainer;local calls=0
+ sendRemoveItemFromContainer=function(c,item)
+  calls=calls+1
+  if calls==4 then
+   if kind=='online'then moved.players.client1.getOnlineID=function()return 999 end
+   elseif kind=='square'then
+    local object=moved.crates[4];object:getSquare():transmitRemoveItemFromSquare(object);square(1300,100,0):AddSpecialObject(object)
+   else local tile=moved.crates[4]:getSquare();table.insert(tile.objects,1,{})end
+   error('injected descriptor change')
+  end;return send(c,item)
+ end
+ rejected(F.release,moved,1);sendRemoveItemFromContainer=send
+ assert(calls==4,'notice retried after native descriptor changed')
+end
+-- Exhaustion remains fail-closed and does not reset through abort.
+local exhausted=F.prepare(players(1140));F.seed(exhausted,1);local failing=exhausted.stores[1];local attempts=0
+failing.Remove=function()attempts=attempts+1;error('persistent cleanup failure')end
+rejected(F.release,exhausted,1);assert(attempts==3 and #failing.values==1,'cleanup retry bound changed')
+rejected(F.abort,exhausted);assert(attempts==3,'abort reset exhausted journal budget')
+-- An original insertion may finish before throwing. Resume the exact prefix
+-- without replaying any completed world index packet or cohort removal.
+local resumed=F.prepare(players(1160));F.seed(resumed,1);local player=resumed.players.client1
+local nativeAdd=player.root.AddItem;local once=false;local worldCalls=0
+for _,object in ipairs(resumed.crates)do local tile=object:getSquare();local nativeWorld=tile.transmitRemoveItemFromSquare
+ tile.transmitRemoveItemFromSquare=function(q,obj)worldCalls=worldCalls+1;return nativeWorld(q,obj)end
+end
+player.root.AddItem=function(c,item)
+ local result=nativeAdd(c,item)
+ if item==player.original and not once then once=true;error('injected completed original insertion')end
+ return result
+end
+rejected(F.abort,resumed);player.root.AddItem=nativeAdd;local removedBefore=#removals
+local completed=F.abort(resumed)
+assert(completed.restored and worldCalls==12 and #removals-removedBefore<=8,'cleanup replayed completed world/actor effects')
+for _,peer in pairs(resumed.players)do assert(peer.root.values[1]==peer.original and #peer.root.values==1,'resumed restore lost original')end
+removedBefore=#removals;F.abort(resumed);assert(worldCalls==12 and #removals==removedBefore,'completed abort replayed native effects')
+-- A normal final cleanup can fail during original insertion after world
+-- deletion too; entering abort must not require already retired descriptors.
+local final=F.prepare(players(1320));final.nextIndex=16;F.seed(final,16);F.release(final,16)
+local lastPlayer=final.players.client1;local lastAdd=lastPlayer.root.AddItem;local injected=false
+lastPlayer.root.AddItem=function(c,item)local result=lastAdd(c,item);if item==lastPlayer.original and not injected then injected=true;error('final original insertion failed')end;return result end
+rejected(F.cleanup,final);lastPlayer.root.AddItem=lastAdd
+assert(F.abort(final).restored and lastPlayer.root.values[1]==lastPlayer.original,'abort could not resume retired world cleanup')
+-- Native world deletion cannot share the inventory notice retry policy: once
+-- an index-addressed transmit throws, neither before nor after effect is safe.
+for _,afterEffect in ipairs({false,true})do
+ local uncertain=F.prepare(players(afterEffect and 1200 or 1180));F.seed(uncertain,1)
+ local tile=uncertain.crates[1]:getSquare();local nativeWorld=tile.transmitRemoveItemFromSquare;local calls=0
+ tile.transmitRemoveItemFromSquare=function(q,obj)calls=calls+1;if afterEffect then nativeWorld(q,obj)end;error('uncertain world publication')end
+ rejected(F.abort,uncertain);tile.transmitRemoveItemFromSquare=nativeWorld
+ rejected(F.abort,uncertain);assert(calls==1,'uncertain world index was retransmitted')
+end
 -- Partly built geometry also uses actual objects and counts at cleanup.
 local nativeNew,created=IsoThumpable.new,0
 IsoThumpable.new=function(...)created=created+1;assert(created<5,'object allocation failed');return nativeNew(...)end

@@ -3,6 +3,7 @@ local selection=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
 local A=require 'WarehouseWalkingActor'
 local Items=require 'WarehouseWalkingItems'
+local Cleanup=require 'QueueFixtureItemCleanup'
 local F={module='WarehouseWalkingTest',phases={},initialTransport=selection.kind=='mp'and'native-reliable-ordered-channel0'or'in-process-shared-authority',
  materializationTransport=selection.kind=='mp'and'native-reliable-ordered-channel1'or'in-process-shared-authority',
  cleanupTransport=selection.kind=='mp'and'native-reliable-ordered-channel1'or'in-process-shared-authority'}
@@ -184,42 +185,109 @@ local function cleanupEntries(s)
  for id,entry in pairs(s.owned)do
   assert(entry.id==id and entry.item:getID()==id and entry.item:getFullType()==entry.ft,'refusing changed walking identity cleanup')
   local endpoint=entry.item:getContainer()
-  assert((entry.state=='staged'and endpoint==nil)or(entry.state=='inserting'and(endpoint==nil or endpoint==entry.container))
+  local removed=s.removalJournal and Cleanup.removed(s.removalJournal,entry.item)
+  assert((removed and endpoint==nil)or(entry.state=='staged'and endpoint==nil)or(entry.state=='inserting'and(endpoint==nil or endpoint==entry.container))
    or(entry.state=='inserted'and endpoint==entry.container),'refusing missing/moved walking identity cleanup')
   assert(endpoint==nil or seen[id],'refusing unlisted walking identity cleanup')
  end;return entries
 end
 local function removeItems(s)
- local entries=cleanupEntries(s);local removed={}
- for _,entry in ipairs(entries)do local id=entry.item:getID();entry.container:Remove(entry.item)
-  if isServer() then sendRemoveItemFromContainer(entry.container,entry.item)end;removed[#removed+1]=id
- end;table.sort(removed);s.owned={};return removed
+ if not s.removalJournal then
+  local entries=cleanupEntries(s);local containers={}
+  for _,c in ipairs(s.stores)do containers[#containers+1]=c end
+  for _,actor in pairs(s.actors)do containers[#containers+1]=actor.root end
+  local phase,token,phaseToken,index=s.phase,s.token,s.phase and s.phase.phaseToken,s.phase and s.phase.index
+  local owned=s.owned;local identities,stores,crates,actors,addresses={},{},{},{},{}
+  for id,entry in pairs(owned)do identities[id]={entry=entry,item=entry.item,container=entry.container,ft=entry.ft,state=entry.state}end
+  for i,c in ipairs(s.stores)do
+   stores[i]=c;crates[i]=s.crates[i];local square=crates[i]:getSquare()
+   assert(square or #entries==0 and s.worldCleanup and s.worldCleanup[i].done,'walking namespace missing before item cleanup')
+   addresses[i]={square=square,id=square and descriptor(crates[i]).id or false}
+  end
+  for role,actor in pairs(s.actors)do actors[role]={actor=actor,player=actor.player,root=actor.root,online=actor.player:getOnlineID()}end
+  s.removalJournal=Cleanup.new(entries,{containers=containers,server=isServer(),
+   guard=function()
+    assert(s.phase==phase and s.token==token and s.owned==owned and(not phase or phase.phaseToken==phaseToken and phase.index==index),'walking cleanup generation changed')
+    assert(#s.stores==#stores and #s.crates==#crates,'walking cleanup namespace changed')
+    for i,c in ipairs(stores)do
+     assert(s.stores[i]==c and s.crates[i]==crates[i]and crates[i]:getSquare()==addresses[i].square
+      and(addresses[i].id and descriptor(crates[i]).id==addresses[i].id or not addresses[i].id and crates[i]:getObjectIndex()<0),'walking cleanup namespace changed')
+    end
+    for role,actor in pairs(s.actors)do assert(actors[role]and actors[role].actor==actor,'walking cleanup actors changed')end
+    for role,entry in pairs(actors)do assert(s.actors[role]==entry.actor and entry.actor.player==entry.player and entry.actor.root==entry.root
+     and entry.player:getInventory()==entry.root and entry.player:getOnlineID()==entry.online,'walking cleanup actor/root changed')end
+    for id,entry in pairs(owned)do assert(identities[id]and identities[id].entry==entry,'walking cleanup cohort changed')end
+    for id,entry in pairs(identities)do
+     local current=owned[id];assert(current==entry.entry and current.item==entry.item and current.container==entry.container
+      and current.ft==entry.ft and current.state==entry.state,'walking cleanup cohort changed')
+    end
+    cleanupEntries(s)
+   end,
+   check=function(entry)assert(phase and entry.item:getModData()[owner]==phase.phaseToken,'walking cleanup owner changed')end})
+ end
+ local receipt=Cleanup.run(s.removalJournal);s.owned={};s.removalJournal=nil;return receipt
 end
 function F.release(s,index)
- assert(s.phase and s.phase.index==index and F.snapshot(s),'unfinished walking release')
- local row=F.context(s,{removedIds=removeItems(s),ownedRemaining=0,originalRootIds=s.ids.originalRootIds})
- s.phase=nil;s.nextIndex=index+1;preserved(s);return row
+ if s.lastRelease and s.lastRelease.index==index and not s.phase and s.nextIndex==index+1 then
+  cleanupEntries(s);for _,c in ipairs(s.stores)do assert(c:getItems():isEmpty(),'released walking stock reappeared')end
+  return s.lastRelease
+ end
+ assert(s.phase and s.phase.index==index,'unfinished walking release')
+ if not s.removalJournal then assert(F.snapshot(s),'unfinished walking release')end
+ local receipt=removeItems(s)
+ local row=F.context(s,{removedIds=receipt.removedIds,cleanupJournal=receipt,ownedRemaining=0,originalRootIds=s.ids.originalRootIds})
+ s.phase=nil;s.nextIndex=index+1;preserved(s);s.lastRelease=row;return row
 end
 function F.absent(packet)
  for _,point in ipairs(packet.crates)do local square=getCell():getGridSquare(point.x,point.y,point.z);if not square then return false end
-  for _,object in ipairs(array(square:getObjects()))do if object:getModData()[owner]==point.token then return false end end
+  for _,list in ipairs({square:getObjects(),square:getSpecialObjects()})do
+   for _,object in ipairs(array(list))do if object:getModData()[owner]==point.token then return false end end
+  end
  end;return true
 end
 function F.cleanup(s)
  assert(not s.phase and s.nextIndex==17,'unfinished walking cleanup');cleanupEntries(s)
- for i,object in ipairs(s.crates)do assert(object:getModData()[owner]==s.token..':'..i and object:getContainer():getItems():isEmpty(),'refusing foreign/nonempty walking cleanup')end
- local removed={};for _,object in ipairs(s.crates)do local point=descriptor(object)
-  object:getSquare():transmitRemoveItemFromSquare(object)
-  if object:getObjectIndex()>=0 then object:removeFromWorld();object:removeFromSquare()end
-  assert(object:getObjectIndex()<0,'owned walking object survived');point.afterIndex=object:getObjectIndex();removed[#removed+1]=point
+ assert(not s.worldUncertain,'uncertain walking world removal cannot be retransmitted')
+ if not s.worldCleanup then
+  s.worldCleanup={};s.worldToken=s.token
+  for i,object in ipairs(s.crates)do
+   assert(object:getModData()[owner]==s.token..':'..i and object:getContainer():getItems():isEmpty(),'refusing foreign/nonempty walking cleanup')
+   s.worldCleanup[i]={object=object,container=s.stores[i],square=object:getSquare(),point=descriptor(object)}
+  end
  end
- assert(F.absent(s.ids),'owned walking objects remain');local actors,equipment={},{}
- for role,actor in pairs(s.actors)do actors[role]=A.restore(actor,true);equipment[role]=A.equipmentProof(actor)end
- return {cleanupTransport=F.cleanupTransport,actorRestored=actors,originalEquipment=equipment,token=s.token,index=16,removedCrates=#removed,crates=removed,ownedAbsent=true,ownedRemaining=0,originalRootIds=s.ids.originalRootIds}
+ assert(s.token==s.worldToken and #s.worldCleanup==#s.crates and #s.stores==#s.crates,'walking world cleanup generation/cohort changed')
+ for i,entry in ipairs(s.worldCleanup)do
+  local object,point=entry.object,entry.point
+  assert(s.crates[i]==object and s.stores[i]==entry.container and object:getContainer()==entry.container
+   and object:getModData()[owner]==point.token and object:getContainer():getItems():isEmpty(),'walking cleanup object changed')
+  if entry.done then
+   assert(object:getObjectIndex()<0 and F.absent({crates={point}}),'removed walking object reappeared')
+  else assert(object:getSquare()==entry.square and object:getObjectIndex()>=0 and descriptor(object).id==point.id,'walking object missing/moved before removal')end
+ end
+ local removed={}
+ for _,entry in ipairs(s.worldCleanup)do
+  local object,point=entry.object,entry.point
+  if not entry.done then
+   -- Native world packets address a mutable index. A thrown transmit is
+   -- permanently uncertain; replay could delete a different peer object.
+   local ok,problem=pcall(function()
+    object:getSquare():transmitRemoveItemFromSquare(object)
+    if object:getObjectIndex()>=0 then object:removeFromWorld();object:removeFromSquare()end
+    assert(object:getObjectIndex()<0 and F.absent({crates={point}}),'owned walking object survived')
+   end)
+   if not ok then s.worldUncertain=true;error(problem)end
+   entry.done=true;point.afterIndex=object:getObjectIndex()
+  end;removed[#removed+1]=point
+ end
+ assert(F.absent(s.ids),'owned walking objects remain');local actors,equipment,journals={},{},{}
+ for role,actor in pairs(s.actors)do
+  actors[role]=A.restore(actor,true);equipment[role]=A.equipmentProof(actor);journals[role]=A.cleanupReceipt(actor)
+ end
+ return {cleanupTransport=F.cleanupTransport,actorRestored=actors,actorCleanup=journals,originalEquipment=equipment,token=s.token,index=16,removedCrates=#removed,crates=removed,ownedAbsent=true,ownedRemaining=0,originalRootIds=s.ids.originalRootIds}
 end
 function F.abort(s)
  if not s then return {cleanupTransport=F.cleanupTransport,restored=true,unprepared=true}end
- local removed=removeItems(s);s.phase=nil;s.nextIndex=17
- local row=F.cleanup(s);row.removedIds=removed;row.restored=true;return row
+ if not s.abortRemoval then s.abortRemoval=removeItems(s);s.phase=nil;s.nextIndex=17 end
+ local row=F.cleanup(s);row.removedIds=s.abortRemoval.removedIds;row.cleanupJournal=s.abortRemoval;row.restored=true;return row
 end
 return F

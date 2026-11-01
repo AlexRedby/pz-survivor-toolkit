@@ -37,9 +37,12 @@ each insertion before the native mutation. Allocation failures publish no
 partial cohort; insertion/publication failures retain exact-object ownership
 for cleanup after the normal drain barrier, including native calls that insert
 before throwing. Only a complete seed can reach measurement. Cleanup still
-rejects foreign objects and missing committed items; interrupted cleanup itself
-remains a separate TODO. Exclude the entire failed capture from comparisons and
-retain its report.
+rejects foreign objects and missing committed items. Inventory removal uses the
+[shared cleanup journal](../README.md#shared-inventory-cleanup), retaining exact
+partial progress and recovery diagnostics. Original insertion resumes from its
+exact prefix, and completed world removals are not repeated. An uncertain world
+transmit permanently blocks automatic index retransmission. Exclude the entire
+failed or unexpectedly recovered capture from comparisons and retain its report.
 
 The disposable test mod sends the setup and final cleanup commands through the
 unchanged native command serializer with reliable ordered delivery. Initial

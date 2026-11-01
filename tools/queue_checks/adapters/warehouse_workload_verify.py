@@ -246,6 +246,9 @@ def _server(rows):
         ensure(set(ids(release['removedIds'], 17)) == set(endpoints(final, 'hidden-loot')), 'owned release cohort differs')
         ensure(ids(release['consumedIds'], 1) == [base['craftInputId']], 'recipe input was not consumed exactly once')
         require(release, ownedRemaining=0)
+        journal = release['cleanupJournal']
+        ensure(type(journal) is dict and ids(journal['removedIds'], 17) == sorted(release['removedIds']), 'cleanup journal cohort differs')
+        require(journal, removalCalls=17, noticeAttempts=17, recoveries=[])
         ensure(release['originalRootIds'] == originals, 'release originals differ')
         snapshot(release['snapshot'], None, None, descriptors, originals, 'server')
         phases[index] = dict(steps=by_step, release=release)

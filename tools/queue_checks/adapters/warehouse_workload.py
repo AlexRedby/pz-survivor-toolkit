@@ -35,7 +35,7 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [*sorted((root / SUITE).rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
-            root / 'health/shared/QueueHealthEvents.lua', Path(__file__).with_name('warehouse_workload_verify.py')]
+            root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueFixtureItemCleanup.lua', Path(__file__).with_name('warehouse_workload_verify.py')]
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
@@ -45,7 +45,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
         for source, side in [(root / 'startup/client/ZZStartup.lua', 'client'),
                              (root / 'startup/server/ZZStartupServer.lua', 'server'),
-                             (root / 'health/shared/QueueHealthEvents.lua', 'shared')]:
+                             (root / 'health/shared/QueueHealthEvents.lua', 'shared'),
+                             (root / 'support/QueueFixtureItemCleanup.lua', 'shared')]:
             (lua / side).mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, lua / side / source.name)
     runtime.setdefault('fixture', {}).update(server_ready='[STARTUP_TEST] SERVER_READY',

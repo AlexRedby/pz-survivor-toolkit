@@ -3,6 +3,7 @@
 local selection=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
 local Model=require 'PZSurvivorToolkit/ManifestModel'
+local Cleanup=require 'QueueFixtureItemCleanup'
 local F={module='WarehouseWorkloadTest',modes={'clean','vanilla'},steps={'initial','peer-transfer','peer-replace','peer-craft','hidden-loot'}}
 local owner='PZSTWarehouseWorkloadOwner'
 local function array(list)local out={};for i=0,list:size()-1 do out[#out+1]=list:get(i)end;return out end
@@ -207,63 +208,192 @@ function F.native(s,step)
  if not complete then return end
  local row=F.snapshot(s);row.step=step;row.outputIds=p.outputIds;row.consumedId=(step=='peer-craft'or step=='hidden-loot')and p.craftInputId or nil;return row
 end
-local function validateCleanup(s)
+local function validateCleanup(s,journal)
  preserved(s)
+ local found={}
+ eachContainer(s,function(container,endpoint)
+  for _,item in ipairs(array(container:getItems()))do
+   local id=item:getID()
+   if string.sub(endpoint,1,5)=='crate'then assert(s.owned[id],'refusing foreign workload crate content cleanup')end
+   if s.owned[id]then
+    assert(not found[id],'duplicated workload cleanup identity')
+    found[id]={item=item,container=container}
+   end
+  end
+ end)
  for slot,object in ipairs(s.crates)do
   assert(object:getModData()[owner]==s.token..':'..slot and object:getContainer()==s.stores[slot],'refusing foreign workload object cleanup')
-  for _,item in ipairs(array(s.stores[slot]:getItems()))do assert(s.owned[item:getID()],'refusing foreign workload crate content cleanup')end
  end
  local entries={}
  for id,entry in pairs(s.owned)do
-  local item,_,count=F.find(s,id)
+  local live=found[id];local item=live and live.item
   local consumed=s.phase and id==s.phase.craftInputId and #s.phase.outputIds==4
-  if consumed then assert(count==0,'consumed workload input reappeared')
+  if consumed then assert(not live,'consumed workload input reappeared')
+  elseif journal and journal.byId[id]and Cleanup.removed(journal.j,journal.byId[id].item)then
+   assert(not live,'removed workload identity reappeared')
   else
-   assert(count==1 and item:getFullType()==entry.ft,'refusing missing/foreign workload cleanup identity')
+   assert(item and item:getFullType()==entry.ft,'refusing missing/foreign workload cleanup identity')
+   assert(item:getContainer()==live.container,'workload cleanup pointer differs')
    local output=false;for _,outputId in ipairs(s.phase.outputIds)do if outputId==id then output=true end end
    assert(output or item:getModData()[owner]==s.phase.phaseToken,'refusing foreign workload item token')
-   entries[#entries+1]={id=id,item=item,container=assert(item:getContainer())}
+   for _,player in pairs(s.players)do assert(not player:isEquipped(item),'refusing equipped workload item cleanup')end
+   entries[#entries+1]={id=id,item=item,container=live.container,ft=entry.ft}
   end
  end;return entries
 end
+local function cleanupInventory(s)
+ local lease=s.inventoryCleanup
+ if not lease then
+  local entries=validateCleanup(s);local containers={};eachContainer(s,function(container)containers[#containers+1]=container end)
+  lease={phase=s.phase,token=s.token,phaseToken=s.phase and s.phase.phaseToken,index=s.phase and s.phase.index,
+   owned=s.owned,byId={},metadata={},metadataValues={},outputs={},craftInputId=s.phase and s.phase.craftInputId,containers=containers,crates={},stores={},points={},players={}}
+  for id,entry in pairs(s.owned)do lease.metadata[id]=entry;lease.metadataValues[id]={ft=entry.ft,key=entry.key,cat=entry.cat}end
+  if s.phase then for i,id in ipairs(s.phase.outputIds)do lease.outputs[i]=id end end
+  for i,object in ipairs(s.crates)do
+   lease.crates[i]=object;lease.stores[i]=s.stores[i]
+   lease.points[i]={square=assert(object:getSquare()),point=descriptor(object)}
+   assert(lease.points[i].point.index>=0,'workload cleanup native object missing')
+  end
+  for role,player in pairs(s.players)do lease.players[role]={player=player,root=player:getInventory(),onlineID=player:getOnlineID()}end
+  for _,entry in ipairs(entries)do lease.byId[entry.id]=entry end
+  lease.j=Cleanup.new(entries,{containers=containers,server=true,guard=function()
+   assert(s.token==lease.token and s.phase==lease.phase and s.owned==lease.owned
+    and(not s.phase or(s.phase.phaseToken==lease.phaseToken and s.phase.index==lease.index)),
+    'workload cleanup generation changed')
+   assert(#s.crates==#lease.crates and #s.stores==#lease.stores,'workload cleanup objects changed')
+   for i,object in ipairs(lease.crates)do
+    local frozen=lease.points[i];local point=frozen.point
+    assert(s.crates[i]==object and s.stores[i]==lease.stores[i],'workload cleanup endpoints changed')
+    assert(object:getSquare()==frozen.square and object:getObjectIndex()==point.index
+     and frozen.square:getX()==point.x and frozen.square:getY()==point.y and frozen.square:getZ()==point.z,
+     'workload cleanup native object descriptor changed')
+   end
+   for role,entry in pairs(lease.players)do assert(s.players[role]==entry.player and entry.player:getInventory()==entry.root
+    and entry.player:getOnlineID()==entry.onlineID,'workload cleanup player/root descriptor changed')end
+   for id,entry in pairs(s.owned)do assert(lease.metadata[id]==entry,'workload cleanup ownership cohort changed')end
+   for id,entry in pairs(lease.metadata)do
+    local frozen=lease.metadataValues[id]
+    assert(s.owned[id]==entry and entry.ft==frozen.ft and entry.key==frozen.key and entry.cat==frozen.cat,'workload cleanup ownership cohort changed')
+   end
+   if s.phase then
+    assert(s.phase.craftInputId==lease.craftInputId and #s.phase.outputIds==#lease.outputs,'workload cleanup recipe cohort changed')
+    for i,id in ipairs(lease.outputs)do assert(s.phase.outputIds[i]==id,'workload cleanup recipe cohort changed')end
+   end
+   validateCleanup(s,lease)
+  end,check=function(entry)
+   assert(lease.byId[entry.id].item==entry.item and s.owned[entry.id]and s.owned[entry.id].ft==entry.ft,
+    'workload cleanup ownership changed')
+   local output=false;for _,id in ipairs(lease.outputs)do if id==entry.id then output=true end end
+   assert(output or entry.item:getModData()[owner]==lease.phaseToken,'workload cleanup item token changed')
+   local actual=assert(Model.item(entry.item));local metadata=lease.metadataValues[entry.id]
+   assert(actual.key==metadata.key and actual.cat==metadata.cat,'workload cleanup item metadata changed')
+   for _,player in pairs(s.players)do assert(not player:isEquipped(entry.item),'refusing equipped workload item cleanup')end
+  end})
+  s.inventoryCleanup=lease
+ end
+ return Cleanup.run(lease.j)
+end
 function F.release(s,index)
- local p=assert(s.phase);assert(index==p.index and p.state=='hidden-loot'and F.native(s,'hidden-loot'),'unfinished workload release')
- local entries=validateCleanup(s);local removed={}
- for _,entry in ipairs(entries)do entry.container:Remove(entry.item);sendRemoveItemFromContainer(entry.container,entry.item);removed[#removed+1]=entry.id end
- table.sort(removed);s.owned={};s.phase=nil;s.nextIndex=index+1;preserved(s)
+ if s.releases and s.releases[index]then
+  local lease=assert(s.releaseLeases[index]);local row=s.releases[index]
+  assert(not s.phase and not s.worldCleanup and s.nextIndex==index+1 and s.token==lease.token
+   and s.owned==lease.releasedOwned and empty(s.owned),'stale workload release generation')
+  preserved(s)
+  assert(#s.crates==#lease.crates and #s.stores==#lease.stores,'released workload object cohort changed')
+  for role,entry in pairs(lease.players)do
+   assert(s.players[role]==entry.player and entry.player:getInventory()==entry.root
+    and entry.player:getOnlineID()==entry.onlineID,'released workload root descriptor changed')
+  end
+  for slot,object in ipairs(lease.crates)do
+   local frozen=lease.points[slot];local point=frozen.point
+   assert(s.crates[slot]==object and s.stores[slot]==lease.stores[slot]
+    and object:getContainer()==lease.stores[slot]and object:getModData()[owner]==lease.token..':'..slot
+    and object:getSquare()==frozen.square and object:getObjectIndex()==point.index
+    and frozen.square:getX()==point.x and frozen.square:getY()==point.y and frozen.square:getZ()==point.z,
+    'released workload ownership changed')
+   assert(lease.stores[slot]:getItems():isEmpty(),'released workload crate refilled')
+  end
+  assert(row.token==lease.token and row.index==index and row.phaseToken==lease.phaseToken,'released workload receipt changed')
+  return row
+ end
+ local p=assert(s.phase);assert(index==p.index and p.state=='hidden-loot','unfinished workload release')
+ if not s.inventoryCleanup then assert(F.native(s,'hidden-loot'),'unfinished workload release')end
+ local receipt=cleanupInventory(s)
  for _,container in ipairs(s.stores)do assert(container:getItems():isEmpty(),'workload crate survived release')end
- return {token=s.token,index=index,phaseToken=p.phaseToken,removedIds=removed,consumedIds={p.craftInputId},ownedRemaining=0,originalRootIds=s.ids.originalRootIds,snapshot=F.snapshot(s)}
+ preserved(s);local lease=s.inventoryCleanup
+ s.owned={};lease.releasedOwned=s.owned;s.phase=nil;s.nextIndex=index+1;s.inventoryCleanup=nil
+ local row={token=s.token,index=index,phaseToken=p.phaseToken,removedIds=receipt.removedIds,cleanupJournal=receipt,
+  consumedIds={p.craftInputId},ownedRemaining=0,originalRootIds=s.ids.originalRootIds,snapshot=F.snapshot(s)}
+ s.releases=s.releases or {};s.releaseLeases=s.releaseLeases or {}
+ s.releases[index]=row;s.releaseLeases[index]=lease;return row
+end
+local function present(square,object)
+ for _,getter in ipairs({'getObjects','getSpecialObjects'})do
+  for _,candidate in ipairs(array(square[getter](square)))do if candidate==object then return true end end
+ end;return false
 end
 function F.absent(packet)
  for _,point in ipairs(packet.crates)do
   local square=getCell():getGridSquare(point.x,point.y,point.z);if not square then return false end
-  for _,object in ipairs(array(square:getObjects()))do if object:getModData()[owner]==point.token then return false end end
+  for _,getter in ipairs({'getObjects','getSpecialObjects'})do
+   for _,object in ipairs(array(square[getter](square)))do if object:getModData()[owner]==point.token then return false end end
+  end
  end;return true
 end
 function F.cleanup(s)
  assert(not s.phase and s.nextIndex==3 and empty(s.owned),'unfinished workload cleanup');preserved(s)
- -- Validate every object before deleting any of them.
- for slot,object in ipairs(s.crates)do assert(object:getModData()[owner]==s.token..':'..slot and object:getContainer():getItems():isEmpty(),'refusing foreign/nonempty workload crate')end
- local removed={}
- for _,object in ipairs(s.crates)do
-  local point=descriptor(object);object:getSquare():transmitRemoveItemFromSquare(object)
-  if object:getObjectIndex()>=0 then object:removeFromWorld();object:removeFromSquare()end
-  assert(object:getObjectIndex()<0,'owned workload crate survived cleanup')
-  point.afterIndex=object:getObjectIndex();removed[#removed+1]=point
+ local world=s.worldCleanup
+ if not world then
+  world={entries={},removed={},token=s.token}
+  -- Freeze all exact objects and packet descriptors before deleting any.
+  for slot,object in ipairs(s.crates)do
+   assert(object:getModData()[owner]==s.token..':'..slot and object:getContainer()==s.stores[slot]
+    and object:getContainer():getItems():isEmpty(),'refusing foreign/nonempty workload crate')
+   local square=assert(object:getSquare());assert(present(square,object)and object:getObjectIndex()>=0,'missing workload crate before cleanup')
+   world.entries[#world.entries+1]={object=object,container=s.stores[slot],square=square,point=descriptor(object),status='pending'}
+  end
+  s.worldCleanup=world
+ end
+ assert(s.token==world.token and #s.crates==#world.entries,'workload world cleanup cohort changed')
+ for slot,entry in ipairs(world.entries)do
+  local object=entry.object
+  assert(s.crates[slot]==object and object:getModData()[owner]==entry.point.token
+   and s.stores[slot]==entry.container and object:getContainer()==entry.container
+   and object:getContainer():getItems():isEmpty(),'workload world cleanup ownership changed')
+  assert(entry.status~='uncertain','workload world publication uncertain; refusing index retransmission')
+  if entry.status=='done'then assert(not present(entry.square,object),'removed workload crate reappeared')
+  else assert(present(entry.square,object)or entry.status=='sent','workload crate missing before publication')end
+ end
+ for _,entry in ipairs(world.entries)do
+  local object=entry.object
+  if entry.status~='done'then
+   if entry.status=='pending'then
+    local point=descriptor(object)
+    assert(point.id==entry.point.id and object:getSquare()==entry.square,'workload world cleanup index changed')
+    -- A throw may follow publication: never send this mutable square index again.
+    entry.status='uncertain';entry.square:transmitRemoveItemFromSquare(object);entry.status='sent'
+   end
+   if present(entry.square,object)then object:removeFromWorld();object:removeFromSquare()end
+   assert(not present(entry.square,object)and object:getObjectIndex()<0,'owned workload crate survived cleanup')
+   entry.point.afterIndex=object:getObjectIndex();world.removed[#world.removed+1]=entry.point;entry.status='done'
+  end
  end
  assert(F.absent(s.ids),'owned workload objects remain')
- return {token=s.token,index=2,removedCrates=#removed,crates=removed,ownedAbsent=true,ownedRemaining=0,originalRootIds=s.ids.originalRootIds,snapshot=F.snapshot(s)}
+ return {token=s.token,index=2,removedCrates=#world.removed,crates=world.removed,ownedAbsent=true,
+  ownedRemaining=0,originalRootIds=s.ids.originalRootIds,snapshot=F.snapshot(s)}
 end
 function F.abort(s)
  if not s then return {restored=true,unprepared=true}end
- if s.phase and #s.phase.outputIds==0 then
-  local _,_,count=F.find(s,s.phase.craftInputId)
-  if count==0 then assert(adoptOutputs(s,s.phase),'cannot safely adopt incomplete workload recipe outputs')end
+ if s.abortReceipt then F.cleanup(s);return s.abortReceipt end
+ if not s.abortInventory then
+  if not s.inventoryCleanup and s.phase and #s.phase.outputIds==0 then
+   local _,_,count=F.find(s,s.phase.craftInputId)
+   if count==0 then assert(adoptOutputs(s,s.phase),'cannot safely adopt incomplete workload recipe outputs')end
+  end
+  local receipt=cleanupInventory(s)
+  s.abortInventory=receipt;s.owned={};s.phase=nil;s.nextIndex=3;s.inventoryCleanup=nil
  end
- -- Validate all roots, objects and items before removing even one identity.
- local entries=validateCleanup(s);local removed={}
- for _,entry in ipairs(entries)do entry.container:Remove(entry.item);sendRemoveItemFromContainer(entry.container,entry.item);removed[#removed+1]=entry.id end
- table.sort(removed);s.owned={};s.phase=nil;s.nextIndex=3
- local row=F.cleanup(s);row.removedIds=removed;row.restored=true;return row
+ local row=F.cleanup(s);row.removedIds=s.abortInventory.removedIds;row.cleanupJournal=s.abortInventory;row.restored=true
+ s.abortReceipt=row;return row
 end
 return F

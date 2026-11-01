@@ -110,6 +110,12 @@ def snapshot(row, phase, descriptors, originals, role):
         ensure(not all_ids.intersection(original), 'owned item aliases original')
 
 
+def clean_journal(row, expected_ids, server):
+    ensure(type(row) is dict, 'cleanup journal missing')
+    ensure(ids(row['removedIds'], len(expected_ids)) == sorted(expected_ids), 'cleanup journal cohort differs')
+    require(row, removalCalls=len(expected_ids), noticeAttempts=len(expected_ids) if server else 0, recoveries=[])
+
+
 def readiness(proof, descriptors, roles, online_ids):
     ensure(type(proof) is dict and set(proof) == set(roles), 'missing authoritative position barrier')
     for role, row in proof.items():
@@ -282,6 +288,7 @@ def verify(root, selection):
         snapshot(effect['after'], phase, descriptors, originals, 'server')
         ensure(effect['before'] == seed['snapshot'] == effect['after'], 'authoritative static load changed')
         release = one(rows, 'RELEASE'); require(release, ownedRemaining=0)
+        clean_journal(release.get('cleanupJournal'), release['removedIds'], selection['kind']=='mp')
         ensure(ids(release['removedIds'], 12*phase['itemsPerCrate']) == sorted(i for crate in phase['crateIds'] for i in crate), 'release removed wrong identities')
         ensure(release['originalRootIds'] == originals, 'release changed originals')
         phases[index] = (phase, seed['snapshot'], release)
@@ -291,6 +298,9 @@ def verify(root, selection):
     ensure(cleanup['originalRootIds'] == originals and len(cleanup['crates']) == 12, 'cleanup cohort differs')
     ensure(cleanup.get('originalEquipment') == descriptors['originalEquipment'], 'authority original equipment slots/IDs not restored')
     ensure(set(cleanup.get('actorRestored', {})) == set(roles), 'missing authority actor restoration')
+    ensure(set(cleanup.get('actorCleanup', {})) == set(roles), 'missing actor cleanup journals')
+    for role in roles:
+        clean_journal(cleanup['actorCleanup'][role], descriptors['actorLoads'][role]['itemIds'], selection['kind']=='mp')
     for proof in cleanup['actorRestored'].values():
         require(proof, identity=True, payload=True, equipment=True)
     for before, after in zip(descriptors['crates'], cleanup['crates']):

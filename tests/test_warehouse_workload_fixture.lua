@@ -3,6 +3,7 @@ local fixtureRoot=ProjectRoot..'/tests/native_queue/warehouse-workload/'
 local nativeNext=next;next=nil
 local config={kind='mp',mode='toolkit',cases={'peer-edits'}}
 package.preload.QueueTestSelection=function()return config end
+package.preload.QueueFixtureItemCleanup=function()return dofile(ProjectRoot..'/tests/native_queue/support/QueueFixtureItemCleanup.lua')end
 package.preload.QueueHealthEvents=function()return dofile(ProjectRoot..'/tests/native_queue/health/shared/QueueHealthEvents.lua')end
 package.preload['PZSurvivorToolkit/ManifestModel']=function()return {item=function(item)
  local name=item.custom and item.name or nil
@@ -62,7 +63,7 @@ local function container()
 end
 local function square(x,y,z)
  local key=x..','..y..','..z;if squares[key]then return squares[key]end
- local s={x=x,y=y,z=z,objects={}}
+ local s={x=x,y=y,z=z,objects={},special={}}
  function s:getX()return self.x end
  function s:getY()return self.y end
  function s:getZ()return self.z end
@@ -70,10 +71,11 @@ local function square(x,y,z)
  function s:isFree()return true end
  function s:getRoom()return nil end
  function s:getObjects()return list(self.objects)end
- function s:getSpecialObjects()return list({})end
+ function s:getSpecialObjects()return list(self.special)end
  function s:isBlockedTo()return false end
- function s:AddSpecialObject(object)self.objects[#self.objects+1]=object;object.square=self end
+ function s:AddSpecialObject(object)self.objects[#self.objects+1]=object;self.special[#self.special+1]=object;object.square=self end
  function s:transmitRemoveItemFromSquare(object)
+  for i,value in ipairs(self.special)do if value==object then table.remove(self.special,i);break end end
   for i,value in ipairs(self.objects)do if value==object then table.remove(self.objects,i);object.square=nil;return end end
  end
  squares[key]=s;return s
@@ -99,8 +101,9 @@ package.preload.WarehouseWorkloadFixture=function()return F end
 local function actor(role,x)
  local p={root=container(),square=square(x,100,0),role=role}
  function p:getInventory()return self.root end
+ function p:isEquipped(item)return self.equipped==item end
  function p:getUsername()return self.role end
- function p:getOnlineID()return self.role=='client1'and 1 or 2 end
+ function p:getOnlineID()return self.onlineID or(self.role=='client1'and 1 or 2)end
  function p:getSquare()return self.square end
  function p:getX()return self.square:getX()+.5 end
  function p:getY()return self.square:getY()+.5 end
@@ -130,6 +133,7 @@ local s=F.prepare(players(100));assert(#s.crates==12 and #s.ids.crates==12)
 rejected(F.seed,s,2)
 for index=1,2 do
  local p=F.seed(s,index);assert(#p.items==14 and F.native(s,'initial'))
+ if index==2 then rejected(F.release,s,1);assert(F.find(s,p.transferId),'stale cached release changed new generation')end
  rejected(F.seed,s,index);rejected(F.release,s,index)
  assert(not F.native(s,'peer-transfer'),'unperformed native action passed')
  for _,step in ipairs({'peer-transfer','peer-replace','peer-craft','hidden-loot'})do
@@ -146,9 +150,16 @@ for index=1,2 do
  rejected(F.release,s,index);assert(F.find(s,p.quickId),'foreign token partially deleted workload')
  s.crates[12].data.PZSTWarehouseWorkloadOwner=token
  local receipt=F.release(s,index);assert(#receipt.removedIds==17 and #receipt.consumedIds==1 and receipt.ownedRemaining==0)
- originals(s);rejected(F.release,s,index)
+ originals(s);assert(F.release(s,index)==receipt,'repeat release changed receipt')
+ local refill=s.stores[1]:AddItem('Base.Pencil');rejected(F.release,s,index)
+ assert(refill:getContainer()==s.stores[1],'cached release deleted foreign refill');s.stores[1]:Remove(refill)
+ local retiredToken=s.crates[1].data.PZSTWarehouseWorkloadOwner;s.crates[1].data.PZSTWarehouseWorkloadOwner='foreign'
+ rejected(F.release,s,index);s.crates[1].data.PZSTWarehouseWorkloadOwner=retiredToken
+ local original=s.players.client1.original;s.players.client1.root:Remove(original);rejected(F.release,s,index)
+ s.players.client1.root:AddItem(original);assert(F.release(s,index)==receipt)
 end
 local cleanup=F.cleanup(s);assert(cleanup.removedCrates==12 and #cleanup.crates==12 and F.absent(s.ids));originals(s)
+rejected(F.release,s,2)
 for i,point in ipairs(cleanup.crates)do
  for _,field in ipairs({'x','y','z','index','object','ci','key','id','token'})do assert(point[field]==s.ids.crates[i][field],'removed object descriptor differs')end
  assert(point.afterIndex<0,'removed crate has a native object index')
@@ -190,6 +201,201 @@ end
 rejected(F.prepare,players(395));IsoThumpable.new=nativeNew
 s=F.preparing;abort=F.abort(s)
 assert(abort.removedCrates==4 and #abort.crates==4 and F.absent(s.ids),'partial cleanup reported a hardcoded object count');originals(s)
+-- Both suite cleanup paths use the shared bounded inventory journal. Notice
+-- returns are attempts only; these offline checks do not establish delivery.
+local function finished(x)
+ local state=F.prepare(players(x));local phase=F.seed(state,1)
+ for _,step in ipairs({'peer-transfer','peer-replace','peer-craft','hidden-loot'})do
+  effect(state,step);assert(F.native(state,step));phase.state=step
+ end;return state,phase
+end
+local testX=2000
+for _,mode in ipairs({'abort','release'})do
+ for _,operation in ipairs({'remove','notice'})do for _,when in ipairs({'before','after'})do
+  testX=testX+100
+  local state,phase
+  if mode=='release'then state,phase=finished(testX)else state=F.prepare(players(testX));phase=F.seed(state,1)end
+  local fired,calls=false,0
+  local function inject(native,...)
+   calls=calls+1
+   if not fired then
+    fired=true
+    if when=='after'then native(...)end
+    error('injected '..operation..' '..when)
+   end;return native(...)
+  end
+  if operation=='notice'then
+   sendRemoveItemFromContainer=function(...)return inject(function()end,...)end
+  else
+   local containers={};for _,c in ipairs(state.stores)do containers[#containers+1]=c end
+   for _,p in pairs(state.players)do containers[#containers+1]=p.root end
+   for _,c in ipairs(containers)do local native=c.Remove;c.Remove=function(...)return inject(native,...)end end
+  end
+  local row=mode=='release'and F.release(state,1)or F.abort(state)
+  local count=mode=='release'and 17 or 14;local journal=row.cleanupJournal
+  assert(#journal.removedIds==count and #journal.recoveries==1,'native exception did not retain exact recovery evidence')
+  assert(journal.removalCalls==count+(operation=='remove'and when=='before'and 1 or 0),'local remove replayed or omitted')
+  assert(journal.noticeAttempts==count+(operation=='notice'and 1 or 0),'inventory notice was not retried')
+  local before=calls
+  assert((mode=='release'and F.release(state,1)or F.abort(state))==row and calls==before,'completed cleanup replayed native calls')
+  originals(state);sendRemoveItemFromContainer=function()end
+  if mode=='release'then F.abort(state)end
+ end end
+end
+-- Inventory notices encode native addresses, so pin the square/object index
+-- and online ID as well as Java references. A fault cannot move that namespace
+-- and then cause the journal to publish a retry to its replacement address.
+for _,mode in ipairs({'abort','release'})do
+ for _,operation in ipairs({'remove','notice'})do for _,when in ipairs({'before','after'})do
+  for _,mutation in ipairs({'square','index','onlineID'})do
+   testX=testX+100;local state,phase
+   if mode=='release'then state,phase=finished(testX)else state=F.prepare(players(testX));phase=F.seed(state,1)end
+   local object=state.crates[1];local oldSquare=object:getSquare();local foreign={foreign=true}
+   local calls,notices,removed=0,0,0;local fired=false
+   local function changeDescriptor()
+    if mutation=='onlineID'then state.players.client1.onlineID=999
+    elseif mutation=='index'then table.insert(oldSquare.objects,1,foreign)
+    else
+     for index,candidate in ipairs(oldSquare.objects)do if candidate==object then table.remove(oldSquare.objects,index);break end end
+     for index,candidate in ipairs(oldSquare.special)do if candidate==object then table.remove(oldSquare.special,index);break end end
+     square(testX,700,0):AddSpecialObject(object)
+    end
+   end
+   local function fault(native,...)
+    calls=calls+1
+    if not fired then
+     fired=true;if when=='after'then native(...)end;changeDescriptor();error('native cleanup descriptor changed')
+    end;return native(...)
+   end
+   sendRemoveItemFromContainer=function(...)
+    if operation=='notice'then return fault(function()notices=notices+1 end,...)end
+    notices=notices+1
+   end
+   if operation=='remove'then
+    local containers={};for _,container in ipairs(state.stores)do containers[#containers+1]=container end
+    for _,peer in pairs(state.players)do containers[#containers+1]=peer.root end
+    for _,container in ipairs(containers)do local native=container.Remove
+     container.Remove=function(...)return fault(function(...)removed=removed+1;return native(...)end,...)end
+    end
+   end
+   local invoke=function()return mode=='release'and F.release(state,1)or F.abort(state)end
+   rejected(invoke);assert(calls==1 and notices==(operation=='notice'and when=='after'and 1 or 0),
+    'changed native namespace was retried or published')
+   local beforeRemoved=removed;rejected(invoke)
+   assert(calls==1 and removed==beforeRemoved and state.phase==phase and not state.worldCleanup,
+    'changed native descriptor caused later deletion/publication')
+   if mutation=='index'then assert(oldSquare.objects[1]==foreign,'foreign indexed object was deleted')end
+   sendRemoveItemFromContainer=function()end
+  end
+ end end
+end
+-- Equipment is not an owned disposable inventory endpoint, even when its
+-- item token is valid. Never let native cleanup implicitly unequip it.
+for _,mode in ipairs({'abort','release'})do
+ testX=testX+100;local state,phase
+ if mode=='release'then state,phase=finished(testX)else state=F.prepare(players(testX));phase=F.seed(state,1)end
+ state.players.client1.equipped=assert(F.find(state,phase.quickMatchId))
+ if mode=='release'then rejected(F.release,state,1)else rejected(F.abort,state)end
+ assert(F.find(state,phase.transferId),'equipped refusal partially removed fixture')
+ state.players.client1.equipped=nil;F.abort(state);originals(state)
+end
+-- Missing before the journal begins is not a completed removal.
+testX=testX+100;s=F.prepare(players(testX));p=F.seed(s,1)
+local missing=assert(F.find(s,p.transferId));local missingContainer=missing:getContainer();missingContainer:Remove(missing)
+rejected(F.abort,s);assert(F.find(s,p.quickMatchId),'missing identity permitted partial cleanup')
+missingContainer:AddItem(missing);F.abort(s)
+-- An interrupted journal retains its exact live Java references and generation;
+-- a same-ID/type/token replacement after freezing must never inherit that lease.
+for _,mode in ipairs({'abort','release'})do
+ testX=testX+100;local state,phase
+ if mode=='release'then state,phase=finished(testX)else state=F.prepare(players(testX));phase=F.seed(state,1)end
+ local originalToken=state.token;local fired=false
+ local containers={};for _,c in ipairs(state.stores)do containers[#containers+1]=c end
+ for _,peer in pairs(state.players)do containers[#containers+1]=peer.root end
+ for _,c in ipairs(containers)do local native=c.Remove;c.Remove=function(...)
+  if not fired then fired=true;native(...);state.token='foreign-generation';error('interrupted after local removal')end
+  return native(...)
+ end end
+ local invoke=function()return mode=='release'and F.release(state,1)or F.abort(state)end
+ rejected(invoke);assert(state.phase==phase and state.inventoryCleanup,'interrupted cleanup discarded phase or journal')
+ rejected(invoke);state.token=originalToken
+ local live
+ for _,c in ipairs(containers)do for _,item in ipairs(c.values)do if state.owned[item.id]then live=item;break end end;if live then break end end
+ local endpoint=live:getContainer();endpoint:Remove(live)
+ local replacement=endpoint:AddItem(live.fullType);replacement.id=live.id;replacement.name=live.name;replacement.custom=live.custom
+ replacement.data=live.data
+ rejected(invoke);assert(replacement:getContainer()==endpoint,'frozen same-ID impostor was removed')
+ endpoint:Remove(replacement);endpoint:AddItem(live)
+ local foreign=state.stores[1]:AddItem('Base.Pencil');rejected(invoke)
+ assert(foreign:getContainer()==state.stores[1],'foreign content was removed during retry');state.stores[1]:Remove(foreign)
+ local row=invoke();assert(#row.cleanupJournal.recoveries==1,'interrupted native evidence missing');originals(state)
+ if mode=='release'then F.abort(state)end
+end
+-- A permanently failing native primitive has one shared finite failure budget.
+testX=testX+100;s=F.prepare(players(testX));p=F.seed(s,1)
+local budgetCalls=0
+for _,c in ipairs(s.stores)do c.Remove=function()budgetCalls=budgetCalls+1;error('persistent removal failure')end end
+for _,peer in pairs(s.players)do peer.root.Remove=function()budgetCalls=budgetCalls+1;error('persistent removal failure')end end
+rejected(F.abort,s);assert(budgetCalls==3 and s.phase==p,'native failure budget or phase retention differs')
+rejected(F.abort,s);assert(budgetCalls==3,'terminal journal restarted native removals')
+-- Mutable square-index packets have a different contract: any uncertain send
+-- latches permanently, and previously completed object descriptors stay retained.
+for _,when in ipairs({'before','after'})do
+ testX=testX+100;local state=F.prepare(players(testX));local calls={}
+ for index,object in ipairs(state.crates)do local sq=object:getSquare();local native=sq.transmitRemoveItemFromSquare
+  sq.transmitRemoveItemFromSquare=function(self,value)
+   calls[index]=(calls[index]or 0)+1
+   if index==3 then if when=='after'then native(self,value)end;error('uncertain world packet '..when)end
+   return native(self,value)
+  end
+ end
+ rejected(F.abort,state);assert(#state.worldCleanup.removed==2,'completed world prefix was lost')
+ assert(calls[1]==1 and calls[2]==1 and calls[3]==1 and calls[4]==nil,'world cleanup crossed uncertain packet')
+ rejected(F.abort,state);assert(calls[1]==1 and calls[2]==1 and calls[3]==1 and calls[4]==nil,'world index packet replayed')
+end
+-- Publication returned normally but a later local world removal failed. The
+-- sent object can finish locally; neither it nor the completed prefix is resent.
+testX=testX+100;s=F.prepare(players(testX))
+local worldCalls={};local failedLocal=false
+for index,object in ipairs(s.crates)do local sq=object:getSquare();local native=sq.transmitRemoveItemFromSquare
+ sq.transmitRemoveItemFromSquare=function(self,value)
+  worldCalls[index]=(worldCalls[index]or 0)+1
+  if index~=3 then return native(self,value)end
+ end
+ if index==3 then
+  object.removeFromWorld=function()if not failedLocal then failedLocal=true;error('local world removal failed')end end
+  object.removeFromSquare=function(self)native(sq,self)end
+ end
+end
+rejected(F.abort,s);assert(#s.worldCleanup.removed==2 and worldCalls[3]==1,'local failure lost completed prefix')
+local restored=F.abort(s);assert(restored.removedCrates==12 and #restored.crates==12,'local world retry did not finish exact cohort')
+for index=1,12 do assert(worldCalls[index]==1,'local world retry retransmitted a square index')end
+assert(F.abort(s)==restored,'repeat abort regenerated world proof')
+-- Cached abort receipts still validate originals, exact object ownership and
+-- actual absence before returning; a completed receipt is not a live proof.
+local retired=s;local retiredObject=retired.crates[1];local retiredEntry=retired.worldCleanup.entries[1]
+local retiredOriginal=retired.players.client1.original
+retired.players.client1.root:Remove(retiredOriginal);rejected(F.abort,retired)
+retired.players.client1.root:AddItem(retiredOriginal)
+local retiredToken=retiredObject.data.PZSTWarehouseWorkloadOwner
+retiredObject.data.PZSTWarehouseWorkloadOwner='foreign';rejected(F.abort,retired)
+retiredObject.data.PZSTWarehouseWorkloadOwner=retiredToken
+retiredEntry.square:AddSpecialObject(retiredObject);rejected(F.abort,retired)
+assert(retiredObject:getSquare()==retiredEntry.square,'cached abort removed a reappeared object')
+for index=1,12 do assert(worldCalls[index]==1,'cached abort failure replayed native world deletion')end
+-- Restore the test double directly, without invoking the fixture cleanup.
+retiredEntry.square.objects={};retiredEntry.square.special={};retiredObject.square=nil
+assert(F.abort(retired)==restored,'valid cached abort no longer returns its receipt')
+-- World absence includes the special-object collection, not only ordinary objects.
+testX=testX+100;s=F.prepare(players(testX));local object=s.crates[1];local sq=object:getSquare()
+sq.objects={};assert(not F.absent(s.ids),'special-only owned object was ignored')
+-- A normal native transfer may reconstruct an InventoryItem before cleanup.
+-- Freeze the final live reference instead of imposing seed-reference identity.
+testX=testX+100;s,p=finished(testX)
+local live=assert(F.find(s,p.quickId));local endpoint=live:getContainer();endpoint:Remove(live)
+local reconstructed=endpoint:AddItem(live.fullType);reconstructed.id=live.id;reconstructed.data=live.data
+assert(F.native(s,'hidden-loot'));F.release(s,1);originals(s);F.abort(s)
+
 local function openServer(x)
  replies={};local peers=players(x);dofile(fixtureRoot..'server/ZZWarehouseWorkloadServer.lua')
  for _,role in ipairs({'client1','client2'})do callbacks.command(F.module,'Prepare',peers[role],{case='peer-edits'})end

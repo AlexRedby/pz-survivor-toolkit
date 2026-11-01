@@ -45,6 +45,10 @@ def lock_proof():
                 pages=[{'tempForceSelectUnlock': missing()} for _ in range(2)])
 
 
+def clean_journal(values, server=True):
+    return dict(removedIds=sorted(values),removalCalls=len(values),noticeAttempts=len(values) if server else 0,recoveries=[])
+
+
 def fixture(kind='mp'):
     roles = ['client1', 'client2'] if kind == 'mp' else ['client1']
     rows = {role: [] for role in ['server', *roles]}
@@ -102,7 +106,7 @@ def fixture(kind='mp'):
         emit('server', 'GO', ctx)
         emit('server', 'AUTHORITY', dict(ctx, before=authority, after=authority))
         for role in roles: emit('server', 'SEEN', dict(ctx, observer=role, stage='after'))
-        release = emit('server', 'RELEASE', dict(ctx, removedIds=sum(cohort, []), ownedRemaining=0, originalRootIds=originals))
+        release = emit('server', 'RELEASE', dict(ctx, removedIds=sum(cohort, []), cleanupJournal=clean_journal(sum(cohort, []),kind=='mp'), ownedRemaining=0, originalRootIds=originals))
         view = [dict(visible=state != 'both-hidden', collapsed=False, paneVisible=True, x=30, y=50, w=590, h=740),
                 dict(visible=state in ('both-open', 'loot-collapsed'), collapsed=state == 'loot-collapsed', paneVisible=True,
                      x=640, y=50, w=590, h=740)]
@@ -125,7 +129,7 @@ def fixture(kind='mp'):
             emit(role, 'ADMIT', dict(ctx, stage='after', snapshot=native, authority=authority))
             emit(role, 'RELEASE', dict(ctx, receipt=release, absent=True, originalStash=baselines[role],actorLoad=measured_loads[role]))
     cleanup = emit('server', 'RESTORED', dict(cleanupTransport='native-reliable-ordered-channel1' if kind=='mp' else 'in-process-shared-authority',index=16, removedCrates=12, ownedAbsent=True, ownedRemaining=0,
-                       originalRootIds=originals, originalEquipment=equipment, actorRestored=baselines, crates=[dict(point, afterIndex=-1) for point in crates]))
+                       originalRootIds=originals, originalEquipment=equipment, actorRestored=baselines,actorCleanup={role:clean_journal(load['itemIds'],kind=='mp')for role,load in actor_loads.items()}, crates=[dict(point, afterIndex=-1) for point in crates]))
     emit('server', 'COMPLETE', dict(phases=16, restored=True))
     for role in roles:
         emit(role, 'RESTORED', dict(original=baselines[role], originalEquipment=equipment[role], uiProof=restoration[role]['uiProof'],
@@ -273,6 +277,14 @@ class WarehouseWalkingTests(unittest.TestCase):
                        lambda rows: V.one(rows['client1'],'SETUP').update(materializationTransport='native-reliable-ordered-channel0'),
                        lambda rows: V.one(rows['server'],'RESTORED').update(cleanupTransport='native-reliable-ordered-channel0')):
             rows=fixture();mutate(rows);self.assertTrue(self.result(rows)['issues'])
+
+    def test_recovered_cleanup_cannot_be_a_pristine_capture(self):
+        for target in ('release', 'actor'):
+            rows=fixture()
+            receipt=(next(row for event,row in rows['server'] if event=='RELEASE')['cleanupJournal']
+                     if target=='release' else V.one(rows['server'],'RESTORED')['actorCleanup']['client1'])
+            receipt['recoveries']=[dict(operation='notice',id=receipt['removedIds'][0],publicationUncertain=True)]
+            self.assertTrue(self.result(rows)['issues'])
 
     def test_motion_and_ui_drift_cannot_pass(self):
         for mutate in (lambda row: row['motion'].update(teleports=1),

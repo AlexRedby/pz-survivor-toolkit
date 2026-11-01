@@ -126,7 +126,8 @@ def fixture():
                                         reopen=reopen,aggregateBefore=aggregate_before,aggregateProof=aggregate))
                 emit('server','SEEN',dict(current,observer=role))
         release=dict(token=token,index=index,phaseToken=phase['phaseToken'],removedIds=list(places),consumedIds=[offset+4],
-                     ownedRemaining=0,originalRootIds=originals,snapshot=snapshot(None,{},'server'))
+                     ownedRemaining=0,originalRootIds=originals,snapshot=snapshot(None,{},'server'),
+                     cleanupJournal=dict(removedIds=sorted(places),removalCalls=17,noticeAttempts=17,recoveries=[]))
         # emit supplies the envelope token; raw nested receipts retain it.
         emit('server','RELEASE',{key:value for key,value in release.items() if key!='token'})
         release=copy.deepcopy(rows['server'][-1][1])
@@ -176,10 +177,20 @@ class WarehouseWorkloadTests(unittest.TestCase):
                 lua=root/role/'mods/ActionQueueTest/42/media/lua'
                 self.assertTrue((lua/'client/ZZStartup.lua').is_file());self.assertTrue((lua/'server/ZZStartupServer.lua').is_file())
                 self.assertTrue((lua/'shared/QueueHealthEvents.lua').is_file())
+                self.assertTrue((lua/'shared/QueueFixtureItemCleanup.lua').is_file())
             self.assertIn(Path(V.__file__),A.sources(ROOT,selection()))
+            self.assertIn(ROOT/'tests/native_queue/support/QueueFixtureItemCleanup.lua',A.sources(ROOT,selection()))
 
     def test_complete_independent_two_mode_proof_passes(self):
         self.assertEqual(self.result(fixture())['issues'],[])
+
+    def test_recovered_cleanup_cannot_qualify_normal_native_run(self):
+        for change in (lambda row:row.pop('cleanupJournal'),
+                       lambda row:row['cleanupJournal'].update(recoveries=[dict(operation='notice',id=101)]),
+                       lambda row:row['cleanupJournal'].update(removalCalls=18),
+                       lambda row:row['cleanupJournal']['removedIds'].pop()):
+            rows=fixture();change(find(rows,'server','RELEASE'))
+            with self.subTest(change=change):self.assertTrue(self.result(rows)['issues'])
 
     def test_actual_craft_control_requires_its_exact_native_transfer_path(self):
         neat=fixture()

@@ -7,7 +7,7 @@ One preparation/launch/report tool, independent suites, and a fresh profile for 
 ## Files and contributions
 
 - `tools/check_action_queue.py` and `tools/queue_checks/`: shared CLI, snapshots, process lifecycle and reports.
-- `support/`: Java launcher, preflight and native fixture placement.
+- `support/`: Java launcher, preflight, native fixture placement and shared inventory cleanup.
 - `<suite>/{client,server,shared}/`: each suite's test-only Lua mod.
 - `catalog.json` plus `tools/queue_checks/adapters/*.py`: declared cases, producers, capabilities, SP/MP and modes. Declarations are not passing tests.
 - [`contributions/<topic>/`](contributions/README.md): fixture sources, acceptance contracts and limitations. Adapters stage these sources; registration alone is not current run coverage.
@@ -15,6 +15,14 @@ One preparation/launch/report tool, independent suites, and a fresh profile for 
 Commit fixtures, parameters, assertions and reproduced limitations. Do not commit game/Workshop copies, compiled JARs/classes, profiles, saves, credentials, logs or videos. Outputs go outside the checkout or in ignored `dist/`. Delivered stands must not import `.codex/investigations` or hardcode a developer's directories.
 
 Read [commands](#commands) for a first run, [batch plans](#batch-plans) and [pack locks](#selected-pack-locks) for comparisons, and [results and isolation](#result-and-isolation) for acceptance. Suite commands and behavior contracts live in the [scenario cookbook](SCENARIOS.md); specialized fixtures are indexed under [contributions](contributions/README.md).
+
+### Shared inventory cleanup
+
+[`QueueFixtureItemCleanup`](support/QueueFixtureItemCleanup.lua) is used by warehouse walking (actor and crate items) and the independent peer-edit workload. Freeze exact item/container references and the generation before cleanup, and supply guards for original state, foreign contents, equipment and ownership. The journal reconciles a removal that throws after its physical effect, skips confirmed removals and permits at most three native failures. It retains recovery diagnostics; suite verifiers reject unexpected recoveries after safe cleanup has finished. Completed calls still revalidate their scope.
+
+Keep the controlled container/ID namespace frozen until every relevant replica proves absence. A native inventory notice returning normally proves only an attempt, and duplicate missing IDs are no-ops only under that lease. The journal does not support arbitrary RPCs or world-object removal: world packets address mutable square indices and cannot be retransmitted after uncertain publication. Kahlua ignores weak-table `__mode`; journal state lives in an opaque closure handle without a global registry.
+
+Run `.venv/bin/python tools/run_tests.py --test test_fixture_item_cleanup` for forced before/after mutation and publication failures, ownership/generation rejection and journal lifetime. With `PZ_GAME` and `PZ_JDK` set, `.venv/bin/python -m unittest tests.test_fixture_item_cleanup_native` also executes the module in the installed game's Kahlua without opening the game. Actual native replication remains a separate suite gate.
 
 ## Commands
 

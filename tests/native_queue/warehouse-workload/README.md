@@ -20,6 +20,12 @@ queues an ingredient pickup. Selection alone does not identify the active
 control because its toggle or dependency fallback can restore vanilla. Abort
 cleanup waits for both native action queues to drain.
 
+Inventory removal uses the [shared cleanup journal](../README.md#shared-inventory-cleanup).
+It freezes live references and endpoints at the cleanup boundary, preserves the
+consumed input separately, and records bounded recovery attempts. Unexpected
+recovery receipts fail verification after cleanup finishes. World index packets
+are sent at most once; uncertain publication blocks automatic retransmission.
+
 Use the current complete pack and prepared Java Patches. The config contains
 `mp_host: true`, `patch_jar` and any explicit `mod_sources`; no imported world or
 other inventory owner is supported. Run outside the sandbox on macOS using the

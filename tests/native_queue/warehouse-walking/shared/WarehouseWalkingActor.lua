@@ -3,6 +3,7 @@
 -- original item packets: receiving one would replace the replica's saved object.
 local A={count=8,itemType='Base.Nails'}
 local Items=require 'WarehouseWalkingItems'
+local Cleanup=require 'QueueFixtureItemCleanup'
 local owner='PZSTWarehouseWalkingActor'
 local function array(list)local out={};for i=0,list:size()-1 do out[#out+1]=list:get(i)end;return out end
 local function ids(items)local out={};for _,item in ipairs(items)do out[#out+1]=item:getID()end;table.sort(out);return out end
@@ -29,7 +30,7 @@ local function savedProof(s)
   local actual=payload(entry.item);for key,value in pairs(entry.payload)do assert(actual[key]==value,'stashed original actor payload changed: '..key)end
   local expected=entry.container
   if entry.container==s.root and s.detached then expected=nil end
-  assert(entry.item:getContainer()==expected or(s.detaching and entry.container==s.root and entry.item:getContainer()==s.root),'stashed original actor endpoint changed')
+  assert(entry.item:getContainer()==expected or((s.detaching or s.restoring)and entry.container==s.root and entry.item:getContainer()==s.root),'stashed original actor endpoint changed')
  end
  if s.restored then A.equipmentProof(s)end
  return {ids=s.originalIds,identity=true,payload=true,equipment=true}
@@ -157,23 +158,29 @@ function A.snapshot(s)
 end
 function A.originalProof(s)return savedProof(s)end
 function A.validateRestore(s,authority)
- if s.restored or not s.detached then A.equipmentProof(s);return savedProof(s)end
+ if s.restored or not s.detached then
+  assert(s.player:getInventory()==s.root,'original actor root changed')
+  local actual=array(s.root:getItems());assert(#actual==#s.roots,'restored original actor root count changed')
+  for i,item in ipairs(actual)do assert(item==s.roots[i],'restored original actor root identity/order changed')end
+  A.equipmentProof(s);return savedProof(s)
+ end
  freshEquipment(s.player)
- if not s.detaching then assert(equipmentEmpty(s.player),'unexpected equipment before actor cleanup')end
+ if not s.detaching and not s.restoring then assert(equipmentEmpty(s.player),'unexpected equipment before actor cleanup')end
  local items=array(s.root:getItems());local own,seen={},{}
  if authority then
   for _,item in ipairs(s.cohort)do
    local entry=assert(s.seedEntries and s.seedEntries[item],'missing actor insertion ledger');own[item]=entry
    assert(item:getID()==entry.id and item:getFullType()==A.itemType,'owned actor identity/type changed')
    local endpoint=item:getContainer()
-   assert((entry.state=='staged'and endpoint==nil)or(entry.state=='inserting'and(endpoint==nil or endpoint==s.root))
+   local removed=s.cleanupJournal and Cleanup.removed(s.cleanupJournal,item)
+   assert((removed and endpoint==nil)or(entry.state=='staged'and endpoint==nil)or(entry.state=='inserting'and(endpoint==nil or endpoint==s.root))
     or(entry.state=='inserted'and endpoint==s.root),'owned actor insertion endpoint changed/missing')
   end
  end
  for _,item in ipairs(items)do
   assert(not seen[item:getID()],'duplicate actor identity before cleanup');seen[item:getID()]=true
   local original=s.original[item:getID()]
-  assert((s.detaching and original and original.item==item and original.container==s.root)or(item:getFullType()==A.itemType and item:getModData()[owner]==s.token
+  assert(((s.detaching or s.restoring)and original and original.item==item and original.container==s.root)or(item:getFullType()==A.itemType and item:getModData()[owner]==s.token
    and(not authority or own[item]and own[item].state~='staged')),'refusing foreign actor cleanup')
  end
  if authority then for item,entry in pairs(own)do
@@ -182,18 +189,44 @@ function A.validateRestore(s,authority)
  savedProof(s)
  return items
 end
+function A.cleanupReceipt(s)
+ return s.cleanupJournal and Cleanup.receipt(s.cleanupJournal)or{removedIds={},removalCalls=0,noticeAttempts=0,recoveries={}}
+end
 function A.restore(s,authority)
- if s.restored or not s.detached then A.equipmentProof(s);return savedProof(s)end
- local items=A.validateRestore(s,authority)
- for _,item in ipairs(items)do if not s.original[item:getID()]then
-  s.root:Remove(item)
-  if authority and isServer() then sendRemoveItemFromContainer(s.root,item)end
- end end
+ if s.restored or not s.detached then
+  A.validateRestore(s,authority);if s.cleanupJournal then Cleanup.run(s.cleanupJournal)end
+  return savedProof(s)
+ end
+ if not s.cleanupJournal then
+  local items=A.validateRestore(s,authority);local entries={}
+  for _,item in ipairs(items)do if not s.original[item:getID()]then
+   entries[#entries+1]={id=item:getID(),item=item,container=s.root,ft=A.itemType}
+  end end
+  local token,root,player,online=s.token,s.root,s.player,s.player:getOnlineID()
+  s.cleanupJournal=Cleanup.new(entries,{containers={root},server=authority and isServer()or false,
+   guard=function()
+    assert(s.token==token and s.root==root and s.player==player and player:getInventory()==root and player:getOnlineID()==online,'actor cleanup generation/root changed')
+    A.validateRestore(s,authority)
+   end,
+   check=function(entry)assert(entry.item:getModData()[owner]==token,'actor cleanup owner changed')end})
+ end
+ Cleanup.run(s.cleanupJournal);s.restoring=true
  -- A partly failed detach may leave a suffix in the root. Reinsert every
  -- original locally in its exact initial order; none of these are network packets.
- for _,item in ipairs(s.roots)do if item:getContainer()==s.root then s.root:Remove(item)else assert(item:getContainer()==nil,'original root unexpectedly attached')end end
- for _,item in ipairs(s.roots)do s.root:AddItem(item)end
- s.detached=false;s.detaching=false
+ if not s.restoreOrderReady then
+  for _,item in ipairs(s.roots)do
+   if item:getContainer()==s.root then s.root:Remove(item)else assert(item:getContainer()==nil,'original root unexpectedly attached')end
+  end;s.restoreOrderReady=true
+ end
+ for index,item in ipairs(s.roots)do
+  local current=array(s.root:getItems())
+  for i,present in ipairs(current)do assert(present==s.roots[i],'original root restoration order changed')end
+  if item:getContainer()==s.root then assert(current[index]==item,'original root restoration prefix changed')
+  else
+   assert(item:getContainer()==nil and #current==index-1,'original root restoration gap/foreign endpoint')
+   assert(s.root:AddItem(item)==item and item:getContainer()==s.root,'original root insertion changed identity')
+  end
+ end
  for id,entry in pairs(s.original)do
   if s.processed[id]then getCell():addToProcessItems(entry.item)else getCell():addToProcessItemsRemove(entry.item)end
  end
@@ -202,6 +235,6 @@ function A.restore(s,authority)
  refreshClothing(s.player)
  assert(same(ids(array(s.root:getItems())),s.rootIds),'original actor roots not restored')
  A.equipmentProof(s)
- s.restored=true;return savedProof(s)
+ s.detached=false;s.detaching=false;s.restoring=false;s.restored=true;return savedProof(s)
 end
 return A
