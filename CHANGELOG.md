@@ -46,14 +46,17 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.331
+
+- **Performance:** Research indicators reuse the stable recipe-list reference and player index within each inventory render, reducing repeated native getter calls. Learning, perk changes and expiry checks remain live; native/CleanUI drawing and drag callbacks still run in full.
+- **Fixed:** Realistic Dashboard wear overlays wait for their textures to become ready before reading image dimensions, avoiding synchronous PNG-header reads during rendering. Original size, placement and layer order are preserved.
+
 ### 0.1.330
 
 - Reduce inventory refresh work for large stacks by reusing live usage-tag membership during grouping. Keep current item-state reads, custom rules, retained-item grouping and preview/snapshot metadata behavior.
 - Reduce work when grouping inventory stacks by projecting only tag membership, skipping unused preview/provenance copies and a duplicate signature calculation. Keep physical item state, custom tags and retention live.
 - Refresh ingredient, disassembly, repair, smelting and wear-preview tags after native script reload or deferred input resolution, including changes that keep the same recipe lists and counts. Retain batching within each operation; unavailable native revision metadata permits operation-local cache reuse only.
 - Reuse recipe catalogue reads within each inventory grouping, tag rendering, filter, tag-menu and distribution-planning pass, reducing repeated work in large visible stacks. Keep item categories, freshness, damage, retention and custom tags live for each physical item; refresh recipe reads on the next operation.
-- **Performance:** Research indicators reuse the stable recipe-list reference and player index within each inventory render, reducing repeated native getter calls. Learning, perk changes and expiry checks remain live; native/CleanUI drawing and drag callbacks still run in full.
-- **Fixed:** Realistic Dashboard wear overlays wait for their textures to become ready before reading image dimensions, avoiding synchronous PNG-header reads during rendering. Original size, placement and layer order are preserved.
 
 ### 0.1.329
 
@@ -1542,9 +1545,8 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
-### 0.1.81
+### 0.1.82
 
-- Expose the native script-catalogue revision for item-tag indexes. Track loading, reload, deferred resolution and reset, including partial failures; ordinary catalogue reads preserve the revision.
 - Remove the shared lock around independent map-lot reads at initial class definition, retaining the synchronized object pool and original parser. Unsupported or already-loaded input classes keep their native path.
 - Prepare the three native outline composite shaders on the render context after world loading, preserving their native lifetime and lazy fallback.
 - Avoid synchronous PNG dimension reads for pending 2D world-item textures that the native render queue rejects. Ready textures keep their authored geometry and render-state commands; custom texture classes and non-game threads retain the original getters.
@@ -1555,6 +1557,10 @@ The older README associates medicine indicators with this label, but no separate
 
 - Fix the cutaway cache storing the north-edge result for the south edge. Unchanged south edges no longer repeatedly invalidate the neighbouring chunk texture; actual edge changes still invalidate it immediately.
 - Admit the pinned experimental optimizer profile only with its complete 770 settings and 888 exact resources. Native bytecode checks remain the default; unsupported profiles and modified resources are rejected. No optimizer binaries are bundled or installed automatically.
+
+### 0.1.81
+
+- Expose the native script-catalogue revision for item-tag indexes. Track loading, reload, deferred resolution and reset, including partial failures; ordinary catalogue reads preserve the revision.
 
 ### 0.1.80
 
