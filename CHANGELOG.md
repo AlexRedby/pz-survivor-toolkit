@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.331
+
+- **Fixed:** A fresh, confirmed multiplayer refusal to pick up a single borrowed item can discard its verified untouched read/equip/return dependants while preserving supported independent queued work. Unknown, partial, custom and previously earned operations retain the native fallback; no item transfer is replayed or treated as completed.
+
 ### 0.1.330
 
 - Reduce inventory refresh work for large stacks by reusing live usage-tag membership during grouping. Keep current item-state reads, custom rules, retained-item grouping and preview/snapshot metadata behavior.

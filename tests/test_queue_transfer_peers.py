@@ -39,7 +39,7 @@ class QueueTransferPeersTests(unittest.TestCase):
             records = []
             for seq, kind in enumerate(('pickup', 'front', 'return', 'tail'), 1):
                 book = actor['tail' if kind == 'tail' else 'front']
-                unstarted = loser and case == 'contested-pickup' and kind in ('front', 'return', 'tail') or kind == 'tail' and (lost or loser and not enabled)
+                unstarted = loser and case == 'contested-pickup' and kind in ('front', 'return') or kind == 'tail' and (lost or loser and not enabled)
                 failed = loser and kind == ('pickup' if case == 'contested-pickup' else 'return')
                 waiting = lost and kind == 'return'
                 tx = 20 + seq if kind in ('pickup', 'return') and not unstarted else False
@@ -58,7 +58,7 @@ class QueueTransferPeersTests(unittest.TestCase):
                     record['nativeStopEntry'] = dict(actor=actor['onlineId'], item=actor['front']['id'], transaction=tx,
                         nativeRef=record['nativeRef'], at=seq * 100 + 50, done=False, rejected=failed,
                         current=True, endpointsExact=True, observation=False)
-                    record['nativeStopReturned'] = dict(transaction=0 if enabled and failed and kind == 'return' else tx,
+                    record['nativeStopReturned'] = dict(transaction=0 if enabled and failed else tx,
                         at=seq * 100 + 60, sameNative=True, returned=True)
                     record['finishes'] = [dict(phase='stop', at=seq * 100 + 60, succeeded=True)]
                 elif enabled and kind == 'return' and not unstarted:
@@ -68,8 +68,12 @@ class QueueTransferPeersTests(unittest.TestCase):
                     for sample in record['samples']: sample['observation'] = copy.deepcopy(observation)
                     record['samples'].append(dict(point='perform-finish', at=seq * 100 + 60, transaction=0,
                         done=True, rejected=True, observation=dict(observation, paired=True, currentHandle=False)))
+                if enabled and failed and kind == 'pickup':
+                    record['nativeStopEntry']['refusal'] = dict(phase='submitted', sourceExact=True, currentHandle=True,
+                        nativeHandle=True, wireAmbiguous=False, ambiguous=False, refused=False, transaction=tx,
+                        id=book['id'], fullType=book['ft'])
                 records.append(record)
-            tail_pages = actor['tail']['initial'] if lost or loser and (case == 'contested-pickup' or not enabled) else actor['tail']['total']
+            tail_pages = actor['tail']['initial'] if lost or loser and not enabled else actor['tail']['total']
             clients[role] = dict(case=case, token=token, index=index, role=role, onlineId=actor['onlineId'], mode=mode,
                 queueEnabled=enabled, sourceBound=True, records=records, tailPages=tail_pages, tailInitial=actor['tail']['initial'],
                 tailTotal=actor['tail']['total'], frontPages=actor['front']['initial'] if loser and case == 'contested-pickup' else actor['front']['total'],
@@ -222,12 +226,23 @@ class QueueTransferPeersTests(unittest.TestCase):
         data['clients']['client2']['records'][2]['samples'] = [dict(point='pending', at=400, transaction=False, done=False, rejected=False, observation={})]
         self.assertTrue(self.check(data))
 
-    def test_rejected_pickup_retains_byte_while_earned_return_guard_resets_it(self):
+    def test_rejected_pickup_requires_neutral_fresh_proof_and_preserved_tail(self):
+        for field, value in (('sourceExact', False), ('currentHandle', False), ('nativeHandle', False),
+                             ('wireAmbiguous', True), ('ambiguous', True), ('transaction', -7),
+                             ('refused', True), ('id', 999), ('phase', 'failed')):
+            data = self.fixture('contested-pickup')
+            data['clients']['client2']['records'][0]['nativeStopEntry']['refusal'][field] = value
+            self.assertTrue(self.check(data), field)
+        data = self.fixture('contested-pickup')
+        data['clients']['client2']['tailPages'] = 219
+        self.assertTrue(self.check(data), 'old tail loss must fail the repaired contract')
+
+    def test_guarded_rejected_pickup_and_return_reset_only_their_exact_cursor(self):
         pickup = self.fixture('contested-pickup')
         rejected_pickup = pickup['clients']['client2']['records'][0]
-        self.assertEqual(rejected_pickup['nativeStopReturned']['transaction'], rejected_pickup['transaction'])
+        self.assertEqual(rejected_pickup['nativeStopReturned']['transaction'], 0)
         self.assertEqual(self.check(pickup), [])
-        rejected_pickup['nativeStopReturned']['transaction'] = 0
+        rejected_pickup['nativeStopReturned']['transaction'] = rejected_pickup['transaction']
         self.assertTrue(self.check(pickup))
         returning = self.fixture('shared-capacity')
         rejected_return = returning['clients']['client2']['records'][2]

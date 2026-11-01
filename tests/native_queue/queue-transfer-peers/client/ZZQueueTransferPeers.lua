@@ -6,6 +6,8 @@ local Proof=require 'PZSurvivorToolkit/SourceProof'
 local R={index=1,phase='hello',records={},tracks={},tokens={},serial=0,tokenSerial=0}
 local entered,done=false,false
 local producer,readProducer,requestState
+local pickupFailure=T.ActionQueuePickupFailure
+local pickupState=pickupFailure and pickupFailure.nativeRequestState
 local function now()return getTimestampMs()end
 local function ref(value)return value and tostring(value)or false end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(R.player)end
@@ -22,15 +24,18 @@ end
 local function intact()
  assert(ISInventoryPaneContextMenu.onLiteratureItems==producer and ISInventoryPaneContextMenu.readItem==readProducer,'literature producer changed')
  assert(Proof.closure(producer,'ISInventoryPaneContextMenu.lua')and Proof.closure(readProducer,'ActionQueueOperations.lua'),'literature source mismatch')
+ assert(pickupFailure==T.ActionQueuePickupFailure and pickupFailure.nativeRequestState==pickupState
+  and Proof.closure(pickupState,'ActionQueuePickupFailure.lua'),'pickup observer changed')
  assert(T.ActionQueueSettlement.nativeRequestState==requestState and Proof.closure(requestState,'ActionQueueSettlement.lua'),'request observer changed')
 end
 local function sample(action,row,point)
  local tx=action.transactionId or 0
  if tx~=0 then row.transaction=tx end
- local value={point=point,at=now(),transaction=tx,done=false,rejected=false,observation=false}
+ local value={point=point,at=now(),transaction=tx,done=false,rejected=false,observation=false,refusal=false}
  if row.role=='pickup'or row.role=='return'then
   value.done=isItemTransactionDone(tx)==true;value.rejected=isItemTransactionRejected(tx)==true
   value.observation=requestState(action)or false
+  if row.role=='pickup'then value.refusal=pickupState(action)or false end
  end
  if row.samples[#row.samples]then
   local prior=row.samples[#row.samples];local a,b={},{}
@@ -57,6 +62,30 @@ local function register(action)
   started=false,progress=false,duration=duration,transaction=0,finishes={},samples={}}
  assert(T.ActionQueuePolicy.matchesNative(action),'unreviewed native action binding')
  R.tracks[action]=row;R.records[#R.records+1]=row;sample(action,row,'pending');return row
+end
+-- Disposable entry diagnostics: inspect the same pre-Java stage as the real
+-- begin gate, without changing production bindings or retrying that begin.
+local function pickupEntry(action)
+ local row=register(action)
+ if not row or row.role~='pickup'then return end
+ local q=queue();local allowed,reason=T.ActionQueuePolicy.rejectedPickupPlan(q,action)
+ local ownership=T.ActionQueueSettlement.rejectedPickupUntouched(action,{})
+ local metadata={}
+ for key,entry in pairs({native={T.ActionQueuePolicy.matchesNative,'ActionQueuePolicy.lua'},
+  ordinary={T.ActionQueuePolicy.isOrdinaryTransfer,'ActionQueuePolicy.lua'},
+  partition={T.ActionQueuePolicy.rejectedPickupPlan,'ActionQueuePolicy.lua'},
+  untouched={T.ActionQueueSettlement.rejectedPickupUntouched,'ActionQueueSettlement.lua'},
+  guard={T.BulkActions.guardTransfer,'BulkActions.lua'},cancel={ISBaseTimedAction.forceCancel,'ISBaseTimedAction.lua'},
+  requests={T.ActionQueueTransferRequests.prepare,'ActionQueueTransferRequests.lua'}})do
+  metadata[key]=Proof.closure(entry[1],entry[2])==true
+ end
+ row.entry={plan=allowed~=nil,reason=reason or false,ownership=ownership,operation=T.ActionQueueSettlement.operationState(action)or false,
+  native=T.ActionQueuePolicy.matchesNative(action),ordinary=T.ActionQueuePolicy.isOrdinaryTransfer(action),
+  bridge=T.ActionQueueLifecycle.hasNativeStopBridge(),metadata=metadata,queueSize=#q.queue,
+  nativeAllocated=action.action~=nil,adding=action._isAddingActions==true,activeWatch=pickupState(action)or false,
+  pendingHint=T.ActionQueueTransferRequests.pending[R.player]==action,
+  completeSource=action.onCompleteFunc and getFilenameOfClosure(action.onCompleteFunc)or false}
+ F.emit('ENTRY',{case=R.seed.case,index=R.index,role=R.role,entry=row.entry})
 end
 local function nativeIdentity(action,row)
  if action.action then
@@ -95,7 +124,7 @@ function bookControlsNativeTransferStop(action,episode,phase,returned)
    current=queue().current==action and queue().queue[1]==action,
    endpointsExact=action.srcContainer==(row.role=='return'and R.player:getInventory()or R.state.frontSource)
     and action.destContainer==(row.role=='pickup'and R.player:getInventory()or R.state.frontSource),
-   observation=requestState(action)or false}
+   observation=requestState(action)or false,refusal=row.role=='pickup'and(pickupState(action)or false)or false}
  elseif phase=='returned'and row.nativeStopEntry then
   row.nativeStopReturned={transaction=tx,at=now(),sameNative=action.action==episode,returned=returned}
  end
@@ -179,7 +208,7 @@ Events.OnTick.Add(function()
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);R.player:setAutoDrink(false)
    producer=ISInventoryPaneContextMenu.onLiteratureItems;readProducer=ISInventoryPaneContextMenu.readItem
    requestState=T.ActionQueueSettlement.nativeRequestState;intact()
-   assert(T.ActionQueueLifecycle.registerObserver('fixture.queue-transfer-peers',{started=register,begin=begin,finish=finish}),'native observer unavailable')
+   assert(T.ActionQueueLifecycle.registerObserver('fixture.queue-transfer-peers',{started=pickupEntry,begin=begin,finish=finish}),'native observer unavailable')
    if type(queuePeersReplyLossState)=='function'then
     local probe=queuePeersReplyLossState();F.emit('PROBE',{role=R.role,state=probe})
     for _,selected in ipairs(config.cases)do if selected=='lost-done'then assert(probe.sourceExact and probe.historyFromConnectionStart,'reply-loss source/lifecycle unsupported: '..tostring(probe.failure))end end

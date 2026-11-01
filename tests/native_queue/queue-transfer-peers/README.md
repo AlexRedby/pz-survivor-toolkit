@@ -8,9 +8,10 @@ world and game lifecycle. Select any nonempty ordered subset:
 - `shared-capacity`: two books compete for one native unit of destination space;
   verify the original reservation/rejection and exact carried-item retention.
 - `contested-pickup`: two clients request one physical book. Verify one owner,
-  one rejected pickup and no invented earned return. The losing actor currently
-  loses its independent queued tail in both profiles; this bank records that
-  fallback and does not qualify independent-tail isolation for failed pickups.
+  one rejected pickup and no invented earned return. The queue-enabled loser
+  must retain its independent root-book tail using a fresh exact singleton
+  refusal; the queue-disabled control keeps the native tail-loss behavior.
+  Unknown, batch, prior-effect and unreviewed dependency shapes stay unsupported.
 - `lost-done`: last when selected. A disposable, native-source-gated probe drops
   only one exact fresh transaction's Done. Accept, Reject, native work and
   container replication remain unchanged. The server must confirm the physical

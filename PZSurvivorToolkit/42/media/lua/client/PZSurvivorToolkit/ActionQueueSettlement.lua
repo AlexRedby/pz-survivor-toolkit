@@ -333,6 +333,56 @@ function Settlement.inheritCleanup(action, parent)
     return true
 end
 
+local pickupApproachBinding
+local function pickupApproach(action, container, character)
+    local owner = Toolkit.ActionQueueApproach
+    local checker = owner and owner.isContainer
+    if not executionProof or not executionProof.closure(checker, "ActionQueueApproach.lua") then return false end
+    if not pickupApproachBinding then pickupApproachBinding = {owner = owner, checker = checker} end
+    return owner == pickupApproachBinding.owner and checker == pickupApproachBinding.checker
+        and checker(action, container, character) == true
+end
+
+-- Failure isolation asks only about this private operation, never enqueue
+-- pickup hints or a copied diagnostics table. Prior mutating work and earned
+-- cleanup remain outside the unreceived singleton contract.
+function Settlement.rejectedPickupUntouched(action, members)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local queue = record and record.queue
+    local current = record and record.actions[action]
+    if not current or not queue or queue.current ~= action or queue.queue[1] ~= action
+        or #record.steps > 32 or #record.borrowings > 32 or type(members) ~= "table" or #members > 31 then return false end
+    for _, step in ipairs(record.steps) do
+        if step.state ~= "pending" or step.required or step.receipt then return false end
+        -- Absence without a started receipt is unknown, not proof of no effect.
+        if step ~= current and not step.started and queue:indexOf(step.action) <= 1 then return false end
+        if step ~= current and step.started then
+            local previous = step.action
+            local walking = previous.Type == "ISWalkToTimedAction" or previous.Type == "ISWalkToTimedActionF"
+                or previous.Type == "ISPathFindAction"
+            if queue:indexOf(previous) ~= -1 then return false end
+            if walking then
+                if not Toolkit.ActionQueuePolicy.matchesNative(previous) then return false end
+            elseif previous.Type ~= "ISQueueActionsAction"
+                or not pickupApproach(previous, action.srcContainer, action.character) then return false end
+        end
+        for _, prerequisite in ipairs(step.prerequisites or {}) do
+            if prerequisite.state ~= "pending" then return false end
+        end
+    end
+    for _, binding in ipairs(record.borrowings) do
+        local candidate = binding.candidate
+        if not candidate or candidate.phase ~= "prepare" or candidate.ambiguous
+            or candidate.step and candidate.step.state ~= "pending" then return false end
+    end
+    for _, member in ipairs(members) do
+        local step = record.actions[member]
+        if not step or member.toolkitQueueOperation ~= record.token or step.started or step.state ~= "pending"
+            or requiredCleanup(member) then return false end
+    end
+    return true
+end
+
 -- Value-only diagnostics. Callers cannot mutate proof, renew it after reset or
 -- turn an enqueue claim into an authoritative result.
 function Settlement.operationState(action)

@@ -7,7 +7,8 @@ Toolkit.ActionQueueTransferRequests = Requests
 local pending, watches = Requests.pending, {}
 local function owned(callback)
     return Proof.own == own and Proof.closure == origin
-        and type(callback) == "function" and origin(callback, "ActionQueueSettlement.lua")
+        and type(callback) == "function" and (origin(callback, "ActionQueueSettlement.lua")
+            or origin(callback, "ActionQueuePickupFailure.lua"))
 end
 local function release(binding)
     if watches[binding.actor] == binding then

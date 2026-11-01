@@ -53,10 +53,12 @@ function Actions.selectedItems(rows)
     return items
 end
 
-function Actions.guardTransfer(transfer)
+function Actions.guardTransfer(transfer, allowNativeMerge)
     local guard = transfer.toolkitTransferGuard
-    -- Prevent native merging from discarding the guard; keep an existing owner's callback.
-    if not transfer.onCompleteFunc then
+    -- Returns retain their singleton guard. Pickup observers may keep native
+    -- merging and revoke their own authority if later siblings join the batch.
+    -- Always preserve an existing owner's callback.
+    if allowNativeMerge ~= true and not transfer.onCompleteFunc then
         transfer:setOnComplete(function() end)
         transfer.toolkitQueueSafeOnComplete = transfer.onCompleteFunc
     end
@@ -65,6 +67,8 @@ function Actions.guardTransfer(transfer)
     local guardedStop = function(self)
         local execution = PZSurvivorToolkit.ActionQueueExecution
         if execution then execution.beforeStop(self) end
+        local pickup = PZSurvivorToolkit.ActionQueuePickupFailure
+        if pickup then pickup.beforeStop(self) end
         -- B42 cancellation uses a client-local ID without an owner on the server.
         if isClient() and self.transactionId ~= 0
             and isItemTransactionRejected(self.transactionId)

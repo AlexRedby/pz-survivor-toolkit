@@ -3041,3 +3041,39 @@ for _,mode in ipairs({'active','off','generation','queue','revoked','kept'})do
     assert(s.settlement.blockedReturnInfo(s.player).revision==info.revision,'read-only hint changed UI revision')
 end
 print('Active failure hint: O(1), current queue/generation only, no historical/off scan or inventory lookup.')
+
+-- A rejected pickup cannot erase earlier earned/preparation work merely because
+-- those actions already left the shrinking native queue.
+for _,scenario in ipairs({'fresh','missing-unstarted','earlier-mutation','earlier-walk','earlier-approach','foreign-command','wrong-approach-source','earned','required','foreign-member','started-member'})do
+ local s=setup(true);local settlement=s.settlement
+ s.queue.indexOf=function(self,action)for i,v in ipairs(self.queue)do if v==action then return i end end;return -1 end
+ PZSurvivorToolkit.ActionQueuePolicy.matchesNative=function()return true end
+ local command=scenario=='earlier-approach'or scenario=='foreign-command'or scenario=='wrong-approach-source'
+ local prior={character=s.player,toolkitQueueOperation=s.token,Type=command and'ISQueueActionsAction'or scenario=='earlier-walk'and'ISWalkToTimedAction'or'ISEquipWeaponAction'}
+ s.current.srcContainer=s.source
+ if command then
+  PZSurvivorToolkit.ActionQueueApproach={isContainer=assert(loadstring('return function(action,container,actor)return action.approach==true and container==action.container and actor==action.character end','@/fixture/ActionQueueApproach.lua'))()}
+  prior.approach=scenario~='foreign-command';prior.container=scenario=='wrong-approach-source'and{}or s.source
+ end
+ if scenario=='earlier-mutation'or scenario=='earlier-walk'or command then settlement.started(prior)end
+ if scenario=='missing-unstarted'then settlement.track(prior,'body')end
+ local handle=settlement.track(s.current,'prepare');settlement.started(s.current)
+ local child={character=s.player,toolkitQueueOperation=s.token}
+ settlement.track(child,'body');s.queue.queue={s.current,child}
+ if scenario=='earned'then
+  local receipt=settlement.captureEffect(s.current)
+  -- The SP native effect seam is exercised independently elsewhere; attach an
+  -- actual admitted Started receipt here to reject pre-existing effect evidence.
+  s.current.toolkitNativeTransaction,s.current.toolkitNativeKind=90,'Test'
+  s.receipt(s.current,'started');receipt=settlement.captureEffect(s.current)
+  assert(settlement.bindEffect(handle,receipt))
+ elseif scenario=='required'then
+  local cleanup={character=s.player,toolkitQueueOperation=s.token,Type='ISUnequipAction'}
+  settlement.cleanup(cleanup,handle)
+  settlement.started(cleanup) -- Any started cleanup is already outside untouched ownership.
+ elseif scenario=='foreign-member'then child.toolkitQueueOperation={}
+ elseif scenario=='started-member'then settlement.started(child)end
+ local expected=scenario=='fresh'or scenario=='earlier-walk'or scenario=='earlier-approach'
+ assert(settlement.rejectedPickupUntouched(s.current,{child})==expected,scenario..': private rejected-pickup ownership differs')
+end
+print('Rejected pickup private ownership: fresh scope only, native completed walk retained, earlier mutation/receipt/cleanup/foreign or started descendants denied.')

@@ -15,7 +15,7 @@ ROLES = ('client1', 'client2')
 PREFIX = '[QUEUE_PEERS] '
 LIMITS = [
     'Two real EN/RU macOS clients in a fresh menu Host with the full selected pack; no dedicated-server, WAN or Windows qualification.',
-    'Contested pickup preserves native preparation-failure behavior; its losing actor does not qualify generic independent-tail isolation.',
+    'Fresh singleton pickup refusal isolates verified untouched direct dependants and preserves supported independent tails; unknown, batch, prior-effect and unreviewed shapes retain native fallback.',
     'Lost Done drops one exact native acknowledgement while independent container replication runs; unknown outcome never grants return, Keep or replay authority.',
 ]
 
@@ -49,7 +49,8 @@ def sources(project, selection):
             *sorted(path for path in (root / 'queue-transfer-peers').rglob('*') if path.suffix in ('.lua', '.java')),
             *sorted((root / 'startup').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua',
             root / 'support/QueueEnergyPlacement.lua', code / 'client/PZSurvivorToolkit/ActionQueueTransferRequests.lua',
-            root / 'book-controls/java/Main.java', code / 'client/PZSurvivorToolkit/ActionQueueSettlement.lua']
+            root / 'book-controls/java/Main.java', code / 'client/PZSurvivorToolkit/ActionQueueSettlement.lua',
+            code / 'client/PZSurvivorToolkit/ActionQueuePickupFailure.lua']
 
 
 def _probe(project, output, game, jdk):
@@ -276,6 +277,9 @@ def _record_errors(row, actor, enabled):
                 errors.append('Malformed native transfer boundary sample'); continue
             times.append(sample['at'])
             errors.extend(_observation_errors(sample.get('observation'), record, sample, book, enabled))
+            refusal = sample.get('refusal', False)
+            if refusal is not False and (role != 'pickup' or not enabled or not isinstance(refusal, dict)):
+                errors.append('Foreign neutral pickup refusal observation')
         if times != sorted(times):
             errors.append('Native samples reordered')
         for finish in finishes:
@@ -341,11 +345,23 @@ def _stopped_errors(record, actor, rejected, enabled):
             or entry.get('done') is not False or entry.get('rejected') is not rejected
             or entry.get('current') is not True or entry.get('endpointsExact') is not True
             or not _number(entry.get('at')) or returned.get('transaction') != (
-                0 if enabled and rejected and record.get('role') == 'return' else entry.get('transaction'))
+                0 if enabled and rejected else entry.get('transaction'))
             or not _number(returned.get('at')) or returned['at'] < entry['at']
             or returned.get('sameNative') is not True or returned.get('returned') is not True):
         return ['Native stop lost exact actor/item/live transaction identity or pending/rejected state']
-    return _observation_errors(entry.get('observation'), record, entry, actor['front'], enabled)
+    errors = _observation_errors(entry.get('observation'), record, entry, actor['front'], enabled)
+    if record.get('role') == 'pickup':
+        refusal = entry.get('refusal', False)
+        if enabled:
+            expected = dict(phase='submitted', sourceExact=True, currentHandle=True, nativeHandle=True,
+                wireAmbiguous=False, ambiguous=False, refused=False, transaction=entry['transaction'],
+                id=actor['front']['id'], fullType=actor['front']['ft'])
+            if refusal != expected or any(type(refusal.get(k)) is not bool for k in
+                    ('sourceExact', 'currentHandle', 'nativeHandle', 'wireAmbiguous', 'ambiguous', 'refused')):
+                errors.append('Rejected pickup lacks exact fresh singleton no-effect request evidence')
+        elif refusal is not False:
+            errors.append('Queue-disabled pickup acquired private refusal authority')
+    return errors
 
 
 def _unknown_errors(value, row, actor, enabled, applied):
@@ -441,7 +457,7 @@ def check_case(seed, result, clients, selection, case, index, release, capacity=
         if loser:
             losers.append(role)
         expected_front = actor['front']['initial'] if case == 'contested-pickup' and loser else actor['front']['total']
-        expected_tail = actor['tail']['initial'] if lost or loser and (case == 'contested-pickup' or not enabled) else actor['tail']['total']
+        expected_tail = actor['tail']['initial'] if lost or loser and not enabled else actor['tail']['total']
         if (row.get('frontPages') != expected_front or row.get('tailPages') != expected_tail
                 or row.get('tailInitial') != actor['tail']['initial'] or row.get('tailTotal') != actor['tail']['total']
                 or tail_item.get('pages') != expected_tail or tail_item.get('endpoint') != role + '-root'):

@@ -1994,6 +1994,88 @@ function Policy.editUnchanged(queue, snapshot)
     return true
 end
 
+-- A structural plan only: the caller must prove an exact rejected native
+-- singleton pickup and that its private owner has no earlier effects/cleanup.
+-- A token groups a producer; it is never evidence that every child depends on
+-- the failed item. Unsupported owners/tails keep their native failure path.
+function Policy.rejectedPickupPlan(queue, action)
+    if not queue or not queue.queue or #queue.queue > MAX_RETURN_EXECUTION_MEMBERS then
+        return nil, "unsupported_queue_size"
+    end
+    if type(action) ~= "table" or not Toolkit.Settings.actionQueue() or not live(queue)
+        or ISTimedActionQueue.queues[queue.character] ~= queue or queue.current ~= action or queue.queue[1] ~= action
+        or queue.toolkitCancel or queue.toolkitGroupCancel or queue.toolkitResume or queue.toolkitOutcomeWait
+        or queue.toolkitStopIntent or queue.character:isPlayerMoving() or queue.character:pressedMovement(false) then
+        return nil, "unavailable"
+    end
+    if not targetCheckersUnchanged() then return nil, "unsupported_target_checker" end
+    local token = action.toolkitQueueOperation
+    if type(token) ~= "table" or token.toolkitCancelled
+        or Operations.isContinuationPending(token) then return nil, "unsupported_owner" end
+    local first, last = Operations.bounds(queue, action)
+    if first ~= 1 then return nil, "unsupported_owner" end
+    local snapshot = snapshots[getmetatable(action)]
+    if action.Type ~= "ISInventoryTransferAction" or not snapshot or not nativeMatches(action, snapshot)
+        or action._isAddingActions or action.allowMissingItems or action.destContainer ~= queue.character:getInventory()
+        or action.srcContainer == action.destContainer or not instanceof(action.item, "InventoryItem")
+        or instanceof(action.item, "InventoryContainer") then return nil, "unsupported_pickup" end
+    local context = {contracts = {}, items = {}, executionProbe = true, failurePositionPrerequisite = action}
+    local own = inspect(action, context)
+    if not own or own.knownInputs == false or own.unknownOutputs then return nil, "unsupported_pickup" end
+    local members, retained = {}, {}
+    local function pending(member, owner)
+        local memberToken = member.toolkitQueueOperation
+        if member.character ~= queue.character or member.action or member.started or member._isAddingActions
+            or member.retriggerLastAction or member.forceCancel ~= nativeForceCancel
+            or type(memberToken) ~= "table" or memberToken.toolkitCancelled
+            or not owner and memberToken.toolkitStarted
+            or Operations.isContinuationPending(memberToken) then return false end
+        local settlement = Toolkit.ActionQueueSettlement
+        if settlement and (settlement.requiredStep(member)
+            or settlement.isCleanup and settlement.isCleanup(member)) then return false end
+        if owner then
+            -- First slice: the native item user and its unearned return. Shared
+            -- container/position resources alone do not establish dependence.
+            if member.Type ~= "ISReadABook" and member.Type ~= "ISEquipWeaponAction"
+                and member.Type ~= "ISUnequipAction" and member.Type ~= "ISInventoryTransferAction" then return false end
+            if member.Type == "ISInventoryTransferAction" and (member.allowMissingItems ~= true
+                or member.item ~= action.item or member.srcContainer ~= action.destContainer
+                or member.destContainer ~= action.srcContainer) then return false end
+        elseif not returnFailureSuffix[member.Type]
+            or member.Type == "ISRadioAction" and not mediaSetterModes[member.mode] then return false end
+        local binding = snapshots[getmetatable(member)]
+        if not binding or not nativeMatches(member, binding) then return false end
+        local contract = inspect(member, context)
+        if not contract or contract.knownInputs == false or contract.unknownOutputs
+            or contract.cancelOperation == false then return false end
+        return true
+    end
+    for i = 2, last do
+        local member = queue.queue[i]
+        if not pending(member, true) or not sharedItem(action, member, context) then
+            return nil, "unsupported_owner_member"
+        end
+        members[#members + 1] = member
+    end
+    if #members > 0 and not nativePendingCancelHasNoEffects() then return nil, "unsupported_cancel_binding" end
+    for i = last + 1, #queue.queue do
+        local other = queue.queue[i]
+        if not pending(other, false) then return nil, "unsupported_tail_binding" end
+        for j = 1, #members + 1 do
+            local removed = j == 1 and action or members[j - 1]
+            -- Transfers require reachability but do not establish a position
+            -- effect. Removing their unearned return cannot invalidate a walk.
+            context.failurePositionPrerequisite = removed.Type == "ISInventoryTransferAction" and removed or action
+            if sharedItem(removed, other, context) or sharedWorldTarget(removed, other, context)
+                or dynamicConflict(removed, other, context) or dynamicConflict(other, removed, context) then
+                return nil, "dependent_tail"
+            end
+        end
+        retained[#retained + 1] = other
+    end
+    return {members = members, retained = retained, snapshot = editSnapshot(queue)}
+end
+
 local resourceDenials = {move_shared_item = true, move_craft_inputs = true, move_dependent = true,
     operation_shared_item = true, operation_dependent = true, container_capacity = true}
 local function editDenial(reason, blocker, resource, context)
