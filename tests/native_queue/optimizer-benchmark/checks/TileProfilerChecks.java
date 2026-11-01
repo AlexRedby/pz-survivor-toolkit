@@ -128,9 +128,13 @@ public final class TileProfilerChecks {
         int chunk=StageProfiler.chunkEnter(-1,0,5);
         int nestedChunk=StageProfiler.chunkEnter(-2,0,4);
         StageProfiler.chunkExit(nestedChunk,4);
-        int loot=StageProfiler.enter(StageProfiler.LOOT);
+        int loot=StageProfiler.lootEnterType("fixture");
+        StageProfiler.lootCount(LootProfiler.CHANCE);
+        int nestedLoot=StageProfiler.lootEnterType("nested");
+        StageProfiler.lootCount(LootProfiler.FACTORY); StageProfiler.lootCount(LootProfiler.FACTORY_NONNULL);
+        StageProfiler.lootTranslation("plain",new Object[0]); StageProfiler.lootExit(nestedLoot);
         check(Boolean.TRUE.equals(actual.getMethod("probe",int.class).invoke(null,1)),"Outside-root return intact");
-        StageProfiler.exit(loot); StageProfiler.chunkExit(chunk,3);
+        StageProfiler.lootExit(loot); StageProfiler.chunkExit(chunk,3);
         chunk=StageProfiler.chunkEnter(0,0,3); StageProfiler.chunkExit(chunk,-1);
         StageProfiler.frameEnd();
         StageProfiler.frameBegin(1,0,0); // Intentionally partial; no tile row/event must escape.

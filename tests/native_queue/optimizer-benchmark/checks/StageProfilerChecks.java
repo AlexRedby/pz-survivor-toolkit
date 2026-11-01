@@ -119,7 +119,8 @@ public final class StageProfilerChecks {
         System.clearProperty("pz.drivingPerf.stageProfile");
         StageProfiler.start(null,null); StageProfiler.frameBegin(1,0,0); StageProfiler.frameEnd();
         eq(0,StageProfiler.enter(StageProfiler.LOGIC),"default off");
-        eq(0,StageProfiler.chunkEnter(null),"inactive chunk does not read game object/queue"); StageProfiler.finish();
+        eq(0,StageProfiler.chunkEnter(null),"inactive chunk does not read game object/queue");
+        eq(0,StageProfiler.lootEnter(null),"inactive fill does not read container"); StageProfiler.lootCount(-1); StageProfiler.finish();
         System.setProperty("pz.drivingPerf.stageProfile","true");
         System.setProperty("pz.drivingPerf.cachedir",Files.createDirectory(cache.resolve("wrong")).toString());
         boolean rejected=false;
@@ -139,6 +140,7 @@ public final class StageProfilerChecks {
             eq(0,StageProfiler.detailEnter(StageProfiler.FOG),"foreign detail no-op");
             eq(0,StageProfiler.chunkEnter(null),"foreign chunk does not read game object/queue");
             StageProfiler.chunkExit(123);
+            eq(0,StageProfiler.lootEnter(null),"foreign fill no-op"); StageProfiler.lootCount(-1); StageProfiler.lootExit(123);
             StageProfiler.detailBegin(StageProfiler.MERGE); StageProfiler.detailEnd(StageProfiler.MERGE);
             StageProfiler.exit(123); StageProfiler.frameEnd(); StageProfiler.swapped(1,2);
         });
@@ -154,14 +156,22 @@ public final class StageProfilerChecks {
         StageProfiler.exit(lua); StageProfiler.exit(logic); StageProfiler.frameEnd();
         StageProfiler.frameBegin(2,3,20); int ui=StageProfiler.enter(StageProfiler.UI); StageProfiler.exit(ui);
         int chunk=StageProfiler.chunkEnter(-2,17,4);
-        int loot=StageProfiler.enter(StageProfiler.LOOT); StageProfiler.exit(loot);
+        int loot=StageProfiler.lootEnterType("fixture");
+        StageProfiler.lootCount(LootProfiler.CHANCE);
+        int nestedLoot=StageProfiler.lootEnterType("bag");
+        StageProfiler.lootCount(LootProfiler.CHANCE);
+        StageProfiler.lootCount(LootProfiler.FACTORY); StageProfiler.lootCount(LootProfiler.FACTORY_NONNULL);
+        StageProfiler.lootTranslation("plain",new Object[0]);
+        StageProfiler.lootExit(nestedLoot); StageProfiler.lootExit(loot);
+        StageProfiler.lootCount(-1); // Outside a fill is ignored, including invalid kinds.
         StageProfiler.chunkExit(chunk,3);
         chunk=StageProfiler.chunkEnter(-1,17,3); StageProfiler.chunkExit(chunk,-1);
         StageProfiler.frameEnd();
         StageProfiler.frameBegin(3,4,45); StageProfiler.frameEnd();
         StageProfiler.frameBegin(3,5,46); int incomplete=StageProfiler.enter(StageProfiler.LUA);
         int partialChunk=StageProfiler.chunkEnter(0,17,0);
-        StageProfiler.finish(); StageProfiler.chunkExit(partialChunk); StageProfiler.exit(incomplete); StageProfiler.frameEnd();
+        int partialLoot=StageProfiler.lootEnterType("partial");
+        StageProfiler.finish(); StageProfiler.lootExit(partialLoot); StageProfiler.chunkExit(partialChunk); StageProfiler.exit(incomplete); StageProfiler.frameEnd();
         List<String> csv=Files.readAllLines(cache.resolve("driving-stages.csv"));
         eq(4,csv.size(),"only complete frames emitted");
         String[] header=csv.getFirst().split(",");
@@ -215,6 +225,17 @@ public final class StageProfilerChecks {
             eq(Long.parseLong(stageValues[i]),chunkWall,"chunk rows partition complete-frame chunk time");
         check(Files.readString(cache.resolve("driving-chunks-status.txt")).contains("omitted_chunks=1"),"partial chunk omitted");
         check(Files.readString(cache.resolve("driving-stages-status.txt")).contains("chunk_details=invocations-v1"),"chunk details declared");
+        List<String> lootCsv=Files.readAllLines(cache.resolve("driving-loot.csv"));
+        eq(3,lootCsv.size(),"nested completed fills retained, partial omitted");
+        String[] lootHead=lootCsv.getFirst().split(",");
+        Map<String,Integer> lootColumns=new HashMap<>();
+        for(int i=0;i<lootHead.length;i++) lootColumns.put(lootHead[i],i);
+        String[] outer=lootCsv.get(1).split(","),inner=lootCsv.get(2).split(",");
+        eq(2,Long.parseLong(outer[lootColumns.get("chance_calls")]),"outer includes nested chances");
+        eq(1,Long.parseLong(inner[lootColumns.get("chance_calls")]),"nested chances");
+        eq(1,Long.parseLong(outer[lootColumns.get("factory_nonnull")]),"nonnull factory call count");
+        eq(1,Long.parseLong(outer[lootColumns.get("plain_translation_calls")]),"plain translation calls");
+        check(Files.readString(cache.resolve("driving-loot-status.txt")).contains("omitted_fills=1"),"partial fill omitted");
         List<RecordedEvent> events=RecordingFile.readAllEvents(cache.resolve("driving-stages.jfr"));
         List<RecordedEvent> frames=events.stream().filter(e -> e.getEventType().getName().equals("pz.driving.Frame")).toList();
         List<RecordedEvent> swaps=events.stream().filter(e -> e.getEventType().getName().equals("pz.driving.Swap")).toList();
@@ -238,30 +259,33 @@ public final class StageProfilerChecks {
         var field=Loader.class.getDeclaredField("g_instrumentation"); field.setAccessible(true);
         Instrumentation instrumentation=(Instrumentation)field.get(null);
         check(instrumentation!=null,"--weave requires the real ZombieBuddy javaagent with a disposable config_dir");
-        Map<String,String> targets=Map.of(
-                "zombie/inventory/ItemPickerJava","fillContainer(Lzombie/inventory/ItemContainer;Lzombie/characters/IsoPlayer;)V",
-                "zombie/iso/IsoChunk","doLoadGridsquare()V",
-                "zombie/iso/fboRenderChunk/FBORenderCell","RenderTiles(II)V");
+        Map<String,Map<String,String>> targets=Map.of(
+            "zombie/inventory/ItemPickerJava",Map.of(
+                "fillContainer(Lzombie/inventory/ItemContainer;Lzombie/characters/IsoPlayer;)V","lootEnter,lootExit",
+                "getActualSpawnChance(Lzombie/inventory/ItemPickerJava$ItemPickerItem;Lzombie/characters/IsoGameCharacter;Lzombie/inventory/ItemContainer;FZ)F","lootCount",
+                "doRollItemInternal(Lzombie/inventory/ItemPickInfo;Lzombie/inventory/ItemPickerJava$ItemPickerContainer;Lzombie/inventory/ItemContainer;FLzombie/characters/IsoGameCharacter;ZLzombie/inventory/ItemPickerJava$ItemPickerRoom;Z)V","lootCount",
+                "rollContainerItemInternal(Lzombie/inventory/ItemPickInfo;Lzombie/inventory/types/InventoryContainer;Lzombie/characters/IsoGameCharacter;Lzombie/inventory/ItemPickerJava$ItemPickerContainer;Z)V","lootCount"),
+            "zombie/inventory/InventoryItemFactory",Map.of("createItemInternal(Ljava/lang/String;FZZ)Lzombie/inventory/InventoryItem;","lootCount"),
+            "zombie/core/Translator",Map.of("reportMissingArgumentsFromPastAbuse(Ljava/lang/String;Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;","lootTranslation"),
+            "zombie/iso/IsoChunk",Map.of("doLoadGridsquare()V","chunkEnter,chunkExit"),
+            "zombie/iso/fboRenderChunk/FBORenderCell",Map.of("RenderTiles(II)V","enter,exit"));
         PatchEngine.applyPatches("net.alexredby.drivingperf",StageProfilerChecks.class.getClassLoader());
-        Map<String,Boolean> observed=new HashMap<>();
+        Map<String,java.util.Set<String>> observed=new HashMap<>();
         ClassFileTransformer observer=new ClassFileTransformer() {
             @Override public byte[] transform(ClassLoader loader,String name,Class<?> type,ProtectionDomain domain,byte[] bytes) {
                 if (!targets.containsKey(name)) return null;
-                int[] calls={0,0};
                 new ClassReader(bytes).accept(new ClassVisitor(Opcodes.ASM9) {
                     @Override public MethodVisitor visitMethod(int access,String method,String descriptor,String signature,String[] exceptions) {
-                        if (!targets.get(name).equals(method+descriptor)) return null;
+                        String key=method+descriptor;
+                        if (!targets.get(name).containsKey(key)) return null;
+                        var methods=new java.util.HashSet<String>(); observed.put(name+"."+key,methods);
                         return new MethodVisitor(Opcodes.ASM9) {
-                            @Override public void visitMethodInsn(int opcode,String owner,String method,String descriptor,boolean itf) {
-                                if (!owner.equals("net/alexredby/drivingperf/StageProfiler")) return;
-                                if ((method.equals("enter") && descriptor.equals("(I)I"))
-                                        || (method.equals("chunkEnter") && descriptor.equals("(Lzombie/iso/IsoChunk;)I"))) calls[0]++;
-                                if ((method.equals("exit") || method.equals("chunkExit")) && descriptor.equals("(I)V")) calls[1]++;
+                            @Override public void visitMethodInsn(int opcode,String owner,String invoked,String desc,boolean itf) {
+                                if (owner.equals("net/alexredby/drivingperf/StageProfiler")) methods.add(invoked);
                             }
                         };
                     }
                 },ClassReader.SKIP_DEBUG);
-                observed.put(name,calls[0]>0 && calls[1]>0);
                 return null;
             }
         };
@@ -270,10 +294,12 @@ public final class StageProfilerChecks {
             for (String name:targets.keySet()) {
                 Class<?> type=Class.forName(name.replace('/','.'),false,StageProfilerChecks.class.getClassLoader());
                 instrumentation.retransformClasses(type);
-                check(Boolean.TRUE.equals(observed.get(name)),"No enter/exit woven into exact native method "+name);
+                for(var target:targets.get(name).entrySet()) for(String method:target.getValue().split(","))
+                    check(observed.getOrDefault(name+"."+target.getKey(),java.util.Set.of()).contains(method),
+                        "Missing diagnostic call "+method+" in "+name+"."+target.getKey());
             }
         } finally { instrumentation.removeTransformer(observer); }
-        System.out.println("STAGE_PROFILER_NATIVE_WEAVING_PASS targets=3 gameMethodsInvoked=0");
+        System.out.println("STAGE_PROFILER_NATIVE_WEAVING_PASS targets=8 gameMethodsInvoked=0");
     }
     public static void main(String[] args) throws Exception {
         boolean weave=List.of(args).contains("--weave");
