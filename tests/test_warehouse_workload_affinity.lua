@@ -352,8 +352,10 @@ assert(categoryReceipt.selectedId==categoryControl.new.id and categoryReceipt.be
 -- Use the installed toolbar callback/handler and real Toolkit wrappers/rules;
 -- only panes, physical replicas, presentation helpers and action sinks are doubles.
 do
- local function preparationFixture(method)
+ local function preparationFixture(method,options)
+  options=options or {}
   local boot,start,modules={},{},{}
+  local preparations,hooks,menu={},{},{}
   local admitted,queued={},{}
   local source,target=container('inventorymale'),container('crate')
   function target:isEmpty()return #self.values==0 end
@@ -365,7 +367,8 @@ do
    local value=item(id,'Base.Screwdriver','ToolWeapon',c)
    value.originalCategory=value.category
    function value:getScriptItem()return script end
-   function value:hasModData()return false end
+   function value:hasModData()return options.override~=nil end
+   function value:getModData()return {OC_DisplayCategory=options.override}end
    function value:isFluidContainer()return false end
    function value:getUnequippedWeight()return 1 end
    function value:setDisplayCategory(category)self.category=category end
@@ -375,7 +378,11 @@ do
   local paneClass={prerender=function()end,restoreSelection=function()end}
   function paneClass:refreshContainer()
    self.refreshes=(self.refreshes or 0)+1
-   self.itemslist={};self:restoreSelection({})
+   self.itemslist={}
+   for _,value in ipairs(self.inventory.values)do
+    self.itemslist[#self.itemslist+1]={name=value:getFullType(),items={value,value}}
+   end
+   self:restoreSelection({})
   end
   function paneClass:transferItemsByWeight(values,destination)
    assert(destination==target,'single callback selected a nonphysical destination')
@@ -388,7 +395,7 @@ do
   end
   local personal,loot=page(source,true),page(target,false)
   local player={getPlayerNum=function()return 0 end}
-  local env=setmetatable({PZSurvivorToolkit={Settings={inventoryFilters=function()return true end}},
+  local env=setmetatable({PZSurvivorToolkit={Settings={inventoryFilters=function()return options.filters~=false end}},
    ISInventoryPane=paneClass,ISInventoryPage={},ItemBodyLocation={},
    table=setmetatable({wipe=function(values)for key in pairs(values)do values[key]=nil end end},{__index=table}),
    CleanUI_Clean_ISInventoryPane=false,CleanUI_Vanilla_ISInventoryPane=false,
@@ -398,6 +405,14 @@ do
     OnGameStart={Add=function(fn)start[#start+1]=fn end},OnCreatePlayer={Add=function()end}},
    getPlayerInventory=function()return personal end,getPlayerLoot=function()return loot end,
    getSpecificPlayer=function()return player end,getPlayerHotbar=function()end,
+   getText=function(key)return key end,
+   ISContextMenu={get=function()
+    menu.options={}
+    function menu:addOption(name,target,callback)
+     local option={name=name,target=target,callback=callback};self.options[#self.options+1]=option;return option
+    end
+    return menu
+   end},
    isGamePaused=function()return false end,CleanUI_getTransferMethod=function()return method end,
    ISTimedActionQueue={add=function(action)
     assert(action.srcContainer==source and action.destContainer==target,
@@ -413,7 +428,7 @@ do
    ['PZSurvivorToolkit/InventoryRows']={captureAnchor=function()end,restoreAnchor=function()end,restoreSelection=function()end},
    ['PZSurvivorToolkit/InventoryCategoryGroups']={split=function()return false end},
    ['PZSurvivorToolkit/InventoryOrder']={prioritize=function()return false end},
-   ['PZSurvivorToolkit/InventorySearch']={forPane=function()end},
+   ['PZSurvivorToolkit/InventorySearch']={forPane=function()end,matches=function()return true end},
    ['PZSurvivorToolkit/ItemTags']={enabled=function()return false end}}
   local real={['PZSurvivorToolkit/InventoryClasses']='client',
    ['PZSurvivorToolkit/InventoryMembership']='shared',
@@ -424,11 +439,23 @@ do
    if modules[name]then return modules[name]end
    if real[name]then
     local path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/'..real[name]..'/'..name..'.lua'
-    local chunk=assert(loadfile(path));setfenv(chunk,env);modules[name]=chunk();return modules[name]
+    local chunk=assert(loadfile(path));setfenv(chunk,env);modules[name]=chunk()
+    if name=='PZSurvivorToolkit/ItemCategories'then
+     local prepare=modules[name].prepareContainer
+     modules[name].prepareContainer=function(c)
+      preparations[c]=(preparations[c]or 0)+1;return prepare(c)
+     end
+    end
+    return modules[name]
    end
    error('unexpected preparation fixture dependency: '..name)
   end
   load(CleanUIInventoryTransferHandlerSource,env,'ISUI/ISInventoryPageTransferHandler.lua')
+  local categoryTable=env.ISInventoryPageTransferHandler.getItemsCategoryTable
+  env.ISInventoryPageTransferHandler.getItemsCategoryTable=function(c,...)
+   if hooks.category then hooks.category(c)end
+   return categoryTable(c,...)
+  end
   for _,name in ipairs({'onTransferByNameClick','onTransferByCategoryClick','cleanUIClearQuickTransferHighlights'})do
    load(pageMethod(name),env,'ISUI/ISInventoryPage.lua')
   end
@@ -439,14 +466,18 @@ do
   end
   for _,fn in ipairs(boot)do fn()end
   for _,fn in ipairs(start)do fn()end
+  personal.inventoryPane.toolkitCategory=options.sourceFilter
   personal.inventoryPane:refreshContainer()
-  assert(candidate.category=='toolElectrical'and stock.category=='ToolWeapon',
+  assert(candidate.category==(options.override or'toolElectrical')and stock.category=='ToolWeapon',
    'fixture did not establish the real prepared-source/raw-target boundary')
   assert(not candidate:isFavorite()and not candidate:isEquipped()
-   and env.ISInventoryPageTransferHandler.canTransferItem(candidate,target,player)
+   and target:isItemAllowed(candidate)
+   and env.ISInventoryPageTransferHandler.canTransferItem(candidate,target,player)==(not options.sourceFilter)
    and env.ISInventoryPageTransferHandler.canPlaceItemInContainer(candidate,target,0,player),
    'physical destination/protection controls did not allow the candidate')
-  return {personal=personal,loot=loot,candidate=candidate,stock=stock,script=script,admitted=admitted,queued=queued}
+  for c in pairs(preparations)do preparations[c]=nil end
+  return {personal=personal,loot=loot,candidate=candidate,stock=stock,script=script,admitted=admitted,queued=queued,
+   source=source,target=target,handler=env.ISInventoryPageTransferHandler,preparations=preparations,hooks=hooks,menu=menu}
  end
  local function exactIds(w,method,expected)
   local actual=method=='1'and w.admitted or w.queued
@@ -459,19 +490,122 @@ do
  for _,method in ipairs({'1','2'})do
   local category=preparationFixture(method)
   category.personal:onTransferByCategoryClick()
-  exactIds(category,method,{})
-  assert(category.stock.category=='ToolWeapon'and not category.loot.inventoryPane.refreshes and not category.loot:getIsVisible(),
-   'category callback/observation prepared the raw physical target')
+  exactIds(category,method,{301})
+  assert(category.stock.category=='toolElectrical'and not category.loot.inventoryPane.refreshes and not category.loot:getIsVisible(),
+   'category callback did not prepare physical metadata without refreshing/showing target rows')
   local sameType=preparationFixture(method)
   sameType.personal:onTransferByNameClick()
   exactIds(sameType,method,{301})
-  assert(sameType.stock.category=='ToolWeapon','same-type control repaired the target category')
-  local refreshed=preparationFixture(method)
-  refreshed.loot.inventoryPane:refreshContainer()
-  assert(refreshed.stock.category=='toolElectrical','normal target refresh did not prepare the real category')
-  refreshed.personal:onTransferByCategoryClick()
-  exactIds(refreshed,method,{301})
+  assert(sameType.stock.category=='ToolWeapon'and not sameType.preparations[sameType.target],
+   'same-type dispatch prepared target categories')
+  local preview=preparationFixture(method)
+  local values=preview.handler.getQuickTransferItems(preview.personal,'category')
+  assert(#values==1 and values[1]==preview.candidate and preview.stock.category=='toolElectrical',
+   'actual category preview omitted the prepared physical target')
+  exactIds(preview,method,{})
+  assert(preview.preparations[preview.source]==1 and preview.preparations[preview.target]==1,
+   'preview prepared a container repeatedly')
+  preview.stock.category='ToolWeapon' -- Same item/list/count, a later operation must prepare again.
+  preview.handler.getQuickTransferItems(preview.personal,'category')
+  assert(preview.stock.category=='toolElectrical'and preview.preparations[preview.target]==2,
+   'next preview reused stale category preparation')
+  local typePreview=preparationFixture(method)
+  values=typePreview.handler.getQuickTransferItems(typePreview.personal,'type')
+  assert(#values==1 and values[1]==typePreview.candidate and typePreview.stock.category=='ToolWeapon'
+   and not typePreview.preparations[typePreview.target],'type-only preview prepared target metadata')
+  local combined=preparationFixture(method)
+  local menu=combined.handler.showTransferMenu(combined.personal,0,0)
+  local highlight=assert(menu.options[2].onHighlightParams,'category menu lost its real highlight binding')[2]
+  assert(highlight[combined.candidate]and combined.stock.category=='toolElectrical'
+   and combined.preparations[combined.source]==1 and combined.preparations[combined.target]==1,
+   'combined menu did not prepare each category container once')
+  exactIds(combined,method,{})
+  for _,options in ipairs({{filters=false},{override='My.Saved.Category'}})do
+   local configured=preparationFixture(method,options)
+   configured.personal:onTransferByCategoryClick();exactIds(configured,method,{301})
+   assert(configured.stock.category==(options.override or'toolElectrical'),
+    'disabled filters or per-instance override broke category preparation')
+  end
+  local filtered=preparationFixture(method,{sourceFilter='medicalFirstAid'})
+  filtered.personal:onTransferByCategoryClick();exactIds(filtered,method,{})
+  local rejected=preparationFixture(method);rejected.target.allowed=false
+  rejected.personal:onTransferByCategoryClick();exactIds(rejected,method,{})
+  local protected=preparationFixture(method);protected.candidate.favorite=true
+  protected.personal:onTransferByCategoryClick();exactIds(protected,method,{})
+  if method=='1'then
+   local aggregateTarget=preparationFixture(method)
+   aggregateTarget.target.kind='proximityInv';aggregateTarget.target.allowed=false
+   aggregateTarget.personal:onTransferByCategoryClick();exactIds(aggregateTarget,method,{})
+   assert(aggregateTarget.stock.category=='toolElectrical','aggregate control did not reach metadata preparation')
+  end
+  for _,guarded in ipairs({filtered,rejected,protected})do
+   assert(#guarded.handler.getQuickTransferItems(guarded.personal,'category')==0,
+    'category preview bypassed source visibility/native protection')
+   local guardedMenu=guarded.handler.showTransferMenu(guarded.personal,0,0)
+   assert(not guardedMenu.options[2].onHighlightParams,'category menu highlighted an ineligible candidate')
+  end
+  -- Repeated getter/predicate consumers share preparation with the raw nearby scan.
+  local repeated=preparationFixture(method)
+  repeated.hooks.category=function(c)
+   if c~=repeated.source then return end
+   assert(repeated.handler.containerHasCategory(repeated.target,'toolElectrical'))
+   assert(repeated.handler.containerHasCategory(repeated.target,'toolElectrical'))
+  end
+  repeated.handler.getQuickTransferItems(repeated.personal,'category')
+  assert(repeated.preparations[repeated.source]==1 and repeated.preparations[repeated.target]==1,
+   'category getters/predicates repeated preparation inside one operation')
+  -- Child scopes prepare independently; returning to the parent retains its cache.
+  local nested=preparationFixture(method)
+  nested.hooks.category=function(c)
+   if c~=nested.source then return end
+   nested.hooks.category=nil
+   nested.handler.getQuickTransferItems(nested.personal,'category')
+   local before=nested.preparations[nested.source]
+   nested.handler.getItemsCategoryTable(nested.source)
+   assert(nested.preparations[nested.source]==before,'child scope displaced the parent preparation cache')
+  end
+  nested.handler.getQuickTransferItems(nested.personal,'category')
+  assert(nested.preparations[nested.source]==2 and nested.preparations[nested.target]==2,
+   'nested operation reused its parent preparation cache')
+  local nestedError=preparationFixture(method)
+  nestedError.hooks.category=function(c)
+   if c~=nestedError.source then return end
+   nestedError.hooks.category=function()error('expected nested category failure')end
+   local ok,problem=pcall(nestedError.handler.getQuickTransferItems,nestedError.personal,'category')
+   assert(not ok and tostring(problem):find('expected nested category failure',1,true))
+   nestedError.hooks.category=nil
+   local before=nestedError.preparations[nestedError.source]
+   nestedError.handler.getItemsCategoryTable(nestedError.source)
+   assert(nestedError.preparations[nestedError.source]==before,'nested failure lost its parent category cache')
+  end
+  nestedError.handler.getQuickTransferItems(nestedError.personal,'category')
+  local invalidated=preparationFixture(method)
+  invalidated.hooks.category=function(c)
+   if c~=invalidated.source then return end
+   invalidated.hooks.category=function(child)
+    if child==invalidated.source then
+     invalidated.hooks.category=nil;invalidated.personal.inventoryPane:refreshContainer()
+    end
+   end
+   invalidated.handler.getQuickTransferItems(invalidated.personal,'category')
+   local before=invalidated.preparations[invalidated.source]
+   invalidated.handler.getItemsCategoryTable(invalidated.source)
+   assert(invalidated.preparations[invalidated.source]==before+1,
+    'nested pane refresh retained an ancestor category preparation cache')
+  end
+  invalidated.handler.getQuickTransferItems(invalidated.personal,'category')
+  local failed=preparationFixture(method)
+  failed.hooks.category=function()error('expected category enumeration failure')end
+  local ok,problem=pcall(failed.handler.getQuickTransferItems,failed.personal,'category')
+  assert(not ok and tostring(problem):find('expected category enumeration failure',1,true))
+  failed.hooks.category=nil
+  local before=failed.preparations[failed.source]
+  failed.handler.getItemsCategoryTable(failed.source)
+  assert(failed.preparations[failed.source]==before+1,'failed operation leaked its category cache')
+  failed.stock.category='ToolWeapon'
+  values=failed.handler.getQuickTransferItems(failed.personal,'category')
+  assert(#values==1 and failed.stock.category=='toolElectrical','category enumeration did not recover after an error')
  end
- print('PASS offline category boundary: real CleanUI callbacks/Toolkit wrappers reject raw physical target categories for methods 1/2; same-type and normal target-refresh controls admit exact ID 301')
+ print('PASS offline category preparation: actual CleanUI dispatch/preview/menu, both methods, pure row boundary, overrides/filter/native guards, scoped preparation freshness/nesting/errors')
 end
 print('PASS warehouse affinity: installed CleanUI type/category callbacks, native option snapshot/setValue/restore, exact admission IDs and guarded observations; stale aggregate is a controlled dependency demonstration only')

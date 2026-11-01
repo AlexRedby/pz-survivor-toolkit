@@ -1,6 +1,7 @@
 local InventoryClasses = require "PZSurvivorToolkit/InventoryClasses"
 local Rows = require "PZSurvivorToolkit/InventoryRows"
 local Membership = require "PZSurvivorToolkit/InventoryMembership"
+local Categories = require "PZSurvivorToolkit/ItemCategories"
 local Search = require "PZSurvivorToolkit/InventorySearch"
 require "PZSurvivorToolkit/Settings"
 local UIStyle = require "PZSurvivorToolkit/UIStyle"
@@ -21,13 +22,20 @@ end
 
 -- A command only enumerates/queues transfers; native execution validates them later.
 -- Never retain membership across commands, frames, or nested enumerations.
-local function withTransferMembership(callback, ...)
+local function withTransferMembership(callback, categoryCommand, ...)
     local previous = transferMembership
-    transferMembership = {parent = previous, index = {}}
+    transferMembership = {parent = previous, index = {}, categories = {}, categoryCommand = categoryCommand}
     local result = pack(pcall(callback, ...))
     transferMembership = previous
     if not result[1] then error(result[2], 0) end
     return unpack(result, 2, result.n)
+end
+
+local function prepareTransferCategories(container)
+    local scope = transferMembership
+    if not container or scope and scope.categories[container] then return end
+    Categories.prepareContainer(container)
+    if scope then scope.categories[container] = true end
 end
 
 local function categoryName(category)
@@ -293,6 +301,7 @@ local function install(class)
         local membership = transferMembership
         while membership do
             membership.index = {}
+            membership.categories = {}
             membership = membership.parent
         end
         self.toolkitFilterItems, self.toolkitFilterSourceRows = nil, nil
@@ -352,6 +361,29 @@ local function installQuickTransfers()
     local handler = ISInventoryPageTransferHandler
     if not handler or patched[handler] then return end
     patched[handler] = true
+    -- These category consumers may read physical replicas that no pane has shown.
+    -- Keep upstream admission/routing intact and prepare metadata once per command.
+    for _, name in ipairs({"getItemsCategoryTable", "containerHasCategory"}) do
+        local original = handler[name]
+        if original then
+            handler[name] = function(container, ...)
+                prepareTransferCategories(container)
+                return original(container, ...)
+            end
+        end
+    end
+    local nearby = handler.getNearbyTransferContainers
+    if nearby then
+        handler.getNearbyTransferContainers = function(...)
+            local containers = nearby(...)
+            -- Nearby category dispatch/preview scan these items directly, before
+            -- containerHasCategory. Type-only commands do not need this pass.
+            if transferMembership and transferMembership.categoryCommand then
+                for _, container in ipairs(containers) do prepareTransferCategories(container) end
+            end
+            return containers
+        end
+    end
     local canTransfer = handler.canTransferItem
     handler.canTransferItem = function(item, container, player, ...)
         if item and player then
@@ -368,14 +400,17 @@ local function installQuickTransfers()
         local original = handler[name]
         handler[name] = function(page, ...)
             page.inventoryPane:refreshContainer()
-            return withTransferMembership(original, page, ...)
+            return withTransferMembership(original, name == "transferSameCategory", page, ...)
         end
     end
     -- These enumerate the same eligibility predicate without executing transfers.
     for _, name in ipairs({"getQuickTransferItems", "showTransferMenu"}) do
         local original = handler[name]
         if original then
-            handler[name] = function(...) return withTransferMembership(original, ...) end
+            handler[name] = function(page, ...)
+                local categoryCommand = name == "showTransferMenu" or select(1, ...) == "category"
+                return withTransferMembership(original, categoryCommand, page, ...)
+            end
         end
     end
     handler.takeSameType = handler.transferSameType

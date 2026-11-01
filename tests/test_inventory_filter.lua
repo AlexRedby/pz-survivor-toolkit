@@ -800,6 +800,7 @@ do
         end
         if name=='PZSurvivorToolkit/InventorySearch' then return {forPane=function() end} end
         if name=='PZSurvivorToolkit/ItemTags' then return {enabled=function() return false end} end
+        if name=='PZSurvivorToolkit/ItemCategories' then return {prepareContainer=function() end} end
         return {}
     end
     local chunk=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/InventoryFilter.lua'))
@@ -900,6 +901,7 @@ do
             if name=='PZSurvivorToolkit/InventoryRows' then return {restoreSelection=function() end} end
             if name=='PZSurvivorToolkit/InventorySearch' then return {forPane=function() end,matches=function() return true end} end
             if name=='PZSurvivorToolkit/ItemTags' then return {enabled=function() return false end,ruleActive=function() return false end} end
+            if name=='PZSurvivorToolkit/ItemCategories' then return {prepareContainer=function() end} end
             return {}
         end
         for index=1,2 do

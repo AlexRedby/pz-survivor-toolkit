@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.334
+
+- **Fixed:** CleanUI category quick transfers now prepare fresh physical destination items before matching, including nearby containers, previews and the transfer menu. Items received from another player no longer require reopening or refreshing the loot window to match their carried counterparts. Native eligibility, saved item categories and the aggregate insertion restriction remain in effect.
+
 ### 0.1.333
 
 - Add an opt-in structural forecast for editing active reading: distinguish the observed checkpoint, future resumed reader, pending actions and cleanup obligations. Read private obligation metadata without creating returns or updating receipts; unknown ownership stays explicit. This preparation adds no new cancel/reorder permissions and runs only when explicitly requested by development checks.

@@ -118,7 +118,9 @@ preparation is added after replication.
 
 Receipts record raw physical categories immediately before/after the callback,
 native eligibility for both carried candidates, exact queued/transferred IDs,
-and at least three post-callback draw frames and 500 ms with an idle queue.
+and at least three post-callback game ticks, three draw frames and 500 ms with
+an idle queue. CleanUI may defer enqueue until the next tick; an empty queue
+immediately after the button callback does not establish a no-op.
 Both methods must deposit only the new Screwdriver candidate. A coherent
 category miss or stale transfer is conserved and fully cleaned up before the
 functional verifier rejects the result; a failing baseline is never a pass.

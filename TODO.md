@@ -48,11 +48,6 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ## Inventory, crafting, food and storage block
 
-### Warehouse client workload
-
-- [ ] Fix destination category preparation for CleanUI quick transfers to new peer-replicated physical stock: carried Screwdriver `toolElectrical` does not match raw physical stock `ToolWeapon` in single-target or nearby mode. The complete-pack two-client Host reproduces both category misses with successful same-type controls and full restoration. Keep observers read-only and preserve the separate aggregate-insertion restriction.
-  - [ ] Prepare the required physical inputs at the shared category-affinity boundary, including related preview/menu paths; preserve instance overrides, filters and native eligibility without rebuilding hidden UI rows. Update the characterization to require successful category admission and rerun affected source checks and supported Host phases.
-
 ### Item catalogue test world
 
 - [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen with the complete current source lock. The earlier isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text, but omitted seven selected mods; five startup font errors also remain unclassified.
