@@ -256,6 +256,14 @@ local function observe()
 end
 local function lifecycleBegin(action,step)
  local row=register(action)
+ -- Instant native actions can perform and leave the queue between OnTick
+ -- observations. Capture their real episode at the callback boundary; this
+ -- records neither an observed start nor fabricated progress/duration.
+ if row and step=='perform'and action.action then
+  local episode=ref(action.action)
+  assert(not row.nativeRef or row.nativeRef==episode,'native perform episode changed')
+  row.nativeRef=row.nativeRef or episode;row.allocatedAt=row.allocatedAt or now()
+ end
  if requestsEnabled and row and step=='perform'then requestSample(action,row,'perform-begin')end
  if row and step=='perform'and row.type=='ISInventoryTransferAction'and action.transactionId then
   row.transaction=action.transactionId;row.transactionDone=isClient()and isItemTransactionDone(action.transactionId)==true or not isClient()

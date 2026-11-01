@@ -1079,6 +1079,53 @@ os.exit(0)
         row,ids=self.request_evidence(a.CAPACITY_CASES[0],kind='sp')[:2]
         self.assertEqual(a.native_transfer_stop_errors(row,row['id'],selection,ids),[])
 
+    def test_actual_callback_captures_instant_native_episode_without_inventing_start(self):
+        lua=shutil.which('luajit')
+        if not lua:self.skipTest('LuaJIT not installed')
+        text=(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua').read_text()
+        first=text.index('local function lifecycleBegin(action,step)')
+        body=text[first:text.index('local function lifecycleFinish(',first)]
+        source="""
+local run=assert(loadstring(arg[1]..' return lifecycleBegin'))()
+local row={type='ISInventoryTransferAction',duration=0,started=false,progress=false}
+local action={action={},transactionId=0}
+isClient=function()return false end
+register=function()return row end;ref=function(value)return value end;now=function()return 25 end
+requestsEnabled=true;transferEpisode=nil
+requestSample=function(a,r,point)
+ assert(point=='perform-begin'and r.nativeRef==a.action and r.allocatedAt==25,'sample lost actual instant episode')
+end
+assert(run(action,'perform'))
+assert(row.nativeRef==action.action and row.allocatedAt==25)
+assert(not row.started and not row.progress and row.startedAt==nil and row.effectiveDuration==nil,'callback fabricated native timing')
+row.nativeRef={};local ok,err=pcall(run,action,'perform')
+assert(not ok and tostring(err):find('native perform episode changed',1,true),'foreign episode accepted')
+row.nativeRef=nil;row.allocatedAt=nil;action.action=nil;requestsEnabled=false
+assert(run(action,'perform')and row.nativeRef==nil and row.allocatedAt==nil,'missing Java action acquired a native identity')
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',body],check=True)
+
+    def test_instant_return_request_identity_remains_strict_without_observed_start(self):
+        case='world.header-cancel-favorite';evidence=self.request_evidence(case,'sp','native')
+        row,ids=evidence[:2];selection=self.selection('sp','native');selection['options']['require_native_requests']=True
+        extra=copy.deepcopy(next(r for r in row['records']if r['role']=='return'))
+        extra.update(sequence=800,actionRef='ISInventoryTransferAction 0x800',token=77,duration=0,
+                     started=False,progress=False,nativeRef='java:800',allocatedAt=2,performedAt=4)
+        extra['requestStates']=[]
+        for point,at,native,current in [('pending',1,False,True),('perform-begin',2,'java:800',True),
+                                        ('perform-finish',4,'java:800',False),('terminal',5,'java:800',False)]:
+            extra['requestStates'].append(dict(case=case,sequence=800,actor=ids['actor'],item=ids['front']['id'],
+                itemType=ids['front']['type'],token=77,actionRef=extra['actionRef'],nativeRef=native,
+                point=point,at=at,current=current,transaction=0,observation=False,watchPending=False))
+        row['records'].append(extra)
+        self.assertEqual(a.native_request_errors(row,case,selection,ids),[])
+        for mutate in (lambda r:r.pop('nativeRef'),lambda r:r.update(nativeRef='foreign'),
+                       lambda r:r['requestStates'][2].update(nativeRef='foreign'),
+                       lambda r:r['requestStates'][-1].update(observation={'phase':'submitted'})):
+            changed=copy.deepcopy(row);mutate(changed['records'][-1])
+            self.assertTrue(a.native_request_errors(changed,case,selection,ids))
+
     def test_native_request_negative_evidence_has_strict_scalar_schema(self):
         selection=self.selection();selection['options']['require_native_requests']=True
         base=self.request_evidence('root.header-cancel')
