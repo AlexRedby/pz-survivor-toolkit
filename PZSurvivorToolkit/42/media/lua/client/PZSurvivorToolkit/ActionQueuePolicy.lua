@@ -25,6 +25,7 @@ local Operations = Toolkit.ActionQueueOperations
 local nativeForceCancel = ISBaseTimedAction.forceCancel
 local Proof = require "PZSurvivorToolkit/SourceProof"
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
+local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
 local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
@@ -2173,6 +2174,110 @@ end
 function Policy.evaluateCancel(queue, action, whole)
     local context = freshDecisionContext()
     return inDecision(queue, context, nil, evaluateCancel, queue, action, whole, context)
+end
+
+-- Opt-in observation only. No UI/tick/commit path calls this while migration
+-- is incomplete; a resource projection is never an edit permission.
+function Policy.observeActiveEdit(queue, intent)
+    local function unknown(reason)return {status="unhandled",reason=reason or "edit_unknown"}end
+    if type(intent)~="table"or getmetatable(intent)or type(queue)~="table"
+        or type(queue.queue)~="table"or getmetatable(queue.queue)
+        or #queue.queue==0 or #queue.queue>MAX_RETURN_EXECUTION_MEMBERS or not live(queue)
+        or ISTimedActionQueue.queues[queue.character]~=queue or queue.current~=queue.queue[1]
+        or queue.toolkitCancel or queue.toolkitGroupCancel or queue.toolkitResume
+        or queue.toolkitOutcomeWait or queue.toolkitStopIntent
+        or (intent.after~=nil and type(intent.after)~="boolean")
+        or (intent.whole~=nil and type(intent.whole)~="boolean")
+        or not EditTransition or Toolkit.ActionQueueEditTransition~=EditTransition
+        or not Proof.closure(EditTransition.project,"ActionQueueEditTransition.lua")then return unknown()end
+    for _,member in ipairs(queue.queue)do if type(member)~="table"then return unknown()end end
+    local snapshot=editSnapshot(queue)
+    local current=queue.current
+    local currentItem=current.item
+    local fields={"Type","item","srcContainer","destContainer","mode","device","deviceData","secondaryItem","primary","twoHands"}
+    local observed={}
+    for index,member in ipairs(queue.queue)do
+        local values={}
+        for _,field in ipairs(fields)do values[field]=member[field]end
+        observed[index]=values
+    end
+    local context=freshDecisionContext()
+    local function readerEdit(member)
+        local binding=snapshots[getmetatable(member)]
+        if member.Type~="ISReadABook"or not binding or not nativeMatches(member,binding)
+            or member._isAddingActions or member.onStartFunc or member.onCancelFunc or member.onCompleteFunc
+            or member.onFailFunc or member.additionalTest then return end
+        local contract=inspect(member,context)
+        if not contract or contract.interrupt~="audited-resume"or contract.knownInputs==false or contract.unknownOutputs then return end
+        local item=member.item
+        if not instanceof(item,"InventoryItem")then return end
+        local id,fullType,location=item:getID(),item:getFullType(),item:getContainer()
+        if type(id)~="number"or id~=id or id%1~=0 or type(fullType)~="string"or fullType==""
+            or not instanceof(location,"ItemContainer")then return end
+        local root=member.character:getInventory()
+        return {version=1,complete=true,capacity="unchanged",resources={{domain="item",key=id,
+            facts={item=item,location=location},requires={{field="location",equal=root}},effects={}}}},id,fullType,location
+    end
+    if not current.action or not current.action:isStarted()or current.action:finished()
+        or current.action:isForceComplete()then return unknown("edit_in_flight")end
+    local checkpoint,bookId,bookType,bookLocation=readerEdit(current)
+    if not checkpoint then return unknown()end
+    local first,last=Operations.bounds(queue,current)
+    if first~=1 then return unknown()end
+    local kind,rangeFirst,rangeLast
+    if intent.kind=="cancel"and intent.action==current then
+        kind=intent.whole and "cancel-operation"or "cancel-body"
+        rangeFirst,rangeLast=1,intent.whole and last or 1
+    elseif intent.kind=="move"then
+        local selectedFirst,selectedLast=Operations.bounds(queue,intent.action)
+        local targetFirst,targetLast=Operations.bounds(queue,intent.target)
+        if not selectedFirst or not targetFirst then return unknown()end
+        if selectedFirst==1 then
+            kind,rangeFirst,rangeLast="preempt",last+1,intent.after and targetLast or targetFirst-1
+        elseif targetFirst==1 and not intent.after then
+            kind,rangeFirst,rangeLast="preempt",selectedFirst,selectedLast
+        else return unknown()end
+        if rangeFirst>rangeLast then return unknown("edit_no_change")end
+    else return unknown()end
+    local entries={}
+    for index,member in ipairs(queue.queue)do
+        local contract=inspect(member,context)
+        local edit
+        if index==1 then edit=checkpoint
+        elseif member.Type=="ISReadABook"then
+            local readEdit,_,readType=readerEdit(member)
+            -- Native progress is shared by full type. Its cross-copy completion/
+            -- reset effects have no declarative contract yet; retain unknown.
+            if readType~=bookType then edit=readEdit end
+        else edit=contract and contract.edit end
+        if not contract or contract.knownInputs==false or contract.unknownOutputs then edit=nil end
+        entries[index]={action=member,edit=edit,active=index==1 or member.action~=nil or member.started==true}
+    end
+    local item=currentItem
+    local pages,total=item:getAlreadyReadPages(),item:getNumberOfPages()
+    if type(pages)~="number"or pages~=pages or pages<0 or pages==math.huge
+        or type(total)~="number"or total~=total or total==0 or math.abs(total)==math.huge
+        or total>0 and pages>total then return unknown()end
+    local ledger
+    if kind=="cancel-operation"then
+        local settlement=Toolkit.ActionQueueSettlement
+        if settlement and Proof.closure(settlement.editLedger,"ActionQueueSettlement.lua")then
+            ledger=settlement.editLedger(queue,current)
+        end
+    end
+    local result=EditTransition.project(entries,{kind=kind,first=rangeFirst,last=rangeLast,
+        generation=queue.toolkitOperationGeneration or 0,checkpoint=checkpoint,ledger=ledger})
+    if current.item~=item or not Policy.editUnchanged(queue,snapshot)then return unknown("unavailable")end
+    for index,member in ipairs(queue.queue)do
+        for _,field in ipairs(fields)do
+            if not rawequal(member[field],observed[index][field])then return unknown("unavailable")end
+        end
+    end
+    if result.status=="observed"then
+        result.checkpoint={stage="before-stop",id=bookId,fullType=bookType,pages=pages,total=total,location=bookLocation}
+        result.snapshot=snapshot
+    end
+    return result
 end
 
 local function priorityDecision(queue, action, preempt, decide)

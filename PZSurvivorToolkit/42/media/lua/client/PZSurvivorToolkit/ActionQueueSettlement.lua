@@ -403,6 +403,101 @@ function Settlement.operationState(action)
     return result
 end
 
+-- A bounded observation of existing obligations, never an execution forecast.
+-- Avoid operationLive: its cancellation bridge may retire state and invoke
+-- settings/native callbacks. Missing history remains explicitly unknown.
+local editLedgerOrigin = executionProof and executionProof.closure
+function Settlement.editLedger(queue, current)
+    local function unknown() return {status = "unhandled", reason = "edit_obligation_unknown"} end
+    -- Query-local list freshness only: retaining an old array in the private
+    -- operation would also retain unrelated tail actions after replacement.
+    local list = type(queue) == "table" and rawget(queue, "queue")
+    if PZSurvivorToolkit ~= Toolkit or Toolkit.ActionQueueSettlement ~= Settlement
+        or type(queue) ~= "table" or type(current) ~= "table" or type(queue.queue) ~= "table"
+        or getmetatable(queue.queue) ~= nil or queue.current ~= current or queue.queue[1] ~= current
+        or rawget(current, "character") ~= queue.character or not queue.character
+        or not ISTimedActionQueue or not ISTimedActionQueue.queues
+        or ISTimedActionQueue.queues[queue.character] ~= queue
+        or queue.toolkitCancel or queue.toolkitGroupCancel or queue.toolkitResume
+        or queue.toolkitOutcomeWait or queue.toolkitStopIntent or cancellations[queue] then return unknown() end
+    local token, generation = rawget(current, "toolkitQueueOperation"), queue.toolkitOperationGeneration or 0
+    if type(generation) ~= "number" or generation % 1 ~= 0
+        or type(token) ~= "table" or getmetatable(token) ~= nil or token.toolkitCancelled
+        or not executionProof or executionProof.closure ~= editLedgerOrigin
+        or type(editLedgerOrigin) ~= "function" then return unknown() end
+    local seal = rawget(token, operationMarker)
+    if type(seal) ~= "function" or not editLedgerOrigin(seal, "ActionQueueSettlement.lua") then return unknown() end
+    local ok, record = pcall(seal, token)
+    if not ok or type(record) ~= "table" or getmetatable(record) ~= nil
+        or record.token ~= token or record.queue ~= queue or list ~= queue.queue
+        or record.character ~= queue.character or record.generation ~= generation or record.settlement
+        or queue.current ~= current or queue.queue[1] ~= current or rawget(current, "character") ~= record.character
+        or rawget(current, "toolkitQueueOperation") ~= token or token.toolkitCancelled
+        or ISTimedActionQueue.queues[record.character] ~= queue or (queue.toolkitOperationGeneration or 0) ~= generation
+        or queue.toolkitCancel or queue.toolkitGroupCancel or queue.toolkitResume
+        or queue.toolkitOutcomeWait or queue.toolkitStopIntent or cancellations[queue] then return unknown() end
+    local function boundedArray(values, maximum)
+        if type(values) ~= "table" or getmetatable(values) ~= nil then return end
+        local count, size = 0, #values
+        if size > maximum then return end
+        for key in pairs(values) do
+            count = count + 1
+            if count > maximum or type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > size then return end
+        end
+        if count == size then return size end
+    end
+    local stepCount, borrowingCount = boundedArray(record.steps, 32), boundedArray(record.borrowings, 32)
+    if not stepCount or not borrowingCount or type(record.actions) ~= "table" or not record.actions[current] then return unknown() end
+    local hints = rawget(token, "toolkitPickups")
+    local hinted = hints ~= nil
+    if type(hints) == "table" and getmetatable(hints) == nil then
+        hinted = false
+        for _ in pairs(hints) do hinted = true; break end
+    end
+    local result = {status = "observed", generation = generation, steps = {}, borrowings = {},
+        legacyHints = hinted, providersPresent = #providers > 0}
+    local visits = 0
+    for index = 1, stepCount do
+        local step = record.steps[index]
+        if type(step) ~= "table" or getmetatable(step) ~= nil or step.operation ~= record
+            or type(step.action) ~= "table" or rawget(step.action, "character") ~= record.character
+            or rawget(step.action, "toolkitQueueOperation") ~= token or record.actions[step.action] ~= step
+            or (step.phase ~= "prepare" and step.phase ~= "body" and step.phase ~= "cleanup")
+            or type(step.state) ~= "string" then return unknown() end
+        local required = step.required == true
+        if step.prerequisites ~= nil then
+            local count = boundedArray(step.prerequisites, 128 - visits)
+            if not count then return unknown() end
+            visits = visits + count
+            for position = 1, count do
+                local previous = step.prerequisites[position]
+                if type(previous) ~= "table" or getmetatable(previous) ~= nil or previous.operation ~= record
+                    or not previous.action or record.actions[previous.action] ~= previous then return unknown() end
+                required = required or previous.state == "earned"
+            end
+        end
+        result.steps[index] = {action = step.action, phase = step.phase, state = step.state,
+            started = step.started == true, required = required, returning = step.returning ~= nil}
+    end
+    for index = 1, borrowingCount do
+        local binding = record.borrowings[index]
+        local candidate = type(binding) == "table" and getmetatable(binding) == nil and binding.candidate
+        if type(candidate) ~= "table" or getmetatable(candidate) ~= nil or candidate.owner ~= token
+            or type(candidate.id) ~= "number" or candidate.id % 1 ~= 0
+            or type(candidate.fullType) ~= "string" or type(candidate.phase) ~= "string"
+            or candidate.source == nil or candidate.destination == nil
+            or candidate.plannedReturn ~= nil and type(candidate.plannedReturn) ~= "table" then return unknown() end
+        local owner = candidate.sourceOwner
+        if owner ~= nil and (type(owner) ~= "table" or getmetatable(owner) ~= nil
+            or type(owner.id) ~= "number" or owner.id % 1 ~= 0 or type(owner.fullType) ~= "string") then return unknown() end
+        result.borrowings[index] = {id = candidate.id, fullType = candidate.fullType, state = candidate.phase,
+            ambiguous = candidate.ambiguous == true, source = candidate.source, destination = candidate.destination,
+            sourceOwner = owner and {id = owner.id, fullType = owner.fullType} or nil,
+            returning = candidate.returning ~= nil, plannedReturn = candidate.plannedReturn}
+    end
+    return result
+end
+
 -- Families retain their own identity/effect proofs. Registration grants no edit rights.
 function Settlement.register(id, provider)
     assert(type(id) == "string" and type(provider) == "table" and type(provider.retain) == "function")

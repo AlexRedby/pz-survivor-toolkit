@@ -542,6 +542,41 @@ for _,kind in ipairs({'fuel','wreck'}) do
     assert(api.moveReason(q,deferred,callbackMove)=='move_dependent', 'future vehicle inputs prevent moving its command')
     assert(api.moveReason(q,callbackMove,deferred,true)=='move_dependent', 'other work cannot cross unresolved vehicle inputs')
 end
+-- Compare the observer's structural sequence with the existing native-stop/
+-- constructor path below. Unknown leaf resources intentionally stay unmodeled.
+local function observedReadOrder(queue,first,last)
+    local savedRequire,savedFilename=require,getFilenameOfClosure
+    local oldModel,oldTransition=PZSurvivorToolkit.ActionQueueEditModel,PZSurvivorToolkit.ActionQueueEditTransition
+    getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+    local prefix=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/'
+    local model=assert(loadfile(prefix..'client/PZSurvivorToolkit/ActionQueueEditModel.lua'))()
+    require=function(name)
+        if name=='PZSurvivorToolkit/ActionQueueEditModel'then return model end
+        return savedRequire(name)
+    end
+    local transition=assert(loadfile(prefix..'client/PZSurvivorToolkit/ActionQueueEditTransition.lua'))()
+    local entries={}
+    for i,action in ipairs(queue.queue)do entries[i]={action=action,active=i==1}end
+    local result=transition.project(entries,{kind='preempt',first=first,last=last,
+        checkpoint={version=1,complete=true,capacity='unchanged',resources={}},generation=0})
+    require,getFilenameOfClosure=savedRequire,savedFilename
+    PZSurvivorToolkit.ActionQueueEditModel,PZSurvivorToolkit.ActionQueueEditTransition=oldModel,oldTransition
+    assert(result.status=='observed'and result.projection.status=='unhandled',
+        'structural observation must not invent resource contracts for native test leaves')
+    return result
+end
+local function matchesResumedOrder(plan,queue,resumed)
+    local position=1
+    for _,node in ipairs(plan.nodes)do
+        if node.kind~='checkpoint'then
+            if node.kind=='resume'then
+                assert(queue.queue[position]==resumed and resumed~=node.action and resumed.item==node.action.item)
+            else assert(queue.queue[position]==node.action,'observed order differs from actual native reconstruction')end
+            position=position+1
+        end
+    end
+    assert(position==#queue.queue+1)
+end
 -- Interrupt a read only after native stop/removal; a fresh native read preserves saved pages.
 p=player();a,b=book(p),book(p)
 q=ISTimedActionQueue.add(a);ISTimedActionQueue.add(b);frame(p)
@@ -550,6 +585,7 @@ p=player();a,b,c=book(p),leaf(p,'walk'),leaf(p,'tv')
 q=ISTimedActionQueue.add(a)
 operations.run(function() ISTimedActionQueue.add(b);ISTimedActionQueue.add(c) end)
 frame(p);p.pages=37
+local promotedPlan=observedReadOrder(q,2,3)
 assert(api.move(q,c,a) and q.current==a and q.queue[2]==b and q.queue[3]==c)
 q:tick();assert(#q.queue==3 and q.current==a, 'no premature read reconstruction')
 assert(not api.move(q,c,c), 'in-flight stop blocks edits')
@@ -557,6 +593,7 @@ frame(p)
 local resumed=q.queue[3]
 assert(q.current==b and resumed~=a and resumed.item==a.item and resumed.Type=='ISReadABook')
 assert(resumed.startPage==37 and resumed.pageTimer==0 and not resumed.action and not q.toolkitResume)
+matchesResumedOrder(promotedPlan,q,resumed)
 b.action.done=true;frame(p);c.action.done=true;frame(p)
 assert(q.current==resumed and not p.actions[a.action] and p.actions[resumed.action])
 -- A natural finish or external stop wins over a requested read resumption.
@@ -1653,6 +1690,7 @@ do
         return character,queue,read,returned,power,insert,play,shelf
     end
     local character,queue,read,returned,power,insert,play,shelf=scenario()
+    local loweredPlan=observedReadOrder(queue,3,5)
     refresh();panel=ui[#ui];panel:update();list=panel.list
     assert(list.items[1].header and not api.moveReason(queue,read),'active reading header must be draggable')
     drag(1,#list.items,true)
@@ -1666,6 +1704,7 @@ do
         and resumed.toolkitQueueOperation==returned.toolkitQueueOperation and queue.queue[5]==returned)
     local first,last=operations.bounds(queue,resumed)
     assert(first==4 and last==5,'resumed reading and shelf return stay one contiguous operation')
+    matchesResumedOrder(loweredPlan,queue,resumed)
     for _,command in ipairs({power,insert,play}) do
         assert(queue.current==command);command.action.done=true;frame(character)
     end
