@@ -20,6 +20,7 @@ local function script(name, kind)
         getDisplayCategory = function() return "Food" end,
         getDisplayName = function() return name end,
         isItemType = function(_, expected) return expected == (kind or ItemType.FOOD) end}
+    value.isIsCookable = function() return value.cookable == true end
     scripts[name] = value
     return value
 end
@@ -28,6 +29,7 @@ local flour, salt, sugar = script("Base.Flour2"), script("Base.Salt"), script("B
 local oil, honey, hops = script("Base.OilOlive"), script("Base.Honey"), script("Base.Hops")
 local openCan, closedCan = script("Base.CannedSardinesOpen"), script("Base.CannedSardines")
 local bread, batter, dish = script("Base.BreadSlices"), script("Base.CakeBatter"), script("Base.Cake")
+dish.cookable = true
 local powder = script("Base.AnimalMilkPowder", "drainable")
 local pot, knife, jar, fuel = script("Base.Pot", "normal"), script("Base.Knife", "normal"),
     script("Base.Jar", "normal"), script("Base.Charcoal", "normal")
@@ -106,8 +108,10 @@ local craft = list({
     recipe({milkInput}, {output({dish})}),
 })
 local chum, bait = script("Base.Chum"), script("Base.BaitFish")
+-- B42.21 EvolvedRecipe.Load sets this flag from key presence: the native
+-- AddBaitToChum's Cookable=false becomes true. Item.IsCookable remains false.
 local evolvedRecipes = list({evolved(pot, {meat, vegetable, peanuts, flour, salt, sugar, oil, honey, openCan}),
-    evolved(bread, {}), evolved(chum, {bait}, {result = chum, cookable = false})})
+    evolved(bread, {}), evolved(chum, {bait}, {result = chum, cookable = true})})
 local manager = {getAllCraftRecipes = function() return craft end,
     getAllEvolvedRecipesList = function() return evolvedRecipes end,
     getItem = function(_, name) return scripts[name] end}
@@ -120,6 +124,26 @@ for _, definition in ipairs({meat, vegetable, peanuts, flour, salt, sugar, oil, 
     expect(definition, true)
 end
 for _, definition in ipairs({pot, knife, jar, fuel, hops, closedCan, dish, chum, bait}) do expect(definition, false) end
+do
+    local previousCraft, previousEvolved = craft, evolvedRecipes
+    local cold, drink = script("Probe.ColdMeal"), script("Probe.ColdDrink")
+    cold.getHungerChange = function() return -5 end
+    drink.getThirstChange = function() return -5 end
+    local coldInput, drinkInput = script("Probe.ColdIngredient"), script("Probe.DrinkIngredient")
+    local nonfood, nonfoodInput = script("Probe.Nonfood", "normal"), script("Probe.NonfoodIngredient")
+    nonfood.cookable = true
+    craft = list({})
+    evolvedRecipes = list({
+        evolved(pot, {coldInput}, {result = cold, cookable = false}),
+        evolved(pot, {drinkInput}, {result = drink, cookable = false}),
+        evolved(pot, {nonfoodInput}, {result = nonfood, cookable = true}),
+    })
+    expect(coldInput, true)
+    expect(drinkInput, true)
+    expect(nonfoodInput, false)
+    craft, evolvedRecipes = previousCraft, previousEvolved
+end
+expect(peanuts, true)
 local before = scans
 for _ = 1, 100 do expect(peanuts, true) end
 assert(scans == before, "repeated classification must not rescan recipe catalogs")
@@ -335,9 +359,12 @@ for _, definition in ipairs({peanuts, flour, salt, meat, vegetable, honey, oil, 
         assert(Tags.matches(tags, {"ingredient"}), definition:getFullName() .. " lost ingredient projection")
     end
 end
-for _, definition in ipairs({hops, closedCan, pot, fuel}) do
-    assert(not Tags.matches(Tags.forItem(physical(definition)), {"ingredient"}),
-        definition:getFullName() .. " inherited ingredient without cooking capability")
+for _, definition in ipairs({hops, closedCan, pot, fuel, chum, bait}) do
+    for _, tags in ipairs({Tags.forScriptItem(definition), Tags.forItem(physical(definition)),
+        Tags.forSnapshot(definition, definition:getFullName(), "Food")}) do
+        assert(not Tags.matches(tags, {"ingredient"}),
+            definition:getFullName() .. " inherited ingredient without cooking capability")
+    end
 end
 local liveBottle = physical(bottle)
 container.empty, container.fluid = false, milk
@@ -403,8 +430,11 @@ if NativeActionRoot then
         local definition = scripts["Base." .. name] or script("Base." .. name)
         local hunger = tonumber(block:match("HungerChange%s*=%s*([^,]+)")) or 0
         local thirst = tonumber(block:match("ThirstChange%s*=%s*([^,]+)")) or 0
+        local cookable = block:match("IsCookable%s*=%s*([^,]+)")
+        cookable = cookable and cookable:match("^%s*(.-)%s*$"):lower() == "true" or false
         definition.getHungerChange = function() return hunger end
         definition.getThirstChange = function() return thirst end
+        definition.isIsCookable = function() return cookable end
         nativeDefinitions["Base." .. name] = definition
         local links = block:match("EvolvedRecipe%s*=%s*([^,]+)") or ""
         for evolvedName, use in links:gmatch("([^;:]+):(%d+)") do
@@ -423,7 +453,7 @@ if NativeActionRoot then
         local base = baseName and (nativeDefinitions[baseName] or scripts[baseName] or script(baseName, "normal"))
         if base and resultName and nativeDefinitions[resultName] then
             nativeEvolved[#nativeEvolved + 1] = evolved(base, additions[template] or {},
-                {result = nativeDefinitions[resultName], cookable = block:match("Cookable%s*=%s*true") ~= nil})
+                {result = nativeDefinitions[resultName], cookable = block:match("Cookable%s*=") ~= nil})
         end
     end
     evolvedRecipes = list(nativeEvolved)

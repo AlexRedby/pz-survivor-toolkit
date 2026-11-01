@@ -29,7 +29,8 @@ for _,kind in ipairs({'craft','evolved','legacy'}) do
 end
 local manager={getAllCraftRecipes=getters.craft,getAllEvolvedRecipesList=getters.evolved,getAllRecipes=getters.legacy,
     getItem=function(_,fullType)
-        if fullType=='Mod.Meal' then return {isItemType=function(_,kind) return kind==ItemType.FOOD end} end
+        if fullType=='Mod.Meal' then return {isItemType=function(_,kind) return kind==ItemType.FOOD end,
+            isIsCookable=function() return true end} end
     end}
 getScriptManager=function() return manager end
 local Tags=require 'PZSurvivorToolkit/ItemTags'

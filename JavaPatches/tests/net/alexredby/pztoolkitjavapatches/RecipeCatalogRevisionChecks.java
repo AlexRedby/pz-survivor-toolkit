@@ -93,7 +93,7 @@ public final class RecipeCatalogRevisionChecks {
             + "evolvedrecipe CatalogMeal { BaseItem=Base.CatalogVessel, MaxItems=6, "
             + "ResultItem=Base." + (time == 19 ? "CatalogVessel" : "CatalogFood") + ", Cookable=true, } "
             + "item CatalogVessel { ItemType=base:normal, } "
-            + "item CatalogFood { ItemType=base:food, HungerChange=0, "
+            + "item CatalogFood { ItemType=base:food, IsCookable=true, HungerChange=0, "
             + "EvolvedRecipe=CatalogMeal:" + use + ", } }");
     }
 

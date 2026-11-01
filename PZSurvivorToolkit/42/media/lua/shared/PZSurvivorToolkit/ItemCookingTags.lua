@@ -71,9 +71,10 @@ end
 local function evolvedMeal(recipe, manager)
     local result = manager.getItem and manager:getItem(recipe:getFullResultItem())
     if not food(result) then return false end
-    -- EvolvedRecipe also implements fishing chum. A Food implementation alone
-    -- does not make its bait additions culinary ingredients.
-    return recipe:isCookable()
+    -- B42.21 EvolvedRecipe.Load treats Cookable=false as true. The result's
+    -- Item.IsCookable is a real Boolean; combine it with nutrition so cold
+    -- meals/drinks qualify while non-nutritive fishing chum does not.
+    return result.isIsCookable and result:isIsCookable()
         or result.getHungerChange and result:getHungerChange() < 0
         or result.getThirstChange and result:getThirstChange() < 0
 end
