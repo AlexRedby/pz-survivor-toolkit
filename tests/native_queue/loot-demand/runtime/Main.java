@@ -91,20 +91,53 @@ public final class Main {
             method.invoke(field.get(null),object);
         }
     }
-    private static void items(ItemContainer container,String prefix,java.util.List<String> rows,int depth) {
+    private static void items(ItemContainer container,String prefix,java.util.List<String> rows,int depth,boolean includeTypes) {
         if(depth>32) throw new IllegalStateException("Fixture nesting limit");
         java.util.HashSet<Integer> ids=new java.util.HashSet<>();
         for(var item:container.getItems()) {
             if(!ids.add(item.getID())) throw new IllegalStateException("Duplicate native item ID");
-            String key=prefix+item.getID()+":"+item.getFullType();rows.add(key);
-            if(item instanceof zombie.inventory.types.InventoryContainer bag) items(bag.getInventory(),key+"/",rows,depth+1);
+            String key=prefix+item.getID()+(includeTypes?":"+item.getFullType():"");rows.add(key);
+            if(item instanceof zombie.inventory.types.InventoryContainer bag) items(bag.getInventory(),key+"/",rows,depth+1,includeTypes);
         }
+    }
+    @LuaMethod(name="lootDemandRows",global=true)
+    public static String rows(ItemContainer container) {
+        gate();java.util.List<String> rows=new java.util.ArrayList<>();items(container,"",rows,0,true);java.util.Collections.sort(rows);
+        return String.join("\n",rows);
     }
     @LuaMethod(name="lootDemandFingerprint",global=true)
     public static String fingerprint(ItemContainer container) throws Exception {
-        gate();java.util.List<String> rows=new java.util.ArrayList<>();items(container,"",rows,0);java.util.Collections.sort(rows);
         return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
-            .digest(String.join("\n",rows).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            .digest(rows(container).getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
+    private static String shape(ItemContainer container) {
+        java.util.List<String> rows=new java.util.ArrayList<>();items(container,"",rows,0,false);java.util.Collections.sort(rows);
+        return String.join("\n",rows);
+    }
+    private static ItemContainer roundtrip(ItemContainer container) throws Exception {
+        gate();String before=rows(container),identities=shape(container);
+        ByteBuffer out=ByteBuffer.allocate(8*1024*1024);container.save(out);out.flip();
+        ItemContainer copy=new ItemContainer();copy.load(out,IsoWorld.getWorldVersion());
+        if(out.hasRemaining() || !rows(container).equals(before) || !shape(copy).equals(identities)
+            || copy.isExplored()!=container.isExplored() || !copy.getType().equals(container.getType()))
+            throw new IllegalStateException("Native serialization changed source, identities, nesting or container state");
+        return copy;
+    }
+    @LuaMethod(name="lootDemandRoundtripRows",global=true)
+    public static String roundtripRows(ItemContainer container) throws Exception { return rows(roundtrip(container)); }
+    @LuaMethod(name="lootDemandMoveableRoundtrip",global=true)
+    public static boolean moveableRoundtrip() throws Exception {
+        gate();ItemContainer container=new ItemContainer();
+        var item=zombie.inventory.InventoryItemFactory.CreateItem("Base.Mov_PalletEmpty");
+        if(!(item instanceof zombie.inventory.types.Moveable moveable)
+            || !item.getFullType().equals("Base.Mov_PalletEmpty")
+            || !moveable.getWorldSprite().equals("construction_01_5")) return false;
+        container.AddItem(item);
+        ItemContainer copy=roundtrip(container);
+        var restored=copy.getItems().getFirst();
+        return restored instanceof zombie.inventory.types.Moveable moved
+            && restored.getID()==item.getID() && restored.getFullType().equals("Base.construction_01_5")
+            && moved.getWorldSprite().equals(moveable.getWorldSprite());
     }
     @LuaMethod(name="lootDemandSerialized",global=true)
     public static boolean serialized(ItemContainer container) throws Exception {

@@ -6,7 +6,7 @@ package unchanged. It defers initial native `bin`/`dumpster` loading, retaining
 native method guards reject unsupported code; partially installed hooks remain
 inactive. No blanket `getItems()` interception or background fill queue is added.
 
-`loot-demand/lifecycle` uses the shared runner's isolated SP or menu Host, one
+`loot-demand` uses the shared runner's isolated SP or menu Host, one
 client, current selected pack and normal desktop policy. Supply explicit local
 sources and `loot_demand_experiment=true`, `preload_toolkit_fonts=true`, and (for
 Host) `mp_host=true`. The runner must use `--exclusive`. An optional pinned
@@ -14,7 +14,7 @@ Host) `mp_host=true`. The runner must use `--exclusive`. An optional pinned
 fixture into an ordinary game profile. The generated mod requires its matching
 per-run token and ownership marker.
 
-The current native bank uses synthetic world objects with real bin sprites,
+Select `--cases lifecycle` for the lifecycle bank. It uses synthetic world objects with real bin sprites,
 actual loader/access methods, a fixture-only OnFillContainer sentinel, repeat and
 reentrant calls, native ItemContainer serialization, and destruction spilling.
 It checks that every generated item ID reaches the ground. The selected
@@ -23,8 +23,8 @@ entrypoints ensure every member container before capturing contents. Run its
 source-backed Lua checks with `furniture_checks.py --furniture-root PATH` using a
 Python environment containing Lupa.
 
-These are functional checks, not a driving benchmark. Native serialization in
-memory is not a stopped world save/restart. The Host phase creates a separate
+These are functional checks, not a driving benchmark. The lifecycle bank
+serializes containers in memory; that alone is not a world restart. The Host phase creates a separate
 source outside the nearby inventory scan, sends two native RequestItemsForContainer
 requests and compares recursive item IDs/types/count/tree against authority.
 Custom commands set up and verify the exchange; they do not transport contents.
@@ -60,15 +60,48 @@ advice inside that method. Measure with a minimal unchanged frame collector, or
 explicitly verify a composed transform before adding richer instrumentation; do
 not weaken the guards merely to admit an unknown combination.
 
+## Saved-world continuation
+
+`--cases persist-seed` combines the lifecycle bank, pending/completed world objects
+outside nearby inventory scanning, nested sentinel items and (in Host) the native
+request exchange. It leaves its objects and global ModData record in the disposable
+world. SP calls `save(true)`; the shared runner owns Host save/quit. After the run
+has stopped, export with `check_action_queue.py save-world RUN TEMPLATE`, then use
+`--cases persist-reload --world-template TEMPLATE` with the same pack/kind.
+
+Reload checks authoritative pending state, completed recursive IDs/types/nesting,
+unique IDs/counts, sentinel objects, no repeat fill and one first demand. The seed
+stores both original rows and an actual native ItemContainer save/load reference;
+reload compares exact rows to that reference. The native roundtrip must preserve
+ID/nesting shape, container state and the original source rows. This is not a
+blanket exception for changed types. Legacy seeds without that reference are
+rejected. Native `Moveable.load` changes `Base.Mov_PalletEmpty` to
+`Base.construction_01_5`; a separate real-item serialization control checks that
+normalization with the same ID/world sprite, independently of loot generation.
+
+The reference does not cover all item condition, age, uses, fluids or modData.
+Reload observes server contents; its separate seed request exchange is still one
+client, not concurrent clients. Grid-event diagnostics run after possible earlier
+listeners and do not represent raw bytes before deserialization.
+
 ## Qualification state
 
-The first SP and Host attempts stopped before this lifecycle bank because of two
-fixture activation defects. Both now have old-artifact regressions: initialize
-the transformer's own helper before registration, and use Buddy's registered-JAR
-scanner rather than explicit AppClassLoader scanning for a dynamically appended
-JAR. Startup-classpath activation alone missed the latter. Directory entries
-alone did not fix it and that attempted repair was discarded.
+On macOS, the preceding research source passed actual full-selected-pack menu
+Host activation, lifecycle, repeated one-client native request/replication and a
+sealed saved-world continuation, with clean runtime/source/viewport checks. Two
+historical raw-type checksum failures were explained by native pallet type
+normalization: changing that one type reconstructs the entire original eleven-item
+SHA, with IDs/nesting unchanged. The final Host reload and independent native
+pallet control passed. Failed original reports remain failed; they are retained
+with the causal explanation.
 
-Corrected artifact activation passes outside the game. Actual SP/Host gameplay,
-reload/movement and driving benefit remain unqualified; do not promote this
-experiment to a user package on the strength of activation tests.
+SP lifecycle assertions passed, but the run failed the optimizer telemetry's
+world-name guard. Clean SP, native furniture moves, multiplayer contention, broader
+item state and representative driving/first-access performance remain open. The
+subsequent main rebase includes newer inventory/Java code; earlier game results do
+not qualify those combined bytes. This fixture is still test-only and is not a
+Windows package improvement or a proven FPS gain.
+
+The actual dynamic-JAR activation checker also preserves regressions for helper
+self-loading recursion and Buddy registered-JAR discovery. Startup-classpath tests
+alone missed those defects; adding ZIP directory entries alone did not fix them.

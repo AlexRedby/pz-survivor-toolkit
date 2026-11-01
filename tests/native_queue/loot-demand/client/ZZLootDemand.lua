@@ -1,6 +1,8 @@
 local config=require 'QueueTestSelection'
 if config.suite~='loot-demand' then return end
 require 'LootDemandBank'
+require 'LootDemandPersistence'
+local case=config.cases[1]
 require 'LootDemandFurniture'
 local started,sent,done=false,false,false
 local at,probe,requests,observed
@@ -13,8 +15,8 @@ Events.OnServerCommand.Add(function(module,command,args)
   if not sent or probe or type(args)~='table' then fail('unexpected native probe');return end
   probe=args;return
  end
- if not sent or command~='Complete' or type(args)~='table' or args.ok~=true or not observed then fail('authority response failed');return end
- done=true;print('[LOOT_DEMAND_TEST] COMPLETE lifecycle')
+ if not sent or command~='Complete' or type(args)~='table' or args.ok~=true or args.case~=case or (case~='persist-reload' and not observed) then fail('authority response failed');return end
+ done=true;print('[LOOT_DEMAND_TEST] COMPLETE '..case)
 end)
 Events.OnTick.Add(function()
  if done or not started or not isIngameState() then return end
@@ -42,8 +44,15 @@ Events.OnTick.Add(function()
    end
    sent=true;at=getTimestampMs();sendClientCommand('LootDemandTest','Run',{})
   else
-   assert(not sent,'duplicate bank');sent=true
-   assert(LootDemandBank.run(player));done=true;print('[LOOT_DEMAND_TEST] COMPLETE lifecycle')
+   if case=='persist-reload' then
+    at=at or getTimestampMs();assert(getTimestampMs()-at<120000,'persisted squares did not load')
+    if not LootDemandBank.reloadPersistence(player) then return end
+   else
+    assert(not sent,'duplicate bank');sent=true
+    assert(LootDemandBank.run(player))
+    if case=='persist-seed' then assert(LootDemandBank.seedPersistence(player));save(true) end
+   end
+   done=true;print('[LOOT_DEMAND_TEST] COMPLETE '..case)
   end
  end)
  if not ok then fail(problem) end
