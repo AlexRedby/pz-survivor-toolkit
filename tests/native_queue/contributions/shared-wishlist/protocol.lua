@@ -14,7 +14,7 @@ local function client(user,toolkit,clock,selection,fixture)
  local output={}
  local env=setmetatable({Events=events(),print=function(line)output[#output+1]=line end},{__index=_G})
  env.require=function(name)
-  if name=='PZSurvivorToolkit/InventoryClasses'then
+  if name=='PZSurvivorToolkit/InventoryClasses'or name=='PZSurvivorToolkit/InventoryRows'then
    return load(project..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua',env)
   end
  end
@@ -109,11 +109,11 @@ do
  load(project..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorWishlist/Inventory.lua',env)
  local inventory=env.PZSurvivorWishlist.Inventory
  -- InventoryPresentation now owns the actual native rendering wrapper.
- -- Keep that boundary and Wishlist real; unrelated icon/tooltip presenters are inert.
+ -- Keep that boundary, Wishlist and row-anchor handling real; unrelated icon/tooltip presenters are inert.
  local requireFixture=env.require
  env.require=function(name)
   if name=='PZSurvivorWishlist/Inventory'then return inventory end
-  if name=='PZSurvivorToolkit/InventoryClasses'then return requireFixture(name) end
+  if name=='PZSurvivorToolkit/InventoryClasses'or name=='PZSurvivorToolkit/InventoryRows'then return requireFixture(name) end
   return{drawIcon=function()end,draw=function()return false end,refresh=function()end,install=function()end}
  end
  env.getActivatedMods=function()return{contains=function(_,id)return id=='PZSurvivorToolkit'end}end
