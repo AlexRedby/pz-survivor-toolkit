@@ -67,6 +67,10 @@ INTEGRATIONS = {
             'test_container_configuration_menus.lua': CLEAN_PAGES,
             'test_smart_deposit.lua': CLEAN_PAGES,
             'test_inventory_refresh.lua': CLEAN_PAGES,
+            'test_warehouse_workload_affinity.lua': (
+                Source('CleanUIInventoryPageSource', 'ISUI/ISInventoryPage.lua'),
+                Source('CleanUIInventoryTransferHandlerSource', 'ISUI/ISInventoryPageTransferHandler.lua'),
+                Source('CleanUIInventoryModOptionsSource', 'ISUI/CleanUI_ModOptions.lua')),
             'test_bc_inventory_classes.lua': (CLEAN_PANE, Source('CleanUIVanillaInventoryPaneSource',
                                                                'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua')),
         },
@@ -75,7 +79,7 @@ INTEGRATIONS = {
                                                            'test_inventory_layout.lua', 'test_inventory_interaction.lua')},
             **{test: ('native_action_root',) for test in ('test_inventory_transfer_operations.lua',
                                                         'test_container_configuration_menus.lua', 'test_smart_deposit.lua',
-                                                        'test_inventory_refresh.lua')},
+                                                        'test_inventory_refresh.lua', 'test_warehouse_workload_affinity.lua')},
         },
     },
     'Navigator': {

@@ -50,7 +50,7 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ### Warehouse client workload
 
-- [ ] Reproduce visible personal-page quick transfer while loot is hidden after a peer changes a source item type/category. CleanUI quick-transfer affinity reads the hidden selected aggregate before physical Smart Deposit routing; the existing same-type Bandage replacement does not establish a user-visible failure. Use the installed callback and exact transferred IDs to determine whether an invalidation fix is needed.
+- [ ] Investigate raw category convergence for peer-replicated physical items before extending nearby/category quick-transfer coverage. During a Bandage/Screwdriver Host replacement the carried Screwdriver had Toolkit category `toolElectrical`, while the newly replicated physical stock retained `ToolWeapon`; read-only observations must not call `ManifestModel.item`, which prepares categories and can hide this distinction. Establish whether the actual supported physical/nearby category callback misses the matching item, then fix its shared preparation boundary only if demonstrated.
 
 ### Item catalogue test world
 

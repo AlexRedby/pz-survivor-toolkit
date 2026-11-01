@@ -4,7 +4,10 @@ local selection=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
 local Model=require 'PZSurvivorToolkit/ManifestModel'
 local Cleanup=require 'QueueFixtureItemCleanup'
-local F={module='WarehouseWorkloadTest',modes={'clean','vanilla'},steps={'initial','peer-transfer','peer-replace','peer-craft','hidden-loot'}}
+local affinity=selection.cases[1]=='hidden-affinity'
+local F={module='WarehouseWorkloadTest',case=selection.cases[1],affinity=affinity,
+ modes=affinity and{'clean','clean'}or{'clean','vanilla'},
+ steps=affinity and{'initial','peer-replace','personal-quick'}or{'initial','peer-transfer','peer-replace','peer-craft','hidden-loot'}}
 local owner='PZSTWarehouseWorkloadOwner'
 local function array(list)local out={};for i=0,list:size()-1 do out[#out+1]=list:get(i)end;return out end
 local function integer(n)return type(n)=='number'and n==math.floor(n)end
@@ -18,7 +21,7 @@ local function original(player)
 end
 local function originalIds(items)local out={};for id in pairs(items)do out[#out+1]=id end;table.sort(out);return out end
 function F.emit(event,row)
- row=row or {};row.suite='warehouse-workload';row.case='peer-edits';row.kind=selection.kind;row.mode=selection.mode
+ row=row or {};row.suite='warehouse-workload';row.case=F.case;row.kind=selection.kind;row.mode=selection.mode
  row.role=row.role or(isServer()and'server'or isClient()and'client'or'sp')
  print('[WAREHOUSE_WORKLOAD] '..event..' '..JSON.encode(row))
 end
@@ -99,6 +102,13 @@ local function metadata(item,endpoint)
  local entry=assert(Model.item(item),'workload model identity missing')
  return {id=item:getID(),ft=item:getFullType(),name=entry.name,key=entry.key,cat=entry.cat,initialEndpoint=endpoint}
 end
+local function nativeIdentity(item,entry,container)
+ assert(item:getContainer()==container and item:getFullType()==entry.ft,'workload native item/type differs')
+ local custom=item:isCustomName()==true
+ local name=custom and item:getDisplayName()or nil
+ assert(custom==(entry.name~=nil)and name==entry.name,'workload native custom name changed')
+ return name,custom
+end
 local function own(s,p,container,ft,name,endpoint)
  local item=assert(container:AddItem(ft),'missing native workload item '..ft);local id=item:getID()
  assert(integer(id)and not s.owned[id],'duplicate workload identity')
@@ -122,7 +132,8 @@ function F.seed(s,index)
  assert(isServer()and not s.phase and index==s.nextIndex and F.modes[index]and empty(s.owned),'out-of-order workload seed')
  preserved(s)
  for _,container in ipairs(s.stores)do assert(container:getItems():isEmpty(),'workload crate is not empty')end
- local p={token=s.token,index=index,mode=F.modes[index],phaseToken=s.token..':'..index,items={},outputIds={},recipe='OpenHotdogPack',outputType='Base.Hotdog_single',outputCount=4}
+ local p={token=s.token,index=index,mode=F.modes[index],phaseToken=s.token..':'..index,items={},outputIds={}}
+ if not F.affinity then p.recipe='OpenHotdogPack';p.outputType='Base.Hotdog_single';p.outputCount=4 end
  F.attachPhase(s,p)
  for i,container in ipairs(s.stores)do
   local ft=i==3 and'Base.Bandage'or i==4 and'Base.HotdogPack'or'Base.Nails'
@@ -130,11 +141,46 @@ function F.seed(s,index)
   local id=own(s,p,container,ft,name,'crate'..i)
   if i==1 then p.transferId=id elseif i==3 then p.replacementSourceId=id elseif i==4 then p.craftInputId=id elseif i==5 then p.quickId=id end
  end
- p.replacementId=own(s,p,s.players.client2:getInventory(),'Base.Bandage','Warehouse new bandage','client2')
- p.quickMatchId=own(s,p,s.players.client1:getInventory(),'Base.Nails',nil,'client1')
+ local replacementType,replacementName='Base.Bandage','Warehouse new bandage'
+ if F.affinity then replacementType='Base.Screwdriver';replacementName=nil end
+ p.replacementId=own(s,p,s.players.client2:getInventory(),replacementType,replacementName,'client2')
+ if F.affinity then
+  p.affinityKind=index%2==1 and'type'or'category'
+  p.oldCandidateId=own(s,p,s.players.client1:getInventory(),'Base.Bandage',nil,'client1')
+  p.newCandidateId=own(s,p,s.players.client1:getInventory(),'Base.Screwdriver',nil,'client1')
+  local function category(id)
+   local item=assert(F.find(s,id));local value=item:getDisplayCategory()
+   return value and value~=''and value or'Other'
+  end
+  p.oldCategory=category(p.replacementSourceId);p.newCategory=category(p.replacementId)
+  assert(p.oldCategory~=p.newCategory and category(p.oldCandidateId)==p.oldCategory
+   and category(p.newCandidateId)==p.newCategory,'workload affinity category controls differ')
+  for slot,container in ipairs(s.stores)do if slot~=3 then
+   for _,item in ipairs(array(container:getItems()))do local value=category(item:getID())
+    assert(value~=p.oldCategory and value~=p.newCategory,'unrelated workload stock masks affinity category controls')
+   end
+  end end
+ else p.quickMatchId=own(s,p,s.players.client1:getInventory(),'Base.Nails',nil,'client1')end
  p.state='initial';return p
 end
-function F.expected(p,step)
+function F.expected(p,step,outcome,oldDestination)
+ if F.affinity then
+  local rank={initial=1,['peer-replace']=2,['personal-quick']=3}
+  local n=assert(rank[step],'unknown workload step');local expected={}
+  for _,entry in ipairs(p.items)do expected[entry.id]=entry.initialEndpoint end
+  if n>=2 then expected[p.replacementSourceId]='client2';expected[p.replacementId]='crate3'end
+  if n>=3 then
+   outcome=outcome or p.affinityOutcome or'fresh';oldDestination=oldDestination or p.oldDestination
+   assert(outcome=='fresh'or outcome=='stale'or outcome=='blocked','unknown workload affinity outcome')
+   if outcome=='fresh'then expected[p.newCandidateId]='crate3'
+   elseif outcome=='stale'then
+    local ownedDestination=false
+    for _,entry in ipairs(p.items)do if entry.initialEndpoint==oldDestination and string.sub(entry.initialEndpoint,1,5)=='crate'then ownedDestination=true end end
+    assert(ownedDestination,'missing workload stale destination');expected[p.oldCandidateId]=oldDestination
+   end
+  end
+  return expected
+ end
  local rank={initial=1,['peer-transfer']=2,['peer-replace']=3,['peer-craft']=4,['hidden-loot']=5}
  local n=assert(rank[step],'unknown workload step');local expected={}
  for _,entry in ipairs(p.items)do expected[entry.id]=entry.initialEndpoint end
@@ -146,10 +192,26 @@ function F.expected(p,step)
 end
 function F.snapshot(s)
  local row={token=s.token,index=s.phase and s.phase.index or 0,phaseToken=s.phase and s.phase.phaseToken,items={},crates={},rootIds={},visibility=s.players and'both-roots'or s.role}
+ local readOnly=F.affinity and not s.players;local containers={}
+ if readOnly then
+  row.projection='native-identity'
+  eachContainer(s,function(container,endpoint)containers[endpoint]=container end)
+ end
  local entries=s.phase and s.phase.items or {}
  for _,entry in ipairs(entries)do
   local item,endpoint,count=F.find(s,entry.id)
-  if item then row.items[#row.items+1]={id=entry.id,ft=item:getFullType(),endpoint=endpoint,count=count,key=assert(Model.item(item)).key,cat=Model.item(item).cat}end
+  if item then
+   local observed={id=entry.id,ft=item:getFullType(),endpoint=endpoint,count=count}
+   if readOnly then
+    assert(count==1,'duplicated workload native ID')
+    observed.name,observed.customName=nativeIdentity(item,entry,containers[endpoint])
+    observed.rawCategory=item:getDisplayCategory()
+   else
+    local actual=assert(Model.item(item));observed.key=actual.key;observed.cat=actual.cat
+    if F.affinity then observed.name=actual.name;observed.customName=item:isCustomName()==true end
+   end
+   row.items[#row.items+1]=observed
+  end
  end
  local actor=s.players and s.players.client1 or s.player
  for i,container in ipairs(s.stores)do row.crates[i]={slot=i,id=s.ids.crates[i].id,capacity=container:getCapacity(),
@@ -176,13 +238,32 @@ local function adoptOutputs(s,p)
   -- Adoption changes ownership bookkeeping only, never the native recipe effect.
  end;return true
 end
+local function affinityOutcome(s,p)
+ local function at(id,target)
+  local _,endpoint,count=F.find(s,id);assert(count<=1,'duplicated workload native ID')
+  local visible=s.players or target==s.role or string.sub(target,1,5)=='crate'
+  return visible and count==1 and endpoint==target or not visible and count==0
+ end
+ if at(p.oldCandidateId,'client1')and at(p.newCandidateId,'crate3')then return'fresh','client1'end
+ if at(p.oldCandidateId,'client1')and at(p.newCandidateId,'client1')then return'blocked','client1'end
+ if at(p.newCandidateId,'client1')then
+  for slot in ipairs(s.stores)do local destination='crate'..slot
+   if at(p.oldCandidateId,destination)then return'stale',destination end
+  end
+ end
+end
 function F.native(s,step)
  local p=assert(s.phase)
  if s.players then
-  preserved(s,step=='peer-craft'and #p.outputIds==0)
-  if(step=='peer-craft'or step=='hidden-loot')and #p.outputIds==0 and not adoptOutputs(s,p)then return end
+  preserved(s,not F.affinity and step=='peer-craft'and #p.outputIds==0)
+  if not F.affinity and(step=='peer-craft'or step=='hidden-loot')and #p.outputIds==0 and not adoptOutputs(s,p)then return end
  end
- local expected=F.expected(p,step);local known={};for _,entry in ipairs(p.items)do known[entry.id]=entry end
+ local outcome,oldDestination
+ if F.affinity and step=='personal-quick'then
+  outcome,oldDestination=affinityOutcome(s,p)
+  if not outcome or p.affinityOutcome and(p.affinityOutcome~=outcome or p.oldDestination~=oldDestination)then return end
+ end
+ local expected=F.expected(p,step,outcome,oldDestination);local known={};for _,entry in ipairs(p.items)do known[entry.id]=entry end
  local complete=true
  eachContainer(s,function(container,endpoint)
   local crate=string.sub(endpoint,1,5)=='crate'
@@ -194,8 +275,11 @@ function F.native(s,step)
    local id=item:getID();local entry=known[id]
    if crate then assert(entry,'foreign workload crate content')end
    if entry then
-    assert(item:getContainer()==container and item:getFullType()==entry.ft,'workload native item/type differs')
-    local actual=assert(Model.item(item));assert(actual.key==entry.key and actual.cat==entry.cat,'workload native identity/category changed')
+    if F.affinity and not s.players then nativeIdentity(item,entry,container)
+    else
+     assert(item:getContainer()==container and item:getFullType()==entry.ft,'workload native item/type differs')
+     local actual=assert(Model.item(item));assert(actual.key==entry.key and actual.cat==entry.cat,'workload native identity/category changed')
+    end
    end
   end
  end)
@@ -206,7 +290,10 @@ function F.native(s,step)
   elseif count~=0 then complete=false end
  end
  if not complete then return end
- local row=F.snapshot(s);row.step=step;row.outputIds=p.outputIds;row.consumedId=(step=='peer-craft'or step=='hidden-loot')and p.craftInputId or nil;return row
+ if outcome then p.affinityOutcome=outcome;p.oldDestination=oldDestination end
+ local row=F.snapshot(s);row.step=step;row.outputIds=p.outputIds
+ row.consumedId=not F.affinity and(step=='peer-craft'or step=='hidden-loot')and p.craftInputId or nil
+ row.affinityOutcome=p.affinityOutcome;row.oldDestination=p.oldDestination;return row
 end
 local function validateCleanup(s,journal)
  preserved(s)
@@ -316,14 +403,16 @@ function F.release(s,index)
   assert(row.token==lease.token and row.index==index and row.phaseToken==lease.phaseToken,'released workload receipt changed')
   return row
  end
- local p=assert(s.phase);assert(index==p.index and p.state=='hidden-loot','unfinished workload release')
- if not s.inventoryCleanup then assert(F.native(s,'hidden-loot'),'unfinished workload release')end
+ local p=assert(s.phase);local finalStep=F.steps[#F.steps]
+ assert(index==p.index and p.state==finalStep,'unfinished workload release')
+ if not s.inventoryCleanup then assert(F.native(s,finalStep),'unfinished workload release')end
  local receipt=cleanupInventory(s)
  for _,container in ipairs(s.stores)do assert(container:getItems():isEmpty(),'workload crate survived release')end
  preserved(s);local lease=s.inventoryCleanup
  s.owned={};lease.releasedOwned=s.owned;s.phase=nil;s.nextIndex=index+1;s.inventoryCleanup=nil
  local row={token=s.token,index=index,phaseToken=p.phaseToken,removedIds=receipt.removedIds,cleanupJournal=receipt,
-  consumedIds={p.craftInputId},ownedRemaining=0,originalRootIds=s.ids.originalRootIds,snapshot=F.snapshot(s)}
+  consumedIds=F.affinity and{}or{p.craftInputId},affinityOutcome=p.affinityOutcome,oldDestination=p.oldDestination,
+  ownedRemaining=0,originalRootIds=s.ids.originalRootIds,snapshot=F.snapshot(s)}
  s.releases=s.releases or {};s.releaseLeases=s.releaseLeases or {}
  s.releases[index]=row;s.releaseLeases[index]=lease;return row
 end
@@ -341,7 +430,7 @@ function F.absent(packet)
  end;return true
 end
 function F.cleanup(s)
- assert(not s.phase and s.nextIndex==3 and empty(s.owned),'unfinished workload cleanup');preserved(s)
+ assert(not s.phase and s.nextIndex==#F.modes+1 and empty(s.owned),'unfinished workload cleanup');preserved(s)
  local world=s.worldCleanup
  if not world then
   world={entries={},removed={},token=s.token}
@@ -379,19 +468,19 @@ function F.cleanup(s)
   end
  end
  assert(F.absent(s.ids),'owned workload objects remain')
- return {token=s.token,index=2,removedCrates=#world.removed,crates=world.removed,ownedAbsent=true,
+ return {token=s.token,index=#F.modes,removedCrates=#world.removed,crates=world.removed,ownedAbsent=true,
   ownedRemaining=0,originalRootIds=s.ids.originalRootIds,snapshot=F.snapshot(s)}
 end
 function F.abort(s)
  if not s then return {restored=true,unprepared=true}end
  if s.abortReceipt then F.cleanup(s);return s.abortReceipt end
  if not s.abortInventory then
-  if not s.inventoryCleanup and s.phase and #s.phase.outputIds==0 then
+  if not F.affinity and not s.inventoryCleanup and s.phase and #s.phase.outputIds==0 then
    local _,_,count=F.find(s,s.phase.craftInputId)
    if count==0 then assert(adoptOutputs(s,s.phase),'cannot safely adopt incomplete workload recipe outputs')end
   end
   local receipt=cleanupInventory(s)
-  s.abortInventory=receipt;s.owned={};s.phase=nil;s.nextIndex=3;s.inventoryCleanup=nil
+  s.abortInventory=receipt;s.owned={};s.phase=nil;s.nextIndex=#F.modes+1;s.inventoryCleanup=nil
  end
  local row=F.cleanup(s);row.removedIds=s.abortInventory.removedIds;row.cleanupJournal=s.abortInventory;row.restored=true
  s.abortReceipt=row;return row

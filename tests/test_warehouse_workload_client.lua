@@ -449,5 +449,123 @@ do
   end
  end
 end
+-- Hidden-affinity waits for the visible source's ordinary category preparation.
+-- Readiness observation itself stays read-only. Keep real A.begin, Model.item
+-- and Categories.prepareItem; a separately driven visible render owns writes.
+do
+ local stamp,nativeReady,aggregateReady=0,false,false
+ local tick,command,phase;local sent,beginAttempts,bindings,preparations,hides={},0,0,0,0
+ local rendering=false
+ local oldCandidate=item(14,'Bandage');oldCandidate.cat='NativeMedical';oldCandidate.targetCategory='FirstAid'
+ local newCandidate=item(15,'Screwdriver');newCandidate.cat='NativeTools';newCandidate.targetCategory='Tool'
+ local candidates=container({oldCandidate,newCandidate})
+ for _,value in ipairs(candidates.values)do
+  function value:setDisplayCategory(category)self.cat=category;preparations=preparations+1 end
+ end
+ local fixturePlayer={getUsername=function()return 'client1'end,getPlayerNum=function()return 0 end,
+  getSquare=function()return {}end,getInventory=function()return candidates end}
+ local function page()
+  local q={inventory={},getX=function()return 0 end,getY=function()return 20 end,getWidth=function()return 400 end,getHeight=function()return 300 end}
+  return {inventoryPane=q,getX=function()return 0 end,getY=function()return 0 end,getWidth=function()return 400 end,getHeight=function()return 320 end,
+   getIsVisible=function()return true end,setNewContainer=function()end,refreshBackpacks=function()end}
+ end
+ local pages={page(),page()};local ids={token='affinity-session',actorOrigin={x=10,y=10,z=0},crates={}}
+ local state={stores={}};local hidden={visible=false,rowsPending=true,nativeBuilds=0}
+ local function observation()return {nativeAggregate=true,actualIds=aggregateReady and{1,2}or{1},expectedIds={1,2},fresh=aggregateReady}end
+ local fakeN={sameIds=N.sameIds,idle=function()return true end,selectAggregate=function()return true end,
+  startObservation=function(player,p)return {player=player,phase=p}end,observe=function()end,closeCraft=function()end,
+  aggregateObservation=observation,aggregateProof=function()if aggregateReady then return observation()end end,
+  hidden=function()return hidden end,reopenReady=function()return true end,
+  hide=function()assert(nativeReady and preparations>=2,'setup discovery preceded normal metadata readiness');hides=hides+1;return hidden end,
+  reopen=function()return {rowIds={1,2}},observation()end,diagnostics=function()return {}end}
+ local fakeU={pages=function()return pages end,normalize=function()end,save=function()return {}end,
+  original=function()return {}end,originalProof=function()return {}end,position=function()return {}end,
+  protect=function()end,place=function()return {}end,configure=function()end}
+ local modules={QueueTestSelection={kind='mp',cases={'hidden-affinity'}},WarehouseWorkloadUI=fakeU,
+  WarehouseWorkloadNative=fakeN,QueueHealthEvents={encode=function()return '{}'end},
+  ['PZSurvivorToolkit/ItemCategoryRules']={forItem=function(value)
+   assert(rendering,'read-only affinity observation prepared item categories');return value.targetCategory
+  end},
+  ['PZSurvivorToolkit/TagCustomization']={itemDelta=function()end},
+  ['PZSurvivorToolkit/ItemCookingTags']={read=function()end},['PZSurvivorToolkit/ItemCookingStates']={read=function()end},
+  ['PZSurvivorToolkit/ItemFluidTags']={read=function()end},['PZSurvivorToolkit/ItemUsageTags']={read=function()end,encode=function()end}}
+ local options={transferMethod={value=2},transferButtonLayout={value=1}}
+ for _,option in pairs(options)do function option:getValue()return self.value end;function option:setValue(value)self.value=value end end
+ local env=setmetatable({PZSurvivorToolkit={},require=function(name)return assert(modules[name],name)end,
+  PZAPI={ModOptions={getOptions=function()return {getOption=function(_,name)return options[name]end}end}},
+  CleanUI_getTransferMethod=function()return tostring(options.transferMethod.value)end,
+  CleanUI_getTransferButtonLayout=function()return tostring(options.transferButtonLayout.value)end,
+  print=function(line)error('unexpected affinity driver diagnostic/failure: '..line)end,
+  getTimestampMs=function()return stamp end,isClient=function()return true end,isIngameState=function()return true end,
+  getPlayer=function()return fixturePlayer end,getPlayerInventory=function()return pages[1]end,getPlayerLoot=function()return pages[2]end,
+  sendClientCommand=function(_,name,args)sent[#sent+1]={command=name,args=args}end,
+  Events={OnTick={Add=function(fn)tick=fn end},OnServerCommand={Add=function(fn)command=fn end},OnPostUIDraw={Add=function()end}}},{__index=_G})
+ local function load(path)local chunk=assert(loadfile(path));setfenv(chunk,env);return chunk()end
+ local shared=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/'
+ modules['PZSurvivorToolkit/ItemCategories']=load(shared..'ItemCategories.lua')
+ local actualModel=load(shared..'ManifestModel.lua')
+ local actualA=load(client..'WarehouseWorkloadAffinity.lua')
+ local function visibleSourceRender()
+  rendering=true;for _,value in ipairs(candidates.values)do actualModel.item(value)end;rendering=false
+ end
+ local fakeF={module='WarehouseWorkloadTest',affinity=true,modes={'clean','clean'},
+  emit=function(event,row)assert(event~='FAIL'and event~='ABORT',row.error)end,
+  resolve=function()return state end,attachPhase=function(_,p)phase=p end,find=function()return nil,nil,0 end,
+  native=function()
+   if not nativeReady then return end
+   local observed={}
+   for _,value in ipairs(candidates.values)do observed[#observed+1]={id=value:getID(),ft=value:getFullType(),
+    endpoint='client1',count=1,customName=false,rawCategory=value:getDisplayCategory()}end
+   return {token=phase.token,phaseToken=phase.phaseToken,projection='native-identity',
+    crates={},rootIds={client1={14,15}},items=observed}
+  end}
+ modules.WarehouseWorkloadFixture=fakeF
+ modules.WarehouseWorkloadAffinity=setmetatable({begin=function(run)
+  beginAttempts=beginAttempts+1;local result=actualA.begin(run);if run.affinity then bindings=bindings+1 end;return result
+ end},{__index=actualA})
+ local function nextPhase(index)
+  return {token=ids.token,index=index,mode='clean',phaseToken=ids.token..':'..index,items={},replacementSourceId=1,craftInputId=2,
+   oldCandidateId=14,newCandidateId=15,oldCategory='FirstAid',newCategory='Tool',affinityKind=index==1 and'type'or'category'}
+ end
+ local premature={player=fixturePlayer,phase=nextPhase(1)}
+ assert(actualA.begin(premature)==nil and not premature.affinity and preparations==0,
+  'unprepared source categories bound affinity controls or were repaired by observation')
+ load(client..'ZZWarehouseWorkload.lua')
+ local function step()stamp=stamp+200;tick()end
+ local function untilCommand(name)
+  local previous=#sent
+  for _=1,15 do step();if #sent>previous and sent[#sent].command==name then return end end
+  error('affinity driver did not request '..name)
+ end
+ untilCommand('Prepare');command(fakeF.module,'Prepared',{role='client1',ids=ids});untilCommand('Ready')
+ for index=1,2 do
+  phase=nextPhase(index);nativeReady=false;aggregateReady=false
+  oldCandidate.cat='NativeMedical';newCandidate.cat='NativeTools'
+  local beforePreparations=preparations;local beforeHides=hides;local beforeAttempts=beginAttempts
+  command(fakeF.module,'Seeded',{phase=phase});step()
+  for _=1,3 do step()end
+  assert(beginAttempts==beforeAttempts and bindings==index-1 and preparations==beforePreparations and hides==beforeHides,
+   'affinity begin/preparation/discovery ran before ordinary native readiness')
+  nativeReady=true;step()
+  assert(beginAttempts==beforeAttempts+1 and bindings==index-1 and preparations==beforePreparations and hides==beforeHides,
+   'read-only physical readiness bound or repaired unprepared categories')
+  for _=1,3 do step()end
+  assert(bindings==index-1 and preparations==beforePreparations and oldCandidate.cat=='NativeMedical'and newCandidate.cat=='NativeTools',
+   'observer retries changed raw categories instead of waiting for the visible source UI')
+  visibleSourceRender();step()
+  assert(bindings==index and preparations==beforePreparations+2 and oldCandidate.cat=='FirstAid'and newCandidate.cat=='Tool',
+   'ordinary visible-source metadata preparation did not release affinity setup')
+  local boundAttempts=beginAttempts
+  for _=1,3 do step()end
+  assert(bindings==index and beginAttempts==boundAttempts and preparations==beforePreparations+2,
+   'repeated readiness rebound controls or prepared categories after successful binding')
+  aggregateReady=true;step()
+  assert(bindings==index and beginAttempts==boundAttempts and sent[#sent].command=='Seen'and sent[#sent].args.case=='hidden-affinity',
+   'initial aggregate convergence rebound affinity or acknowledged another case')
+  if index==1 then
+   command(fakeF.module,'Released',{token=ids.token,index=1,ownedRemaining=0,removedIds={}});untilCommand('Ready')
+  end
+ end
+end
 require=originalRequire
 print('PASS warehouse workload native client consumers and quiescent restoration (offline doubles only)')

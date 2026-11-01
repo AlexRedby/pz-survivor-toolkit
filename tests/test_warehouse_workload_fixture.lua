@@ -2,12 +2,19 @@
 local fixtureRoot=ProjectRoot..'/tests/native_queue/warehouse-workload/'
 local nativeNext=next;next=nil
 local config={kind='mp',mode='toolkit',cases={'peer-edits'}}
+local function category(item)
+ return item.displayCategory or item.fullType:find('Hotdog',1,true)and'Food'or item.fullType=='Base.Bandage'and'FirstAid'
+  or item.fullType=='Base.Screwdriver'and'Tool'or'Material'
+end
 package.preload.QueueTestSelection=function()return config end
 package.preload.QueueFixtureItemCleanup=function()return dofile(ProjectRoot..'/tests/native_queue/support/QueueFixtureItemCleanup.lua')end
 package.preload.QueueHealthEvents=function()return dofile(ProjectRoot..'/tests/native_queue/health/shared/QueueHealthEvents.lua')end
+local modelCalls,forbidModel=0,false
 package.preload['PZSurvivorToolkit/ManifestModel']=function()return {item=function(item)
+ assert(not forbidModel,'client affinity observer invoked mutating Model.item')
+ modelCalls=modelCalls+1
  local name=item.custom and item.name or nil
- local cat=item.fullType:find('Hotdog',1,true)and'Food'or item.fullType=='Base.Bandage'and'FirstAid'or'Material'
+ local cat=category(item)
  return {ft=item.fullType,name=name,cat=cat,key=item.fullType..':'..(name or '')..':'..cat}
 end}end
 local callbacks,replies,logs={},{},{}
@@ -34,6 +41,9 @@ local function container()
    nextId=nextId+1;item={id=nextId,kind='InventoryItem',fullType=value,weight=value=='Base.Apple'and .1 or .05}
    function item:getID()return self.id end
    function item:getFullType()return self.fullType end
+   function item:getDisplayCategory()return category(self)end
+   function item:isCustomName()return self.custom==true end
+   function item:getDisplayName()return self.name or self.fullType end
    function item:getUnequippedWeight()return self.weight end
    function item:getContainer()return self.container end
    function item:setName(v)self.name=v end
@@ -523,5 +533,146 @@ callbacks.command(F.module,'Ready',peers.client2,args(packet,1));clock=clock+100
 local failed=replies[#replies].row
 assert(replies[#replies].command=='Failed'and failed.error:find('position convergence timeout',1,true)and F.absent(packet),'server readiness deadline was reset/unbounded')
 assert(failed.readiness.client1.waitMs==15001 and failed.readiness.client2.waitMs==1001 and #failed.cleanup.removedIds==0,'position timeout lost pending native diagnostics or seeded items')
+-- Hidden-affinity owns a distinct type/category probe cohort. Changed transfers
+-- remain cleanable evidence; the later verifier requires the native aggregate's
+-- rejected eligibility and exact no-effect callback outcome.
+config.cases={'hidden-affinity'}
+local affinityF=dofile(fixtureRoot..'shared/WarehouseWorkloadFixture.lua')
+config.cases={'peer-edits'}
+assert(affinityF.case=='hidden-affinity'and affinityF.affinity and #affinityF.modes==2
+ and affinityF.modes[1]=='clean'and affinityF.modes[2]=='clean'and #affinityF.steps==3
+ and affinityF.steps[3]=='personal-quick','affinity case manufactured unsupported vanilla controls')
+affinityF.emit('CASE',{});assert(logs[#logs]:find('hidden-affinity',1,true),'affinity receipt used another case')
+local function checkReadOnlyAffinity(state,phase,step)
+ local stockId=step=='initial'and phase.replacementSourceId or phase.replacementId
+ local stock=assert(F.find(state,stockId));local raw=stock.displayCategory
+ stock.displayCategory='UnpreparedReplicatedCategory'
+ local before=modelCalls;forbidModel=true
+ for _,role in ipairs({'client1','client2'})do
+  local client=assert(affinityF.resolve(state.players[role],state.ids,role));affinityF.attachPhase(client,phase)
+  for _,receipt in ipairs({assert(affinityF.native(client,step)),affinityF.snapshot(client)})do
+   assert(receipt.projection=='native-identity'and receipt.visibility==role,'client affinity claimed a semantic metadata projection')
+   local found=false
+   for _,entry in ipairs(receipt.items)do
+    assert(entry.key==nil and entry.cat==nil and type(entry.customName)=='boolean','client fabricated semantic key/category evidence')
+    if entry.id==stockId then
+     found=true;assert(entry.rawCategory=='UnpreparedReplicatedCategory'and entry.ft==stock.fullType
+      and entry.name==(stock.custom and stock.name or nil),'client observer hid raw category/custom-name state')
+    end
+   end
+   assert(found,'client read-only observation omitted exact shared stock ID')
+  end
+  assert(stock.displayCategory=='UnpreparedReplicatedCategory','client observation repaired replicated category state')
+  -- Raw category differences are observable; native identity differences are
+  -- still rejected before either readiness or diagnostic snapshot can qualify.
+  local name,custom,kind,source=stock.name,stock.custom,stock.fullType,stock.container
+  stock.name='Foreign custom label';stock.custom=true
+  rejected(affinityF.native,client,step);rejected(affinityF.snapshot,client)
+  stock.name=name;stock.custom=custom;stock.fullType='Base.Pencil'
+  rejected(affinityF.native,client,step);rejected(affinityF.snapshot,client)
+  stock.fullType=kind;stock.container=state.players[role].root
+  rejected(affinityF.native,client,step);rejected(affinityF.snapshot,client)
+  stock.container=source
+ end
+ assert(modelCalls==before,'client readiness/diagnostics called Model.item')
+ forbidModel=false
+ rejected(affinityF.native,state,step)
+ stock.displayCategory=raw
+ local authority=assert(affinityF.native(state,step))
+ assert(authority.projection==nil,'authority lost full semantic scope')
+ for _,entry in ipairs(authority.items)do assert(entry.key and entry.cat,'authority omitted prepared semantic metadata')end
+end
+for _,outcome in ipairs({'fresh','stale','blocked'})do
+ testX=testX+100;local state=affinityF.prepare(players(testX))
+ for index=1,#affinityF.modes do
+  local phase=affinityF.seed(state,index)
+  assert(#phase.items==15 and phase.affinityKind==(index==1 and'type'or'category')
+   and phase.quickMatchId==nil and phase.recipe==nil and phase.outputType==nil and #phase.outputIds==0,
+   'affinity phase retained unrelated craft/quick setup')
+  assert(phase.oldCategory=='FirstAid'and phase.newCategory=='Tool'and phase.oldCategory~=phase.newCategory,
+   'affinity setup categories do not distinguish admission')
+  assert(affinityF.native(state,'initial')and not affinityF.native(state,'peer-replace'))
+  checkReadOnlyAffinity(state,phase,'initial')
+  effect(state,'peer-replace');phase.state='peer-replace'
+  assert(#state.stores[3].values==1 and affinityF.native(state,'peer-replace')
+   and F.find(state,phase.replacementId):getFullType()=='Base.Screwdriver',
+   'affinity replacement did not preserve count and change physical type')
+  checkReadOnlyAffinity(state,phase,'peer-replace')
+  rejected(affinityF.expected,phase,'personal-quick','stale','crate13')
+  rejected(affinityF.expected,phase,'personal-quick','stale','client2')
+  rejected(affinityF.native,state,'peer-craft')
+  local blocked=assert(affinityF.native(state,'personal-quick'))
+  assert(blocked.affinityOutcome=='blocked'and phase.oldDestination=='client1',
+   'unchanged candidates did not produce the exact no-effect projection')
+  -- Physical projection alone proves no effect; the driver/verifier separately
+  -- require the actual callback, rejected eligibility and post-call settling.
+  phase.affinityOutcome=nil;phase.oldDestination=nil
+  rejected(affinityF.release,state,index)
+  -- An unrelated moved stock ID invalidates the whole result, even when the
+  -- candidate pair alone appears fresh.
+  move(state,phase.newCandidateId,'crate3');move(state,phase.transferId,'crate2')
+  assert(not affinityF.native(state,'personal-quick')and phase.affinityOutcome==nil,
+   'candidate inference ignored another moved owned item')
+  move(state,phase.transferId,'crate1')
+  move(state,phase.oldCandidateId,'crate3')
+  assert(not affinityF.native(state,'personal-quick')and phase.affinityOutcome==nil,
+   'both candidates moving produced an accepted affinity outcome')
+  move(state,phase.oldCandidateId,'client1');move(state,phase.newCandidateId,'crate4')
+  assert(not affinityF.native(state,'personal-quick'),'fresh candidate accepted another destination')
+  move(state,phase.newCandidateId,'client1');move(state,phase.oldCandidateId,'client2')
+  assert(not affinityF.native(state,'personal-quick'),'stale candidate accepted another player root')
+  move(state,phase.oldCandidateId,'client1')
+  if outcome=='fresh'then move(state,phase.newCandidateId,'crate3')
+  elseif outcome=='stale'then move(state,phase.oldCandidateId,'crate12')end
+  local duplicate=state.stores[4]:AddItem('Base.Bandage');duplicate.id=phase.oldCandidateId
+  rejected(affinityF.native,state,'personal-quick');state.stores[4]:Remove(duplicate)
+  local foreign=state.stores[7]:AddItem('Base.Pencil')
+  rejected(affinityF.native,state,'personal-quick');state.stores[7]:Remove(foreign)
+  local candidate=assert(F.find(state,phase.newCandidateId));candidate.displayCategory='Changed'
+  rejected(affinityF.native,state,'personal-quick');candidate.displayCategory=nil
+  local receipt=assert(affinityF.native(state,'personal-quick'));phase.state='personal-quick'
+  checkReadOnlyAffinity(state,phase,'personal-quick')
+  local destination=outcome=='stale'and'crate12'or'client1'
+  assert(receipt.affinityOutcome==outcome and phase.affinityOutcome==outcome
+   and receipt.oldDestination==destination and phase.oldDestination==destination
+   and receipt.consumedId==nil and #receipt.outputIds==0,'affinity authority outcome/recipe facts differ')
+  local expected=affinityF.expected(phase,'personal-quick')
+  assert(expected[phase.oldCandidateId]==destination
+   and expected[phase.newCandidateId]==(outcome=='fresh'and'crate3'or'client1'))
+  -- Each client checks its own visibility projection; a remote root is absent,
+  -- while the exact moved candidate is visible in the same owned crate.
+  for _,role in ipairs({'client1','client2'})do
+   local client=assert(affinityF.resolve(state.players[role],state.ids,role));affinityF.attachPhase(client,phase)
+   local localReceipt=assert(affinityF.native(client,'personal-quick'))
+   assert(localReceipt.visibility==role and localReceipt.affinityOutcome==outcome and localReceipt.oldDestination==destination,
+    'affinity result required a remote root or lost exact endpoint inference')
+  end
+  if outcome=='stale'then
+   move(state,phase.oldCandidateId,'crate11')
+   assert(not affinityF.native(state,'personal-quick'),'completed affinity outcome changed its accepted endpoint')
+   rejected(affinityF.release,state,index);move(state,phase.oldCandidateId,'crate12')
+  end
+  local released=affinityF.release(state,index)
+  assert(#released.removedIds==#phase.items and #released.consumedIds==0 and released.affinityOutcome==outcome
+   and released.oldDestination==destination and released.ownedRemaining==0,
+   'affinity release did not remove the exact unconsumed owned cohort')
+  originals(state);assert(affinityF.release(state,index)==released)
+ end
+ local cleaned=affinityF.cleanup(state)
+ assert(cleaned.index==#affinityF.modes and cleaned.removedCrates==12 and affinityF.absent(state.ids))
+ originals(state)
+end
+-- Affinity abort must neither adopt recipe outputs nor excuse a missing
+-- HotdogPack as a consumed input; this case performs no crafting.
+testX=testX+100;local affinityState=affinityF.prepare(players(testX));local affinityPhase=affinityF.seed(affinityState,1)
+local missingInput=assert(F.find(affinityState,affinityPhase.craftInputId));local inputContainer=missingInput:getContainer()
+inputContainer:Remove(missingInput);rejected(affinityF.abort,affinityState)
+inputContainer:AddItem(missingInput)
+local unownedOutput=affinityState.players.client2.root:AddItem('Base.Hotdog_single')
+rejected(affinityF.abort,affinityState);assert(not affinityState.owned[unownedOutput.id],'affinity adopted an unrelated craft output')
+affinityState.players.client2.root:Remove(unownedOutput)
+local affinityAbort=affinityF.abort(affinityState)
+assert(affinityAbort.restored and #affinityAbort.removedIds==15 and affinityF.absent(affinityState.ids))
+originals(affinityState)
 print=nativePrint;next=nativeNext
 print('PASS warehouse workload fixture: sparse capacities, exact IDs/endpoints, same-count replacement, craft adoption, visibility projection, exact cleanup and protocol guards')

@@ -59,3 +59,50 @@ python3 -m unittest tests.test_queue_warehouse_workload tests.test_queue_campaig
 Synthetic receipt tests exercise rejection paths; only a fresh native report can
 establish a game pass. Preserve failed attempts and prepare again after changing
 sealed fixture sources.
+
+## Hidden target affinity
+
+Select `--cases hidden-affinity` with the same fresh two-client menu-Host and
+complete-pack inputs. This separate case tests the visible personal page's
+actual CleanUI split buttons, once by type and once by category. Vanilla pages
+have no corresponding split buttons; `peer-edits` retains their existing checks.
+
+The fixture saves the actual CleanUI `transferMethod` and `transferButtonLayout`
+options, selects single-target/split mode and restores both. Single-target mode
+reads the hidden selected aggregate before physical Smart Deposit routing;
+CleanUI's default nearby-container mode uses physical destinations and a
+different admission path. BetterContainers makes its virtual aggregate reject
+items with `onlyAcceptCategory=none` and capacity zero. The current single-target
+callback must respect that restriction before Smart Deposit is reached.
+
+One peer replaces an exact Bandage stock ID with an exact Screwdriver ID while
+keeping the crate count unchanged. The observer holds one owned candidate of
+each type. After physical replication, multiple ordinary visible-page draw
+frames and at least 500 ms precede the real button callback. The fixture never
+forces hidden discovery after replacement. Read-only aggregate samples record
+whether the UI naturally converged. Initial source readiness waits for ordinary
+visible-page category preparation. Later client observations read native
+identity and raw display categories directly: `ManifestModel.item` prepares
+categories and would change the state being tested.
+
+Both candidates must be eligible for the physical crate but rejected by the
+selected aggregate. Invoke the installed visible button and require no native
+actions, at least three further draw frames and 500 ms, an idle queue and exact
+unchanged candidate endpoints on the server and both clients. A fresh or stale
+transfer is still conserved and cleaned up before the functional verifier
+rejects that changed contract. Receipts audit both clients, all 15 owned identities,
+original equipment/UI/options and twelve removed crates. Source-only tests use
+the installed handler, page callbacks, getters and native ModOptions:
+
+```sh
+.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --pack-lock "$PZ_PACK_LOCK" \
+  --test test_warehouse_workload_affinity --test test_warehouse_workload_client \
+  --test test_warehouse_workload_fixture
+.venv/bin/python -m unittest tests.test_queue_warehouse_affinity
+```
+
+Accepting source doubles demonstrate the handler's type/category input
+dependency; rejecting doubles exercise the aggregate restriction. They do not
+establish natural Host staleness. A successful native run covers the restricted
+single-target callback with this pack, not nearby transfers, physical mouse
+input, immediate packet/input ordering, other stock types or performance.

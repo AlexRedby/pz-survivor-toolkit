@@ -39,7 +39,7 @@ def one(rows, event):
     return values[0]
 
 
-def records(text, role):
+def records(text, role, case='peer-edits'):
     result = []
     for line in text.splitlines():
         if MARKER not in line:
@@ -47,7 +47,7 @@ def records(text, role):
         event, separator, body = line.split(MARKER, 1)[1].partition(' ')
         ensure(event in EVENTS and separator and body and len(body) <= 262144, 'failed/unknown/malformed event')
         row = receipts.decode_object(body)
-        require(row, suite='warehouse-workload', case='peer-edits', kind='mp', mode='toolkit', role=role)
+        require(row, suite='warehouse-workload', case=case, kind='mp', mode='toolkit', role=role)
         result.append((event, row))
     return result
 
@@ -102,10 +102,11 @@ def endpoints(phase, step):
     return expected
 
 
-def snapshot(row, phase, step, descriptors, originals, role):
+def snapshot(row, phase, step, descriptors, originals, role, expected=None, metadata=True):
     require(row, token=descriptors['token'], visibility='both-roots' if role == 'server' else role)
     meta = {item['id']: item for item in phase['items']} if phase else {}
-    expected = endpoints(phase, step) if phase else {}
+    if expected is None:
+        expected = endpoints(phase, step) if phase else {}
     if phase:
         require(row, index=phase['index'], phaseToken=phase['phaseToken'])
     visible = {key: where for key, where in expected.items()
@@ -114,7 +115,14 @@ def snapshot(row, phase, step, descriptors, originals, role):
     ensure(type(item_rows) is list and set(ids([item['id'] for item in item_rows])) == set(visible), 'visible item cohort differs')
     for item in item_rows:
         before = meta[item['id']]
-        require(item, endpoint=visible[item['id']], count=1, ft=before['ft'], key=before['key'], cat=before['cat'])
+        require(item, endpoint=visible[item['id']], count=1, ft=before['ft'])
+        if metadata:
+            require(item, key=before['key'], cat=before['cat'])
+        else:
+            require(row, projection='native-identity')
+            require(item, customName=bool(before.get('name')))
+            ensure(item.get('name') == before.get('name') and 'key' not in item and 'cat' not in item, 'native identity projection claimed model metadata')
+            ensure(item.get('rawCategory') is None or type(item['rawCategory']) is str, 'invalid raw native category')
     roots = ('client1', 'client2') if role == 'server' else (role,)
     ensure(type(row['rootIds']) is dict and set(row['rootIds']) == set(roots), 'root visibility differs')
     locations = {}

@@ -47,6 +47,8 @@ class ModIntegrations(unittest.TestCase):
         self.write(root / 'ISUI/ISInventoryPane.lua', 'CleanUI pane')
         if full:
             for relative, text in (
+                    ('ISUI/ISInventoryPageTransferHandler.lua', 'CleanUI transfer handler'),
+                    ('ISUI/CleanUI_ModOptions.lua', 'CleanUI options'),
                     ('ISUI/ISInventoryPage.lua', 'CleanUI page'),
                     ('CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua', 'CleanUI vanilla pane'),
                     ('CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPage.lua', 'CleanUI vanilla page')):
@@ -195,7 +197,8 @@ class ModIntegrations(unittest.TestCase):
         self.assertEqual({'test_inventory_tags.lua', 'test_inventory_filter.lua', 'test_inventory_search.lua',
                           'test_inventory_layout.lua', 'test_inventory_interaction.lua',
                           'test_inventory_transfer_operations.lua', 'test_container_configuration_menus.lua',
-                          'test_smart_deposit.lua', 'test_inventory_refresh.lua', 'test_bc_inventory_classes.lua'}, requested)
+                          'test_smart_deposit.lua', 'test_inventory_refresh.lua', 'test_bc_inventory_classes.lua',
+                          'test_warehouse_workload_affinity.lua'}, requested)
         self.assertEqual({'CleanUIInventoryPaneSource': 'CleanUI pane',
                           'CleanUIVanillaInventoryPaneSource': 'CleanUI vanilla pane'},
                          self.bound(args, 'test_inventory_transfer_operations.lua'))

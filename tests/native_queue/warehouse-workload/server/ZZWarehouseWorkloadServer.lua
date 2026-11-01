@@ -1,5 +1,5 @@
 local selection=require 'QueueTestSelection'
-if selection.kind~='mp'or selection.cases[1]~='peer-edits'or not isServer()then return end
+if selection.kind~='mp'or(selection.cases[1]~='peer-edits'and selection.cases[1]~='hidden-affinity')or not isServer()then return end
 local F=require 'WarehouseWorkloadFixture'
 local players,ready,seen={},{},{}
 local state,step,pending,since,closed,aborting
@@ -35,7 +35,7 @@ end
 local function go(index)
  step=F.steps[index];seen={};pending=nil;since=now()
  if step=='initial'then return end
- local actor=step=='hidden-loot'and'client1'or'client2'
+ local actor=(step=='hidden-loot'or step=='personal-quick')and'client1'or'client2'
  broadcast('Go',context({step=step,actor=actor,phase=state.phase}))
  F.emit('GO',context({step=step,actor=actor}))
 end
@@ -59,7 +59,7 @@ Events.OnClientCommand.Add(function(module,command,player,args)
  if module~=F.module then return end
  local ok,problem=pcall(function()
   assert(not closed,'closed workload session')
-  assert(type(args)=='table'and args.case=='peer-edits','invalid workload case')
+  assert(type(args)=='table'and args.case==F.case,'invalid workload case')
   local role=player:getUsername();assert(role=='client1'or role=='client2','unexpected workload actor')
   if command=='Prepare'then
    assert(not players[role]and not state,'duplicate workload preparation');players[role]=player;since=since or now()
@@ -94,17 +94,17 @@ Events.OnClientCommand.Add(function(module,command,player,args)
   assert(args.index==p.index and args.phaseToken==p.phaseToken and args.step==step,'wrong workload phase/step')
   if command=='Acted'then
    assert(step~='initial'and not pending and not p.authorityStep,'duplicate/out-of-order workload action receipt')
-   assert(role==(step=='hidden-loot'and'client1'or'client2'),'wrong workload action role')
+   assert(role==((step=='hidden-loot'or step=='personal-quick')and'client1'or'client2'),'wrong workload action role')
    pending=now()
   elseif command=='Seen'then
    assert(not seen[role]and not pending and(step=='initial'or p.authorityStep==step),'duplicate/premature workload observer receipt')
    seen[role]=true;F.emit('SEEN',context({step=step,observer=role}))
    if both(seen)then
     assert(F.native(state,step),'authoritative workload changed after observation')
-    if step=='hidden-loot'then
+    if step==F.steps[#F.steps]then
      local receipt=F.release(state,p.index);F.emit('RELEASE',receipt);broadcast('Released',receipt);step=nil;since=now()
-     if state.nextIndex==3 then
-      local cleanup=F.cleanup(state);F.emit('RESTORED',cleanup);F.emit('COMPLETE',{token=state.token,index=2,phases=2,restored=true})
+     if state.nextIndex==#F.modes+1 then
+      local cleanup=F.cleanup(state);F.emit('RESTORED',cleanup);F.emit('COMPLETE',{token=state.token,index=#F.modes,phases=#F.modes,restored=true})
       broadcast('Done',cleanup);closed=true
      end
     else

@@ -1,9 +1,10 @@
 -- Fresh menu-Host plus joining client, both exercising the installed live UI.
 local selection=require 'QueueTestSelection'
-if selection.kind~='mp'or selection.cases[1]~='peer-edits'then return end
+if selection.kind~='mp'or(selection.cases[1]~='peer-edits'and selection.cases[1]~='hidden-affinity')then return end
 local F=require 'WarehouseWorkloadFixture'
 local U=require 'WarehouseWorkloadUI'
 local N=require 'WarehouseWorkloadNative'
+local A=F.affinity and require 'WarehouseWorkloadAffinity'
 local JSON=require 'QueueHealthEvents'
 local started,done=false,false
 local R={stage='baseline',index=1,replies={},phases=0}
@@ -15,7 +16,7 @@ local function emit(event,row)
  F.emit(event,row)
 end
 local function request(command,args)
- args=args or {};args.case='peer-edits';args.token=R.ids and R.ids.token;args.index=R.index
+ args=args or {};args.case=selection.cases[1];args.token=R.ids and R.ids.token;args.index=R.index
  args.phaseToken=R.phase and R.phase.phaseToken;args.step=R.step
  sendClientCommand(F.module,command,args)
 end
@@ -83,7 +84,10 @@ local function checkProjection(native,authority)
  local expected=assert(authority.rootIds[R.role]);assert(N.sameIds(native.rootIds[R.role],expected),'replicated own root IDs differ from authority')
  local physical={};for _,item in ipairs(authority.items)do if item.endpoint==R.role or string.sub(item.endpoint,1,5)=='crate'then physical[item.id]=item end end
  local n=0;for _,item in ipairs(native.items)do local expectedItem=physical[item.id]
-  assert(expectedItem and item.ft==expectedItem.ft and item.endpoint==expectedItem.endpoint and item.count==1 and item.key==expectedItem.key and item.cat==expectedItem.cat,'replicated item payload differs from authority');n=n+1
+  assert(expectedItem and item.ft==expectedItem.ft and item.endpoint==expectedItem.endpoint and item.count==1,'replicated item identity/endpoint differs from authority')
+  if F.affinity then
+   assert(native.projection=='native-identity'and item.customName==expectedItem.customName and item.name==expectedItem.name,'replicated native item name differs from authority')
+  else assert(item.key==expectedItem.key and item.cat==expectedItem.cat,'replicated item payload differs from authority')end;n=n+1
  end
  local expectedCount=0;for _ in pairs(physical)do expectedCount=expectedCount+1 end;assert(n==expectedCount,'replicated projected item count differs from authority')
 end
@@ -91,6 +95,12 @@ local function observerReady(authority)
  local native=F.native(R.state,R.step);local aggregateBefore=N.aggregateObservation(R.run)
  readinessWait(native,aggregateBefore.fresh and aggregateBefore or nil);if not native then return end
  checkProjection(native,authority)
+ if A and R.step~='initial'then
+  if R.step=='peer-replace'and not A.ready(R.run)then return end
+  sampleHidden();emit('HIDDEN',{before=R.hidden,after=R.lastHidden,samples=R.hiddenSamples,elapsedMs=now()-R.hiddenAt})
+  emit('SNAPSHOT',{native=native,authority=authority,aggregateBefore=aggregateBefore,affinity=A.proof(R.run)})
+  request('Seen');transition('await-go');return true
+ end
  if R.role=='client1'and R.step=='peer-transfer'then
   local target=R.ids.actorOrigin;local pos=U.position(R.player)
   if not N.idle(R.player)or math.floor(pos.x)~=target.x or math.floor(pos.y)~=target.y then return end
@@ -119,13 +129,14 @@ local function observerReady(authority)
  hide();request('Seen');transition('await-go');return true
 end
 local function dispatch(go)
- assert(go.phase.phaseToken==R.phase.phaseToken and go.actor==(go.step=='hidden-loot'and'client1'or'client2'),'wrong native workload dispatch')
+ assert(go.phase.phaseToken==R.phase.phaseToken and go.actor==((go.step=='hidden-loot'or go.step=='personal-quick')and'client1'or'client2'),'wrong native workload dispatch')
  F.attachPhase(R.state,go.phase);R.phase=go.phase;R.run.phase=go.phase;R.step=go.step;R.run.step=go.step
  R.substage=0;R.acted=false;R.walked=nil;R.go=go;R.waitEmitted=false
  if R.role=='client1'and R.step=='peer-transfer'then
   R.walked={from=U.position(R.player),target=R.ids.walkTarget,progress=false,returned=false}
   R.walkAction=N.walk(R.run,R.ids.walkTarget.x,R.ids.walkTarget.y,R.ids.walkTarget.z)
  elseif R.role==go.actor and R.step=='hidden-loot'then R.quick=N.quick(R.run)
+ elseif R.role==go.actor and R.step=='personal-quick'then R.quick=A.dispatch(R.run)
  end
  transition('working')
 end
@@ -151,7 +162,8 @@ local function nativeActor()
    end
    if count~=4 then return end;return true
   end
- elseif R.step=='hidden-loot'then return root:getItemById(p.quickId)~=nil and not stores[5]:getItemById(p.quickId)end
+ elseif R.step=='hidden-loot'then return root:getItemById(p.quickId)~=nil and not stores[5]:getItemById(p.quickId)
+ elseif R.step=='personal-quick'then return A.done(R.run)end
 end
 local function walkObserver()
  if not R.walked then return end
@@ -171,7 +183,7 @@ local function releaseReady(receipt)
  N.closeCraft(R.run);R.run=nil;R.hidden=nil
  local original=U.originalProof(R.player,R.original)
  emit('RELEASE',{receipt=receipt,absent=true,original=original});R.phases=R.phases+1
- if R.index==1 then R.index=2;R.phase=nil;place(R.ids.actorOrigin)else transition('await-done')end
+ if R.index<#F.modes then R.index=R.index+1;R.phase=nil;place(R.ids.actorOrigin)else transition('await-done')end
  return true
 end
 local function tick()
@@ -181,7 +193,8 @@ local function tick()
  if R.stage=='baseline'then
   if not N.idle(R.player)or not stableUI()then return end
   R.ui=U.save(R.player);R.original=U.original(R.player);R.position=U.position(R.player)
-  emit('BASELINE',{original=U.originalProof(R.player,R.original),position=R.position,stableSamples=R.baseline.samples})
+  if A then R.affinityOptions=A.save()end
+  emit('BASELINE',{original=U.originalProof(R.player,R.original),position=R.position,affinityOptions=R.affinityOptions,stableSamples=R.baseline.samples})
   U.protect(R.player,R.ui)
   request('Prepare');transition('prepared')
  elseif R.stage=='prepared'then
@@ -191,6 +204,7 @@ local function tick()
   emit('SETUP',{ids=R.ids});place(R.ids.actorOrigin)
  elseif R.stage=='position'then
   local proof=U.place(R.player,R.placement,N.idle(R.player));if not proof then return end
+  if A then A.configure()end
   U.configure(R.player,F.modes[R.index]);R.configuredAt=now();R.placementProof=proof;transition('configured')
  elseif R.stage=='configured'then
   if now()-R.configuredAt<300 then return end
@@ -200,6 +214,10 @@ local function tick()
  elseif R.stage=='seeded'then if R.replies.Seeded then beginInitial()end
  elseif R.stage=='initial'then
   local native=F.native(R.state,'initial')
+  -- Wait for the real visible source UI to prepare its categories; native
+  -- replication observation itself must not invoke model/category preparation.
+  if A and native and not R.run.affinity then A.begin(R.run)end
+  if A and native and not R.run.affinity then return end
   -- Seeded physical replicas must precede the single setup discovery. The
   -- aggregate was selected before the server seed and can still be empty.
   if native and not R.initialDiscovery then R.initialDiscovery=true;hide()end
@@ -216,7 +234,7 @@ local function tick()
  elseif R.stage=='working'then
   sampleHidden();walkObserver()
   if R.role==R.go.actor and not R.acted and nativeActor()then
-   R.acted=true;emit('ACTIONS',{records=N.actionProof(R.run),craftDispatch=R.step=='peer-craft'and R.run.craftDispatch or nil,quick=R.step=='hidden-loot'and R.quick or nil});request('Acted')
+   R.acted=true;emit('ACTIONS',{records=N.actionProof(R.run),craftDispatch=R.step=='peer-craft'and R.run.craftDispatch or nil,quick=(R.step=='hidden-loot'or R.step=='personal-quick')and R.quick or nil});request('Acted')
   end
   local observed=R.replies.Observed
   if observed then
@@ -229,8 +247,8 @@ local function tick()
   R.placement={began=now(),target=R.position};transition('return')
  elseif R.stage=='return'then
   local position=U.place(R.player,R.placement,N.idle(R.player));if not position then return end
-  local actual=U.originalProof(R.player,R.original);local ui=U.restore(R.player,R.ui)
-  emit('RESTORED',{original=actual,actual=actual,uiProof=ui,positionProof=position,ownedAbsent=true,authority=R.replies.Done})
+  local actual=U.originalProof(R.player,R.original);local affinityOptions=A and A.restore(R.affinityOptions);local ui=U.restore(R.player,R.ui)
+  emit('RESTORED',{original=actual,actual=actual,uiProof=ui,affinityOptions=affinityOptions,positionProof=position,ownedAbsent=true,authority=R.replies.Done})
   emit('COMPLETE',{phases=R.phases,restored=true});done=true
  end
 end
@@ -252,8 +270,8 @@ local function abortTick()
  if not R.ui then emit('ABORT',{restored=true,authority=reply});done=true;return end
  if not R.abortPosition then R.abortPosition={began=now(),target=R.position}end
  local position=U.place(R.player,R.abortPosition,true);if not position then return end
- local actual=U.originalProof(R.player,R.original);local ui=U.restore(R.player,R.ui)
- emit('ABORT',{restored=true,authority=reply,actual=actual,uiProof=ui,positionProof=position});done=true
+ local actual=U.originalProof(R.player,R.original);local affinityOptions=A and A.restore(R.affinityOptions);local ui=U.restore(R.player,R.ui)
+ emit('ABORT',{restored=true,authority=reply,actual=actual,uiProof=ui,affinityOptions=affinityOptions,positionProof=position});done=true
 end
 Events.OnTick.Add(function()
  if done or not isClient()or not isIngameState()then return end
@@ -268,6 +286,7 @@ Events.OnTick.Add(function()
  local aborting=R.stage=='abort';local ok,problem=pcall(aborting and abortTick or tick)
  if not ok then
   if aborting then
+   if A and R.affinityOptions then pcall(A.restore,R.affinityOptions)end
    if R.ui then pcall(U.flags,R.player,R.ui)end
    emit('ABORT',{restored=false,error=tostring(problem),originalFailure=R.failure});done=true
   else
