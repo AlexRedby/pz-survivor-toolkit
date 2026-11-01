@@ -548,6 +548,39 @@ object NativeTransferRequestsChecks {
             check(!matches(independent, 42)) {
                 "unknown direct manager call retained the previous actor cursor"
             }
+
+            for ((allocated, expected) in listOf(127 to 127, -128 to -128, -1 to -1, 0 to 1)) {
+                wire = connection()
+                val signed = start(allocated, "native-byte-$allocated")
+                check(
+                    signed.first.rawget("transactionId") == expected.toDouble() &&
+                        packetId.getByte(nativeQueue.single()).toInt() == expected &&
+                        wire.packets == 1 &&
+                        matches(signed, expected) &&
+                        !signed.second.isWireAmbiguous(),
+                ) {
+                    "native signed byte $allocated did not retain its exact nonzero wire identity"
+                }
+                if (expected < 0) {
+                    check(!matches(signed, expected and 255)) {
+                        "an unsigned alias matched a signed native transaction byte"
+                    }
+                }
+            }
+
+            connection()
+            val sharedByte = start(70, "actor-shared-byte")
+            nextId.setByte(null, 70)
+            TransactionManager.createItemTransaction(
+                secondActor,
+                listOf(item),
+                secondSource,
+                destination,
+            )
+            check(!matches(sharedByte, 70) && sharedByte.second.isWireAmbiguous()) {
+                "a second actor's reused connection byte retained authoritative correlation"
+            }
+
             val directSet = start(54, "direct-set")
             ItemTransactionPacket()
                 .set(
