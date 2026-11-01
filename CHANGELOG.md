@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.333
+
+- Add an opt-in structural forecast for editing active reading: distinguish the observed checkpoint, future resumed reader, pending actions and cleanup obligations. Read private obligation metadata without creating returns or updating receipts; unknown ownership stays explicit. This preparation adds no new cancel/reorder permissions and runs only when explicitly requested by development checks.
+
 ### 0.1.332
 
 - Keep fishing chum and bait-only recipe inputs out of automatic cooking-ingredient tags. Determine evolved meal capability from the result item's cooking and nutrition metadata; B42.21 treats an evolved recipe's `Cookable=false` as true. Preserve cold meals, drinks and explicit tag overrides.

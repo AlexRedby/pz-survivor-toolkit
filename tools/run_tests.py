@@ -32,6 +32,7 @@ NATIVE_TAG_TESTS = (
 REQUIRED_INPUTS = {
     "test_warehouse_workload_affinity.lua": (("cleanui_inventory_pane", "native_action_root"),
                                            "--game and --cleanui-inventory-pane (or a complete --pack-lock)"),
+    "test_action_queue_active_edit.lua": ("native_action_root", "--game or --native-action-root"),
     "test_bc_inventory_classes.lua": (("bc_filter_source", "cleanui_inventory_pane"),
                                       "--bc-filter-source and --cleanui-inventory-pane (or a complete --pack-lock)"),
     "test_kahlua_own_fields.lua": ("native_action_root", "--game or --native-action-root"),
