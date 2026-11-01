@@ -50,13 +50,10 @@ Focused checks before a game launch:
 .venv/bin/python tools/run_tests.py \
   --test test_warehouse_workload_fixture --test test_warehouse_workload_client
 python3 -m unittest tests.test_queue_warehouse_workload tests.test_queue_campaign
-mkdir -p /tmp/pz-kahlua-check
-"$PZ_JDK/bin/javac" -cp "$PZ_GAME/projectzomboid.jar" -d /tmp/pz-kahlua-check \
-  tests/native_queue/contributions/smart-deposit/java/KahluaCompileCheck.java
-"$PZ_JDK/bin/java" -cp "/tmp/pz-kahlua-check:$PZ_GAME/projectzomboid.jar" \
-  KahluaCompileCheck tests/native_queue/warehouse-workload/client/*.lua \
-  tests/native_queue/warehouse-workload/shared/*.lua \
-  tests/native_queue/warehouse-workload/server/*.lua
+.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --jdk "$PZ_JDK" \
+  --check-lua tests/native_queue/warehouse-workload/client \
+  --check-lua tests/native_queue/warehouse-workload/shared \
+  --check-lua tests/native_queue/warehouse-workload/server
 ```
 
 Synthetic receipt tests exercise rejection paths; only a fresh native report can

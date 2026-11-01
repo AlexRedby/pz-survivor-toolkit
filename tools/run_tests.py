@@ -10,9 +10,10 @@ import time
 from pathlib import Path
 
 try:
-    from . import mod_integrations
+    from . import mod_integrations, lua_compatibility
 except ImportError:
     import mod_integrations
+    import lua_compatibility
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -262,6 +263,10 @@ def main() -> None:
     parser.add_argument('--pack-lock', type=Path, help='validated selected-pack lock supplying integration source paths')
     parser.add_argument('--game', type=Path,
                         help='directory containing projectzomboid.jar; supplies native Lua paths, and must match --pack-lock when used')
+    parser.add_argument('--jdk', type=Path, help='JDK for the installed-Kahlua compatibility check')
+    parser.add_argument('--check-lua', type=Path, action='append', default=[], metavar='SOURCE',
+                        help='compile runtime Lua file/directory with installed Kahlua and reject absent standard globals; repeatable, requires --game and --jdk; alone runs no behavioural tests')
+    parser.add_argument('--lua-report', type=Path, help='write the --check-lua compatibility report, including rejected sources')
     parser.add_argument("--native-mod-options", type=Path,
                         help="test against an extracted vanilla PZAPI/ModOptions.lua")
     parser.add_argument("--cleanui-inventory-pane", type=Path, help="test against CleanUI ISInventoryPane.lua")
@@ -306,6 +311,27 @@ def main() -> None:
     if args.list_integrations:
         print(json.dumps(mod_integrations.describe(), indent=2))
         return
+    if args.lua_report and not args.check_lua:
+        parser.error('--lua-report requires --check-lua')
+    if args.check_lua:
+        if not args.game or not args.jdk:
+            parser.error('--check-lua requires --game and --jdk')
+        sources = []
+        for path in args.check_lua:
+            if path.is_dir():
+                found = sorted(path.rglob('*.lua'))
+                if not found:
+                    parser.error('No runtime Lua sources in: ' + str(path))
+                sources.extend(found)
+            else:
+                sources.append(path)
+        try:
+            checked = lua_compatibility.check_sources(sources, game=args.game, jdk=args.jdk, output=args.lua_report)
+        except (OSError, ValueError) as error:
+            parser.error(str(error))
+        print('Installed-Kahlua compatibility passed for ' + str(len(checked['sources'])) + ' runtime Lua files.', flush=True)
+        if not args.test and not args.group and not args.integration:
+            return
     if args.integration or args.pack_lock:
         try:
             mod_integrations.configure(args, ROOT, requested)

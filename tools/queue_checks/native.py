@@ -10,6 +10,10 @@ import subprocess
 import sys
 import zipfile
 from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw
+try:
+    from .. import lua_compatibility
+except ImportError:
+    import lua_compatibility
 from .mod_selection import (
     MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots,
     mod_layers, mod_info, selected_mod_version,
@@ -231,6 +235,23 @@ def source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None
     return locations, template, world
 
 
+def runtime_lua_sources(runtime, selection):
+    """Effective owned runtime files, including generated fixtures; never offline harnesses."""
+    owned = {'ActionQueueTest', *runtime['fixture'].get('mods', [])}
+    owned.update({'PZSurvivorToolkit', 'PZToolkitJavaPatches'}.intersection(selection['mods']))
+    sources = set()
+    for role in runtime['roles'].values():
+        cache = Path(role['cache'])
+        for identifier in sorted(owned):
+            effective = {}
+            for layer in mod_layers(cache / 'mods' / identifier):
+                lua = layer / 'media/lua'
+                effective.update({path.relative_to(lua): path for path in lua.rglob('*.lua') if path.is_file()})
+            sources.update(effective.values())
+        sources.update((cache / 'Server').glob('*.lua'))
+    return sorted(sources)
+
+
 def prepare(project: Path, output: Path, game: Path, jdk: Path,
             selection: dict, workshop: list[Path] = ()) -> Path:
     """Return a fresh snapshot directory; never reuse or change an earlier run."""
@@ -258,6 +279,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     support = project / "tests/native_queue/support"
     suite = project / "tests/native_queue" / selection["suite"]
     required = [support / name for name in ("ToolkitSmokeLauncher.java", "ToolkitWindowBootstrap.java", "ZZReleasePreflight.lua", "QueueEnergyPlacement.lua")]
+    required += [Path(lua_compatibility.HARNESS), Path(lua_compatibility.__file__).resolve(), game / 'stdlib.lbc']
     required += [project / "tools/check_action_queue.py", project / "tests/native_queue/catalog.json"]
     if not adapter and (not (suite / "client").is_dir() or not (suite / "shared").is_dir() or selection["kind"] == "mp" and not (suite / "server").is_dir()):
         raise ValueError("Native suite is missing its client/shared/server source directories: " + str(suite))
@@ -452,6 +474,11 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         path.write_text(text)
     if coop.enabled(selection):
         coop.stage(output, runtime)
+    # Compile the final staged bytes, including generated session chunks. A
+    # failure leaves no accepted snapshot/launch manifest. Test-only Lua helpers
+    # and third-party mods are deliberately outside this owned-runtime check.
+    lua_compatibility.check_sources(runtime_lua_sources(runtime, selection), game=game, jdk=jdk,
+                                    output=output / 'lua-compatibility.json')
     _json(output / "selection.json", selection)
     if locked:
         pack.validate(locked, project, game, selection['mods'])

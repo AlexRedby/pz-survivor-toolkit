@@ -116,18 +116,15 @@ Host coverage is one actual client through installed Lua drag/drop callbacks;
 physical mouse dispatch, contention and a separate remote client remain outside
 this scenario. Inspect both screenshots as well as the common runtime audit.
 
-Before launching a changed fixture, compile it with the installed game's Kahlua
-compiler as well as running the focused behavioral checks. Standard Lua accepts
-some closures that exceed Kahlua's 60-upvalue limit. This check only compiles; it
-does not execute Lua or initialize a game:
+Before launching a changed fixture, run the common installed-Kahlua source check
+as well as the focused behavioral checks. Standard Lua accepts some closures
+that exceed Kahlua's 60-upvalue limit. The common native runner also checks final
+staged Lua, including generated sessions, before accepting the snapshot:
 
 ```sh
-check_classes="$(mktemp -d)"
-javac_source=tests/native_queue/contributions/smart-deposit/java/KahluaCompileCheck.java
-"$PZ_JDK/bin/javac" -cp "$PZ_GAME/projectzomboid.jar" -d "$check_classes" "$javac_source"
-"$PZ_JDK/bin/java" -cp "$check_classes:$PZ_GAME/projectzomboid.jar" KahluaCompileCheck \
-  tests/native_queue/contributions/smart-deposit/ZZSmartDepositHost.lua \
-  tests/native_queue/contributions/smart-deposit/QueueSmartDepositHostFixture.lua \
-  tests/native_queue/contributions/smart-deposit/ZZSmartDepositHostServer.lua \
-  tests/native_queue/contributions/smart-deposit/ZZSmartDepositNative.lua
+.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --jdk "$PZ_JDK" \
+  --check-lua tests/native_queue/contributions/smart-deposit/ZZSmartDepositHost.lua \
+  --check-lua tests/native_queue/contributions/smart-deposit/QueueSmartDepositHostFixture.lua \
+  --check-lua tests/native_queue/contributions/smart-deposit/ZZSmartDepositHostServer.lua \
+  --check-lua tests/native_queue/contributions/smart-deposit/ZZSmartDepositNative.lua
 ```

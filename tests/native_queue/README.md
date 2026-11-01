@@ -24,6 +24,14 @@ Keep the controlled container/ID namespace frozen until every relevant replica p
 
 Run `.venv/bin/python tools/run_tests.py --test test_fixture_item_cleanup` for forced before/after mutation and publication failures, ownership/generation rejection and journal lifetime. With `PZ_GAME` and `PZ_JDK` set, `.venv/bin/python -m unittest tests.test_fixture_item_cleanup_native` also executes the module in the installed game's Kahlua without opening the game. Actual native replication remains a separate suite gate.
 
+### Lua source compatibility
+
+Native preparation compiles the final staged Lua with the installed game's Kahlua before accepting the snapshot. It checks effective `common`/selected-version files in `ActionQueueTest`, declared generated fixture mods, Toolkit and Java Patches, plus generated server configuration. Offline protocol/test helpers and third-party mod code are outside this gate. It includes generated session chunks, which source-only checks can miss.
+
+The common [checker](../../tools/lua_compatibility.py) and [Java helper](support/KahluaCompatibilityChecks.java) reject native syntax/closure limits and direct reads of absent standard globals such as `next`. The helper executes only installed `stdlib.lbc`, never project Lua or the game. It reports exact source lines, nested functions and checked hashes in `lua-compatibility.json`; the report and compiler inputs are sealed with the snapshot. Failure produces no accepted launch manifest. Ordinary snapshot/source checks still reject edits after preparation.
+
+Use `tools/run_tests.py --game "$PZ_GAME" --jdk "$PZ_JDK" --check-lua SOURCE` for a separate check, adding `--lua-report FILE` to retain diagnostics. This is a compile/global-availability gate, not behavioral parity: indirect globals, generated code at runtime, library members, inherited `rawget`, weak-table behavior and game/network effects still need their own tests. The installed-compiler regressions run with `PZ_GAME` and `PZ_JDK` set via `.venv/bin/python -m unittest tests.test_lua_compatibility`.
+
 ## Commands
 
 Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. The macOS runner supports the catalogued suites. Windows has a bounded one-client Host launch path for `startup` and `forge`, using the game's bundled Java runtime, explicit ports, isolated loader approvals and a Windows Job Object that owns only the test client and its descendants. A named lease serializes this initial Windows launch path; available-memory and disk guards run before launch. Other Windows suites and physical input automation are not supported by that path. The core runner needs no Python packages; the SP cart mesh analyzers additionally require NumPy, as declared in their contribution. Health fixture selfchecks use `luajit` on PATH; existing product Lua regressions separately use `lupa`.

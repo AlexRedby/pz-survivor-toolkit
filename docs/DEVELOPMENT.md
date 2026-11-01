@@ -33,6 +33,16 @@ python3 tools/prepare_install.py --check
 
 List Lua tests with `.venv/bin/python tools/run_tests.py --list`. Select one or several with repeatable `--test NAME` (relative to `tests/`, with or without `.lua`). For example, `--test test_tv_controls --test test_vhs_ownership` runs only those tests and their associated variants, without scanning all mod files. Omit `--test` for the existing full Lua checks, including the syntax scan. Quartermaster checks always use the owned `PZSurvivorToolkit/42/media/lua` sources. Explicitly selecting its craft UI or the native tag transfer/placement checks also requires native game sources through `--game` or `--native-action-root`. Other checks retain their existing source-dependent SKIP behavior; a skipped integration check does not validate that integration.
 
+Before launching changed runtime Lua, use the installed game's compiler without opening a game window:
+
+```sh
+.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --jdk "$PZ_JDK" \
+  --check-lua PZSurvivorToolkit/42/media/lua \
+  --lua-report /tmp/pz-lua-compatibility.json
+```
+
+Repeat `--check-lua` for runtime files/directories. Without an explicit `--test`, `--group` or `--integration`, this command runs only source compatibility checks; offline harness helpers are not checked as game code. Kahlua compiles all nested functions and rejects its own syntax/upvalue limits. Compiled direct standard-global reads are checked against installed libraries and game-provided globals; comments, strings, locals and object methods do not trigger a missing-global error. Project chunks are never executed. This does not validate indirect `_G` access, dynamically generated Lua, library members, game API availability or runtime semantics such as inherited `rawget` and ignored weak-table modes. Keep focused behavioral and native checks for those contracts. Native preparation also requires this gate for final staged owned Lua, including generated sessions; see the [runner guide](../tests/native_queue/README.md#lua-source-compatibility).
+
 Add `--game "$PZ_GAME"` (the directory containing `projectzomboid.jar`) to supply native Lua inputs from one installation. For example, `.venv/bin/python tools/run_tests.py --game "$PZ_GAME" --test test_inventory_tags --test test_vehicle_ground` reads the selected tests' native inventory and vehicle sources. This also supplies Mod Options, radio, action and Wishlist paths when their checks are selected. Individual source-path options override these defaults; locked integration checks retain their source-consistency requirements. Only selected tests read their inputs, and a missing required file fails instead of silently skipping it. Third-party source paths remain explicit or come from `--pack-lock`.
 
 VHS menu, sorting, drop validation and live toggle checks run by default; add `--tv-source /path/to/RWMMergedTV.lua --game "$PZ_GAME"` to also exercise the upstream window and native media actions and drag parser.

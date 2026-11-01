@@ -34,7 +34,7 @@ class NativeSnapshotTests(unittest.TestCase):
         sample.start()
         self.addCleanup(sample.stop)
         self.project, self.game, self.jdk = [self.root / name for name in ("project", "game", "jdk")]
-        for relative in ("projectzomboid.jar", "media/lua/shared/native.lua", "media/scripts/items.txt",
+        for relative in ("projectzomboid.jar", "stdlib.lbc", "media/lua/shared/native.lua", "media/scripts/items.txt",
                          "media/lua/shared/Translate/EN/Fixture_EN.txt"):
             self.write(self.game / relative, "native input")
         for name in ('java', 'javac'):
@@ -56,6 +56,9 @@ class NativeSnapshotTests(unittest.TestCase):
         self.compiler = patch.object(native.subprocess, "run", side_effect=self.compile)
         self.compile_mock = self.compiler.start()
         self.addCleanup(self.compiler.stop)
+        compatibility = patch.object(native.lua_compatibility, 'check_sources', side_effect=self.check_compatibility)
+        self.compatibility_mock = compatibility.start()
+        self.addCleanup(compatibility.stop)
 
     @staticmethod
     def write(path, text):
@@ -81,6 +84,12 @@ class NativeSnapshotTests(unittest.TestCase):
             if str(value).endswith(".java"):
                 Path(value).with_suffix(".class").write_bytes(b"fake class")
 
+    @staticmethod
+    def check_compatibility(sources, *, game, jdk, output):
+        value = {'status': 'passed', 'sources': [str(path) for path in sources]}
+        native._json(output, value)
+        return value
+
     def prepare(self, name="run", **changes):
         selection = dict(self.selection, **changes)
         return native.prepare(self.project, self.root / name, self.game, self.jdk, selection)
@@ -103,6 +112,37 @@ class NativeSnapshotTests(unittest.TestCase):
         output = self.prepare()
         self.assert_window_size(output, [1600, 900])
         self.assertNotIn('window_size', self.selection)
+
+    def test_runtime_compatibility_checks_final_generated_owned_files_and_seals_receipt(self):
+        def stage(project, output, game, jdk, selection, locations, runtime):
+            cache = Path(runtime['roles']['client1']['cache'])
+            self.write(cache / 'mods/ActionQueueTest/42/media/lua/shared/GeneratedSession.lua', 'return {}\n')
+            self.mod(cache / 'mods/ExtraFixture', 'ExtraFixture')
+            runtime['fixture']['mods'] = ['ExtraFixture']
+        self.mod(self.project / 'OtherMod', 'OtherMod')
+        self.write(self.project / 'Toolkit/common/media/lua/shared/test.lua', 'next({}) -- overridden\n')
+        self.write(self.project / 'Toolkit/43/media/lua/shared/future.lua', 'next({}) -- inactive\n')
+        self.write(self.project / 'tests/native_queue/health/protocol.lua', 'next({}) -- offline helper\n')
+        with patch.object(native.adapters, 'get', return_value=self.fixture_adapter(stage)):
+            output = self.prepare(mods=['PZSurvivorToolkit', 'OtherMod'])
+        sources = self.compatibility_mock.call_args.args[0]
+        names = [path.relative_to(output).as_posix() for path in sources]
+        self.assertIn('client1/mods/ActionQueueTest/42/media/lua/shared/GeneratedSession.lua', names)
+        self.assertIn('client1/mods/ExtraFixture/42/media/lua/shared/test.lua', names)
+        self.assertIn('client1/mods/PZSurvivorToolkit/42/media/lua/shared/test.lua', names)
+        self.assertFalse(any('/OtherMod/' in name or '/43/' in name or '/common/' in name or 'protocol.lua' in name for name in names))
+        frozen = report.read_json(output / 'snapshot-hashes.json')
+        self.assertEqual(native.sha256(output / 'lua-compatibility.json'), frozen['lua-compatibility.json'])
+        inputs = report.read_json(output / 'source-manifest.json')
+        for path in (Path(native.lua_compatibility.__file__).resolve(), native.lua_compatibility.HARNESS, self.game / 'stdlib.lbc'):
+            self.assertIn(str(path), inputs)
+
+    def test_runtime_incompatibility_prevents_snapshot_acceptance(self):
+        self.compatibility_mock.side_effect = ValueError('generated.lua:3: unsupported global next')
+        with self.assertRaisesRegex(ValueError, 'unsupported global next'):
+            self.prepare()
+        for name in ('selection.json', 'runtime.json', 'snapshot-hashes.json'):
+            self.assertFalse((self.root / 'run' / name).exists(), name)
 
     def test_explicit_window_size_applies_to_every_prepared_mp_role(self):
         output = self.prepare(kind='mp', languages=['EN', 'RU'], options={'window_size': [2560, 1440]})
