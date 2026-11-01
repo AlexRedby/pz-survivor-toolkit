@@ -1,7 +1,7 @@
 -- Exercise native placement and the upstream compositor, with small content
 -- providers. Real BCI contents and ObjectTooltip Layout are checked in game.
 if not NativeTooltipLuaRoot or not NativeBCITooltipRoot then
-    print('Clothing tooltip: native/BCI sources absent; source-backed checks skipped.')
+    if TestCoverage then TestCoverage('source-contract','skipped','Clothing tooltip: native/BCI sources absent; source-backed checks skipped.')end
     return
 end
 local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
@@ -146,3 +146,4 @@ local crowded = window(); crowded.followMouse = true
 boundary.renderBlocks(crowded, {function(target) target:setWidth(600); target:setHeight(500) end}, {})
 assert(crowded.x == 0 and crowded.y == 0, 'native mouse avoidance clipped the left edge of the complete frame')
 print('Clothing tooltip: upstream placement reproduction, complete frame, native positioning, flag and error cleanup passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

@@ -1,5 +1,5 @@
 -- Execute the full native action/definitions; doubles cover Java API state.
-if not NativeActionRoot then print('Native makeup output sync SKIP (requires game sources).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Native makeup output sync SKIP (requires game sources).')end;return end
 next=nil
 local modulePath=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/server/PZSurvivorToolkit/MakeupOutputSync.lua'
 local function read(path)
@@ -563,3 +563,4 @@ for _,change in ipairs({'nested','world','worn','auto-equipped','auto-unequipped
  end
 end
 print('Native makeup output sync: native output correction and exact final-use removal, exact root-held hand cleanup, current source admission, unchanged ordinary/unsupported costs and no replay passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

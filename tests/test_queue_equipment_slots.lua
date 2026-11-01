@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Equipment slot native checks skipped (pass --native-action-root).'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Equipment slot native checks skipped (pass --native-action-root).')end; return end
 function require() end
 function isServer() return false end
 function isClient() return false end
@@ -1378,3 +1378,4 @@ for _,caseID in ipairs({'tidy-hotbar','tidy-hotbar-holster-left','tidy-hotbar-ho
  end
  print(caseID..': native constructors/attachConnect/hand effects, exact source proof and strict Host receipts passed')
 end
+if TestCoverage then TestCoverage('source-contract','passed')end

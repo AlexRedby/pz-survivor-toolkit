@@ -1,7 +1,7 @@
 -- Execute the selected upstream menu producer. The tested wrapper may change
 -- presentation only; native callback identities, parameters and clicks survive.
 if not NativeWishlistWorkshopRoot then
-    print('Food goal labels SKIP (pass --wishlist-workshop-root).'); return
+    if TestCoverage then TestCoverage('source-contract','skipped','Food goal labels SKIP (pass --wishlist-workshop-root).')end; return
 end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r', '') end
@@ -191,3 +191,4 @@ local s=setup('EN');assert(s.labels.install())
 local foreign=function()end;ES_subMenuEat=foreign
 assert(not s.labels.install()and ES_subMenuEat==foreign,'later foreign replacement must not be overwritten')
 print('Food goal labels: actual pinned EatSmartInt producer, EN/RU compact outcomes, remaining portions, hidden/disabled rows, exact callbacks/parameters and install guards passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

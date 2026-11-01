@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Book controls SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Book controls SKIP (pass --native-action-root).')end;return end
 
 -- Policy-only matrix: Java ownership/start state and container facts are explicit.
 -- This does not simulate a producer, native stop acknowledgement or a UI gesture.
@@ -200,3 +200,4 @@ do
     approach.isAction=checker
 end
 print('Real native TV producer: owned approach/volume beside borrowed return/Pen/tail and foreign callback guards passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

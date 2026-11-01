@@ -1,5 +1,5 @@
 if not NativeActionRoot then
-    print('Manifest transfer isolation SKIP (pass native action root).'); return
+    if TestCoverage then TestCoverage('source-contract','skipped','Manifest transfer isolation SKIP (pass native action root).')end; return
 end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r', '') end
@@ -91,3 +91,4 @@ for _, mp in ipairs({false, true}) do
     assert(policy.inspect(transfer()), 'restoring the native transfer callback must retain its original contract')
 end
 print('Manifest isolation: no transfer wrapper install, native completion/tail, cancellation cleanup and opaque callbacks passed (SP/client).')
+if TestCoverage then TestCoverage('source-contract','passed')end

@@ -1,5 +1,5 @@
 if not NativeQuartermasterLuaRoot then
-    print('SKIP Quartermaster sync: actual upstream Lua sources required.')
+    if TestCoverage then TestCoverage('source-contract','skipped','SKIP Quartermaster sync: actual upstream Lua sources required.')end
     return
 end
 
@@ -195,3 +195,4 @@ assert(synced and #boxes == 1 and boxes[1].groupId == nil,
 client = false
 assert(LootSorter.arePresetsSynced(), 'single-player acquired a network prerequisite')
 print('Quartermaster sync passed: complete snapshots, obsolete/out-of-order replies, draft isolation, empty stores, generations and read-only discovery.')
+if TestCoverage then TestCoverage('source-contract','passed')end

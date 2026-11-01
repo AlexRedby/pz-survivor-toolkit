@@ -203,7 +203,8 @@ if NativeActionRoot then
     end
     assert(next(wanted) == nil, "native item fixture missing")
     print("native B42.21 fluid categories and bottle declarations checked")
+    if TestCoverage then TestCoverage('native-fluid-declarations','passed') end
 else
-    print("SKIP native fluid declaration check (NativeActionRoot not supplied)")
+    if TestCoverage then TestCoverage('native-fluid-declarations','skipped','SKIP native fluid declaration check (NativeActionRoot not supplied)') end
 end
 print("item fluid tags tests passed")

@@ -4,7 +4,7 @@ if not source and NativeWishlistWorkshopRoot then
  if NativeReadText then source=NativeReadText(path)
  else local file=io.open(path);if file then source=file:read('*a');file:close()end end
 end
-if not source then print('Text resolver source proof SKIP (supply --wishlist-workshop-root or BC source).');return end
+if not source then if TestCoverage then TestCoverage('source-contract','skipped','Text resolver source proof SKIP (supply --wishlist-workshop-root or BC source).')end;return end
 source=source:gsub('\r','')
 local installSource=assert(source:match('(function Store%.installTextResolver.-)\nfunction Store%.getAllCategoryIDs'))
 local function scenario(options)
@@ -64,3 +64,4 @@ end})
 proxy.store.installTextResolver()
 assert(not proxy.binding.matches(getText,proxy.native),'proxy Store laundered a hidden foreign predecessor')
 print('PASS provider metatables cannot change the predecessor between admission and original capture')
+if TestCoverage then TestCoverage('source-contract','passed')end

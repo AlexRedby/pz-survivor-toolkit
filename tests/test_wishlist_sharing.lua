@@ -1,5 +1,5 @@
 if not NativeWishlistGameRoot then
-    print("SKIP wishlist player picker: supply --game for native combo/filter source")
+    if TestCoverage then TestCoverage('source-contract','skipped',"SKIP wishlist player picker: supply --game for native combo/filter source")end
     return
 end
 
@@ -162,3 +162,4 @@ combo.expanded, combo.popup.managed, combo.popup.parentCombo = true, true, {}
 sharing:close()
 assert(combo.popup.managed, "closing Wishlist must not remove another control's shared popup")
 print("PASS wishlist sharing: native search/selection, exact identities, live roster, retained grants and popup cleanup")
+if TestCoverage then TestCoverage('source-contract','passed')end

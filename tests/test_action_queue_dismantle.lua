@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Native dismantle lifecycle SKIP (pass --native-action-root).'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Native dismantle lifecycle SKIP (pass --native-action-root).')end; return end
 local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
 f.native('shared/Moveables/ISMoveablesAction.lua')
 local callbacks = {}
@@ -71,3 +71,4 @@ for _, changed in ipairs({'new', 'update', 'complete', 'callback', 'moving', 'di
 end
 assert(not policy.adoptMoveablesConstructor(function() end, ISMoveablesAction.new), 'foreign delegate cannot be adopted')
 print('Native dismantle lifecycle: installed constructor, removed target, delayed Java removal and abort guards passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

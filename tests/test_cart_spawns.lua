@@ -22,7 +22,7 @@ dofile(gate)
 print("PASS cart spawning: inactive without SaucedCarts and on pure MP clients")
 if not SaucedCartsSource then
     require = nativeRequire
-    print("SKIP cart generation requires installed SaucedCarts source")
+    if TestCoverage then TestCoverage('source-contract','skipped',"SKIP cart generation requires installed SaucedCarts source")end
     return
 end
 
@@ -186,3 +186,4 @@ w.run(200, 200)
 assert(#w.created > 0 and w.created[1].type == "Other.HandTruck", "unknown addon distribution changed")
 print("PASS cart spawning: error cleanup, saved decisions and unrelated addon pool preserved")
 require = nativeRequire
+if TestCoverage then TestCoverage('source-contract','passed')end

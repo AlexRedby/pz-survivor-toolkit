@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Rejected pickup policy SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Rejected pickup policy SKIP (pass --native-action-root).')end;return end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
     local file=assert(io.open(path));local source=file:read('*a');file:close();return source:gsub('\r','')
@@ -95,3 +95,4 @@ for _,size in ipairs({32,33,200})do
     if size>32 then assert(why=='unsupported_queue_size')end
 end
 print('Rejected pickup policy: bounded native owner partition, exact item dependencies, independent books/walk, closed callbacks/lifecycle/continuations and stale snapshots passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

@@ -136,5 +136,8 @@ if NativeActionRoot then
     local catch = read("server/Traps/STrapGlobalObject.lua")
     assert(catch:find("v.baits[self.bait] and ZombRand(100)", 1, true))
     print("native B42 lure/trap definitions, admission and consumption checked")
-else print("SKIP native bait source check (NativeActionRoot not supplied)") end
+    if TestCoverage then TestCoverage('native-bait-sources','passed') end
+else
+    if TestCoverage then TestCoverage('native-bait-sources','skipped','SKIP native bait source check (NativeActionRoot not supplied)') end
+end
 print("item bait tags tests passed")

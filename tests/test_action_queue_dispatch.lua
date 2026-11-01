@@ -1,4 +1,8 @@
-if not NativeActionRoot then print('Device dispatch native checks skipped (pass --native-action-root media/lua).'); return end
+if not NativeActionRoot then
+    if TestCoverage then TestCoverage('native-contracts','skipped','Device dispatch native checks skipped (pass --native-action-root media/lua).') end
+    if TestCoverage then TestCoverage('project-cook-callback','skipped','Device dispatch native checks skipped (pass --native-action-root media/lua).') end
+    return
+end
 require = function(name)
     if name == 'PZSurvivorToolkit/SourceProof' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua') end
 end
@@ -250,7 +254,12 @@ if cookPath then
     panel.CookerPanel.selectedCooker = {getParent = object}
     expand(command); assert(q.queue[3].object == stove and q.queue[3].Type == 'PZSurvivorToolkitSetStoveState')
     reset(); paused = true; PJCK_CookerPicker.onStoveButtonClick(panel); assert(#q.queue == 1); paused = false
-else print('Project Cook callback source check SKIP (provide ProjectCookPickerSourcePath).') end
+    if TestCoverage then TestCoverage('project-cook-callback','passed') end
+else
+    if TestCoverage then TestCoverage('project-cook-callback','skipped','Project Cook callback source check SKIP (provide ProjectCookPickerSourcePath).') end
+end
 enabled = false; reset(); ISWorldObjectContextMenu.onToggleStove(nil, object(), 0)
 assert(player.stopped == 1 and q.queue[#q.queue].Type == 'ISToggleStoveAction', 'disabled setting preserves original callback')
 print('Device dispatch native callbacks: generator, charger, BBQ, deferred target/binding checks and stove intent passed.')
+
+if TestCoverage then TestCoverage('native-contracts','passed') end

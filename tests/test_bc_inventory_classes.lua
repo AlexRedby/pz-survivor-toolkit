@@ -1,6 +1,6 @@
 -- Actual BC installers and vanilla update/highlight methods; UI/world are doubles.
 if not NativeBCProximityPaneSource or not NativeBCProximityPageSource or not CleanUIVanillaInventoryPaneSource then
-    print('SKIP BC inventory class integration: explicit CleanUI and Better Containers sources required')
+    if TestCoverage then TestCoverage('source-contract','skipped','SKIP BC inventory class integration: explicit CleanUI and Better Containers sources required')end
     return
 end
 local paneSource=assert(NativeBCProximityPaneSource,'BC proximity pane source required')
@@ -320,3 +320,4 @@ do
     local loader=assert(loadfile(client..'000ToolkitBCInventoryCompatibility.lua'));setfenv(loader,env);loader()
     print('PASS BC inactive early loader leaves dependencies/classes untouched')
 end
+if TestCoverage then TestCoverage('source-contract','passed')end

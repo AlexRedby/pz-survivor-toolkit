@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Pending grooming contracts SKIP.');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Pending grooming contracts SKIP.')end;return end
 GroomingNativeSetupOnly=true
 local setup=assert(loadfile(ProjectRoot..'/tests/test_action_queue_grooming_active.lua'))()
 GroomingNativeSetupOnly=nil
@@ -247,3 +247,4 @@ assert(not female.policy.inspect(female.body).knownInputs and not female.api.mov
 local validFemale=pending('ISCutHair',{female=true})
 assert(validFemale.policy.inspect(validFemale.body).knownInputs and validFemale.api.move(validFemale.queue,validFemale.body,validFemale.tail,false),'valid female style lost native eligibility')
 print('PASS unavailable female style cannot borrow a male target; valid female metadata retains pending support')
+if TestCoverage then TestCoverage('source-contract','passed')end

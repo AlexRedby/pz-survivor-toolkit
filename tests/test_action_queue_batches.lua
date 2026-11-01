@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Batch native-contract checks skipped.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Batch native-contract checks skipped.')end; return end
 require = function() end
 PZSurvivorToolkit = {}
 local function derive(self, name)
@@ -205,3 +205,4 @@ if NativeWishlistWorkshopRoot or NativeNeatCraftingSource then
     ISBaseTimedAction.perform = nativePerform
 end
 print('Batch contracts: legacy native selection/continuation, cancel, bounded/unknown counts, plan expansion and late MP returns passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

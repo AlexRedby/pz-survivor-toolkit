@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Active grooming contracts SKIP.');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Active grooming contracts SKIP.')end;return end
 local function text(path)
  if NativeReadText then return NativeReadText(path):gsub('\r','')end
  local file=assert(io.open(path));local value=file:read('*a');file:close();return value:gsub('\r','')
@@ -257,3 +257,4 @@ for _,kind in ipairs({'ISCutHair','ISTrimBeard','ISDyeHair'})do
  assert(s.api.cancelOperation(s.queue,s.body),'early source-bound grooming cancellation was not admitted')
 end
 print('PASS early generator/Policy bootstrap binds interruption only after the owned Queue stop bridge exists')
+if TestCoverage then TestCoverage('source-contract','passed')end

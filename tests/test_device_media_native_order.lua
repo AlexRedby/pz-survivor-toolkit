@@ -3,7 +3,7 @@
 -- and the IsoGameCharacter update boundary are explicit Lua models, not Java or
 -- network execution. This test does not establish any live run's packet order.
 if not NativeActionRoot then
- print('Native media completion order SKIP (pass --native-action-root).');return
+ if TestCoverage then TestCoverage('source-contract','skipped','Native media completion order SKIP (pass --native-action-root).')end;return
 end
 
 local function setup()
@@ -135,3 +135,4 @@ do
 end
 
 print('Native media order baseline reproduced: native Lua only; modeled Java validity-before-Done resets pending play; pending play itself is valid; translated-Done completion control continues. Java/network/DeviceData effects are modeled, not executed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

@@ -1,7 +1,7 @@
 -- Source-backed contract checks: run with the actual B42 renderer and VHS module.
 local nativeRoot = NativeTooltipLuaRoot or NativePlantingLuaRoot
 if not nativeRoot or not NativeVHSTooltipRoot then
-    print('Inventory media tooltip: native/VHS sources absent; source-backed checks skipped.')
+    if TestCoverage then TestCoverage('source-contract','skipped','Inventory media tooltip: native/VHS sources absent; source-backed checks skipped.')end
     return
 end
 local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
@@ -226,3 +226,4 @@ reset(); Events.OnGameStart.fire()
 local lateRender = ISToolTipInv.render; install()
 assert(ISToolTipInv.render == lateRender, 'late install must not stack another owner over an existing VHS wrapper')
 print('Inventory media tooltip: upstream data, native sizing/placement/visibility, guards and error cleanup passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

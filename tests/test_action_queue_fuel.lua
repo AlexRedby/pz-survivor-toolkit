@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Fuel native-contract checks skipped.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Fuel native-contract checks skipped.')end; return end
 require = function() end
 local enabled = true
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
@@ -241,3 +241,4 @@ for _, take in ipairs({false, true}) do
     drain()
 end
 print('Fuel native-contract checks passed: deferred native selectors/transactions, context fallback, copied batches, live IDs, safe skips and opt-out.')
+if TestCoverage then TestCoverage('source-contract','passed')end

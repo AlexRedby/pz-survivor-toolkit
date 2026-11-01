@@ -53,6 +53,9 @@ class LuaRunner(unittest.TestCase):
 
             def execute(self, source, *args):
                 executions.append((source, vars(self.variables).copy()))
+                # These filename fixtures model a successfully completed script.
+                for check in run_tests.SOURCE_CHECKS.get(source, ()):
+                    self.variables.TestCoverage(check, 'passed')
 
             def table_from(self, value, **kwargs):
                 return value

@@ -1,5 +1,5 @@
 if not NativeActionRoot or not NativeWishlistWorkshopRoot then
-    print('Generator overlay source checks SKIP (pass native action and Workshop roots).'); return
+    if TestCoverage then TestCoverage('source-contract','skipped','Generator overlay source checks SKIP (pass native action and Workshop roots).')end; return
 end
 local function read(path, raw)
     if raw and NativeReadRawText then return NativeReadRawText(path):gsub('\r', '') end
@@ -171,3 +171,4 @@ generator.failToStart = function(self) self.failed = true end
 assert(failedEnv.ISActivateGenerator.complete({generator = generator, activate = true})
     and generator.failed and not generator.activated, 'BGI failed start changed native power state')
 print('Generator overlay passed: real selected BGI source, proof by installation, actual native completes and runtime identity guards.')
+if TestCoverage then TestCoverage('source-contract','passed')end

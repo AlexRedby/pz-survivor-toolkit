@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Generator native contracts SKIP.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Generator native contracts SKIP.')end; return end
 local function firstKey(values)for key in pairs(values)do return key end;return nil end
 local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
 local craftContainers
@@ -911,3 +911,4 @@ do
     pcall=protected
 end
 print('Generator native contracts passed: native callbacks/completions, resource/power edges, cancellation guards, recursive SP/MP repair and source/helper trust.')
+if TestCoverage then TestCoverage('source-contract','passed')end

@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Drink fluid boundary SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Drink fluid boundary SKIP (pass --native-action-root).')end;return end
 local originalRawget=rawget
 local function ownRawget(owner,key)
     for name,value in pairs(owner)do if name==key then return value end end
@@ -364,3 +364,4 @@ end
 rawget=originalRawget
 TestDrinkFluidBoundaryPassed=true
 print('Drink fluid boundary: native pre-finished prune reproduced; SP, tiny half, client acknowledgement, unchanged effects/duration/completion, source/identity/stale guards, Kahlua own-member checks and start adoption passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

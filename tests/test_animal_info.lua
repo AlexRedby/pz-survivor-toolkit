@@ -1,5 +1,5 @@
 if not NativeActionRoot then
-    print('Animal info checks skipped (pass --native-action-root media/lua).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Animal info checks skipped (pass --native-action-root media/lua).')end
     return
 end
 
@@ -146,3 +146,4 @@ for _, class in ipairs({ISHutchRoost, ISHutchNestBox}) do
     assert(inspected[1] == animal and inspected[2] == player, 'native menus must inspect IsoAnimal with the right player')
 end
 print('Native hutch animal info checks passed (dead/live, controls, range, removal, roost/nest menus).')
+if TestCoverage then TestCoverage('source-contract','passed')end

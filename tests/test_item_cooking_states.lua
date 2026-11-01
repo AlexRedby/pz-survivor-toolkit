@@ -103,7 +103,8 @@ if NativeActionRoot then
     state("burnt", slices, rottenSlices)
     for _, name in ipairs({"Toast", "Baguette"}) do state("cooked", native(name)) end
     print("native B42.21 Food cookability, fruit, replacement and alreadycooked declarations checked")
+    if TestCoverage then TestCoverage('native-cooking-state-declarations','passed') end
 else
-    print("SKIP native cooking state declarations (NativeActionRoot not supplied)")
+    if TestCoverage then TestCoverage('native-cooking-state-declarations','skipped','SKIP native cooking state declarations (NativeActionRoot not supplied)') end
 end
 print("item cooking state tests passed")

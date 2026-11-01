@@ -90,7 +90,10 @@ if NativeActionRoot then
     end
     assert(recipeCount>0,'native source check found no recipes')
     print('Native recorded-media source verified: '..recipeCount..' recordings teach recipes; '..recipeOnly..' teach recipes without XP.')
-else print('SKIP native recorded-media definitions: pass --native-action-root or --game') end
+    if TestCoverage then TestCoverage('native-recorded-media','passed') end
+else
+    if TestCoverage then TestCoverage('native-recorded-media','skipped','SKIP native recorded-media definitions: pass --native-action-root or --game') end
+end
 
 
 -- Consumers project one physical recording, or one possible recording, before manual overrides.

@@ -239,5 +239,8 @@ if NativeActionRoot then
     local bbq = read("lua/client/ISUI/ISBBQMenu.lua")
     assert(bbq:find('"Base.PropaneTank"', 1, true) and bbq:find("getCurrentUsesFloat() > 0", 1, true))
     print("native B42 medical predicates, dirty cloth, charcoal and propane metadata checked")
-else print("SKIP native usage declaration check (NativeActionRoot not supplied)") end
+    if TestCoverage then TestCoverage('native-usage-declarations','passed') end
+else
+    if TestCoverage then TestCoverage('native-usage-declarations','skipped','SKIP native usage declaration check (NativeActionRoot not supplied)') end
+end
 print("item usage tags tests passed")

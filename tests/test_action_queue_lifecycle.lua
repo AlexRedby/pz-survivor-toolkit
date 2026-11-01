@@ -590,8 +590,9 @@ if NativeActionRoot then
         end
     end
     print('Admitted lifecycle toggle checks passed with native perform/onCompleted/tick (SP and Host callback topology).')
+    if TestCoverage then TestCoverage('native-lifecycle-toggle','passed') end
 else
-    print('Admitted lifecycle native toggle checks SKIP (requires --game).')
+    if TestCoverage then TestCoverage('native-lifecycle-toggle','skipped','Admitted lifecycle native toggle checks SKIP (requires --game).') end
 end
 
 

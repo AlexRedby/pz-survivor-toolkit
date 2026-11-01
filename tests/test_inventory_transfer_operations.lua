@@ -1,6 +1,6 @@
 -- Exercise the selected CleanUI drop callback and its real deferred queue flush.
 if not NativeActionRoot or not CleanUIInventoryPaneSource or not CleanUIVanillaInventoryPaneSource then
-    print('Inventory transfer operation checks skipped (pass --game and --cleanui-inventory-pane).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Inventory transfer operation checks skipped (pass --game and --cleanui-inventory-pane).')end
     return
 end
 
@@ -310,3 +310,4 @@ do
 end
 definitions.describe, operations.bounds = describe, bounds
 print('Inventory transfer operation checks passed: real CleanUI deferred/synchronous drops, native merge, separate drags and factory restoration.')
+if TestCoverage then TestCoverage('source-contract','passed')end

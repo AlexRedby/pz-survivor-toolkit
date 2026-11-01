@@ -1,7 +1,7 @@
 -- Regression for the real Compat installer accepting Toolkit's exact late retention Grab wrappers.
 -- Run with --wishlist-workshop-root; unrelated cooking/equipment integrations are not loaded.
 if not NativeWishlistWorkshopRoot then
-    print('Grab compatibility source checks skipped (pass Workshop root).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Grab compatibility source checks skipped (pass Workshop root).')end
     return
 end
 local function read(path)
@@ -131,3 +131,4 @@ end
 checkOrder(false)
 checkOrder(true)
 print('Owned retention Grab late guards passed with early/late owner publication and actual P4 source.')
+if TestCoverage then TestCoverage('source-contract','passed')end

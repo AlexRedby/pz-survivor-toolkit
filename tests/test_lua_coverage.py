@@ -3,6 +3,7 @@ from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 from pathlib import Path
+import re
 from types import SimpleNamespace
 import sys
 import tempfile
@@ -120,26 +121,30 @@ class LuaCoverageTests(unittest.TestCase):
         self.assertEqual('skipped', result['checks'][0]['status'])
         self.assertEqual('fixture dependency unavailable', result['checks'][0]['reason'])
 
-    def test_legacy_printed_skips_still_activate_strict_gate(self):
+    def test_log_text_cannot_supply_a_missing_completion(self):
         self.registry.clear()
-        with patch.object(run_tests, 'SOURCE_CHECKS', {}):
-            for message in ('SKIP optional dependency', 'source checks skipped (no dependency)',
-                            'Appliance native-contract checks skipped.'):
-                with self.subTest(message=message):
-                    self.write_lua('print(' + json.dumps(message) + ')')
-                    code, report, _ = self.invoke('--require-complete')
-                    self.assertNotEqual(0, code)
-                    self.assertEqual('partial', report['results'][0]['status'])
-                    self.assertIn(message, report['results'][0]['partial_reasons'])
+        for message in ('PASS all checks', 'SKIP optional dependency', 'source checks skipped.'):
+            with self.subTest(message=message):
+                self.write_lua('print(' + json.dumps(message) + ')')
+                code, report, _ = self.invoke('--require-complete')
+                self.assertNotEqual(0, code)
+                self.assertEqual('partial', report['results'][0]['status'])
+                self.assertEqual('not-run', report['results'][0]['checks'][0]['status'])
 
-    def test_legacy_partial_is_successful_without_strict_gate(self):
+    def test_omitted_completion_is_partial_without_strict_gate(self):
         self.registry.clear()
-        self.write_lua("print('SKIP optional dependency')")
-        with patch.object(run_tests, 'SOURCE_CHECKS', {}):
-            code, report, output = self.invoke()
+        self.write_lua("print('PASS only the fixture model')")
+        code, report, output = self.invoke()
         self.assertEqual(0, code)
         self.assertEqual('partial', report['status'])
         self.assertIn('PARTIAL', output)
+
+    def test_skip_text_in_an_ordinary_log_is_not_a_coverage_event(self):
+        self.registry.clear()
+        self.write_lua("TestCoverage('upstream','passed'); print('SKIP is ordinary log text here')")
+        code, report, _ = self.invoke('--require-complete')
+        self.assertEqual(0, code)
+        self.assertEqual('passed', report['status'])
 
     def test_assertion_failure_cannot_be_downgraded_to_partial(self):
         self.write_lua("TestCoverage('upstream', 'skipped', 'optional fixture'); assert(false, 'broken contract')")
@@ -265,6 +270,40 @@ class LuaCoverageTests(unittest.TestCase):
         self.assertEqual('passed', report['status'])
         self.assertEqual(['bound', 'not-applicable'],
                          [source['status'] for source in report['results'][0]['source_inputs']])
+
+
+class CoverageConsumerTests(unittest.TestCase):
+    """The migrated scripts must keep declarations, receipts and syntax aligned."""
+
+    def test_declared_source_checks_compile_and_have_both_outcomes(self):
+        root = Path(__file__).resolve().parents[1]
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        compile_source = lua.eval('function(source) local f,err=loadstring(source); return f~=nil,err end')
+        receipt = re.compile(r'''TestCoverage\(\s*(['"])([\w-]+)\1\s*,\s*(['"])(passed|skipped)\3''')
+        for name, expected in run_tests.SOURCE_CHECKS.items():
+            with self.subTest(test=name):
+                source = (root / 'tests' / name).read_text()
+                ok, error = compile_source(source)
+                self.assertTrue(ok, error)
+                if name == 'test_inventory_refresh.lua':
+                    # This fixture uses sourceCheck/completed helpers; its seven
+                    # paths also have direct source-backed execution coverage.
+                    continue
+                outcomes = {}
+                for match in receipt.finditer(source):
+                    outcomes.setdefault(match[2], set()).add(match[4])
+                self.assertEqual(set(expected), set(outcomes))
+                self.assertTrue(all(values == {'passed', 'skipped'} for values in outcomes.values()), outcomes)
+
+    def test_runnable_lua_checks_do_not_report_coverage_by_printing_skip(self):
+        root = Path(__file__).resolve().parents[1]
+        prints = re.compile(r'''\bprint\(\s*(['"])(.*?)\1\s*\)''')
+        old_skip = re.compile(r'(?<![A-Za-z0-9_])SKIP(?:PED)?(?![A-Za-z0-9_])|\b(?:checks?|tests?|contracts?) skipped\b')
+        for name in run_tests.discover_tests(root):
+            with self.subTest(test=name):
+                source = (root / 'tests' / name).read_text()
+                self.assertFalse([match[2] for match in prints.finditer(source) if old_skip.search(match[2])],
+                                 'Declare a structured source check and emit TestCoverage receipts instead.')
 
 
 if __name__ == '__main__':

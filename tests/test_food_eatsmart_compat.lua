@@ -2,7 +2,7 @@
 -- when its private, source-level logging switch is enabled. Exercise the real
 -- public menu producer and callback before granting any wrapper adoption.
 if not NativeActionRoot or not (EatSmartSource or NativeWishlistWorkshopRoot) then
-    print('Food/EatSmart actual-source checks skipped (pass native and EatSmartInt source roots).'); return
+    if TestCoverage then TestCoverage('source-contract','skipped','Food/EatSmart actual-source checks skipped (pass native and EatSmartInt source roots).')end; return
 end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r', '') end
@@ -89,3 +89,4 @@ ISEatFoodAction.serverStop(action)
 assert(#calls == 2 and calls[2].item == food and calls[2].percentage == .125,
     'native active interruption retains its progress-scaled portion')
 print('Food/EatSmart compatibility: pinned actual menu callbacks, original partial fractions, click-time nutrition and unchanged native complete/serverStop passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

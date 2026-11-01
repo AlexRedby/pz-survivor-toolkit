@@ -177,6 +177,7 @@ end
 print('PASS replacement-only VRO glass: absent/prefixed mod, early/late load, Lua/script registries, SP/Host callbacks, repeat world injection and preserved other repairs')
 if VRORecipesSource then
  print('PASS actual VRO recipe tables, part lists, script fixer definitions and complete FixingRecipeHandler source')
+ if TestCoverage then TestCoverage('upstream-vro-sources','passed') end
 else
- print('SKIP upstream VRO source checks require --vro-source effective content root')
+ if TestCoverage then TestCoverage('upstream-vro-sources','skipped','SKIP upstream VRO source checks require --vro-source effective content root') end
 end

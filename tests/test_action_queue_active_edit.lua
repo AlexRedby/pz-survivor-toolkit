@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Active edit observation SKIP (pass --game).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Active edit observation SKIP (pass --game).')end;return end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.native('shared/RadioCom/ISRadioAction.lua')
 f.native('shared/TimedActions/ISEquipWeaponAction.lua')
@@ -117,3 +117,4 @@ do
 end
 assert(policy.observeActiveEdit(7,{}).status=='unhandled')
 print('Active edit observation: native reader boundaries, shared progress, unchanged rights and no execution passed')
+if TestCoverage then TestCoverage('source-contract','passed')end

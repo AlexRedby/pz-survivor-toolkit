@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Hygiene native contracts SKIP.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Hygiene native contracts SKIP.')end; return end
 local f = assert(loadfile(ProjectRoot .. '/tests/support/action_queue_native.lua'))()
 for _, kind in ipairs({'ISWashClothing', 'ISWashYourself', 'ISDryMyself'}) do
     f.native('shared/TimedActions/' .. kind .. '.lua')
@@ -417,3 +417,4 @@ assert(policy.hygieneUnavailable(first), 'removed clothing is unavailable on the
 bodyWash.sink.water=0
 assert(policy.hygieneUnavailable(bodyWash))
 print('Native hygiene resource conflicts, finish-step cancellation, SP/MP depletion and guarded skipping passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

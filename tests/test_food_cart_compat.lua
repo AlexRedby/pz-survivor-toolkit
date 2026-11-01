@@ -1,6 +1,6 @@
 -- Source-pinned presentation wrapping must preserve owned-food contracts without admitting foreign hooks.
 if not NativeActionRoot or not SaucedCartsSource then
-    print('Food/cart actual-source checks skipped (pass native action and SaucedCarts shared source roots).'); return
+    if TestCoverage then TestCoverage('source-contract','skipped','Food/cart actual-source checks skipped (pass native action and SaucedCarts shared source roots).')end; return
 end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r', '') end
@@ -16,29 +16,23 @@ local function setup(mode)
     SandboxVars, CharacterActionAnims = {}, {Eat = 'Eat', Drink = 'Drink'}
     fixture.native('shared/TimedActions/ISEatFoodAction.lua')
     fixture.native('shared/TimedActions/ISDrinkFluidAction.lua')
+    fixture.native('shared/TimedActions/ISToggleStoveAction.lua')
     SaucedCarts = nil
     LootSorter = {} -- Unrelated owned transfer integration has no hooks in this presentation fixture.
     local loaded = {}
+    local fixtureRequire = require
     require = function(name)
         -- This fixture exercises legacy owned-food presentation; the complete
         -- edit-adapter/native-state fixture covers dependency projection.
         if name == 'PZSurvivorToolkit/ActionQueueItemEditAdapters' or name == 'PZSurvivorToolkit/ActionQueueEditModel'
             or name == 'PZSurvivorToolkit/ActionQueueEditAdapters' then return nil end
+        if name == 'PZSurvivorToolkit/Settings' then return PZSurvivorToolkit.Settings end
         if loaded[name] then return loaded[name] end
-        if name == 'PZSurvivorToolkit/ActionQueueWeights' then
-            loaded[name] = fixture.project('ActionQueueWeights')
-            return loaded[name]
-        end
-        if name == 'PZSurvivorToolkit/SourceProof' then
-            return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
-        end
-        if name == 'PZSurvivorToolkit/QuartermasterCraftContainers' then
-            loaded[name] = fixture.project('QuartermasterCraftContainers')
-            return loaded[name]
-        end
-        if name == 'SaucedCarts/Core' then loaded[name] = assert(loadstring(coreSource))()
+        local owned = name:match('^PZSurvivorToolkit/(.+)$')
+        if owned then loaded[name] = fixture.project(owned) or true
+        elseif name == 'SaucedCarts/Core' then loaded[name] = assert(loadstring(coreSource))()
         elseif name == 'SaucedCarts/ConsumeWithCart' then loaded[name] = assert(loadstring(consumeSource))()
-        else return true end
+        else return fixtureRequire(name) end
         return loaded[name]
     end
     local owner = require('SaucedCarts/Core')
@@ -51,17 +45,17 @@ local function setup(mode)
         local index = 0
         return {readLine = function() index = index + 1; return lines[index] end, close = function() end}
     end
-    fixture.project('ActionQueueOperations')
-    fixture.project('ActionQueueDefinitions')
+    require('PZSurvivorToolkit/ActionQueueOperations')
+    require('PZSurvivorToolkit/ActionQueueDefinitions')
     local owned
     PZSurvivorToolkit.BulkFood = {isEat = function(action) return action == owned end, isCommand = function() return false end}
-    local Policy = fixture.project('ActionQueuePolicy')
+    local Policy = require('PZSurvivorToolkit/ActionQueuePolicy')
     local nativeStart, drinkStart = ISEatFoodAction.start, ISDrinkFluidAction.start
     if mode == 'foreign-predecessor' then ISEatFoodAction.start = function() end end
     if mode == 'foreign-drink-predecessor' then ISDrinkFluidAction.start = function() end end
     if mode == 'prewrapped' then require('SaucedCarts/ConsumeWithCart').install() end
     ISDrinkFromBottle = {start = function() return 'bottle native' end}
-    local Compat = fixture.project('ActionQueueCompat')
+    local Compat = require('PZSurvivorToolkit/ActionQueueCompat')
     local meal = ISBaseTimedAction.new(ISEatFoodAction, fixture.player)
     meal.item = fixture.item('Base.Herb'); meal.percentage, meal.eatSound, meal.eatAudio = 1, '', 0
     meal.item.getRequireInHandOrInventory = function() end
@@ -88,6 +82,8 @@ local function setup(mode)
         overrides = overrides, nativeAnimations = function() return nativeAnimations end}
 end
 local f = setup()
+assert(not pcall(require, 'PZSurvivorToolkit/UnknownFixtureModule'),
+    'unknown owned modules must fail instead of receiving a fixture stub')
 assert(f.Compat.isInstalled('SaucedCarts') and ISEatFoodAction.start ~= f.nativeStart,
     'verified cart presentation starts early and adopts only the observed native predecessor')
 assert(not f.Compat.isInstalled('SaucedCartsTransfers'),
@@ -153,3 +149,4 @@ for _, mode in ipairs({'changed-source', 'foreign-predecessor', 'foreign-drink-p
     assert(not f.Policy.inspect(f.meal) and not f.Policy.inspect(f.drink), mode .. ' protects both consume contracts atomically')
 end
 print('Food/cart compatibility: actual pinned Core/ConsumeWithCart, native food/fluid delegates, atomic adoption, idempotent install and unknown-hook rejection passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

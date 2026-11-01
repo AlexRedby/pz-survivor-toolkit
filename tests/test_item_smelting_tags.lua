@@ -229,7 +229,8 @@ if NativeActionRoot then
     -- These checks only exclude supplies that have no independently smeltable role.
     for _, definition in ipairs({crucible, charcoal, coke, lime, fire, gold, other}) do expect(definition, nil) end
     print("native B42.21 furnace material declarations checked")
+    if TestCoverage then TestCoverage('native-furnace-declarations','passed') end
 else
-    print("SKIP native furnace declarations (NativeActionRoot not supplied)")
+    if TestCoverage then TestCoverage('native-furnace-declarations','skipped','SKIP native furnace declarations (NativeActionRoot not supplied)') end
 end
 print("item smelting tags tests passed")

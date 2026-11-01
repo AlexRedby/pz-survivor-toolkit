@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Fitness queue native contracts SKIP.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Fitness queue native contracts SKIP.')end; return end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 local fixtureRequire=require
 require=function(name)
@@ -1745,3 +1745,4 @@ ISFitnessAction.new=foreignConstructor
 f.project('ActionQueueFitness')
 assert(ISFitnessAction.new==foreignConstructor,'unsupported constructor lost its original parameter-name wire ABI')
 print('PASS pre-existing native source/constructor mismatch falls back without managed permissions or wire-schema changes')
+if TestCoverage then TestCoverage('source-contract','passed')end

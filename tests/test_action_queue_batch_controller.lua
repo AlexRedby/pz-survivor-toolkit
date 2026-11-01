@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Batch controller native-contract checks skipped.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Batch controller native-contract checks skipped.')end; return end
 require = function() end
 getText = function(key) return key end
 local function derive(self, name)
@@ -426,3 +426,4 @@ for _, class in ipairs({ISUnloadBulletsFromFirearm, ISUnloadBulletsFromMagazine,
     assert(not PZSurvivorToolkit.BulkActions.canFinish(current), 'foreign completion is not audited')
 end
 print('Bulk cancellation: audited native current action finishes; remaining members cancel without dropping unrelated work.')
+if TestCoverage then TestCoverage('source-contract','passed')end

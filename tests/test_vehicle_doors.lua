@@ -1,5 +1,5 @@
 if not NativeActionRoot then
-    print('Vehicle door native contracts skipped (pass --native-action-root media/lua).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Vehicle door native contracts skipped (pass --native-action-root media/lua).')end
     return
 end
 
@@ -192,3 +192,4 @@ for _, slice in ipairs(menu.slices) do
 end
 assert(closeCount == 1, 'an existing mod slice calling the native close for this part must not be duplicated')
 print('Vehicle door native contracts passed: radial lifecycle, target validation, installed door, deduplication and SP/server synchronization.')
+if TestCoverage then TestCoverage('source-contract','passed')end

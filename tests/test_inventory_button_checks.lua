@@ -6,7 +6,7 @@ if NativeActionRoot then
     local file = assert(io.open(NativeActionRoot .. '/client/ISUI/ISUIElement.lua'))
     source = file:read('*a'):gsub('\r\n', '\n'); file:close()
 else
-    print('SKIP native ISUIElement sources: supply --game or --native-action-root; fixture model still runs')
+    if TestCoverage then TestCoverage('native-ui-element-setters','skipped','SKIP native ISUIElement sources: supply --game or --native-action-root; fixture model still runs') end
 end
 local function setup(settings)
     settings = settings or {}
@@ -142,3 +142,7 @@ do
     assert(not ok and tostring(problem):find('not the native source',1,true) and stats.refreshes==0)
 end
 print('PASS button feasibility fixture: balanced alternating modes, source setters, geometry/model guards, exact restoration and successor preservation')
+
+if source then
+    if TestCoverage then TestCoverage('native-ui-element-setters','passed') end
+end

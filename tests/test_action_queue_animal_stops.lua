@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Animal terminal stops SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Animal terminal stops SKIP (pass --native-action-root).')end;return end
 local function read(path)
  if NativeReadText then return NativeReadText(path):gsub('\r','')end
  local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
@@ -325,3 +325,4 @@ for _,mode in ipairs({'no-started','no-terminal','foreign-terminal','reset'})do
  assert(#s.queue.queue==0 and select(4,s.counts())==0,'expired native outcome invented success')
 end
 print('PASS stale episode/settings/queue/input/duplicate-stop revocation and bounded missing/foreign ACK failures')
+if TestCoverage then TestCoverage('source-contract','passed')end

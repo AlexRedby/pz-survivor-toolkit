@@ -1,4 +1,8 @@
-if not NativeActionRoot then print('Item edit adapters SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then
+    if TestCoverage then TestCoverage('native-contracts','skipped','Item edit adapters SKIP (pass --native-action-root).') end
+    if TestCoverage then TestCoverage('p4-transfer-offset','skipped','Item edit adapters SKIP (pass --native-action-root).') end
+    return
+end
 next = nil -- PZ Kahlua has no global next; capacity checks must work without it.
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
@@ -547,7 +551,10 @@ if NativeWishlistWorkshopRoot then
     assert(not s.adapters.transfer(pending),'a replaced P4 owner cannot reuse its old proof')
     P4TidyUpMeister=owner
     assert(s.adapters.transfer(pending),'restoring the exact public owner/helpers restores the proof')
-else print('Actual selected P4 transfer/offset pair SKIP (pass --wishlist-workshop-root).')end
+    if TestCoverage then TestCoverage('p4-transfer-offset','passed') end
+else
+    if TestCoverage then TestCoverage('p4-transfer-offset','skipped','Actual selected P4 transfer/offset pair SKIP (pass --wishlist-workshop-root).') end
+end
 do
     -- Execute the live fixture's observer around actual native queue completion
     -- and transfer perform(), including Host's replacement InventoryItem proxy.
@@ -2023,3 +2030,5 @@ do
     assert(not decision.allowed and decision.reason=='container_capacity','in-flight emptying cannot certify an unrelated capacity prefix')
 end
 print('Pending clean-water empty edits: exact native source/wrapper/owner/capture, independent move/cancel, shared drink dependency, transient peak and external capacity passed.')
+
+if TestCoverage then TestCoverage('native-contracts','passed') end

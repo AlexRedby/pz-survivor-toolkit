@@ -1,5 +1,5 @@
 if not NativeActionRoot then
-    print('Repair reorder native-contract checks skipped (pass --native-action-root media/lua).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Repair reorder native-contract checks skipped (pass --native-action-root media/lua).')end
     return
 end
 require = function(name)
@@ -205,3 +205,4 @@ q=queue(head,transfer,vehicleRepair)
 assert(queueAPI.moveReason(q,vehicleRepair,transfer)=='move_craft_inputs')
 assert(queueAPI.moveReason(q,transfer,vehicleRepair,true)=='move_craft_inputs')
 assert(queueAPI.cancelOperationReason(q,vehicleRepair),'dynamic vehicle donor selection stays protected on cancel')
+if TestCoverage then TestCoverage('source-contract','passed')end

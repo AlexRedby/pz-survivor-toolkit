@@ -115,7 +115,8 @@ if NativeActionRoot then
         assert(context.eat==case[2],case[1].name..' diverged from native Eat/OpenAndEat menu')
     end
     print('Native Eat/OpenAndEat option builder verified against capability cases.')
+    if TestCoverage then TestCoverage('native-eat-menu','passed') end
 else
-    print('SKIP native Eat menu comparison (NativeActionRoot not supplied)')
+    if TestCoverage then TestCoverage('native-eat-menu','skipped','SKIP native Eat menu comparison (NativeActionRoot not supplied)') end
 end
 print('Item action capabilities passed: Eat versus Food/Smoke/Drink, opening recipes, live metadata and filled fluid vessels.')

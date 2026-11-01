@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Radio edit adapters SKIP (pass --native-action-root).'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Radio edit adapters SKIP (pass --native-action-root).')end; return end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r', '') end
     local file = assert(io.open(path)); local value = file:read('*a'); file:close(); return value:gsub('\r', '')
@@ -278,3 +278,4 @@ do
 end
 
 print('Radio pending edit adapters: upstream setter order/effects, native prerequisites, legacy barriers, source/helper guards and pure inspection passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

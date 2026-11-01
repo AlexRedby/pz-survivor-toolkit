@@ -46,7 +46,7 @@ for _, mode in ipairs({{false, true}, {true, false}}) do
 end
 print("PASS MPFF inactive mod and client leave registrations untouched")
 if not NativeMPFFConfigSource or not NativeMPFFServerSource then
-    print("SKIP MPFF load/handler checks require actual upstream config and server sources")
+    if TestCoverage then TestCoverage('source-contract','skipped',"SKIP MPFF load/handler checks require actual upstream config and server sources")end
     return
 end
 
@@ -120,3 +120,4 @@ dofile(gate)
 assert(not PZSurvivorToolkit.MPFastForwardCompatibility and w.handlers.command[1] == original and #w.handlers.command == 1)
 assert(Events.OnClientCommand.Add == w.add, "wrong load order must restore Add and avoid claiming success")
 print("PASS MPFF load errors restore Add/rethrow/retry; wrong order is detected without extra handlers")
+if TestCoverage then TestCoverage('source-contract','passed')end

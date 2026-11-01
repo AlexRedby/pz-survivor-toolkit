@@ -1,6 +1,6 @@
 -- The upstream catalog stays upstream; verify its calls still match the native path adapter.
 if not TVSource then
-    print("SKIP TV video source contract requires actual RWMMergedTV source")
+    if TestCoverage then TestCoverage('source-contract','skipped',"SKIP TV video source contract requires actual RWMMergedTV source")end
     return
 end
 local prefix = "../../../../workshop/content/108600/3420581050/mods/TVRadio Reinvented/42/media/videos/"
@@ -33,3 +33,4 @@ for pass = 1, 2 do
     assert(count > 0 and count == #calls, "upstream did not publish every requested video")
 end
 print("Actual upstream TV catalog and original initialization checks passed.")
+if TestCoverage then TestCoverage('source-contract','passed')end

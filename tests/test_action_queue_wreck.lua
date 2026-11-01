@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Wreck native-contract checks skipped.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Wreck native-contract checks skipped.')end; return end
 require = function() end
 local enabled = true
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
@@ -191,3 +191,4 @@ assert(player.stops == 1 and q.queue[#q.queue].Type == 'ISRemoveBurntVehicle', '
 drain(); assert(first.removed and #completed == 1 and not world.wreckTargetGone(completed[1]))
 assert(nativeCallback ~= ISVehicleMenu.onRemoveBurntVehicle)
 print('Wreck native callback, SP completion ordering, equipment, stale-target, ownership and opt-out checks passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

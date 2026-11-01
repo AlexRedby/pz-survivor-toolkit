@@ -1,5 +1,5 @@
 local savedNext=next;next=nil -- Native Kahlua does not provide Lua 5.1's next iterator.
-if not NativeActionRoot then print('Grooming costs native contracts SKIP.');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Grooming costs native contracts SKIP.')end;return end
 local modulePath=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueGroomingCosts.lua'
 local nativePath=NativeActionRoot..'/shared/TimedActions/ISCutHair.lua'
 local nativeSource
@@ -366,3 +366,4 @@ string.contains=oldContains
 print('PASS native paid hair late selectors/costs, complete future inputs, ancestry and atomic fail-closed inspection')
 
 next=savedNext
+if TestCoverage then TestCoverage('source-contract','passed')end

@@ -1,6 +1,6 @@
 -- Native queue and transfer contracts, with synchronous UI dispatch doubles.
 if not NativeActionRoot then
-    print('Action operation native-contract checks skipped (pass --native-action-root media/lua).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Action operation native-contract checks skipped (pass --native-action-root media/lua).')end
     return
 end
 require = function(name)
@@ -676,3 +676,4 @@ queueEnabled = true
 reset()
 
 print('Action operation grouping: native contracts, volume slider/deferred commits and foreign helper guards passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

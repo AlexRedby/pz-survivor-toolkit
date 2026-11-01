@@ -137,5 +137,8 @@ if NativeActionRoot then
     end
     assert(count == 3, "native sharpening recipe set changed")
     print("native B42 sharpening item and recipe declarations checked")
-else print("SKIP native sharpening declarations (NativeActionRoot not supplied)") end
+    if TestCoverage then TestCoverage('native-sharpening-declarations','passed') end
+else
+    if TestCoverage then TestCoverage('native-sharpening-declarations','skipped','SKIP native sharpening declarations (NativeActionRoot not supplied)') end
+end
 print("item sharpening tags tests passed")

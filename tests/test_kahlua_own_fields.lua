@@ -1,7 +1,7 @@
 -- Kahlua rawget traverses metatables; pairs enumerates delegate-own entries.
 -- Installed native sources and existing focused fixture builders exercise the
 -- real adapters under that verified engine lookup contract.
-if not NativeActionRoot then print('SKIP Kahlua own-field regressions: supply --game'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','SKIP Kahlua own-field regressions: supply --game')end; return end
 local function read(path)
     local file=assert(io.open(path));local value=file:read('*a');file:close();return value:gsub('\r','')
 end
@@ -216,3 +216,4 @@ for _,fields in ipairs({64,128,256}) do
     print('Kahlua own-field scan benchmark (Lua51 only): '..(fields+2)..' fields, 10000 scopes, '..string.format('%.1f',(os.clock()-start)*1000)..' ms')
 end
 print('PASS tag ownership scan: one pane-field pass per render, independent of 2400/4800 nested items')
+if TestCoverage then TestCoverage('source-contract','passed')end

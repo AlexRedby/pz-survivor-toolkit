@@ -1,4 +1,4 @@
-if not NativeQuartermasterLuaRoot then print('SKIP Quartermaster preset transactions: actual upstream Lua required.'); return end
+if not NativeQuartermasterLuaRoot then if TestCoverage then TestCoverage('source-contract','skipped','SKIP Quartermaster preset transactions: actual upstream Lua required.')end; return end
 local shared = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
 local cache, disk = {}, {}
 require = function(name)
@@ -171,3 +171,4 @@ assert(Presets.receive({schema=1,revision=0,presets={Client={gen=1,cats={},items
 assert(Rules.presetStore().Client and LootSorter.getPresetStore().Client and writes == before)
 assert(not pcall(Presets.transaction, function() return 'ok' end), 'client could mutate authoritative store')
 print('Quartermaster preset transactions passed: direct owned put/remove, private drafts, one pair commit, fullType translation, generations/revisions/owner, conflicts, partial/ambiguous failure recovery and MP isolation.')
+if TestCoverage then TestCoverage('source-contract','passed')end

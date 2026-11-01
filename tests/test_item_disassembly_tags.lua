@@ -362,8 +362,9 @@ if NativeDisassemblyScriptsRoot then
         expect(definition, nil, false)
     end
     print('native B42.21 disassembly recipe declarations checked')
+    if TestCoverage then TestCoverage('native-disassembly-declarations','passed') end
 else
-    print('SKIP native disassembly declaration check (NativeDisassemblyScriptsRoot not supplied)')
+    if TestCoverage then TestCoverage('native-disassembly-declarations','skipped','SKIP native disassembly declaration check (NativeDisassemblyScriptsRoot not supplied)') end
 end
 require = nativeRequire
 print('item disassembly tags tests passed')

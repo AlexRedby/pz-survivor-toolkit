@@ -1,4 +1,5 @@
 local client = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/'
+local shared = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
 PZSurvivorToolkit = {}
 local starts, toggle = {}, nil
 Events = {}
@@ -64,21 +65,27 @@ local bc = {handleCustomiserOptions=function() fallbackCalls=fallbackCalls+1 end
 local bcOptions = {enableCustomizer=true}
 local loaded = {}
 require = function(name)
-    if name == 'PZSurvivorToolkit/ContainerAppearance' then
-        if not loaded[name] then
-            loaded[name] = dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua')
-        end
-        return loaded[name]
-    end
     if name == 'ISUI/ISWorldObjectContextMenu' then return end
     if name == 'ISUI/ISInventoryPage' then return end
     if name == 'BetterContainers/Helpers' then return {getParent=function(inventory) return inventory:getParent() end} end
     if name == 'BetterContainers/_Options' then return bcOptions end
     if name == 'BetterContainers/Customize/Customizer' then return {} end
     if name == 'BetterContainers/Customize/ContextMenu' then return bc end
-    if not loaded[name] then loaded[name] = dofile(client .. name .. '.lua') end
-    return loaded[name]
+    if loaded[name] then return loaded[name] end
+    for _, root in ipairs({client, shared}) do
+        local path = root .. name .. '.lua'
+        local file = io.open(path, 'r')
+        if file then
+            file:close()
+            loaded[name] = assert(loadfile(path))() or true
+            return loaded[name]
+        end
+    end
+    error('module not found: ' .. name)
 end
+local missingLoaded, missingError = pcall(require, 'PZSurvivorToolkit/UnknownFixtureModule')
+assert(not missingLoaded and tostring(missingError):find('module not found: PZSurvivorToolkit/UnknownFixtureModule', 1, true),
+    'unknown fixture modules must fail explicitly')
 LootSorter = {DBG=function() end,canLootSquare=function() return allowLoot end,
     hasClipboardContent=function() return true end,copyDesignation=function() end,
     containerIndex=function(obj, inventory)

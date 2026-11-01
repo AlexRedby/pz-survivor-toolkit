@@ -427,8 +427,9 @@ do
             'native expansion applies access revocation before exposing controls')
         ISCollapsableWindow=savedWindow
         print('PASS wishlist native window: collapse/unpin, pointer exit and title-bar expansion')
+        if TestCoverage then TestCoverage('native-collapse-lifecycle','passed') end
     else
-        print('SKIP wishlist native collapse lifecycle: supply --game')
+        if TestCoverage then TestCoverage('native-collapse-lifecycle','skipped','SKIP wishlist native collapse lifecycle: supply --game') end
     end
     getText=originalText
     next=originalNext

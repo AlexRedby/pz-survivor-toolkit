@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Appliance native-contract checks skipped.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Appliance native-contract checks skipped.')end; return end
 require = function() end
 local enabled = true
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
@@ -235,3 +235,4 @@ assert(world.targetGone(foreign), 'target removal after approach must preserve t
 foreign.complete = function() end
 assert(not world.isApplianceAction(foreign), 'foreign lifecycle override cannot borrow cancellation support')
 print('Appliance native-contract checks passed: native/CleanUI clicks, delayed paths, priority, cancellation, missing targets and native opt-out.')
+if TestCoverage then TestCoverage('source-contract','passed')end

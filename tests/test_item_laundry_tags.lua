@@ -144,5 +144,8 @@ if NativeActionRoot then
         and wash:find('item:setBlood(coveredParts:get(j), 0)', 1, true)
         and wash:find('item:setDirt(coveredParts:get(j), 0)', 1, true), "native wash stain model changed")
     print("native B42.21 laundry declarations and covered-part washing source checked")
-else print("SKIP native laundry source checks (NativeActionRoot not supplied)") end
+    if TestCoverage then TestCoverage('native-laundry-sources','passed') end
+else
+    if TestCoverage then TestCoverage('native-laundry-sources','skipped','SKIP native laundry source checks (NativeActionRoot not supplied)') end
+end
 print("laundry tags passed: clothing/bags, native stain predicates, exclusions, unknown metadata and script alternatives")

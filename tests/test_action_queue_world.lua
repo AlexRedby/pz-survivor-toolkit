@@ -1,5 +1,5 @@
 if not NativeActionRoot then
-    print('World queue native-contract checks skipped (pass --native-action-root media/lua).')
+    if TestCoverage then TestCoverage('source-contract','skipped','World queue native-contract checks skipped (pass --native-action-root media/lua).')end
     return
 end
 require = function(name)
@@ -591,3 +591,4 @@ assert(attached.origSpriteName == 'attached sprite' and attached.moveCursor == a
     and attached.toolkitWorldResume.snapshot.origSpriteName == 'attached sprite'
     and attached.toolkitWorldResume.snapshot.cursor == attachedCursor)
 print('World native MP constructor field-name and attached-sprite/cursor contracts passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

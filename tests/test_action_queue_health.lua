@@ -1,4 +1,9 @@
-if not NativeActionRoot then print('Health queue native contracts SKIP.');return end
+if not NativeActionRoot then
+    if TestCoverage then TestCoverage('native-contracts','skipped','Health queue native contracts SKIP.') end
+    if TestCoverage then TestCoverage('health-cleanui-bandage','skipped','Health queue native contracts SKIP.') end
+    if TestCoverage then TestCoverage('minihealthplus-contracts','skipped','Health queue native contracts SKIP.') end
+    return
+end
 local function readText(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
     local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
@@ -1063,6 +1068,9 @@ if NativeWishlistWorkshopRoot then
     ISInventoryPaneContextMenu.cleanUIResetStaleTimedActionRetrigger=nil
     ISInventoryPaneContextMenu.cleanUILogTimedActionFix=nil
     print('CleanUI inventory bandage: actual reviewed override retains native behavior and guards both mutable cleanup helpers.')
+    if TestCoverage then TestCoverage('health-cleanui-bandage','passed') end
+else
+    if TestCoverage then TestCoverage('health-cleanui-bandage','skipped','CleanUI inventory bandage native contracts require --wishlist-workshop-root.') end
 end
 
 if NativeWishlistWorkshopRoot then
@@ -1310,4 +1318,9 @@ if NativeWishlistWorkshopRoot then
     assert(treatment.doBodyPartContextMenu==original,'unreviewed MHP source never installs producer hooks')
     getModFileReader=oldReader
     print('MiniHealthPlus contracts: 16 native branches, stable actor/helper proofs and two-phase replacement with exact material and group cancellation passed.')
-else print('MiniHealthPlus native contracts SKIP (pass --wishlist-workshop-root).')end
+    if TestCoverage then TestCoverage('minihealthplus-contracts','passed') end
+else
+    if TestCoverage then TestCoverage('minihealthplus-contracts','skipped','MiniHealthPlus native contracts SKIP (pass --wishlist-workshop-root).') end
+end
+
+if TestCoverage then TestCoverage('native-contracts','passed') end

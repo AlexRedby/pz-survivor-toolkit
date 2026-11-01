@@ -193,7 +193,8 @@ if NativeActionRoot then
     for _, definition in ipairs({tape, ties, rags, denim}) do expect(definition, true) end
     for _, definition in ipairs({bat, scissors, file, stone, gun, other}) do expect(definition, nil) end
     print("native B42.21 repair supply declarations checked")
+    if TestCoverage then TestCoverage('native-repair-declarations','passed') end
 else
-    print("SKIP native repair declarations (NativeActionRoot not supplied)")
+    if TestCoverage then TestCoverage('native-repair-declarations','skipped','SKIP native repair declarations (NativeActionRoot not supplied)') end
 end
 print("item repair supply tags tests passed")

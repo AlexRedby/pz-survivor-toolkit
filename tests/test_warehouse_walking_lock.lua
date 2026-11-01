@@ -2,7 +2,7 @@
 -- native look-square/force-hold selection. External sources stay external.
 local bcPath=os.getenv('PZ_WALKING_BC_PROXIMITY_SOURCE')
 local pagePath=os.getenv('PZ_WALKING_CLEANUI_PAGE_SOURCE')
-if not bcPath or not pagePath then print('SKIP warehouse walking installed BC/CleanUI lock sources');return end
+if not bcPath or not pagePath then if TestCoverage then TestCoverage('source-contract','skipped','SKIP warehouse walking installed BC/CleanUI lock sources')end;return end
 local function read(path)local f=assert(io.open(path));local source=f:read('*a');f:close();return(source:gsub('\r\n','\n'))end
 local bcSource,pageSource=read(bcPath),read(pagePath)
 local lookStart=assert(pageSource:find('if (numButtons < #self.backpacks) and (gs == lookSquare) then',1,true))
@@ -98,3 +98,4 @@ assert(proof.restored and proof.methodUnchanged and P.isForceSelected[0]==false 
 assert(proof.globals.isForceSelected.expected.present and not proof.globals.isForceSelected.actual.value)
 assert(not proof.globals._HasNearbyCorpses.expected.present and not proof.globals._HasNearbyCorpses.actual.present)
 print('WAREHOUSE_WALKING_INSTALLED_LOCK_PASS native_look_selection=true public_manual_lock=true exact_restore=true')
+if TestCoverage then TestCoverage('source-contract','passed')end

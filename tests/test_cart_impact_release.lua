@@ -293,7 +293,8 @@ if SaucedCartsSource then
         "installed MP endpoint used SP presentation APIs")
     end
     print("PASS installed InstantDrop: healthy cart/cargo exact identity, broken delegation, persistent world drop and MP authoritative request without local mutation")
+    if TestCoverage then TestCoverage('installed-instant-drop','passed') end
 else
-    print("SKIP installed InstantDrop integration: SaucedCartsSource not supplied")
+    if TestCoverage then TestCoverage('installed-instant-drop','skipped','SKIP installed InstantDrop integration: SaucedCartsSource not supplied') end
 end
 require = originalRequire

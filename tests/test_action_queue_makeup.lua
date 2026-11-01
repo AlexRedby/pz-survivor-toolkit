@@ -1,5 +1,5 @@
 -- Execute the complete shipped UI and timed action; only Java/UI objects are doubles.
-if not NativeActionRoot then print('Native makeup queue contracts SKIP (requires --game).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Native makeup queue contracts SKIP (requires --game).')end;return end
 next=nil -- Native Kahlua has pairs, but no global next.
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','')end
@@ -1285,3 +1285,4 @@ for _,change in ipairs({'shared-kit','old-consumer','output-consumer','appearanc
         change..' crossed the makeup body despite a resource dependency')
 end
 print('Native makeup preview isolation, SP/MP cost timing, owned waiting receipts and pure move footprint tests passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

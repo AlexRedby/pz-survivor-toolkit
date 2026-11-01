@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Set stove state native checks skipped (pass --native-action-root media/lua).'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Set stove state native checks skipped (pass --native-action-root media/lua).')end; return end
 require = function() end
 local function derive(self, name)
     local class = {Type = name, derive = derive}; class.__index = class
@@ -65,3 +65,4 @@ assert(source:match('function PZSurvivorToolkitSetStoveState:new%(character, obj
     'NetTimedAction constructor keeps formal parameter names for native serialization')
 assert(state:new(player, stove, false).desired == false, 'false constructor argument is retained for native serialization')
 print('Set stove state native contract: formal arguments, inherited perform/duration, server no-op, target, range, reachability, life and power passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

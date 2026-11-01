@@ -1,5 +1,5 @@
 if not NativeActionRoot then
-    print('Craft/repair native-contract checks skipped (pass --native-action-root media/lua).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Craft/repair native-contract checks skipped (pass --native-action-root media/lua).')end
     return
 end
 require = function() end
@@ -442,3 +442,4 @@ do
 end
 
 print('Craft/repair native identities, callback ownership, waiting UI cleanup and input dependencies passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

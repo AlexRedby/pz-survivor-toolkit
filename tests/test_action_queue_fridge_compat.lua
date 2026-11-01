@@ -1,5 +1,5 @@
 if not FridgeSource then
-    print('Fridge transfer compatibility SKIP (pass --fridge-source).'); return
+    if TestCoverage then TestCoverage('source-contract','skipped','Fridge transfer compatibility SKIP (pass --fridge-source).')end; return
 end
 local root = ProjectRoot or '.'
 local function read(path)
@@ -224,3 +224,4 @@ do
         'changed TileProps clearFridgeProperty retained transfer/return permission')
 end
 print('Fridge transfer compatibility: real Core/Client/Light, exact native/BC delegates, startup ordering, source pins and live guards passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

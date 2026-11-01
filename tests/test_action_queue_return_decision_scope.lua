@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Return decision scope SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Return decision scope SKIP (pass --native-action-root).')end;return end
 -- Test-only instrumentation counts the real Policy/native-source resource path.
 -- Java actors and the two Execution/Settlement observer calls remain explicit
 -- doubles; their earned-loan/episode contracts have separate dedicated suites.
@@ -402,3 +402,4 @@ assert(not ok and rawequal(reason,payload) and scopeOutput.denialReason=='failed
     'error publication, identity or final scope restoration changed')
 
 print('Return decision scope: one bounded suffix, fresh nested/error/public boundaries, exact native/helper/callback gates, scalar/device parity and full-planner isolation passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

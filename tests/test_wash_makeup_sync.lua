@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Native makeup removal sync SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Native makeup removal sync SKIP (pass --native-action-root).')end;return end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
     local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
@@ -103,3 +103,4 @@ assert(not ok and tostring(message):find('native removal failed',1,true)and #fai
 local value=setup();local item=value.makeup(40,2);value.root.Remove=function()end
 value.action:removeMakeup(item);assert(value.root:getItemById(40)==item and #value.sent==0,'missing native physical removal got a packet')
 print('Native body makeup removal sync tests passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

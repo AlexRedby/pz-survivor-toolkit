@@ -1,6 +1,6 @@
 -- Native action fields and queue boundaries; Java start/stop is outside this regression.
 if not NativeActionRoot then
-    print('Action queue world-target checks skipped (pass --native-action-root media/lua).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Action queue world-target checks skipped (pass --native-action-root media/lua).')end
     return
 end
 require = function(name)
@@ -117,3 +117,4 @@ a.object, b.object = 'label', 'label'
 q = queue(a, b)
 assert(not api.move(q, b, a), 'arbitrary base actions cannot inherit permission from unrecognized fields')
 print('Action queue world-target ordering: native generator/charger, aliases, whole operations and independent targets passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

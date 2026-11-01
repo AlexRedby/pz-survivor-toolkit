@@ -1,5 +1,5 @@
 -- Execute the B42 get-up callback and queue insertion sources; Java animation/networking is explicit.
-if not NativeActionRoot then print('Native continuation contracts SKIP (requires --game).'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Native continuation contracts SKIP (requires --game).')end; return end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
@@ -266,3 +266,4 @@ assert(results.n==4 and results[1]==nil and results[2]==false and results[3]=='r
 assert(continuation.isCallback('perform',ISWaitWhileGettingUp.perform),'installed get-up callback lost narrow adoption proof')
 assert(not continuation.isCallback('perform',function()end),'foreign callback acquired native continuation proof')
 print('Native get-up continuations passed (queue on/off, original sitting/standing callbacks, child/tail order, other producer, cross-actor/nested scope, reset/cancel/identity revocation, errors, native admission and nil/false values).')
+if TestCoverage then TestCoverage('source-contract','passed')end

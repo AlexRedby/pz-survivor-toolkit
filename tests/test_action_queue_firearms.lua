@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Firearm queue native contracts SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Firearm queue native contracts SKIP (pass --native-action-root).')end;return end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
     local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
@@ -427,3 +427,4 @@ do
     assert(not unavailable.adoptBase('begin',function()end,function()end))
 end
 print('Firearm native resources, source/helper/output fallback and SP/Host event authority passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

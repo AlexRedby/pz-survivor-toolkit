@@ -1,4 +1,9 @@
-if not NativeActionRoot then print('Recovery adapters SKIP (pass --game or --native-action-root).');return end
+if not NativeActionRoot then
+    if TestCoverage then TestCoverage('native-contracts','skipped','Recovery adapters SKIP (pass --game or --native-action-root).') end
+    if TestCoverage then TestCoverage('constructor-call-trace','skipped','Recovery adapters SKIP (pass --game or --native-action-root).') end
+    if TestCoverage then TestCoverage('custom-light-switch','skipped','Recovery adapters SKIP (pass --game or --native-action-root).') end
+    return
+end
 local customLightSwitchSource=CustomLightSwitchSource or os and os.getenv and os.getenv('PZ_CUSTOM_LIGHT_SWITCH_SOURCE')
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
@@ -211,8 +216,13 @@ do
     local writes=s.state.writes
     s.state.itemVisits,s.state.lookups=0,0
     for _=1,8 do assert(s.recovery.validate(records,s.f.player))end
-    if trace then debug.sethook()else print('Recovery constructor call trace SKIP (debug hooks unavailable).')end
+    if trace then debug.sethook() end
     assert(constructed==0 and s.state.writes==writes,'validation has no constructor or saved-page effects')
+    if trace then
+        if TestCoverage then TestCoverage('constructor-call-trace','passed') end
+    else
+        if TestCoverage then TestCoverage('constructor-call-trace','skipped','Recovery constructor call trace SKIP (debug hooks unavailable).') end
+    end
     assert(s.state.lookups==0 and s.state.itemVisits==8*#s.state.items,
         'preview work scales with inventory size rather than records times inventory size')
     local action=s.book();local record=capture(s,action)
@@ -474,8 +484,9 @@ if customLightSwitchSource then
         assert(not other.recovery.capture(reading),'changed/unknown completion proof is rejected')
     end
     print('Recovery CustomLightSwitch: actual source, native delegation, pure reconstruction, magazine exclusion and closed changed wrappers passed.')
+    if TestCoverage then TestCoverage('custom-light-switch','passed') end
 else
-    print('Recovery CustomLightSwitch SKIP (set PZ_CUSTOM_LIGHT_SWITCH_SOURCE to the upstream CustomLightSwitch_ReadFix.lua).')
+    if TestCoverage then TestCoverage('custom-light-switch','skipped','Recovery CustomLightSwitch SKIP (set PZ_CUSTOM_LIGHT_SWITCH_SOURCE to the upstream CustomLightSwitch_ReadFix.lua).') end
 end
 
 -- Source/callback failures are closed before any new constructor can execute.
@@ -513,3 +524,5 @@ do
     assert(not s.recovery.plan({record},s.f.player)and s.state.writes==0,'changed constructor helper is rejected without effects')
 end
 print('Recovery adapters: actual native reconstruction, pure preview, projected TV/item dependencies, repeated recovery and closed unsupported effects passed.')
+
+if TestCoverage then TestCoverage('native-contracts','passed') end

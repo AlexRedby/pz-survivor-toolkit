@@ -1,5 +1,5 @@
 if not NativeActionRoot or not NativeWishlistWorkshopRoot then
-    print('Selected chain source checks skipped (pass native action and Workshop roots).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Selected chain source checks skipped (pass native action and Workshop roots).')end
     return
 end
 local function read(path)
@@ -5086,3 +5086,4 @@ for _,sharedPreload in ipairs({false,true})do
     assert(adapters.drink(action),'restoring the captured helper identity restores the pending native drink contract')
     print('Early Quartermaster Compat: sharedPreload='..tostring(sharedPreload)..', lazy real Policy, actual cart starts, live repair and pending drink inspection passed.')
 end
+if TestCoverage then TestCoverage('source-contract','passed')end

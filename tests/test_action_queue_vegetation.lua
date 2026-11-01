@@ -1,5 +1,5 @@
 if not NativeActionRoot then
-    print('Vegetation queue native-contract checks skipped (pass --native-action-root media/lua).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Vegetation queue native-contract checks skipped (pass --native-action-root media/lua).')end
     return
 end
 
@@ -911,3 +911,4 @@ assert(policyApproach.isAction(standalone) and queueAPI.cancel(editQueue,standal
     'a scoped approach without a later body must remain cancelable as its own operation')
 assert(#editQueue.queue==2 and editQueue.queue[1]==head and editQueue.queue[2]==middle)
 print('Approach pending intent capture/rebuild and actual-policy whole-operation edit contracts passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

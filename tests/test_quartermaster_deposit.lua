@@ -1,6 +1,6 @@
 -- Run actual B42 transfer/merge/completion code; only Java objects, animation and audio are doubles.
 if not NativeActionRoot then
-    print('Quartermaster deposit checks skipped (pass --game or --native-action-root).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Quartermaster deposit checks skipped (pass --game or --native-action-root).')end
     return
 end
 package.path = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/?.lua;' .. package.path
@@ -352,3 +352,4 @@ for _, failure in ipairs({'zero-id', 'done-and-rejected', 'changed-id', 'changed
     assert(#created == 1, 'Host failure/cancel retried a transaction: ' .. failure)
 end
 print('Quartermaster deposits passed: native SP merged capacity/admission, post-start changes, local skip/tail, Host rejected-batch cleanup/continuation, identity failures and native cancellation.')
+if TestCoverage then TestCoverage('source-contract','passed')end

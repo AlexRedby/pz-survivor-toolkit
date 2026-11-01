@@ -495,7 +495,8 @@ if NativeActionRoot then
     end
     for _, definition in ipairs({hops, closedCan, pot, jar, fuel, chum, bait}) do expect(definition, false) end
     print("native B42.21 evolved food links, ordinary baking and callback-only milk declarations checked")
+    if TestCoverage then TestCoverage('native-cooking-declarations','passed') end
 else
-    print("SKIP native cooking declaration check (NativeActionRoot not supplied)")
+    if TestCoverage then TestCoverage('native-cooking-declarations','skipped','SKIP native cooking declaration check (NativeActionRoot not supplied)') end
 end
 print("item cooking tags tests passed")

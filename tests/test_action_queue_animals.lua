@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Animal butchering native-contract checks skipped.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Animal butchering native-contract checks skipped.')end; return end
 require = function() end
 local enabled = true
 PZSurvivorToolkit = {Settings = {actionQueue = function() return enabled end}}
@@ -202,3 +202,4 @@ assert(player.stops == 1 and q.current ~= active and q.queue[#q.queue].Type == '
     'disabled setting must retain the native immediate clear behavior')
 drain(); assert(#completed == 1 and nativeCallback ~= AnimalContextMenu.onButcherAnimal)
 print('Animal butchering native reset, deferred dispatch, stale targets, current tools and opt-out checks passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

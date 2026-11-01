@@ -249,5 +249,8 @@ if NativeActionRoot then
         expect(script, physical(false), false)
     end
     print("native B42 broken-state preview declarations checked")
-else print("SKIP native broken declarations (NativeActionRoot not supplied)") end
+    if TestCoverage then TestCoverage('native-broken-declarations','passed') end
+else
+    if TestCoverage then TestCoverage('native-broken-declarations','skipped','SKIP native broken declarations (NativeActionRoot not supplied)') end
+end
 print("item broken tags tests passed")

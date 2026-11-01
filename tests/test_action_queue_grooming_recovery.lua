@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Trim recovery proof SKIP (pass --game).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Trim recovery proof SKIP (pass --game).')end;return end
 GroomingNativeSetupOnly=true
 local nativeSetup=assert(loadfile(ProjectRoot..'/tests/test_action_queue_grooming_active.lua'))()
 GroomingNativeSetupOnly=nil
@@ -195,3 +195,4 @@ local changed=setup(true)
 NativeReadText=originalRead
 assert(not PZSurvivorToolkit.ActionQueueGrooming.canRecoverTrim(changed.body),'changed native source installed trim recovery')
 print('PASS restore rechecks live tools/catalog, resolves fresh root ID replicas and rejects changed native source pins')
+if TestCoverage then TestCoverage('source-contract','passed')end

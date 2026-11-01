@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('SKIP Policy resource comparisons: supply --game');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','SKIP Policy resource comparisons: supply --game')end;return end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
 local policy=f.project('ActionQueuePolicy')
@@ -268,3 +268,4 @@ do
     end
 end
 print('PASS Policy resource comparisons: absent/false/empty maps, exact conflicts, sparse spatial targets and callback/snapshot ordering')
+if TestCoverage then TestCoverage('source-contract','passed')end

@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Queue recovery SKIP (pass --game).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Queue recovery SKIP (pass --game).')end;return end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions');f.project('ActionQueuePolicy');f.project('ActionQueueLabels')
 f.project('ActionQueue')
@@ -182,3 +182,4 @@ do
 end
 assert(captures>0 and plans>0 and validations>0)
 print('Queue recovery: pre-wipe capture, completed-prefix exclusion, one-shot fresh tokens, grouping, settlement, stale resources/history and lifecycle guards passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

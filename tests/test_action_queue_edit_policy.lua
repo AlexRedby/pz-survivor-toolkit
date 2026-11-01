@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Queue edit policy SKIP (pass --game).'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Queue edit policy SKIP (pass --game).')end; return end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.native('shared/RadioCom/ISRadioAction.lua')
 getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
@@ -275,3 +275,4 @@ do
 end
 
 print('Queue edit policy: changed outcomes, downstream prerequisites, removal, fallback, native execution and stale edits passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

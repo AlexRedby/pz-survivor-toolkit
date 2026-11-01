@@ -17,7 +17,7 @@ do
     SaucedCarts,ISCartTransferAction,ISInventoryTransferAction,Events=previousCore,previousClass,previousTransfer,previousEvents
 end
 if not NativeActionRoot or not SaucedCartsSource then
-    print('Cart action queue contracts SKIP (pass native action and SaucedCarts source roots).'); return
+    if TestCoverage then TestCoverage('source-contract','skipped','Cart action queue contracts SKIP (pass native action and SaucedCarts source roots).')end; return
 end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 getActivatedMods=function() return {contains=function(_,id) return id=='SaucedCarts' end} end
@@ -918,3 +918,4 @@ do
  for _,mode in ipairs({'foreign-predecessor','already-wrapped','missing-metatable','missing-wrapper','changed-source','valid'}) do scenario(mode) end
 end
 print('Cart queue contracts passed: actual early capacity wrappers, carried cart-to-cart, conservative incoming bounds, ownership/helper guards, batching, SP returns and protected MP sends.')
+if TestCoverage then TestCoverage('source-contract','passed')end

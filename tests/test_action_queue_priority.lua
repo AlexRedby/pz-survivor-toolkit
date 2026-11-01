@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Automatic queue priority native checks skipped (pass --native-action-root media/lua).'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Automatic queue priority native checks skipped (pass --native-action-root media/lua).')end; return end
 getFilenameOfClosure = NativeFilenameOfClosure or function(callback) return debug.getinfo(callback, 'S').source end
 require = function(name)
     if name == 'PZSurvivorToolkit/SourceProof' then
@@ -324,3 +324,4 @@ local clearedGeneration=q.toolkitOperationGeneration
 for i=1,8 do q:tick() end
 assert(q.toolkitOperationGeneration==clearedGeneration,'idle after explicit clear invalidated ownership twice')
 print('Native empty ticks preserve generation; explicit empty clear revokes once.')
+if TestCoverage then TestCoverage('source-contract','passed')end

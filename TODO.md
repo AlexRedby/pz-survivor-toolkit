@@ -238,10 +238,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Finish migrating legacy Lua source checks to structured completion reporting. `run_tests.py` still retains stdout SKIP detection for native-only and other unmigrated checks (for example `test_action_queue_appliances.lua` and the native sections of `test_wishlist_client.lua`); their current skip messages must remain detectable while migrating. Register expected check IDs and emit completion/skip receipts with reasons, preserving strict incomplete-coverage rejection. Remove the regex fallback only after every remaining printed-skip consumer is migrated and covered by missing-input/omitted-completion regressions.
-
-- [ ] Repair the offline `test_container_configuration_menus.lua` module loader: its Toolkit fallback reads only `client/`, but `ContainerAppearance.lua` now requires shared `ContainerGroups.lua`. Source-backed checks with native game, CleanUI and Better Containers stop before their assertions with a missing client-path file. Resolve owned shared/client modules consistently with the game and rerun the focused source-backed check; do not suppress the require failure.
-
 - [ ] Add a source-backed local composition check for native producer enqueue, deferred container approach, first transfer begin, P4 pickup earning and return failure handling. Run the actual enqueue/observer order with plain, singleton-guarded and merge-preserving transfers; separate seam checks can miss an unrecognised completed approach or a stop guard rejected by the P4 observer. Require this combined check before the corresponding Host bank while retaining native authority/conservation qualification.
 
 - [ ] Define safe recovery for uncertain fixture world-object deletion separately from inventory removal. Native `RemoveItemFromSquare` addresses coordinates and object index; duplicate delivery can remove the next object after indices shift. Preserve quarantine after uncertain publication until exact peer/world absence proves a safe outcome; do not retransmit solely because the authority object still exists.

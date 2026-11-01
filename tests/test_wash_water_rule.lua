@@ -1,4 +1,4 @@
-if not NativeActionRoot and not NativeWishlistWorkshopRoot then print('WMI water restoration SKIP (pass native and Workshop sources).'); return end
+if not NativeActionRoot and not NativeWishlistWorkshopRoot then if TestCoverage then TestCoverage('source-contract','skipped','WMI water restoration SKIP (pass native and Workshop sources).')end; return end
 assert(NativeActionRoot and NativeWishlistWorkshopRoot, 'WMI water restoration requires --game/--native-action-root and --wishlist-workshop-root')
 local root = ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/'
 local modRoot = NativeWishlistWorkshopRoot .. '/3460812542/mods/WashingMenusImproved/42.15/'
@@ -212,3 +212,4 @@ assert(result.n == 3 and result[1] == 'foreign' and result[2] == nil and result[
 rawget = stockRawget
 TestWashWaterRulePassed = true
 print('WMI water restoration tests passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

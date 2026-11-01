@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Media insertion native contracts SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Media insertion native contracts SKIP (pass --native-action-root).')end;return end
 local function read(path)
  if NativeReadText then return NativeReadText(path):gsub('\r','')end
  local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
@@ -1079,3 +1079,4 @@ for _,enabled in ipairs({true,false})do
  o.noReplay()
 end
 print('Eject input snapshot excludes matching tapes previously held in nested bags.')
+if TestCoverage then TestCoverage('source-contract','passed')end

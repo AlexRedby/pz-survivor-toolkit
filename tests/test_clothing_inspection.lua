@@ -1,5 +1,5 @@
 if not NativeInventoryContextMenuSource or not NativeTransferSource then
-    print('SKIP clothing inspection requires native sources (--game)')
+    if TestCoverage then TestCoverage('source-contract','skipped','SKIP clothing inspection requires native sources (--game)')end
     return
 end
 require = function() end
@@ -118,3 +118,4 @@ end
 player.dead = true; inspect(sp); assert(opened == count, 'dead players cannot open inspection')
 assert(completed > 0, 'native transfer completion must remain active')
 print('PASS native storage inspection: Host stale instance, SP/carried, delayed receipt, identity, failure/cancel and request cleanup')
+if TestCoverage then TestCoverage('source-contract','passed')end

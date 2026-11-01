@@ -60,6 +60,8 @@ class LuaRunnerBatch(unittest.TestCase):
                 executions.append((name, variant))
                 if (name, variant) in failures:
                     raise RuntimeError("failed " + name + "/" + variant)
+                for check in run_tests.SOURCE_CHECKS.get(name, ()):
+                    self.variables['TestCoverage'](check, 'passed')
 
             def table_from(self, value, **kwargs):
                 return value
@@ -155,10 +157,10 @@ class LuaRunnerBatch(unittest.TestCase):
         self.assertIn("--fridge-source", self.output.getvalue())
 
     @unittest.skipUnless(importlib.util.find_spec("lupa"), "Lupa is required for the real Lua print regression")
-    def test_real_lua_print_skip_and_failure_are_captured_in_subprocess(self):
+    def test_real_lua_receipts_and_failures_are_independent_of_print_output(self):
         for name, source in (("pass", "print('real Lua pass'); print('safe skips'); print('skipped-task'); print('idle rows skip permissions')"),
-                             ("skip", "print('real Lua SKIP optional check')"),
-                             ("lower_skip", "print('Source checks skipped (pass --game).')"),
+                             ("skip", "TestCoverage('upstream', 'skipped', 'optional source absent')"),
+                             ("lower_skip", "print('real Lua PASS without executing the source check')"),
                              ("fail", "print('real Lua failure') error('real failure')")):
             (self.root / f"tests/test_{name}.lua").write_text(source)
         script = self.root / "exercise_runner.py"
@@ -176,6 +178,7 @@ args = SimpleNamespace(keep_going=True, native_action_root=None, wishlist_game_r
     native_vehicles=None, fridge_source=None, vva_source=None, project_cook_picker=None,
     native_inventory_pane=None, cleanui_inventory_pane=None, oc_stick_source=None,
     oc_display_source=None)
+run_tests.SOURCE_CHECKS.update({'test_skip.lua': ('upstream',), 'test_lower_skip.lua': ('upstream',)})
 results = [run_tests._run_variant('test_' + name + '.lua', None, args, LuaRuntime)
            for name in ('pass', 'skip', 'lower_skip', 'fail')]
 print('RESULTS=' + json.dumps(results))
@@ -184,12 +187,12 @@ print('RESULTS=' + json.dumps(results))
                                 capture_output=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("real Lua pass", result.stdout)
-        self.assertIn("real Lua SKIP optional check", result.stdout)
+        self.assertIn("real Lua PASS without executing the source check", result.stdout)
         self.assertIn("real Lua failure", result.stdout)
         report = json.loads(result.stdout.split("RESULTS=", 1)[1])
         self.assertEqual([item["status"] for item in report], ["passed", "partial", "partial", "failed"])
-        self.assertIn("real Lua SKIP optional check", report[1]["partial_reasons"][0])
-        self.assertIn("checks skipped", report[2]["partial_reasons"][0])
+        self.assertIn("optional source absent", report[1]["partial_reasons"][0])
+        self.assertEqual('not-run', report[2]['checks'][0]['status'])
         self.assertIn("real failure", report[3]["error"])
 
 

@@ -44,7 +44,7 @@ end
 DebugType = {Action = {warn = function() end}}
 ISLogSystem = {logAction = function() end}
 if not NativeActionRoot then
-    print('Action queue native-contract checks skipped (pass --native-action-root media/lua).')
+    if TestCoverage then TestCoverage('source-contract','skipped','Action queue native-contract checks skipped (pass --native-action-root media/lua).')end
     return
 end
 local function load(path) assert(loadfile(NativeActionRoot .. '/' .. path))() end
@@ -2685,3 +2685,4 @@ do
     ISWorldObjectContextMenu,ISEquipWeaponAction,getDebug,ISInventoryPaneContextMenu=originalWorld,originalEquip,originalDebug,originalInventory
 end
 print('Waiting grooming cancellation: actual haircut/trim/dye producers, borrowed items and no-tool styling preserve exact cleanup and independent tail.')
+if TestCoverage then TestCoverage('source-contract','passed')end

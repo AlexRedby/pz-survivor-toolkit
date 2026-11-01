@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Fire native-contract checks skipped.'); return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Fire native-contract checks skipped.')end; return end
 local craftContainers
 require = function(module)
     if module == "PZSurvivorToolkit/ActionQueueMembership" then
@@ -959,3 +959,4 @@ reset();local opaque=target();item('Log');ISCampingMenu.onAddFuel(player,opaque,
 assert(q.queue[#q.queue].Type=='ISBBQAddFuel' and not PZSurvivorToolkit.ActionQueueFire.supports(q.queue[#q.queue]))
 getGameFilesInput=sourceReader
 print('Fire native contracts: fixed resource IDs, SP/MP completion, multi-use limits, independent/shared work, active boundary, retry-before-returns, sealed missing returns, native MP transfer reuse and source/helper guards passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

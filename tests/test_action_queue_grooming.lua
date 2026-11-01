@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Grooming native contracts SKIP.');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Grooming native contracts SKIP.')end;return end
 local function read(path)
  if NativeReadText then return NativeReadText(path):gsub('\r','')end
  local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
@@ -198,3 +198,4 @@ assert(not family.ISCutHair(constructed)and not family.ISTrimBeard(ISTrimBeard:n
  and not family.ISDyeHair(ISDyeHair:new(player,tool,false)),'modified base constructor retained reviewed waiting capabilities')
 ISBaseTimedAction.new=baseNew
 print('PASS dynamic native base-constructor provenance rejects already-mutated grooming bodies')
+if TestCoverage then TestCoverage('source-contract','passed')end

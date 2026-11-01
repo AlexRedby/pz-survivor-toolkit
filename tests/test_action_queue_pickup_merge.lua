@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Pickup merge policy SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Pickup merge policy SKIP (pass --native-action-root).')end;return end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 isClient=function()return true end
 round=function(value)return value end
@@ -77,3 +77,4 @@ first:checkQueueList()
 assert(#q.queue==2 and first.toolkitQueueOperation~=second.toolkitQueueOperation,
     'allowing native merge must not cross distinct operation tokens')
 print('Pickup native merge: synchronous first begin, same-type and multigroup siblings, default singleton returns, callback retention and producer isolation passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

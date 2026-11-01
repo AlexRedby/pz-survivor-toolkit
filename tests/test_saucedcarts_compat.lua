@@ -42,7 +42,7 @@ end
 print("PASS cart compatibility inactive without SaucedCarts or outside server")
 if not SaucedCartsSource then
     require = nativeRequire
-    print("SKIP cart server behavior requires upstream SaucedCarts source")
+    if TestCoverage then TestCoverage('source-contract','skipped',"SKIP cart server behavior requires upstream SaucedCarts source")end
     return
 end
 local w = setup(true, true)
@@ -191,3 +191,4 @@ assert(ISUnequipAction.complete(action)==true and state.placed==1 and state.dama
 assert(ISBaseTimedAction.perform==perform,'Nested completion failed to restore the outer perform scope')
 require=nativeRequire
 print('PASS upstream server cart completions preserve authoritative drop/spill effects, Boolean outcomes and exact-action perform scope'..(nativePerform and ' with actual native base perform' or ' (native base source not provided)'))
+if TestCoverage then TestCoverage('source-contract','passed')end

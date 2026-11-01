@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Queue denial details SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Queue denial details SKIP (pass --native-action-root).')end;return end
 local function read(path)
  if NativeReadText then return NativeReadText(path):gsub('\r','')end
  local file=assert(io.open(path));local value=file:read('*a');file:close();return value:gsub('\r','')
@@ -233,3 +233,4 @@ moveDenied(queue,reader,expanding,true,'move_dependent','edit_in_flight',expandi
 assert(queue.current==reader and queue.queue[1]==reader and reader.action:isStarted(),
  'a demotion explanation changed current reading or queue order')
 print('PASS active reading demotion identifies unknown/expanding crossed work without interruption')
+if TestCoverage then TestCoverage('source-contract','passed')end

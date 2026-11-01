@@ -73,7 +73,7 @@ assert(#selections == 2, "removed panel must never be retained")
 print("PASS alarm discovers only live MPFF panel and sends normal safety veto for accelerated selection/server speed")
 
 if not NativeMPFFClientSource or not NativeMPFFPanelSource or not NativeMPFFConfigSource then
-    print("SKIP alarm upstream MPFF client checks require --mpff-source")
+    if TestCoverage then TestCoverage('source-contract','skipped',"SKIP alarm upstream MPFF client checks require --mpff-source")end
     return
 end
 w = setup(true)
@@ -109,3 +109,4 @@ assert(sent[1] == "MPFastForward" and sent[2] == "select" and sent[3].level == M
     and sent[3].force == false and sent[3].veto == true, "actual upstream client must receive safety veto in admin mode")
 assert(w.multiplier == 1 and w.resets == 0, "actual upstream client must apply its own immediate normal reset")
 print("PASS actual MPFF private Client/panel callback resets local multiplier and sends normal veto in admin mode")
+if TestCoverage then TestCoverage('source-contract','passed')end

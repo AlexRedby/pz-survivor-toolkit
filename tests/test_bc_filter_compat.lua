@@ -56,7 +56,7 @@ dofile(gate)
 assert(#w.calls == 0 and ISInventoryPane.refreshContainer == w.base.refreshContainer and not PZSurvivorToolkit.BCFilterCompatibility)
 print("PASS BC inactive mod leaves pane and dependencies untouched")
 if not NativeBCFilterSource then
-    print("SKIP BC duplicate filtering checks require actual upstream CategoryFilters source")
+    if TestCoverage then TestCoverage('source-contract','skipped',"SKIP BC duplicate filtering checks require actual upstream CategoryFilters source")end
     return
 end
 
@@ -135,3 +135,4 @@ assert(not PZSurvivorToolkit.BCFilterCompatibility and ISInventoryPane.refreshCo
 assert(ISInventoryPane.onFilterMenu == menu and ISInventoryPane.createChildren == children)
 assert(require("BetterContainers/Categorize/CategoryFilters") == upstream and w.loads["BetterContainers/Categorize/CategoryFilters"] == 1)
 print("PASS BC wrong load order preserves installed/later methods and avoids claiming success")
+if TestCoverage then TestCoverage('source-contract','passed')end

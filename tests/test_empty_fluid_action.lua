@@ -1,4 +1,4 @@
-if not NativeActionRoot then print('Empty fluid repair SKIP (pass --native-action-root).');return end
+if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Empty fluid repair SKIP (pass --native-action-root).')end;return end
 local function read(path)
     if NativeReadText then return NativeReadText(path):gsub('\r','') end
     local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')
@@ -201,3 +201,4 @@ do
         'server animation remains a single native update; no fabricated client/SP evidence')
 end
 print('Empty fluid repair: pinned native constructor/update/validity, float self-pruning, active client zero sync, stale/external/missing/helper barriers and unchanged completion/duration passed.')
+if TestCoverage then TestCoverage('source-contract','passed')end

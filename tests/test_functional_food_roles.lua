@@ -124,5 +124,8 @@ if NativeActionRoot then
         assert(Tags.matches(Tags.forItem(item(s)),{'seasoning'})==expected,name..' got wrong native additive role')
     end
     print('native B42.21 additive flags checked: salt, sauces, oils, bacon and bean negatives')
-else print('SKIP native additive flags (NativeActionRoot not supplied)') end
+    if TestCoverage then TestCoverage('native-additive-flags','passed') end
+else
+    if TestCoverage then TestCoverage('native-additive-flags','skipped','SKIP native additive flags (NativeActionRoot not supplied)') end
+end
 print('functional food roles: one seasoning, saved aliases, contents, previews, snapshots and manual precedence passed')

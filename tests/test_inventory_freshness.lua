@@ -336,7 +336,8 @@ if NativeBCFreshnessSource then
         end
     end
     print('inventory freshness: '..compared..' active Better Containers draw-stream comparisons passed')
+    if TestCoverage then TestCoverage('better-containers-freshness-parity','passed') end
 else
-    print('SKIP: active Better Containers source parity requires NativeBCFreshnessSource')
+    if TestCoverage then TestCoverage('better-containers-freshness-parity','skipped','SKIP: active Better Containers source parity requires NativeBCFreshnessSource') end
 end
 print('inventory freshness: live groups, visibility, native row projection, options, lifecycle and reservations passed')

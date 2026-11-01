@@ -4,7 +4,6 @@
 import argparse
 import json
 import locale
-import re
 import sys
 import time
 from pathlib import Path
@@ -55,12 +54,118 @@ DEFAULT_NATIVE_ONLY = {
 
 # Completion receipts are separate from input availability. A supplied source
 # cannot prove that its conditional assertions actually ran.
-SOURCE_CHECKS = {
-    'test_inventory_refresh.lua': (
-        'native-page', 'bc-proximity', 'cleanui-page', 'cleanui-vanilla-page',
-        'cleanui-bc-discovery', 'cleanui-bc-player', 'bc-pane-selection',
-    ),
-}
+SOURCE_CHECKS = {'test_action_queue.lua': ('source-contract',),
+ 'test_action_queue_active_edit.lua': ('source-contract',),
+ 'test_action_queue_animal_stops.lua': ('source-contract',),
+ 'test_action_queue_animals.lua': ('source-contract',),
+ 'test_action_queue_appliances.lua': ('source-contract',),
+ 'test_action_queue_batch_controller.lua': ('source-contract',),
+ 'test_action_queue_batches.lua': ('source-contract',),
+ 'test_action_queue_book_controls.lua': ('source-contract',),
+ 'test_action_queue_carts.lua': ('source-contract',),
+ 'test_action_queue_compat.lua': ('source-contract',),
+ 'test_action_queue_craft.lua': ('source-contract',),
+ 'test_action_queue_denial_details.lua': ('source-contract',),
+ 'test_action_queue_dismantle.lua': ('source-contract',),
+ 'test_action_queue_dispatch.lua': ('native-contracts', 'project-cook-callback'),
+ 'test_action_queue_edit_adapters.lua': ('source-contract',),
+ 'test_action_queue_edit_policy.lua': ('source-contract',),
+ 'test_action_queue_fire.lua': ('source-contract',),
+ 'test_action_queue_firearms.lua': ('source-contract',),
+ 'test_action_queue_fitness.lua': ('source-contract',),
+ 'test_action_queue_fridge_compat.lua': ('source-contract',),
+ 'test_action_queue_fuel.lua': ('source-contract',),
+ 'test_action_queue_generator_overlay.lua': ('source-contract',),
+ 'test_action_queue_generators.lua': ('source-contract',),
+ 'test_action_queue_grab_compat.lua': ('source-contract',),
+ 'test_action_queue_grooming.lua': ('source-contract',),
+ 'test_action_queue_grooming_active.lua': ('source-contract',),
+ 'test_action_queue_grooming_costs.lua': ('source-contract',),
+ 'test_action_queue_grooming_pending.lua': ('source-contract',),
+ 'test_action_queue_grooming_recovery.lua': ('source-contract',),
+ 'test_action_queue_health.lua': ('native-contracts',
+                                  'health-cleanui-bandage',
+                                  'minihealthplus-contracts'),
+ 'test_action_queue_hygiene.lua': ('source-contract',),
+ 'test_action_queue_item_edit_adapters.lua': ('native-contracts', 'p4-transfer-offset'),
+ 'test_action_queue_lifecycle.lua': ('native-lifecycle-toggle',),
+ 'test_action_queue_makeup.lua': ('source-contract',),
+ 'test_action_queue_makeup_sync.lua': ('source-contract',),
+ 'test_action_queue_manifest.lua': ('source-contract',),
+ 'test_action_queue_media.lua': ('source-contract',),
+ 'test_action_queue_native_continuations.lua': ('source-contract',),
+ 'test_action_queue_operations.lua': ('source-contract',),
+ 'test_action_queue_pickup_merge.lua': ('source-contract',),
+ 'test_action_queue_pickup_policy.lua': ('source-contract',),
+ 'test_action_queue_policy.lua': ('source-contract',),
+ 'test_action_queue_priority.lua': ('source-contract',),
+ 'test_action_queue_recovery.lua': ('source-contract',),
+ 'test_action_queue_recovery_adapters.lua': ('native-contracts',
+                                             'constructor-call-trace',
+                                             'custom-light-switch'),
+ 'test_action_queue_repair.lua': ('source-contract',),
+ 'test_action_queue_resource_comparisons.lua': ('source-contract',),
+ 'test_action_queue_return_decision_scope.lua': ('source-contract',),
+ 'test_action_queue_targets.lua': ('source-contract',),
+ 'test_action_queue_text_binding.lua': ('source-contract',),
+ 'test_action_queue_vegetation.lua': ('source-contract',),
+ 'test_action_queue_world.lua': ('source-contract',),
+ 'test_action_queue_wreck.lua': ('source-contract',),
+ 'test_alarm_clock.lua': ('source-contract',),
+ 'test_animal_info.lua': ('source-contract',),
+ 'test_bc_filter_compat.lua': ('source-contract',),
+ 'test_bc_inventory_classes.lua': ('source-contract',),
+ 'test_cart_impact_release.lua': ('installed-instant-drop',),
+ 'test_cart_spawns.lua': ('source-contract',),
+ 'test_clothing_inspection.lua': ('source-contract',),
+ 'test_clothing_tooltip.lua': ('source-contract',),
+ 'test_device_media_native_order.lua': ('source-contract',),
+ 'test_drink_fluid_boundary.lua': ('source-contract',),
+ 'test_empty_fluid_action.lua': ('source-contract',),
+ 'test_food_cart_compat.lua': ('source-contract',),
+ 'test_food_eatsmart_compat.lua': ('source-contract',),
+ 'test_food_goal_labels.lua': ('source-contract',),
+ 'test_functional_food_roles.lua': ('native-additive-flags',),
+ 'test_inventory_button_checks.lua': ('native-ui-element-setters',),
+ 'test_inventory_freshness.lua': ('better-containers-freshness-parity',),
+ 'test_inventory_refresh.lua': ('native-page',
+                                'bc-proximity',
+                                'cleanui-page',
+                                'cleanui-vanilla-page',
+                                'cleanui-bc-discovery',
+                                'cleanui-bc-player',
+                                'bc-pane-selection'),
+ 'test_inventory_tooltips.lua': ('source-contract',),
+ 'test_inventory_transfer_operations.lua': ('source-contract',),
+ 'test_item_action_capabilities.lua': ('native-eat-menu',),
+ 'test_item_bait_tags.lua': ('native-bait-sources',),
+ 'test_item_broken_tags.lua': ('native-broken-declarations',),
+ 'test_item_cooking_states.lua': ('native-cooking-state-declarations',),
+ 'test_item_cooking_tags.lua': ('native-cooking-declarations',),
+ 'test_item_disassembly_tags.lua': ('native-disassembly-declarations',),
+ 'test_item_fluid_tags.lua': ('native-fluid-declarations',),
+ 'test_item_laundry_tags.lua': ('native-laundry-sources',),
+ 'test_item_media_tags.lua': ('native-recorded-media',),
+ 'test_item_repair_tags.lua': ('native-repair-declarations',),
+ 'test_item_sharpening_tags.lua': ('native-sharpening-declarations',),
+ 'test_item_smelting_tags.lua': ('native-furnace-declarations',),
+ 'test_item_usage_tags.lua': ('native-usage-declarations',),
+ 'test_kahlua_own_fields.lua': ('source-contract',),
+ 'test_mpff_compat.lua': ('source-contract',),
+ 'test_quartermaster_deposit.lua': ('source-contract',),
+ 'test_quartermaster_preset_transactions.lua': ('source-contract',),
+ 'test_quartermaster_sync.lua': ('source-contract',),
+ 'test_queue_equipment_slots.lua': ('source-contract',),
+ 'test_saucedcarts_compat.lua': ('source-contract',),
+ 'test_set_stove_state.lua': ('source-contract',),
+ 'test_tv_videos.lua': ('source-contract',),
+ 'test_vehicle_doors.lua': ('source-contract',),
+ 'test_vehicle_glass.lua': ('upstream-vro-sources',),
+ 'test_warehouse_walking_lock.lua': ('source-contract',),
+ 'test_wash_makeup_sync.lua': ('source-contract',),
+ 'test_wash_water_rule.lua': ('source-contract',),
+ 'test_wishlist_client.lua': ('native-collapse-lifecycle',),
+ 'test_wishlist_sharing.lua': ('source-contract',)}
 
 
 def discover_tests(root):
@@ -195,20 +300,6 @@ def test_variants(name, args):
     return flags
 
 
-class _Tee:
-    """Capture Lua print output while preserving the runner's normal stdout."""
-    def __init__(self, target):
-        self.target = target
-        self.parts = []
-
-    def write(self, value):
-        self.parts.append(value)
-        return self.target.write(value)
-
-    def flush(self):
-        return self.target.flush()
-
-
 class _Coverage:
     def __init__(self, name):
         self.expected = SOURCE_CHECKS.get(name, ())
@@ -252,21 +343,16 @@ def _run_variant(name, flag, args, LuaRuntime):
             raise
         return result
     try:
-        captured = _Tee(sys.stdout)
         if hasattr(lua, "eval"):
             to_string = lua.eval("tostring")
             def lua_print(*values):
-                captured.write("\t".join(to_string(value) for value in values) + "\n")
+                print("\t".join(to_string(value) for value in values))
             lua.globals()["print"] = lua_print
         lua.execute((ROOT / "tests" / name).read_text(encoding="utf-8"))
         if coverage.errors:
             raise ValueError('; '.join(coverage.errors))
-        output = "".join(captured.parts)
-        partial = [line.strip() for line in output.splitlines()
-                   if re.search(r"(?<![A-Za-z0-9_])SKIP(?:PED)?(?![A-Za-z0-9_])", line)
-                   or re.search(r"\b(?:checks?|tests?|contracts?) skipped\b", line)]
-        partial.extend(f"Missing {item['integration']} source: {item['variable']}"
-                       for item in inputs if item['status'] == 'missing')
+        partial = [f"Missing {item['integration']} source: {item['variable']}"
+                   for item in inputs if item['status'] == 'missing']
         checks = coverage.results()
         partial.extend(f"{item['id']}: {item['reason']}" for item in checks if item['status'] != 'passed')
         return {"test": name, "variant": flag or "default",
