@@ -22,6 +22,16 @@ def get(suite):
     return import_module('.' + MODULES[suite], __name__)
 
 
+def preflight(selection):
+    """Resolve and record build inputs without creating profiles or compiling fixtures."""
+    adapter = get(selection['suite'])
+    check = getattr(adapter, 'preflight', None)
+    resolved = check(selection) if check else {}
+    if resolved:
+        selection.setdefault('options', {}).update(resolved)
+    return resolved
+
+
 def definitions(suites=None):
     """Load declarations for requested suites, or the complete catalog by default."""
     selected = MODULES if suites is None else {suite: MODULES[suite] for suite in suites if suite in MODULES}

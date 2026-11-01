@@ -184,9 +184,10 @@ def _lua(value):
 
 
 def source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None, validate_adapter=True):
-    """Read-only launch inputs; an invocation-local cache avoids rehashing one pack per job.
+    """Validate launch inputs and pin build options without writing a profile.
 
-    Preparation deliberately calls this without a cache, so a later source edit
+    An invocation-local cache avoids rehashing one pack per job. Preparation
+    deliberately calls this without a cache, so a later source edit
     still fails the fresh snapshot even after a successful campaign preflight.
     """
     project, game, jdk = (Path(path).resolve() for path in (project, game, jdk))
@@ -204,6 +205,7 @@ def source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None
     adapter = adapters.get(selection['suite'])
     if adapter and validate_adapter:
         adapter.validate(selection)
+    adapters.preflight(selection)
     overrides = selection.get('options', {}).get('mod_sources', {})
     locked = selection.get('options', {}).get('pack_lock')
     if locked:

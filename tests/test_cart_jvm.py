@@ -48,6 +48,101 @@ class CartJVMCompilation(unittest.TestCase):
                 patch.object(cart_jvm.subprocess, 'run', side_effect=self.subprocess):
             cart_jvm.compile_sources(self.jdk, self.classpath, classes, sources, kotlin_home=self.home)
 
+    def test_kotlin_selection_prefers_explicit_home_then_environment_then_path(self):
+        fixture = kotlin_fixture.KotlinBuild(methodName='runTest')
+        environment_home = fixture.distribution(self.root / 'environment Kotlin')
+        path_home = fixture.distribution(self.root / 'PATH Kotlin')
+        launcher = path_home / 'bin/kotlinc'
+        with patch.object(cart_jvm, 'patch_build', return_value=build), \
+                patch.object(build.subprocess, 'run') as run:
+            with patch.dict(os.environ, {'KOTLIN_HOME': str(environment_home)}, clear=True), \
+                    patch.object(build.shutil, 'which', return_value=str(launcher)) as which:
+                self.assertEqual(cart_jvm.resolve_kotlin_home(str(self.home)), self.home)
+                which.assert_not_called()
+                self.assertEqual(cart_jvm.resolve_kotlin_home(), environment_home)
+                which.assert_not_called()
+            with patch.dict(os.environ, {}, clear=True), \
+                    patch.object(build.shutil, 'which', return_value=str(launcher)) as which:
+                self.assertEqual(cart_jvm.resolve_kotlin_home(), path_home)
+                which.assert_called_once_with('kotlinc')
+            run.assert_not_called()
+
+    def test_path_launcher_symlink_resolves_distribution_home(self):
+        launcher = self.root / 'kotlinc-link'
+        try:
+            launcher.symlink_to(self.home / 'bin/kotlinc')
+        except OSError as error:
+            self.skipTest('File symlinks unavailable: ' + str(error))
+        with patch.dict(os.environ, {}, clear=True), \
+                patch.object(build.shutil, 'which', return_value=str(launcher)), \
+                patch.object(cart_jvm, 'patch_build', return_value=build):
+            self.assertEqual(cart_jvm.resolve_kotlin_home(), self.home)
+
+    def test_invalid_explicit_or_environment_home_does_not_fall_back(self):
+        missing = self.root / 'missing Kotlin'
+        with patch.object(cart_jvm, 'patch_build', return_value=build), \
+                patch.object(build.shutil, 'which', return_value=str(self.home / 'bin/kotlinc')) as which, \
+                patch.object(build.subprocess, 'run') as run:
+            for explicit, configured in ((missing, self.home), (None, missing)):
+                with self.subTest(explicit=explicit), \
+                        patch.dict(os.environ, {'KOTLIN_HOME': str(configured)}, clear=True), \
+                        self.assertRaises(ValueError) as failure:
+                    cart_jvm.resolve_kotlin_home(explicit)
+                self.assertIn(str(missing), str(failure.exception))
+                self.assertIn(build.KOTLIN_VERSION, str(failure.exception))
+                self.assertIn('--kotlin-home', str(failure.exception))
+                self.assertIn('KOTLIN_HOME', str(failure.exception))
+            which.assert_not_called()
+            run.assert_not_called()
+
+    def test_missing_kotlin_selection_has_actionable_error(self):
+        with patch.object(cart_jvm, 'patch_build', return_value=build), \
+                patch.dict(os.environ, {}, clear=True), \
+                patch.object(build.shutil, 'which', return_value=None), \
+                patch.object(build.subprocess, 'run') as run, \
+                self.assertRaises(ValueError) as failure:
+            cart_jvm.resolve_kotlin_home()
+        for text in (build.KOTLIN_VERSION, '--kotlin-home', 'KOTLIN_HOME'):
+            self.assertIn(text, str(failure.exception))
+        run.assert_not_called()
+
+    def test_invalid_kotlin_distribution_fails_before_creating_classes(self):
+        fixture = kotlin_fixture.KotlinBuild(methodName='runTest')
+        cases = ('missing compiler', 'missing runtime', 'corrupt compiler', 'corrupt runtime',
+                 'compiler mismatch', 'runtime mismatch', 'missing license')
+        for case in cases:
+            with self.subTest(case=case):
+                home = fixture.distribution(self.root / case,
+                                            compiler_version='2.2.0' if case == 'compiler mismatch' else None,
+                                            runtime_version='2.2.0' if case == 'runtime mismatch' else None)
+                damaged = {'missing compiler': 'lib/kotlin-compiler.jar',
+                           'missing runtime': 'lib/kotlin-stdlib.jar',
+                           'corrupt compiler': 'lib/kotlin-compiler.jar',
+                           'corrupt runtime': 'lib/kotlin-stdlib.jar',
+                           'missing license': 'license/NOTICE.txt'}.get(case)
+                if damaged:
+                    if case.startswith('corrupt'):
+                        (home / damaged).write_bytes(b'not a ZIP archive')
+                    else:
+                        (home / damaged).unlink()
+                classes = self.root / (case + ' classes')
+                with patch.object(cart_jvm, 'patch_build', return_value=build), \
+                        patch.object(cart_jvm.subprocess, 'run') as run, \
+                        patch.object(build, 'stage_kotlin_runtime') as stage, \
+                        self.assertRaises(ValueError) as failure:
+                    cart_jvm.compile_sources(self.jdk, self.classpath, classes,
+                                             [self.kotlin, self.java], kotlin_home=home)
+                self.assertIn('Kotlin', str(failure.exception))
+                self.assertIn(str(home), str(failure.exception))
+                if case == 'missing license':
+                    self.assertIn('license/NOTICE.txt', str(failure.exception))
+                else:
+                    for text in (build.KOTLIN_VERSION, '--kotlin-home', 'KOTLIN_HOME'):
+                        self.assertIn(text, str(failure.exception))
+                self.assertFalse(classes.exists())
+                run.assert_not_called()
+                stage.assert_not_called()
+
     def test_mixed_compilation_keeps_cart_module_private_runtime_and_process_policy(self):
         classes = self.root / 'classes'
         environment = {'JAVA_TOOL_OPTIONS': '-javaagent:foreign.jar', 'JDK_JAVA_OPTIONS': '-Xmx1m',
@@ -81,10 +176,12 @@ class CartJVMCompilation(unittest.TestCase):
     def test_java_only_compilation_does_not_resolve_or_stage_kotlin(self):
         classes = self.root / 'java-only'
         with patch.object(build, 'kotlin_toolchain') as toolchain, \
-                patch.object(build, 'stage_kotlin_runtime') as stage:
+                patch.object(build, 'stage_kotlin_runtime') as stage, \
+                patch.object(cart_jvm, 'resolve_kotlin_home') as resolve:
             self.compile(classes, [self.java])
         toolchain.assert_not_called()
         stage.assert_not_called()
+        resolve.assert_not_called()
         self.assertEqual(len(self.commands), 1)
         command = self.commands[0][0]
         self.assertEqual(command, [str(self.jdk / 'bin/javac'), '--release', build.JVM_TARGET,

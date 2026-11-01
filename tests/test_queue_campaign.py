@@ -15,6 +15,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks import campaign
+from JavaPatches.tests.test_build_kotlin import KotlinBuild
 spec = importlib.util.spec_from_file_location('campaign_cli', ROOT / 'tools/check_action_queue.py')
 cli = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cli)
@@ -155,6 +156,7 @@ class CampaignTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder); tool=root/'input'; tool.write_text('fixture input'); tool.chmod(0o700)
             options=plan['options']
+            options['kotlin_home']=str(KotlinBuild(methodName='runTest').distribution(root/'kotlin'))
             options.update(patch_jar=str(tool),ffmpeg=str(tool),ffprobe=str(tool))
             options['mod_sources']={key:str(root) for key in options['mod_sources']}
             for job in plan['jobs']:

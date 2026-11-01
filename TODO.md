@@ -244,8 +244,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Route standalone queue JVM timing banks through the shared resource/exclusive admission mechanism, including development profile hosts. They can currently overlap a native Host run and contaminate latency comparisons even when deterministic scalar/counter checks pass. Provide an explicit headless timing lease and reject unregistered timing claims; ordinary untimed compilation/unit checks need no desktop lease.
 
-- [ ] Validate the required Kotlin 2.4.21 toolchain during cart campaign preflight. Cart campaign `--dry-run` passed with no compiler configured, but each cart preparation then copied sources before failing with `Kotlin 2.4.21 compiler distribution is required`. A previously used temporary distribution later retained its directory/stdlib but lost `lib/kotlin-compiler.jar`; directory existence alone is insufficient. Resolve and validate the selected compiler/runtime version and required files before profile creation; the documented `KOTLIN_HOME` remains necessary until this guard is added.
-
 - [ ] Expose exclusive admission for snapshot preparation through the native CLI. Walking captures require builds/copies to stay outside measurement, but `prepare` only checks capacity; coordinated preparation currently needs a separate call to the common admission API. Queue hashing, copying and JVM preparation with the normal FIFO/resource budgets while retaining source, port and owned-process guards.
 
 

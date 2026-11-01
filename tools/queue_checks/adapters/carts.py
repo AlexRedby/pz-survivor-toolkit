@@ -13,7 +13,7 @@ import tempfile
 import zipfile
 
 from .auxiliary import _load, _path, _write
-from cart_jvm import compile_sources
+from cart_jvm import compile_sources, resolve_kotlin_home
 
 MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit',
         'SaucedCarts', 'saucedwheelbarrow']
@@ -446,8 +446,18 @@ def sources(project, selection):
     return paths
 
 
-def _compile(jdk, classpath, classes, sources):
-    compile_sources(jdk, classpath, classes, sources)
+def preflight(selection):
+    home = selection.get('options', {}).get('kotlin_home')
+    if home is not None and (not isinstance(home, str) or not home):
+        raise ValueError('Cart options.kotlin_home must be a nonempty distribution path')
+    try:
+        return {'kotlin_home': str(resolve_kotlin_home(home))}
+    except ValueError as error:
+        raise ValueError('Cart Kotlin preflight (KOTLIN_HOME or options.kotlin_home): ' + str(error)) from error
+
+
+def _compile(jdk, classpath, classes, sources, *, kotlin_home=None):
+    compile_sources(jdk, classpath, classes, sources, kotlin_home=kotlin_home)
 
 
 def runtime_sources(sp, mp=None):
@@ -480,6 +490,8 @@ def _jar(path, classes, manifest=None):
 def stage(project, output, game, jdk, selection, locations, runtime):
     from ..native import _lua
     validate(selection)
+    selection['options'].update(preflight(selection))
+    kotlin_home = selection['options']['kotlin_home']
     project, output, game = map(Path, (project, output, game))
     sp, mp = _intake(project, SP), _intake(project, MP)
     manual = selection['suite'] == SP and selection['cases'] == ['manual']
@@ -496,7 +508,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     source = build / 'Main.kt'
     source.write_text(main_source(sp/'Main.kt', selection['suite'] == MP), encoding='utf-8')
     inputs = runtime_sources(sp, mp if selection['suite'] == MP else None)
-    _compile(jdk, classpath, build / 'lab-classes', [source, *inputs[1:]])
+    _compile(jdk, classpath, build / 'lab-classes', [source, *inputs[1:]], kotlin_home=kotlin_home)
     _jar(build / 'CartLab.jar', build / 'lab-classes')
     evidence = sp / 'evidence'
     variant_probes = selection['suite'] == SP and selection.get('options', {}).get('cart_variant') in ('metal-wheelbarrow', 'shopping-cart')
@@ -518,7 +530,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         probe_sources = [composed if path == original else path for path in probe_sources]
     probes = [] if manual or simple and not controls else ['ClearanceProbe'] if selection['suite'] == MP else list(sp_probes)
     if probes:
-        _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'])
+        _compile(jdk, classpath, build / 'probe-classes', [*probe_sources, evidence / 'AttachWoodenWheelProbe.java'], kotlin_home=kotlin_home)
     for name in probes:
         _jar(build / (name + '.jar'), build / 'probe-classes', (mp if selection['suite'] == MP else evidence) / (name + '.mf'))
     fixture = runtime.setdefault('fixture', {})

@@ -21,6 +21,11 @@ class Configuration:
         raise ValueError(message)
 
 
+def resolve_kotlin_home(kotlin_home=None) -> Path:
+    """Validate the selected local Kotlin distribution without creating build output."""
+    return patch_build().kotlin_toolchain(Path(kotlin_home) if kotlin_home else None, Configuration())
+
+
 def clean_environment():
     return {key: value for key, value in os.environ.items()
             if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')}
@@ -43,7 +48,7 @@ def compile_sources(jdk, classpath, classes, sources, *, kotlin_home=None):
         raise ValueError('Cart compiler requires existing Java/Kotlin sources')
     kotlin = [path for path in sources if path.suffix == '.kt']
     java = [path for path in sources if path.suffix == '.java']
-    home = build.kotlin_toolchain(Path(kotlin_home) if kotlin_home else None, Configuration()) if kotlin else None
+    home = resolve_kotlin_home(kotlin_home) if kotlin else None
     classes.mkdir(parents=True)
     compilepath = classpath
     if home:

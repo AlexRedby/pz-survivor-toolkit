@@ -265,14 +265,24 @@ def batch(args, catalog):
     if args.output.exists():
         raise FileExistsError('Fresh batch output directory required')
     units = batch_sessions(plan, jobs, catalog, args.plan, args.output, getattr(args, 'desktop_mode', None))
+    paths = {job['id']: (args.output / job['id']).resolve() for job in jobs}
+    for unit in units:
+        unit['build_inputs'] = {}
+        suite = unit['jobs'][0].get('suite')
+        adapter = adapters.get(suite) if isinstance(suite, str) else None
+        if not getattr(adapter, 'preflight', None):
+            continue
+        selected = unit.get('selection') or batch_selection(
+            plan, unit['jobs'][0], catalog, args.plan, paths, getattr(args, 'desktop_mode', None))
+        unit['build_inputs'] = adapters.preflight(selected)
     if 'campaign' in plan:
         # Unlike an ordinary independent-job batch, a campaign preflights all
         # selected environments before spending its first native launch.
-        paths = {job['id']: (args.output / job['id']).resolve() for job in jobs}
         checked_packs = {}
         for unit in units:
             job = unit['jobs'][0]
             selected = unit.get('selection') or batch_selection(plan, job, catalog, args.plan, paths, getattr(args, 'desktop_mode', None))
+            selected['options'].update(unit['build_inputs'])
             native._validate(selected)
             native.window_size(selected)
             native.source_inputs(ROOT, plan['game'], plan['jdk'], selected, plan.get('workshop', []),
@@ -283,6 +293,7 @@ def batch(args, catalog):
             for index, job in enumerate(unit['jobs']):
                 selected = unit['members'][index] if unit['session'] else batch_selection(
                     plan, job, catalog, args.plan, runs, getattr(args, 'desktop_mode', None))
+                selected['options'].update(unit['build_inputs'])
                 output = unit['output'].resolve()
                 rows.append({'id': job['id'], 'run': str(output), 'selection': selected,
                              'session': unit['session'],
@@ -316,6 +327,7 @@ def batch(args, catalog):
             if selected is None:
                 selected = batch_selection(plan, job, catalog, args.plan, completed,
                                            getattr(args, 'desktop_mode', None))
+            selected['options'].update(unit['build_inputs'])
             native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])])
             execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)

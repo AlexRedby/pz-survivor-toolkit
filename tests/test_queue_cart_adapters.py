@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import carts
 from queue_checks import runner
+from JavaPatches.tests.test_build_kotlin import KotlinBuild
 
 
 class CartAdapterTests(unittest.TestCase):
@@ -29,6 +30,7 @@ class CartAdapterTests(unittest.TestCase):
         self.output.mkdir()
         self.runtime = {'game': str(self.root / 'game'), 'server_name': 'queue-smoke', 'roles': {}}
         self.options = {}
+        self.options['kotlin_home'] = str(KotlinBuild(methodName='runTest').distribution(self.root / 'kotlin'))
         for key in ('ffmpeg', 'ffprobe', 'patch_jar', 'mesh_fbx'):
             path = self.root / key
             path.write_bytes(b'explicit dependency')
@@ -54,7 +56,7 @@ class CartAdapterTests(unittest.TestCase):
         return cache
 
     @staticmethod
-    def compiler(jdk, classpath, classes, sources):
+    def compiler(jdk, classpath, classes, sources, *, kotlin_home=None):
         classes.mkdir(parents=True)
         for source in map(Path, sources):
             target = classes / ('net/alexredby/cartlab/Main.class' if source.stem == 'Main' else source.stem + '.class')
@@ -84,6 +86,18 @@ class CartAdapterTests(unittest.TestCase):
         self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN', 'RU'])
         with self.assertRaisesRegex(ValueError, 'cart_entry_contact_repro'):
             carts.validate(self.selection)
+
+    def test_preflight_pins_toolchain_for_both_compilation_phases(self):
+        from queue_checks import adapters
+        import os
+        self.selection.update(suite=carts.MP, cases=['owner_observer_motion'], kind='mp', languages=['EN','RU'])
+        home=self.options['kotlin_home']
+        resolved=adapters.preflight(self.selection)
+        self.assertEqual(resolved, {'kotlin_home':home})
+        with patch.dict(os.environ, {'KOTLIN_HOME':str(self.root/'wrong-later-home')}):
+            compiler=self.stage()
+        self.assertEqual(compiler.call_count,2)
+        self.assertTrue(all(call.kwargs=={'kotlin_home':home} for call in compiler.call_args_list))
 
     def test_speed_parity_stage_uses_native_input_without_graphics_probes_or_meshes(self):
         self.selection['cases'] = ['speed-parity']
