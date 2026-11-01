@@ -49,12 +49,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 ### 0.1.330
 
 - Reduce inventory refresh work for large stacks by reusing live usage-tag membership during grouping. Keep current item-state reads, custom rules, retained-item grouping and preview/snapshot metadata behavior.
-
-### 0.1.329
-
 - Reduce work when grouping inventory stacks by projecting only tag membership, skipping unused preview/provenance copies and a duplicate signature calculation. Keep physical item state, custom tags and retention live.
 - Refresh ingredient, disassembly, repair, smelting and wear-preview tags after native script reload or deferred input resolution, including changes that keep the same recipe lists and counts. Retain batching within each operation; unavailable native revision metadata permits operation-local cache reuse only.
 - Reuse recipe catalogue reads within each inventory grouping, tag rendering, filter, tag-menu and distribution-planning pass, reducing repeated work in large visible stacks. Keep item categories, freshness, damage, retention and custom tags live for each physical item; refresh recipe reads on the next operation.
+
+### 0.1.329
 
 - Expose a fresh native-object match in explicit transfer diagnostics so tests can distinguish a live request from historical transaction data. Add paired native-stop probes before rejected transfers are removed; queue execution and edit permissions stay unchanged.
 - Remove one temporary Lua result table from every common cancel/move decision, preserving callback results, errors, nested contexts and all source checks. This allocation reduction does not establish that live timing budgets pass.
@@ -1541,6 +1540,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.81
+
+- Expose the native script-catalogue revision for item-tag indexes. Track loading, reload, deferred resolution and reset, including partial failures; ordinary catalogue reads preserve the revision.
+
 ### 0.1.80
 
 - Refresh the exact queue Policy source fingerprint after its temporary-result allocation reduction, preserving the existing compiler eligibility checks and fallback behavior.
@@ -1552,7 +1555,6 @@ The older README associates medicine indicators with this label, but no separate
 
 ### 0.1.78
 
-- Expose the native script-catalogue revision for item-tag indexes. Track loading, reload, deferred resolution and reset, including partial failures; ordinary catalogue reads preserve the revision.
 - Capture native item transaction objects at their original manager boundary. Track allocated wire IDs in bounded connection histories, invalidate intervening actor requests and preserve unknown results after ID reuse or late attachment.
 
 ### 0.1.77
