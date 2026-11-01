@@ -7,7 +7,7 @@ import subprocess
 import unittest
 import zlib
 
-from test_fitness_storage_fixture import HARNESS as STORAGE_HARNESS
+from tests.test_fitness_storage_fixture import HARNESS as STORAGE_HARNESS
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULE = ROOT / 'tests/native_queue/fitness/shared/QueueFitnessStorageNegative.lua'

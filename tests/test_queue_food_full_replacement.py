@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import food
 from queue_checks import scenarios
-import test_queue_food as fixtures
+from tests import test_queue_food as fixtures
 
 
 def family_evidence(case, index, mode):
@@ -249,6 +249,7 @@ end
 package.preload.QueueScenarioChecks=function()return {}end
 package.preload['PZSurvivorToolkit/ActionQueue']=function()return {}end
 package.preload['PZSurvivorToolkit/ActionQueuePolicy']=function()return {}end
+package.preload['PZSurvivorToolkit/ActionQueueOperations']=function()return {}end
 package.preload['TimedActions/ISQueueActionsAction']=function()return {}end
 ISQueueActionsAction={start=function()end}
 PZSurvivorToolkit={Settings={actionQueue=function()return true end}}

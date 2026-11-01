@@ -2,7 +2,7 @@
 
 [Development](../DEVELOPMENT.md)
 
-Build and test the engine patches and test-only instrumentation. Run commands from the repository root. Loader installation is in the [Java user guide](../../JavaPatches/README.md).
+Build and test the engine patches and test-only instrumentation. Run commands from the repository root using the [shared project Python](../DEVELOPMENT.md#checks-and-packaging). Loader installation is in the [Java user guide](../../JavaPatches/README.md).
 
 - [Java development](#java-development)
 - [Java patch boundaries](#java-patch-boundaries)
@@ -19,7 +19,7 @@ export JAVA_HOME="/path/to/jdk-25"
 export KOTLIN_HOME="/path/to/kotlin-distribution"
 export PZ_GAME="/path/to/game/Java"
 export PATH="$JAVA_HOME/bin:$PATH"
-python3 tools/prepare_install.py --game "$PZ_GAME" --jdk "$JAVA_HOME" --check
+uv run --locked python tools/prepare_install.py --game "$PZ_GAME" --jdk "$JAVA_HOME" --check
 ```
 
 The explicit flags are shown so the selected JDK and game are clear; Kotlin is selected from `KOTLIN_HOME`. If the build reports a missing or invalid Kotlin distribution, check that `KOTLIN_HOME` points to the root containing `lib/kotlin-compiler.jar` and `lib/kotlin-stdlib.jar`, both report version 2.4.21, and the distribution includes its license files. Passing `--kotlin-home /path/to/kotlin-distribution` overrides the environment. Discovery through `PATH` requires an executable `bin/kotlinc` script; if an archive extractor removed its executable permission, use `KOTLIN_HOME` or unpack it with permissions preserved. Playing and launching Host do not require this compiler: the ordinary mod JAR bundles its relocated private runtime. The early font JAR remains Java-only. The distribution does not include `kotlin-reflect` or promise Kotlin reflection over relocated metadata.
@@ -32,17 +32,17 @@ The independent early font JAR intentionally retains `PreMain`, `FontPage` and `
 
 `--test TVVideoPathChecks` exercises the real woven game method. `--test KotlinRuntimeChecks` starts without the mod on the classpath, registers the built JAR through instrumentation and checks its private runtime alongside the unchanged game runtime. `CartBootstrapCheck.java` retains a runtime-independent entry point to test startup preparation and retransformation. These cold fixtures must not acquire Kotlin references before the operation under test.
 
-`python3 JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts `--game` for the directory containing both game/loader JARs, `--jdk` for JDK 25+, and `--check` for native JVM regressions. The checks compare original and patched engine vehicle interpolation, vehicle ownership recovery (native collision race, validated driver/towing guards and idempotency), continuous opt-in vehicle tracing (runtime controls, rotation, sampling limits, Host authorization and I/O recovery), media restart, build cancellation/completion behavior, animal location/identity/capacity reconciliation, equipment acknowledgements, hutch unloading and native string-property startup fallback (cold loader entry, IDs, values, storage and unrelated diagnostics), plus native fluid-container token normalization, fence-validation timing and early font-page loading; cart checks cover movement budgets/collision, native cadence and stop/reverse transitions, grip/grounding and wheel rolling. There is no separate zombie-speed regression in this command. Generated output is ignored by Git.
+`uv run --locked python JavaPatches/build.py` produces `JavaPatches/build/PZToolkitJavaPatches`; it accepts `--game` for the directory containing both game/loader JARs, `--jdk` for JDK 25+, and `--check` for native JVM regressions. The checks compare original and patched engine vehicle interpolation, vehicle ownership recovery (native collision race, validated driver/towing guards and idempotency), continuous opt-in vehicle tracing (runtime controls, rotation, sampling limits, Host authorization and I/O recovery), media restart, build cancellation/completion behavior, animal location/identity/capacity reconciliation, equipment acknowledgements, hutch unloading and native string-property startup fallback (cold loader entry, IDs, values, storage and unrelated diagnostics), plus native fluid-container token normalization, fence-validation timing and early font-page loading; cart checks cover movement budgets/collision, native cadence and stop/reverse transitions, grip/grounding and wheel rolling. There is no separate zombie-speed regression in this command. Generated output is ignored by Git.
 
 For an isolated build, pass `--output DIR` directly to `JavaPatches/build.py`. This selects the build root: the mod is written to `DIR/PZToolkitJavaPatches`, with regression logs and temporary staging under `DIR`. Relative paths are resolved from the invoking shell's working directory. For example:
 
 ```sh
-python3 JavaPatches/build.py --game "$PZ_GAME" --jdk "$JAVA_HOME" --output .codex/java-candidate --test KotlinRuntimeChecks
+uv run --locked python JavaPatches/build.py --game "$PZ_GAME" --jdk "$JAVA_HOME" --output .codex/java-candidate --test KotlinRuntimeChecks
 ```
 
 The default remains `JavaPatches/build`. A custom output leaves that default untouched; consumers must be given the resulting mod or JAR path explicitly. The selected root retains source-manifest validation and promotion with rollback after a failure. Output inside source subdirectories (`src`, `tests`, `tools`), game or toolchain input directories, or a destination containing those inputs, is rejected. The output root and mod destination must not be symlinks.
 
-For one JVM regression, use `python3 JavaPatches/build.py --test MediaChecks`; repeat `--test` to select more. When present, `--test` overrides the `--check`/`--check-video` groups; without it, those flags retain their existing behavior. `--help` lists the available test names. Each JVM regression has a 120-second timeout; change it with a positive integer `--test-timeout SECONDS`. A timed-out test fails and retains its output in the reported `<build-root>/<check-name>.log`. The limit applies to each test invocation, not to compilation.
+For one JVM regression, use `uv run --locked python JavaPatches/build.py --test MediaChecks`; repeat `--test` to select more. When present, `--test` overrides the `--check`/`--check-video` groups; without it, those flags retain their existing behavior. `--help` lists the available test names. Each JVM regression has a 120-second timeout; change it with a positive integer `--test-timeout SECONDS`. A timed-out test fails and retains its output in the reported `<build-root>/<check-name>.log`. The limit applies to each test invocation, not to compilation.
 
 `--test HostLoaderChecks --test CartBootstrapCheck` covers automatic Host loading and its cold-start consumer: the real woven `CoopMaster` Host/soft-reset entrypoints (intercepted before server creation), existing command/environment loaders, duplicate and unsafe-option rejection, exact native argument preservation, approval-directory/policy propagation and a real JVM child that initializes ZombieBuddy. It does not edit system environment variables or saved approvals. Separate isolated Windows Host startup verification confirms actual client connection and ordinary server-mod activation without an inherited loader; macOS/Linux native gameplay remains unqualified.
 
@@ -51,7 +51,7 @@ Migrate associated regression bodies to Kotlin with each runtime module. The bui
 Use the pinned [ktfmt 0.65 with-dependencies JAR](https://github.com/Kotlin/ktfmt/releases/download/v0.65/ktfmt-0.65-with-dependencies.jar) for the Kotlin-language profile (four-space indentation, 100-column wrapping and trailing commas), with `.editorconfig` for matching editor settings:
 
 ```sh
-python3 tools/format_kotlin.py --formatter-jar /path/to/ktfmt-0.65-with-dependencies.jar --check
+uv run --locked python tools/format_kotlin.py --formatter-jar /path/to/ktfmt-0.65-with-dependencies.jar --check
 ```
 
 Omit `--check` to format; `KTFMT_JAR` can supply the JAR path and `--jdk` selects a JDK explicitly. The command validates the pinned SHA-256 and downloads nothing. It covers handwritten runtime and regression sources. The three generated numeric tables retain their generator-owned layout; use the existing curve/clearance/wheel regeneration checks instead of hand-formatting them. The formatter and its compiler dependencies are development tools and are not shipped with the mod.
@@ -94,6 +94,6 @@ Capture uses one direct RGBA buffer plus three bounded heap buffers (at most abo
 
 After stop, a 15-second watchdog aborts an encoder that cannot finish. Normal JVM exit attempts a four-second flush; force-kill, encoder failure or a full disk can leave an incomplete MP4. There is no audio input, codec implementation or permanent recorder. The Display hook retains the per-class B42.21 fingerprint guard.
 
-Run `python3 JavaPatches/build.py --check-video` with `PZ_TEST_FFMPEG` set to the FFmpeg executable (otherwise found on `PATH`; sibling `ffprobe` is required). This checks timing boundaries, delayed/gapped captures, last-frame hold, decoded colors, exact duration/dimensions, stop without frames and encoder failure. Ordinary `--check` retains its existing engine regressions.
+Run `uv run --locked python JavaPatches/build.py --check-video` with `PZ_TEST_FFMPEG` set to the FFmpeg executable (otherwise found on `PATH`; sibling `ffprobe` is required). This checks timing boundaries, delayed/gapped captures, last-frame hold, decoded colors, exact duration/dimensions, stop without frames and encoder failure. Ordinary `--check` retains its existing engine regressions.
 
 The native capture fixture currently covers macOS, English UI and single-player. Russian UI, multiplayer, Windows/Linux, live resize, sustained 4K and forced-shutdown recovery remain unverified. See the [video fixture guide](../../tests/native_queue/contributions/video-recording/README.md) for preparation, recording and decoding commands.

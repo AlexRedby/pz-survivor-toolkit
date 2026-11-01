@@ -357,7 +357,7 @@ def main() -> None:
     try:
         from lupa.lua51 import LuaRuntime
     except ImportError as error:
-        raise SystemExit("Install the test dependency with: python3 -m pip install lupa") from error
+        raise SystemExit("Set up the project Python with: uv sync --locked; then run uv run --locked python tools/run_tests.py") from error
     if not requested:
         syntax = LuaRuntime(unpack_returned_tuples=True)
         for path in sorted((ROOT / "PZSurvivorToolkit").rglob("*.lua")):

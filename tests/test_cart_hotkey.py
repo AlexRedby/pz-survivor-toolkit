@@ -2,7 +2,7 @@
 import copy
 import json
 import unittest
-from test_cart_repeat import analyzer, fixture, edit_log
+from tests.test_cart_repeat import analyzer, fixture, edit_log
 
 
 def hotkey_fixture():

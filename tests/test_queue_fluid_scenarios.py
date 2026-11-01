@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks import report, scenarios
 from queue_checks.adapters import fluid
-import test_queue_fluid as fixtures
+from tests import test_queue_fluid as fixtures
 
 
 class FluidScenarioTests(unittest.TestCase):

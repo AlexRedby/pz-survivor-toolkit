@@ -114,7 +114,7 @@ class PendingOutcomeAdapterTests(unittest.TestCase):
             self.assertTrue(pending.verify_logs(log(changed),[],selection))
 
     def test_complete_report_preserves_existing_effect_and_cleanup_oracles(self):
-        import test_queue_fitness_adapter as baseline
+        from tests import test_queue_fitness_adapter as baseline
         for mode in ('native', 'toolkit'):
             seed = baseline.FitnessAdapterTests();seed.setUp();self.addCleanup(seed.doCleanups)
             selection, _, _ = self.fixture(mode=mode)

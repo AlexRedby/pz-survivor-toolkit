@@ -22,7 +22,7 @@ Read [commands](#commands) for a first run, [batch plans](#batch-plans) and [pac
 
 Keep the controlled container/ID namespace frozen until every relevant replica proves absence. A native inventory notice returning normally proves only an attempt, and duplicate missing IDs are no-ops only under that lease. The journal does not support arbitrary RPCs or world-object removal: world packets address mutable square indices and cannot be retransmitted after uncertain publication. Kahlua ignores weak-table `__mode`; journal state lives in an opaque closure handle without a global registry.
 
-Run `.venv/bin/python tools/run_tests.py --test test_fixture_item_cleanup` for forced before/after mutation and publication failures, ownership/generation rejection and journal lifetime. With `PZ_GAME` and `PZ_JDK` set, `.venv/bin/python -m unittest tests.test_fixture_item_cleanup_native` also executes the module in the installed game's Kahlua without opening the game. Actual native replication remains a separate suite gate.
+Run `uv run --locked python tools/run_tests.py --test test_fixture_item_cleanup` for forced before/after mutation and publication failures, ownership/generation rejection and journal lifetime. With `PZ_GAME` and `PZ_JDK` set, `uv run --locked python -m unittest tests.test_fixture_item_cleanup_native` also executes the module in the installed game's Kahlua without opening the game. Actual native replication remains a separate suite gate.
 
 ### Lua source compatibility
 
@@ -30,11 +30,11 @@ Native preparation compiles the final staged Lua with the installed game's Kahlu
 
 The common [checker](../../tools/lua_compatibility.py) and [Java helper](support/KahluaCompatibilityChecks.java) reject native syntax/closure limits and direct reads of absent standard globals such as `next`. The helper executes only installed `stdlib.lbc`, never project Lua or the game. It reports exact source lines, nested functions and checked hashes in `lua-compatibility.json`; the report and compiler inputs are sealed with the snapshot. Failure produces no accepted launch manifest. Ordinary snapshot/source checks still reject edits after preparation.
 
-Use `tools/run_tests.py --game "$PZ_GAME" --jdk "$PZ_JDK" --check-lua SOURCE` for a separate check, adding `--lua-report FILE` to retain diagnostics. This is a compile/global-availability gate, not behavioral parity: indirect globals, generated code at runtime, library members, inherited `rawget`, weak-table behavior and game/network effects still need their own tests. The installed-compiler regressions run with `PZ_GAME` and `PZ_JDK` set via `.venv/bin/python -m unittest tests.test_lua_compatibility`.
+Use `tools/run_tests.py --game "$PZ_GAME" --jdk "$PZ_JDK" --check-lua SOURCE` for a separate check, adding `--lua-report FILE` to retain diagnostics. This is a compile/global-availability gate, not behavioral parity: indirect globals, generated code at runtime, library members, inherited `rawget`, weak-table behavior and game/network effects still need their own tests. The installed-compiler regressions run with `PZ_GAME` and `PZ_JDK` set via `uv run --locked python -m unittest tests.test_lua_compatibility`.
 
 ## Commands
 
-Preparation needs Python 3.11+, JDK 25+ and installed B42.21 game files. The macOS runner supports the catalogued suites. Windows has a bounded one-client Host launch path for `startup` and `forge`, using the game's bundled Java runtime, explicit ports, isolated loader approvals and a Windows Job Object that owns only the test client and its descendants. A named lease serializes this initial Windows launch path; available-memory and disk guards run before launch. Other Windows suites and physical input automation are not supported by that path. The core runner needs no Python packages; the SP cart mesh analyzers additionally require NumPy, as declared in their contribution. Health fixture selfchecks use `luajit` on PATH; existing product Lua regressions separately use `lupa`.
+Preparation uses the project Python 3.14 environment and needs JDK 25+ and installed B42.21 game files. The macOS runner supports the catalogued suites. Windows has a bounded one-client Host launch path for `startup` and `forge`, using the game's bundled Java runtime, explicit ports, isolated loader approvals and a Windows Job Object that owns only the test client and its descendants. A named lease serializes this initial Windows launch path; available-memory and disk guards run before launch. Other Windows suites and physical input automation are not supported by that path. Use the shared project Python: run `uv sync --locked` once, then launch commands through `uv run --locked python` as below. Python 3.14 and the locked NumPy/Lupa dependencies come from the project environment; see [environment setup](../../docs/DEVELOPMENT.md#checks-and-packaging). The core runner itself uses the standard library; cart mesh analyzers use NumPy. Health fixture selfchecks use `luajit` on PATH; existing product Lua regressions separately use `lupa`.
 
 Mod snapshots prefer macOS copy-on-write file clones where the filesystem supports them. Each role has independent file identities and private subsequent writes; unsupported or cross-filesystem copies use ordinary copying. File metadata and source/snapshot hash checks remain in place. Disk admission still budgets for ordinary copies and later private writes, without reducing runtime or peer reserves. Saves, settings and logs keep their existing separate paths.
 
@@ -43,7 +43,7 @@ Mod snapshots prefer macOS copy-on-write file clones where the filesystem suppor
 Use the normal command outside the sandbox in the logged-in macOS session. No desktop strategy flag or awake-screen preparation is needed:
 
 ```sh
-python3 tools/check_action_queue.py run /tmp/startup-fresh \
+uv run --locked python tools/check_action_queue.py run /tmp/startup-fresh \
   --suite startup --kind sp --mode native --mods vanilla \
   --game "$PZ_GAME" --jdk "$PZ_JDK"
 ```
@@ -70,7 +70,7 @@ The flags work for `prepare`, `run` and `batch`, and override `options.desktop_m
 For a no-game native regression, run outside the sandbox with `PZ_GAME` and `PZ_JDK` exported:
 
 ```sh
-PZ_NATIVE_GLFW_CHECK=1 python3 -B -m unittest discover -s tests -p test_queue_glfw_native.py -v
+PZ_NATIVE_GLFW_CHECK=1 uv run --locked python -B -m unittest discover -s tests -t . -p test_queue_glfw_native.py -v
 ```
 
 It checks the original GLFW against a child-process-only simulated sleep answer, then validates real NSGL framebuffer pixels with the private copy in ordinary and simulated-sleep conditions. It never changes the physical display and prints its real state separately. Passing this regression does not replace a physically asleep-display SP/Host run.
@@ -87,10 +87,10 @@ Test windows default to a logical windowed size of 1600 by 900, independent of t
 Batch plans use the same value in `options.window_size`. The value must be a JSON array of two integers: width 640..7680 and height 480..4320, inclusive. Booleans, fractional values and strings are rejected before profile copying or compilation. Preparation writes the resolved size into each disposable profile's `options.ini` before UI creation and records the expected size as `window_size` in `selection.json` and `runtime.json`. A suite cannot silently change it during staging. At game start, the common preflight records the actual Core logical size before readiness; a missing or mismatched observation fails the run. `report.json.window_size` keeps expected and observed sizes for each client; `report.txt` shows the same comparison. The OS may cap a window larger than its available working area; that is a mismatch, not a passing run. Choose a supported explicit size if the default does not fit. Framebuffer pixels may differ from this logical size. A large frame alone does not prove that every control is visible. Choose the required size before launch and prepare a fresh run when it changes. Manual resizing after startup is possible, but invalidates comparisons that depend on a fixed viewport and cannot establish UI coverage for the prepared size.
 
 ```sh
-python3 -m unittest discover -s tests -p 'test_queue_*.py'
-python3 tests/native_queue/health/check.py
-python3 tools/check_action_queue.py matrix
-python3 tools/check_action_queue.py matrix --suite startup --kind mp --mode toolkit
+uv run --locked python -m unittest discover -s tests -t . -p 'test_queue_*.py'
+uv run --locked python tests/native_queue/health/check.py
+uv run --locked python tools/check_action_queue.py matrix
+uv run --locked python tools/check_action_queue.py matrix --suite startup --kind mp --mode toolkit
 ```
 
 Use repeatable `--suite`, plus optional `--kind` and `--mode`, to limit scenario discovery and existing-report views to the task. The same filters apply to `--output` JSON; unsupported controls, missing runs and failed evidence retain their original statuses.
@@ -98,10 +98,10 @@ Use repeatable `--suite`, plus optional `--kind` and `--mode`, to limit scenario
 Set local `PZ_GAME` to the directory containing `projectzomboid.jar`, and `PZ_JDK` to a JDK root. Use the same queue-independent selection in both modes:
 
 ```sh
-python3 tools/check_action_queue.py run /tmp/pz-control-fresh \
+uv run --locked python tools/check_action_queue.py run /tmp/pz-control-fresh \
   --game "$PZ_GAME" --jdk "$PZ_JDK" --kind mp \
   --mode native --cases nativeStop,remoteRemoved
-python3 tools/check_action_queue.py run /tmp/pz-toolkit-fresh \
+uv run --locked python tools/check_action_queue.py run /tmp/pz-toolkit-fresh \
   --game "$PZ_GAME" --jdk "$PZ_JDK" --kind mp \
   --mode toolkit --cases nativeStop,remoteRemoved --control /tmp/pz-control-fresh
 ```
@@ -132,7 +132,7 @@ For sequential runs, `batch` accepts a JSON plan and a new output directory:
 ```
 
 ```sh
-python3 tools/check_action_queue.py batch /path/to/plan.json /tmp/native-stands-fresh
+uv run --locked python tools/check_action_queue.py batch /path/to/plan.json /tmp/native-stands-fresh
 ```
 
 ### Sharing one game session
@@ -149,7 +149,7 @@ The disposable inventory probe delegates both real renderer callbacks and counts
 
 ### Outstanding in-game campaign
 
-The [campaign plan](plans/in-game-campaign.example.json) maps the outstanding TODO blocks and reusable regression scenarios to executable jobs and explicit remaining acceptance gates. Make a local copy and supply the game/JDK, current complete pack lock, prepared Toolkit/Java source paths, patch JAR, FFmpeg/FFprobe and exact mesh inputs for cart injury analysis. Cart sets require a Python runtime with NumPy; confirm `python3 -c 'import numpy'` in the runtime used for the command. Campaign preflight checks these game, source, media and NumPy inputs before any game profile is prepared. This is still followed by the normal source/hash/runtime guards during preparation and execution.
+The [campaign plan](plans/in-game-campaign.example.json) maps the outstanding TODO blocks and reusable regression scenarios to executable jobs and explicit remaining acceptance gates. Make a local copy and supply the game/JDK, current complete pack lock, prepared Toolkit/Java source paths, patch JAR, FFmpeg/FFprobe and exact mesh inputs for cart injury analysis. Cart sets require a Python runtime with NumPy; confirm `uv run --locked python -c 'import numpy'` in the runtime used for the command. Campaign preflight checks these game, source, media and NumPy inputs before any game profile is prepared. This is still followed by the normal source/hash/runtime guards during preparation and execution.
 
 Cart probe compilation requires the matching Kotlin 2.4.21 distribution. Set `options.kotlin_home` in the suite/plan options, or use `KOTLIN_HOME`, then `kotlinc` on `PATH` as fallback. Batch planning (including `--dry-run`) and direct preparation validate the compiler/stdlib JAR versions and required licenses before creating a profile or copying inputs. The resolved absolute path is recorded in the selection and passed to fixture compilation; preparation rechecks it, so a removed or changed distribution still fails. Non-cart jobs and Java-only compilation do not require Kotlin.
 
@@ -168,9 +168,9 @@ The plan's `campaign` blocks keep job IDs, a work reference in `todo` and unreso
 For feature development, select only the relevant jobs or a named plan set:
 
 ```sh
-python3 tools/check_action_queue.py batch /path/to/plan.json /tmp/craft-fresh --set craft
-python3 tools/check_action_queue.py batch /path/to/plan.json /tmp/targeted-fresh --jobs wishlist,tags
-python3 tools/check_action_queue.py batch /path/to/plan.json /tmp/craft-fresh --set craft --dry-run
+uv run --locked python tools/check_action_queue.py batch /path/to/plan.json /tmp/craft-fresh --set craft
+uv run --locked python tools/check_action_queue.py batch /path/to/plan.json /tmp/targeted-fresh --jobs wishlist,tags
+uv run --locked python tools/check_action_queue.py batch /path/to/plan.json /tmp/craft-fresh --set craft --dry-run
 ```
 
 `--dry-run` prints JSON with the selected jobs in execution order, their control/seed paths and effective scenarios, mods, options and resources. It uses the same selection as execution and creates no output directories, profiles or processes. Ordinary plans validate selections; campaign plans also check available game/JDK, source locks/overrides and world-template inputs. Future seed artifacts are validated once produced. Runtime readiness and automatic port assignment still belong to preparation/launch. Remove `--dry-run` to execute that selection. A campaign requires a passed, clean control/seed report before preparing a dependent job; failed or unreviewed dependencies remain blocked while independent jobs may continue.
@@ -184,7 +184,7 @@ Jobs may override `options`, `mods`, `ports`, `language`, `kind`, `resources`, `
 Lock the actual selected pack once its local sources are available:
 
 ```sh
-python3 tools/check_action_queue.py lock-pack /tmp/selected-pack.lock.json \
+uv run --locked python tools/check_action_queue.py lock-pack /tmp/selected-pack.lock.json \
   --game "$PZ_GAME" --workshop /path/to/workshop/content/108600
 ```
 
@@ -197,8 +197,8 @@ For a modpack change, retain the baseline lock and reports, create a new candida
 Reuse a prepared world through a sealed copy:
 
 ```sh
-python3 tools/check_action_queue.py save-world /tmp/completed-owned-run /tmp/prepared-world
-python3 tools/check_action_queue.py run /tmp/targeted-world-copy \
+uv run --locked python tools/check_action_queue.py save-world /tmp/completed-owned-run /tmp/prepared-world
+uv run --locked python tools/check_action_queue.py run /tmp/targeted-world-copy \
   --game "$PZ_GAME" --jdk "$PZ_JDK" --suite crafting-plans --cases ui \
   --pack-lock /tmp/selected-pack.lock.json --world-template /tmp/prepared-world
 ```

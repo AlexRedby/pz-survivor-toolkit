@@ -118,7 +118,7 @@ class CartAdapterTests(unittest.TestCase):
             subprocess.run([lua, '-e', 'assert(loadfile(' + json.dumps(str(self.output / 'client1/Lua/cart-runtime.lua')) + '))'], check=True, capture_output=True)
 
     def test_speed_parity_verification_preserves_selected_native_scope_without_video_or_mesh_claims(self):
-        from test_cart_speed_parity import capture
+        from tests.test_cart_speed_parity import capture
         self.selection['cases'] = ['speed-parity']
         self.options['cart_scenes'] = ['male-empty-left-mild']
         text = capture(self.options['cart_scenes'])

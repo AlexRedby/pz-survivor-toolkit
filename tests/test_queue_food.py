@@ -30,7 +30,7 @@ class FoodAdapterTests(unittest.TestCase):
         raw = []
         for index, case in enumerate(cases):
             if case in food.FULL_CASES:
-                from test_queue_food_full_replacement import family_evidence
+                from tests.test_queue_food_full_replacement import family_evidence
                 row, authority = family_evidence(case, index, self.selection['mode'])
                 rows.append(row); raw.extend(authority)
                 continue

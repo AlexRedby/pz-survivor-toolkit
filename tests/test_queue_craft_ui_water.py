@@ -1,7 +1,7 @@
 """Falsify first native water-pot ingredient receipts, including queue-off."""
 import copy
 import unittest
-import test_queue_craft_ui as base
+from tests import test_queue_craft_ui as base
 from queue_checks.adapters import craft_ui, craft_ui_water
 
 class WaterCookTests(unittest.TestCase):

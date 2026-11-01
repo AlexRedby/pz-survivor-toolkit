@@ -11,11 +11,10 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-sys.path.insert(0, str(ROOT / "tests"))
 from queue_checks import adapters, native, report, runner
-import test_queue_native_snapshot as snapshot_helpers
-import test_queue_report as report_helpers
-import test_queue_runner as runner_helpers
+from tests import test_queue_native_snapshot as snapshot_helpers
+from tests import test_queue_report as report_helpers
+from tests import test_queue_runner as runner_helpers
 
 
 class AdapterSnapshotBoundaryTests(unittest.TestCase):

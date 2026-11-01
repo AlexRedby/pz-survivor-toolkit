@@ -1,7 +1,7 @@
 """Mixed-storage cases reuse the real Fitness reporting protocol."""
 import copy
 import unittest
-import test_queue_fitness_adapter as base
+from tests import test_queue_fitness_adapter as base
 from queue_checks.adapters import fitness
 from queue_checks.adapters.fitness_storage import verify_storage
 

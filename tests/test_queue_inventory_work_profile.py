@@ -441,7 +441,9 @@ class InventoryWorkProfileTests(unittest.TestCase):
                 self.assertEqual(len(outcome['evidence']['food']),10)
 
     def test_selection_and_isolated_stage(self):
-        self.assertEqual([case['capability']for case in auxiliary.definitions()['storage-profile']['cases']],['capture','capture','effect','effect'])
+        self.assertEqual({case['id']: case['capability'] for case in auxiliary.definitions()['storage-profile']['cases']},
+                         {'walk': 'capture', 'inventory-work': 'capture', 'inventory-selection': 'capture',
+                          'inventory-freshness': 'effect', 'inventory-food-age': 'effect'})
         prepare=auxiliary._load(INTAKE/'prepare.py').prepare
         with tempfile.TemporaryDirectory()as temp:
             target=Path(temp)/'fixture';prepare(ROOT/'PZSurvivorToolkit',target,case='inventory-work')

@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from queue_checks import desktop
-import test_queue_runner
+from tests import test_queue_runner
 
 
 class DesktopTests(unittest.TestCase):

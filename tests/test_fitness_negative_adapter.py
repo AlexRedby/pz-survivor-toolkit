@@ -1,8 +1,8 @@
 """Falsify ownership and real movement/transaction evidence; no gameplay pass."""
 import copy
 import unittest
-from test_queue_fitness_adapter import clinical
-import test_queue_fitness_adapter as base
+from tests.test_queue_fitness_adapter import clinical
+from tests import test_queue_fitness_adapter as base
 from queue_checks.adapters.fitness_negative import _topology
 from queue_checks.adapters.fitness_negative import verify_negative
 
