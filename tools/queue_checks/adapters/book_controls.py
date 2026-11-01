@@ -119,6 +119,14 @@ def definitions():
         cases=[dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'], modes=['native', 'toolkit'], languages=['EN']) for case in CASES])}
 
 
+def selected_cases(selection):
+    cases = selection.get('cases')
+    if (not isinstance(cases, list) or not cases or any(not isinstance(case, str) or case not in CASES for case in cases)
+            or len(set(cases)) != len(cases) or cases != [case for case in CASES if case in cases]):
+        raise ValueError('Book controls require a nonempty unique ordered subset of the declared cases')
+    return cases
+
+
 def validate(selection):
     if type(selection.get('options', {}).get('precise_timing', False)) is not bool:
         raise ValueError('precise_timing must be boolean')
@@ -131,13 +139,14 @@ def validate(selection):
     extended = selection.get('options', {}).get('require_extended_native_bindings', False)
     if type(extended) is not bool or extended and flag is not True:
         raise ValueError('require_extended_native_bindings requires boolean true require_native_bindings')
-    if (selection.get('cases') != list(CASES) or selection.get('kind') not in ('sp', 'mp')
+    selected_cases(selection)
+    if (selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients')) is not int or selection['clients'] != 1
             or selection.get('mods') != MODS or selection.get('options', {}).get('book_controls') is not True
             or selection.get('options', {}).get('world_template')
             or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
-        raise ValueError('Book controls require book_controls=true, the exact ordered twenty-case bank, full selected EN pack, fresh SP/menu Host and one client')
+        raise ValueError('Book controls require book_controls=true, an ordered nonempty case selection, full selected EN pack, fresh SP/menu Host and one client')
 
 
 def sources(project, selection):
@@ -202,8 +211,8 @@ def complete(selection, role, text):
     """A complete diagnostic bank terminates even when feature cases were denied."""
     try:
         values = raw(text, 'COMPLETE')
-        return (role == 'client1' and len(values) == 1 and values[0].get('cases') == list(CASES)
-                and type(values[0].get('failed')) is int and 0 <= values[0]['failed'] <= len(CASES))
+        return (role == 'client1' and len(values) == 1 and values[0].get('cases') == selected_cases(selection)
+                and type(values[0].get('failed')) is int and 0 <= values[0]['failed'] <= len(selected_cases(selection)))
     except (ValueError, TypeError):
         return False
 
@@ -411,8 +420,7 @@ def native_request_errors(row, case, selection, ids):
 
 
 def native_transfer_stop_errors(row, case, selection, ids):
-    if selection.get('options', {}).get('require_native_requests') is not True:
-        return []
+    requests = selection.get('options', {}).get('require_native_requests') is True
     errors, rejected = [], False
     entry_fields = {'case', 'sequence', 'actor', 'item', 'itemType', 'actionRef', 'nativeRef',
                     'transaction', 'at', 'point', 'current', 'nativePresent', 'endpointsExact', 'nativeSource',
@@ -453,7 +461,11 @@ def native_transfer_stop_errors(row, case, selection, ids):
                 errors.append('Native stop control used guarded Toolkit cleanup')
             if state is not False: errors.append('Native stop control acquired a private request owner')
         elif record.get('role') == 'return':
-            if (entry['guarded'] is not True or not isinstance(state, dict) or set(state) != {'phase', 'boundary', 'sourceExact', 'ambiguous', 'paired',
+            if entry['guarded'] is not True:
+                errors.append('Toolkit return stop lost its guarded native cleanup')
+            if not requests:
+                if state is not False: errors.append('Disabled request diagnostics claimed a private request owner')
+            elif (not isinstance(state, dict) or set(state) != {'phase', 'boundary', 'sourceExact', 'ambiguous', 'paired',
                     'nativeHandle', 'wireAmbiguous', 'transaction', 'id', 'fullType', 'currentHandle'}
                     or state.get('phase') != 'submitted' or state.get('boundary') != 'start'
                     or any(state.get(k) is not True for k in ('sourceExact', 'nativeHandle', 'currentHandle'))
@@ -613,6 +625,50 @@ def performance_errors(value, case, enabled, probe=False, precise=False):
     return errors
 
 
+def waiver_identity_errors(value, ids, boundary, retired):
+    """Replica replacement is observed, never manufactured or required."""
+    fields = {'schema', 'case', 'actor', 'source', 'actionRef', 'token', 'beforeAt', 'afterAt',
+              'before', 'after', 'previewUnchanged', 'actualReplicaReplacement', 'previewCheckedAt', 'groupUnchangedAfterCommit'}
+    if (not isinstance(value, dict) or set(value) != fields or type(value.get('schema')) is not int or value['schema'] != 1
+            or value.get('case') != ids['case'] or value.get('actor') != ids['actor']
+            or type(value.get('actor')) is not int or value.get('source') != ids['source']
+            or not _same_action(value.get('actionRef'), retired.get('actionRef')) or value.get('token') != retired.get('token')
+            or type(value.get('token')) is not int or value.get('previewUnchanged') is not True
+            or value.get('groupUnchangedAfterCommit') is not True
+            or type(value.get('actualReplicaReplacement')) is not bool
+            or any(not _number(value.get(key)) for key in ('beforeAt', 'previewCheckedAt', 'afterAt'))
+            or not value['beforeAt'] <= boundary.get('at', -1) <= value['previewCheckedAt'] <= value['afterAt'] <= boundary.get('ui', {}).get('acceptedAt', -1)):
+        return ['Missing exact passive optional-return waiver identity boundary']
+    errors = []
+    for phase in ('before', 'after'):
+        snapshot = value.get(phase)
+        if (not isinstance(snapshot, dict) or set(snapshot) != {'requested', 'carried', 'rootMatches', 'directRootMatches', 'destinationMatches', 'sameReference'}
+                or type(snapshot.get('sameReference')) is not bool
+                or any(type(snapshot.get(key)) is not int for key in ('rootMatches', 'directRootMatches', 'destinationMatches'))
+                or (snapshot['rootMatches'], snapshot['directRootMatches'], snapshot['destinationMatches']) != (1, 1, 0)):
+            errors.append('Optional-return waiver lacks one direct carried replica and an empty destination'); continue
+        for name in ('requested', 'carried'):
+            item = snapshot.get(name)
+            if (not isinstance(item, dict) or set(item) != {'ref', 'id', 'type', 'container'}
+                    or not isinstance(item.get('ref'), str) or not item['ref']
+                    or type(item.get('id')) is not int or item['id'] != ids['front']['id'] or item.get('type') != ids['front']['type']
+                    or item.get('container') not in ('root', ids['source'], 'other', False)
+                    or name == 'carried' and item.get('container') != 'root'):
+                errors.append('Optional-return requested/carried exact replica identity differs')
+        requested, carried = snapshot.get('requested'), snapshot.get('carried')
+        if isinstance(requested, dict) and isinstance(carried, dict):
+            if snapshot['sameReference'] is True and requested != carried:
+                errors.append('Optional-return waiver same-reference summaries contradict the observed equality')
+    before, after = value['before'], value['after']
+    if isinstance(before, dict) and isinstance(after, dict):
+        if value['actualReplicaReplacement'] is not (before.get('sameReference') is False):
+            errors.append('Replica replacement claim differs from the passive pre-cancel observation')
+        if (before.get('carried') != after.get('carried') or after.get('sameReference') is not True
+                or after.get('requested') != after.get('carried')):
+            errors.append('Committed waiver did not retain and bind the exact carried replica')
+    return errors
+
+
 def check_case(row, case, selection, prepared, authority_baseline, authority_final, admissions, boundaries, drains, acks, capacity_authority=None, stops=None):
     errors = []
     try:
@@ -746,7 +802,9 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
                 errors.append('Real Panel operation identity missing')
             if keep:
                 retired = [r for r in records if r.get('role') == 'return' and r.get('token') == original.get('token')]
-                if (len(retired) != 1 or not _same_action(ui.get('target'), retired[0].get('actionRef'))
+                errors.extend(waiver_identity_errors(ui.get('waiverIdentity'), ids, boundary, retired[0] if len(retired) == 1 else {}))
+                if (len(retired) != 1 or sum(r.get('role') == 'return' for r in records) != 1
+                        or not _same_action(ui.get('target'), retired[0].get('actionRef'))
                         or any(ui.get(k) is not True for k in ('bodyContinues', 'returnAbsent', 'bookRoot'))
                         or ui.get('operationCancelled') is not False
                         or retired[0].get('started') is not False or retired[0].get('progress') is not False
@@ -754,6 +812,8 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
                         or any(retired[0].get(k) is not None for k in ('nativeRef', 'performedAt', 'startedAt', 'allocatedAt'))
                         or retired[0].get('transaction') not in (None, False)):
                     errors.append('Optional return cross stopped the reader, ran the retired return or lost exact keep intent')
+            if not keep and 'waiverIdentity' in ui:
+                errors.append('Non-return-child control acquired optional-return waiver evidence')
             if moving and (ui.get('dragging') is not True or not _same_action(ui.get('movingAction'), (equip if control == 'move-equip' else volume).get('actionRef'))
                     or ui.get('movingToken') != (equip if control == 'move-equip' else volume).get('token') or not ui.get('movingAnchor')):
                 errors.append('Move gesture never crossed the drag threshold')
@@ -906,14 +966,15 @@ def verify(root, selection, catalog):
     root = Path(root); issues, outcomes, rows = [], [], []
     try:
         validate(selection)
+        cases = selected_cases(selection)
         text = (root / 'client1-launch.log').read_text(errors='replace')
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
         events = [r for r in report.events(text) if r.get('suite') == 'book-controls']
         setup = [r for r in events if r.get('event') == 'setup']; rows = [r for r in events if r.get('event') == 'case']; final = [r for r in events if r.get('event') == 'complete']
-        if (len(setup) != 1 or setup[0].get('cases') != list(CASES)
+        if (len(setup) != 1 or setup[0].get('cases') != cases
                 or any(setup[0].get(k) is not True for k in ('nativeDurations', 'sourceBound', 'authorityEquipment'))
                 or setup[0].get('queueEnabled') is not (selection['mode'] == 'toolkit')
-                or len(final) != 1 or final[0].get('cases') != list(CASES) or final[0].get('performed') != len(CASES)
+                or len(final) != 1 or final[0].get('cases') != cases or final[0].get('performed') != len(cases)
                 or final[0].get('failed') != 0 or final[0].get('skipped') != 0 or any(r.get('event') == 'fatal' for r in events)):
             issues.append('Missing complete ordered book-controls qualification bank or functional denials remain')
         if selection.get('options', {}).get('precise_timing') is True:
@@ -930,22 +991,26 @@ def verify(root, selection, catalog):
             if raw(text, 'NATIVE_BINDINGS') != [observed]:
                 issues.append('Raw native binding-loop evidence differs from setup')
         prepared, baselines, verified = (raw(authority, marker) for marker in ('PREPARED', 'BASELINE', 'VERIFIED'))
-        if [r.get('id') for r in rows] != list(CASES) or any([r.get('case') for r in values] != list(CASES) for values in (prepared, baselines, verified)):
+        if [r.get('id') for r in rows] != cases or any([r.get('case') for r in values] != cases for values in (prepared, baselines, verified)):
             issues.append('Cases or raw authoritative snapshots missing, duplicated or reordered')
         capacities = raw(authority, 'CAPACITY_LOST')
-        if [r.get('case') for r in capacities] != list(CAPACITY_CASES): issues.append('Capacity interventions missing, duplicated or reordered')
+        if [r.get('case') for r in capacities] != [case for case in cases if case in CAPACITY_CASES]: issues.append('Capacity interventions missing, duplicated or reordered')
         admissions, boundaries, drains, acks = (raw(text, marker) for marker in ('ADMISSION', 'BOUNDARY', 'DRAIN', 'ACK'))
+        if any([r.get('case') for r in values] != cases for values in (admissions, boundaries, drains)):
+            issues.append('Selected native producer/UI/drain evidence missing, duplicated, foreign or reordered')
+        if any(r.get('case') not in cases for r in acks):
+            issues.append('Foreign native outcome case')
         stop_rows = raw(text, 'STOP_RETURNED')
-        expected_stops = [case for case in CASES if base_control(case.split('.', 1)[1]) != 'return-child-cancel'] if selection['mode'] == 'toolkit' else []
+        expected_stops = [case for case in cases if base_control(case.split('.', 1)[1]) != 'return-child-cancel'] if selection['mode'] == 'toolkit' else []
         if [r.get('case') for r in stop_rows] != expected_stops:
             issues.append('Native stop return receipts missing, duplicated or reordered')
         timing_rows = raw(text, 'PERFORMANCE')
-        if [r.get('case') for r in timing_rows] != list(CASES): issues.append('Timing evidence missing, duplicated or reordered')
+        if [r.get('case') for r in timing_rows] != cases: issues.append('Timing evidence missing, duplicated or reordered')
         debts, failure_uis = raw(text, 'BLOCKED_RETURN'), raw(text, 'FAILURE_UI')
-        expected_failures = list(CAPACITY_CASES) + (list(FAVORITE_CASES) if selection['kind'] == 'sp' else []) if selection['mode'] == 'toolkit' else []
+        expected_failures = [case for case in cases if case in CAPACITY_CASES or selection['kind'] == 'sp' and case in FAVORITE_CASES] if selection['mode'] == 'toolkit' else []
         if [r.get('case') for r in debts] != expected_failures or [r.get('case') for r in failure_uis] != expected_failures:
             issues.append('Exact blocked-return and actual footer evidence missing, duplicated or reordered')
-        for i, case in enumerate(CASES):
+        for i, case in enumerate(cases):
             row = rows[i] if i < len(rows) else {}
             errors = check_case(row, case, selection, prepared[i] if i < len(prepared) else None,
                 baselines[i] if i < len(baselines) else None, verified[i] if i < len(verified) else None,
@@ -959,14 +1024,13 @@ def verify(root, selection, catalog):
                 for record in row.get('records', []):
                     if [sample for sample in observed if sample.get('sequence') == record.get('sequence')] != record.get('requestStates', []):
                         errors.append('Raw native request observations differ from their exact owner record')
-            if selection.get('options', {}).get('require_native_requests') is True:
-                for marker, field in (('TRANSFER_STOP_ENTRY', 'nativeStopEntry'), ('TRANSFER_STOP_RETURNED', 'nativeStopReturned')):
-                    actual = [r for r in raw(text, marker) if r.get('case') == case]
-                    expected_stops = [r[field] for r in row.get('records', []) if field in r]
-                    if len(actual) != len(expected_stops) or any(value not in actual for value in expected_stops):
-                        errors.append('Raw native transfer stop boundaries differ from exact records')
-                    if any(r.get('case') not in CASES for r in raw(text, marker)):
-                        errors.append('Foreign native transfer stop case')
+            for marker, field in (('TRANSFER_STOP_ENTRY', 'nativeStopEntry'), ('TRANSFER_STOP_RETURNED', 'nativeStopReturned')):
+                actual = [r for r in raw(text, marker) if r.get('case') == case]
+                expected_stops = [r[field] for r in row.get('records', []) if field in r]
+                if len(actual) != len(expected_stops) or any(value not in actual for value in expected_stops):
+                    errors.append('Raw native transfer stop boundaries differ from exact records')
+                if any(r.get('case') not in cases for r in raw(text, marker)):
+                    errors.append('Foreign native transfer stop case')
             gap_rows = [r for r in raw(text, 'REPLICA_GAP') if r.get('case') == case]
             converged = [r for r in raw(text, 'REPLICA_CONVERGED') if r.get('case') == case]
             expected_gaps = row.get('replicaGaps', [])

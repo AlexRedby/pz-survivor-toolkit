@@ -406,6 +406,57 @@ for _,client in ipairs({false,true}) do
             'paired exact placement was retained or unrelated floor restoration was removed')
     end)
 end
+-- A Host waiver can commit a fresh carried replica of the same exact earned
+-- item. The native source guard still observes the requested item/group during
+-- publication; Settlement binds the carried item only after publication commits.
+test('committed Host replica retention preserves the live item and unrelated restoration',function()
+    local h=fixture(true)
+    local original,other=h.item(),h.item()
+    local action,handle,dto=retainReturn(h,original,h.source)
+    local carried=h.item(h.inventory,original:getID(),original:getFullType())
+    -- A stale proxy can still report its former container; source guards must
+    -- continue to see the original action/group while Keep is published.
+    local group=action.queueList[1].items[1]
+    assert(h.intent.canKeepReturn(action)and action.item==original and group==original,
+        'eligibility must leave the queued proxy and its native group untouched')
+    dto.item,dto.requestedItem=carried,original
+    local canKeep=h.intent.canKeepReturn
+    h.intent.canKeepReturn=function(candidate)
+        assert(candidate.item==original and candidate.queueList[1].items[1]==original,
+            'native guards must observe the requested proxy and original group')
+        return canKeep(candidate)
+    end
+    assert(h.intent.keepReturn(action,handle))
+    assert(action.item==original and action.queueList[1].items[1]==original,
+        'Intent publication must not mutate the queued action or group')
+    action.item=carried -- Settlement's final pure commit after publication.
+    assert(h.inventory:getItemById(carried:getID())==carried and carried:getContainer()==h.inventory)
+    h.restore(function()
+        ISTimedActionQueue.add(h.transfer(carried,h.source))
+        ISTimedActionQueue.add(h.transfer(other,h.source))
+    end)
+    assert(#h.queue.queue==1 and h.queue.queue[1].item==other,
+        'keep the exact live replica without suppressing an unrelated item')
+    assert(carried:getContainer()==h.inventory and original:getContainer()==h.inventory)
+end)
+test('replica publication requires Host exact requested identity and direct-root possession',function()
+    for _,boundary in ipairs({'sp','requested','id','type','nested','missing','not-item'})do
+        local h=fixture(boundary~='sp')
+        local original=h.item()
+        local action,handle,dto=retainReturn(h,original,h.source)
+        local carried=h.item(h.inventory,original:getID(),original:getFullType())
+        dto.item,dto.requestedItem=carried,original
+        if boundary=='requested'then dto.requestedItem=h.item()
+        elseif boundary=='id'then carried.id=carried.id+100
+        elseif boundary=='type'then carried.kind='Base.Other'
+        elseif boundary=='nested'then carried.container={items={[carried.id]=carried}}
+        elseif boundary=='missing'then h.inventory.items[carried.id]=nil
+        elseif boundary=='not-item'then carried.inventoryItem=false end
+        assert(not h.intent.keepReturn(action,handle),boundary..': uncertain replica published Keep intent')
+        assert(action.item==original and action.queueList[1].items[1]==original,
+            boundary..': refused publication changed native bindings')
+    end
+end)
 test('keepReturn rejects uncommitted copied and stale DTO publications',function()
     for _,mutation in ipairs({'forged','source','destination','item','generation','queue','actor','guard','local-actor','helper'})do
         local h=fixture()

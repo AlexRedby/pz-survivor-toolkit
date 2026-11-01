@@ -1452,6 +1452,237 @@ local function pendingReturnFixture(client, unearned, carried)
     s.pendingReturn = action
     return s
 end
+-- Host pickup replication may leave a pending native return holding its old
+-- proxy. Preview resolves only the private earned loan and never rewrites it.
+local function pendingReplicaReturnFixture(client)
+    local s = pendingReturnFixture(client)
+    s.requestedItem = s.pendingReturn.item
+    s.carriedItem = s.item(s.requestedItem:getID(), s.root)
+    s.requestedItem.container = nil
+    s.root.items[s.carriedItem:getID()] = s.carriedItem
+    s.pendingReturn.queueList = {{items = {s.requestedItem}}}
+    return s
+end
+do
+    local s = pendingReplicaReturnFixture(true)
+    local action, requested, carried = s.pendingReturn, s.requestedItem, s.carriedItem
+    local group, members = action.queueList[1], action.queueList[1].items
+    local authorityReads = s.transaction.calls
+    assert(s.settlement.canWaivePendingReturn(action, s.returnGuard),
+        'Host exact earned return must resolve its current direct-root replica')
+    local handle = assert(s.settlement.pendingReturnWaiver(action, s.returnGuard))
+    assert(action.item == requested and action.queueList[1] == group and group.items == members
+        and members[1] == requested and s.root.items[181] == carried
+        and s.settlement.operationState(s.current).borrowings[1].state == 'active' and s.counts() == 0,
+        'Host replica preview changed native item/group, debt or inventory')
+    local oldIntent, retained = PZSurvivorToolkit.ActionQueueTidyIntent, nil
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        assert(actual.item == requested and members[1] == requested,
+            'P4 publication must see the original native item/group binding')
+        retained = assert(s.settlement.returnRetention(capability, actual))
+        assert(retained.item == carried and retained.requestedItem == requested)
+        return true
+    end}
+    assert(s.settlement.waivePendingReturn(handle, action, s.returnGuard))
+    assert(retained.item == carried and action.item == carried and members[1] == requested
+        and s.root.items[181] == carried and requested:getContainer() == nil and s.counts() == 0
+        and s.transaction.calls == authorityReads,
+        'Host committed Keep must publish the exact carried member without native work')
+    PZSurvivorToolkit.ActionQueueTidyIntent = oldIntent
+end
+for _, change in ipairs({'sp', 'requested-id', 'requested-type', 'carried-id', 'carried-type', 'consumed',
+    'nested', 'duplicate', 'nested-duplicate', 'stale-duplicate', 'unearned', 'native', 'native-error', 'guard', 'guard-error'}) do
+    local s = pendingReplicaReturnFixture(change ~= 'sp')
+    local action, requested, carried = s.pendingReturn, s.requestedItem, s.carriedItem
+    if change == 'requested-id' then requested.id = 999
+    elseif change == 'requested-type' then requested.fullType = 'Base.Other'
+    elseif change == 'carried-id' then carried.id = 999
+    elseif change == 'carried-type' then carried.fullType = 'Base.Other'
+    elseif change == 'consumed' then carried.consumed = true
+    elseif change == 'nested' then carried.container = {}
+    elseif change == 'duplicate' then s.source.items[181] = s.item(181, s.source)
+    elseif change == 'nested-duplicate' then s.source.items[181] = s.item(181, {})
+    elseif change == 'stale-duplicate' then s.source.items[181] = s.item(181, nil)
+    elseif change == 'unearned' then
+        -- Possession and a queued return cannot substitute for its private receipt.
+        s = pendingReturnFixture(true, true)
+        action, requested = s.pendingReturn, s.pendingReturn.item
+        carried = s.item(181, s.root); requested.container = nil; s.root.items[181] = carried
+    elseif change == 'native' then s.nativeLive = false
+    elseif change == 'native-error' then PZSurvivorToolkit.ActionQueuePolicy.matchesNative = function() error('unavailable source') end
+    elseif change == 'guard' then s.returnGuardLive = false
+    elseif change == 'guard-error' then s.returnGuard = function() error('unavailable guard') end end
+    assert(not s.settlement.canWaivePendingReturn(action, s.returnGuard)
+        and not s.settlement.pendingReturnWaiver(action, s.returnGuard), change .. ': unsupported replica acquired Keep')
+    assert(action.item == requested and s.root.items[181] == carried
+        and s.settlement.operationState(s.current).borrowings[1].state ~= 'waived' and s.counts() == 0,
+        change .. ': rejected replica preview changed the native action or debt')
+end
+for _, change in ipairs({'replacement', 'requested-replacement', 'destination', 'source', 'token', 'generation',
+    'native-start', 'current-native', 'list', 'step-start', 'shared', 'owner', 'guard-replacement', 'late-missing', 'late-consumed',
+    'late-duplicate', 'late-endpoint', 'late-generation', 'late-forcecancel', 'getter-replacement'}) do
+    local s = pendingReplicaReturnFixture(true)
+    local action, requested, carried = s.pendingReturn, s.requestedItem, s.carriedItem
+    local reenter, originalGuard = nil, s.returnGuard
+    s.returnGuard = function(...)
+        local valid = originalGuard(...)
+        if reenter then reenter() end
+        return valid
+    end
+    local handle = assert(s.settlement.pendingReturnWaiver(action, s.returnGuard))
+    local guard = s.returnGuard
+    local late
+    if change == 'replacement' then s.root.items[181] = s.item(181, s.root)
+    elseif change == 'requested-replacement' then action.item = s.item(181, nil)
+    elseif change == 'destination' then action.destContainer = {}
+    elseif change == 'source' then action.srcContainer = {}
+    elseif change == 'token' then action.toolkitQueueOperation = {}
+    elseif change == 'generation' then s.queue.toolkitOperationGeneration = 1
+    elseif change == 'native-start' then action.action = {}
+    elseif change == 'current-native' then s.current.action = {}
+    elseif change == 'list' then s.queue.queue = {s.current, action, s.tail}
+    elseif change == 'step-start' then s.settlement.started(action)
+    elseif change == 'shared' then s.settlement.remember(s.scope, {character = s.player, toolkitQueueOperation = {}}, {items = {[181] = true}})
+    elseif change == 'owner' then s.scope.tasks[s.token] = nil
+    elseif change == 'guard-replacement' then guard = function() return true end
+    elseif change == 'getter-replacement' then
+        local calls = 0
+        carried.getIsCraftingConsumed = function()
+            calls = calls + 1
+            if calls == 2 then s.root.items[181] = s.item(181, s.root) end
+            return false
+        end
+    else late = change end
+    if late then
+        -- The exact guard identity captured by the capability remains unchanged.
+        reenter = function()
+            if late == 'late-missing' then s.root.items[181] = nil
+            elseif late == 'late-consumed' then carried.consumed = true
+            elseif late == 'late-duplicate' then s.source.items[181] = s.item(181, s.source)
+            elseif late == 'late-endpoint' then action.destContainer = {}
+            elseif late == 'late-generation' then s.queue.toolkitOperationGeneration = 1
+            elseif late == 'late-forcecancel' then action.forceCancel = function() error('foreign cancel must not run') end end
+        end
+    end
+    local before = action.item
+    assert(not s.settlement.waivePendingReturn(handle, action, guard), change .. ': stale Host capability waived debt')
+    assert(action.item == before and s.counts() == 0, change .. ': rejection rebound or constructed native work')
+    local state = s.settlement.operationState(s.current)
+    assert(not state or state.borrowings[1].state == 'active', change .. ': rejected commit changed its earned loan')
+end
+-- The final exact lookup is a callback boundary too: it cannot replace a
+-- source-proven native group/handler/owner after the reviewed guard returned.
+for _, change in ipairs({'groups', 'group', 'items', 'member', 'append', 'allow-missing', 'forcecancel',
+    'complete', 'native', 'token', 'list', 'claim'}) do
+    local s = pendingReplicaReturnFixture(true)
+    local action, requested = s.pendingReturn, s.requestedItem
+    local handle = assert(s.settlement.pendingReturnWaiver(action, s.returnGuard))
+    local lookup, calls = s.root.getItemById, 0
+    s.root.getItemById = function(self, id)
+        calls = calls + 1
+        if calls == 4 then
+            if change == 'groups' then action.queueList = {{items = {requested}}}
+            elseif change == 'group' then action.queueList[1] = {items = {requested}}
+            elseif change == 'items' then action.queueList[1].items = {requested}
+            elseif change == 'member' then action.queueList[1].items[1] = s.item(181, nil)
+            elseif change == 'append' then action.queueList[1].items[2] = requested
+            elseif change == 'allow-missing' then action.allowMissingItems = false
+            elseif change == 'forcecancel' then action.forceCancel = function() error('foreign cancel') end
+            elseif change == 'complete' then action.onCompleteFunc = function() error('foreign completion') end
+            elseif change == 'native' then s.current.action = {}
+            elseif change == 'token' then action.toolkitQueueOperation = {}
+            elseif change == 'list' then s.queue.queue = {s.current, action, s.tail}
+            elseif change == 'claim' then s.scope.tasks[{}] = {items = {[181] = true}, pickups = {}, actions = {}} end
+        end
+        return lookup(self, id)
+    end
+    assert(not s.settlement.waivePendingReturn(handle, action, s.returnGuard) and calls == 4,
+        change .. ': final lookup mutation escaped source/group freshness')
+    assert(action.item == requested and s.settlement.operationState(s.current).borrowings[1].state == 'active'
+        and s.counts() == 0, change .. ': rejected lookup changed item/debt or constructed work')
+end
+-- Ordinary exact-reference waivers keep their existing single native lookup
+-- and rights even outside the newly bounded Host replacement slice.
+for _, client in ipairs({false, true}) do
+    local s = pendingReturnFixture(client)
+    while #s.queue.queue < 33 do s.queue.queue[#s.queue.queue + 1] = s.action() end
+    local lookup, calls = s.root.getItemById, 0
+    s.root.getItemById = function(self, id) calls = calls + 1; return lookup(self, id) end
+    s.source.getItemById = function() error('strict exact-reference waiver must not inspect destination') end
+    assert(s.settlement.canWaivePendingReturn(s.pendingReturn, s.returnGuard) and calls == 1,
+        'legacy exact-reference waiver acquired replica snapshots/lookups/bounds')
+end
+for _, limit in ipairs({'queue', 'claims'}) do
+    local s = pendingReplicaReturnFixture(true)
+    if limit == 'queue' then while #s.queue.queue < 33 do s.queue.queue[#s.queue.queue + 1] = s.action() end
+    else for _ = 1, 129 do s.scope.tasks[{}] = {items = {}, pickups = {}, actions = {}} end end
+    assert(not s.settlement.canWaivePendingReturn(s.pendingReturn, s.returnGuard),
+        limit .. ': Host replacement capability must fail closed outside its bounded slice')
+    assert(s.pendingReturn.item == s.requestedItem and s.counts() == 0)
+end
+for _, failure in ipairs({'reject', 'error', 'changed-item', 'changed-endpoint', 'replaced-carried'}) do
+    local s = pendingReplicaReturnFixture(true)
+    local action, requested, carried = s.pendingReturn, s.requestedItem, s.carriedItem
+    local handle = assert(s.settlement.pendingReturnWaiver(action, s.returnGuard))
+    local oldIntent, foreign = PZSurvivorToolkit.ActionQueueTidyIntent, s.item(181, nil)
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        assert(actual.item == requested)
+        local retained = assert(s.settlement.returnRetention(capability, actual))
+        assert(retained.item == carried and retained.requestedItem == requested)
+        if failure == 'error' then error('fixture unavailable integration') end
+        if failure == 'changed-item' then actual.item = foreign
+        elseif failure == 'changed-endpoint' then actual.destContainer = {}
+        elseif failure == 'replaced-carried' then s.root.items[181] = s.item(181, s.root) end
+        return false
+    end}
+    assert(not s.settlement.waivePendingReturn(handle, action, s.returnGuard), failure .. ': publication failure was committed')
+    assert(action.item == (failure == 'changed-item' and foreign or requested)
+        and s.settlement.operationState(s.current).borrowings[1].state == 'active'
+        and not s.settlement.returnRetention(handle, action) and s.counts() == 0,
+        failure .. ': publication rollback lost the original binding/debt or overwrote a foreign binding')
+    PZSurvivorToolkit.ActionQueueTidyIntent = oldIntent
+end
+do
+    local s = pendingReplicaReturnFixture(true)
+    local action, requested, foreign = s.pendingReturn, s.requestedItem, s.item(181, nil)
+    local handle = assert(s.settlement.pendingReturnWaiver(action, s.returnGuard))
+    local oldIntent = PZSurvivorToolkit.ActionQueueTidyIntent
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        assert(actual.item == requested and s.settlement.returnRetention(capability, actual).item == s.carriedItem)
+        actual.item = foreign
+        return true
+    end}
+    assert(s.settlement.waivePendingReturn(handle, action, s.returnGuard) and action.item == foreign
+        and s.settlement.operationState(s.current).borrowings[1].state == 'waived',
+        'successful publication must not overwrite a callback-owned item binding')
+    PZSurvivorToolkit.ActionQueueTidyIntent = oldIntent
+end
+-- Once trusted publication succeeds, a following Host refresh cannot turn
+-- that committed Keep back into an owed return. No post-publication read runs.
+do
+    local s = pendingReplicaReturnFixture(true)
+    local action, requested, carried = s.pendingReturn, s.requestedItem, s.carriedItem
+    local handle = assert(s.settlement.pendingReturnWaiver(action, s.returnGuard))
+    local oldIntent, lookup = PZSurvivorToolkit.ActionQueueTidyIntent, s.root.getItemById
+    local published, refreshed = nil, s.item(181, s.root)
+    PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+        published = assert(s.settlement.returnRetention(capability, actual)).item
+        s.root.items[181], carried.container = refreshed, nil
+        s.root.getItemById = function() error('successful publication must be the last callback boundary') end
+        return true
+    end}
+    assert(s.settlement.waivePendingReturn(handle, action, s.returnGuard))
+    s.root.getItemById = lookup
+    assert(published == carried and action.item == carried and action.queueList[1].items[1] == requested
+        and s.root.items[181] == refreshed and s.settlement.operationState(s.current).borrowings[1].state == 'waived')
+    table.remove(s.queue.queue, 2)
+    s.token.toolkitCancelled = true
+    assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
+    assert(s.counts() == 0 and s.queue.queue[2] == s.tail and s.root.items[181] == refreshed,
+        'a committed Host Keep was retroactively reactivated by another exact replica')
+    PZSurvivorToolkit.ActionQueueTidyIntent = oldIntent
+end
+print('Pending return Keep: Host exact live replica, strict SP, fresh dual identity, guard reentry and publication rollback passed.')
 for _, client in ipairs({false, true}) do
     local s = pendingReturnFixture(client)
     local action = s.pendingReturn
@@ -2642,6 +2873,20 @@ local function returnExecutionFixture(client,unearned,carried)
     end]],'@fixture/ActionQueuePolicy.lua'))()
     return s
 end
+do
+    local s = returnExecutionFixture(true)
+    local action, requested = s.pendingReturn, s.pendingReturn.item
+    local carried = s.item(181, s.root)
+    s.root.items[181], requested.container = carried, nil
+    assert(s.settlement.canWaivePendingReturn(action, s.returnGuard)
+        and s.settlement.pendingReturnWaiver(action, s.returnGuard), 'Host replica Keep fixture lost earned ownership')
+    assert(not s.settlement.returnExecutionSupported(action, s.executionGuard)
+        and not s.settlement.authorizeReturnRetention(action, s.executionGuard),
+        'waiver-only Host replica resolution must never expand execution/capacity capabilities')
+    assert(action.item == requested and action.queueList[1].items[1] == requested
+        and s.root.items[181] == carried and s.counts() == 0,
+        'rejected strict execution rebound the Host item or constructed a transfer')
+end
 -- Exercise the real private request admission callback, not a replacement
 -- Settlement observer. This seam models only the before-call receipt getters:
 -- it cannot claim a Java receipt or establish submission/transaction authority.
@@ -2853,6 +3098,47 @@ for _, client in ipairs({false, true}) do
     QueueReturnExecutionMutation = nil
 end
 
+-- Footer Keep publishes through the real one-use retention reader too. Its
+-- already-failed native return uses the original strict proof without a view,
+-- even after the producer closes and the independent tail becomes current.
+for _, client in ipairs({false, true}) do
+    for _, change in ipairs({'normal', 'closed', 'stale-item', 'stale-endpoint', 'reject', 'error'}) do
+        local s = returnExecutionFixture(client)
+        local action, guard = s.pendingReturn, s.executionGuard
+        s.queue.current, s.queue.queue = action, {action, s.tail}
+        assert(s.settlement.prepareReturnExecution(action, guard))
+        s.settlement.started(action)
+        action.action = {isStarted = function() return false end}; s.stack = false
+        assert(s.settlement.rejectReturnExecution(action, 'admission', guard))
+        if change == 'closed' then s.settlement.close(s.scope) end
+        s.queue.current, s.queue.queue = s.tail, {s.tail}
+        local id = s.settlement.blockedReturns(s.player)[1].id
+        local oldIntent, retained = PZSurvivorToolkit.ActionQueueTidyIntent, nil
+        PZSurvivorToolkit.ActionQueueTidyIntent = {keepReturn = function(actual, capability)
+            assert(actual == action and not s.settlement.returnRetention({}, actual)
+                and not s.settlement.returnRetention(capability, s.tail))
+            if change == 'stale-item' then s.root.items[181] = s.item(181, s.root)
+            elseif change == 'stale-endpoint' then actual.destContainer = {} end
+            retained = s.settlement.returnRetention(capability, actual)
+            if change == 'stale-item' or change == 'stale-endpoint' then assert(not retained); return false end
+            assert(retained and retained.item == actual.item and retained.requestedItem == nil
+                and retained.character == s.player and retained.queue == s.queue
+                and retained.source == s.root and retained.destination == s.source)
+            assert(not s.settlement.returnRetention(capability, actual), 'footer retention DTO must be one-use')
+            if change == 'error' then error('footer publication unavailable') end
+            return change ~= 'reject'
+        end}
+        local kept = s.settlement.keepReturn(s.player, id)
+        local success = change == 'normal' or change == 'closed'
+        assert(kept == success, change .. ': failed-return strict publication changed')
+        assert(s.settlement.blockedReturnInfo(s.player).count == (success and 0 or 1)
+            and s.settlement.operationState(action).borrowings[1].state == (success and 'waived' or 'active')
+            and s.queue.current == s.tail and s.counts() == 0,
+            change .. ': footer publication lost rollback/debt or constructed native work')
+        PZSurvivorToolkit.ActionQueueTidyIntent = oldIntent
+    end
+end
+print('Failed-return footer Keep: real strict one-use DTO, closed producer, post-native tail and rejected publication passed.')
 for _,client in ipairs({false,true})do
     local s=returnExecutionFixture(client);local action=s.pendingReturn;local guard=s.executionGuard
     assert(s.settlement.returnExecutionSupported(action,guard),'earned pending return lacks execution descriptor')

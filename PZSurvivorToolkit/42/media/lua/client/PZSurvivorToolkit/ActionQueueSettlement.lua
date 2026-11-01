@@ -1262,7 +1262,82 @@ function Settlement.poll(scope) pollPickups(scope) end
 -- the body that still uses it. A sealed, revalidated capability retires only the
 -- exact earned loan; its historical ID still fences enqueue-only return hints.
 local returnWaiverMarker = {}
-local function returnWaiverCandidate(action, guard, allowCurrent, budget)
+-- Waiver-only Host replica resolution. These captured private facts are never
+-- passed to execution admission or accepted from a caller's item DTO.
+local function waiverUnchanged(view, phase, item)
+    local action, record, candidate, scope = view.action, view.record, view.candidate, view.scope
+    local queue, step = record.queue, view.step
+    if ISTimedActionQueue.queues[record.character] ~= queue or queue.character ~= record.character
+        or queue.queue ~= view.list or queue.current ~= view.current or queue.queue[1] ~= view.current
+        or view.current.character ~= record.character or view.current.action ~= view.native
+        or (queue.toolkitOperationGeneration or 0) ~= view.generation or record.generation ~= view.generation
+        or queue.toolkitCancel or queue.toolkitGroupCancel or record.settlement or record.token ~= view.token
+        or view.token.toolkitCancelled or action.toolkitQueueOperation ~= view.token or action.character ~= record.character
+        or record.actions[action] ~= step or action.action or action.started or step.started
+        or step.state ~= "pending" or step.phase ~= view.stepPhase or step.required or step.returning or action.toolkitQueueReturn == cleanupMarker
+        or action.Type ~= "ISInventoryTransferAction" or action.allowMissingItems ~= view.allowMissing or action.item ~= item
+        or action.srcContainer ~= view.source or action.destContainer ~= view.destination
+        or action.forceCancel ~= view.forceCancel or action.onCompleteFunc ~= view.onComplete
+        or Toolkit.ActionQueuePolicy ~= view.policy or view.policy.matchesNative ~= view.matchesNative
+        or not deferred(scope) or scope.phase == "retired" or scope.queue ~= queue or scope.character ~= record.character
+        or scope.generation ~= view.generation or candidate.owner ~= view.token or candidate.phase ~= phase
+        or candidate.id ~= view.id or candidate.fullType ~= view.fullType or candidate.sourceOwner ~= view.owner
+        or view.owner and (view.owner.id ~= view.ownerId or view.owner.fullType ~= view.ownerType) or candidate.ambiguous
+        or candidate.step ~= view.pickupStep or candidate.step.state ~= "earned"
+        or candidate.returning or candidate.plannedReturn or candidate.source ~= view.destination
+        or candidate.destination ~= view.source then return false end
+    -- The last native inventory getter may reenter after the source guard.
+    -- Compare the original singleton group without executing that guard again.
+    if action.queueList ~= view.groups then return false end
+    if view.groups ~= nil then
+        if type(view.groups) ~= "table" or getmetatable(view.groups) ~= view.groupsMeta
+            or rawget(view.groups, 1) ~= view.group then return false end
+        for key in pairs(view.groups) do if key ~= 1 then return false end end
+    end
+    if view.group ~= nil then
+        if type(view.group) ~= "table" or getmetatable(view.group) ~= view.groupMeta
+            or rawget(view.group, "items") ~= view.items or type(view.items) ~= "table"
+            or getmetatable(view.items) ~= view.itemsMeta or rawget(view.items, 1) ~= view.member then return false end
+        for key in pairs(view.items) do if key ~= 1 then return false end end
+    end
+    local visits = 0
+    for _, previous in ipairs(step.prerequisites or {}) do
+        visits = visits + 1
+        if visits > MAX_EXECUTION_BORROWING_WORK or previous.state == "earned" then return false end
+    end
+    local found = false
+    for _, binding in ipairs(record.borrowings) do
+        visits = visits + 1
+        if visits > MAX_EXECUTION_BORROWING_WORK then return false end
+        local other = binding.candidate
+        if other.id == view.id and other.fullType == view.fullType
+            and other.phase ~= "completed" and other.phase ~= "waived" then
+            if phase == "active" and other == candidate and binding.scope == scope and not found then found = true
+            else return false end
+        elseif other == candidate and binding.scope == scope and phase == "waived" then found = true end
+    end
+    if not scope.tasks[view.token] then return false end
+    for token, task in pairs(scope.tasks) do
+        visits = visits + 1
+        if visits > MAX_EXECUTION_BORROWING_WORK then return false end
+        local pickup = task.pickups[view.id]
+        if pickup and (pickup.ambiguous or pickup.fullType ~= view.fullType
+            or pickup.container ~= view.destination or token ~= view.token)
+            or token ~= view.token and claimedInput(scope, task, view.id) then return false end
+    end
+    return found and queued(queue, action)
+end
+local function waiverCarried(view, observed)
+    local inventory, requested = view.source, view.requested
+    if view.record.character:getInventory() ~= inventory or not sameMember(requested, view) then return end
+    local item = observed or inventory:getItemById(view.id)
+    if not instanceof(item, "InventoryItem") or not sameMember(item, view)
+        or item ~= requested and not view.client or item:getContainer() ~= inventory or item:getIsCraftingConsumed() then return end
+    local duplicate = view.destination:getItemById(view.id)
+    if duplicate ~= nil or inventory:getItemById(view.id) ~= item then return end
+    return item
+end
+local function returnWaiverCandidate(action, guard, allowCurrent, budget, allowReplica)
     local record = action and operation(action.character, action.toolkitQueueOperation)
     local queue, token = record and record.queue, action and action.toolkitQueueOperation
     local step = record and record.actions[action]
@@ -1300,26 +1375,69 @@ local function returnWaiverCandidate(action, guard, allowCurrent, budget)
         end
     end
     if not found then return nil, "borrowing_missing" end
-    if not policy.matchesNative(action) then return nil, "operation" end
-    if item:getContainer() ~= inventory or inventory:getItemById(item:getID()) ~= item
-        or item:getIsCraftingConsumed() then return nil, "item_identity" end
+    -- The ordinary exact-reference path keeps its original native proof and
+    -- single root lookup. Only an actual Host replacement pays for a view.
+    local client = allowReplica and isClient()
+    local current, list, native = queue.current, queue.queue, queue.current.action
+    local nativeChecker = policy.matchesNative
+    if client then
+        local ok, valid = pcall(nativeChecker, action)
+        if not ok or valid ~= true then return nil, "operation" end
+    elseif not nativeChecker(action) then return nil, "operation" end
+    local location = item:getContainer()
+    if location ~= inventory and not client then return nil, "item_identity" end
+    local carried, view = inventory:getItemById(item:getID()), nil
+    if carried == item then
+        if location ~= inventory or item:getIsCraftingConsumed() then return nil, "item_identity" end
+    else
+        if not client or not carried then return nil, "item_identity" end
+        if #queue.queue > MAX_EXECUTION_MEMBERS then return nil, "unsupported_queue_size" end
+        budget = budget or {remaining = MAX_EXECUTION_BORROWING_WORK}
+        local groups = action.queueList
+        local group = type(groups) == "table" and rawget(groups, 1) or nil
+        local items = type(group) == "table" and rawget(group, "items") or nil
+        view = {action = action, record = record, step = step, candidate = found, scope = foundScope,
+            list = list, current = current, native = native,
+            generation = record.generation, token = token, source = inventory, destination = found.source,
+            policy = policy, matchesNative = nativeChecker, id = found.id, fullType = found.fullType,
+            pickupStep = found.step, stepPhase = step.phase, requested = item, client = true,
+            forceCancel = action.forceCancel, onComplete = action.onCompleteFunc, allowMissing = action.allowMissingItems,
+            groups = groups, groupsMeta = type(groups) == "table" and getmetatable(groups) or nil,
+            group = group, groupMeta = type(group) == "table" and getmetatable(group) or nil,
+            items = items, itemsMeta = type(items) == "table" and getmetatable(items) or nil,
+            member = type(items) == "table" and rawget(items, 1) or nil,
+            owner = found.sourceOwner, ownerId = found.sourceOwner and found.sourceOwner.id,
+            ownerType = found.sourceOwner and found.sourceOwner.fullType}
+        local ok, present = pcall(waiverCarried, view, carried)
+        if not ok or present ~= carried then return nil, "item_identity" end
+    end
     if not queued(queue, action) then return nil, "operation" end
     local ok, valid = pcall(guard, action, {id = found.id, fullType = found.fullType})
     if not ok or valid ~= true then return nil, "native_guard" end
-    return found, foundScope, record
+    if view then
+        -- Native/source guards may reenter. Finish callback-bearing liveness and
+        -- ownership checks before the last physical lookup, then check bindings.
+        if not operationLive(record) or not borrowingLive(foundScope) or sharedBorrowing(foundScope, found, budget)
+            or getSpecificPlayer(record.character:getPlayerNum()) ~= record.character
+            or isClient() ~= view.client or not waiverUnchanged(view, "active", item) then return nil, "operation" end
+        local present
+        ok, present = pcall(waiverCarried, view)
+        if not ok or present ~= carried or not waiverUnchanged(view, "active", item) then return nil, "item_identity" end
+    end
+    return found, foundScope, record, carried or item, view
 end
 
 function Settlement.canWaivePendingReturn(action, guard)
-    local candidate, detail = returnWaiverCandidate(action, guard)
+    local candidate, detail = returnWaiverCandidate(action, guard, false, nil, true)
     return candidate ~= nil, not candidate and detail or nil
 end
 
 function Settlement.pendingReturnWaiver(action, guard)
-    local candidate, scope, record = returnWaiverCandidate(action, guard)
+    local candidate, scope, record, carried, view = returnWaiverCandidate(action, guard, false, nil, true)
     if not candidate then return end
     local handle = {}
     local proof = {action = action, candidate = candidate, scope = scope, record = record, guard = guard,
-        item = action.item, source = action.srcContainer, destination = action.destContainer}
+        item = action.item, carried = carried, view = view, source = action.srcContainer, destination = action.destContainer}
     handle[returnWaiverMarker] = function(value) if value == handle then return proof end end
     return handle
 end
@@ -1333,16 +1451,28 @@ function Settlement.returnRetention(handle, action)
         or proof.action ~= action or proof.candidate.phase ~= "waived"
         or not operationLive(proof.record) then return end
     local character, candidate = proof.record.character, proof.candidate
-    local inventory = character:getInventory()
-    local item = inventory:getItemById(candidate.id)
-    if getSpecificPlayer(character:getPlayerNum()) ~= character or item ~= proof.item
-        or not sameMember(item, candidate) or item:getContainer() ~= inventory
-        or proof.source ~= inventory or action.srcContainer ~= proof.source
-        or action.destContainer ~= proof.destination or action.item ~= item then return end
+    local inventory, item = character:getInventory(), nil
+    if proof.view then
+        if not borrowingLive(proof.scope)
+            or sharedBorrowing(proof.scope, candidate, {remaining = MAX_EXECUTION_BORROWING_WORK})
+            or getSpecificPlayer(character:getPlayerNum()) ~= character or proof.source ~= inventory then return end
+        local ok
+        ok, item = pcall(waiverCarried, proof.view)
+        if not ok or item ~= proof.carried or not waiverUnchanged(proof.view, "waived", proof.item) then return end
+    else
+        -- Failed-return footer receipts and ordinary exact-reference waivers
+        -- retain their original strict proof, including closed producer scopes.
+        item = inventory:getItemById(candidate.id)
+        if getSpecificPlayer(character:getPlayerNum()) ~= character or item ~= proof.item
+            or not sameMember(item, candidate) or item:getContainer() ~= inventory
+            or proof.source ~= inventory or action.srcContainer ~= proof.source
+            or action.destContainer ~= proof.destination or action.item ~= item then return end
+    end
     proof.retentionRead = true
     local owner = candidate.sourceOwner
     return {character = character, queue = proof.record.queue, generation = proof.record.generation,
-        item = item, source = inventory, destination = proof.destination,
+        item = item, requestedItem = proof.view and proof.item ~= item and proof.item or nil,
+        source = inventory, destination = proof.destination,
         owner = owner and {id = owner.id, fullType = owner.fullType} or nil}
 end
 
@@ -1355,19 +1485,29 @@ function Settlement.waivePendingReturn(handle, action, guard)
     if not proof or proof.used or proof.action ~= action or proof.guard ~= guard
         or action.item ~= proof.item or action.srcContainer ~= proof.source
         or action.destContainer ~= proof.destination then return false end
-    local candidate, scope, record = returnWaiverCandidate(action, guard)
-    if candidate ~= proof.candidate or scope ~= proof.scope or record ~= proof.record then return false end
+    local candidate, scope, record, carried = returnWaiverCandidate(action, guard, false, nil, true)
+    if candidate ~= proof.candidate or scope ~= proof.scope or record ~= proof.record or carried ~= proof.carried
+        or proof.view and not waiverUnchanged(proof.view, "active", proof.item) then return false end
+    -- Keep publication sees the unchanged native item/group. Its private DTO
+    -- alone describes the live Host member; no temporary binding is exposed.
     proof.used, candidate.phase = true, "waived"
+    local function rollback()
+        if candidate.phase == "waived" then candidate.phase = "active" end
+        proof.used, proof.retentionRead = false, nil
+        return false
+    end
     local intent = Toolkit.ActionQueueTidyIntent
     if intent and type(intent.keepReturn) == "function" then
         proof.publishing = true
         local ok, kept = pcall(intent.keepReturn, action, handle)
         proof.publishing = false
         if not ok or kept ~= true then
-            proof.used, proof.retentionRead, candidate.phase = false, nil, "active"
-            return false
+            return rollback()
         end
     end
+    -- Successful publication is the commit boundary. Bind only now, with no
+    -- callback/getter afterward that could privately undo already-published Keep.
+    if action.item == proof.item then action.item = carried end
     return true
 end
 
@@ -1870,7 +2010,7 @@ local function executionCandidate(action, guard)
         owner = record
     else
         if #record.borrowings == 0 then return end
-        candidate, scope, owner = returnWaiverCandidate(action, guard, true, budget)
+        candidate, scope, owner = returnWaiverCandidate(action, guard, true, budget, false)
         if not candidate then return nil, budget.remaining < 0 and "unsupported_borrowing_work" or nil end
     end
     -- Only a private earned candidate may pay for suffix contract inspection.

@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.334
+
+- Allow cancelling a pending borrowed-item return in Host when native replication has replaced the queued item proxy with the same exact earned item in the character's main inventory. Preserve the active action, retain the carried item and commit Keep intent only after fresh identity/ownership checks; failed publication leaves the return and debt intact. Native transfer execution and capacity proofs retain their strict path.
+
 ### 0.1.333
 
 - Add an opt-in structural forecast for editing active reading: distinguish the observed checkpoint, future resumed reader, pending actions and cleanup obligations. Read private obligation metadata without creating returns or updating receipts; unknown ownership stays explicit. This preparation adds no new cancel/reorder permissions and runs only when explicitly requested by development checks.
