@@ -21,6 +21,7 @@ import se.krka.kahlua.j2se.J2SEPlatform;
 import se.krka.kahlua.vm.JavaFunction;
 import se.krka.kahlua.vm.KahluaTable;
 import zombie.Lua.LuaManager;
+import zombie.GameTime;
 import zombie.characters.IsoPlayer;
 import zombie.core.Transaction;
 import zombie.core.Transaction.TransactionState;
@@ -37,6 +38,7 @@ import zombie.network.packets.ItemTransactionPacket;
 /** Disposable client-side reply loss. Never changes a request, timer or item. */
 public final class Main {
     private static final Map<String,String> SOURCES = Map.of(
+        "zombie/GameTime", "ec030ac26790d8c06712c3e1d5935bb29cc816ac3b6f1ea55b06ebeccb7e7125",
         "zombie/core/TransactionManager", "4a0f649f5e55edd13eff7d6788934fbec49e0073901609e1c12731fc47d7481d",
         "zombie/core/Transaction", "107b0a554cc46d1015398ff283a2e48faf02efbc44adf12854f66394ee2487b6",
         "zombie/network/packets/ItemTransactionPacket", "41608a6690d16cb0ac202a4a3196b2b0851dadb935bca2b1d9a0a3e501791e83",
@@ -48,6 +50,7 @@ public final class Main {
     private static final String PACKET = "zombie/network/packets/ItemTransactionPacket";
     private static final ThreadLocal<Scope> CURRENT = new ThreadLocal<>();
     private static final WeakHashMap<UdpConnection,History> HISTORIES = new WeakHashMap<>();
+    private static final WeakHashMap<Transaction,Long> CLOCK_BIRTHS = new WeakHashMap<>();
     private static final java.util.Set<String> WOVEN = new java.util.HashSet<>();
     private static boolean attempted, sourceExact, historyFromConnectionStart, used, armed, bound;
     private static String failure = "not-installed", closed = "";
@@ -154,13 +157,17 @@ public final class Main {
         var locator=new ClassFileLocator.Compound(ClassFileLocator.Simple.of(binary,bytes),
                 ClassFileLocator.ForClassLoader.of(loader));
         var description=TypePool.Default.of(locator).describe(binary).resolve();
-        DynamicType.Builder<?> builder=new ByteBuddy().redefine(description,locator);
+        DynamicType.Builder<?> builder=new ByteBuddy().ignore(none()).redefine(description,locator);
         if (MANAGER.equals(name)) {
             var create=named("createItemTransaction").and(takesArguments(IsoPlayer.class,List.class,ItemContainer.class,ItemContainer.class)).and(returns(byte.class));
             var add=named("add").and(takesArguments(Transaction.class)).and(returns(void.class));
             if (description.getDeclaredMethods().filter(create).size()!=1 || description.getDeclaredMethods().filter(add).size()!=1)
                 throw new IllegalArgumentException("manager descriptors");
-            builder=builder.visit(Advice.to(Request.class).on(create)).visit(Advice.to(Added.class).on(add));
+            var expiry=named("lambda$update$1").and(takesArguments(long.class,Transaction.class)).and(returns(boolean.class));
+            if (description.getDeclaredMethods().filter(expiry).size()!=1)
+                throw new IllegalArgumentException("expiry descriptor");
+            builder=builder.visit(Advice.to(Request.class).on(create)).visit(Advice.to(Added.class).on(add))
+                    .visit(Advice.to(Expired.class).on(expiry));
         } else if (TRANSACTION.equals(name)) {
             var set=named("set").and(takesArguments(IsoPlayer.class,List.class,ItemContainer.class,ItemContainer.class,
                     String.class,zombie.iso.IsoDirections.class,float.class,float.class,float.class)).and(returns(void.class));
@@ -196,8 +203,32 @@ public final class Main {
     }
     public static synchronized void allocated(Transaction tx) {
         recordAllocation(tx);
+        if (GameClient.client && !GameServer.server && tx!=null && tx.getClass()==ItemTransactionPacket.class) {
+            CLOCK_BIRTHS.put(tx,System.nanoTime());
+            clockEvent("allocated",tx,null);
+        }
         Scope scope=CURRENT.get();
         if (scope!=null) { scope.allocations++; scope.allocated=tx; }
+    }
+    private static void clockEvent(String event,Transaction tx,Long timeoutNow) {
+        Long birth=CLOCK_BIRTHS.get(tx);
+        System.out.println("[QueuePeersClock] " + event + " object="+System.identityHashCode(tx)
+            +" id="+transactionId(tx)+" state="+state(tx)
+            +" start="+get(tx,"startTime",(Long)null)+" end="+get(tx,"endTime",(Long)null)
+            +" ready="+GameTime.getServerTimeShiftIsSet()+" server="+GameTime.getServerTimeMills()
+            +" ageMs="+(birth==null ? "unknown" : (System.nanoTime()-birth)/1_000_000L)
+            +" timeoutNow="+timeoutNow);
+    }
+    public static synchronized void expired(Transaction tx,long timeoutNow,boolean result) {
+        if (result && GameClient.client && !GameServer.server && tx!=null && CLOCK_BIRTHS.containsKey(tx))
+            clockEvent("expired",tx,timeoutNow);
+    }
+    public static class Expired {
+        @Advice.OnMethodExit(suppress=Throwable.class)
+        public static void exit(@Advice.Argument(0) long nativeNow,
+                @Advice.Argument(1) Transaction tx,@Advice.Return boolean result) {
+            expired(tx,nativeNow,result);
+        }
     }
     public static synchronized void added(Transaction tx) {
         Scope scope=CURRENT.get();
@@ -285,6 +316,8 @@ public final class Main {
     }
     /** Only Done is lost. Accept/Reject and every other packet run unchanged. */
     public static synchronized boolean drop(ItemTransactionPacket packet,UdpConnection incoming) {
+        if (GameClient.client && !GameServer.server && packet!=null)
+            clockEvent("received",packet,null);
         if (!currentBinding() || incoming!=connection || packet==selected || transactionId(packet)==null
                 || transactionId(packet)!=id) return false;
         TransactionState reply=state(packet);

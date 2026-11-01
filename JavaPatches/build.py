@@ -140,6 +140,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'zombie.radio.devices.MediaChecks': 'MEDIA_CHECKS_PASS',
           'zombie.core.BuildChecks': 'BUILD_CHECKS_PASS',
           'zombie.core.QueueManagerChecks': 'QUEUE_MANAGER_CHECKS_PASS',
+          'zombie.core.ItemTransactionClockChecks': 'ITEM_TRANSACTION_CLOCK_CHECKS_PASS',
           'zombie.core.ItemBatchAdmissionChecks': 'ITEM_BATCH_ADMISSION_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.NativeTransferRequestsChecks': 'NATIVE_TRANSFER_REQUESTS_CHECKS_PASS',
           'zombie.core.ActionAcknowledgementChecks': 'ACTION_ACKNOWLEDGEMENT_CHECKS_PASS',
@@ -354,7 +355,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.81',
+    'version': '0.1.82',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

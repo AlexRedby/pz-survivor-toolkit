@@ -59,7 +59,8 @@ public final class QueuePeersProbeSelfCheck {
         check(calls.getOrDefault("set:allocated",0)==1,"one allocation hook");
         check(calls.getOrDefault("add:added",0)==1,"one add hook");
         check(calls.getOrDefault("processClient:drop",0)==1,"one receive gate");
-        check(calls.size()==5,"unexpected injection "+calls);
+        check(calls.getOrDefault("lambda$update$1:expired",0)==1,"one passive timeout exit");
+        check(calls.size()==6,"unexpected injection "+calls);
         boolean rejected=false;
         try { Main.weave("zombie/core/TransactionManager",resource("zombie/core/Transaction"),Main.class.getClassLoader()); }
         catch (RuntimeException expected) { rejected=true; }
