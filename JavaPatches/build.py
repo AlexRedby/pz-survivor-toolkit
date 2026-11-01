@@ -377,6 +377,7 @@ def main(argv=None):
     parser.add_argument('--game', type=Path, default=game_defaults.get(sys.platform), help='Folder containing projectzomboid.jar and ZombieBuddy.jar')
     parser.add_argument('--jdk', type=Path)
     parser.add_argument('--kotlin-home', type=Path, help=f'Kotlin {KOTLIN_VERSION} compiler distribution (or KOTLIN_HOME / kotlinc on PATH)')
+    parser.add_argument('--output', type=Path, help='Build root containing PZToolkitJavaPatches and check logs (default: JavaPatches/build)')
     parser.add_argument('--check', action='store_true', help='Run original-engine versus woven-patch regression')
     parser.add_argument('--check-video', action='store_true', help='Run headless video timeline/FFmpeg regression (PZ_TEST_FFMPEG selects executable)')
     parser.add_argument('--test', action='append', choices=TEST_NAMES, default=[], metavar='NAME', help='Run only selected regressions; repeat for multiple. WashWaterRuleChecks and QueueOwnershipChecks require PZ_TEST_WORKSHOP with the Workshop content root. Names: ' + ', '.join(TEST_NAMES))
@@ -409,11 +410,18 @@ def main(argv=None):
     if version is None or int(version.group(1)) < 25:
         parser.error(f'B42.21 requires JDK 25 or newer to read game classes. Found "{compiler.stdout.strip()}" at "{javac}". Select JDK 25+ with --jdk or JAVA_HOME.')
     classpath = os.pathsep.join(str(args.game / name) for name in ['projectzomboid.jar', 'ZombieBuddy.jar'])
-    build = ROOT / 'build'
+    build = (args.output if args.output is not None else ROOT / 'build').absolute()
     destination = build / 'PZToolkitJavaPatches'
     for directory in (build, destination):
         if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
             parser.error(f'Build output must be a regular directory: {directory}')
+    for directory in build.parents:
+        if (directory.exists() or directory.is_symlink()) and not directory.is_dir():
+            parser.error(f'Build output parent must be a regular directory: {directory}')
+    # Resolve safe parent aliases, but never hide a forbidden leaf symlink.
+    # Regression JVMs run with cwd=game, so output paths must already be absolute.
+    build = build.resolve()
+    destination = build / 'PZToolkitJavaPatches'
 
     def log_path(name, trace):
         return build / (name.rsplit('.', 1)[-1] + ('-trace' if trace else '') + '.log')
@@ -428,8 +436,17 @@ def main(argv=None):
     kotlin_sources = sorted((ROOT / 'src').rglob('*.kt'))
     java_sources = sorted((ROOT / 'src').rglob('*.java'))
     kotlin_home = kotlin_toolchain(args.kotlin_home, parser) if kotlin_sources or kotlin_tests else None
+    protected = [ROOT / name for name in ('src', 'tests', 'tools')]
+    protected += [args.game, args.jdk]
+    if kotlin_home is not None:
+        protected.append(kotlin_home)
+    for directory in map(Path.resolve, protected):
+        if build.is_relative_to(directory) or directory.is_relative_to(destination):
+            parser.error(f'Build output overlaps input directory: {directory}')
+    if ROOT.resolve().is_relative_to(destination):
+        parser.error(f'Build destination contains source directory: {ROOT.resolve()}')
     fingerprints = source_fingerprints(ROOT)
-    build.mkdir(exist_ok=True)
+    build.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix='.build-', dir=build))
     previous = temporary / 'previous'
     promoted = False

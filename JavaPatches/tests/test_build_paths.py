@@ -44,7 +44,7 @@ class BuildPaths(unittest.TestCase):
         self.assertEqual({path.relative_to(mod).as_posix(): path.read_bytes()
                           for path in mod.rglob('*') if path.is_file()}, self.previous_files)
 
-    def run_build(self, platform, *args, version='javac 25.0.1', failure=None, hook=None):
+    def run_build(self, platform, *args, version='javac 25.0.1', failure=None, hook=None, root=None):
         self.manifests = []
 
         def run(command, **kwargs):
@@ -62,7 +62,7 @@ class BuildPaths(unittest.TestCase):
         stderr = io.StringIO()
         with patch.object(sys, 'platform', platform), patch.object(Path, 'home', return_value=self.root), \
              patch.dict(os.environ, {'ProgramFiles(x86)': str(self.root / 'program files'), 'JAVA_HOME': str(self.root / 'jdk')}), \
-             patch.object(build, 'ROOT', self.root), \
+             patch.object(build, 'ROOT', self.root if root is None else root), \
              patch('subprocess.run', side_effect=run) as mocked, \
              contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
             try:
@@ -248,6 +248,128 @@ class BuildPaths(unittest.TestCase):
         self.assertIn(str(retained[0]), str(error.exception))
         self.assert_previous_mod(retained[0])
         self.assertFalse(self.mod.exists())
+
+    def seed_custom_mod(self, output):
+        mod = output / self.mod.name
+        for name, content in self.previous_files.items():
+            target = mod / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        (mod / 'common').mkdir()
+        return mod
+
+    def test_custom_nested_output_preserves_default_and_replaces_only_its_mod(self):
+        output = self.root / 'isolated build' / 'nested' / 'candidate'
+        custom = self.seed_custom_mod(output)
+        code, error, _ = self.run_build('darwin', '--game', str(self.game), '--output', str(output))
+        self.assertEqual(code, 0, error)
+        self.assert_previous_mod()
+        self.assertEqual(self.sentinel.read_text(), 'previous build')
+        self.assertFalse((custom / 'obsolete.txt').exists())
+        for name in ('PZToolkitJavaPatches.jar', 'PZToolkitFonts.jar'):
+            self.assertEqual(len(list(custom.rglob(name))), 1)
+        self.assertEqual(list(output.glob('.build-*')), [])
+        self.assertEqual(list((self.root / 'build').glob('.build-*')), [])
+
+    def test_custom_output_creates_missing_parent_directories(self):
+        output = self.root / 'missing' / 'nested' / 'output with spaces'
+        code, error, _ = self.run_build('darwin', '--game', str(self.game), '--output', str(output))
+        self.assertEqual(code, 0, error)
+        self.assertTrue((output / self.mod.name / '42/mod.info').is_file())
+        self.assert_previous_mod()
+
+    def test_custom_output_failures_and_failed_restore_preserve_both_builds(self):
+        output = self.root / 'isolated'
+        custom = self.seed_custom_mod(output)
+        for phase in ('javac', 'PZToolkitJavaPatches.jar', 'PZToolkitFonts.jar'):
+            def fail(command):
+                if (phase == 'javac' and '--release' in command or
+                        '--file' in command and Path(command[command.index('--file') + 1]).name == phase):
+                    raise subprocess.CalledProcessError(1, command)
+            with self.subTest(phase=phase), self.assertRaises(subprocess.CalledProcessError):
+                self.run_build('darwin', '--game', str(self.game), '--output', str(output), hook=fail)
+            self.assert_previous_mod(custom)
+            self.assert_previous_mod()
+            self.assertEqual(list(output.glob('.build-*')), [])
+        rename = Path.rename
+        for restore_fails in (False, True):
+            def fail_rename(path, target):
+                if path.parent.name.startswith('.build-') and (path.name == self.mod.name or restore_fails and path.name == 'previous'):
+                    raise OSError('custom promotion failure')
+                return rename(path, target)
+            with self.subTest(restore_fails=restore_fails), patch.object(Path, 'rename', fail_rename), self.assertRaises(OSError):
+                self.run_build('darwin', '--game', str(self.game), '--output', str(output))
+            self.assert_previous_mod()
+            if restore_fails:
+                retained = list(output.glob('.build-*/previous'))
+                self.assertEqual(len(retained), 1)
+                self.assert_previous_mod(retained[0])
+            else:
+                self.assert_previous_mod(custom)
+                self.assertEqual(list(output.glob('.build-*')), [])
+
+    def test_custom_output_rejects_leaf_symlinks_files_and_invalid_parents(self):
+        external = self.root / 'external output'
+        external.mkdir()
+        for kind in ('symlink', 'dangling', 'file', 'parent-file', 'destination-symlink', 'destination-file'):
+            output = self.root / kind
+            if kind in ('symlink', 'dangling'):
+                output.symlink_to(external if kind == 'symlink' else self.root / 'absent', target_is_directory=True)
+            elif kind == 'file':
+                output.write_text('untouched')
+            elif kind == 'parent-file':
+                output.write_text('untouched'); output = output / 'child'
+            else:
+                output.mkdir()
+                destination = output / self.mod.name
+                if kind == 'destination-symlink': destination.symlink_to(external, target_is_directory=True)
+                else: destination.write_text('untouched')
+            with self.subTest(kind=kind):
+                code, error, calls = self.run_build('darwin', '--game', str(self.game), '--output', str(output))
+                self.assertEqual(code, 2)
+                self.assertIn('Build output', error)
+                self.assertEqual(len(calls), 1)
+                self.assert_previous_mod()
+                self.assertEqual(list(external.iterdir()), [])
+
+    def test_output_cannot_overlap_inputs_even_through_parent_alias(self):
+        protected = [self.root / name for name in ('src', 'tests', 'tools', 'game', 'jdk')]
+        alias = self.root / 'game alias'; alias.symlink_to(self.game, target_is_directory=True)
+        for output in [*protected, alias / 'nested']:
+            with self.subTest(output=output):
+                before = output.exists()
+                code, error, calls = self.run_build('darwin', '--game', str(self.game), '--output', str(output))
+                self.assertEqual(code, 2)
+                self.assertIn('overlaps input', error)
+                self.assertEqual(output.exists(), before)
+                self.assertEqual(len(calls), 1)
+                self.assert_previous_mod()
+        output = self.root / 'source container'
+        source = output / self.mod.name
+        source.mkdir(parents=True)
+        code, error, _ = self.run_build('darwin', '--game', str(self.game), '--output', str(output), root=source)
+        self.assertEqual(code, 2)
+        self.assertIn('overlaps input', error)
+        self.assertTrue(source.is_dir())
+        game = source / 'game'; game.mkdir()
+        for name in ('projectzomboid.jar', 'ZombieBuddy.jar'): (game / name).touch()
+        code, error, _ = self.run_build('darwin', '--game', str(game), '--output', str(output))
+        self.assertEqual(code, 2)
+        self.assertIn('overlaps input', error)
+        self.assertTrue((game / 'projectzomboid.jar').is_file())
+        self.assert_previous_mod()
+
+    def test_custom_output_allows_safe_parent_alias(self):
+        parent = self.root / 'real parent'
+        parent.mkdir()
+        alias = self.root / 'parent alias'
+        alias.symlink_to(parent, target_is_directory=True)
+        code, error, calls = self.run_build('darwin', '--game', str(self.game), '--output', str(alias / 'candidate'))
+        self.assertEqual(code, 0, error)
+        self.assertTrue((parent / 'candidate' / self.mod.name / '42/mod.info').is_file())
+        jars = [call.args[0] for call in calls if '--create' in call.args[0]]
+        self.assertTrue(all(Path(command[command.index('--file') + 1]).is_relative_to(parent) for command in jars))
+        self.assert_previous_mod()
 
 
 if __name__ == '__main__':

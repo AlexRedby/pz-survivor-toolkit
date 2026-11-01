@@ -118,13 +118,13 @@ class KotlinBuild(unittest.TestCase):
             self.fail('Unexpected external command: ' + repr(command))
         return subprocess.CompletedProcess(command, 0)
 
-    def run_build(self, home=None):
+    def run_build(self, home=None, *args):
         with patch.object(build, 'ROOT', self.root), \
                 patch.object(build.subprocess, 'run', side_effect=self.subprocess), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as error:
             self.stderr = error
             return build.main(['--game', str(self.game), '--jdk', str(self.root / 'jdk'),
-                               '--kotlin-home', str(self.home if home is None else home)])
+                               '--kotlin-home', str(self.home if home is None else home), *args])
 
     def test_missing_or_mismatched_toolchain_fails_before_output_mutation(self):
         for case in ('missing compiler', 'missing runtime', 'compiler mismatch', 'runtime mismatch', 'missing license'):
@@ -151,6 +151,23 @@ class KotlinBuild(unittest.TestCase):
                 self.assertEqual(self.commands[0][-1], '-version')
                 self.assert_previous_output()
 
+    def test_invalid_kotlin_distribution_does_not_create_custom_output_parents(self):
+        home = self.distribution(self.root / 'wrong Kotlin', compiler_version='2.2.0')
+        output = self.root / 'candidate builds/nested'
+        with patch.object(Path, 'mkdir') as mkdir, \
+                patch.object(build.tempfile, 'mkdtemp') as temporary, \
+                self.assertRaises(SystemExit) as failure:
+            self.run_build(home, '--output', str(output))
+        self.assertEqual(failure.exception.code, 2)
+        self.assertIn('Kotlin', self.stderr.getvalue())
+        self.assertIn(str(home), self.stderr.getvalue())
+        mkdir.assert_not_called()
+        temporary.assert_not_called()
+        self.assertFalse(output.parent.exists())
+        self.assertEqual(len(self.commands), 1)
+        self.assertEqual(self.commands[0][-1], '-version')
+        self.assert_previous_output()
+
     def test_toolchain_can_be_selected_from_environment_or_path_without_running_compiler(self):
         parser = argparse.ArgumentParser()
         with patch.dict(os.environ, {'KOTLIN_HOME': str(self.home)}, clear=True), \
@@ -163,6 +180,25 @@ class KotlinBuild(unittest.TestCase):
                 patch.object(build.subprocess, 'run') as run:
             self.assertEqual(build.kotlin_toolchain(None, parser), self.home)
             run.assert_not_called()
+
+    def test_custom_output_cannot_overwrite_kotlin_inputs(self):
+        containing = self.root / 'candidate'
+        nested_home = self.distribution(containing / 'PZToolkitJavaPatches/kotlinc')
+        for home, output in ((self.home, self.home / 'build'), (nested_home, containing)):
+            with self.subTest(output=output):
+                before = self.snapshot(home)
+                self.commands.clear()
+                with patch.object(Path, 'mkdir') as mkdir, \
+                        patch.object(build.tempfile, 'mkdtemp') as temporary, \
+                        self.assertRaises(SystemExit) as failure:
+                    self.run_build(home, '--output', str(output))
+                self.assertEqual(failure.exception.code, 2)
+                self.assertIn('overlaps input', self.stderr.getvalue())
+                mkdir.assert_not_called()
+                temporary.assert_not_called()
+                self.assertEqual(self.snapshot(home), before)
+                self.assertEqual(len(self.commands), 1)
+                self.assert_previous_output()
 
     def test_mixed_build_targets_java25_and_bundles_runtime_only_in_ordinary_jar(self):
         with patch.dict(os.environ, {'KOTLIN_HOME': str(self.root / 'wrong environment distribution')}):

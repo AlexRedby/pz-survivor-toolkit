@@ -115,6 +115,65 @@ class BuildChecks(unittest.TestCase):
         self.assertIn(str(self.game / 'projectzomboid.jar'), classpath)
         self.assertIn(str(self.game / 'ZombieBuddy.jar'), classpath)
 
+    def test_relative_custom_output_keeps_regressions_and_reported_jar_in_that_root(self):
+        output = self.root / 'candidate builds/nested'
+        stale = output / 'test-classes/RemovedHelper.class'
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b'stale class')
+        previous = Path.cwd()
+        try:
+            os.chdir(self.root)
+            self.run_build('--output', 'candidate builds/nested', '--test', 'MediaChecks')
+        finally:
+            os.chdir(previous)
+
+        jar = output / 'PZToolkitJavaPatches/42/media/java/PZToolkitJavaPatches.jar'
+        self.assertEqual(jar.read_bytes(), b'new JAR')
+        self.assertEqual(self.output.getvalue().strip().splitlines()[-1], str(jar))
+        self.assertEqual((output / 'MediaChecks.log').read_text(), self.markers)
+        compilation = next(call.args[0] for call in self.run.call_args_list if '-sourcepath' in call.args[0])
+        classes = Path(compilation[compilation.index('-d') + 1])
+        command = self.java_calls()[0].args[0]
+        classpath = command[command.index('-cp') + 1].split(os.pathsep)
+        self.assertEqual(classpath[0], str(classes))
+        self.assertEqual(classes.parent.parent, output)
+        self.assertNotIn(str(stale.parent), classpath)
+        candidate_jar = Path(next(arg.split('=', 1)[1] for arg in command if arg.startswith('-Dpz.test.patch.jar=')))
+        self.assertTrue(candidate_jar.is_relative_to(output))
+        self.assertIn(str(candidate_jar), classpath)
+        self.assertEqual(self.java_calls()[0].kwargs['cwd'], self.game)
+        self.assertFalse(list(output.glob('.build-*')))
+        self.assertEqual(stale.read_bytes(), b'stale class')
+        self.assertEqual(self.sentinel.read_text(), 'previous Java mod')
+        self.assertEqual([path for path in (self.root / 'build').rglob('*') if path.is_file()], [self.sentinel])
+
+    def test_custom_output_failed_checks_retain_logs_and_both_previous_mods(self):
+        cases = [
+            (subprocess.TimeoutExpired(['java'], 7, output=b'MEDIA_CHECKS_PASS\npartial \xff'), RuntimeError),
+            (subprocess.CompletedProcess(['java'], 1, stdout='MEDIA_CHECKS_PASS'), subprocess.CalledProcessError),
+            (subprocess.CompletedProcess(['java'], 0, stdout='incomplete'), RuntimeError),
+        ]
+        for index, (result, failure) in enumerate(cases):
+            with self.subTest(result=result):
+                output = self.root / 'candidate builds' / str(index)
+                custom_previous = output / 'PZToolkitJavaPatches/previous.txt'
+                custom_previous.parent.mkdir(parents=True)
+                custom_previous.write_text('previous custom mod')
+                with self.assertRaises(failure) as error:
+                    self.run_build('--output', str(output), '--test', 'MediaChecks',
+                                   '--test-timeout', '7', java_result=result)
+                expected = result.stdout if isinstance(result, subprocess.CompletedProcess) else result.output
+                expected = expected if isinstance(expected, bytes) else expected.encode()
+                log = output / 'MediaChecks.log'
+                self.assertEqual(log.read_bytes(), expected)
+                if isinstance(result, subprocess.TimeoutExpired):
+                    self.assertIn(str(log), str(error.exception))
+                self.assertEqual(custom_previous.read_text(), 'previous custom mod')
+                self.assertEqual([path for path in custom_previous.parent.rglob('*') if path.is_file()], [custom_previous])
+                self.assertFalse(list(output.glob('.build-*')))
+                self.assertEqual(self.sentinel.read_text(), 'previous Java mod')
+                self.assertEqual([path for path in (self.root / 'build').rglob('*') if path.is_file()], [self.sentinel])
+
     def test_named_selection_overrides_groups_and_deduplicates(self):
         self.run_build('--check', '--check-video', '--test', 'MediaChecks', '--test', 'AnimalChecks', '--test', 'MediaChecks')
         calls = self.java_calls()
@@ -145,7 +204,8 @@ class BuildChecks(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), 'MEDIA_CHECKS_PASS')
 
     def test_default_and_group_selection_remain_compatible(self):
-        workshop = {'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
+        workshop = {'net.alexredby.pztoolkitjavapatches.DamnLibraryBatteryRecipeChecks',
+                    'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
                     'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks'}
         grouped = [name for name in build.CHECKS if name not in workshop]
         ordinary = [name for name in grouped if not name.endswith('.VideoChecks')]
