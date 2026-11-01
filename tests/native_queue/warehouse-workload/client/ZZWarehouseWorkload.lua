@@ -1,6 +1,6 @@
 -- Fresh menu-Host plus joining client, both exercising the installed live UI.
 local selection=require 'QueueTestSelection'
-if selection.kind~='mp'or(selection.cases[1]~='peer-edits'and selection.cases[1]~='hidden-affinity')then return end
+if selection.kind~='mp'or(selection.cases[1]~='peer-edits'and selection.cases[1]~='hidden-affinity'and selection.cases[1]~='physical-affinity')then return end
 local F=require 'WarehouseWorkloadFixture'
 local U=require 'WarehouseWorkloadUI'
 local N=require 'WarehouseWorkloadNative'
@@ -52,7 +52,7 @@ local function sampleHidden()
  if not R.run or not R.hidden then return end
  local sample=N.hidden(R.run)
  assert(not sample.visible,'observer loot page became visible during native peer actions')
- if R.role=='client1'and R.step~='hidden-loot'then
+ if R.role=='client1'and R.step~='hidden-loot'and not(F.physical and R.step=='personal-quick')then
   assert(sample.nativeBuilds==R.hidden.nativeBuilds,'hidden idle loot rebuilt native details rows')
   assert(sample.rowsPending,'hidden native details lost pending obligation')
  end
@@ -204,7 +204,7 @@ local function tick()
   emit('SETUP',{ids=R.ids});place(R.ids.actorOrigin)
  elseif R.stage=='position'then
   local proof=U.place(R.player,R.placement,N.idle(R.player));if not proof then return end
-  if A then A.configure()end
+  if A then A.configure(F.physical and R.index>2 and'2'or'1')end
   U.configure(R.player,F.modes[R.index]);R.configuredAt=now();R.placementProof=proof;transition('configured')
  elseif R.stage=='configured'then
   if now()-R.configuredAt<300 then return end

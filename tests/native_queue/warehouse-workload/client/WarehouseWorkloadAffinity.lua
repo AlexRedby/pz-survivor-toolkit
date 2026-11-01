@@ -10,9 +10,10 @@ end
 function A.save()
  local out={};for _,name in ipairs(optionNames)do out[name]=option(name):getValue()end;return out
 end
-function A.configure()
- option('transferMethod'):setValue(1);option('transferButtonLayout'):setValue(2)
- assert(CleanUI_getTransferMethod()=='1'and CleanUI_getTransferButtonLayout()=='2','native single-target split options not applied')
+function A.configure(method)
+ method=method or'1';assert(method=='1'or method=='2','unsupported native transfer method')
+ option('transferMethod'):setValue(tonumber(method));option('transferButtonLayout'):setValue(2)
+ assert(CleanUI_getTransferMethod()==method and CleanUI_getTransferButtonLayout()=='2','native split options not applied')
 end
 function A.restore(saved)
  if not saved then return end
@@ -64,15 +65,18 @@ function A.proof(run)
 end
 function A.dispatch(run)
  local p=run.phase;local personal=getPlayerInventory(run.player:getPlayerNum());local loot=getPlayerLoot(run.player:getPlayerNum())
- local target=N.aggregate(run.player);local root=run.player:getInventory()
+ local physicalMode=p.transferMethod~=nil
+ local target=physicalMode and run.state.stores[3]or N.aggregate(run.player);local root=run.player:getInventory()
  assert(personal:getIsVisible()and not loot:getIsVisible(),'personal quick requires visible source and hidden target')
  assert(personal.inventoryPane.inventory==root and loot.inventoryPane.inventory==target,'personal quick source/aggregate binding changed')
- assert(CleanUI_getTransferMethod()=='1'and CleanUI_getTransferButtonLayout()=='2','quick options drifted')
+ assert(CleanUI_getTransferMethod()==(p.transferMethod or'1')and CleanUI_getTransferButtonLayout()=='2','quick options drifted')
  local old,new=candidate(run,p.oldCandidateId),candidate(run,p.newCandidateId)
  local oldCategory,newCategory=category(old),category(new)
  local physicalOld,physicalNew,physicalOldAffinity,physicalNewAffinity=0,0,0,0
- for _,container in ipairs(run.state.stores)do
+ local physicalRows={}
+ for _,container in ipairs(physicalMode and{target}or run.state.stores)do
   for i=0,container:getItems():size()-1 do local item=container:getItems():get(i)
+   if physicalMode then physicalRows[#physicalRows+1]={id=item:getID(),ft=item:getFullType(),rawCategory=category(item)}end
    local a=p.affinityKind=='type'and item:getFullType()==old:getFullType()or p.affinityKind=='category'and category(item)==oldCategory
    local b=p.affinityKind=='type'and item:getFullType()==new:getFullType()or p.affinityKind=='category'and category(item)==newCategory
    if item:getFullType()==old:getFullType()then physicalOld=physicalOld+1 end
@@ -91,9 +95,20 @@ function A.dispatch(run)
   and not old:isEquipped()and not new:isEquipped()and not attached(old)and not attached(new),'affinity candidate protection differs')
  local blocked=not oldAllowed and not newAllowed and not oldEligible and not newEligible
  assert(blocked or oldAllowed and newAllowed and oldEligible and newEligible,'affinity candidates differ in ordinary native eligibility')
- assert(blocked or physicalOldAffinity==0 and physicalNewAffinity==1,'physical stock does not distinguish affinity')
- for i=0,target:getItems():size()-1 do local item=target:getItems():get(i)
-  selected[p.affinityKind=='type'and item:getFullType()or category(item)]=true
+ assert(physicalMode or blocked or physicalOldAffinity==0 and physicalNewAffinity==1,'physical stock does not distinguish affinity')
+ local metadata={};for _,entry in ipairs(p.items or{})do metadata[entry.id]=entry end
+ local destinations=physicalMode and p.transferMethod=='2'and handler.getNearbyTransferContainers(personal)or{target}
+ for _,destination in ipairs(destinations)do
+  if physicalMode then local owned=false;for _,container in ipairs(run.state.stores)do if destination==container then owned=true end end
+   assert(owned,'physical quick discovered a foreign destination')end
+  for i=0,destination:getItems():size()-1 do local item=destination:getItems():get(i)
+   selected[p.affinityKind=='type'and item:getFullType()or category(item)]=true
+   -- Admission may prepare the fixed owned stock during the real callback.
+   -- Include its authority category only in this conservative original-item
+   -- safety guard; observations/admission evidence still use actual raw values.
+   if physicalMode and p.affinityKind=='category'then local entry=assert(metadata[item:getID()],'foreign physical affinity stock')
+    selected[entry.cat]=true end
+  end
  end
  for i=0,root:getItems():size()-1 do local item=root:getItems():get(i)
   if selected[p.affinityKind=='type'and item:getFullType()or category(item)]and handler.canTransferItem(item,target,run.player)then
@@ -114,7 +129,10 @@ function A.dispatch(run)
   assert(owned,'personal quick targeted a foreign endpoint')
  end end
  local details={};for _,item in ipairs(before.items)do details[#details+1]=item.ft..'/'..item.rawCategory end
- assert(count==(blocked and 0 or 1),'personal quick admitted '..count..' candidates; source categories='..oldCategory..'/'..newCategory..'; target='..table.concat(details,','))
+ assert(physicalMode and(count==0 or count==1)or not physicalMode and count==(blocked and 0 or 1),'personal quick admitted '..count..' candidates; source categories='..oldCategory..'/'..newCategory..'; target='..table.concat(details,','))
+ local afterRows={};if physicalMode then for i=0,target:getItems():size()-1 do local item=target:getItems():get(i)
+  afterRows[#afterRows+1]={id=item:getID(),ft=item:getFullType(),rawCategory=category(item)}end
+  table.sort(physicalRows,function(a,b)return a.id<b.id end);table.sort(afterRows,function(a,b)return a.id<b.id end)end
  local proof={installedButton=true,dispatched=true,callback=callbackName,kind=p.affinityKind,source='client1',selectedId=selectedId,
   oldCandidateId=p.oldCandidateId,newCandidateId=p.newCandidateId,physicalOld=physicalOld,physicalNew=physicalNew,
   physicalOldAffinity=physicalOldAffinity,physicalNewAffinity=physicalNewAffinity,
@@ -124,17 +142,19 @@ function A.dispatch(run)
   oldFavorite=old:isFavorite()==true,newFavorite=new:isFavorite()==true,
   oldEquipped=old:isEquipped()==true,newEquipped=new:isEquipped()==true,oldHotbar=attached(old),newHotbar=attached(new),
   targetType=target:getType(),targetOnlyAcceptCategory=target:getOnlyAcceptCategory(),targetCapacity=target:getCapacity(),
+  targetMode=physicalMode and'physical'or nil,physicalBefore=physicalMode and physicalRows or nil,physicalAfter=physicalMode and afterRows or nil,
   oldCategory=oldCategory,newCategory=newCategory,personalVisible=true,hiddenBefore=true,hiddenAfter=true,
   transferMethod=CleanUI_getTransferMethod(),buttonLayout=CleanUI_getTransferButtonLayout(),before=before,after=aggregate(run)}
- run.affinity.dispatch={blocked=blocked,at=getTimestampMs(),frame=run.affinity.frames,proof=proof};return proof
+ run.affinity.dispatch={blocked=physicalMode and count==0 or blocked,physical=physicalMode,at=getTimestampMs(),frame=run.affinity.frames,proof=proof};return proof
 end
 function A.done(run)
  local p=run.phase;local root=run.player:getInventory()
  local dispatch=assert(run.affinity.dispatch,'personal quick has not been dispatched')
- if dispatch.blocked then
+ if dispatch.blocked or dispatch.physical then
   dispatch.proof.completionFrames=run.affinity.frames-dispatch.frame;dispatch.proof.completionMs=getTimestampMs()-dispatch.at
-  assert(root:getItemById(p.oldCandidateId)and root:getItemById(p.newCandidateId),'blocked callback changed candidate endpoints')
-  return dispatch.proof.completionFrames>=3 and dispatch.proof.completionMs>=500 and N.idle(run.player)
+  if dispatch.blocked then assert(root:getItemById(p.oldCandidateId)and root:getItemById(p.newCandidateId),'blocked callback changed candidate endpoints')end
+  local effect=dispatch.blocked or(root:getItemById(p.oldCandidateId)~=nil)~=(root:getItemById(p.newCandidateId)~=nil)
+  return effect and dispatch.proof.completionFrames>=3 and dispatch.proof.completionMs>=500 and N.idle(run.player)
  end
  return (root:getItemById(p.oldCandidateId)~=nil)~=(root:getItemById(p.newCandidateId)~=nil)
 end

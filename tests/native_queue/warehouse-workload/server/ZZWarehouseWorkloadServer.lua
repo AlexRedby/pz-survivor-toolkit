@@ -1,5 +1,5 @@
 local selection=require 'QueueTestSelection'
-if selection.kind~='mp'or(selection.cases[1]~='peer-edits'and selection.cases[1]~='hidden-affinity')or not isServer()then return end
+if selection.kind~='mp'or(selection.cases[1]~='peer-edits'and selection.cases[1]~='hidden-affinity'and selection.cases[1]~='physical-affinity')or not isServer()then return end
 local F=require 'WarehouseWorkloadFixture'
 local players,ready,seen={},{},{}
 local state,step,pending,since,closed,aborting

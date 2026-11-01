@@ -4,9 +4,10 @@ local selection=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
 local Model=require 'PZSurvivorToolkit/ManifestModel'
 local Cleanup=require 'QueueFixtureItemCleanup'
-local affinity=selection.cases[1]=='hidden-affinity'
-local F={module='WarehouseWorkloadTest',case=selection.cases[1],affinity=affinity,
- modes=affinity and{'clean','clean'}or{'clean','vanilla'},
+local physical=selection.cases[1]=='physical-affinity'
+local affinity=selection.cases[1]=='hidden-affinity'or physical
+local F={module='WarehouseWorkloadTest',case=selection.cases[1],affinity=affinity,physical=physical,
+ modes=physical and{'clean','clean','clean','clean'}or affinity and{'clean','clean'}or{'clean','vanilla'},
  steps=affinity and{'initial','peer-replace','personal-quick'}or{'initial','peer-transfer','peer-replace','peer-craft','hidden-loot'}}
 local owner='PZSTWarehouseWorkloadOwner'
 local function array(list)local out={};for i=0,list:size()-1 do out[#out+1]=list:get(i)end;return out end
@@ -146,6 +147,7 @@ function F.seed(s,index)
  p.replacementId=own(s,p,s.players.client2:getInventory(),replacementType,replacementName,'client2')
  if F.affinity then
   p.affinityKind=index%2==1 and'type'or'category'
+  if F.physical then p.transferMethod=index<=2 and'1'or'2'end
   p.oldCandidateId=own(s,p,s.players.client1:getInventory(),'Base.Bandage',nil,'client1')
   p.newCandidateId=own(s,p,s.players.client1:getInventory(),'Base.Screwdriver',nil,'client1')
   local function category(id)

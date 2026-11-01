@@ -14,13 +14,17 @@ from queue_checks.adapters import warehouse_affinity_verify as V
 from tests.test_queue_warehouse_workload import fixture as peer_fixture, find
 
 
-def selection():
-    return dict(suite=A.SUITE, cases=['hidden-affinity'], kind='mp', mode='toolkit', clients=2,
+def selection(case='hidden-affinity'):
+    return dict(suite=A.SUITE, cases=[case], kind='mp', mode='toolkit', clients=2,
                 languages=['EN', 'RU'], mods=list(A.MODS), options={'mp_host': True})
 
 
-def fixture(outcomes=('blocked', 'blocked')):
+def fixture(outcomes=None, case='hidden-affinity'):
     """Produce internally consistent, independent copies of the declared receipts."""
+    physical = case == 'physical-affinity'
+    kinds = ('type', 'category') * (2 if physical else 1)
+    outcomes = outcomes or (('fresh',)*4 if physical else ('blocked',)*2)
+    assert len(outcomes) == len(kinds)
     peer = peer_fixture()
     setup = copy.deepcopy(find(peer, 'server', 'SETUP'))
     descriptors, token = setup['ids'], setup['ids']['token']
@@ -29,7 +33,7 @@ def fixture(outcomes=('blocked', 'blocked')):
 
     def emit(role, event, data):
         row = copy.deepcopy(data)
-        row.update(suite=A.SUITE, case='hidden-affinity', kind='mp', mode='toolkit', role=role, token=token)
+        row.update(suite=A.SUITE, case=case, kind='mp', mode='toolkit', role=role, token=token)
         rows[role].append((event, row))
         return copy.deepcopy(row)
 
@@ -76,7 +80,7 @@ def fixture(outcomes=('blocked', 'blocked')):
         baselines[role]['affinityOptions'] = dict(transferMethod=2, transferButtonLayout=1)
         emit(role, 'BASELINE', baselines[role])
         emit(role, 'SETUP', dict(ids=descriptors))
-    for index, kind in enumerate(('type', 'category'), 1):
+    for index, kind in enumerate(kinds, 1):
         outcome = outcomes[index-1]
         offset = 100 * index
         items = []
@@ -90,13 +94,16 @@ def fixture(outcomes=('blocked', 'blocked')):
                      affinityKind=kind, oldCategory='FirstAid', newCategory='Tool', transferId=offset+1,
                      replacementSourceId=offset+3, replacementId=offset+13, oldCandidateId=offset+14,
                      newCandidateId=offset+15, craftInputId=offset+4, quickId=offset+5)
+        if physical:
+            phase['transferMethod'] = '1' if index <= 2 else '2'
         context = dict(index=index, paneMode='clean', phaseToken=phase['phaseToken'])
         places = {item['id']: item['initialEndpoint'] for item in items}
-        readiness = copy.deepcopy(find(peer, 'server', 'SEED', index=index)['readiness'])
+        template_index = (index-1) % 2 + 1
+        readiness = copy.deepcopy(find(peer, 'server', 'SEED', index=template_index)['readiness'])
         emit('server', 'SEED', dict(context, phase=phase, readiness=readiness,
                                   snapshot=snapshot(phase, places, 'server', 'initial')))
         for role in ('client1', 'client2'):
-            emit(role, 'MODE', dict(context, placement=find(peer, role, 'MODE', index=index)['placement']))
+            emit(role, 'MODE', dict(context, placement=find(peer, role, 'MODE', index=template_index)['placement']))
         replacement_aggregate = None
         for step in V.STEPS:
             current = dict(context, step=step)
@@ -145,6 +152,14 @@ def fixture(outcomes=('blocked', 'blocked')):
                                           before=copy.deepcopy(before), after=copy.deepcopy(before))
                     if outcome == 'blocked':
                         extra['quick'].pop('selectedId')
+                    if physical:
+                        extra['quick'].update(targetMode='physical', targetType='crate', targetCapacity=100,
+                                              targetOnlyAcceptCategory=None, transferMethod=phase['transferMethod'],
+                                              oldEligible=True, newEligible=True, targetOldAllowed=True, targetNewAllowed=True,
+                                              physicalNewAffinity=1 if kind == 'type' else 0,
+                                              physicalBefore=[dict(id=offset+13, ft='Base.Screwdriver', rawCategory='ToolWeapon')],
+                                              physicalAfter=[dict(id=offset+13, ft='Base.Screwdriver',
+                                                                  rawCategory='Tool' if outcome == 'fresh' else 'ToolWeapon')])
                 emit(actor, 'ACTIONS', dict(current, records=records, **extra))
             observed_aggregate = copy.deepcopy(replacement_aggregate) if step == 'peer-replace' or (step == 'personal-quick' and outcome == 'blocked') else aggregate(places)
             for role in ('client1', 'client2'):
@@ -171,27 +186,178 @@ def fixture(outcomes=('blocked', 'blocked')):
         for role in ('client1', 'client2'):
             emit(role, 'RELEASE', dict(context, step='personal-quick', absent=True, receipt=released,
                                       original=baselines[role]['original']))
-    restored = emit('server', 'RESTORED', dict(index=2, removedCrates=12, ownedAbsent=True, ownedRemaining=0,
+    restored = emit('server', 'RESTORED', dict(index=len(kinds), removedCrates=12, ownedAbsent=True, ownedRemaining=0,
                                               originalRootIds=originals, crates=[dict(d, afterIndex=-1) for d in descriptors['crates']],
                                               snapshot=snapshot(None, {}, 'server')))
-    emit('server', 'COMPLETE', dict(phases=2, restored=True))
+    emit('server', 'COMPLETE', dict(phases=len(kinds), restored=True))
     for role in ('client1', 'client2'):
         final = copy.deepcopy(find(peer, role, 'RESTORED'))
         final.update(authority=restored, affinityOptions={name: dict(expected=value, actual=value)
                                                         for name, value in baselines[role]['affinityOptions'].items()})
         emit(role, 'RESTORED', final)
-        emit(role, 'COMPLETE', dict(phases=2, restored=True))
+        emit(role, 'COMPLETE', dict(phases=len(kinds), restored=True))
     # The shared template supplied setup/geometry/options, never effect receipts.
     return rows
 
 
-class WarehouseAffinityTests(unittest.TestCase):
+class WarehousePhysicalAffinityTests(unittest.TestCase):
+    """Synthetic physical receipts test validation, never establish a game pass."""
+
     def result(self, rows):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for role, values in rows.items():
                 (root / f'{role}-launch.log').write_text('\n'.join(A.MARKER + event + ' ' + json.dumps(row) for event, row in values))
-            return A.verify(root, selection(), {})
+            try:
+                return V.verify(root, 'physical-affinity'), None
+            except (KeyError, TypeError, ValueError) as error:
+                return None, str(error)
+
+    def assert_rejected(self, mutation):
+        rows = fixture(case='physical-affinity')
+        mutation(rows)
+        self.assertIsNotNone(self.result(rows)[1])
+
+    def test_four_phase_fresh_effect_and_callback_preparation_brackets(self):
+        result, issue = self.result(fixture(case='physical-affinity'))
+        self.assertIsNone(issue)
+        self.assertEqual(result['phases'], 4)
+        self.assertEqual(result['outcomes'], ['fresh']*4)
+        rows = fixture(case='physical-affinity')
+        for index in range(1, 5):
+            quick = find(rows, 'client1', 'ACTIONS', 'personal-quick', index=index)['quick']
+            quick.pop('targetOnlyAcceptCategory')
+            quick['physicalAfter'].append(dict(id=index*100+15, ft='Base.Screwdriver', rawCategory='Tool'))
+        self.assertIsNone(self.result(rows)[1])
+
+    def test_coherent_baseline_and_stale_effect_audited_before_final_failure(self):
+        for outcomes in (('fresh', 'blocked', 'fresh', 'blocked'), ('stale', 'fresh', 'fresh', 'fresh')):
+            with self.subTest(outcomes=outcomes):
+                result, issue = self.result(fixture(outcomes, case='physical-affinity'))
+                self.assertIsNone(result)
+                self.assertIn('native personal quick affinity outcomes:', issue)
+
+    def test_active_physical_callback_allows_explicit_hidden_destination_refresh(self):
+        rows = fixture(case='physical-affinity')
+        for role in ('client1', 'client2'):
+            for index in range(1, 5):
+                hidden = find(rows, role, 'HIDDEN', 'personal-quick', index=index)
+                hidden['after'].update(nativeBuilds=hidden['before']['nativeBuilds']+1, rowsPending=False)
+        self.assertIsNone(self.result(rows)[1])
+        changes = [
+            lambda r: find(r, 'client1', 'HIDDEN', 'personal-quick')['before'].update(visible=True),
+            lambda r: find(r, 'client2', 'HIDDEN', 'personal-quick')['after'].update(visible=True),
+            lambda r: find(r, 'client1', 'HIDDEN', 'personal-quick')['after'].update(nativeBuilds=1),
+            lambda r: find(r, 'client1', 'HIDDEN', 'personal-quick')['after'].update(nativeBuilds='3'),
+            lambda r: find(r, 'client1', 'HIDDEN', 'personal-quick')['after'].update(rowsPending='false'),
+            lambda r: find(r, 'client1', 'HIDDEN', 'peer-replace')['after'].update(nativeBuilds=3),
+            lambda r: find(r, 'client1', 'HIDDEN', 'initial')['after'].update(rowsPending=False),
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                self.assert_rejected(change)
+
+    def test_binding_modes_options_eligibility_and_completion_guards(self):
+        changes = [
+            lambda q: q.pop('installedButton'), lambda q: q.update(installedButton=False),
+            lambda q: q.pop('callback'), lambda q: q.update(callback='onTransferByCategoryClick'),
+            lambda q: q.update(targetMode='aggregate'), lambda q: q.pop('targetMode'),
+            lambda q: q.update(targetType='proximityInv'), lambda q: q.update(targetCapacity=0),
+            lambda q: q.update(targetOnlyAcceptCategory='Tool'), lambda q: q.update(transferMethod='2'),
+            lambda q: q.update(buttonLayout='1'), lambda q: q.update(oldEligible=False),
+            lambda q: q.update(newEligible=False), lambda q: q.update(targetOldAllowed=False),
+            lambda q: q.update(targetNewAllowed=False), lambda q: q.update(physicalNewEligible=False),
+            lambda q: q.update(physicalOldAllowed=False), lambda q: q.update(oldFavorite=True),
+            lambda q: q.update(newEquipped=True), lambda q: q.update(newHotbar=True),
+            lambda q: q.update(completionFrames=2), lambda q: q.update(completionMs=499),
+            lambda q: q.update(hiddenBefore=False), lambda q: q.update(personalVisible=False),
+            lambda q: q.update(selectedId=114), lambda q: q.update(source='client2'),
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                self.assert_rejected(lambda r: change(find(r, 'client1', 'ACTIONS', 'personal-quick')['quick']))
+        self.assert_rejected(lambda r: find(r, 'client1', 'ACTIONS', 'personal-quick', index=3)['quick'].update(transferMethod='1'))
+
+    def test_physical_stock_and_affinity_are_separate_from_aggregate(self):
+        changes = [
+            lambda q: q.pop('physicalBefore'), lambda q: q.pop('physicalAfter'),
+            lambda q: q.update(physicalBefore=[]), lambda q: q.update(physicalAfter=[]),
+            lambda q: q['physicalBefore'][0].update(id=999),
+            lambda q: q['physicalAfter'][0].update(id=114),
+            lambda q: q['physicalBefore'][0].update(ft='Base.Bandage'),
+            lambda q: q['physicalAfter'][0].update(rawCategory=None),
+            lambda q: q.update(physicalNewAffinity=0),
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                self.assert_rejected(lambda r: change(find(r, 'client1', 'ACTIONS', 'personal-quick')['quick']))
+        rows = fixture(case='physical-affinity')
+        quick = find(rows, 'client1', 'ACTIONS', 'personal-quick', index=2)['quick']
+        for bracket in ('physicalBefore', 'physicalAfter'):
+            quick[bracket][0]['rawCategory'] = 'ForeignCategory'
+        self.assertIn('physical affinity bracket', self.result(rows)[1])
+        # Aggregate stock may still be stale while the selected physical crate
+        # supplies the callback's fresh admission evidence.
+        rows = fixture(case='physical-affinity')
+        quick = find(rows, 'client1', 'ACTIONS', 'personal-quick')['quick']
+        for bracket in ('before', 'after'):
+            aggregate = quick[bracket]
+            aggregate['actualIds'] = [103 if key == 113 else key for key in aggregate['actualIds']]
+            for item in aggregate['items']:
+                if item['id'] == 113:
+                    item.update(id=103, ft='Base.Bandage', rawCategory='FirstAid')
+            aggregate['fresh'] = False
+        self.assertIsNone(self.result(rows)[1])
+
+    def test_exact_actions_identity_metadata_lifecycle_and_cleanup(self):
+        changes = [
+            lambda r: find(r, 'client1', 'ACTIONS', 'personal-quick')['records'][0].update(id=114),
+            lambda r: find(r, 'client1', 'ACTIONS', 'personal-quick')['records'][0].update(destination='crate1'),
+            lambda r: find(r, 'client1', 'ACTIONS', 'personal-quick')['records'][0].update(sourceMethodsUnchanged=False),
+            lambda r: find(r, 'client1', 'ACTIONS', 'personal-quick')['records'].append(dict(
+                type='ISInventoryTransferAction', step='peer-replace', id=114, source='client1', destination='crate1',
+                duration=-1, progressSamples=0, sourceMethodsUnchanged=True)),
+            lambda r: find(r, 'server', 'AUTHORITY', 'personal-quick')['snapshot']['items'][0].update(cat='Changed'),
+            lambda r: find(r, 'client1', 'SNAPSHOT', 'initial')['native']['items'][0].update(rawCategory=None),
+            lambda r: find(r, 'client1', 'SNAPSHOT', 'peer-replace')['native']['items'][0].update(ft='Base.Pencil'),
+            lambda r: find(r, 'client1', 'SNAPSHOT', 'personal-quick')['native']['rootIds']['client1'].append(999),
+            lambda r: find(r, 'server', 'RELEASE', index=4)['removedIds'].pop(),
+            lambda r: find(r, 'server', 'RELEASE')['cleanupJournal'].update(removalCalls=14),
+            lambda r: find(r, 'server', 'RESTORED').update(removedCrates=11),
+            lambda r: find(r, 'client2', 'RESTORED')['affinityOptions']['transferMethod'].update(actual=1),
+            lambda r: find(r, 'server', 'COMPLETE').update(phases=2),
+            lambda r: find(r, 'client2', 'COMPLETE').update(phases=2),
+            lambda r: r['client2'].append(copy.deepcopy(r['client2'][-1])),
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                self.assert_rejected(change)
+
+    def test_blocked_controls_keep_both_candidates_and_queue_no_actions(self):
+        changes = [
+            lambda q: q.update(selectedId=215), lambda q: q.update(targetNewAllowed=False),
+            lambda q: q.update(newEligible=False), lambda q: q.update(completionMs=499),
+            lambda q: q['physicalAfter'][0].update(rawCategory='Tool'),
+        ]
+        for change in changes:
+            rows = fixture(('fresh', 'blocked', 'fresh', 'blocked'), case='physical-affinity')
+            change(find(rows, 'client1', 'ACTIONS', 'personal-quick', index=2)['quick'])
+            issue = self.result(rows)[1]
+            self.assertIsNotNone(issue)
+            self.assertNotIn('native personal quick affinity outcomes:', issue)
+        rows = fixture(('fresh', 'blocked', 'fresh', 'blocked'), case='physical-affinity')
+        find(rows, 'client1', 'ACTIONS', 'personal-quick', index=2)['records'].append(dict(
+            type='ISWalkToTimedAction', step='personal-quick', duration=100, progressSamples=0, sourceMethodsUnchanged=True))
+        self.assertNotIn('native personal quick affinity outcomes:', self.result(rows)[1])
+
+
+class WarehouseAffinityTests(unittest.TestCase):
+    def result(self, rows, case='hidden-affinity'):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for role, values in rows.items():
+                (root / f'{role}-launch.log').write_text('\n'.join(A.MARKER + event + ' ' + json.dumps(row) for event, row in values))
+            return A.verify(root, selection(case), {})
 
     def assert_rejected(self, mutation):
         rows = fixture()

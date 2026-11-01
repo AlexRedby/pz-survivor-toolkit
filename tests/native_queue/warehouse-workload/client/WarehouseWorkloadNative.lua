@@ -164,7 +164,7 @@ end
 function N.reopenReady(run)
  local loot=getPlayerLoot(run.player:getPlayerNum())
  local deadline=holdDeadline(loot)
- local target=run.step=='hidden-loot'and run.state.stores[5]or N.aggregate(run.player)
+ local target=run.phase.transferMethod and run.state.stores[3]or run.step=='hidden-loot'and run.state.stores[5]or N.aggregate(run.player)
  -- Transfer actions hold their physical container while turning. Native
  -- refreshBackpacks honours that hold even after an explicit button click.
  -- Wait hidden for natural expiry instead of cancelling the native hold.
@@ -179,8 +179,8 @@ function N.reopen(run,preOpen)
   and sameIds(preOpen.discoveredSlots,observed.discoveredSlots),'pre-open native aggregate observation missing or changed')
  assert(N.reopenReady(run),'native reopen still held by a transfer container')
  local loot=getPlayerLoot(run.player:getPlayerNum());local before=N.hidden(run);loot:setVisible(true)
- local selectedKind=run.step=='hidden-loot'and'crate5'or'aggregate'
- local target=selectedKind=='crate5'and run.state.stores[5]or N.aggregate(run.player);local button=reopenButton(loot,target)
+ local selectedKind=run.phase.transferMethod and'crate3'or run.step=='hidden-loot'and'crate5'or'aggregate'
+ local target=selectedKind=='crate3'and run.state.stores[3]or selectedKind=='crate5'and run.state.stores[5]or N.aggregate(run.player);local button=reopenButton(loot,target)
  local callback=button.onclick;callback(button.target,button)
  -- Native selectContainer refreshes backpacks: the pool can rebind this button
  -- to another inventory, and BC installs a fresh onclick closure per rebuild.

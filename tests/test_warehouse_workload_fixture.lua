@@ -536,6 +536,20 @@ assert(failed.readiness.client1.waitMs==15001 and failed.readiness.client2.waitM
 -- Hidden-affinity owns a distinct type/category probe cohort. Changed transfers
 -- remain cleanable evidence; the later verifier requires the native aggregate's
 -- rejected eligibility and exact no-effect callback outcome.
+config.cases={'physical-affinity'}
+local physicalF=dofile(fixtureRoot..'shared/WarehouseWorkloadFixture.lua')
+testX=testX+100;local physicalState=physicalF.prepare(players(testX))
+assert(physicalF.physical and #physicalF.modes==4)
+for index=1,4 do
+ local phase=physicalF.seed(physicalState,index)
+ assert(phase.transferMethod==(index<=2 and'1'or'2')and phase.affinityKind==(index%2==1 and'type'or'category'))
+ effect(physicalState,'peer-replace');assert(physicalF.native(physicalState,'peer-replace'))
+ if index%2==1 then move(physicalState,phase.newCandidateId,'crate3')end
+ assert(physicalF.native(physicalState,'personal-quick').affinityOutcome==(index%2==1 and'fresh'or'blocked'))
+ phase.state='personal-quick';local released=physicalF.release(physicalState,index)
+ assert(#released.removedIds==15 and #released.consumedIds==0)
+end
+assert(physicalF.cleanup(physicalState).removedCrates==12)
 config.cases={'hidden-affinity'}
 local affinityF=dofile(fixtureRoot..'shared/WarehouseWorkloadFixture.lua')
 config.cases={'peer-edits'}

@@ -106,3 +106,27 @@ dependency; rejecting doubles exercise the aggregate restriction. They do not
 establish natural Host staleness. A successful native run covers the restricted
 single-target callback with this pack, not nearby transfers, physical mouse
 input, immediate packet/input ordering, other stock types or performance.
+
+## Physical target affinity
+
+Select `--cases physical-affinity` with the same complete-pack Host inputs.
+Four phases use the actual visible personal split buttons: type/category in
+single-target mode, then type/category in nearby mode. The hidden loot page
+selects physical crate3 during initial setup. A peer replaces its Bandage with
+a Screwdriver without changing the count; no target refresh or category/model
+preparation is added after replication.
+
+Receipts record raw physical categories immediately before/after the callback,
+native eligibility for both carried candidates, exact queued/transferred IDs,
+and at least three post-callback draw frames and 500 ms with an idle queue.
+Both methods must deposit only the new Screwdriver candidate. A coherent
+category miss or stale transfer is conserved and fully cleaned up before the
+functional verifier rejects the result; a failing baseline is never a pass.
+Explicit native action refreshes may build hidden rows during this active
+step. This case makes no idle-row or performance claim.
+
+The four-phase contract still requires authoritative and both peer endpoint
+proofs, fifteen exact owned removals per phase, unchanged original inventories,
+restored UI/options/positions and all twelve crates absent. Keep failed
+baselines separate from fresh candidate runs; changing sealed fixture inputs
+requires a fresh preparation.

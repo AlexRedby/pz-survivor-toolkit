@@ -32,6 +32,7 @@ local function container(kind)
  function c:isItemAllowed()return self.allowed~=false end
  function c:getOnlyAcceptCategory()return self.allowed==false and'none'or nil end
  function c:getCapacity()return self.allowed==false and 0 or 100 end
+ function c:hasRoomFor()return true end
  function c:isInCharacterInventory()return false end
  return c
 end
@@ -41,6 +42,7 @@ local function item(id,ft,category,c)
  function value:getFullType()return self.ft end
  function value:getDisplayCategory()return self.category end
  function value:getContainer()return self.container end
+ function value:getUnequippedWeight()return 1 end
  function value:isFavorite()return self.favorite==true end
  function value:isEquipped()return self.equipped==true end
  function value:setDisplayCategory()error('affinity observation must not prepare native categories')end
@@ -66,6 +68,7 @@ local function fixture(kind,fresh)
   return p
  end
  local personal,loot=page(true,root,true),page(false,aggregate,false)
+ loot.backpacks={{inventory=physical}}
  local env=setmetatable({PZAPI={},ISInventoryPage={},
   getText=function(text)return text end,isGamePaused=function()return false end,
   getFileWriter=function()error('fixture options must not persist settings')end,
@@ -74,7 +77,9 @@ local function fixture(kind,fresh)
   getPlayerInventory=function(n)assert(n==0);return personal end,
   getPlayerLoot=function(n)assert(n==0);return loot end,
   getTimestampMs=function()return w.now end,
-  Events={OnPostUIDraw={Add=function(fn)w.frames[#w.frames+1]=fn end}}},{__index=_G})
+  Events={OnPostUIDraw={Add=function(fn)w.frames[#w.frames+1]=fn end}},
+  ISInventoryTransferAction={new=function(_,who,value,from,to)assert(who==player and from==root and to==physical);return {item=value}end},
+  ISTimedActionQueue={add=function(action)w.captures[#w.captures+1]={items={action.item},target=physical}end}},{__index=_G})
  load(modOptionsSource,env,'PZAPI/ModOptions.lua')
  local options=env.PZAPI.ModOptions:create('CleanUI')
  local method=options:addComboBox('transferMethod','method');method:addItem('single');method:addItem('nearby',true)
@@ -91,7 +96,7 @@ local function fixture(kind,fresh)
  personal.transferByNameButton=button(personal.onTransferByNameClick)
  personal.transferByCategoryButton=button(personal.onTransferByCategoryClick)
  function personal.inventoryPane:transferItemsByWeight(values,target)
-  assert(self==personal.inventoryPane and target==aggregate,'actual CleanUI handler used another admission target')
+  assert(self==personal.inventoryPane and(target==aggregate or target==physical),'actual CleanUI handler used another admission target')
   local admitted={};for _,value in ipairs(values)do admitted[#admitted+1]=value end
   w.captures[#w.captures+1]={items=admitted,target=target}
  end
@@ -125,6 +130,20 @@ local function reject(f,pattern)
  local ok,problem=pcall(f);assert(not ok,'invalid affinity input accepted')
  if pattern then assert(tostring(problem):find(pattern,1,true),'unexpected rejection: '..tostring(problem))end
 end
+for _,method in ipairs({'1','2'})do for _,kind in ipairs({'type','category'})do
+ local w=fixture(kind,true);w.run.phase.transferMethod=method;w.A.configure(method)
+ w.run.phase.items={{id=w.newStock.id,cat='Tool'}}
+ w.loot.inventoryPane.inventory=w.physical;w.newStock.category='NativeTool'
+ local proof=w.A.dispatch(w.run)
+ assert(proof.targetMode=='physical'and proof.oldEligible and proof.newEligible and proof.targetCapacity==100
+  and proof.physicalBefore[1].id==w.newStock.id and proof.physicalAfter[1].rawCategory=='NativeTool')
+ assert((kind=='type'and proof.selectedId==w.new.id and #w.captures==1)
+  or(kind=='category'and proof.selectedId==nil and #w.captures==0),'physical callback admission differs')
+ assert(not w.A.done(w.run),'physical callback bypassed post-callback settling')
+ if kind=='type'then table.remove(w.root.values,2)end
+ w.now=1500;w.frame();w.frame();w.frame()
+ assert(w.A.done(w.run)and proof.completionFrames==3 and proof.completionMs==500)
+end end
 for _,kind in ipairs({'type','category'})do for _,fresh in ipairs({true,false})do
  local blocked=fixture(kind,fresh);blocked.aggregate.allowed=false
  local receipt=blocked.A.dispatch(blocked.run)
