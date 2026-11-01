@@ -18,20 +18,22 @@ REQUIRED = {'ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit', 'Furnitu
 
 def definitions():
     return {'loot-demand': {'status': 'ready', 'clients': 1, 'default_mods': sorted(REQUIRED),
-        'cases': [dict(id='lifecycle', producer='fixture', capability='effect', kinds=['sp', 'mp'],
-                       modes=['toolkit'], languages=['EN'])]}}
+        'cases': [dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'],
+                       modes=['toolkit'], languages=['EN']) for case in ('lifecycle', 'persist-seed', 'persist-reload')]}}
 
 
 def validate(s):
     o = s.get('options', {})
-    if (s.get('cases') != ['lifecycle'] or s.get('kind') not in ('sp', 'mp')
+    if (s.get('cases') not in (['lifecycle'], ['persist-seed'], ['persist-reload']) or s.get('kind') not in ('sp', 'mp')
             or s.get('mode') != 'toolkit' or s.get('clients') != 1 or s.get('languages') != ['EN']
             or not REQUIRED <= set(s.get('mods', [])) or MOD in s['mods']
             or s.get('resources', {}).get('exclusive') is not True
             or o.get('loot_demand_experiment') is not True or o.get('preload_toolkit_fonts') is not True
             or (s['kind'] == 'mp') != (o.get('mp_host') is True)
-            or any(o.get(k) for k in ('world_template', 'seed_run', 'startup_connection'))):
-        raise ValueError('Loot demand requires explicit fresh exclusive SP/menu Host lifecycle with the selected pack')
+            or any(o.get(k) for k in ('seed_run', 'startup_connection'))):
+        raise ValueError('Loot demand requires explicit exclusive SP/menu Host with the selected pack')
+    if bool(o.get('world_template')) != (s['cases'] == ['persist-reload']):
+        raise ValueError('Only persist-reload requires a sealed world_template')
 
 
 def sources(project, selection):
@@ -71,6 +73,13 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         for side, name in [('client', 'ZZStartup.lua'), ('server', 'ZZStartupServer.lua')]:
             (lua / side).mkdir(parents=True, exist_ok=True)
             shutil.copy2(project / 'tests/native_queue/startup' / side / name, lua / side / name)
+        if selection['cases'] == ['persist-reload'] and selection['kind'] == 'sp':
+            starter = lua / 'client/ZZStartup.lua'
+            text = starter.read_text()
+            anchor = "  getWorld():setGameMode('Sandbox');getWorld():setWorld('QueueStartup');getWorld():setMap('Muldraugh, KY')"
+            if text.count(anchor) != 1:
+                raise ValueError('Common SP starter changed')
+            starter.write_text(text.replace(anchor, "  if config.cases[1]=='persist-reload' then MainScreen.continueLatestSave('Sandbox','QueueStartup');return end"))
         for side in ('client', 'server', 'shared'):
             (lua / side).mkdir(parents=True, exist_ok=True)
             for path in sorted((base / side).glob('*.lua')):
@@ -92,11 +101,11 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     optimizer_profile.stage(project, output, game, jdk, selection, runtime)
     (output / 'loot-demand-inputs.json').write_text(json.dumps({'test_only': True, 'sources': hashes,
         'furniture_sources': furniture_inputs,
-        'limits': ['Synthetic containers with native lifecycle methods, not driving or full save/restart.']}, indent=2) + '\n')
+        'limits': ['Synthetic native containers, not driving. persist-reload checks stopped-world IDs/native saved types/nesting; other cases do not establish restart safety.']}, indent=2) + '\n')
 
 
 def complete(selection, role, text):
-    return role == 'client1' and len(re.findall(re.escape(PREFIX) + r'COMPLETE lifecycle(?:\s|$)', text)) == 1
+    return role == 'client1' and len(re.findall(re.escape(PREFIX) + 'COMPLETE ' + re.escape(selection['cases'][0]) + r'(?:\s|$)', text)) == 1
 
 
 def verify(root, selection, catalog):
@@ -107,13 +116,19 @@ def verify(root, selection, catalog):
     for label, text in [('client', client), ('authority', authority)]:
         if '[LOOT_DEMAND] INSTALLED isolated=true' not in text or PREFIX + 'FAIL ' in text:
             issues.append(label + ': missing activation or fixture failed')
-    for case in ('bin', 'dumpster', 'existing-items', 'destroy-fill', 'empty-trash'):
+    case = selection['cases'][0]
+    expected = [] if case == 'persist-reload' else ['bin', 'dumpster', 'existing-items', 'destroy-fill', 'empty-trash']
+    if case != 'lifecycle':
+        expected.append(case)
+    if case == 'persist-reload':
+        expected.append('native-moveable-roundtrip')
+    for case in expected:
         if len(re.findall(re.escape(PREFIX + 'PASS ' + case) + r'(?:\s|$)', authority)) != 1:
             issues.append('Missing/duplicate authority case: ' + case)
-    if selection['kind'] == 'mp' and len(re.findall(re.escape(PREFIX + 'PASS native-request') + r'(?:\s|$)', authority)) != 1:
+    if selection['kind'] == 'mp' and selection['cases'] != ['persist-reload'] and len(re.findall(re.escape(PREFIX + 'PASS native-request') + r'(?:\s|$)', authority)) != 1:
         issues.append('Missing/duplicate native Host content exchange')
     if not complete(selection, 'client1', client):
         issues.append('Missing/duplicate completion')
-    return {'issues': issues, 'outcomes': [dict(actor='client1', case='lifecycle',
+    return {'issues': issues, 'outcomes': [dict(actor='client1', case=selection['cases'][0],
         status='failed' if issues else 'passed', reason='; '.join(issues))],
-        'evidence': {'limits': ['Synthetic native containers; no driving gain, full save restart, two-client race or FPP move acceptance.']}}
+        'evidence': {'limits': ['Synthetic native containers; persist-reload alone covers stopped-world contents. No driving gain, two-client race or FPP move acceptance.']}}

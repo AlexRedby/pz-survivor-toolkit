@@ -15,7 +15,7 @@ end
 local function same(container,saved)
  local now=identities(container)
  for id,name in pairs(saved) do check(now[id]==name,'changed/lost item '..tostring(id));now[id]=nil end
- check(next(now)==nil,'unexpected additional items')
+ for _ in pairs(now) do error('loot-demand: unexpected additional items') end
 end
 function B.run(player)
  check(not isClient() and lootDemandInstalled(),'authority hook required')
