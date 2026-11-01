@@ -35,14 +35,20 @@ public final class CleanUIFoodAge {
     public static final class Scope {
         private final boolean candidate;
         private final String target;
+        private final String resolved;
         private boolean claimed;
-        private Scope(String target) { this.target = target; this.candidate = target != null; }
+        private Scope(String target, String resolved) {
+            this.target = target;
+            this.resolved = resolved;
+            this.candidate = target != null;
+        }
     }
 
     /** Each nested load, including unrelated loads, temporarily owns its own compiler scope. */
     public static Scope begin(String file, boolean supported) {
         Scope previous = LOADING.get();
-        LOADING.set(new Scope(candidateTarget(file, supported)));
+        Scope candidate = candidateScope(file, supported);
+        LOADING.set(candidate != null ? candidate : new Scope(null, null));
         return previous;
     }
 
@@ -51,7 +57,7 @@ public final class CleanUIFoodAge {
         else LOADING.set(previous);
     }
 
-    private static String candidateTarget(String file, boolean supported) {
+    private static Scope candidateScope(String file, boolean supported) {
         if (!supported || file == null) return null;
         String normalized = file.replace('\\', '/');
         String target;
@@ -64,8 +70,9 @@ public final class CleanUIFoodAge {
             ChooseGameInfo.Mod mod = ChooseGameInfo.getModDetails("CleanUI");
             if (mod == null || mod.getVersionDir() == null) return null;
             Path expected = Path.of(mod.getVersionDir()).resolve(target);
-            Path resolved = Path.of(files.getString(normalized));
-            return Files.isRegularFile(expected) && Files.isSameFile(expected, resolved) ? target : null;
+            String resolved = files.getString(normalized);
+            return Files.isRegularFile(expected) && Files.isSameFile(expected, Path.of(resolved))
+                ? new Scope(target, resolved) : null;
         } catch (IOException | RuntimeException error) {
             return null;
         }
@@ -147,7 +154,7 @@ public final class CleanUIFoodAge {
     public static Reader compilerInput(Reader reader, String name, boolean supported) throws IOException {
         Scope scope = LOADING.get();
         if (!supported || scope == null || !scope.candidate || scope.claimed
-                || !scope.target.substring(scope.target.lastIndexOf('/') + 1).equals(name)) return reader;
+                || !CompilerInputName.matches(name, scope.target.substring(scope.target.lastIndexOf('/') + 1), scope.resolved)) return reader;
         scope.claimed = true;
         CompilerReaderInput.Captured captured = CompilerReaderInput.capture(reader, MAX_SOURCE_CHARS);
         String original = captured.getText();

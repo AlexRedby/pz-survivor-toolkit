@@ -1,6 +1,7 @@
 """Opt-in native book control bank: exact source, real Panel gesture and authority effects."""
 import copy
 import json
+import math
 import os
 import subprocess
 import zipfile
@@ -9,7 +10,16 @@ import re
 import shutil
 
 from .. import report
-from .tv_controls import MODS, _number
+from .tv_controls import MODS, _number as _base_number
+
+
+def _number(value):
+    # JSON integers may exceed the float range used by math.isfinite.
+    try:
+        return _base_number(value)
+    except OverflowError:
+        return False
+
 
 SOURCES = ('root', 'worn-bag', 'world')
 CONTROLS = ('header-cancel', 'reader-child-cancel', 'move-equip', 'move-volume')
@@ -18,6 +28,46 @@ CAPACITY_CASES = tuple(source + '.' + control + '-capacity-lost' for source in S
 FAVORITE_CASES = ('world.header-cancel-favorite', 'world.move-volume-favorite')
 CASES += CAPACITY_CASES + FAVORITE_CASES
 PREFIX = '[BOOK_CONTROLS] '
+
+CLOCK_INFO = dict(schema=1, timer='System.nanoTime', units='ms', monotonic=True, relativeOrigin=True,
+                  source='disposable-jvm-probe', functionClass='net.alexredby.bookcontrolsprobe.Main$MonotonicClock', nativeClock=True)
+PERFORMANCE_SCOPE = dict(measurementScope='isolated-entrypoint-bank', completeEditMeasured=False, frameLoadMeasured=False,
+                         firstUseScope='first-sample-of-this-bank-not-cold-process',
+                         tailEstimate='20-samples-p95-order19-p99-sample-maximum', timerOverhead='included-not-subtracted')
+ASSESSMENT_POLICY = dict(assessmentPolicy='correctness-work-complexity-and-impact', performanceAssessment='not-assessed')
+
+
+def clock_errors(value):
+    if (not isinstance(value, dict) or set(value) != set(CLOCK_INFO)
+            or type(value.get('schema')) is not int or value != CLOCK_INFO
+            or any(value.get(k) is not True for k in ('monotonic', 'relativeOrigin', 'nativeClock'))):
+        return ['Missing source-bound monotonic millisecond clock evidence']
+    return []
+
+
+def handler_timing_errors(ui, precise, enabled):
+    value = ui.get('handlerTiming') if isinstance(ui, dict) else None
+    if not precise:
+        return ['Unexpected unbound handler timing'] if value is not None else []
+    if not enabled:
+        return ['Queue-off control claimed an editor handler'] if value is not None else []
+    fixed = dict(timer='System.nanoTime', units='ms', scope='actual-list-handler-work', samples=1, replayed=False,
+                 includesHumanPause=False, includesRender=False, includesAsyncSettlement=False,
+                 warmState='after-readonly-bank-and-diagnostic-decision', completeEditQualified=False, timerOverhead='included-not-subtracted')
+    times = ('pressMs', 'releaseMs', 'handlerWorkMs', 'pressStartedMs', 'pressFinishedMs', 'releaseStartedMs', 'releaseFinishedMs')
+    fields = set(fixed) | set(times)
+    if (not isinstance(value, dict) or set(value) != fields or type(value.get('samples')) is not int
+            or any(value.get(k) != v for k, v in fixed.items())
+            or any(value.get(k) is not False for k in ('replayed', 'includesHumanPause', 'includesRender', 'includesAsyncSettlement', 'completeEditQualified'))
+            or any(not _number(value.get(k)) or value[k] < 0 for k in times)):
+        return ['Malformed single-use actual handler timing or unsupported latency claim']
+    if (not value['pressStartedMs'] <= value['pressFinishedMs'] <= value['releaseStartedMs'] <= value['releaseFinishedMs']
+            or not math.isclose(value['pressMs'], value['pressFinishedMs'] - value['pressStartedMs'], rel_tol=1e-12, abs_tol=1e-6)
+            or not math.isclose(value['releaseMs'], value['releaseFinishedMs'] - value['releaseStartedMs'], rel_tol=1e-12, abs_tol=1e-6)):
+        return ['Handler durations differ from their monotonic time intervals']
+    if not math.isclose(value['handlerWorkMs'], value['pressMs'] + value['releaseMs'], rel_tol=1e-12, abs_tol=1e-9):
+        return ['Handler work total differs from the single press/release observations']
+    return []
 
 
 def _action_identity(value):
@@ -70,6 +120,11 @@ def definitions():
 
 
 def validate(selection):
+    if type(selection.get('options', {}).get('precise_timing', False)) is not bool:
+        raise ValueError('precise_timing must be boolean')
+    requests = selection.get('options', {}).get('require_native_requests', False)
+    if type(requests) is not bool:
+        raise ValueError('require_native_requests must be boolean')
     flag = selection.get('options', {}).get('require_native_bindings', False)
     if type(flag) is not bool:
         raise ValueError('require_native_bindings must be boolean')
@@ -244,6 +299,177 @@ def _nonfinite_case_errors(row, ids, enabled):
     return errors
 
 
+def native_request_errors(row, case, selection, ids):
+    """Local request evidence never substitutes for the independent effect audit."""
+    if selection.get('options', {}).get('require_native_requests') is not True:
+        return []
+    errors = []
+    source, control_name = case.split('.', 1)
+    negative = (selection['mode'] == 'native' or selection['kind'] != 'mp'
+                or source == 'root' or base_control(control_name) == 'return-child-cancel')
+    failed = capacity_case(control_name)
+    candidates = [r for r in row.get('records', []) if r.get('role') == ('front' if source == 'root' else 'return')]
+    if not candidates:
+        return ['Missing explicit native request positive/negative observation target']
+    positive = False
+    phases = {'pending', 'started', 'perform-begin', 'perform-finish', 'terminal'}
+    sample_fields = {'case', 'sequence', 'actor', 'item', 'itemType', 'token', 'actionRef',
+                     'nativeRef', 'point', 'at', 'current', 'transaction', 'observation', 'watchPending'}
+    state_fields = {'phase', 'boundary', 'sourceExact', 'ambiguous', 'paired', 'nativeHandle',
+                    'wireAmbiguous', 'transaction', 'id', 'fullType', 'currentHandle'}
+    def transaction(value):
+        return _number(value) and value == int(value) and -128 <= value <= 127 and value != 0
+    for record in candidates:
+        samples = record.get('requestStates')
+        if not isinstance(samples, list) or not 2 <= len(samples) <= 16:
+            errors.append('Missing bounded native request observation history'); continue
+        points, seen, anchored, paired, last_at, request_id = set(), set(), False, False, -1, None
+        submitted_binding = None
+        for sample in samples:
+            if not isinstance(sample, dict) or set(sample) != sample_fields:
+                errors.append('Malformed native request observation'); continue
+            point, at = sample.get('point'), sample.get('at')
+            value, token, native_ref = sample['transaction'], sample['token'], sample['nativeRef']
+            if (value is not False and not (_number(value) and value == int(value) and -128 <= value <= 127)
+                    or token is not False and not (_number(token) and token == int(token) and token > 0)
+                    or native_ref is not False and not _same_action(native_ref, record.get('nativeRef'))):
+                errors.append('Malformed scalar native request cursor/token/native identity'); continue
+
+            if (sample.get('case') != case or sample.get('sequence') != record.get('sequence')
+                    or type(sample.get('sequence')) is not int or not _number(sample.get('actor')) or sample.get('actor') != ids['actor']
+                    or not _number(sample.get('item')) or sample.get('item') != ids['front']['id'] or sample.get('itemType') != ids['front']['type']
+                    or (type(sample.get('token')) is bool) != (type(record.get('token')) is bool)
+                    or sample.get('token') != record.get('token') or not _same_action(sample.get('actionRef'), record.get('actionRef'))
+                    or point not in phases or not _number(at) or at < last_at
+                    or type(sample.get('current')) is not bool or type(sample.get('watchPending')) is not bool):
+                errors.append('Native request case/actor/item/token/action/time binding differs'); continue
+            last_at = at; points.add(point)
+            key = copy.deepcopy(sample); key.pop('at', None)
+            key['actionRef'] = _action_identity(key.get('actionRef'))
+            key['nativeRef'] = _action_identity(key.get('nativeRef')) if key.get('nativeRef') else False
+            try: signature = json.dumps(key, sort_keys=True, allow_nan=False)
+            except (ValueError, TypeError):
+                errors.append('Non-scalar native request evidence'); continue
+            if signature in seen: errors.append('Duplicate native request transition')
+            seen.add(signature)
+            state = sample.get('observation')
+            if state is False:
+                continue
+            if negative:
+                errors.append('Private request state appeared on an absent-owner control'); continue
+            if (not isinstance(state, dict) or set(state) - state_fields
+                    or any(type(v) not in (str, int, float, bool) for v in state.values())
+                    or state.get('phase') not in ('before', 'submitted', 'failed') or state.get('boundary') != 'start'
+                    or not _number(state.get('id')) or state.get('id') != ids['front']['id'] or state.get('fullType') != ids['front']['type']
+                    or any(type(state.get(k)) is not bool for k in ('sourceExact', 'paired', 'nativeHandle', 'wireAmbiguous', 'currentHandle'))
+                    or 'ambiguous' in state and type(state['ambiguous']) is not bool
+                    or not _same_action(sample.get('nativeRef'), record.get('nativeRef'))):
+                errors.append('Malformed or foreign private native request state'); continue
+            if state['phase'] == 'submitted':
+                binding = tuple(state.get(k) for k in ('boundary', 'sourceExact', 'id', 'fullType', 'nativeHandle', 'ambiguous', 'transaction'))
+                if submitted_binding is not None and binding != submitted_binding:
+                    errors.append('Contradictory singleton submitted request history')
+                submitted_binding = binding
+            value = state.get('transaction')
+            if value is not None and value != 0 and not transaction(value):
+                errors.append('Native request transaction is not a signed nonzero byte'); continue
+            if transaction(value):
+                if request_id is not None and value != request_id:
+                    errors.append('Singleton native request changed transaction')
+                request_id = value
+                if value != record.get('transaction'):
+                    errors.append('Native request transaction differs from native transfer record')
+                if sample.get('transaction') != value and not (point in ('perform-finish', 'terminal') and sample.get('transaction') == 0):
+                    errors.append('Native request transaction differs from current/historical cursor')
+            exact = (state.get('phase') == 'submitted' and state.get('sourceExact') is True
+                     and state.get('nativeHandle') is True and state.get('wireAmbiguous') is False
+                     and state.get('ambiguous') is False and transaction(value))
+            if exact and state.get('currentHandle') is True and sample.get('current') is True and state.get('paired') is False:
+                anchored = True
+            if state.get('paired') is True:
+                # Pairing links an attempt, including a stopped/rejected attempt;
+                # it never asserts that a perform succeeded or an item arrived.
+                debt = row.get('blockedReturn')
+                rejected_stop = (failed and point == 'terminal' and row.get('returnSucceeded') is False
+                    and isinstance(debt, dict) and debt.get('reason') == 'server' and debt.get('state') == 'blocked'
+                    and debt.get('itemId') == ids['front']['id'] and debt.get('itemType') == ids['front']['type']
+                    and row.get('server', {}).get('books', {}).get('front', {}).get('container') == 'root')
+                if not exact or not anchored or (not paired and point != 'perform-finish' and not rejected_stop):
+                    errors.append('Paired native request lacks its prior exact current owner or supported terminal attempt')
+                else: paired = True
+            elif paired:
+                errors.append('Paired singleton request reverted to unpaired evidence')
+        if not {'pending', 'terminal'} <= points:
+            errors.append('Native request pending/terminal absence controls missing')
+        if not negative and not failed and record.get('started') is True:
+            if not anchored or not paired:
+                errors.append('Started earned return lacks exact native request capture and pairing')
+            else: positive = True
+    if not negative and not failed and not positive:
+        errors.append('No qualified singleton earned-return native request was observed')
+    return errors
+
+
+def native_transfer_stop_errors(row, case, selection, ids):
+    if selection.get('options', {}).get('require_native_requests') is not True:
+        return []
+    errors, rejected = [], False
+    entry_fields = {'case', 'sequence', 'actor', 'item', 'itemType', 'actionRef', 'nativeRef',
+                    'transaction', 'at', 'point', 'current', 'nativePresent', 'endpointsExact', 'nativeSource',
+                    'done', 'rejected', 'observation', 'guarded'}
+    exit_fields = {'case', 'sequence', 'actor', 'item', 'itemType', 'actionRef', 'nativeRef',
+                   'transaction', 'at', 'point', 'returned', 'sameNative'}
+    for record in row.get('records', []):
+        entry, returned = record.get('nativeStopEntry'), record.get('nativeStopReturned')
+        if entry is None and returned is None:
+            continue
+        if (selection['kind'] != 'mp' or record.get('role') not in ('pickup', 'return')
+                or not isinstance(entry, dict) or set(entry) != entry_fields
+                or not isinstance(returned, dict) or set(returned) != exit_fields):
+            errors.append('Missing paired exact native transfer stop boundaries'); continue
+        for value in (entry, returned):
+            if (value['case'] != case or type(value['sequence']) is not int or value['sequence'] != record.get('sequence')
+                    or not _number(value['actor']) or value['actor'] != ids['actor']
+                    or not _number(value['item']) or value['item'] != ids['front']['id'] or value['itemType'] != ids['front']['type']
+                    or not _same_action(value['actionRef'], record.get('actionRef'))
+                    or not _same_action(value['nativeRef'], record.get('nativeRef'))
+                    or not _number(value['at'])):
+                errors.append('Native transfer stop case/actor/item/action binding differs')
+        tx = entry['transaction']
+        if (not _number(tx) or tx != int(tx) or tx == 0 or not -128 <= tx <= 127 or tx != record.get('transaction')
+                or entry['point'] != 'entry' or returned['point'] != 'returned'
+                or any(entry[k] is not True for k in ('current', 'nativePresent', 'endpointsExact', 'nativeSource'))
+                or type(entry['done']) is not bool or type(entry['rejected']) is not bool or type(entry['guarded']) is not bool
+                or returned['returned'] is not True or returned['sameNative'] is not True
+                or not _number(returned['transaction']) or returned['transaction'] != (0 if entry['guarded'] else tx)
+                or not _number(entry['at']) or not _number(returned['at']) or entry['at'] > returned['at']
+                or not _number(record.get('startedAt')) or entry['at'] < record['startedAt']
+                or not _number(row.get('finishedAt')) or returned['at'] > row['finishedAt']
+                or record.get('transactionDone') is not entry['done'] or record.get('transactionRejected') is not entry['rejected']):
+            errors.append('Native stop is not the live unchanged transaction before cleanup')
+        state = entry['observation']
+        if selection['mode'] == 'native':
+            if entry['guarded'] is not False or returned['transaction'] != tx:
+                errors.append('Native stop control used guarded Toolkit cleanup')
+            if state is not False: errors.append('Native stop control acquired a private request owner')
+        elif record.get('role') == 'return':
+            if (entry['guarded'] is not True or not isinstance(state, dict) or set(state) != {'phase', 'boundary', 'sourceExact', 'ambiguous', 'paired',
+                    'nativeHandle', 'wireAmbiguous', 'transaction', 'id', 'fullType', 'currentHandle'}
+                    or state.get('phase') != 'submitted' or state.get('boundary') != 'start'
+                    or any(state.get(k) is not True for k in ('sourceExact', 'nativeHandle', 'currentHandle'))
+                    or any(state.get(k) is not False for k in ('wireAmbiguous', 'ambiguous', 'paired'))
+                    or not _number(state.get('transaction')) or state['transaction'] != tx
+                    or not _number(state.get('id')) or state['id'] != ids['front']['id'] or state.get('fullType') != ids['front']['type']):
+                errors.append('Native stop lacks its unreused exact current request object')
+        elif state is not False:
+            errors.append('Pickup stop acquired an earned-return request owner')
+        if record.get('role') == 'return' and entry['rejected'] is True and entry['done'] is False:
+            rejected = True
+    if selection['kind'] == 'mp' and capacity_case(case.split('.', 1)[1]) and not rejected:
+        errors.append('Capacity loss lacks native rejection before transaction removal')
+    return errors
+
+
 def _record_errors(record, kind, case, actor, acks, capacity_lost=False):
     errors = []
     role = record.get('role')
@@ -288,25 +514,53 @@ def _record_errors(record, kind, case, actor, acks, capacity_lost=False):
     return errors
 
 
-def performance_errors(value, case, enabled, probe=False):
+def performance_errors(value, case, enabled, probe=False, precise=False):
     errors = []
-    if (not isinstance(value, dict) or value.get('case') != case or value.get('timer') != 'getTimestampMs'
-            or value.get('units') != 'ms' or value.get('coarse') is not True or value.get('readOnly') is not True
+    timer, coarse = ('System.nanoTime', False) if precise else ('getTimestampMs', True)
+    if (not isinstance(value, dict) or value.get('case') != case or value.get('timer') != timer
+            or value.get('units') != 'ms' or value.get('coarse') is not coarse or value.get('readOnly') is not True
             or value.get('queueEnabled') is not enabled or type(value.get('queueCount')) is not int or not 1 <= value['queueCount'] <= 32
             or value.get('warmup') != 3 or value.get('samples') != 20 or not isinstance(value.get('limits'), str)):
-        return ['Missing bounded read-only coarse-clock performance evidence']
+        return ['Missing bounded read-only performance evidence for the selected clock']
+    if precise:
+        errors.extend(clock_errors(value.get('clockEvidence')))
+    elif 'clockEvidence' in value:
+        errors.append('Unbound monotonic clock evidence in a coarse-clock bank')
+    modern = any(k in value for k in ASSESSMENT_POLICY)
+    if modern and any(value.get(k) != v for k, v in ASSESSMENT_POLICY.items()):
+        errors.append('Measurements cannot assert design acceptance or rejection')
+    if modern and 'budgetBasis' in value:
+        errors.append('Current observations must not restore a numerical acceptance gate')
+    scoped = modern or precise or any(k in value for k in PERFORMANCE_SCOPE)
+    if not modern and (scoped or 'budgetBasis' in value) and value.get('budgetBasis') != 'initial-engineering-targets':
+        errors.append('Historical timing-reference provenance differs')
+    if scoped and (any(value.get(k) != v for k, v in PERFORMANCE_SCOPE.items())
+                   or any(value.get(k) is not False for k in ('completeEditMeasured', 'frameLoadMeasured'))):
+        errors.append('Isolated call timings cannot qualify complete edit or frame load')
+    if value.get('completeEditQualified', False) is not False:
+        errors.append('Isolated call bank claimed complete edit qualification')
     metrics = value.get('metrics', [])
     expected_names = ['evaluateMove', 'evaluateCancel', 'previewMove', 'previewCancel', 'panelUpdate']
     if not isinstance(metrics, list) or [m.get('name') for m in metrics if isinstance(m, dict)] != expected_names:
         return ['Missing/duplicate actual Policy/Panel timing entrypoints']
     for index, metric in enumerate(metrics):
         kind = 'authoritative' if index < 2 else 'advisory'
+        scope = 'policy-decision-call' if index < 2 else 'policy-preview-call' if index < 4 else 'panel-update-only'
+        if scoped and metric.get('workScope') != scope:
+            errors.append('Timing entrypoint work scope differs: ' + expected_names[index])
         raw = metric.get('rawMs')
-        budgets = (2, 4) if index < 2 else (1, 2)
+        legacy_reference = (2, 4) if index < 2 else (1, 2)
         if (metric.get('kind') != kind or not _number(metric.get('firstUseMs')) or metric['firstUseMs'] < 0
+                or any(not _number(metric.get(k)) for k in ('p95Ms', 'p99Ms'))
                 or not isinstance(raw, list) or len(raw) != 20 or any(not _number(v) or v < 0 for v in raw)
-                or (metric.get('p95BudgetMs'), metric.get('p99BudgetMs')) != budgets):
-            errors.append('Malformed raw timings/warmup separation/frozen budget: ' + expected_names[index]); continue
+                ):
+            errors.append('Malformed raw timings/warmup separation: ' + expected_names[index]); continue
+        if modern:
+            if any(k in metric for k in ('p95BudgetMs', 'p99BudgetMs', 'passed')):
+                errors.append('Current measurement claimed a numerical pass/fail: ' + expected_names[index])
+        elif (any(not _number(metric.get(k)) for k in ('p95BudgetMs', 'p99BudgetMs'))
+                or (metric.get('p95BudgetMs'), metric.get('p99BudgetMs')) != legacy_reference):
+            errors.append('Malformed historical reference fields: ' + expected_names[index])
         first, last = metric.get('firstDecision'), metric.get('lastDecision')
         if index < 4:
             valid_observations = all(isinstance(observation, dict) and set(observation) == {'allowed', 'reason', 'mode'}
@@ -322,24 +576,26 @@ def performance_errors(value, case, enabled, probe=False):
                 or first is not False or last is not False or metric.get('decisionClass') != 'not-decision'):
             errors.append('Panel update incorrectly claims an edit decision')
         ordered = sorted(raw); p95, p99 = ordered[18], ordered[19]
-        if metric.get('p95Ms') != p95 or metric.get('p99Ms') != p99 or metric.get('passed') is not (p95 <= budgets[0] and p99 <= budgets[1]):
-            errors.append('Timing quantile or pass claim differs from raw samples: ' + expected_names[index])
-        if p95 > budgets[0] or p99 > budgets[1]:
-            errors.append('Frozen performance budget exceeded: ' + expected_names[index])
+        if metric.get('p95Ms') != p95 or metric.get('p99Ms') != p99:
+            errors.append('Timing quantile differs from raw samples: ' + expected_names[index])
+        # Preserve the integrity of old data without retaining its acceptance policy.
+        if not modern and metric.get('passed') is not (p95 <= legacy_reference[0] and p99 <= legacy_reference[1]):
+            errors.append('Historical numerical comparison differs from raw samples: ' + expected_names[index])
     actual_allowed = all(isinstance(metric.get('firstDecision'), dict) and metric['firstDecision'].get('allowed') is True
         and metric.get('decisionStable') is True and metric.get('decisionClass') == 'allowed' for metric in metrics[:2])
-    actual_timing_passed = all(metric.get('passed') is True and metric.get('decisionStable') is True for metric in metrics)
+    historical_numerical_match = all(metric.get('passed') is True and metric.get('decisionStable') is True for metric in metrics)
+    expected_claim = False if modern else enabled and actual_allowed and historical_numerical_match
     if (value.get('pathClass') != ('toolkit-observed-decisions' if enabled else 'nativeoff-denial-baseline')
             or value.get('authorityAllowed') is not actual_allowed
-            or value.get('positiveTimingClaim') is not (enabled and actual_allowed and actual_timing_passed)):
+            or value.get('positiveTimingClaim') is not expected_claim):
         errors.append('Timing path/positive claim differs from actual scalar decision observations')
     if probe and enabled and not actual_allowed:
         denied = ', '.join(metric.get('name', '?') + ':' + str(metric.get('firstDecision', {}).get('reason'))
                            for metric in metrics[:2] if isinstance(metric.get('firstDecision'), dict) and metric['firstDecision'].get('allowed') is not True)
-        errors.append('Intended Toolkit32 authority edit denied; no positive timing qualification: ' + denied)
+        errors.append('Intended Toolkit32 authority edit denied: ' + denied)
     if not probe:
         bounded = value.get('probe32')
-        errors.extend('32-member probe: ' + reason for reason in performance_errors(bounded, case, enabled, True))
+        errors.extend('32-member probe: ' + reason for reason in performance_errors(bounded, case, enabled, True, precise))
         if isinstance(bounded, dict):
             temporary = bounded.get('temporary')
             if (bounded.get('queueCount') != 32 or bounded.get('originalQueueCount') != value.get('queueCount')
@@ -366,7 +622,10 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         keep = enabled and control == 'return-child-cancel'
         ids, boundary, records = row['ids'], row['boundary'], row['records']
         errors.extend(_nonfinite_case_errors(row, ids, enabled))
-        errors.extend(performance_errors(row.get('performance'), case, enabled))
+        errors.extend(native_request_errors(row, case, selection, ids))
+        errors.extend(native_transfer_stop_errors(row, case, selection, ids))
+        errors.extend(performance_errors(row.get('performance'), case, enabled, precise=selection.get('options', {}).get('precise_timing') is True))
+        errors.extend(handler_timing_errors(boundary.get('ui'), selection.get('options', {}).get('precise_timing') is True, enabled))
         if isinstance(row.get('performance'), dict) and row['performance'].get('queueCount') != len(boundary.get('queue', [])):
             errors.append('Timing queue shape differs from the real edit boundary')
         spacing = row.get('tickSpacingMs')
@@ -599,6 +858,38 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
     return errors
 
 
+def performance_observations(rows):
+    observations, handlers = [], []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        outer = row.get('performance')
+        if not isinstance(outer, dict):
+            continue
+        for scope, bank in (('natural', outer), ('probe32', outer.get('probe32'))):
+            if not isinstance(bank, dict) or not isinstance(bank.get('metrics'), list):
+                continue
+            for metric in bank['metrics']:
+                if not isinstance(metric, dict):
+                    continue
+                raw = metric.get('rawMs')
+                valid = isinstance(raw, list) and bool(raw) and all(_number(v) and v >= 0 for v in raw)
+                entry = dict(case=row.get('id'), scope=scope, metric=metric.get('name'), queueCount=bank.get('queueCount'),
+                             timer=bank.get('timer'), validSamples=valid)
+                if valid:
+                    ordered = sorted(raw)
+                    entry.update(samples=len(raw), minMs=ordered[0], medianMs=ordered[(len(raw)-1)//2]/2 + ordered[len(raw)//2]/2, maxMs=ordered[-1])
+                    for key in ('firstUseMs', 'p95Ms', 'p99Ms'):
+                        if _number(metric.get(key)): entry[key] = metric[key]
+                observations.append(entry)
+        boundary = row.get('boundary')
+        ui = boundary.get('ui') if isinstance(boundary, dict) else None
+        if isinstance(ui, dict) and isinstance(ui.get('handlerTiming'), dict):
+            handlers.append(dict(case=row.get('id'), measurement=ui['handlerTiming']))
+    return dict(ASSESSMENT_POLICY, observations=observations, handlers=handlers,
+                runtimeImpact='not-established', historicalThresholds='not-an-acceptance-criterion')
+
+
 def native_binding_errors(value, extended=False):
     if not isinstance(value, dict):
         return ['Missing native binding-loop source/environment evidence']
@@ -612,7 +903,7 @@ def native_binding_errors(value, extended=False):
 
 
 def verify(root, selection, catalog):
-    root = Path(root); issues, outcomes = [], []
+    root = Path(root); issues, outcomes, rows = [], [], []
     try:
         validate(selection)
         text = (root / 'client1-launch.log').read_text(errors='replace')
@@ -625,6 +916,14 @@ def verify(root, selection, catalog):
                 or len(final) != 1 or final[0].get('cases') != list(CASES) or final[0].get('performed') != len(CASES)
                 or final[0].get('failed') != 0 or final[0].get('skipped') != 0 or any(r.get('event') == 'fatal' for r in events)):
             issues.append('Missing complete ordered book-controls qualification bank or functional denials remain')
+        if selection.get('options', {}).get('precise_timing') is True:
+            if len(setup) != 1:
+                issues.append('Monotonic timing setup missing')
+            else:
+                issues.extend(clock_errors(setup[0].get('timingClock')))
+        if selection.get('options', {}).get('require_native_requests') is True:
+            if len(setup) != 1 or setup[0].get('nativeRequestsObserved') is not True:
+                issues.append('Native request diagnostics were not source-bound at setup')
         if selection.get('options', {}).get('require_native_bindings') is True:
             observed = setup[0].get('nativeBindings') if len(setup) == 1 else None
             issues.extend(native_binding_errors(observed, selection.get('options', {}).get('require_extended_native_bindings') is True))
@@ -652,6 +951,22 @@ def verify(root, selection, catalog):
                 baselines[i] if i < len(baselines) else None, verified[i] if i < len(verified) else None,
                 [r for r in admissions if r.get('case') == case], [r for r in boundaries if r.get('case') == case], [r for r in drains if r.get('case') == case], [r for r in acks if r.get('case') == case], next((r for r in capacities if r.get('case') == case), None),
                 [r for r in stop_rows if r.get('case') == case])
+            if selection.get('options', {}).get('require_native_requests') is True:
+                observed = [r for r in raw(text, 'NATIVE_REQUEST') if r.get('case') == case]
+                expected_requests = [sample for record in row.get('records', []) for sample in record.get('requestStates', [])]
+                if len(observed) != len(expected_requests):
+                    errors.append('Raw native request observation count differs')
+                for record in row.get('records', []):
+                    if [sample for sample in observed if sample.get('sequence') == record.get('sequence')] != record.get('requestStates', []):
+                        errors.append('Raw native request observations differ from their exact owner record')
+            if selection.get('options', {}).get('require_native_requests') is True:
+                for marker, field in (('TRANSFER_STOP_ENTRY', 'nativeStopEntry'), ('TRANSFER_STOP_RETURNED', 'nativeStopReturned')):
+                    actual = [r for r in raw(text, marker) if r.get('case') == case]
+                    expected_stops = [r[field] for r in row.get('records', []) if field in r]
+                    if len(actual) != len(expected_stops) or any(value not in actual for value in expected_stops):
+                        errors.append('Raw native transfer stop boundaries differ from exact records')
+                    if any(r.get('case') not in CASES for r in raw(text, marker)):
+                        errors.append('Foreign native transfer stop case')
             gap_rows = [r for r in raw(text, 'REPLICA_GAP') if r.get('case') == case]
             converged = [r for r in raw(text, 'REPLICA_CONVERGED') if r.get('case') == case]
             expected_gaps = row.get('replicaGaps', [])
@@ -675,7 +990,10 @@ def verify(root, selection, catalog):
         if not complete(selection, 'client1', text): issues.append('Missing unique diagnostic-bank completion')
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         issues.append('Book controls verifier ' + type(error).__name__ + ': ' + str(error))
-    return dict(issues=issues, outcomes=outcomes, evidence={'limits': [
+    return dict(issues=issues, outcomes=outcomes, evidence={'performance': performance_observations(rows), 'limits': [
         'Programmatic real widget hit tests and handlers with an injected drag-threshold state; no physical pointer or rendering claim.',
+        'Policy timings cover isolated calls; panelUpdate excludes hover rebuilds. Durations and 20-sample quantiles are diagnostic observations, not design acceptance criteria or complete input/frame cost.',
+        'Optional monotonic handler timings observe one actual press/release pair after the diagnostic call bank, without replay; they exclude human pause, rendering and asynchronous settlement.',
+        'Performance remains not-assessed until correctness, useful-work cost, complexity, scaling and actual runtime impact are reviewed; a functional pass is not performance approval.',
         'Root singleton cross has no fabricated header; bag/world exercise actual operation/reader/optional-return controls. Four after-edit capacity failures retain an exact visible optional-return obligation, then explicitly Keep the item. Queue-off controls retain native rejected-return/tail-reset behavior.',
         'World normal/capacity books are nonfavorite to isolate eligible return; separate favorite-world SP no-effect/Host native-success probes preserve native protection. No magazine/comic or older-build claim.']})

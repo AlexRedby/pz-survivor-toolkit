@@ -60,6 +60,12 @@ def validate(mod_root: Path = MOD_ROOT) -> list[str]:
         source = bootstrap.read_text(encoding="utf-8")
         if not source.strip():
             errors.append("bootstrap file must not be empty")
+    # Existing Windows checkouts can retain CRLF after pulling new Git attributes.
+    # Never publish bytes that invalidate the runtime's exact-source compiler gates.
+    for path in sorted(mod_root.rglob("*.lua")):
+        if path.is_file() and b"\r\n" in path.read_bytes():
+            errors.append(f"owned Lua source must use LF line endings: {path.relative_to(mod_root.parent)}; "
+                          "convert this file to LF before packaging (preserve local edits)")
     return errors
 
 

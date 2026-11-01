@@ -52,6 +52,13 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - Refresh ingredient, disassembly, repair, smelting and wear-preview tags after native script reload or deferred input resolution, including changes that keep the same recipe lists and counts. Retain batching within each operation; unavailable native revision metadata permits operation-local cache reuse only.
 - Reuse recipe catalogue reads within each inventory grouping, tag rendering, filter, tag-menu and distribution-planning pass, reducing repeated work in large visible stacks. Keep item categories, freshness, damage, retention and custom tags live for each physical item; refresh recipe reads on the next operation.
 
+- Expose a fresh native-object match in explicit transfer diagnostics so tests can distinguish a live request from historical transaction data. Add paired native-stop probes before rejected transfers are removed; queue execution and edit permissions stay unchanged.
+- Remove one temporary Lua result table from every common cancel/move decision, preserving callback results, errors, nested contexts and all source checks. This allocation reduction does not establish that live timing budgets pass.
+
+### 0.1.328
+
+- Preserve native request observations when Host replaces the carried Java item instance while retaining its original queue member. Reuse the existing exact-ID/type detached-member proof and fresh source checks without changing native arguments, transfers or queue permissions.
+
 ### 0.1.327
 
 - Pair earned-return source observations only with their captured native transaction object and current actor request. Decline missing, replaced, nested or reused-ID evidence without changing native execution or editing permissions.
@@ -1529,6 +1536,15 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.80
+
+- Refresh the exact queue Policy source fingerprint after its temporary-result allocation reduction, preserving the existing compiler eligibility checks and fallback behavior.
+
+### 0.1.79
+
+- Fix CleanUI food-age correction and action-queue compiler binding on Windows. Accept the native compiler label from the verified provider, including backslash and mixed-separator paths, without admitting foreign same-basename paths or changing reader ownership and source validation.
+- Keep owned Lua sources at LF line endings on checkout so Windows Git settings cannot disable exact-source compiler bindings. Packaging rejects leftover CRLF sources in older checkouts without changing local files or the previous publication.
 
 ### 0.1.78
 

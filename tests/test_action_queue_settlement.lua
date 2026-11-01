@@ -2642,6 +2642,77 @@ local function returnExecutionFixture(client,unearned,carried)
     end]],'@fixture/ActionQueuePolicy.lua'))()
     return s
 end
+-- Exercise the real private request admission callback, not a replacement
+-- Settlement observer. This seam models only the before-call receipt getters:
+-- it cannot claim a Java receipt or establish submission/transaction authority.
+do
+    local path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueItemEditAdapters.lua'
+    local source
+    if NativeReadText then source=NativeReadText(path)
+    else local file=assert(io.open(path));source=file:read('*a');file:close()end
+    source=source:gsub('\r','')
+    local memberSource=assert(source:match('(function Adapters.matchesTransferMember%(action,member%).-\nend)'))
+    local memberFactory=assert(loadstring('local Adapters={}; '..memberSource..'\nreturn Adapters.matchesTransferMember',
+        '@fixture/ActionQueueItemEditAdapters.lua'))
+    local intercept=assert(loadstring([[return function(original,captured)
+        return function(action,guard,before,after)
+            captured.action,captured.guard,captured.before,captured.after=action,guard,before,after
+            return original(action,guard,before,after)
+        end
+    end]],'@fixture/ActionQueueTransferRequests.lua'))()
+    for _,change in ipairs({'same','old-proxy','wrong-id','wrong-type','foreign-container','consumed','duplicate',
+        'sp-old-proxy','module-replaced','checker-replaced','getter-consumed','getter-duplicate'})do
+        local s=returnExecutionFixture(change~='sp-old-proxy');local action=s.pendingReturn
+        local captured={};s.requests.prepare=intercept(s.requests.prepare,captured)
+        local memberMatches=memberFactory()
+        PZSurvivorToolkit.ActionQueueItemEditAdapters={matchesTransferMember=memberMatches}
+        s.queue.current,s.queue.queue=action,{action,s.tail}
+        assert(s.settlement.prepareReturnExecution(action,s.executionGuard),'request fixture failed its real earned-owner preparation')
+        assert(captured.action==action and type(captured.before)=='function'and type(captured.after)=='function'
+            and s.requests.pending[s.player]==action,'test seam did not delegate the real private request preparation')
+        local live=action.item
+        local member=change=='same'and live or s.item(live:getID(),nil)
+        if change=='wrong-id'then member.id=live:getID()+1
+        elseif change=='wrong-type'then member.fullType='Base.Other'
+        elseif change=='foreign-container'then member.container=s.source
+        elseif change=='consumed'then live.consumed=true
+        elseif change=='duplicate'then s.source.items[live:getID()]=s.item(live:getID(),s.source)end
+        local group=action.queueList[1];local items=group.items;items[1]=member
+        local memberValid=change~='wrong-id'and change~='wrong-type'and change~='foreign-container'and change~='sp-old-proxy'
+        assert(memberMatches(action,member)==memberValid,change..': source-owned Host member binding changed')
+        action.action={}
+        local receipt={getSource=function()return s.root end,getDestination=function()return s.source end,
+            getItems=function()return items end,getBoundary=function()return 'start'end}
+        if change=='module-replaced'or change=='checker-replaced'then
+            assert(captured.guard(action)and captured.before(action,receipt),'alias checker binding was never established')
+            if change=='module-replaced'then PZSurvivorToolkit.ActionQueueItemEditAdapters={matchesTransferMember=memberMatches}
+            else PZSurvivorToolkit.ActionQueueItemEditAdapters.matchesTransferMember=memberFactory()end
+        elseif change=='getter-consumed'or change=='getter-duplicate'then
+            local originalType=member.getFullType
+            member.getFullType=function(self)
+                if change=='getter-consumed'then live.consumed=true
+                else s.source.items[live:getID()]=s.item(live:getID(),s.source)end
+                return originalType(self)
+            end
+        end
+        assert(captured.guard(action),'actual request guard lost its prepared current owner')
+        local request=captured.before(action,receipt)
+        local observed=s.settlement.nativeRequestState(action)
+        local accepted=change=='same'or change=='old-proxy'
+        if accepted then
+            assert(request and request.sourceExact==true and observed and observed.phase=='before'and observed.sourceExact==true,
+                change..': supported Host singleton member lost the actual private native request observation')
+        else
+            assert((not request or request.sourceExact~=true)and(not observed or observed.sourceExact~=true),
+                change..': unsupported member or changed physical source acquired exact request evidence')
+        end
+        assert(action.item==live and action.queueList[1]==group and group.items==items and items[1]==member
+            and s.root.items[live:getID()]==live and s.queue.queue[1]==action and s.queue.queue[2]==s.tail and s.counts()==0,
+            change..': observing request admission changed native members, effects or independent work')
+        assert(not observed or observed.nativeHandle==false and observed.paired==false,
+            'a before-call receipt double fabricated native transaction authority')
+    end
+end
 -- Candidate-shaped work without a private earned loan must not inspect the
 -- suffix or invoke an action guard, even for large queues. Queue bounds also
 -- reject earned candidates before membership or inventory lookup.

@@ -1,0 +1,2 @@
+# Runtime compiler source hashes require byte-stable Lua inputs on every platform.
+PZSurvivorToolkit/**/*.lua text eol=lf

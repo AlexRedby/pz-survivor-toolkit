@@ -10,12 +10,44 @@ import se.krka.kahlua.stdlib.BaseLib;
 import se.krka.kahlua.stdlib.TableLib;
 import se.krka.kahlua.vm.JavaFunction;
 import se.krka.kahlua.vm.KahluaTable;
+import se.krka.kahlua.vm.LuaCallFrame;
 import se.krka.kahlua.vm.LuaClosure;
 import zombie.Lua.LuaManager;
 import zombie.characters.CharacterTimedActions.LuaTimedActionNew;
 
 /** Observe the unchanged native stop after its Lua cleanup, before engine removal. */
 public final class Main {
+    /** Disposable measurement clock; no game state or native initialization. */
+    public static final class MonotonicClock implements JavaFunction {
+        private static final long ORIGIN_NANOS = System.nanoTime();
+        private static final MonotonicClock INSTANCE = new MonotonicClock();
+        private MonotonicClock() {}
+
+        @Override public int call(LuaCallFrame frame, int arguments) {
+            // Subtract before converting to double, preserving short interval precision.
+            return frame.push((System.nanoTime() - ORIGIN_NANOS) / 1_000_000.0);
+        }
+    }
+
+    /** Shared identity also makes the actual Lua callback directly testable. */
+    public static JavaFunction timingClock() { return MonotonicClock.INSTANCE; }
+
+    /** Safe to exercise in a standalone Kahlua VM without touching LuaManager. */
+    public static void installTimingClock(KahluaTable environment) {
+        environment.rawset("bookControlsMonotonicMs", timingClock());
+        Object callback = environment.rawget("bookControlsMonotonicMs");
+        KahluaTable info = new J2SEPlatform().newTable();
+        info.rawset("schema", 1.0);
+        info.rawset("timer", "System.nanoTime");
+        info.rawset("units", "ms");
+        info.rawset("monotonic", true);
+        info.rawset("relativeOrigin", true);
+        info.rawset("source", "disposable-jvm-probe");
+        info.rawset("functionClass", callback.getClass().getName());
+        info.rawset("nativeClock", callback == timingClock() && callback.getClass() == MonotonicClock.class);
+        environment.rawset("bookControlsTimingClockInfo", info);
+    }
+
     public static void stopped(LuaTimedActionNew nativeAction, Throwable failure) {
         if (LuaManager.env == null || nativeAction == null) return;
         var action = nativeAction.getTable();
@@ -25,6 +57,18 @@ public final class Main {
         Object[] result = LuaManager.caller.pcall(LuaManager.thread, observer, action, nativeAction, failure == null);
         if (result.length == 0 || !Boolean.TRUE.equals(result[0]))
             System.err.println("[QUEUE_TEST] FAIL book-controls-stop-observer rejected native stop evidence");
+    }
+
+    /** Before Lua cleanup can remove the exact native transfer transaction. */
+    public static void transferStop(LuaTimedActionNew nativeAction, String phase, Throwable failure) {
+        if (LuaManager.env == null || nativeAction == null) return;
+        var action = nativeAction.getTable();
+        if (action == null || !"ISInventoryTransferAction".equals(action.rawget("Type"))) return;
+        Object observer = LuaManager.env.rawget("bookControlsNativeTransferStop");
+        if (observer == null) return;
+        Object[] result = LuaManager.caller.pcall(LuaManager.thread, observer, action, nativeAction, phase, failure == null);
+        if (result.length == 0 || !Boolean.TRUE.equals(result[0]))
+            System.err.println("[QUEUE_TEST] FAIL book-controls-transfer-stop-observer rejected native stop evidence");
     }
 
     private static Object own(Object value, String key) {
@@ -60,6 +104,7 @@ public final class Main {
     }
     public static void bindings() {
         if (!(LuaManager.env instanceof KahluaTableImpl env)) return;
+        installTimingClock(env);
         var platform = new J2SEPlatform();
         KahluaTable result = platform.newTable();
         try {
@@ -93,8 +138,16 @@ public final class Main {
 
     @Patch(className="zombie.characters.CharacterTimedActions.LuaTimedActionNew", methodName="stop", warmUp=true, strictMatch=true)
     public static class Stopped {
+        @Patch.OnEnter
+        public static void enter(@Patch.This LuaTimedActionNew action) {
+            try { Main.transferStop(action, "entry", null); }
+            catch (Throwable failure) {
+                System.err.println("[QUEUE_TEST] FAIL book-controls-transfer-stop-observer entry failed");
+            }
+        }
         @Patch.OnExit(onThrowable=Throwable.class, suppress=Throwable.class)
         public static void exit(@Patch.This LuaTimedActionNew action, @Patch.Thrown Throwable failure) {
+            Main.transferStop(action, "returned", failure);
             Main.stopped(action, failure);
         }
     }

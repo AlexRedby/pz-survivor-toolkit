@@ -359,7 +359,7 @@ require = function(module)
     elseif module == 'TimedActions/WMI_PatchWashClothing' then id, branch = 'WashFix', 'shared/'
     elseif module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then
         local path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'
-        local source=read(path):gsub('\nreturn Intent','\nIntent.fixtureState=state\nreturn Intent')
+        local source=read(path):gsub('\nreturn Intent','\nIntent.fixtureState=state\nIntent.fixtureStates=states\nIntent.fixtureClear=clear\nreturn Intent')
         return assert(loadstring(source,'@'..path))()
     elseif module == 'PZSurvivorToolkit/ActionQueueLifecycle' then
         if PZSurvivorToolkit.ActionQueueLifecycle then return PZSurvivorToolkit.ActionQueueLifecycle end
@@ -3601,12 +3601,13 @@ do
         -- Actual native pickup outcome plus an admission refusal must fence only
         -- P4's matching idle return until Keep. Other P4 returns still execute.
         local fixtureIndependent=assert(loadstring([[return function()return true end]],'@fixture/ActionQueuePolicy.lua'))()
-        for _,fenceMode in ipairs({'active','restoring','keep-before-idle','keep-before-first-idle','disabled','foreign-checker'})do
+        for _,fenceMode in ipairs({'active','no-prior-intent','restoring','keep-before-idle','keep-before-first-idle','disabled','foreign-checker'})do
         local savedExecution,savedIndependent=PZSurvivorToolkit.ActionQueueExecution,actualPolicy.returnFailureIndependent
         local savedActions,savedOnline,savedRootExists=player.getCharacterActions,player.getOnlineID,inventory.isExistYet
         local savedBagInventory=tidyBagOwner.getInventory
         tidyBagOwner.getInventory=function()return tidyBag end
         local first,second,firstOwner=tidyTasks()
+        if fenceMode=='no-prior-intent'then intent.fixtureClear(player)end
         inventory.isExistYet=function()return true end
         first.getIsCraftingConsumed=function()return false end;first.getDisplayName=first.getName
         local scope=assert(compat.fixtureRegistries[2][player])
@@ -3655,13 +3656,16 @@ do
         QueueBlockedP4Fixture.nanItem=first
         local savedFence=settlement.returnRestorationBlocked
         local foreignCalls=0
+        if fenceMode=='no-prior-intent'then
+            assert(intent.fixtureStates[player]==nil,'automatic native borrowing unexpectedly created explicit Intent state')
+        end
         if fenceMode=='disabled'then enabled=false
         elseif fenceMode=='foreign-checker'then settlement.returnRestorationBlocked=function()foreignCalls=foreignCalls+1;error('foreign fence must not run')end end
         tickTidy();tickTidy()
         local retry=assert(QueueBlockedP4Fixture.retry,'actual P4 must construct the observed failed-capacity retry')
         assert(retry.maxTime~=retry.maxTime,'fixture must retain native capacity-zero NaN timing metadata')
         local unrelated=assert(findReturn(second),'unrelated P4 restoration must remain native')
-        if fenceMode=='active'or fenceMode=='restoring'or fenceMode:match('^keep%-before')then
+        if fenceMode=='active'or fenceMode=='no-prior-intent'or fenceMode=='restoring'or fenceMode:match('^keep%-before')then
             assert(not findReturn(first),'P4 idle restoration must not replay an undecided failed return')
             unrelated:perform();tickTidy();tickTidy()
             assert(first.container==inventory and second.container==tidyBag,'fence changed an unrelated native restoration effect')

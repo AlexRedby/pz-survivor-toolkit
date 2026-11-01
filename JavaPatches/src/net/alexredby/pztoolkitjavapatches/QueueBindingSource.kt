@@ -22,7 +22,11 @@ internal object QueueBindingSource {
             get() = "media/lua/client/PZSurvivorToolkit/$compilerName"
     }
 
-    class Scope internal constructor(internal val module: Module?, internal val file: String?) {
+    class Scope internal constructor(
+        internal val module: Module?,
+        internal val file: String?,
+        internal val resolved: String?,
+    ) {
         internal var claimed = false
     }
 
@@ -38,11 +42,11 @@ internal object QueueBindingSource {
         val module =
             if (supported && normalized != null)
                 Module.entries.firstOrNull {
-                    (normalized == it.target || normalized.endsWith("/" + it.target)) &&
-                        provider(it, normalized)
+                    normalized == it.target || normalized.endsWith("/" + it.target)
                 }
             else null
-        loading.set(Scope(module, normalized))
+        val resolved = if (module != null) provider(module, normalized!!) else null
+        loading.set(Scope(module.takeIf { resolved != null }, normalized, resolved))
         return previous
     }
 
@@ -51,28 +55,30 @@ internal object QueueBindingSource {
         if (previous == null) loading.remove() else loading.set(previous)
     }
 
-    private fun provider(module: Module, file: String): Boolean =
+    private fun provider(module: Module, file: String): String? =
         try {
             val files = ZomboidFileSystem.instance
-            if (files.ignoreActiveFileMap.get() == true || !files.modIDs.contains(MOD_ID)) false
+            if (files.ignoreActiveFileMap.get() == true || !files.modIDs.contains(MOD_ID)) null
             else {
                 val version = ChooseGameInfo.getModDetails(MOD_ID)?.versionDir
                 val active = files.activeFileMap[module.target.lowercase(Locale.ENGLISH)]
-                if (version == null || active == null) false
+                if (version == null || active == null) null
                 else {
                     val expected = Path.of(version).resolve(module.target)
                     val selected = Path.of(active)
-                    val resolved = Path.of(files.getString(file))
-                    Files.isRegularFile(expected) &&
-                        Files.isRegularFile(selected) &&
-                        Files.isSameFile(expected, selected) &&
-                        Files.isSameFile(expected, resolved)
+                    val resolved = files.getString(file)
+                    if (
+                        Files.isRegularFile(expected) &&
+                            Files.isRegularFile(selected) &&
+                            Files.isSameFile(expected, selected) &&
+                            Files.isSameFile(expected, Path.of(resolved))
+                    ) resolved else null
                 }
             }
         } catch (_: IOException) {
-            false
+            null
         } catch (_: RuntimeException) {
-            false
+            null
         }
 
     /**
@@ -89,12 +95,12 @@ internal object QueueBindingSource {
                 scope == null ||
                 module == null ||
                 scope.claimed ||
-                name != module.compilerName
+                !CompilerInputName.matches(name, module.compilerName, scope.resolved)
         )
             return Prepared(reader, null, null)
         scope.claimed = true
         // Recheck native selection in case callbacks changed it since RunLua entry.
-        if (!provider(module, scope.file!!)) return Prepared(reader, null, null)
+        if (provider(module, scope.file!!) == null) return Prepared(reader, null, null)
         val captured = CompilerReaderInput.capture(reader, MAX_SOURCE_CHARS)
         return Prepared(captured.reader, captured.text, module)
     }
