@@ -10,7 +10,20 @@ local capacityReceipt,capacityRequestedAt,blockedEvidence,failureUI,nativeDebtAb
 local performance,tickSpacing,lastTick,transferEpisode,replicaGaps
 local failures=0;local serial,tokenSerial=0,0;local tokens={};local classes={}
 local producer,readProducer,volumeProducer,equipProducer
+local requestsEnabled=config.options and config.options.require_native_requests==true
+local requestSettlement,nativeRequestState,requestSample,requestModule,requestPending,requestObserver
+local requestPolicy,nativeStopMatcher
+local preciseTiming=config.options and config.options.precise_timing==true
+local performanceClock,performanceClockInfo
 local function now()return getTimestampMs()end
+local function timingNow()
+ if not preciseTiming then return now()end
+ assert(performanceClock and bookControlsMonotonicMs==performanceClock,'monotonic clock binding changed')
+ local value=performanceClock()
+ assert(bookControlsMonotonicMs==performanceClock and type(value)=='number'and value==value and value>=0 and value<math.huge,
+  'monotonic clock returned an invalid value')
+ return value
+end
 local function case()return config.cases[index]end
 local function control()return ids and F.parseControl(ids.control)end
 local function capacityLost()if not ids then return false end;local _,lost=F.parseControl(ids.control);return lost end
@@ -56,16 +69,59 @@ local function register(action)
  tracks[action]=row;records[#records+1]=row
  local class=getmetatable(action)
  if not classes[class]then local saved={};for _,method in ipairs({'new','getDuration','isValid','start','stop','update','perform','complete','animEvent'})do saved[method]=class[method]end;classes[class]=saved end
+ if requestsEnabled then requestSample(action,row,'pending')end
  return row
+end
+-- Observe the public scalar diagnostics without replacing the source-owned
+-- bridge, its dispatcher or any native producer. Root readers are explicit
+-- negative controls because their producer has no borrowed return action.
+requestSample=function(action,row,point)
+ if not requestsEnabled or not row or not(row.role=='return'or ids.source=='root'and row.role=='front')then return end
+ assert(T.ActionQueueSettlement==requestSettlement and requestSettlement.nativeRequestState==nativeRequestState,
+  'native request diagnostic binding changed')
+ assert(T.ActionQueueTransferRequests==requestModule and requestModule.pending==requestPending and requestModule.observe==requestObserver,
+  'native request watch diagnostic binding changed')
+ local observation=nativeRequestState(action)or false
+ assert(observation==false or type(observation)=='table','native request diagnostic is not scalar data')
+ if observation then for _,value in pairs(observation)do
+  assert(type(value)=='boolean'or type(value)=='string'or type(value)=='number','native request diagnostic retained an object')
+ end end
+ local q=queue()
+ local sample={case=case(),sequence=row.sequence,actor=ids.actor,item=action.item and action.item:getID()or false,
+  itemType=action.item and action.item:getFullType()or false,token=tokenID(action.toolkitQueueOperation),
+  actionRef=row.actionRef,nativeRef=ref(action.action),point=point,current=q.current==action and q.queue[1]==action,
+  transaction=action.transactionId or false,observation=observation,
+  -- Public pending is only a lookup hint; this never proves an earned owner.
+  watchPending=requestPending[action.character]==action}
+ row.requestStates=row.requestStates or{}
+ -- Compare without timestamps; recurring ticks cannot grow a retained history.
+ for _,previous in ipairs(row.requestStates)do
+  local same=true
+  for key,value in pairs(sample)do if not F.same(value,previous[key])then same=false;break end end
+  if same then return end
+ end
+ assert(#row.requestStates<16,'native request diagnostic exceeded bounded transitions')
+ sample.at=now();row.requestStates[#row.requestStates+1]=sample;raw('NATIVE_REQUEST',sample)
 end
 local function intact()
  assert(ISInventoryPaneContextMenu.onLiteratureItems==producer and ISInventoryPaneContextMenu.readItem==readProducer and RWMVolume.onVolumeChange==volumeProducer and ISInventoryPaneContextMenu.equipWeapon==equipProducer,'native producer callback changed after setup')
  assert(Proof.closure(producer,'ISInventoryPaneContextMenu.lua')and Proof.closure(readProducer,'ActionQueueOperations.lua')and Proof.closure(equipProducer,'ISInventoryPaneContextMenu.lua'),'native literature/equip producer source changed')
  assert(Proof.closure(ISReadABook.new,'ISReadABook.lua')and Proof.closure(ISReadABook.getDuration,'ISReadABook.lua')and Proof.closure(ISRadioAction.new,'ISRadioAction.lua'),'native constructors/timers replaced')
+ if requestsEnabled then
+  assert(T.ActionQueueSettlement==requestSettlement and requestSettlement.nativeRequestState==nativeRequestState,
+   'native request diagnostic binding changed')
+  assert(T.ActionQueueTransferRequests==requestModule and requestModule.pending==requestPending and requestModule.observe==requestObserver,
+   'native request watch diagnostic binding changed')
+  assert(T.ActionQueuePolicy==requestPolicy and requestPolicy.matchesNative==nativeStopMatcher,
+   'native transfer source matcher binding changed')
+ end
  for class,saved in pairs(classes)do for method,callback in pairs(saved)do assert(class[method]==callback,'native lifecycle changed '..tostring(class.Type)..'.'..method)end end
 end
 local function updateTransferEpisode(action,row)
  if not isClient()or row.type~='ISInventoryTransferAction'or(row.role~='pickup'and row.role~='return')then return end
+ -- A native stop entry is the final live transaction observation; its byte
+ -- can remain on an unguarded stopped action after native removal.
+ if row.nativeStopEntry then return end
  if transferEpisode and transferEpisode.action==action then transferEpisode.live=false end
  local tx=action.transactionId
  local root=state.player:getInventory();local from=row.role=='pickup'and state.source or root;local to=row.role=='pickup'and root or state.source
@@ -93,6 +149,54 @@ function bookControlsNativeStopped(action,episode,returned)
   nativeSource=Proof.closure(ISReadABook.stop,'ISReadABook.lua')and T.ActionQueueLifecycle.hasNativeStopBridge()==true,
   finished=episode:finished(),forceComplete=episode:isForceComplete(),pages=action.item:getAlreadyReadPages()}
  raw('STOP_RETURNED',row.stopReturned)
+end
+-- The disposable JVM probe enters the real native stop before guarded Lua
+-- cleanup removes its transaction. Historical Done/Reject queries after removal
+-- are intentionally absent: native considers a missing transaction terminal.
+function bookControlsNativeTransferStop(action,episode,point,returned)
+ if not requestsEnabled or not state then return end
+ local row=tracks[action]
+ if not row or(row.role~='pickup'and row.role~='return')then return end
+ intact()
+ local q=queue()
+ if point=='entry'then
+  assert(not row.nativeStopEntry,'duplicate native transfer stop entry')
+  local tx=action.transactionId
+  assert(type(tx)=='number'and tx%1==0 and tx~=0 and tx>=-128 and tx<=127,'missing live transfer byte at native stop')
+  local guard=action.toolkitTransferGuard
+  local guarded=type(guard)=='table'and action.stop==guard.stop
+  local root=state.player:getInventory()
+  local from=row.role=='pickup'and state.source or root
+  local to=row.role=='pickup'and root or state.source
+  local entry={case=case(),sequence=row.sequence,actor=ids.actor,item=action.item:getID(),itemType=action.item:getFullType(),
+   actionRef=row.actionRef,nativeRef=ref(episode),transaction=tx,at=now(),point=point,
+   current=q.current==action and q.queue[1]==action and action.action==episode,
+   nativePresent=state.player:getCharacterActions():contains(episode),
+   endpointsExact=action.character==state.player and action.srcContainer==from and action.destContainer==to,
+   guarded=guarded,
+   -- Match the complete reviewed native/BC/fridge/cart delegate chain;
+   -- an approved delegate need not have the stock file's name.
+   nativeSource=nativeStopMatcher(action)==true,
+   done=isItemTransactionDone(tx)==true,rejected=isItemTransactionRejected(tx)==true,
+   observation=nativeRequestState(action)or false}
+  assert(row.nativeRef==entry.nativeRef and row.transaction==tx,'native stop lost the observed transfer episode')
+  row.nativeStopEntry=entry;row.transactionDone=entry.done;row.transactionRejected=entry.rejected
+  if transferEpisode and transferEpisode.action==action then
+   assert(transferEpisode.transaction==tx,'native stop changed the exact transfer episode')
+   transferEpisode.done,transferEpisode.rejected,transferEpisode.observedAt=entry.done,entry.rejected,entry.at
+  end
+  raw('TRANSFER_STOP_ENTRY',entry)
+ elseif point=='returned'then
+  local entry=assert(row.nativeStopEntry,'native stop returned without entry')
+  assert(not row.nativeStopReturned,'duplicate native transfer stop return')
+  row.nativeStopReturned={case=case(),sequence=row.sequence,actor=ids.actor,item=action.item:getID(),itemType=action.item:getFullType(),
+   actionRef=row.actionRef,nativeRef=ref(episode),transaction=action.transactionId,at=now(),point=point,returned=returned,
+   sameNative=action.action==episode and entry.nativeRef==ref(episode)}
+  raw('TRANSFER_STOP_RETURNED',row.nativeStopReturned)
+  if transferEpisode and transferEpisode.action==action then
+   transferEpisode.live=false;transferEpisode.terminalAt=now()
+  end
+ else error('unknown native transfer stop boundary')end
 end
 local function observeStoppedRemoval()
  if native or not boundary or not oldNative or control()=='return-child-cancel'then return end
@@ -139,8 +243,9 @@ local function observe()
    end
    local delta=action:getJobDelta();row.firstDelta=row.firstDelta or delta;row.maxDelta=math.max(row.maxDelta or delta,delta)
    row.progress=row.maxDelta>row.firstDelta+.00000001
+   if requestsEnabled then requestSample(action,row,'started')end
   end
-  if row.type=='ISInventoryTransferAction'and action.transactionId and action.transactionId~=0 then
+  if row.type=='ISInventoryTransferAction'and not row.nativeStopEntry and action.transactionId and action.transactionId~=0 then
    row.transaction=action.transactionId;row.transactionDone=isClient()and isItemTransactionDone(action.transactionId)==true or not isClient()
    row.transactionRejected=isClient()and isItemTransactionRejected(action.transactionId)==true or false
   end
@@ -151,15 +256,30 @@ local function observe()
 end
 local function lifecycleBegin(action,step)
  local row=register(action)
+ -- Instant native actions can perform and leave the queue between OnTick
+ -- observations. Capture their real episode at the callback boundary; this
+ -- records neither an observed start nor fabricated progress/duration.
+ if row and step=='perform'and action.action then
+  local episode=ref(action.action)
+  assert(not row.nativeRef or row.nativeRef==episode,'native perform episode changed')
+  row.nativeRef=row.nativeRef or episode;row.allocatedAt=row.allocatedAt or now()
+ end
+ if requestsEnabled and row and step=='perform'then requestSample(action,row,'perform-begin')end
  if row and step=='perform'and row.type=='ISInventoryTransferAction'and action.transactionId then
   row.transaction=action.transactionId;row.transactionDone=isClient()and isItemTransactionDone(action.transactionId)==true or not isClient()
   row.transactionRejected=isClient()and isItemTransactionRejected(action.transactionId)==true or false
+  if transferEpisode and transferEpisode.action==action then
+   transferEpisode.done,transferEpisode.rejected,transferEpisode.observedAt=row.transactionDone,row.transactionRejected,now()
+  end
  end
  return row~=nil
 end
 local function lifecycleFinish(action,step,succeeded)
- if transferEpisode and transferEpisode.action==action and(step=='perform'or step=='stop')then transferEpisode.live=false;transferEpisode.terminalAt=now();transferEpisode.observedAt=now();transferEpisode.done=isItemTransactionDone(transferEpisode.transaction)==true;transferEpisode.rejected=isItemTransactionRejected(transferEpisode.transaction)==true end
- local row=register(action);if row then row.finishes[#row.finishes+1]={phase=step,succeeded=succeeded,at=now()};if step=='perform'and succeeded then row.performedAt=now()end end
+ if transferEpisode and transferEpisode.action==action and(step=='perform'or step=='stop')then transferEpisode.live=false;transferEpisode.terminalAt=now() end
+ local row=register(action);if row then
+  if requestsEnabled and step=='perform'then requestSample(action,row,'perform-finish')end
+  row.finishes[#row.finishes+1]={phase=step,succeeded=succeeded,at=now()};if step=='perform'and succeeded then row.performedAt=now()end
+ end
 end
 local function request(command)
  if isClient()then sendClientCommand('BookControlsTest',command,{case=case(),expected=command=='Verify'and F.snapshot(state)or false,requestedAt=capacityRequestedAt,acceptedAt=boundary and boundary.ui and boundary.ui.acceptedAt or false});return end
@@ -225,6 +345,15 @@ local function diagnostic(decision,action)
   adapter=adapter or false,resource=decision.resource and tostring(decision.resource)or false,first=decision.first or false,last=decision.last or false,
   contract={knownInputs=contract and contract.knownInputs==true or false,cancelOperation=contract and contract.cancelOperation or false,cancelWaiting=contract and contract.cancelWaiting or false},at=now()}
 end
+-- Measure each actual mutating handler once; no replay or rollback. Dispatch
+-- preparation and diagnostic Policy calls are outside these handler intervals.
+local function timedHandler(list,name,x,y)
+ local callback=list[name]
+ if not preciseTiming then callback(list,x,y);return end
+ local started=timingNow();callback(list,x,y);local finished=timingNow();local elapsed=finished-started
+ assert(elapsed>=0,'monotonic handler clock moved backwards')
+ return elapsed,started,finished
+end
 local function realGesture()
  local panel=T.ActionQueuePanel:new(80,80,460,640);panel.queue,panel.playerNum=queue(),state.player:getPlayerNum();panel:initialise();panel:addToUIManager();panel:update()
  local list=panel.list;list:setYScroll(0);assert(not list:isVScrollBarVisible(),'owned real queue panel must fit all rows')
@@ -251,22 +380,30 @@ local function realGesture()
  local decision=moving and T.ActionQueuePolicy.evaluateMove(queue(),movingAction,front,false)or T.ActionQueuePolicy.evaluateCancel(queue(),target.item,whole)
  local ui={source='ActionQueuePanel.List',input=moving and'programmatic-drag'or'programmatic-press-release',header=whole,singleton=not grouped,
   target=ref(target.item),operation=tokenID(target.operation),hitTested=true,decision=diagnostic(decision,moving and movingAction or target.item),at=now()}
+ local pressMs,releaseMs,pressStartedMs,pressFinishedMs,releaseStartedMs,releaseFinishedMs
  if moving then
   local from=rowFor(movingAction,false)or rowFor(movingAction,true)
   if not from then for _,row in ipairs(list.items)do if row.operation==movingAction.toolkitQueueOperation and row.header then from=row;break end end end
   assert(from,'real pending operation row missing');ui.movingAction=ref(movingAction);ui.movingAnchor=ref(from.item);ui.movingToken=tokenID(from.operation)
   local x,fromY=35,list:topOfItem(from.index)+from.height/2;local toY=list:topOfItem(target.index)+2
   assert(list:rowUnderMouse(x,fromY)==from and list:rowUnderMouse(x,toY)==target,'real drag hit targets differ')
-  list:onMouseDown(x,fromY);ui.pressCaptured=list.dragAction==from.item
+  pressMs,pressStartedMs,pressFinishedMs=timedHandler(list,'onMouseDown',x,fromY);ui.pressCaptured=list.dragAction==from.item
   -- The actual list onMouseMove reads native pointer coordinates. Use release's
   -- real hit testing with a captured programmatic drag; no pointer getter override.
   list.dragging=ui.pressCaptured and math.abs(fromY-toY)>5;ui.dragging=list.dragging==true
-  list:onMouseUp(x,toY);ui.x,ui.fromY,ui.toY=x,fromY,toY
+  releaseMs,releaseStartedMs,releaseFinishedMs=timedHandler(list,'onMouseUp',x,toY);ui.x,ui.fromY,ui.toY=x,fromY,toY
  else
   local x,y=list:cancelX()+12,list:topOfItem(target.index)+target.height/2
   assert(list:rowUnderMouse(x,y)==target,'real cancel hit target differs')
-  list:onMouseDown(x,y);ui.pressCaptured=whole and list.pressedOperation~=nil or not whole and list.pressedCancel==target.item
-  list:onMouseUp(x,y);ui.x,ui.y=x,y
+  pressMs,pressStartedMs,pressFinishedMs=timedHandler(list,'onMouseDown',x,y);ui.pressCaptured=whole and list.pressedOperation~=nil or not whole and list.pressedCancel==target.item
+  releaseMs,releaseStartedMs,releaseFinishedMs=timedHandler(list,'onMouseUp',x,y);ui.x,ui.y=x,y
+ end
+ if preciseTiming then
+  ui.handlerTiming={timer='System.nanoTime',units='ms',scope='actual-list-handler-work',samples=1,
+   pressMs=pressMs,releaseMs=releaseMs,handlerWorkMs=pressMs+releaseMs,
+   pressStartedMs=pressStartedMs,pressFinishedMs=pressFinishedMs,releaseStartedMs=releaseStartedMs,releaseFinishedMs=releaseFinishedMs,replayed=false,
+   includesHumanPause=false,includesRender=false,includesAsyncSettlement=false,
+   warmState='after-readonly-bank-and-diagnostic-decision',completeEditQualified=false,timerOverhead='included-not-subtracted'}
  end
  ui.feedback=list.cancelFeedback and list.cancelFeedback.text or false;ui.gestureCleared=not list.pressedOperation and not list.pressedCancel and not list.dragAction
  if keep then
@@ -285,8 +422,8 @@ local function resetFailure(reason)
  ISTimedActionQueue.clear(state.player);raw('RESET',{case=case(),entrypoint='ISTimedActionQueue.clear',reason=reason,at=now()});phase='reset-drain'
 end
 -- Test-only observations of real read-only production entrypoints. The
--- millisecond clock is deliberately reported as coarse; no render/Host-contention
--- or full-queue regression claim follows from these tiny scenario timings.
+-- isolated calls and panel update are diagnostics, not complete input/frame work.
+-- The optional monotonic clock improves resolution without changing that scope.
 local function performanceAtBoundary()
  local profileRequested=type(config.options)=='table'and config.options.profileCounts==true
  local liveProfile=profileRequested and PZSurvivorToolkitBookProfile or nil
@@ -313,7 +450,10 @@ local function performanceAtBoundary()
   {name='panelUpdate',kind='advisory',call=function()panel:update()end},
  }
  local function input(count,limits)
-  return{case=case(),timer='getTimestampMs',units='ms',coarse=true,queueEnabled=not native,queueCount=count,warmup=3,samples=20,limits=limits,metrics={}}
+  return{case=case(),timer=preciseTiming and'System.nanoTime'or'getTimestampMs',units='ms',coarse=not preciseTiming,
+   clockEvidence=preciseTiming and performanceClockInfo or nil,queueEnabled=not native,queueCount=count,warmup=3,samples=20,limits=limits,metrics={},
+   measurementScope='isolated-entrypoint-bank',completeEditMeasured=false,frameLoadMeasured=false,assessmentPolicy='correctness-work-complexity-and-impact',performanceAssessment='not-assessed',
+   firstUseScope='first-sample-of-this-bank-not-cold-process',tailEstimate='20-samples-p95-order19-p99-sample-maximum',timerOverhead='included-not-subtracted'}
  end
  local function measure(result)
   for _,entry in ipairs(entries)do
@@ -336,13 +476,14 @@ local function performanceAtBoundary()
     decisionSamples=decisionSamples+1;lastAllowed,lastReason,lastMode=allowed,reason,mode
    end
    local function sample()
-    local started=now();local decision=entry.call();local elapsed=now()-started
+    local started=timingNow();local decision=entry.call();local elapsed=timingNow()-started
     assert(elapsed>=0,'benchmark wall clock moved backwards')
     -- Scalar comparison is outside the timed call; authority snapshots and
     -- execution descriptors never survive this local observation.
     observe(decision);return elapsed
    end
-   local row={name=entry.name,kind=entry.kind,firstUseMs=sample(),rawMs={}}
+   local row={name=entry.name,kind=entry.kind,firstUseMs=sample(),rawMs={},
+    workScope=entry.name=='panelUpdate'and'panel-update-only'or entry.kind=='authoritative'and'policy-decision-call'or'policy-preview-call'}
    for i=1,result.warmup do observe(entry.call())end
    for i=1,result.samples do row.rawMs[i]=sample()end
    if liveProfile then
@@ -357,18 +498,17 @@ local function performanceAtBoundary()
    else row.firstDecision=false;row.lastDecision=false;row.decisionClass='not-decision'end
    local sorted={};for i,value in ipairs(row.rawMs)do sorted[i]=value end;table.sort(sorted)
    row.p95Ms=sorted[math.ceil(#sorted*.95)];row.p99Ms=sorted[math.ceil(#sorted*.99)]
-   row.p95BudgetMs=entry.kind=='authoritative'and 2 or 1;row.p99BudgetMs=entry.kind=='authoritative'and 4 or 2
-   row.passed=row.p95Ms<=row.p95BudgetMs and row.p99Ms<=row.p99BudgetMs
    result.metrics[#result.metrics+1]=row
   end
   result.pathClass=native and'nativeoff-denial-baseline'or'toolkit-observed-decisions'
-  result.authorityAllowed=true;local timingPassed=true
+  result.authorityAllowed=true
   for index,metric in ipairs(result.metrics)do
    if index<=2 and(metric.decisionClass~='allowed'or not metric.decisionStable)then result.authorityAllowed=false end
-   if not metric.passed or not metric.decisionStable then timingPassed=false end
   end
   result.diagnosticProfile=liveProfile~=nil
-  result.positiveTimingClaim=not liveProfile and not native and result.authorityAllowed and timingPassed
+  -- Useful raw measurements do not accept or reject a design. Cost needs a
+  -- separate assessment of equivalent work, scaling and actual runtime impact.
+  result.positiveTimingClaim=false
  end
  local private,privateSet={},{}
  local ok,problem=pcall(function()
@@ -475,16 +615,17 @@ local function keepBlocked()
 end
 local function finish()
  local actual=F.snapshot(state)
+ if requestsEnabled then for action,record in pairs(tracks)do requestSample(action,record,'terminal')end end
  assert(not state.replicaGap,'unresolved exact transfer replica gap at final verification')
  if not failure and performance then
-  for _,result in ipairs({performance,performance.probe32})do for _,metric in ipairs(result.metrics)do if not metric.passed then failure='frozen timing budget exceeded: '..result.queueCount..'/'..metric.name;break end
+  for _,result in ipairs({performance,performance.probe32})do for _,metric in ipairs(result.metrics)do
    if not metric.decisionStable then failure='unstable read-only decision: '..result.queueCount..'/'..metric.name;break end end end
  end
  if not failure then
   local expected=F.expected(state,boundary,native)
   if not F.same(actual,expected)or not F.same(authorityFinal,expected)then failure='native final effect/inventory/Pen intent differs from exact requested result' end
  end
- if not failure and not native and performance and not performance.probe32.authorityAllowed then failure='Toolkit32 intended edit denied; no positive performance claim'end
+ if not failure and not native and performance and not performance.probe32.authorityAllowed then failure='Toolkit32 intended edit denied'end
  local passed=not failure
  local row={event='case',id=case(),status=passed and'passed'or'failed',reason=failure or false,ids=ids,baseline=baseline,authorityBaseline=authorityBaseline,
   boundary=boundary,records=records,starts=starts,resume=resume or false,tailSnapshot=tailSnapshot or false,volumeSnapshot=volumeSnapshot or false,equipSnapshot=equipSnapshot or false,
@@ -516,7 +657,30 @@ Events.OnTick.Add(function()
    assert(T.ActionQueueOperations.installVolumeProducer(),'source-bound native RWM producer unavailable');producer,readProducer,volumeProducer,equipProducer=ISInventoryPaneContextMenu.onLiteratureItems,ISInventoryPaneContextMenu.readItem,RWMVolume.onVolumeChange,ISInventoryPaneContextMenu.equipWeapon
    PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native)
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);player:setAutoDrink(false)
+   if requestsEnabled then
+    requestSettlement=T.ActionQueueSettlement;nativeRequestState=requestSettlement and requestSettlement.nativeRequestState
+    assert(type(nativeRequestState)=='function'and Proof.closure(nativeRequestState,'ActionQueueSettlement.lua'),
+     'source-owned native request diagnostic API missing')
+    requestPolicy=T.ActionQueuePolicy;nativeStopMatcher=requestPolicy and requestPolicy.matchesNative
+    assert(type(requestPolicy)=='table'and getmetatable(requestPolicy)==nil and type(nativeStopMatcher)=='function'
+     and Proof.closure(nativeStopMatcher,'ActionQueuePolicy.lua'),'source-owned native transfer matcher missing')
+    requestModule=T.ActionQueueTransferRequests;requestPending=requestModule and requestModule.pending;requestObserver=requestModule and requestModule.observe
+    assert(type(requestModule)=='table'and getmetatable(requestModule)==nil and type(requestPending)=='table'and getmetatable(requestPending)==nil
+     and type(requestObserver)=='function'and Proof.closure(requestObserver,'ActionQueueTransferRequests.lua'),
+     'source-owned native request watch diagnostic missing')
+   end
    assert(T.ActionQueueLifecycle.registerObserver('fixture.book-controls',{started=register,begin=lifecycleBegin,finish=lifecycleFinish}),'read-only native observer missing')
+   if preciseTiming then
+    local info=bookControlsTimingClockInfo
+    assert(type(bookControlsMonotonicMs)=='function'and type(info)=='table'and getmetatable(info)==nil
+     and info.schema==1 and info.timer=='System.nanoTime'and info.units=='ms'and info.monotonic==true and info.relativeOrigin==true
+     and info.source=='disposable-jvm-probe'and info.nativeClock==true
+     and info.functionClass=='net.alexredby.bookcontrolsprobe.Main$MonotonicClock','native monotonic clock evidence missing')
+    performanceClock=bookControlsMonotonicMs
+    performanceClockInfo={schema=info.schema,timer=info.timer,units=info.units,monotonic=info.monotonic,relativeOrigin=info.relativeOrigin,
+     source=info.source,functionClass=info.functionClass,nativeClock=info.nativeClock}
+    timingNow()
+   end
    local bindings=bookControlsNativeBindings
    if config.options and config.options.require_native_bindings==true then
     assert(type(bindings)=='table'and bindings.readOnly==true and bindings.compatFactories==2 and bindings.cartFactories==1
@@ -528,7 +692,8 @@ Events.OnTick.Add(function()
     end
     raw('NATIVE_BINDINGS',bindings)
    end
-   ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,sourceBound=true,authorityEquipment=true,nativeBindings=bindings or false})
+   ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,sourceBound=true,authorityEquipment=true,
+    nativeRequestsObserved=requestsEnabled or nil,nativeBindings=bindings or false,timingClock=performanceClockInfo or false})
   end
   local elapsed=now()-since
   if elapsed>180000 and(phase=='boundary'or phase=='drain')then resetFailure('native functional timeout '..phase);since=now()

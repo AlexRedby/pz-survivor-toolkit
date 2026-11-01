@@ -199,8 +199,8 @@ local function classUnchanged(class, methods)
     return true
 end
 
--- BulkActions adds only its owned stop delegate and an empty completion used to
--- prevent merging. Validate that exact owner before admitting those differences
+-- BulkActions owns the stop delegate and optionally an empty completion that
+-- prevents merging. Validate those exact differences before admitting them
 -- into Tidy's source proof; never call Policy.inspect from this binding check.
 local bulkTransferBinding
 local function ownedBulkStop(action, original)
@@ -230,8 +230,14 @@ local function ownedBulkCompletion(action)
     return true
 end
 local function ownedNativeBulkTransfer(action)
-    return ownedBulkStop(action,ISInventoryTransferAction.stop)and ownedBulkCompletion(action)
-        and bulkTransferBinding.native(action)==true
+    if not ownedBulkStop(action,ISInventoryTransferAction.stop)then return false end
+    local stopOnly=action.onCompleteFunc==nil
+    local args=action.onCompleteArgs
+    if stopOnly and args~=nil then
+        if type(args)~='table'or getmetatable(args)then stopOnly=false
+        else for _ in pairs(args)do stopOnly=false;break end end
+    end
+    return (stopOnly or ownedBulkCompletion(action))and bulkTransferBinding.native(action)==true
 end
 
 local function sourceClassUnchanged(id, class, methods, clothingTransfer)

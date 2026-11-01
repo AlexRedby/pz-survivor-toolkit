@@ -72,6 +72,92 @@ assert(Tags.matches(fuel,{'fuel'}) and not Tags.matches(fuel,{'beverage'}) and f
 amount=0;local empty,_,emptyKey=parity(bottle,'emptied physical fluid container',context)
 assert(Tags.matches(empty,{'empty'}) and not Tags.matches(empty,{'fuel','beverage'},'any') and emptyKey~=fuelKey)
 
+-- Live usage projection must preserve unknown legacy roles, remove known false
+-- roles, and keep the original support tags while deriving related capabilities.
+-- Keep the ordinary producer as the oracle; only its membership sibling takes
+-- the allocation-saving path. Reuse and mutate one role table/context throughout.
+do
+ local Usage=require 'PZSurvivorToolkit/ItemUsageTags'
+ local schema=require 'PZSurvivorToolkit/ItemTagSchema'
+ local nativeRead=Usage.read
+ local category='FixtureUsageMembership'
+ local previousCategory=schema.categories[category]
+ local sample=item(script('Fixture.UsageMembership',category))
+ local usageContext=Tags.newProjectionContext()
+ local roles,states,reads={},{},0
+ Usage.read=function(_,physical,projectionContext)
+  assert(physical==sample and projectionContext==usageContext,'usage projection changed its live item/context')
+  reads=reads+1
+  return roles,states,false
+ end
+ local function expect(reason,expected)
+  local before=reads
+  local result=parity(sample,reason,usageContext)
+  assert(reads==before+2,reason..': full/membership projection stopped reading live usage')
+  for id,value in pairs(expected)do
+   assert(Tags.matches(result,{id})==value,reason..': unexpected '..id..' membership')
+  end
+  return result
+ end
+ local ids={'bandage','disinfectant','dirty','fuel','ignite','treatment','repair','smelting','sharpen','broken','empty'}
+ for _,id in ipairs(ids)do
+  for _,present in ipairs({false,true})do
+   schema.categories[category]=present and {id} or {}
+   for _,value in ipairs({'unknown',false,true})do
+    for key in pairs(roles)do roles[key]=nil end
+    if value~='unknown' then roles[id]=value end
+    expect(id..' '..tostring(value)..' with base '..tostring(present),
+     {[id]=value=='unknown' and present or value==true})
+   end
+  end
+ end
+ local function current(values)
+  for key in pairs(roles)do roles[key]=nil end
+  for key,value in pairs(values)do roles[key]=value end
+ end
+ schema.categories[category]={}
+ current({bandage=true,disinfectant=true,repair=true,fishBait=true,trapBait=true,spentBattery=false})
+ expect('combined live capabilities without inherited support',
+  {medical=true,firstaid=true,maintenance=true,fishing=true,trapping=true,bait=true,
+   junk=false,crafting=false,electrical=false})
+ schema.categories[category]={'medical','firstaid','maintenance','bait','fishing','trapping','crafting','electrical'}
+ current({bandage=false,disinfectant=false,repair=false,fishBait=false,trapBait=false,spentBattery=true})
+ expect('known negatives with inherited support and spent battery',
+  {medical=true,firstaid=true,maintenance=true,fishing=false,trapping=false,bait=false,
+   junk=true,crafting=false,electrical=false})
+ current({bandage=false,disinfectant=false,repair=false,trapBait=false,spentBattery=false})
+ expect('unknown fishing and replenished battery in the same context',
+  {medical=true,firstaid=true,maintenance=true,fishing=true,trapping=false,bait=true,
+   junk=false,crafting=true,electrical=true})
+ schema.categories[category]={'fishing','trapping','crafting','electrical'}
+ current({fishBait=false,trapBait=false,spentBattery=true})
+ expect('nonbait fishing and trapping survive known bait negatives',
+  {fishing=true,trapping=true,bait=false,junk=true,crafting=false,electrical=false})
+ schema.categories[category]={'medical','firstaid','maintenance','bait','fishing','trapping','junk','crafting','electrical'}
+ current({})
+ expect('unknown usage retains all inherited support',
+  {medical=true,firstaid=true,maintenance=true,fishing=true,trapping=true,bait=true,
+   junk=true,crafting=true,electrical=true})
+ schema.categories[category]={}
+ expect('unknown usage does not invent support',
+  {medical=false,firstaid=false,maintenance=false,fishing=false,trapping=false,bait=false,
+   junk=false,crafting=false,electrical=false})
+
+ -- A replacement reader can expose physical preview states. Their managed
+ -- fields still suppress unknown current roles, so this must use the old path.
+ schema.categories[category]={'fuel','dirty','broken'}
+ states[1]={fuel=false,dirty=true}
+ expect('physical previews manage unknown current roles',{fuel=false,dirty=false,broken=true})
+ states[1].fuel=nil
+ expect('mutated physical preview management',{fuel=true,dirty=false,broken=true})
+ states[1]=nil
+ expect('empty physical previews restore ordinary unknown handling',{fuel=true,dirty=true,broken=true})
+ states=nil
+ expect('absent physical previews preserve unknown handling',{fuel=true,dirty=true,broken=true})
+ Usage.read=nativeRead
+ schema.categories[category]=previousCategory
+end
+
 local custom='custom:00000000-0000-4000-8000-000000000001'
 local deleted='custom:00000000-0000-4000-8000-000000000002'
 local catalog=Custom.catalog()

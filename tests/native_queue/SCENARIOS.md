@@ -16,6 +16,7 @@ Choose a suite with `python3 tools/check_action_queue.py matrix`, then read its 
 - [Drinking after a backpack transfer](#drinking-after-a-backpack-transfer)
 - [Quartermaster sorting and crafting](#quartermaster-sorting-and-crafting)
 - [Inventory retention and classification](#inventory-retention-and-classification)
+- [Inventory selection profiling](#inventory-selection-profiling)
 - [Warehouse persistence](#warehouse-persistence)
 - [Cart capture](#cart-capture)
 
@@ -160,6 +161,21 @@ Select standalone `--cases uses` for native two-use DuctTape crafting: one full 
 These cases cover basic gameplay through programmatic UI callbacks, not physical
 mouse/controller input, every recipe, crafting batches or concurrent clients.
 
+
+## Inventory selection profiling
+
+Use `storage-profile/inventory-selection` for attributed synchronous refresh costs with 4,800 native Nails, an empty selection, both CleanUI renderers and collapsed/expanded stock:
+
+```sh
+python3 tools/check_action_queue.py run /tmp/selection-profile-fresh \
+  --suite storage-profile --cases inventory-selection --kind sp --mode toolkit \
+  --mods selected --exclusive --pack-lock "$PZ_PACK_LOCK" --config "$PZ_PROFILE_CONFIG" \
+  --game "$PZ_GAME" --jdk "$PZ_JDK" --resource-wait 300 --timeout 480
+```
+
+Use a fresh lock for the current selected sources and the runner's normal config for explicit mod/resource paths. The collector modifies only disposable source snapshots, before callbacks are captured, and records original/observed hashes in `selection-observer-inputs.json`. It observes CleanUI and Better Containers mapper leaves, filter restoration, category splitting, priority, detail sorting and the presentation refresh. Phase scopes use the exact pane object; receipts attest the actual renderer/class, collapse state, empty selection, item population and cleanup.
+
+Each of four cells contains seven samples; the first is explicitly first-measured after setup, not a cold game start. Other samples in the same process are correlated. Timing includes observer overhead; nested inclusive spans must not be added together. Missing executed mapper/presentation spans or mismatched identity fail evidence qualification. A successful capture establishes only costs for this generated stock and callback path, not FPS, input latency, a player-reported stall, optimization benefit or Host coverage. Registration, offline tests and compilation alone do not qualify a native capture; inspect the run's execution, runtime and source audit.
 
 ## Inventory retention and classification
 

@@ -318,7 +318,7 @@ class BookControlTests(unittest.TestCase):
             self.assertEqual(native[0]['starts'], [1]); self.assertIs(native[0]['blockedReturn'], False)
             self.assertEqual(native[0]['client']['books']['tail']['pages'], native[1]['tail']['initial'])
 
-    def test_timing_samples_quantiles_and_frozen_design_budgets(self):
+    def test_historical_timing_integrity_is_separate_from_design_acceptance(self):
         self.assertEqual(self.check(self.evidence()), [])  # Slow first-use is separate from warmed samples.
         mutations = {
             'no evidence': lambda r: r.update(performance=False),
@@ -338,7 +338,10 @@ class BookControlTests(unittest.TestCase):
                 evidence=self.evidence();mutate(evidence[0]);self.assertTrue(self.check(evidence))
         evidence=self.evidence();metric=evidence[0]['performance']['metrics'][0]
         metric['rawMs'][-1]=5;metric.update(p99Ms=5,passed=False)
-        self.assertTrue(any('Frozen performance budget exceeded' in e for e in self.check(evidence)))
+        evidence[0]['performance']['positiveTimingClaim']=False
+        self.assertEqual(self.check(evidence), [])
+        evidence[0].update(status='failed',reason='frozen timing budget exceeded')
+        self.assertTrue(any('Fixture case failed' in e for e in self.check(evidence)))
 
     def test_actual_cli_catalog_selection_and_native_preflight_accept_safe_case_ids(self):
         catalog = cli.load_catalog(['book-controls'])
@@ -391,7 +394,7 @@ os.exit(0)
             'shortened native duration': lambda r: r['performance']['probe32']['temporary'][0].update(duration=1),
             'missing constructor': lambda r: r['performance']['probe32']['temporary'].pop(),
             'budget raised': lambda r: r['performance']['probe32']['metrics'][0].update(p99BudgetMs=99),
-            'slow32 edit': lambda r: r['performance']['probe32']['metrics'][0]['rawMs'].__setitem__(-1,5),
+            'sample changed without updating quantile': lambda r: r['performance']['probe32']['metrics'][0]['rawMs'].__setitem__(-1,5),
         }
         for name, mutate in mutations.items():
             with self.subTest(name=name):
@@ -415,7 +418,7 @@ local list={};for i,a in ipairs(original)do list[i]=a end
 local q={queue=list,current=original[1],toolkitOperationGeneration=17}
 front,equip,volume=original[1],original[3],original[4];ids={source='worn-bag'}
 queue=function()return q end;control=function()return'move-volume'end;case=function()return'worn-bag.move-volume'end
-now=function()return 1000 end;ref=function(value)return tostring(value)end;raw=function()end
+now=function()return 1000 end;timingNow=now;ref=function(value)return tostring(value)end;raw=function()end
 F={snapshot=function()return{itemId=101,pages=219,container='root',volume=.5}end,same=function(a,b)for k,v in pairs(a)do if b[k]~=v then return false end end;return true end}
 local ctor=function(_,mode,player,device,value)
  local action={Type='ISRadioAction',character=player,device=device,deviceData=data,mode=mode,secondaryItem=value,maxTime=30}
@@ -451,7 +454,7 @@ for _,scenario in ipairs({'success','failure','unstable','absent-options','false
   assert(not performance.diagnosticProfile and not performance.probe32.diagnosticProfile,'absent/false/nonnested option enabled profiling')
   local metric=performance.probe32.metrics[1]
   if unstable then assert(not metric.decisionStable and metric.decisionClass=='unstable'and metric.firstDecision.allowed and metric.lastDecision.allowed and not performance.probe32.positiveTimingClaim,'intermediate denial hidden by equal first/last samples')
-  else assert(metric.decisionStable and metric.decisionClass=='allowed'and performance.probe32.positiveTimingClaim)end
+  else assert(metric.decisionStable and metric.decisionClass=='allowed'and not performance.probe32.positiveTimingClaim)end
  end
 end
 -- Explicit nested opt-in must fail before touching the queue if the private
@@ -490,6 +493,232 @@ ok,problem=pcall(run)
 assert(not ok and tostring(problem):find('deliberate read-only inspection failure',1,true),'diagnostic hid original callback failure')
 assert(not profile.active and #constructed==27 and #removed==oldRemoved+1 and q.queue==list and #list==5,'failed diagnostic leaked active scope or suffix')
 assert(calls>0,'actual entrypoints were not exercised')
+-- Fractional-clock diagnostics keep the same source/queue guards and scopes.
+preciseTiming=true;config={options={precise_timing=true}};fail=false;unstable=false
+performanceClockInfo={schema=1,timer='System.nanoTime',units='ms',monotonic=true,relativeOrigin=true,source='disposable-jvm-probe',
+ functionClass='net.alexredby.bookcontrolsprobe.Main$MonotonicClock',nativeClock=true}
+local precise=0;timingNow=function()precise=precise+.03125;return precise end
+assert(pcall(run),'precise diagnostic probe failed')
+for _,result in ipairs({performance,performance.probe32})do
+ assert(result.timer=='System.nanoTime'and result.coarse==false and result.clockEvidence==performanceClockInfo)
+ assert(result.measurementScope=='isolated-entrypoint-bank'and result.completeEditMeasured==false and result.frameLoadMeasured==false)
+ assert(result.assessmentPolicy=='correctness-work-complexity-and-impact'and result.performanceAssessment=='not-assessed')
+ assert(result.budgetBasis==nil and not result.positiveTimingClaim and result.tailEstimate=='20-samples-p95-order19-p99-sample-maximum')
+ for _,metric in ipairs(result.metrics)do assert(metric.passed==nil and metric.p95BudgetMs==nil and metric.p99BudgetMs==nil)end
+ for _,metric in ipairs(result.metrics)do assert(metric.rawMs[1]==.03125 and metric.p95Ms==.03125 and metric.p99Ms==.03125)end
+end
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
+
+    @staticmethod
+    def current_measurements(evidence):
+        # Legacy fixtures above remain useful for auditing old captured reports.
+        row=evidence[0]
+        for value in (row['performance'],row['performance']['probe32']):
+            value.update(positiveTimingClaim=False,**a.ASSESSMENT_POLICY,**a.PERFORMANCE_SCOPE)
+            for index,metric in enumerate(value['metrics']):
+                metric['workScope']='policy-decision-call'if index<2 else 'policy-preview-call'if index<4 else 'panel-update-only'
+                for key in ('p95BudgetMs','p99BudgetMs','passed'):metric.pop(key,None)
+        return evidence
+
+    def precise_evidence(self, case='worn-bag.move-equip', kind='mp', mode='toolkit', requests=False):
+        evidence=self.current_measurements((self.request_evidence if requests else self.evidence)(case,kind,mode));row=evidence[0]
+        for value in (row['performance'],row['performance']['probe32']):
+            value.update(timer='System.nanoTime',coarse=False,clockEvidence=copy.deepcopy(a.CLOCK_INFO),**a.PERFORMANCE_SCOPE)
+            for index,metric in enumerate(value['metrics']):
+                metric['workScope']='policy-decision-call'if index<2 else 'policy-preview-call'if index<4 else 'panel-update-only'
+        if mode=='toolkit':
+            row['boundary']['ui']['handlerTiming']=dict(timer='System.nanoTime',units='ms',scope='actual-list-handler-work',samples=1,
+                pressMs=.125,releaseMs=.75,handlerWorkMs=.875,pressStartedMs=10,pressFinishedMs=10.125,releaseStartedMs=10.5,releaseFinishedMs=11.25,replayed=False,includesHumanPause=False,includesRender=False,
+                includesAsyncSettlement=False,warmState='after-readonly-bank-and-diagnostic-decision',completeEditQualified=False,timerOverhead='included-not-subtracted')
+            for boundary in evidence[5]:boundary['ui']=copy.deepcopy(row['boundary']['ui'])
+        return evidence
+
+    def test_current_observations_preserve_correctness_without_numerical_acceptance(self):
+        for kind in ('sp','mp'):
+            for mode in ('native','toolkit'):
+                for case in a.CASES:
+                    with self.subTest(kind=kind,mode=mode,case=case):
+                        evidence=self.current_measurements(self.evidence(case,kind,mode))
+                        for bank in (evidence[0]['performance'],evidence[0]['performance']['probe32']):
+                            for metric in bank['metrics']:
+                                metric.update(rawMs=[50]*20,p95Ms=50,p99Ms=50)
+                        self.assertEqual(self.check(evidence,kind,mode),[])
+                        evidence[0]['performance']['metrics'][0]['decisionStable']=False
+                        self.assertTrue(self.check(evidence,kind,mode))
+        for mutate in (lambda r:r.update(performanceAssessment='accepted'),
+                       lambda r:r.update(performanceAssessment='rejected'),
+                       lambda r:r.update(positiveTimingClaim=True),
+                       lambda r:r.pop('assessmentPolicy'),
+                       lambda r:r.pop('measurementScope'),
+                       lambda r:r['metrics'][0].pop('workScope'),
+                       lambda r:r['metrics'][0].update(passed=True),
+                       lambda r:r['metrics'][0].update(p95BudgetMs=1)):
+            row=self.current_measurements(self.evidence())[0];mutate(row['performance'])
+            self.assertTrue(a.performance_errors(row['performance'],row['id'],True))
+        evidence=self.current_measurements(self.evidence())
+        evidence[0]['client']['books']['tail']['pages']-=1
+        self.assertTrue(self.check(evidence))  # Removing timing gates cannot hide a wrong physical outcome.
+
+    def test_legacy_reference_provenance_and_malformed_summary_are_not_reinterpreted(self):
+        row=self.evidence()[0];bank=row['performance']
+        for value in (bank,bank['probe32']):
+            value.update(timer='System.nanoTime',coarse=False,clockEvidence=copy.deepcopy(a.CLOCK_INFO),
+                         budgetBasis='initial-engineering-targets',**a.PERFORMANCE_SCOPE)
+            for index,metric in enumerate(value['metrics']):
+                metric['workScope']='policy-decision-call'if index<2 else 'policy-preview-call'if index<4 else 'panel-update-only'
+        self.assertEqual(a.performance_errors(bank,row['id'],True,precise=True),[])
+        bank['budgetBasis']='fabricated-empirical-baseline'
+        self.assertTrue(a.performance_errors(bank,row['id'],True,precise=True))
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory)
+            for field in ('rawMs','firstUseMs'):
+                row=self.current_measurements(self.evidence())[0]
+                row['performance']['metrics'][0][field]=[10**309]if field=='rawMs'else 10**309
+                self.assertTrue(a.performance_errors(row['performance'],row['id'],True))
+                (root/'client1-launch.log').write_text('[QUEUE_CHECK] '+json.dumps(row))
+                (root/'server-launch.log').write_text('')
+                result=a.verify(root,self.selection(),{})
+                self.assertTrue(result['issues'])
+                self.assertEqual(result['evidence']['performance']['performanceAssessment'],'not-assessed')
+
+    def test_actual_fixture_completion_rejects_instability_without_timing_gate(self):
+        lua=shutil.which('luajit')
+        if not lua:self.skipTest('LuaJIT not installed')
+        text=(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua').read_text()
+        first=text.index(' if not failure and performance then')
+        body=text[first:text.index(' if not failure then\n  local expected=',first)]
+        source="""
+local check=assert(loadstring('return function(performance) local failure; '..arg[1]..' return failure end'))()
+local metric={name='previewMove',p95Ms=50,p99Ms=50,passed=false,decisionStable=true}
+local bank={queueCount=32,metrics={metric}};bank.probe32={queueCount=32,metrics={metric}}
+assert(check(bank)==nil,'duration alone became a functional failure')
+metric.decisionStable=false
+assert(check(bank):find('unstable read-only decision',1,true),'unstable decisions silently accepted')
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',body],check=True)
+
+    def test_current_full_bank_reports_cost_unassessed_and_preserves_raw_integrity(self):
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory)
+            for mode in ('toolkit','native'):
+                selection,client,server=self.log_bank(mode=mode,current=True,sample_ms=50)
+                (root/'client1-launch.log').write_text(client);(root/'server-launch.log').write_text(server)
+                result=a.verify(root,selection,{})
+                self.assertEqual(result['issues'],[])
+                cost=result['evidence']['performance']
+                self.assertEqual(cost['performanceAssessment'],'not-assessed')
+                self.assertEqual(cost['runtimeImpact'],'not-established')
+                self.assertEqual(len(cost['observations']),len(a.CASES)*10)
+                self.assertTrue(all(r['p95Ms']==50 and r['maxMs']==50 for r in cost['observations']))
+                changed=client.replace('"p95Ms": 50','"p95Ms": 0',1)
+                (root/'client1-launch.log').write_text(changed)
+                self.assertTrue(a.verify(root,selection,{})['issues'])
+        with tempfile.TemporaryDirectory()as directory:
+            result=a.verify(Path(directory),self.selection(),{})
+            self.assertTrue(result['issues'])
+            self.assertEqual(result['evidence']['performance']['performanceAssessment'],'not-assessed')
+        self.assertEqual(a.performance_observations([None,dict(performance={},boundary=None)])['handlers'],[])
+        row=self.current_measurements(self.evidence())[0]
+        row['performance']['metrics'][0]['rawMs']=list(range(20))
+        self.assertEqual(a.performance_observations([row])['observations'][0]['medianMs'],9.5)
+
+    def test_precise_scope_and_clock_do_not_qualify_complete_input_latency(self):
+        for mode in ('toolkit','native'):
+            row=self.precise_evidence(mode=mode)[0]
+            self.assertEqual(a.performance_errors(row['performance'],row['id'],mode=='toolkit',precise=True),[])
+            self.assertEqual(a.handler_timing_errors(row['boundary']['ui'],True,mode=='toolkit'),[])
+        row=self.precise_evidence()[0]
+        mutations=[lambda r:r.update(coarse=True),lambda r:r.update(timer='getTimestampMs'),
+            lambda r:r.update(completeEditMeasured=True),lambda r:r.update(frameLoadMeasured=True),
+            lambda r:r.update(completeEditQualified=True),lambda r:r.update(budgetBasis='baseline-measured'),
+            lambda r:r['clockEvidence'].update(schema=True),lambda r:r['clockEvidence'].update(nativeClock=False),
+            lambda r:r['clockEvidence'].update(extra={'object':'bad'}),lambda r:r['metrics'][0].update(workScope='complete-edit'),
+            lambda r:r['metrics'][0].update(p95BudgetMs=99),lambda r:r['probe32'].update(completeEditMeasured=True)]
+        for i,mutate in enumerate(mutations):
+            value=copy.deepcopy(row['performance']);mutate(value)
+            self.assertTrue(a.performance_errors(value,row['id'],True,precise=True),i)
+        timing=row['boundary']['ui']['handlerTiming']
+        for key,value in [('samples',True),('replayed',True),('includesRender',True),('includesHumanPause',True),
+                ('includesAsyncSettlement',True),('completeEditQualified',True),('handlerWorkMs',9),('pressMs',float('nan')),
+                ('releaseMs',-1),('releaseStartedMs',0),('pressFinishedMs',11),('scope','end-to-end-click'),('warmState','cold-process')]:
+            changed=copy.deepcopy(timing);changed[key]=value
+            self.assertTrue(a.handler_timing_errors({'handlerTiming':changed},True,True),key)
+        self.assertTrue(a.handler_timing_errors({'handlerTiming':timing},False,True))
+        self.assertTrue(a.handler_timing_errors({'handlerTiming':timing},True,False))
+        selection=self.selection();selection['options']['precise_timing']=1
+        with self.assertRaises(ValueError):a.validate(selection)
+
+    def test_timing_quantiles_and_budgets_cannot_alias_boolean_values(self):
+        for precise in (False,True):
+            row=(self.precise_evidence if precise else self.evidence)()[0]
+            for key,index,value in [('p95Ms',0,False),('p99Ms',0,False),('p95BudgetMs',2,True)]:
+                bank=copy.deepcopy(row['performance']);bank['metrics'][index][key]=value
+                self.assertTrue(a.performance_errors(bank,row['id'],True,precise=precise),(key,precise))
+
+    def test_precise_timing_full_bank_needs_setup_and_actual_handler_evidence(self):
+        with tempfile.TemporaryDirectory()as directory:
+            root=Path(directory)
+            for mode in ('toolkit','native'):
+                selection,client,server=self.log_bank(mode=mode,requests=True,precise=True)
+                (root/'client1-launch.log').write_text(client);(root/'server-launch.log').write_text(server)
+                self.assertEqual(a.verify(root,selection,{})['issues'],[],mode)
+                # Corrupt only the source-bound setup row; samples stay intact.
+                changed=client.replace('"nativeClock": true','"nativeClock": false',1)
+                (root/'client1-launch.log').write_text(changed)
+                self.assertTrue(a.verify(root,selection,{})['issues'])
+                (root/'client1-launch.log').write_text(client)
+                selection['options'].pop('precise_timing')
+                self.assertTrue(a.verify(root,selection,{})['issues'])
+
+    def test_actual_fixture_times_one_mutating_handler_pair_without_replay(self):
+        lua=shutil.which('luajit')
+        if not lua:self.skipTest('LuaJIT not installed')
+        source=r"""
+local file=assert(io.open(arg[1]));local text=file:read('*a');file:close()
+local first=assert(text:find('local function timedHandler(',1,true))
+local last=assert(text:find('\nlocal function resetFailure(',first,true))
+local run,handler=assert(loadstring(text:sub(first,last-1)..'\nreturn realGesture,timedHandler'))()
+preciseTiming=true;local clock=0
+-- Clock double isolates the fixture's wiring, not native time accuracy.
+timingNow=function()clock=clock+.125;return clock end
+now=function()return 100 end
+local down,up,removed=0,0,0
+for _,moving in ipairs({false,true})do
+ local token={};oldNative={};front={toolkitQueueOperation=token,action=oldNative}
+ equip={toolkitQueueOperation={}};volume={toolkitQueueOperation={}}
+ state={player={getPlayerNum=function()return 0 end}};ids={source='root'}
+ local q={current=front,queue={front,equip,volume}}
+ queue=function()return q end;control=function()return moving and'move-equip'or'reader-child-cancel'end
+ diagnostic=function()return{reason=false}end;ref=tostring;tokenID=function()return 1 end
+ local rows={{item=front,operation=token,header=false,index=1,height=40},
+  {item=equip,operation=equip.toolkitQueueOperation,header=false,index=2,height=40}}
+ local list={items=rows,setYScroll=function()end,isVScrollBarVisible=function()return false end,
+  cancelX=function()return 400 end,topOfItem=function(_,i)return(i-1)*40 end,
+  rowUnderMouse=function(_,x,y)return rows[math.floor(y/40)+1]end}
+ list.onMouseDown=function(self,x,y)
+  down=down+1;if moving then self.dragAction=equip else self.pressedCancel=front end
+ end
+ list.onMouseUp=function(self,x,y)
+  up=up+1;q.toolkitCancel=front;self.dragAction=nil;self.dragging=nil;self.pressedCancel=nil
+ end
+ local panel={list=list,initialise=function()end,addToUIManager=function()end,update=function()end,
+  removeFromUIManager=function()removed=removed+1 end}
+ T={ActionQueuePanel={new=function()return panel end},ActionQueuePolicy={evaluateCancel=function()return{}end,evaluateMove=function()return{}end}}
+ local oldDown,oldUp=down,up;local ui=run()
+ assert(down==oldDown+1 and up==oldUp+1 and removed==(moving and 2 or 1),'handler was replayed or not called')
+ assert(ui.accepted and ui.handlerTiming.pressMs==.125 and ui.handlerTiming.releaseMs==.125 and ui.handlerTiming.handlerWorkMs==.25)
+ assert(ui.handlerTiming.samples==1 and ui.handlerTiming.replayed==false and ui.handlerTiming.completeEditQualified==false)
+ assert(ui.handlerTiming.pressStartedMs<=ui.handlerTiming.pressFinishedMs and ui.handlerTiming.pressFinishedMs<=ui.handlerTiming.releaseStartedMs and ui.handlerTiming.releaseStartedMs<=ui.handlerTiming.releaseFinishedMs)
+ assert(list.onMouseDown~=nil and list.onMouseUp~=nil,'callback binding was replaced')
+end
+local effects,payload=0,{}
+local list={onMouseUp=function()effects=effects+1;error(payload,0)end}
+local original=list.onMouseUp
+local ok,reason=pcall(handler,list,'onMouseUp',0,0)
+assert(not ok and reason==payload and effects==1 and list.onMouseUp==original,'timing swallowed an error, replayed mutation or replaced callback')
 os.exit(0)
 """
         subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
@@ -752,13 +981,265 @@ os.exit(0)
         selection = self.selection(); selection['options']['world_template'] = 'fixture'
         with self.assertRaises(ValueError): a.validate(selection)
 
-    def log_bank(self, kind='mp', mode='toolkit'):
+    def request_evidence(self, case='worn-bag.move-equip', kind='mp', mode='toolkit'):
+        evidence = self.evidence(case, kind, mode)
+        row, ids = evidence[:2]
+        source, name = case.split('.', 1)
+        negative = mode == 'native' or kind != 'mp' or source == 'root' or a.base_control(name) == 'return-child-cancel' or a.capacity_case(name)
+        targets = [r for r in row['records'] if r['role'] == ('front' if source == 'root' else 'return')]
+        for record in targets:
+            def sample(point, at, observation=False, current=False, transaction=0, allocated=False):
+                return dict(case=case,sequence=record['sequence'],actor=ids['actor'],item=ids['front']['id'],itemType=ids['front']['type'],
+                    token=record['token'],actionRef=record['actionRef'],nativeRef=record.get('nativeRef',False) if allocated else False,
+                    point=point,at=at,current=current,transaction=transaction,observation=copy.deepcopy(observation),watchPending=observation is not False)
+            record['requestStates'] = [sample('pending',1)]
+            if not negative:
+                tx=record['transaction']
+                state=dict(phase='submitted',boundary='start',sourceExact=True,ambiguous=False,paired=False,
+                    nativeHandle=True,currentHandle=True,wireAmbiguous=False,transaction=tx,id=ids['front']['id'],fullType=ids['front']['type'])
+                record['requestStates'].append(sample('started',2,state,True,tx,True))
+                record['requestStates'].append(sample('perform-begin',3,state,True,tx,True))
+                state['paired']=True
+                record['requestStates'].append(sample('perform-finish',4,state,False,0,True))
+            record['requestStates'].append(sample('terminal',5))
+        if kind=='mp' and a.capacity_case(name):
+            record=next(r for r in row['records'] if r['role']=='return')
+            if mode=='native':
+                record.update(started=True,startedAt=17,allocatedAt=16,nativeRef='java:7',transaction=7,transactionDone=False,transactionRejected=True)
+            entry=dict(case=case,sequence=record['sequence'],actor=ids['actor'],item=ids['front']['id'],itemType=ids['front']['type'],
+                actionRef=record['actionRef'],nativeRef=record['nativeRef'],transaction=record['transaction'],at=18,point='entry',
+                current=True,nativePresent=True,endpointsExact=True,nativeSource=True,guarded=mode=='toolkit',done=False,rejected=True,observation=False)
+            if mode=='toolkit':
+                entry['observation']=dict(phase='submitted',boundary='start',sourceExact=True,ambiguous=False,paired=False,
+                    nativeHandle=True,currentHandle=True,wireAmbiguous=False,transaction=record['transaction'],id=ids['front']['id'],fullType=ids['front']['type'])
+            record['nativeStopEntry']=entry
+            record['nativeStopReturned']=dict(case=case,sequence=record['sequence'],actor=ids['actor'],item=ids['front']['id'],itemType=ids['front']['type'],
+                actionRef=record['actionRef'],nativeRef=record['nativeRef'],transaction=0 if mode=='toolkit' else record['transaction'],at=19,point='returned',returned=True,sameNative=True)
+        return evidence
+
+    def test_native_requests_require_exact_capture_and_explicit_absence_controls(self):
+        for kind,mode,case in [('mp','toolkit','worn-bag.move-equip'),('mp','toolkit','world.header-cancel'),
+                ('mp','toolkit','root.move-volume'),('mp','native','worn-bag.move-equip'),
+                ('sp','toolkit','world.header-cancel'),('mp','toolkit','worn-bag.return-child-cancel'),
+                ('mp','toolkit','world.header-cancel-capacity-lost')]:
+            evidence=self.request_evidence(case,kind,mode);selection=self.selection(kind,mode)
+            selection['options']['require_native_requests']=True
+            self.assertEqual(a.native_request_errors(evidence[0],case,selection,evidence[1]),[],(kind,mode,case))
+        selection=self.selection();selection['options']['require_native_requests']=1
+        with self.assertRaises(ValueError):a.validate(selection)
+
+    def test_native_request_pairing_can_describe_a_rejected_stop_without_success(self):
+        evidence=self.request_evidence('worn-bag.header-cancel-capacity-lost');row,ids=evidence[:2]
+        record=next(r for r in row['records']if r['role']=='return'and r['started'])
+        state=dict(phase='submitted',boundary='start',sourceExact=True,ambiguous=False,paired=False,
+            nativeHandle=True,currentHandle=True,wireAmbiguous=False,transaction=record['transaction'],id=ids['front']['id'],fullType=ids['front']['type'])
+        first=copy.deepcopy(record['requestStates'][0]);first.update(point='started',at=2,current=True,
+            nativeRef=record['nativeRef'],transaction=record['transaction'],observation=copy.deepcopy(state))
+        state['paired']=True
+        terminal=copy.deepcopy(first);terminal.update(point='terminal',at=3,current=False,observation=state)
+        record['requestStates']=[record['requestStates'][0],first,terminal]
+        record['finishes']=[];record.pop('performedAt',None)
+        selection=self.selection();selection['options']['require_native_requests']=True
+        self.assertEqual(a.native_request_errors(row,row['id'],selection,ids),[])
+        for mutate in [lambda r:r.update(returnSucceeded=True),lambda r:r.update(blockedReturn=False),
+                lambda r:r['blockedReturn'].update(reason='unmoved'),lambda r:r['server']['books']['front'].update(container='world')]:
+            changed=copy.deepcopy(row);mutate(changed)
+            self.assertTrue(a.native_request_errors(changed,changed['id'],selection,ids))
+
+    def test_native_transfer_rejection_requires_live_paired_stop_evidence(self):
+        for mode in ('toolkit','native'):
+            selection=self.selection(mode=mode);selection['options']['require_native_requests']=True
+            for case in a.CAPACITY_CASES:
+                row,ids=self.request_evidence(case,mode=mode)[:2]
+                self.assertEqual(a.native_transfer_stop_errors(row,case,selection,ids),[])
+                mutations=[lambda r:r.pop('nativeStopEntry'),lambda r:r.pop('nativeStopReturned'),
+                    lambda r:r['nativeStopEntry'].update(done=True),lambda r:r['nativeStopEntry'].update(rejected=False),
+                    lambda r:r['nativeStopEntry'].update(current=False),lambda r:r['nativeStopEntry'].update(nativePresent=False),
+                    lambda r:r['nativeStopEntry'].update(guarded=1),lambda r:r['nativeStopEntry'].update(endpointsExact=False),lambda r:r['nativeStopEntry'].update(nativeSource=False),
+                    lambda r:r['nativeStopEntry'].update(sequence=True),lambda r:r['nativeStopEntry'].update(actor=True),
+                    lambda r:r['nativeStopEntry'].update(item=True),lambda r:r['nativeStopEntry'].update(transaction=True),
+                    lambda r:r['nativeStopEntry'].update(nativeRef='foreign'),lambda r:r['nativeStopEntry'].update(actionRef='foreign'),
+                    lambda r:r['nativeStopEntry'].update(case='root.header-cancel'),lambda r:r['nativeStopEntry'].update(at=float('nan')),
+                    lambda r:r['nativeStopEntry'].update(extra={'unbounded':'object'}),lambda r:r['nativeStopReturned'].update(transaction=99),
+                    lambda r:r['nativeStopReturned'].update(at=1),lambda r:r['nativeStopReturned'].update(returned=False),
+                    lambda r:r['nativeStopReturned'].update(sameNative=False)]
+                if mode=='toolkit':
+                    mutations += [lambda r:r['nativeStopEntry']['observation'].update(currentHandle=False),
+                        lambda r:r['nativeStopEntry']['observation'].update(wireAmbiguous=True),
+                        lambda r:r['nativeStopEntry']['observation'].update(paired=True),
+                        lambda r:r['nativeStopEntry']['observation'].update(id=True),
+                        lambda r:r['nativeStopEntry']['observation'].update(transaction=True),
+                        lambda r:r['nativeStopEntry'].update(observation=False)]
+                else: mutations += [lambda r:r['nativeStopEntry'].update(observation={'sourceExact':True}),
+                    lambda r:(r['nativeStopEntry'].update(guarded=True),r['nativeStopReturned'].update(transaction=0))]
+                for index,mutate in enumerate(mutations):
+                    changed=copy.deepcopy(row);record=next(r for r in changed['records']if r['role']=='return');mutate(record)
+                    self.assertTrue(a.native_transfer_stop_errors(changed,case,selection,ids),(case,mode,index))
+        selection=self.selection(kind='sp');selection['options']['require_native_requests']=True
+        row,ids=self.request_evidence(a.CAPACITY_CASES[0],kind='sp')[:2]
+        self.assertEqual(a.native_transfer_stop_errors(row,row['id'],selection,ids),[])
+
+    def test_actual_callback_captures_instant_native_episode_without_inventing_start(self):
+        lua=shutil.which('luajit')
+        if not lua:self.skipTest('LuaJIT not installed')
+        text=(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua').read_text()
+        first=text.index('local function lifecycleBegin(action,step)')
+        body=text[first:text.index('local function lifecycleFinish(',first)]
+        source="""
+local run=assert(loadstring(arg[1]..' return lifecycleBegin'))()
+local row={type='ISInventoryTransferAction',duration=0,started=false,progress=false}
+local action={action={},transactionId=0}
+isClient=function()return false end
+register=function()return row end;ref=function(value)return value end;now=function()return 25 end
+requestsEnabled=true;transferEpisode=nil
+requestSample=function(a,r,point)
+ assert(point=='perform-begin'and r.nativeRef==a.action and r.allocatedAt==25,'sample lost actual instant episode')
+end
+assert(run(action,'perform'))
+assert(row.nativeRef==action.action and row.allocatedAt==25)
+assert(not row.started and not row.progress and row.startedAt==nil and row.effectiveDuration==nil,'callback fabricated native timing')
+row.nativeRef={};local ok,err=pcall(run,action,'perform')
+assert(not ok and tostring(err):find('native perform episode changed',1,true),'foreign episode accepted')
+row.nativeRef=nil;row.allocatedAt=nil;action.action=nil;requestsEnabled=false
+assert(run(action,'perform')and row.nativeRef==nil and row.allocatedAt==nil,'missing Java action acquired a native identity')
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',body],check=True)
+
+    def test_instant_return_request_identity_remains_strict_without_observed_start(self):
+        case='world.header-cancel-favorite';evidence=self.request_evidence(case,'sp','native')
+        row,ids=evidence[:2];selection=self.selection('sp','native');selection['options']['require_native_requests']=True
+        extra=copy.deepcopy(next(r for r in row['records']if r['role']=='return'))
+        extra.update(sequence=800,actionRef='ISInventoryTransferAction 0x800',token=77,duration=0,
+                     started=False,progress=False,nativeRef='java:800',allocatedAt=2,performedAt=4)
+        extra['requestStates']=[]
+        for point,at,native,current in [('pending',1,False,True),('perform-begin',2,'java:800',True),
+                                        ('perform-finish',4,'java:800',False),('terminal',5,'java:800',False)]:
+            extra['requestStates'].append(dict(case=case,sequence=800,actor=ids['actor'],item=ids['front']['id'],
+                itemType=ids['front']['type'],token=77,actionRef=extra['actionRef'],nativeRef=native,
+                point=point,at=at,current=current,transaction=0,observation=False,watchPending=False))
+        row['records'].append(extra)
+        self.assertEqual(a.native_request_errors(row,case,selection,ids),[])
+        for mutate in (lambda r:r.pop('nativeRef'),lambda r:r.update(nativeRef='foreign'),
+                       lambda r:r['requestStates'][2].update(nativeRef='foreign'),
+                       lambda r:r['requestStates'][-1].update(observation={'phase':'submitted'})):
+            changed=copy.deepcopy(row);mutate(changed['records'][-1])
+            self.assertTrue(a.native_request_errors(changed,case,selection,ids))
+
+    def test_native_request_negative_evidence_has_strict_scalar_schema(self):
+        selection=self.selection();selection['options']['require_native_requests']=True
+        base=self.request_evidence('root.header-cancel')
+        changes=[lambda s:s.pop('transaction'),lambda s:s.update(transaction={'object':'bad'}),
+            lambda s:s.update(transaction=True),lambda s:s.update(nativeRef='foreign'),
+            lambda s:s.update(extra={'unbounded':['object']}),lambda s:s.update(token=True)]
+        for mutate in changes:
+            changed=copy.deepcopy(base);mutate(changed[0]['records'][0]['requestStates'][0])
+            self.assertTrue(a.native_request_errors(changed[0],changed[0]['id'],selection,changed[1]))
+
+    def test_native_request_causal_mutations_reject_false_pairing(self):
+        base=self.request_evidence();selection=self.selection();selection['options']['require_native_requests']=True
+        mutations={
+            'foreign actor':lambda r:r['requestStates'][1].update(actor=999),
+            'boolean actor alias':lambda r:r['requestStates'][1].update(actor=False),
+            'foreign item':lambda r:r['requestStates'][1].update(item=999),
+            'foreign action':lambda r:r['requestStates'][1].update(actionRef='foreign'),
+            'foreign native':lambda r:r['requestStates'][1].update(nativeRef='foreign'),
+            'missing source':lambda r:r['requestStates'][1]['observation'].update(sourceExact=False),
+            'no handle':lambda r:r['requestStates'][1]['observation'].update(nativeHandle=False),
+            'byte reuse':lambda r:r['requestStates'][3]['observation'].update(wireAmbiguous=True),
+            'ambiguous nested':lambda r:r['requestStates'][3]['observation'].update(ambiguous=True),
+            'foreign byte':lambda r:r['requestStates'][3]['observation'].update(transaction=-127),
+            'wrong boundary':lambda r:r['requestStates'][3]['observation'].update(boundary='continuation'),
+            'early pair':lambda r:r['requestStates'][1]['observation'].update(paired=True),
+            'missing final pair':lambda r:r['requestStates'][3]['observation'].update(paired=False),
+            'no current anchor':lambda r:[v.update(current=False)for v in r['requestStates']],
+            'missing terminal':lambda r:r['requestStates'].pop(),
+            'duplicate':lambda r:r['requestStates'].insert(2,copy.deepcopy(r['requestStates'][1])),
+            'unbounded':lambda r:r.update(requestStates=r['requestStates']*4),
+        }
+        for reason,mutate in mutations.items():
+            changed=copy.deepcopy(base);record=next(r for r in changed[0]['records']if r['role']=='return');mutate(record)
+            self.assertTrue(a.native_request_errors(changed[0],changed[0]['id'],selection,changed[1]),reason)
+        state=next(r for r in base[0]['records']if r['role']=='return')['requestStates'][1]['observation']
+        negative=self.request_evidence('root.header-cancel');negative[0]['records'][0]['requestStates'][0]['observation']=state
+        self.assertTrue(a.native_request_errors(negative[0],negative[0]['id'],selection,negative[1]))
+
+    def test_native_request_raw_and_setup_binding_cannot_be_fabricated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);selection,client,server=self.log_bank(requests=True)
+            (root/'server-launch.log').write_text(server);(root/'client1-launch.log').write_text(client)
+            self.assertEqual(a.verify(root,selection,{})['issues'],[])
+            lines=client.splitlines();request=next(v for v in lines if 'NATIVE_REQUEST 'in v)
+            for changed in [client.replace('"nativeRequestsObserved": true','"nativeRequestsObserved": false'),
+                    '\n'.join(v for v in lines if v!=request),client+'\n'+request]:
+                (root/'client1-launch.log').write_text(changed)
+                self.assertTrue(a.verify(root,selection,{})['issues'])
+
+    def test_native_request_current_anchor_requires_live_object(self):
+        row,ids=self.request_evidence()[:2];selection=self.selection();selection['options']['require_native_requests']=True
+        for record in row['records']:
+            for sample in record.get('requestStates',[]):
+                if isinstance(sample['observation'],dict):sample['observation']['currentHandle']=False
+        self.assertTrue(a.native_request_errors(row,row['id'],selection,ids))
+
+    def test_native_transfer_finish_preserves_pre_removal_episode_without_query(self):
+        lua=shutil.which('luajit')
+        if not lua:self.skipTest('LuaJIT not installed')
+        source=r"""
+local file=assert(io.open(arg[1]));local text=file:read('*a');file:close()
+local first=assert(text:find('local function lifecycleFinish(',1,true))
+local last=assert(text:find('\nlocal function request(command)',first,true))
+local finish=assert(loadstring(text:sub(first,last-1)..'\nreturn lifecycleFinish'))()
+local epFirst=assert(text:find('local function updateTransferEpisode(',1,true))
+local epLast=assert(text:find('\n-- The disposable Java probe',epFirst,true))
+local update=assert(loadstring(text:sub(epFirst,epLast-1)..'\nreturn updateTransferEpisode'))()
+isClient=function()return true end
+local retained={live=false,done=false,rejected=true,observedAt=10}
+transferEpisode=retained
+update({}, {type='ISInventoryTransferAction',role='return',nativeStopEntry={}})
+assert(transferEpisode==retained and retained.observedAt==10 and retained.rejected==true)
+now=function()return 12 end
+requestsEnabled=false
+isItemTransactionDone=function()error('queried a removed native transaction')end
+isItemTransactionRejected=isItemTransactionDone
+for _,step in ipairs({'stop','perform'})do
+ local action={};local row={finishes={}}
+ register=function(value)assert(value==action);return row end
+ transferEpisode={action=action,transaction=7,live=true,done=step=='perform',rejected=step=='stop',observedAt=10}
+ finish(action,step,true)
+ assert(transferEpisode.live==false and transferEpisode.terminalAt==12 and transferEpisode.observedAt==10)
+ assert(transferEpisode.done==(step=='perform')and transferEpisode.rejected==(step=='stop'))
+ assert(#row.finishes==1 and row.finishes[1].phase==step and row.finishes[1].succeeded==true)
+end
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
+
+    def test_native_transfer_stop_raw_pair_cannot_be_dropped_or_duplicated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);selection,client,server=self.log_bank(requests=True)
+            (root/'server-launch.log').write_text(server);(root/'client1-launch.log').write_text(client)
+            self.assertEqual(a.verify(root,selection,{})['issues'],[])
+            for marker in ('TRANSFER_STOP_ENTRY ','TRANSFER_STOP_RETURNED '):
+                line=next(value for value in client.splitlines()if marker in value)
+                for changed in [client.replace(line,'',1),client+'\n'+line,client+'\n'+line.replace('worn-bag.header-cancel-capacity-lost','foreign.case')]:
+                    (root/'client1-launch.log').write_text(changed)
+                    self.assertTrue(a.verify(root,selection,{})['issues'])
+
+    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False, current=False, sample_ms=None):
         selection = self.selection(kind, mode); client, server = [], []
+        if requests: selection['options']['require_native_requests']=True
+        if precise: selection['options']['precise_timing']=True
         def raw(marker, value): return a.PREFIX + marker + ' ' + json.dumps(value)
         def event(value): return '[QUEUE_CHECK] ' + json.dumps(value)
-        client.append(event(dict(event='setup', suite='book-controls', cases=list(a.CASES), queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True)))
+        client.append(event(dict(event='setup', suite='book-controls', cases=list(a.CASES), queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests,timingClock=copy.deepcopy(a.CLOCK_INFO)if precise else False)))
         for case in a.CASES:
-            row, spec, baseline, final, admissions, boundaries, drains, acks = self.evidence(case, kind, mode)
+            evidence=self.precise_evidence(case,kind,mode,requests=requests)if precise else(self.request_evidence if requests else self.evidence)(case,kind,mode)
+            if current:evidence=self.current_measurements(evidence)
+            if sample_ms is not None:
+                for bank in (evidence[0]['performance'],evidence[0]['performance']['probe32']):
+                    for metric in bank['metrics']:metric.update(rawMs=[sample_ms]*20,p95Ms=sample_ms,p99Ms=sample_ms)
+            row, spec, baseline, final, admissions, boundaries, drains, acks = evidence
             authority = server if kind == 'mp' else client
             authority.extend([raw('PREPARED', spec), raw('BASELINE', baseline), raw('VERIFIED', final)])
             if row.get('capacity') is not False: authority.append(raw('CAPACITY_LOST', row['capacity']))
@@ -769,6 +1250,9 @@ os.exit(0)
                 client.extend(raw(marker, value) for value in values)
             for record in row['records']:
                 if 'stopReturned' in record:client.append(raw('STOP_RETURNED',record['stopReturned']))
+                for marker,field in [('TRANSFER_STOP_ENTRY','nativeStopEntry'),('TRANSFER_STOP_RETURNED','nativeStopReturned')]:
+                    if field in record: client.append(raw(marker,record[field]))
+                for sample in record.get('requestStates',[]):client.append(raw('NATIVE_REQUEST',sample))
             client.append(raw('PERFORMANCE',row['performance']))
             client.append(event(row))
         client.append(event(dict(event='complete', suite='book-controls', cases=list(a.CASES), performed=len(a.CASES), skipped=0, failed=0)))

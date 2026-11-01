@@ -115,16 +115,16 @@ local function usageBase(tags, roles, states)
     return base
 end
 
-local function applyUsage(tags, roles, base, snapshot, present)
+local function applyUsage(tags, roles, base, snapshot, present, liveMembership)
     local changed = false
     local function put(id, value) changed = setTag(tags, id, value, present) or changed end
     for _, id in ipairs(usageIds) do
         local value = roles[id]
-        if value == nil then
+        if value == nil and not liveMembership then
             local original = id == "bandage" or id == "disinfectant" or id == "dirty" or id == "fuel"
             value = not base.managed[id] and not (snapshot and original) and base[id] == true
         end
-        put(id, value)
+        if value ~= nil then put(id, value) end
     end
     put("medical", base.medical or roles.bandage == true or roles.disinfectant == true)
     put("firstaid", base.firstaid or roles.bandage == true or roles.disinfectant == true)
@@ -177,7 +177,12 @@ local function itemTags(category, fullType, script, item, context, membershipOnl
         if category == "characterHygieneFitness" then refined = put("hygiene", false) or refined end
     end
     local roles, usageStates, isFluid = usage.read(script, item, context)
-    local base = usageBase(tags, roles, usageStates)
+    local liveMembership = membershipOnly and item and not snapshot
+        and (not usageStates or usageStates[1] == nil)
+    -- Live membership has no preview-managed roles. Unknown roles preserve
+    -- membership directly. Derived base keys are read before their own writes
+    -- below, so the existing presence set replaces two temporary base tables.
+    local base = liveMembership and present or usageBase(tags, roles, usageStates)
     if snapshot then
         roles, usageStates = usage.decode(snapshotUsageState), nil
         roles.beverage = snapshotFluidState == "beverage" or snapshotFluidState == "alcoholic"
@@ -188,7 +193,7 @@ local function itemTags(category, fullType, script, item, context, membershipOnl
         refined = put("beverage", roles.beverage == true) or refined
         refined = put("alcoholic", roles.alcoholic == true) or refined
     end
-    refined = applyUsage(tags, roles, base, snapshot, present) or refined
+    refined = applyUsage(tags, roles, base, snapshot, present, liveMembership) or refined
     tags.usageStates = usageStates
     if not item and not snapshot then tags.usageBase = base end
     refined = put("edible", properties.edible(script, item)) or refined

@@ -21,6 +21,10 @@ loadfile=function(path)
         source=instrument(source,'    local result = {Definitions.inspect(action, context)}','contracts')
         source=instrument(source,'    for i = index + 1, #queue.queue do','tailMembers')
         source=instrument(source,'    if not targetCheckersUnchanged() then return false, "unsupported_target_checker" end','tailSweeps')
+        local export='\nreturn Policy'
+        local first=assert(source:find(export,1,true))
+        assert(not source:find(export,first+1,true),'ambiguous private scope test export')
+        source=source:sub(1,first-1)..'\nPolicy.fixtureInDecision=inDecision\nPolicy.fixtureActiveDecision=function()return activeDecision end'..source:sub(first)
         return loadstring(source,'@'..path)
     end
     return ordinaryLoadfile(path)
@@ -362,4 +366,39 @@ queue.queue[32].item=nil;cancelAllowed()
 PZSurvivorToolkit.ActionQueueSettlement=originalSettlement
 
 DecisionScopeNoTiming=nil
+-- Exercise the real private wrapper through a test-only source export. Its
+-- public APIs return one decision; extra callback returns never escape.
+local scopeContext={contracts={},items={},denialReason='scope-owned'}
+local scopeOutput={}
+local payload={}
+local function activeScope()return policy.fixtureActiveDecision()end
+assert(activeScope()==nil,'earlier decision leaked its scope')
+local value=policy.fixtureInDecision(queue,scopeContext,scopeOutput,function(...)
+    assert(select('#',...)==3 and select(1,...)==1 and select(2,...)==nil and select(3,...)==3)
+    local outer=activeScope();assert(outer.queue==queue and outer.context==scopeContext)
+    local nested=policy.fixtureInDecision(queue,{contracts={},items={}},nil,function()
+        assert(activeScope()~=outer,'nested call reused the outer scope')
+        return false,'discarded',nil
+    end)
+    assert(nested==false and activeScope()==outer,'nested false result or scope restoration changed')
+    for _,failure in ipairs({payload,'deliberate scope failure'})do
+        local ok,reason=pcall(policy.fixtureInDecision,queue,{contracts={},items={}},nil,function()error(failure,0)end)
+        assert(not ok and rawequal(reason,failure) and activeScope()==outer,'nested error payload or restoration changed')
+    end
+    local ok,reason=pcall(policy.fixtureInDecision,queue,{contracts={},items={}},nil,function()error(nil,0)end)
+    assert(not ok and reason==nil and activeScope()==outer,'nil error payload or restoration changed')
+    return payload,nil,'discarded'
+end,1,nil,3)
+assert(rawequal(value,payload) and activeScope()==nil and scopeOutput.denialReason=='scope-owned',
+    'first result, bounded output or final scope restoration changed')
+local function nilResult()
+    return policy.fixtureInDecision(queue,scopeContext,nil,function()return nil,'discarded',nil end)
+end
+assert(select('#',nilResult())==1 and nilResult()==nil and activeScope()==nil,'nil first return became a multireturn')
+local ok,reason=pcall(policy.fixtureInDecision,queue,scopeContext,scopeOutput,function()
+    scopeContext.denialReason='failed-scope';error(payload,0)
+end)
+assert(not ok and rawequal(reason,payload) and scopeOutput.denialReason=='failed-scope' and activeScope()==nil,
+    'error publication, identity or final scope restoration changed')
+
 print('Return decision scope: one bounded suffix, fresh nested/error/public boundaries, exact native/helper/callback gates, scalar/device parity and full-planner isolation passed.')

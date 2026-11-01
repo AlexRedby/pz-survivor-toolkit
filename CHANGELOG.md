@@ -46,15 +46,29 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.1.330
+### 0.1.332
 
 - Keep fishing chum and bait-only recipe inputs out of automatic cooking-ingredient tags. Determine evolved meal capability from the result item's cooking and nutrition metadata; B42.21 treats an evolved recipe's `Cookable=false` as true. Preserve cold meals, drinks and explicit tag overrides.
 
-### 0.1.329
+### 0.1.331
 
+- **Fixed:** A fresh, confirmed multiplayer refusal to pick up a single borrowed item can discard its verified untouched read/equip/return dependants while preserving supported independent queued work. Unknown, partial, custom and previously earned operations retain the native fallback; no item transfer is replayed or treated as completed.
+
+### 0.1.330
+
+- Reduce inventory refresh work for large stacks by reusing live usage-tag membership during grouping. Keep current item-state reads, custom rules, retained-item grouping and preview/snapshot metadata behavior.
 - Reduce work when grouping inventory stacks by projecting only tag membership, skipping unused preview/provenance copies and a duplicate signature calculation. Keep physical item state, custom tags and retention live.
 - Refresh ingredient, disassembly, repair, smelting and wear-preview tags after native script reload or deferred input resolution, including changes that keep the same recipe lists and counts. Retain batching within each operation; unavailable native revision metadata permits operation-local cache reuse only.
 - Reuse recipe catalogue reads within each inventory grouping, tag rendering, filter, tag-menu and distribution-planning pass, reducing repeated work in large visible stacks. Keep item categories, freshness, damage, retention and custom tags live for each physical item; refresh recipe reads on the next operation.
+
+### 0.1.329
+
+- Expose a fresh native-object match in explicit transfer diagnostics so tests can distinguish a live request from historical transaction data. Add paired native-stop probes before rejected transfers are removed; queue execution and edit permissions stay unchanged.
+- Remove one temporary Lua result table from every common cancel/move decision, preserving callback results, errors, nested contexts and all source checks. This allocation reduction does not establish that live timing budgets pass.
+
+### 0.1.328
+
+- Preserve native request observations when Host replaces the carried Java item instance while retaining its original queue member. Reuse the existing exact-ID/type detached-member proof and fresh source checks without changing native arguments, transfers or queue permissions.
 
 ### 0.1.327
 
@@ -1534,9 +1548,21 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
-### 0.1.78
+### 0.1.81
 
 - Expose the native script-catalogue revision for item-tag indexes. Track loading, reload, deferred resolution and reset, including partial failures; ordinary catalogue reads preserve the revision.
+
+### 0.1.80
+
+- Refresh the exact queue Policy source fingerprint after its temporary-result allocation reduction, preserving the existing compiler eligibility checks and fallback behavior.
+
+### 0.1.79
+
+- Fix CleanUI food-age correction and action-queue compiler binding on Windows. Accept the native compiler label from the verified provider, including backslash and mixed-separator paths, without admitting foreign same-basename paths or changing reader ownership and source validation.
+- Keep owned Lua sources at LF line endings on checkout so Windows Git settings cannot disable exact-source compiler bindings. Packaging rejects leftover CRLF sources in older checkouts without changing local files or the previous publication.
+
+### 0.1.78
+
 - Capture native item transaction objects at their original manager boundary. Track allocated wire IDs in bounded connection histories, invalidate intervening actor requests and preserve unknown results after ID reuse or late attachment.
 
 ### 0.1.77

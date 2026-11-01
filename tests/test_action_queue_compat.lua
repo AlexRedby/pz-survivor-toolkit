@@ -359,7 +359,7 @@ require = function(module)
     elseif module == 'TimedActions/WMI_PatchWashClothing' then id, branch = 'WashFix', 'shared/'
     elseif module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then
         local path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'
-        local source=read(path):gsub('\nreturn Intent','\nIntent.fixtureState=state\nreturn Intent')
+        local source=read(path):gsub('\nreturn Intent','\nIntent.fixtureState=state\nIntent.fixtureStates=states\nIntent.fixtureClear=clear\nreturn Intent')
         return assert(loadstring(source,'@'..path))()
     elseif module == 'PZSurvivorToolkit/ActionQueueLifecycle' then
         if PZSurvivorToolkit.ActionQueueLifecycle then return PZSurvivorToolkit.ActionQueueLifecycle end
@@ -3351,18 +3351,31 @@ local tidyBagOwner=item(inventory,40); tidyBagOwner.class='InventoryContainer'
 local tidyBag={class='ItemContainer',getParent=function() end,getType=function() return 'bag' end,
     getContainingItem=function() return tidyBagOwner end}
 getPlayerLoot=function() return {backpacks={{inventory=tidyBag}}} end
-local function tidyTasks(shared, insertion, queueEnabled, sameOwner)
+local function tidyTasks(shared, insertion, queueEnabled, sameOwner, stopOnlyPickups)
     reset(); doNotReequip=false; player.primary=nil
     if queueEnabled~=nil then enabled=queueEnabled end
     local first,second=item(tidyBag,41),item(tidyBag,42)
+    if stopOnlyPickups then
+        for _,value in ipairs({first,second})do value.getIsCraftingConsumed=function()return false end end
+        inventory.isExistYet=function()return true end
+        tidyBag.getItemById=function(_,id)
+            for _,value in ipairs({first,second})do if value:getID()==id and value.container==tidyBag then return value end end
+        end
+    end
     local firstPickup,firstRead,secondPickup,secondRead
     operations.run(function()
-        firstPickup=ISInventoryTransferAction:new(player,first,tidyBag,inventory); ISTimedActionQueue.add(firstPickup)
+        firstPickup=ISInventoryTransferAction:new(player,first,tidyBag,inventory)
+        if stopOnlyPickups then PZSurvivorToolkit.BulkActions.guardTransfer(firstPickup,true)end
+        ISTimedActionQueue.add(firstPickup)
         firstRead=ISReadABook:new(player,first); ISTimedActionQueue.add(firstRead)
     end)
     local secondOperation=sameOwner and function(callback) return operations.runWith(firstRead.toolkitQueueOperation,callback) end or operations.run
     secondOperation(function()
-        if not shared then secondPickup=ISInventoryTransferAction:new(player,second,tidyBag,inventory); ISTimedActionQueue.add(secondPickup) end
+        if not shared then
+            secondPickup=ISInventoryTransferAction:new(player,second,tidyBag,inventory)
+            if stopOnlyPickups then PZSurvivorToolkit.BulkActions.guardTransfer(secondPickup,true)end
+            ISTimedActionQueue.add(secondPickup)
+        end
         secondRead=ISReadABook:new(player,shared and first or second); ISTimedActionQueue.add(secondRead)
     end)
     local extra
@@ -3379,18 +3392,30 @@ local function tidyTasks(shared, insertion, queueEnabled, sameOwner)
     local nativeSession=TidyFixture.sessions[player]
     assert(nativeSession.armed and nativeSession.transferredItems[first].hasFollowingOperation,
         'actual installed Tidy observes pickup plus following operation')
-    firstPickup:perform(); firstRead:perform()
-    if secondPickup then secondPickup:perform() end
+    local function performPickup(action)
+        if stopOnlyPickups then
+            action.queueList={{items={action.item}}}
+            inventory.values={first,second,tidyBagOwner}
+            assert(PZSurvivorToolkit.ActionQueueTidyIntent.begin(action,'perform'),'stop-only pickup observer begin failed')
+        end
+        action:perform()
+        if stopOnlyPickups then
+            action.queueList={}
+            PZSurvivorToolkit.ActionQueueTidyIntent.finish(action,'perform',true)
+        end
+    end
+    performPickup(firstPickup); firstRead:perform()
+    if secondPickup then performPickup(secondPickup) end
     secondRead:perform(); if extra then extra:perform() end
     inventory.values=shared and {first} or {first,second}
-    return first,second,firstRead.toolkitQueueOperation,secondRead.toolkitQueueOperation,nativeSession
+    return first,second,firstRead.toolkitQueueOperation,secondRead.toolkitQueueOperation,nativeSession,firstPickup,secondPickup
 end
 local function findReturn(value)
     for _,action in ipairs(queue.queue) do if action.Type=='ISInventoryTransferAction' and action.item==value then return action end end
 end
 -- Disabling native merge boundaries cannot lend an older source record to another task.
 do
-    local previousRound,previousOnline,previousVehiclePart=round,player.getOnlineID,inventory.getVehiclePart
+    local previousRound,previousOnline,previousVehiclePart,previousRootExists=round,player.getOnlineID,inventory.getVehiclePart,inventory.isExistYet
     local previousExists,previousLookup=tidyBag.isExistYet,tidyBag.getItemById
     local actualPolicy
     round=function(value)return value end
@@ -3527,6 +3552,72 @@ do
             local value=item(inventory,id);inventory.values={value}
             return bulk.guardTransfer(ISInventoryTransferAction:new(player,value,inventory,tidyBag))
         end
+        -- The neutral pickup observer installs no merge sentinel. Tidy must
+        -- still observe and earn its exact native move, then schedule returns.
+        local picked,other,owner,_,_,pickup,otherPickup=tidyTasks(false,nil,true,nil,true)
+        local pickupScope=assert(compat.fixtureRegistries[2][player])
+        assert(pickup.onCompleteFunc==nil and otherPickup.onCompleteFunc==nil and intent.status(pickup),
+            'stop-only native pickups lost their full P4 source binding')
+        settlement.poll(pickupScope)
+        local pickedState=assert(settlement.operationState(pickup))
+        assert(pickedState.borrowings[1]and pickedState.borrowings[1].state=='active',
+            'actual Compat observer failed to earn the stop-only pickup')
+        tickTidy();tickTidy()
+        assert(findReturn(picked)and findReturn(other),'stop-only pickups lost native P4 return scheduling')
+        do
+            reset();doNotReequip=false
+            local one,two=item(tidyBag,19411),item(tidyBag,19412)
+            for _,value in ipairs({one,two})do
+                value.getWeight=function()return .05 end;value.getUnequippedWeight=value.getWeight
+                value.getIsCraftingConsumed=function()return false end
+            end
+            tidyBag.getItemById=function(_,id)
+                for _,value in ipairs({one,two})do if value:getID()==id and value.container==tidyBag then return value end end
+            end
+            inventory.values={one,two,tidyBagOwner}
+            local executor,child,readOne,readTwo
+            operations.run(function()
+                executor=bulk.guardTransfer(ISInventoryTransferAction:new(player,one,tidyBag,inventory),true)
+                child=bulk.guardTransfer(ISInventoryTransferAction:new(player,two,tidyBag,inventory),true)
+                for _,action in ipairs({executor,child})do
+                    action.queueList={{items={action.item},time=10,type=action.item:getFullType()}}
+                    action.maxTime,action.fixtureNativeGroup=10,true
+                    ISTimedActionQueue.add(action)
+                end
+                readOne=ISReadABook:new(player,one);ISTimedActionQueue.add(readOne)
+                readTwo=ISReadABook:new(player,two);ISTimedActionQueue.add(readTwo)
+            end)
+            local scope=assert(compat.fixtureRegistries[2][player])
+            executor:checkQueueList()
+            assert(queue:indexOf(child)==-1 and next(child)==nil and #executor.queueList[1].items==2,
+                'stop-only P4 observer must retain native grouped pickup merge and child wipe')
+            assert(intent.begin(executor,'perform'));executor:perform();intent.finish(executor,'perform',true)
+            settlement.poll(scope)
+            local earned=assert(settlement.operationState(executor)).borrowings
+            assert(#earned==2 and earned[1].state=='active'and earned[2].state=='active'
+                and one.container==inventory and two.container==inventory,
+                'grouped stop-only pickup must conserve both native effects and earned loans')
+            readOne:perform();readTwo:perform();tickTidy();tickTidy()
+            assert(findReturn(one)and findReturn(two),'grouped stop-only pickups lost a native P4 return')
+        end
+        for _,change in ipairs({'callback','args','args-meta','helper'})do
+            local candidate=bulk.guardTransfer(ISInventoryTransferAction:new(player,item(tidyBag,19410),tidyBag,inventory),true)
+            assert(intent.status(candidate),'unchanged stop-only native transfer was rejected')
+            candidate.onCompleteArgs={}
+            assert(intent.status(candidate),'empty native completion arguments acquired executable semantics')
+            local restore
+            if change=='callback'then candidate.onCompleteFunc=function()error('foreign completion executed')end
+            elseif change=='args'then candidate.onCompleteArgs={'foreign'}
+            elseif change=='args-meta'then candidate.onCompleteArgs=setmetatable({},{})
+            else
+                local previous=ISInventoryTransferAction.getNotFullFloorSquare
+                ISInventoryTransferAction.getNotFullFloorSquare=function()error('foreign helper executed')end
+                restore=function()ISInventoryTransferAction.getNotFullFloorSquare=previous end
+            end
+            assert(not intent.status(candidate),'stop-only source proof accepted changed '..change)
+            if restore then restore()end
+        end
+        reset()
         owned=returning(19401)
         assert(actualPolicy.matchesNative(owned)and actualPolicy.isOrdinaryTransfer(owned),'actual guarded return must match native Policy')
         assert(intent.status(owned)and intent.canKeepReturn(owned),
@@ -3601,12 +3692,13 @@ do
         -- Actual native pickup outcome plus an admission refusal must fence only
         -- P4's matching idle return until Keep. Other P4 returns still execute.
         local fixtureIndependent=assert(loadstring([[return function()return true end]],'@fixture/ActionQueuePolicy.lua'))()
-        for _,fenceMode in ipairs({'active','restoring','keep-before-idle','keep-before-first-idle','disabled','foreign-checker'})do
+        for _,fenceMode in ipairs({'active','stop-only','no-prior-intent','restoring','keep-before-idle','keep-before-first-idle','disabled','foreign-checker'})do
         local savedExecution,savedIndependent=PZSurvivorToolkit.ActionQueueExecution,actualPolicy.returnFailureIndependent
         local savedActions,savedOnline,savedRootExists=player.getCharacterActions,player.getOnlineID,inventory.isExistYet
         local savedBagInventory=tidyBagOwner.getInventory
         tidyBagOwner.getInventory=function()return tidyBag end
-        local first,second,firstOwner=tidyTasks()
+        local first,second,firstOwner=tidyTasks(false,nil,true,nil,fenceMode=='stop-only')
+        if fenceMode=='no-prior-intent'then intent.fixtureClear(player)end
         inventory.isExistYet=function()return true end
         first.getIsCraftingConsumed=function()return false end;first.getDisplayName=first.getName
         local scope=assert(compat.fixtureRegistries[2][player])
@@ -3621,13 +3713,19 @@ do
         player.getOnlineID=function()return 101 end
         player.getCharacterActions=function()return list({})end
         local pickupGuard=function(action)return action==pickup end
-        first.container=tidyBag;inventory.values={second,tidyBagOwner}
-        pickup.action={};pickup.queueList={{items={first}}};pickup.transactionId=0
-        queue.current,queue.queue=pickup,{pickup}
-        assert(settlement.beginPickup(scope,pickup,pickupGuard),'fixture must observe the original native pickup episode')
-        first.container=inventory;inventory.values={first,second,tidyBagOwner}
-        pickup.queueList={}
-        assert(settlement.finishPickup(scope,pickup,true));settlement.poll(scope)
+        if fenceMode=='stop-only'then
+            inventory.values={first,second,tidyBagOwner}
+            assert(pickup.onCompleteFunc==nil and settlement.operationState(pickup).borrowings[1].state=='active',
+                'stop-only debt must come from the actual Compat pickup observer')
+        else
+            first.container=tidyBag;inventory.values={second,tidyBagOwner}
+            pickup.action={};pickup.queueList={{items={first}}};pickup.transactionId=0
+            queue.current,queue.queue=pickup,{pickup}
+            assert(settlement.beginPickup(scope,pickup,pickupGuard),'fixture must observe the original native pickup episode')
+            first.container=inventory;inventory.values={first,second,tidyBagOwner}
+            pickup.queueList={}
+            assert(settlement.finishPickup(scope,pickup,true));settlement.poll(scope)
+        end
         QueueBlockedP4Fixture={}
         local returning=bulk.guardTransfer(ISInventoryTransferAction:new(player,first,inventory,tidyBag))
         returning:setAllowMissingItems(true);returning.toolkitQueueOperation=firstOwner
@@ -3655,14 +3753,17 @@ do
         QueueBlockedP4Fixture.nanItem=first
         local savedFence=settlement.returnRestorationBlocked
         local foreignCalls=0
+        if fenceMode=='no-prior-intent'then
+            assert(intent.fixtureStates[player]==nil,'automatic native borrowing unexpectedly created explicit Intent state')
+        end
         if fenceMode=='disabled'then enabled=false
         elseif fenceMode=='foreign-checker'then settlement.returnRestorationBlocked=function()foreignCalls=foreignCalls+1;error('foreign fence must not run')end end
         tickTidy();tickTidy()
         local retry=assert(QueueBlockedP4Fixture.retry,'actual P4 must construct the observed failed-capacity retry')
         assert(retry.maxTime~=retry.maxTime,'fixture must retain native capacity-zero NaN timing metadata')
         local unrelated=assert(findReturn(second),'unrelated P4 restoration must remain native')
-        if fenceMode=='active'or fenceMode=='restoring'or fenceMode:match('^keep%-before')then
-            assert(not findReturn(first),'P4 idle restoration must not replay an undecided failed return')
+        if fenceMode=='active'or fenceMode=='stop-only'or fenceMode=='no-prior-intent'or fenceMode=='restoring'or fenceMode:match('^keep%-before')then
+            assert(not findReturn(first),'P4 idle restoration must not replay an undecided failed return: '..fenceMode)
             unrelated:perform();tickTidy();tickTidy()
             assert(first.container==inventory and second.container==tidyBag,'fence changed an unrelated native restoration effect')
             if fenceMode:match('^keep%-before')then
@@ -3717,6 +3818,7 @@ do
         reset()
     end
     round,player.getOnlineID,inventory.getVehiclePart=previousRound,previousOnline,previousVehiclePart
+    inventory.isExistYet=previousRootExists
     tidyBag.isExistYet,tidyBag.getItemById=previousExists,previousLookup
 end
 -- The native boundary owns only audited Tidy transfers, including completion after cancellation.

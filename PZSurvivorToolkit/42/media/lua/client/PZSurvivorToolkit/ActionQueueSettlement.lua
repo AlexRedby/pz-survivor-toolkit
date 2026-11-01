@@ -38,7 +38,10 @@ local function transferRequests()
             if not origin(method, "ActionQueueTransferRequests.lua") then return end
             result[name] = method
         end
-        if executionProof.own == own and executionProof.closure == origin then return result end
+        if executionProof.own == own and executionProof.closure == origin then
+            result.proofOwn, result.proofOrigin = own, origin
+            return result
+        end
     end)
     requestBinding, requestAttempted = false, true
     if ok then requestMethods = methods end
@@ -327,6 +330,56 @@ function Settlement.inheritCleanup(action, parent)
     step.kind, step.required = action.Type, true
     step.prerequisites = parentRecord.actions[parent].prerequisites
     if action.item then step.item = {id = action.item:getID(), fullType = action.item:getFullType()} end
+    return true
+end
+
+local pickupApproachBinding
+local function pickupApproach(action, container, character)
+    local owner = Toolkit.ActionQueueApproach
+    local checker = owner and owner.isContainer
+    if not executionProof or not executionProof.closure(checker, "ActionQueueApproach.lua") then return false end
+    if not pickupApproachBinding then pickupApproachBinding = {owner = owner, checker = checker} end
+    return owner == pickupApproachBinding.owner and checker == pickupApproachBinding.checker
+        and checker(action, container, character) == true
+end
+
+-- Failure isolation asks only about this private operation, never enqueue
+-- pickup hints or a copied diagnostics table. Prior mutating work and earned
+-- cleanup remain outside the unreceived singleton contract.
+function Settlement.rejectedPickupUntouched(action, members)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local queue = record and record.queue
+    local current = record and record.actions[action]
+    if not current or not queue or queue.current ~= action or queue.queue[1] ~= action
+        or #record.steps > 32 or #record.borrowings > 32 or type(members) ~= "table" or #members > 31 then return false end
+    for _, step in ipairs(record.steps) do
+        if step.state ~= "pending" or step.required or step.receipt then return false end
+        -- Absence without a started receipt is unknown, not proof of no effect.
+        if step ~= current and not step.started and queue:indexOf(step.action) <= 1 then return false end
+        if step ~= current and step.started then
+            local previous = step.action
+            local walking = previous.Type == "ISWalkToTimedAction" or previous.Type == "ISWalkToTimedActionF"
+                or previous.Type == "ISPathFindAction"
+            if queue:indexOf(previous) ~= -1 then return false end
+            if walking then
+                if not Toolkit.ActionQueuePolicy.matchesNative(previous) then return false end
+            elseif previous.Type ~= "ISQueueActionsAction"
+                or not pickupApproach(previous, action.srcContainer, action.character) then return false end
+        end
+        for _, prerequisite in ipairs(step.prerequisites or {}) do
+            if prerequisite.state ~= "pending" then return false end
+        end
+    end
+    for _, binding in ipairs(record.borrowings) do
+        local candidate = binding.candidate
+        if not candidate or candidate.phase ~= "prepare" or candidate.ambiguous
+            or candidate.step and candidate.step.state ~= "pending" then return false end
+    end
+    for _, member in ipairs(members) do
+        local step = record.actions[member]
+        if not step or member.toolkitQueueOperation ~= record.token or step.started or step.state ~= "pending"
+            or requiredCleanup(member) then return false end
+    end
     return true
 end
 
@@ -1753,12 +1806,34 @@ local function requestGuard(action)
         and action.character == execution.actor
         and (execution.queue.toolkitOperationGeneration or 0) == execution.generation or false
 end
+local requestMemberBinding
+local function requestMember(action, member)
+    if member == action.item then return true end
+    local methods, owner = requestMethods, Toolkit.ActionQueueItemEditAdapters
+    local own, origin = methods and methods.proofOwn, methods and methods.proofOrigin
+    if not own or not origin or executionProof.own ~= own or executionProof.closure ~= origin
+        or type(owner) ~= "table" or getmetatable(owner) ~= nil then return false end
+    local binding = requestMemberBinding
+    if not binding then
+        local checker = own(owner, "matchesTransferMember")
+        if not origin(checker, "ActionQueueItemEditAdapters.lua") then return false end
+        binding = {owner = owner, checker = checker}
+        requestMemberBinding = binding
+    end
+    if binding.owner ~= owner or own(owner, "matchesTransferMember") ~= binding.checker then return false end
+    -- Native Host may rebind action.item while retaining an older same-ID group
+    -- member. Reuse the source-owned alias proof; native arguments stay intact.
+    local accepted = binding.checker(action, member) == true
+    return accepted and Toolkit.ActionQueueItemEditAdapters == owner
+        and own(owner, "matchesTransferMember") == binding.checker
+        and executionProof.own == own and executionProof.closure == origin
+end
 local function requestBefore(action, receipt)
     local planned = plannedReturn(action)
     local execution = planned and planned.execution
     local group = action.queueList and action.queueList[1]
     if not execution or receipt:getSource() ~= execution.source or receipt:getDestination() ~= execution.destination
-        or not group or receipt:getItems() ~= group.items or #group.items ~= 1 or group.items[1] ~= action.item then return end
+        or not group or receipt:getItems() ~= group.items or #group.items ~= 1 or not requestMember(action, group.items[1]) then return end
     local request = {native = action.action, boundary = receipt:getBoundary(), phase = "before", dispatcher = createItemTransaction,
         id = execution.id, fullType = execution.fullType}
     request.sourceExact = sourceEvidence(action, execution) == true
@@ -1779,7 +1854,12 @@ function Settlement.nativeRequestState(action)
     local request = planned and planned.execution and planned.execution.request
     if not request then return end
     return {phase = request.phase, boundary = request.boundary, sourceExact = request.sourceExact, ambiguous = request.ambiguous,
-        paired = request.paired == true, nativeHandle = request.receipt and type(request.receipt.hasNativeHandle) == "function"
+        paired = request.paired == true,
+        -- Explicit diagnostics only: resolve the captured native object while it
+        -- still exists, rather than treating a historical byte as a live request.
+        currentHandle = request.receipt and type(request.receipt.matchesTransaction) == "function"
+            and type(action.transactionId) == "number" and request.receipt:matchesTransaction(action, action.transactionId) == true or false,
+        nativeHandle = request.receipt and type(request.receipt.hasNativeHandle) == "function"
             and request.receipt:hasNativeHandle() == true or false,
         wireAmbiguous = not (request.receipt and type(request.receipt.isWireAmbiguous) == "function")
             or request.receipt:isWireAmbiguous() ~= false,

@@ -28,6 +28,7 @@
   "cases": [
     "walk",
     "inventory-work",
+    "inventory-selection",
     "inventory-freshness",
     "inventory-food-age"
   ],

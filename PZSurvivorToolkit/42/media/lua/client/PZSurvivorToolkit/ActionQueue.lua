@@ -17,6 +17,7 @@ require "TimedActions/ISUnequipAction"
 require "Vehicles/TimedActions/ISPathFindAction"
 require "PZSurvivorToolkit/BulkActions"
 require "PZSurvivorToolkit/ActionQueueExecution"
+require "PZSurvivorToolkit/ActionQueuePickupFailure"
 require "RadioCom/ISRadioAction"
 
 local Toolkit = PZSurvivorToolkit
@@ -27,6 +28,7 @@ local Operations = Toolkit.ActionQueueOperations
 local Batch = Toolkit.ActionQueueBatch
 local Settlement = Toolkit.ActionQueueSettlement
 local Execution = Toolkit.ActionQueueExecution
+local PickupFailure = Toolkit.ActionQueuePickupFailure
 local processPriority
 require "PZSurvivorToolkit/ActionQueuePolicy"
 local Policy = Toolkit.ActionQueuePolicy
@@ -65,6 +67,7 @@ ISBaseTimedAction.begin = function(action)
     local intent=Toolkit.ActionQueueTidyIntent
     if intent and isClient() then intent.start(action) end
     if Execution then Execution.begin(action) end
+    if PickupFailure then PickupFailure.begin(action) end
     Toolkit.ActionQueueLifecycle.started(action)
     local token = action.toolkitQueueOperation
     if type(token) == "table" then token.toolkitStarted = true end
@@ -227,6 +230,7 @@ ISTimedActionQueue.onCompleted = function(queue, action)
     if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.completeCancellation(queue, action) end
     completed(queue, action)
     if Execution then Execution.completed(action) end
+    if PickupFailure then PickupFailure.completed(action) end
 end
 
 function Queue.move(queue, action, target, after)
@@ -297,6 +301,7 @@ ISBaseTimedAction.stop = function(action)
     if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.stop(action) end
     local queue = ISTimedActionQueue.queues[action.character]
     if queue and Execution and Execution.preserveStop(action) then queue.toolkitCancel = action end
+    if queue and PickupFailure and PickupFailure.preserveStop(action) then queue.toolkitCancel = action end
     local terminal = queue and Toolkit.ActionQueueLifecycle.deferStop(queue, action)
     if terminal ~= nil then
         if terminal then
@@ -376,6 +381,7 @@ if Operations.adoptCommandLifecycle then Operations.adoptCommandLifecycle("stop"
 local cancelQueue = ISTimedActionQueue.cancelQueue
 ISTimedActionQueue.cancelQueue = function(queue)
     if Execution then Execution.reset(queue) end
+    if PickupFailure then PickupFailure.reset(queue) end
     Settlement.resetCancellation(queue)
     if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.reset(queue) end
     if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.capture(queue) end
@@ -401,6 +407,7 @@ local function insertResumed(queue, action, index, receipt)
 end
 
 local function completeStopped(queue, action, cleanup)
+    if PickupFailure and PickupFailure.finish(queue, action) == false then return queue:resetQueue() end
     if not cleanup then return queue:onCompleted(action) end
     return Operations.performNativeContinuation(action, function(current)
         current:beginAddingActions()
