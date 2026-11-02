@@ -255,7 +255,7 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.
 
-- [ ] Report the exact rejected suite-selection constraint: running `queue-recovery` without explicit `--language EN` produces only a blanket list of requirements. Include actual and expected language/cases/mod selection in the validation error; explicit EN with both ordered cases succeeds.
+- [ ] Reconcile the native catalog's selected-pack declarations with dynamic adapter definitions. `test_queue_recovery_adapter` fails its catalog equality check because the current selected pack includes `MVXIVY_UTILS` while the saved `queue-recovery` declaration omits it. Decide which declarations are static versus resolved from the current selection, update affected consumers consistently and make the registration regression pass without concealing pack drift.
 
 - [ ] Define bounded handling for a resource-starved FIFO head. An oversized menu-Host request can keep an otherwise eligible SP job waiting while no test clients are running. Preserve hard resource and exclusive-desktop guards; qualify an explicit fair timeout/requeue or bounded backfill policy, with truthful owner/queue diagnostics and unchanged result provenance. Do not silently bypass the head from an individual test task.
 

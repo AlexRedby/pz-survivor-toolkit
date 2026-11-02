@@ -5,6 +5,7 @@ import re
 import shutil
 
 from .. import report
+from .recovery_selection import validate as validate_recovery_selection
 from .tv_controls import MODS, _close, _duration, _ids, _number
 
 CASES = ('movement-cancel', 'clear-queue')
@@ -25,17 +26,12 @@ def definitions():
 
 
 def validate(selection):
-    if (selection.get('cases') != list(CASES) or selection.get('kind') not in ('sp', 'mp')
-            or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
-            or type(selection.get('clients')) is not int or selection['clients'] != 1
-            or selection.get('mods') != MODS or selection.get('options', {}).get('world_template')
-            or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
-        raise ValueError('Recovery requires both ordered cases, full selected EN pack, fresh SP/menu Host and one client')
+    validate_recovery_selection(selection, suite='queue-recovery', cases=CASES, mods=MODS)
 
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [Path(__file__).with_name('tv_controls.py'),
+    return [Path(__file__).with_name('tv_controls.py'), Path(__file__).with_name('recovery_selection.py'),
             *sorted((root / 'queue-recovery').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
 

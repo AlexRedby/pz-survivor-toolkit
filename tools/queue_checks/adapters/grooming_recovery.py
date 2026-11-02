@@ -6,6 +6,7 @@ import re
 import shutil
 
 from .. import report
+from .recovery_selection import validate as validate_recovery_selection
 from .tv_controls import MODS, _duration, _number
 
 CASES = ('pending-restore', 'lost-tool', 'active-denied')
@@ -22,20 +23,15 @@ def definitions():
 
 
 def validate(selection):
-    if (selection.get('cases') != list(CASES) or selection.get('kind') not in ('sp', 'mp')
-            or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
-            or type(selection.get('clients')) is not int or selection['clients'] != 1
-            or selection.get('mods') != MODS or selection.get('options', {}).get('grooming_recovery') is not True
-            or selection.get('options', {}).get('world_template')
-            or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
-        raise ValueError('Grooming recovery requires its opt-in ordered three-case bank, full selected EN pack, fresh SP/menu Host and one actor')
+    validate_recovery_selection(selection, suite='grooming-recovery', cases=CASES, mods=MODS, grooming=True)
 
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     # Helpers below are executable verifier inputs, including imported duration
     # and selected-pack parsing; seal them alongside all fixture Lua.
-    return [Path(__file__).with_name('tv_controls.py'), Path(__file__).parents[1] / 'mod_selection.py',
+    return [Path(__file__).with_name('tv_controls.py'), Path(__file__).with_name('recovery_selection.py'),
+            Path(__file__).parents[1] / 'mod_selection.py',
             *sorted((root / 'grooming-recovery').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
 
