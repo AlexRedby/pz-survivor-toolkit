@@ -1471,7 +1471,7 @@ os.exit(0)
             currentLuaStarted=False, nativeStarted=True, nativeFinished=False, nativeForceComplete=False,
             liveItem=item, source=source, observer=observer,
             existingDecision=dict(entrypoint='Policy.evaluateCancel', allowed=legacy_allowed, reason=False if legacy_allowed else 'unavailable', whole=True),
-            ledgerBefore=ledger, ledgerAfter=copy.deepcopy(ledger), nativeFacts=False, prototype=False, effect=False,
+            ledgerBefore=ledger, ledgerAfter=copy.deepcopy(ledger), nativeFacts=False, aliasFacts=False, prototype=False, effect=False,
             qualifiedReturn=borrowed, readOnly=True, uiUnchanged=True, passed=True, failure=False, sources=sources)
         if borrowed:
             action = next(r['actionRef'] for r in row['records'] if r['role'] == 'return')
@@ -1691,6 +1691,36 @@ os.exit(0)
                 receipt = self.active_edit_receipt(control, legacy_allowed=True)
                 self.assertTrue(a.active_edit_errors(receipt, control, case, chosen))
 
+    def test_active_edit_detached_member_needs_native_resolution_and_keeps_admission_external(self):
+        row = self.precise_evidence('worn-bag.header-cancel')[0]
+        selection = self.selection(); selection['cases'] = [row['id']]
+        value = self.active_edit_receipt(row)
+        prototype, facts = value['prototype'], value['nativeFacts']
+        prototype.update(member='Literature@detached', sameMemberReference=False)
+        value['sources']['nativeAlias'] = True
+        value['aliasFacts'] = dict(scope='independent-native-alias-probe', schema=2, item=facts['item'],
+            source=facts['source'], destination=facts['destination'], aliasMember=prototype['member'], aliasResolution='native-root-id')
+        self.assertEqual(a.active_edit_errors(value, row, row['id'], selection), [])
+        for key, wrong in [('aliasFacts', False), ('aliasFacts', dict(value['aliasFacts'], aliasResolution='same-id')),
+                           ('aliasFacts', dict(value['aliasFacts'], aliasMember=facts['item'])),
+                           ('aliasFacts', dict(value['aliasFacts'], destination=facts['source'])),
+                           ('sources', dict(value['sources'], nativeAlias=False)),
+                           ('prototype', dict(prototype, sameItemReference=False)),
+                           ('prototype', dict(prototype, member=facts['item']))]:
+            changed=copy.deepcopy(value); changed[key]=wrong
+            self.assertTrue(a.active_edit_errors(changed, row, row['id'], selection), key)
+        for field in value['aliasFacts']:
+            changed=copy.deepcopy(value); changed['aliasFacts'].pop(field)
+            self.assertTrue(a.active_edit_errors(changed, row, row['id'], selection), field)
+        changed=copy.deepcopy(value); changed['aliasFacts']['allowed']=True
+        self.assertTrue(a.active_edit_errors(changed, row, row['id'], selection))
+        sp_row=self.precise_evidence('worn-bag.header-cancel',kind='sp')[0]
+        sp_value=self.active_edit_receipt(sp_row); sp_value.update(aliasFacts=value['aliasFacts'],prototype=prototype)
+        sp_selection=self.selection(kind='sp');sp_selection['cases']=[sp_row['id']]
+        self.assertTrue(a.active_edit_errors(sp_value,sp_row,sp_row['id'],sp_selection))
+        direct=self.active_edit_receipt(row);direct['aliasFacts']=value['aliasFacts']
+        self.assertTrue(a.active_edit_errors(direct,row,row['id'],selection))
+
     def test_active_edit_raw_setup_case_receipts_are_integrated_and_optional(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
@@ -1885,6 +1915,73 @@ local legacy=Panel:new(0,0,420,300);legacy.queue=queue;legacy:initialise();legac
 os.exit(0)
 """
         subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePanel.lua')], check=True)
+
+    def test_unsupported_active_edit_is_collected_after_read_only_checks(self):
+        lua = shutil.which('luajit')
+        if not lua: self.skipTest('LuaJIT not installed')
+        source = r"""
+local item={getID=function()return 17 end,getFullType=function()return 'Base.Book' end}
+local root,destination={},{}
+local native={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+local operation={};local front={item=item,action=native,started=true,toolkitQueueOperation=operation}
+local prototype={Type='ISInventoryTransferAction',item=item,allowMissingItems=true,toolkitQueueOperation=operation,
+ queueList={{items={{}}}},srcContainer=root,destContainer=destination}
+local queue={queue={front,prototype},current=front}
+local ui={size=function()return 0 end};UIManager={getUI=function()return ui end}
+local player={getInventory=function()return root end};local state={player=player,front=item,source=destination}
+local observeCount,ledgerCount,snapshots=0,0,0
+local queueOff,withEffect=false,false
+local function observe()observeCount=observeCount+1;if queueOff then return{status='unhandled'}end
+ local node={kind='return',action=nil,synthetic=true,item=item,id=17,fullType='Base.Book',source=root,destination=destination}
+ if withEffect then node.edit={version=1,complete=true,capacity='external',resources={{domain='item',key=17,facts={item=item,location=root},requires={{field='location',equal=root}},effects={{field='location',set=destination}}}}}end
+ return{status='observed',nodes={node}}end
+local function evaluate()return{allowed=true}end
+local function ledger()ledgerCount=ledgerCount+1;return{status='observed',steps={{phase='prepare',state='earned'}},borrowings={{id=17,fullType='Base.Book',state='active',ambiguous=false,returning=false,source=destination,destination=root}}}end
+local toolkit={ActionQueuePolicy={observeActiveEdit=observe,evaluateCancel=evaluate},ActionQueueSettlement={editLedger=ledger}}
+function getFilenameOfClosure(fn)if fn==observe then return 'ActionQueuePolicy.lua'elseif fn==ledger then return 'ActionQueueSettlement.lua'end end
+ISInventoryTransferAction={}
+function toolkitLeafTransferFacts()return{schema=2,item=item,source=root,destination=destination}end
+local aliasCalls=0
+function toolkitLeafTransferAliasFacts(actor,canonical,source,dest,id,fullType,member)
+ aliasCalls=aliasCalls+1;assert(actor==player and canonical==item and source==root and dest==destination and id==17 and fullType=='Base.Book' and member==prototype.queueList[1].items[1])
+ return{schema=2,item=item,source=root,destination=destination,aliasMember=member,aliasResolution='native-root-id'}
+end
+local fixture={snapshot=function()snapshots=snapshots+1;return{stable=true}end,same=function(a,b)
+ local function same(x,y)if type(x)~=type(y)then return false end;if type(x)~='table'then return x==y end
+ for k,v in pairs(x)do if not same(v,y[k])then return false end end;for k in pairs(y)do if x[k]==nil then return false end end;return true end
+ return same(a,b)end}
+local tick=0;local function clock()tick=tick+1;return tick end
+local run=assert(loadfile(arg[1]))().run
+local context={toolkit=toolkit,queue=queue,front=front,state=state,fixture=fixture,
+ ids={source='worn-bag',front={id=17,type='Base.Book'}},case='worn-bag.header-cancel',kind='mp',mode='toolkit',native=false,
+ control='header-cancel',clock=clock,precise=true,pickupEarned=true}
+local result=run(context)
+assert(result.passed==false and result.failure=='virtual-return-effect-unavailable' and result.unsupported==result.failure)
+assert(result.effect==false and result.qualifiedReturn==false and result.mutationAuthorized==false)
+assert(aliasCalls==1 and result.sources.nativeAlias and result.prototype.sameItemReference and not result.prototype.sameMemberReference)
+assert(result.aliasFacts.scope=='independent-native-alias-probe' and result.aliasFacts.aliasMember==result.prototype.member and result.aliasFacts.aliasResolution=='native-root-id')
+assert(result.readOnly and result.uiUnchanged and result.ledgerAfter and result.performance and not result.performance.comparable)
+assert(observeCount==5 and ledgerCount==2 and snapshots==2,'observation did not finish the full read-only bank')
+local detached=prototype.queueList[1].items[1];prototype.queueList[1].items[1]=item
+local same=run(context);assert(same.aliasFacts==false and same.prototype.sameMemberReference and aliasCalls==1)
+prototype.queueList[1].items[1]=detached;queueOff=true;context.native=true;context.mode='native'
+local control=run(context);assert(control.passed and control.control=='queue-disabled' and control.aliasFacts==false and aliasCalls==1)
+queueOff=false;context.native=false;context.mode='toolkit';withEffect=true
+local helper=toolkitLeafTransferAliasFacts
+for _,which in ipairs({'absent','nil'})do
+ toolkitLeafTransferAliasFacts=which=='absent'and nil or function()return nil end
+ -- Lua's and/or idiom cannot represent nil in its middle operand.
+ if which=='absent'then toolkitLeafTransferAliasFacts=nil end
+ local beforeObserve,beforeLedger,beforeSnapshots=observeCount,ledgerCount,snapshots
+ local missing=run(context)
+ assert(not missing.passed and missing.failure=='native-alias-facts-unavailable' and missing.aliasFacts==false)
+ assert(not missing.qualifiedReturn and missing.effect.complete and missing.readOnly and missing.performance and not missing.performance.comparable)
+ assert(observeCount-beforeObserve==5 and ledgerCount-beforeLedger==2 and snapshots-beforeSnapshots==2)
+end
+toolkitLeafTransferAliasFacts=helper
+os.exit(0)
+"""
+        subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookEditObservation.lua')], check=True)
 
     def test_fixture_compiles_and_does_not_repair_client_equipment(self):
         lua = shutil.which('luajit')

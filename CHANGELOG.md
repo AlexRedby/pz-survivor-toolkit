@@ -46,6 +46,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.339
+
+- **Internal:** Extend opt-in queue return-effect observations to detached Host singleton members through a native transaction-ID-resolution witness. Require exact native API/source semantics, supported detached leaf classes and the unique canonical root item plus earned private borrowing. Preserve the original queue, native admission/capacity/outcome checks and unknown fallbacks; no new cancel/reorder rights are enabled.
+- **Tests:** Collect unsupported active return-effect qualifications through the remaining read-only checks and native case controls, retaining failed-case results instead of aborting the bank at the first missing effect.
+
 ### 0.1.338
 
 - **Internal:** Extend opt-in queue return-effect observations to source-owned Toolkit base/Bulk/Compat/Tidy hooks and reviewed Better Containers, P4, fridge and cart wrappers. Immutable delegate/receipt provenance and query-local pure field watchers replace generic guard execution at the final facts boundary. Capture generic native holder, hand-container and sibling-container types so inactive fridge/cart branches can be proven without running their helpers. Keep unknown listeners, foreign wrappers, detached aliases and unsupported borrowing on the existing path; no new cancel/reorder/capacity permissions are enabled.
@@ -1572,6 +1577,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.85
+
+- **Internal:** Add a read-only native alias target witness for menu-Host outgoing leaf transfers. Verify the real native transaction API and pinned ID-resolution implementation, detached queued handle, unique canonical root item and unchanged endpoint/equipment constraints. The witness describes the prospective location-effect target; old-handle admission/weight reads and authoritative completion remain native and unproven by this witness.
 
 ### 0.1.84
 

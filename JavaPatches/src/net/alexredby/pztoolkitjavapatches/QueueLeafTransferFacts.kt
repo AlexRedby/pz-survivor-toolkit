@@ -26,6 +26,7 @@ import zombie.iso.IsoDirections
 import zombie.iso.IsoGridSquare
 import zombie.iso.IsoObject
 import zombie.network.GameServer
+import zombie.network.GameClient
 import zombie.iso.objects.IsoBarricade
 import zombie.iso.objects.IsoThumpable
 import zombie.iso.sprite.IsoSprite
@@ -83,6 +84,16 @@ object QueueLeafTransferFacts {
         HandWeapon::class.java, Clothing::class.java, Literature::class.java, Key::class.java,
         MapItem::class.java, WeaponPart::class.java,
     )
+    // Metadata-only callers (including luaMetatableMatches) must not initialize
+    // the native request/client subsystem merely by loading this helper.
+    internal val ALIAS_SUPPORTED by lazy { SUPPORTED && NativeTransferRequestsLogic.SUPPORTED &&
+        BytecodeSupport.supports(
+            "zombie/core/Transaction\$TransactionEntry.class",
+            "e3ff05f0965b36dd7b72464ee0cdd3dbd79218df2bf580cb559ad3acd50c26b5",
+        ) && BytecodeSupport.supports(
+            "zombie/network/fields/ContainerID.class",
+            "d7ef29f65c423135d70f829a1381b9e32ce06d68f87ae49de1980bfcf7c0244b",
+        ) }
     private val excludedContainerTypes = setOf("floor", "proximityInv", "twistInv_corpses", "TradeUI", "microwave")
     private val worldStorageTypes = setOf("crate", "shelf", "shelves", "metal_shelves")
     private val applianceGroups = setOf("Coffee", "Espresso")
@@ -130,11 +141,54 @@ object QueueLeafTransferFacts {
     ): KahluaTableImpl? = read(actor, item, source, destination, id, fullType, SUPPORTED,
         LuaManager.thread?.debugOwnerThread === Thread.currentThread())
 
+    /**
+     * Effect target only: ordinary MP requests encode the queued member's ID and native
+     * Transaction.updateItem resolves that ID in source. Admission still reads the old
+     * member's weight/allowance; this witness grants no admission or execution rights.
+     */
+    @JvmStatic
+    @LuaMethod(name = "toolkitLeafTransferAliasFacts", global = true)
+    fun aliasFacts(
+        actor: IsoPlayer?, item: InventoryItem?, source: ItemContainer?,
+        destination: ItemContainer?, id: Double, fullType: String?, queuedMember: InventoryItem?,
+    ): KahluaTableImpl? {
+        val env = LuaManager.env as? KahluaTableImpl
+        val nativeApi = env != null && env.javaClass == KahluaTableImpl::class.java &&
+            env.metatable == null && env.rewriteTable == null && env.delegate.javaClass == LinkedHashMap::class.java &&
+            NativeTransferRequestsLogic.canonicalApi(env.delegate["createItemTransaction"])
+        return readAlias(actor, item, source, destination, id, fullType, queuedMember,
+            ALIAS_SUPPORTED, LuaManager.thread?.debugOwnerThread === Thread.currentThread(),
+            GameClient.client && !GameServer.server, nativeApi)
+    }
+
+    /** Explicit negative-test gates; the exposed method always reads native state itself. */
+    internal fun readAlias(
+        actor: IsoPlayer?, item: InventoryItem?, source: ItemContainer?,
+        destination: ItemContainer?, id: Double, fullType: String?, queuedMember: InventoryItem?,
+        supported: Boolean, ownerThread: Boolean, client: Boolean, nativeApi: Boolean,
+    ): KahluaTableImpl? {
+        if (!supported || !ownerThread || !client || !nativeApi || actor?.javaClass != IsoPlayer::class.java ||
+            item == null || queuedMember == null || queuedMember === item || item.javaClass !in leafClasses ||
+            queuedMember.javaClass != item.javaClass) return null
+        return try {
+            // Both classes are exact pinned leaves before any virtual native getter. No
+            // recursive scan, Lua dispatch, native request or list rebinding occurs here.
+            if (queuedMember.id != item.id || queuedMember.getFullType() != item.getFullType() ||
+                queuedMember.getContainer() != null || queuedMember.getWorldItem() != null ||
+                queuedMember.getIsCraftingConsumed() || equipParent == null || equipParent.get(queuedMember) != null ||
+                queuedMember.getAttachedSlot() >= 0) return null
+            val facts = read(actor, item, source, destination, id, fullType, true, true, queuedMember) ?: return null
+            facts.delegate["aliasMember"] = queuedMember
+            facts.delegate["aliasResolution"] = "native-root-id"
+            facts
+        } catch (_: Exception) { null } catch (_: AssertionError) { null }
+    }
+
     /** Explicit gates are a test seam; production always uses pinned classes and the Lua owner. */
     internal fun read(
         actor: IsoPlayer?, item: InventoryItem?, source: ItemContainer?,
         destination: ItemContainer?, id: Double, fullType: String?,
-        supported: Boolean, ownerThread: Boolean,
+        supported: Boolean, ownerThread: Boolean, aliasMember: InventoryItem? = null,
     ): KahluaTableImpl? {
         if (!supported || !ownerThread || actor?.javaClass != IsoPlayer::class.java
             || item == null || item.javaClass !in leafClasses
@@ -156,7 +210,7 @@ object QueueLeafTransferFacts {
                 || item.getContainer() !== source || item.getWorldItem() != null
                 || item.getIsCraftingConsumed() || equipParent == null || equipParent.get(item) != null
                 || item.getAttachedSlot() >= 0 || item.getType() == "CandleLit"
-                || item.getType() == "Lantern_HurricaneLit" || !unequipped(actor, item)
+                || item.getType() == "Lantern_HurricaneLit" || !unequipped(actor, item, aliasMember)
                 || !absent(destination, item.id)) return null
             val sourceTypes = parentTypes(actor) ?: return null
             val holder = destination.getContainingItem()
@@ -242,15 +296,20 @@ object QueueLeafTransferFacts {
         return values.none { it is InventoryContainer || it.id == id }
     }
 
-    private fun unequipped(actor: IsoPlayer, item: InventoryItem): Boolean {
-        if (actor.getPrimaryHandItem() === item || actor.getSecondaryHandItem() === item) return false
+    private fun unequipped(actor: IsoPlayer, item: InventoryItem, aliasMember: InventoryItem?): Boolean {
+        fun selected(value: InventoryItem?): Boolean = value === item || aliasMember != null &&
+            (value === aliasMember || value != null && value.id == item.id)
+        // An alias request resolves by logical ID. A third equipment replica with
+        // that ID is equally ambiguous. Inspect public IDs while traversing each
+        // equipment collection once; ordinary facts retain reference-only checks.
+        if (selected(actor.getPrimaryHandItem()) || selected(actor.getSecondaryHandItem())) return false
         val worn = actor.getWornItems() ?: return false
         if (worn.javaClass != WornItems::class.java) return false
         val values = wornEntries?.get(worn)
         if (values?.javaClass != ArrayList::class.java) return false
         val count = (values as ArrayList<*>).size
         if (count > MAX_WORN) return false
-        for (index in 0 until count) if (worn.getItemByIndex(index) === item) return false
+        for (index in 0 until count) if (selected(worn.getItemByIndex(index))) return false
         // Native transfer always calls removeAttachedItem, even if attachedSlot is stale.
         val attached = actor.getAttachedItems() ?: return false
         if (attached.javaClass != AttachedItems::class.java) return false
@@ -258,7 +317,7 @@ object QueueLeafTransferFacts {
         if (slots?.javaClass != ArrayList::class.java) return false
         val slotCount = (slots as ArrayList<*>).size
         if (slotCount > MAX_WORN) return false
-        for (index in 0 until slotCount) if (attached.getItemByIndex(index) === item) return false
+        for (index in 0 until slotCount) if (selected(attached.getItemByIndex(index))) return false
         return true
     }
 

@@ -104,14 +104,16 @@ object QueueLeafTransferFactsChecks {
         }
         fun read(id: Double = 17.0, kind: String? = "Base.Leaf") =
             QueueLeafTransferFacts.read(actor, item, root, destination, id, kind, true, true)
+        fun alias(member: InventoryItem?) = QueueLeafTransferFacts.readAlias(
+            actor, item, root, destination, 17.0, "Base.Leaf", member, true, true, true, true)
         fun sprite(properties: PropertyContainer) {
             val sprite = bare(IsoSprite::class.java)
             field(IsoSprite::class.java, sprite, "properties", properties)
             field(IsoObject::class.java, parent!!, "sprite", sprite)
         }
-        fun worn() {
+        fun worn(value: InventoryItem = item) {
             val entry = bare(WornItem::class.java)
-            field(WornItem::class.java, entry, "item", item)
+            field(WornItem::class.java, entry, "item", value)
             field(WornItems::class.java, actor.getWornItems(), "items", arrayListOf(entry))
         }
     }
@@ -237,6 +239,71 @@ object QueueLeafTransferFactsChecks {
         verify(opposite.read() == null, "opposite barricade hidden by absent nav")
     }
 
+    private fun aliases() {
+        fun rejected(message: String, change: (Fixture, InventoryItem) -> InventoryItem?) {
+            val fixture = Fixture()
+            val member = item(ComboItem::class.java, 17)
+            verify(fixture.alias(member) != null, "invalid alias baseline: $message")
+            verify(fixture.alias(change(fixture, member)) == null, message)
+        }
+        rejected("alias missing") { _, _ -> null }
+        rejected("alias same reference") { fixture, _ -> fixture.item }
+        rejected("alias different exact leaf class") { _, _ -> item(InventoryItem::class.java, 17) }
+        rejected("alias custom class must not dispatch") { _, _ -> item(ForeignItem::class.java, 17) }
+        rejected("alias changed ID") { _, member -> member.also { it.id = 18 } }
+        rejected("alias changed type") { _, member -> member.also { field(InventoryItem::class.java, it, "fullType", "Base.Other") } }
+        rejected("alias still contained") { fixture, member -> member.also { field(InventoryItem::class.java, it, "container", fixture.root) } }
+        rejected("alias world handle") { _, member -> member.also { field(InventoryItem::class.java, it, "worldItem", bare(IsoWorldInventoryObject::class.java)) } }
+        rejected("alias consumed") { _, member -> member.also { field(InventoryItem::class.java, it, "isCraftingConsumed", true) } }
+        rejected("alias attached slot") { _, member -> member.also { field(InventoryItem::class.java, it, "attachedSlot", 0) } }
+        rejected("alias equip parent") { fixture, member -> member.also { field(InventoryItem::class.java, it, "equipParent", fixture.actor) } }
+        rejected("alias hand reference") { fixture, member -> member.also { field(IsoGameCharacter::class.java, fixture.actor, "leftHandItem", it) } }
+        rejected("alias worn reference") { fixture, member -> member.also { fixture.worn(it) } }
+        rejected("alias native attachment despite negative slot") { fixture, member ->
+            val entry = bare(AttachedItem::class.java)
+            field(AttachedItem::class.java, entry, "item", member)
+            field(AttachedItems::class.java, fixture.actor.getAttachedItems(), "items", arrayListOf(entry))
+            member
+        }
+        // The shared canonical reader must still run at this same boundary. The ordinary
+        // reader already covers its complete endpoint/equipment matrix.
+        rejected("alias duplicate canonical ID") { fixture, member -> member.also { fixture.root.items.add(item(ComboItem::class.java, 17)) } }
+        rejected("alias lost canonical reference") { fixture, member -> member.also { fixture.root.items.remove(fixture.item) } }
+        rejected("alias canonical type changed") { fixture, member -> member.also { field(InventoryItem::class.java, fixture.item, "fullType", "Base.Other") } }
+        rejected("alias canonical consumed") { fixture, member -> member.also { field(InventoryItem::class.java, fixture.item, "isCraftingConsumed", true) } }
+        rejected("alias canonical worn reference") { fixture, member -> member.also { fixture.worn() } }
+        for (slot in listOf("hand", "worn", "attached")) rejected("alias third same-ID replica in $slot") { fixture, member ->
+            // Unknown equipment classes cannot dispatch their getID override: the
+            // alias-only ambiguity check reads the public native ID field directly.
+            val third = item(ForeignItem::class.java, 17)
+            when (slot) {
+                "hand" -> field(IsoGameCharacter::class.java, fixture.actor, "rightHandItem", third)
+                "worn" -> fixture.worn(third)
+                else -> {
+                    val entry = bare(AttachedItem::class.java)
+                    field(AttachedItem::class.java, entry, "item", third)
+                    field(AttachedItems::class.java, fixture.actor.getAttachedItems(), "items", arrayListOf(entry))
+                }
+            }
+            verify(fixture.read() != null, "ordinary facts must retain reference-only equipment checks: $slot")
+            member
+        }
+        val fixture = Fixture()
+        val member = item(ComboItem::class.java, 17)
+        for (gate in 0..3) verify(QueueLeafTransferFacts.readAlias(fixture.actor, fixture.item,
+            fixture.root, fixture.destination, 17.0, "Base.Leaf", member,
+            gate != 0, gate != 1, gate != 2, gate != 3) == null, "alias explicit gate $gate")
+        val world = Fixture(world = true)
+        val witness = world.alias(member) ?: throw AssertionError("ordinary world alias")
+        verify(witness.delegate["aliasMember"] === member && witness.delegate["aliasResolution"] == "native-root-id"
+            && witness.delegate["schema"] == 2.0 && witness.delegate["item"] === world.item
+            && witness.delegate["location"] === world.root, "alias witness binds exact members")
+        verify(!world.read()!!.delegate.containsKey("aliasMember") && !world.read()!!.delegate.containsKey("aliasResolution"),
+            "ordinary DTO gained alias authority")
+        verify(member.getContainer() == null && world.item.getContainer() === world.root
+            && world.root.items.single() === world.item && world.destination.items.isEmpty(), "alias read changed membership")
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         val measure =
@@ -249,6 +316,7 @@ object QueueLeafTransferFactsChecks {
         GameClient.client = false
         GameServer.server = false
         verify(QueueLeafTransferFacts.SUPPORTED, "installed bytecode is unsupported")
+        verify(QueueLeafTransferFacts.ALIAS_SUPPORTED, "installed alias bytecode is unsupported")
         // The canonical opposite-side cell lookup and final equipment element getters
         // cannot dispatch a foreign subclass. A future non-final shape needs a new audit.
         for (type in listOf(WornItems::class.java, WornItem::class.java,
@@ -297,6 +365,7 @@ object QueueLeafTransferFactsChecks {
             && !unknownPrimary.delegate.containsKey("primaryFullType")
             && !unknownPrimary.delegate.containsKey("primaryItemContainer"), "unknown hand dispatch must stay unknown")
         mutations()
+        aliases()
         val near = Fixture()
         while (near.root.items.size < QueueLeafTransferFacts.MAX_ENTRIES) near.root.items.add(item(ComboItem::class.java, 10000 + near.root.items.size))
         while (near.destination.items.size < QueueLeafTransferFacts.MAX_ENTRIES) near.destination.items.add(item(ComboItem::class.java, 20000 + near.destination.items.size))
@@ -324,15 +393,54 @@ object QueueLeafTransferFactsChecks {
         val function = LuaManager.env.rawget("toolkitLeafTransferFacts")
         val arguments = arrayOf<Any?>(fixture.actor, fixture.item, fixture.root, fixture.destination, 17.0, "Base.Leaf")
         verify(thread.call(function, arguments) is KahluaTableImpl, "real Kahlua native facts crossing")
+        val aliasMethod = QueueLeafTransferFacts::class.java.getMethod("aliasFacts", IsoPlayer::class.java,
+            InventoryItem::class.java, ItemContainer::class.java, ItemContainer::class.java,
+            Double::class.javaPrimitiveType, String::class.java, InventoryItem::class.java)
+        verify(aliasMethod.getAnnotation(LuaMethod::class.java)?.name == "toolkitLeafTransferAliasFacts", "annotated alias global")
+        LuaManager.exposer.exposeGlobalClassFunction(LuaManager.env, QueueLeafTransferFacts::class.java,
+            aliasMethod, "toolkitLeafTransferAliasFacts")
+        val aliasFunction = LuaManager.env.rawget("toolkitLeafTransferAliasFacts")
+        val aliasMember = item(ComboItem::class.java, 17)
+        val aliasArguments = arguments + aliasMember
+        GameClient.client = true
+        verify(thread.call(aliasFunction, aliasArguments) == null, "alias missing native API")
+        LuaManager.env.rawset("createItemTransaction", function)
+        verify(thread.call(aliasFunction, aliasArguments) == null, "alias foreign Java Method in real invoker")
+        thread.call(LuaCompiler.loadstring("createItemTransaction=function() error('request must never run') end",
+            "alias-api-sentinel", LuaManager.env), null)
+        verify(thread.call(aliasFunction, aliasArguments) == null, "alias Lua API replacement")
+        LuaManager.env.rawset("createItemTransaction", null)
+        LuaManager.exposer.exposeGlobalClassFunction(LuaManager.env, LuaManager.GlobalObject::class.java,
+            LuaManager.GlobalObject::class.java.getMethod("createItemTransaction", IsoPlayer::class.java,
+                KahluaTableImpl::class.java, ItemContainer::class.java, ItemContainer::class.java), "createItemTransaction")
+        val aliasResult = thread.call(aliasFunction, aliasArguments) as? KahluaTableImpl
+            ?: throw AssertionError("real Kahlua alias native facts crossing")
+        verify(aliasResult.delegate["aliasMember"] === aliasMember && aliasResult.delegate["aliasResolution"] == "native-root-id"
+            && aliasResult.delegate["item"] === fixture.item, "real alias witness")
+        GameClient.client = false
+        verify(thread.call(aliasFunction, aliasArguments) == null, "alias native no-client mode")
+        GameClient.client = true
+        GameServer.server = true
+        verify(thread.call(aliasFunction, aliasArguments) == null, "alias native server mode")
+        GameServer.server = false
         field(ItemContainer::class.java, fixture.destination, "acceptItemFunction", "MustNeverRun")
         verify(thread.call(function, arguments) == null && LuaManager.env.rawget("callbacks") == 0.0, "Lua acceptance callback ran")
+        verify(thread.call(aliasFunction, aliasArguments) == null && LuaManager.env.rawget("callbacks") == 0.0,
+            "alias Lua acceptance callback ran")
         field(ItemContainer::class.java, fixture.destination, "acceptItemFunction", null)
         thread.debugOwnerThread = null
         verify(QueueLeafTransferFacts.facts(fixture.actor, fixture.item, fixture.root, fixture.destination, 17.0, "Base.Leaf") == null, "missing native owner thread")
+        verify(QueueLeafTransferFacts.aliasFacts(fixture.actor, fixture.item, fixture.root, fixture.destination,
+            17.0, "Base.Leaf", aliasMember) == null, "alias missing native owner thread")
         thread.debugOwnerThread = Thread.currentThread()
         var foreignThreadResult: KahluaTableImpl? = result
         Thread { foreignThreadResult = QueueLeafTransferFacts.facts(fixture.actor, fixture.item, fixture.root, fixture.destination, 17.0, "Base.Leaf") }.apply { start(); join() }
         verify(foreignThreadResult == null, "foreign thread read")
+        foreignThreadResult = aliasResult
+        Thread { foreignThreadResult = QueueLeafTransferFacts.aliasFacts(fixture.actor, fixture.item, fixture.root,
+            fixture.destination, 17.0, "Base.Leaf", aliasMember) }.apply { start(); join() }
+        verify(foreignThreadResult == null, "alias foreign thread read")
+        GameClient.client = false
         verify(fixture.item.getContainer() === fixture.root && fixture.root.items.size == 2 && fixture.destination.items.isEmpty(), "observation changed native membership")
         if (measure) {
             fun measure(label: String, value: Fixture, runs: Int) {
@@ -345,7 +453,7 @@ object QueueLeafTransferFactsChecks {
             measure("small", Fixture().also { while (it.root.items.size < 16) it.root.items.add(item(ComboItem::class.java, 100 + it.root.items.size)) }, 2000)
             measure("at-bound", near, 200)
         }
-        println("QUEUE_LEAF_TRANSFER_FACTS_CHECKS_PASS (native direct identities, endpoint/acceptance/equipment mutations, nested duplicate, callback-free Kahlua, bounds and owner thread)")
+        println("QUEUE_LEAF_TRANSFER_FACTS_CHECKS_PASS (native direct identities, endpoint/acceptance/equipment mutations, nested duplicate, callback-free Kahlua, bounds, owner thread and effect-only MP alias)")
         kotlin.system.exitProcess(0)
     }
 }

@@ -352,7 +352,6 @@ for _,mutate in ipairs({
     function(s,c,a)a.allowMissingItems=false end,
     function(s,c,a)a.queueList[2]=a.queueList[1]end,
     function(s,c,a)a.queueList[1].items[2]=a.item end,
-    function(s,c,a)a.queueList[1].items[1]=s.item()end,
     function(s,c,a)a.queueList[1].extra=true end,
     function(s,c,a,q)local other=s.f.action(ISReadABook,{item=s.water});q.queue={c,other,a}end,
     function(s,c,a,q)q.queue[3]=s.f.action(ISReadABook,{item=s.water});q.queue[4]=s.f.action(ISReadABook,{item=s.water});q.queue[4].toolkitQueueOperation=c.toolkitQueueOperation end,

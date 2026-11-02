@@ -85,20 +85,33 @@ for _,mutation in ipairs({'class','base','factory','owner','descriptor','safe-co
     else queue.toolkitOperationGeneration=1 end
     assert(not lease(facts),'combined source lease accepted changed '..mutation)
 end
--- Genuine Host producers may refresh action.item while queueList retains a
--- detached same-ID copy. This layer must decline without canonicalizing either.
-do
-    local s,current,action,queue=fixture(true,false)
+-- Only native alias facts can qualify a different captured singleton member.
+-- The source lease never canonicalizes it or promotes a same-ID match alone.
+for _,change in ipairs({'missing','valid','wrong-member','wrong-resolution','member-mutated','api-mutated'})do
+    local s,current,action,queue,facts=fixture(true,false)
     local detached={}
     for key,value in pairs(s.water)do detached[key]=value end
-    action.queueList[1].items[1]=detached
+    detached.container=nil;action.queueList[1].items[1]=detached
+    local lease,member=s.adapters.deferredTransferBinding(action,current)
+    assert(type(lease)=='function'and member==detached)
     assert(detached~=s.water and detached:getID()==s.water:getID()and detached:getFullType()==s.water:getFullType())
-    assert(s.adapters.deferredTransferBinding(action,current)==nil,'same-ID queue member needs its own native/source alias contract')
-    assert(action.item==s.water and action.queueList[1].items[1]==detached and queue.queue[2]==action,
-        'unsupported Host alias observation must not rebind native producer state')
+    if change~='missing'then facts.aliasMember,facts.aliasResolution=detached,'native-root-id' end
+    if change=='wrong-member'then facts.aliasMember=s.water
+    elseif change=='wrong-resolution'then facts.aliasResolution='same-id'
+    elseif change=='member-mutated'then action.queueList[1].items[1]=s.water
+    elseif change=='api-mutated'then createItemTransaction=function()error('changed native API must not run')end end
+    assert(lease(facts)==(change=='valid'),'source alias witness accepted '..change)
+    assert(action.item==s.water and queue.queue[2]==action,'source alias lease rebound native state')
+    if change~='member-mutated'then assert(action.queueList[1].items[1]==detached)end
 end
 local function earnedObservation(bulkGuard,change)
     local s,current,action,queue,facts,bulk,intent,settlement=fixture(bulkGuard,true)
+    toolkitLeafTransferAliasFacts=nil
+    local alias
+    if change and change:sub(1,5)=='alias'then
+        alias={};for key,value in pairs(s.water)do alias[key]=value end
+        alias.container=nil;action.queueList[1].items[1]=alias
+    end
     assert(s.adapters.deferredTransferBinding(action,current)==nil,'Settlement listener cannot attest outside its private observation')
     local lookup=s.root.getItemById
     s.root.getItemById=function(self,id)if id==s.bag:getID()then return s.bag end;return lookup(self,id)end
@@ -133,8 +146,20 @@ local function earnedObservation(bulkGuard,change)
         s.root.getItemById,s.bagInventory.getItemById,getTimestampMs=forbidden,forbidden,forbidden
         return facts
     end
+    if alias and change~='alias-missing-helper'then
+        local reader=toolkitLeafTransferFacts
+        toolkitLeafTransferAliasFacts=function(actor,item,source,destination,id,fullType,member)
+            assert(member==alias,'final native query did not receive the captured old singleton')
+            local result=reader(actor,item,source,destination,id,fullType)
+            if change=='alias-unavailable'then return nil end
+            if change=='alias-mutation'then action.queueList[1].items[1]=s.water end
+            result.aliasMember=change=='alias-wrong-member'and s.water or member
+            result.aliasResolution=change=='alias-wrong-resolution'and'same-id'or'native-root-id'
+            return result
+        end
+    end
     local result=settlement.observeEditCleanup(queue,current)
-    toolkitLeafTransferFacts=nil
+    toolkitLeafTransferFacts,toolkitLeafTransferAliasFacts=nil,nil
     assert(queue.current==current and queue.queue[2]==action and not queue.toolkitCancel,'joint observation changed native queue ownership')
     return result,nativeReads
 end
@@ -142,6 +167,12 @@ for _,bulkGuard in ipairs({false,true})do
     local result,reads=earnedObservation(bulkGuard)
     assert(reads==1 and result.status=='observed'and result.borrowings[1].effect=='native-leaf-location',
         'actual central/Tidy/Settlement composition failed to qualify the final return effect: reads='..tostring(reads)..' status='..tostring(result.status)..' reason='..tostring(result.reason)..' effect='..tostring(result.borrowings and result.borrowings[1]and result.borrowings[1].effect))
+end
+for _,change in ipairs({'alias','alias-missing-helper','alias-unavailable','alias-wrong-member','alias-wrong-resolution','alias-mutation'})do
+    local result,reads=earnedObservation(true,change)
+    local effect=result.borrowings and result.borrowings[1]and result.borrowings[1].effect
+    assert((effect=='native-leaf-location')==(change=='alias'),'earned alias composition accepted '..change)
+    assert(reads==(change=='alias-missing-helper'and 0 or 1),'alias relation repeated or bypassed final native read')
 end
 for _,change in ipairs({'unknown-listener','late-listener','class','private','facts','location'})do
     local result,reads=earnedObservation(true,change)
