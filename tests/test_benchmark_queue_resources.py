@@ -1,12 +1,19 @@
 """Isolated command, provenance and failure tests; no JVM/game process is launched."""
 import argparse
+from contextlib import contextmanager
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
+import time
+import traceback
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +32,10 @@ class QueueResourceBenchmarkTests(unittest.TestCase):
                                (Path('tools/benchmark_queue_resources.py'), 'development runner'),
                                (Path('JavaPatches/build.py'), (ROOT / 'JavaPatches/build.py').read_text())]:
             path = self.project / relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
+        for relative in (b.TIMING_JAVA, *b.TIMING_TOOLS):
+            path = self.project / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text((ROOT / relative).read_text())
         for path in (self.game / 'projectzomboid.jar', self.game / 'ZombieBuddy.jar', self.jdk / 'bin/java', self.jdk / 'bin/javac'):
             path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(b'local-only-input')
         self.build = b.load_build(self.project)
@@ -34,8 +45,20 @@ class QueueResourceBenchmarkTests(unittest.TestCase):
                 archive.writestr('META-INF/MANIFEST.MF', 'Implementation-Version: ' + self.build.KOTLIN_VERSION + '\n')
         for name in ('LICENSE.txt', 'NOTICE.txt', 'COPYRIGHT.txt'):
             path = self.kotlin / 'license' / name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text('local license')
-        self.args = argparse.Namespace(game=self.game, jdk=self.jdk, kotlin_home=self.kotlin, output=self.root / 'report', samples=7, warmup=2, timeout=30.0)
+        self.args = argparse.Namespace(game=self.game, jdk=self.jdk, kotlin_home=self.kotlin, output=self.root / 'report', samples=7, warmup=2, timeout=30.0, resource_wait=0)
         self.calls = []
+        self.tokens = []
+        for context in (
+                patch.object(b.timing.admission, 'STATE', self.root / 'state'),
+                patch.object(b.timing.admission, 'LEGACY_LOCK', self.root / 'legacy.lock'),
+                patch.object(b.timing.admission.host, 'sample', return_value={
+                    'total_memory': 16 * 1024**3, 'available_memory': 12 * 1024**3, 'cpu_count': 8, 'processes': []}),
+                patch.object(b.timing.admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3)),
+                # The runner is an in-process test double. Actual descendant PID
+                # ownership is qualified by the separate registration/JVM tests.
+                patch.object(b.timing, '_owned_pid', side_effect=lambda pid, owner: pid == os.getpid())):
+            context.start()
+            self.addCleanup(context.stop)
 
     def events(self):
         return [dict(event='environment', scope='native-kahlua-cpu-only', gui=False, allocatedBytesAvailable=True, samples=7, warmup=2, sections=list(b.SECTIONS), maxSteps=1000),
@@ -45,29 +68,46 @@ class QueueResourceBenchmarkTests(unittest.TestCase):
                 dict(event='gc', phase='after', collectors=[]),
                 dict(event='bank', status='passed', marker=b.MARKER, emitted=1, samples=7, warmup=2, sections=list(b.SECTIONS), maxSteps=1000)]
 
-    def runner(self, events=None, fail=None, timeout=None, after_runtime=None, version='openjdk version "25.0.1"'):
+    def runner(self, events=None, fail=None, timeout=None, after_runtime=None, version='openjdk version "25.0.1"', register=True):
         def run(command, **kwargs):
             self.calls.append((command, kwargs.copy()))
             self.assertFalse(kwargs['check']); self.assertTrue(kwargs['text']); self.assertGreater(kwargs['timeout'], 0)
-            label = 'version' if command[-1] == '-version' else 'compile' if '-jar' in command else 'runtime'
+            label = ('version' if command[-1] == '-version' else 'compile' if '-jar' in command
+                     else 'admission-compile' if command[0].endswith('javac') else 'runtime')
             if timeout == label:
                 kwargs['stderr'].write('partial timeout log\n'); raise subprocess.TimeoutExpired(command, kwargs['timeout'])
             if label == 'version': kwargs['stderr'].write(version + '\n')
-            elif label == 'compile': kwargs['stdout'].write('single host compile\n')
+            elif label in ('compile', 'admission-compile'): kwargs['stdout'].write('minimal host compile\n')
             else:
+                admission = None
+                if register:
+                    properties = dict(part[2:].split('=', 1) for part in command if part.startswith('-D') and '=' in part)
+                    self.tokens.append(properties['pz.timing.token'])
+                    with socket.create_connection(('127.0.0.1', int(properties['pz.timing.port'])), timeout=2) as client:
+                        client.sendall(('PZ_TIMING_V1\t%s\t%s\t%d\n' % (
+                            properties['pz.timing.token'], b.MAIN_CLASS, os.getpid())).encode())
+                        reply = client.makefile('r').readline().rstrip('\n').split('\t')
+                    self.assertEqual(reply[0], 'PZ_TIMING_OK')
+                    admission = reply[1]
+                    kwargs['stdout'].write('TIMING_ADMISSION %s %s pid=%d\n' % (admission, b.MAIN_CLASS, os.getpid()))
                 kwargs['stdout'].write('ordinary harness print retained\n')
-                for event in (self.events() if events is None else events): kwargs['stdout'].write(json.dumps(event) + '\n')
+                for event in copy.deepcopy(self.events() if events is None else events):
+                    if event['event'] == 'environment' and admission is not None:
+                        event.setdefault('admission', admission)
+                    kwargs['stdout'].write(json.dumps(event) + '\n')
                 if after_runtime: after_runtime()
             return subprocess.CompletedProcess(command, 3 if fail == label else 0)
         return run
 
     def manifest(self): return json.loads((self.args.output / 'manifest.json').read_text())
 
-    def test_compiles_only_one_host_and_runs_explicit_external_kahlua(self):
+    def test_compiles_minimal_host_and_guard_and_runs_registered_external_kahlua(self):
         result = b.run_benchmark(self.args, project=self.project, runner=self.runner())
         self.assertEqual(result['status'], 'passed'); self.assertEqual(result['emitted'], 1)
-        self.assertEqual(len(self.calls), 3)
-        compile_command, compile_kw = self.calls[1]; runtime_command, runtime_kw = self.calls[2]
+        self.assertEqual(len(self.calls), 4)
+        guard_command = self.calls[1][0]
+        self.assertEqual([part for part in guard_command if part.endswith('.java')], [str(self.project / b.TIMING_JAVA)])
+        compile_command, compile_kw = self.calls[2]; runtime_command, runtime_kw = self.calls[3]
         self.assertEqual([part for part in compile_command if part.endswith(('.java', '.kt'))], [str(self.project / b.HOST)])
         self.assertIn(str(self.kotlin / 'lib/kotlin-compiler.jar'), compile_command)
         self.assertIn('-jvm-target', compile_command); self.assertIn(self.build.JVM_TARGET, compile_command)
@@ -83,10 +123,15 @@ class QueueResourceBenchmarkTests(unittest.TestCase):
         self.assertEqual(json.loads((self.args.output / 'results.jsonl').read_text().splitlines()[3])['value']['text'], 'тест')
         self.assertIn('ordinary harness print', (self.args.output / 'runtime-stdout.log').read_text())
         self.assertEqual(result['scope'], 'native-kahlua-cpu-only')
+        self.assertTrue(result['timing']['attested'])
+        self.assertTrue(result['timing']['admission']['exclusive'])
+        for token in self.tokens:
+            self.assertNotIn(token, json.dumps(result))
+        self.assertEqual(b.timing.admission.status()['timing'], [])
         self.assertIn('no selected-pack UI/Host', result['limits'][0])
 
     def test_failures_preserve_report_and_do_not_run_later_stages(self):
-        for failed, expected_calls in [('version', 1), ('compile', 2), ('runtime', 3)]:
+        for failed, expected_calls in [('version', 1), ('admission-compile', 2), ('compile', 3), ('runtime', 4)]:
             with self.subTest(stage=failed):
                 self.args.output = self.root / ('failure-' + failed); self.calls.clear()
                 with self.assertRaises(b.BenchmarkFailure): b.run_benchmark(self.args, project=self.project, runner=self.runner(fail=failed))
@@ -195,6 +240,46 @@ class QueueResourceBenchmarkTests(unittest.TestCase):
         for text in ('{"event":"sample","value":NaN}', '{"event":', '{}'):
             with self.subTest(text=text), self.assertRaises(b.BenchmarkFailure): b.parse_events(text)
         self.assertEqual(b.parse_events('harness text\n{"event":"sample","label":"a\\n\\\"","value":null}')[0]['label'], 'a\n"')
+
+    def test_unregistered_or_wrong_registration_cannot_qualify_a_bank(self):
+        for index, registered in enumerate((False, True)):
+            self.args.output = self.root / ('unregistered-' + str(index))
+            events = self.events()
+            if registered:
+                events[0]['admission'] = '0' * 32
+            with self.subTest(registered=registered), self.assertRaises(b.BenchmarkFailure):
+                b.run_benchmark(self.args, project=self.project, runner=self.runner(events, register=registered))
+            self.assertEqual(self.manifest()['status'], 'failed')
+            self.assertEqual(b.timing.admission.status()['timing'], [])
+
+    def test_exclusive_peer_prevents_jvm_measurement_and_preserves_failed_manifest(self):
+        with b.timing.admission.preparing(self.root / 'peer', {'kind': 'sp', 'resources': {'exclusive': True}}, wait=0):
+            with self.assertRaisesRegex(b.BenchmarkFailure, 'exclusive'):
+                b.run_benchmark(self.args, project=self.project, runner=self.runner())
+        self.assertEqual(len(self.calls), 3)
+        self.assertEqual(self.manifest()['status'], 'failed')
+        self.assertFalse((self.args.output / 'runtime-stdout.log').exists())
+
+    def test_resource_wait_is_not_charged_to_execution_timeout(self):
+        self.args.timeout = 1
+        acquire = b.timing.acquire
+        @contextmanager
+        def delayed(*args, **kwargs):
+            time.sleep(1.1)
+            with acquire(*args, **kwargs) as registration:
+                yield registration
+        with patch.object(b.timing, 'acquire', side_effect=delayed):
+            result = b.run_benchmark(self.args, project=self.project, runner=self.runner())
+        self.assertEqual(result['status'], 'passed')
+        self.assertGreater(self.calls[-1][1]['timeout'], 0)
+
+    def test_runtime_timeout_never_exposes_registration_token(self):
+        with self.assertRaises(b.BenchmarkFailure) as failure:
+            b.run_benchmark(self.args, project=self.project, runner=self.runner(timeout='runtime'))
+        token = next(part.split('=', 1)[1] for part in self.calls[-1][0] if part.startswith('-Dpz.timing.token='))
+        self.assertNotIn(token, ''.join(traceback.format_exception(failure.exception)))
+        self.assertNotIn(token, json.dumps(self.manifest()))
+        self.assertEqual(b.timing.admission.status()['timing'], [])
 
 
 if __name__ == '__main__': unittest.main()

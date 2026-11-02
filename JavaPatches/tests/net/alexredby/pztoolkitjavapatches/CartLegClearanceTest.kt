@@ -857,7 +857,7 @@ object CartLegClearanceTest {
         }
     }
 
-    private fun replay(path: Path) {
+    private fun replay(path: Path, measure: Boolean) {
         val cases = captures(path)
         val solver = Solver()
         var positives = 0
@@ -918,6 +918,7 @@ object CartLegClearanceTest {
         }
         check(positives > 0 && neutrals > 0, "replay needs contact positives and clear controls")
         check(cases.any { it.female } && cases.any { !it.female }, "both source rigs replayed")
+        if (!measure) return
         repeat(40) {
             check(
                 java.lang.Double.isFinite(solver.solve(cases[it % cases.size])),
@@ -954,6 +955,11 @@ object CartLegClearanceTest {
 
     @JvmStatic
     fun main(args: Array<String>) {
+        val measure =
+            TimingAdmission.requested(
+                args,
+                "net.alexredby.pztoolkitjavapatches.CartLegClearanceTest",
+            )
         recordContracts()
         tetrahedra()
         triangles()
@@ -962,13 +968,13 @@ object CartLegClearanceTest {
         guards()
         footprints()
         val fixture =
-            if (args.isNotEmpty()) Path.of(args[0])
+            if (args.any { it != "--measure" }) Path.of(args.first { it != "--measure" })
             else
                 Path.of(
                     System.getProperty("pz.test.project", "."),
                     "JavaPatches/tests/fixtures/cart-leg-clearance.csv",
                 )
-        replay(fixture)
+        replay(fixture, measure)
         println("CART_LEG_CLEARANCE_PASS")
     }
 }

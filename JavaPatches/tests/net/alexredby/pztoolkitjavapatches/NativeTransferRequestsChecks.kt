@@ -330,7 +330,12 @@ object NativeTransferRequestsChecks {
         println("NATIVE_TRANSFER_REQUESTS_WOVEN_PASS enter=$enters exit=$exits")
     }
 
-    private fun nativeHandleChecks(unsafe: Unsafe, actor: IsoPlayer, source: ItemContainer) {
+    private fun nativeHandleChecks(
+        unsafe: Unsafe,
+        actor: IsoPlayer,
+        source: ItemContainer,
+        measure: Boolean,
+    ) {
         fun field(type: Class<*>, name: String) =
             type.getDeclaredField(name).apply { isAccessible = true }
         val nativeQueue =
@@ -767,48 +772,50 @@ object NativeTransferRequestsChecks {
             check(!replacedEnvironmentMatches && !replacedVmMatches) {
                 "replaced Lua environment/VM retained native correlation"
             }
-            val nativeBenchmark =
-                execute(
-                    "local a=makeAction('native-request-cost');return function(enabled) " +
-                        "PZSurvivorToolkit.ActionQueueTransferRequests.pending[Actor]=enabled and a or nil;StockStart(a)end",
-                    "native-request-cost-fixture",
-                )
-                    as LuaClosure
-            fun nativeSample(enabled: Boolean): Long {
-                // Connection/queue/byte and diagnostic table preparation are not timed.
-                connection()
-                nextId.setByte(null, 71)
-                LuaManager.env.rawset("Events", LuaManager.platform.newTable())
-                LuaManager.env.rawset("Receipts", LuaManager.platform.newTable())
-                val started = System.nanoTime()
-                LuaManager.thread.call(nativeBenchmark, arrayOf<Any?>(enabled))
-                return System.nanoTime() - started
-            }
-            repeat(300) {
-                nativeSample(false)
-                nativeSample(true)
-            }
-            val nativeInactive = LongArray(600)
-            val nativeObserved = LongArray(600)
-            for (index in nativeInactive.indices) {
-                if (index % 2 == 0) {
-                    nativeInactive[index] = nativeSample(false)
-                    nativeObserved[index] = nativeSample(true)
-                } else {
-                    nativeObserved[index] = nativeSample(true)
-                    nativeInactive[index] = nativeSample(false)
+            if (measure) {
+                val nativeBenchmark =
+                    execute(
+                        "local a=makeAction('native-request-cost');return function(enabled) " +
+                            "PZSurvivorToolkit.ActionQueueTransferRequests.pending[Actor]=enabled and a or nil;StockStart(a)end",
+                        "native-request-cost-fixture",
+                    )
+                        as LuaClosure
+                fun nativeSample(enabled: Boolean): Long {
+                    // Connection/queue/byte and diagnostic table preparation are not timed.
+                    connection()
+                    nextId.setByte(null, 71)
+                    LuaManager.env.rawset("Events", LuaManager.platform.newTable())
+                    LuaManager.env.rawset("Receipts", LuaManager.platform.newTable())
+                    val started = System.nanoTime()
+                    LuaManager.thread.call(nativeBenchmark, arrayOf<Any?>(enabled))
+                    return System.nanoTime() - started
                 }
-            }
-            nativeInactive.sort()
-            nativeObserved.sort()
-            println(
-                "NATIVE_TRANSFER_MANAGER_COST inactive_median_ns=${nativeInactive[300]} observed_median_ns=${nativeObserved[300]} observed_p95_ns=${nativeObserved[569]} samples=600 original_manager=true fake_socket=true qualified_live=false",
-            )
-            check(nativeObserved[569] <= 1_000_000) {
-                "native manager fixture p95 exceeded frozen 1 ms CPU gate"
-            }
-            check(nativeObserved[300] - nativeInactive[300] <= 250_000) {
-                "native manager fixture median overhead exceeded frozen 0.25 ms CPU gate"
+                repeat(300) {
+                    nativeSample(false)
+                    nativeSample(true)
+                }
+                val nativeInactive = LongArray(600)
+                val nativeObserved = LongArray(600)
+                for (index in nativeInactive.indices) {
+                    if (index % 2 == 0) {
+                        nativeInactive[index] = nativeSample(false)
+                        nativeObserved[index] = nativeSample(true)
+                    } else {
+                        nativeObserved[index] = nativeSample(true)
+                        nativeInactive[index] = nativeSample(false)
+                    }
+                }
+                nativeInactive.sort()
+                nativeObserved.sort()
+                println(
+                    "NATIVE_TRANSFER_MANAGER_COST inactive_median_ns=${nativeInactive[300]} observed_median_ns=${nativeObserved[300]} observed_p95_ns=${nativeObserved[569]} samples=600 original_manager=true fake_socket=true qualified_live=false",
+                )
+                check(nativeObserved[569] <= 1_000_000) {
+                    "native manager fixture p95 exceeded frozen 1 ms CPU gate"
+                }
+                check(nativeObserved[300] - nativeInactive[300] <= 250_000) {
+                    "native manager fixture median overhead exceeded frozen 0.25 ms CPU gate"
+                }
             }
             GameClient.client = false
             execute(
@@ -846,7 +853,14 @@ object NativeTransferRequestsChecks {
 
     @JvmStatic
     fun main(args: Array<String>) {
-        val game = if (args.isNotEmpty()) Path.of(args[0]) else Path.of("").toAbsolutePath()
+        val measure =
+            TimingAdmission.requested(
+                args,
+                "net.alexredby.pztoolkitjavapatches.NativeTransferRequestsChecks",
+            )
+        val game =
+            args.firstOrNull { it != "--measure" }?.let { Path.of(it) }
+                ?: Path.of("").toAbsolutePath()
         val native = game.resolve("media/lua/client/TimedActions/ISInventoryTransferAction.lua")
         check(Files.isRegularFile(native)) { "Pass the actual game Java folder or run in it" }
         zombie.ZomboidFileSystem.instance.setCacheDir(
@@ -1178,7 +1192,7 @@ object NativeTransferRequestsChecks {
             "request-unknown-multi-invoker",
         )
         LuaManager.env.rawset("createItemTransaction", single)
-        nativeHandleChecks(unsafe, actor, source)
+        nativeHandleChecks(unsafe, actor, source, measure)
 
         // Run the real shared Lua owner and source/effect readers at those same
         // native boundaries. Only the downstream Java sender is stubbed.
@@ -1318,34 +1332,36 @@ object NativeTransferRequestsChecks {
                 "request-cost-fixture",
             )
                 as LuaClosure
-        fun sample(enabled: Boolean): Long {
-            val started = System.nanoTime()
-            LuaManager.thread.call(benchmark, arrayOf<Any?>(enabled))
-            return System.nanoTime() - started
-        }
-        repeat(300) {
-            sample(false)
-            sample(true)
-        }
-        val inactive = LongArray(600)
-        val observed = LongArray(600)
-        for (index in inactive.indices) {
-            if (index % 2 == 0) {
-                inactive[index] = sample(false)
-                observed[index] = sample(true)
-            } else {
-                observed[index] = sample(true)
-                inactive[index] = sample(false)
+        if (measure) {
+            fun sample(enabled: Boolean): Long {
+                val started = System.nanoTime()
+                LuaManager.thread.call(benchmark, arrayOf<Any?>(enabled))
+                return System.nanoTime() - started
             }
-        }
-        inactive.sort()
-        observed.sort()
-        println(
-            "NATIVE_TRANSFER_REQUEST_COST inactive_median_ns=${inactive[300]} observed_median_ns=${observed[300]} observed_p95_ns=${observed[569]} samples=600 qualified_live=false",
-        )
-        check(observed[569] <= 1_000_000) { "request-only p95 exceeded frozen 1 ms CPU gate" }
-        check(observed[300] - inactive[300] <= 250_000) {
-            "request-only median overhead exceeded frozen 0.25 ms CPU gate"
+            repeat(300) {
+                sample(false)
+                sample(true)
+            }
+            val inactive = LongArray(600)
+            val observed = LongArray(600)
+            for (index in inactive.indices) {
+                if (index % 2 == 0) {
+                    inactive[index] = sample(false)
+                    observed[index] = sample(true)
+                } else {
+                    observed[index] = sample(true)
+                    inactive[index] = sample(false)
+                }
+            }
+            inactive.sort()
+            observed.sort()
+            println(
+                "NATIVE_TRANSFER_REQUEST_COST inactive_median_ns=${inactive[300]} observed_median_ns=${observed[300]} observed_p95_ns=${observed[569]} samples=600 qualified_live=false",
+            )
+            check(observed[569] <= 1_000_000) { "request-only p95 exceeded frozen 1 ms CPU gate" }
+            check(observed[300] - inactive[300] <= 250_000) {
+                "request-only median overhead exceeded frozen 0.25 ms CPU gate"
+            }
         }
         execute(
             "local before=OwnerBefore;for i=1,32 do PZSurvivorToolkit.ActionQueueTransferRequests.pending[Actor]=nil;StockStart(OwnerAction)end;assert(OwnerBefore==before,'inactive gate called Lua owner');PZSurvivorToolkit.ActionQueueTransferRequests.clear(OwnerAction);PZSurvivorToolkit.ActionQueueTransferRequests.pending[Actor]=OwnerAction;StockStart(OwnerAction);assert(OwnerBefore==before,'public hint created private ownership');PZSurvivorToolkit.ActionQueueTransferRequests.reset(Actor)",

@@ -20,7 +20,6 @@ object QueueResourceBenchmark {
     private const val MARKER = "QUEUE_RESOURCE_BENCHMARK_BANK_PASS"
     private const val MAX_JSON_NODES = 100_000
     private const val MAX_JSON_DEPTH = 32
-    private val clockOrigin = System.nanoTime()
     private var emitted = 0
 
     private fun quote(value: String): String = buildString {
@@ -123,6 +122,11 @@ object QueueResourceBenchmark {
     @JvmStatic
     fun main(args: Array<String>) {
         try {
+            val admission =
+                TimingAdmission.require(
+                    "net.alexredby.pztoolkitjavapatches.QueueResourceBenchmark",
+                )
+            val clockOrigin = System.nanoTime()
             require(args.isEmpty()) { "Use JVM properties supplied by tools/benchmark_queue_resources.py" }
             val root = Path.of(System.getProperty("pz.test.project")).toRealPath()
             val game = Path.of(System.getProperty("pz.test.game")).toRealPath()
@@ -148,7 +152,7 @@ object QueueResourceBenchmark {
             } catch (error: Exception) {
                 allocationReason = error.javaClass.simpleName + ": " + error.message; null
             }
-            emit(mapOf("event" to "environment", "scope" to "native-kahlua-cpu-only", "gui" to false,
+            emit(mapOf("event" to "environment", "admission" to admission, "scope" to "native-kahlua-cpu-only", "gui" to false,
                 "javaVersion" to System.getProperty("java.version"), "vmName" to System.getProperty("java.vm.name"),
                 "osName" to System.getProperty("os.name"), "osArch" to System.getProperty("os.arch"),
                 "processors" to Runtime.getRuntime().availableProcessors(), "samples" to samples, "warmup" to warmup,

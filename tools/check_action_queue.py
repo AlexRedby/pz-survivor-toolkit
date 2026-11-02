@@ -455,11 +455,17 @@ def main(argv=None):
                         item['root'], item['pid'], ' (owner exited; worker lease held)' if not item.get('owner_alive', True) else '',
                         item.get('suite') or '?', item.get('kind') or '?',
                         item.get('mode') or '?', 'exclusive' if item['budget']['exclusive'] else 'shared'))
+                print('Timing: ' + str(len(value.get('timing', []))))
+                for item in value.get('timing', []):
+                    print('  %s | PID %s%s | %s | exclusive headless timing' % (
+                        item['root'], item['pid'], ' (owner exited; worker lease held)' if not item.get('owner_alive', True) else '',
+                        item['bank']))
                 print('Waiting: ' + str(len(value['waiting'])))
                 for item in value['waiting']:
                     print('  #%s %s | PID %s | %.0fs | %s | %s | %s' % (
                         item['position'], item['root'], item['pid'], item['wait_seconds'],
-                        'exclusive' if item['exclusive'] else 'shared', item.get('phase', 'running'), item['reason']))
+                        'exclusive' if item['exclusive'] else 'shared',
+                        item.get('phase', 'running') + (' ' + item['bank'] if item.get('bank') else ''), item['reason']))
                 print('Prepared port reservations: ' + str(len(value['prepared'])))
                 lock = value['legacy_lock']
                 print('Legacy lock: ' + ('exclusive' if lock['exclusive'] else 'shared/busy' if lock['busy'] else 'free'))

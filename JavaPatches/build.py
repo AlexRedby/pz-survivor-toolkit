@@ -1,5 +1,5 @@
 """Build against local PZ, ZombieBuddy and Kotlin compiler inputs; no downloads."""
-import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile
+import argparse, hashlib, json, math, os, re, shutil, subprocess, sys, tempfile
 from pathlib import Path
 from zipfile import ZipFile, BadZipFile
 
@@ -217,12 +217,81 @@ EXPLICIT_ONLY_CHECKS = {'net.alexredby.pztoolkitjavapatches.DamnLibraryBatteryRe
 TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}
 # This umbrella runs all isolated Kahlua ownership variants in one JVM invocation.
 CHECK_TIMEOUTS = {'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks': 240}
+TIMING_CHECKS = {'net.alexredby.pztoolkitjavapatches.' + name for name in (
+    'GroundHighlightChecks', 'NativeTransferRequestsChecks', 'RadioDeviceLookupChecks',
+    'CartLegClearanceTest', 'QueueOwnershipChecks', 'QueueLeafTransferFactsChecks')}
 
 def positive_timeout(value):
     seconds = int(value)
     if seconds <= 0:
         raise argparse.ArgumentTypeError('must be a positive number of seconds')
     return seconds
+
+
+def resource_wait(value):
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError('must be finite and nonnegative')
+    return seconds
+
+
+def timing_modules():
+    # Script execution starts with JavaPatches on sys.path; ordinary builds do
+    # not import or initialize native resource admission at all.
+    project = str(Path(__file__).resolve().parents[1])
+    if project not in sys.path:
+        sys.path.insert(0, project)
+    from tools.queue_checks import timing, preparation_process
+    return timing, preparation_process
+
+
+def redact_timing_command(command):
+    def redact(value):
+        return re.sub(r'-Dpz\.timing\.token=[0-9a-f]{64}', '-Dpz.timing.token=<redacted>', value)
+    if isinstance(command, str):
+        return redact(command)
+    return [redact(str(part)) for part in command]
+
+
+def run_check(command, game, log, timeout, *, bank=None, wait=300):
+    def execute(args, run):
+        with log.open('w') as output:
+            return run(args, cwd=game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
+
+    if bank is None:
+        return execute(command, subprocess.run)
+    timing, processes = timing_modules()
+    path = log.with_suffix('.timing.json')
+    record = dict(schema_version=1, bank=bank, status='waiting', resource_wait=wait,
+                  log=log.name, scope='headless-jvm-only')
+    def save():
+        path.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+    save()
+    registration = None
+    try:
+        with timing.acquire(log.parent / (log.stem + '-timing'), bank, wait=wait) as registration:
+            record.update(status='running', registration=registration.evidence())
+            save()
+            result = execute([command[0], *registration.java_options, *command[1:], '--measure'], processes.run)
+            result.check_returncode()
+            record.update(status='attested', registration=registration.validate(log.read_text(errors='replace')))
+            save()
+            return result
+    except BaseException as error:
+        if registration is not None:
+            record['registration'] = registration.evidence()
+        reason = re.sub(r'-Dpz\.timing\.token=[0-9a-f]{64}', '-Dpz.timing.token=<redacted>', str(error))
+        record.update(status='failed', reason=reason)
+        save()
+        # Tracebacks and exception.cmd are also public diagnostics; keep the live
+        # registration capability out of them, not only out of the JSON report.
+        if isinstance(error, subprocess.TimeoutExpired):
+            raise subprocess.TimeoutExpired(redact_timing_command(error.cmd), error.timeout,
+                                            error.output, error.stderr) from None
+        if isinstance(error, subprocess.CalledProcessError):
+            raise subprocess.CalledProcessError(error.returncode, redact_timing_command(error.cmd),
+                                               error.output, error.stderr) from None
+        raise
 
 
 def _without_comments(text, kotlin=False):
@@ -383,12 +452,16 @@ def main(argv=None):
     parser.add_argument('--check-video', action='store_true', help='Run headless video timeline/FFmpeg regression (PZ_TEST_FFMPEG selects executable)')
     parser.add_argument('--test', action='append', choices=TEST_NAMES, default=[], metavar='NAME', help='Run only selected regressions; repeat for multiple. WashWaterRuleChecks and QueueOwnershipChecks require PZ_TEST_WORKSHOP with the Workshop content root. Names: ' + ', '.join(TEST_NAMES))
     parser.add_argument('--test-timeout', type=positive_timeout, default=None, metavar='SECONDS', help='Override timeout for each Java regression invocation (default: 120 seconds; QueueOwnershipChecks: 240 seconds)')
+    parser.add_argument('--measure', action='store_true', help='Opt into timing banks in selected checks; requires shared exclusive resource admission')
+    parser.add_argument('--resource-wait', type=resource_wait, default=300, metavar='SECONDS', help='Maximum timing admission wait; excluded from each regression timeout')
     args = parser.parse_args(argv)
     if args.test:
         selected = [TEST_NAMES[name] for name in args.test]
     else:
         selected = [name for name in CHECKS if name not in EXPLICIT_ONLY_CHECKS
                     and (args.check_video if name.endswith('.VideoChecks') else args.check)]
+    if args.measure and not set(selected) & TIMING_CHECKS:
+        parser.error('--measure requires a selected timing check: ' + ', '.join(sorted(name.rsplit('.', 1)[-1] for name in TIMING_CHECKS)))
     if args.game is None:
         parser.error('Pass --game with the folder containing projectzomboid.jar and ZombieBuddy.jar')
     args.game = args.game.resolve()
@@ -432,6 +505,10 @@ def main(argv=None):
             log = log_path(name, trace)
             if log.is_symlink() or (log.exists() and not log.is_file()):
                 parser.error(f'Check log must be a regular file: {log}')
+            if args.measure and name in TIMING_CHECKS:
+                timing_log = log.with_suffix('.timing.json')
+                if timing_log.is_symlink() or timing_log.exists() and not timing_log.is_file():
+                    parser.error(f'Timing evidence must be a regular file: {timing_log}')
     test_sources = check_sources(selected) if selected else []
     kotlin_tests = [source for source in test_sources if source.suffix == '.kt']
     kotlin_sources = sorted((ROOT / 'src').rglob('*.kt'))
@@ -525,8 +602,8 @@ def main(argv=None):
                         log = log_path(name, trace)
                         timeout = args.test_timeout if args.test_timeout is not None else CHECK_TIMEOUTS.get(name, 120)
                         try:
-                            with log.open('w') as output:
-                                result = subprocess.run([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.project=' + str(ROOT.parent), '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], cwd=args.game, text=True, stdout=output, stderr=subprocess.STDOUT, timeout=timeout)
+                            result = run_check([str(args.jdk/'bin/java'), '-javaagent:' + str(args.game/'ZombieBuddy.jar') + '=config_dir=' + cache + ',policy=deny-new,verbosity=1' + (',patches_jar=' + str(fontjar) + ':net.alexredby.pztoolkitbootstrap' if cold_fonts else ''), '-Dpz.vehicle.trace=' + str(trace).lower(), '-Djava.awt.headless=true', '-Dpz.test.cache=' + cache, '-Dpz.test.project=' + str(ROOT.parent), '-Dpz.test.patch.jar=' + str(jar), '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join(testpath), name], args.game, log, timeout,
+                                               bank=name if args.measure and name in TIMING_CHECKS else None, wait=args.resource_wait)
                         except subprocess.TimeoutExpired as error:
                             print(log.read_text(errors='replace'))
                             raise RuntimeError(f'{name} timed out after {timeout} seconds; output saved to {log}') from error

@@ -183,6 +183,11 @@ object RadioDeviceLookupChecks {
 
     @JvmStatic
     fun main(args: Array<String>) {
+        val measure =
+            TimingAdmission.requested(
+                args,
+                "net.alexredby.pztoolkitjavapatches.RadioDeviceLookupChecks",
+            )
         setup()
         // Allocate native shells to avoid unrelated renderer/chat/world startup. All lookup,
         // collection, item and userdata operations below use the real, unoverridden game methods.
@@ -271,11 +276,11 @@ object RadioDeviceLookupChecks {
         LuaManager.env.rawset("Device", radio)
         repeat(10_000) { square.worldObjects.add(wrapper(null, square)) }
         square.worldObjects.add(target)
-        timing("worldObjects", square)
+        if (measure) timing("worldObjects", square)
         square.worldObjects.clear()
         repeat(10_000) { square.objects.add(wrapper(null, square)) }
         square.objects.add(target)
-        timing("objects", square)
+        if (measure) timing("objects", square)
         runLua(
             """
             assert(Device:getSquare()==NativeSquare and NativeObject:getItem()==NativeItem)

@@ -4,6 +4,7 @@ import io
 import importlib.util
 import runpy
 import os
+import socket
 from pathlib import Path
 import shutil
 import subprocess
@@ -67,18 +68,33 @@ class BuildChecks(unittest.TestCase):
         self.sentinel = self.root / 'build/PZToolkitJavaPatches/previous.txt'
         self.sentinel.parent.mkdir(parents=True)
         self.sentinel.write_text('previous Java mod')
+        self.timing_tokens = []
+        self.register_timing = True
 
     def run_build(self, *args, java_result=None):
         def run(command, **kwargs):
             if Path(command[0]).name == 'java':
-                output = self.markers if java_result is None else java_result.stdout or ''
+                provided = java_result(command) if callable(java_result) else java_result
+                output = self.markers if provided is None else provided.stdout or ''
+                properties = dict(part[2:].split('=', 1) for part in command if part.startswith('-D') and '=' in part)
+                if 'pz.timing.port' in properties and self.register_timing:
+                    # This runner is a double; separate JVM/service tests prove
+                    # actual descendant ownership and direct-main rejection.
+                    self.timing_tokens.append(properties['pz.timing.token'])
+                    with socket.create_connection(('127.0.0.1', int(properties['pz.timing.port'])), timeout=2) as client:
+                        client.sendall(('PZ_TIMING_V1\t%s\t%s\t%d\n' % (
+                            properties['pz.timing.token'], properties['pz.timing.bank'], os.getpid())).encode())
+                        reply = client.makefile('r').readline().rstrip('\n').split('\t')
+                    self.assertEqual(reply[0], 'PZ_TIMING_OK')
+                    marker = 'TIMING_ADMISSION %s %s pid=%d\n' % (reply[1], properties['pz.timing.bank'], os.getpid())
+                    output = marker.encode() + output if isinstance(output, bytes) else marker + output
                 stream = kwargs['stdout']
                 stream.flush()
                 stream.buffer.write(output if isinstance(output, bytes) else output.encode())
                 stream.flush()
-                if isinstance(java_result, Exception):
-                    raise java_result
-                return java_result or subprocess.CompletedProcess(command, 0)
+                if isinstance(provided, Exception):
+                    raise provided
+                return provided or subprocess.CompletedProcess(command, 0)
             if '-sourcepath' in command:
                 classes = Path(command[command.index('-d') + 1])
                 bootstrap = classes / 'net/alexredby/javapatchfixture/CartBootstrapCheck.class'

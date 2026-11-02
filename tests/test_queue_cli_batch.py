@@ -480,6 +480,14 @@ class StatusTests(unittest.TestCase):
         self.value['preparing'][0]['owner_alive'] = False
         self.assertIn('PID 20 (owner exited; worker lease held)', self.invoke(['status']))
 
+    def test_status_exposes_headless_timing_bank_and_waiter_without_a_game(self):
+        self.value['timing'] = [dict(root='/headless/run', pid=30, owner_alive=False, bank='checks.Bank')]
+        self.value['waiting'][0].update(phase='timing', bank='checks.NextBank')
+        text = self.invoke(['status'])
+        self.assertIn('Timing: 1', text)
+        self.assertIn('/headless/run | PID 30 (owner exited; worker lease held) | checks.Bank | exclusive headless timing', text)
+        self.assertIn('timing checks.NextBank', text)
+
     def test_status_error_is_clear_and_does_not_claim_free_stand(self):
         error = io.StringIO()
         with patch.object(cli.admission, 'status', side_effect=RuntimeError('Cannot sample host resources')), \

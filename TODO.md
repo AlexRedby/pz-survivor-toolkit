@@ -248,8 +248,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Define safe recovery for uncertain fixture world-object deletion separately from inventory removal. Native `RemoveItemFromSquare` addresses coordinates and object index; duplicate delivery can remove the next object after indices shift. Preserve quarantine after uncertain publication until exact peer/world absence proves a safe outcome; do not retransmit solely because the authority object still exists.
 
-- [ ] Route standalone queue JVM timing banks through the shared resource/exclusive admission mechanism, including development profile hosts. They can currently overlap a native Host run and contaminate latency comparisons even when deterministic scalar/counter checks pass. Provide an explicit headless timing lease and reject unregistered timing claims; ordinary untimed compilation/unit checks need no desktop lease.
-
 
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.
 

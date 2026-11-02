@@ -1,5 +1,5 @@
 """Cross-process resource estimates and endpoint leases, without a runner-count limit."""
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 try:
     import fcntl
 except ImportError:
@@ -32,6 +32,15 @@ def preparation_budget(selection):
     # Validate the selection's resource settings but reserve independently of role count.
     return {'memory': PREPARATION_MEMORY, 'cpu': PREPARATION_CPU,
             'exclusive': budget(selection)['exclusive']}
+
+
+def timing_budget(heap_mib=2048, native_mib=512, cpu=1):
+    """One bounded headless JVM, always isolated from other native work."""
+    if type(cpu) is not int or cpu <= 0:
+        raise ValueError('Timing CPU budget must be a positive integer')
+    return budget({'kind': 'sp', 'clients': 1, 'resources': {
+        'heap_mib': heap_mib, 'native_mib': native_mib,
+        'cpu_per_instance': cpu, 'exclusive': True}})
 
 
 def disk_capacity(root, instances, records=(), copy_bytes=0):
@@ -138,7 +147,7 @@ def _waiters():
                     or type(item['pid']) is not int or item['pid'] <= 0
                     or type(item['queued_at']) not in (int, float) or not math.isfinite(item['queued_at'])
                     or not isinstance(item['reason'], str) or type(item['exclusive']) is not bool
-                    or item.get('phase', 'running') not in ('running', 'preparing')):
+                    or item.get('phase', 'running') not in ('running', 'preparing', 'timing')):
                 raise ValueError('invalid waiter')
             if _held(item['root']):
                 result.append(item)
@@ -162,6 +171,7 @@ def status(legacy_lock=None):
         snapshot = host.sample()
         records = _records(snapshot)
         preparations = _preparations()
+        timings = _timings()
         now = time.time()
         waiting = [dict(item, position=index, wait_seconds=max(0, now - item['queued_at']))
                    for index, item in enumerate(_waiters(), 1)]
@@ -186,6 +196,8 @@ def status(legacy_lock=None):
         return {'schema_version': 1, 'state_directory': str(STATE),
                 'running': running, 'preparing': [dict(item, owner_alive=item['pid'] == os.getpid() or any(
                     process['pid'] == item['pid'] for process in snapshot['processes'])) for item in preparations],
+                'timing': [dict(item, owner_alive=item['pid'] == os.getpid() or any(
+                    process['pid'] == item['pid'] for process in snapshot['processes'])) for item in timings],
                 'waiting': waiting, 'prepared': [item for item in records if item['phase'] == 'prepared'],
                 'legacy_lock': dict(locks, path=str(lock)),
                 'limits': ['FIFO applies to updated runners; older runners do not register waiters.',
@@ -243,8 +255,16 @@ def _records(snapshot=None):
 
 
 def _preparations():
+    return _reservations('preparing')
+
+
+def _timings():
+    return _reservations('timing')
+
+
+def _reservations(phase):
     # Separate from top-level records so older runners retain their schema.
-    directory = STATE / 'preparing'
+    directory = STATE / phase
     _directory(directory)
     result = []
     for path in directory.glob('*.json'):
@@ -252,20 +272,28 @@ def _preparations():
             item = json.loads(path.read_text())
             if (not isinstance(item, dict) or not isinstance(item['root'], str)
                     or not Path(item['root']).is_absolute() or path.stem != _key(item['root'])
-                    or item['phase'] != 'preparing' or type(item['pid']) is not int or item['pid'] <= 0
+                    or item['phase'] != phase or type(item['pid']) is not int or item['pid'] <= 0
                     or type(item['started_at']) not in (int, float) or not math.isfinite(item['started_at'])
                     or not isinstance(item['budget'], dict) or type(item['budget'].get('exclusive')) is not bool
                     or type(item['budget'].get('memory')) is not int
                     or type(item['budget'].get('cpu')) not in (int, float)
-                    or item['budget'] != {'memory': PREPARATION_MEMORY, 'cpu': PREPARATION_CPU,
-                                          'exclusive': item['budget']['exclusive']}):
+                    or (phase == 'preparing' and item['budget'] != {
+                        'memory': PREPARATION_MEMORY, 'cpu': PREPARATION_CPU,
+                        'exclusive': item['budget']['exclusive']})):
                 raise ValueError('invalid preparation')
+            if phase == 'timing':
+                saved = item['budget']
+                if (saved != timing_budget(saved['heap_mib'], saved['native_mib'], saved['cpu_per_instance'])
+                        or not isinstance(item.get('bank'), str)
+                        or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', item['bank']) is None):
+                    raise ValueError('invalid timing reservation')
             if _held(item['root']):
                 result.append(item)
             else:
                 path.unlink()
         except (ValueError, KeyError, TypeError) as error:
-            raise RuntimeError('Invalid native preparation record: ' + str(path)) from error
+            label = 'preparation' if phase == 'preparing' else phase
+            raise RuntimeError('Invalid native ' + label + ' record: ' + str(path)) from error
     return result
 
 
@@ -310,7 +338,7 @@ def capacity(snapshot, records, request, request_pid=None):
     pending_memory = pending_cpu = 0
     accounted_pids = set()
     for item in records:
-        if item['phase'] not in ('running', 'preparing'):
+        if item['phase'] not in ('running', 'preparing', 'timing'):
             continue
         processes = (owned(item, snapshot) if item['phase'] == 'running' else
                      [process for process in snapshot['processes'] if process['pid'] == item['pid']])
@@ -326,6 +354,7 @@ def capacity(snapshot, records, request, request_pid=None):
                'host_available_memory': snapshot['available_memory'], 'host_cpu_count': snapshot['cpu_count'],
                'active_runs': sum(item['phase'] == 'running' for item in records),
                'active_preparations': sum(item['phase'] == 'preparing' for item in records), 'budget': request}
+    details['active_timings'] = sum(item['phase'] == 'timing' for item in records)
     # The preparing Python owner's usage is already in the host inventory.
     current = [process for process in snapshot['processes']
                if process['pid'] == request_pid and process['pid'] not in accounted_pids]
@@ -370,6 +399,27 @@ def preparing(root, selection, wait=300, legacy_lock=None):
         yield details
 
 
+@contextmanager
+def measuring(root, bank, wait=300, heap_mib=2048, native_mib=512, cpu=1):
+    """Reserve a headless measurement through the same FIFO and lifetime locks."""
+    _validate_wait(wait)
+    if not isinstance(bank, str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', bank) is None:
+        raise ValueError('Timing bank must be a nonempty protocol-safe identifier')
+    request = timing_budget(heap_mib, native_mib, cpu)
+    if fcntl is None and os.name == 'nt':
+        from . import preparation_windows
+        with _windows_preparing(request, wait) as details:
+            with preparation_windows.contain() as job, preparation_process.inherit(windows_job=job):
+                yield dict(details, phase='timing', bank=bank, root=os.path.abspath(os.fspath(root)), exclusive=True,
+                           pid=os.getpid(), started_at=time.time())
+        return
+    root = Path(root).resolve()
+    record = dict(root=str(root), phase='timing', bank=bank, budget=request, pid=os.getpid())
+    with _admit(root, {}, record, wait, None) as details:
+        yield dict(details, phase='timing', bank=bank, root=str(root), exclusive=True,
+                   pid=record['pid'], started_at=record['started_at'])
+
+
 def _validate_wait(wait):
     if type(wait) not in (int, float) or not math.isfinite(wait) or wait < 0:
         raise ValueError('Resource wait must be finite and nonnegative')
@@ -379,7 +429,11 @@ def _validate_wait(wait):
 def _admit(root, selection, record, wait, legacy_lock):
     _validate_wait(wait)
     request = record['budget']
-    preparation = record['phase'] == 'preparing'
+    phase = record['phase']
+    preparation = phase == 'preparing'
+    headless = phase == 'timing'
+    contained = preparation or headless
+    record_directory = STATE / phase if contained else STATE
     deadline = time.monotonic() + wait
     _directory()
     with (STATE / (_key(root) + '.lease')).open('a+') as lease, Path(legacy_lock or LEGACY_LOCK).open('a+') as legacy:
@@ -394,13 +448,17 @@ def _admit(root, selection, record, wait, legacy_lock):
             with _locked():
                 _directory(waiting_path.parent)
                 _preparations()  # Validate before reconciling this newly acquired root lease.
-                (STATE / 'preparing' / (_key(root) + '.json')).unlink(missing_ok=True)
+                _timings()
+                for directory in ('preparing', 'timing'):
+                    (STATE / directory / (_key(root) + '.json')).unlink(missing_ok=True)
                 # A restarted owner must not inherit its dead predecessor's queue position.
                 waiting_path.unlink(missing_ok=True)
                 waiters = _waiters()
                 waiter = dict(_metadata(selection), root=str(root), pid=os.getpid(),
                               sequence=max((item['sequence'] for item in waiters), default=0) + 1,
                               queued_at=time.time(), exclusive=request['exclusive'], phase=record['phase'], reason='Checking admission')
+                if headless:
+                    waiter['bank'] = record['bank']
                 _save(waiter, waiting_path.parent)
             while True:
                 reason = None
@@ -415,23 +473,28 @@ def _admit(root, selection, record, wait, legacy_lock):
                             # Only the head takes the lifetime lock; blocked requests release it below.
                             fcntl.flock(legacy, (fcntl.LOCK_EX if request['exclusive'] else fcntl.LOCK_SH) | fcntl.LOCK_NB)
                         except BlockingIOError:
-                            reason = 'Legacy or exclusive native run is using the desktop'
+                            reason = ('Legacy or exclusive native work owns the resource lease' if headless else
+                                      'Legacy or exclusive native run is using the desktop')
                     if reason is None:
                         snapshot = host.sample()
-                        records = _records(snapshot) + _preparations()
+                        records = _records(snapshot) + _preparations() + _timings()
                         peers = [item for item in records if item['root'] != str(root)]
-                        current = (owned(record, snapshot) if not preparation else
+                        current = (owned(record, snapshot) if not contained else
                                    [process for item in records if item['root'] == str(root)
                                     for process in owned(item, snapshot)])
                         if current:
                             raise RuntimeError('Existing game process uses this profile: ' + str([p['pid'] for p in current]))
-                        if not preparation and ((root / 'execution.json').exists() or list(root.glob('*-launch.log'))):
+                        if not contained and ((root / 'execution.json').exists() or list(root.glob('*-launch.log'))):
                             raise ValueError('Run directory has already launched; prepare a fresh snapshot')
                         reserved = {port for item in peers for port in item.get('ports', [])}
-                        permitted, details = capacity(snapshot, peers, request, os.getpid() if preparation else None)
-                        disk_permitted, details['disk'] = disk_capacity(root, 0 if preparation else request['instances'], peers)
-                        if any(item['phase'] in ('running', 'preparing') and (request['exclusive'] or item['budget']['exclusive']) for item in peers):
-                            reason = 'Exclusive native run still has live game processes'
+                        permitted, details = capacity(snapshot, peers, request, os.getpid() if contained else None)
+                        disk_permitted = True
+                        if not headless:
+                            disk_permitted, details['disk'] = disk_capacity(root, 0 if preparation else request['instances'], peers)
+                        if any(item['phase'] in ('running', 'preparing', 'timing') and (request['exclusive'] or item['budget']['exclusive']) for item in peers):
+                            reason = ('Exclusive native run still has live game processes' if any(
+                                item['phase'] == 'running' for item in peers) else
+                                'Exclusive preparation or timing work still holds its lease')
                         elif reserved.intersection(record.get('ports', [])):
                             reason = 'UDP ports reserved by another native run: ' + str(record['ports'])
                         elif not permitted:
@@ -442,10 +505,11 @@ def _admit(root, selection, record, wait, legacy_lock):
                         else:
                             endpoints_available = False
                             try:
-                                with _udp(record.get('ports', [])):
+                                with (nullcontext() if headless else _udp(record.get('ports', []))):
                                     endpoints_available = True
                                     record['started_at'] = time.time()
-                                    _save(record, STATE / 'preparing' if preparation else None)
+                                    _directory(record_directory)
+                                    _save(record, record_directory)
                                     admitted = True
                                     waiting_path.unlink()
                             except OSError as error:
@@ -458,14 +522,15 @@ def _admit(root, selection, record, wait, legacy_lock):
                             waiter['reason'] = reason
                             _save(waiter, waiting_path.parent)
                 if admitted:
-                    if preparation:
+                    if contained:
                         with preparation_process.inherit((lease.fileno(), legacy.fileno())):
                             yield details
                     else:
                         yield details
                     return
                 if time.monotonic() >= deadline:
-                    raise RuntimeError(reason + '; resource wait expired (no game launched)')
+                    raise RuntimeError(reason + ('; resource wait expired (no timing JVM launched)' if headless else
+                                                 '; resource wait expired (no game launched)'))
                 if reason != last_message:
                     print('WAIT ' + reason, flush=True)
                     last_message = reason
@@ -474,13 +539,13 @@ def _admit(root, selection, record, wait, legacy_lock):
             with _locked():
                 waiting_path.unlink(missing_ok=True)
                 # Failed sampling/cleanup must retain the record for the next admission to reconcile.
-                if admitted and preparation:
+                if admitted and contained:
                     # Closing our descriptors preserves a worker's inherited flock.
                     # LOCK_UN would unlock their shared open-file descriptions too.
                     lease.close()
                     legacy.close()
                     if not _held(root):
-                        (STATE / 'preparing' / (_key(root) + '.json')).unlink(missing_ok=True)
+                        (record_directory / (_key(root) + '.json')).unlink(missing_ok=True)
                 elif admitted and not owned(record, host.sample()):
                     (STATE / (_key(root) + '.json')).unlink(missing_ok=True)
 

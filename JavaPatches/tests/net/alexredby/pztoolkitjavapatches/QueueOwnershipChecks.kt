@@ -159,6 +159,11 @@ object QueueOwnershipChecks {
 
     @JvmStatic
     fun main(args: Array<String>) {
+        val measure =
+            TimingAdmission.requested(
+                args,
+                "net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks",
+            )
         val root = Path.of(System.getProperty("pz.test.project"))
         val workshop =
             System.getProperty("pz.test.workshop")
@@ -180,7 +185,7 @@ object QueueOwnershipChecks {
         val failures = mutableListOf<String>()
         for (variant in variants) {
             val label = variant ?: "OwnershipLookup"
-            val started = System.nanoTime()
+            val started = if (measure) System.nanoTime() else 0L
             try {
                 runVariant(root, Path.of(workshop), variant)
                 println("QUEUE_OWNERSHIP_VARIANT_PASS $label")
@@ -189,8 +194,10 @@ object QueueOwnershipChecks {
                 println("QUEUE_OWNERSHIP_VARIANT_FAIL $label: ${failure.message}")
                 failure.printStackTrace(System.out)
             } finally {
-                val elapsedMillis = (System.nanoTime() - started) / 1_000_000
-                println("QUEUE_OWNERSHIP_VARIANT_MILLISECONDS $label $elapsedMillis")
+                if (measure) {
+                    val elapsedMillis = (System.nanoTime() - started) / 1_000_000
+                    println("QUEUE_OWNERSHIP_VARIANT_MILLISECONDS $label $elapsedMillis")
+                }
             }
         }
         check(failures.isEmpty()) { "Ownership variants failed: ${failures.joinToString()}" }

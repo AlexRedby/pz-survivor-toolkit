@@ -239,6 +239,11 @@ object QueueLeafTransferFactsChecks {
 
     @JvmStatic
     fun main(args: Array<String>) {
+        val measure =
+            TimingAdmission.requested(
+                args,
+                "net.alexredby.pztoolkitjavapatches.QueueLeafTransferFactsChecks",
+            )
         zombie.core.random.RandStandard.INSTANCE.init()
         zombie.core.random.RandLua.INSTANCE.init()
         GameClient.client = false
@@ -329,7 +334,7 @@ object QueueLeafTransferFactsChecks {
         Thread { foreignThreadResult = QueueLeafTransferFacts.facts(fixture.actor, fixture.item, fixture.root, fixture.destination, 17.0, "Base.Leaf") }.apply { start(); join() }
         verify(foreignThreadResult == null, "foreign thread read")
         verify(fixture.item.getContainer() === fixture.root && fixture.root.items.size == 2 && fixture.destination.items.isEmpty(), "observation changed native membership")
-        if ("--measure" in args) {
+        if (measure) {
             fun measure(label: String, value: Fixture, runs: Int) {
                 IsoPlayer.players[0] = value.actor
                 repeat(200) { verify(value.read() != null, "measurement warmup") }

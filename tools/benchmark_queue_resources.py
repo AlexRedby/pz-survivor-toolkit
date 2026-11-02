@@ -19,7 +19,14 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tools.queue_checks import timing, preparation_process
+
 HOST = Path('JavaPatches/tests/net/alexredby/pztoolkitjavapatches/QueueResourceBenchmark.kt')
+TIMING_JAVA = HOST.with_name('TimingAdmission.java')
+TIMING_TOOLS = tuple(Path('tools/queue_checks') / name for name in
+                     ('timing.py', 'admission.py', 'preparation_process.py', 'preparation_windows.py'))
 BANK = Path('tests/benchmarks/queue_resources.lua')
 MAIN_CLASS = 'net.alexredby.pztoolkitjavapatches.QueueResourceBenchmark'
 MARKER = 'QUEUE_RESOURCE_BENCHMARK_BANK_PASS'
@@ -58,6 +65,7 @@ def parser():
     result.add_argument('--section', action='append', choices=SECTIONS, help='Repeat to run only selected sections; default all four')
     result.add_argument('--max-steps', type=int, choices=MAX_STEPS, default=1000, help='Largest queue size included in selected sections')
     result.add_argument('--timeout', type=float, default=180, help='Hard total deadline in seconds, including compilation')
+    result.add_argument('--resource-wait', type=float, default=300, help='Maximum exclusive timing admission wait; excluded from the execution deadline')
     return result
 
 
@@ -79,6 +87,9 @@ def validate(args, project):
         raise BenchmarkFailure('Samples must be 1..100000 and warmup 0..100000')
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise BenchmarkFailure('Timeout must be finite and positive')
+    wait = getattr(args, 'resource_wait', 300)
+    if type(wait) not in (int, float) or not math.isfinite(wait) or wait < 0:
+        raise BenchmarkFailure('Resource wait must be finite and nonnegative')
     for field in ('game', 'jdk', 'kotlin_home', 'output'):
         setattr(args, field, Path(getattr(args, field)).expanduser().resolve())
     if args.output.exists():
@@ -87,7 +98,8 @@ def validate(args, project):
         if args.output.is_relative_to(protected):
             raise BenchmarkFailure('Report output must be outside game/JDK/Kotlin inputs')
     for path in (args.game / 'projectzomboid.jar', args.game / 'ZombieBuddy.jar',
-                 args.jdk / 'bin/java', args.jdk / 'bin/javac', project / HOST, project / BANK,
+                 args.jdk / 'bin/java', args.jdk / 'bin/javac', project / HOST, project / BANK, project / TIMING_JAVA,
+                 *(project / relative for relative in TIMING_TOOLS),
                  project / 'JavaPatches/build.py'):
         if not path.is_file():
             raise BenchmarkFailure('Required local benchmark input missing: ' + str(path))
@@ -97,7 +109,7 @@ def commands(args, project, classes, build):
     sections, max_steps = selections(args)
     jars = [args.game / 'projectzomboid.jar', args.game / 'ZombieBuddy.jar']
     stdlib = args.kotlin_home / 'lib/kotlin-stdlib.jar'
-    classpath = os.pathsep.join(map(str, [stdlib, *jars]))
+    classpath = os.pathsep.join(map(str, [classes, stdlib, *jars]))
     compiled = []
     build.compile_kotlin(args.jdk, args.kotlin_home, classpath, classes, [project / HOST],
                          module_name='queue_resource_benchmark', run=lambda command: compiled.append(command))
@@ -109,7 +121,8 @@ def commands(args, project, classes, build):
                os.pathsep.join(map(str, [classes, stdlib, *jars])), MAIN_CLASS]
     if len(compiled) != 1:
         raise BenchmarkFailure('Expected exactly one Kotlin host compile command')
-    return compiled[0], runtime
+    guard = [str(args.jdk / 'bin/javac'), '--release', '25', '-d', str(classes), str(project / TIMING_JAVA)]
+    return guard, compiled[0], runtime
 
 
 def parse_events(text):
@@ -127,7 +140,7 @@ def parse_events(text):
     return result
 
 
-def qualify(events, args, project):
+def qualify(events, args, project, admission_id):
     sections, max_steps = selections(args)
     banks = [e for e in events if e['event'] == 'bank']
     samples = [e for e in events if e['event'] == 'sample']
@@ -140,6 +153,7 @@ def qualify(events, args, project):
             or events[-1] != banks[0]):
         raise BenchmarkFailure('Native bank failed, returned without its exact BANK marker, or emitted no results')
     if (len(environments) != 1 or environments[0].get('scope') != 'native-kahlua-cpu-only'
+            or environments[0].get('admission') != admission_id
             or environments[0].get('gui') is not False or type(environments[0].get('allocatedBytesAvailable')) is not bool
             or environments[0].get('samples') != args.samples or environments[0].get('warmup') != args.warmup
             or environments[0].get('sections') != sections or environments[0].get('maxSteps') != max_steps
@@ -183,25 +197,29 @@ def run_benchmark(args, *, project=ROOT, runner=None, build=None):
     args.output.mkdir(parents=True, exist_ok=False)
     classes = Path(tempfile.mkdtemp(prefix='host-', dir=args.output)) / 'classes'
     classes.mkdir()
-    compile_command, runtime_command = commands(args, project, classes, build)
+    guard_command, compile_command, runtime_command = commands(args, project, classes, build)
     inputs = [('project', str(HOST), project / HOST), ('project', str(BANK), project / BANK),
               ('project', 'tools/benchmark_queue_resources.py', project / 'tools/benchmark_queue_resources.py'),
               ('project', 'JavaPatches/build.py', project / 'JavaPatches/build.py'),
+              ('project', str(TIMING_JAVA), project / TIMING_JAVA),
+              *(('project', str(relative), project / relative) for relative in TIMING_TOOLS),
               ('game', 'projectzomboid.jar', args.game / 'projectzomboid.jar'), ('game', 'ZombieBuddy.jar', args.game / 'ZombieBuddy.jar'),
               ('kotlin', 'lib/kotlin-compiler.jar', args.kotlin_home / 'lib/kotlin-compiler.jar'),
               ('kotlin', 'lib/kotlin-stdlib.jar', args.kotlin_home / 'lib/kotlin-stdlib.jar'),
               ('jdk', 'bin/java', args.jdk / 'bin/java'), ('jdk', 'bin/javac', args.jdk / 'bin/javac')]
     manifest = dict(format=1, status='running', scope='native-kahlua-cpu-only',
                     limits=['CPU simulation in game Kahlua; no selected-pack UI/Host latency or multiplayer qualification.'],
-                    parameters=dict(samples=args.samples, warmup=args.warmup, timeout=args.timeout, sections=sections, maxSteps=max_steps),
+                    parameters=dict(samples=args.samples, warmup=args.warmup, timeout=args.timeout, sections=sections, maxSteps=max_steps,
+                                    resourceWait=getattr(args, 'resource_wait', 300)),
                     python=dict(version=sys.version, platform=platform.platform()),
                     inputs=[dict(scope=scope, path=name, sha256=digest(path)) for scope, name, path in inputs],
-                    commands=dict(compile=compile_command, runtime=runtime_command), classes=str(classes.relative_to(args.output)))
+                    commands=dict(admission_compile=guard_command, compile=compile_command, runtime=runtime_command),
+                    classes=str(classes.relative_to(args.output)))
     manifest_path = args.output / 'manifest.json'
     def save(): manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + '\n', encoding='utf-8')
     save()
     deadline = started + args.timeout
-    execute = runner or subprocess.run
+    execute = runner or preparation_process.run
     def run(command, label, cwd):
         remaining = deadline - time.monotonic()
         if remaining <= 0: raise BenchmarkFailure('Total benchmark timeout before ' + label)
@@ -209,24 +227,41 @@ def run_benchmark(args, *, project=ROOT, runner=None, build=None):
             completed = execute(command, cwd=str(cwd), stdout=stdout, stderr=stderr, text=True, timeout=remaining, check=False)
         if completed.returncode != 0:
             raise BenchmarkFailure(label + ' exited ' + str(completed.returncode) + '; inspect preserved stdout/stderr logs')
+    registration = None
     try:
         run([str(args.jdk / 'bin/java'), '-version'], 'java-version', args.output)
         version_text = (args.output / 'java-version-stdout.log').read_text() + (args.output / 'java-version-stderr.log').read_text()
         version = re.search(r'(?:openjdk|java) version "(\d+)', version_text)
         if version is None or int(version[1]) < 25: raise BenchmarkFailure('Game classpath requires the existing JDK 25+')
         manifest['javaVersion'] = version_text.strip()
+        run(guard_command, 'admission-compile', args.output)
         run(compile_command, 'compile', args.output)
-        run(runtime_command, 'runtime', args.game)
-        events = parse_events((args.output / 'runtime-stdout.log').read_text(encoding='utf-8'))
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BenchmarkFailure('Total benchmark timeout before timing admission')
+        with timing.acquire(args.output / 'timing', MAIN_CLASS, wait=getattr(args, 'resource_wait', 300)) as registration:
+            # Queue waiting is separately bounded and never consumes JVM execution time.
+            deadline = time.monotonic() + remaining
+            runtime_command = [runtime_command[0], *registration.java_options, *runtime_command[1:]]
+            manifest['commands']['runtime'] = [part for part in runtime_command if not part.startswith('-Dpz.timing.token=')]
+            manifest['timing'] = registration.evidence()
+            save()
+            run(runtime_command, 'runtime', args.game)
+            text = (args.output / 'runtime-stdout.log').read_text(encoding='utf-8')
+            manifest['timing'] = registration.validate(text)
+            events = parse_events(text)
+            manifest['executedSources'] = qualify(events, args, project, registration.registration_id)
         (args.output / 'results.jsonl').write_text(''.join(json.dumps(e, sort_keys=True, allow_nan=False) + '\n' for e in events), encoding='utf-8')
-        manifest['executedSources'] = qualify(events, args, project)
         for (_, name, path), fingerprint in zip(inputs, manifest['inputs']):
             if digest(path) != fingerprint['sha256']: raise BenchmarkFailure('Benchmark input changed during execution: ' + name)
         manifest.update(status='passed', emitted=sum(e['event'] == 'sample' for e in events))
-    except (BenchmarkFailure, OSError, subprocess.SubprocessError, ValueError) as error:
-        manifest.update(status='failed', reason=str(error), timedOut=isinstance(error, subprocess.TimeoutExpired))
+    except (RuntimeError, OSError, subprocess.SubprocessError, ValueError) as error:
+        if registration is not None:
+            manifest['timing'] = registration.evidence()
+        reason = re.sub(r'-Dpz\.timing\.token=[0-9a-f]{64}', '-Dpz.timing.token=<redacted>', str(error))
+        manifest.update(status='failed', reason=reason, timedOut=isinstance(error, subprocess.TimeoutExpired))
         save()
-        raise BenchmarkFailure(str(error)) from error
+        raise BenchmarkFailure(reason) from None
     save()
     return manifest
 

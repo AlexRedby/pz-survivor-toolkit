@@ -426,7 +426,7 @@ object GroundHighlightChecks {
         }
     }
 
-    private fun benchmark(thread: KahluaThread) {
+    private fun benchmark(thread: KahluaThread, measure: Boolean) {
         val fixture = Fixture()
         val near = fixture.ground(0, 0)
         val far = fixture.ground(1, 0).apply { xoff = 9f }
@@ -489,6 +489,7 @@ object GroundHighlightChecks {
             thread.call(function, arrayOf<Any?>(true, 1.0)) == reference,
             "benchmark output parity",
         )
+        if (!measure) return
         repeat(3) {
             thread.call(function, arrayOf<Any?>(false, 200.0))
             thread.call(function, arrayOf<Any?>(true, 200.0))
@@ -510,6 +511,11 @@ object GroundHighlightChecks {
 
     @JvmStatic
     fun main(args: Array<String>) {
+        val measure =
+            TimingAdmission.requested(
+                args,
+                "net.alexredby.pztoolkitjavapatches.GroundHighlightChecks",
+            )
         zombie.core.random.RandStandard.INSTANCE.init()
         zombie.core.random.RandLua.INSTANCE.init()
         Core.debug = false
@@ -517,7 +523,7 @@ object GroundHighlightChecks {
         verify(GroundHighlight.SUPPORTED, "installed native classes are unsupported")
         distanceChecks(thread)
         matchesChecks(thread)
-        benchmark(thread)
+        benchmark(thread, measure)
         println(
             "GROUND_HIGHLIGHT_CHECKS_PASS (native objects/cell/visibility, Kahlua parity/errors, exact ownership, unsupported and crossing benchmark)",
         )
