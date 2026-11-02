@@ -428,6 +428,8 @@ end
 -- its shared operation does not start this transfer. Keep the ordinary pending
 -- adapter and all runtime permissions unchanged. Generic adopted wrappers need
 -- their own pure dependency lease before they can join this final-read seam.
+-- A second result is only the captured public queued member when different;
+-- its native ID-resolution witness remains separate from admission and outcomes.
 function Adapters.deferredTransferBinding(action,current)
     local function own(owner,key)
         if bindingType(owner)~="table" then return end
@@ -483,8 +485,10 @@ function Adapters.deferredTransferBinding(action,current)
     local groups=own(action,"queueList")
     if not singleton(groups) or not plain(groups[1]) or not singleton(own(groups[1],"items")) then return end
     local group,items=groups[1],own(groups[1],"items")
-    local item=own(action,"item")
-    if items[1]~=item or own(action,"srcContainer")==own(action,"destContainer")
+    local item,queuedMember=own(action,"item"),items[1]
+    local alias=not bindingEqual(queuedMember,item)
+    if alias and bindingType(queuedMember)~="userdata"and bindingType(queuedMember)~="table"then return end
+    if own(action,"srcContainer")==own(action,"destContainer")
         or not finite(own(action,"maxTime")) or not finite(group.time) or group.time~=own(action,"maxTime") then return end
     for key in bindingPairs(group) do if key~="items" and key~="time" and key~="type" then return end end
     for _,key in ipairs({"onStartFunc","onCancelFunc","onFailFunc","additionalTest","retriggerLastAction"}) do
@@ -542,7 +546,9 @@ function Adapters.deferredTransferBinding(action,current)
     end
     if #moduleKeys>0 then factorySpecs[#factorySpecs+1]={owner=Toolkit,keys=moduleKeys} end
     factorySpecs[#factorySpecs+1]={owner=Proof,keys={"captureBindings","closure"}}
-    factorySpecs[#factorySpecs+1]={owner=bindingGlobals,keys={"getFilenameOfClosure","toolkitLuaMetatableMatches"}}
+    local globalKeys={"getFilenameOfClosure","toolkitLuaMetatableMatches"}
+    if alias then globalKeys[#globalKeys+1]="createItemTransaction" end
+    factorySpecs[#factorySpecs+1]={owner=bindingGlobals,keys=globalKeys}
     local factoryWatch=bindingCapture(factorySpecs)
     if not factoryWatch then return end
     local generation=own(queue,"toolkitOperationGeneration")
@@ -699,9 +705,13 @@ function Adapters.deferredTransferBinding(action,current)
         if used then return false end
         used=true
         if not unchanged() then return false end
+        -- A different queued handle is only a prospective native MP target.
+        -- This witness neither equates its admission/weight nor binds an outcome.
+        if alias and (not plain(facts)or not bindingEqual(facts.aliasMember,queuedMember)
+            or facts.aliasResolution~="native-root-id")then return false end
         for _,lease in bindingIpairs(leases) do if not lease(facts) then return false end end
         return unchanged()
-    end
+    end,alias and queuedMember or nil
 end
 Adapters.weightInspectionSafe=Weights.factoryFree
 -- Host item transactions preserve queue member IDs while authority replication

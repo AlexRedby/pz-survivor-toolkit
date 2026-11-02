@@ -79,6 +79,9 @@ local function descriptor(result,item,root,destination,id,fullType)
  assert(found.action==nil and found.synthetic==true and equal(found.item,item)and found.id==id
   and found.fullType==fullType and equal(found.source,root)and equal(found.destination,destination),'virtual return changed its exact physical owner/endpoints')
  local edit=found.edit
+ -- A detached same-ID native member can make the exact effect unsupported.
+ -- Preserve the observed outcome and continue the read-only checks.
+ if edit==nil then return nil,'virtual-return-effect-unavailable' end
  assert(plain(edit)and edit.version==1 and edit.complete==true and edit.capacity=='external'
   and plain(edit.resources)and #edit.resources==1,'virtual return has no complete external-capacity effect descriptor')
  local resource=edit.resources[1]
@@ -105,7 +108,7 @@ function O.run(context)
   scope='active-edit-native-return-effect-observation',mutationAuthorized=false,permissionsMeasured=false,
   current=ref(front),currentNative=ref(front.action),currentLuaStartedPresent=front.started~=nil,currentLuaStarted=front.started==true,
   liveItem=ref(state.front),source=context.ids.source,
-  observer=false,existingDecision=false,ledgerBefore=false,ledgerAfter=false,nativeFacts=false,prototype=false,
+  observer=false,existingDecision=false,ledgerBefore=false,ledgerAfter=false,nativeFacts=false,aliasFacts=false,prototype=false,
   effect=false,qualifiedReturn=false,readOnly=false,uiUnchanged=false,performance=false,passed=false}
  local before,worldBefore
  local ok,problem=pcall(function()
@@ -117,13 +120,13 @@ function O.run(context)
   assert(receipt.nativeStarted==true and receipt.nativeFinished==false and receipt.nativeForceComplete==false,'current native reader checkpoint unavailable')
   local policy,settlement=T.ActionQueuePolicy,T.ActionQueueSettlement
   local observe,evaluate,ledger=policy.observeActiveEdit,policy.evaluateCancel,settlement.editLedger
-  local primitive=toolkitLeafTransferFacts
+  local primitive,aliasPrimitive=toolkitLeafTransferFacts,toolkitLeafTransferAliasFacts
   assert(kind(observe)=='function'and source(observe)=='ActionQueuePolicy.lua'and kind(ledger)=='function'
    and source(ledger)=='ActionQueueSettlement.lua','source-owned observation/ledger API missing')
   local root=state.player:getInventory()
   worldBefore=fixture.snapshot(state);before=capture(queue)
   local initialLedger=ledger(queue,front);receipt.ledgerBefore=ledgerSummary(initialLedger)
-  local prototype
+  local prototype,member
   for index=2,#queue.queue do
    local action=queue.queue[index]
    if action.toolkitQueueOperation==front.toolkitQueueOperation and action.Type=='ISInventoryTransferAction'
@@ -132,7 +135,7 @@ function O.run(context)
    end
   end
   if prototype then
-   local member=prototype.queueList and prototype.queueList[1]and prototype.queueList[1].items and prototype.queueList[1].items[1]
+   member=prototype.queueList and prototype.queueList[1]and prototype.queueList[1].items and prototype.queueList[1].items[1]
    receipt.prototype={action=ref(prototype),item=ref(prototype.item),member=ref(member),liveItem=ref(state.front),
     sameItemReference=equal(prototype.item,state.front),sameMemberReference=equal(member,state.front),
     itemId=prototype.item:getID(),itemType=prototype.item:getFullType(),source=ref(prototype.srcContainer),destination=ref(prototype.destContainer),
@@ -143,7 +146,8 @@ function O.run(context)
    bulk=T.BulkActions and source(T.BulkActions.transferBinding)or false,
    compat=T.ActionQueueCompat and source(T.ActionQueueCompat.transferBinding)or false,
    carts=T.ActionQueueCarts and source(T.ActionQueueCarts.transferBinding)or false,
-   transferConstructor=source(ISInventoryTransferAction.new),transferPerform=source(ISInventoryTransferAction.perform)}
+   transferConstructor=source(ISInventoryTransferAction.new),transferPerform=source(ISInventoryTransferAction.perform),
+   nativeAlias=kind(aliasPrimitive)=='function'}
   if not context.native and context.ids.source~='root'then
    assert(initialLedger.status=='observed'and #initialLedger.borrowings==1,'genuine native-earned private borrowing ledger missing')
    local loan=initialLedger.borrowings[1]
@@ -152,6 +156,7 @@ function O.run(context)
     and equal(loan.source,state.source)and equal(loan.destination,root),'borrowed book private ownership is not the original active loan')
    assert(receipt.ledgerBefore.earnedPreparations>0 and context.pickupEarned==true,'pickup has no genuine native earned preparation evidence')
    assert(prototype and prototype.action==nil and not prototype.started,'real native optional return is not pending')
+   assert(equal(prototype.item,state.front),'native return prototype item changed')
    assert(kind(primitive)=='function','native leaf facts primitive missing')
    local facts=primitive(state.player,state.front,root,state.source,context.ids.front.id,context.ids.front.type)
    receipt.nativeFacts=plain(facts)and{scope='independent-native-value-probe',schema=facts.schema,item=ref(facts.item),source=ref(facts.source),destination=ref(facts.destination),
@@ -159,6 +164,18 @@ function O.run(context)
     primaryKnown=facts.primaryItemContainerKnown,primaryFullType=facts.primaryFullType or false}or false
    assert(plain(facts)and facts.schema==2 and equal(facts.item,state.front)and equal(facts.source,root)
     and equal(facts.destination,state.source),'direct native physical facts unavailable (no action/replica rebinding is permitted)')
+   if not equal(member,state.front)then
+    local alias
+    if kind(aliasPrimitive)=='function'then alias=aliasPrimitive(state.player,state.front,root,state.source,context.ids.front.id,context.ids.front.type,member)end
+    if alias==nil then receipt.unsupported='native-alias-facts-unavailable'
+    else
+     assert(plain(alias)and alias.schema==2 and equal(alias.item,state.front)and equal(alias.source,root)
+      and equal(alias.destination,state.source)and equal(alias.aliasMember,member)and alias.aliasResolution=='native-root-id',
+      'native detached member alias facts malformed')
+     receipt.aliasFacts={scope='independent-native-alias-probe',schema=alias.schema,item=ref(alias.item),source=ref(alias.source),
+      destination=ref(alias.destination),aliasMember=ref(alias.aliasMember),aliasResolution=alias.aliasResolution}
+    end
+   end
   end
   local intent={kind='cancel',action=front,whole=true}
   local function existing()
@@ -183,8 +200,10 @@ function O.run(context)
    assert(result.status=='observed'and receipt.observer.returns==0,'root control acquired a synthetic return')
    receipt.control='no-loan'
   else
-   receipt.effect=descriptor(result,state.front,root,state.source,context.ids.front.id,context.ids.front.type)
-   receipt.qualifiedReturn=true
+   local effect,unsupported=descriptor(result,state.front,root,state.source,context.ids.front.id,context.ids.front.type)
+   receipt.effect=effect or false;receipt.descriptorUnsupported=unsupported or false
+   receipt.unsupported=receipt.unsupported or unsupported or false
+   receipt.qualifiedReturn=effect~=nil and not receipt.unsupported
   end
   -- Same actual header/whole intent and unchanged live producer state. Outputs
   -- differ: legacy authority versus declarative effect observation. These are
@@ -203,7 +222,10 @@ function O.run(context)
    assert(a.allowed==baseline.allowed and a.reason==baseline.reason,'existing cancellation decision changed in paired bank')
    local summary=observedSummary(b)
    assert(fixture.same(summary,receipt.observer),'active observation result changed in paired bank')
-   if receipt.qualifiedReturn then descriptor(b,state.front,root,state.source,context.ids.front.id,context.ids.front.type)end
+   if not context.native and context.ids.source~='root'then
+    local effect,unsupported=descriptor(b,state.front,root,state.source,context.ids.front.id,context.ids.front.type)
+    assert((effect~=nil)==(receipt.effect~=false) and (unsupported or false)==receipt.descriptorUnsupported,'virtual return qualification changed in paired bank')
+   end
    assert(unchanged(before),'paired observations changed queue/UI or action/native bindings')
   end
   local comparable=receipt.qualifiedReturn and baseline.allowed and result.status=='observed'
@@ -219,15 +241,15 @@ function O.run(context)
   receipt.ledgerAfter=ledgerSummary(ledger(queue,front))
   assert(fixture.same(receipt.ledgerBefore,receipt.ledgerAfter),'observation changed private debt/earned-step disposition')
   assert(equal(policy.observeActiveEdit,observe)and equal(policy.evaluateCancel,evaluate)and equal(settlement.editLedger,ledger)
-   and equal(toolkitLeafTransferFacts,primitive),'observation replaced a production entrypoint')
+   and equal(toolkitLeafTransferFacts,primitive)and equal(toolkitLeafTransferAliasFacts,aliasPrimitive),'observation replaced a production entrypoint')
  end)
  if before then
   local checked,stable=pcall(function()return unchanged(before)and fixture.same(worldBefore,fixture.snapshot(state))end)
   receipt.readOnly=checked and stable or false;receipt.uiUnchanged=receipt.readOnly
   if not receipt.readOnly then ok=false;problem='active edit observation changed queue/UI/item/hands/worn/page state'end
  end
- receipt.passed=ok
- if ok then receipt.failure=false else receipt.failure=tostring(problem)end
+ receipt.passed=ok and not receipt.unsupported
+ if not ok then receipt.failure=tostring(problem)elseif receipt.unsupported then receipt.failure=receipt.unsupported else receipt.failure=false end
  return receipt
 end
 return O

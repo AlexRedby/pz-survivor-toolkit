@@ -2103,7 +2103,7 @@ function Settlement.observeEditCleanup(queue, current)
         end) then return unknown() end
     end
     local policy, adapters = Toolkit.ActionQueuePolicy, Toolkit.ActionQueueItemEditAdapters
-    local nativeFacts = toolkitLeafTransferFacts
+    local nativeFacts, nativeAliasFacts = toolkitLeafTransferFacts, toolkitLeafTransferAliasFacts
     local binding = type(adapters) == "table" and rawget(adapters, "deferredTransferBinding")
     local carried = type(policy) == "table" and rawget(policy, "isCarriedContainer")
     local world = type(adapters) == "table" and rawget(adapters, "worldContainer")
@@ -2112,7 +2112,7 @@ function Settlement.observeEditCleanup(queue, current)
     local worldTrusted = type(world) == "function" and origin(world, "ActionQueueItemEditAdapters.lua")
     local bindingTrusted = type(binding) == "function" and origin(binding, "ActionQueueItemEditAdapters.lua")
     local globals, queueClass, queueMap = _G, ISTimedActionQueue, ISTimedActionQueue.queues
-    for _, key in ipairs({"PZSurvivorToolkit", "ISTimedActionQueue", "toolkitLeafTransferFacts"}) do watch(globals, key) end
+    for _, key in ipairs({"PZSurvivorToolkit", "ISTimedActionQueue", "toolkitLeafTransferFacts", "toolkitLeafTransferAliasFacts"}) do watch(globals, key) end
     for _, key in ipairs({"ActionQueueSettlement", "ActionQueuePolicy", "ActionQueueItemEditAdapters"}) do watch(Toolkit, key) end
     watch(executionProof, "closure"); watch(queueClass, "queues"); watch(queueMap, actor)
     if kind(policy) == "table" then watch(policy, "isCarriedContainer") end
@@ -2138,6 +2138,7 @@ function Settlement.observeEditCleanup(queue, current)
             and (kind(adapters) ~= "table" or equal(own(adapters, "worldContainer"), world)
                 and equal(own(adapters, "deferredTransferBinding"), binding))
             and equal(own(globals, "toolkitLeafTransferFacts"), nativeFacts)
+            and equal(own(globals, "toolkitLeafTransferAliasFacts"), nativeAliasFacts)
             and equal(own(globals, "ISTimedActionQueue"), queueClass)
             and equal(own(queueClass, "queues"), queueMap) and equal(own(queueMap, actor), queue)
             and equal(own(queue, "current"), current) and equal(own(queue, "queue"), list)
@@ -2224,19 +2225,28 @@ function Settlement.observeEditCleanup(queue, current)
                         prototype = member
                     end
                 end
-                local bound, lease
+                local bound, lease, aliasMember
                 if prototype then
                     -- Private synchronous context lets our own listener attester
                     -- reuse this exact earned record without reopening a token
                     -- seal, invoking liveness callbacks or exporting handles.
                     local previousContext=activeEditCleanupBinding
                     activeEditCleanupBinding={record=record,queue=queue,current=current,action=prototype}
-                    bound,lease=pcall(binding,prototype,current)
+                    bound,lease,aliasMember=pcall(binding,prototype,current)
                     activeEditCleanupBinding=previousContext
                 end
                 if not unchanged() then return unknown() end
                 if bound and type(lease) == "function" then
-                    local read, facts = pcall(nativeFacts, actor, value.item, value.source, value.destination, value.id, value.fullType)
+                    local read, facts
+                    -- Native ID resolution proves only the prospective target;
+                    -- old-member admission/weight and completion remain native.
+                    if aliasMember~=nil then
+                        if type(nativeAliasFacts)=="function" then
+                            read,facts=pcall(nativeAliasFacts,actor,value.item,value.source,value.destination,value.id,value.fullType,aliasMember)
+                        end
+                    else
+                        read,facts=pcall(nativeFacts,actor,value.item,value.source,value.destination,value.id,value.fullType)
+                    end
                     -- Only plain DTO fields and private/source identities below.
                     local leased = lease(facts)
                     if not unchanged() then return unknown() end

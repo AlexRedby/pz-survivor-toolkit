@@ -1075,8 +1075,23 @@ def active_edit_errors(value, row, case, selection):
                 or (constructor, perform) == ('TransferRestrictions.lua', 'VisualUpdateQueue.lua')
                 and bindings.get('carts') == 'ActionQueueCarts.lua'
             )
-            if (prototype.get('sameItemReference') is not True or prototype.get('sameMemberReference') is not True
-                    or prototype.get('item') != item or prototype.get('member') != item or prototype.get('liveItem') != item
+            alias_facts = value.get('aliasFacts', False)
+            same_member = prototype.get('sameMemberReference')
+            alias_valid = False
+            if same_member is False:
+                expected_alias = dict(scope='independent-native-alias-probe', schema=2, item=item, source=root,
+                                      destination=destination, aliasMember=prototype.get('member'), aliasResolution='native-root-id')
+                alias_valid = (selection['kind'] == 'mp' and bindings.get('nativeAlias') is True
+                    and isinstance(prototype.get('member'), str) and bool(prototype['member']) and prototype['member'] != item
+                    and isinstance(alias_facts, dict) and set(alias_facts) == set(expected_alias)
+                    and all(type(alias_facts.get(key)) is type(wanted) and alias_facts[key] == wanted
+                            for key, wanted in expected_alias.items()))
+                if not alias_valid:
+                    errors.append('Active-edit detached member lacks exact native ID-resolution proof')
+            elif same_member is not True or prototype.get('member') != item or alias_facts is not False:
+                errors.append('Active-edit singleton member/reference proof differs')
+            if (prototype.get('sameItemReference') is not True or not (same_member is True or alias_valid)
+                    or prototype.get('item') != item or prototype.get('liveItem') != item
                     or prototype.get('itemId') != book.get('id') or prototype.get('itemType') != book.get('type')
                     or prototype.get('source') != root or prototype.get('destination') != destination
                     or prototype.get('allowMissingItems') is not True or prototype.get('pending') is not True
@@ -1113,6 +1128,8 @@ def active_edit_errors(value, row, case, selection):
         if 'control' in value:
             errors.append('Active-edit qualified return mislabeled as a control')
     else:
+        if value.get('aliasFacts', False) is not False:
+            errors.append('Active-edit control acquired a native alias relation')
         control = 'no-loan' if enabled else 'queue-disabled'
         if (value.get('control') != control or any(value.get(k) is not False for k in ('effect', 'nativeFacts'))
                 or enabled and (ledger.get('status') != 'observed' or loans or ledger.get('legacyHints') is not False

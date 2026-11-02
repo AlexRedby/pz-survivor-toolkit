@@ -78,7 +78,7 @@ internal object NativeTransferRequestsLogic {
 
     // A canonical invoker class can wrap a foreign Java method as well. Do not
     // confuse that wrapper's paused Lua frame with the native API's own entry.
-    private fun canonicalApi(function: Any?): Boolean {
+    internal fun canonicalApi(function: Any?): Boolean {
         val single =
             when (function?.javaClass) {
                 LuaJavaInvoker::class.java -> function as LuaJavaInvoker

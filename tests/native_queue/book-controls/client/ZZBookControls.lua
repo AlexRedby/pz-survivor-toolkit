@@ -587,7 +587,9 @@ local function atBoundary()
   activeEditReceipt=editObservation.run({toolkit=T,queue=queue(),front=front,state=state,fixture=F,ids=ids,
    case=case(),kind=config.kind,mode=config.mode,native=native,control=control(),clock=timingNow,precise=preciseTiming,pickupEarned=earned})
   raw('ACTIVE_EDIT_OBSERVATION',activeEditReceipt)
-  assert(activeEditReceipt.passed,'active edit native return-effect observation failed: '..tostring(activeEditReceipt.failure))
+  assert(activeEditReceipt.passed or activeEditReceipt.failure=='virtual-return-effect-unavailable'
+   or activeEditReceipt.failure=='native-alias-facts-unavailable',
+   'active edit native return-effect observation failed: '..tostring(activeEditReceipt.failure))
  end
  performanceAtBoundary()
  if preview then assert(F.returnPreviewUnchanged(preview.action,preview.native),'read-only performance/preview changed native return item/group')end
@@ -660,6 +662,7 @@ local function finish()
   if not F.same(actual,expected)or not F.same(authorityFinal,expected)then failure='native final effect/inventory/Pen intent differs from exact requested result' end
  end
  if not failure and not native and performance and not performance.probe32.authorityAllowed then failure='Toolkit32 intended edit denied'end
+ if not failure and activeEditReceipt and not activeEditReceipt.passed then failure='active edit observation: '..activeEditReceipt.failure end
  local passed=not failure
  local row={event='case',id=case(),status=passed and'passed'or'failed',reason=failure or false,ids=ids,baseline=baseline,authorityBaseline=authorityBaseline,
   boundary=boundary,records=records,starts=starts,resume=resume or false,tailSnapshot=tailSnapshot or false,volumeSnapshot=volumeSnapshot or false,equipSnapshot=equipSnapshot or false,
