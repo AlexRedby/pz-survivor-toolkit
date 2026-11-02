@@ -32,6 +32,19 @@ with patch.object(Path, 'read_text', read):
         catalog = cli.adapters.definitions()
         for suite in ('food', 'fitness', 'radio-settings', 'shelf-book-tv', 'custom-tags'):
             assert catalog[suite]['default_mods'] == ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']
+        for suite, scenario in (('queue-recovery', 'cancelled-remainder'),
+                                ('approach-queue', 'native-cursor-approach')):
+            expected = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']
+            assert catalog[suite]['default_mods'] == expected
+            assert catalog[suite]['scenario_actions'][scenario]['mods'] == expected
+            # Run the real registration assertions against the alternate INI too.
+            from importlib import import_module
+            test = import_module('tests.test_queue_recovery_adapter' if suite == 'queue-recovery'
+                                 else 'tests.test_queue_approach_adapter')
+            case = (test.RecoveryAdapterTests('test_registration_full_pack_selection_and_staging')
+                    if suite == 'queue-recovery' else
+                    test.ApproachAdapterTests('test_registration_selected_pack_and_staging'))
+            case.debug()
     raise SystemExit(result)
 """
 
@@ -42,7 +55,8 @@ class CatalogSelectionTests(unittest.TestCase):
             ini = Path(directory) / 'selected.ini'
             if text is not None:
                 ini.write_text(text, encoding='utf-8')
-            environment = dict(os.environ, PYTHONPATH=str(ROOT / 'tools'), PYTHONDONTWRITEBYTECODE='1')
+            environment = dict(os.environ, PYTHONPATH=os.pathsep.join(map(str, (ROOT / 'tools', ROOT))),
+                               PYTHONDONTWRITEBYTECODE='1')
             return subprocess.run([sys.executable, '-c', CATALOG_PROBE, str(ini), json.dumps(command or ['matrix'])],
                                   cwd=directory, env=environment, text=True, capture_output=True)
 

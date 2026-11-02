@@ -9,6 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import approach_queue as a
+from queue_checks.mod_selection import metadata, mod_ids
 
 
 class ApproachAdapterTests(unittest.TestCase):
@@ -246,7 +247,14 @@ class ApproachAdapterTests(unittest.TestCase):
     def test_registration_selected_pack_and_staging(self):
         from queue_checks import adapters
         self.assertIs(adapters.get('approach-queue'), a)
-        self.assertEqual(a.definitions()['approach-queue'], json.loads((ROOT / 'tests/native_queue/catalog.json').read_text())['suites']['approach-queue'])
+        expected = json.loads((ROOT / 'tests/native_queue/catalog.json').read_text())['suites']['approach-queue']
+        # The JSON records structure; runtime full-pack lists follow the selected INI.
+        self.assertIsInstance(expected['default_mods'], list)
+        self.assertIsInstance(expected['scenario_actions']['native-cursor-approach']['mods'], list)
+        mods = mod_ids(metadata(ROOT / 'SurvivorQoL-selected.ini')['Mods'])
+        expected['default_mods'] = mods
+        expected['scenario_actions']['native-cursor-approach']['mods'] = mods
+        self.assertEqual(a.definitions()['approach-queue'], expected)
         self.assertTrue(all(p.is_file() for p in a.sources(ROOT, self.selection())))
         for key, value in [('cases', [a.CASES[0]]), ('cases', list(reversed(a.CASES))), ('mods', []), ('clients', 2), ('options', {})]:
             selection = self.selection(); selection[key] = value

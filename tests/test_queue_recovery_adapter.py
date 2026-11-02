@@ -9,6 +9,7 @@ import unittest
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools'))
 from queue_checks.adapters import queue_recovery as a
+from queue_checks.mod_selection import metadata, mod_ids
 
 
 class RecoveryAdapterTests(unittest.TestCase):
@@ -208,7 +209,14 @@ class RecoveryAdapterTests(unittest.TestCase):
     def test_registration_full_pack_selection_and_staging(self):
         from queue_checks import adapters
         self.assertIs(adapters.get('queue-recovery'),a)
-        self.assertEqual(a.definitions()['queue-recovery'],json.loads((ROOT/'tests/native_queue/catalog.json').read_text())['suites']['queue-recovery'])
+        expected=json.loads((ROOT/'tests/native_queue/catalog.json').read_text())['suites']['queue-recovery']
+        # The JSON records structure; runtime full-pack lists follow the selected INI.
+        self.assertIsInstance(expected['default_mods'],list)
+        self.assertIsInstance(expected['scenario_actions']['cancelled-remainder']['mods'],list)
+        mods=mod_ids(metadata(ROOT/'SurvivorQoL-selected.ini')['Mods'])
+        expected['default_mods']=mods
+        expected['scenario_actions']['cancelled-remainder']['mods']=mods
+        self.assertEqual(a.definitions()['queue-recovery'],expected)
         self.assertTrue(all(p.is_file()for p in a.sources(ROOT,self.selection())))
         for key,value in [('cases',[a.CASES[0]]),('cases',list(reversed(a.CASES))),('mods',[]),('clients',2),('options',{})]:
             selection=self.selection();selection[key]=value
