@@ -1,5 +1,6 @@
 -- BC installs one set of aggregate policies against the initially active UI.
 -- Share those policies while each supported class retains its own native chain.
+if not getActivatedMods():contains('EURY_CONTAINERS') then return end
 require 'ISUI/ISInventoryPane'
 require 'ISUI/ISInventoryPage'
 local Classes = require 'PZSurvivorToolkit/InventoryClasses'

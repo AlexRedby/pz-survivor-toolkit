@@ -246,8 +246,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Fix Toolkit-only startup when Better Containers is absent. The standalone/visual Wishlist profile completes its cases and cleanup but startup logs show `BCInventoryCompatibility.lua` indexing `_installed` on nil. Gate optional compatibility registration on the actual dependency; keep the standalone profile and strict runtime audit.
-
 - [ ] Update the warehouse workload observer for the current source-owned deferred preparation path. The registered minimal `peer-edits` Host reaches `peer-craft` and then rejects `ISQueueActionsAction` before cleanup. Qualify the actual installed producer/approach/transfer sequence while retaining rejection of foreign deferred callbacks, then rerun the affected native bank.
 
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.

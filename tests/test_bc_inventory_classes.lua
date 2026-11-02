@@ -1,4 +1,25 @@
 -- Actual BC installers and vanilla update/highlight methods; UI/world are doubles.
+local client=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'
+-- The game also loads nested client Lua directly, bypassing the early loader.
+-- Check both entrypoints before the source-backed integration cases.
+do
+    local toolkit,panes,pages={},{},{}
+    local env=setmetatable({PZSurvivorToolkit=toolkit,ISInventoryPane=panes,ISInventoryPage=pages,
+        getActivatedMods=function()return{contains=function(_,id)
+            assert(id=='EURY_CONTAINERS');return false
+        end}end,
+        require=function()error('inactive BC compatibility required a dependency')end}, {__index=_G})
+    env._G=env
+    for _,path in ipairs({'000ToolkitBCInventoryCompatibility.lua','PZSurvivorToolkit/BCInventoryCompatibility.lua'})do
+        local loader=assert(loadfile(client..path));setfenv(loader,env)
+        loader();loader()
+        assert(env.PZSurvivorToolkit==toolkit and next(toolkit)==nil
+            and env.ISInventoryPane==panes and next(panes)==nil
+            and env.ISInventoryPage==pages and next(pages)==nil,
+            'inactive BC entrypoint changed Toolkit or native classes')
+    end
+    print('PASS BC absent: early and directly loaded modules leave dependencies/classes untouched')
+end
 if not NativeBCProximityPaneSource or not NativeBCProximityPageSource or not CleanUIVanillaInventoryPaneSource then
     if TestCoverage then TestCoverage('source-contract','skipped','SKIP BC inventory class integration: explicit CleanUI and Better Containers sources required')end
     return
@@ -6,7 +27,6 @@ end
 local paneSource=assert(NativeBCProximityPaneSource,'BC proximity pane source required')
 local pageSource=assert(NativeBCProximityPageSource,'BC proximity page source required')
 local vanillaSource=assert(CleanUIVanillaInventoryPaneSource,'CleanUI vanilla pane source required')
-local client=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'
 local function pack(...)return{n=select('#',...),...}end
 local function method(name)
     local body=assert(vanillaSource:match('(function CleanUI_Vanilla_ISInventoryPane:'..name..'%b().-)\nfunction '))
@@ -32,6 +52,7 @@ local function run(compatible, initialVanilla, failureMode, initialDerived)
     function prox.DoAutoLock()stats.auto=stats.auto+1 end
     function prox.isHumanContainer(kind)return kind=='inventorymale' end
     local env=setmetatable({PZSurvivorToolkit={},ISMouseDrag={},
+        getActivatedMods=function()return{contains=function(_,id)return id=='EURY_CONTAINERS'end}end,
         getSpecificPlayer=function()return{}end,getPlayerInventory=function()end,getPlayerLoot=function()end,
         instanceof=function(value,name)return type(value)=='table'and(value.class==name or value.classes and value.classes[name])end,
         getCore=function()return{getObjectHighlitedColor=function()return{getR=function()return 1 end,getG=function()return 1 end,getB=function()return 1 end}end}end,
@@ -312,12 +333,4 @@ run(true,false,'error')
 run(true,false,'contract')
 run(true,false,'already-installed')
 
--- The early loader must not require BC or touch classes when the mod is absent.
-do
-    local env={getActivatedMods=function()return{contains=function()return false end}end,
-        require=function()error('inactive BC loader required a dependency')end}
-    setmetatable(env,{__index=_G})
-    local loader=assert(loadfile(client..'000ToolkitBCInventoryCompatibility.lua'));setfenv(loader,env);loader()
-    print('PASS BC inactive early loader leaves dependencies/classes untouched')
-end
 if TestCoverage then TestCoverage('source-contract','passed')end
