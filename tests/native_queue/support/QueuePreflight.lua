@@ -63,7 +63,9 @@ function P.removeTick(events,fn)
  if events~=Events then events.OnTick.Remove(fn);return end
  if ticks[fn] then Events.OnTick.Remove(ticks[fn]);ticks[fn]=nil end
 end
-Events.OnTick.Add(function()
+-- The coordinator must admit startup callbacks even when native SP starts
+-- paused. Gameplay callbacks above still require a genuine native OnTick.
+Events.OnTickEvenPaused.Add(function()
  if failed or not ready then return end
  if not setup and grant('queue-preflight-setup.txt') then
   for _,start in ipairs(starts) do
