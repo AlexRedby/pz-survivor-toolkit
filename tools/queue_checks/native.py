@@ -11,7 +11,7 @@ import sys
 import tempfile
 import zipfile
 import uuid
-from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw, preparation_process
+from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw, preparation_process, borrowing_check
 try:
     from .. import lua_compatibility
 except ImportError:
@@ -295,6 +295,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
     _validate(selection)
     selection = dict(selection, window_size=window_size(selection))
     locations, template, world = _source_inputs(project, game, jdk, selection, workshop)
+    borrowing_required = borrowing_check.required(selection)
     locked = selection.get('options', {}).get('pack_lock')
     adapter = adapters.get(selection['suite'])
     if world and output.is_relative_to(template):
@@ -308,6 +309,8 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
     required = [support / name for name in ("ToolkitSmokeLauncher.java", "ToolkitWindowBootstrap.java", "ZZReleasePreflight.lua", "QueuePreflight.lua", "QueueEnergyPlacement.lua")]
     required += [Path(lua_compatibility.HARNESS), Path(lua_compatibility.__file__).resolve(), game / 'stdlib.lbc']
     required += [project / "tools/check_action_queue.py", project / "tests/native_queue/catalog.json"]
+    if borrowing_required:
+        required += borrowing_check.sources(project)
     if not adapter and (not (suite / "client").is_dir() or not (suite / "shared").is_dir() or selection["kind"] == "mp" and not (suite / "server").is_dir()):
         raise ValueError("Native suite is missing its client/shared/server source directories: " + str(suite))
     for path in required:
@@ -362,7 +365,13 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
     runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(launch_java), "server_name": "queue-smoke", "window_size": selection["window_size"], "roles": {}}
     preflight_config = {'version': 1, 'token': uuid.uuid4().hex, 'roles': adapters.roles(selection, False)}
+    # Hash selected sources before executing the source-backed gate. Subsequent
+    # copies and normal live-input verification reject changed candidate bytes.
+    borrowing = borrowing_check.qualify(project, game, locations) if borrowing_required else None
     output.mkdir(parents=True)
+    if borrowing is not None:
+        _json(output / 'borrowing-composition.json', borrowing[0])
+        (output / 'borrowing-composition.log').write_text(borrowing[1], encoding='utf-8')
     if sys.platform == 'darwin':
         runtime['glfw'] = glfw.prepare(game, output / 'native', launch_java)
     if selection.get('ports_auto'):

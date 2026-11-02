@@ -29,6 +29,8 @@ NATIVE_TAG_TESTS = (
 # An explicit request must not silently skip its required source checks. Other
 # source-dependent tests retain their own optional-input SKIP/fallback behavior.
 REQUIRED_INPUTS = {
+    'test_action_queue_borrowing_composition.lua': (('native_action_root', 'p4_source'),
+                                                  '--game and --p4-source (or a complete --pack-lock)'),
     "test_bulk_transfer_binding.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_deferred_sources.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_cart_transfer_binding.lua": (("native_action_root", "saucedcarts_source"),
@@ -59,6 +61,7 @@ DEFAULT_NATIVE_ONLY = {
 # Completion receipts are separate from input availability. A supplied source
 # cannot prove that its conditional assertions actually ran.
 SOURCE_CHECKS = {'test_action_queue.lua': ('source-contract',),
+ 'test_action_queue_borrowing_composition.lua': ('plain', 'singleton-guarded', 'merge-preserving', 'return-failure'),
  'test_bulk_transfer_binding.lua': ('source-contract',),
  'test_action_queue_deferred_sources.lua': ('source-contract',),
  'test_action_queue_cart_transfer_binding.lua': ('native-branch-contract',),
@@ -205,6 +208,14 @@ def configure_test_sources(lua, name, args):
     """Give every isolated runtime the same paths; read only this test's inputs."""
     inputs = mod_integrations.bind_sources(lua, name, args)
     lua.globals().ProjectRoot = str(ROOT)
+    if name == 'test_action_queue_borrowing_composition.lua':
+        toolkit = getattr(args, 'toolkit_source', None) or ROOT / 'PZSurvivorToolkit'
+        layers = mod_integrations.mod_layers(toolkit.resolve())
+        if not layers:
+            raise ValueError('--toolkit-source requires a Build 42 mod root with common/version layers')
+        lua.globals().ToolkitLuaRoots = lua.table_from([str(layer / 'media/lua') for layer in layers])
+        inputs.append({'integration': 'PZSurvivorToolkit', 'variable': 'ToolkitLuaRoots',
+                       'required': True, 'status': 'bound'})
     lua.globals().NativeQuartermasterLuaRoot = str(ROOT / "PZSurvivorToolkit/42/media/lua")
     for option, variable in (
         ("native_action_root", "NativeActionRoot"),
@@ -413,6 +424,10 @@ def main() -> None:
     parser.add_argument('--pack-lock', type=Path, help='validated selected-pack lock supplying integration source paths')
     parser.add_argument('--game', type=Path,
                         help='directory containing projectzomboid.jar; supplies native Lua paths, and must match --pack-lock when used')
+    parser.add_argument('--p4-source', type=Path,
+                        help='effective P4 Tidy Up Meister content root containing media/ for borrowing composition checks')
+    parser.add_argument('--toolkit-source', type=Path,
+                        help='candidate Toolkit mod root for borrowing composition checks; defaults to this checkout and must match --pack-lock')
     parser.add_argument('--jdk', type=Path, help='JDK for the installed-Kahlua compatibility check')
     parser.add_argument('--check-lua', type=Path, action='append', default=[], metavar='SOURCE',
                         help='compile runtime Lua file/directory with installed Kahlua and reject absent standard globals; repeatable, requires --game and --jdk; alone runs no behavioural tests')

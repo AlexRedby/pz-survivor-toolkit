@@ -78,6 +78,36 @@ class LuaRunner(unittest.TestCase):
         self.invoke("--test", name)
         self.assertEqual(self.executions, [(name, {"ProjectRoot": str(self.root), "NativeQuartermasterLuaRoot": self.owned_root})])
 
+    def test_borrowing_composition_requires_p4_and_uses_candidate_toolkit_layers(self):
+        name = 'test_action_queue_borrowing_composition'
+        p4 = self.root / 'upstream'
+        paths = ('media/lua/client/P4TidyUpMeister.lua',
+                 'media/lua/shared/TimedActions/P4RestoreAction.lua',
+                 'media/lua/shared/TimedActions/P4RestoreFloorAction.lua')
+        for relative in paths:
+            path = p4 / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(relative)
+        native = self.root / 'native'
+        native.mkdir()
+        for arguments in ([], ['--native-action-root', str(native)], ['--p4-source', str(p4)]):
+            with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
+                self.invoke('--test', name, *arguments)
+        candidate = self.root / 'candidate'
+        for layer in ('common', '42.20', '43'):
+            path = candidate / layer
+            path.mkdir(parents=True)
+            (path / 'mod.info').write_text('id=PZSurvivorToolkit\n')
+        self.invoke('--test', name, '--native-action-root', str(native), '--p4-source', str(p4),
+                    '--toolkit-source', str(candidate), '--require-complete')
+        self.assertEqual(1, len(self.executions))
+        values = self.executions[0][1]
+        self.assertEqual([str(candidate.resolve() / layer / 'media/lua') for layer in ('common', '42.20')],
+                         values['ToolkitLuaRoots'])
+        self.assertEqual(paths[0], values['P4TidySource'])
+        self.assertEqual(paths[1], values['P4RestoreSource'])
+        self.assertEqual(paths[2], values['P4RestoreFloorSource'])
+
     def test_bc_class_check_requires_both_integrations_and_binds_actual_hooks(self):
         clean = self.root / 'clean/media/lua/client'
         bc = self.root / 'bc/media/lua/client/BetterContainers'

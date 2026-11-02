@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-from queue_checks import native, worlds, pack, runner, admission, report, snapshot_copy
+from queue_checks import native, worlds, pack, runner, admission, report, snapshot_copy, borrowing_check
 
 
 class NativeSnapshotTests(unittest.TestCase):
@@ -116,6 +116,32 @@ class NativeSnapshotTests(unittest.TestCase):
         output = self.prepare()
         self.assert_window_size(output, [1600, 900])
         self.assertNotIn('window_size', self.selection)
+
+    def test_failed_borrowing_check_stops_before_profile_copy_or_compilation(self):
+        for path in borrowing_check.sources(self.project):
+            self.write(path, 'composition harness source\n')
+        with patch.object(borrowing_check, 'required', return_value=True), \
+             patch.object(borrowing_check, 'qualify', side_effect=ValueError('composition failed')):
+            with self.assertRaisesRegex(ValueError, 'composition failed'):
+                self.prepare()
+        self.assertFalse((self.root / 'run').exists())
+        self.compile_mock.assert_not_called()
+
+    def test_borrowing_receipt_and_harness_are_sealed_with_selected_inputs(self):
+        for path in borrowing_check.sources(self.project):
+            self.write(path, 'composition harness source\n')
+        with patch.object(borrowing_check, 'required', return_value=True), \
+             patch.object(borrowing_check, 'qualify', return_value=({'status': 'passed'}, 'gate passed\n')) as qualify:
+            output = self.prepare()
+        self.assertEqual(self.project / 'Toolkit', qualify.call_args.args[2]['PZSurvivorToolkit'])
+        self.assertEqual({'status': 'passed'}, report.read_json(output / 'borrowing-composition.json'))
+        frozen = report.read_json(output / 'snapshot-hashes.json')
+        self.assertIn('borrowing-composition.json', frozen)
+        self.assertIn('borrowing-composition.log', frozen)
+        source_manifest = report.read_json(output / 'source-manifest.json')
+        self.assertTrue(all(str(path) in source_manifest for path in borrowing_check.sources(self.project)))
+        (output / 'borrowing-composition.json').write_text('{}')
+        self.assertTrue(report.verify_manifest(output, 'snapshot-hashes.json'))
 
     def test_preflight_is_fresh_shared_and_sealed_after_adapter_staging(self):
         def stage(project, output, game, jdk, selection, locations, runtime):

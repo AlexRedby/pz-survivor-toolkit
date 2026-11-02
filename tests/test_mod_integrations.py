@@ -95,6 +95,27 @@ class ModIntegrations(unittest.TestCase):
     def lock_sources(self):
         pack.create(self.root, self.lock, self.game)
 
+    def test_borrowing_composition_locks_p4_overlay_and_toolkit_candidate(self):
+        self.select('P4TidyUpMeister', 'P4/common')
+        self.select('PZSurvivorToolkit', 'Toolkit/42')
+        self.write(self.root / 'P4/42.20/mod.info', 'id=P4TidyUpMeister\n')
+        for relative in ('media/lua/client/P4TidyUpMeister.lua',
+                         'media/lua/shared/TimedActions/P4RestoreAction.lua',
+                         'media/lua/shared/TimedActions/P4RestoreFloorAction.lua'):
+            self.write(self.root / 'P4/common' / relative, 'common ' + relative)
+        override = self.write(self.root / 'P4/42.20/media/lua/client/P4TidyUpMeister.lua', 'selected P4')
+        self.lock_sources()
+        name = 'test_action_queue_borrowing_composition.lua'
+        args, _ = self.configure(requested=[name])
+        self.assertEqual(self.root / 'Toolkit', args.toolkit_source)
+        self.assertEqual(override, args.integration_sources[name]['P4TidySource'])
+        self.assertEqual('selected P4', self.bound(args, name)['P4TidySource'])
+        self.assertTrue(mod_integrations.has_required_input(name, 'p4_source', args))
+        del args.integration_sources[name]['P4RestoreFloorSource']
+        self.assertFalse(mod_integrations.has_required_input(name, 'p4_source', args))
+        with self.assertRaisesRegex(ValueError, 'toolkit-source differs'):
+            self.configure(requested=[name], toolkit_source=self.root / 'other-candidate')
+
     def test_one_profile_selects_its_exact_checks_and_source_layer(self):
         self.write(self.root / 'Navigator/43/media/lua/client/NavigatorRadio/MonitorRender.lua', 'unsupported')
         self.write(self.root / 'Navigator/common/media/lua/client/NavigatorRadio/MonitorRender.lua', 'common')
