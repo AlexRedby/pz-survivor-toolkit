@@ -304,6 +304,7 @@ local function setup(changed,foreignMerge,alias,missing)
         properties=properties,scripts=scripts,item=item,food=food,utensil=utensil,eat=eat,damage=damage,transfer=transfer,drink=drink,empty=empty,runTransfer=runTransfer,drinks=function()return drinks end,
         forbidProofReads=function()proofReadsForbidden=true end}
 end
+if TestReturnSourceFixtureOnly then return setup end
 local function deferredReturnFixture(changed)
     local s=setup(changed)
     local current=s.f.action(ISReadABook,{item=s.water,action={},started=true})
@@ -316,6 +317,7 @@ local function deferredReturnFixture(changed)
 end
 do
     local s,current,action=deferredReturnFixture()
+    current.started=nil -- stock reading exposes native isStarted, not this transfer field
     assert(s.adapters.transfer(action)==nil,'ordinary pending contract still rejects a started operation')
     local valid=assert(s.adapters.deferredTransferBinding(action,current),'existing same-token deferred native return needs a source lease')
     local accessor=getFilenameOfClosure
@@ -346,7 +348,7 @@ for _,mutate in ipairs({
     function(s,c,a)a.action={}end,
     function(s,c,a)a.transactionId=1 end,
     function(s,c,a)a._isAddingActions=true end,
-    function(s,c,a)c.started=false end,
+    function(s,c,a)c.toolkitQueueOperation.toolkitStarted=false end,
     function(s,c,a)a.allowMissingItems=false end,
     function(s,c,a)a.queueList[2]=a.queueList[1]end,
     function(s,c,a)a.queueList[1].items[2]=a.item end,

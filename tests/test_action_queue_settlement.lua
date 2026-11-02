@@ -1,3 +1,4 @@
+toolkitLuaMetatableMatches=assert(loadfile((ProjectRoot or '.')..'/tests/support/source_binding.lua'))()
 -- Shared settlement owns cancellation bookkeeping, never item/equipment effects.
 local function setup(client, outcomeOverride, delayedMetadata)
     toolkitLeafTransferFacts = nil
@@ -3662,7 +3663,7 @@ local function jointReturnFixture()
         assert(actor == s.player and item == s.members[1] and source == s.root and destination == s.source)
         if s.native then s.native() end
         if s.reject then return end
-        return {schema = 1, item = item, source = source, destination = destination,
+        return {schema = 2, item = item, source = source, destination = destination,
             location = source, id = id, fullType = fullType}
     end
     return s

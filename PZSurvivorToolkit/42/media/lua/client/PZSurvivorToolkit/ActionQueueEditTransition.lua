@@ -3,6 +3,11 @@ local Model = require 'PZSurvivorToolkit/ActionQueueEditModel'
 local Proof = require 'PZSurvivorToolkit/SourceProof'
 local origin = Proof and Proof.closure
 local evaluate = Model and Model.evaluate
+local captureBindings = Proof and Proof.captureBindings
+local bindingType,bindingMeta,bindingRaw,bindingEqual=type,getmetatable,rawget,rawequal
+local bindingGlobals=_G
+local bindingPairs,bindingEach=pairs,ipairs
+local bindingMath,bindingAbs,bindingMin,bindingMax,bindingHuge=math,math.abs,math.min,math.max,math.huge
 local Toolkit = PZSurvivorToolkit
 local Transition = {}
 PZSurvivorToolkit.ActionQueueEditTransition = Transition
@@ -27,9 +32,22 @@ local function identity(value)
         or kind=='number'and value==value and math.abs(value)<math.huge
 end
 local function modelBindingsReady()
-    return rawequal(PZSurvivorToolkit,Toolkit)and rawequal(Toolkit.ActionQueueEditTransition,Transition)
-        and rawequal(Toolkit.ActionQueueEditModel,Model)and Model and Model.evaluate==evaluate
-        and Proof and Proof.closure==origin and type(origin)=='function'
+    if bindingMeta(bindingGlobals)~=nil or bindingType(Toolkit)~='table'or bindingMeta(Toolkit)~=nil
+        or bindingMeta(Transition)~=nil or bindingType(Model)~='table'or bindingMeta(Model)~=nil
+        or bindingType(Proof)~='table'or bindingMeta(Proof)~=nil then return false end
+    return bindingEqual(bindingRaw(bindingGlobals,'type'),bindingType)
+        and bindingEqual(bindingRaw(bindingGlobals,'getmetatable'),bindingMeta)
+        and bindingEqual(bindingRaw(bindingGlobals,'rawequal'),bindingEqual)
+        and bindingEqual(bindingRaw(bindingGlobals,'pairs'),bindingPairs)
+        and bindingEqual(bindingRaw(bindingGlobals,'ipairs'),bindingEach)
+        and bindingEqual(bindingRaw(bindingGlobals,'math'),bindingMath)and bindingMeta(bindingMath)==nil
+        and bindingEqual(bindingRaw(bindingMath,'abs'),bindingAbs)and bindingEqual(bindingRaw(bindingMath,'min'),bindingMin)
+        and bindingEqual(bindingRaw(bindingMath,'max'),bindingMax)and bindingEqual(bindingRaw(bindingMath,'huge'),bindingHuge)
+        and bindingEqual(bindingRaw(bindingGlobals,'PZSurvivorToolkit'),Toolkit)
+        and bindingEqual(bindingRaw(Toolkit,'ActionQueueEditTransition'),Transition)
+        and bindingEqual(bindingRaw(Toolkit,'ActionQueueEditModel'),Model)
+        and bindingEqual(bindingRaw(Model,'evaluate'),evaluate)
+        and bindingEqual(bindingRaw(Proof,'closure'),origin)and bindingType(origin)=='function'
 end
 local function modelReady()
     return modelBindingsReady()and origin(evaluate,'ActionQueueEditModel.lua')and modelBindingsReady()
@@ -164,13 +182,21 @@ end
 -- reading fresh obligations; the one-use projection then performs only bindings
 -- and plain-data work, never a post-observation metadata callback.
 function Transition.prepare()
-    if not modelReady()then return end
-    local accessor=getFilenameOfClosure
+    if not modelBindingsReady()or bindingType(captureBindings)~='function'
+        or not bindingEqual(bindingRaw(Proof,'captureBindings'),captureBindings)then return end
+    local watch=captureBindings({
+        {owner=bindingGlobals,keys={'PZSurvivorToolkit','getFilenameOfClosure','type','getmetatable','pairs','ipairs','rawequal','math','table'}},
+        {owner=Toolkit,keys={'ActionQueueEditTransition','ActionQueueEditModel'}},
+        {owner=Transition,keys={'prepare','project'}},{owner=Model,keys={'evaluate'}},
+        {owner=Proof,keys={'closure','captureBindings'}},
+        {owner=math,keys={'abs','min','max','huge'}},
+    })
+    if not watch or not modelReady()or not watch()then return end
     local used=false
     return function(entries,change)
         if used then return unknown()end
         used=true
-        if getFilenameOfClosure~=accessor or not modelBindingsReady()then return unknown()end
+        if not watch()or not modelBindingsReady()then return unknown()end
         return project(entries,change,true)
     end
 end

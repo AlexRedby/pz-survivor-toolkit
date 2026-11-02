@@ -89,7 +89,7 @@ object QueueBindingCompilerChecks {
         }
     }
 
-    private fun trustChecks(root: Path, compat: String, carts: String) {
+    private fun trustChecks(root: Path, compat: String, carts: String, policy: String) {
         val platform = J2SEPlatform()
         val environment = platform.newEnvironment() as KahluaTableImpl
         val thread =
@@ -99,6 +99,7 @@ object QueueBindingCompilerChecks {
             listOf(
                 Triple(compat, "ActionQueueCompat.lua", 4),
                 Triple(carts, "ActionQueueCarts.lua", 1),
+                Triple(policy, "ActionQueuePolicy.lua", 3),
             )) {
             check(
                 nativeConstants(QueueBindingCompiler.compile(text, path, environment, true)) ==
@@ -379,7 +380,8 @@ object QueueBindingCompilerChecks {
         val root = Path.of(System.getProperty("pz.test.project"))
         val compat = Files.readString(root.resolve(SOURCE_DIRECTORY + "ActionQueueCompat.lua"))
         val carts = Files.readString(root.resolve(SOURCE_DIRECTORY + "ActionQueueCarts.lua"))
-        trustChecks(root, compat, carts)
+        val policy = Files.readString(root.resolve(SOURCE_DIRECTORY + "ActionQueuePolicy.lua"))
+        trustChecks(root, compat, carts, policy)
         serializationChecks(root)
         println(
             "QUEUE_BINDING_COMPILER_CHECKS_PASS (native source gates, caller provenance, Lua fallbacks and dump parity)",

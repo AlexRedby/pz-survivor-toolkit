@@ -28,6 +28,7 @@ CAPACITY_CASES = tuple(source + '.' + control + '-capacity-lost' for source in S
 FAVORITE_CASES = ('world.header-cancel-favorite', 'world.move-volume-favorite')
 CASES += CAPACITY_CASES + FAVORITE_CASES
 PREFIX = '[BOOK_CONTROLS] '
+ACTIVE_EDIT_CASES = tuple(source + '.header-cancel' for source in SOURCES)
 
 CLOCK_INFO = dict(schema=1, timer='System.nanoTime', units='ms', monotonic=True, relativeOrigin=True,
                   source='disposable-jvm-probe', functionClass='net.alexredby.bookcontrolsprobe.Main$MonotonicClock', nativeClock=True)
@@ -139,7 +140,13 @@ def validate(selection):
     extended = selection.get('options', {}).get('require_extended_native_bindings', False)
     if type(extended) is not bool or extended and flag is not True:
         raise ValueError('require_extended_native_bindings requires boolean true require_native_bindings')
-    selected_cases(selection)
+    active = selection.get('options', {}).get('active_edit_observation', False)
+    if type(active) is not bool:
+        raise ValueError('active_edit_observation must be boolean')
+    cases = selected_cases(selection)
+    if active and (selection.get('options', {}).get('precise_timing') is not True
+                   or any(case not in ACTIVE_EDIT_CASES for case in cases)):
+        raise ValueError('active_edit_observation requires precise_timing=true and exact root/worn-bag/world header-cancel cases')
     if (selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients')) is not int or selection['clients'] != 1
@@ -962,6 +969,193 @@ def native_binding_errors(value, extended=False):
     return []
 
 
+def active_edit_errors(value, row, case, selection):
+    """Qualify the opt-in return-effect layer, without assigning edit/frame rights."""
+    errors = []
+    enabled = selection['mode'] == 'toolkit'
+    source = case.split('.', 1)[0]
+    borrowed = enabled and source != 'root'
+    if not isinstance(value, dict):
+        return ['Missing active-edit observation receipt']
+    expected = dict(schema=1, case=case, kind=selection['kind'], mode=selection['mode'],
+                    queueEnabled=enabled, scope='active-edit-native-return-effect-observation',
+                    mutationAuthorized=False, permissionsMeasured=False, nativeStarted=True, nativeFinished=False, nativeForceComplete=False,
+                    qualifiedReturn=borrowed, readOnly=True, uiUnchanged=True,
+                    passed=True)
+    for key, wanted in expected.items():
+        if type(value.get(key)) is not type(wanted) or value[key] != wanted:
+            errors.append('Active-edit receipt differs: ' + key)
+    # Older receipts used Lua's `ok and false or tostring(problem)`, encoding
+    # a successful absent error as exactly 'nil'. Preserve only that success.
+    if value.get('failure') is not False and not (value.get('passed') is True and value.get('failure') == 'nil'):
+        errors.append('Active-edit receipt differs: failure')
+    if (type(value.get('currentLuaStartedPresent')) is not bool or type(value.get('currentLuaStarted')) is not bool
+            or value.get('currentLuaStartedPresent') is False and value.get('currentLuaStarted') is not False):
+        errors.append('Active-edit optional Lua started diagnostics are inconsistent')
+    boundary = row.get('boundary', {})
+    current, native = value.get('current'), value.get('currentNative')
+    checkpoint = boundary.get('nativeCheckpoint', {})
+    records = row.get('records', [])
+    front = next((r for r in records if r.get('role') == 'front' and _same_action(r.get('actionRef'), current)), {})
+    if (not _same_action(current, boundary.get('reader')) or not _same_action(native, boundary.get('native'))
+            or not _same_action(front.get('nativeRef'), native) or front.get('started') is not True
+            or checkpoint.get('finished') is not False or checkpoint.get('forceComplete') is not False
+            or value.get('source') != source or not isinstance(value.get('liveItem'), str) or not value['liveItem']):
+        errors.append('Active-edit genuine current/native reader checkpoint differs')
+    ids = row.get('ids', {})
+    book = ids.get('front', {})
+    ledger = value.get('ledgerBefore')
+    after = value.get('ledgerAfter')
+    if not isinstance(ledger, dict) or ledger != after:
+        errors.append('Active-edit private ledger changed or is missing')
+        ledger = {}
+    loans = ledger.get('borrowings')
+    if not isinstance(loans, list):
+        errors.append('Active-edit borrowing evidence missing')
+        loans = []
+    if type(ledger.get('earnedPreparations')) is not int or ledger['earnedPreparations'] < 0:
+        errors.append('Active-edit earned preparation count invalid')
+    observed = value.get('observer')
+    decision = value.get('existingDecision')
+    if (not isinstance(decision, dict) or decision.get('entrypoint') != 'Policy.evaluateCancel'
+            or type(decision.get('allowed')) is not bool or decision.get('whole') is not True
+            or not (decision.get('reason') is False or isinstance(decision.get('reason'), str))):
+        errors.append('Active-edit real whole-operation baseline missing')
+        decision = {}
+    if not enabled and decision.get('allowed') is not False:
+        errors.append('Active-edit queue-disabled control acquired a Policy edit permission')
+    if not isinstance(observed, dict):
+        errors.append('Active-edit observer summary missing')
+        observed = {}
+    status = 'observed' if enabled else 'unhandled'
+    if (observed.get('status') != status or observed.get('allowedAbsent') is not True or 'allowed' in observed
+            or type(observed.get('returns')) is not int or observed['returns'] != int(borrowed)
+            or type(observed.get('unresolved')) is not int or observed['unresolved'] < 0
+            or not (observed.get('reason') is False or isinstance(observed.get('reason'), str))):
+        errors.append('Active-edit observer result acquired rights or wrong virtual return')
+    projection = observed.get('projection')
+    if (enabled and not isinstance(projection, dict) or not enabled and projection is not False
+            or borrowed and isinstance(projection, dict) and projection.get('externalCapacity') is not True):
+        errors.append('Active-edit overall projection/capacity evidence missing or control acquired one')
+    if projection is not False and (not isinstance(projection, dict)
+            or projection.get('allowedAbsent') is not True or 'allowed' in projection or type(projection.get('externalCapacity')) is not bool
+            or projection.get('status') not in ('allowed', 'denied', 'unhandled')
+            or not (projection.get('reason') is False or isinstance(projection.get('reason'), str))
+            or projection.get('status') != 'allowed' and not projection.get('reason')):
+        errors.append('Active-edit overall projection lost its unknown reason or acquired rights')
+    bindings = value.get('sources', {})
+    expected_sources = dict(observer='ActionQueuePolicy.lua', cleanup='ActionQueueSettlement.lua',
+                           bulk='BulkActions.lua', compat='ActionQueueCompat.lua', carts='ActionQueueCarts.lua')
+    if not isinstance(bindings, dict) or any(bindings.get(k) != v for k, v in expected_sources.items()):
+        errors.append('Active-edit actual source wrapper evidence missing')
+        bindings = {}
+    if borrowed:
+        facts, prototype, effect = (value.get(k) for k in ('nativeFacts', 'prototype', 'effect'))
+        if not all(isinstance(v, dict) for v in (facts, prototype, effect)):
+            errors.append('Active-edit borrowed return lacks native facts/prototype/typed effect')
+        else:
+            item, root, destination = facts.get('item'), facts.get('source'), facts.get('destination')
+            if (facts.get('scope') != 'independent-native-value-probe' or type(facts.get('schema')) is not int
+                    or facts['schema'] != 2 or not all(isinstance(v, str) and v for v in (item, root, destination))
+                    or root == destination or item != value.get('liveItem') or facts.get('primaryKnown') is not True
+                    or facts.get('primaryFullType') is not False):
+                errors.append('Active-edit native schema2 item/endpoints or primary facts differ')
+            owner_type = ids.get('bag', {}).get('type') if isinstance(ids.get('bag'), dict) else False
+            if (facts.get('destinationOwnerFullType') != owner_type
+                    or source == 'worn-bag' and (not isinstance(facts.get('destinationOwner'), str) or not facts['destinationOwner'])
+                    or source == 'world' and facts.get('destinationOwner') is not False):
+                errors.append('Active-edit native destination owner type differs')
+            constructor, perform = bindings.get('transferConstructor'), bindings.get('transferPerform')
+            # Diagnostic identities, not filename authority: the native probe,
+            # earned private loan and typed effect above/below remain mandatory.
+            # Carts.bindingSource/sourcesPinned qualifies this exact upstream pair.
+            reviewed_sources = (
+                constructor in ('CartTransferInterceptor.lua', 'ActionQueueCompat.lua', 'ISInventoryTransferAction.lua')
+                and perform in ('ActionQueueCompat.lua', 'Proximity_ISInventoryTransferAction.lua', 'ISInventoryTransferAction.lua')
+                or (constructor, perform) == ('TransferRestrictions.lua', 'VisualUpdateQueue.lua')
+                and bindings.get('carts') == 'ActionQueueCarts.lua'
+            )
+            if (prototype.get('sameItemReference') is not True or prototype.get('sameMemberReference') is not True
+                    or prototype.get('item') != item or prototype.get('member') != item or prototype.get('liveItem') != item
+                    or prototype.get('itemId') != book.get('id') or prototype.get('itemType') != book.get('type')
+                    or prototype.get('source') != root or prototype.get('destination') != destination
+                    or prototype.get('allowMissingItems') is not True or prototype.get('pending') is not True
+                    or not isinstance(prototype.get('action'), str) or not prototype['action']
+                    or not any(r.get('role') == 'return' and _same_action(r.get('actionRef'), prototype['action']) for r in records)
+                    or prototype.get('constructorSource') != bindings.get('transferConstructor')
+                    or prototype.get('performSource') != bindings.get('transferPerform')
+                    or prototype.get('stopSource') not in ('BulkActions.lua', 'ActionQueueCompat.lua', 'ISInventoryTransferAction.lua')
+                    or not reviewed_sources):
+                errors.append('Active-edit actual pending return prototype identity/wrappers differ')
+            expected_effect = dict(version=1, complete=True, capacity='external', domain='item', id=book.get('id'),
+                                   fullType=book.get('type'), item=item, source=root, destination=destination,
+                                   actionAbsent=True, synthetic=True, resources=1, requirements=1, effects=1, field='location')
+            if set(effect) != set(expected_effect) or any(type(effect.get(k)) is not type(v) or effect[k] != v for k, v in expected_effect.items()):
+                errors.append('Active-edit typed return is not one exact external-capacity location effect')
+            loan = loans[0] if len(loans) == 1 and isinstance(loans[0], dict) else {}
+            # These are editLedger metadata snapshots: native borrowed producers
+            # retain toolkitPickups. Fresh cleanup separately proves their coverage
+            # before emitting the qualified location effect; it must not erase hints.
+            if (ledger.get('status') != 'observed' or type(ledger.get('earnedPreparations')) is not int
+                    or ledger['earnedPreparations'] <= 0 or ledger.get('legacyHints') is not True
+                    or ledger.get('providersPresent') is not False or type(ledger.get('generation')) is not int
+                    or ledger['generation'] < 0
+                    or loan.get('id') != book.get('id') or loan.get('fullType') != book.get('type')
+                    or loan.get('state') != 'active' or loan.get('ambiguous') is not False
+                    or loan.get('returning') is not False or loan.get('plannedReturn') is not False
+                    or loan.get('source') != destination or loan.get('destination') != root
+                    or len(loans) != 1 or not any(r.get('role') == 'pickup' and _number(r.get('performedAt')) for r in records)):
+                errors.append('Active-edit genuine native-earned exclusive private borrowing missing')
+            owner = loan.get('sourceOwner')
+            expected_owner = dict(id=ids['bag']['id'], fullType=ids['bag']['type']) if source == 'worn-bag' else False
+            if owner != expected_owner:
+                errors.append('Active-edit private source owner differs')
+        if 'control' in value:
+            errors.append('Active-edit qualified return mislabeled as a control')
+    else:
+        control = 'no-loan' if enabled else 'queue-disabled'
+        if (value.get('control') != control or any(value.get(k) is not False for k in ('effect', 'nativeFacts'))
+                or enabled and (ledger.get('status') != 'observed' or loans or ledger.get('legacyHints') is not False
+                                or value.get('prototype') is not False)):
+            errors.append('Active-edit root/no-queue control acquired a return or private debt')
+    performance = value.get('performance')
+    if not isinstance(performance, dict):
+        return errors + ['Active-edit paired real-entrypoint timing missing']
+    comparable = borrowed and decision.get('allowed') is True and observed.get('status') == 'observed'
+    reason = ('useful-return-effect-layer-and-existing-cancel-success' if comparable else
+              value.get('control') or 'existing-cancel-denied-or-observer-unknown')
+    required = dict(scope='paired-live-header-return-entrypoints', timer='System.nanoTime', units='ms', warmupPairs=1, pairs=3,
+                    sameLiveIntent=True, whole=True, firstUseScope='first-call-after-untimed-identity-ledger-and-native-facts-diagnostics',
+                    comparable=comparable, comparisonReason=reason, timerOverhead='included-not-subtracted',
+                    sameOutputContract=False, completeEditMeasured=False, frameLoadMeasured=False,
+                    positiveTimingClaim=False, assessment='not-assessed',
+                    observerProjectionStatus=projection.get('status', False) if isinstance(projection, dict) else False,
+                    observerProjectionReason=projection.get('reason', False) if isinstance(projection, dict) else False)
+    if (set(performance) != set(required) | {'baseline', 'observer', 'baselineFirstMs', 'observerFirstMs'}
+            or any(type(performance.get(k)) is not type(v) or performance[k] != v for k, v in required.items())):
+        errors.append('Active-edit timing scope/comparability/projection or assessment claim differs')
+    for key in ('baselineFirstMs', 'observerFirstMs'):
+        if not _number(performance.get(key)) or performance[key] < 0:
+            errors.append('Active-edit first-use timing invalid: ' + key)
+    for role in ('baseline', 'observer'):
+        timing = performance.get(role)
+        if not isinstance(timing, dict):
+            errors.append('Active-edit paired timing distribution missing: ' + role)
+            continue
+        values = timing.get('samplesMs')
+        if (set(timing) != {'samplesMs', 'samples', 'minMs', 'medianMs', 'maxMs', 'meanMs'}
+                or type(timing.get('samples')) is not int or timing['samples'] != 3 or not isinstance(values, list)
+                or len(values) != 3 or any(not _number(v) or v < 0 for v in values)):
+            errors.append('Active-edit paired samples invalid: ' + role)
+            continue
+        ordered = sorted(values)
+        stats = dict(minMs=ordered[0], medianMs=ordered[1], maxMs=ordered[2], meanMs=sum(values) / 3)
+        if any(not _number(timing.get(k)) or not math.isclose(timing[k], wanted, rel_tol=1e-9, abs_tol=1e-9)
+               for k, wanted in stats.items()):
+            errors.append('Active-edit timing distribution inconsistent: ' + role)
+    return errors
+
+
 def verify(root, selection, catalog):
     root = Path(root); issues, outcomes, rows = [], [], []
     try:
@@ -977,6 +1171,12 @@ def verify(root, selection, catalog):
                 or len(final) != 1 or final[0].get('cases') != cases or final[0].get('performed') != len(cases)
                 or final[0].get('failed') != 0 or final[0].get('skipped') != 0 or any(r.get('event') == 'fatal' for r in events)):
             issues.append('Missing complete ordered book-controls qualification bank or functional denials remain')
+        active = selection.get('options', {}).get('active_edit_observation', False)
+        if len(setup) != 1 or setup[0].get('activeEditObserved', False) is not active:
+            issues.append('Active-edit observation setup differs from selected option')
+        active_rows = raw(text, 'ACTIVE_EDIT_OBSERVATION')
+        if [r.get('case') for r in active_rows] != (cases if active else []):
+            issues.append('Active-edit raw receipts missing, duplicated, foreign or reordered')
         if selection.get('options', {}).get('precise_timing') is True:
             if len(setup) != 1:
                 issues.append('Monotonic timing setup missing')
@@ -1016,6 +1216,13 @@ def verify(root, selection, catalog):
                 baselines[i] if i < len(baselines) else None, verified[i] if i < len(verified) else None,
                 [r for r in admissions if r.get('case') == case], [r for r in boundaries if r.get('case') == case], [r for r in drains if r.get('case') == case], [r for r in acks if r.get('case') == case], next((r for r in capacities if r.get('case') == case), None),
                 [r for r in stop_rows if r.get('case') == case])
+            if active:
+                receipt = row.get('activeEditObservation')
+                if [r for r in active_rows if r.get('case') == case] != [receipt]:
+                    errors.append('Raw active-edit receipt differs from its exact case')
+                errors.extend(active_edit_errors(receipt, row, case, selection))
+            elif row.get('activeEditObservation', False) is not False:
+                errors.append('Unrequested active-edit receipt in legacy bank')
             if selection.get('options', {}).get('require_native_requests') is True:
                 observed = [r for r in raw(text, 'NATIVE_REQUEST') if r.get('case') == case]
                 expected_requests = [sample for record in row.get('records', []) for sample in record.get('requestStates', [])]
@@ -1054,7 +1261,8 @@ def verify(root, selection, catalog):
         if not complete(selection, 'client1', text): issues.append('Missing unique diagnostic-bank completion')
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         issues.append('Book controls verifier ' + type(error).__name__ + ': ' + str(error))
-    return dict(issues=issues, outcomes=outcomes, evidence={'performance': performance_observations(rows), 'limits': [
+    return dict(issues=issues, outcomes=outcomes, evidence={'performance': performance_observations(rows),
+        'activeEditObservation': [r['activeEditObservation'] for r in rows if isinstance(r.get('activeEditObservation'), dict)], 'limits': [
         'Programmatic real widget hit tests and handlers with an injected drag-threshold state; no physical pointer or rendering claim.',
         'Policy timings cover isolated calls; panelUpdate excludes hover rebuilds. Durations and 20-sample quantiles are diagnostic observations, not design acceptance criteria or complete input/frame cost.',
         'Optional monotonic handler timings observe one actual press/release pair after the diagnostic call bank, without replay; they exclude human pause, rendering and asynchronous settlement.',

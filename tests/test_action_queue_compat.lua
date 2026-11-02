@@ -3524,9 +3524,9 @@ do
         reset()
         local previousPolicy,previousBulk=PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions
         local source=read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkActions.lua')
-        local first=assert(source:find('function Actions.guardTransfer(',1,true))
+        local first=assert(source:find('local Actions = {}',1,true))
         local last=assert(source:find('function Actions.transfer(',first,true))
-        local bulk=assert(loadstring('local Actions={};local transferGuard={}\n'..source:sub(first,last-1)..'\nreturn Actions',
+        local bulk=assert(loadstring(source:sub(first,last-1)..'\nreturn Actions',
             '@PZSurvivorToolkit/BulkActions.lua'))()
         PZSurvivorToolkit.ActionQueuePolicy,PZSurvivorToolkit.BulkActions=actualPolicy,bulk
         local settlement=PZSurvivorToolkit.ActionQueueSettlement

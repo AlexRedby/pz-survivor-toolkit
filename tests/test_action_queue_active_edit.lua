@@ -1,4 +1,12 @@
 if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Active edit observation SKIP (pass --game).')end;return end
+-- Offline Lua models the JVM's actual-metatable check explicitly. Native
+-- Kahlua runs use the real exported helper instead of this fixture.
+if not toolkitLuaMetatableMatches and debug and debug.getmetatable then
+    local fixtureType,fixtureEqual,fixtureMeta=type,rawequal,debug.getmetatable
+    toolkitLuaMetatableMatches=function(owner,expected)
+        return fixtureType(owner)=='table'and fixtureEqual(fixtureMeta(owner),expected)
+    end
+end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.native('shared/RadioCom/ISRadioAction.lua')
 f.native('shared/TimedActions/ISEquipWeaponAction.lua')
@@ -99,6 +107,62 @@ policy.inspect=function()error('public inspector replacement must not run')end
 -- The internal source-bound inspector is used, not a replaceable public callback.
 assert(observe({kind='move',action=c,target=a}).status=='observed')
 policy.inspect=inspect
+-- Exercise the real cleanup observer. Calibrate its final inventory read on
+-- an unchanged control, then mutate exactly that read in a disposable queue.
+-- No replacement cleanup contract or debug hook supplies the observation.
+do
+    local call,setMeta,getMeta,each=pcall,setmetatable,getmetatable,ipairs
+    local globals,toolkit=_G,PZSurvivorToolkit
+    local transition=toolkit.ActionQueueEditTransition
+    local transitionProject,transitionMeta=transition.project,getMeta(transition)
+    local inventoryGetter=player.getInventory
+    local originalPairs=pairs
+    local function probeQueue()
+        local current=book('Base.BookCarpentry1',true);current.started=nil
+        local queue=f.queue(current,book('Base.BookCooking1'),book('Base.BookFirstAid1'))
+        settlement.track(current,'body')
+        return queue,current,{kind='cancel',action=current,whole=true}
+    end
+    for _,boundary in each({'transition-meta','queue-meta','masked-queue-meta','pairs'})do
+        local queue,current,intent=probeQueue()
+        local reads=0
+        player.getInventory=function(self,...)reads=reads+1;return inventoryGetter(self,...)end
+        local control=policy.observeActiveEdit(queue,intent)
+        assert(control.status=='observed'and control.projection.status=='allowed'and reads>0)
+        local finalRead=reads
+        local lateCalls,mutated=0,false
+        local function hostile()lateCalls=lateCalls+1;error('post-cleanup callback')end
+        local queueMeta=getMeta(queue)
+        reads=0
+        player.getInventory=function(self,...)
+            reads=reads+1
+            if reads>finalRead then hostile()end
+            if reads==finalRead then
+                mutated=true
+                if boundary=='transition-meta'then transition.project=nil;setMeta(transition,{__index=hostile})
+                elseif boundary=='queue-meta'then setMeta(queue,{__index=hostile})
+                elseif boundary=='masked-queue-meta'then setMeta(queue,{__metatable=queueMeta,__index=hostile})
+                else globals.pairs=hostile end
+            end
+            return inventoryGetter(self,...)
+        end
+        local ok,result=call(policy.observeActiveEdit,queue,intent)
+        -- The protected disposable queue is never used again. Restore the live
+        -- registry directly, without unmasking through a Lua metatable getter.
+        globals.pairs=originalPairs
+        setMeta(transition,transitionMeta);transition.project=transitionProject
+        player.getInventory=inventoryGetter
+        ISTimedActionQueue.queues[player]=q
+        assert(mutated and ok and result.status=='unhandled'and lateCalls==0,
+            boundary..': final cleanup read reached a hostile callback')
+        assert(queue.current==current and queue.queue[1]==current,'observation changed its disposable native queue')
+    end
+    local helper=toolkitLuaMetatableMatches
+    toolkitLuaMetatableMatches=nil
+    local ok,result=call(policy.observeActiveEdit,q,{kind='cancel',action=a,whole=true})
+    toolkitLuaMetatableMatches=helper
+    assert(ok and result.status=='unhandled','metatable-bearing queue must decline without its native identity helper')
+end
 -- Borrowed book + return + plain hand equip: record the unresolved return and
 -- preserve the existing capacity guard. Neither hints nor previews earn a loan.
 do

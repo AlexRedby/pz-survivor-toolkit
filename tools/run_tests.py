@@ -29,6 +29,10 @@ NATIVE_TAG_TESTS = (
 # An explicit request must not silently skip its required source checks. Other
 # source-dependent tests retain their own optional-input SKIP/fallback behavior.
 REQUIRED_INPUTS = {
+    "test_bulk_transfer_binding.lua": ("native_action_root", "--game or --native-action-root"),
+    "test_action_queue_deferred_sources.lua": ("native_action_root", "--game or --native-action-root"),
+    "test_action_queue_cart_transfer_binding.lua": (("native_action_root", "saucedcarts_source"),
+                                                    "--game and --saucedcarts-source (or a complete --pack-lock)"),
     "test_warehouse_workload_affinity.lua": (("cleanui_inventory_pane", "native_action_root"),
                                            "--game and --cleanui-inventory-pane (or a complete --pack-lock)"),
     "test_action_queue_active_edit.lua": ("native_action_root", "--game or --native-action-root"),
@@ -55,6 +59,9 @@ DEFAULT_NATIVE_ONLY = {
 # Completion receipts are separate from input availability. A supplied source
 # cannot prove that its conditional assertions actually ran.
 SOURCE_CHECKS = {'test_action_queue.lua': ('source-contract',),
+ 'test_bulk_transfer_binding.lua': ('source-contract',),
+ 'test_action_queue_deferred_sources.lua': ('source-contract',),
+ 'test_action_queue_cart_transfer_binding.lua': ('native-branch-contract',),
  'test_action_queue_active_edit.lua': ('source-contract',),
  'test_action_queue_animal_stops.lua': ('source-contract',),
  'test_action_queue_animals.lua': ('source-contract',),

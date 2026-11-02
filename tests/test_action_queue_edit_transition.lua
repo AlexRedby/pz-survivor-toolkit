@@ -1,4 +1,12 @@
 local prefix=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/'
+-- Offline Lua models the JVM's actual-metatable check explicitly. Native
+-- Kahlua runs use the real exported helper instead of this fixture.
+if not toolkitLuaMetatableMatches and debug and debug.getmetatable then
+    local fixtureType,fixtureEqual,fixtureMeta=type,rawequal,debug.getmetatable
+    toolkitLuaMetatableMatches=function(owner,expected)
+        return fixtureType(owner)=='table'and fixtureEqual(fixtureMeta(owner),expected)
+    end
+end
 PZSurvivorToolkit={}
 getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
 local modules={}
@@ -194,6 +202,28 @@ do
     getFilenameOfClosure=function()error('replacement metadata must not execute')end
     assert(stale(before,{kind='cancel-body',first=1,last=1,generation=7,checkpoint=edit()}).status=='unhandled')
     getFilenameOfClosure=accessor
+end
+-- A final fact read may remove an own source field and install __index, or
+-- replace a primitive used by the projection. Preparation must reject those
+-- changes using captured reads before either hostile callback can run.
+do
+    local call,setMeta,getMeta=pcall,setmetatable,getmetatable
+    local toolkit=PZSurvivorToolkit
+    local evaluate,modelMeta=Model.evaluate,getMeta(Model)
+    local modelSlot,toolkitMeta=toolkit.ActionQueueEditModel,getMeta(toolkit)
+    local maximum=math.max
+    for _,boundary in ipairs({'model-meta','module-meta','math-max'})do
+        local prepared=assert(T.prepare())
+        local lateCalls=0
+        local function hostile()lateCalls=lateCalls+1;error('post-facts source callback')end
+        if boundary=='model-meta'then Model.evaluate=nil;setMeta(Model,{__index=hostile})
+        elseif boundary=='module-meta'then toolkit.ActionQueueEditModel=nil;setMeta(toolkit,{__index=hostile})
+        else math.max=hostile end
+        local ok,result=call(prepared,before,{kind='cancel-body',first=1,last=1,generation=7,checkpoint=edit()})
+        setMeta(Model,modelMeta);Model.evaluate=evaluate
+        setMeta(toolkit,toolkitMeta);toolkit.ActionQueueEditModel=modelSlot;math.max=maximum
+        assert(ok and result.status=='unhandled'and lateCalls==0,boundary..': prepared projection executed a late callback')
+    end
 end
 local saved=Model.evaluate
 Model.evaluate=function()calls=calls+1;error('replaced model')end

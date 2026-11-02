@@ -132,6 +132,201 @@ end) end
 
 -- getModFileReader resolves the selected B42 version, then common; no Workshop path is assumed.
 local Proof = require "PZSurvivorToolkit/SourceProof"
+local bindingCapture = Proof and Proof.captureBindings
+local bindingOrigin,bindingSourceOwn=Proof and Proof.closure,Proof and Proof.own
+local bindingType,bindingMeta,bindingRaw,bindingPairs,bindingEach,bindingEqual=type,getmetatable,rawget,pairs,ipairs,rawequal
+local bindingGlobals,bindingFilename=_G,getFilenameOfClosure
+local transferBindingRecords, bindingState = {}, {revision=0}
+local transferBindingFactory, transferListenerFactory, tidyBindingFactory
+local transferListenerRecord, tidyBindingRecord
+local function bindingOwn(owner,key)
+    if bindingType(owner)~="table" then return nil end
+    if bindingMeta(owner)==nil then local value=bindingRaw(owner,key);return value end
+    local count=0
+    for name,value in bindingPairs(owner) do
+        count=count+1
+        if count>128 then return nil end
+        if bindingEqual(name,key) then return value end
+    end
+    return nil
+end
+local function bindingBase()
+    if bindingType(bindingCapture)~="function" or bindingMeta(bindingGlobals)~=nil or bindingMeta(Toolkit)~=nil
+        or bindingMeta(Compat)~=nil or bindingMeta(Proof)~=nil
+        or not bindingEqual(bindingOwn(bindingGlobals,"getFilenameOfClosure"),bindingFilename)
+        or not bindingEqual(bindingOwn(bindingGlobals,"PZSurvivorToolkit"),Toolkit)
+        or not bindingEqual(bindingOwn(Toolkit,"ActionQueueCompat"),Compat)
+        or not bindingEqual(bindingOwn(Toolkit,"ActionQueueSettlement"),Settlement)
+        or not bindingEqual(bindingOwn(Toolkit,"ActionQueueTidyIntent"),TidyIntent)
+        or not bindingEqual(bindingOwn(Toolkit,"ActionQueueOperations"),Operations)
+        or not bindingEqual(bindingOwn(Proof,"captureBindings"),bindingCapture)
+        or not bindingEqual(bindingOwn(Proof,"closure"),bindingOrigin) or not bindingEqual(bindingOwn(Proof,"own"),bindingSourceOwn)
+        or not bindingEqual(bindingOwn(Compat,"transferBinding"),transferBindingFactory)
+        or not bindingEqual(bindingOwn(Compat,"transferListenerBinding"),transferListenerFactory)
+        or not bindingEqual(bindingOwn(Compat,"tidyBinding"),tidyBindingFactory) then return nil end
+    return {{owner=bindingGlobals,keys={"PZSurvivorToolkit","getFilenameOfClosure","EURY_CONTAINERS","P4TidyUpMeister","TurnOffFridges"}},
+        {owner=Toolkit,keys={"ActionQueueCompat","ActionQueueSettlement","ActionQueueTidyIntent","ActionQueueOperations","ActionQueuePolicy","ActionQueueCarts","Settings"}},
+        {owner=Compat,keys={"transferBinding","transferListenerBinding","tidyBinding"}},
+        {owner=Proof,keys={"captureBindings","closure","own"}},{owner=bindingState,keys={"revision"}}}
+end
+local function bindingDependencies()
+    local result={}
+    for _,specification in bindingEach({
+        {slot="ActionQueueSettlement",owner=Settlement,keys={"admittedPickupScope","refreshPickup","departure","pickupMatches","beforePickupMerge",
+            "beginPickup","finishPickup","refreshReturn","returnMatches","beginReturn","finishReturn","stopReturn"}},
+        {slot="ActionQueueOperations",owner=Operations,keys={"perform"}},
+        {slot="ActionQueuePolicy",owner=bindingOwn(Toolkit,"ActionQueuePolicy"),keys={"matchesNative","isOrdinaryTransfer"}},
+        {slot="Settings",owner=bindingOwn(Toolkit,"Settings"),keys={"actionQueue"}},
+    }) do
+        if bindingType(specification.owner)~="table" then return nil end
+        specification.values={}
+        for _,key in bindingEach(specification.keys) do specification.values[key]=bindingOwn(specification.owner,key) end
+        result[#result+1]=specification
+    end
+    local carts=bindingOwn(Toolkit,"ActionQueueCarts")
+    if bindingType(carts)=="table" then
+        local keys={"isTransferConstructor","isUnequipConstructor","isNonCartUnequip","isNonCartItem"}
+        local values={}
+        for _,key in bindingEach(keys) do values[key]=bindingOwn(carts,key) end
+        result[#result+1]={slot="ActionQueueCarts",owner=carts,keys=keys,values=values}
+    end
+    return result
+end
+local function addBindingDependencies(specifications,dependencies)
+    if not dependencies then return false end
+    for _,dependency in bindingEach(dependencies) do
+        if not bindingEqual(bindingOwn(Toolkit,dependency.slot),dependency.owner) then return false end
+        for _,key in bindingEach(dependency.keys) do
+            if not bindingEqual(bindingOwn(dependency.owner,key),dependency.values[key]) then return false end
+        end
+        specifications[#specifications+1]={owner=dependency.owner,keys=dependency.keys}
+    end
+    return true
+end
+local function bindingFields(specifications,owner,expected)
+    if bindingType(owner)~="table" or bindingMeta(owner)~=nil then return false end
+    local keys={}
+    for key,value in bindingPairs(expected) do
+        if not bindingEqual(bindingOwn(owner,key),value) then return false end
+        keys[#keys+1]=key
+    end
+    if #keys>0 then specifications[#specifications+1]={owner=owner,keys=keys} end
+    return true
+end
+local function noFridgeParent(types,on,off)
+    if types==false then return true end
+    if bindingType(types)~="table" or bindingMeta(types)~=nil then return false end
+    local count,size=0,#types
+    if size==0 or size>64 then return false end -- native bounded parent-container DTO
+    for key,value in bindingPairs(types) do
+        if bindingType(key)~="number" or key%1~=0 or key<1 or key>size or bindingType(value)~="string"
+            or bindingOwn(on,value)~=nil or bindingOwn(off,value)~=nil then return false end
+        count=count+1
+    end
+    return count==size
+end
+-- Source provenance only. Each record is created next to the reviewed wrapper
+-- installation; callers cannot turn an arbitrary successful guard into a lease.
+transferBindingFactory=function(guard,action)
+    local specifications=bindingBase()
+    if not specifications or bindingType(action)~="table" then return nil end
+    if guard==false then
+        local record=records[action]
+        local delegates=record and record.transferBinding
+        if not delegates or record.id~="P4TidyUpMeister" or record.class~=ISInventoryTransferAction or record.opaque
+            or delegates.completion~=nil or not bindingEqual(bindingOwn(action,"perform"),delegates.performWrapper) then return nil end
+        specifications[#specifications+1]={owner=records,keys={action}}
+        specifications[#specifications+1]={owner=record,keys={"id","class","opaque","character","token","queue","generation",
+            "worldGeneration","fields","methods","obligation","transferBinding"}}
+        specifications[#specifications+1]={owner=delegates,exact=true}
+        specifications[#specifications+1]={owner=action,keys={"perform","stop","onCompleteFunc"}}
+        specifications[#specifications+1]={owner=record.fields,exact=true}
+        if not addBindingDependencies(specifications,delegates.dependencies) then return nil end
+        return bindingCapture(specifications),{wrappedPerform=delegates.performWrapper,perform=delegates.performDelegate,
+            wrappedStop=delegates.stopWrapper,stop=delegates.stopDelegate,completeWasAbsent=true}
+    end
+    local record=transferBindingRecords[guard]
+    if not record then return nil end
+    specifications[#specifications+1]={owner=transferBindingRecords,keys={guard}}
+    specifications[#specifications+1]={owner=record,exact=true}
+    specifications[#specifications+1]={owner=ready,keys={record.id}}
+    if ready[record.id]~=true then return nil end
+    if record.kind=="bc" then
+        if not bindingEqual(bindingOwn(bindingGlobals,"EURY_CONTAINERS"),record.helpers)
+            or not bindingFields(specifications,record.helpers,record.helperMethods)
+            or not bindingFields(specifications,record.proximity,record.proximityMethods) then return nil end
+        if bindingType(record.running)~="table" or bindingType(record.browsing)~="table" then return nil end
+        for _,state in bindingEach({record.running,record.browsing}) do
+            if bindingType(state)~="table" or bindingMeta(state)~=nil then return nil end
+            specifications[#specifications+1]={owner=state,exact=true}
+        end
+    elseif record.kind=="p4" then
+        if not bindingEqual(bindingOwn(bindingGlobals,"P4TidyUpMeister"),record.owner)
+            or not bindingFields(specifications,record.owner,record.ownerMethods) then return nil end
+    elseif record.kind=="tof" then
+        if not bindingEqual(bindingOwn(bindingGlobals,"TurnOffFridges"),record.owner)
+            or not bindingFields(specifications,record.owner,record.ownerMethods) then return nil end
+        for _,constant in bindingEach({record.on,record.off}) do
+            if not bindingFields(specifications,constant.map,constant.values) then return nil end
+            local count=0
+            for key,value in bindingPairs(constant.map) do
+                count=count+1
+                if not bindingEqual(bindingOwn(constant.values,key),value) then return nil end
+            end
+            if count~=2 then return nil end
+        end
+        local prior=record.priorGuard and transferBindingFactory(record.priorGuard,action)
+        if record.priorGuard and not prior then return nil end
+        local watch=bindingCapture(specifications)
+        if not watch then return nil end
+        return function(facts)
+            return watch() and (not prior or prior(facts)) and bindingType(facts)=="table" and bindingMeta(facts)==nil
+                and bindingOwn(facts,"schema")==2
+                and noFridgeParent(bindingOwn(facts,"sourceParentTypes"),record.on.map,record.off.map)
+                and noFridgeParent(bindingOwn(facts,"destinationParentTypes"),record.on.map,record.off.map)
+        end
+    else return nil end
+    return bindingCapture(specifications)
+end
+Compat.transferBinding=transferBindingFactory
+local function privateTransferBinding(action,specifications)
+    local record=records[action]
+    if record and (record.id~="P4TidyUpMeister" or record.opaque or record.mergeCandidates) then return nil end
+    specifications[#specifications+1]={owner=records,keys={action}}
+    if record then
+        specifications[#specifications+1]={owner=record,keys={"id","class","opaque","mergeCandidates","fields","methods","obligation","transferBinding"}}
+    end
+    local actor=bindingOwn(action,"character")
+    local session=sessions[actor]
+    specifications[#specifications+1]={owner=sessions,keys={actor}}
+    if session then
+        if bindingType(session)~="table" or bindingMeta(session)~=nil then return nil end
+        specifications[#specifications+1]={owner=session,keys={"character","queue","generation","phase","restored","seen"}}
+    end
+    return bindingCapture(specifications)
+end
+transferListenerFactory=function(action,callback,canObserve,events)
+    local record=transferListenerRecord
+    local specifications=bindingBase()
+    if not specifications or not record or not bindingEqual(callback,record.callback)
+        or not bindingEqual(canObserve,record.canObserve) or not bindingEqual(events,record.events) then return nil end
+    specifications[#specifications+1]={owner=record,exact=true}
+    specifications[#specifications+1]={owner=events,exact=true}
+    if not addBindingDependencies(specifications,record.dependencies) then return nil end
+    return privateTransferBinding(action,specifications)
+end
+Compat.transferListenerBinding=transferListenerFactory
+tidyBindingFactory=function(action,valid,wrapper)
+    local record=tidyBindingRecord
+    local specifications=bindingBase()
+    if not specifications or not record or not bindingEqual(valid,record.valid) or not bindingEqual(wrapper,record.wrapper) then return nil end
+    specifications[#specifications+1]={owner=record,exact=true}
+    if not bindingEqual(bindingOwn(bindingGlobals,"P4TidyUpMeister"),record.owner)
+        or not bindingFields(specifications,record.owner,record.ownerMethods) then return nil end
+    if not addBindingDependencies(specifications,record.dependencies) then return nil end
+    return privateTransferBinding(action,specifications)
+end
+Compat.tidyBinding=tidyBindingFactory
 local function verified(id, files)
     for _, file in ipairs(files or sourceFiles[id]) do
         if not Proof.matches("media/lua/" .. file[1], file[2], id, true) then return false end
@@ -910,6 +1105,7 @@ local function adopt(action)
             end
         end
     end
+    local sourceCompletion=action.onCompleteFunc
     if action.onCompleteFunc then
         local callback, args = action.onCompleteFunc, action.onCompleteArgs
         if type(args) ~= "table" or args[1] ~= action then records[action] = nil; return end
@@ -948,8 +1144,10 @@ local function adopt(action)
         end
         return perform(self, ...)
     end
+    local sourceStop
     if record.id == "P4TidyUpMeister" and record.class == ISInventoryTransferAction then
         local stop = action.stop
+        sourceStop=stop
         action.stop = function(self, ...)
             if returnTransfer(self) and (matches(self, record) or Settlement.returnMatches(self, record.obligation)) then
                 -- Capture before the native delegate removes its item transaction.
@@ -958,6 +1156,10 @@ local function adopt(action)
             end
             return stop(self, ...)
         end
+    end
+    if sourceStop then
+        record.transferBinding={performDelegate=perform,performWrapper=action.perform,
+            stopDelegate=sourceStop,stopWrapper=action.stop,completion=sourceCompletion,dependencies=bindingDependencies()}
     end
     action.toolkitQueueSafeOnComplete = action.onCompleteFunc
     record.methods = snapshot(action)
@@ -1402,6 +1604,7 @@ local function installContainerTransfers()
     end
     local policy = Toolkit.ActionQueuePolicy
     if not policy or not policy.adoptTransferMethods then return end
+    local delegates={}
     for _, module in ipairs({"BetterContainers/Proximity/Proximity_ISInventoryTransferAction", "BetterContainers/Nested"}) do
         local loaded, patch = pcall(require, module)
         if not loaded or type(patch) ~= "table" or patch._installed ~= false or type(patch.install) ~= "function" then return end
@@ -1409,9 +1612,17 @@ local function installContainerTransfers()
         if not pcall(patch.install) then return end
         local replacement = transferMethods()
         if not policy.adoptTransferMethods(previous, replacement, containerHelpersUnchanged) then return end
+        delegates[#delegates+1]={previous=previous,replacement=replacement}
         if Operations.adoptReturnMethods then Operations.adoptReturnMethods(previous, replacement, containerHelpersUnchanged) end
     end
     reviewedTransferPerform, transferPerformGuard = ISInventoryTransferAction.perform, containerHelpersUnchanged
+    local leaseMethods={}
+    for name,value in pairs(proximityMethods) do leaseMethods[name]=value end
+    leaseMethods._TransferRunning,leaseMethods._BrowseElapsedMs=proximity._TransferRunning,proximity._BrowseElapsedMs
+    transferBindingRecords[containerHelpersUnchanged]={kind="bc",id="EURY_CONTAINERS",helpers=helpers,proximity=proximity,
+        helperMethods={isStaleVehicleContainer=staleVehicle},proximityMethods=leaseMethods,delegates=delegates,
+        running=proximity._TransferRunning,browsing=proximity._BrowseElapsedMs}
+    bindingState.revision=bindingState.revision+1
     transferSourceSafe, ready.EURY_CONTAINERS = true, true
 end
 
@@ -1469,6 +1680,10 @@ local function installFridgeTransfers()
         or not policy.adoptTransferHooks(previous, replacement, helpersUnchanged)
         or not Operations.adoptReturnHooks(previous, replacement, helpersUnchanged) then return end
     reviewedTransferPerform, transferPerformGuard = replacement.perform, helpersUnchanged
+    transferBindingRecords[helpersUnchanged]={kind="tof",id="NicksTurnOffFridges",owner=owner,priorGuard=priorGuard,
+        ownerMethods={isFridgeObject=functions.isFridgeObject,ON=constants.ON.map,OFF=constants.OFF.map},
+        on=constants.ON,off=constants.OFF,previous=previous,replacement=replacement}
+    bindingState.revision=bindingState.revision+1
     ready.NicksTurnOffFridges = true
 end
 
@@ -1630,12 +1845,19 @@ function Compat.install()
                     local registerAction, registerWorn = owner.registerActionPolicy, owner.registerWornItemReplacement
                     local replacementTransfer, replacementOffset = ISTransferAction.transferItem, ISTransferAction.GetDropItemOffset
                     -- The pinned source captures both delegates in its private local table.
-                    policy.adoptTransferItemHelper(transferItem, replacementTransfer, function()
+                    local sourceGuard=function()
                         return P4TidyUpMeister == owner and type(registerAction) == "function" and type(registerWorn) == "function"
                             and owner.registerActionPolicy == registerAction and owner.registerWornItemReplacement == registerWorn
                             and ISTransferAction.transferItem == replacementTransfer
                             and ISTransferAction.GetDropItemOffset == replacementOffset
-                    end, dropItemOffset, replacementOffset)
+                    end
+                    if policy.adoptTransferItemHelper(transferItem, replacementTransfer, sourceGuard, dropItemOffset, replacementOffset) then
+                        transferBindingRecords[sourceGuard]={kind="p4",id="P4TidyUpMeister",owner=owner,
+                            ownerMethods={registerActionPolicy=registerAction,registerWornItemReplacement=registerWorn},
+                            transferDelegate=transferItem,offsetDelegate=dropItemOffset,
+                            transferWrapper=replacementTransfer,offsetWrapper=replacementOffset}
+                        bindingState.revision=bindingState.revision+1
+                    end
                 end
             end
             ready[id] = ok == true
@@ -1651,7 +1873,7 @@ function Compat.install()
             return getmetatable(action) == ISInventoryTransferAction and tidyActionUnchanged and tidyActionUnchanged(action)
                 and Toolkit.ActionQueuePolicy.isOrdinaryTransfer(action)
         end
-        TidyIntent.observeTransfers(function(action)
+        local onMerged=function(action)
             local session = pickupScope(action)
             if session then
                 Settlement.refreshPickup(session, action)
@@ -1679,12 +1901,14 @@ function Compat.install()
             if record and record.id == "P4TidyUpMeister" and record.obligation then
                 Settlement.refreshReturn(action, record.obligation)
             end
-        end, function(action)
+        end
+        local canObserve=function(action)
             local record = records[action]
             local session = pickupScope(action)
             return record and record.class == ISInventoryTransferAction and matches(action, record)
                 or session and Settlement.pickupMatches(session, action)
-        end, {
+        end
+        local events={
             merging = function(action)
                 local record = records[action]
                 local queue = ISTimedActionQueue.queues[action.character]
@@ -1721,7 +1945,10 @@ function Compat.install()
                 local session = pickupScope(action)
                 return session and Settlement.finishPickup(session, action, succeeded) or false
             end,
-        })
+        }
+        transferListenerRecord={callback=onMerged,canObserve=canObserve,events=events,dependencies=bindingDependencies()}
+        bindingState.revision=bindingState.revision+1
+        TidyIntent.observeTransfers(onMerged,canObserve,events,transferListenerFactory)
         local policy=Toolkit.ActionQueuePolicy
         if policy and policy.adoptTransferQueueObserver then policy.adoptTransferQueueObserver(previous,ISInventoryTransferAction.checkQueueList) end
         Settlement.observePlannedReturns()
@@ -1814,7 +2041,7 @@ function Compat.install()
             return record and (sourceOnly and sourceMatches(action,record) or not sourceOnly and matches(action,record))
                 or not record and tidyClassUnchanged(action,getmetatable(action),baseline)
         end
-        TidyIntent.install(tidyActionUnchanged,function(menu,name)
+        local wrapper=function(menu,name)
             local live=Toolkit.ItemRetention
             if retention and live~=retention then return false end
             local checker=live and live.isContextWrapper
@@ -1825,7 +2052,11 @@ function Compat.install()
                 retention,retentionWrapper=live,checker
             end
             return live==retention and checker==retentionWrapper and retentionWrapper(menu,name)
-        end)
+        end
+        tidyBindingRecord={valid=tidyActionUnchanged,wrapper=wrapper,dependencies=bindingDependencies(),owner=owner,
+            ownerMethods={registerActionPolicy=actionPolicy,registerWornItemReplacement=wornPolicy}}
+        bindingState.revision=bindingState.revision+1
+        TidyIntent.install(tidyActionUnchanged,wrapper,tidyBindingFactory)
     end
 end
 
@@ -1975,5 +2206,11 @@ Toolkit.ActionQueueDefinitions.registerBehavior("compat.tidy-equipment",
     {types = {"ISEquipWeaponAction", "P4RestoreAction", "ISUnequipAction", "ISWearClothing"}, matches = matchesTidyEquipment, inspect = inspect})
 Operations.registerProducer("compat.tidy-equipment", matchesTidyEquipment, acceptsChild, true)
 require "LootSorter_CraftMenu"
+local sourceAdapters=Toolkit.ActionQueueItemEditAdapters
+if sourceAdapters and type(sourceAdapters.registerSourceFactory)=="function" then
+    sourceAdapters.registerSourceFactory(Compat,"transferBinding",transferBindingFactory)
+    sourceAdapters.registerSourceFactory(Compat,"transferListenerBinding",transferListenerFactory)
+    sourceAdapters.registerSourceFactory(Compat,"tidyBinding",tidyBindingFactory)
+end
 Compat.install()
 return Compat

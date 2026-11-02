@@ -46,6 +46,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.338
+
+- **Internal:** Extend opt-in queue return-effect observations to source-owned Toolkit base/Bulk/Compat/Tidy hooks and reviewed Better Containers, P4, fridge and cart wrappers. Immutable delegate/receipt provenance and query-local pure field watchers replace generic guard execution at the final facts boundary. Capture generic native holder, hand-container and sibling-container types so inactive fridge/cart branches can be proven without running their helpers. Keep unknown listeners, foreign wrappers, detached aliases and unsupported borrowing on the existing path; no new cancel/reorder/capacity permissions are enabled.
+- **Verification:** Add an optional borrowed-book observation bank to the existing SP/menu-Host runner, with queue-disabled controls, exact native checkpoint/return-effect receipts, unchanged state and paired entrypoint diagnostics. These diagnostics distinguish resource-effect coverage from overall projection, edit authority and frame-performance qualification.
+
 ### 0.1.337
 
 - **Fixed:** CleanUI category quick transfers now prepare fresh physical destination items before matching, including nearby containers, previews and the transfer menu. Items received from another player no longer require reopening or refreshing the loot window to match their carried counterparts. Native eligibility, saved item categories and the aggregate insertion restriction remain in effect.
@@ -1567,6 +1572,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.84
+
+- **Internal:** Extend the read-only queue leaf-transfer facts DTO with exact destination-owner and primary-hand container information and complete bounded parent-container type evidence. Empty parent sets use an explicit sentinel; unknown hand dispatch remains unknown. This lets reviewed Lua source owners exclude unrelated fridge/cart branches without callbacks, weight/capacity reads, item construction or native mutation. Add an exact native metatable-identity predicate so protected metatables and reload rewrites cannot pass Lua binding checks through a concealed lookup parent.
 
 ### 0.1.83
 
