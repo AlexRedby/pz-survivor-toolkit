@@ -30,7 +30,11 @@ class NativeSnapshotTests(unittest.TestCase):
         state = patch.object(admission, 'STATE', self.root / 'admission-state')
         state.start()
         self.addCleanup(state.stop)
-        sample = patch.object(admission.host, 'sample', return_value={'processes': []})
+        legacy = patch.object(admission, 'LEGACY_LOCK', self.root / 'admission.lock')
+        legacy.start()
+        self.addCleanup(legacy.stop)
+        sample = patch.object(admission.host, 'sample', return_value={
+            'processes': [], 'total_memory': 16 * 1024**3, 'available_memory': 12 * 1024**3, 'cpu_count': 8})
         sample.start()
         self.addCleanup(sample.stop)
         self.project, self.game, self.jdk = [self.root / name for name in ("project", "game", "jdk")]
@@ -92,7 +96,7 @@ class NativeSnapshotTests(unittest.TestCase):
 
     def prepare(self, name="run", **changes):
         selection = dict(self.selection, **changes)
-        return native.prepare(self.project, self.root / name, self.game, self.jdk, selection)
+        return native.prepare(self.project, self.root / name, self.game, self.jdk, selection, resource_wait=0)
 
     def assert_window_size(self, output, expected):
         selected = report.read_json(output / 'selection.json')
@@ -317,7 +321,8 @@ class NativeSnapshotTests(unittest.TestCase):
         with large.open('wb') as stream:
             stream.truncate(8 * 1024**2)
         with patch.object(admission, 'require_disk', wraps=admission.require_disk) as check, \
-             patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)):
+             patch.object(admission.shutil, 'disk_usage', side_effect=[
+                 SimpleNamespace(free=100 * 1024**3), SimpleNamespace(free=1)]):
             with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
                 self.prepare(kind='mp', clients=2, languages=['EN', 'RU'])
         args = check.call_args_list[0].args
@@ -327,6 +332,7 @@ class NativeSnapshotTests(unittest.TestCase):
 
     def test_disk_is_rechecked_before_next_role(self):
         with patch.object(admission.shutil, 'disk_usage', side_effect=[SimpleNamespace(free=100 * 1024**3),
+                 SimpleNamespace(free=100 * 1024**3),
                  SimpleNamespace(free=100 * 1024**3), SimpleNamespace(free=1)]):
             with self.assertRaisesRegex(RuntimeError, 'Insufficient disk space'):
                 self.prepare(kind='mp', clients=2, languages=['EN', 'RU'])

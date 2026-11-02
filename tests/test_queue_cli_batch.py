@@ -25,13 +25,15 @@ class BatchTests(unittest.TestCase):
         self.plan = self.root / 'plan.json'
         self.args = argparse.Namespace(plan=self.plan, output=self.root / 'batch')
         self.calls = []
+        self.preparation_waits = []
 
     def write_plan(self, jobs):
         self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk', 'jobs': jobs}))
 
-    def prepare(self, project, output, game, jdk, selection, workshop):
+    def prepare(self, project, output, game, jdk, selection, workshop, *, resource_wait=300):
         output.mkdir()
         self.calls.append((output.name, selection))
+        self.preparation_waits.append(resource_wait)
         if output.name == 'blocked':
             raise ValueError('Missing declared dependency')
 
@@ -154,16 +156,18 @@ class BatchTests(unittest.TestCase):
         self.assertEqual((resources['heap_mib'], resources['native_mib'], resources['cpu_per_instance']), (1024, 512, 0.5))
         self.assertTrue(self.calls[0][1]['ports_auto'])
         self.assertEqual(waits, [15])
+        self.assertEqual(self.preparation_waits, [15])
 
     def test_prepare_cli_parses_budget_and_exclusive_without_launching(self):
         with patch.object(cli.native, 'prepare') as prepare:
             result = cli.main(['prepare', str(self.root / 'fresh'), '--game', '/game', '--jdk', '/jdk',
                               '--suite', 'video-recording', '--heap-mib', '1536', '--native-mib', '768',
-                              '--cpu-per-instance', '0.75', '--exclusive'])
+                              '--cpu-per-instance', '0.75', '--exclusive', '--resource-wait', '17'])
         self.assertEqual(result, 0)
         selection = prepare.call_args.args[4]
         self.assertEqual(selection['resources'], {'heap_mib': 1536, 'native_mib': 768, 'cpu_per_instance': 0.75, 'exclusive': True})
         self.assertTrue(selection['ports_auto'])
+        self.assertEqual(prepare.call_args.kwargs['resource_wait'], 17)
 
     def test_cart_scene_flag_is_pinned_and_rejected_for_other_suites(self):
         command=['prepare',str(self.root/'cart'),'--game','/game','--jdk','/jdk',
@@ -433,6 +437,8 @@ class MatrixTests(unittest.TestCase):
 class StatusTests(unittest.TestCase):
     def setUp(self):
         self.value = {'schema_version': 1,
+            'preparing': [{'root': '/build/run', 'pid': 20, 'suite': 'food', 'kind': 'mp',
+                           'mode': 'toolkit', 'budget': {'exclusive': False}}],
             'running': [{'root': '/old/run', 'pid': 10, 'owner_alive': False, 'budget': {'exclusive': False},
                          'processes': [{'pid': 11}]}],
             'waiting': [{'root': '/new/run', 'pid': 12, 'position': 1, 'wait_seconds': 5,
@@ -458,12 +464,13 @@ class StatusTests(unittest.TestCase):
     def test_text_status_shows_owners_fifo_position_reason_and_legacy_limits(self):
         value = self.invoke(['status'])
         for expected in ('Running: 1', '/old/run | PID 10 (owner exited)', 'game PIDs 11', 'Waiting: 1',
+                         'Preparing: 1', '/build/run | PID 20 | food/mp/toolkit | shared | snapshot preparation',
                          '#1 /new/run | PID 12', '5s | exclusive', self.value['waiting'][0]['reason'],
                          'Prepared port reservations: 1', 'Legacy lock: shared/busy', self.value['limits'][0]):
             self.assertIn(expected, value)
 
     def test_empty_status_and_legacy_exclusive_status(self):
-        self.value.update(running=[], waiting=[], prepared=[])
+        self.value.update(running=[], preparing=[], waiting=[], prepared=[])
         self.value['legacy_lock'].update(busy=False, exclusive=False)
         self.assertIn('Legacy lock: free', self.invoke(['status']))
         self.value['legacy_lock'].update(busy=True, exclusive=True)

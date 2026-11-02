@@ -33,7 +33,7 @@ class BatchSessionTests(unittest.TestCase):
 
     def invoke(self):
         self.args.plan.write_text(json.dumps(self.plan))
-        def prepare(project, output, game, jdk, selection, workshop):
+        def prepare(project, output, game, jdk, selection, workshop, *, resource_wait=300):
             output.mkdir()
             self.calls.append(copy.deepcopy(selection))
         def run(output, resource_wait=300):

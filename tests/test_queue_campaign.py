@@ -23,6 +23,16 @@ spec.loader.exec_module(cli)
 
 class CampaignTests(unittest.TestCase):
     def setUp(self):
+        self.admission_root = tempfile.TemporaryDirectory()
+        self.addCleanup(self.admission_root.cleanup)
+        directory = Path(self.admission_root.name)
+        for context in (
+                patch.object(cli.admission, 'STATE', directory / 'state'),
+                patch.object(cli.admission, 'LEGACY_LOCK', directory / 'legacy.lock'),
+                patch.object(cli.admission.host, 'sample', return_value={
+                    'processes': [], 'total_memory': 16 * 1024**3, 'available_memory': 12 * 1024**3, 'cpu_count': 8})):
+            context.start()
+            self.addCleanup(context.stop)
         self.jobs = [dict(id='first', suite='startup', kind='sp', boundary='Fresh startup.'),
                      dict(id='second', suite='startup', kind='mp', boundary='Separate multiplayer topology.')]
         self.plan = dict(game='/game', jdk='/jdk', jobs=self.jobs, campaign=[
@@ -75,6 +85,24 @@ class CampaignTests(unittest.TestCase):
                 cli.batch(args,cli.load_catalog())
             prepare.assert_not_called();self.assertFalse(args.output.exists())
 
+    def test_campaign_preflight_inherits_resource_wait_and_applies_job_override(self):
+        self.plan['resource_wait'] = 11
+        self.jobs[1]['resource_wait'] = 23
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / 'plan.json'
+            path.write_text(json.dumps(self.plan))
+            args = argparse.Namespace(plan=path, output=root / 'run', dry_run=True)
+            with patch.object(cli.native, 'source_inputs', side_effect=lambda *args, **kwargs: print('WAIT preparation')) as sources, \
+                    patch.object(cli.native, 'prepare') as prepare, \
+                    patch('sys.stdout', io.StringIO()) as output, patch('sys.stderr', io.StringIO()) as errors:
+                self.assertEqual(cli.batch(args, cli.load_catalog()), 0)
+            self.assertEqual(json.loads(output.getvalue())['status'], 'planned')
+            self.assertEqual(errors.getvalue(), 'WAIT preparation\nWAIT preparation\n')
+            self.assertEqual([call.kwargs['resource_wait'] for call in sources.call_args_list], [11, 23])
+            prepare.assert_not_called()
+            self.assertFalse(args.output.exists())
+
     def test_failed_or_unreviewed_control_blocks_candidate_but_not_independent_job(self):
         for status in ('failed', 'needs-review'):
             with self.subTest(status=status), tempfile.TemporaryDirectory() as folder:
@@ -85,7 +113,7 @@ class CampaignTests(unittest.TestCase):
                 path=root/'plan.json';path.write_text(json.dumps(plan))
                 args=argparse.Namespace(plan=path,output=root/'run')
                 prepared=[]
-                def prepare(project,output,*args):
+                def prepare(project,output,*args,**kwargs):
                     output.mkdir();prepared.append(output.name)
                 def run(output,**kwargs):
                     (output/'execution.json').write_text('{}');return {}

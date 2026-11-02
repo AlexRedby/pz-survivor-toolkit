@@ -45,7 +45,7 @@ def run(root, resource_wait=300):
     kernel.TerminateJobObject.argtypes = [W.HANDLE, W.UINT];kernel.TerminateJobObject.restype = W.BOOL
     kernel.CloseHandle.argtypes = [W.HANDLE];kernel.CloseHandle.restype = W.BOOL
     kernel.ReleaseMutex.argtypes = [W.HANDLE];kernel.ReleaseMutex.restype = W.BOOL
-    mutex = kernel.CreateMutexW(None, False, 'Local\\PZToolkitNativeWindowsHost')
+    mutex = kernel.CreateMutexW(None, False, admission.WINDOWS_HOST_MUTEX)
     if not mutex:
         raise ctypes.WinError(ctypes.get_last_error())
     result = kernel.WaitForSingleObject(mutex, int(resource_wait * 1000))

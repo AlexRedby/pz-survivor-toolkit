@@ -56,7 +56,7 @@ class WalkingAdmissionTests(unittest.TestCase):
         command = ['prepare', str(self.root / 'run'), '--suite', 'base-walking-profile',
                    '--game', '/game', '--jdk', '/jdk', '--config', str(config),
                    '--mods', ','.join(self.selection['mods'])]
-        def prepare(project, output, game, jdk, selection, workshop):
+        def prepare(project, output, game, jdk, selection, workshop, *, resource_wait=300):
             profile.validate(selection)
         with patch.object(cli.native, 'prepare', side_effect=prepare) as prepared, \
                 patch.object(cli.runner, 'run') as launched, \

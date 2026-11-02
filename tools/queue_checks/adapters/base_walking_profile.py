@@ -46,12 +46,17 @@ def _sandbox(selection):
     return path.resolve()
 
 
-def validate(selection):
+def validate_resources(selection):
+    """Reject unsafe timing admission without reading any fixture inputs."""
     resources = selection.get('resources', {})
     if not isinstance(resources, dict) or resources.get('exclusive') is not True:
         raise ValueError('base-walking-profile timing captures require resources.exclusive=true: '
                          'use --exclusive with prepare/run or set resources.exclusive to true in the batch plan; '
                          'prepare a fresh exclusive snapshot before resume')
+
+
+def validate(selection):
+    validate_resources(selection)
     options = selection.get('options', {})
     if (selection.get('cases') != ['walk'] or selection.get('kind') != 'mp'
             or selection.get('mode') != 'toolkit' or type(selection.get('clients')) is not int

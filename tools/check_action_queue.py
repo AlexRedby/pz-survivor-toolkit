@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prepare/run isolated native suites, audit results, and display actual coverage."""
 import argparse
+from contextlib import redirect_stdout
 import json
 import math
 from pathlib import Path
@@ -262,6 +263,7 @@ def batch(args, catalog):
     jobs = selected_jobs(plan, getattr(args, 'jobs', None), getattr(args, 'sets', ()), getattr(args, 'skip_jobs', None))
     campaign.validate(plan)
     identifiers = [job['id'] for job in jobs]
+    progress = sys.stderr if getattr(args, 'dry_run', False) else sys.stdout
     if args.output.exists():
         raise FileExistsError('Fresh batch output directory required')
     units = batch_sessions(plan, jobs, catalog, args.plan, args.output, getattr(args, 'desktop_mode', None))
@@ -274,7 +276,9 @@ def batch(args, catalog):
             continue
         selected = unit.get('selection') or batch_selection(
             plan, unit['jobs'][0], catalog, args.plan, paths, getattr(args, 'desktop_mode', None))
-        unit['build_inputs'] = adapters.preflight(selected)
+        with redirect_stdout(progress), admission.preparing(unit['output'], selected,
+                wait=unit['jobs'][0].get('resource_wait', plan.get('resource_wait', 300))):
+            unit['build_inputs'] = adapters.preflight(selected)
     if 'campaign' in plan:
         # Unlike an ordinary independent-job batch, a campaign preflights all
         # selected environments before spending its first native launch.
@@ -285,8 +289,10 @@ def batch(args, catalog):
             selected['options'].update(unit['build_inputs'])
             native._validate(selected)
             native.window_size(selected)
-            native.source_inputs(ROOT, plan['game'], plan['jdk'], selected, plan.get('workshop', []),
-                                 pack_cache=checked_packs, validate_adapter=not job.get('seed_job'))
+            with redirect_stdout(progress):
+                native.source_inputs(ROOT, plan['game'], plan['jdk'], selected, plan.get('workshop', []),
+                                     pack_cache=checked_packs, validate_adapter=not job.get('seed_job'),
+                                     resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
     if getattr(args, 'dry_run', False):
         runs, rows, sessions = {}, [], []
         for unit in units:
@@ -328,7 +334,8 @@ def batch(args, catalog):
                 selected = batch_selection(plan, job, catalog, args.plan, completed,
                                            getattr(args, 'desktop_mode', None))
             selected['options'].update(unit['build_inputs'])
-            native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])])
+            native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])],
+                           resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)
             value = save_report(output, catalog, control)
@@ -391,10 +398,11 @@ def main(argv=None):
         command.add_argument('--native-mib', type=int, default=1024, help='Estimated native/graphics/encoder memory per process, beyond heap')
         command.add_argument('--cpu-per-instance', type=float, default=1.0, help='Estimated logical CPU budget per game process')
         command.add_argument('--exclusive', action='store_true', help='Reserve the desktop exclusively for physical input or timing measurements')
+        command.add_argument('--resource-wait', type=float, default=300,
+                             help='Maximum resource wait per preparation or launch phase in seconds; 0 refuses immediately')
         command.add_argument('--desktop-mode', choices=('auto', 'aerospace', 'current'),
                              help='macOS: auto (default) routes to PZ-TEST, with current-desktop fallback only for a sleeping physical display; aerospace requires routing; current is a legacy guarded auto alias. Run GUI tests outside the sandbox')
         if name == "run":
-            command.add_argument("--resource-wait", type=float, default=300, help="Seconds to wait for admission; 0 refuses immediately")
             command.add_argument("--control", type=Path, help="Completed matching native control run directory")
     command = commands.add_parser("resume", help="Launch a fresh already prepared snapshot using its immutable desktop policy; prepare again to change it")
     command.add_argument("output", type=Path)
@@ -441,11 +449,16 @@ def main(argv=None):
                         item.get('kind') or '?', item.get('mode') or '?',
                         'exclusive' if item['budget']['exclusive'] else 'shared',
                         ','.join(str(p['pid']) for p in item['processes']) or 'none'))
+                print('Preparing: ' + str(len(value['preparing'])))
+                for item in value['preparing']:
+                    print('  %s | PID %s | %s/%s/%s | %s | snapshot preparation' % (
+                        item['root'], item['pid'], item.get('suite') or '?', item.get('kind') or '?',
+                        item.get('mode') or '?', 'exclusive' if item['budget']['exclusive'] else 'shared'))
                 print('Waiting: ' + str(len(value['waiting'])))
                 for item in value['waiting']:
-                    print('  #%s %s | PID %s | %.0fs | %s | %s' % (
+                    print('  #%s %s | PID %s | %.0fs | %s | %s | %s' % (
                         item['position'], item['root'], item['pid'], item['wait_seconds'],
-                        'exclusive' if item['exclusive'] else 'shared', item['reason']))
+                        'exclusive' if item['exclusive'] else 'shared', item.get('phase', 'running'), item['reason']))
                 print('Prepared port reservations: ' + str(len(value['prepared'])))
                 lock = value['legacy_lock']
                 print('Legacy lock: ' + ('exclusive' if lock['exclusive'] else 'shared/busy' if lock['busy'] else 'free'))
@@ -492,7 +505,8 @@ def main(argv=None):
         if args.command in ("prepare", "run"):
             args.resources = {key: getattr(args, key) for key in admission.DEFAULTS}
             native.prepare(ROOT, args.output, args.game, args.jdk,
-                           selection(args, catalog, desktop_mode=args.desktop_mode), args.workshop)
+                           selection(args, catalog, desktop_mode=args.desktop_mode), args.workshop,
+                           resource_wait=args.resource_wait)
             print("Prepared: " + str(args.output.resolve()), flush=True)
             if args.command == "prepare":
                 return 0

@@ -41,7 +41,7 @@ class NativeTagPreparation(unittest.TestCase):
                 self.mod(self.workshop / identifier, identifier, 'common' if identifier == 'CleanUI' else '42.20')
         self.java = self.mod(self.project / 'JavaPatches/build/PZToolkitJavaPatches', 'PZToolkitJavaPatches')
         self.write(self.java / '42/media/java/PZToolkitJavaPatches.jar', 'current local Java build')
-        for relative in ('projectzomboid.jar', 'media/lua/shared/native.lua', 'media/scripts/items.txt'):
+        for relative in ('projectzomboid.jar', 'stdlib.lbc', 'media/lua/shared/native.lua', 'media/scripts/items.txt'):
             self.write(self.game / relative, 'native input')
         for name in ('java', 'javac'):
             executable = native.jdk_binary(self.jdk, name)
@@ -57,16 +57,34 @@ class NativeTagPreparation(unittest.TestCase):
         self.start_patch(patch.object(admission.shutil, 'disk_usage',
                                       return_value=SimpleNamespace(free=100 * 1024**3)))
         self.start_patch(patch.object(admission, 'STATE', self.root / 'admission-state'))
-        self.start_patch(patch.object(admission.host, 'sample', return_value={'processes': []}))
+        self.start_patch(patch.object(admission, 'LEGACY_LOCK', self.root / 'admission.lock'))
+        self.start_patch(patch.object(admission.host, 'sample', return_value={
+            'processes': [], 'total_memory': 16 * 1024**3, 'available_memory': 12 * 1024**3, 'cpu_count': 8}))
         self.start_patch(patch.object(tags, 'ROOT', self.project))
         self.start_patch(patch.object(tags, 'HERE', self.fixture))
         self.start_patch(patch.object(native.subprocess, 'run', side_effect=self.compile_or_run))
+        self.start_patch(patch.object(native.lua_compatibility, 'check_sources', side_effect=self.check_compatibility))
+        self.start_patch(patch.object(native.glfw, 'prepare', side_effect=self.prepare_glfw))
         self.launch = self.start_patch(patch.object(runner, 'run', side_effect=AssertionError('Unexpected game launch')))
 
     def start_patch(self, value):
         result = value.start()
         self.addCleanup(value.stop)
         return result
+
+    @staticmethod
+    def check_compatibility(sources, *, game, jdk, output):
+        value = {'status': 'passed', 'sources': [str(path) for path in sources]}
+        native._json(output, value)
+        return value
+
+    @staticmethod
+    def prepare_glfw(game, directory, java):
+        directory.mkdir()
+        library = directory / 'libglfw.dylib'
+        library.write_bytes(b'prepared private GLFW input')
+        return {'library': str(library), 'sha256': native.sha256(library),
+                'compatibility': 'retain-online-displays-during-sleep'}
 
     @staticmethod
     def write(path, value):

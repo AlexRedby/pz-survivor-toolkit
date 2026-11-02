@@ -22,6 +22,16 @@ LEGACY_LOCK = Path('/tmp/pz-queue-native-launch.lock')
 DEFAULTS = {'heap_mib': 2048, 'native_mib': 1024, 'cpu_per_instance': 1.0, 'exclusive': False}
 DISK_MARGIN = 1024 ** 3
 DISK_PER_ROLE = 1024 ** 3
+# Preparation hashes/copies inputs and compiles helpers; it does not start role JVMs.
+PREPARATION_MEMORY = 1024 ** 3
+PREPARATION_CPU = 1.0
+WINDOWS_HOST_MUTEX = 'Local\\PZToolkitNativeWindowsHost'
+
+
+def preparation_budget(selection):
+    # Validate the selection's resource settings but reserve independently of role count.
+    return {'memory': PREPARATION_MEMORY, 'cpu': PREPARATION_CPU,
+            'exclusive': budget(selection)['exclusive']}
 
 
 def disk_capacity(root, instances, records=(), copy_bytes=0):
@@ -127,7 +137,8 @@ def _waiters():
                     or type(item['sequence']) is not int or item['sequence'] <= 0
                     or type(item['pid']) is not int or item['pid'] <= 0
                     or type(item['queued_at']) not in (int, float) or not math.isfinite(item['queued_at'])
-                    or not isinstance(item['reason'], str) or type(item['exclusive']) is not bool):
+                    or not isinstance(item['reason'], str) or type(item['exclusive']) is not bool
+                    or item.get('phase', 'running') not in ('running', 'preparing')):
                 raise ValueError('invalid waiter')
             if _held(item['root']):
                 result.append(item)
@@ -150,6 +161,7 @@ def status(legacy_lock=None):
     with _locked():
         snapshot = host.sample()
         records = _records(snapshot)
+        preparations = _preparations()
         now = time.time()
         waiting = [dict(item, position=index, wait_seconds=max(0, now - item['queued_at']))
                    for index, item in enumerate(_waiters(), 1)]
@@ -172,7 +184,7 @@ def status(legacy_lock=None):
                 finally:
                     fcntl.flock(stream, fcntl.LOCK_UN)
         return {'schema_version': 1, 'state_directory': str(STATE),
-                'running': running,
+                'running': running, 'preparing': preparations,
                 'waiting': waiting, 'prepared': [item for item in records if item['phase'] == 'prepared'],
                 'legacy_lock': dict(locks, path=str(lock)),
                 'limits': ['FIFO applies to updated runners; older runners do not register waiters.',
@@ -229,6 +241,33 @@ def _records(snapshot=None):
     return records
 
 
+def _preparations():
+    # Separate from top-level records so older runners retain their schema.
+    directory = STATE / 'preparing'
+    _directory(directory)
+    result = []
+    for path in directory.glob('*.json'):
+        try:
+            item = json.loads(path.read_text())
+            if (not isinstance(item, dict) or not isinstance(item['root'], str)
+                    or not Path(item['root']).is_absolute() or path.stem != _key(item['root'])
+                    or item['phase'] != 'preparing' or type(item['pid']) is not int or item['pid'] <= 0
+                    or type(item['started_at']) not in (int, float) or not math.isfinite(item['started_at'])
+                    or not isinstance(item['budget'], dict) or type(item['budget'].get('exclusive')) is not bool
+                    or type(item['budget'].get('memory')) is not int
+                    or type(item['budget'].get('cpu')) not in (int, float)
+                    or item['budget'] != {'memory': PREPARATION_MEMORY, 'cpu': PREPARATION_CPU,
+                                          'exclusive': item['budget']['exclusive']}):
+                raise ValueError('invalid preparation')
+            if _held(item['root']):
+                result.append(item)
+            else:
+                path.unlink()
+        except (ValueError, KeyError, TypeError) as error:
+            raise RuntimeError('Invalid native preparation record: ' + str(path)) from error
+    return result
+
+
 @contextmanager
 def _udp(ports):
     sockets = []
@@ -266,12 +305,16 @@ def allocate_ports(root, selection):
     raise RuntimeError('No available adjacent UDP ports for native smoke')
 
 
-def capacity(snapshot, records, request):
+def capacity(snapshot, records, request, request_pid=None):
     pending_memory = pending_cpu = 0
+    accounted_pids = set()
     for item in records:
-        if item['phase'] != 'running':
+        if item['phase'] not in ('running', 'preparing'):
             continue
-        processes = owned(item, snapshot)
+        processes = (owned(item, snapshot) if item['phase'] == 'running' else
+                     [process for process in snapshot['processes'] if process['pid'] == item['pid']])
+        processes = [process for process in processes if process['pid'] not in accounted_pids]
+        accounted_pids.update(process['pid'] for process in processes)
         pending_memory += max(0, item['budget']['memory'] - sum(p['rss'] for p in processes))
         pending_cpu += max(0, item['budget']['cpu'] - sum(p['cpu'] for p in processes))
     # Available memory already excludes RSS; reserve only each admitted run's unconsumed budget.
@@ -280,14 +323,19 @@ def capacity(snapshot, records, request):
     cpu = max(0, snapshot['cpu_count'] - sum(p['cpu'] for p in snapshot['processes']) - pending_cpu)
     details = {'memory_available': int(memory), 'cpu_available': cpu, 'host_memory_margin': margin,
                'host_available_memory': snapshot['available_memory'], 'host_cpu_count': snapshot['cpu_count'],
-               'active_runs': sum(item['phase'] == 'running' for item in records), 'budget': request}
-    return memory >= request['memory'] and cpu >= request['cpu'], details
+               'active_runs': sum(item['phase'] == 'running' for item in records),
+               'active_preparations': sum(item['phase'] == 'preparing' for item in records), 'budget': request}
+    # The preparing Python owner's usage is already in the host inventory.
+    current = [process for process in snapshot['processes']
+               if process['pid'] == request_pid and process['pid'] not in accounted_pids]
+    requested_memory = max(0, request['memory'] - sum(process['rss'] for process in current))
+    requested_cpu = max(0, request['cpu'] - sum(process['cpu'] for process in current))
+    return memory >= requested_memory and cpu >= requested_cpu, details
 
 
 @contextmanager
 def acquire(root, selection, runtime, wait=300, legacy_lock=None):
-    if type(wait) not in (int, float) or not math.isfinite(wait) or wait < 0:
-        raise ValueError('Resource wait must be finite and nonnegative')
+    _validate_wait(wait)
     root = Path(root).resolve()
     request = budget(selection)
     caches = [str(Path(value['cache']).resolve()) for value in runtime['roles'].values()]
@@ -295,6 +343,40 @@ def acquire(root, selection, runtime, wait=300, legacy_lock=None):
         raise ValueError('Native role caches must belong to this run')
     record = {'root': str(root), 'phase': 'running', 'ports': selection.get('ports', []) if selection['kind'] == 'mp' else [],
               'caches': caches, 'budget': request, 'pid': os.getpid(), **_metadata(selection)}
+    with _admit(root, selection, record, wait, legacy_lock) as details:
+        yield details
+
+
+@contextmanager
+def preparing(root, selection, wait=300, legacy_lock=None):
+    """Admit hashing, copying and compilation with a 1 GiB / 1 CPU estimate.
+
+    POSIX preparations share run FIFO/exclusive locks. Windows uses the existing
+    Host mutex conservatively (serial admission; no FIFO or CPU inventory).
+    """
+    _validate_wait(wait)
+    request = preparation_budget(selection)
+    if fcntl is None and os.name == 'nt':
+        with _windows_preparing(request, wait) as details:
+            yield details
+        return
+    root = Path(root).resolve()
+    record = dict(_metadata(selection), root=str(root), phase='preparing',
+                  budget=request, pid=os.getpid())
+    with _admit(root, selection, record, wait, legacy_lock) as details:
+        yield details
+
+
+def _validate_wait(wait):
+    if type(wait) not in (int, float) or not math.isfinite(wait) or wait < 0:
+        raise ValueError('Resource wait must be finite and nonnegative')
+
+
+@contextmanager
+def _admit(root, selection, record, wait, legacy_lock):
+    _validate_wait(wait)
+    request = record['budget']
+    preparation = record['phase'] == 'preparing'
     deadline = time.monotonic() + wait
     _directory()
     with (STATE / (_key(root) + '.lease')).open('a+') as lease, Path(legacy_lock or LEGACY_LOCK).open('a+') as legacy:
@@ -308,12 +390,14 @@ def acquire(root, selection, runtime, wait=300, legacy_lock=None):
         try:
             with _locked():
                 _directory(waiting_path.parent)
+                _preparations()  # Validate before reconciling this newly acquired root lease.
+                (STATE / 'preparing' / (_key(root) + '.json')).unlink(missing_ok=True)
                 # A restarted owner must not inherit its dead predecessor's queue position.
                 waiting_path.unlink(missing_ok=True)
                 waiters = _waiters()
                 waiter = dict(_metadata(selection), root=str(root), pid=os.getpid(),
                               sequence=max((item['sequence'] for item in waiters), default=0) + 1,
-                              queued_at=time.time(), exclusive=request['exclusive'], reason='Checking admission')
+                              queued_at=time.time(), exclusive=request['exclusive'], phase=record['phase'], reason='Checking admission')
                 _save(waiter, waiting_path.parent)
             while True:
                 reason = None
@@ -331,19 +415,21 @@ def acquire(root, selection, runtime, wait=300, legacy_lock=None):
                             reason = 'Legacy or exclusive native run is using the desktop'
                     if reason is None:
                         snapshot = host.sample()
-                        records = _records(snapshot)
+                        records = _records(snapshot) + _preparations()
                         peers = [item for item in records if item['root'] != str(root)]
-                        current = owned(record, snapshot)
+                        current = (owned(record, snapshot) if not preparation else
+                                   [process for item in records if item['root'] == str(root)
+                                    for process in owned(item, snapshot)])
                         if current:
                             raise RuntimeError('Existing game process uses this profile: ' + str([p['pid'] for p in current]))
-                        if (root / 'execution.json').exists() or list(root.glob('*-launch.log')):
+                        if not preparation and ((root / 'execution.json').exists() or list(root.glob('*-launch.log'))):
                             raise ValueError('Run directory has already launched; prepare a fresh snapshot')
-                        reserved = {port for item in peers for port in item['ports']}
-                        permitted, details = capacity(snapshot, peers, request)
-                        disk_permitted, details['disk'] = disk_capacity(root, request['instances'], peers)
-                        if any(item['phase'] == 'running' and (request['exclusive'] or item['budget']['exclusive']) for item in peers):
+                        reserved = {port for item in peers for port in item.get('ports', [])}
+                        permitted, details = capacity(snapshot, peers, request, os.getpid() if preparation else None)
+                        disk_permitted, details['disk'] = disk_capacity(root, 0 if preparation else request['instances'], peers)
+                        if any(item['phase'] in ('running', 'preparing') and (request['exclusive'] or item['budget']['exclusive']) for item in peers):
                             reason = 'Exclusive native run still has live game processes'
-                        elif reserved.intersection(record['ports']):
+                        elif reserved.intersection(record.get('ports', [])):
                             reason = 'UDP ports reserved by another native run: ' + str(record['ports'])
                         elif not permitted:
                             reason = ('Insufficient resources: need %.2f GiB / %.2f CPU; available after reserves %.2f GiB / %.2f CPU'
@@ -353,10 +439,10 @@ def acquire(root, selection, runtime, wait=300, legacy_lock=None):
                         else:
                             endpoints_available = False
                             try:
-                                with _udp(record['ports']):
+                                with _udp(record.get('ports', [])):
                                     endpoints_available = True
                                     record['started_at'] = time.time()
-                                    _save(record)
+                                    _save(record, STATE / 'preparing' if preparation else None)
                                     admitted = True
                                     waiting_path.unlink()
                             except OSError as error:
@@ -381,5 +467,62 @@ def acquire(root, selection, runtime, wait=300, legacy_lock=None):
             with _locked():
                 waiting_path.unlink(missing_ok=True)
                 # Failed sampling/cleanup must retain the record for the next admission to reconcile.
-                if admitted and not owned(record, host.sample()):
-                    (STATE / (_key(root) + '.json')).unlink(missing_ok=True)
+                if admitted and (preparation or not owned(record, host.sample())):
+                    directory = STATE / 'preparing' if preparation else STATE
+                    (directory / (_key(root) + '.json')).unlink(missing_ok=True)
+
+
+@contextmanager
+def _windows_preparing(request, wait):
+    import ctypes
+    from ctypes import wintypes as W
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.argtypes = [W.LPVOID, W.BOOL, W.LPCWSTR]
+    kernel.CreateMutexW.restype = W.HANDLE
+    kernel.WaitForSingleObject.argtypes = [W.HANDLE, W.DWORD]
+    kernel.WaitForSingleObject.restype = W.DWORD
+    kernel.ReleaseMutex.argtypes = [W.HANDLE]
+    kernel.ReleaseMutex.restype = W.BOOL
+    kernel.CloseHandle.argtypes = [W.HANDLE]
+    kernel.CloseHandle.restype = W.BOOL
+    mutex = kernel.CreateMutexW(None, False, WINDOWS_HOST_MUTEX)
+    if not mutex:
+        raise ctypes.WinError(ctypes.get_last_error())
+    acquired = False
+    deadline = time.monotonic() + wait
+    try:
+        # Slice large waits to avoid DWORD overflow and retain cancellation points.
+        while True:
+            remaining = max(0, deadline - time.monotonic())
+            result = kernel.WaitForSingleObject(mutex, min(1000, int(remaining * 1000)))
+            if result in (0, 0x80):  # WAIT_OBJECT_0 or abandoned (owner died).
+                acquired = True
+                break
+            if result != 0x102:
+                raise RuntimeError('Cannot acquire Windows native preparation lease: ' + str(result))
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Another Windows preparation or Host run owns the lease; resource wait expired (no game launched)')
+
+        class Memory(ctypes.Structure):
+            _fields_ = [('length', W.DWORD), ('load', W.DWORD), *[(name, ctypes.c_ulonglong) for name in
+                ('total', 'available', 'totalPage', 'availablePage', 'totalVirtual', 'availableVirtual', 'extended')]]
+
+        kernel.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(Memory)]
+        kernel.GlobalMemoryStatusEx.restype = W.BOOL
+        memory = Memory()
+        memory.length = ctypes.sizeof(memory)
+        if not kernel.GlobalMemoryStatusEx(ctypes.byref(memory)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if memory.total <= 0 or memory.available > memory.total:
+            raise RuntimeError('Cannot sample valid Windows preparation memory capacity')
+        margin = max(1024**3, memory.total // 10)
+        if memory.available - margin < request['memory']:
+            raise RuntimeError('Insufficient available memory after the live host and safety margin; no game launched')
+        yield {'budget': request, 'memory_available': memory.available - margin,
+               'host_available_memory': memory.available, 'host_memory_margin': margin,
+               'limits': ['Windows preparation and Host runs use a serial named mutex; no FIFO or CPU inventory.']}
+    finally:
+        if acquired:
+            kernel.ReleaseMutex(mutex)
+        kernel.CloseHandle(mutex)

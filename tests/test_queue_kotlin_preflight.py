@@ -83,7 +83,6 @@ class QueueKotlinPreflightTests(unittest.TestCase):
                                 patch.object(cli.runner, 'run') as run, \
                                 patch.object(carts, '_compile') as compile_cart, \
                                 patch.object(native.shutil, 'copytree') as copy_mods, \
-                                patch.object(Path, 'mkdir') as mkdir, \
                                 self.assertRaises(ValueError) as failure:
                             cli.batch(args, self.catalog)
                         message = str(failure.exception)
@@ -94,7 +93,6 @@ class QueueKotlinPreflightTests(unittest.TestCase):
                         run.assert_not_called()
                         compile_cart.assert_not_called()
                         copy_mods.assert_not_called()
-                        mkdir.assert_not_called()
                         self.fixture.compile_mock.assert_not_called()
                         self.assertFalse(args.output.exists())
 
@@ -110,7 +108,6 @@ class QueueKotlinPreflightTests(unittest.TestCase):
                         patch.object(cli.runner, 'run') as run, \
                         patch.object(carts, '_compile') as compile_cart, \
                         patch.object(native.shutil, 'copytree') as copy_mods, \
-                        patch.object(Path, 'mkdir') as mkdir, \
                         patch('sys.stdout', new_callable=io.StringIO) as stdout:
                     self.assertEqual(cli.batch(args, self.catalog), 0)
                 value = json.loads(stdout.getvalue())
@@ -127,7 +124,6 @@ class QueueKotlinPreflightTests(unittest.TestCase):
                 run.assert_not_called()
                 compile_cart.assert_not_called()
                 copy_mods.assert_not_called()
-                mkdir.assert_not_called()
                 self.fixture.compile_mock.assert_not_called()
                 self.assertFalse(args.output.exists())
 
@@ -139,7 +135,7 @@ class QueueKotlinPreflightTests(unittest.TestCase):
                 args = self.arguments(plan, f'executed-{campaign}', dry_run=False)
                 prepared = []
 
-                def prepare(project, output, game, jdk, selected, workshop):
+                def prepare(project, output, game, jdk, selected, workshop, *, resource_wait=300):
                     prepared.append(copy.deepcopy(selected))
                     if selected['suite'] == 'startup':
                         os.environ['KOTLIN_HOME'] = str(self.root / 'changed Kotlin')
@@ -179,7 +175,6 @@ class QueueKotlinPreflightTests(unittest.TestCase):
                         patch.object(native.worlds, 'restore') as restore_world, \
                         patch.object(carts, '_compile') as compile_cart, \
                         patch.object(native.admission, 'allocate_ports') as ports, \
-                        patch.object(Path, 'mkdir') as mkdir, \
                         self.assertRaises(ValueError) as failure:
                     native.prepare(self.fixture.project, output, self.fixture.game,
                                    self.fixture.jdk, selection)
@@ -191,7 +186,6 @@ class QueueKotlinPreflightTests(unittest.TestCase):
                 restore_world.assert_not_called()
                 compile_cart.assert_not_called()
                 ports.assert_not_called()
-                mkdir.assert_not_called()
                 self.fixture.compile_mock.assert_not_called()
                 self.assertFalse(output.exists())
 

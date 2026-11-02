@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw
 try:
@@ -183,7 +184,16 @@ def _lua(value):
     raise ValueError("Unsupported Lua selection value: " + repr(value))
 
 
-def source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None, validate_adapter=True):
+def source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None, validate_adapter=True,
+                  resource_wait=300):
+    """Check external inputs under the same preparation lease as snapshot creation."""
+    with tempfile.TemporaryDirectory(prefix='pz-native-preflight-') as directory:
+        with admission.preparing(Path(directory), selection, wait=resource_wait):
+            return _source_inputs(project, game, jdk, selection, workshop,
+                                  pack_cache=pack_cache, validate_adapter=validate_adapter)
+
+
+def _source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None, validate_adapter=True):
     """Validate launch inputs and pin build options without writing a profile.
 
     An invocation-local cache avoids rehashing one pack per job. Preparation
@@ -255,7 +265,21 @@ def runtime_lua_sources(runtime, selection, *, fixtures_only=False):
 
 
 def prepare(project: Path, output: Path, game: Path, jdk: Path,
-            selection: dict, workshop: list[Path] = ()) -> Path:
+            selection: dict, workshop: list[Path] = (), *, resource_wait=300) -> Path:
+    """Admit preparation before hashing, copying or compiling any native inputs."""
+    output = Path(output).resolve()
+    if output.exists():
+        raise FileExistsError('Fresh output directory required: ' + str(output))
+    adapter = adapters.get(selection['suite'])
+    resource_check = getattr(adapter, 'validate_resources', None)
+    if resource_check:
+        resource_check(selection)
+    with admission.preparing(output, selection, wait=resource_wait):
+        return _prepare(project, output, game, jdk, selection, workshop)
+
+
+def _prepare(project: Path, output: Path, game: Path, jdk: Path,
+             selection: dict, workshop: list[Path] = ()) -> Path:
     """Return a fresh snapshot directory; never reuse or change an earlier run."""
     project, output, game, jdk = (Path(path).resolve() for path in (project, output, game, jdk))
     launch_java = game / 'jre64/bin/java.exe' if os.name == 'nt' else jdk_binary(jdk, 'java')
@@ -269,7 +293,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
         selection = dict(selection, ports=json.loads((Path(selection['options']['seed_run']) / 'selection.json').read_text())['ports'])
     _validate(selection)
     selection = dict(selection, window_size=window_size(selection))
-    locations, template, world = source_inputs(project, game, jdk, selection, workshop)
+    locations, template, world = _source_inputs(project, game, jdk, selection, workshop)
     locked = selection.get('options', {}).get('pack_lock')
     adapter = adapters.get(selection['suite'])
     if world and output.is_relative_to(template):
