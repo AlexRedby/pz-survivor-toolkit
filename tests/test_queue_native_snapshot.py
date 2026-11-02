@@ -403,7 +403,7 @@ class NativeSnapshotTests(unittest.TestCase):
             (fluid, ('craft.py',)),
             (food, ('craft.py', 'fluid.py')),
             (quartermaster_crafting, ('craft.py', 'quartermaster_supply_units.py')),
-            (queue_recovery, ('tv_controls.py',)),
+            (queue_recovery, ('tv_controls.py', 'recovery_selection.py')),
             (approach_queue, ('tv_controls.py',)),
         )
         # Keep helper mutations private; exercise the real source declarations
