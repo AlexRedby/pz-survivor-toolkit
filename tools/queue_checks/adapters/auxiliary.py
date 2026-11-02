@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from .. import preparation_process
 
 
 ANIMAL_CASES = {
@@ -217,7 +218,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             else:
                 prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier)
         if suite == 'storage-profile' and any(case in selection['cases'] for case in ('inventory-work', 'inventory-selection')):
-            _load(intake / 'stage_inventory_probe.py').stage(output, game, jdk, runtime)
+            _load(intake / 'stage_inventory_probe.py').stage(output, game, jdk, runtime, processes=preparation_process)
             for role, settings in runtime['roles'].items():
                 settings.setdefault('env', {}).update(
                     {name: str(value) for name, value in environment(selection, role, settings['cache']).items()})
@@ -269,9 +270,9 @@ Events.OnGameStart.Add(function() Events.OnTick.Add(setup) end)
         staged = Path(output) / 'animal-fixtures'
         builder = _load(intake / 'build.py')
         if len(selection['cases']) > 1:
-            builder.build(Path(game), Path(jdk), _path(selection, 'patch_jar'), staged, scenario, cases=selection['cases'])
+            builder.build(Path(game), Path(jdk), _path(selection, 'patch_jar'), staged, scenario, cases=selection['cases'], processes=preparation_process)
         else:
-            builder.build(Path(game), Path(jdk), _path(selection, 'patch_jar'), staged, scenario)
+            builder.build(Path(game), Path(jdk), _path(selection, 'patch_jar'), staged, scenario, processes=preparation_process)
         manifest = json.loads((staged / 'runtime-manifest.json').read_text())
         fixture['mods'] = manifest['helper_mod_ids']
         fixture['server_ready'] = '[ANIMAL_TRAILER] SERVER READY'

@@ -1,5 +1,6 @@
 """Preparation/run coordination without starting a game or copying game inputs."""
 import ctypes
+from contextlib import contextmanager
 from ctypes import wintypes  # Load before tests temporarily emulate os.name == nt.
 import fcntl
 import json
@@ -298,9 +299,20 @@ class PreparationAdmissionTests(unittest.TestCase):
         return kernel
 
     def test_windows_uses_shared_host_mutex_and_releases_on_exception_or_abandoned_owner(self):
+        from queue_checks import preparation_windows
         for result in (0, 0x80):
             kernel = self.windows_kernel(result)
+            events = []
+            @contextmanager
+            def contain():
+                events.append('job-open')
+                try:
+                    yield object()
+                finally:
+                    events.append('job-close')
+            kernel.ReleaseMutex.side_effect = lambda handle: events.append('mutex-release')
             with patch.object(admission, 'fcntl', None), patch.object(admission.os, 'name', 'nt'), \
+                    patch.object(preparation_windows, 'contain', side_effect=contain), \
                     patch('ctypes.WinDLL', return_value=kernel, create=True):
                 with self.assertRaisesRegex(ValueError, 'copy failed'):
                     with admission.preparing('unused', {'kind': 'mp', 'clients': 4}, wait=0) as details:
@@ -310,6 +322,7 @@ class PreparationAdmissionTests(unittest.TestCase):
             kernel.CreateMutexW.assert_called_once_with(None, False, 'Local\\PZToolkitNativeWindowsHost')
             kernel.ReleaseMutex.assert_called_once_with(123)
             kernel.CloseHandle.assert_called_once_with(123)
+            self.assertEqual(events, ['job-open', 'job-close', 'mutex-release'])
 
     def test_windows_timeout_and_low_memory_fail_closed_with_handle_cleanup(self):
         for result, available, message, releases in ((0x102, 8*GIB, 'resource wait expired', 0),

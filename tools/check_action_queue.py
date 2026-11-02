@@ -451,8 +451,9 @@ def main(argv=None):
                         ','.join(str(p['pid']) for p in item['processes']) or 'none'))
                 print('Preparing: ' + str(len(value['preparing'])))
                 for item in value['preparing']:
-                    print('  %s | PID %s | %s/%s/%s | %s | snapshot preparation' % (
-                        item['root'], item['pid'], item.get('suite') or '?', item.get('kind') or '?',
+                    print('  %s | PID %s%s | %s/%s/%s | %s | snapshot preparation' % (
+                        item['root'], item['pid'], ' (owner exited; worker lease held)' if not item.get('owner_alive', True) else '',
+                        item.get('suite') or '?', item.get('kind') or '?',
                         item.get('mode') or '?', 'exclusive' if item['budget']['exclusive'] else 'shared'))
                 print('Waiting: ' + str(len(value['waiting'])))
                 for item in value['waiting']:

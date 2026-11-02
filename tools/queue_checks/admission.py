@@ -14,7 +14,7 @@ import shutil
 import socket
 import time
 
-from . import adapters, host
+from . import adapters, host, preparation_process
 
 MIB = 1024 ** 2
 STATE = Path('/tmp') / ('pz-native-' + str(os.getuid() if hasattr(os, 'getuid') else 'unsupported'))
@@ -184,7 +184,8 @@ def status(legacy_lock=None):
                 finally:
                     fcntl.flock(stream, fcntl.LOCK_UN)
         return {'schema_version': 1, 'state_directory': str(STATE),
-                'running': running, 'preparing': preparations,
+                'running': running, 'preparing': [dict(item, owner_alive=item['pid'] == os.getpid() or any(
+                    process['pid'] == item['pid'] for process in snapshot['processes'])) for item in preparations],
                 'waiting': waiting, 'prepared': [item for item in records if item['phase'] == 'prepared'],
                 'legacy_lock': dict(locks, path=str(lock)),
                 'limits': ['FIFO applies to updated runners; older runners do not register waiters.',
@@ -357,8 +358,10 @@ def preparing(root, selection, wait=300, legacy_lock=None):
     _validate_wait(wait)
     request = preparation_budget(selection)
     if fcntl is None and os.name == 'nt':
+        from . import preparation_windows
         with _windows_preparing(request, wait) as details:
-            yield details
+            with preparation_windows.contain() as job, preparation_process.inherit(windows_job=job):
+                yield details
         return
     root = Path(root).resolve()
     record = dict(_metadata(selection), root=str(root), phase='preparing',
@@ -455,7 +458,11 @@ def _admit(root, selection, record, wait, legacy_lock):
                             waiter['reason'] = reason
                             _save(waiter, waiting_path.parent)
                 if admitted:
-                    yield details
+                    if preparation:
+                        with preparation_process.inherit((lease.fileno(), legacy.fileno())):
+                            yield details
+                    else:
+                        yield details
                     return
                 if time.monotonic() >= deadline:
                     raise RuntimeError(reason + '; resource wait expired (no game launched)')
@@ -467,9 +474,15 @@ def _admit(root, selection, record, wait, legacy_lock):
             with _locked():
                 waiting_path.unlink(missing_ok=True)
                 # Failed sampling/cleanup must retain the record for the next admission to reconcile.
-                if admitted and (preparation or not owned(record, host.sample())):
-                    directory = STATE / 'preparing' if preparation else STATE
-                    (directory / (_key(root) + '.json')).unlink(missing_ok=True)
+                if admitted and preparation:
+                    # Closing our descriptors preserves a worker's inherited flock.
+                    # LOCK_UN would unlock their shared open-file descriptions too.
+                    lease.close()
+                    legacy.close()
+                    if not _held(root):
+                        (STATE / 'preparing' / (_key(root) + '.json')).unlink(missing_ok=True)
+                elif admitted and not owned(record, host.sample()):
+                    (STATE / (_key(root) + '.json')).unlink(missing_ok=True)
 
 
 @contextmanager

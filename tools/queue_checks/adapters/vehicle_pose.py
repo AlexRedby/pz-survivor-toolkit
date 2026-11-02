@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 import os
 import subprocess
+from .. import preparation_process
 import zipfile
 import shutil
 import json
@@ -56,7 +57,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     base = Path(project) / 'tests/native_queue'
     classes = Path(output) / 'pose-probe-classes'; classes.mkdir()
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
         os.pathsep.join(str(Path(game) / jar) for jar in ('projectzomboid.jar', 'ZombieBuddy.jar')),
         '-d', str(classes), str(base / 'vehicle-pose/Main.java'), str(base / 'vehicle-pose/StepPoseProbe.java'), str(base / 'vehicle-pose/StartupNetworkProbe.java')],
         check=True, capture_output=True, text=True, timeout=60)

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from .. import preparation_process
 import zipfile
 
 from .. import receipts
@@ -60,7 +61,7 @@ def _probe(project, output, game, jdk):
     if not inputs:
         raise ValueError('Queue peer probe Java sources missing')
     classpath = os.pathsep.join(str(Path(game) / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar'))
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
                     *map(str, inputs)], check=True, capture_output=True, text=True, timeout=60)
     compiled = sorted(classes.rglob('*.class'))
     if not compiled:

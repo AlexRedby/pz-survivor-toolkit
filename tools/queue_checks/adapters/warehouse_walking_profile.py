@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from .. import preparation_process
 import tempfile
 import zipfile
 
@@ -56,7 +57,7 @@ def _env():
 
 def _run(command):
     try:
-        return subprocess.run(list(map(str, command)), check=True, capture_output=True,
+        return preparation_process.run(list(map(str, command)), check=True, capture_output=True,
                               text=True, timeout=60, env=_env())
     except subprocess.CalledProcessError as error:
         raise ValueError('Warehouse observer native command failed: '

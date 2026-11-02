@@ -13,7 +13,10 @@ import tempfile
 import zipfile
 
 from .auxiliary import _load, _path, _write
-from cart_jvm import compile_sources, resolve_kotlin_home
+try:
+    from ...cart_jvm import compile_sources, resolve_kotlin_home
+except ImportError:
+    from cart_jvm import compile_sources, resolve_kotlin_home
 
 MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit',
         'SaucedCarts', 'saucedwheelbarrow']

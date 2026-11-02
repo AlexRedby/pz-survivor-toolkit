@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+from .. import preparation_process
 import zipfile
 
 SUITE='vehicle-inventory'
@@ -31,7 +32,7 @@ def sources(project,s):
 
 def stage(project,output,game,jdk,selection,locations,runtime):
     validate(selection);base=Path(project)/'tests/native_queue';classes=Path(output)/'inventory-probe-classes';classes.mkdir()
-    subprocess.run([str(Path(jdk)/'bin/javac'),'--release','25','-cp',os.pathsep.join(str(Path(game)/j) for j in ('projectzomboid.jar','ZombieBuddy.jar')),
+    preparation_process.run([str(Path(jdk)/'bin/javac'),'--release','25','-cp',os.pathsep.join(str(Path(game)/j) for j in ('projectzomboid.jar','ZombieBuddy.jar')),
         '-d',str(classes),str(base/SUITE/'Main.java')],check=True,capture_output=True,text=True,timeout=60)
     for role,settings in runtime['roles'].items():
         lua=Path(output)/role/'mods/ActionQueueTest/42/media/lua'

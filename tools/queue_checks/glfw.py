@@ -11,6 +11,7 @@ from pathlib import Path
 import platform
 import re
 import subprocess
+from . import preparation_process
 import zipfile
 
 
@@ -27,7 +28,7 @@ REVIEWED = {
 def jvm_architecture(java):
     environment = {key: value for key, value in os.environ.items()
                    if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')}
-    result = subprocess.run([str(java), '-XshowSettings:properties', '-version'],
+    result = preparation_process.run([str(java), '-XshowSettings:properties', '-version'],
                             check=True, capture_output=True, text=True, timeout=20, env=environment)
     matches = re.findall(r'^\s*os\.arch\s*=\s*(\S+)\s*$', result.stderr, re.M)
     if len(matches) != 1 or matches[0] not in ('aarch64', 'arm64', 'amd64', 'x86_64'):
@@ -54,9 +55,9 @@ def prepare(game, directory, java=None):
         stream.write(original[:offset] + after + original[offset + len(before):])
     # ARM64 code pages require a valid signature after modification. No identity,
     # entitlements, game bundle or user keychain is changed by ad-hoc signing.
-    subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', '--timestamp=none', str(library)],
+    preparation_process.run(['/usr/bin/codesign', '--force', '--sign', '-', '--timestamp=none', str(library)],
                    check=True, capture_output=True, text=True, timeout=20)
-    subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(library)],
+    preparation_process.run(['/usr/bin/codesign', '--verify', '--strict', str(library)],
                    check=True, capture_output=True, text=True, timeout=20)
     return {'library': str(library), 'sha256': hashlib.sha256(library.read_bytes()).hexdigest(),
             'source_sha256': source_hash, 'source_entry': entry, 'architecture': architecture,

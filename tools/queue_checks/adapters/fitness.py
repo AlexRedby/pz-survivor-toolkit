@@ -4,6 +4,7 @@ import json
 import math
 import os
 import subprocess
+from .. import preparation_process
 import zipfile
 from pathlib import Path
 import re
@@ -85,7 +86,7 @@ def _validity_probe(project, output, game, jdk, locations):
     classes.mkdir(parents=True)
     classpath = os.pathsep.join(map(str, [Path(game) / 'projectzomboid.jar', Path(game) / 'ZombieBuddy.jar',
                                         Path(locations['PZToolkitJavaPatches']) / '42/media/java/PZToolkitJavaPatches.jar']))
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
                     str(Path(project) / 'tests/native_queue/fitness/java/Main.java')],
                    check=True, capture_output=True, text=True, timeout=60)
     compiled = sorted(classes.rglob('*.class'))

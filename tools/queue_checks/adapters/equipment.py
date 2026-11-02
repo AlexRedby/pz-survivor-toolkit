@@ -5,6 +5,7 @@ import re
 import math
 import shutil
 import subprocess
+from .. import preparation_process
 import zipfile
 
 CASES = ['hands-chain', 'waiting-cancel', 'bag-capacity', 'clothing-chain', 'hotbar-chain', 'belt-knife', 'belt-hammer', 'floor-pickup', 'bulk-pickup', 'bulk-waiting-cancel', 'bulk-mixed', 'tidy-hands', 'tidy-floor', 'tidy-empty-hands', 'tidy-group', 'tidy-multigroup', 'tidy-clothing', 'tidy-clothing-replace', 'tidy-headwear-hat-exclusive', 'tidy-headwear-full-hat-exclusive', 'tidy-clothing-remove', 'tidy-clothing-overlap', 'tidy-clothing-overlap-primary', 'tidy-clothing-overlap-both', 'tidy-clothing-held-primary', 'tidy-clothing-held-secondary', 'tidy-clothing-held-both', 'tidy-headwear-hat-remove', 'tidy-headwear-full-hat-remove', 'tidy-headwear-hat-restore', 'tidy-headwear-full-hat-restore', 'tidy-headwear-mohawk-hat-restore', 'tidy-headwear-mohawk-hat-remove', 'tidy-headwear-mohawk-full-hat-restore', 'tidy-headwear-mohawk-full-hat-remove', 'tidy-watch-digital-restore', 'tidy-watch-digital-remove', 'tidy-watch-classic-restore', 'tidy-watch-classic-remove', 'tidy-watch-overlap-primary', 'tidy-watch-overlap-secondary', 'tidy-watch-overlap-both', 'tidy-watch-held-primary', 'tidy-watch-held-secondary', 'tidy-watch-held-both', 'tidy-watch-ringing-restore', 'tidy-watch-ringing-remove', 'tidy-watch-ringing-overlap-both', 'tidy-watch-ringing-held-both', 'tidy-hotbar', 'tidy-hotbar-holster-left', 'tidy-hotbar-holster-right', 'tidy-hotbar-normal-left', 'tidy-hotbar-normal-right', 'tidy-hotbar-radio-off', 'tidy-hotbar-radio-on', 'tidy-hotbar-flashlight-charged', 'tidy-hotbar-flashlight-empty', 'tidy-hotbar-flashlight-deplete']
@@ -220,7 +221,7 @@ def _transfer_probe(project, output, game, jdk, locations):
     classes.mkdir(parents=True)
     classpath = os.pathsep.join(map(str, [Path(game) / 'projectzomboid.jar', Path(game) / 'ZombieBuddy.jar',
                                         Path(locations['PZToolkitJavaPatches']) / '42/media/java/PZToolkitJavaPatches.jar']))
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
                     str(Path(project) / 'tests/native_queue/equipment/java/Main.java')],
                    check=True, capture_output=True, text=True, timeout=60)
     compiled = sorted(classes.rglob('*.class'))
@@ -242,10 +243,10 @@ def _item_shape_probe(project, output, game, jdk):
     game = Path(game)
     try:
         with log.open('w') as stream:
-            subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', str(game / 'projectzomboid.jar'),
+            preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', str(game / 'projectzomboid.jar'),
                             '-d', str(classes), str(Path(project) / 'tests/native_queue/equipment/java/HotbarItemShapeCheck.java')],
                            check=True, stdout=stream, stderr=subprocess.STDOUT, text=True, timeout=60)
-            subprocess.run([str(Path(jdk) / 'bin/java'), '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.',
+            preparation_process.run([str(Path(jdk) / 'bin/java'), '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.',
                             '-cp', os.pathsep.join([str(classes), str(game / 'projectzomboid.jar')]),
                             'net.alexredby.equipmentprobe.HotbarItemShapeCheck', str(cache)],
                            cwd=game, check=True, stdout=stream, stderr=subprocess.STDOUT, text=True, timeout=35)

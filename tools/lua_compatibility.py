@@ -13,6 +13,11 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+try:
+    from .queue_checks import preparation_process
+except ImportError:
+    from queue_checks import preparation_process
+
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = ROOT / 'tests/native_queue/support/KahluaCompatibilityChecks.java'
@@ -44,7 +49,7 @@ def _file(value, label, *, executable=False):
 
 def _run(command, label):
     try:
-        return subprocess.run([str(part) for part in command], capture_output=True,
+        return preparation_process.run([str(part) for part in command], capture_output=True,
                               text=True, timeout=120,
                               env={key: value for key, value in os.environ.items()
                                    if key not in ('JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS')})

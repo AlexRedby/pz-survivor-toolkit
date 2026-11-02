@@ -5,10 +5,11 @@ import subprocess
 import zipfile
 
 
-def stage(output, game, jdk, runtime):
+def stage(output, game, jdk, runtime, *, processes=None):
+    processes = subprocess if processes is None else processes
     classes = Path(output) / 'inventory-work-probe-classes'
     classes.mkdir()
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
+    processes.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
         os.pathsep.join(str(Path(game) / jar) for jar in ('projectzomboid.jar', 'ZombieBuddy.jar')),
         '-d', str(classes), str(Path(__file__).parent / 'java/Main.java')],
         check=True, capture_output=True, text=True, timeout=60)

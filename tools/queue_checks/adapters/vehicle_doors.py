@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import subprocess
+from .. import preparation_process
 import zipfile
 import re
 import shutil
@@ -44,7 +45,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     classes.mkdir()
     source = Path(project) / 'tests/native_queue/vehicle-doors/support/VehicleDoorRadialCapture.java'
     javac = Path(jdk) / 'bin' / ('javac.exe' if os.name == 'nt' else 'javac')
-    subprocess.run([str(javac), '--release', '25', '-cp', str(game / 'projectzomboid.jar'), '-d', str(classes), str(source)],
+    preparation_process.run([str(javac), '--release', '25', '-cp', str(game / 'projectzomboid.jar'), '-d', str(classes), str(source)],
                    check=True, capture_output=True, text=True, timeout=60)
     jar = Path(output) / 'radial-capture.jar'
     with zipfile.ZipFile(jar, 'w') as archive:

@@ -147,7 +147,7 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         server.mkdir()
         self.runtime['roles']['server'] = {'cache': str(server)}
         calls = []
-        def build(game, jdk, patch_jar, output, scenario):
+        def build(game, jdk, patch_jar, output, scenario, *, processes=None):
             calls.append((patch_jar, scenario))
             helper = output / 'mods/AnimalTrailerBaseline/42/media/lua/shared'
             helper.mkdir(parents=True)
@@ -238,7 +238,7 @@ class AuxiliaryAdapterTests(unittest.TestCase):
         server.mkdir()
         self.runtime['roles']['server'] = {'cache': str(server)}
         calls = []
-        def build(game, jdk, patch_jar, output, scenario, cases=None):
+        def build(game, jdk, patch_jar, output, scenario, cases=None, *, processes=None):
             calls.append((scenario, cases))
             helper = output / 'mods/AnimalTrailerBaseline/42/media/lua/shared'
             helper.mkdir(parents=True)

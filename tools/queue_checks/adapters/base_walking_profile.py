@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from .. import preparation_process
 import tempfile
 import zipfile
 
@@ -129,7 +130,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     classpath = os.pathsep.join(str(game / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar'))
     with tempfile.TemporaryDirectory(prefix='pz-base-walking-observer-') as temporary:
         build = Path(temporary)
-        subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(build),
+        preparation_process.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(build),
                         *map(str, java_sources)], check=True, capture_output=True, text=True, timeout=60,
                        env=_clean_env())
         for settings in runtime['roles'].values():
@@ -165,7 +166,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     assignments = '\n'.join('System.setProperty(' + json.dumps(key) + ', ' + json.dumps(value) + ');'
                             for key, value in props.items())
     launcher.write_text(text.replace(anchor, anchor + '\n' + assignments))
-    subprocess.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', str(game / 'projectzomboid.jar'),
+    preparation_process.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', str(game / 'projectzomboid.jar'),
                     str(classes / 'ToolkitWindowBootstrap.java'), str(launcher)],
                    check=True, capture_output=True, text=True, timeout=60, env=_clean_env())
     server = output / 'server/Server'

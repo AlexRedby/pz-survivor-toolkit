@@ -5,6 +5,11 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+try:
+    from .queue_checks import preparation_process
+except ImportError:
+    from queue_checks import preparation_process
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -32,7 +37,7 @@ def clean_environment():
 
 
 def run(command):
-    result = subprocess.run(list(map(str, command)), capture_output=True, text=True,
+    result = preparation_process.run(list(map(str, command)), capture_output=True, text=True,
                             timeout=120, env=clean_environment())
     if result.returncode:
         raise ValueError(f'Cart JVM compiler failed ({result.returncode}):\n'

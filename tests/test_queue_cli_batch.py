@@ -476,6 +476,10 @@ class StatusTests(unittest.TestCase):
         self.value['legacy_lock'].update(busy=True, exclusive=True)
         self.assertIn('Legacy lock: exclusive', self.invoke(['status']))
 
+    def test_status_shows_worker_lease_after_preparation_owner_exit(self):
+        self.value['preparing'][0]['owner_alive'] = False
+        self.assertIn('PID 20 (owner exited; worker lease held)', self.invoke(['status']))
+
     def test_status_error_is_clear_and_does_not_claim_free_stand(self):
         error = io.StringIO()
         with patch.object(cli.admission, 'status', side_effect=RuntimeError('Cannot sample host resources')), \

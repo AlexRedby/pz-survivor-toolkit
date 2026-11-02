@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+from .. import preparation_process
 import zipfile
 from .auxiliary import _load, _path
 
@@ -63,7 +64,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     intake = Path(project) / 'tests/native_queue/contributions/basement-hall'
     classes = Path(output) / 'basement-hall-classes'
     classes.mkdir()
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp',
                     os.pathsep.join(str(Path(game) / jar) for jar in ('projectzomboid.jar', 'ZombieBuddy.jar')),
                     '-d', str(classes), str(intake / 'Main.java')], check=True, capture_output=True,
                    text=True, timeout=60, env={key: value for key, value in os.environ.items()

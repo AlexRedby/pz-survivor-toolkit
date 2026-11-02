@@ -4,6 +4,7 @@ import json
 import math
 import os
 import subprocess
+from .. import preparation_process
 import zipfile
 from pathlib import Path
 import re
@@ -171,7 +172,7 @@ def _stop_probe(project, output, game, jdk):
     classes = Path(output) / 'book-stop-probe/classes'
     classes.mkdir(parents=True)
     classpath = os.pathsep.join(str(Path(game) / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar'))
-    subprocess.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
                     str(Path(project) / 'tests/native_queue/book-controls/java/Main.java')],
                    check=True, capture_output=True, text=True, timeout=60)
     compiled = sorted(classes.rglob('*.class'))

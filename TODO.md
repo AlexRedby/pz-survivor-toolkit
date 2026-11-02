@@ -250,8 +250,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Route standalone queue JVM timing banks through the shared resource/exclusive admission mechanism, including development profile hosts. They can currently overlap a native Host run and contaminate latency comparisons even when deterministic scalar/counter checks pass. Provide an explicit headless timing lease and reject unregistered timing claims; ordinary untimed compilation/unit checks need no desktop lease.
 
-- [ ] Contain preparation compiler descendants when their Python owner dies. A dummy child launched with the same `subprocess.run` defaults as native javac continued working after the preparation owner received SIGKILL; its lease was released and a new exclusive request admitted. Retain owned-child isolation until exit or guarantee descendant termination on owner death, including Windows preparation. Qualify with a real child-process regression while preserving dead-waiter cleanup and surviving-game guards.
-
 
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.
 

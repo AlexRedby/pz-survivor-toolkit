@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import subprocess
+from .. import preparation_process
 import zipfile
 from pathlib import Path
 import re
@@ -105,7 +106,7 @@ def sources(project,selection):
 def stage(project,output,game,jdk,selection,locations,runtime):
     validate(selection);root=Path(project)/'tests/native_queue'
     classes=Path(output)/'makeup-capture-classes';classes.mkdir()
-    subprocess.run([str(Path(jdk)/'bin/javac'),'--release','25','-cp',
+    preparation_process.run([str(Path(jdk)/'bin/javac'),'--release','25','-cp',
         os.pathsep.join(str(Path(game)/name) for name in ('projectzomboid.jar','ZombieBuddy.jar')),
         '-d',str(classes),str(root/'makeup/Main.java')],check=True,capture_output=True,text=True,timeout=60,
         env={key:value for key,value in os.environ.items() if key not in ('JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS','_JAVA_OPTIONS')})

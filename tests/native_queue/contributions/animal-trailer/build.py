@@ -14,7 +14,8 @@ import zipfile
 HERE = Path(__file__).resolve().parent
 
 
-def build(game, jdk, patch_jar, output, scenario, cases=None):
+def build(game, jdk, patch_jar, output, scenario, cases=None, *, processes=None):
+    processes = subprocess if processes is None else processes
     manifest = json.loads((HERE / 'manifest.json').read_text())
     for jar in [game / 'projectzomboid.jar', game / 'ZombieBuddy.jar', patch_jar]:
         if not jar.is_file():
@@ -26,7 +27,7 @@ def build(game, jdk, patch_jar, output, scenario, cases=None):
     executable = '.exe' if os.name == 'nt' else ''
     javac = str(jdk / ('bin/javac' + executable))
     java = str(jdk / ('bin/java' + executable))
-    version = subprocess.check_output([javac, '-version'], text=True, stderr=subprocess.STDOUT)
+    version = processes.check_output([javac, '-version'], text=True, stderr=subprocess.STDOUT)
     compiler = re.search(r'javac (\d+)', version)
     if compiler is None or int(compiler[1]) < 25:
         raise ValueError('JDK 25+ is required to read the B42.21 classes')
@@ -44,7 +45,7 @@ def build(game, jdk, patch_jar, output, scenario, cases=None):
             probe = manifest['probes'][key]
             classes = temporary / key
             classes.mkdir()
-            subprocess.run([javac, '--release', '25', '-cp', classpath, '-d', str(classes), str(HERE / probe['source'])], check=True)
+            processes.run([javac, '--release', '25', '-cp', classpath, '-d', str(classes), str(HERE / probe['source'])], check=True)
             mod = output / 'mods' / probe['mod_id']
             jar = mod / ('42/media/java/' + probe['mod_id'] + '.jar')
             jar.parent.mkdir(parents=True)
@@ -73,17 +74,17 @@ def build(game, jdk, patch_jar, output, scenario, cases=None):
                     (mod / media / directory).mkdir(parents=True, exist_ok=True)
         check_classes = temporary / 'lua-parser'
         check_classes.mkdir()
-        subprocess.run([javac, '--release', '25', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/ParseLua.java')], check=True)
-        subprocess.run([java, '-Djava.awt.headless=true', '-cp', str(check_classes) + os.pathsep + classpath, 'ParseLua', *map(str, sorted(fixture.rglob('*.lua')))], check=True)
+        processes.run([javac, '--release', '25', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/ParseLua.java')], check=True)
+        processes.run([java, '-Djava.awt.headless=true', '-cp', str(check_classes) + os.pathsep + classpath, 'ParseLua', *map(str, sorted(fixture.rglob('*.lua')))], check=True)
         if cases and 'equipment' in keys and 'timer' in keys:
             checks_path = os.pathsep.join([classpath, *map(str, sorted((output / 'mods').rglob('*.jar')))])
-            subprocess.run([javac, '--release', '25', '-cp', checks_path, '-d', str(check_classes), str(HERE / 'checks/SessionProbeChecks.java')], check=True)
-            subprocess.run([java, '-Djava.awt.headless=true', '-cp', str(check_classes) + os.pathsep + checks_path, 'SessionProbeChecks'], check=True)
+            processes.run([javac, '--release', '25', '-cp', checks_path, '-d', str(check_classes), str(HERE / 'checks/SessionProbeChecks.java')], check=True)
+            processes.run([java, '-Djava.awt.headless=true', '-cp', str(check_classes) + os.pathsep + checks_path, 'SessionProbeChecks'], check=True)
         if 'ghost' in keys:
-            subprocess.run([javac, '--release', '25', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/GhostDecoderChecks.java')], check=True)
+            processes.run([javac, '--release', '25', '-cp', classpath, '-d', str(check_classes), str(HERE / 'checks/GhostDecoderChecks.java')], check=True)
             for mode in ('original', 'patched'):
                 with tempfile.TemporaryDirectory(prefix='animal-ghost-decoder-') as config:
-                    result = subprocess.run([java, '-javaagent:' + str(game / 'ZombieBuddy.jar') + '=config_dir=' + config + ',policy=deny-new,verbosity=0',
+                    result = processes.run([java, '-javaagent:' + str(game / 'ZombieBuddy.jar') + '=config_dir=' + config + ',policy=deny-new,verbosity=0',
                         '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp',
                         str(check_classes) + os.pathsep + classpath, 'zombie.characters.GhostDecoderChecks', mode],
                         cwd=game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
