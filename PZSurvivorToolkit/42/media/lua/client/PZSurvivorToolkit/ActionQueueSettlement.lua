@@ -3,6 +3,8 @@ local Toolkit = PZSurvivorToolkit
 local Settlement = {}
 Toolkit.ActionQueueSettlement = Settlement
 local providers, byId, providerRevision = {}, {}, 0
+local activeEditCleanupBinding
+local transferListenerMethods
 local executionProof = require "PZSurvivorToolkit/SourceProof"
 -- Keep the new dependency inside the existing source-owned wrapper boundary.
 -- Unknown factories must never receive private callbacks or attempt records.
@@ -1706,17 +1708,20 @@ function Settlement.observePlannedReturns()
             and (policy.isOrdinaryTransfer(action) or Settlement.isCleanupPickup(action))
     end
     local previous = ISInventoryTransferAction and ISInventoryTransferAction.checkQueueList
-    transfers.observeTransfers(function(action) Settlement.refreshPlannedReturn(action) end,
-        function(action) return Settlement.plannedReturnMatches(action) end, {
-            begin = function(action) return guard(action) and Settlement.beginPlannedReturn(action, guard) end,
-            finish = function(action, succeeded) return Settlement.finishPlannedReturn(action, succeeded) end,
-        })
+    local onMerged=function(action) Settlement.refreshPlannedReturn(action) end
+    local canObserve=function(action) return Settlement.plannedReturnMatches(action) end
+    local events={
+        begin = function(action) return guard(action) and Settlement.beginPlannedReturn(action, guard) end,
+        finish = function(action, succeeded) return Settlement.finishPlannedReturn(action, succeeded) end,
+    }
+    transfers.observeTransfers(onMerged,canObserve,events,Settlement.transferListenerBinding)
     local replacement = ISInventoryTransferAction and ISInventoryTransferAction.checkQueueList
     local valid, policy = previous == replacement, Toolkit.ActionQueuePolicy
     if not valid and policy and type(policy.adoptTransferQueueObserver) == "function" then
         valid = policy.adoptTransferQueueObserver(previous, replacement) == true
     end
-    plannedReturnObserver = {transfers = transfers, observe = transfers.observeTransfers, valid = valid}
+    plannedReturnObserver = {transfers = transfers, observe = transfers.observeTransfers, valid = valid,
+        callback=onMerged,canObserve=canObserve,events=events}
     return valid
 end
 
@@ -1765,13 +1770,15 @@ function Settlement.preparationAvailable()
     }
     if not lifecycle.registerObserver("settlement-preparation", observer) then return false end
     local previous = ISInventoryTransferAction and ISInventoryTransferAction.checkQueueList
-    transfers.observeTransfers(function(action)
+    local onMerged=function(action)
         local step = preparationStep(action)
         if step and step.preparation.scope then Settlement.refreshPickup(step.preparation.scope, action) end
-    end, function(action)
+    end
+    local canObserve=function(action)
         local step = preparationStep(action)
         return step and step.preparation.scope and preparationGuard(action) or false
-    end, {
+    end
+    local events={
         merging = function(action)
             local step = preparationStep(action)
             return step and step.preparation.scope and Settlement.beforePickupMerge(step.preparation.scope, action, preparationGuard) or false
@@ -1793,7 +1800,8 @@ function Settlement.preparationAvailable()
             preparationState(step)
             return result
         end,
-    })
+    }
+    transfers.observeTransfers(onMerged,canObserve,events,Settlement.transferListenerBinding)
     local replacement = ISInventoryTransferAction and ISInventoryTransferAction.checkQueueList
     local valid = previous == replacement
     local policy = Toolkit.ActionQueuePolicy
@@ -1801,7 +1809,8 @@ function Settlement.preparationAvailable()
         valid = policy.adoptTransferQueueObserver(previous, replacement) == true
     end
     preparationObserver = {lifecycle = lifecycle, register = lifecycle.registerObserver,
-        transfers = transfers, observe = transfers.observeTransfers, valid = valid}
+        transfers = transfers, observe = transfers.observeTransfers, valid = valid,
+        callback=onMerged,canObserve=canObserve,events=events}
     return valid
 end
 
@@ -2216,13 +2225,22 @@ function Settlement.observeEditCleanup(queue, current)
                     end
                 end
                 local bound, lease
-                if prototype then bound, lease = pcall(binding, prototype, current) end
+                if prototype then
+                    -- Private synchronous context lets our own listener attester
+                    -- reuse this exact earned record without reopening a token
+                    -- seal, invoking liveness callbacks or exporting handles.
+                    local previousContext=activeEditCleanupBinding
+                    activeEditCleanupBinding={record=record,queue=queue,current=current,action=prototype}
+                    bound,lease=pcall(binding,prototype,current)
+                    activeEditCleanupBinding=previousContext
+                end
                 if not unchanged() then return unknown() end
                 if bound and type(lease) == "function" then
                     local read, facts = pcall(nativeFacts, actor, value.item, value.source, value.destination, value.id, value.fullType)
                     -- Only plain DTO fields and private/source identities below.
-                    if not lease() or not unchanged() then return unknown() end
-                    if read and kind(facts) == "table" and meta(facts) == nil and facts.schema == 1
+                    local leased = lease(facts)
+                    if not unchanged() then return unknown() end
+                    if leased and read and kind(facts) == "table" and meta(facts) == nil and facts.schema == 2
                         and equal(facts.item, value.item) and equal(facts.source, value.source)
                         and equal(facts.destination, value.destination) and equal(facts.location, value.source)
                         and facts.id == value.id and facts.fullType == value.fullType then
@@ -2801,4 +2819,46 @@ end
 if Events and Events.OnMainMenuEnter then
     Events.OnMainMenuEnter.Add(function() cancellations = {} end)
 end
+-- Only our private in-progress observation can attest dormant listener state.
+-- No public flags, token callbacks, outcome readers or liveness getters run here.
+function Settlement.transferListenerBinding(action,onMerged,canObserve,events)
+    local context=activeEditCleanupBinding
+    if not context or not rawequal(context.action,action) or not transferListenerMethods
+        or not executionProof or type(executionProof.captureBindings)~="function" then return end
+    local observer
+    for _,value in ipairs({plannedReturnObserver,preparationObserver}) do
+        if value and rawequal(value.callback,onMerged) and rawequal(value.canObserve,canObserve)
+            and rawequal(value.events,events) then observer=value;break end
+    end
+    if not observer or not observer.valid then return end
+    local record=context.record
+    local step=record.actions[action]
+    if step and (step.returning or step.preparation) then return end
+    local keys={}
+    for key,value in pairs(transferListenerMethods) do
+        if not rawequal(Settlement[key],value) then return end
+        keys[#keys+1]=key
+    end
+    local specifications={
+        {owner=record.actions,keys={action}}, {owner=observer,exact=true}, {owner=events,exact=true},
+        {owner=record,keys={"actions","token","queue","character","generation","settlement"}},
+        {owner=action,keys={"toolkitQueueOperation","character"}},
+        {owner=Toolkit,keys={"ActionQueueSettlement","ActionQueueTidyIntent"}},
+        {owner=Settlement,keys=keys},
+    }
+    if step then specifications[#specifications+1]={owner=step,keys={"returning","preparation"}} end
+    local watch=executionProof.captureBindings(specifications)
+    if not watch then return end
+    return function()return watch()end
+end
+transferListenerMethods={}
+for _,key in ipairs({"transferListenerBinding","refreshPlannedReturn","plannedReturnMatches","beginPlannedReturn",
+    "finishPlannedReturn","refreshPickup","beforePickupMerge","beginPickup","finishPickup"}) do
+    transferListenerMethods[key]=Settlement[key]
+end
+local sourceAdapters=Toolkit.ActionQueueItemEditAdapters
+if sourceAdapters and sourceAdapters.registerSourceFactory then
+    sourceAdapters.registerSourceFactory(Settlement,"transferListenerBinding",Settlement.transferListenerBinding)
+end
+
 return Settlement

@@ -1,3 +1,4 @@
+toolkitLuaMetatableMatches=assert(loadfile((ProjectRoot or '.')..'/tests/support/source_binding.lua'))()
 -- Shared setup for new native-source policy fixtures; native execution/Java state remains explicit per test.
 local native,project
 local itemAdapters,capacityAdapters,weights

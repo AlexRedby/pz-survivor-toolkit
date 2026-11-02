@@ -14,6 +14,9 @@ local requestsEnabled=config.options and config.options.require_native_requests=
 local requestSettlement,nativeRequestState,requestSample,requestModule,requestPending,requestObserver
 local requestPolicy,nativeStopMatcher
 local preciseTiming=config.options and config.options.precise_timing==true
+local activeEditEnabled=config.options and config.options.active_edit_observation==true
+local editObservation=activeEditEnabled and require 'QueueBookEditObservation'or nil
+local activeEditReceipt
 local performanceClock,performanceClockInfo
 local function now()return getTimestampMs()end
 local function timingNow()
@@ -321,6 +324,7 @@ local function enqueue()
  tracks,records,starts={},{},{};boundary,resume,quiet,failure,draining,tailSnapshot,volumeSnapshot,equipSnapshot=nil,nil,nil,nil,nil,nil,nil,nil
  capacityReceipt,capacityRequestedAt,blockedEvidence,failureUI,nativeDebtAbsent=nil,nil,nil,nil,nil
  performance,tickSpacing,lastTick,transferEpisode,replicaGaps=nil,{},now(),nil,{}
+ activeEditReceipt=nil
  baseline=F.snapshot(state);assert(F.same(baseline,ids.baseline)and F.same(authorityBaseline,baseline),'exact native baseline differs')
  assert(not state.player:hasTrait(CharacterTrait.DISORGANIZED),'native producer requires its normal return contract')
  assert(not state.player:isTimedActionInstant()and not state.player:hasTrait(CharacterTrait.ILLITERATE),'native reading actor unavailable')
@@ -577,6 +581,14 @@ local function atBoundary()
   assert(target,'native optional return missing before first preview')
   preview={action=target,native=F.captureReturnPreview(target),identity=F.waiverIdentity(state,target),at=now()}
  end
+ if activeEditEnabled then
+  local earned=false
+  for _,row in ipairs(records)do if row.role=='pickup'and row.performedAt then earned=true end end
+  activeEditReceipt=editObservation.run({toolkit=T,queue=queue(),front=front,state=state,fixture=F,ids=ids,
+   case=case(),kind=config.kind,mode=config.mode,native=native,control=control(),clock=timingNow,precise=preciseTiming,pickupEarned=earned})
+  raw('ACTIVE_EDIT_OBSERVATION',activeEditReceipt)
+  assert(activeEditReceipt.passed,'active edit native return-effect observation failed: '..tostring(activeEditReceipt.failure))
+ end
  performanceAtBoundary()
  if preview then assert(F.returnPreviewUnchanged(preview.action,preview.native),'read-only performance/preview changed native return item/group')end
  -- A paid native page leaves one unread page: a precise stop/resume checkpoint.
@@ -651,7 +663,7 @@ local function finish()
  local passed=not failure
  local row={event='case',id=case(),status=passed and'passed'or'failed',reason=failure or false,ids=ids,baseline=baseline,authorityBaseline=authorityBaseline,
   boundary=boundary,records=records,starts=starts,resume=resume or false,tailSnapshot=tailSnapshot or false,volumeSnapshot=volumeSnapshot or false,equipSnapshot=equipSnapshot or false,
-  client=actual,server=authorityFinal,performance=performance or false,replicaGaps=replicaGaps or{},finishedAt=now(),tickSpacingMs=tickSpacing or {},capacity=capacityReceipt or false,nativeDebtAbsent=nativeDebtAbsent,blockedReturn=blockedEvidence or false,failureUI=failureUI or false,nativeMethodsUnchanged=true,reset=draining and{entrypoint='ISTimedActionQueue.clear',drained=true,at=draining.at}or false}
+  client=actual,server=authorityFinal,performance=performance or false,activeEditObservation=activeEditReceipt or false,replicaGaps=replicaGaps or{},finishedAt=now(),tickSpacingMs=tickSpacing or {},capacity=capacityReceipt or false,nativeDebtAbsent=nativeDebtAbsent,blockedReturn=blockedEvidence or false,failureUI=failureUI or false,nativeMethodsUnchanged=true,reset=draining and{entrypoint='ISTimedActionQueue.clear',drained=true,at=draining.at}or false}
  if failedReturnExpected()then row.returnSucceeded=false end
  emit(row);if not passed then failures=failures+1 end
  if not isClient()then previous=state end
@@ -719,7 +731,8 @@ Events.OnTick.Add(function()
     raw('NATIVE_BINDINGS',bindings)
    end
    ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,sourceBound=true,authorityEquipment=true,
-    nativeRequestsObserved=requestsEnabled or nil,nativeBindings=bindings or false,timingClock=performanceClockInfo or false})
+    nativeRequestsObserved=requestsEnabled or nil,nativeBindings=bindings or false,timingClock=performanceClockInfo or false,
+    activeEditObserved=activeEditEnabled or nil})
   end
   local elapsed=now()-since
   if elapsed>180000 and(phase=='boundary'or phase=='drain')then resetFailure('native functional timeout '..phase);since=now()

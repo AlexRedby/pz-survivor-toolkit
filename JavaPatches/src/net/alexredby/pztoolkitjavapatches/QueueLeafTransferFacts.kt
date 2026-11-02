@@ -99,6 +99,29 @@ object QueueLeafTransferFacts {
         WornItems::class.java.getDeclaredField("items").apply { isAccessible = true }
     } catch (_: Exception) { null }
 
+    private val metatableSupported = BytecodeSupport.supports(
+        "se/krka/kahlua/j2se/KahluaTableImpl.class",
+        "101df1481366f976f76c037094e29f5ad21c71f5026dc3d0693f25d68b1c79f7",
+    )
+
+    // Lua getmetatable honors __metatable, so it cannot attest the actual
+    // lookup parent. This value check exposes no table internals or authority.
+    @JvmStatic
+    @LuaMethod(name = "toolkitLuaMetatableMatches", global = true)
+    fun luaMetatableMatches(owner: Any?, expected: Any?): Boolean {
+        if (!metatableSupported) return false
+        fun ordinary(value: Any?): KahluaTableImpl? {
+            val table = value as? KahluaTableImpl ?: return null
+            return table.takeIf {
+                it.javaClass == KahluaTableImpl::class.java && it.rewriteTable == null &&
+                    it.delegate.javaClass == LinkedHashMap::class.java
+            }
+        }
+        val table = ordinary(owner) ?: return false
+        if (expected != null && ordinary(expected) == null) return false
+        return table.metatable === expected
+    }
+
     @JvmStatic
     @LuaMethod(name = "toolkitLeafTransferFacts", global = true)
     fun facts(
@@ -135,7 +158,9 @@ object QueueLeafTransferFacts {
                 || item.getAttachedSlot() >= 0 || item.getType() == "CandleLit"
                 || item.getType() == "Lantern_HurricaneLit" || !unequipped(actor, item)
                 || !absent(destination, item.id)) return null
+            val sourceTypes = parentTypes(actor) ?: return null
             val holder = destination.getContainingItem()
+            val destinationTypes: List<String>
             if (holder != null) {
                 // One direct carried bag only: no recursive lookup or owner-chain snapshot.
                 if (holder.javaClass != InventoryContainer::class.java || holder === item
@@ -144,20 +169,40 @@ object QueueLeafTransferFacts {
                     || holder.getIsCraftingConsumed()
                     || destination.getParent() != null || destination.getSourceGrid() != null
                     || !ordinary(destination)) return null
+                destinationTypes = emptyList()
             } else {
-                if (item.isFavorite() || !worldEndpoint(destination, actor)) return null
+                if (item.isFavorite()) return null
+                destinationTypes = worldEndpoint(destination, actor) ?: return null
             }
             if (!directMembers(source, item, holder)) return null
             // Own tables/strings only. No Lua dispatch, item/action constructors, virtual weight,
             // capacity, validity, transaction or effect APIs run in this helper.
+            val primary = actor.getPrimaryHandItem()
+            val primaryKnown = primary == null || primary.javaClass in leafClasses
+                || primary.javaClass == InventoryContainer::class.java
             val result = KahluaTableImpl(LinkedHashMap<Any, Any?>())
-            result.delegate["schema"] = 1.0
+            result.delegate["schema"] = 2.0
             result.delegate["item"] = item
             result.delegate["source"] = source
             result.delegate["destination"] = destination
             result.delegate["id"] = id
             result.delegate["fullType"] = fullType
             result.delegate["location"] = source
+            // Generic branch evidence for reviewed source owners. False means a
+            // complete empty parent-type set, avoiding two empty Lua allocations.
+            result.delegate["sourceParentTypes"] = typeTable(sourceTypes)
+            result.delegate["destinationParentTypes"] = typeTable(destinationTypes)
+            result.delegate["primaryItemContainerKnown"] = primaryKnown
+            if (holder != null) {
+                result.delegate["destinationOwner"] = holder
+                result.delegate["destinationOwnerFullType"] = holder.getFullType()
+            }
+            if (primary != null) {
+                result.delegate["primaryItem"] = primary
+                if (primaryKnown) result.delegate["primaryFullType"] = primary.getFullType()
+                if (primary.javaClass == InventoryContainer::class.java)
+                    result.delegate["primaryItemContainer"] = (primary as InventoryContainer).getItemContainer()
+            }
             result
         } catch (_: Exception) { null } catch (_: AssertionError) { null }
     }
@@ -217,47 +262,67 @@ object QueueLeafTransferFacts {
         return true
     }
 
-    private fun worldEndpoint(container: ItemContainer, actor: IsoPlayer): Boolean {
-        if (!ordinary(container) || container.getType() !in worldStorageTypes) return false
-        val parent = container.getParent() ?: return false
-        if (parent.javaClass != IsoObject::class.java && parent.javaClass != IsoThumpable::class.java) return false
-        val square = parent.getSquare() ?: return false
-        if (square.javaClass != IsoGridSquare::class.java || container.getSourceGrid() !== square) return false
-        val origin = actor.getCurrentSquare() ?: return false
-        if (origin.javaClass != IsoGridSquare::class.java) return false
+    private fun worldEndpoint(container: ItemContainer, actor: IsoPlayer): List<String>? {
+        if (!ordinary(container) || container.getType() !in worldStorageTypes) return null
+        val parent = container.getParent() ?: return null
+        if (parent.javaClass != IsoObject::class.java && parent.javaClass != IsoThumpable::class.java) return null
+        val square = parent.getSquare() ?: return null
+        if (square.javaClass != IsoGridSquare::class.java || container.getSourceGrid() !== square) return null
+        val origin = actor.getCurrentSquare() ?: return null
+        if (origin.javaClass != IsoGridSquare::class.java) return null
         if (origin.getZ() != square.getZ() || kotlin.math.abs(origin.getX().toLong() - square.getX()) > 1
-            || kotlin.math.abs(origin.getY().toLong() - square.getY()) > 1) return false
-        val objects = square.getObjects() ?: return false
-        if (objects.javaClass != PZArrayList::class.java || objects.size > MAX_ENTRIES) return false
+            || kotlin.math.abs(origin.getY().toLong() - square.getY()) > 1) return null
+        val objects = square.getObjects() ?: return null
+        if (objects.javaClass != PZArrayList::class.java || objects.size > MAX_ENTRIES) return null
         var anchors = 0
         for (index in 0 until objects.size) if (objects[index] === parent) anchors++
-        if (anchors != 1) return false
-        val count = parent.getContainerCount()
-        if (count !in 1..MAX_CONTAINERS) return false
-        var owners = 0
-        for (index in 0 until count) if (parent.getContainerByIndex(index) === container) owners++
-        if (owners != 1) return false
+        if (anchors != 1) return null
+        val types = parentTypes(parent, container) ?: return null
         val sprite = parent.getSprite()
-        if (sprite != null && sprite.javaClass != IsoSprite::class.java) return false
+        if (sprite != null && sprite.javaClass != IsoSprite::class.java) return null
         val properties = parent.getProperties()
-        if (properties != null && properties.javaClass != PropertyContainer::class.java) return false
+        if (properties != null && properties.javaClass != PropertyContainer::class.java) return null
         if (properties?.get(IsoPropertyType.CUSTOM_NAME) == "Toaster"
-            || properties?.get(IsoPropertyType.GROUP_NAME) in applianceGroups) return false
+            || properties?.get(IsoPropertyType.GROUP_NAME) in applianceGroups) return null
         if (parent is IsoThumpable) {
             if (parent.isDoor() || parent.isDoorFrame() || parent.isWindowN() || parent.isWindowW()
                 || parent.isLocked() || parent.isLockedByKey() || parent.isLockedByPadlock()
-                || parent.getLockedByCode() != 0) return false
+                || parent.getLockedByCode() != 0) return null
             val north = parent.getNorth()
-            if (!noBarricade(square, if (north) IsoDirections.N else IsoDirections.W)) return false
+            if (!noBarricade(square, if (north) IsoDirections.N else IsoDirections.W)) return null
             // Native opposite-side lookup uses the live cell, not potentially absent/stale nav[].
             // IsoGridSquare, IsoWorld, IsoCell, IsoChunkMap and IsoChunk are final and
             // pinned (also asserted by native checks); their typed lookup path cannot
             // dispatch foreign overrides. This path performs only native reads.
-            if (GameServer.server) return false
+            if (GameServer.server) return null
             val opposite = parent.getOppositeSquare()
-            if (opposite != null && !noBarricade(opposite, if (north) IsoDirections.S else IsoDirections.E)) return false
+            if (opposite != null && !noBarricade(opposite, if (north) IsoDirections.S else IsoDirections.E)) return null
         }
-        return true
+        return types
+    }
+
+    private fun parentTypes(parent: IsoObject, expected: ItemContainer? = null): List<String>? {
+        if (parent.javaClass != IsoObject::class.java && parent.javaClass != IsoThumpable::class.java
+            && parent.javaClass != IsoPlayer::class.java) return null
+        val count = parent.getContainerCount()
+        if (count !in 0..MAX_CONTAINERS || expected != null && count == 0) return null
+        if (count == 0) return emptyList()
+        val types = ArrayList<String>(count)
+        var owners = 0
+        for (index in 0 until count) {
+            val container = parent.getContainerByIndex(index) ?: continue
+            if (container.javaClass != ItemContainer::class.java) return null
+            if (container === expected) owners++
+            container.getType()?.let { types.add(it) }
+        }
+        return if (expected == null || owners == 1) types else null
+    }
+
+    private fun typeTable(types: List<String>): Any {
+        if (types.isEmpty()) return false
+        val result = KahluaTableImpl(LinkedHashMap<Any, Any?>())
+        for (index in types.indices) result.delegate[index.toDouble() + 1.0] = types[index]
+        return result
     }
 
     private fun noBarricade(square: IsoGridSquare, direction: IsoDirections): Boolean {

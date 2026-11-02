@@ -253,11 +253,15 @@ object QueueLeafTransferFactsChecks {
         }
         val small = Fixture()
         val result = small.read() ?: throw AssertionError("ordinary carried return")
-        verify(result.getMetatable() == null && result.getRewriteTable() == null && result.delegate.size == 7, "plain exact DTO")
-        verify(result.delegate["schema"] == 1.0 && result.delegate["item"] === small.item
+        verify(result.getMetatable() == null && result.getRewriteTable() == null && result.delegate.size == 12, "plain exact DTO")
+        verify(result.delegate["schema"] == 2.0 && result.delegate["item"] === small.item
             && result.delegate["source"] === small.root && result.delegate["destination"] === small.destination
             && result.delegate["location"] === small.root && result.delegate["id"] == 17.0
-            && result.delegate["fullType"] == "Base.Leaf", "DTO fields")
+            && result.delegate["fullType"] == "Base.Leaf"
+            && result.delegate["sourceParentTypes"] == false && result.delegate["destinationParentTypes"] == false
+            && result.delegate["primaryItemContainerKnown"] == true
+            && result.delegate["destinationOwner"] === small.bag
+            && result.delegate["destinationOwnerFullType"] == "Base.Leaf", "DTO fields")
         field(InventoryItem::class.java, small.item, "favorite", true)
         verify(small.read() != null, "favorite carried return")
         for (id in listOf(Double.NaN, Double.POSITIVE_INFINITY, 17.5, Int.MAX_VALUE.toDouble() + 1)) verify(small.read(id) == null, "invalid ID $id")
@@ -268,6 +272,25 @@ object QueueLeafTransferFactsChecks {
         }
         verify(QueueLeafTransferFacts.read(small.actor, small.item, small.root, small.destination, 17.0, "Base.Leaf", false, true) == null, "unsupported gate")
         verify(QueueLeafTransferFacts.read(small.actor, small.item, small.root, small.destination, 17.0, "Base.Leaf", true, false) == null, "owner gate")
+        // Source owners need complete sibling types, not just the selected shelf.
+        val worldTypes = Fixture(world = true)
+        val sibling = container("fridge", worldTypes.parent)
+        field(IsoObject::class.java, worldTypes.parent!!, "secondaryContainers", arrayListOf(sibling))
+        val branch = worldTypes.read() ?: throw AssertionError("ordinary sibling type evidence")
+        val types = branch.delegate["destinationParentTypes"] as KahluaTableImpl
+        verify(types.delegate[1.0] == "crate" && types.delegate[2.0] == "fridge" && types.delegate.size == 2,
+            "missing complete sibling container types")
+        val primaryBag = Fixture()
+        field(IsoGameCharacter::class.java, primaryBag.actor, "leftHandItem", primaryBag.bag)
+        val held = primaryBag.read() ?: throw AssertionError("unrelated held owner evidence")
+        verify(held.delegate["primaryItem"] === primaryBag.bag && held.delegate["primaryFullType"] == "Base.Leaf"
+            && held.delegate["primaryItemContainerKnown"] == true
+            && held.delegate["primaryItemContainer"] === primaryBag.destination, "held bag must expose internal inventory")
+        field(IsoGameCharacter::class.java, primaryBag.actor, "leftHandItem", item(ForeignItem::class.java, 44))
+        val unknownPrimary = primaryBag.read() ?: throw AssertionError("unknown primary cannot invalidate base facts")
+        verify(unknownPrimary.delegate["primaryItemContainerKnown"] == false
+            && !unknownPrimary.delegate.containsKey("primaryFullType")
+            && !unknownPrimary.delegate.containsKey("primaryItemContainer"), "unknown hand dispatch must stay unknown")
         mutations()
         val near = Fixture()
         while (near.root.items.size < QueueLeafTransferFacts.MAX_ENTRIES) near.root.items.add(item(ComboItem::class.java, 10000 + near.root.items.size))
@@ -312,7 +335,7 @@ object QueueLeafTransferFactsChecks {
                 repeat(200) { verify(value.read() != null, "measurement warmup") }
                 val start = System.nanoTime()
                 repeat(runs) { verify(value.read() != null, "measurement read") }
-                println("LEAF_FACTS_COST helper-only warm-JVM diagnostic (no planner/render baseline): $label root=${value.root.items.size} destination=${value.destination.items.size} ns/read=${(System.nanoTime()-start)/runs} reads=$runs; one direct source scan, one direct destination scan, one 7-field DTO")
+                println("LEAF_FACTS_COST helper-only warm-JVM diagnostic (no planner/render baseline): $label root=${value.root.items.size} destination=${value.destination.items.size} ns/read=${(System.nanoTime()-start)/runs} reads=$runs; one direct source scan, one direct destination scan, one schema2 DTO plus nonempty parent-type arrays")
             }
             measure("small", Fixture().also { while (it.root.items.size < 16) it.root.items.add(item(ComboItem::class.java, 100 + it.root.items.size)) }, 2000)
             measure("at-bound", near, 200)

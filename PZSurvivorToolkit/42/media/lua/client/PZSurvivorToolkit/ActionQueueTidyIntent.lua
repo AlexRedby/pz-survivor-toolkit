@@ -12,6 +12,22 @@ local mergeListeners={}
 local transferEvent
 local scope, guard, wrappedUI, installed
 local serial=0
+local bindingCapture=Proof and Proof.captureBindings
+local bindingType,bindingMeta,bindingRaw,bindingPairs,bindingEach,bindingEqual=type,getmetatable,rawget,pairs,ipairs,rawequal
+local bindingGlobals,bindingToolkit,bindingFilename=_G,PZSurvivorToolkit,getFilenameOfClosure
+local bindingState,guardBinding={revision=0},nil
+local queueObserverFactory
+local function bindingOwn(owner,key)
+    if bindingType(owner)~='table'then return nil end
+    if bindingMeta(owner)==nil then local value=bindingRaw(owner,key);return value end
+    local count=0
+    for name,value in bindingPairs(owner)do
+        count=count+1
+        if count>128 then return nil end
+        if bindingEqual(name,key)then return value end
+    end
+    return nil
+end
 local function pack(...) return {n=select('#',...),...} end
 local function identity(item) return item and {id=item:getID(),kind=item:getFullType()} or false end
 local function same(item, ref) return item and ref and item:getID()==ref.id and item:getFullType()==ref.kind or not item and not ref end
@@ -190,11 +206,14 @@ local function transfer(action)
     return batch
 end
 -- Observe the native merge before table.wipe destroys the child action's identity.
-function Intent.observeTransfers(onMerged, canObserve, callbacks)
+function Intent.observeTransfers(onMerged, canObserve, callbacks, sourceFactory)
     if type(onMerged)=='function' then
         local present=false
         for _,listener in ipairs(mergeListeners) do if listener.callback==onMerged then present=true;break end end
-        if not present then mergeListeners[#mergeListeners+1]={callback=onMerged,canObserve=canObserve,events=callbacks} end
+        if not present then
+            mergeListeners[#mergeListeners+1]={callback=onMerged,canObserve=canObserve,events=callbacks,sourceFactory=sourceFactory}
+            bindingState.revision=bindingState.revision+1
+        end
     end
     if mergeObserver or type(ISInventoryTransferAction.checkQueueList)~='function' then return end
     mergeOriginal=ISInventoryTransferAction.checkQueueList
@@ -247,6 +266,75 @@ end
 function Intent.isQueueObserver(previous,replacement)
     return previous==mergeOriginal and replacement==mergeObserver and replacement~=nil
 end
+-- Every listener is vouched for by its source owner's exact private record.
+-- The dispatcher authenticates factory identities before any factory is called;
+-- the returned composition invokes only the owners' prepared pure leases.
+queueObserverFactory=function(previous,replacement,action,trustedFactory)
+    if bindingType(action)~='table'or bindingType(trustedFactory)~='function'
+        or not bindingEqual(previous,mergeOriginal)or not bindingEqual(replacement,mergeObserver)or replacement==nil
+        or bindingType(bindingCapture)~='function'or bindingMeta(bindingGlobals)~=nil or bindingMeta(bindingToolkit)~=nil
+        or bindingMeta(Intent)~=nil or bindingMeta(Proof)~=nil
+        or not bindingEqual(bindingOwn(bindingGlobals,'PZSurvivorToolkit'),bindingToolkit)
+        or not bindingEqual(bindingOwn(bindingGlobals,'getFilenameOfClosure'),bindingFilename)
+        or not bindingEqual(bindingOwn(bindingToolkit,'ActionQueueTidyIntent'),Intent)
+        or not bindingEqual(bindingOwn(Intent,'queueObserverBinding'),queueObserverFactory)
+        or not bindingEqual(bindingOwn(Proof,'captureBindings'),bindingCapture)then return nil end
+    local specifications={{owner=bindingGlobals,keys={'PZSurvivorToolkit','getFilenameOfClosure'}},
+        {owner=bindingToolkit,keys={'ActionQueueTidyIntent'}},{owner=Intent,keys={'queueObserverBinding'}},
+        {owner=Proof,keys={'captureBindings'}},{owner=bindingState,keys={'revision'}},{owner=mergeListeners,exact=true},
+        {owner=watching,keys={action}},{owner=transfers,keys={action}}}
+    local leases,pendingFactories={},{}
+    if guard then
+        if not guardBinding or not bindingEqual(guard,guardBinding.guard)
+            or bindingType(guardBinding.sourceFactory)~='function'then return nil end
+        specifications[#specifications+1]={owner=guardBinding,exact=true}
+        local helperSpecifications={}
+        for _,entry in bindingEach(guardBinding.helpers)do
+            if not bindingEqual(bindingOwn(entry.owner,entry.name),entry.callback)then return nil end
+            local specification=helperSpecifications[entry.owner]
+            if not specification then
+                specification={owner=entry.owner,keys={}}
+                helperSpecifications[entry.owner]=specification
+                specifications[#specifications+1]=specification
+            end
+            specification.keys[#specification.keys+1]=entry.name
+        end
+        pendingFactories[#pendingFactories+1]={factory=guardBinding.sourceFactory,second=guardBinding.valid,third=guardBinding.wrapper}
+    end
+    for _,listener in bindingEach(mergeListeners)do
+        if bindingType(listener.sourceFactory)~='function'then return nil end
+        specifications[#specifications+1]={owner=listener,exact=true}
+        if listener.events then specifications[#specifications+1]={owner=listener.events,exact=true}end
+        pendingFactories[#pendingFactories+1]={factory=listener.sourceFactory,second=listener.callback,
+            third=listener.canObserve,fourth=listener.events}
+    end
+    local record=watching[action]
+    local batch=transfers[action]
+    if record then specifications[#specifications+1]={owner=record,exact=true}end
+    if batch then specifications[#specifications+1]={owner=batch,keys={'records','attempted'}}end
+    local actor=bindingOwn(action,'character')
+    if actor~=nil then
+        specifications[#specifications+1]={owner=states,keys={actor}}
+        local state=states[actor]
+        if state then specifications[#specifications+1]={owner=state,keys={'queue','pending','pickups','returnIntents','hands','worn','attached','activation','versions','idle'}}end
+    end
+    local watch=bindingCapture(specifications)
+    if not watch then return nil end
+    -- Freeze our own dispatch fields before any owner factory can reenter.
+    for _,entry in bindingEach(pendingFactories)do
+        if not trustedFactory(entry.factory)then return nil end
+        local lease=entry.factory(action,entry.second,entry.third,entry.fourth)
+        if bindingType(lease)~='function'then return nil end
+        leases[#leases+1]=lease
+    end
+    if not watch()then return nil end
+    return function(facts)
+        if not watch()then return false end
+        for _,lease in bindingEach(leases)do if not lease(facts)then return false end end
+        return true
+    end
+end
+Intent.queueObserverBinding=queueObserverFactory
 transferEvent=function(event,action,...)
     local observed=false
     for _,listener in ipairs(mergeListeners) do
@@ -394,7 +482,7 @@ local function wrap(owner,name,kind,hotbar)
     end
     owner[name]=replacement
 end
-function Intent.install(valid,approvedWrapper)
+function Intent.install(valid,approvedWrapper,sourceFactory)
     if installed then return end
     installed=true
     wrappedUI=approvedWrapper
@@ -407,6 +495,8 @@ function Intent.install(valid,approvedWrapper)
         for _,entry in ipairs(helpers) do if entry.owner[entry.name]~=entry.callback then return false,'helper_changed',entry.name end end
         return valid(action)
     end
+    guardBinding={guard=guard,valid=valid,wrapper=approvedWrapper,helpers=helpers,sourceFactory=sourceFactory}
+    bindingState.revision=bindingState.revision+1
     for _,name in ipairs({'OnPrimaryWeapon','OnSecondWeapon','OnTwoHandsEquip'}) do wrap(ISInventoryPaneContextMenu,name,'equip') end
     for _,name in ipairs({'onGrabItems','onGrabOneItems','onGrabHalfItems'}) do wrap(ISInventoryPaneContextMenu,name,'grab') end
     wrap(ISInventoryPaneContextMenu,'onWearItems','wear')
@@ -431,7 +521,10 @@ function Intent.install(valid,approvedWrapper)
     ISTimedActionQueue.addAfter=function(previous,action) return enqueue(action,addAfter,previous,action) end
     local addToQueue=ISTimedActionQueue.addToQueue
     ISTimedActionQueue.addToQueue=function(queue,action) return enqueue(action,addToQueue,queue,action) end
-    if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() states=setmetatable({}, {__mode='k'});watching=setmetatable({}, {__mode='k'});transfers=setmetatable({}, {__mode='k'}) end) end
+    if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
+        bindingState.revision=bindingState.revision+1
+        states=setmetatable({}, {__mode='k'});watching=setmetatable({}, {__mode='k'});transfers=setmetatable({}, {__mode='k'})
+    end) end
 end
 function Intent.update(player,callback,...)
     local activeBlocked=mayHaveBlockedReturn(player)
@@ -611,5 +704,9 @@ function Intent.update(player,callback,...)
     consumeKeptReturns(value,consumedKept)
     value.restoring,value.idle=true,0
     return unpack(results,2,results.n)
+end
+local sourceAdapters=bindingToolkit.ActionQueueItemEditAdapters
+if sourceAdapters and type(sourceAdapters.registerSourceFactory)=='function'then
+    sourceAdapters.registerSourceFactory(Intent,'queueObserverBinding',queueObserverFactory)
 end
 return Intent

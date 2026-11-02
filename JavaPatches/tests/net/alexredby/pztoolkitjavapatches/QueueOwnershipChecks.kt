@@ -18,12 +18,20 @@ object QueueOwnershipChecks {
         LuaManager.platform = platform
         LuaManager.env = environment
         LuaManager.thread = thread
+        val metatableMatches = JavaFunction { frame, count ->
+            frame.push(QueueLeafTransferFacts.luaMetatableMatches(frame.get(0), if (count > 1) frame.get(1) else null))
+            1
+        }
+        environment.rawset("NativeMetatableMatches", metatableMatches)
+        environment.rawset("toolkitLuaMetatableMatches", metatableMatches)
         environment.rawset("ProjectRoot", root.toString())
         environment.rawset("NativeActionRoot", Path.of("media/lua").toAbsolutePath().toString())
         environment.rawset("NativeWishlistWorkshopRoot", workshop.toAbsolutePath().toString())
         System.getenv("PZ_CUSTOM_LIGHT_SWITCH_SOURCE")?.let {
             environment.rawset("CustomLightSwitchSource", it)
         }
+        System.getenv("PZ_TEST_SAUCEDCARTS_SOURCE")?.let { environment.rawset("SaucedCartsSource", it) }
+        System.getenv("PZ_TEST_FRIDGE_SOURCE")?.let { environment.rawset("FridgeSource", it) }
         if (variant != null) environment.rawset(variant, true)
         environment.rawset(
             "print",
@@ -57,6 +65,11 @@ object QueueOwnershipChecks {
                 1
             },
         )
+        environment.rawset("NativeFirstLineOfClosure", JavaFunction { frame, _ ->
+            val callback = frame.get(0)
+            frame.push(if (callback is LuaClosure) LuaManager.GlobalObject.getFirstLineOfClosure(callback).toDouble() else null)
+            1
+        })
         environment.rawset(
             "NativeCallerSource",
             JavaFunction { frame, _ ->
@@ -155,7 +168,7 @@ object QueueOwnershipChecks {
                 )
         val available = listOf(
             null, "OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
-            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops",
+            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops", "OwnershipBulkTransfer", "OwnershipTransferBindings", "OwnershipCartTransfer", "OwnershipReturnSources",
         )
         // Re-run affected native table vectors without repeating every family.
         // Empty/unrecognized selections are errors, never successful zero-case runs.

@@ -24,10 +24,13 @@ Toolkit.ActionQueuePolicy = Policy
 local Operations = Toolkit.ActionQueueOperations
 local nativeForceCancel = ISBaseTimedAction.forceCancel
 local Proof = require "PZSurvivorToolkit/SourceProof"
+local editBindingCapture=Proof and Proof.captureBindings
+local editNativeMeta=toolkitLuaMetatableMatches
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
+local deferredTransferGuards = {}
 local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
 local Firearms = require "PZSurvivorToolkit/ActionQueueFirearms"
 local rackResources = Firearms and Firearms.rack
@@ -670,8 +673,14 @@ function Policy.adoptTransferQueueObserver(previous,replacement)
     if not snapshot or snapshot.helpers.checkQueueList~=previous or ISInventoryTransferAction.checkQueueList~=replacement
         or not intent or not intent.isQueueObserver(previous,replacement) then return false end
     snapshot.helpers.checkQueueList=replacement
-    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISInventoryTransferAction,
-        {checkQueueList=previous}, {checkQueueList=replacement}, function()return intent.isQueueObserver(previous,replacement)end) end
+    if ItemEditAdapters then
+        local guard=function()return intent.isQueueObserver(previous,replacement)end
+        deferredTransferGuards[guard]={kind="observer",previous=previous,replacement=replacement,intent=intent}
+        if ItemEditAdapters.registerSourceFactory then
+            ItemEditAdapters.registerSourceFactory(intent,"queueObserverBinding",intent.queueObserverBinding)
+        end
+        ItemEditAdapters.adoptMethods(ISInventoryTransferAction,{checkQueueList=previous},{checkQueueList=replacement},guard)
+    end
     return true
 end
 
@@ -682,10 +691,11 @@ function Policy.adoptTransferFloorHelper(previous, replacement)
         or type(previous) ~= "function" or type(replacement) ~= "function" then return false end
     -- The native transfer ignores the helper's square for a non-floor destination.
     transferFloorHelper = {previous = previous, replacement = replacement}
-    if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISInventoryTransferAction,
-        {getNotFullFloorSquare = previous}, {getNotFullFloorSquare = replacement}, function()
-            return ISInventoryTransferAction.getNotFullFloorSquare == replacement
-        end) end
+    if ItemEditAdapters then
+        local guard=function()return ISInventoryTransferAction.getNotFullFloorSquare==replacement end
+        deferredTransferGuards[guard]={kind="floor",previous=previous,replacement=replacement}
+        ItemEditAdapters.adoptMethods(ISInventoryTransferAction,{getNotFullFloorSquare=previous},{getNotFullFloorSquare=replacement},guard)
+    end
     return true
 end
 
@@ -708,6 +718,37 @@ function Policy.adoptTransferMethods(previous, replacement, helpersUnchanged)
     transferHelperGuards[#transferHelperGuards + 1] = helpersUnchanged
     if ItemEditAdapters then ItemEditAdapters.adoptMethods(ISInventoryTransferAction, previous, replacement, helpersUnchanged) end
     return true
+end
+
+-- Source ancestry only. Normal guards remain live on the ordinary native path;
+-- this observation leases their exact installation without executing them.
+function Policy.transferBinding(guard,action,trustedFactory)
+    local valueType,valueMeta=type,getmetatable
+    local record=deferredTransferGuards[guard]
+    if not record or type(Proof.captureBindings)~="function" then return end
+    local nativeClass=ISInventoryTransferAction
+    local key=record.kind=="floor" and "getNotFullFloorSquare" or "checkQueueList"
+    if nativeClass[key]~=record.replacement then return end
+    local watch=Proof.captureBindings({
+        {owner=deferredTransferGuards,keys={guard}}, {owner=record,exact=true},
+        {owner=nativeClass,keys={key}}, {owner=Toolkit,keys={"ActionQueuePolicy","ActionQueueTidyIntent"}},
+        {owner=_G,keys={"ISInventoryTransferAction"}},
+        {owner=Policy,keys={"transferBinding"}}, {owner=Proof,keys={"captureBindings"}},
+    })
+    if not watch then return end
+    if record.kind=="floor" then
+        if not Proof.closure(record.previous,"ISInventoryTransferAction.lua") then return end
+        return function(facts)return watch() and valueType(facts)=="table" and valueMeta(facts)==nil and facts.schema==2 end
+    end
+    local intent=record.intent
+    local factory=intent and intent.queueObserverBinding
+    if Toolkit.ActionQueueTidyIntent~=intent or type(trustedFactory)~="function" or not trustedFactory(factory) then return end
+    local lease=factory(record.previous,record.replacement,action,trustedFactory)
+    if type(lease)~="function" or not watch() then return end
+    return function(facts)return watch() and lease(facts) end
+end
+if ItemEditAdapters and ItemEditAdapters.registerSourceFactory then
+    ItemEditAdapters.registerSourceFactory(Policy,"transferBinding",Policy.transferBinding)
 end
 
 local function itemResources(action)
@@ -2180,12 +2221,13 @@ local activeCleanupBinding
 -- Query-local Lua bindings only, not an inventory/world snapshot. Native getters
 -- happen later; finish with raw comparisons so late inspection cannot replace a
 -- reviewed action, callback, class or singleton group without invalidating it.
-local function editSourceShape(members)
+local function editSourceShape(members,queue)
     local seen,records={},{}
     local function capture(value,depth)
         if value==nil or seen[value]then return true end
         if type(value)~="table"or depth>8 then return false end
         local record={owner=value,meta=getmetatable(value),fields={},count=0}
+        if record.meta~=nil and (type(editNativeMeta)~="function"or not editNativeMeta(value,record.meta))then return false end
         seen[value]=record;records[#records+1]=record
         for key,field in pairs(value)do
             record.count=record.count+1
@@ -2195,9 +2237,12 @@ local function editSourceShape(members)
         if type(record.fields.__index)=="function"then return false end
         return record.meta==nil or capture(record.meta,depth+1)
     end
+    if queue and not capture(queue,1)then return end
+    if not capture(members,1)then return end
     for _,member in ipairs(members)do
         if not capture(member,1)then return end
         local fields=seen[member].fields
+        if fields.toolkitQueueOperation~=nil and not capture(fields.toolkitQueueOperation,1)then return end
         local groups=fields.queueList
         if groups~=nil then
             if not capture(groups,1)then return end
@@ -2209,7 +2254,8 @@ local function editSourceShape(members)
     end
     return function()
         for _,record in ipairs(records)do
-            if not rawequal(getmetatable(record.owner),record.meta)then return false end
+            if not rawequal(getmetatable(record.owner),record.meta)
+                or record.meta~=nil and not editNativeMeta(record.owner,record.meta)then return false end
             local count=0
             for key,value in pairs(record.owner)do
                 count=count+1
@@ -2237,7 +2283,7 @@ function Policy.observeActiveEdit(queue, intent)
         or not Proof.closure(EditTransition.project,"ActionQueueEditTransition.lua")then return unknown()end
     for _,member in ipairs(queue.queue)do if type(member)~="table"then return unknown()end end
     local snapshot=editSnapshot(queue)
-    local sourceUnchanged=editSourceShape(queue.queue)
+    local sourceUnchanged=editSourceShape(queue.queue,queue)
     local preparer=EditTransition.prepare
     if not sourceUnchanged or type(preparer)~="function"or not Proof.closure(preparer,"ActionQueueEditTransition.lua")then return unknown()end
     local projector=preparer()
@@ -2312,6 +2358,17 @@ function Policy.observeActiveEdit(queue, intent)
     -- observation. No settings/native/provider getter runs after that boundary.
     if current.item~=item or not Policy.editUnchanged(queue,snapshot)then return unknown("unavailable")end
     local ledger,cleanupOwner,cleanupObserver
+    if type(editBindingCapture)~="function"or Proof.captureBindings~=editBindingCapture
+        or toolkitLuaMetatableMatches~=editNativeMeta then return unknown("unavailable")end
+    local postBindings=editBindingCapture({
+        {owner=_G,keys={"PZSurvivorToolkit","ISTimedActionQueue","type","getmetatable","rawequal","pairs","ipairs","toolkitLuaMetatableMatches"}},
+        {owner=Toolkit,keys={"ActionQueueEditTransition","ActionQueueSettlement"}},
+        {owner=EditTransition,keys={"prepare","project"}},
+        {owner=Proof,keys={"captureBindings"}},
+        {owner=ISTimedActionQueue,keys={"queues"}},
+        {owner=ISTimedActionQueue.queues,keys={queue.character}},
+    })
+    if not postBindings then return unknown("unavailable")end
     if kind=="cancel-operation"then
         cleanupOwner=Toolkit.ActionQueueSettlement
         cleanupObserver=cleanupOwner and cleanupOwner.observeEditCleanup
@@ -2320,8 +2377,14 @@ function Policy.observeActiveEdit(queue, intent)
             return unknown("edit_obligation_unknown")
         end
         activeCleanupBinding=activeCleanupBinding or {owner=cleanupOwner,observe=cleanupObserver}
+        local cleanupBindings=editBindingCapture({{owner=cleanupOwner,keys={"observeEditCleanup"}}})
+        if not cleanupBindings then return unknown("unavailable")end
         ledger=cleanupObserver(queue,current)
+        if not cleanupBindings()then return unknown("unavailable")end
     end
+    -- Validate modules/standard helpers and queue class ancestry before any
+    -- ordinary indexing or model call after the final native facts boundary.
+    if not postBindings()or not sourceUnchanged()then return unknown("unavailable")end
     if not rawequal(Toolkit.ActionQueueEditTransition,EditTransition)or EditTransition.prepare~=preparer then return unknown("unavailable")end
     local result=projector(entries,{kind=kind,first=rangeFirst,last=rangeLast,
         generation=queue.toolkitOperationGeneration or 0,checkpoint=checkpoint,ledger=ledger})

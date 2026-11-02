@@ -359,3 +359,52 @@ class ModIntegrations(unittest.TestCase):
                 self.configure(**selection, medicine_framework_source=source)
                 with self.assertRaisesRegex(ValueError, 'differs from locked integration inputs'):
                     self.configure(**selection, medicine_framework_source=self.root / 'other/MF_ISMoodle.lua')
+
+    def test_cart_named_check_binds_all_locked_inputs_without_a_manual_directory(self):
+        self.select('SaucedCarts', 'SaucedCarts/42')
+        name = 'test_action_queue_cart_transfer_binding.lua'
+        spec = mod_integrations.INTEGRATIONS['SaucedCarts']
+        cart_root = self.root / 'SaucedCarts/42/media/lua'
+        for source in spec['tests'][name]:
+            self.write(cart_root / source.path, source.path)
+        # The locked per-file view can mix version and common directories.
+        network = cart_root / 'shared/SaucedCarts/Network.lua'
+        common = self.write(self.root / 'SaucedCarts/common/media/lua/shared/SaucedCarts/Network.lua', 'common network')
+        network.unlink()
+        self.lock_sources()
+        args, requested = self.configure(requested=[name])
+        self.assertEqual({name}, requested)
+        self.assertIsNone(getattr(args, 'saucedcarts_source', None))
+        self.assertEqual(self.game / 'media/lua', args.native_action_root)
+        self.assertEqual(common, args.integration_sources[name]['CartBindingNetworkSource'])
+        bound = self.bound(args, name)
+        self.assertEqual(7, len(bound))
+        self.assertEqual('common network', bound['CartBindingNetworkSource'])
+        self.assertEqual('shared/SaucedCarts/TimedActions/ISCartTransferAction.lua', bound['CartBindingActionSource'])
+        self.assertEqual('client/SaucedCarts/Restrictions/TransferRestrictions.lua', bound['CartBindingRestrictionsSource'])
+        self.assertTrue(mod_integrations.has_required_input(name, 'saucedcarts_source', args))
+        del args.integration_sources[name]['CartBindingVisualSource']
+        self.assertFalse(mod_integrations.has_required_input(name, 'saucedcarts_source', args))
+
+    def test_cart_directory_argument_keeps_its_actual_basename_and_client_siblings(self):
+        name = 'test_action_queue_cart_transfer_binding.lua'
+        spec = mod_integrations.INTEGRATIONS['SaucedCarts']
+        anchor = self.root / 'manual/media/lua/shared/custom-cart-directory'
+        for source in spec['tests'][name]:
+            relative = Path(source.path).relative_to('shared/SaucedCarts') if source.path.startswith('shared/') else None
+            path = anchor / relative if relative else self.root / 'manual/media/lua' / source.path
+            self.write(path, source.path)
+            self.assertEqual(path, mod_integrations.manual_source(spec, anchor, source))
+        args = SimpleNamespace(saucedcarts_source=anchor)
+        self.assertEqual({source.variable: source.path for source in spec['tests'][name]}, self.bound(args, name))
+
+    def test_cart_client_hook_is_a_required_locked_input(self):
+        self.select('SaucedCarts', 'SaucedCarts/42')
+        name = 'test_action_queue_cart_transfer_binding.lua'
+        spec = mod_integrations.INTEGRATIONS['SaucedCarts']
+        for source in spec['tests'][name]:
+            if source.variable != 'CartBindingVisualSource':
+                self.write(self.root / 'SaucedCarts/42/media/lua' / source.path, source.path)
+        self.lock_sources()
+        with self.assertRaisesRegex(ValueError, 'Missing upstream source: .*VisualUpdateQueue.lua'):
+            self.configure(requested=[name])

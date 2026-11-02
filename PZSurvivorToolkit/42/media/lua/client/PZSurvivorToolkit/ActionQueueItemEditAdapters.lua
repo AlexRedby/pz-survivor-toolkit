@@ -30,6 +30,9 @@ local bindingPairs, bindingType, bindingMeta, bindingEqual = pairs, type, getmet
 local bindingGlobals, bindingRaw, bindingIpairs, bindingParent = _G, rawget, ipairs, ISBaseObject
 local baseMethods={}
 local ownMethods,ownerSafe,baselineSafe={},{},true
+local baseDelegates, sourceFactories, sourceFactoryRefs, factoryRevision = {}, {}, {}, 0
+local bindingCapture = Proof and Proof.captureBindings
+local bindingNativeMeta = toolkitLuaMetatableMatches
 -- These are the own methods in the pinned native files, including helpers called
 -- by other methods. Enumerating only surviving callbacks would trust a class
 -- whose effect/helper was deleted before this module loaded, or inherited instead.
@@ -158,6 +161,7 @@ function Adapters.adoptBase(name,previous,replacement)
     for _,owner in ipairs({transfer,drink,eat,empty}) do
         if snapshots[owner][name]==previous and owner[name]==replacement then snapshots[owner][name]=replacement end
     end
+    baseDelegates[name]=previous
     baseHooks[name],baseMethods[name]=replacement,replacement
     return true
 end
@@ -224,6 +228,55 @@ local function pending(action,owner)
     elseif not pinned("media/lua/shared/TimedActions/ISDrinkFluidAction.lua",3564665289) then return false end
     return unchanged(owner,action)
 end
+-- Fixed source owners register their immutable factory identity during module
+-- initialization. Observation never discovers or invokes a replacement callback
+-- just because it shares a filename with another reviewed function.
+local sourceRoles = {
+    BulkActions={transferBinding="BulkActions.lua"},
+    ActionQueueCompat={transferBinding="ActionQueueCompat.lua",transferListenerBinding="ActionQueueCompat.lua",tidyBinding="ActionQueueCompat.lua"},
+    ActionQueuePolicy={transferBinding="ActionQueuePolicy.lua"},
+    ActionQueueTidyIntent={queueObserverBinding="ActionQueueTidyIntent.lua"},
+    ActionQueueCarts={transferBinding="ActionQueueCarts.lua"},
+    ActionQueueSettlement={transferListenerBinding="ActionQueueSettlement.lua"},
+    FitnessEquipment={transferListenerBinding="FitnessEquipment.lua"},
+}
+local function bindingOwn(owner,key)
+    if bindingType(owner)~="table" then return end
+    if bindingMeta(owner)==nil then return bindingRaw(owner,key) end
+    local count=0
+    for name,value in bindingPairs(owner) do
+        count=count+1;if count>128 then return end
+        if bindingEqual(name,key) then return value end
+    end
+end
+function Adapters.registerSourceFactory(owner,key,factory)
+    if bindingType(owner)~="table" or bindingMeta(owner)~=nil or bindingType(factory)~="function"
+        or bindingType(bindingCapture)~="function" or Proof.captureBindings~=bindingCapture
+        or getFilenameOfClosure~=bindingAccessor or Proof.closure~=bindingOrigin then return false end
+    for module,roles in bindingPairs(sourceRoles) do
+        if bindingEqual(bindingOwn(Toolkit,module),owner) and roles[key]
+            and bindingEqual(bindingOwn(owner,key),factory) then
+            local slot=module.."."..key
+            if sourceFactories[slot] then return bindingEqual(sourceFactories[slot].factory,factory) end
+            if sourceFactoryRefs[factory] then return false end
+            local revision=factoryRevision
+            if not bindingOrigin(factory,roles[key]) or revision~=factoryRevision
+                or not bindingEqual(bindingOwn(Toolkit,module),owner)
+                or bindingMeta(owner)~=nil or not bindingEqual(bindingOwn(owner,key),factory) then return false end
+            local record={owner=owner,module=module,key=key,factory=factory}
+            sourceFactories[slot],sourceFactoryRefs[factory]=record,record
+            factoryRevision=factoryRevision+1
+            return true
+        end
+    end
+    return false
+end
+local function registeredFactory(module,key)
+    local record=sourceFactories[module.."."..key]
+    if record and bindingMeta(record.owner)==nil and bindingEqual(bindingOwn(Toolkit,module),record.owner)
+        and bindingEqual(bindingOwn(record.owner,key),record.factory) then return record.factory,record end
+end
+
 local function leaf(item,player)
     if not instanceof(item,"InventoryItem") or instanceof(item,"InventoryContainer") or instanceof(item,"AnimalInventoryItem")
         or instanceof(item,"Radio") or item:getWorldItem() or item:getIsCraftingConsumed() or player:isEquipped(item)
@@ -392,17 +445,22 @@ function Adapters.deferredTransferBinding(action,current)
         or bindingType(bindingAccessor)~="function" or getFilenameOfClosure~=bindingAccessor
         or not Proof or Proof.closure~=bindingOrigin or Proof.matches~=bindingMatches or bindingType(bindingOrigin)~="function"
         or not baselineSafe or not ownerSafe[transfer] or not ownerSafe[lowlevel]
-        or #guards[transfer]~=0 or #guards[lowlevel]~=0 then return end
-    -- Base hooks and per-instance BulkActions callbacks are deliberately outside
-    -- this first source contract, as are detached Host queue-member aliases.
-    for _ in bindingPairs(baseHooks) do return end
+        or bindingType(bindingCapture)~="function" or Proof.captureBindings~=bindingCapture then return end
+    local revision=factoryRevision
+    -- Only successful native-to-Toolkit adoptions have private delegates here.
+    -- Their source ancestry does not grant lifecycle or native-outcome authority.
+    for name,callback in bindingPairs(baseHooks) do
+        if not baseDelegates[name] or baseMethods[name]~=callback then return end
+    end
     local token,actor,native=own(current,"toolkitQueueOperation"),own(current,"character"),own(current,"action")
     if not plain(token) or own(token,"toolkitCancelled") or own(token,"toolkitStarted")~=true
-        or native==nil or own(current,"started")~=true
+        -- Native checkpoint ownership proves the active step; reading does not
+        -- set the transfer-specific Lua `started` flag in stock B42.
+        or native==nil
         or own(action,"toolkitQueueOperation")~=token or own(action,"character")~=actor
         or own(action,"action")~=nil or own(action,"started") or own(action,"_isAddingActions")
         or own(action,"transactionId")~=nil and own(action,"transactionId")~=0
-        or own(action,"allowMissingItems")~=true or own(action,"toolkitTransferGuard")~=nil then return end
+        or own(action,"allowMissingItems")~=true then return end
     local queueClass=ISTimedActionQueue
     local queueMap=bindingType(queueClass)=="table" and own(queueClass,"queues")
     local queue=bindingType(queueMap)=="table" and own(queueMap,actor)
@@ -429,7 +487,7 @@ function Adapters.deferredTransferBinding(action,current)
     if items[1]~=item or own(action,"srcContainer")==own(action,"destContainer")
         or not finite(own(action,"maxTime")) or not finite(group.time) or group.time~=own(action,"maxTime") then return end
     for key in bindingPairs(group) do if key~="items" and key~="time" and key~="type" then return end end
-    for _,key in ipairs({"onStartFunc","onCompleteFunc","onCancelFunc","onFailFunc","additionalTest","retriggerLastAction"}) do
+    for _,key in ipairs({"onStartFunc","onCancelFunc","onFailFunc","additionalTest","retriggerLastAction"}) do
         if own(action,key) then return end
     end
     -- Capture before file/metadata/member getters. Every table below has a fixed
@@ -445,7 +503,9 @@ function Adapters.deferredTransferBinding(action,current)
             if count>128 then return false end
             fields[key]=value
         end
-        records[#records+1]={owner=owner,fields=fields,count=count,meta=bindingMeta(owner)}
+        local parent=bindingMeta(owner)
+        if parent~=nil and (bindingType(bindingNativeMeta)~="function"or not bindingNativeMeta(owner,parent))then return false end
+        records[#records+1]={owner=owner,fields=fields,count=count,meta=parent}
         return true
     end
     local function inherits(owner,parent)
@@ -467,6 +527,24 @@ function Adapters.deferredTransferBinding(action,current)
         if not capture(owner) then return end
     end
     for _,member in ipairs(list) do if member~=action and member~=current and not capture(member) then return end end
+    for _,owner in ipairs({baseHooks,baseDelegates,guards[transfer],guards[lowlevel],sourceFactories,sourceFactoryRefs}) do
+        if not capture(owner) then return end
+    end
+    local factorySpecs,byOwner,moduleKeys,seenModules={},{},{},{}
+    for _,record in bindingPairs(sourceFactories) do
+        local specification=byOwner[record.owner]
+        if not specification then
+            specification={owner=record.owner,keys={}}
+            byOwner[record.owner]=specification;factorySpecs[#factorySpecs+1]=specification
+        end
+        specification.keys[#specification.keys+1]=record.key
+        if not seenModules[record.module] then seenModules[record.module]=true;moduleKeys[#moduleKeys+1]=record.module end
+    end
+    if #moduleKeys>0 then factorySpecs[#factorySpecs+1]={owner=Toolkit,keys=moduleKeys} end
+    factorySpecs[#factorySpecs+1]={owner=Proof,keys={"captureBindings","closure"}}
+    factorySpecs[#factorySpecs+1]={owner=bindingGlobals,keys={"getFilenameOfClosure","toolkitLuaMetatableMatches"}}
+    local factoryWatch=bindingCapture(factorySpecs)
+    if not factoryWatch then return end
     local generation=own(queue,"toolkitOperationGeneration")
     local function unchanged()
         if bindingMeta(bindingGlobals)~=nil or not bindingEqual(own(bindingGlobals,"PZSurvivorToolkit"),Toolkit)
@@ -479,11 +557,12 @@ function Adapters.deferredTransferBinding(action,current)
             or not bindingEqual(own(bindingGlobals,"ISTimedActionQueue"),queueClass)
             or not bindingEqual(own(queueClass,"queues"),queueMap) or not bindingEqual(own(queueMap,actor),queue)
             or not bindingEqual(own(bindingGlobals,"getFilenameOfClosure"),bindingAccessor)
+            or not bindingEqual(own(bindingGlobals,"toolkitLuaMetatableMatches"),bindingNativeMeta)
             or not bindingEqual(own(queue,"toolkitOperationGeneration"),generation)
-            or #guards[transfer]~=0 or #guards[lowlevel]~=0 then return false end
-        for _ in bindingPairs(baseHooks) do return false end
+            or factoryRevision~=revision or not factoryWatch() then return false end
         for _,record in bindingIpairs(records) do
-            if not bindingEqual(bindingMeta(record.owner),record.meta) then return false end
+            if not bindingEqual(bindingMeta(record.owner),record.meta)
+                or record.meta~=nil and not bindingNativeMeta(record.owner,record.meta) then return false end
             local count=0
             for key,value in bindingPairs(record.owner) do
                 count=count+1
@@ -493,11 +572,94 @@ function Adapters.deferredTransferBinding(action,current)
         end
         return true
     end
+    local leases,sourceChanged={},false
+    local function trustedFactory(factory)
+        local record=sourceFactoryRefs[factory]
+        return not sourceChanged and record~=nil and bindingEqual(registeredFactory(record.module,record.key),factory)
+            and factoryWatch() and factoryRevision==revision
+    end
+    local compatFactory=registeredFactory("ActionQueueCompat","transferBinding")
+    local policyFactory=registeredFactory("ActionQueuePolicy","transferBinding")
+    local cartsFactory=registeredFactory("ActionQueueCarts","transferBinding")
+    local function prepare(factory,guard)
+        if not factory or not trustedFactory(factory) then return end
+        local ok,lease,description=pcall(factory,guard,action,trustedFactory)
+        if not unchanged() then sourceChanged=true;return end
+        if not ok or bindingType(lease)~="function" then return end
+        leases[#leases+1]=lease
+        return lease,description
+    end
+    local preparedGuards={}
+    for _,owner in ipairs({transfer,lowlevel}) do
+        if #guards[owner]>32 then return end
+        for _,guard in ipairs(guards[owner]) do
+            if not preparedGuards[guard] then
+                -- Filename chooses the owner to ask, never authorizes a guard.
+                -- The owner's immutable registration must recognize its exact
+                -- private guard; no arbitrary guard is executed to classify it.
+                local factory
+                if bindingOrigin(guard,"ActionQueueCompat.lua") then factory=compatFactory
+                elseif bindingOrigin(guard,"ActionQueuePolicy.lua") then factory=policyFactory
+                elseif bindingOrigin(guard,"ActionQueueCarts.lua") then factory=cartsFactory end
+                if not unchanged() or not prepare(factory,guard) then return end
+                -- Several audited wrappers share one guard/dependency set. Its
+                -- first lease stays live through every later preparation and is
+                -- checked after the same native facts; recapturing adds no proof.
+                preparedGuards[guard]=true
+            end
+        end
+    end
+    local _,instance=prepare(compatFactory,false)
+    if instance~=nil and (not plain(instance) or instance.completeWasAbsent~=true) then return end
+    local function effective(name)
+        local value=own(action,name)
+        if value==nil then return transfer[name] end
+        return value
+    end
+    local bulk
+    local guard=own(action,"toolkitTransferGuard")
+    if guard~=nil then
+        local factory=registeredFactory("BulkActions","transferBinding")
+        if not factory or not trustedFactory(factory) or not plain(guard)
+            or not pinned("media/lua/client/PZSurvivorToolkit/BulkActions.lua",3109997898,"PZSurvivorToolkit") then return end
+        local ok,lease,description=pcall(factory,action,own(guard,"original"),own(guard,"stop"))
+        if not ok or bindingType(lease)~="function" or not plain(description) or not unchanged() then return end
+        leases[#leases+1]=lease;bulk=description
+    end
+    local methodOverrides={}
+    local performed=effective("perform")
+    if instance and instance.wrappedPerform then
+        if not bindingEqual(performed,instance.wrappedPerform) or not bindingEqual(instance.perform,snapshots[transfer].perform) then return end
+        methodOverrides.perform=performed
+    elseif not bindingEqual(performed,snapshots[transfer].perform) then return end
+    local stopped=effective("stop")
+    local usedInstance,usedBulk=false,false
+    for _=1,2 do
+        if bindingEqual(stopped,snapshots[transfer].stop) then break end
+        if instance and not usedInstance and bindingEqual(stopped,instance.wrappedStop) then
+            stopped=instance.stop;usedInstance=true
+        elseif bulk and not usedBulk and bindingEqual(stopped,bulk.wrappedStop) then
+            stopped=bulk.stop;usedBulk=true
+        else return end
+    end
+    if not bindingEqual(stopped,snapshots[transfer].stop) or instance and instance.wrappedStop and not usedInstance
+        or bulk and not usedBulk then return end
+    methodOverrides.stop=effective("stop")
+    if own(action,"onCompleteFunc") then
+        if not bulk or not bindingEqual(own(action,"onCompleteFunc"),bulk.onComplete) then return end
+        methodOverrides.onCompleteFunc=bulk.onComplete
+        methodOverrides.toolkitQueueSafeOnComplete=bulk.onComplete
+    elseif bulk then return end
+    if not unchanged() or getFilenameOfClosure~=bindingAccessor then return end
     if not pinned("media/lua/shared/TimedActions/ISBaseTimedAction.lua",3104185167)
         or not pinned("media/lua/client/TimedActions/ISInventoryTransferAction.lua",3739549534)
         or not pinned("media/lua/shared/TimedActions/ISTransferAction.lua",798240932) then return end
     for name,callback in bindingPairs(baseMethods) do
-        if own(base,name)~=callback or name~="derive" and not bindingOrigin(callback,"ISBaseTimedAction.lua") then return end
+        if own(base,name)~=callback then return end
+        if name~="derive" and not bindingOrigin(callback,"ISBaseTimedAction.lua") then
+            if not bindingEqual(baseHooks[name],callback) or not bindingOrigin(callback,"ActionQueue.lua")
+                or not bindingOrigin(baseDelegates[name],"ISBaseTimedAction.lua") then return end
+        end
     end
     for _,owner in ipairs({transfer,lowlevel}) do
         local currentOwn={}
@@ -510,19 +672,22 @@ function Adapters.deferredTransferBinding(action,current)
         if not ownsRequired(owner,currentOwn,snapshots[owner]) then return end
         for name,callback in bindingPairs(snapshots[owner]) do
             if (owner[name] or false)~=callback then return end
-            if owner==transfer and (action[name] or false)~=callback then return end
-            if bindingType(callback)=="function" and name~="derive" then
+            if owner==transfer and (action[name] or false)~=callback and not bindingEqual(methodOverrides[name],action[name]) then return end
+            if bindingType(callback)=="function" and name~="derive" and not bindingEqual(approved[owner][name],callback) then
                 if owner==transfer and name=="canMergeAction" and bindingOrigin(callback,"ActionQueueOperations.lua") then
                     if own(operations,"transferMergeDelegate")~=mergeDelegate or bindingType(mergeDelegate)~="function"
                         or not bindingOrigin(mergeDelegate,"ActionQueueOperations.lua") then return end
                     local ok,delegate=pcall(mergeDelegate,callback)
                     if not ok or not bindingOrigin(delegate,"ISInventoryTransferAction.lua") then return end
-                elseif not bindingOrigin(callback,ownMethods[owner][name] and files[owner] or "ISBaseTimedAction.lua") then return end
+                elseif not bindingOrigin(callback,ownMethods[owner][name] and files[owner] or "ISBaseTimedAction.lua") then
+                    if not bindingEqual(baseHooks[name],callback) or not bindingOrigin(callback,"ActionQueue.lua")
+                        or not bindingOrigin(baseDelegates[name],"ISBaseTimedAction.lua") then return end
+                end
             end
         end
     end
     for name,value in bindingPairs(action) do
-        if bindingType(value)=="function" and snapshots[transfer][name]~=value then return end
+        if bindingType(value)=="function" and snapshots[transfer][name]~=value and not bindingEqual(methodOverrides[name],value) then return end
     end
     if action.Type~=transfer.Type or not instanceof(actor,"IsoPlayer") or not instanceof(item,"InventoryItem")
         or not instanceof(action.srcContainer,"ItemContainer") or not instanceof(action.destContainer,"ItemContainer") then return end
@@ -530,9 +695,11 @@ function Adapters.deferredTransferBinding(action,current)
     if not finite(id) or id%1~=0 or bindingType(fullType)~="string" or fullType=="" or group.type~=fullType
         or not unchanged() then return end
     local used=false
-    return function()
+    return function(facts)
         if used then return false end
         used=true
+        if not unchanged() then return false end
+        for _,lease in bindingIpairs(leases) do if not lease(facts) then return false end end
         return unchanged()
     end
 end
@@ -848,5 +1015,11 @@ function Adapters.food(action)
             requires={{field="location",oneOf={utensilFacts.location,action.character:getInventory()}}},effects={}}
     end
     return {version=1,complete=true,capacity="external",resources=resources},fullOutput
+end
+for module,roles in bindingPairs(sourceRoles) do
+    local owner=bindingOwn(Toolkit,module)
+    if bindingType(owner)=="table" then
+        for key in bindingPairs(roles) do Adapters.registerSourceFactory(owner,key,bindingOwn(owner,key)) end
+    end
 end
 return Adapters

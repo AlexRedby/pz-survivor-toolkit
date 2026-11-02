@@ -140,6 +140,20 @@ INTEGRATIONS = {
         'game_inputs': {test: ('native_action_root',) for test in ('test_smart_deposit.lua',
                                                                  'test_container_configuration_menus.lua', 'test_inventory_refresh.lua')},
     },
+    'SaucedCarts': {
+        'owners': ['client/PZSurvivorToolkit/ActionQueueCarts.lua'],
+        'option': 'saucedcarts_source', 'root': 'media/lua', 'argument': 'shared/SaucedCarts',
+        'tests': {'test_action_queue_cart_transfer_binding.lua': (
+            Source('CartBindingCoreSource', 'shared/SaucedCarts/Core.lua'),
+            Source('CartBindingDataSource', 'shared/SaucedCarts/CartData.lua'),
+            Source('CartBindingNetworkSource', 'shared/SaucedCarts/Network.lua'),
+            Source('CartBindingActionSource', 'shared/SaucedCarts/TimedActions/ISCartTransferAction.lua'),
+            Source('CartBindingInterceptorSource', 'shared/SaucedCarts/CartTransferInterceptor.lua'),
+            Source('CartBindingRestrictionsSource', 'client/SaucedCarts/Restrictions/TransferRestrictions.lua'),
+            Source('CartBindingVisualSource', 'client/SaucedCarts/CartState/VisualUpdateQueue.lua'),
+        )},
+        'game_inputs': {'test_action_queue_cart_transfer_binding.lua': ('native_action_root',)},
+    },
 }
 
 
@@ -162,6 +176,10 @@ def manual_source(spec, value, source):
     argument = spec.get('argument')
     if not argument:
         return value / source.path
+    if not Path(argument).suffix:
+        # Directory anchors may have a different basename from the upstream
+        # directory. Resolve every declared file relative to the anchor itself.
+        return Path(os.path.normpath(value / os.path.relpath(source.path, argument)))
     if source.path == argument:
         return value
     relative = os.path.relpath(source.path, str(Path(argument).parent))

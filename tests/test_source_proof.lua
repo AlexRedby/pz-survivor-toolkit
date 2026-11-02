@@ -1,3 +1,4 @@
+toolkitLuaMetatableMatches=NativeMetatableMatches or assert(loadfile((ProjectRoot or '.')..'/tests/support/source_binding.lua'))()
 local loadProof = TestLoadSourceProof or function()
     return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua')
 end
@@ -138,3 +139,97 @@ assert(Proof.closure(callback, 'bounded.lua') and filenameCalls == before + 1,
 assert(Proof.closure(callback, 'bounded.lua') and filenameCalls == before + 1)
 assert(opened == closed)
 print('Source proof checks passed: Unicode pins, fresh reads, bounded closure origins, replacement and retry.')
+
+
+-- This is a synchronous binding watcher only; it never runs a proof/guard.
+do
+    local callbackCalls = 0
+    local prototype = {inherited = 8}
+    local meta = {__index = function() callbackCalls = callbackCalls + 1; error('watcher index callback') end,
+        __eq = function() callbackCalls = callbackCalls + 1; error('watcher equality callback') end}
+    local owner = setmetatable({value = {}, unused = 1}, meta)
+    local marker = owner.value
+    local keys = {'value', 'missing'}
+    local specifications = {{owner = owner, keys = keys}}
+    local watch = assert(Proof.captureBindings(specifications))
+    keys[1] = 'other'; specifications[1].owner = prototype
+    assert(watch() and callbackCalls == 0, 'watcher retained caller-owned specifications')
+    owner.unused = 2
+    assert(watch(), 'unselected state invalidated a selected binding')
+    owner.missing = true
+    assert(not watch() and callbackCalls == 0, 'missing own-field insertion was not observed')
+    owner.missing = nil; owner.value = nil
+    assert(not watch() and callbackCalls == 0, 'removed field dispatched __index')
+    owner.value = marker
+    assert(watch())
+    setmetatable(owner, {})
+    assert(not watch() and callbackCalls == 0, 'metatable identity was not observed')
+end
+do
+    local meta = {__index = {value = 1}}
+    local owner = setmetatable({}, meta)
+    local watch = assert(Proof.captureBindings({{owner = owner, keys = {'value'}}}))
+    assert(watch(), 'inherited Kahlua fields must be treated as absent own fields')
+    owner.value = 1
+    assert(not watch(), 'inherited and own bindings were confused')
+    owner.value = nil
+    assert(watch())
+end
+do
+    local owner = {value = {}, disabled = false}
+    local watch = assert(Proof.captureBindings({{owner = owner, exact = true}}))
+    assert(watch())
+    owner.new = false; assert(not watch()); owner.new = nil
+    owner.disabled = nil; assert(not watch()); owner.disabled = false
+    assert(watch(), 'exact map failed after exact restoration')
+    owner.value = {}; assert(not watch(), 'object equality must use reference identity')
+end
+do
+    local owner = {}
+    for index = 1, 300 do owner[index] = index end
+    local watch = assert(Proof.captureBindings({{owner = owner, keys = {1, 300, 'absent'}}}))
+    assert(watch(), 'selected plain fields must not scan an entire large global table')
+    assert(not Proof.captureBindings({{owner = owner, exact = true}}), 'whole-map capture exceeded its structural bound')
+    setmetatable(owner, {__index=function()error('unknown inheritance callback')end})
+    assert(not Proof.captureBindings({{owner = owner, keys = {1}}}), 'metatable-bearing scan exceeded its structural bound')
+end
+for _, bindings in ipairs({{}, {{owner = {}, keys = {}}}, {{owner = {}, keys = {'x', 'x'}}},
+    {{owner = {}, exact = true, keys = {'x'}}}, {{owner = {}, exact = 'yes'}}, {{owner = {}, keys = {[2] = 'x'}}}}) do
+    assert(not Proof.captureBindings(bindings), 'malformed binding specifications accepted')
+end
+do
+    local owner = {}
+    assert(not Proof.captureBindings({{owner = owner, keys = {'x'}}, {owner = owner, keys = {'y'}}}),
+        'duplicate owners should be combined by their source owner')
+    local values = {}
+    for index = 1, 33 do values[index] = {owner = {}, keys = {'x'}} end
+    assert(not Proof.captureBindings(values), 'too many source roles accepted')
+end
+print('Source binding watchers: selected/exact own fields, no callbacks, caller isolation and bounded work passed.')
+
+do
+    local action,owner={},{}
+    for index=1,3000 do owner[index]=index end
+    local parent={__mode='k'}
+    setmetatable(owner,parent)
+    local watch=assert(Proof.captureBindings({{owner=owner,keys={action}}}))
+    assert(watch(),'selected weak-mode registry lookup must not scan the whole registry')
+    parent[action]='inherited'
+    assert(not watch(),'parent mutation could make native rawget inherit an action entry')
+    parent[action]=nil
+    assert(watch())
+    owner[action]=true
+    assert(not watch(),'new direct action claim was not observed')
+    owner[action]=nil;parent.__mode='v'
+    assert(not watch(),'inert metatable state changed after preparation')
+end
+print('Source selected registry lookup: large inert weak-mode maps retain exact own-field and parent-change semantics.')
+
+do
+    local parent,called={},0
+    local owner=setmetatable({value=7},parent)
+    local watch=assert(Proof.captureBindings({{owner=owner,keys={'value','missing'}}}))
+    setmetatable(owner,{__metatable=parent,__index=function()called=called+1;error('hidden lookup invoked')end})
+    assert(rawequal(getmetatable(owner),parent),'fixture must conceal the actual replacement')
+    assert(not watch()and called==0,'visible metatable equality must not attest actual lookup ancestry')
+end

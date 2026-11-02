@@ -6,6 +6,7 @@ local Equipment = {}
 Toolkit.FitnessEquipment = Equipment
 local Proof = require 'PZSurvivorToolkit/SourceProof'
 local nativeRestoration
+local loanObserver
 local panels, borrowed, episodes = {}, setmetatable({}, {__mode = "k"}), setmetatable({}, {__mode = "k"})
 
 local function matches(item, ref)
@@ -145,7 +146,9 @@ end
 
 local function observeLoans(intent)
     local previous = ISInventoryTransferAction.checkQueueList
-    intent.observeTransfers(function() end, function(action) return borrowed[action] ~= nil end, {
+    local onMerged=function() end
+    local canObserve=function(action) return borrowed[action]~=nil end
+    local events={
         begin = function(action)
             local loan = borrowed[action]
             if not loan then return false end
@@ -175,7 +178,9 @@ local function observeLoans(intent)
             if item and not loan.source:containsID(loan.item.id)
                 and Toolkit.ActionQueueSettlement.confirmEffect(loan.proof, true) then loan.earned = true end
         end,
-    })
+    }
+    intent.observeTransfers(onMerged,canObserve,events,Equipment.transferListenerBinding)
+    loanObserver={intent=intent,callback=onMerged,canObserve=canObserve,events=events}
     local replacement = ISInventoryTransferAction.checkQueueList
     local policy = Toolkit.ActionQueuePolicy
     return previous == replacement or policy and policy.adoptTransferQueueObserver
@@ -388,6 +393,25 @@ end
 -- The returned callbacks retain no public action-field capability.
 function Equipment.deferRestoration(action, panel)
     if nativeRestoration then return nativeRestoration(action, panel) end
+end
+
+function Equipment.transferListenerBinding(action,onMerged,canObserve,events)
+    local kind,meta,equal=type,getmetatable,rawequal
+    local observer,borrowedMap=loanObserver,borrowed
+    if not observer or not equal(observer.callback,onMerged) or not equal(observer.canObserve,canObserve)
+        or not equal(observer.events,events) or borrowedMap[action]~=nil or not Proof
+        or kind(Proof.captureBindings)~="function" then return end
+    local watch=Proof.captureBindings({
+        {owner=borrowedMap,keys={action}}, {owner=observer,exact=true}, {owner=events,exact=true},
+        {owner=Equipment,keys={"transferListenerBinding"}},
+        {owner=Toolkit,keys={"FitnessEquipment","ActionQueueTidyIntent"}},
+    })
+    if not watch then return end
+    return function()return equal(borrowed,borrowedMap) and equal(loanObserver,observer) and watch()end
+end
+local sourceAdapters=Toolkit.ActionQueueItemEditAdapters
+if sourceAdapters and sourceAdapters.registerSourceFactory then
+    sourceAdapters.registerSourceFactory(Equipment,"transferListenerBinding",Equipment.transferListenerBinding)
 end
 
 return Equipment

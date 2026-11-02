@@ -9,6 +9,7 @@ local function read(path)
 end
 local compatPath = root .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
 local compatSource = read(compatPath)
+local bindings = assert(compatSource:match('(local bindingCapture =.-)local function verified'))
 local catalog = assert(compatSource:match('(local projectCookActionSources = %b{})')) .. '\n'
     .. assert(compatSource:match('(local sourceFiles = %b{})'))
 local verified = assert(compatSource:match('(local function verified%(id, files%).-\nend)'))
@@ -103,7 +104,7 @@ local function fixture(options)
     require('TurnOffFridges/TOF_TileProps')
     local Proof = assert(loadfile(proofPath))()
     local code = 'local Toolkit,Operations,Policy,Proof,reviewedTransferPerform,transferPerformGuard=...\n'
-        .. 'local Compat,ready={},{}\n' .. catalog .. '\n' .. verified .. '\n' .. methods .. '\n' .. install .. '\n' .. query
+        .. 'local Compat,ready={},{}\n' .. bindings .. catalog .. '\n' .. verified .. '\n' .. methods .. '\n' .. install .. '\n' .. query
         .. '\nreturn {install=installFridgeTransfers,compat=Compat,ready=ready}'
     h.adapter = assert(loadstring(code, '@' .. compatPath))(PZSurvivorToolkit, operations, policy, Proof,
         options.bc and initial or nil, options.bc and function() return h.priorValid end or nil)

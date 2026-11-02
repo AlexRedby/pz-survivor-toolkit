@@ -1446,14 +1446,289 @@ os.exit(0)
                     (root/'client1-launch.log').write_text(changed)
                     self.assertTrue(a.verify(root,selection,{})['issues'])
 
-    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False, current=False, sample_ms=None, cases=None):
+    def active_edit_receipt(self, row, legacy_allowed=None):
+        case, mode, kind = row['id'], row['mode'], row['kind']
+        source = case.split('.')[0]; enabled = mode == 'toolkit'; borrowed = enabled and source != 'root'
+        if legacy_allowed is None: legacy_allowed = enabled
+        item, root, destination = 'Literature@live', 'ItemContainer@root', 'ItemContainer@' + source
+        book = row['ids']['front']; bag = row['ids']['bag']
+        ledger = dict(status='observed' if enabled else 'unhandled', reason=False if enabled else 'unavailable',
+                      borrowings=[], earnedPreparations=int(borrowed))
+        if enabled: ledger.update(generation=10, legacyHints=borrowed, providersPresent=False)
+        if borrowed:
+            ledger['borrowings'] = [dict(id=book['id'], fullType=book['type'], state='active', ambiguous=False,
+                source=destination, destination=root, returning=False, plannedReturn=False,
+                sourceOwner=dict(id=bag['id'], fullType=bag['type']) if bag else False)]
+        projection = dict(status='unhandled', reason='edit_unknown', externalCapacity=borrowed, allowedAbsent=True) if enabled else False
+        observer = dict(status='observed' if enabled else 'unhandled', reason=False if enabled else 'unavailable',
+                        allowedAbsent=True, projection=projection, returns=int(borrowed), unresolved=0)
+        sources = dict(observer='ActionQueuePolicy.lua', cleanup='ActionQueueSettlement.lua', bulk='BulkActions.lua',
+                       compat='ActionQueueCompat.lua', carts='ActionQueueCarts.lua',
+                       transferConstructor='CartTransferInterceptor.lua', transferPerform='ActionQueueCompat.lua')
+        value = dict(schema=1, case=case, kind=kind, mode=mode, queueEnabled=enabled,
+            scope='active-edit-native-return-effect-observation', mutationAuthorized=False, permissionsMeasured=False,
+            current=row['boundary']['reader'], currentNative=row['boundary']['native'], currentLuaStartedPresent=False,
+            currentLuaStarted=False, nativeStarted=True, nativeFinished=False, nativeForceComplete=False,
+            liveItem=item, source=source, observer=observer,
+            existingDecision=dict(entrypoint='Policy.evaluateCancel', allowed=legacy_allowed, reason=False if legacy_allowed else 'unavailable', whole=True),
+            ledgerBefore=ledger, ledgerAfter=copy.deepcopy(ledger), nativeFacts=False, prototype=False, effect=False,
+            qualifiedReturn=borrowed, readOnly=True, uiUnchanged=True, passed=True, failure=False, sources=sources)
+        if borrowed:
+            action = next(r['actionRef'] for r in row['records'] if r['role'] == 'return')
+            value['nativeFacts'] = dict(scope='independent-native-value-probe', schema=2, item=item, source=root, destination=destination,
+                destinationOwner='InventoryContainer@bag' if bag else False, destinationOwnerFullType=bag['type'] if bag else False,
+                primaryKnown=True, primaryFullType=False)
+            value['prototype'] = dict(action=action, item=item, member=item, liveItem=item, sameItemReference=True,
+                sameMemberReference=True, itemId=book['id'], itemType=book['type'], source=root, destination=destination,
+                stopSource='BulkActions.lua', performSource=sources['transferPerform'], constructorSource=sources['transferConstructor'],
+                allowMissingItems=True, pending=True)
+            value['effect'] = dict(version=1, complete=True, capacity='external', domain='item', id=book['id'], fullType=book['type'],
+                item=item, source=root, destination=destination, actionAbsent=True, synthetic=True,
+                resources=1, requirements=1, effects=1, field='location')
+        else: value['control'] = 'no-loan' if enabled else 'queue-disabled'
+        def distribution(samples):
+            return dict(samplesMs=samples, samples=3, minMs=min(samples), medianMs=sorted(samples)[1],
+                        maxMs=max(samples), meanMs=sum(samples)/3)
+        comparable = borrowed and legacy_allowed
+        value['performance'] = dict(scope='paired-live-header-return-entrypoints', timer='System.nanoTime', units='ms',
+            warmupPairs=1, pairs=3, sameLiveIntent=True, whole=True,
+            firstUseScope='first-call-after-untimed-identity-ledger-and-native-facts-diagnostics',
+            baseline=distribution([.2,.1,.3]), observer=distribution([.3,.2,.1]), baselineFirstMs=.4, observerFirstMs=.5,
+            comparable=comparable, comparisonReason='useful-return-effect-layer-and-existing-cancel-success' if comparable else value.get('control','existing-cancel-denied-or-observer-unknown'),
+            observerProjectionStatus=projection['status'] if projection else False, observerProjectionReason=projection['reason'] if projection else False,
+            timerOverhead='included-not-subtracted', sameOutputContract=False, completeEditMeasured=False, frameLoadMeasured=False,
+            positiveTimingClaim=False, assessment='not-assessed')
+        return value
+
+    def test_active_edit_flag_is_strict_and_restricted_to_precise_real_header_cases(self):
+        selection = self.selection(); selection['cases'] = list(a.ACTIVE_EDIT_CASES)
+        for bad in (1, 'true', None, [], {}):
+            selection['options']['active_edit_observation'] = bad
+            with self.assertRaises(ValueError): a.validate(selection)
+        selection['options']['active_edit_observation'] = True
+        with self.assertRaises(ValueError): a.validate(selection)
+        selection['options']['precise_timing'] = True
+        a.validate(selection)
+        for case in ('root.reader-child-cancel', 'worn-bag.header-cancel-capacity-lost', 'world.header-cancel-favorite'):
+            selection['cases'] = [case]
+            with self.assertRaises(ValueError): a.validate(selection)
+        selection['options']['active_edit_observation'] = False
+        a.validate(selection)  # Legacy cases retain their previous options/evidence contract.
+
+    def test_active_edit_exact_return_and_controls_keep_overall_unknown_visible(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for case in a.ACTIVE_EDIT_CASES:
+                    row = self.precise_evidence(case, kind, mode)[0]
+                    selection = self.selection(kind, mode)
+                    receipt = self.active_edit_receipt(row)
+                    self.assertEqual(a.active_edit_errors(receipt, row, case, selection), [], (kind, mode, case))
+                    diagnostic_only = copy.deepcopy(receipt)
+                    diagnostic_only.update(currentLuaStartedPresent=True, currentLuaStarted=True)
+                    self.assertEqual(a.active_edit_errors(diagnostic_only, row, case, selection), [])
+                    if mode == 'toolkit':
+                        self.assertEqual(receipt['observer']['projection']['status'], 'unhandled')
+                        self.assertEqual(receipt['performance']['observerProjectionReason'], 'edit_unknown')
+                    if mode == 'toolkit' and not case.startswith('root.'):
+                        self.assertTrue(receipt['performance']['comparable'])
+                        denied = self.active_edit_receipt(row, legacy_allowed=False)
+                        self.assertFalse(denied['performance']['comparable'])
+                        self.assertEqual(a.active_edit_errors(denied, row, case, selection), [])
+
+    def test_active_edit_metadata_hints_stay_native_and_require_fresh_qualified_effect(self):
+        for kind in ('sp', 'mp'):
+            for case in ('worn-bag.header-cancel', 'world.header-cancel'):
+                row = self.precise_evidence(case, kind=kind)[0]; selection = self.selection(kind=kind)
+                receipt = self.active_edit_receipt(row)
+                before = copy.deepcopy(receipt['ledgerBefore'])
+                self.assertIs(before['legacyHints'], True)
+                self.assertEqual(receipt['ledgerAfter'], before)
+                self.assertEqual(a.active_edit_errors(receipt, row, case, selection), [])
+                self.assertEqual(receipt['ledgerBefore'], before)
+                self.assertEqual(receipt['ledgerAfter'], before)
+                for wrong in (False, None, 1, 'true'):
+                    changed = copy.deepcopy(receipt)
+                    changed['ledgerBefore']['legacyHints'] = wrong; changed['ledgerAfter']['legacyHints'] = wrong
+                    self.assertTrue(a.active_edit_errors(changed, row, case, selection), wrong)
+                for field in ('nativeFacts', 'effect'):
+                    changed = copy.deepcopy(receipt); changed[field] = False
+                    self.assertTrue(a.active_edit_errors(changed, row, case, selection), field)
+                changed = copy.deepcopy(receipt); changed['ledgerAfter']['legacyHints'] = False
+                self.assertTrue(a.active_edit_errors(changed, row, case, selection))
+            row = self.precise_evidence('root.header-cancel', kind=kind)[0]; selection = self.selection(kind=kind)
+            receipt = self.active_edit_receipt(row)
+            self.assertIs(receipt['ledgerBefore']['legacyHints'], False)
+            receipt['ledgerBefore']['legacyHints'] = True; receipt['ledgerAfter']['legacyHints'] = True
+            self.assertTrue(a.active_edit_errors(receipt, row, row['id'], selection))
+
+    def test_active_edit_legacy_nil_error_encoding_only_decodes_success(self):
+        for mode in ('native', 'toolkit'):
+            row = self.precise_evidence('worn-bag.header-cancel', mode=mode)[0]
+            selection = self.selection(mode=mode)
+            receipt = self.active_edit_receipt(row); receipt['failure'] = 'nil'
+            self.assertEqual(a.active_edit_errors(receipt, row, row['id'], selection), [])
+            for failed in (None, 'None', '', 'false', 'nil\n', 'real failure', True):
+                changed = copy.deepcopy(receipt); changed['failure'] = failed
+                self.assertTrue(a.active_edit_errors(changed, row, row['id'], selection), failed)
+            for passed in (False, 'true', 1):
+                changed = copy.deepcopy(receipt); changed['passed'] = passed
+                self.assertTrue(a.active_edit_errors(changed, row, row['id'], selection), passed)
+        selection, client, server = self.log_bank(mode='native', precise=True, active=True, cases=a.ACTIVE_EDIT_CASES)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root/'server-launch.log').write_text(server)
+            (root/'client1-launch.log').write_text(client.replace('"failure": false', '"failure": "nil"'))
+            self.assertEqual(a.verify(root, selection, {})['issues'], [])
+
+    def test_active_edit_reviewed_cart_wrapper_pair_still_requires_qualified_return(self):
+        for kind in ('sp', 'mp'):
+            row = self.precise_evidence('worn-bag.header-cancel', kind=kind)[0]; selection = self.selection(kind=kind)
+            receipt = self.active_edit_receipt(row)
+            receipt['sources'].update(transferConstructor='TransferRestrictions.lua', transferPerform='VisualUpdateQueue.lua')
+            receipt['prototype'].update(constructorSource='TransferRestrictions.lua', performSource='VisualUpdateQueue.lua')
+            self.assertEqual(a.active_edit_errors(receipt, row, row['id'], selection), [])
+            for constructor, perform in (('TransferRestrictions.lua', 'ISInventoryTransferAction.lua'),
+                                         ('ISInventoryTransferAction.lua', 'VisualUpdateQueue.lua'),
+                                         ('Foreign.lua', 'VisualUpdateQueue.lua'),
+                                         ('TransferRestrictions.lua', 'Foreign.lua')):
+                changed = copy.deepcopy(receipt)
+                changed['sources'].update(transferConstructor=constructor, transferPerform=perform)
+                changed['prototype'].update(constructorSource=constructor, performSource=perform)
+                self.assertTrue(a.active_edit_errors(changed, row, row['id'], selection), (constructor, perform))
+            for mutate in (lambda r: r['sources'].update(carts='fixture.lua'),
+                           lambda r: r.update(nativeFacts=False), lambda r: r.update(effect=False),
+                           lambda r: (r['ledgerBefore'].update(earnedPreparations=0), r['ledgerAfter'].update(earnedPreparations=0)),
+                           lambda r: r['prototype'].update(performSource='ISInventoryTransferAction.lua')):
+                changed = copy.deepcopy(receipt); mutate(changed)
+                self.assertTrue(a.active_edit_errors(changed, row, row['id'], selection))
+
+    def test_active_edit_causal_mutations_reject_rebinding_rights_missing_facts_and_timing_claims(self):
+        row = self.precise_evidence('worn-bag.header-cancel')[0]; selection = self.selection()
+        mutations = {
+            'schema': lambda r: r.update(schema=True),
+            'case': lambda r: r.update(case='world.header-cancel'),
+            'kind': lambda r: r.update(kind='sp'),
+            'mode': lambda r: r.update(mode='native'),
+            'native current': lambda r: r.update(currentNative='java:foreign'),
+            'Lua started inconsistent': lambda r: r.update(currentLuaStartedPresent=False, currentLuaStarted=True),
+            'Lua started nonboolean': lambda r: r.update(currentLuaStartedPresent=1),
+            'Lua started diagnostic missing': lambda r: r.pop('currentLuaStarted'),
+            'not native started': lambda r: r.update(nativeStarted=False),
+            'native complete': lambda r: r.update(nativeFinished=True),
+            'native force complete': lambda r: r.update(nativeForceComplete=True),
+            'mutation': lambda r: r.update(readOnly=False),
+            'UI mutation': lambda r: r.update(uiUnchanged=False),
+            'rights': lambda r: r.update(mutationAuthorized=True),
+            'permission measurement': lambda r: r.update(permissionsMeasured=True),
+            'failed assertion': lambda r: r.update(passed=False, failure='detached prototype'),
+            'observer authority': lambda r: r['observer'].update(allowedAbsent=False),
+            'missing return': lambda r: r['observer'].update(returns=0),
+            'lost overall unknown reason': lambda r: r['observer']['projection'].update(reason=False),
+            'lost overall projection': lambda r: (r['observer'].update(projection=False), r['performance'].update(observerProjectionStatus=False, observerProjectionReason=False)),
+            'projection capacity lost': lambda r: r['observer']['projection'].update(externalCapacity=False),
+            'projection authority': lambda r: r['observer']['projection'].update(allowedAbsent=False),
+            'hidden projection authority': lambda r: r['observer']['projection'].update(allowed=True),
+            'fake wrapper': lambda r: r['sources'].update(carts='fixture.lua'),
+            'no probe': lambda r: r.update(nativeFacts=False),
+            'old native schema': lambda r: r['nativeFacts'].update(schema=1),
+            'native different item': lambda r: r['nativeFacts'].update(item='Literature@detached'),
+            'native unknown primary': lambda r: r['nativeFacts'].update(primaryKnown=False),
+            'native wrong owner': lambda r: r['nativeFacts'].update(destinationOwnerFullType='Base.OtherBag'),
+            'detached prototype': lambda r: r['prototype'].update(sameItemReference=False),
+            'detached queue member': lambda r: r['prototype'].update(member='Literature@detached'),
+            'prototype wrong action': lambda r: r['prototype'].update(action='lua:foreign'),
+            'prototype native allocated': lambda r: r['prototype'].update(pending=False),
+            'effect hidden native action': lambda r: r['effect'].update(actionAbsent=False),
+            'effect appended executor': lambda r: r['effect'].update(action='lua:executor'),
+            'effect capacity': lambda r: r['effect'].update(capacity='admitted'),
+            'effect wrong id': lambda r: r['effect'].update(id=999),
+            'effect wrong type': lambda r: r['effect'].update(fullType='Base.OtherBook'),
+            'effect wrong destination': lambda r: r['effect'].update(destination='ItemContainer@other'),
+            'effect two effects': lambda r: r['effect'].update(effects=2),
+            'effect incomplete': lambda r: r['effect'].update(complete=False),
+            'ledger mutation': lambda r: r['ledgerAfter'].update(earnedPreparations=0),
+            'no private borrowing': lambda r: (r['ledgerBefore'].update(borrowings=[]), r['ledgerAfter'].update(borrowings=[])),
+            'no real baseline': lambda r: r['existingDecision'].update(entrypoint='fixture.helper'),
+            'baseline different intent': lambda r: r['existingDecision'].update(whole=False),
+            'false comparability': lambda r: r['existingDecision'].update(allowed=False),
+            'timing fake scope': lambda r: r['performance'].update(scope='source-only'),
+            'timing warmup': lambda r: r['performance'].update(warmupPairs=0),
+            'timing pairs': lambda r: r['performance'].update(pairs=2),
+            'timing frame claim': lambda r: r['performance'].update(frameLoadMeasured=True),
+            'timing complete edit claim': lambda r: r['performance'].update(completeEditMeasured=True),
+            'timing positive claim': lambda r: r['performance'].update(positiveTimingClaim=True),
+            'timing acceptance': lambda r: r['performance'].update(assessment='accepted'),
+            'timing hidden acceptance': lambda r: r['performance'].update(performanceAssessment='accepted'),
+            'timing lost unknown': lambda r: r['performance'].update(observerProjectionStatus='allowed'),
+            'timing negative': lambda r: r['performance'].update(observerFirstMs=-1),
+            'timing infinity': lambda r: r['performance']['observer']['samplesMs'].__setitem__(0, float('inf')),
+            'timing NaN': lambda r: r['performance']['baseline'].update(meanMs=float('nan')),
+            'timing bool': lambda r: r['performance']['observer']['samplesMs'].__setitem__(0, True),
+            'timing inconsistent mean': lambda r: r['performance']['baseline'].update(meanMs=8),
+            'timing missing distribution': lambda r: r['performance'].pop('baseline'),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                receipt = self.active_edit_receipt(row); mutate(receipt)
+                self.assertTrue(a.active_edit_errors(receipt, row, row['id'], selection))
+        for key, wrong in (('earnedPreparations', 0), ('legacyHints', False), ('providersPresent', True), ('generation', -1)):
+            receipt = self.active_edit_receipt(row)
+            receipt['ledgerBefore'][key] = wrong; receipt['ledgerAfter'][key] = wrong
+            self.assertTrue(a.active_edit_errors(receipt, row, row['id'], selection), key)
+        changed = copy.deepcopy(row)
+        next(r for r in changed['records'] if r['role'] == 'pickup').pop('performedAt')
+        self.assertTrue(a.active_edit_errors(self.active_edit_receipt(row), changed, row['id'], selection))
+        for field in ('nativeRef', 'started'):
+            changed = copy.deepcopy(row); changed['records'][0].pop(field)
+            self.assertTrue(a.active_edit_errors(self.active_edit_receipt(row), changed, row['id'], selection))
+        for case, mode in (('root.header-cancel', 'toolkit'), ('world.header-cancel', 'native')):
+            control = self.precise_evidence(case, mode=mode)[0]; chosen = self.selection(mode=mode)
+            for mutate in (lambda r: r.update(control='no-loan' if mode == 'native' else 'queue-disabled'),
+                           lambda r: r.update(qualifiedReturn=True), lambda r: r.update(effect={'complete': True}),
+                           lambda r: r['performance'].update(comparable=True)):
+                receipt = self.active_edit_receipt(control); mutate(receipt)
+                self.assertTrue(a.active_edit_errors(receipt, control, case, chosen))
+            if mode == 'native':
+                receipt = self.active_edit_receipt(control, legacy_allowed=True)
+                self.assertTrue(a.active_edit_errors(receipt, control, case, chosen))
+
+    def test_active_edit_raw_setup_case_receipts_are_integrated_and_optional(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                selection, client, server = self.log_bank(kind=kind, mode=mode, precise=True, active=True, cases=a.ACTIVE_EDIT_CASES)
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory); (root/'server-launch.log').write_text(server)
+                    (root/'client1-launch.log').write_text(client)
+                    result = a.verify(root, selection, {})
+                    self.assertEqual(result['issues'], [], (kind, mode, result['issues']))
+                    self.assertEqual(len(result['evidence']['activeEditObservation']), 3)
+                    rawline = next(line for line in client.splitlines() if line.startswith(a.PREFIX+'ACTIVE_EDIT_OBSERVATION '))
+                    for name, changed in (
+                        ('missing raw', client.replace(rawline, '', 1)), ('duplicate raw', client+'\n'+rawline),
+                        ('foreign raw', client+'\n'+rawline.replace('root.header-cancel', 'foreign.case')),
+                        ('setup false', client.replace('"activeEditObserved": true', '"activeEditObserved": false')),
+                        ('setup missing', client.replace(', "activeEditObserved": true', '')),
+                        ('case mismatch', client.replace('"readOnly": true, "uiUnchanged": true', '"readOnly": false, "uiUnchanged": true', 1)),
+                        ('malformed raw', client.replace(rawline, a.PREFIX+'ACTIVE_EDIT_OBSERVATION null', 1))):
+                        (root/'client1-launch.log').write_text(changed)
+                        self.assertTrue(a.verify(root, selection, {})['issues'], (kind, mode, name))
+                    selection['options']['active_edit_observation'] = False
+                    (root/'client1-launch.log').write_text(client)
+                    self.assertTrue(a.verify(root, selection, {})['issues'])
+                    old_selection, old_client, old_server = self.log_bank(kind=kind, mode=mode, precise=True, cases=a.ACTIVE_EDIT_CASES)
+                    (root/'client1-launch.log').write_text(old_client); (root/'server-launch.log').write_text(old_server)
+                    self.assertEqual(a.verify(root, old_selection, {})['issues'], [])
+
+    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False, current=False, sample_ms=None, cases=None, active=False):
         selection = self.selection(kind, mode); client, server = [], []
         cases = list(a.CASES) if cases is None else list(cases); selection['cases'] = cases
         if requests: selection['options']['require_native_requests']=True
         if precise: selection['options']['precise_timing']=True
+        if active: selection['options']['active_edit_observation']=True
         def raw(marker, value): return a.PREFIX + marker + ' ' + json.dumps(value)
         def event(value): return '[QUEUE_CHECK] ' + json.dumps(value)
         client.append(event(dict(event='setup', suite='book-controls', cases=cases, queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests,timingClock=copy.deepcopy(a.CLOCK_INFO)if precise else False)))
+        if active:
+            setup=json.loads(client[0].split(' ', 1)[1]);setup['activeEditObserved']=True;client[0]=event(setup)
         for case in cases:
             evidence=self.precise_evidence(case,kind,mode,requests=requests)if precise else(self.request_evidence if requests else self.evidence)(case,kind,mode)
             if current:evidence=self.current_measurements(evidence)
@@ -1475,6 +1750,9 @@ os.exit(0)
                     if field in record: client.append(raw(marker,record[field]))
                 for sample in record.get('requestStates',[]):client.append(raw('NATIVE_REQUEST',sample))
             client.append(raw('PERFORMANCE',row['performance']))
+            if active:
+                row['activeEditObservation']=self.active_edit_receipt(row)
+                client.append(raw('ACTIVE_EDIT_OBSERVATION',row['activeEditObservation']))
             client.append(event(row))
         client.append(event(dict(event='complete', suite='book-controls', cases=cases, performed=len(cases), skipped=0, failed=0)))
         client.append(raw('COMPLETE', dict(cases=cases, failed=0)))

@@ -103,4 +103,114 @@ function Proof.closure(callback, filename)
     return source == filename
 end
 
+-- Query-local Lua bindings, not a proof of behavior or a cached queue decision.
+-- Reviewed owners select their dependencies; arbitrary guard callbacks gain no
+-- authority from making a watcher. No getter or metatable callback is invoked.
+local bindingType, bindingMeta, bindingRaw = type, getmetatable, rawget
+local bindingPairs, bindingEach, bindingEqual = pairs, ipairs, rawequal
+local bindingNativeMeta, bindingGlobals = toolkitLuaMetatableMatches, _G
+local function actualBindingMeta(owner, expected)
+    if bindingType(bindingNativeMeta) ~= "function" then return expected == nil end
+    return bindingMeta(bindingGlobals) == nil
+        and bindingEqual(bindingRaw(bindingGlobals,"toolkitLuaMetatableMatches"),bindingNativeMeta)
+        and bindingNativeMeta(owner, expected) == true
+end
+local function bindingArray(value, limit)
+    if bindingType(value) ~= "table" or bindingMeta(value) ~= nil then return end
+    local count, maximum = 0, 0
+    for key in bindingPairs(value) do
+        count = count + 1
+        if count > limit or bindingType(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > limit then return end
+        if key > maximum then maximum = key end
+    end
+    if count == maximum then return count end
+end
+-- A private weak-mode metatable has no inherited binding for these keys.
+-- Prove and retain its tiny exact shape, then use native rawget for selected
+-- fields without scanning an arbitrarily large action/loan registry.
+local function inertBindingParent(parent, keys)
+    if bindingType(parent)~="table" or bindingMeta(parent)~=nil or not actualBindingMeta(parent,nil) then return end
+    local count=0
+    for key in bindingPairs(parent) do
+        if key~="__mode" then return end
+        count=count+1
+    end
+    for key in bindingPairs(keys) do if bindingRaw(parent,key)~=nil then return end end
+    return {owner=parent,mode=bindingRaw(parent,"__mode"),count=count}
+end
+local function bindingParentUnchanged(parent)
+    if bindingMeta(parent.owner)~=nil or not actualBindingMeta(parent.owner,nil) then return false end
+    local count=0
+    for key,value in bindingPairs(parent.owner) do
+        count=count+1
+        if count>parent.count or key~="__mode" or not bindingEqual(value,parent.mode) then return false end
+    end
+    return count==parent.count
+end
+function Proof.captureBindings(bindings)
+    local size = bindingArray(bindings, 32)
+    if not size or size == 0 then return end
+    local records, owners = {}, {}
+    for index = 1, size do
+        local specification = bindings[index]
+        if bindingType(specification) ~= "table" or bindingMeta(specification) ~= nil then return end
+        local owner, keys, exact = specification.owner, specification.keys, specification.exact
+        if bindingType(owner) ~= "table" or owners[owner] or exact ~= nil and bindingType(exact) ~= "boolean" then return end
+        local keyCount = not exact and bindingArray(keys, 128)
+        if exact and keys ~= nil or not exact and (not keyCount or keyCount == 0) then return end
+        local record = {owner = owner, meta = bindingMeta(owner), exact = exact == true, fields = {}, keys = {}, count = 0}
+        if not actualBindingMeta(owner,record.meta) then return end
+        owners[owner], records[index] = true, record
+        if not exact then
+            for position = 1, keyCount do
+                local key = keys[position]
+                if key == nil or bindingType(key) == "number" and key ~= key or record.keys[key] then return end
+                record.keys[key] = true
+            end
+        end
+        if not exact and record.meta~=nil then record.parent=inertBindingParent(record.meta,record.keys) end
+        if exact or record.meta ~= nil and not record.parent then
+            local count = 0
+            for key, value in bindingPairs(owner) do
+                count = count + 1
+                if count > 128 then return end
+                if exact or record.keys[key] then
+                    record.fields[key] = value
+                    record.count = record.count + 1
+                end
+            end
+        else
+            -- Plain or proven noninheriting selected fields have truly own
+            -- rawget semantics, even in Kahlua's metatable-following rawget.
+            for _, key in bindingEach(keys) do
+                local value = bindingRaw(owner, key)
+                if value ~= nil then record.fields[key] = value; record.count = record.count + 1 end
+            end
+        end
+    end
+    return function()
+        for _, record in bindingEach(records) do
+            if not bindingEqual(bindingMeta(record.owner), record.meta) or not actualBindingMeta(record.owner,record.meta) then return false end
+            if record.parent and not bindingParentUnchanged(record.parent) then return false end
+            if record.exact or record.meta ~= nil and not record.parent then
+                local total, found = 0, 0
+                for key, value in bindingPairs(record.owner) do
+                    total = total + 1
+                    if total > 128 then return false end
+                    if record.exact or record.keys[key] then
+                        found = found + 1
+                        if not bindingEqual(record.fields[key], value) then return false end
+                    end
+                end
+                if found ~= record.count then return false end
+            else
+                for key in bindingPairs(record.keys) do
+                    if not bindingEqual(bindingRaw(record.owner, key), record.fields[key]) then return false end
+                end
+            end
+        end
+        return true
+    end
+end
+
 return Proof
