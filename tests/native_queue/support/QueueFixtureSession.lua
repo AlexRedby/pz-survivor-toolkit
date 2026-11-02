@@ -10,6 +10,7 @@ return function(config,factories,server)
   allowed[actor]=true
  end
  local S={index=1,epoch=1,phase='prepare',actors={},cases=config.cases,config=config}
+ local localRole=server and 'server' or config.user
  local context,prepared,finished,cleaned
  local function actorFor(player)
   if config.actor then return config.actor(player) end
@@ -40,7 +41,7 @@ return function(config,factories,server)
  end
  function S.quarantine(reason)
   if S.phase=='done' or S.phase=='quarantined' then return end
-  S.phase='quarantined';S.reason=tostring(reason);log('QUARANTINE',config.user,'reason='..tostring(reason))
+  S.phase='quarantined';S.reason=tostring(reason);log('QUARANTINE',localRole,'reason='..tostring(reason))
   if server then broadcast('Quarantine',{reason=tostring(reason)}) else transmit(nil,'Quarantine',{reason=tostring(reason)}) end
  end
  local function callbacks(name,...)
@@ -57,17 +58,17 @@ return function(config,factories,server)
   local function finishClean()
    local clean,result,reason=pcall(context.cleanup)
    if not clean or result~=true then S.quarantine('client cleanup '..tostring(reason or result));return end
-   S.phase='finish';log('LOCAL_CLEAN',config.user,'ok=true');transmit(nil,'Finish',{ok=S.result})
+   S.phase='finish';log('LOCAL_CLEAN',localRole,'ok=true');transmit(nil,'Finish',{ok=S.result})
   end
   context.finish=function(ok,uncertain)
    if S.phase~='running' then return end
    if uncertain then S.quarantine('unknown effects after deadline');return end
-   S.result=ok;log('FINISH',config.user,'ok='..tostring(ok))
+   S.result=ok;log('FINISH',localRole,'ok='..tostring(ok))
    S.phase='drain';S.drainSince=getTimestampMs();S.finishClean=finishClean
    if not context.readyToClean then finishClean() end
   end
   if S.configure then S.configure(context) end
-  log('BEGIN',config.user);factories[context.case](context)
+  log('BEGIN',localRole);factories[context.case](context)
  end
  function S.prepare()
   if S.phase~='prepare' then return end
@@ -80,8 +81,8 @@ return function(config,factories,server)
   return true
  end
  local function advance()
-  log('JOINT_CLEAN',config.user,'ok=true');broadcast('JointClean')
-  if S.index==#S.cases then S.phase='done';log('COMPLETE',config.user,'cases='..#S.cases);broadcast('Complete');return end
+  log('JOINT_CLEAN',localRole,'ok=true');broadcast('JointClean')
+  if S.index==#S.cases then S.phase='done';log('COMPLETE',localRole,'cases='..#S.cases);broadcast('Complete');return end
   S.index=S.index+1;S.epoch=S.epoch+1;S.phase='prepare'
   local ok,error=pcall(instantiate)
   if not ok then S.quarantine('prepare '..tostring(error));return end
@@ -151,7 +152,7 @@ return function(config,factories,server)
    end
    if ready then
     -- OnGameStart precedes MP connection; native OnTick runs after ingame becomes true.
-    S.pendingPrepare=false;log('PREPARE',config.user);transmit(nil,'Prepare')
+    S.pendingPrepare=false;log('PREPARE',localRole);transmit(nil,'Prepare')
    end
   elseif S.phase=='drain' then
    local ok,ready=pcall(context.readyToClean)
@@ -163,7 +164,7 @@ return function(config,factories,server)
   elseif not server and S.phase=='clean' then
    local ok,ready,reason=pcall(context.clean,S.cleanReceipt)
    if not ok then S.quarantine('cleanup verification '..tostring(ready))
-   elseif ready==true then S.phase='cleaned';log('CLEANUP',config.user,'ok=true');transmit(nil,'Cleaned')
+   elseif ready==true then S.phase='cleaned';log('CLEANUP',localRole,'ok=true');transmit(nil,'Cleaned')
    elseif getTimestampMs()-S.cleanSince>15000 then S.quarantine('replicated cleanup deadline '..tostring(reason)) end
   end
  end

@@ -1,5 +1,10 @@
 -- Exercise the actual coordinator after a post-Prepare local failure. A runner
 -- marker must wait for owned cleanup and complete original/UI/position return.
+package.preload.QueuePreflight=function()
+ return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,
+  onTick=function(events,fn)events.OnTick.Add(fn)end,
+  removeTick=function(events,fn)events.OnTick.Remove(fn)end}
+end
 local nativePrint=print
 local function run(kind,stuck,lateDone,duplicateCapture,failedDispatch)
  local clock,owned,restored,positionReturned=0,false,false,false

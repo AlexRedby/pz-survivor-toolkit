@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 
 from .. import receipts
-from .warehouse_workload_verify import restored_ui, position
+from .warehouse_workload_verify import restored_ui, position, world_cleanup
 
 MARKER = '[WAREHOUSE_WALKING] '
 EVENTS = {'READY', 'BASELINE_SEEN', 'BASELINES', 'NORMALIZED', 'BASELINE', 'SETUP', 'SEED', 'ADMIT', 'MODE', 'GO', 'INTERVAL',
@@ -293,6 +293,7 @@ def verify(root, selection):
         ensure(release['originalRootIds'] == originals, 'release changed originals')
         phases[index] = (phase, seed['snapshot'], release)
     cleanup = one(server, 'RESTORED')
+    world_cleanup(cleanup.get('worldCleanupJournal'), 12)
     require(cleanup, token=token, index=16, removedCrates=12, ownedAbsent=True, ownedRemaining=0,
             cleanupTransport='native-reliable-ordered-channel1' if selection['kind']=='mp' else 'in-process-shared-authority')
     ensure(cleanup['originalRootIds'] == originals and len(cleanup['crates']) == 12, 'cleanup cohort differs')

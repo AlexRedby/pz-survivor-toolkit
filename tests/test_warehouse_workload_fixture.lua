@@ -1,5 +1,7 @@
 -- Offline protocol/ownership checks. Actual actions and replication need fresh Host clients.
 local fixtureRoot=ProjectRoot..'/tests/native_queue/warehouse-workload/'
+local WorldCleanup=dofile(ProjectRoot..'/tests/native_queue/support/QueueFixtureWorldCleanup.lua')
+package.preload.QueueFixtureWorldCleanup=function()return WorldCleanup end
 local nativeNext=next;next=nil
 local config={kind='mp',mode='toolkit',cases={'peer-edits'}}
 local function category(item)
@@ -82,6 +84,7 @@ local function square(x,y,z)
  function s:getRoom()return nil end
  function s:getObjects()return list(self.objects)end
  function s:getSpecialObjects()return list(self.special)end
+ function s:getWorldObjects()return list(self.worldObjects or {})end
  function s:isBlockedTo()return false end
  function s:AddSpecialObject(object)self.objects[#self.objects+1]=object;self.special[#self.special+1]=object;object.square=self end
  function s:transmitRemoveItemFromSquare(object)
@@ -359,7 +362,11 @@ for _,when in ipairs({'before','after'})do
    return native(self,value)
   end
  end
- rejected(F.abort,state);assert(#state.worldCleanup.removed==2,'completed world prefix was lost')
+ rejected(F.abort,state)
+ local journal=WorldCleanup.receipt(state.worldCleanup)
+ assert(journal.removedObjects==(when=='after'and 3 or 2)and journal.states[1].status=='removed'
+  and journal.states[2].status=='removed'and journal.states[3].status=='uncertain',
+  'completed world prefix or uncertain physical result was lost')
  assert(calls[1]==1 and calls[2]==1 and calls[3]==1 and calls[4]==nil,'world cleanup crossed uncertain packet')
  rejected(F.abort,state);assert(calls[1]==1 and calls[2]==1 and calls[3]==1 and calls[4]==nil,'world index packet replayed')
 end
@@ -377,25 +384,25 @@ for index,object in ipairs(s.crates)do local sq=object:getSquare();local native=
   object.removeFromSquare=function(self)native(sq,self)end
  end
 end
-rejected(F.abort,s);assert(#s.worldCleanup.removed==2 and worldCalls[3]==1,'local failure lost completed prefix')
+rejected(F.abort,s);assert(WorldCleanup.receipt(s.worldCleanup).removedObjects==2 and worldCalls[3]==1,'local failure lost completed prefix')
 local restored=F.abort(s);assert(restored.removedCrates==12 and #restored.crates==12,'local world retry did not finish exact cohort')
 for index=1,12 do assert(worldCalls[index]==1,'local world retry retransmitted a square index')end
 assert(F.abort(s)==restored,'repeat abort regenerated world proof')
 -- Cached abort receipts still validate originals, exact object ownership and
 -- actual absence before returning; a completed receipt is not a live proof.
-local retired=s;local retiredObject=retired.crates[1];local retiredEntry=retired.worldCleanup.entries[1]
+local retired=s;local retiredObject=retired.crates[1];local retiredSquare=retiredObject:getSquare() or getCell():getGridSquare(retired.worldPoints[1].x,retired.worldPoints[1].y,retired.worldPoints[1].z)
 local retiredOriginal=retired.players.client1.original
 retired.players.client1.root:Remove(retiredOriginal);rejected(F.abort,retired)
 retired.players.client1.root:AddItem(retiredOriginal)
 local retiredToken=retiredObject.data.PZSTWarehouseWorkloadOwner
 retiredObject.data.PZSTWarehouseWorkloadOwner='foreign';rejected(F.abort,retired)
 retiredObject.data.PZSTWarehouseWorkloadOwner=retiredToken
-retiredEntry.square:AddSpecialObject(retiredObject);rejected(F.abort,retired)
-assert(retiredObject:getSquare()==retiredEntry.square,'cached abort removed a reappeared object')
+retiredSquare:AddSpecialObject(retiredObject);rejected(F.abort,retired)
+assert(retiredObject:getSquare()==retiredSquare,'cached abort removed a reappeared object')
 for index=1,12 do assert(worldCalls[index]==1,'cached abort failure replayed native world deletion')end
 -- Restore the test double directly, without invoking the fixture cleanup.
-retiredEntry.square.objects={};retiredEntry.square.special={};retiredObject.square=nil
-assert(F.abort(retired)==restored,'valid cached abort no longer returns its receipt')
+retiredSquare.objects={};retiredSquare.special={};retiredObject.square=nil
+rejected(F.abort,retired) -- A violated world lease cannot be revived by restoring public fields.
 -- World absence includes the special-object collection, not only ordinary objects.
 testX=testX+100;s=F.prepare(players(testX));local object=s.crates[1];local sq=object:getSquare()
 sq.objects={};assert(not F.absent(s.ids),'special-only owned object was ignored')

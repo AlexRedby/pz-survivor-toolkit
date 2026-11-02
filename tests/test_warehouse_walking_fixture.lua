@@ -1,5 +1,7 @@
 -- Offline protocol/ownership checks. Actual actions and replication need fresh Host clients.
 local fixtureRoot=ProjectRoot..'/tests/native_queue/warehouse-walking/'
+local WorldCleanup=dofile(ProjectRoot..'/tests/native_queue/support/QueueFixtureWorldCleanup.lua')
+package.preload.QueueFixtureWorldCleanup=function()return WorldCleanup end
 local nativeNext=next;next=nil
 local config={kind='mp',mode='toolkit',cases={'walk'}}
 package.preload.QueueTestSelection=function()return config end

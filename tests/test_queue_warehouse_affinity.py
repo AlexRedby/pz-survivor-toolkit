@@ -188,6 +188,8 @@ def fixture(outcomes=None, case='hidden-affinity'):
             emit(role, 'RELEASE', dict(context, step='personal-quick', absent=True, receipt=released,
                                       original=baselines[role]['original']))
     restored = emit('server', 'RESTORED', dict(index=len(kinds), removedCrates=12, ownedAbsent=True, ownedRemaining=0,
+                                              worldCleanupJournal=dict(publicationAttempts=12,removedObjects=12,recoveries=[],publicationUncertain=False,
+                                                  states=[dict(index=d['index'],status='removed') for d in descriptors['crates']]),
                                               originalRootIds=originals, crates=[dict(d, afterIndex=-1) for d in descriptors['crates']],
                                               snapshot=snapshot(None, {}, 'server')))
     emit('server', 'COMPLETE', dict(phases=len(kinds), restored=True))
@@ -424,6 +426,9 @@ class WarehouseAffinityTests(unittest.TestCase):
             lambda r: find(r, 'server', 'RELEASE')['cleanupJournal'].update(recoveries=[dict(id=101)]),
             lambda r: find(r, 'client2', 'RELEASE')['original'].update(payload=False),
             lambda r: find(r, 'server', 'RESTORED')['crates'][0].update(afterIndex=1),
+            lambda r: find(r, 'server', 'RESTORED').pop('worldCleanupJournal'),
+            lambda r: find(r, 'server', 'RESTORED')['worldCleanupJournal'].update(publicationUncertain=True),
+            lambda r: find(r, 'server', 'RESTORED')['worldCleanupJournal'].update(recoveries=[{'operation': 'local'}]),
         ]
         for change in changes:
             with self.subTest(change=change):

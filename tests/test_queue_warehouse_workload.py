@@ -134,6 +134,8 @@ def fixture():
         for role in ('client1','client2'):
             emit(role,'RELEASE',dict(context,step='hidden-loot',receipt=release,absent=True,original=baseline[role]))
     cleanup=dict(token=token,index=2,removedCrates=12,ownedAbsent=True,ownedRemaining=0,originalRootIds=originals,
+                 worldCleanupJournal=dict(publicationAttempts=12,removedObjects=12,recoveries=[],publicationUncertain=False,
+                    states=[dict(index=desc['index'],status='removed') for desc in crates]),
                  crates=[dict(desc,afterIndex=-1) for desc in crates],snapshot=snapshot(None,{},'server'))
     emit('server','RESTORED',{key:value for key,value in cleanup.items() if key!='token'})
     cleanup=copy.deepcopy(rows['server'][-1][1])
@@ -191,6 +193,13 @@ class WarehouseWorkloadTests(unittest.TestCase):
                        lambda row:row['cleanupJournal']['removedIds'].pop()):
             rows=fixture();change(find(rows,'server','RELEASE'))
             with self.subTest(change=change):self.assertTrue(self.result(rows)['issues'])
+        for change in (lambda row: row.pop('worldCleanupJournal'),
+                       lambda row: row['worldCleanupJournal'].update(publicationUncertain=True),
+                       lambda row: row['worldCleanupJournal'].update(recoveries=[{'operation': 'local'}]),
+                       lambda row: row['worldCleanupJournal'].update(publicationAttempts=13),
+                       lambda row: row['worldCleanupJournal']['states'][0].update(status='published')):
+            rows=fixture();change(find(rows,'server','RESTORED'))
+            self.assertTrue(self.result(rows)['issues'])
 
     def test_actual_craft_control_requires_its_exact_native_transfer_path(self):
         neat=fixture()

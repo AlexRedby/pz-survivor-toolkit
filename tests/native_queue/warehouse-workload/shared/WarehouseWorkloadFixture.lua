@@ -4,6 +4,7 @@ local selection=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
 local Model=require 'PZSurvivorToolkit/ManifestModel'
 local Cleanup=require 'QueueFixtureItemCleanup'
+local WorldCleanup=require 'QueueFixtureWorldCleanup'
 local physical=selection.cases[1]=='physical-affinity'
 local affinity=selection.cases[1]=='hidden-affinity'or physical
 local F={module='WarehouseWorkloadTest',case=selection.cases[1],affinity=affinity,physical=physical,
@@ -418,11 +419,6 @@ function F.release(s,index)
  s.releases=s.releases or {};s.releaseLeases=s.releaseLeases or {}
  s.releases[index]=row;s.releaseLeases[index]=lease;return row
 end
-local function present(square,object)
- for _,getter in ipairs({'getObjects','getSpecialObjects'})do
-  for _,candidate in ipairs(array(square[getter](square)))do if candidate==object then return true end end
- end;return false
-end
 function F.absent(packet)
  for _,point in ipairs(packet.crates)do
   local square=getCell():getGridSquare(point.x,point.y,point.z);if not square then return false end
@@ -433,44 +429,37 @@ function F.absent(packet)
 end
 function F.cleanup(s)
  assert(not s.phase and s.nextIndex==#F.modes+1 and empty(s.owned),'unfinished workload cleanup');preserved(s)
- local world=s.worldCleanup
- if not world then
-  world={entries={},removed={},token=s.token}
-  -- Freeze all exact objects and packet descriptors before deleting any.
-  for slot,object in ipairs(s.crates)do
-   assert(object:getModData()[owner]==s.token..':'..slot and object:getContainer()==s.stores[slot]
-    and object:getContainer():getItems():isEmpty(),'refusing foreign/nonempty workload crate')
-   local square=assert(object:getSquare());assert(present(square,object)and object:getObjectIndex()>=0,'missing workload crate before cleanup')
-   world.entries[#world.entries+1]={object=object,container=s.stores[slot],square=square,point=descriptor(object),status='pending'}
+ if not s.worldCleanup then
+  local crates,stores,token=s.crates,s.stores,s.token
+  local entries,owned,points={},{},{}
+  for slot,object in ipairs(crates)do
+   local container=stores[slot];local point=descriptor(object)
+   assert(object:getModData()[owner]==token..':'..slot and object:getContainer()==container
+    and container:getItems():isEmpty(),'refusing foreign/nonempty workload crate')
+   entries[slot]={object=object,square=object:getSquare()}
+   owned[slot]={object=object,container=container,token=point.token,point=point}
+   points[slot]=point
   end
-  s.worldCleanup=world
- end
- assert(s.token==world.token and #s.crates==#world.entries,'workload world cleanup cohort changed')
- for slot,entry in ipairs(world.entries)do
-  local object=entry.object
-  assert(s.crates[slot]==object and object:getModData()[owner]==entry.point.token
-   and s.stores[slot]==entry.container and object:getContainer()==entry.container
-   and object:getContainer():getItems():isEmpty(),'workload world cleanup ownership changed')
-  assert(entry.status~='uncertain','workload world publication uncertain; refusing index retransmission')
-  if entry.status=='done'then assert(not present(entry.square,object),'removed workload crate reappeared')
-  else assert(present(entry.square,object)or entry.status=='sent','workload crate missing before publication')end
- end
- for _,entry in ipairs(world.entries)do
-  local object=entry.object
-  if entry.status~='done'then
-   if entry.status=='pending'then
-    local point=descriptor(object)
-    assert(point.id==entry.point.id and object:getSquare()==entry.square,'workload world cleanup index changed')
-    -- A throw may follow publication: never send this mutable square index again.
-    entry.status='uncertain';entry.square:transmitRemoveItemFromSquare(object);entry.status='sent'
+  s.worldPoints=points
+  s.worldCleanup=WorldCleanup.new(entries,{server=true,guard=function(journal)
+   assert(s.worldCleanup==journal and s.token==token and s.crates==crates and s.stores==stores
+    and s.worldPoints==points and #crates==#owned and #stores==#owned,'workload world cleanup generation/cohort changed')
+   for slot,entry in ipairs(owned)do
+    assert(crates[slot]==entry.object and stores[slot]==entry.container and points[slot]==entry.point
+     and entry.point.token==entry.token and entry.object:getModData()[owner]==entry.token
+     and entry.object:getContainer()==entry.container and entry.container:getItems():isEmpty(),
+     'workload world cleanup ownership changed')
    end
-   if present(entry.square,object)then object:removeFromWorld();object:removeFromSquare()end
-   assert(not present(entry.square,object)and object:getObjectIndex()<0,'owned workload crate survived cleanup')
-   entry.point.afterIndex=object:getObjectIndex();world.removed[#world.removed+1]=entry.point;entry.status='done'
-  end
+  end})
+ end
+ local worldReceipt=WorldCleanup.run(s.worldCleanup)
+ local removed={}
+ for slot,object in ipairs(s.crates)do
+  assert(WorldCleanup.removed(s.worldCleanup,object),'owned workload crate survived cleanup')
+  local point=s.worldPoints[slot];point.afterIndex=object:getObjectIndex();removed[slot]=point
  end
  assert(F.absent(s.ids),'owned workload objects remain')
- return {token=s.token,index=#F.modes,removedCrates=#world.removed,crates=world.removed,ownedAbsent=true,
+ return {token=s.token,index=#F.modes,removedCrates=#removed,crates=removed,worldCleanupJournal=worldReceipt,ownedAbsent=true,
   ownedRemaining=0,originalRootIds=s.ids.originalRootIds,snapshot=F.snapshot(s)}
 end
 function F.abort(s)

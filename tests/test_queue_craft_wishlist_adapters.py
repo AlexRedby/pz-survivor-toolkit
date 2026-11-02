@@ -78,6 +78,57 @@ def session_log(value, role):
     return "\n".join(blocks)
 
 
+# The native world keeps getSquare()/getWorldItem() after removal. Lists carry
+# authoritative membership; publication records a square/index, not a GUID ACK.
+CRAFT_WORLD_MODEL = r"""
+package.path=arg[1]:match('^(.*)/[^/]+$')..'/?.lua;'..package.path
+local configure=dofile(arg[1])
+local function model()
+ local m={objects={},special={},ground={},published={},localCalls=0,mode='normal'}
+ local function list(values)return{size=function()return #values end,get=function(_,i)return values[i+1]end,
+  contains=function(_,value)for _,entry in ipairs(values)do if entry==value then return true end end return false end}end
+ local function erase(values,value)for i=#values,1,-1 do if values[i]==value then table.remove(values,i)end end end
+ local square={getX=function()return 1 end,getY=function()return 2 end,getZ=function()return 0 end,
+  getObjects=function()return list(m.objects)end,getSpecialObjects=function()return list(m.special)end,
+  getWorldObjects=function()return list(m.ground)end}
+ m.square=square
+ getCell=function()return{getGridSquare=function(_,x,y,z)if x==1 and y==2 and z==0 then return square end end}end
+ local function remove(object)
+  erase(m.objects,object);erase(m.special,object);erase(m.ground,object)
+  -- Native pointers intentionally remain unchanged.
+ end
+ square.transmitRemoveItemFromSquare=function(_,object,multi)
+  assert(multi==false,'fixture must not delete a multi-tile partner')
+  m.published[#m.published+1]={object=object,index=object:getObjectIndex()}
+  if m.mode=='uncertain'then error('native transmit failed after publication')end
+  if m.mode=='normal'then remove(object)end
+ end
+ function m.object(ground)
+  local object={mark={CraftChainTestOwner='fixture-owner'},square=square}
+  object.getSquare=function(self)return self.square end;object.getModData=function()return object.mark end
+  object.getObjectIndex=function()for i,value in ipairs(m.objects)do if value==object then return i-1 end end return -1 end
+  object.getContainer=function()return object.container end
+  object.removeFromWorld=function()
+   m.localCalls=m.localCalls+1
+   if m.failLocal then m.failLocal=false;error('local world removal interrupted')end
+  end
+  object.removeFromSquare=function()remove(object)end
+  m.objects[#m.objects+1]=object
+  if ground then m.ground[#m.ground+1]=object else m.special[#m.special+1]=object end
+  return object
+ end
+ function m.item(id,world)
+  local item={id=id,world=world,kind='Base.Plank',getID=function(self)return self.id end,getFullType=function(self)return self.kind end,
+   getWorldItem=function(self)return self.world end,getContainer=function(self)return self.endpoint end}
+  if world then world.getItem=function()return item end end
+  return item
+ end
+ local session={};configure(session,true);local ctx={case='crafting',epoch=1};session.configure(ctx)
+ m.context=ctx;return m
+end
+"""
+
+
 class CraftWishlistAdapterTests(unittest.TestCase):
     def test_every_preserved_scenario_and_exact_stage_guards(self):
         catalog = {"suites": adapter.definitions()}
@@ -146,6 +197,10 @@ print('PASS staged selected factories and single event dispatchers')
             self.assertEqual(3, text.count("']=function(QueueCraftSession)"))
             self.assertEqual(["client1", "ui,crafting,alternatives"], (root / "client1/Lua/craft-fixture.txt").read_text().splitlines()[:2])
             self.assertIn(ROOT / "tests/native_queue/support/QueueFixtureSession.lua", adapter.sources(ROOT, value))
+            self.assertIn(ROOT / "tests/native_queue/support/QueueFixtureWorldCleanup.lua", adapter.sources(ROOT, value))
+            for role in runtime["roles"]:
+                staged = root / role / "mods/CraftPlanTest/42/media/lua/shared/QueueFixtureWorldCleanup.lua"
+                self.assertEqual((ROOT / "tests/native_queue/support/QueueFixtureWorldCleanup.lua").read_bytes(), staged.read_bytes())
 
     def test_real_lua_session_joint_cleanup_stale_duplicate_and_reset_failure(self):
         lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
@@ -278,39 +333,98 @@ print('PASS deferred initial/next Prepare, missing/offline player, no resend and
                 self.assertEqual([(role, case) for role in ("client1", "client2") for case in cases],
                                  [(row["actor"], row["case"]) for row in coverage])
 
-    def test_real_lua_owned_surface_removal_targets_single_native_object_and_confirms_absence(self):
+    def test_real_lua_owned_world_cleanup_uses_membership_with_retained_native_pointers(self):
         lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
-        code = r'''local configure=dofile(arg[1]);local session={};configure(session,true)
-local ctx={};session.configure(ctx)
-local owned,neighbor={},{};local present={[owned]=true,[neighbor]=true}
-local network,ignoreRemoval={},false
-local square={getX=function()return 1 end,getY=function()return 2 end,getZ=function()return 0 end,
- getObjects=function()return{contains=function(_,object)return present[object]==true end}end}
-local empty={getItems=function()return{size=function()return 0 end}end}
-owned.getSquare=function()return square end;owned.getContainer=function()return empty end
-square.transmitRemoveItemFromSquare=function(_,object,includeMulti)
- -- B42's default multi-square path rejects this incomplete stock table before network/server mutation.
- if includeMulti~=false then return -1 end
- network[#network+1]=object
- if not ignoreRemoval then present[object]=nil end
- return 0
-end
-ctx.ownObject(owned);ctx.cleanOwned()
-assert(#network==1 and network[1]==owned,'single-object network removal must be sent')
-assert(not present[owned]and present[neighbor],'authoritative owned object must disappear without touching its neighbor')
-ctx.cleanOwned();assert(#network==1,'already removed object must not be transmitted again')
-present[owned]=true;ignoreRemoval=true
-assert(not pcall(ctx.cleanOwned),'broadcast without authoritative removal must fail cleanup')
-assert(present[owned]and present[neighbor],'failed cleanup must preserve server ground truth')
-print('PASS exact native single-object removal, authoritative absence and untouched neighbor')
+        code = CRAFT_WORLD_MODEL + r'''local m=model();local ctx=m.context
+local surface,neighbor,ground=m.object(false),m.object(false),m.object(true)
+local item=m.item(7,ground)
+item.endpoint={getType=function()return 'floor'end,getParent=function()end,getContainingItem=function()end,contains=function(_,value)return value==item end}
+ctx.ownObject(surface);ctx.ownItem(item);ctx.ownItem(item)
+assert(#ctx.receipt.items==1,'same owned item registration must stay idempotent')
+assert(not pcall(ctx.ownItem,m.item(7,nil)),'duplicate native ID must not replace the owned reference')
+ctx.cleanOwned()
+assert(#m.published==2 and m.published[1].object==ground and m.published[2].object==surface)
+assert(#m.objects==1 and m.objects[1]==neighbor,'fixture cleanup touched its unowned neighbor')
+assert(item:getWorldItem()==ground and ground:getSquare()==m.square and item:getContainer():contains(item),
+ 'native world/square/floor-cache pointers must remain part of the regression')
+assert(ctx.receipt.worldCleanup.removedObjects==2 and ctx.receipt.worldCleanup.publicationAttempts==2)
+ctx.cleanOwned();assert(#m.published==2,'completed cleanup retransmitted native index removal')
+assert(not pcall(ctx.ownItem,m.item(8,nil)),'late item ownership must not extend a cleanup lease')
+assert(not pcall(ctx.ownObject,neighbor),'late world ownership must not extend a cleanup lease')
+print('PASS exact surface/ground cleanup with retained native pointers and immutable ownership')
 '''
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueCraftSession.lua")],
                                 input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
+    def test_real_lua_craft_cleanup_retries_local_work_but_never_uncertain_publication(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        code = CRAFT_WORLD_MODEL + r'''local m=model();m.mode='local';m.failLocal=true
+local owned,neighbor=m.object(false),m.object(false);m.context.ownObject(owned)
+assert(not pcall(m.context.cleanOwned)and #m.published==1)
+m.context.cleanOwned()
+assert(#m.published==1 and #m.objects==1 and m.objects[1]==neighbor,'local recovery must not publish a second index packet')
+assert(m.context.receipt.worldCleanup.removedObjects==1 and #m.context.receipt.worldCleanup.recoveries==1)
+local uncertain=model();uncertain.mode='uncertain'
+local value=uncertain.object(false);uncertain.context.ownObject(value)
+assert(not pcall(uncertain.context.cleanOwned)and #uncertain.published==1 and uncertain.localCalls==0)
+assert(not pcall(uncertain.context.cleanOwned)and #uncertain.published==1,'unknown publication may never retransmit')
+local foreign=model();local surface=foreign.object(false)
+surface.container={getItems=function()return{size=function()return 1 end,get=function()return foreign.item(33,nil)end}end}
+foreign.context.ownObject(surface)
+assert(not pcall(foreign.context.cleanOwned)and #foreign.published==0,'foreign surface contents must fail before publication')
+local generation=model();local object=generation.object(false);generation.context.ownObject(object)
+generation.mode='local';generation.failLocal=true;assert(not pcall(generation.context.cleanOwned))
+generation.context.epoch=2;assert(not pcall(generation.context.cleanOwned)and #generation.published==1,'late generation must revoke local recovery')
+local moved=model();local target=moved.object(false);moved.context.ownObject(target)
+moved.mode='local';moved.failLocal=true;assert(not pcall(moved.context.cleanOwned))
+target.square={};assert(not pcall(moved.context.cleanOwned)and #moved.published==1,'moved surface must revoke local recovery')
+local rebound=model();local ground=rebound.object(true);local item=rebound.item(99,ground);rebound.context.ownItem(item)
+rebound.mode='local';rebound.failLocal=true;assert(not pcall(rebound.context.cleanOwned))
+item.world={};assert(not pcall(rebound.context.cleanOwned)and #rebound.published==1,'rebound world item must revoke local recovery')
+print('PASS local-only recovery, terminal uncertain publication, foreign contents and generation gates')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueCraftSession.lua")],
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+    def test_real_lua_wishlist_local_ground_cleanup_has_separate_ownership_and_membership_receipt(self):
+        lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
+        code = CRAFT_WORLD_MODEL + r'''local m=model();local state={queue={},lists={}}
+local option={value=true,getValue=function(self)return self.value end,setValue=function(self,value)self.value=value end}
+local page={pin=false,inventoryPane={getYScroll=function()return 0 end},getIsVisible=function()return false end}
+getPlayerInventory=function()return page end;getPlayerLoot=function()return page end
+getPlayer=function()return{hasTimedActions=function()return false end}end
+getCore=function()return{isDoingTextEntry=function()return false end}end
+ISTimedActionQueue={getTimedActionQueue=function()return{queue={}}end}
+PZSurvivorWishlist={Client={state=function()return state end},UI={windows={}}}
+PZAPI={ModOptions={getOptions=function()return{getOption=function()return option end}end}}
+local lines={'client1','visual,standalone','host','12345','password','PZSurvivorToolkit'}
+getFileReader=function()local i=0;return{readLine=function()i=i+1;return lines[i]end,close=function()end}end
+local events=setmetatable({},{__index=function(owner,key)local event={Add=function()end};owner[key]=event;return event end})
+local restored=0
+QueueWishlistSession={case='visual',epoch=1,events=events,restoreClient=function()restored=restored+1 end}
+dofile(arg[2]);local ctx=QueueWishlistSession
+local world,neighbor=m.object(true),m.object(true);local item=m.item(44,world);m.item(45,neighbor)
+item.endpoint={getType=function()return 'floor'end,getParent=function()end,getContainingItem=function()end,contains=function(_,value)return value==item end}
+ctx.ownWorld(world)
+assert(ctx.cleanup()==true and restored==1)
+assert(#m.published==1 and m.published[1].object==world and #m.objects==1 and m.objects[1]==neighbor)
+assert(item:getWorldItem()==world and world:getSquare()==m.square,'retained native pointers must not fail local visual cleanup')
+assert(ctx.visualCleanupReceipt.publicationAttempts==1 and ctx.visualCleanupReceipt.removedObjects==1)
+assert(ctx.cleanup()==true and #m.published==1,'repeat local cleanup may not reenter native index removal')
+assert(not pcall(ctx.ownWorld,neighbor),'late local props may not extend a frozen visual lease')
+print('PASS Wishlist local-only journal, untouched neighboring world item and retained pointer absence')
+'''
+        result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueCraftSession.lua"),
+                                 str(ROOT / "tests/native_queue/contributions/shared-wishlist/client/ZZWishlist.lua")],
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
     def test_real_lua_skill_restore_uses_remote_safe_api_and_only_owned_changed_perks(self):
         lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
-        code = r'''local configure=dofile(arg[1]);local session={};configure(session,true)
+        code = r'''package.path=arg[1]:match('^(.*)/[^/]+$')..'/?.lua;'..package.path
+local configure=dofile(arg[1]);local session={};configure(session,true)
 Perks={Carving='Carving',Woodwork='Woodwork'}
 local amounts={Carving=12.25,Woodwork=7.75,Fitness=0};local levels={Carving=1,Woodwork=2,Fitness=5}
 local writes,total={},123.75
@@ -409,7 +523,8 @@ state.error='timeout';nativeAssert(not pcall(ctx.readyToClean),'unknown product 
 local removed=false
 local square={getX=function()return 0 end,getY=function()return 0 end,getZ=function()return 0 end,
  transmitRemoveItemFromSquare=function()removed=true end}
-local foreign={getSquare=function()return square end,getContainer=function()return{getItems=function()return{size=function()return 1 end}end}end}
+local foreign={getSquare=function()return square end,getModData=function()return{CraftChainTestOwner='fixture-owner'}end,
+ getContainer=function()return{getItems=function()return{size=function()return 1 end,get=function()return{getID=function()return 99 end}end}end}end}
 ownership.ownObject(foreign);nativeAssert(not pcall(ownership.cleanOwned)and not removed,'foreign contents must retain their fixture surface')
 print('PASS quiet replication polling, RPC drain, real Wishlist pending/forged receipt guards')
 '''
@@ -606,6 +721,9 @@ print('PASS grouped Wishlist generated Lua and single bootstrap')
             shutil.copy2(ROOT / relative / "prepare.py", source)
             for side in ("client", "server"):
                 shutil.copytree(ROOT / relative / side, source / side)
+            support = project / "tests/native_queue/support"
+            support.mkdir(parents=True)
+            shutil.copy2(ROOT / "tests/native_queue/support/QueueFixtureWorldCleanup.lua", support)
             runtime = {"server_name": "queue-smoke", "roles": {role: {"cache": str(output / role)} for role in ("server", "client1", "client2")}}
             with patch.object(sys, "dont_write_bytecode", False):
                 adapter.stage(project, output, None, None, selection("shared-wishlist", "standalone"), {}, runtime)

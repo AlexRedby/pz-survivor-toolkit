@@ -72,6 +72,7 @@ def validate(selection):
 def sources(project, selection):
     source = Path(project) / "tests/native_queue/contributions" / selection["suite"]
     paths = sorted(path for path in source.rglob("*") if path.is_file() and path.suffix in (".py", ".lua", ".json"))
+    paths.append(Path(project) / "tests/native_queue/support/QueueFixtureWorldCleanup.lua")
     if selection["suite"] == "shared-wishlist" and selection.get("options", {}).get("mp_host"):
         paths.append(Path(project) / "tests/native_queue/startup/client/ZZStartup.lua")
     if selection["suite"] == "shared-wishlist" and selection["cases"] == ["reload"]:

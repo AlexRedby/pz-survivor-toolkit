@@ -42,6 +42,9 @@ def prepare(cache, user, mode, host, port, password, mods):
             (lua / side).mkdir(parents=True)
             (lua / side / ('ZZWishlist.lua' if side == 'client' else 'ZZWishlist_Server.lua')).write_text(
                 session_source(selected, side), encoding='utf-8')
+    shared = helper / '42/media/lua/shared'
+    shared.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(HERE.parents[1] / 'support/QueueFixtureWorldCleanup.lua', shared)
     (helper / "42/mod.info").write_text("name=Isolated wishlist fixture\nid=WishlistTest\nversionMin=42.21\n", encoding="utf-8")
     config.parent.mkdir(parents=True, exist_ok=True)
     # This disposable runtime file contains the supplied test password.

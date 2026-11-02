@@ -129,6 +129,8 @@ def fixture(kind='mp'):
             emit(role, 'ADMIT', dict(ctx, stage='after', snapshot=native, authority=authority))
             emit(role, 'RELEASE', dict(ctx, receipt=release, absent=True, originalStash=baselines[role],actorLoad=measured_loads[role]))
     cleanup = emit('server', 'RESTORED', dict(cleanupTransport='native-reliable-ordered-channel1' if kind=='mp' else 'in-process-shared-authority',index=16, removedCrates=12, ownedAbsent=True, ownedRemaining=0,
+                       worldCleanupJournal=dict(publicationAttempts=12,removedObjects=12,recoveries=[],publicationUncertain=False,
+                           states=[dict(index=point['index'],status='removed') for point in crates]),
                        originalRootIds=originals, originalEquipment=equipment, actorRestored=baselines,actorCleanup={role:clean_journal(load['itemIds'],kind=='mp')for role,load in actor_loads.items()}, crates=[dict(point, afterIndex=-1) for point in crates]))
     emit('server', 'COMPLETE', dict(phases=16, restored=True))
     for role in roles:
@@ -284,6 +286,13 @@ class WarehouseWalkingTests(unittest.TestCase):
             receipt=(next(row for event,row in rows['server'] if event=='RELEASE')['cleanupJournal']
                      if target=='release' else V.one(rows['server'],'RESTORED')['actorCleanup']['client1'])
             receipt['recoveries']=[dict(operation='notice',id=receipt['removedIds'][0],publicationUncertain=True)]
+            self.assertTrue(self.result(rows)['issues'])
+        for change in (lambda row: row.pop('worldCleanupJournal'),
+                       lambda row: row['worldCleanupJournal'].update(publicationUncertain=True),
+                       lambda row: row['worldCleanupJournal'].update(recoveries=[{'operation': 'local'}]),
+                       lambda row: row['worldCleanupJournal'].update(publicationAttempts=13),
+                       lambda row: row['worldCleanupJournal']['states'][0].update(status='published')):
+            rows=fixture();change(V.one(rows['server'],'RESTORED'))
             self.assertTrue(self.result(rows)['issues'])
 
     def test_motion_and_ui_drift_cannot_pass(self):

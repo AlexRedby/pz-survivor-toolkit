@@ -4,6 +4,7 @@ local JSON=require 'QueueHealthEvents'
 local A=require 'WarehouseWalkingActor'
 local Items=require 'WarehouseWalkingItems'
 local Cleanup=require 'QueueFixtureItemCleanup'
+local WorldCleanup=require 'QueueFixtureWorldCleanup'
 local F={module='WarehouseWalkingTest',phases={},initialTransport=selection.kind=='mp'and'native-reliable-ordered-channel0'or'in-process-shared-authority',
  materializationTransport=selection.kind=='mp'and'native-reliable-ordered-channel1'or'in-process-shared-authority',
  cleanupTransport=selection.kind=='mp'and'native-reliable-ordered-channel1'or'in-process-shared-authority'}
@@ -201,8 +202,9 @@ local function removeItems(s)
   for id,entry in pairs(owned)do identities[id]={entry=entry,item=entry.item,container=entry.container,ft=entry.ft,state=entry.state}end
   for i,c in ipairs(s.stores)do
    stores[i]=c;crates[i]=s.crates[i];local square=crates[i]:getSquare()
-   assert(square or #entries==0 and s.worldCleanup and s.worldCleanup[i].done,'walking namespace missing before item cleanup')
-   addresses[i]={square=square,id=square and descriptor(crates[i]).id or false}
+   local removed=s.worldCleanup and WorldCleanup.removed(s.worldCleanup,crates[i])
+   assert(square or #entries==0 and removed,'walking namespace missing before item cleanup')
+   addresses[i]={square=square,id=not removed and square and descriptor(crates[i]).id or false}
   end
   for role,actor in pairs(s.actors)do actors[role]={actor=actor,player=actor.player,root=actor.root,online=actor.player:getOnlineID()}end
   s.removalJournal=Cleanup.new(entries,{containers=containers,server=isServer(),
@@ -247,43 +249,42 @@ function F.absent(packet)
 end
 function F.cleanup(s)
  assert(not s.phase and s.nextIndex==17,'unfinished walking cleanup');cleanupEntries(s)
- assert(not s.worldUncertain,'uncertain walking world removal cannot be retransmitted')
  if not s.worldCleanup then
-  s.worldCleanup={};s.worldToken=s.token
-  for i,object in ipairs(s.crates)do
-   assert(object:getModData()[owner]==s.token..':'..i and object:getContainer():getItems():isEmpty(),'refusing foreign/nonempty walking cleanup')
-   s.worldCleanup[i]={object=object,container=s.stores[i],square=object:getSquare(),point=descriptor(object)}
+  local crates,stores,token=s.crates,s.stores,s.token
+  local entries,owned,points={},{},{}
+  for i,object in ipairs(crates)do
+   local container=stores[i];local point=descriptor(object)
+   assert(object:getModData()[owner]==token..':'..i and object:getContainer()==container
+    and container:getItems():isEmpty(),'refusing foreign/nonempty walking cleanup')
+   entries[i]={object=object,square=object:getSquare()}
+   owned[i]={object=object,container=container,token=point.token,point=point}
+   points[i]=point
   end
+  s.worldPoints=points
+  s.worldCleanup=WorldCleanup.new(entries,{server=isServer(),guard=function(journal)
+   assert(s.worldCleanup==journal and s.token==token and s.crates==crates and s.stores==stores
+    and s.worldPoints==points and #crates==#owned and #stores==#owned,'walking world cleanup generation/cohort changed')
+   for i,entry in ipairs(owned)do
+    assert(crates[i]==entry.object and stores[i]==entry.container and points[i]==entry.point
+     and entry.point.token==entry.token and entry.object:getModData()[owner]==entry.token
+     and entry.object:getContainer()==entry.container and entry.container:getItems():isEmpty(),
+     'walking cleanup object changed')
+   end
+  end})
  end
- assert(s.token==s.worldToken and #s.worldCleanup==#s.crates and #s.stores==#s.crates,'walking world cleanup generation/cohort changed')
- for i,entry in ipairs(s.worldCleanup)do
-  local object,point=entry.object,entry.point
-  assert(s.crates[i]==object and s.stores[i]==entry.container and object:getContainer()==entry.container
-   and object:getModData()[owner]==point.token and object:getContainer():getItems():isEmpty(),'walking cleanup object changed')
-  if entry.done then
-   assert(object:getObjectIndex()<0 and F.absent({crates={point}}),'removed walking object reappeared')
-  else assert(object:getSquare()==entry.square and object:getObjectIndex()>=0 and descriptor(object).id==point.id,'walking object missing/moved before removal')end
- end
+ local worldReceipt=WorldCleanup.run(s.worldCleanup)
  local removed={}
- for _,entry in ipairs(s.worldCleanup)do
-  local object,point=entry.object,entry.point
-  if not entry.done then
-   -- Native world packets address a mutable index. A thrown transmit is
-   -- permanently uncertain; replay could delete a different peer object.
-   local ok,problem=pcall(function()
-    object:getSquare():transmitRemoveItemFromSquare(object)
-    if object:getObjectIndex()>=0 then object:removeFromWorld();object:removeFromSquare()end
-    assert(object:getObjectIndex()<0 and F.absent({crates={point}}),'owned walking object survived')
-   end)
-   if not ok then s.worldUncertain=true;error(problem)end
-   entry.done=true;point.afterIndex=object:getObjectIndex()
-  end;removed[#removed+1]=point
+ for i,object in ipairs(s.crates)do
+  assert(WorldCleanup.removed(s.worldCleanup,object),'owned walking object survived')
+  local point=s.worldPoints[i];point.afterIndex=object:getObjectIndex();removed[i]=point
  end
  assert(F.absent(s.ids),'owned walking objects remain');local actors,equipment,journals={},{},{}
  for role,actor in pairs(s.actors)do
   actors[role]=A.restore(actor,true);equipment[role]=A.equipmentProof(actor);journals[role]=A.cleanupReceipt(actor)
  end
- return {cleanupTransport=F.cleanupTransport,actorRestored=actors,actorCleanup=journals,originalEquipment=equipment,token=s.token,index=16,removedCrates=#removed,crates=removed,ownedAbsent=true,ownedRemaining=0,originalRootIds=s.ids.originalRootIds}
+ return {cleanupTransport=F.cleanupTransport,actorRestored=actors,actorCleanup=journals,originalEquipment=equipment,
+  worldCleanupJournal=worldReceipt,token=s.token,index=16,removedCrates=#removed,crates=removed,ownedAbsent=true,
+  ownedRemaining=0,originalRootIds=s.ids.originalRootIds}
 end
 function F.abort(s)
  if not s then return {cleanupTransport=F.cleanupTransport,restored=true,unprepared=true}end

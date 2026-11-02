@@ -27,6 +27,16 @@ def number(value, minimum=None):
     return value
 
 
+def world_cleanup(row, count):
+    """A normal capture cannot silently accept uncertain or recovered deletion."""
+    require(row, publicationAttempts=count, removedObjects=count, recoveries=[], publicationUncertain=False)
+    states = row.get('states')
+    ensure(type(states) is list and len(states) == count, 'world cleanup state cohort differs')
+    for state in states:
+        require(state, status='removed')
+        ensure(type(state.get('index')) is int and state['index'] >= 0, 'world cleanup index is invalid')
+
+
 def ids(value, count=None):
     ensure(type(value) is list and (count is None or len(value) == count), 'wrong ID cohort size')
     ensure(all(type(item) is int for item in value) and len(value) == len(set(value)), 'invalid/duplicate IDs')
@@ -261,6 +271,7 @@ def _server(rows):
         snapshot(release['snapshot'], None, None, descriptors, originals, 'server')
         phases[index] = dict(steps=by_step, release=release)
     restored = one(rows, 'RESTORED')
+    world_cleanup(restored.get('worldCleanupJournal'), 12)
     require(restored, removedCrates=12, ownedAbsent=True, ownedRemaining=0)
     ensure(restored['originalRootIds'] == originals and len(restored['crates']) == 12, 'originals/world cleanup proof differs')
     for before, after in zip(descriptors['crates'], restored['crates']):

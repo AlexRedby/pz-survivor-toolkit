@@ -370,13 +370,32 @@ if Session then
    smoothTarget=page.inventoryPane.smoothScrollTargetY,smooth=page.inventoryPane.smoothScrollY}
  end
  local worlds,requests,windows={},{},{}
+ local worldLease,worldJournal,World
+ local cleanupCurrent=Session.cleanupCurrent
  Session.ownWindow=function(window) windows[window]=true end
  Session.ownerKey='WishlistTestOwner'
  Session.trackRequest=function(id) assert(not requests[id],'duplicate raw fixture product request');requests[id]=true end
  Session.observeProduct=function(module,command,args)
   if module=='PZSurvivorWishlist' and command=='snapshot' and args and args.requestId then requests[args.requestId]=nil end
  end
- Session.ownWorld=function(world) worlds[#worlds+1]={world=world,square=world:getSquare()} end
+ Session.ownWorld=function(world)
+  assert(not worldLease,'Wishlist visual world ownership is frozen for cleanup')
+  local item=assert(world:getItem(),'visual world item is missing')
+  worlds[#worlds+1]={world=world,square=assert(world:getSquare()),item=item,id=item:getID(),kind=item:getFullType()}
+ end
+ local function worldGuard()
+  assert(Session.case==worldLease.case and Session.epoch==worldLease.epoch,'Wishlist visual cleanup generation changed')
+  assert(not cleanupCurrent or cleanupCurrent(),'Wishlist visual cleanup context is no longer current')
+  assert(#worlds==#worldLease.entries,'Wishlist visual ownership changed during cleanup')
+  for index,entry in ipairs(worlds) do
+   local square=entry.world:getSquare()
+   assert(worldLease.entries[index]==entry and (square==entry.square or square==nil and worldJournal and World.removed(worldJournal,entry.world)),
+    'Wishlist visual object moved or rebound')
+   assert(entry.world:getItem()==entry.item and entry.item:getID()==entry.id and entry.item:getFullType()==entry.kind,
+    'Wishlist visual item identity changed')
+  end
+  return true
+ end
  Session.readyToClean=function()
   assert(state.error~='timeout','product request timed out with unknown effects')
   if state.pending or #state.queue>0 then return false end
@@ -387,9 +406,21 @@ if Session then
   assert(Session.readyToClean(),'product requests still pending')
   assert(not getPlayer():hasTimedActions(),'native actions still active')
   local queue=ISTimedActionQueue.getTimedActionQueue(getPlayer());assert(#queue.queue==0,'native queue still active')
+  if not worldLease then
+   worldLease={case=Session.case,epoch=Session.epoch,entries={}}
+   for i,entry in ipairs(worlds) do worldLease.entries[i]=entry end
+  end
+  worldGuard();World=World or require 'QueueFixtureWorldCleanup'
+  if not worldJournal then
+   local entries={}
+   for _,entry in ipairs(worlds) do entries[#entries+1]={object=entry.world,square=entry.square,item=entry.item} end
+   -- AddWorldInventoryItem's syncSpawn=false default makes these client-only
+   -- highlight props separate from the server-owned replicated fixture objects.
+   worldJournal=World.new(entries,{server=false,guard=worldGuard})
+  end
   local window=W().UI.windows[0];if window and window~=originalWindow then window:close() end
   for window in pairs(windows) do window:close() end
-  for _,entry in ipairs(worlds) do if entry.square:getWorldObjects():contains(entry.world) then entry.square:transmitRemoveItemFromSquare(entry.world) end end
+  World.run(worldJournal);Session.visualCleanupReceipt=World.receipt(worldJournal)
   W().UI.windows[0]=originalWindow;option:setValue(originalOption)
   assert(option:getValue()==originalOption and not getCore():isDoingTextEntry(),'Wishlist option/focus did not restore')
   pending=nil;data={};Session.restoreClient()
@@ -397,7 +428,9 @@ if Session then
  end
  Session.clean=function(receipt)
   local ready,reason=Session.verifyOwned(receipt);if not ready then return false,reason end
-  for _,entry in ipairs(worlds) do if entry.square:getWorldObjects():contains(entry.world) then return false,'owned loose item remains' end end
+  for _,entry in ipairs(worlds) do
+   if not World.absent(entry.square,entry.world,entry.item) then return false,'owned loose item remains' end
+  end
   for _,entry in ipairs(pages) do
    local page=entry.page
    if entry.pin then page:setPinned() else page:collapse() end

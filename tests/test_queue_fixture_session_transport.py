@@ -228,6 +228,54 @@ for i=4,5 do
 end
 ''')
 
+    def test_host_shared_client_cache_logs_authority_as_server_and_preserves_peer_actor_labels(self):
+        self.execute(r'''
+local logs,sends={},{}
+print=function(line)logs[#logs+1]=line end
+sendServerCommand=function(player,module,command,args)
+ assert(module=='QueueFixtureSession' and args.fixtureActor==player:getUsername(),
+  'canonical log role must not change actual transport recipients')
+ sends[#sends+1]={command=command,args=args}
+end
+local players={
+ client1={getUsername=function()return 'client1'end},
+ client2={getUsername=function()return 'client2'end}}
+local cfg={user='client1',cases={'visual','standalone'}} -- Native Host shares the owning client's cache.
+local factory=function(ctx)ctx.cleanup=function()return true end;ctx.receipt={items={},squares={}}end
+local authority=createSession(cfg,{visual=factory,standalone=factory},true)
+authority.prepare()
+local function receive(command,role)
+ authority.command('QueueFixtureSession',command,players[role],
+  {fixtureActor=role,fixtureCase=cfg.cases[authority.index],fixtureEpoch=authority.epoch,ok=true})
+end
+for index=1,2 do
+ for _,role in ipairs({'client1','client2'})do receive('Prepare',role)end
+ for _,role in ipairs({'client1','client2'})do receive('Finish',role)end
+ for _,role in ipairs({'client1','client2'})do receive('Cleaned',role)end
+end
+assert(authority.phase=='done')
+local counts={}
+for _,line in ipairs(logs)do
+ local event,actor=line:match('^%[QUEUE_SESSION%] ([A-Z_]+) .- actor=([^ ]+)')
+ assert(event and actor,'missing structured session event')
+ counts[event..':'..actor]=(counts[event..':'..actor]or 0)+1
+ if event=='BEGIN'or event=='START'or event=='JOINT_CLEAN'or event=='COMPLETE'then
+  assert(actor=='server','authority lifecycle was mislabeled from Host cache user: '..line)
+ end
+end
+for _,event in ipairs({'BEGIN','START','JOINT_CLEAN'})do assert(counts[event..':server']==2)end
+assert(counts['COMPLETE:server']==1)
+for _,role in ipairs({'client1','client2'})do
+ assert(counts['PREPARE:'..role]==2 and counts['FINISH:'..role]==2 and counts['CLEANUP:'..role]==2,
+  'real peer lifecycle labels changed')
+end
+assert(counts['CLEANUP:server']==2)
+local refused=createSession(cfg,{visual=factory,standalone=factory},true)
+refused.prepare();refused.quarantine('cleanup uncertain')
+assert(logs[#logs]:find('QUARANTINE case=visual epoch=1 actor=server reason=cleanup uncertain',1,true),
+ 'Host authority quarantine must retain canonical server role')
+''')
+
 
 if __name__ == '__main__':
     unittest.main()

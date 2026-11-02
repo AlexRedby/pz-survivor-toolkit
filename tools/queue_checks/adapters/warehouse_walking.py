@@ -47,6 +47,7 @@ def sources(project, selection):
             *sorted((root / 'startup').rglob('*.lua')),
             root / 'warehouse-workload/client/WarehouseWorkloadUI.lua',
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueFixtureItemCleanup.lua',
+            root / 'support/QueueFixtureWorldCleanup.lua',
             Path(__file__).with_name('warehouse_workload_verify.py'),
             Path(__file__).with_name('warehouse_walking_verify.py'),
             Path(__file__).with_name('warehouse_walking_profile.py')]
@@ -61,7 +62,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                              (root / 'startup/server/ZZStartupServer.lua', 'server'),
                              (root / 'warehouse-workload/client/WarehouseWorkloadUI.lua', 'client'),
                              (root / 'health/shared/QueueHealthEvents.lua', 'shared'),
-                             (root / 'support/QueueFixtureItemCleanup.lua', 'shared')]:
+                             (root / 'support/QueueFixtureItemCleanup.lua', 'shared'),
+                             (root / 'support/QueueFixtureWorldCleanup.lua', 'shared')]:
             if selection['kind'] == 'sp' and source.name == 'ZZStartup.lua':
                 continue
             (lua / side).mkdir(parents=True, exist_ok=True)

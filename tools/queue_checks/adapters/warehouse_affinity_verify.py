@@ -226,6 +226,7 @@ def verify(root, case='hidden-affinity'):
         snapshot(release['snapshot'], None, None, descriptors, originals, 'server')
         phases[index] = {'steps': by_step, 'release': release}
     restored = one(server, 'RESTORED'); require(restored, removedCrates=12, ownedAbsent=True, ownedRemaining=0)
+    V.world_cleanup(restored.get('worldCleanupJournal'), 12)
     ensure(restored['originalRootIds'] == originals and len(restored['crates']) == 12, 'world/original cleanup differs')
     for before, after in zip(descriptors['crates'], restored['crates']):
         ensure(all(after[key] == value for key, value in before.items()) and number(after['afterIndex']) < 0, 'world cleanup changed identity/survives')

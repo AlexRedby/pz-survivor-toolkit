@@ -26,37 +26,107 @@ return function(S,server)
  end
  S.configure=function(context)
   local items,objects,players={},{},{}
+  local itemTypes,lease,journal,World={},nil,nil,nil
   context.receipt={items={},squares={}}
+  local function cleanupCurrent()
+   return (not S.current or S.current()==context) and (S.epoch==nil or S.epoch==context.epoch)
+  end
+  context.cleanupCurrent=cleanupCurrent
   context.ownItem=function(item)
+   assert(not lease,'fixture ownership is frozen for cleanup')
+   assert(not items[item:getID()] or items[item:getID()]==item,'owned item identity rebound')
+   assert(not itemTypes[item:getID()] or itemTypes[item:getID()]==item:getFullType(),'owned item type changed')
+   itemTypes[item:getID()]=item:getFullType()
    if not items[item:getID()] then context.receipt.items[#context.receipt.items+1]=item:getID() end
    items[item:getID()]=item
   end
   context.ownObject=function(object)
-   local square=object:getSquare();objects[#objects+1]={object=object,square=square}
+   assert(not lease,'fixture ownership is frozen for cleanup')
+   local square=assert(object:getSquare(),'owned surface has no square')
+   local key=context.ownerKey or 'CraftChainTestOwner'
+   local owner=assert(object:getModData()[key],'owned surface has no fixture mark')
+   objects[#objects+1]={object=object,square=square,key=key,owner=owner}
    context.receipt.squares[#context.receipt.squares+1]={x=square:getX(),y=square:getY(),z=square:getZ()}
   end
-  context.player=function(player) if not players[player:getUsername()] then players[player:getUsername()]=snapshot(player) end end
+  context.player=function(player)
+   assert(not lease,'fixture ownership is frozen for cleanup')
+   local previous=players[player:getUsername()]
+   assert(not previous or previous.player==player,'fixture player identity rebound')
+   if not previous then players[player:getUsername()]=snapshot(player) end
+  end
+  local function guard()
+   assert(context.case==lease.case and context.epoch==lease.epoch,'cleanup generation changed')
+   assert(cleanupCurrent(),'cleanup context is no longer current')
+   for _,entry in ipairs(lease.items) do
+    local item=entry.item
+    assert(items[entry.id]==item and item:getID()==entry.id and item:getFullType()==entry.kind,'owned item identity changed')
+    local container=item:getContainer()
+    assert(container==entry.container or container==nil,'owned item moved during cleanup')
+    local world=item:getWorldItem()
+    assert(world==entry.world or world==nil and entry.world and journal and World.removed(journal,entry.world),
+     'owned item world binding changed during cleanup')
+   end
+   for index,entry in ipairs(objects) do
+    local square=entry.object:getSquare()
+    assert(lease.objects[index]==entry and (square==entry.square or square==nil and journal and World.removed(journal,entry.object)),
+     'owned surface moved or rebound')
+    assert(entry.object:getModData()[entry.key]==entry.owner,'owned surface fixture mark changed')
+    local container=entry.object:getContainer()
+    local contents=container and container:getItems()
+    for i=0,(contents and contents:size() or 0)-1 do
+     local item=contents:get(i)
+     assert(items[item:getID()]==item,'foreign item in owned surface; retain it for diagnosis')
+    end
+   end
+   assert(#objects==#lease.objects,'fixture world ownership changed during cleanup')
+   return true
+  end
   context.cleanOwned=function()
-   for _,item in pairs(items) do
-    local world=item:getWorldItem();local container=item:getContainer()
-    if world and world:getSquare() then world:getSquare():transmitRemoveItemFromSquare(world)
-    elseif container and container:contains(item) then
+   World=World or require 'QueueFixtureWorldCleanup'
+   if not lease then
+    lease={case=context.case,epoch=context.epoch,items={},objects={}}
+    for id,item in pairs(items) do
+     assert(item:getFullType()==itemTypes[id],'owned item type changed')
+     local world=item:getWorldItem()
+     lease.items[#lease.items+1]={id=id,kind=itemTypes[id],item=item,container=item:getContainer(),world=world,square=world and world:getSquare()}
+     if world then
+      local square=assert(world:getSquare(),'owned ground square missing')
+      context.receipt.squares[#context.receipt.squares+1]={x=square:getX(),y=square:getY(),z=square:getZ()}
+     end
+    end
+    for i,entry in ipairs(objects) do lease.objects[i]=entry end
+   end
+   guard()
+   if not journal then
+    local entries={}
+    for _,entry in ipairs(lease.items) do
+     if entry.world then entries[#entries+1]={object=entry.world,square=entry.square,item=entry.item} end
+    end
+    for _,entry in ipairs(objects) do entries[#entries+1]={object=entry.object,square=entry.square} end
+    -- Freeze neighbors before any inventory mutation can invoke another callback.
+    journal=World.new(entries,{server=server,guard=guard})
+   end
+   for _,entry in ipairs(lease.items) do
+    local item,container=entry.item,entry.container
+    if not entry.world and container and container:contains(item) then
      for _,state in pairs(players) do state.player:removeFromHands(item) end
      container:Remove(item);sendRemoveItemFromContainer(container,item)
      assert(not container:contains(item),'owned item removal failed')
     end
    end
    for _,entry in ipairs(objects) do
-    local object,square=entry.object,entry.square
-    local container=object:getContainer()
-    assert(not container or container:getItems():size()==0,'foreign item in owned surface; retain it for diagnosis')
-    -- Stock table sprites have multi-square partners which this fixture never owns or creates.
-    if square:getObjects():contains(object) then square:transmitRemoveItemFromSquare(object,false) end
-    assert(not square:getObjects():contains(object),'owned surface removal failed')
+    local container=entry.object:getContainer()
+    assert(not container or container:getItems():size()==0,'nonempty owned surface; retain it for diagnosis')
    end
+   World.run(journal);context.receipt.worldCleanup=World.receipt(journal)
    for _,state in pairs(players) do restore(state) end
-   for _,item in pairs(items) do
-    assert((not item:getWorldItem() or not item:getWorldItem():getSquare()) and (not item:getContainer() or not item:getContainer():contains(item)),'owned item survived reset')
+   for _,entry in ipairs(lease.items) do
+    local item=entry.item
+    if entry.world then
+     assert(World.absent(entry.square,entry.world,item),'owned ground item survived reset')
+    else
+     assert(not item:getContainer() or not item:getContainer():contains(item),'owned item survived reset')
+    end
    end
   end
   context.verifyOwned=function(receipt)

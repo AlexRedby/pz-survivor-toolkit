@@ -31,6 +31,9 @@ def prepare(cache, user, scenario, host, port, password):
             shutil.copy2(HERE / scenarios[selected[0]][side], target / 'ZZCraftFixture.lua')
         else:
             (target / 'ZZCraftFixture.lua').write_text(session_source(selected, scenarios, side), encoding='utf-8')
+    shared = helper / '42/media/lua/shared'
+    shared.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(HERE.parents[1] / 'support/QueueFixtureWorldCleanup.lua', shared)
     (helper / '42/mod.info').write_text('name=Isolated crafting fixture\nid=CraftPlanTest\nversionMin=42.21\n', encoding='utf-8')
     config.parent.mkdir(parents=True, exist_ok=True)
     with open(config, 'x', encoding='utf-8', opener=lambda path, flags: os.open(path, flags, 0o600)) as stream:

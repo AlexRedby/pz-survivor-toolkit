@@ -36,7 +36,8 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     paths = [*sorted((root / SUITE).rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
-             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueFixtureItemCleanup.lua', Path(__file__).with_name('warehouse_workload_verify.py')]
+             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueFixtureItemCleanup.lua',
+             root / 'support/QueueFixtureWorldCleanup.lua', Path(__file__).with_name('warehouse_workload_verify.py')]
     if selection['cases'] in (['hidden-affinity'], ['physical-affinity']):
         paths.append(Path(__file__).with_name('warehouse_affinity_verify.py'))
     return paths
@@ -50,7 +51,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         for source, side in [(root / 'startup/client/ZZStartup.lua', 'client'),
                              (root / 'startup/server/ZZStartupServer.lua', 'server'),
                              (root / 'health/shared/QueueHealthEvents.lua', 'shared'),
-                             (root / 'support/QueueFixtureItemCleanup.lua', 'shared')]:
+                             (root / 'support/QueueFixtureItemCleanup.lua', 'shared'),
+                             (root / 'support/QueueFixtureWorldCleanup.lua', 'shared')]:
             (lua / side).mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, lua / side / source.name)
     runtime.setdefault('fixture', {}).update(server_ready='[STARTUP_TEST] SERVER_READY',
