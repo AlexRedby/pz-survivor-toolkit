@@ -227,7 +227,8 @@ assert(physical.selectedBound and physical.selectedKind=='crate5'and loot.invent
 run.step='initial';N.hide(run);N.reopen(run,assert(N.aggregateProof(run)))
 -- Native action callbacks and endpoints stay untouched during observation.
 local function action(i,src,dst,kind,duration)
- local a={item=i,srcContainer=src,destContainer=dst,Type=kind or 'ISInventoryTransferAction',duration=duration or -1}
+ local a={character=player,item=i,srcContainer=src,destContainer=dst,Type=kind or 'ISInventoryTransferAction',duration=duration or -1}
+ if i then a.queueList={{items={i}}}end
  function a:getDuration()return self.duration end;function a:isStarted()return true end;function a:getJobDelta()return .5 end
  return a
 end
@@ -262,6 +263,12 @@ run.phase.craftInputId=4;run.owned[4]=true;run.phase.mode='clean'
 local recipe={getInputs=function()return list({{}})end,getName=function()return 'OpenHotdogPack'end,getTime=function()return 15 end}
 getScriptManager=function()return {getCraftRecipe=function(_,name)assert(name=='OpenHotdogPack');return recipe end}end
 local chosen,usedContainers,dispatchCount=nil,nil,0
+local deferred,returning=false,false;local trusted={}
+local approach={isContainer=function(command,source,actor)
+ return trusted[command]==command.addActionsFunction and command.character==actor
+  and command.toolkitQueueCommand.snapshot.args[1]==source
+end}
+PZSurvivorToolkit.ActionQueueApproach=approach
 local logic={setContainers=function(_,v)usedContainers=v end,setRecipe=function(_,v)assert(v==recipe)end,
  setManualSelectInputs=function(_,v)assert(v)end,clearManualInputs=function()end,
  setManualInputsFor=function(_,input,v)chosen=v:get(0);return true end,canPerformCurrentRecipe=function()return true end,
@@ -276,6 +283,18 @@ local function dispatchCraft(selectedOwner,selectedButton,pickup)
  local native=action(nil,nil,nil,'ISHandcraftAction',recipe:getTime(player)*5)
  native.craftRecipe=recipe;native.onStartTarget=owner;native.onCompleteTarget=owner
  queue.queue=pickup and {action(pack,craftSource,root),native}or {native};queue.current=queue.queue[1]
+ if returning then
+  owner.returnToContainer={pack}
+  local returned=action(pack,root,craftSource);returned.allowMissingItems=true
+  queue.queue[#queue.queue+1]=returned
+ end
+ if deferred then
+  local token={};local command=action(nil,nil,nil,'ISQueueActionsAction')
+  command.addActionsFunction=function()end;trusted[command]=command.addActionsFunction
+  command.toolkitQueueCommand={snapshot={args={n=2,craftSource,0}}}
+  for _,a in ipairs(queue.queue)do a.toolkitQueueOperation=token end
+  command.toolkitQueueOperation=token;table.insert(queue.queue,1,command);queue.current=command
+ end
 end
 NC_CraftActionPanel.onCraftButtonClick=function(target,selected)dispatchCraft(target,selected,false)end
 ISWidgetHandCraftControl.onButtonClick=function(target,selected)dispatchCraft(target,selected,true)end
@@ -289,6 +308,7 @@ assert(chosen==pack and usedContainers:get(1)==craftSource and dispatchCount==1,
 assert(run.craftDispatch.nativeDuration==75 and run.craftDispatch.recipeTime==15 and run.records[1].duration==75,'native craft baseline was accelerated')
 assert(run.craftDispatch.controlType=='NC_CraftActionPanel'and run.craftDispatch.callbackBound and #run.records==1,'Neat control receipt did not bind the actual direct-crafting consumer')
 queue.queue={};queue.current=nil;N.closeCraft(run);opened=false
+
 local missing=ISInventoryPaneContextMenu.getContainers;ISInventoryPaneContextMenu.getContainers=function()return list({root})end
 assert(not pcall(N.craft,run)and dispatchCount==1,'absent native source still dispatched crafting')
 ISInventoryPaneContextMenu.getContainers=missing;opened=false
@@ -314,6 +334,78 @@ run.actions={};run.records={};N.craft(run)
 assert(dispatchCount==2 and run.craftDispatch.controlType=='ISWidgetHandCraftControl'and run.craftDispatch.callbackBound,'vanilla control receipt was inferred from the Neat-style owner fields')
 assert(#run.records==2 and run.records[1].type=='ISInventoryTransferAction'and run.records[1].id==4 and run.records[1].source=='crate4'and run.records[1].destination=='client1'and run.records[2].type=='ISHandcraftAction','supported native control lost its exact pickup/craft actions')
 queue.queue={};queue.current=nil;N.closeCraft(run);opened=false
+
+-- The preparation predicate is an observation port. Actual Toolkit/native
+-- composition is qualified separately; these faults exercise the caller lease.
+deferred=true;returning=true;run.actions={};run.records={};N.craft(run)
+local lease=assert(run.craftPreparation);local command=lease.command
+assert(run.craftDispatch.preparationCount==1 and run.craftDispatch.returnCount==1 and #run.records==4
+ and run.records[1].type=='ISQueueActionsAction'and run.records[1].preparation.operationBound,
+ 'owned deferred approach did not retain its transfer/craft chain')
+for _,fault in ipairs({'foreign','callback','predicate','source','actor','generation','list','phase','step','operation',
+ 'cancelled','transfer','recipe','owner','arguments','extra-argument','removed-consumer','replaced-consumer','reordered-consumer'})do
+ local undo
+ if fault=='foreign'then local old=trusted[command];trusted[command]=nil;undo=function()trusted[command]=old end
+ elseif fault=='callback'then local old=command.addActionsFunction;command.addActionsFunction=function()end;undo=function()command.addActionsFunction=old end
+ elseif fault=='predicate'then local old=approach.isContainer;approach.isContainer=function()return true end;undo=function()approach.isContainer=old end
+ elseif fault=='source'then local old=run.state.stores[4];run.state.stores[4]={};undo=function()run.state.stores[4]=old end
+ elseif fault=='actor'then command.character={};undo=function()command.character=player end
+ elseif fault=='generation'then queue.toolkitOperationGeneration=1;undo=function()queue.toolkitOperationGeneration=nil end
+ elseif fault=='list'then queue.queue={command,lease.transfer,lease.craft};undo=function()queue.queue=lease.list end
+ elseif fault=='phase'then local old=run.phase;run.phase={};undo=function()run.phase=old end
+ elseif fault=='step'then run.step='peer-transfer';undo=function()run.step='peer-craft'end
+ elseif fault=='operation'then command.toolkitQueueOperation={};undo=function()command.toolkitQueueOperation=lease.token end
+ elseif fault=='cancelled'then lease.token.toolkitCancelled=true;undo=function()lease.token.toolkitCancelled=nil end
+ elseif fault=='transfer'then lease.transfer.item=item(999);undo=function()lease.transfer.item=pack end
+ elseif fault=='recipe'then lease.craft.craftRecipe={};undo=function()lease.craft.craftRecipe=recipe end
+ elseif fault=='owner'then lease.craft.onStartTarget={};undo=function()lease.craft.onStartTarget=owner end
+ elseif fault=='arguments'then lease.args[2]=1;undo=function()lease.args[2]=0 end
+ elseif fault=='extra-argument'then lease.args[3]={};undo=function()lease.args[3]=nil end
+ elseif fault=='removed-consumer'then table.remove(queue.queue,2);undo=function()table.insert(queue.queue,2,lease.transfer)end
+ elseif fault=='replaced-consumer'then queue.queue[2]=action(pack,craftSource,root);undo=function()queue.queue[2]=lease.transfer end
+ else queue.queue[2],queue.queue[3]=queue.queue[3],queue.queue[2];undo=function()queue.queue[2],queue.queue[3]=lease.transfer,lease.craft end end
+ assert(not pcall(N.observe,run),'foreign or changed deferred preparation accepted: '..fault)
+ undo();N.observe(run)
+end
+local returnLease=assert(run.craftReturn);local returned=returnLease.action
+for _,fault in ipairs({'missing-policy','route','return-list','token','reordered-return'})do
+ local undo
+ if fault=='missing-policy'then returned.allowMissingItems=false;undo=function()returned.allowMissingItems=true end
+ elseif fault=='route'then returned.destContainer={};undo=function()returned.destContainer=craftSource end
+ elseif fault=='return-list'then owner.returnToContainer={};undo=function()owner.returnToContainer=returnLease.returns end
+ elseif fault=='token'then returned.toolkitQueueOperation={};undo=function()returned.toolkitQueueOperation=returnLease.token end
+ else queue.queue[3],queue.queue[4]=queue.queue[4],queue.queue[3];undo=function()queue.queue[3],queue.queue[4]=lease.craft,returned end end
+ assert(not pcall(N.observe,run),'changed optional native return accepted: '..fault);undo();N.observe(run)
+end
+-- The native resolver may insert a walk before the already queued pickup.
+local insertedWalk=action(nil,nil,nil,'ISWalkToTimedAction')
+table.insert(queue.queue,2,insertedWalk);N.observe(run);table.remove(queue.queue,2)
+-- Reproduce native ActionManager's top-level-only MP replica substitution.
+table.remove(queue.queue,1) -- the approach completed before pickup replication
+local replica=item(4,'HotdogPack');replica.container=root
+local originalRoot=root.values;root.values={replica};craftSource.values={}
+lease.transfer.item=replica;returned.item=replica;N.observe(run)
+assert(returnLease.accepted==replica and returnLease.remapped and returnLease.items[1]==pack
+ and owner.returnToContainer[1]==pack,'native replica adoption lost its original nested bindings')
+local foreignReplica=item(4,'HotdogPack');foreignReplica.container=root
+root.values={foreignReplica};lease.transfer.item=foreignReplica;returned.item=foreignReplica
+assert(not pcall(N.observe,run),'second same-ID replica rebind was accepted')
+lease.transfer.item=replica;returned.item=replica;root.values={replica};N.observe(run)
+table.remove(queue.queue,1);table.remove(returnLease.groups,1) -- native pickup consumes its group
+lease.transfer.item=pack;N.observe(run) -- perform restores its original nested item
+table.remove(queue.queue,1) -- craft completes, leaving only the optional return
+root.values={};N.observe(run) -- consumption may remove the accepted replica
+root.values=originalRoot;craftSource.values={pack}
+queue.queue={};queue.current=nil;N.closeCraft(run);opened=false
+run.actions={};run.records={};N.craft(run)
+local lateLease=run.craftReturn;local latePickup=lateLease.pickup;local lateReturn=lateLease.action
+table.remove(queue.queue,1);table.remove(queue.queue,1);table.remove(lateLease.groups,1)
+replica=item(4,'HotdogPack');replica.container=root;root.values={replica};craftSource.values={}
+lateReturn.item=replica -- Java remap followed by native perform before this tick
+assert(latePickup.item==pack);N.observe(run)
+assert(lateLease.accepted==replica,'first replica observation after completed pickup was rejected')
+root.values=originalRoot;craftSource.values={pack}
+queue.queue={};queue.current=nil;N.closeCraft(run);opened=false;deferred=false;returning=false
 
 -- A later legitimate decorator remains owned by that installer. Counter
 -- observations never replace or restore a foreign callback.
@@ -393,6 +485,7 @@ do
   original=function()return {}end,originalProof=function()return {}end,position=function()return {}end,
   protect=function()end,place=function()return {}end,configure=function()end}
  local modules={QueueTestSelection={kind='mp',cases={'peer-edits'}},WarehouseWorkloadFixture=fakeF,
+  QueuePreflight={onTick=function(events,fn)events.OnTick.Add(fn)end},
   WarehouseWorkloadUI=fakeU,WarehouseWorkloadNative=fakeN,QueueHealthEvents={encode=function(row)waits[#waits+1]=row;return '{}'end}}
  local env=setmetatable({require=function(name)return assert(modules[name],name)end,
   print=function(line)assert(line:find('[WAREHOUSE_WORKLOAD_WAIT] ',1,true)==1,'unexpected runner failure or accepted diagnostic lifecycle: '..line);waitLines[#waitLines+1]=line end,
@@ -482,6 +575,7 @@ do
   original=function()return {}end,originalProof=function()return {}end,position=function()return {}end,
   protect=function()end,place=function()return {}end,configure=function()end}
  local modules={QueueTestSelection={kind='mp',cases={'hidden-affinity'}},WarehouseWorkloadUI=fakeU,
+  QueuePreflight={onTick=function(events,fn)events.OnTick.Add(fn)end},
   WarehouseWorkloadNative=fakeN,QueueHealthEvents={encode=function()return '{}'end},
   ['PZSurvivorToolkit/ItemCategoryRules']={forItem=function(value)
    assert(rendering,'read-only affinity observation prepared item categories');return value.targetCategory

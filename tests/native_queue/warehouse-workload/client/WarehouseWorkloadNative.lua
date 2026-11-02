@@ -6,7 +6,7 @@ local Proximity=require 'BetterContainers/Proximity'
 local Model=require 'PZSurvivorToolkit/ManifestModel'
 local InventoryCategory=require 'BetterContainers/Categorize/InventoryCategory'
 local N={}
-local methodNames={'new','start','update','perform','complete','stop','getDuration','isValid','isValidStart','onStartFunc','onCompleteFunc','onCancelFunc','onStartTarget','onCompleteTarget','onCancelTarget'}
+local methodNames={'new','start','waitToStart','update','perform','complete','stop','getDuration','isValid','isValidStart','onStartFunc','onCompleteFunc','onCancelFunc','onStartTarget','onCompleteTarget','onCancelTarget','addActionsFunction'}
 local function sortedKeys(values)local out={};for id in pairs(values)do out[#out+1]=id end;table.sort(out);return out end
 local function sameIds(a,b)if #a~=#b then return false end;for i,id in ipairs(a)do if id~=b[i]then return false end end;return true end
 function N.queue(player)return ISTimedActionQueue.getTimedActionQueue(player)end
@@ -41,13 +41,100 @@ function N.remember(run,action)
  if action.craftRecipe then record.recipe=action.craftRecipe:getName()end
  run.actions[action]=record;run.records[#run.records+1]=record
 end
+local function preparation(run,action)
+ local lease=run.craftPreparation;local q=N.queue(run.player)
+ assert(lease and lease.command==action and run.step=='peer-craft'and run.phase==lease.phase
+  and run.phase.phaseToken==lease.phaseToken and q==lease.queue and q.queue==lease.list
+  and q.toolkitOperationGeneration==lease.generation,'foreign/stale warehouse preparation')
+ local approach=PZSurvivorToolkit.ActionQueueApproach
+ assert(approach==lease.approach and approach.isContainer==lease.predicate
+  and lease.predicate(action,lease.source,run.player),'warehouse preparation callback/source changed')
+ local token=lease.token;local transfer,craft=lease.transfer,lease.craft
+ local commandIndex,transferIndex,craftIndex
+ for index,queued in ipairs(q.queue)do
+  if queued==action then assert(not commandIndex,'duplicate warehouse preparation');commandIndex=index
+  elseif queued==transfer then assert(not transferIndex,'duplicate warehouse ingredient transfer');transferIndex=index
+  elseif queued==craft then assert(not craftIndex,'duplicate warehouse handcraft');craftIndex=index end
+ end
+ assert(commandIndex and transferIndex and craftIndex and commandIndex<transferIndex and transferIndex<craftIndex,
+  'warehouse preparation consumers removed/reordered')
+ assert(type(token)=='table'and not token.toolkitCancelled and action.toolkitQueueOperation==token
+  and transfer.toolkitQueueOperation==token and craft.toolkitQueueOperation==token,
+  'warehouse preparation operation changed')
+ assert(action.character==run.player and transfer.character==run.player and craft.character==run.player
+  and run.state.stores[4]==lease.source and transfer.item==lease.input
+  and lease.input:getID()==run.phase.craftInputId and lease.input:getFullType()=='Base.HotdogPack'
+  and transfer.srcContainer==lease.source and transfer.destContainer==run.player:getInventory()
+  and craft.craftRecipe==run.recipe and craft.onStartTarget==lease.owner and craft.onCompleteTarget==lease.owner,
+  'warehouse preparation consumer/input changed')
+ local request=action.toolkitQueueCommand.snapshot
+ assert(request==lease.request and request.args==lease.args and request.args.n==2
+  and request.args[1]==lease.source and request.args[2]==lease.playerNum,
+  'warehouse preparation arguments changed')
+ for key in pairs(request.args)do assert(key=='n'or key==1 or key==2,'extra warehouse preparation argument')end
+end
+local function optionalReturn(run,action)
+ local lease=run.craftReturn;local q=N.queue(run.player)
+ assert(lease and lease.action==action and run.step=='peer-craft'and run.phase==lease.phase
+  and run.phase.phaseToken==lease.phaseToken
+  and q==lease.queue and q.queue==lease.list and q.toolkitOperationGeneration==lease.generation,
+  'foreign/stale warehouse craft return')
+ assert(type(lease.token)=='table'and not lease.token.toolkitCancelled and action.toolkitQueueOperation==lease.token
+  and lease.craft.toolkitQueueOperation==lease.token,'warehouse craft return operation changed')
+ assert(action.character==run.player,'warehouse craft return actor changed')
+ assert(action.srcContainer==run.player:getInventory()
+  and action.destContainer==run.state.stores[4]and action.destContainer==lease.source,'warehouse craft return route changed')
+ assert(action.allowMissingItems==true,'warehouse craft return missing-item policy changed')
+ local pickup=lease.pickup
+ local pickupQueued=false;for _,queued in ipairs(q.queue)do if queued==pickup then pickupQueued=true end end
+ local completedPickup=not pickupQueued and #lease.groups==0 and pickup.item==lease.input
+ assert(pickup.toolkitQueueOperation==lease.token and pickup.character==run.player
+  and pickup.srcContainer==lease.source and pickup.destContainer==run.player:getInventory()
+  and pickup.queueList==lease.groups and(#lease.groups==1 and lease.groups[1]==lease.group
+   or #lease.groups==0 and not pickupQueued)
+  and lease.group.items==lease.items and #lease.items==1 and lease.items[1]==lease.input,
+  'warehouse craft pickup binding changed')
+ if action.item~=lease.accepted then
+  -- Native ActionManager replaces top-level InventoryItem fields by ID when
+  -- the MP pickup replica arrives. It leaves the nested queueList/return list
+  -- untouched. Accept that one observed physical transition, never ID alone.
+  local item=action.item;local root=run.player:getInventory()
+  assert(not lease.remapped and(item==pickup.item or completedPickup)and item:getID()==run.phase.craftInputId
+   and item:getFullType()=='Base.HotdogPack'and item:getContainer()==root
+   and root:getItemById(run.phase.craftInputId)==item and not lease.source:getItemById(run.phase.craftInputId),
+   'warehouse craft return replica is not the exact received pickup')
+  lease.accepted=item;lease.remapped=true
+ end
+ -- perform() drains the group and assigns its original item back to pickup.item
+ -- before removing the completed pickup; the pending return keeps the replica.
+ assert(action.item==lease.accepted and(pickup.item==lease.accepted or completedPickup)and action.item:getID()==run.phase.craftInputId
+  and action.item:getFullType()=='Base.HotdogPack','warehouse craft return item changed')
+ local craftIndex,returnIndex
+ for index,queued in ipairs(q.queue)do
+  if queued==lease.craft then craftIndex=index elseif queued==action then returnIndex=index end
+ end
+ assert(returnIndex and(not craftIndex or craftIndex<returnIndex),'warehouse craft return reordered before craft')
+ assert(type(lease.returns)=='table'and lease.owner.returnToContainer==lease.returns and #lease.returns==1 and lease.returns[1]==lease.input
+  and lease.craft.craftRecipe==run.recipe and lease.craft.onStartTarget==lease.owner
+  and lease.craft.onCompleteTarget==lease.owner,'warehouse craft return consumer changed')
+end
 function N.observe(run)
  local q=N.queue(run.player)
  for _,action in ipairs(q.queue)do
   if action.Type=='ISInventoryTransferAction'then
    assert(action.item and run.owned[action.item:getID()],'native warehouse action selected an unowned item');N.remember(run,action)
+   if run.step=='peer-craft'and action.srcContainer==run.player:getInventory()then
+    optionalReturn(run,action)
+    run.actions[action].optionalReturn={source=run.player:getUsername(),destination='crate4',inputId=run.phase.craftInputId,
+     nativeReturnList=true,operationBound=true,allowMissingItems=true}
+   end
   elseif action.Type=='ISHandcraftAction'then
    assert(action.craftRecipe==run.recipe,'native warehouse action selected another recipe');N.remember(run,action)
+  elseif action.Type=='ISQueueActionsAction'then
+   preparation(run,action);N.remember(run,action)
+   local record=run.actions[action]
+   record.preparation={producer='toolkit.approach',source='crate4',inputId=run.phase.craftInputId,
+    operationBound=true,callbackBound=true}
   elseif action.Type=='ISWalkToTimedAction'then N.remember(run,action)
   else error('unexpected native warehouse timed action: '..tostring(action.Type))end
  end
@@ -82,6 +169,7 @@ function N.transfer(run,id,from,to)
  action:setAllowMissingItems(false);ISTimedActionQueue.add(action);N.remember(run,action);return action
 end
 function N.craft(run)
+ assert(N.idle(run.player),'native craft dispatch requires an idle queue')
  local player=run.player;local num=player:getPlayerNum();local input=assert(run.state.stores[4]:getItemById(run.phase.craftInputId))
  assert(input:getFullType()=='Base.HotdogPack','native crafting input changed')
  local old=ISEntityUI.GetWindowInstance(num,'HandcraftWindow')
@@ -115,7 +203,42 @@ function N.craft(run)
  else owner:setCraftQuantity(1);owner:prerender()end
  assert(not player:isTimedActionInstant(),'native action timing is instant')
  run.craftDispatch={inputId=input:getID(),source='crate4',nativeMaterials=true,recipe='OpenHotdogPack',outputType='Base.Hotdog_single',outputCount=4,recipeTime=recipe:getTime(player),nativeDuration=recipe:getTime(player)*5,controlType=controlType,callbackBound=true,callback=tostring(button.onclick)}
- button:forceClick();N.observe(run)
+ button:forceClick()
+ -- Vanilla collects this exact ingredient before crafting. Toolkit defers the
+ -- native container approach in the same synchronous button operation. Neat
+ -- consumes directly from its source containers and has no such preparation.
+ local q=N.queue(player);local command
+ run.craftPreparation=nil;run.craftReturn=nil;run.craftDispatch.preparationCount=0;run.craftDispatch.returnCount=0
+ for _,action in ipairs(q.queue)do if action.Type=='ISQueueActionsAction'then
+  assert(not command,'multiple warehouse preparation commands');command=action
+ end end
+ if command then
+  local transfer,craft=q.queue[2],q.queue[3]
+  local shape={};for _,action in ipairs(q.queue)do shape[#shape+1]=tostring(action.Type)end
+  assert(controlType=='ISWidgetHandCraftControl'and (#q.queue==3 or #q.queue==4)and q.queue[1]==command
+   and transfer.Type=='ISInventoryTransferAction'and craft.Type=='ISHandcraftAction',
+   'unsupported warehouse preparation sequence: '..controlType..' '..table.concat(shape,','))
+  local approach=assert(PZSurvivorToolkit.ActionQueueApproach,'warehouse approach contract absent')
+  local request=assert(command.toolkitQueueCommand and command.toolkitQueueCommand.snapshot,'foreign warehouse preparation')
+  run.craftPreparation={command=command,transfer=transfer,craft=craft,owner=owner,input=input,source=run.state.stores[4],
+   phase=run.phase,phaseToken=run.phase.phaseToken,queue=q,list=q.queue,generation=q.toolkitOperationGeneration,
+   token=craft.toolkitQueueOperation,approach=approach,predicate=approach.isContainer,
+   request=request,args=request.args,playerNum=num}
+  preparation(run,command);run.craftDispatch.preparationCount=1
+ end
+ local offset=command and 1 or 0;local returned=q.queue[offset+3]
+ if returned and returned.Type=='ISInventoryTransferAction'then
+  local craft=q.queue[offset+2]
+  assert(controlType=='ISWidgetHandCraftControl'and #q.queue==offset+3 and craft.Type=='ISHandcraftAction',
+   'unsupported warehouse optional return sequence')
+  local pickup=q.queue[offset+1];local groups=assert(pickup.queueList,'native craft pickup queue list missing')
+  local group=assert(groups[1],'native craft pickup group missing')
+  run.craftReturn={action=returned,craft=craft,owner=owner,returns=owner.returnToContainer,input=input,accepted=input,
+   pickup=pickup,groups=groups,group=group,items=group.items,source=run.state.stores[4],
+   phase=run.phase,phaseToken=run.phase.phaseToken,queue=q,list=q.queue,generation=q.toolkitOperationGeneration,token=craft.toolkitQueueOperation}
+  optionalReturn(run,returned);run.craftDispatch.returnCount=1
+ end
+ N.observe(run)
  local count=0;for action,record in pairs(run.actions)do if record.step==run.step and action.Type=='ISHandcraftAction'then
   count=count+1;assert(action.craftRecipe==recipe and action:getDuration()==recipe:getTime(player)*5,'native OpenHotdogPack duration/recipe changed')
   assert(action.onStartTarget==owner and action.onCompleteTarget==owner,'native craft callback owner changed')

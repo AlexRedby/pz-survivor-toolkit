@@ -149,7 +149,10 @@ local function fixture(kind,fresh)
    end
   end end
  end
- env.require=function(name)assert(name=='WarehouseWorkloadNative','unexpected affinity dependency: '..name);return N end
+ env.require=function(name)
+  if name=='QueuePreflight'then return{onTick=function(events,fn)events.OnTick.Add(fn)end}end
+  assert(name=='WarehouseWorkloadNative','unexpected affinity dependency: '..name);return N
+ end
  local A=load(affinitySource,env,'WarehouseWorkloadAffinity.lua')
  function w.frame()for _,fn in ipairs(w.frames)do fn()end end
  function w.tick()

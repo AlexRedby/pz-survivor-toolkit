@@ -424,7 +424,7 @@ def _actions(row, phase, step, mode):
     current = [action for action in all_actions if action.get('step') == step]
     for action in current:
         require(action, sourceMethodsUnchanged=True)
-        ensure(action['type'] in ('ISInventoryTransferAction', 'ISWalkToTimedAction', 'ISHandcraftAction'), 'foreign native action')
+        ensure(action['type'] in ('ISInventoryTransferAction', 'ISWalkToTimedAction', 'ISHandcraftAction', 'ISQueueActionsAction'), 'foreign native action')
         number(action['duration'])
         number(action['progressSamples'], 0)
         if 'transactionDuration' in action:
@@ -432,17 +432,35 @@ def _actions(row, phase, step, mode):
             ensure(type(action.get('transactionId')) is int and action['transactionId'] > 0, 'invalid native transaction')
     transfers = [action for action in current if action['type'] == 'ISInventoryTransferAction']
     crafts = [action for action in current if action['type'] == 'ISHandcraftAction']
+    preparation = [action for action in current if action['type'] == 'ISQueueActionsAction']
     craft_transfers = []
     if step == 'peer-craft':
         dispatch = row['craftDispatch']
         require(dispatch, callbackBound=True)
         control = dispatch['controlType']
         ensure(control in ('NC_CraftActionPanel', 'ISWidgetHandCraftControl'), 'unsupported native craft control')
+        count = dispatch.get('preparationCount')
+        ensure(type(count) is int and count in (0, 1) and len(preparation) == count, 'native preparation count differs')
+        returns = dispatch.get('returnCount')
+        ensure(type(returns) is int and returns in (0, 1), 'native return count differs')
+        ensure(not returns or control == 'ISWidgetHandCraftControl', 'unsupported craft return producer')
+        if returns:
+            require(transfers[-1].get('optionalReturn'), source='client2', destination='crate4',
+                    inputId=phase['craftInputId'], nativeReturnList=True, operationBound=True, allowMissingItems=True)
+        if preparation:
+            ensure(control == 'ISWidgetHandCraftControl', 'unsupported craft preparation producer')
+            require(preparation[0].get('preparation'), producer='toolkit.approach', source='crate4',
+                    inputId=phase['craftInputId'], operationBound=True, callbackBound=True)
         # Neat Crafting passes the exact source containers to the handcraft
         # action; the native control first picks up this recipe's ingredient.
         # Mod presence alone cannot identify the active control (toggle/fallback).
         if control == 'ISWidgetHandCraftControl':
             craft_transfers = [(phase['craftInputId'], 'crate4', 'client2')]
+            if returns:craft_transfers.append((phase['craftInputId'], 'client2', 'crate4'))
+        ensure([a['type'] for a in current if a['type'] != 'ISWalkToTimedAction']
+               == ['ISQueueActionsAction']*count + ['ISInventoryTransferAction']*(control == 'ISWidgetHandCraftControl')
+               + ['ISHandcraftAction'] + ['ISInventoryTransferAction']*returns,
+               'native preparation/transfer/craft/return order differs')
     expected = {
         'peer-transfer': [(phase['transferId'], 'crate1', 'client2'), (phase['transferId'], 'client2', 'crate2')],
         'peer-replace': [(phase['replacementSourceId'], 'crate3', 'client2'), (phase['replacementId'], 'client2', 'crate3')],
@@ -459,7 +477,7 @@ def _actions(row, phase, step, mode):
         require(crafts[0], recipe='OpenHotdogPack', started=True)
         number(crafts[0]['progressSamples'], 1)
     else:
-        ensure(not crafts, 'unexpected native craft action')
+        ensure(not crafts and not preparation, 'unexpected native craft/preparation action')
     if step == 'hidden-loot':
         require(row['quick'], installedButton=True, hiddenBefore=True, hiddenAfter=True, id=phase['quickId'],
                 source='crate5', destination='client1', callback='ISInventoryPage.onTransferByNameClick' if mode == 'clean' else 'ISInventoryPage.lootAll')

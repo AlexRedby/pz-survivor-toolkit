@@ -97,7 +97,7 @@ def fixture():
                     records[actor].append(dict(type='ISHandcraftAction',step=step,recipe='OpenHotdogPack',duration=75,
                                               started=True,progressSamples=5,sourceMethodsUnchanged=True))
                     extra['craftDispatch']=dict(recipe='OpenHotdogPack',inputId=offset+4,source='crate4',nativeMaterials=True,
-                                                controlType='ISWidgetHandCraftControl',callbackBound=True,
+                                                controlType='ISWidgetHandCraftControl',callbackBound=True,preparationCount=0,returnCount=0,
                                                 outputType='Base.Hotdog_single',outputCount=4,recipeTime=15,nativeDuration=75)
                 if step=='hidden-loot':
                     extra['quick']=dict(installedButton=True,hiddenBefore=True,hiddenAfter=True,id=offset+5,source='crate5',destination='client1',
@@ -222,6 +222,58 @@ class WarehouseWorkloadTests(unittest.TestCase):
                          lambda row:row['craftDispatch'].pop('controlType')):
             rows=fixture();mutation(find(rows,'client2','ACTIONS','peer-craft'))
             with self.subTest(mutation=mutation):self.assertTrue(self.result(rows)['issues'])
+
+    def test_deferred_craft_preparation_requires_exact_producer_input_and_order(self):
+        rows=fixture()
+        for event,row in rows['client2']:
+            if event=='ACTIONS' and row['step']=='peer-craft':
+                row['craftDispatch']['preparationCount']=1
+                start=next(i for i,a in enumerate(row['records']) if a['step']=='peer-craft')
+                row['records'].insert(start, dict(type='ISQueueActionsAction', step='peer-craft',
+                    duration=-1, progressSamples=0, sourceMethodsUnchanged=True,
+                    preparation=dict(producer='toolkit.approach', source='crate4',
+                        inputId=row['craftDispatch']['inputId'], operationBound=True, callbackBound=True)))
+        self.assertEqual(self.result(rows)['issues'],[])
+        def command(row):return next(a for a in row['records'] if a['type']=='ISQueueActionsAction')
+        for change in (lambda r:r['craftDispatch'].update(preparationCount=0),
+                       lambda r:r['craftDispatch'].update(preparationCount=True),
+                       lambda r:r['craftDispatch'].update(controlType='NC_CraftActionPanel'),
+                       lambda r:command(r).pop('preparation'),
+                       lambda r:command(r)['preparation'].update(producer='foreign'),
+                       lambda r:command(r)['preparation'].update(source='crate3'),
+                       lambda r:command(r)['preparation'].update(inputId=999),
+                       lambda r:command(r)['preparation'].update(operationBound=False),
+                       lambda r:command(r)['preparation'].update(callbackBound=False),
+                       lambda r:r['records'].append(copy.deepcopy(command(r))),
+                       lambda r:r['records'].append(r['records'].pop(next(i for i,a in enumerate(r['records']) if a['type']=='ISQueueActionsAction')))):
+            bad=copy.deepcopy(rows);change(find(bad,'client2','ACTIONS','peer-craft'))
+            with self.subTest(change=change):self.assertTrue(self.result(bad)['issues'])
+        bad=copy.deepcopy(rows)
+        foreign=copy.deepcopy(command(find(bad,'client2','ACTIONS','peer-craft')));foreign['step']='peer-transfer'
+        find(bad,'client2','ACTIONS','peer-transfer')['records'].append(foreign)
+        self.assertTrue(self.result(bad)['issues'])
+
+    def test_native_consumed_input_return_is_exact_optional_and_ordered(self):
+        rows=fixture()
+        for event,row in rows['client2']:
+            if event=='ACTIONS' and row['step']=='peer-craft':
+                row['craftDispatch']['returnCount']=1
+                row['records'].append(dict(type='ISInventoryTransferAction',step='peer-craft',
+                    id=row['craftDispatch']['inputId'],source='client2',destination='crate4',duration=-1,
+                    progressSamples=0,sourceMethodsUnchanged=True,
+                    optionalReturn=dict(source='client2',destination='crate4',inputId=row['craftDispatch']['inputId'],
+                        nativeReturnList=True,operationBound=True,allowMissingItems=True)))
+        self.assertEqual(self.result(rows)['issues'],[],'native optional return need not start or move consumed input')
+        for change in (lambda r:r['craftDispatch'].update(returnCount=0),
+                       lambda r:r['craftDispatch'].update(returnCount=True),
+                       lambda r:r['records'][-1]['optionalReturn'].update(nativeReturnList=False),
+                       lambda r:r['records'][-1]['optionalReturn'].update(operationBound=False),
+                       lambda r:r['records'][-1]['optionalReturn'].update(allowMissingItems=False),
+                       lambda r:r['records'][-1].update(id=999),
+                       lambda r:r['records'][-1].update(destination='crate3'),
+                       lambda r:r['records'].insert(0,r['records'].pop())):
+            bad=copy.deepcopy(rows);change(find(bad,'client2','ACTIONS','peer-craft'))
+            with self.subTest(change=change):self.assertTrue(self.result(bad)['issues'])
 
     def test_hidden_cache_lag_is_observed_but_reopen_must_be_fresh(self):
         rows=fixture()
