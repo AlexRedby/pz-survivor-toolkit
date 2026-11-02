@@ -232,3 +232,45 @@ Model.evaluate=saved
 assert(calls==0)
 require=previousRequire
 print('Edit transition: paid checkpoint, resumed requirements, range ordering and uncertain cleanup passed')
+
+-- Retain the original native pending return across a preempt/body cancellation;
+-- only an exact fresh earned witness supplies its missing resource descriptor.
+do
+ local item,root,destination={},{},{}
+ local returning={}
+ local rows={entry(current,nil,true),{action=returning},entry(power),entry(tail)}
+ local loan={id=91,fullType='Base.Book',state='active',ambiguous=false,returning=false,
+  disposition='synthesize-return',item=item,source=root,destination=destination,
+  effect='native-leaf-location',returnAction=returning}
+ local ledger={status='observed',fresh=true,generation=7,providersPresent=false,legacyHints=false,steps={},borrowings={loan}}
+ local result=project(rows,'preempt',3,3,edit(),ledger)
+ assert(result.status=='observed'and result.projection.status=='allowed')
+ local found
+ for _,node in ipairs(result.nodes)do if node.action==returning then found=node end end
+ assert(found and found.kind=='pending'and found.edit.complete and found.edit.capacity=='external')
+ assert(rows[2].edit==nil and found.edit.resources[1].facts.item==item,'retained contract mutated native input or item identity')
+ assert(project(rows,'cancel-body',1,1,edit(),ledger).projection.status=='allowed')
+ -- The final native loan witness is fresher than an earlier ordinary inspection.
+ local earlier={version=1,complete=false,capacity='external',resources={}}
+ rows[2].edit=earlier
+ local fresh=project(rows,'preempt',3,3,edit(),ledger)
+ assert(fresh.projection.status=='allowed'and rows[2].edit==earlier,'fresh retained effect must not reuse or mutate an earlier descriptor')
+ for _,node in ipairs(fresh.nodes)do if node.action==returning then
+  assert(node.edit~=earlier and node.edit.resources[1].facts.item==item,'final loan facts lost precedence')
+ end end
+ rows[2].edit=nil
+ for _,key in ipairs({'fresh','providersPresent','legacyHints'})do
+  local old=ledger[key];ledger[key]=not old
+  assert(project(rows,'preempt',3,3,edit(),ledger).projection.status=='unhandled',key)
+  ledger[key]=old
+ end
+ for _,change in ipairs({'action','effect','state','duplicate'})do
+  local a,e,state=loan.returnAction,loan.effect,loan.state
+  if change=='action'then loan.returnAction={}
+  elseif change=='effect'then loan.effect=nil
+  elseif change=='state'then loan.state='pending'
+  else ledger.borrowings[2]=loan end
+  assert(project(rows,'preempt',3,3,edit(),ledger).projection.status=='unhandled',change)
+  loan.returnAction,loan.effect,loan.state=a,e,state;ledger.borrowings[2]=nil
+ end
+end

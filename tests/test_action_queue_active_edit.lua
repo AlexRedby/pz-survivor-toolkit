@@ -11,10 +11,26 @@ local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))(
 f.native('shared/RadioCom/ISRadioAction.lua')
 f.native('shared/TimedActions/ISEquipWeaponAction.lua')
 getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+-- Source proofs read the installed vanilla text, without inventing checksums
+-- or treating the fixture's Java objects as native execution evidence.
+getGameFilesInput=function(path)
+    local filename=NativeActionRoot..'/'..path:gsub('^media/lua/','')
+    local text
+    if NativeReadText then text=NativeReadText(filename)
+    else local file=assert(io.open(filename));text=file:read('*a');file:close()end
+    text=text:gsub('\r','')
+    local position=1
+    return {close=function()end,readLine=function()
+        if position>#text then return end
+        local boundary=text:find('\n',position,true)or #text+1
+        local line=text:sub(position,boundary-1);position=boundary+1;return line
+    end}
+end
 local savedRequire=require
 local modules={}
 require=function(name)
-    if name=='PZSurvivorToolkit/ActionQueueEditModel'or name=='PZSurvivorToolkit/ActionQueueEditTransition'then
+    if name=='PZSurvivorToolkit/ActionQueueEditModel'or name=='PZSurvivorToolkit/ActionQueueEditTransition'
+        or name=='PZSurvivorToolkit/ActionQueueEditAdapters'then
         if not modules[name]then modules[name]=f.project(name:match('/([^/]+)$'))end
         return modules[name]
     end
@@ -55,6 +71,7 @@ local started=a.action.isStarted
 a.action.isStarted=function()return false end
 assert(observe({kind='move',action=c,target=a}).reason=='edit_in_flight','allocation is not a started read checkpoint')
 a.action.isStarted=started
+settlement.track(a,'body')
 local before=policy.evaluateMove(q,c,a)
 local promotion=observe({kind='move',action=c,target=a})
 assert(promotion.status=='observed'and promotion.allowed==nil)
@@ -70,9 +87,11 @@ assert(demotion.status=='observed'and demotion.nodes[2].action==b and demotion.n
     and demotion.nodes[4].kind=='resume')
 local body=observe({kind='cancel',action=a})
 assert(body.status=='observed'and body.nodes[2].action==b and #body.removed==1)
-local unknown=observe({kind='cancel',action=a,whole=true})
+local untracked=book('Base.BookFirstAid2',true)
+local untrackedQueue=f.queue(untracked,book('Base.BookCooking2'))
+local unknown=policy.observeActiveEdit(untrackedQueue,{kind='cancel',action=untracked,whole=true})
 assert(unknown.projection.reason=='edit_obligation_unknown','missing private ledger must stay unknown')
-settlement.track(a,'body')
+ISTimedActionQueue.queues[player]=q
 local whole=observe({kind='cancel',action=a,whole=true})
 assert(whole.status=='observed'and whole.projection.status=='allowed'and #whole.removed==1)
 -- Shared native progress belongs to book type even for a different item ID.
@@ -178,6 +197,97 @@ do
     local copied=policy.observeActiveEdit(q,{kind='cancel',action=a,whole=true})
     assert(copied.status=='observed'and copied.projection.reason=='edit_obligation_unknown')
     assert(not policy.evaluateCancel(q,a,true).allowed,'observation must not wash a protected callback/capacity gate')
+end
+-- A source-owned direct TV setter has a complete observation contract. This
+-- deliberately has no producer-inserted approach and proves no routing support.
+do
+    local tv={class='IsoTelevision'}
+    local square={class='IsoGridSquare'}
+    local data={class='DeviceData'}
+    tv.getObjectIndex=function()return 0 end;tv.getSquare=function()return square end
+    tv.getDeviceData=function()return data end
+    data.getParent=function()return tv end;data.isIsoDevice=function()return true end
+    data.isVehicleDevice=function()return false end;data.getIsTurnedOn=function()return true end
+    data.getPower=function()return 1 end;data.getDeviceVolume=function()return .5 end
+    data.getChannel=function()return 200 end;data.getMicIsMuted=function()return false end
+    data.getMinChannelRange=function()return 100 end;data.getMaxChannelRange=function()return 1000 end
+    local function volume()
+        local action=ISRadioAction:new('SetVolume',player,tv,.25)
+        action.toolkitQueueOperation={}
+        return action
+    end
+    local current,setting,tail=book('Base.BookCarpentry2',true),volume(),book('Base.BookCooking2')
+    local queue=f.queue(current,setting,tail)
+    settlement.track(current,'body')
+    local leaf=toolkitLeafTransferFacts
+    local leafReads=0
+    toolkitLeafTransferFacts=function()leafReads=leafReads+1;error('root reader has no borrowed transfer')end
+    local function observation(action,target,after)
+        local members={}
+        for i,member in ipairs(queue.queue)do members[i]=member end
+        local before=policy.evaluateMove(queue,action,target,after)
+        local result=policy.observeActiveEdit(queue,{kind='move',action=action,target=target,after=after})
+        local unchanged=policy.evaluateMove(queue,action,target,after)
+        assert(before.allowed==unchanged.allowed and before.reason==unchanged.reason,
+            'observation changed the existing authoritative edit permission')
+        assert(result.allowed==nil,'an observation must not export public edit permission')
+        assert(queue.current==current and not queue.toolkitCancel and not queue.toolkitResume
+            and not queue.toolkitGroupCancel and #queue.queue==#members,'observation mutated active queue')
+        for i,member in ipairs(members)do assert(queue.queue[i]==member,'observation changed queue order')end
+        assert(current.item:getAlreadyReadPages()==37 and setting.secondaryItem==.25)
+        return result
+    end
+    local promoted=observation(setting,current)
+    assert(promoted.status=='observed'and promoted.projection.status=='allowed'
+        and promoted.nodes[2].action==setting and promoted.nodes[3].kind=='resume'
+        and #promoted.contractGaps==0,'direct root TV setter should project without claiming native approach support')
+    local demoted=observation(current,setting,true)
+    assert(demoted.status=='observed'and demoted.projection.status=='allowed'
+        and demoted.nodes[2].action==setting and demoted.nodes[3].kind=='resume')
+
+    local nativeHelper=setting.performSetVolume
+    setting.performSetVolume=function()error('foreign mode helper must not run')end
+    local changedCallback=observation(setting,current)
+    assert(changedCallback.projection.status=='unhandled'and #changedCallback.contractGaps==1
+        and changedCallback.contractGaps[1].action==setting,
+        'changing a native helper must leave an explicit observation contract gap')
+    setting.performSetVolume=nativeHelper
+    assert(observation(setting,current).projection.status=='allowed',
+        'restoring the exact native helper restores only its observation contract')
+
+    local helperCalls=0
+    -- This owned generic command intentionally has no routing edit contract;
+    -- it is not presented as a proven ActionQueueApproach request.
+    local helper=PZSurvivorToolkit.ActionQueueOperations.command(player,function()
+        helperCalls=helperCalls+1;error('planner must not execute deferred helper')
+    end,{})
+    helper.toolkitQueueOperation=setting.toolkitQueueOperation
+    table.insert(queue.queue,2,helper)
+    local unresolved=observation(setting,current)
+    assert(unresolved.status=='observed'and unresolved.projection.status=='unhandled'
+        and #unresolved.contractGaps==1 and unresolved.contractGaps[1].action==helper
+        and unresolved.contractGaps[1].actionType=='ISQueueActionsAction'and helperCalls==0,
+        'an uncontracted helper must remain diagnostic unknown without running its native expansion')
+    table.remove(queue.queue,2)
+
+    local destination={class='ItemContainer',getType=function()return 'container'end,
+        getParent=function()return {class='IsoObject'}end,getContainingItem=function()end,
+        getAcceptItemFunction=function()end}
+    local unpaid=f.action(ISInventoryTransferAction,{item=current.item,srcContainer=root,
+        destContainer=destination,allowMissingItems=true})
+    unpaid.toolkitQueueOperation=current.toolkitQueueOperation
+    table.insert(queue.queue,2,unpaid)
+    assert(observation(setting,current).projection.status=='unhandled',
+        'a lookalike optional return without earned descriptor must remain observation unknown')
+    table.remove(queue.queue,2)
+
+    local providerCalls=0
+    settlement.register('active-edit-test-unknown',{retain=function()providerCalls=providerCalls+1;error('provider must not run')end})
+    local providerUnknown=observation(setting,current)
+    assert(providerUnknown.projection.reason=='edit_obligation_unknown'and providerCalls==0,
+        'an unknown cleanup provider must remain unresolved without executing it')
+    assert(leafReads==0,'root-only observations did not earn transfer facts or runtime rights')
+    toolkitLeafTransferFacts=leaf
 end
 assert(policy.observeActiveEdit(7,{}).status=='unhandled')
 print('Active edit observation: native reader boundaries, shared progress, unchanged rights and no execution passed')

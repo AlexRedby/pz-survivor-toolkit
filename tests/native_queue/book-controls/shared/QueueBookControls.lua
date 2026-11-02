@@ -180,15 +180,16 @@ function F.dispose(s)
 end
 function F.parseControl(control)
  if type(control)~='string'then return end
- local base,lost,favorite=control,false,false
- if control:sub(-14)=='-capacity-lost'then base=control:sub(1,-15);lost=true
+ local base,lost,favorite,deviceOnly=control,false,false,false
+ if control:sub(-12)=='-device-only'then base=control:sub(1,-13);deviceOnly=true
+ elseif control:sub(-14)=='-capacity-lost'then base=control:sub(1,-15);lost=true
  elseif control:sub(-9)=='-favorite'then base=control:sub(1,-10);favorite=true end
- return base,lost,favorite
+ return base,lost,favorite,deviceOnly
 end
 function F.prepare(player,case,previous)
  assert(not isClient(),'book controls scene requires authority')
  if previous then F.dispose(previous)end
- local source,control=case:match('^(.-)%.(.+)$');local base,lost,favorite=F.parseControl(control);assert(source and(base=='header-cancel'or base=='reader-child-cancel'or base=='move-volume'or base=='move-equip'or base=='return-child-cancel'),'unknown book controls case')
+ local source,control=case:match('^(.-)%.(.+)$');local base,lost,favorite,deviceOnly=F.parseControl(control);assert(not deviceOnly or base=='move-volume'or base=='demote-reader','unknown device-only control');assert(source and(base=='header-cancel'or base=='reader-child-cancel'or base=='move-volume'or base=='move-equip'or base=='demote-reader'or base=='return-child-cancel'),'unknown book controls case')
  assert((base~='return-child-cancel'and not lost)or source~='root','a root book has no native borrowed return')
  assert(not lost or source~='root'and(base=='header-cancel'or base=='move-volume'),'unknown capacity control');assert(not favorite or source=='world'and(base=='header-cancel'or base=='move-volume'),'unknown favorite control')
  player:setPrimaryHandItem(nil);player:setSecondaryHandItem(nil)
@@ -259,8 +260,11 @@ function F.expected(s,boundary,native)
   for _,entry in ipairs(result.items)do if entry.id==s.ids.front.id then entry.container='root'end end
  end
  result.volume=native and lost and s.ids.initialVolume or s.ids.targetVolume
- result.hands.primary=native and lost and false or s.ids.pen.id
- if native and lost then result.hands.primary=false end
+ local _,_,_,deviceOnly=F.parseControl(s.ids.control)
+ if not deviceOnly then
+  result.hands.primary=native and lost and false or s.ids.pen.id
+  if native and lost then result.hands.primary=false end
+ end
  return result
 end
 function F.capacityLost(s,requestedAt,acceptedAt)

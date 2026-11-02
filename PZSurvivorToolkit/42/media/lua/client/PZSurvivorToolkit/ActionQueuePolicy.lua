@@ -2267,8 +2267,9 @@ local function editSourceShape(members,queue)
     end
 end
 
--- Opt-in observation only. No UI/tick/commit path calls this while migration
--- is incomplete; a resource projection is never an edit permission.
+-- Opt-in read-only plan. UI/tick/commit paths do not consume it while
+-- deferred routing and other effect contracts remain incomplete. A resource
+-- projection grants no admission, capacity, execution or outcome authority.
 function Policy.observeActiveEdit(queue, intent)
     local function unknown(reason)return {status="unhandled",reason=reason or "edit_unknown"}end
     if type(intent)~="table"or getmetatable(intent)or type(queue)~="table"
@@ -2335,7 +2336,7 @@ function Policy.observeActiveEdit(queue, intent)
         else return unknown()end
         if rangeFirst>rangeLast then return unknown("edit_no_change")end
     else return unknown()end
-    local entries={}
+    local entries,contractGaps={},{}
     for index,member in ipairs(queue.queue)do
         local contract=inspect(member,context)
         local edit
@@ -2348,6 +2349,9 @@ function Policy.observeActiveEdit(queue, intent)
         else edit=contract and contract.edit end
         if not contract or contract.knownInputs==false or contract.unknownOutputs then edit=nil end
         entries[index]={action=member,edit=edit,active=index==1 or member.action~=nil or member.started==true}
+        if not edit then contractGaps[#contractGaps+1]={action=member,index=index,actionType=observed[index].Type,
+            reason=not contract and "contract_unavailable"or contract.knownInputs==false and "inputs_unknown"
+                or contract.unknownOutputs and "outputs_unknown"or "effects_unproven"}end
     end
     local item=currentItem
     local pages,total=item:getAlreadyReadPages(),item:getNumberOfPages()
@@ -2369,7 +2373,7 @@ function Policy.observeActiveEdit(queue, intent)
         {owner=ISTimedActionQueue.queues,keys={queue.character}},
     })
     if not postBindings then return unknown("unavailable")end
-    if kind=="cancel-operation"then
+    if kind=="cancel-operation"or kind=="preempt"or kind=="cancel-body"then
         cleanupOwner=Toolkit.ActionQueueSettlement
         cleanupObserver=cleanupOwner and cleanupOwner.observeEditCleanup
         if type(cleanupObserver)~="function"or not Proof.closure(cleanupObserver,"ActionQueueSettlement.lua")
@@ -2407,6 +2411,12 @@ function Policy.observeActiveEdit(queue, intent)
     if result.status=="observed"then
         result.checkpoint={stage="before-stop",id=bookId,fullType=bookType,pages=pages,total=total,location=bookLocation}
         result.snapshot=snapshot
+        local resolved,missing={},{}
+        for _,node in ipairs(result.nodes)do
+            if node.action and type(node.edit)=="table"and getmetatable(node.edit)==nil and node.edit.complete==true then resolved[node.action]=true end
+        end
+        for _,gap in ipairs(contractGaps)do if not resolved[gap.action]then missing[#missing+1]=gap end end
+        result.contractGaps=missing
     end
     return result
 end

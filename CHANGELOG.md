@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.340
+
+- **Internal:** Extend the read-only active-reading edit plan with the exact location effect of an existing pending borrowed-book return. Preemption and body-cancel observations retain that original action rather than constructing another transfer, with fresh source/native and private-loan checks. Add precise missing-contract diagnostics; deferred routing remains explicitly unresolved and this observer grants no edit, capacity or execution permission.
+
 ### 0.1.339
 
 - **Internal:** Extend opt-in queue return-effect observations to detached Host singleton members through a native transaction-ID-resolution witness. Require exact native API/source semantics, supported detached leaf classes and the unique canonical root item plus earned private borrowing. Preserve the original queue, native admission/capacity/outcome checks and unknown fallbacks; no new cancel/reorder rights are enabled.
@@ -1577,6 +1581,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.86
+
+- **Internal:** Refresh the queue Policy compiler source gate for the retained-return observation and diagnostics, retaining the existing native ownership and fallback checks.
 
 ### 0.1.85
 

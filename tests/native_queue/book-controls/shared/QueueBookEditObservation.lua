@@ -71,6 +71,54 @@ local function observedSummary(result)
  for _,node in each(result.nodes or{})do if node.kind=='return'then value.returns=value.returns+1 end end
  return value
 end
+local function failureDiagnostics(result)
+ local value={contractGaps={},nodes={},projectionBlockerType=false,gapsTruncated=false,nodesTruncated=false}
+ for index,gap in each(plain(result.contractGaps)and result.contractGaps or{})do
+  if index>32 then value.gapsTruncated=true;break end
+  if plain(gap)then value.contractGaps[#value.contractGaps+1]={index=gap.index,actionType=gap.actionType or false,reason=gap.reason or false}end
+ end
+ for index,node in each(plain(result.nodes)and result.nodes or{})do
+  if index>32 then value.nodesTruncated=true;break end
+  if plain(node)then value.nodes[#value.nodes+1]={kind=node.kind or false,action=ref(node.action),complete=plain(node.edit)and node.edit.complete==true or false}end
+ end
+ local projection=plain(result.projection)and result.projection
+ local blocker=projection and projection.blocker
+ if kind(blocker)=='table'then
+  value.projectionBlockerType=kind(blocker.Type)=='string'and blocker.Type
+   or kind(blocker.action)=='table'and kind(blocker.action.Type)=='string'and blocker.action.Type or false
+ end
+ return value
+end
+local function planSummary(result,prototype,item,root,destination,id,fullType,approach)
+ local value={kind=result.kind,nodes={}}
+ local retained,incomplete=0,0
+ for _,node in each(result.nodes or{})do
+  local complete=plain(node.edit)and node.edit.complete==true
+  if approach and equal(node.action,approach)then
+   incomplete=incomplete+1
+   assert(node.kind=='pending'and node.edit==nil,'owned deferred approach unexpectedly acquired an effect contract')
+  else assert(complete,'device-only plan contains another incomplete effect')end
+  local summary={kind=node.kind,action=ref(node.action),complete=complete,capacity=node.edit and node.edit.capacity or false}
+  if prototype and equal(node.action,prototype)then
+   retained=retained+1
+   local edit=node.edit;local resource=plain(edit.resources)and edit.resources[1]
+   assert(node.kind=='pending'and edit.version==1 and edit.capacity=='external'and #edit.resources==1
+    and plain(resource)and resource.domain=='item'and resource.key==id and plain(resource.facts)
+    and equal(resource.facts.item,item)and equal(resource.facts.location,root),'retained native return item/location resource differs')
+   assert(plain(resource.requires)and #resource.requires==1 and plain(resource.requires[1])and resource.requires[1].field=='location'
+    and equal(resource.requires[1].equal,root),'retained native return root precondition differs')
+   assert(plain(resource.effects)and #resource.effects==1 and plain(resource.effects[1])and resource.effects[1].field=='location'
+    and equal(resource.effects[1].set,destination),'retained native return destination effect differs')
+   summary.returnEffect={version=1,complete=true,capacity='external',domain='item',id=id,fullType=fullType,
+    item=ref(item),source=ref(root),destination=ref(destination),action=ref(prototype),synthetic=false,
+    resources=1,requirements=1,effects=1,field='location'}
+  end
+  value.nodes[#value.nodes+1]=summary
+ end
+ assert(retained==(prototype and 1 or 0),'retained native return absent or duplicated in preempt plan')
+ assert(incomplete==(approach and 1 or 0),'owned deferred approach missing or duplicated in preempt plan')
+ return value
+end
 local function descriptor(result,item,root,destination,id,fullType)
  assert(result.status=='observed'and result.allowed==nil,'active observer did not reach its typed transition')
  local found
@@ -104,29 +152,33 @@ end
 function O.run(context)
  local T,queue,front,state=context.toolkit,context.queue,context.front,context.state
  local fixture,clock=context.fixture,context.clock
- local receipt={schema=1,case=context.case,kind=context.kind,mode=context.mode,queueEnabled=not context.native,
-  scope='active-edit-native-return-effect-observation',mutationAuthorized=false,permissionsMeasured=false,
+ local deviceOnly=context.deviceOnly==true
+ local demote=context.control=='demote-reader'
+ local movingAction=demote and front or context.volume
+ local movingTarget=demote and context.volume or front
+ local receipt={schema=deviceOnly and not context.native and 2 or 1,case=context.case,kind=context.kind,mode=context.mode,queueEnabled=not context.native,
+  scope=deviceOnly and(not context.native and'active-edit-device-only-approach-observation'or'active-edit-device-only-preempt-observation')or'active-edit-native-return-effect-observation',mutationAuthorized=false,permissionsMeasured=false,
   current=ref(front),currentNative=ref(front.action),currentLuaStartedPresent=front.started~=nil,currentLuaStarted=front.started==true,
   liveItem=ref(state.front),source=context.ids.source,
   observer=false,existingDecision=false,ledgerBefore=false,ledgerAfter=false,nativeFacts=false,aliasFacts=false,prototype=false,
   effect=false,qualifiedReturn=false,readOnly=false,uiUnchanged=false,performance=false,passed=false}
  local before,worldBefore
  local ok,problem=pcall(function()
-  assert(context.control=='header-cancel','active edit observation requires the actual header cancellation boundary')
+  assert(context.control=='header-cancel'and not deviceOnly or deviceOnly and(context.control=='move-volume'or demote)and context.volume,'active edit observation requires its declared genuine control boundary')
   assert(kind(clock)=='function'and context.precise==true,'active edit observation requires the source-bound native monotonic clock')
   assert(equal(queue.current,front)and equal(queue.queue[1],front)and front.action,'genuine active native reader missing')
   assert(front.item:getID()==context.ids.front.id and front.item:getFullType()==context.ids.front.type,'current reader identity changed')
   receipt.nativeStarted=front.action:isStarted();receipt.nativeFinished=front.action:finished();receipt.nativeForceComplete=front.action:isForceComplete()
   assert(receipt.nativeStarted==true and receipt.nativeFinished==false and receipt.nativeForceComplete==false,'current native reader checkpoint unavailable')
   local policy,settlement=T.ActionQueuePolicy,T.ActionQueueSettlement
-  local observe,evaluate,ledger=policy.observeActiveEdit,policy.evaluateCancel,settlement.editLedger
+  local observe,evaluate,ledger=policy.observeActiveEdit,deviceOnly and policy.evaluateMove or policy.evaluateCancel,settlement.editLedger
   local primitive,aliasPrimitive=toolkitLeafTransferFacts,toolkitLeafTransferAliasFacts
   assert(kind(observe)=='function'and source(observe)=='ActionQueuePolicy.lua'and kind(ledger)=='function'
    and source(ledger)=='ActionQueueSettlement.lua','source-owned observation/ledger API missing')
   local root=state.player:getInventory()
   worldBefore=fixture.snapshot(state);before=capture(queue)
   local initialLedger=ledger(queue,front);receipt.ledgerBefore=ledgerSummary(initialLedger)
-  local prototype,member
+  local prototype,member,approach,approachIndex
   for index=2,#queue.queue do
    local action=queue.queue[index]
    if action.toolkitQueueOperation==front.toolkitQueueOperation and action.Type=='ISInventoryTransferAction'
@@ -142,13 +194,23 @@ function O.run(context)
     stopSource=source(prototype.stop),performSource=source(prototype.perform),constructorSource=source(ISInventoryTransferAction.new),
     allowMissingItems=prototype.allowMissingItems==true,pending=prototype.action==nil and not prototype.started}
   end
+  if deviceOnly and not context.native then
+   for index,action in each(queue.queue)do
+    if action.Type=='ISQueueActionsAction'and action.toolkitQueueOperation==context.volume.toolkitQueueOperation then
+     assert(not approach,'duplicate deferred approach in native volume operation');approach,approachIndex=action,index
+    end
+   end
+   assert(approach and approach.toolkitQueueApproach==true and T.ActionQueueApproach
+    and source(T.ActionQueueApproach.isAction)=='ActionQueueApproach.lua'and T.ActionQueueApproach.isAction(approach)==true,
+    'genuine owned deferred native volume approach missing')
+  end
   receipt.sources={observer=source(observe),cleanup=source(settlement.observeEditCleanup),
    bulk=T.BulkActions and source(T.BulkActions.transferBinding)or false,
    compat=T.ActionQueueCompat and source(T.ActionQueueCompat.transferBinding)or false,
    carts=T.ActionQueueCarts and source(T.ActionQueueCarts.transferBinding)or false,
    transferConstructor=source(ISInventoryTransferAction.new),transferPerform=source(ISInventoryTransferAction.perform),
    nativeAlias=kind(aliasPrimitive)=='function'}
-  if not context.native and context.ids.source~='root'then
+  if not deviceOnly and not context.native and context.ids.source~='root'then
    assert(initialLedger.status=='observed'and #initialLedger.borrowings==1,'genuine native-earned private borrowing ledger missing')
    local loan=initialLedger.borrowings[1]
    assert(loan.id==context.ids.front.id and loan.fullType==context.ids.front.type and loan.state=='active'
@@ -177,9 +239,11 @@ function O.run(context)
     end
    end
   end
-  local intent={kind='cancel',action=front,whole=true}
+  local intent=deviceOnly and{kind='move',action=movingAction,target=movingTarget,after=demote}or{kind='cancel',action=front,whole=true}
+  if deviceOnly then receipt.intent={kind='move',action=ref(movingAction),target=ref(movingTarget),after=demote}end
   local function existing()
-   local result=evaluate(queue,front,true)
+   local result
+   if deviceOnly then result=evaluate(queue,movingAction,movingTarget,demote)else result=evaluate(queue,front,true)end
    assert(plain(result)and kind(result.allowed)=='boolean','existing whole-operation decision missing')
    return result
   end
@@ -190,9 +254,25 @@ function O.run(context)
   end
   local started=clock();local baseline=existing();local baselineFirst=clock()-started
   started=clock();local result=observation();local observerFirst=clock()-started
-  receipt.existingDecision={entrypoint='Policy.evaluateCancel',allowed=baseline.allowed,reason=baseline.reason or false,whole=true}
+  receipt.existingDecision={entrypoint=deviceOnly and'Policy.evaluateMove'or'Policy.evaluateCancel',allowed=baseline.allowed,reason=baseline.reason or false,whole=not deviceOnly}
+  if deviceOnly then receipt.existingDecision.commonActiveEdit=baseline.commonActiveEdit==true end
   receipt.observer=observedSummary(result)
-  if context.native then
+  if deviceOnly then receipt.diagnostics=failureDiagnostics(result)end
+  if deviceOnly then
+   receipt.plan=false
+   if context.native then
+    assert(result.status=='unhandled'and not result.projection,'queue-off move observer acquired a plan');receipt.control='queue-disabled'
+   else
+    assert(result.status=='observed'and result.kind=='preempt'and result.projection and result.projection.status=='unhandled'
+     and result.projection.reason=='edit_unknown'and #result.unresolved==0,'deferred native approach must keep common projection unknown')
+    assert(baseline.allowed and not baseline.commonActiveEdit,'device-only move must use existing legacy authority')
+    local gaps=receipt.diagnostics.contractGaps
+    assert(#gaps==1 and gaps[1].index==approachIndex and gaps[1].actionType=='ISQueueActionsAction'and gaps[1].reason=='effects_unproven'
+     and receipt.diagnostics.projectionBlockerType=='ISQueueActionsAction'and not receipt.diagnostics.gapsTruncated and not receipt.diagnostics.nodesTruncated,
+     'common projection has an unexpected effect gap')
+    receipt.plan=planSummary(result,prototype,state.front,root,state.source,context.ids.front.id,context.ids.front.type,approach)
+   end
+  elseif context.native then
    assert(result.status=='unhandled'and receipt.observer.returns==0,'queue-off observer acquired a virtual operation')
    receipt.control='queue-disabled'
   elseif context.ids.source=='root'then
@@ -205,7 +285,7 @@ function O.run(context)
    receipt.unsupported=receipt.unsupported or unsupported or false
    receipt.qualifiedReturn=effect~=nil and not receipt.unsupported
   end
-  -- Same actual header/whole intent and unchanged live producer state. Outputs
+  -- Same actual declared intent and unchanged live producer state. Outputs
   -- differ: legacy authority versus declarative effect observation. These are
   -- paired entrypoint diagnostics, never a complete edit/frame performance gate.
   existing();observation() -- one warm-up pair, no replayed edit or input handler
@@ -220,27 +300,30 @@ function O.run(context)
     started=clock();a=existing();baselineTimes[index]=clock()-started
    end
    assert(a.allowed==baseline.allowed and a.reason==baseline.reason,'existing cancellation decision changed in paired bank')
+   if deviceOnly and not context.native then
+    assert(not a.commonActiveEdit and fixture.same(failureDiagnostics(b),receipt.diagnostics)and fixture.same(planSummary(b,prototype,state.front,root,state.source,context.ids.front.id,context.ids.front.type,approach),receipt.plan),'device-only legacy authority or exact approach gap changed in paired bank')
+   end
    local summary=observedSummary(b)
    assert(fixture.same(summary,receipt.observer),'active observation result changed in paired bank')
-   if not context.native and context.ids.source~='root'then
+   if not deviceOnly and not context.native and context.ids.source~='root'then
     local effect,unsupported=descriptor(b,state.front,root,state.source,context.ids.front.id,context.ids.front.type)
     assert((effect~=nil)==(receipt.effect~=false) and (unsupported or false)==receipt.descriptorUnsupported,'virtual return qualification changed in paired bank')
    end
    assert(unchanged(before),'paired observations changed queue/UI or action/native bindings')
   end
-  local comparable=receipt.qualifiedReturn and baseline.allowed and result.status=='observed'
-  receipt.performance={scope='paired-live-header-return-entrypoints',timer='System.nanoTime',units='ms',warmupPairs=1,pairs=3,
-   sameLiveIntent=true,whole=true,firstUseScope='first-call-after-untimed-identity-ledger-and-native-facts-diagnostics',
+  local comparable=not deviceOnly and receipt.qualifiedReturn and baseline.allowed and result.status=='observed'
+  receipt.performance={scope=deviceOnly and'paired-live-device-preempt-entrypoints'or'paired-live-header-return-entrypoints',timer='System.nanoTime',units='ms',warmupPairs=1,pairs=3,
+   sameLiveIntent=true,whole=not deviceOnly,firstUseScope='first-call-after-untimed-identity-ledger-and-native-facts-diagnostics',
    baseline=distribution(baselineTimes),observer=distribution(observerTimes),baselineFirstMs=baselineFirst,observerFirstMs=observerFirst,
-   comparable=comparable,comparisonReason=comparable and'useful-return-effect-layer-and-existing-cancel-success'
-    or receipt.control or'existing-cancel-denied-or-observer-unknown',
+   comparable=comparable,comparisonReason=comparable and(deviceOnly and'complete-device-projection-and-existing-move-success'or'useful-return-effect-layer-and-existing-cancel-success')
+    or receipt.control or deviceOnly and'approach-effects-unproven'or'existing-cancel-denied-or-observer-unknown',
    observerProjectionStatus=receipt.observer.projection and receipt.observer.projection.status or false,
    observerProjectionReason=receipt.observer.projection and receipt.observer.projection.reason or false,
    timerOverhead='included-not-subtracted',sameOutputContract=false,completeEditMeasured=false,frameLoadMeasured=false,
    positiveTimingClaim=false,assessment='not-assessed'}
   receipt.ledgerAfter=ledgerSummary(ledger(queue,front))
   assert(fixture.same(receipt.ledgerBefore,receipt.ledgerAfter),'observation changed private debt/earned-step disposition')
-  assert(equal(policy.observeActiveEdit,observe)and equal(policy.evaluateCancel,evaluate)and equal(settlement.editLedger,ledger)
+  assert(equal(policy.observeActiveEdit,observe)and equal(deviceOnly and policy.evaluateMove or policy.evaluateCancel,evaluate)and equal(settlement.editLedger,ledger)
    and equal(toolkitLeafTransferFacts,primitive)and equal(toolkitLeafTransferAliasFacts,aliasPrimitive),'observation replaced a production entrypoint')
  end)
  if before then

@@ -52,6 +52,18 @@ end
 local function modelReady()
     return modelBindingsReady()and origin(evaluate,'ActionQueueEditModel.lua')and modelBindingsReady()
 end
+-- Pure location effect for an earned loan, shared by retained and virtual returns.
+local function returnEdit(borrowing)
+    if not plain(borrowing)or borrowing.effect~='native-leaf-location'
+        or borrowing.disposition~='synthesize-return'or borrowing.state~='active'
+        or borrowing.ambiguous~=false or borrowing.returning~=false or borrowing.plannedReturn~=nil
+        or not integer(borrowing.id,-math.huge,math.huge)or type(borrowing.fullType)~='string'or borrowing.fullType==''
+        or not identity(borrowing.item)or not identity(borrowing.source)or not identity(borrowing.destination)
+        or rawequal(borrowing.source,borrowing.destination)then return end
+    return {version=1,complete=true,capacity='external',resources={{domain='item',key=borrowing.id,
+        facts={item=borrowing.item,location=borrowing.source},requires={{field='location',equal=borrowing.source}},
+        effects={{field='location',set=borrowing.destination}}}}}
+end
 local function project(entries,change,prepared)
     local count=array(entries)
     if not count or count==0 or not plain(change)or not plain(change.checkpoint)
@@ -85,16 +97,45 @@ local function project(entries,change,prepared)
         local value={kind='unresolved',reason=reason,detail=detail}
         plan.nodes[#plan.nodes+1]=value;plan.unresolved[#plan.unresolved+1]=value
     end
+    local retainedEdits={}
+    if change.kind~='cancel-operation'and change.ledger~=nil then
+        local ledger=change.ledger
+        local countLoans=plain(ledger)and ledger.status=='observed'and ledger.fresh==true
+            and ledger.generation==change.generation and ledger.providersPresent==false and ledger.legacyHints==false
+            and array(ledger.borrowings)
+        if not countLoans then uncertain('edit_obligation_unknown',{kind='retained-cleanup'})
+        else
+            local seenLoans={}
+            for i=1,countLoans do
+                local loan=ledger.borrowings[i]
+                if not plain(loan)then return unknown('edit_obligation_unknown')end
+                if loan.disposition=='settled'then
+                    if loan.state~='completed'and loan.state~='waived'then uncertain('edit_obligation_unknown',{kind='retained-disposition'})end
+                else
+                    local action=loan.returnAction
+                    local at=action and seen[action]
+                    local descriptor=returnEdit(loan)
+                    if not descriptor or not at or at<2 or retainedEdits[action]or seenLoans[loan.id]
+                        or entries[at].active then uncertain('edit_obligation_unknown',{kind='retained-return'})
+                    else retainedEdits[action]=descriptor;seenLoans[loan.id]=true end
+                end
+            end
+        end
+    end
+    local function pending(index)
+        local entry=entries[index]
+        return node('pending',entry.action,retainedEdits[entry.action] or entry.edit)
+    end
     node('checkpoint',current,change.checkpoint,true)
     if change.kind=='preempt'then
-        for i=change.first,change.last do node('pending',entries[i].action,entries[i].edit)end
+        for i=change.first,change.last do pending(i)end
         node('resume',current,change.checkpoint)
         for i=2,count do
-            if i<change.first or i>change.last then node('pending',entries[i].action,entries[i].edit)end
+            if i<change.first or i>change.last then pending(i)end
         end
     elseif change.kind=='cancel-body'then
         plan.removed[1]=current
-        for i=2,count do node('pending',entries[i].action,entries[i].edit)end
+        for i=2,count do pending(i)end
     else
         local ledger=change.ledger
         local steps=plain(ledger)and ledger.status=='observed'and array(ledger.steps)
@@ -156,12 +197,7 @@ local function project(entries,change,prepared)
             if debt.kind=='return'then
                 local borrowing=debt.borrowing
                 local descriptor
-                if borrowing.effect=='native-leaf-location'then
-                    descriptor={version=1,complete=true,capacity='external',resources={{domain='item',key=borrowing.id,
-                        facts={item=borrowing.item,location=borrowing.source},
-                        requires={{field='location',equal=borrowing.source}},
-                        effects={{field='location',set=borrowing.destination}}}}}
-                end
+                descriptor=returnEdit(borrowing)
                 local value=node('return',nil,descriptor)
                 value.item,value.id,value.fullType=borrowing.item,borrowing.id,borrowing.fullType
                 externalCapacity=true
