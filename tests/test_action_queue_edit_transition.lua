@@ -274,3 +274,28 @@ do
   loan.returnAction,loan.effect,loan.state=a,e,state;ledger.borrowings[2]=nil
  end
 end
+
+-- A retained native routing phase is data, not a forecast of future position or
+-- a permission to execute it. Every path preserving it must keep the boundary.
+do
+ local actor,target,route={},{},{}
+ local deferred={version=1,kind='deferred-spatial',actor=actor,targetSquare=target,
+  invalidates='all-resources',routing='native',expansion='native',outcome='native'}
+ local rows={entry(current,nil,true),{action=route,deferred=deferred},entry(power),entry(tail)}
+ local ledger={status='observed',fresh=true,generation=7,providersPresent=false,legacyHints=false,steps={},borrowings={}}
+ for _,case in ipairs({{'preempt',2,3},{'cancel-body',1,1},{'cancel-operation',1,1}})do
+  local result=project(rows,case[1],case[2],case[3],edit(),ledger)
+  assert(result.status=='observed'and result.projection.status=='deferred'and result.projection.reason=='edit_native_resolution')
+  assert(result.projection.externalCapacity and result.projection.allowed==nil and #result.projection.deferred==1)
+  local found
+  for _,node in ipairs(result.nodes)do if node.action==route then found=node end end
+  assert(found and found.deferred==deferred and found.edit==nil and rows[2].deferred==deferred,'retained phase was dropped, copied as an effect, or mutated')
+ end
+ ledger.steps={{action=route,required=true}}
+ local cleanup=project(rows,'cancel-operation',1,2,edit(),ledger)
+ assert(cleanup.projection.status=='deferred'and cleanup.nodes[2].kind=='cleanup'and cleanup.nodes[2].deferred==deferred,
+  'required cleanup lost its deferred native boundary')
+ ledger.steps={}
+ local removed=project(rows,'cancel-operation',1,2,edit(),ledger)
+ assert(removed.projection.status=='allowed'and removed.projection.deferred==nil,'a removed pending phase must not execute or invalidate future resources')
+end

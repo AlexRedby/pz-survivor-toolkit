@@ -9,6 +9,15 @@ local commandFactory=Operations.command
 local Approach = {}
 Toolkit.ActionQueueApproach = Approach
 local bindings, installed, attestations = {}, {}, {}
+local spatialPrimitives={kind=type,meta=getmetatable,raw=rawget,equal=rawequal,each=ipairs,pairs=pairs,
+    globals=_G,actualMeta=toolkitLuaMetatableMatches,capture=Proof.captureBindings,origin=Proof.closure,matches=Proof.matches,own=Proof.own,
+    isCommand=Operations.isCommand,construction=Operations.commandConstructionTrusted}
+local spatialPrimitiveWatch=Proof.captureBindings({
+    {owner=_G,keys={'type','getmetatable','rawget','rawequal','pairs','ipairs','pcall','unpack','select',
+        'math','table','string','getFilenameOfClosure','getGameFilesInput','toolkitLuaMetatableMatches'}},
+    {owner=math,keys={'floor'}},{owner=string,keys={'byte','sub','gsub','match'}},
+})
+local spatialFactory,spatialSources
 local walking = setmetatable({}, {__mode='k'})
 local resolving, preparing = 0, 0
 local nativeBatch
@@ -491,4 +500,160 @@ function Approach.isAction(action)
     local record=action and action.toolkitQueueCommand
     return record and record.callback==resolve and Operations.isCommand(action)and live(record.snapshot)
 end
+-- A query-local lease for the captured entrypoint, not a route or a native
+-- child forecast. Every resource becomes unresolved when this boundary runs.
+local function spatialPlain(value)
+    return spatialPrimitives.kind(value)=='table'and spatialPrimitives.meta(value)==nil
+        and spatialPrimitives.kind(spatialPrimitives.actualMeta)=='function'
+        and spatialPrimitives.actualMeta(value,nil)==true
+end
+local function spatialArray(value,limit)
+    if not spatialPlain(value)then return end
+    local count,maximum=0,0
+    for key in spatialPrimitives.pairs(value)do
+        count=count+1
+        if count>limit or spatialPrimitives.kind(key)~='number'or key~=key
+            or key%1~=0 or key<1 or key>limit then return end
+        if key>maximum then maximum=key end
+    end
+    if count==maximum then return count end
+end
+-- Validate inherited reads without ever indexing through a foreign __index.
+-- The native classes and Lua 5.1 test classes use slightly different table
+-- chains; both must remain bounded tables with no lookup callback.
+local function spatialInheritance(action)
+    local p=spatialPrimitives
+    local pending,seen,specifications={action},{},{}
+    local index=1
+    while index<=#pending do
+        local owner=pending[index];index=index+1
+        if not seen[owner]then
+            if #specifications>=8 or p.kind(owner)~='table'then return end
+            seen[owner]=true;specifications[#specifications+1]={owner=owner,exact=true}
+            local parent=p.meta(owner)
+            if parent~=nil then
+                if p.kind(parent)~='table'then return end
+                pending[#pending+1]=parent
+                local lookup=p.own(parent,'__index')
+                if lookup~=nil then
+                    if p.kind(lookup)~='table'then return end
+                    pending[#pending+1]=lookup
+                end
+            end
+        end
+    end
+    return p.capture(specifications)
+end
+function Approach.prepareSpatialLease(action)
+    local p=spatialPrimitives
+    if not spatialPrimitiveWatch or not spatialPrimitiveWatch()
+        or p.meta(p.globals)~=nil or not spatialPlain(Toolkit)or not spatialPlain(Approach)
+        or not spatialPlain(Proof)or not spatialPlain(Operations)or not spatialPlain(luautils)
+        or not spatialPlain(first)or not spatialPlain(installed)or not spatialPlain(knownWrappers)
+        or not spatialPlain(attestations)
+        or not p.equal(p.raw(p.globals,'PZSurvivorToolkit'),Toolkit)
+        or not p.equal(p.raw(Toolkit,'ActionQueueApproach'),Approach)
+        or not p.equal(p.raw(Toolkit,'ActionQueueOperations'),Operations)
+        or not p.equal(p.raw(p.globals,'ISQueueActionsAction'),commandClass)
+        or not p.equal(p.raw(p.globals,'ISBaseTimedAction'),baseClass)
+        or not p.equal(p.raw(Approach,'prepareSpatialLease'),spatialFactory)
+        or not p.equal(p.raw(Proof,'captureBindings'),p.capture)
+        or not p.equal(p.raw(Proof,'closure'),p.origin)or not p.equal(p.raw(Proof,'matches'),p.matches)
+        or not p.equal(p.raw(Proof,'own'),p.own)
+        or not p.equal(p.raw(Operations,'isCommand'),p.isCommand)
+        or not p.equal(p.raw(Operations,'commandConstructionTrusted'),p.construction)
+        or p.kind(action)~='table'or not p.equal(p.meta(action),commandClass) then return end
+    -- Capture before metadata readers: they may reenter and change bindings.
+    local rootWatch=p.capture({
+        {owner=p.globals,keys={'PZSurvivorToolkit','ISQueueActionsAction','ISBaseTimedAction','luautils',
+            'getFilenameOfClosure','getGameFilesInput','type','getmetatable','rawget','rawequal','pairs','ipairs',
+            'pcall','unpack','select','math','table','string','toolkitLuaMetatableMatches'}},
+        {owner=Toolkit,keys={'ActionQueueApproach','ActionQueueOperations'}},
+        {owner=Approach,keys={'prepareSpatialLease'}},{owner=Proof,keys={'captureBindings','closure','matches','own'}},
+        {owner=Operations,keys={'command','isCommand','commandConstructionTrusted','expandCommand','runWith'}},
+        {owner=commandClass,exact=true},{owner=baseClass,exact=true},{owner=action,exact=true},
+        {owner=math,exact=true},{owner=string,exact=true},{owner=table,exact=true},
+    })
+    if not rootWatch then return end
+    local inheritanceWatch=spatialInheritance(action)
+    if not inheritanceWatch then return end
+    local record=p.own(action,'toolkitQueueCommand')
+    if not spatialPlain(record)or not spatialPlain(record.marker)then return end
+    local request=record.snapshot
+    if not spatialPlain(request)or not spatialPlain(request.binding)or not spatialPlain(request.args)
+        or not spatialPlain(request.guards)then return end
+    local binding,args,guards=request.binding,request.args,request.guards
+    local spec=binding.spec
+    if spatialArray(guards,2)~=2 or not spatialPlain(spec)or not p.equal(binding.owner,luautils) or binding.name~='walkAdj'
+        or not p.equal(spec.actor,first.actor) or spec.receiver~=nil or spec.cursor~=nil
+        or spatialArray(spec.arrays,1)~=1 or spec.arrays[1]~=4
+        or request.cursorKind~=nil or request.selected~=nil
+        or p.kind(args.n)~='number'or args.n%1~=0 or args.n<2 or args.n>4
+        or not p.equal(args[1],p.own(action,'character'))or args[1]==nil or args[2]==nil
+        or args[3]~=nil and p.kind(args[3])~='boolean'
+        or args[4]~=nil and not spatialArray(args[4],32)then return end
+    local argumentFields=0
+    for key in p.pairs(args)do
+        argumentFields=argumentFields+1
+        if argumentFields>5 or key~='n'and(key~=1 and key~=2 and key~=3 and key~=4 or key>args.n)then return end
+    end
+    if p.kind(args[2])~='table'and p.kind(args[2])~='userdata'then return end
+    if p.own(action,'action')or p.own(action,'started')or p.own(action,'_isAddingActions')
+        or p.own(action,'isAddingActions')or record.ready~=nil
+        or p.own(action,'onFailFunc')or p.own(action,'additionalTest')or p.own(action,'retriggerLastAction')
+        or not p.equal(record.callback,resolve) or not p.equal(record.owner,action) or not spatialPlain(record.args)
+        or spatialArray(record.args,1)~=1 or not p.equal(record.args[1],request)
+        or not p.equal(p.own(action,'args'),record.args)
+        or not p.equal(p.own(action,'addActionsFunction'),record.callback)then return end
+    for index=1,2 do
+        if not spatialPlain(guards[index])or not p.equal(guards[index].owner,luautils) then return end
+    end
+    if guards[1].name~='walkAdj'or not p.equal(guards[1].callback,binding.wrapper)
+        or guards[2].name~='getCorrectSquareForWall'or not p.equal(guards[2].callback,luautils.getCorrectSquareForWall)
+        or not spatialPlain(installed[luautils])or not p.equal(installed[luautils].walkAdj,binding)
+        or not p.equal(knownWrappers[binding.wrapper],binding) or not p.equal(luautils.walkAdj,binding.wrapper) then return end
+    local token=p.own(action,'toolkitQueueOperation')
+    if token~=nil and(not spatialPlain(token)or token.toolkitStarted or token.toolkitCancelled)then return end
+    local specifications={
+        {owner=record,exact=true},{owner=record.marker,exact=true},{owner=request,exact=true},{owner=binding,exact=true},
+        {owner=args,exact=true},{owner=record.args,exact=true},{owner=spec,exact=true},
+        {owner=spec.arrays,exact=true},{owner=guards,exact=true},
+        {owner=guards[1],exact=true},{owner=guards[2],exact=true},
+        {owner=luautils,keys={'walkAdj','getCorrectSquareForWall'}},
+        {owner=installed,keys={luautils}},{owner=installed[luautils],keys={'walkAdj'}},
+        {owner=knownWrappers,keys={binding.wrapper}},{owner=attestations,keys={binding}},
+        {owner=first,exact=true},
+    }
+    if args[4]then specifications[#specifications+1]={owner=args[4],exact=true}end
+    if token then specifications[#specifications+1]={owner=token,keys={'toolkitStarted','toolkitCancelled'}}end
+    local requestWatch=p.capture(specifications)
+    if not requestWatch or not rootWatch()then return end
+    if not p.origin(p.isCommand,'ActionQueueOperations.lua')
+        or not p.origin(p.construction,'ActionQueueOperations.lua')
+        or not p.origin(commandFactory,'ActionQueueOperations.lua')
+        or not p.origin(commandNew,'ISQueueActionsAction.lua')or not p.origin(baseNew,'ISBaseTimedAction.lua')
+        or not p.origin(resolve,'ActionQueueApproach.lua')
+        or not p.origin(binding.callback,'luautils.lua')
+        or not p.origin(guards[2].callback,'luautils.lua')then return end
+    if spatialSources==nil then
+        local trusted=p.matches('media/lua/shared/luautils.lua',937393183,nil,true)
+            and p.matches('media/lua/client/TimedActions/ISQueueActionsAction.lua',687313299,nil,true)
+            and p.matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)
+        if not rootWatch()or not requestWatch()or not inheritanceWatch()then return end
+        spatialSources=trusted
+    end
+    if not spatialSources or not rootWatch()or not requestWatch()or not inheritanceWatch()
+        or not p.construction()or not p.isCommand(action)or not rootWatch()or not requestWatch()or not inheritanceWatch()then return end
+    local description={version=1,kind='deferred-spatial',actor=args[1],targetSquare=args[2],
+        invalidates='all-resources',routing='native',expansion='native',outcome='native'}
+    local descriptorWatch=p.capture({{owner=description,exact=true}})
+    if not descriptorWatch then return end
+    local used=false
+    return function()
+        if used then return false end
+        used=true
+        return rootWatch()and requestWatch()and inheritanceWatch()and descriptorWatch()
+    end,description
+end
+spatialFactory=Approach.prepareSpatialLease
 return Approach

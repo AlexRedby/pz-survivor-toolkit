@@ -113,7 +113,7 @@ class BookControlTests(unittest.TestCase):
         volume = record(3, 'volume', False, 30, started=enabled or not lost)
         tail = record(4, 'tail', 102, 40, started=enabled or not lost)
         approach=record(8,'preparation',False,30,started=False,performed=False) if device and enabled else None
-        if approach: approach.update(duration=-1,approach=dict(declared=True,owned=True,nativeConstructor=True,nativeResolver=True,ownedStart=True))
+        if approach: approach.update(duration=-1,approach=dict(declared=True,owned=True,nativeConstructor=True,nativeResolver=True,ownedStart=True,actor='IsoPlayer@live',targetSquare='IsoGridSquare@tv'))
         if moving:
             resumed = record(5, 'front', 101, 10)
             resume = dict(oldAction=original['actionRef'], newAction=resumed['actionRef'], oldNative=original['nativeRef'], newNative=resumed['nativeRef'],
@@ -1513,14 +1513,17 @@ os.exit(0)
             positiveTimingClaim=False, assessment='not-assessed')
         if device:
             if enabled: value.pop('control', None)
-            value.update(schema=2 if enabled else 1,scope='active-edit-device-only-approach-observation' if enabled else 'active-edit-device-only-preempt-observation', qualifiedReturn=False, effect=False, nativeFacts=False, aliasFacts=False,
+            value.update(schema=3 if enabled else 1,scope='active-edit-device-only-deferred-native-phase-observation' if enabled else 'active-edit-device-only-preempt-observation', qualifiedReturn=False, effect=False, nativeFacts=False, aliasFacts=False,
                 intent=dict(kind='move', action=row['boundary']['reader'] if a.base_control(row['ids']['control'])=='demote-reader' else next(r['actionRef'] for r in row['records'] if r['role']=='volume'), target=next(r['actionRef'] for r in row['records'] if r['role']=='volume') if a.base_control(row['ids']['control'])=='demote-reader' else row['boundary']['reader'], after=a.base_control(row['ids']['control'])=='demote-reader'))
             value['existingDecision'] = dict(entrypoint='Policy.evaluateMove', allowed=enabled, reason=False if enabled else 'unavailable', whole=False, commonActiveEdit=False)
             if enabled:
-                projection.update(status='unhandled', reason='edit_unknown')
+                projection.update(status='deferred', reason='edit_native_resolution', externalCapacity=True)
                 approach=next(r for r in row['records'] if r['role']=='preparation'and r['type']=='ISQueueActionsAction'and r['token']==30)
+                phase=dict(version=1,kind='deferred-spatial',actor=approach['approach']['actor'],targetSquare=approach['approach']['targetSquare'],
+                    invalidates='all-resources',routing='native',expansion='native',outcome='native')
+                projection.update(blocker=approach['actionRef'],evaluatedPrefix=1,deferred=[dict(action=approach['actionRef'],index=2,descriptor=copy.deepcopy(phase))])
                 nodes = [dict(kind='checkpoint', action=row['boundary']['reader'], complete=True, capacity='unchanged'),
-                    dict(kind='pending',action=approach['actionRef'],complete=False,capacity=False),
+                    dict(kind='pending',action=approach['actionRef'],complete=False,capacity=False,deferred=copy.deepcopy(phase)),
                     dict(kind='pending', action=next(r['actionRef'] for r in row['records'] if r['role']=='volume'), complete=True, capacity='unchanged'),
                     dict(kind='resume', action=row['boundary']['reader'], complete=True, capacity='unchanged')]
                 for returning in (r for r in row['records'] if r['role']=='return'):
@@ -1530,13 +1533,13 @@ os.exit(0)
                 nodes.append(dict(kind='pending', action=next(r['actionRef'] for r in row['records'] if r['role']=='tail'), complete=True, capacity='unchanged'))
                 value['plan'] = dict(kind='preempt', nodes=nodes)
                 at=next(index for index,r in enumerate(row['boundary']['queue'],1) if r.get('actionRef')==approach['actionRef'])
-                value['diagnostics']=dict(contractGaps=[dict(index=at,actionType='ISQueueActionsAction',reason='effects_unproven')],
-                    nodes=[dict(kind=n['kind'],action=n['action'],complete=n['complete']) for n in nodes],projectionBlockerType='ISQueueActionsAction',gapsTruncated=False,nodesTruncated=False)
+                value['diagnostics']=dict(contractGaps=[],
+                    nodes=[dict(kind=n['kind'],action=n['action'],complete=n['complete'],**({'deferred':copy.deepcopy(n['deferred'])} if 'deferred'in n else {})) for n in nodes],projectionBlockerType='ISQueueActionsAction',gapsTruncated=False,nodesTruncated=False)
             else: value['plan'] = False
             observer['returns'] = 0
             value['performance'].update(scope='paired-live-device-preempt-entrypoints', whole=False, comparable=False,
-                comparisonReason='approach-effects-unproven' if enabled else 'queue-disabled',
-                observerProjectionStatus='unhandled' if enabled else False, observerProjectionReason='edit_unknown' if enabled else False)
+                comparisonReason='deferred-native-phase-not-full-projection' if enabled else 'queue-disabled',
+                observerProjectionStatus='deferred' if enabled else False, observerProjectionReason='edit_native_resolution' if enabled else False)
         return value
 
     def test_device_only_variants_use_native_device_chain_and_keep_pen_untouched(self):
@@ -1606,6 +1609,8 @@ local run=assert(loadfile(arg[3]))().run
 local item={getID=function()return 1 end,getFullType=function()return'Base.Book'end}
 local native={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
 local front={Type='ISReadABook',item=item,action=native,toolkitQueueOperation={}}
+local actor={getInventory=function()return{}end};local target={}
+local phase={version=1,kind='deferred-spatial',actor=actor,targetSquare=target,invalidates='all-resources',routing='native',expansion='native',outcome='native'}
 local volume,tail={Type='ISRadioAction',toolkitQueueOperation={}},{Type='ISReadABook'}
 local approach={Type='ISQueueActionsAction',toolkitQueueApproach=true,toolkitQueueOperation=volume.toolkitQueueOperation}
 local q={current=front,queue={front,approach,volume,tail}}
@@ -1615,12 +1620,12 @@ local function observe(queue,intent)
  observations=observations+1;assert(queue==q and intent.kind=='move'and intent.action==(demoting and front or volume)and intent.target==(demoting and volume or front)and intent.after==demoting)
  if off then return{status='unhandled',reason='unavailable'}end
  local edit={complete=true,capacity='unchanged'}
- local result={status='observed',kind='preempt',unresolved={},nodes={{kind='checkpoint',action=front,edit=edit},{kind='pending',action=approach},
+ local result={status='observed',kind='preempt',unresolved={},nodes={{kind='checkpoint',action=front,edit=edit},{kind='pending',action=approach,deferred=phase},
   {kind='pending',action=volume,edit=edit},{kind='resume',action=front,edit=edit},{kind='pending',action=tail,edit=edit}},
-  projection={status='unhandled',reason='edit_unknown',blocker=approach,externalCapacity=false},contractGaps={{index=2,actionType='ISQueueActionsAction',reason='effects_unproven'}}}
+  projection={status='deferred',reason='edit_native_resolution',blocker=approach,externalCapacity=true,evaluatedPrefix=1,deferred={{action=approach,index=2,descriptor=phase}}},contractGaps={}}
  if unexpected then
-  result.nodes[3].edit=nil;result.contractGaps[2]={index=3,actionType='ISRadioAction',reason='effects_unproven'}
-  if unexpected=='bounded'then for index=3,40 do result.nodes[index]=result.nodes[3];result.contractGaps[index]=result.contractGaps[2]end end
+  result.nodes[3].edit=nil;result.contractGaps[1]={index=3,actionType='ISRadioAction',reason='effects_unproven'}
+  if unexpected=='bounded'then for index=2,40 do result.nodes[index]=result.nodes[3];result.contractGaps[index]=result.contractGaps[1]end end
  end
  return result
 end
@@ -1630,17 +1635,22 @@ local function owned(action)return action==approach end
 local toolkit={ActionQueuePolicy={observeActiveEdit=observe,evaluateMove=move},ActionQueueSettlement={editLedger=ledger},ActionQueueApproach={isAction=owned}}
 getFilenameOfClosure=function(fn)if fn==observe then return'ActionQueuePolicy.lua'elseif fn==ledger then return'ActionQueueSettlement.lua'elseif fn==owned then return'ActionQueueApproach.lua'end end
 ISInventoryTransferAction={}
-local tick=0;local context={toolkit=toolkit,queue=q,front=front,state={front=item,player={getInventory=function()return{}end}},
+local tick=0;local context={toolkit=toolkit,queue=q,front=front,state={front=item,player=actor},spatialIdentity={actor=actor,targetSquare=target},
  fixture={snapshot=function()return{}end,same=fixture.same},ids={source='root',front={id=1,type='Base.Book'}},case='root.move-volume-device-only',
  kind='sp',mode='toolkit',native=false,control='move-volume',deviceOnly=true,volume=volume,precise=true,clock=function()tick=tick+1;return tick end}
 local receipt=run(context)
 assert(receipt.passed and receipt.readOnly and not receipt.existingDecision.commonActiveEdit and receipt.intent.action==tostring(volume))
-assert(receipt.schema==2 and receipt.plan.kind=='preempt'and #receipt.plan.nodes==5 and not receipt.plan.nodes[2].complete and receipt.observer.projection.status=='unhandled'and receipt.observer.returns==0)
-assert(receipt.diagnostics.contractGaps[1].index==2 and receipt.diagnostics.projectionBlockerType=='ISQueueActionsAction'and not receipt.performance.comparable)
+assert(receipt.schema==3 and receipt.plan.kind=='preempt'and #receipt.plan.nodes==5 and not receipt.plan.nodes[2].complete and receipt.observer.projection.status=='deferred'and receipt.observer.returns==0)
+assert(#receipt.diagnostics.contractGaps==0 and receipt.diagnostics.nodes[2].deferred.kind=='deferred-spatial'and receipt.diagnostics.projectionBlockerType=='ISQueueActionsAction'and not receipt.performance.comparable)
 assert(moves==5 and observations==5 and q.current==front and front.action==native)
 demoting=true;context.control='demote-reader';context.case='root.demote-reader-device-only'
 receipt=run(context);assert(receipt.passed and receipt.intent.action==tostring(front)and receipt.intent.target==tostring(volume)and receipt.intent.after==true and #receipt.plan.nodes==5)
-unexpected=true;receipt=run(context);assert(not receipt.passed and receipt.readOnly and #receipt.diagnostics.contractGaps==2 and not receipt.diagnostics.nodes[3].complete)
+for _,change in ipairs({{'invalidates','position'},{'domain','position'},{'actor',{}},{'targetSquare',{}},{'complete',true},{'futureFacts',{}}})do
+ local field,value=change[1],change[2];local previous=phase[field];phase[field]=value
+ receipt=run(context);assert(not receipt.passed and receipt.readOnly,'raw malformed descriptor escaped native fixture qualification')
+ phase[field]=previous
+end
+unexpected=true;receipt=run(context);assert(not receipt.passed and receipt.readOnly and #receipt.diagnostics.contractGaps==1 and not receipt.diagnostics.nodes[3].complete)
 unexpected='bounded';receipt=run(context);assert(not receipt.passed and #receipt.diagnostics.nodes==32 and #receipt.diagnostics.contractGaps==32 and receipt.diagnostics.nodesTruncated and receipt.diagnostics.gapsTruncated)
 unexpected=false;off=true;context.native=true;context.mode='native'
 receipt=run(context);assert(receipt.passed and receipt.schema==1 and receipt.plan==false and receipt.observer.projection==false and receipt.existingDecision.commonActiveEdit==false)
@@ -1762,7 +1772,7 @@ os.exit(0)
                             changed=copy.deepcopy(receipt);changed['prototype']['action']='ForeignAction 0x'+format(7+256,'x')
                             self.assertTrue(a.active_edit_errors(changed,row,case,selection))
 
-    def test_device_only_unknown_gap_requires_owned_record_and_every_other_effect_complete(self):
+    def test_device_only_native_phase_requires_owned_record_and_every_other_effect_complete(self):
         for case in a.DEVICE_ONLY_CASES:
             row=self.precise_evidence(case)[0];selection=self.selection()
             receipt=self.active_edit_receipt(row)
@@ -1771,9 +1781,9 @@ os.exit(0)
             for token in (10,30):
                 completed=copy.deepcopy(actual_approach);completed.update(sequence=900+token,actionRef='ISQueueActionsAction 0x'+format(900+token,'x'),token=token,started=True,performedAt=8)
                 historical['records'].insert(0,completed)
-            self.assertEqual(a.active_edit_errors(receipt,historical,case,selection),[], 'completed historical preparation cannot become the pending TV gap')
-            for mutate in (lambda r:r['diagnostics']['contractGaps'][0].update(index=999),
-                           lambda r:r['diagnostics']['contractGaps'][0].update(reason='inputs_unknown'),
+            self.assertEqual(a.active_edit_errors(receipt,historical,case,selection),[], 'completed historical preparation cannot become the pending native TV phase')
+            for mutate in (lambda r:r['diagnostics']['contractGaps'].append(dict(index=999,actionType='ISQueueActionsAction',reason='effects_unproven')),
+                           lambda r:r['observer']['projection']['deferred'][0].update(index=999),
                            lambda r:r['diagnostics']['contractGaps'].append(dict(index=4,actionType='ISRadioAction',reason='effects_unproven')),
                            lambda r:r['diagnostics'].update(projectionBlockerType='ISRadioAction'),
                            lambda r:r['diagnostics'].update(nodesTruncated=True),
@@ -1795,7 +1805,45 @@ os.exit(0)
                 evidence=list(self.precise_evidence(case));evidence[0]=changed
                 self.assertTrue(self.check(evidence),case)
 
-    def test_device_only_requires_exact_approach_gap_and_real_legacy_authority(self):
+    def test_device_only_native_phase_descriptor_identity_shape_and_order_are_causal(self):
+        for case in a.DEVICE_ONLY_CASES:
+            row=self.precise_evidence(case)[0];selection=self.selection()
+            receipt=self.active_edit_receipt(row)
+            self.assertEqual(a.active_edit_errors(receipt,row,case,selection),[])
+            for path in ('projection','plan','diagnostics'):
+                def phase(value):
+                    if path=='projection': return value['observer']['projection']['deferred'][0]['descriptor']
+                    return value[path]['nodes'][1]['deferred']
+                for field,wrong in [('version',True),('version',2),('kind','native-noop'),('actor','IsoPlayer@foreign'),
+                        ('actor',False),('targetSquare','IsoGridSquare@foreign'),('targetSquare',42),
+                        ('invalidates','position'),('routing','direct'),('expansion','known'),('outcome','success'),
+                        ('complete',True),('resources',[]),('domain','position'),('futureFacts',{}),('position',{})]:
+                    changed=copy.deepcopy(receipt);phase(changed)[field]=wrong
+                    self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,path,field,wrong))
+                for field in receipt['plan']['nodes'][1]['deferred']:
+                    changed=copy.deepcopy(receipt);phase(changed).pop(field)
+                    self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,path,field))
+            for field in ('actor','targetSquare'):
+                changed=copy.deepcopy(receipt)
+                for descriptor in (changed['observer']['projection']['deferred'][0]['descriptor'],
+                        changed['plan']['nodes'][1]['deferred'],changed['diagnostics']['nodes'][1]['deferred']):
+                    descriptor[field]='foreign@identity'
+                self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,field,'all summaries'))
+            for mutate in (lambda r:r['observer']['projection'].update(evaluatedPrefix=True),
+                           lambda r:r['observer']['projection'].update(evaluatedPrefix=2),
+                           lambda r:r['observer']['projection'].update(blocker='ForeignAction 0xdead'),
+                           lambda r:r['observer']['projection']['deferred'].append(copy.deepcopy(r['observer']['projection']['deferred'][0])),
+                           lambda r:r['observer']['projection']['deferred'][0].update(index=True),
+                           lambda r:r['observer']['projection']['deferred'][0].update(action=r['current']),
+                           lambda r:r['observer']['projection']['deferred'][0].update(complete=True),
+                           lambda r:r['observer']['projection'].update(futureFacts={}),
+                           lambda r:r['plan']['nodes'][1].pop('deferred'),
+                           lambda r:r['plan']['nodes'][2].update(deferred=copy.deepcopy(r['plan']['nodes'][1]['deferred'])),
+                           lambda r:r['plan']['nodes'].__setitem__(slice(1,3),list(reversed(r['plan']['nodes'][1:3])))):
+                changed=copy.deepcopy(receipt);mutate(changed)
+                self.assertTrue(a.active_edit_errors(changed,row,case,selection),case)
+
+    def test_device_only_requires_exact_native_phase_and_real_legacy_authority(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 selection, client, server = self.log_bank(kind=kind, mode=mode, precise=True, active=True, cases=a.DEVICE_ONLY_CASES)

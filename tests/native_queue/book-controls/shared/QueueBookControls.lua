@@ -7,6 +7,12 @@ function F.same(a,b)
  for k,v in pairs(a)do if not F.same(v,b[k])then return false end end
  for k in pairs(b)do if a[k]==nil then return false end end;return true
 end
+-- Current opaque entrypoint identities only; native routing owns all future positions.
+function F.spatialIdentity(s)
+ local target=s.tv:getSquare()
+ assert(s.player and target,'native device approach endpoints missing')
+ return{actor=s.player,targetSquare=target}
+end
 local function id(item)return item and item:getID()or false end
 function F.find(container,wanted)
  local items=container:getItems()

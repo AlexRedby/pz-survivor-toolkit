@@ -1026,8 +1026,21 @@ def _exact_device_plan(value, wanted):
     return True
 
 
+def _exact_device_observer(value, wanted):
+    if type(value) is not dict or value.keys() != wanted.keys(): return False
+    if not _exact({k: v for k, v in value.items() if k != 'projection'},
+                  {k: v for k, v in wanted.items() if k != 'projection'}): return False
+    actual, expected = value['projection'], wanted['projection']
+    if expected is False: return actual is False
+    if type(actual) is not dict or actual.keys() != expected.keys(): return False
+    if not _exact_action_record({k: v for k, v in actual.items() if k != 'deferred'},
+                               {k: v for k, v in expected.items() if k != 'deferred'}, {'blocker'}): return False
+    return (type(actual['deferred']) is list and len(actual['deferred']) == 1
+            and _exact_action_record(actual['deferred'][0], expected['deferred'][0], {'action'}))
+
+
 def device_active_edit_errors(value, row, case, selection):
-    """Observe the exact deferred approach gap without claiming a complete common edit."""
+    """Qualify one deferred native phase without granting a complete common edit."""
     if not isinstance(value, dict):
         return ['Missing device-only active-edit observation receipt']
     errors = []
@@ -1038,8 +1051,8 @@ def device_active_edit_errors(value, row, case, selection):
     original = next((r for r in records if r.get('role') == 'front'), {})
     tail = next((r for r in records if r.get('role') == 'tail'), {})
     returns = [r for r in records if r.get('role') == 'return']
-    required = dict(schema=2 if enabled else 1, case=case, kind=selection['kind'], mode=selection['mode'], queueEnabled=enabled,
-        scope='active-edit-device-only-approach-observation' if enabled else 'active-edit-device-only-preempt-observation', mutationAuthorized=False, permissionsMeasured=False,
+    required = dict(schema=3 if enabled else 1, case=case, kind=selection['kind'], mode=selection['mode'], queueEnabled=enabled,
+        scope='active-edit-device-only-deferred-native-phase-observation' if enabled else 'active-edit-device-only-preempt-observation', mutationAuthorized=False, permissionsMeasured=False,
         nativeStarted=True, nativeFinished=False, nativeForceComplete=False, qualifiedReturn=False,
         effect=False, nativeFacts=False, aliasFacts=False, readOnly=True, uiUnchanged=True, passed=True, failure=False, source=source)
     if any(type(value.get(k)) is not type(v) or value[k] != v for k, v in required.items()):
@@ -1062,11 +1075,9 @@ def device_active_edit_errors(value, row, case, selection):
     if not _exact(value.get('existingDecision'), decision):
         errors.append('Device-only actual move must retain legacy authority')
     observer = value.get('observer')
-    projection = dict(status='unhandled', reason='edit_unknown', externalCapacity=source != 'root', allowedAbsent=True) if enabled else False
-    wanted = dict(status='observed' if enabled else 'unhandled', reason=False if enabled else 'unavailable',
-                  allowedAbsent=True, projection=projection, returns=0, unresolved=0)
-    if not _exact(observer, wanted):
-        errors.append('Device-only deferred approach must remain an explicit unknown common projection')
+    if not enabled:
+        wanted = dict(status='unhandled', reason='unavailable', allowedAbsent=True, projection=False, returns=0, unresolved=0)
+        if not _exact_device_observer(observer, wanted): errors.append('Device-only queue-off observer acquired a projection')
     if enabled:
         approach_rows=[(index,r) for index,r in enumerate(boundary.get('queue',[]),1)
             if r.get('role')=='preparation'and r.get('type')=='ISQueueActionsAction'and r.get('token')==volume.get('token')]
@@ -1074,12 +1085,24 @@ def device_active_edit_errors(value, row, case, selection):
         preparations=[r for r in records if r.get('role')=='preparation'and r.get('type')=='ISQueueActionsAction'
             and r.get('token')==volume.get('token')and _same_action(r.get('actionRef'),queued_approach.get('actionRef'))]
         approach=preparations[0] if len(preparations)==1 else {}
-        ownership=dict(declared=True,owned=True,nativeConstructor=True,nativeResolver=True,ownedStart=True)
+        endpoints=queued_approach.get('approach',{})
+        if not isinstance(endpoints,dict): endpoints={}
+        actor,target=endpoints.get('actor'),endpoints.get('targetSquare')
+        descriptor=dict(version=1,kind='deferred-spatial',actor=actor,targetSquare=target,
+            invalidates='all-resources',routing='native',expansion='native',outcome='native')
+        projection=dict(status='deferred',reason='edit_native_resolution',externalCapacity=True,allowedAbsent=True,
+            blocker=approach.get('actionRef'),evaluatedPrefix=1,
+            deferred=[dict(action=approach.get('actionRef'),index=2,descriptor=descriptor)])
+        wanted=dict(status='observed',reason=False,allowedAbsent=True,projection=projection,returns=0,unresolved=0)
+        if not _exact_device_observer(observer,wanted):
+            errors.append('Device-only projection lost the exact deferred native obligation or acquired forecast/permission fields')
+        ownership=dict(declared=True,owned=True,nativeConstructor=True,nativeResolver=True,ownedStart=True,actor=actor,targetSquare=target)
         if (len(preparations)!=1 or type(approach.get('token')) is not int or not _exact(approach.get('approach'),ownership)
+                or not isinstance(actor,str)or not actor or not isinstance(target,str)or not target or actor==target
                 or len(approach_rows)!=1 or queued_approach.get('type')!='ISQueueActionsAction'or queued_approach.get('role')!='preparation'
                 or queued_approach.get('token')!=volume.get('token')or queued_approach.get('nativeRef')is not False
                 or queued_approach.get('current')is not False or not _exact(queued_approach.get('approach'),ownership)):
-            errors.append('Device-only unknown gap lacks the exact pending source-owned native volume approach record')
+            errors.append('Device-only native phase lacks the exact pending source-owned native volume approach record')
         boundary_members=[original,*returns,approach,volume,tail]
         actual_members=boundary.get('queue',[])
         if (type(actual_members)is not list or len(actual_members)!=len(boundary_members)
@@ -1089,7 +1112,7 @@ def device_active_edit_errors(value, row, case, selection):
             errors.append('Device-only observed plan omitted or changed a real pending queue member')
         if 'control' in value: errors.append('Device-only toolkit preempt mislabeled as a native control')
         nodes = [dict(kind='checkpoint', action=boundary.get('reader'), complete=True, capacity='unchanged'),
-                 dict(kind='pending', action=approach.get('actionRef'), complete=False, capacity=False),
+                 dict(kind='pending', action=approach.get('actionRef'), complete=False, capacity=False, deferred=descriptor),
                  dict(kind='pending', action=volume.get('actionRef'), complete=True, capacity='unchanged'),
                  dict(kind='resume', action=boundary.get('reader'), complete=True, capacity='unchanged')]
         prototype = value.get('prototype', {})
@@ -1105,14 +1128,15 @@ def device_active_edit_errors(value, row, case, selection):
                 or boundary.get('ui', {}).get('commonActiveEdit') is not False):
             errors.append('Device-only plan lost exact native approach/volume order, introduced equipment or changed legacy authority')
         diagnostics=value.get('diagnostics')
-        wanted_gaps=[dict(index=approach_index,actionType='ISQueueActionsAction',reason='effects_unproven')]
-        wanted_nodes=[dict(kind=node['kind'],action=node['action'],complete=node['complete']) for node in nodes]
+        wanted_gaps=[]
+        wanted_nodes=[dict(kind=node['kind'],action=node['action'],complete=node['complete'],
+                           **({'deferred':node['deferred']} if 'deferred'in node else {})) for node in nodes]
         if (not isinstance(diagnostics,dict)or set(diagnostics)!={'contractGaps','nodes','projectionBlockerType','gapsTruncated','nodesTruncated'}
                 or not _exact(diagnostics.get('contractGaps'),wanted_gaps)or diagnostics.get('projectionBlockerType')!='ISQueueActionsAction'
                 or diagnostics.get('gapsTruncated')is not False or diagnostics.get('nodesTruncated')is not False
                 or type(diagnostics.get('nodes'))is not list or len(diagnostics['nodes'])!=len(wanted_nodes)
                 or any(not _exact_action_record(actual,expected,{'action'}) for actual,expected in zip(diagnostics.get('nodes',[]),wanted_nodes))):
-            errors.append('Device-only diagnostics must identify exactly one recorded approach effect gap and complete remaining nodes')
+            errors.append('Device-only diagnostics must identify one typed native phase, no contract gaps and complete remaining nodes')
     elif value.get('plan') is not False or value.get('control') != 'queue-disabled':
         errors.append('Device-only queue-disabled control acquired a transition plan')
     ledger = value.get('ledgerBefore')
@@ -1148,8 +1172,8 @@ def device_active_edit_errors(value, row, case, selection):
     performance = value.get('performance')
     required_performance = dict(scope='paired-live-device-preempt-entrypoints', timer='System.nanoTime', units='ms', warmupPairs=1, pairs=3,
         sameLiveIntent=True, whole=False, firstUseScope='first-call-after-untimed-identity-ledger-and-native-facts-diagnostics',
-        comparable=False, comparisonReason='approach-effects-unproven' if enabled else 'queue-disabled',
-        observerProjectionStatus='unhandled' if enabled else False, observerProjectionReason='edit_unknown' if enabled else False, timerOverhead='included-not-subtracted',
+        comparable=False, comparisonReason='deferred-native-phase-not-full-projection' if enabled else 'queue-disabled',
+        observerProjectionStatus='deferred' if enabled else False, observerProjectionReason='edit_native_resolution' if enabled else False, timerOverhead='included-not-subtracted',
         sameOutputContract=False, completeEditMeasured=False, frameLoadMeasured=False, positiveTimingClaim=False, assessment='not-assessed')
     if (not isinstance(performance, dict) or set(performance) != set(required_performance) | {'baseline', 'observer', 'baselineFirstMs', 'observerFirstMs'}
             or any(type(performance.get(k)) is not type(v) or performance[k] != v for k, v in required_performance.items())):

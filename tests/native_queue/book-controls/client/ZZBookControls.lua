@@ -74,6 +74,7 @@ local function register(action)
   row.approach={declared=true,owned=approach and type(approach.isAction)=='function'and approach.isAction(action)==true or false,
    nativeConstructor=Proof.closure(ISQueueActionsAction.new,'ISQueueActionsAction.lua'),
    nativeResolver=Proof.closure(action.addActionsFunction,'ActionQueueApproach.lua'),ownedStart=Proof.closure(action.start,'ActionQueueOperations.lua')}
+  if deviceOnly()then local identity=F.spatialIdentity(state);row.approach.actor=ref(identity.actor);row.approach.targetSquare=ref(identity.targetSquare)end
  end
  if type(duration)=='number'and duration>0 then row.durationBefore=action:adjustMaxTime(duration)end
  tracks[action]=row;records[#records+1]=row
@@ -602,7 +603,7 @@ local function atBoundary()
   local earned=false
   for _,row in ipairs(records)do if row.role=='pickup'and row.performedAt then earned=true end end
   activeEditReceipt=editObservation.run({toolkit=T,queue=queue(),front=front,state=state,fixture=F,ids=ids,
-   case=case(),kind=config.kind,mode=config.mode,native=native,control=control(),clock=timingNow,precise=preciseTiming,pickupEarned=earned,volume=volume,deviceOnly=deviceOnly()})
+   case=case(),kind=config.kind,mode=config.mode,native=native,control=control(),clock=timingNow,precise=preciseTiming,pickupEarned=earned,volume=volume,deviceOnly=deviceOnly(),spatialIdentity=deviceOnly()and F.spatialIdentity(state)or nil})
   raw('ACTIVE_EDIT_OBSERVATION',activeEditReceipt)
   assert(activeEditReceipt.passed or activeEditReceipt.failure=='virtual-return-effect-unavailable'
    or activeEditReceipt.failure=='native-alias-facts-unavailable',

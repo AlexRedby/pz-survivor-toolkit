@@ -11,6 +11,24 @@ local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))(
 f.native('shared/RadioCom/ISRadioAction.lua')
 f.native('shared/TimedActions/ISEquipWeaponAction.lua')
 getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
+getFirstLineOfClosure=NativeFirstLineOfClosure or function(callback)return debug.getinfo(callback,'S').linedefined+1 end
+local function sourceText(path)
+    if NativeReadText then return NativeReadText(path)end
+    local file=assert(io.open(path));local text=file:read('*a');file:close();return text
+end
+local function sourceReader(text)
+    text=text:gsub('\r','')
+    local position=1
+    return {close=function()end,readLine=function()
+        if position>#text then return end
+        local boundary=text:find('\n',position,true)or #text+1
+        local line=text:sub(position,boundary-1);position=boundary+1;return line
+    end}
+end
+getModFileReader=function(mod,path)
+    assert(mod=='PZSurvivorToolkit','only owned candidate sources are available')
+    return sourceReader(sourceText(ProjectRoot..'/PZSurvivorToolkit/42/'..path))
+end
 -- Source proofs read the installed vanilla text, without inventing checksums
 -- or treating the fixture's Java objects as native execution evidence.
 getGameFilesInput=function(path)
@@ -37,7 +55,28 @@ require=function(name)
     return savedRequire(name)
 end
 isClient=function()return false end
-f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
+isServer=function()return false end
+local operations=f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
+-- The policy captures this actual factory at load time. The helper bodies and
+-- mod source reader use the installed/native and candidate files unchanged.
+luautils={}
+local utilities=sourceText(NativeActionRoot..'/shared/luautils.lua'):gsub('\r','')
+assert(loadstring(assert(utilities:match('(function luautils.walkAdj%(.-\nend)'))..'\n'..
+    assert(utilities:match('(luautils.getCorrectSquareForWall = function.-\nend)')),
+    '@'..NativeActionRoot..'/shared/luautils.lua'))()
+local nativeWalk=luautils.walkAdj
+local approach=f.project('ActionQueueApproach');assert(approach.install())
+local spatialFactory=approach.prepareSpatialLease
+local foreignFactoryCalls=0
+local function foreignFactory()foreignFactoryCalls=foreignFactoryCalls+1;error('foreign factory must not run')end
+approach.prepareSpatialLease=foreignFactory
+local foreignFactoryPolicy=f.project('ActionQueuePolicy')
+local otherRole=approach.rebuild
+approach.prepareSpatialLease=otherRole
+f.project('ActionQueueDefinitions')
+local sameFileFactoryPolicy=f.project('ActionQueuePolicy')
+approach.prepareSpatialLease=spatialFactory
+f.project('ActionQueueDefinitions')
 local policy=f.project('ActionQueuePolicy')
 local settlement=f.project('ActionQueueSettlement')
 local player=f.player
@@ -268,6 +307,156 @@ do
         and #unresolved.contractGaps==1 and unresolved.contractGaps[1].action==helper
         and unresolved.contractGaps[1].actionType=='ISQueueActionsAction'and helperCalls==0,
         'an uncontracted helper must remain diagnostic unknown without running its native expansion')
+    table.remove(queue.queue,2)
+
+    -- Reproduce a genuine source-owned walkAdj in the TV operation. The
+    -- native dispatcher owns routing and expansion when this helper runs.
+    local forbiddenCalls=0
+    local function noWorld()forbiddenCalls=forbiddenCalls+1;error('observer sampled future spatial execution')end
+    player.isLocalPlayer=function()return true end
+    player.isDraggingCorpse=function()return false end
+    player.getX,player.getY,player.getSquare,player.getCurrentSquare=noWorld,noWorld,noWorld,noWorld
+    square.getX,square.getY,square.getZ=noWorld,noWorld,noWorld
+    local cellGetter=getCell;getCell=noWorld
+    local count=#queue.queue
+    operations.runWith(setting.toolkitQueueOperation,function()assert(luautils.walkAdj(player,square,false))end)
+    assert(#queue.queue==count+1,'native walkAdj must enqueue its real deferred command')
+    local spatial=table.remove(queue.queue)
+    table.insert(queue.queue,2,spatial)
+    assert(approach.isAction(spatial)and spatial.toolkitQueueOperation==setting.toolkitQueueOperation)
+    local checkpointAction=current.action
+    local forbiddenNative={[nativeWalk]=true,[spatial.toolkitQueueCommand.callback]=true}
+    for _,name in ipairs({'isValid','start','update','stop','perform','complete','performSetVolume'})do
+        if type(setting[name])=='function'then forbiddenNative[setting[name]]=true end
+    end
+    local function noExecution(callback)
+        local calls=0
+        debug.sethook(function(event)
+            if event=='call'and forbiddenNative[debug.getinfo(2,'f').func]then
+                calls=calls+1;error('observer executed a native action or route')
+            end
+        end,'c')
+        local ok,result=pcall(callback)
+        debug.sethook()
+        assert(ok,result);assert(calls==0,'native callback was invoked and swallowed')
+        return result
+    end
+    local function nativePhase(result)
+        assert(result.status=='observed'and result.allowed==nil
+            and result.projection.status=='deferred'and result.projection.reason=='edit_native_resolution'
+            and result.projection.allowed==nil and #result.contractGaps==0,
+            'genuine walkAdj must be deferred without a contract gap or new edit permission')
+        assert(#result.projection.deferred==1 and result.projection.deferred[1].action==spatial
+            and result.projection.blocker==spatial and result.projection.evaluatedPrefix==1)
+        local phases=0
+        for _,node in ipairs(result.nodes)do
+            if node.deferred then
+                phases=phases+1
+                assert(node.action==spatial and node.edit==nil
+                    and node.deferred.actor==player and node.deferred.targetSquare==square)
+            end
+        end
+        assert(phases==1 and result.nodes[2].action==spatial and result.nodes[3].action==setting
+            and result.nodes[4].kind=='resume'and result.nodes[5].action==tail)
+        assert(current.action==checkpointAction and not spatial.started and not spatial.action
+            and not setting.started and not setting.action and current.item:getAlreadyReadPages()==37)
+    end
+    nativePhase(noExecution(function()return observation(setting,current)end))
+    nativePhase(noExecution(function()return observation(current,setting,true)end))
+
+    -- A foreign closure and a different role in the same real source file
+    -- must be rejected before invocation, even when captured at policy load.
+    for _,case in ipairs({{policy=foreignFactoryPolicy,factory=foreignFactory},
+        {policy=sameFileFactoryPolicy,factory=otherRole}})do
+        approach.prepareSpatialLease=case.factory
+        forbiddenNative[case.factory]=true
+        local denied=noExecution(function()
+            return case.policy.observeActiveEdit(queue,{kind='move',action=setting,target=current})
+        end)
+        assert(denied.status=='observed'and denied.projection.status=='unhandled'
+            and #denied.contractGaps==1 and denied.contractGaps[1].action==spatial,
+            'an unauthenticated factory role must leave the spatial helper unknown')
+        forbiddenNative[case.factory]=nil
+        approach.prepareSpatialLease=spatialFactory
+        PZSurvivorToolkit.ActionQueuePolicy=policy
+    end
+    assert(foreignFactoryCalls==0)
+    nativePhase(noExecution(function()return observation(setting,current)end))
+
+    -- Init-time prerequisites cover used bindings, while unrelated mod helpers
+    -- added to the standard libraries after load retain the native phase.
+    local foreignHelperCalls=0
+    local function foreignHelper()foreignHelperCalls=foreignHelperCalls+1;error('changed source prerequisite executed')end
+    local owners={string,table,math};local previous={}
+    for index,owner in ipairs(owners)do previous[index]=owner.activeEditFixtureUnused;owner.activeEditFixtureUnused=foreignHelper end
+    local ok,extended=pcall(noExecution,function()return observation(setting,current)end)
+    for index,owner in ipairs(owners)do owner.activeEditFixtureUnused=previous[index]end
+    assert(ok,extended);nativePhase(extended)
+    assert(foreignHelperCalls==0,'an unrelated standard-library helper was invoked')
+    for _,binding in ipairs({{owner=string,name='byte'},{owner=string,name='sub'},{owner=_G,name='getModFileReader'}})do
+        -- The successful controls above warmed native source pins. The changed
+        -- identity must be rejected before own-module hash/source IO can run.
+        local owner,name=binding.owner,binding.name;local original=owner[name]
+        owner[name]=foreignHelper
+        local valid,changed=pcall(noExecution,function()
+            return policy.observeActiveEdit(queue,{kind='move',action=setting,target=current})
+        end)
+        owner[name]=original
+        assert(valid,changed)
+        assert(changed.status=='observed'and changed.projection.status=='unhandled'
+            and #changed.contractGaps==1 and changed.contractGaps[1].action==spatial,
+            'changed source prerequisite must leave the deferred helper unknown')
+        assert(foreignHelperCalls==0,'a changed source prerequisite ran before identity rejection')
+        nativePhase(noExecution(function()return observation(setting,current)end))
+    end
+
+    -- Calibrate the real final cleanup inventory read against a successful
+    -- control; mutate after preparation to prove the query-local lease revokes.
+    local inventoryGetter=player.getInventory
+    for _,mutation in ipairs({'source','request'})do
+        local reads=0
+        player.getInventory=function(self,...)reads=reads+1;return inventoryGetter(self,...)end
+        local control=noExecution(function()
+            return policy.observeActiveEdit(queue,{kind='move',action=setting,target=current})
+        end)
+        nativePhase(control)
+        local finalRead=reads
+        local originalGuard=luautils.getCorrectSquareForWall
+        local request=spatial.toolkitQueueCommand.snapshot
+        local target=request.args[2]
+        local mutated=false
+        reads=0
+        player.getInventory=function(self,...)
+            reads=reads+1
+            assert(reads<=finalRead,'observer called another getter after final cleanup facts')
+            if reads==finalRead then
+                mutated=true
+                if mutation=='source'then luautils.getCorrectSquareForWall=noWorld
+                else request.args[2]={}end
+            end
+            return inventoryGetter(self,...)
+        end
+        local changed=noExecution(function()
+            return policy.observeActiveEdit(queue,{kind='move',action=setting,target=current})
+        end)
+        player.getInventory=inventoryGetter
+        luautils.getCorrectSquareForWall=originalGuard;request.args[2]=target
+        assert(mutated and changed.status=='unhandled'and changed.reason=='unavailable',
+            'late '..mutation..' mutation escaped the final spatial lease')
+        assert(queue.current==current and queue.queue[1]==current and queue.queue[2]==spatial
+            and queue.queue[3]==setting and queue.queue[4]==tail and current.item:getAlreadyReadPages()==37)
+        nativePhase(noExecution(function()return observation(setting,current)end))
+    end
+    local lineCapability=getFirstLineOfClosure
+    getFirstLineOfClosure=nil
+    local missing=noExecution(function()return observation(setting,current)end)
+    getFirstLineOfClosure=lineCapability
+    assert(missing.status=='observed'and missing.projection.status=='unhandled'
+        and #missing.contractGaps==1 and missing.contractGaps[1].action==spatial,
+        'missing role metadata must keep the helper unknown')
+    nativePhase(noExecution(function()return observation(setting,current)end))
+    assert(forbiddenCalls==0,'spatial observation executed a world callback')
+    getCell=cellGetter
     table.remove(queue.queue,2)
 
     local destination={class='ItemContainer',getType=function()return 'container'end,

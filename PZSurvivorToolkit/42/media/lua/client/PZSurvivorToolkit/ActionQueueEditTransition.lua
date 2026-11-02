@@ -84,13 +84,13 @@ local function project(entries,change,prepared)
     local current=entries[1].action
     local plan={status='observed',kind=change.kind,generation=change.generation,nodes={},removed={},unresolved={}}
     local declarations,externalCapacity={},false
-    local function node(kind,action,edit,snapshotOnly)
-        local value={kind=kind,action=action,edit=edit}
-        externalCapacity=externalCapacity or plain(edit)and edit.capacity=='external'
+    local function node(kind,action,edit,snapshotOnly,deferred)
+        local value={kind=kind,action=action,edit=edit,deferred=deferred}
+        externalCapacity=externalCapacity or deferred~=nil or plain(edit)and edit.capacity=='external'
         plan.nodes[#plan.nodes+1]=value
         -- Resume/checkpoint are virtual instructions, never existing native actions to execute.
         declarations[#declarations+1]={action=(kind=='checkpoint'or kind=='resume'or kind=='return')and value or action,
-            edit=edit,snapshotOnly=snapshotOnly}
+            edit=edit,snapshotOnly=snapshotOnly,deferred=deferred}
         return value
     end
     local function uncertain(reason,detail)
@@ -124,7 +124,7 @@ local function project(entries,change,prepared)
     end
     local function pending(index)
         local entry=entries[index]
-        return node('pending',entry.action,retainedEdits[entry.action] or entry.edit)
+        return node('pending',entry.action,retainedEdits[entry.action] or entry.edit,nil,entry.deferred)
     end
     node('checkpoint',current,change.checkpoint,true)
     if change.kind=='preempt'then
@@ -189,7 +189,7 @@ local function project(entries,change,prepared)
         -- virtual return, never to the old executor removed with its operation.
         for i=1,change.last do
             local entry=entries[i]
-            if i>1 and retained[entry.action]then node('cleanup',entry.action,entry.edit)
+            if i>1 and retained[entry.action]then node('cleanup',entry.action,entry.edit,nil,entry.deferred)
             elseif i>1 and providerUnknown then uncertain('edit_obligation_unknown',{kind='pending-disposition',action=entry.action})
             else plan.removed[#plan.removed+1]=entry.action end
         end
@@ -205,7 +205,7 @@ local function project(entries,change,prepared)
                 value.synthetic=true
             else uncertain('edit_obligation_unknown',debt.detail)end
         end
-        for i=change.last+1,count do node('pending',entries[i].action,entries[i].edit)end
+        for i=change.last+1,count do pending(i)end
     end
     -- The resource model remains pending-only: current effects enter only as a
     -- separately declared snapshot; its original active entry is never evaluated.

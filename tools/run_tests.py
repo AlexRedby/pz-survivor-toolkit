@@ -29,6 +29,7 @@ NATIVE_TAG_TESTS = (
 # An explicit request must not silently skip its required source checks. Other
 # source-dependent tests retain their own optional-input SKIP/fallback behavior.
 REQUIRED_INPUTS = {
+    "test_action_queue_spatial_lease.lua": ("native_action_root", "--game or --native-action-root"),
     'test_action_queue_borrowing_composition.lua': (('native_action_root', 'p4_source'),
                                                   '--game and --p4-source (or a complete --pack-lock)'),
     "test_bulk_transfer_binding.lua": ("native_action_root", "--game or --native-action-root"),
@@ -60,7 +61,8 @@ DEFAULT_NATIVE_ONLY = {
 
 # Completion receipts are separate from input availability. A supplied source
 # cannot prove that its conditional assertions actually ran.
-SOURCE_CHECKS = {'test_action_queue.lua': ('source-contract',),
+SOURCE_CHECKS = {'test_action_queue_spatial_lease.lua': ('source-contract',),
+ 'test_action_queue.lua': ('source-contract',),
  'test_action_queue_borrowing_composition.lua': ('plain', 'singleton-guarded', 'merge-preserving', 'return-failure'),
  'test_bulk_transfer_binding.lua': ('source-contract',),
  'test_action_queue_deferred_sources.lua': ('source-contract',),

@@ -63,15 +63,45 @@ local function ledgerSummary(ledger)
  end
  return result
 end
-local function observedSummary(result)
+local function spatialDescriptor(value,expected)
+ assert(plain(value),'deferred native phase is not a plain descriptor')
+ local fields={version=true,kind=true,actor=true,targetSquare=true,invalidates=true,routing=true,expansion=true,outcome=true}
+ local count=0
+ for key in pairsOf(value)do count=count+1;assert(fields[key],'deferred native phase has an extra field')end
+ assert(count==8 and value.version==1 and value.kind=='deferred-spatial'and value.invalidates=='all-resources'
+  and value.routing=='native'and value.expansion=='native'and value.outcome=='native','deferred native phase semantics differ')
+ assert((kind(value.actor)=='table'or kind(value.actor)=='userdata')and(kind(value.targetSquare)=='table'or kind(value.targetSquare)=='userdata'),
+  'deferred native phase identities are not opaque')
+ if expected then assert(equal(value.actor,expected.actor)and equal(value.targetSquare,expected.targetSquare),'deferred native phase changed exact actor/target')end
+ return{version=1,kind='deferred-spatial',actor=ref(value.actor),targetSquare=ref(value.targetSquare),
+  invalidates='all-resources',routing='native',expansion='native',outcome='native'}
+end
+local function observedSummary(result,spatial)
  local value={status=result.status,reason=result.reason or false,allowedAbsent=result.allowed==nil,
   projection=result.projection and{status=result.projection.status,reason=result.projection.reason or false,
    externalCapacity=result.projection.externalCapacity==true,allowedAbsent=result.projection.allowed==nil}or false,
   returns=0,unresolved=result.unresolved and #result.unresolved or 0}
  for _,node in each(result.nodes or{})do if node.kind=='return'then value.returns=value.returns+1 end end
+ if spatial and value.projection then
+  local projection=result.projection
+  local fields={status=true,reason=true,blocker=true,evaluatedPrefix=true,deferred=true,externalCapacity=true}
+  for key in pairsOf(projection)do assert(fields[key],'native phase projection contains a forecast or permission field')end
+  assert(plain(projection.deferred)and #projection.deferred==1,'native phase obligation missing or duplicated')
+  local obligations=0
+  for key in pairsOf(projection.deferred)do obligations=obligations+1;assert(key==1,'native phase obligation list has extra fields')end
+  assert(obligations==1,'native phase obligation list malformed')
+  local obligation=projection.deferred[1]
+  assert(plain(obligation),'native phase obligation malformed')
+  local count=0
+  for key in pairsOf(obligation)do count=count+1;assert(key=='action'or key=='index'or key=='descriptor','native phase obligation extra field')end
+  assert(count==3 and equal(obligation.action,spatial.action)and obligation.index==2
+   and equal(projection.blocker,spatial.action)and projection.evaluatedPrefix==1,'native phase action/order changed')
+  value.projection.blocker=ref(projection.blocker);value.projection.evaluatedPrefix=projection.evaluatedPrefix
+  value.projection.deferred={{action=ref(obligation.action),index=obligation.index,descriptor=spatialDescriptor(obligation.descriptor,spatial)}}
+ end
  return value
 end
-local function failureDiagnostics(result)
+local function failureDiagnostics(result,spatial)
  local value={contractGaps={},nodes={},projectionBlockerType=false,gapsTruncated=false,nodesTruncated=false}
  for index,gap in each(plain(result.contractGaps)and result.contractGaps or{})do
   if index>32 then value.gapsTruncated=true;break end
@@ -79,7 +109,11 @@ local function failureDiagnostics(result)
  end
  for index,node in each(plain(result.nodes)and result.nodes or{})do
   if index>32 then value.nodesTruncated=true;break end
-  if plain(node)then value.nodes[#value.nodes+1]={kind=node.kind or false,action=ref(node.action),complete=plain(node.edit)and node.edit.complete==true or false}end
+  if plain(node)then
+   local summary={kind=node.kind or false,action=ref(node.action),complete=plain(node.edit)and node.edit.complete==true or false}
+   if node.deferred~=nil then summary.deferred=spatialDescriptor(node.deferred,spatial)end
+   value.nodes[#value.nodes+1]=summary
+  end
  end
  local projection=plain(result.projection)and result.projection
  local blocker=projection and projection.blocker
@@ -89,7 +123,7 @@ local function failureDiagnostics(result)
  end
  return value
 end
-local function planSummary(result,prototype,item,root,destination,id,fullType,approach)
+local function planSummary(result,prototype,item,root,destination,id,fullType,approach,spatial)
  local value={kind=result.kind,nodes={}}
  local retained,incomplete=0,0
  for _,node in each(result.nodes or{})do
@@ -99,6 +133,8 @@ local function planSummary(result,prototype,item,root,destination,id,fullType,ap
    assert(node.kind=='pending'and node.edit==nil,'owned deferred approach unexpectedly acquired an effect contract')
   else assert(complete,'device-only plan contains another incomplete effect')end
   local summary={kind=node.kind,action=ref(node.action),complete=complete,capacity=node.edit and node.edit.capacity or false}
+  if approach and equal(node.action,approach)then summary.deferred=spatialDescriptor(node.deferred,spatial)
+  else assert(node.deferred==nil,'another node acquired an unexpected native phase')end
   if prototype and equal(node.action,prototype)then
    retained=retained+1
    local edit=node.edit;local resource=plain(edit.resources)and edit.resources[1]
@@ -156,8 +192,8 @@ function O.run(context)
  local demote=context.control=='demote-reader'
  local movingAction=demote and front or context.volume
  local movingTarget=demote and context.volume or front
- local receipt={schema=deviceOnly and not context.native and 2 or 1,case=context.case,kind=context.kind,mode=context.mode,queueEnabled=not context.native,
-  scope=deviceOnly and(not context.native and'active-edit-device-only-approach-observation'or'active-edit-device-only-preempt-observation')or'active-edit-native-return-effect-observation',mutationAuthorized=false,permissionsMeasured=false,
+ local receipt={schema=deviceOnly and not context.native and 3 or 1,case=context.case,kind=context.kind,mode=context.mode,queueEnabled=not context.native,
+  scope=deviceOnly and(not context.native and'active-edit-device-only-deferred-native-phase-observation'or'active-edit-device-only-preempt-observation')or'active-edit-native-return-effect-observation',mutationAuthorized=false,permissionsMeasured=false,
   current=ref(front),currentNative=ref(front.action),currentLuaStartedPresent=front.started~=nil,currentLuaStarted=front.started==true,
   liveItem=ref(state.front),source=context.ids.source,
   observer=false,existingDecision=false,ledgerBefore=false,ledgerAfter=false,nativeFacts=false,aliasFacts=false,prototype=false,
@@ -203,6 +239,12 @@ function O.run(context)
    assert(approach and approach.toolkitQueueApproach==true and T.ActionQueueApproach
     and source(T.ActionQueueApproach.isAction)=='ActionQueueApproach.lua'and T.ActionQueueApproach.isAction(approach)==true,
     'genuine owned deferred native volume approach missing')
+  end
+  local spatial
+  if approach then
+   local identity=context.spatialIdentity
+   assert(plain(identity)and equal(identity.actor,state.player)and identity.targetSquare,'independent current native approach identity missing')
+   spatial={action=approach,actor=identity.actor,targetSquare=identity.targetSquare}
   end
   receipt.sources={observer=source(observe),cleanup=source(settlement.observeEditCleanup),
    bulk=T.BulkActions and source(T.BulkActions.transferBinding)or false,
@@ -256,21 +298,21 @@ function O.run(context)
   started=clock();local result=observation();local observerFirst=clock()-started
   receipt.existingDecision={entrypoint=deviceOnly and'Policy.evaluateMove'or'Policy.evaluateCancel',allowed=baseline.allowed,reason=baseline.reason or false,whole=not deviceOnly}
   if deviceOnly then receipt.existingDecision.commonActiveEdit=baseline.commonActiveEdit==true end
-  receipt.observer=observedSummary(result)
-  if deviceOnly then receipt.diagnostics=failureDiagnostics(result)end
+  receipt.observer=observedSummary(result,spatial)
+  if deviceOnly then receipt.diagnostics=failureDiagnostics(result,spatial)end
   if deviceOnly then
    receipt.plan=false
    if context.native then
     assert(result.status=='unhandled'and not result.projection,'queue-off move observer acquired a plan');receipt.control='queue-disabled'
    else
-    assert(result.status=='observed'and result.kind=='preempt'and result.projection and result.projection.status=='unhandled'
-     and result.projection.reason=='edit_unknown'and #result.unresolved==0,'deferred native approach must keep common projection unknown')
+    assert(result.status=='observed'and result.kind=='preempt'and result.projection and result.projection.status=='deferred'
+     and result.projection.reason=='edit_native_resolution'and #result.unresolved==0,'native phase must remain deferred without future projection')
     assert(baseline.allowed and not baseline.commonActiveEdit,'device-only move must use existing legacy authority')
     local gaps=receipt.diagnostics.contractGaps
-    assert(#gaps==1 and gaps[1].index==approachIndex and gaps[1].actionType=='ISQueueActionsAction'and gaps[1].reason=='effects_unproven'
+    assert(#gaps==0
      and receipt.diagnostics.projectionBlockerType=='ISQueueActionsAction'and not receipt.diagnostics.gapsTruncated and not receipt.diagnostics.nodesTruncated,
-     'common projection has an unexpected effect gap')
-    receipt.plan=planSummary(result,prototype,state.front,root,state.source,context.ids.front.id,context.ids.front.type,approach)
+     'typed native phase has an unexpected contract gap')
+    receipt.plan=planSummary(result,prototype,state.front,root,state.source,context.ids.front.id,context.ids.front.type,approach,spatial)
    end
   elseif context.native then
    assert(result.status=='unhandled'and receipt.observer.returns==0,'queue-off observer acquired a virtual operation')
@@ -301,9 +343,9 @@ function O.run(context)
    end
    assert(a.allowed==baseline.allowed and a.reason==baseline.reason,'existing cancellation decision changed in paired bank')
    if deviceOnly and not context.native then
-    assert(not a.commonActiveEdit and fixture.same(failureDiagnostics(b),receipt.diagnostics)and fixture.same(planSummary(b,prototype,state.front,root,state.source,context.ids.front.id,context.ids.front.type,approach),receipt.plan),'device-only legacy authority or exact approach gap changed in paired bank')
+    assert(not a.commonActiveEdit and fixture.same(failureDiagnostics(b,spatial),receipt.diagnostics)and fixture.same(planSummary(b,prototype,state.front,root,state.source,context.ids.front.id,context.ids.front.type,approach,spatial),receipt.plan),'device-only legacy authority or exact deferred native phase changed in paired bank')
    end
-   local summary=observedSummary(b)
+   local summary=observedSummary(b,spatial)
    assert(fixture.same(summary,receipt.observer),'active observation result changed in paired bank')
    if not deviceOnly and not context.native and context.ids.source~='root'then
     local effect,unsupported=descriptor(b,state.front,root,state.source,context.ids.front.id,context.ids.front.type)
@@ -315,8 +357,8 @@ function O.run(context)
   receipt.performance={scope=deviceOnly and'paired-live-device-preempt-entrypoints'or'paired-live-header-return-entrypoints',timer='System.nanoTime',units='ms',warmupPairs=1,pairs=3,
    sameLiveIntent=true,whole=not deviceOnly,firstUseScope='first-call-after-untimed-identity-ledger-and-native-facts-diagnostics',
    baseline=distribution(baselineTimes),observer=distribution(observerTimes),baselineFirstMs=baselineFirst,observerFirstMs=observerFirst,
-   comparable=comparable,comparisonReason=comparable and(deviceOnly and'complete-device-projection-and-existing-move-success'or'useful-return-effect-layer-and-existing-cancel-success')
-    or receipt.control or deviceOnly and'approach-effects-unproven'or'existing-cancel-denied-or-observer-unknown',
+   comparable=comparable,comparisonReason=comparable and'useful-return-effect-layer-and-existing-cancel-success'
+    or receipt.control or deviceOnly and'deferred-native-phase-not-full-projection'or'existing-cancel-denied-or-observer-unknown',
    observerProjectionStatus=receipt.observer.projection and receipt.observer.projection.status or false,
    observerProjectionReason=receipt.observer.projection and receipt.observer.projection.reason or false,
    timerOverhead='included-not-subtracted',sameOutputContract=false,completeEditMeasured=false,frameLoadMeasured=false,
