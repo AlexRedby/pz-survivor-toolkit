@@ -67,12 +67,12 @@ local function open(player)
  print('[FORGE_TEST] UI_OPEN case='..case()..' recipe='..recipe:getName()..' bench='..tostring(logic:getCraftBench()))
  return true
 end
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
  emit({event='setup',cases=config.cases,nativeDurations=true,queueEnabled=PZSurvivorToolkit.Settings.actionQueue()})
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()then return end
  local ok,problem=pcall(function()
   local player=getPlayer();if not player or player:isDead()or not player:getSquare()then return end

@@ -111,7 +111,7 @@ local function makeEnv(name)
  e.sendServerCommand=function(p,module,command,args) queue[#queue+1]={target=p.name,module=module,command=command,args=clone(args)} end
  e.sendClientCommand=function(p,module,command,args) queue[#queue+1]={target='server',p=p,module=module,command=command,args=clone(args)} end
  e.print=function(s) logs[#logs+1]={role=name,text=s};if s:find('ERROR',1,true) then for i=math.max(1,#logs-12),#logs do _G.print(logs[i].role..' '..logs[i].text) end;error(s) end end
- e.require=function(mod)
+ e.require=function(mod) if mod=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
   if mod=='QueueTestSelection' then return {suite='wooden_cart_multiplayer',disposable=true,kind='mp',cases={'lease_lifecycle'},options={mp_host=true},port=1} end
   if mod=='CartMPJSON' then return {encode=function(row) local s='';for k,v in pairs(row) do s=s..k..'='..tostring(v)..',' end;return s end} end
   if mod=='CartLeaseProtocol' then return assert(load(protocol,'protocol','t',e))() end

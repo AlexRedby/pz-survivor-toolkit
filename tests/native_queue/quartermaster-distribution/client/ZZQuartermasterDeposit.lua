@@ -11,7 +11,7 @@ local merged, confirmedRejection, rejectionId, startCapacity = false, false, 0, 
 local function emit(event,value) print('[QM_DEPOSIT] '..event..' '..JSON.encode(value)) end
 local function queue() return ISTimedActionQueue.getTimedActionQueue(getPlayer()) end
 Events.OnPlayerUpdate.Add(function(player) if started and player == getPlayer() then updates=updates+1 end end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started, since = true, getTimestampMs()
  getPlayer():setGodMod(true); getPlayer():setGhostMode(true)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
@@ -110,7 +110,7 @@ local function tick()
   done=true
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() or not getPlayer() or not getPlayer():getSquare() then return end
  local ok,problem=pcall(function()
   assert(getTimestampMs()-since<120000,'deposit timeout phase='..phase)

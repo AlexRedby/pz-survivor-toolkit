@@ -43,7 +43,7 @@ class NativeRunnerTests(unittest.TestCase):
         disk = patch.object(admission.shutil, 'disk_usage', return_value=SimpleNamespace(free=100 * 1024**3))
         disk.start()
         self.addCleanup(disk.stop)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         (self.root / "client1").mkdir()
         (self.root / "client1/options.ini").write_text("voiceEnable=false\n")
         self.selection = {"suite": "health", "kind": "sp", "mods": [], "cases": ["nativeStop"], "timeout_seconds": 10}
@@ -55,6 +55,8 @@ class NativeRunnerTests(unittest.TestCase):
         self.commands = []
         self.processes = []
         self.streams = []
+        self.client_streams = {}
+        self.setup_receipts = set()
         self.handlers = {}
         self.signal_changes = []
         self.complete = True
@@ -69,11 +71,40 @@ class NativeRunnerTests(unittest.TestCase):
         self.commands.append(command)
         process = Process(100 + len(self.processes))
         self.processes.append(process)
-        if "stdout" in kwargs and self.complete:
+        if "stdout" in kwargs:
             self.streams.append(kwargs["stdout"])
-            kwargs["stdout"].write(self.content)
+            role = Path(kwargs['stdout'].name).name.removesuffix('-launch.log')
+            if role != 'server':
+                self.client_streams[role] = kwargs['stdout']
+                kwargs['stdout'].write(self.preflight_receipt(role, 'ready'))
+            if self.complete:
+                kwargs["stdout"].write(self.content)
             kwargs["stdout"].flush()
         return process
+
+    def preflight_receipt(self, role, event, **fields):
+        config = self.runtime['fixture']['preflight']
+        return '[QUEUE_PREFLIGHT] ' + json.dumps(dict(event=event, token=config['token'], role=role, **fields)) + '\n'
+
+    def prepare_preflight(self):
+        # Tests change role counts and fixture options after setUp; seal their final inputs.
+        selection = json.loads((self.root / 'selection.json').read_text())
+        runtime = json.loads((self.root / 'runtime.json').read_text())
+        config = dict(version=1, token='0123456789abcdef' * 2, roles=runner.adapters.roles(selection, False))
+        runtime.setdefault('fixture', {})['preflight'] = config
+        self.runtime.setdefault('fixture', {})['preflight'] = config
+        for role in config['roles']:
+            (self.root / role / 'Lua').mkdir(parents=True, exist_ok=True)
+        (self.root / 'runtime.json').write_text(json.dumps(runtime))
+
+    def acknowledge_setup(self):
+        for role, stream in self.client_streams.items():
+            grant = self.root / role / 'Lua/queue-preflight-setup.txt'
+            if role not in self.setup_receipts and grant.exists():
+                self.assertEqual(self.runtime['fixture']['preflight']['token'] + '\n', grant.read_text())
+                stream.write(self.preflight_receipt(role, 'setup-ready'))
+                stream.flush()
+                self.setup_receipts.add(role)
 
     def signal(self, signum, handler):
         self.handlers[signum] = handler
@@ -93,9 +124,17 @@ class NativeRunnerTests(unittest.TestCase):
                         expected[name] = path.read_text()
         (self.root / 'initial-settings.json').write_text(json.dumps(expected))
 
-    def invoke(self, collisions="", sleep=None, settings=True):
+    def invoke(self, collisions="", sleep=None, settings=True, preflight=True):
         if settings:
             self.seal_settings(add_only=True)
+        if preflight:
+            self.prepare_preflight()
+        def advance(seconds):
+            if isinstance(sleep, BaseException):
+                raise sleep
+            if sleep is not None:
+                sleep(seconds)
+            self.acknowledge_setup()
         def kill_group(pid, sig):
             if sig == 0:
                 raise ProcessLookupError
@@ -109,7 +148,7 @@ class NativeRunnerTests(unittest.TestCase):
              patch.object(coop, 'save_host', side_effect=self.host_save), \
              patch.object(runner.subprocess, "Popen", side_effect=self.popen), \
              patch.object(runner.os, "killpg", side_effect=kill_group) as kill, patch.object(runner.signal, "signal", side_effect=self.signal), \
-             patch.object(runner.time, "sleep", side_effect=sleep):
+             patch.object(runner.time, "sleep", side_effect=advance):
             result = runner.run(self.root, resource_wait=0)
             return result, kill.call_args_list
 
@@ -120,6 +159,128 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertIn('-Dorg.lwjgl.glfw.libname=/owned/native/libglfw.dylib', self.commands[1])
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
+
+    def test_completion_waits_for_fresh_setup_receipt_and_gameplay_release(self):
+        waits = []
+        def setup(seconds):
+            waits.append(seconds)
+            self.assertTrue((self.root / 'client1/Lua/queue-preflight-setup.txt').is_file())
+            self.assertFalse((self.root / 'client1/Lua/queue-preflight-release.txt').exists())
+        result, _ = self.invoke(sleep=setup)
+        self.assertEqual([2], waits)
+        self.assertEqual('completed', result['status'])
+        self.assertEqual({'client1'}, result['preflight']['ready'].keys())
+        self.assertEqual({'client1'}, result['preflight']['fixture_setup'].keys())
+        self.assertTrue(result['preflight']['released'])
+        self.assertEqual(self.runtime['fixture']['preflight']['token'] + '\n',
+                         (self.root / 'client1/Lua/queue-preflight-release.txt').read_text())
+
+    def prepare_second_client(self):
+        self.selection['clients'] = 2
+        cache = self.root / 'client2'
+        cache.mkdir()
+        (cache / 'options.ini').write_text('voiceEnable=false\n')
+        self.runtime['roles']['client2'] = {'cache': str(cache), 'classes': str(self.root / 'classes')}
+        for name, value in [('selection', self.selection), ('runtime', self.runtime)]:
+            (self.root / (name + '.json')).write_text(json.dumps(value))
+
+    def test_required_client_failure_wins_over_all_completion_markers_and_stops_owned_clients(self):
+        self.prepare_second_client()
+        popen = self.popen
+        def launch(command, **kwargs):
+            process = popen(command, **kwargs)
+            if 'stdout' in kwargs and Path(kwargs['stdout'].name).name == 'client2-launch.log':
+                kwargs['stdout'].write(self.preflight_receipt('client2', 'failed', phase='preflight',
+                                                              reason='required dependency unavailable'))
+                kwargs['stdout'].flush()
+            return process
+        self.popen = launch
+        result, kills = self.invoke()
+        self.assertEqual('failed', result['status'])
+        self.assertEqual({'kind': 'client-preflight', 'role': 'client2', 'phase': 'preflight',
+                          'reason': 'required dependency unavailable', 'evidence': {'line': 4}},
+                         result['setup_failure'])
+        self.assertEqual([102, 101], [call.args[0] for call in kills])
+        self.assertTrue(all(stream.closed for stream in self.streams))
+        for role in ('client1', 'client2'):
+            for name in ('queue-preflight-setup.txt', 'queue-preflight-release.txt'):
+                self.assertFalse((self.root / role / 'Lua' / name).exists())
+
+    def test_required_client_setup_failure_prevents_gameplay_release_and_cleans_owned_clients(self):
+        self.prepare_second_client()
+        def fail_setup(seconds):
+            if seconds != 2:
+                return  # The second-client launch stagger precedes the setup grant.
+            for role in ('client1', 'client2'):
+                self.assertTrue((self.root / role / 'Lua/queue-preflight-setup.txt').is_file())
+            stream = self.client_streams['client2']
+            stream.write(self.preflight_receipt('client2', 'failed', phase='fixture-setup',
+                                               reason='fixture spawn failed'))
+            stream.flush()
+        result, kills = self.invoke(sleep=fail_setup)
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('fixture-setup', result['setup_failure']['kind'])
+        self.assertEqual('client2', result['setup_failure']['role'])
+        self.assertEqual('fixture spawn failed', result['setup_failure']['reason'])
+        self.assertEqual([102, 101], [call.args[0] for call in kills])
+        self.assertTrue(all(stream.closed for stream in self.streams))
+        for role in ('client1', 'client2'):
+            self.assertFalse((self.root / role / 'Lua/queue-preflight-release.txt').exists())
+
+    def test_missing_preflight_seal_starts_no_process(self):
+        with self.assertRaisesRegex(ValueError, 'preflight barrier is missing or invalid'):
+            self.invoke(preflight=False)
+        self.assertEqual([], self.commands)
+        self.assertFalse((self.root / 'execution.json').exists())
+
+    def test_client_popen_failure_records_setup_evidence_and_closes_launch_stream(self):
+        popen = self.popen
+        streams = []
+        def launch(command, **kwargs):
+            if 'stdout' in kwargs:
+                streams.append(kwargs['stdout'])
+                raise OSError('owned client launch failed')
+            return popen(command, **kwargs)
+        self.popen = launch
+        result, kills = self.invoke()
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('owned client launch failed', result['setup_failure']['reason'])
+        self.assertEqual('client1', result['setup_failure']['role'])
+        self.assertEqual({}, result['processes'])
+        self.assertTrue(streams[0].closed)
+        self.assertEqual([], kills)
+        self.assertEqual(-15, self.processes[0].returncode)
+
+    def test_probe_failure_before_release_is_setup_failure_and_cleans_client(self):
+        self.runtime['fixture'] = {'attach': {'client1': [
+            {'classpath': '/owned/classes', 'jar': '/owned/probe', 'ready': '[QUEUE_CHECK]',
+             'output': '/owned/probe-output'}]}}
+        (self.root / 'runtime.json').write_text(json.dumps(self.runtime))
+        failure = subprocess.CalledProcessError(1, ['owned-probe'])
+        with patch.object(runner.subprocess, 'run', side_effect=failure):
+            result, kills = self.invoke()
+        self.assertEqual('failed', result['status'])
+        self.assertEqual(str(failure), result['setup_failure']['reason'])
+        self.assertFalse(result['preflight']['released'])
+        self.assertFalse((self.root / 'client1/Lua/queue-preflight-release.txt').exists())
+        self.assertEqual([101], [call.args[0] for call in kills])
+        self.assertTrue(all(stream.closed for stream in self.streams))
+
+    def test_gameplay_failure_after_release_has_no_setup_failure(self):
+        self.complete = False
+        waits = []
+        def gameplay(seconds):
+            waits.append(seconds)
+            if (self.root / 'client1/Lua/queue-preflight-release.txt').exists():
+                self.client_streams['client1'].write('[QUEUE_TEST] FAIL gameplay assertion\n')
+                self.client_streams['client1'].flush()
+        result, kills = self.invoke(sleep=gameplay)
+        self.assertEqual([2, 2], waits)
+        self.assertEqual('failed', result['status'])
+        self.assertIn('Native fixture failed', result['error'])
+        self.assertTrue(result['preflight']['released'])
+        self.assertNotIn('setup_failure', result)
+        self.assertEqual([101], [call.args[0] for call in kills])
 
     def fixture_source(self, role='client1'):
         source = self.root / role / 'mods/ActionQueueTest/42/media/lua/shared/ZZBrokenFixture.lua'
@@ -145,7 +306,8 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual('runtime', result['fixture_load_error']['kind'])
         self.assertIn('ZZBrokenFixture.lua', result['error'])
         self.assertIn('SEVERE: fixture initialization failed', result['fixture_load_error']['block'])
-        self.assertEqual(self.content, (self.root / 'client1-launch.log').read_text())
+        self.assertEqual(self.preflight_receipt('client1', 'ready') + self.content,
+                         (self.root / 'client1-launch.log').read_text())
         self.assertEqual(result, json.loads((self.root / 'execution.json').read_text()))
         self.assertEqual([101], [call.args[0] for call in kills])
         self.assertTrue(all(stream.closed for stream in self.streams))
@@ -253,14 +415,13 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in kills], [101])
 
     def test_crash_after_completion_marker_is_failed_after_cleanup(self):
-        original_popen = self.popen
-        def crash(command, **kwargs):
-            process = original_popen(command, **kwargs)
-            if 'stdout' in kwargs:
-                process.returncode = -11
-            return process
-        with patch.object(self, 'popen', side_effect=crash):
-            result, kills = self.invoke()
+        self.complete = False
+        def crash(seconds):
+            if (self.root / 'client1/Lua/queue-preflight-release.txt').exists():
+                self.client_streams['client1'].write(self.content)
+                self.client_streams['client1'].flush()
+                self.processes[1].returncode = -11
+        result, kills = self.invoke(sleep=crash)
         self.assertEqual(result['status'], 'failed')
         self.assertIn('unexpected process exit code -11', result['error'])
         self.assertEqual(result['processes']['client1']['exit_code'], -11)
@@ -273,9 +434,10 @@ class NativeRunnerTests(unittest.TestCase):
         waits = []
         def user_exit(seconds):
             waits.append(seconds)
-            self.processes[1].returncode = 0
+            if (self.root / 'client1/Lua/queue-preflight-release.txt').exists():
+                self.processes[1].returncode = 0
         result, kills = self.invoke(sleep=user_exit)
-        self.assertEqual(waits, [2])
+        self.assertEqual(waits, [2, 2])
         self.assertEqual(result['status'], 'completed')
         self.assertTrue(result['manual'])
         self.assertEqual(result['processes']['client1']['exit_code'], 0)
@@ -703,6 +865,8 @@ class NativeRunnerTests(unittest.TestCase):
         result, kills = self.invoke()
         self.assertEqual(result["status"], "failed")
         self.assertIn("VOIP", result["error"])
+        self.assertIn('VOIP', result['setup_failure']['reason'])
+        self.assertFalse(result['preflight']['released'])
         self.assertEqual(len(self.commands), 1)  # Display guard only.
         self.assertEqual(kills, [])
 
@@ -915,7 +1079,8 @@ class NativeRunnerTests(unittest.TestCase):
     def test_partial_final_json_does_not_abort_polling(self):
         self.content = '[QUEUE_CHECK] {"event":"case"'
         def finish(_):
-            (self.root / "client1-launch.log").write_text('[QUEUE_CHECK] {"event":"case","id":"nativeStop"}\n[QUEUE_CHECK] {"event":"complete","failed":0}\n')
+            self.streams[-1].write(',"id":"nativeStop"}\n[QUEUE_CHECK] {"event":"complete","failed":0}\n')
+            self.streams[-1].flush()
         result, _ = self.invoke(sleep=finish)
         self.assertEqual(result["status"], "completed")
 

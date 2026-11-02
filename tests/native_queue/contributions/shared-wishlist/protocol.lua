@@ -13,7 +13,7 @@ local function load(path,env)return assert(setfenv(assert(loadfile(path)),env))(
 local function client(user,toolkit,clock,selection,fixture)
  local output={}
  local env=setmetatable({Events=events(),print=function(line)output[#output+1]=line end},{__index=_G})
- env.require=function(name)
+ env.require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
   if name=='PZSurvivorToolkit/InventoryClasses'or name=='PZSurvivorToolkit/InventoryRows'then
    return load(project..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua',env)
   end
@@ -111,7 +111,7 @@ do
  -- InventoryPresentation now owns the actual native rendering wrapper.
  -- Keep that boundary, Wishlist and row-anchor handling real; unrelated icon/tooltip presenters are inert.
  local requireFixture=env.require
- env.require=function(name)
+ env.require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
   if name=='PZSurvivorWishlist/Inventory'then return inventory end
   if name=='PZSurvivorToolkit/InventoryClasses'or name=='PZSurvivorToolkit/InventoryRows'then return requireFixture(name) end
   return{drawIcon=function()end,draw=function()return false end,refresh=function()end,install=function()end}
@@ -163,7 +163,7 @@ do
  local page={inventoryPane=makePane({nails},285,31,22),backpacks={{inventory=aggregate}},
   refreshBackpacks=function()end,setVisible=function()end,setPinned=function()end,
   selectContainer=function(self,button)selected=selected+1;self.inventoryPane.inventory=button.inventory end}
- env.require=function(name)assert(name=='BetterContainers/Proximity');return{GetItemContainer=function()return aggregate end,
+ env.require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;assert(name=='BetterContainers/Proximity');return{GetItemContainer=function()return aggregate end,
   ForceSelectContainer=function()forced=true end}end
  env.getPlayerLoot=function()return page end
  env.ISInventoryPage={}

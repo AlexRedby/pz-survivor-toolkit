@@ -112,7 +112,7 @@ class InventoryFreshnessTests(unittest.TestCase):
         from lupa.lua51 import LuaRuntime
         lua = LuaRuntime()
         lua.execute('''
-            require=function(name) if name=='QueueTestSelection'then return {cases={'inventory-freshness'}}end return {}end
+            require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; if name=='QueueTestSelection'then return {cases={'inventory-freshness'}}end return {}end
             Events={};for _,name in ipairs({'OnTick','OnMainMenuEnter','OnGameStart','OnPreUIDraw'})do
                 Events[name]={Add=function(callback)Events[name].callback=callback end}
             end

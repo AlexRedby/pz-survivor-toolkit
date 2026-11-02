@@ -47,7 +47,7 @@ Events.OnServerCommand.Add(function(module,name,value)
   if value.case==case()then ids=value end
  elseif name=='Verified'and value.case==case()then receipt=value end
 end)
-Events.OnGameStart.Add(function()started=true;since=now()end)
+require('QueuePreflight').onGameStart(Events,function()started=true;since=now()end)
 local function initialize()
  local player=getPlayer()
  if not isIngameState()or not player or not player:getSquare()or player:isDead()then return false end
@@ -272,7 +272,7 @@ local function finish()
  ids,state,authority,receipt,panels,commands,actions,order,edit,quiet=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  initialQueue,editedQueue=nil,nil;phase='prepare';since=now()
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,problem=pcall(function()
   if not ready and not initialize()then return end

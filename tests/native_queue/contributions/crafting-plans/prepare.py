@@ -63,7 +63,7 @@ ISHandcraftAction.performRecipe=function(action,...)
 end
 Events.OnServerStarted.Add(function() session.prepare();print('[QUEUE_TEST] SERVER_READY') end)
 Events.OnClientCommand.Add(function(module,command,player,args) session.command(module,command,player,args) end)
-Events.OnTick.Add(session.tick)
+require('QueuePreflight').onTick(Events,session.tick)
 """)
     else:
         parts.append("""
@@ -84,12 +84,12 @@ Events.OnPreUIDraw.Add(function()
 end)
 Events.OnConnectFailed.Add(function(a,b) session.quarantine('connect '..tostring(a)..' '..tostring(b)) end)
 Events.OnDisconnect.Add(function() session.quarantine('disconnect with unknown effects') end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  if config.user=='client2' then local p=getPlayer();p:teleportTo(math.floor(p:getX())+8,math.floor(p:getY())+8,0) end
  session.prepare()
 end)
 Events.OnServerCommand.Add(function(module,command,args) session.command(module,command,nil,args) end)
-Events.OnTick.Add(session.tick)
+require('QueuePreflight').onTick(Events,session.tick)
 """)
     return ''.join(parts)
 

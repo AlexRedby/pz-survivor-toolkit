@@ -229,8 +229,8 @@ function F.start(config)
             ',"childId":'..quote(actualChild:getID())..',"exactSelection":true,"groupSemantics":true,"itemSemantics":true,"repeatedRefresh":true,"shiftRange":true'..
             ',"markerPasses":'..markerPasses..',"markerGeometry":true}')
     end
-    Events.OnGameStart.Add(function() started=true;nextAt=getTimestampMs()+2500 end)
-    Events.OnTick.Add(function()
+    require('QueuePreflight').onGameStart(Events,function() started=true;nextAt=getTimestampMs()+2500 end)
+    require('QueuePreflight').onTick(Events,function()
         if done or not started or not isIngameState() or getTimestampMs()<nextAt then return end
         if not getPlayer() or not getPlayer():getSquare() then return end
         local ok,err=pcall(function()

@@ -37,7 +37,7 @@ end
 Events.OnPostUIDraw.Add(function()
  if watched and getPlayerInventory(watched.player:getPlayerNum()):getIsVisible()then watched.affinity.frames=watched.affinity.frames+1 end
 end)
-Events.OnTick.Add(function()if watched then watched.affinity.ticks=watched.affinity.ticks+1 end end)
+require('QueuePreflight').onTick(Events,function()if watched then watched.affinity.ticks=watched.affinity.ticks+1 end end)
 local function aggregate(run)
  local row=N.aggregateObservation(run);row.items={};local values=N.aggregate(run.player):getItems()
  for i=0,values:size()-1 do local item=values:get(i)

@@ -604,8 +604,8 @@ Events.OnPostUIDraw.Add(function()
     end)
     if not ok then failure(problem) end
 end)
-Events.OnGameStart.Add(function() started=true;since=now() end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function() started=true;since=now() end)
+require('QueuePreflight').onTick(Events,function()
     if not started or not isIngameState() then return end
     if done then if now()-since>3000 then getCore():quitToDesktop() end;return end
     local ok,problem=pcall(function()

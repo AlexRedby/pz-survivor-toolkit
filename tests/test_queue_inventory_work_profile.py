@@ -59,7 +59,7 @@ class InventoryWorkProfileTests(unittest.TestCase):
         lua=LuaRuntime()
         lua.globals().selectedRenderer=renderer
         lua.execute('''
-            require=function(name)
+            require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
                 if name=='QueueTestSelection' then return {cases={'inventory-work'},kind='sp',clients=1,options={inventory_work_renderer=selectedRenderer}} end
                 return {}
             end

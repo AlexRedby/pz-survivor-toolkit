@@ -123,7 +123,7 @@ if isServer() then
    log(cycleRow(t.before,native,'server'));t.complete=true
   end
  end
- if menuMode then Events.OnTick.Add(function()
+ if menuMode then require('QueuePreflight').onTick(Events,function()
   local ok,err=pcall(menuProgress);if not ok then log({actor='server',event='error',reason=tostring(err)}) end
  end) end
  Events.OnClientCommand.Add(function(mod,command,p,args)

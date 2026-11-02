@@ -207,7 +207,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  assert(args.ok~=false,args.error)
  if command=='Prepared' then ids=args elseif command=='Checkpointed' then checkpoint=args elseif command=='Verified' then receipt=args elseif command=='Cleaned' then cleaned=true elseif command=='HotbarConfigured'then hotbarConfigured=args elseif command=='ClothingConfigured'then clothingConfigured=args elseif command=='RingConfigured'then ringConfigured=args end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  local ok,problem=pcall(function()
   local player=assert(getPlayer());assert(isClient()==(Selection.kind=='mp') and not isServer(),'equipment connection kind differs')
   assert(Translator.getLanguage():name()==Selection.language,'equipment language differs')
@@ -229,7 +229,7 @@ Events.OnGameStart.Add(function()
  end)
  if not ok then failures=failures+1;emit({event='error',reason=tostring(problem)});complete() end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local now=getTimestampMs()
  local ok,problem=pcall(function()

@@ -79,6 +79,109 @@ class BatchTests(unittest.TestCase):
         self.assertEqual([row['status'] for row in result['jobs']], ['blocked', 'passed'])
         self.assertEqual(result['remaining'], [])
 
+    def test_stop_policy_preserves_partial_report_after_prepare_failure(self):
+        self.write_plan([{'id': name, 'suite': 'startup'} for name in ('blocked', 'next')])
+        self.args.failure_policy = 'stop-on-setup-failure'
+        self.assertEqual(1, self.invoke())
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertEqual(['blocked'], [name for name, _ in self.calls])
+        self.assertEqual(['next'], result['remaining'])
+        self.assertEqual('prepare', result['stop_reason']['phase'])
+        self.assertEqual('blocked', result['stop_reason']['job'])
+        self.assertEqual('stop-on-setup-failure', result['failure_policy'])
+        self.assertTrue((self.args.output / 'coverage.json').is_file())
+
+    def test_setup_evidence_blocks_dependencies_under_both_policies(self):
+        self.write_plan([{'id': 'control', 'suite': 'startup'},
+                         {'id': 'candidate', 'suite': 'startup', 'control_job': 'control'},
+                         {'id': 'independent', 'suite': 'startup'}])
+        original = self.run_job
+        for policy in cli.batch_policy.POLICIES:
+            with self.subTest(policy=policy):
+                self.args.output = self.root / policy
+                self.args.failure_policy = policy
+                self.calls = []
+                def run(output, resource_wait=300):
+                    value = original(output, resource_wait)
+                    if output.name == 'control':
+                        value['setup_failure'] = dict(kind='client-preflight', role='client2',
+                            phase='preflight', reason='Viewport mismatch')
+                    return value
+                self.run_job = run
+                self.assertEqual(1, self.invoke())
+                result = json.loads((self.args.output / 'batch-report.json').read_text())
+                self.assertEqual('failed', result['jobs'][0]['status'])
+                self.assertEqual('client2', result['jobs'][0]['setup_failure']['role'])
+                if policy == 'continue':
+                    self.assertEqual(['control', 'independent'], [name for name, _ in self.calls])
+                    self.assertEqual('blocked', result['jobs'][1]['status'])
+                    self.assertIsNone(result['stop_reason'])
+                else:
+                    self.assertEqual(['control'], [name for name, _ in self.calls])
+                    self.assertEqual(['candidate', 'independent'], result['remaining'])
+
+    def test_stop_policy_collects_ordinary_gameplay_failures(self):
+        self.write_plan([{'id': name, 'suite': 'startup'} for name in ('gameplay', 'next')])
+        self.args.failure_policy = 'stop-on-setup-failure'
+        def report(output, catalog, control=None):
+            return dict(status='failed' if output.name == 'gameplay' else 'passed',
+                        functional={'status': 'failed'}, runtime={'status': 'clean'})
+        self.report = report
+        self.assertEqual(1, self.invoke())
+        self.assertEqual(['gameplay', 'next'], [name for name, _ in self.calls])
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertEqual([], result['remaining'])
+        self.assertIsNone(result['stop_reason'])
+
+    def test_stop_policy_keeps_runner_and_report_exceptions_auditable(self):
+        self.write_plan([{'id': 'current', 'suite': 'startup'}, {'id': 'next', 'suite': 'startup'}])
+        self.args.failure_policy = 'stop-on-setup-failure'
+        originals = self.run_job, self.report
+        for stage, method in (('run', 'run_job'), ('report', 'report')):
+            with self.subTest(stage=stage):
+                self.args.output = self.root / stage
+                self.run_job, self.report = originals
+                def fail(*args, **kwargs):
+                    raise RuntimeError('gate failed')
+                setattr(self, method, fail)
+                self.assertEqual(1, self.invoke())
+                result = json.loads((self.args.output / 'batch-report.json').read_text())
+                self.assertEqual(['next'], result['remaining'])
+                self.assertEqual(stage, result['stop_reason']['phase'])
+                self.assertEqual('gate failed', result['stop_reason']['reason'])
+
+    def test_policy_validation_and_plan_override_precede_preparation(self):
+        self.write_plan([{'id': 'next', 'suite': 'startup'}])
+        plan = json.loads(self.plan.read_text())
+        for configured in ('typo', None, [], {}):
+            plan['failure_policy'] = configured
+            self.plan.write_text(json.dumps(plan))
+            with self.subTest(configured=configured), self.assertRaises(ValueError):
+                self.invoke()
+            self.assertFalse(self.args.output.exists())
+        plan['failure_policy'] = 'stop-on-setup-failure'
+        self.plan.write_text(json.dumps(plan))
+        self.args.failure_policy = 'continue'
+        self.args.dry_run = True
+        with patch('sys.stdout', io.StringIO()) as stdout:
+            self.assertEqual(0, self.invoke())
+        self.assertEqual('continue', json.loads(stdout.getvalue())['failure_policy'])
+        self.assertFalse(self.calls)
+
+    def test_upfront_input_failure_saves_zero_launch_partial_report(self):
+        self.write_plan([{'id': name, 'suite': 'startup'} for name in ('first', 'second')])
+        self.args.failure_policy = 'stop-on-setup-failure'
+        adapter = cli.adapters.get('startup')
+        with patch.object(adapter, 'preflight', create=True, side_effect=ValueError('compiler input missing')), \
+             patch.object(cli.admission, 'preparing'), \
+             patch.object(cli.native, 'prepare') as prepare, patch.object(cli.runner, 'run') as run:
+            self.assertEqual(1, self.invoke())
+        prepare.assert_not_called()
+        run.assert_not_called()
+        result = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertEqual('input-preflight', result['stop_reason']['phase'])
+        self.assertEqual(['second'], result['remaining'])
+
     def test_reload_seed_resolves_only_completed_prior_job(self):
         self.write_plan([{'id': 'seed', 'suite': 'shared-wishlist', 'case': 'standalone'},
                          {'id': 'reload', 'suite': 'shared-wishlist', 'case': 'reload', 'seed_job': 'seed'}])

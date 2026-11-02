@@ -105,7 +105,7 @@ local function run()
         print('[VEHICLE_DIAGNOSTICS] COMPLETE controls')
     end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
     if failed or stage == 'done' or not isIngameState() or not getPlayer() or not getPlayer():getSquare() then return end
     if not began then began = getTimestampMs() end
     if getTimestampMs() < nextAt then return end

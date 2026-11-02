@@ -186,8 +186,8 @@ local function completeCase()
  phase='prepare';since=now()
  if not case()then emit({event='complete',cases=cfg.cases,performed=#cfg.cases,failed=0,skipped=0});raw('COMPLETE',{cases=cfg.cases});done=true end
 end
-Events.OnGameStart.Add(function()entered=true;since=now()end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function()entered=true;since=now()end)
+require('QueuePreflight').onTick(Events,function()
  if not entered or done then return end
  local ok,problem=pcall(function()
   local player=getPlayer();if not isIngameState()or not player or not player:getSquare()then return end

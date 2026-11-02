@@ -22,8 +22,8 @@ Events.OnPreUIDraw.Add(function()
     MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'})
     MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
 end)
-Events.OnGameStart.Add(function() started = true; since = getTimestampMs(); setGameSpeed(1) end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function() started = true; since = getTimestampMs(); setGameSpeed(1) end)
+require('QueuePreflight').onTick(Events,function()
     if not started or done then return end
     if not recording and getTimestampMs()-since > 3000 then
         if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end

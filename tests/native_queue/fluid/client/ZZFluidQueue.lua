@@ -49,7 +49,7 @@ Events.OnServerCommand.Add(function(module,command,value)
  assert(command~='Failed',value.error)
  if command=='Prepared'then ids=value elseif command=='Verified'then receipt=value end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs()
  getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false)
  getPlayer():setAutoDrink(false);getPlayer():setGhostMode(true)
@@ -294,7 +294,7 @@ local function finish()
  emit(row);if reason then failed=failed+1 end
  advance()
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()or not getPlayer()or not getPlayer():getSquare()then return end
  local ok,problem=pcall(function()
   local player=getPlayer();getCore():setOptionAutoDrink(false);player:setAutoDrink(false)

@@ -274,7 +274,7 @@ class PlasticBatteryNativeTests(unittest.TestCase):
     def test_lua_exact_transfer_and_effect_readiness_reject_one_unit_loss(self):
         from lupa.lua51 import LuaRuntime
         lua = LuaRuntime(unpack_returned_tuples=True)
-        lua.execute("require=function()end;ISHandcraftAction={performRecipe=function()end}")
+        lua.execute("require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;end;ISHandcraftAction={performRecipe=function()end}")
         fixture = Path(__file__).parent / 'native_queue/plastic-battery/shared/PlasticBatteryFixture.lua'
         helper = lua.execute(fixture.read_text())
         helper.snapshot = lua.eval('function()return observed end')

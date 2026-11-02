@@ -72,7 +72,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  elseif actions and command:sub(1,6)=='Action' then local ok,e=pcall(actions.command,command,args);if not ok then fail(e) end
  end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;readyAt=getTimestampMs();cartLabDrive(0);cartLabGait(0)
  getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false)
  getPlayer():setGodMod(true);getPlayer():setGhostMode(false);getPlayer():setAutoDrink(false)
@@ -131,7 +131,7 @@ local function wallSample(p,now,elapsed)
  assert(row.queue==0 and row.actions==0 and not row.path,'Wall route enqueued an action/path')
  print('[CART_MP_WALL] INPUT '..J.encode(row))
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,e=pcall(function()
   local now=getTimestampMs();local p=getPlayer()

@@ -343,7 +343,7 @@ Events.OnServerCommand.Add(function(module,name,value)
  elseif name=='CompetitionPickup'then assert(peerCase==value.case and peerSpec and value.bag==peerSpec.bag.id,'competition grant differs');compGranted=true
  elseif name=='PeerComplete'then peerComplete=true elseif name=='PeersReady'then peersReceipt=value end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  -- Host identity and the local player can still be incomplete in this callback.
  -- The role file is written by the common runner; validate the live peer on ticks.
  started=true;setupSince=getTimestampMs();since=setupSince
@@ -651,7 +651,7 @@ local function peerTick()
  end
  if peerComplete and not peerCase then print('[FITNESS_TEST] COMPLETE');done=true end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,problem=pcall(function()
   if not ready then

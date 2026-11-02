@@ -86,7 +86,7 @@ local function initialize()
     end
     started = true
 end
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
     local ok, problem = pcall(initialize)
     if not ok then
         failed = true
@@ -178,7 +178,7 @@ local function populate()
     end
 end
 
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
     if not started or failed or not isIngameState() then return end
     if ready then
         readyFrames = readyFrames + 1

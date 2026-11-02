@@ -222,7 +222,7 @@ local config={kind=selected_kind,mode='native',cases={
  'bandageEmpty','bandageApply','waitingCancel','waitingMove','missingSupply',
  'inventoryBandage','inventoryRepeatSame','inventoryReplaceSupply',
  'changedHelper','reassignedPanel','expandedCancel','miniWaitingCancel'}}
-require=function(name)
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name=='QueueTestSelection' then return config end
  if name=='QueueHealthCases' then return cases end
  error('unexpected module '..name)

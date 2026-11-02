@@ -2,10 +2,10 @@ local selection=require 'QueueTestSelection'
 local entered,starting,started,attempted=false,false,false,false
 local tick
 Events.OnMainMenuEnter.Add(function()entered=true end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if tick then tick()
  elseif started and not attempted and getPlayer()and getPlayer():getCurrentSquare()then
   attempted=true

@@ -13,6 +13,7 @@ import time
 from . import adapters, admission, coop
 from .report import read_json, verify_manifest, write_json
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
+from .preflight import ClientPreflight, fail as setup_failure
 
 
 def loader_agent(game, cache, selection):
@@ -26,6 +27,7 @@ def run(root, resource_wait=300):
     from .runner import _verify_live_inputs
     root = Path(root).resolve()
     selection, runtime = read_json(root / 'selection.json'), read_json(root / 'runtime.json')
+    preflight = ClientPreflight(root, runtime, selection)
     if selection['suite'] not in ('forge', 'startup') or not coop.enabled(selection) or selection.get('clients') != 1:
         raise ValueError('Windows launch currently supports one-client forge/startup Host only')
     if selection.get('ports_auto'):
@@ -118,21 +120,30 @@ def run(root, resource_wait=300):
                     'client1': text,
                     'server': server_log.read_text(errors='replace') if server_log.is_file() else '',
                 }, execution, 'execution')
+                preflight.check({'client1': text}, execution, release=False)
                 if '[QUEUE_TEST] HOST_CHILD ' in text and 'server' not in execution['processes']:
                     execution['processes']['server'] = {'pid': coop.child(text, process.pid), 'parent_role': 'client1',
                                                         'cache': str(root / 'client1')}
                 if '[QUEUE_TEST] FAIL ' in text:
                     raise RuntimeError('Native fixture failed; inspect sealed client/server logs')
-                if adapter.complete(selection, 'client1', text):
+                if preflight.pending() and process.poll() is not None:
+                    setup_failure(execution, 'client-readiness', 'client1', 'readiness', 'Owned client exited before fixture readiness')
+                preflight.check({'client1': text}, execution)
+                if not preflight.pending() and adapter.complete(selection, 'client1', text):
                     if 'server' not in execution['processes']:
                         raise RuntimeError('Missing owned native Host child evidence')
                     execution['status'] = 'completed';break
                 if process.poll() is not None:
+                    if preflight.pending():
+                        setup_failure(execution, 'client-readiness', 'client1', 'readiness', 'Owned client exited before fixture readiness')
                     raise RuntimeError('Owned client exited before fixture completion')
                 time.sleep(1)
             else:
+                if preflight.pending():
+                    preflight.failure(execution, 'Required client readiness/fixture setup deadline expired')
                 raise RuntimeError('Bounded native Host deadline expired')
     except (Exception, KeyboardInterrupt) as error:
+        preflight.record_exception(execution, error)
         execution.update(status='failed', error=str(error))
     finally:
         if job:
@@ -141,6 +152,11 @@ def run(root, resource_wait=300):
             process.wait(timeout=15)
             execution['processes'].setdefault('client1', {'pid': process.pid})['exit_code'] = process.returncode
         coop.mirror_logs(root)
+        client_log = root / 'client1-launch.log'
+        try:
+            preflight.check({'client1': client_log.read_text(errors='replace') if client_log.is_file() else ''}, execution, release=False)
+        except RuntimeError as error:
+            execution.update(status='failed', error=str(error))
         if job:
             class Accounting(ctypes.Structure):
                 _fields_ = [(name, ctypes.c_longlong) for name in ('user', 'system', 'periodUser', 'periodSystem')] + [

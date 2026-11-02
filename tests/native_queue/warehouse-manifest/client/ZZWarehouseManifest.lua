@@ -216,7 +216,7 @@ Events.OnServerCommand.Add(function(module, command, args)
  elseif command == 'Transferred' then packet.transferAt = args.transferAt
  elseif command == 'Done' then finished = true end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started, since = true, getTimestampMs()
 end)
 local function initialize()
@@ -314,7 +314,7 @@ local function tick()
   emit('COMPLETE', {case = 'snapshot', role = role}); done = true
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() or getTimestampMs() < nextAt then return end
  local ok, problem = pcall(function()
   assert(getTimestampMs() - since < 180000, 'Timeout phase=' .. phase)

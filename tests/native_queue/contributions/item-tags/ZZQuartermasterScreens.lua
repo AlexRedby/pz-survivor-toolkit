@@ -160,8 +160,8 @@ Events.OnPreUIDraw.Add(function()
  MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'})
  MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
 end)
-Events.OnGameStart.Add(function() started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false) end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function() started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false) end)
+require('QueuePreflight').onTick(Events,function()
  if not started then return end
  if done then if getTimestampMs()-since>4000 then getCore():quitToDesktop() end;return end
  if getTimestampMs()-since<1800 then return end

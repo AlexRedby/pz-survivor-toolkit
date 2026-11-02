@@ -119,12 +119,12 @@ Events.OnServerCommand.Add(function(module,command,args)
  elseif command=='ConflictSave'then conflictReady=true
  elseif command=='Finish'then packet=args.packet;finished=true end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;startedAt=getTimestampMs();getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
  if getPlayerInfoPanel and getPlayerInfoPanel(0)then getPlayerInfoPanel(0):setVisible(false)end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,err=pcall(function()
   if not requested then requested=true;send('Prepare',{});return end

@@ -136,7 +136,7 @@ local function measure()
     if #samples==7 then phase=phase+1;stage=phase>#cells and 'finish' or 'configure' else nextAt=getTimestampMs()+250 end
 end
 Events.OnMainMenuEnter.Add(function()entered=true end)
-Events.OnGameStart.Add(function()ready=true;began=getTimestampMs()end)
+require('QueuePreflight').onGameStart(Events,function()ready=true;began=getTimestampMs()end)
 Events.OnPreUIDraw.Add(function()
     if ready and isIngameState() and isGamePaused() then setGameSpeed(1) end
     if not entered or starting or isIngameState() then return end
@@ -149,7 +149,7 @@ Events.OnPreUIDraw.Add(function()
     MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'})
     MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
     if not ready or done then return end
     local ok,problem=pcall(function()
         assert(getTimestampMs()-began<180000,'selection diagnostic deadline exceeded')

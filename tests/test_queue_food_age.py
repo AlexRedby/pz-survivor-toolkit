@@ -255,7 +255,7 @@ class NativeFoodAgeQueueTests(unittest.TestCase):
          lua=LuaRuntime()
          lua.execute('''
          fixtureDiagnostics={}
-         require=function()return {cases={'inventory-food-age'},module='StorageFoodAgeTest',emit=function(event,row)
+         require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;return {cases={'inventory-food-age'},module='StorageFoodAgeTest',emit=function(event,row)
           fixtureDiagnostics[#fixtureDiagnostics+1]={event=event,row=row}
          end}end
          Events={};for _,name in ipairs({'OnServerCommand','OnGameStart','OnTick','OnContainerUpdate'})do
@@ -468,7 +468,7 @@ class NativeFoodAgeQueueTests(unittest.TestCase):
          F.release=function(s)fixtureCounts.release=fixtureCounts.release+1;s.phase=nil;return {index=s.index}end
          F.restored=function(s,row)assert(s.index==2);return {restored=true}end
          fixtureFresh=function(v)fresh=v end
-         require=function()return F end
+         require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;return F end
          isServer=function()return true end
          instanceof=function(item,kind)return kind=='Food'and item==head end
          Events={};for _,name in ipairs({'OnClientCommand','OnContainerUpdate','OnTick'})do Events[name]={Add=function(fn)Events[name].callback=fn end}end
@@ -511,7 +511,7 @@ class NativeFoodAgeQueueTests(unittest.TestCase):
         source=(INTAKE / 'ZZFoodAgeNative.lua').read_text()
         lua=LuaRuntime()
         lua.execute('''
-         require=function()return {cases={'inventory-food-age'},module='StorageFoodAgeTest'}end
+         require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;return {cases={'inventory-food-age'},module='StorageFoodAgeTest'}end
          Events={};for _,name in ipairs({'OnServerCommand','OnGameStart','OnTick','OnContainerUpdate'})do
           Events[name]={Add=function(callback)Events[name].callback=callback end,Remove=function()end}
          end

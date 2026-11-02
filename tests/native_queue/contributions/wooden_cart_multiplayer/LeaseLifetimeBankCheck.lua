@@ -37,7 +37,7 @@ local function run(injected)
   for _,kind in ipairs({'OnClientCommand','OnServerCommand'}) do events[kind]={Add=function(fn) callbacks[kind]=fn end} end
   local env=setmetatable({},{__index=_G});r.env=env;r.callbacks=callbacks
   env.Events=events
-  env.require=function(name)
+  env.require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
    if name=='QueueTestSelection' then return {disposable=true,options={cart_lease_control=true,cart_lease_lifetimes=true}} end
    if name=='CartLeaseProtocol' then return P end
    if name=='CartMPJSON' then return {encode=function(row) logs[#logs+1]={role=role,row=row};return row.event end} end

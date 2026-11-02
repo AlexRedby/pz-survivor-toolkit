@@ -249,7 +249,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             helper = cache / 'mods/QuartermasterScreens'
             prepare.prepare(locations['PZSurvivorToolkit'], helper)
             _write(helper / '42/media/lua/client/ZZQuartermasterSetup.lua', """local function setup()
- Events.OnTick.Remove(setup)
+ require('QueuePreflight').removeTick(Events,setup)
  PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ItemTags'):setValue(true)
  local options=require 'BetterContainers/_Options'
  local helpers=require 'BetterContainers/Helpers'
@@ -258,7 +258,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
  assert(PZSurvivorToolkit.ItemTags.enabled() and not options.showAdvancedDisplayCategories)
  print('[QM_SCREEN] SETTINGS_READY')
 end
-Events.OnGameStart.Add(function() Events.OnTick.Add(setup) end)
+require('QueuePreflight').onGameStart(Events,function() require('QueuePreflight').onTick(Events,setup) end)
 """)
     else:
         scenario, timer, hands = ANIMAL_CASES[selection['cases'][0]]

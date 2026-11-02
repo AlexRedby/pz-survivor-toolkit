@@ -49,7 +49,7 @@ function H.restore()
     for _, hook in ipairs(hooks) do
         if hook.control[hook.name] == hook.wrapper then hook.control[hook.name] = hook.own end
     end
-    hooks = {}; Events.OnTick.Remove(pulse)
+    hooks = {}; require('QueuePreflight').removeTick(Events,pulse)
     assert(ok, err)
 end
 function H.start(actor, report)
@@ -67,7 +67,7 @@ function H.start(actor, report)
         player:PlayAnim('Idle'); triggerEvent('OnExitVehicle', player)
         vehicle:updateHasExtendOffsetForExitEnd(player)
     end
-    deadline = getTimestampMs() + 90000; Events.OnTick.Add(pulse); wait(1)
+    deadline = getTimestampMs() + 90000; require('QueuePreflight').onTick(Events,pulse); wait(1)
 end
 function H.step()
     assert(getTimestampMs() < deadline, 'sidebar qualification deadline phase=' .. phase)

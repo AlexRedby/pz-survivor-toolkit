@@ -80,7 +80,7 @@ Events.OnPreUIDraw.Add(function()
 end)
 Events.OnConnectFailed.Add(function(a,b) print('[CRAFT_TEST] FAIL connect '..tostring(a)..' '..tostring(b)) end)
 end
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=getTimestampMs();getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false)
  if user=='client2' and not Session then local p=getPlayer();p:teleportTo(math.floor(p:getX())+8,math.floor(p:getY())+8,0) end
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
@@ -323,7 +323,7 @@ Events.OnServerCommand.Add(function(module,command,args)
   if not ids then ids=args;previous=getTimestampMs() end
  else replies[command]=args end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  local now=getTimestampMs()
  if not ids then
   if started and now-started>2000 and now-lastReady>1000 then lastReady=now;send('Ready') end

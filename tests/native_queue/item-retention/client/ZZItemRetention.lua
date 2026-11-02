@@ -73,12 +73,12 @@ Events.OnServerCommand.Add(function(module,command,args)
  if command=='Prepared'then packet=args.target;role=args.role;emit('PREPARED',{role=role,truckId=packet.truckId})
  else phase=command;actionAt=nil end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
  if getPlayerInfoPanel and getPlayerInfoPanel(0)then getPlayerInfoPanel(0):setVisible(false)end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,err=pcall(function()
   local player=getPlayer()

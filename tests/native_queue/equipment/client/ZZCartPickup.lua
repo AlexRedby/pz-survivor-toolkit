@@ -81,7 +81,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  end)
  if not ok then finish(problem) end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  local ok,problem=pcall(function()
   assert(isClient() and not isServer(),'cart fixture requires actual Host client')
   assert(Translator.getLanguage():name()==config.languages[1],'cart language differs')
@@ -94,7 +94,7 @@ Events.OnGameStart.Add(function()
  end)
  if not ok then finish(problem) end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,problem=pcall(function()
   local now=getTimestampMs()

@@ -337,7 +337,7 @@ class ApproachAdapterTests(unittest.TestCase):
                     return z==0 and grid[x..','..y]or nil
                 end}
                 getCell=function()return cell end;isClient=function()return client end
-                require=function(name)
+                require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
                     if name=='QueueTestSelection'then return{disposable=disposable}end
                     assert(name=='QueueEnergyPlacement')
                     return function()return{getX=function()return 0 end,getY=function()return 0 end,getZ=function()return 0 end}end
@@ -444,7 +444,7 @@ class ApproachAdapterTests(unittest.TestCase):
                 snapshot=function()snapshots=snapshots+1;return{case='bush',book={pages=219},targets={first=true,second=true}}end,
                 verify=function()error('Snapshot invoked success verification')end}
             isServer=function()return true end
-            require=function(name)
+            require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
                 if name=='QueueApproach'then return F elseif name=='QueueTestSelection'then return{cases={'bush'},mode='native'}end
                 return{encode=function()return '{}'end}
             end

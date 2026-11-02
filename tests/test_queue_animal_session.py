@@ -4,6 +4,8 @@ import shutil
 import subprocess
 import unittest
 
+from tests.lua_fixture_events import OFFLINE_FIXTURE_EVENTS
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -102,7 +104,7 @@ run(false,false);run(false,true);run(true,false);run(false,false,true)
 io.write('PASS actual waiting/drain/echo/audit callback, empty-hands control, elapsed timeout and no manual release\n')
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/client/ZZAnimalTrailer_Client.lua')],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_return_requires_issue_then_real_client_arrival_and_matching_server_receipt(self):
@@ -137,7 +139,7 @@ assert(not pcall(movement.restore,context,player,{}))
 print('PASS scoped native request, issue/arrival/ACK ordering, duplicates, strict tolerance and diagnostics')
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalMovement.lua')],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_actual_client_return_waits_for_arrival_and_ack_and_quarantines_invalid_or_expired_receipts(self):
@@ -212,7 +214,7 @@ print('PASS actual client return callbacks: native issue, real local position, o
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/client/ZZAnimalTrailer_Client.lua'),
                                  str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalMovement.lua')],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_actual_server_return_requires_owned_drops_client_arrival_and_observed_server_position(self):
@@ -304,7 +306,7 @@ print('PASS actual server callbacks: drops/ownership/issue/arrival/observed posi
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/server/ZZAnimalTrailer_Server.lua'),
                                  str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalMovement.lua')],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_native_disconnect_quarantines_on_ui_event_without_another_game_tick(self):
@@ -333,7 +335,7 @@ S.phase='done';disconnected=true;events.OnPreUIDraw();events.OnDisconnect();asse
 print('PASS disconnect/kick UI and native event guards without a game tick')
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalLifecycle.lua')],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_owned_cleanup_keeps_foreign_entities_and_requires_replicated_absence(self):
@@ -406,7 +408,7 @@ vehicles[7]=vehicle;assert(not ownership.verify(receipt,player))
 print('PASS exact owned cleanup, foreign entity retention, foreign contents refusal and replication ACK gates')
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/contributions/animal-trailer/lua/shared/QueueAnimalOwnership.lua')],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_one_actor_barriers_reset_failure_and_default_two_actor_barrier(self):
@@ -460,7 +462,7 @@ end
 print('PASS one-client barriers, stale receipts, reset refusal, deferred one-shot Prepare and unchanged two-client default')
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/support/QueueFixtureSession.lua')],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
 

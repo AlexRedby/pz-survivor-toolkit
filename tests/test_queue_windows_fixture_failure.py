@@ -18,6 +18,8 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.cache = self.root / 'client1'
+        (self.cache / 'Lua').mkdir(parents=True)
+        self.token = 'a' * 32
         source = self.cache / 'mods/GeneratedFixture/42/media/lua/client/ZZFixture.lua'
         source.parent.mkdir(parents=True)
         source.write_text('local fixture = true\n')
@@ -25,7 +27,8 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         self.selection = {'suite': 'startup', 'kind': 'mp', 'mods': [], 'clients': 1,
                           'timeout_seconds': 5, 'ports': [16761, 16762], 'options': {'mp_host': True}}
         self.runtime = {'game': str(self.root / 'game'), 'java': 'fake-java',
-                        'fixture': {'mods': ['GeneratedFixture']}, 'host_cache': str(self.cache),
+                        'fixture': {'mods': ['GeneratedFixture'], 'preflight': {
+                            'version': 1, 'token': self.token, 'roles': ['client1']}}, 'host_cache': str(self.cache),
                         'roles': {'client1': {'cache': str(self.cache), 'classes': str(self.cache / 'classes')},
                                   'server': {'cache': str(self.root / 'server')}}}
         for name, value in (('selection.json', self.selection), ('runtime.json', self.runtime),
@@ -62,6 +65,8 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         self.ntdll = SimpleNamespace(NtResumeProcess=Mock(return_value=0))
 
     def run_fake(self, client, server='', complete=True):
+        client += '[QUEUE_PREFLIGHT] ' + json.dumps({'event': 'ready', 'token': self.token, 'role': 'client1'}) + '\n'
+        expected = [client]
         def popen(command, **kwargs):
             kwargs['stdout'].write(client)
             kwargs['stdout'].flush()
@@ -70,6 +75,13 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         def mirror(root):
             if server:
                 (root / 'server-launch.log').write_text(server)
+
+        def sleep(seconds):
+            if (self.cache / 'Lua/queue-preflight-setup.txt').is_file() and len(expected) == 1:
+                receipt = '[QUEUE_PREFLIGHT] ' + json.dumps({'event': 'setup-ready', 'token': self.token, 'role': 'client1'}) + '\n'
+                with (self.root / 'client1-launch.log').open('a') as stream:
+                    stream.write(receipt)
+                expected.append(receipt)
 
         adapter = SimpleNamespace(complete=Mock(return_value=complete))
         budget = {'memory': 1024**3, 'instances': 2, 'heap_mib': 2048}
@@ -86,6 +98,7 @@ class WindowsFixtureFailureTests(unittest.TestCase):
                 patch.object(windows.subprocess, 'Popen', side_effect=popen),
                 patch.object(windows.coop, 'mirror_logs', side_effect=mirror),
                 patch.object(windows.adapters, 'get', return_value=adapter),
+                patch.object(windows.time, 'sleep', side_effect=sleep),
             )
             for context in patches:
                 stack.enter_context(context)
@@ -99,7 +112,7 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         self.process.wait.assert_called_once_with(timeout=15)
         self.process.kill.assert_not_called()
         self.assertEqual(execution['host_cleanup'], {'remaining_pids': [], 'active_job_processes': 0})
-        self.assertEqual((self.root / 'client1-launch.log').read_text(), client)
+        self.assertEqual((self.root / 'client1-launch.log').read_text(), ''.join(expected))
         if server:
             self.assertEqual((self.root / 'server-launch.log').read_text(), server)
         return execution, adapter
@@ -131,6 +144,17 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         self.assertEqual(result['status'], 'completed')
         self.assertNotIn('fixture_load_error', result)
         adapter.complete.assert_called_once()
+
+    def test_preflight_failure_preempts_completion_and_cleans_owned_job(self):
+        receipt = '[QUEUE_PREFLIGHT] ' + json.dumps({'event': 'failed', 'token': self.token, 'role': 'client1',
+                                                     'phase': 'preflight', 'reason': 'viewport mismatch'}) + '\n'
+        result, adapter = self.run_fake(self.normal + receipt)
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['setup_failure']['kind'], 'client-preflight')
+        self.assertEqual(result['setup_failure']['role'], 'client1')
+        self.assertEqual(result['setup_failure']['reason'], 'viewport mismatch')
+        self.assertFalse((self.cache / 'Lua/queue-preflight-setup.txt').exists())
+        adapter.complete.assert_not_called()
 
 
 if __name__ == '__main__':

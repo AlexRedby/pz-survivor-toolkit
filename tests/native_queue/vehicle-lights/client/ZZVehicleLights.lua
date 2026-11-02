@@ -255,7 +255,7 @@ Events.OnServerCommand.Add(function(module,command,args)
   log('POWER_ACK family='..args.family..' mode='..args.mode..' on='..tostring(args.on)..' id='..args.id..' generation='..args.generation..' request='..args.request)
  end
 end)
-Events.OnGameStart.Add(function() started=true;since=clock() end)
+require('QueuePreflight').onGameStart(Events,function() started=true;since=clock() end)
 Events.OnPostUIDraw.Add(function()
  if label then getTextManager():DrawString(UIFont.Medium,25,30,'Vehicle lights | '..config.kind..' | '..label..(originDebug and ' | 12:00 geometry diagnostic (not night comparison)' or ' | 02:00 | 20 July 1993 | Pitch Black / new moon'),1,1,1,1) end
  if originDebug then
@@ -531,7 +531,7 @@ local function run()
   log('RESTORED queueDrained=true settings=true');done=true;log('COMPLETE road')
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() then return end
  local ok,err=pcall(run)
  if not ok then

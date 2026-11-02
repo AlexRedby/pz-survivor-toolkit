@@ -20,7 +20,7 @@ local function counts(container,result)
  end
  return result
 end
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
  getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false)
  getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
@@ -185,7 +185,7 @@ local function tick()
   print('[QM_BACKPACK] COMPLETE');done=true
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()or not getPlayer()or not getPlayer():getSquare()then return end
  local ok,problem=pcall(function()assert(getTimestampMs()-since<120000,'backpack timeout phase='..phase);tick()end)
  if not ok then done=true;print('[QUEUE_TEST] FAIL backpack '..tostring(problem))end

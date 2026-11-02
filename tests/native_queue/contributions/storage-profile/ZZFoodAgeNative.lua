@@ -564,8 +564,8 @@ local function tick()
   F.restored(session,{ui=true,observers=true,mode=true,optimize=true,positionRestored=true,positionProof=positionProof});done=true
  end
 end
-Events.OnGameStart.Add(function()started=true;began=now()end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function()started=true;began=now()end)
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()or not getPlayer()then return end
  if not getPlayer():getSquare()and stage~='return-position'then return end
  if isClient()and getPlayer():getOnlineID()<0 then return end

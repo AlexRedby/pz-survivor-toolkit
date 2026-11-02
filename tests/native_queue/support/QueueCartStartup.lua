@@ -18,11 +18,11 @@ Events.OnPreUIDraw.Add(function()
  MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'})
  MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true
  cartLabReload()
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or launched then return end
  local ok,problem=pcall(function()
   if not CartTestArea or not CartTestArea.ready then return end

@@ -369,7 +369,7 @@ ISFluidUtil={validateContainer=function()return true end,getTransferActionTimePe
  getMinTransferActionTime=function()return 10 end}
 ISFluidContainer={new=function(_,fluid)return {getFluidContainer=function()return fluid end,
  getFluidResource=function()return nil end,sync=function()end}end}
-require=function()return {}end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;return {}end
 """)
         # Kahlua accepts Java-style float suffixes; normalize only that literal for stock Lua.
         lua.execute(native.read_text().replace('0.0f', '0.0'))
@@ -397,7 +397,7 @@ api.policy={inspect=function()return {edit={}}end,evaluateCancel=function()retur
 local modules={QueueScenarioChecks=Checks,['PZSurvivorToolkit/ActionQueue']=api,
  ['PZSurvivorToolkit/ActionQueuePolicy']=api.policy,['PZSurvivorToolkit/ActionQueueOperations']={bounds=function(q,a)local i=q:indexOf(a);return i,i end},
  QueueFluidFixture={snapshot=function()return directReceipt end},QueueHealthEvents={encode=function()return '{}'end}}
-require=function(name)return modules[name]or {}end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;return modules[name]or {}end
 local repair={authorizes=function()return not rejectCompletionProof,'fixture-rejected'end}
 PZSurvivorToolkit={EmptyFluidAction=repair,DrinkFluidCompletion=repair}
 ISTimedActionQueue={add=function(action)queue.queue[#queue.queue+1]=action end}
@@ -536,7 +536,7 @@ end
         lua.execute("""
 receipt={bottles={{amount=.5},{amount=0},{amount=1}}}
 local modules={QueueFluidFixture={snapshot=function()return receipt end},QueueHealthEvents=JSON}
-require=function(name)return modules[name]or {}end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;return modules[name]or {}end
 run={player={},ids={case='fluid-empty-cancel-waiting'},dispatched=true,
  evidence={anchorRunning=true,drinkBBoundaryFailed=false,order={1,2}},actions={
   {kind='drink',index=1,command={id=11,progress=true,cancelled=false}},

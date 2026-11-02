@@ -629,8 +629,8 @@ Events.OnPreUIDraw.Add(function()
  if holdDrag and sourcePane then sourcePane.draggingX=sourcePane:getMouseX();sourcePane.draggingY=sourcePane:getMouseY()end
  if holdDrag and loot then loot.mouseOverButton=button end
 end)
-Events.OnGameStart.Add(function()started=true;began=now();stageAt=began end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function()started=true;began=now();stageAt=began end)
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()or not getPlayer()or not getPlayer():getSquare()or getPlayer():getOnlineID()<0 then return end
  local ok,problem=pcall(failing and abortTick or tick)
  if not ok then

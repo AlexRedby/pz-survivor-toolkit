@@ -63,7 +63,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  if module~='BulkReadingTest'then return end
  if command=='Prepared'then packet=args elseif command=='Verified'then authority=args end
 end)
-Events.OnGameStart.Add(function()started=true end)
+require('QueuePreflight').onGameStart(Events,function()started=true end)
 Events.OnTickEvenPaused.Add(function()
  if not started or done then return end
  local stage=samplePhase();local timestamp=now()
@@ -72,7 +72,7 @@ Events.OnTickEvenPaused.Add(function()
  end
  previousFrame={stage=stage,time=timestamp}
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not getPlayer()or not getPlayer():getCurrentSquare()then return end
  local ok,problem=pcall(function()
   if phase=='prepare'then

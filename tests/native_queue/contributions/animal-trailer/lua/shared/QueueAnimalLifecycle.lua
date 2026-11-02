@@ -4,7 +4,7 @@ function M.start(cfg,factory,server)
  local factories={};for _,case in ipairs(cfg.cases) do factories[case]=factory end
  local S=create({user=server and 'server' or 'client1',actors={'client1'},cases=cfg.cases,module='AnimalTrailerBaseline'},factories,server)
  S.configure=function(context) context.quarantine=S.quarantine end
- Events.OnTick.Add(S.tick)
+ require('QueuePreflight').onTick(Events,S.tick)
  if server then
   Events.OnServerStarted.Add(S.prepare)
   Events.OnClientCommand.Add(function(module,command,player,args) S.command(module,command,player,args) end)
@@ -17,7 +17,7 @@ function M.start(cfg,factory,server)
   Events.OnPreUIDraw.Add(function()
    if animalFixtureDisconnected() then disconnected('native server disconnect/kick during animal session') end
   end)
-  Events.OnGameStart.Add(S.prepare)
+  require('QueuePreflight').onGameStart(Events,S.prepare)
   Events.OnServerCommand.Add(function(module,command,args) S.command(module,command,nil,args) end)
  end
  return S

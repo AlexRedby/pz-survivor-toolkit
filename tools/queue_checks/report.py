@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from . import adapters
+from . import adapters, batch_policy
 
 
 MARKER = "[QUEUE_CHECK] "
@@ -459,6 +459,9 @@ def execution_issues(root, selection, execution):
     if not isinstance(execution, dict):
         return ['Execution record is missing or invalid']
     issues = [] if execution.get('status') == 'completed' else ['Execution is not completed']
+    failure = batch_policy.setup_failure(execution, adapters.roles(selection, False))
+    if failure:
+        issues.append('Setup failure: ' + failure['reason'])
     processes = execution.get('processes')
     roles = adapters.roles(selection)
     if not isinstance(processes, dict) or set(processes) != set(roles):

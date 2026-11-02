@@ -39,6 +39,7 @@ class BatchSessionTests(unittest.TestCase):
         def run(output, resource_wait=300):
             self.runs.append(output)
             value = {'status': 'completed', 'processes': {'client1': {'pid': 123}}}
+            value.update(getattr(self, 'execution_fields', {}))
             (output / 'execution.json').write_text(json.dumps(value))
             return value
         def report(output, catalog, control=None):
@@ -69,6 +70,20 @@ class BatchSessionTests(unittest.TestCase):
         self.assertEqual(value['remaining'], [])
         self.assertEqual(value['launches_planned'], 1)
         self.assertEqual(len(value['sessions']), 1)
+
+    def test_setup_failure_stops_after_whole_session_and_preserves_remaining(self):
+        self.plan['failure_policy'] = 'stop-on-setup-failure'
+        self.plan['jobs'] += [dict(id='later', suite='startup')]
+        self.execution_fields = {'setup_failure': dict(kind='fixture-setup', phase='fixture-setup',
+                                                       role='client1', reason='Fixture refused setup')}
+        result, _ = self.invoke()
+        self.assertEqual(1, result)
+        self.assertEqual(1, len(self.runs))
+        value = json.loads((self.args.output / 'batch-report.json').read_text())
+        self.assertEqual(['later'], value['remaining'])
+        self.assertEqual(['failed'] * 3, [row['status'] for row in value['jobs']])
+        self.assertEqual(1, len(value['sessions']))
+        self.assertEqual('client1', value['stop_reason']['role'])
 
     def test_sp_and_host_are_two_explicit_launch_groups(self):
         host = [dict(job, id='host-' + job['id'], session='torch-host', kind='mp', options={'mp_host': True})

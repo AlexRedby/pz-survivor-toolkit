@@ -254,7 +254,7 @@ local function tick()
  end
 end
 Events.OnMainMenuEnter.Add(function()entered=true end)
-Events.OnGameStart.Add(function()started=true;began=getTimestampMs()end)
+require('QueuePreflight').onGameStart(Events,function()started=true;began=getTimestampMs()end)
 Events.OnPreUIDraw.Add(function()
  if started and isIngameState()and isGamePaused()then setGameSpeed(1)end
  if not entered or starting or isIngameState()then return end
@@ -266,7 +266,7 @@ Events.OnPreUIDraw.Add(function()
  MapSpawnSelect.instance.selectedRegion={points={unemployed={{posX=10835,posY=10144,posZ=0}}}}
  MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'});MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,err=pcall(tick)
  if not ok then

@@ -152,8 +152,8 @@ local function customBoundaries()
  ISTimedActionQueue.clear(player)
  phase = 'cleanup'
 end
-Events.OnGameStart.Add(function() started = true; since = getTimestampMs() end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function() started = true; since = getTimestampMs() end)
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() or not getPlayer() or not getPlayer():getSquare() then return end
  local ok, err = pcall(function()
   assert(getTimestampMs()-since < 120000, 'native transfer phase deadline '..phase)

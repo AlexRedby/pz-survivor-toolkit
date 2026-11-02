@@ -1,7 +1,7 @@
 local events,logs,shots,walks={},{},{},{}
 local clock,saves,ready=0,0,false
 local config={disposable=true,world='QueueBasementHall',kind='sp',cases={fixtureCase or 'fresh'},options={},video={directory='/cache/videos',ffmpeg='/bin/ffmpeg'}}
-function require(name) if name=='QueueTestSelection' then return config end end
+function require(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; if name=='QueueTestSelection' then return config end end
 Events=setmetatable({},{__index=function(t,name)
  local e={Add=function(fn)events[name]=fn end};rawset(t,name,e);return e
 end})

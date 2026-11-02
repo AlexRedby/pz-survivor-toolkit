@@ -56,12 +56,12 @@ local function diagnose(reason)
  emit('CLIENT_DIAGNOSTIC',row)
  if isClient()and packet then sendClientCommand(F.module,'Diagnose',{index=index})end
 end
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
  emit('RECIPES',F.recipes('client1'))
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not getPlayer()or not getPlayer():getSquare()then return end
  local ok,problem=pcall(function()
   if phase=='prepare'then

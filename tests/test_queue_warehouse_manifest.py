@@ -444,7 +444,7 @@ LootSorter = {}
 manifestClient = {}
 Translator = {getLanguage = function() return {name = function() return 'EN' end} end}
 print = function(message) logs[#logs + 1] = message end
-require = function(name)
+require = function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name == 'QueueTestSelection' then return {kind = 'mp', mode = 'toolkit', cases = {'snapshot'}} end
  if name == 'WarehouseManifestFixture' then return {module = 'WarehouseManifestTest'} end
  if name == 'PZSurvivorToolkit/ManifestClient' then return manifestClient end

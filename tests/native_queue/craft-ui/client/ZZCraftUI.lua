@@ -396,12 +396,12 @@ end
 Events.OnPlayerUpdate.Add(function(player)
  if started and player==getPlayer()then idle=#queue().queue==0 and not player:hasTimedActions()and idle+1 or 0 end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs();localDeferrals=0;getCore():setOptionPauseOnFocusloss(false)
  if not isClient()then getPlayer():setGhostMode(true)end
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()then return end
  local ok,problem=pcall(function()
   assert(getTimestampMs()-since<(joined and 360000 or 180000),'UI craft deadline: '..phase)

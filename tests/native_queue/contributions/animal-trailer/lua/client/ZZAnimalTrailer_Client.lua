@@ -28,7 +28,7 @@ Events.OnPreUIDraw.Add(function()
   MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'});MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
  end
 end)
-Events.OnGameStart.Add(function() ingame=true;log('INGAME '..getCore():getVersion());if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end end)
+require('QueuePreflight').onGameStart(Events,function() ingame=true;log('INGAME '..getCore():getVersion());if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end end)
 local function createFixture(Session)
 local Events=Session and Session.events or Events
 local sendClientCommand=Session and function(module,command,args) Session.send(command,args) end or sendClientCommand
@@ -87,7 +87,7 @@ Events.OnServerCommand.Add(function(module,command,args)
   end
  end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not ingame then return end
  local now=getTimestampMs()
  local p=getPlayer()

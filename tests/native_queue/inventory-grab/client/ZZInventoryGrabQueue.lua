@@ -22,7 +22,7 @@ Events.OnServerCommand.Add(function(module,name,value)
  assert(name~='Failed',value.error)
  if name=='Prepared'then ids=value elseif name=='Verified'then receipt=value end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
  getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false);getPlayer():setGhostMode(true)
 end)
@@ -135,7 +135,7 @@ local function finish()
  getPlayerInventory(0):setNewContainer(getPlayer():getInventory());getPlayerLoot(0):setNewContainer(getPlayer():getInventory())
  ISTimedActionQueue.add(ISUnequipAction:new(getPlayer(),previousBag,50));phase='unequipped';since=getTimestampMs()
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()or not getPlayer()or not getPlayer():getSquare()then return end
  local ok,problem=pcall(function()
   local player=getPlayer();getCore():setOptionAutoDrink(false);player:setAutoDrink(false)

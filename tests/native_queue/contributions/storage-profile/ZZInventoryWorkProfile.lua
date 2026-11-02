@@ -311,7 +311,7 @@ local function tick()
  end
 end
 Events.OnMainMenuEnter.Add(function()entered=true end)
-Events.OnGameStart.Add(function()started=true;since=now();began=since end)
+require('QueuePreflight').onGameStart(Events,function()started=true;since=now();began=since end)
 Events.OnPreUIDraw.Add(function()
  if started and isIngameState()and isGamePaused()then setGameSpeed(1)end
  if not entered or starting or isIngameState()then return end
@@ -324,7 +324,7 @@ Events.OnPreUIDraw.Add(function()
  MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'})
  MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,error=pcall(tick)
  if not ok then

@@ -63,7 +63,7 @@ local function gameTick()
   end
  end
 end
-Events.OnTick.Add(function()guard(gameTick)end)
+require('QueuePreflight').onTick(Events,function()guard(gameTick)end)
 local function menuTick()
  if done or failed then return end
  if exitStage then

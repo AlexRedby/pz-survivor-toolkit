@@ -41,7 +41,7 @@ Events.OnServerCommand.Add(function(module,command,value)
  elseif command=='Prepared'then packet=value elseif command=='Verified'then receipt=value
  elseif command=='PasteVerified'then pasteReceipt=value elseif command=='Cleaned'then cleaned=true end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs();getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
 end)
@@ -261,7 +261,7 @@ local function tick()
   done=true
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,problem=pcall(function()assert(getTimestampMs()-since<420000,'distribution timeout phase='..phase);tick()end)
  if not ok then done=true;print('[QUEUE_TEST] FAIL distribution '..tostring(problem))end

@@ -70,7 +70,7 @@ for _,role in ipairs({'server','client1','client2'}) do
  r.callbacks=callbacks
  local env=setmetatable({},{__index=_G});r.env=env
  env.Events=events
- env.require=function(name)
+ env.require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
   if name=='QueueTestSelection' then return {disposable=true,options={cart_lease_control=true,cart_lease_lifetimes=true,cart_lease_menu=true}} end
   if name=='CartLeaseProtocol' then
    local p={server=function(...)

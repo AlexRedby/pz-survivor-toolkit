@@ -77,8 +77,8 @@ local function check()
  print('[QM_PRESET] COMPLETE case='..config.cases[1])
 end
 
-Events.OnGameStart.Add(function() started = true end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function() started = true end)
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() or not getPlayer() or not getPlayer():getSquare() then return end
  done = true
  local ok, err = pcall(check)

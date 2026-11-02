@@ -22,7 +22,7 @@ local function dispatch()
  LootSorter.DEBUG=true;button.onclick(button.target,button)
  assert((LootSorter._sortRunSeq or 0)>before and #queue().queue>0,'distribution did not start')
 end
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs();getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
  getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
@@ -91,7 +91,7 @@ local function tick()
   emit('COMPLETE',{case='barricaded-door'});done=true
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,problem=pcall(function()assert(getTimestampMs()-since<240000,'door distribution timeout phase='..phase);tick()end)
  if not ok then done=true;print('[QM_DOOR] FAIL '..tostring(problem))end

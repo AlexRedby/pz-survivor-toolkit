@@ -40,7 +40,7 @@ Events.OnServerCommand.Add(function(module,command,value)
   receipt=value;print('[FOOD_TEST] RECEIPT_RECEIVED '..JSON.encode({case=case(),phase=phase,receipt=value}))
  end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
  getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false);getPlayer():setGhostMode(true)
 end)
@@ -295,7 +295,7 @@ local function finish(localReceipt)
  ids,state,authority,receipt,anchor=nil,nil,nil,nil,nil;commands,observed,evidence={},{},nil
  ISTimedActionQueue.add(ISUnequipAction:new(getPlayer(),previousBag,50));phase='unequipped';since=getTimestampMs()
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()or not getPlayer()or not getPlayer():getSquare()then return end
  local ok,problem=pcall(function()
   local player=getPlayer();getCore():setOptionAutoDrink(false);player:setAutoDrink(false)

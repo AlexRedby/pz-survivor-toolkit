@@ -129,7 +129,7 @@ local function run()
         end
     end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
     if failed or stage=='done' or not isIngameState() or not getPlayer() or not getPlayer():getSquare() or getTimestampMs()<nextAt then return end
     nextAt=getTimestampMs()+30
     local ok,err=pcall(run)

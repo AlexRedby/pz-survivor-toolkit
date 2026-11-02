@@ -43,7 +43,7 @@ Events.OnInitGlobalModData.Add(function()
  end)
  if not ok then done = true; print('[WAREHOUSE_LEGACY] FAIL cold ' .. tostring(problem)) end
 end)
-Events.OnGameStart.Add(function() started, since = true, getTimestampMs() end)
+require('QueuePreflight').onGameStart(Events,function() started, since = true, getTimestampMs() end)
 local function seed(player)
  assert(LootSorter.manifestReconcile and not PZSurvivorToolkit.ManifestAuthority, 'Seed requires actual pre-Host Toolkit sources')
  assert(not getCell():getGridSquare(7000, 7000, 0), 'Remote legacy location unexpectedly loaded')
@@ -97,7 +97,7 @@ local function reload()
  getCore():TakeFullScreenshot('warehouse-manifest-legacy-reload.png')
  LootSorter._manifestWin:close(); phase = 'complete'
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() then return end
  local ok, problem = pcall(function()
   assert(not isClient() and not isServer(), 'Legacy save migration requires native SP')

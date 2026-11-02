@@ -49,7 +49,7 @@ local function initialize()
  sendClientCommand(P.module, 'Prepare', {reconnect = resuming})
  return true
 end
-Events.OnGameStart.Add(function() started, since, initialized = true, getTimestampMs(), false end)
+require('QueuePreflight').onGameStart(Events,function() started, since, initialized = true, getTimestampMs(), false end)
 local function connectAgain()
  if not resuming or reconnecting or isIngameState() then return end
  if not MainScreen or not MainScreen.instance or not ConnectToServer or not ConnectToServer.instance then return end
@@ -146,7 +146,7 @@ local function tick()
   emit('COMPLETE', {case = case, role = role}); done = true
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or exitRequestedAt or not isIngameState() then return end
  local ok, problem = pcall(function()
   assert(getTimestampMs() - since < 600000, 'Persistence native client timeout stage=' .. tostring(stage)); tick()

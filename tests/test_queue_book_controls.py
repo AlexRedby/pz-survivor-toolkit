@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+from tests.lua_fixture_events import OFFLINE_FIXTURE_EVENTS
 import zipfile
 from unittest import mock
 
@@ -393,7 +395,7 @@ for _,invalid in ipairs({'world.header-cancel-favorite-capacity-lost','world.hea
 end
 os.exit(0)
 """
-        subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookControls.lua'), ','.join(a.CASES)], check=True)
+        subprocess.run([lua, '-e', OFFLINE_FIXTURE_EVENTS + source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookControls.lua'), ','.join(a.CASES)], check=True)
 
     def test_32_probe_evidence_and_frozen_budgets_cannot_be_fabricated(self):
         mutations = {
@@ -521,7 +523,7 @@ for _,result in ipairs({performance,performance.probe32})do
 end
 os.exit(0)
 """
-        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
+        subprocess.run([lua,'-e',OFFLINE_FIXTURE_EVENTS + source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
 
     @staticmethod
     def current_measurements(evidence):
@@ -610,7 +612,7 @@ metric.decisionStable=false
 assert(check(bank):find('unstable read-only decision',1,true),'unstable decisions silently accepted')
 os.exit(0)
 """
-        subprocess.run([lua,'-e',source,'--','unused',body],check=True)
+        subprocess.run([lua,'-e',OFFLINE_FIXTURE_EVENTS + source,'--','unused',body],check=True)
 
     def test_current_full_bank_reports_cost_unassessed_and_preserves_raw_integrity(self):
         with tempfile.TemporaryDirectory()as directory:
@@ -733,7 +735,7 @@ local ok,reason=pcall(handler,list,'onMouseUp',0,0)
 assert(not ok and reason==payload and effects==1 and list.onMouseUp==original,'timing swallowed an error, replayed mutation or replaced callback')
 os.exit(0)
 """
-        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
+        subprocess.run([lua,'-e',OFFLINE_FIXTURE_EVENTS + source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
 
     def test_scalar_decisions_classify_allowed_denied_and_block_false32_claims(self):
         self.assertEqual(self.check(self.evidence()), [])
@@ -827,7 +829,7 @@ objects[1]={kind='IsoTelevision',getObjectIndex=function()return 1 end};ok,d=F.r
 for _,case in ipairs({'header-cancel-favorite','move-volume-favorite'})do local base,lost,favorite=F.parseControl(case);assert(not lost and favorite and base:find('favorite')==nil)end
 os.exit(0)
 """
-        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/shared/QueueBookControls.lua')],check=True)
+        subprocess.run([lua,'-e',OFFLINE_FIXTURE_EVENTS + source,'--','unused',str(ROOT/'tests/native_queue/book-controls/shared/QueueBookControls.lua')],check=True)
         client=(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua').read_text()
         self.assertIn('if not observe()then return end',client)
         wait=client.split("if status=='wait'then",1)[1].split("if status=='resolved'",1)[0]
@@ -856,7 +858,7 @@ tracks[{}]={role='equip',started=false,performedAt=100}
 local ok,problem=pcall(observe);assert(not ok and tostring(problem):find('native start crossed replica gap',1,true),'missed native timing fabricated')
 os.exit(0)
 """
-        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/shared/QueueBookControls.lua'),str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
+        subprocess.run([lua,'-e',OFFLINE_FIXTURE_EVENTS + source,'--','unused',str(ROOT/'tests/native_queue/book-controls/shared/QueueBookControls.lua'),str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
 
     def test_exact_replica_gap_requires_terminal_transaction_and_raw_pair(self):
         evidence=self.evidence();row=evidence[0];without_gap=copy.deepcopy(row);record=next(r for r in row['records'] if r['role']=='return')
@@ -935,7 +937,7 @@ local ok=pcall(J.encode,function()end);assert(not ok,'unknown Lua value accepted
 ok=pcall(J.encode,{[1]='mixed',unknown=true});assert(not ok,'malformed mixed table accepted')
 os.exit(0)
 """
-        value=json.loads(subprocess.check_output([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/health/shared/QueueHealthEvents.lua')],text=True))
+        value=json.loads(subprocess.check_output([lua,'-e',OFFLINE_FIXTURE_EVENTS + source,'--','unused',str(ROOT/'tests/native_queue/health/shared/QueueHealthEvents.lua')],text=True))
         self.assertEqual(value,dict(nan={'__queueNonfiniteNumber':'nan'},pos={'__queueNonfiniteNumber':'+inf'},neg={'__queueNonfiniteNumber':'-inf'},finite=1.25,flag=False,text='nan'))
 
     def test_actual_case15_unstarted_nan_is_diagnostic_only_with_exact_admission_evidence(self):
@@ -1039,7 +1041,7 @@ assert(v.rootMatches==2 and v.directRootMatches==2 and v.carried.type=='Base.Pen
 assert(action.item==carried,'passive diagnostic rebound the requested action')
 os.exit(0)
 """
-        subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookControls.lua')], check=True)
+        subprocess.run([lua, '-e', OFFLINE_FIXTURE_EVENTS + source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookControls.lua')], check=True)
 
     def test_optional_return_waiver_passively_qualifies_same_or_replaced_replica(self):
         for source in ('world', 'worn-bag'):
@@ -1297,7 +1299,7 @@ for _,guarded in ipairs({false,true})do
 end
 os.exit(0)
 """
-        subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/client/ZZBookControls.lua')], check=True)
+        subprocess.run([lua, '-e', OFFLINE_FIXTURE_EVENTS + source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/client/ZZBookControls.lua')], check=True)
 
     def test_actual_callback_captures_instant_native_episode_without_inventing_start(self):
         lua=shutil.which('luajit')
@@ -1324,7 +1326,7 @@ row.nativeRef=nil;row.allocatedAt=nil;action.action=nil;requestsEnabled=false
 assert(run(action,'perform')and row.nativeRef==nil and row.allocatedAt==nil,'missing Java action acquired a native identity')
 os.exit(0)
 """
-        subprocess.run([lua,'-e',source,'--','unused',body],check=True)
+        subprocess.run([lua,'-e',OFFLINE_FIXTURE_EVENTS + source,'--','unused',body],check=True)
 
     def test_instant_return_request_identity_remains_strict_without_observed_start(self):
         case='world.header-cancel-favorite';evidence=self.request_evidence(case,'sp','native')
@@ -1433,7 +1435,7 @@ for _,step in ipairs({'stop','perform'})do
 end
 os.exit(0)
 """
-        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
+        subprocess.run([lua,'-e',OFFLINE_FIXTURE_EVENTS + source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua')],check=True)
 
     def test_native_transfer_stop_raw_pair_cannot_be_dropped_or_duplicated(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1887,7 +1889,7 @@ local revision,entries,copies,kept=1,{{id=11,itemId=101,title='Book',state='bloc
 local execution={blockedReturnInfo=function()return{count=#entries,revision=revision}end,blockedReturns=function()copies=copies+1;return entries end,
  keepReturn=function(_,id)kept=id;for index,entry in ipairs(entries)do if entry.id==id then table.remove(entries,index);revision=revision+1;return true end end;return false,'unavailable'end}
 PZSurvivorToolkit={Settings={actionQueue=function()return true end},ActionQueueExecution=execution}
-require=function(name)if name=='PZSurvivorToolkit/ActionQueueProjection'then return{capture=function()return{stable=false}end}end end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='PZSurvivorToolkit/ActionQueueProjection'then return{capture=function()return{stable=false}end}end end
 assert(loadfile(arg[1]))()
 local Panel=PZSurvivorToolkit.ActionQueuePanel;Panel.refresh();local view=windows[#windows];view:update()
 assert(view.visible and #view.list.items==0 and view.keepReturnButton.visible and view.keepReturnButton.enabled,'idle failure footer absent')
@@ -1914,7 +1916,7 @@ PZSurvivorToolkit.ActionQueueExecution=nil;other:setVisible(true);other:update()
 local legacy=Panel:new(0,0,420,300);legacy.queue=queue;legacy:initialise();legacy:update();assert(not legacy.keepReturnButton,'legacy panel acquired execution controls')
 os.exit(0)
 """
-        subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePanel.lua')], check=True)
+        subprocess.run([lua, '-e', OFFLINE_FIXTURE_EVENTS + source, '--', 'unused', str(ROOT / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePanel.lua')], check=True)
 
     def test_unsupported_active_edit_is_collected_after_read_only_checks(self):
         lua = shutil.which('luajit')
@@ -1981,7 +1983,7 @@ end
 toolkitLeafTransferAliasFacts=helper
 os.exit(0)
 """
-        subprocess.run([lua, '-e', source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookEditObservation.lua')], check=True)
+        subprocess.run([lua, '-e', OFFLINE_FIXTURE_EVENTS + source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookEditObservation.lua')], check=True)
 
     def test_fixture_compiles_and_does_not_repair_client_equipment(self):
         lua = shutil.which('luajit')

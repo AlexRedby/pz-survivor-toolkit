@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios, campaign
+from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios, campaign, batch_policy
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
@@ -258,9 +258,35 @@ def batch_sessions(plan, jobs, catalog, config, output, desktop_mode=None):
     return units
 
 
+def batch_input_failure(args, plan, jobs, units, unit, catalog, policy, error):
+    """Keep a zero-launch audit when an upfront preparation gate refuses a batch."""
+    interrupted = isinstance(error, KeyboardInterrupt)
+    finding = batch_policy.exception_failure('input-preflight', error)
+    members = unit['jobs']
+    item = dict(status='blocked', run=str(unit['output'].resolve()),
+                error='Batch job interrupted' if interrupted else str(error), setup_failure=finding)
+    results = [dict(item, id=job['id']) for job in members]
+    if unit['session']:
+        for index, row in enumerate(results):
+            row.update(session=unit['session'], cases=unit['members'][index]['cases'])
+    attempted = {job['id'] for job in members}
+    args.output.mkdir(parents=True)
+    report.write_json(args.output / 'batch-report.json', dict(
+        status='failed', failure_policy=policy, jobs=results,
+        sessions=[dict(item, id=unit['session'] or members[0]['id'],
+                       jobs=[job['id'] for job in members], boundary=members[0].get('boundary'))],
+        launches_planned=len(units), remaining=[job['id'] for job in jobs if job['id'] not in attempted],
+        stop_reason=dict(finding, kind='interrupted' if interrupted else finding['kind'], job=members[0]['id']),
+        campaign=campaign.build(plan, jobs, results)))
+    report.write_json(args.output / 'coverage.json', report.matrix(catalog, []))
+    print('BLOCKED ' + members[0]['id'] + ': ' + item['error'], flush=True)
+    return 130 if interrupted else 1
+
+
 def batch(args, catalog):
     plan = report.read_json(args.plan)
     jobs = selected_jobs(plan, getattr(args, 'jobs', None), getattr(args, 'sets', ()), getattr(args, 'skip_jobs', None))
+    policy = batch_policy.resolve(plan, getattr(args, 'failure_policy', None))
     campaign.validate(plan)
     identifiers = [job['id'] for job in jobs]
     progress = sys.stderr if getattr(args, 'dry_run', False) else sys.stdout
@@ -268,31 +294,36 @@ def batch(args, catalog):
         raise FileExistsError('Fresh batch output directory required')
     units = batch_sessions(plan, jobs, catalog, args.plan, args.output, getattr(args, 'desktop_mode', None))
     paths = {job['id']: (args.output / job['id']).resolve() for job in jobs}
-    for unit in units:
-        unit['build_inputs'] = {}
-        suite = unit['jobs'][0].get('suite')
-        adapter = adapters.get(suite) if isinstance(suite, str) else None
-        if not getattr(adapter, 'preflight', None):
-            continue
-        selected = unit.get('selection') or batch_selection(
-            plan, unit['jobs'][0], catalog, args.plan, paths, getattr(args, 'desktop_mode', None))
-        with redirect_stdout(progress), admission.preparing(unit['output'], selected,
-                wait=unit['jobs'][0].get('resource_wait', plan.get('resource_wait', 300))):
-            unit['build_inputs'] = adapters.preflight(selected)
-    if 'campaign' in plan:
-        # Unlike an ordinary independent-job batch, a campaign preflights all
-        # selected environments before spending its first native launch.
-        checked_packs = {}
+    try:
         for unit in units:
-            job = unit['jobs'][0]
-            selected = unit.get('selection') or batch_selection(plan, job, catalog, args.plan, paths, getattr(args, 'desktop_mode', None))
-            selected['options'].update(unit['build_inputs'])
-            native._validate(selected)
-            native.window_size(selected)
-            with redirect_stdout(progress):
-                native.source_inputs(ROOT, plan['game'], plan['jdk'], selected, plan.get('workshop', []),
-                                     pack_cache=checked_packs, validate_adapter=not job.get('seed_job'),
-                                     resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
+            unit['build_inputs'] = {}
+            suite = unit['jobs'][0].get('suite')
+            adapter = adapters.get(suite) if isinstance(suite, str) else None
+            if not getattr(adapter, 'preflight', None):
+                continue
+            selected = unit.get('selection') or batch_selection(
+                plan, unit['jobs'][0], catalog, args.plan, paths, getattr(args, 'desktop_mode', None))
+            with redirect_stdout(progress), admission.preparing(unit['output'], selected,
+                    wait=unit['jobs'][0].get('resource_wait', plan.get('resource_wait', 300))):
+                unit['build_inputs'] = adapters.preflight(selected)
+        if 'campaign' in plan:
+            # Unlike an ordinary independent-job batch, a campaign preflights all
+            # selected environments before spending its first native launch.
+            checked_packs = {}
+            for unit in units:
+                job = unit['jobs'][0]
+                selected = unit.get('selection') or batch_selection(plan, job, catalog, args.plan, paths, getattr(args, 'desktop_mode', None))
+                selected['options'].update(unit['build_inputs'])
+                native._validate(selected)
+                native.window_size(selected)
+                with redirect_stdout(progress):
+                    native.source_inputs(ROOT, plan['game'], plan['jdk'], selected, plan.get('workshop', []),
+                                         pack_cache=checked_packs, validate_adapter=not job.get('seed_job'),
+                                         resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
+    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
+        if getattr(args, 'dry_run', False) or (policy == 'continue' and not isinstance(error, KeyboardInterrupt)):
+            raise
+        return batch_input_failure(args, plan, jobs, units, unit, catalog, policy, error)
     if getattr(args, 'dry_run', False):
         runs, rows, sessions = {}, [], []
         for unit in units:
@@ -310,7 +341,7 @@ def batch(args, catalog):
                              'jobs': [job['id'] for job in unit['jobs']], 'run': str(unit['output'].resolve()),
                              'selection': unit.get('selection', selected),
                              'boundary': unit['jobs'][0].get('boundary')})
-        print(json.dumps({'status': 'planned', 'game': plan['game'], 'jdk': plan['jdk'],
+        print(json.dumps({'status': 'planned', 'failure_policy': policy, 'game': plan['game'], 'jdk': plan['jdk'],
                           'workshop': plan.get('workshop', []), 'jobs': rows, 'sessions': sessions,
                           'launches': len(units), 'jobs_without_reuse': len(jobs),
                           'campaign': campaign.build(plan, jobs, planned=True)}, indent=2))
@@ -321,6 +352,7 @@ def batch(args, catalog):
         job, output = unit['jobs'][0], unit['output']
         item = {'run': str(output.resolve())}
         interrupted = False
+        stage = 'dependency'
         print('START ' + (unit['session'] or job['id']) + ' [' + ','.join(j['id'] for j in unit['jobs']) + ']', flush=True)
         try:
             for key in ('control_job', 'seed_job'):
@@ -329,27 +361,42 @@ def batch(args, catalog):
                 if 'campaign' in plan and job.get(key) and job[key] not in accepted:
                     raise ValueError('Campaign dependency requires a passed report with clean runtime: ' + job[key])
             control = completed[job['control_job']] if job.get('control_job') else None
+            stage = 'selection'
             selected = unit.get('selection')
             if selected is None:
                 selected = batch_selection(plan, job, catalog, args.plan, completed,
                                            getattr(args, 'desktop_mode', None))
             selected['options'].update(unit['build_inputs'])
+            stage = 'prepare'
             native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])],
                            resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
+            stage = 'run'
             execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)
+            failure = batch_policy.setup_failure(execution, adapters.roles(selected, False))
+            if failure:
+                item['setup_failure'] = failure
+            stage = 'report'
             value = save_report(output, catalog, control)
+            if failure:
+                value = dict(value, status='failed')
             reports.append(value)
             for member in unit['jobs']:
-                completed[member['id']] = output.resolve()
-                if value['status'] == 'passed' and value['runtime']['status'] == 'clean':
+                if not failure:
+                    completed[member['id']] = output.resolve()
+                if not failure and value['status'] == 'passed' and value['runtime']['status'] == 'clean':
                     accepted.add(member['id'])
             item.update(status=value['status'], functional=value['functional']['status'], runtime=value['runtime']['status'])
             print(report.summary(value), flush=True)
         except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError, KeyboardInterrupt) as error:
             interrupted = interrupted or isinstance(error, KeyboardInterrupt)
+            for member in unit['jobs']:
+                completed.pop(member['id'], None)
+                accepted.discard(member['id'])
             item.update(status='blocked' if not (output / 'execution.json').exists() else 'failed',
                         error='Batch job interrupted' if isinstance(error, KeyboardInterrupt) else str(error))
+            if stage != 'dependency' and not interrupted:
+                item.setdefault('setup_failure', batch_policy.exception_failure(stage, error))
             print(item['status'].upper() + ' ' + job['id'] + ': ' + item['error'], flush=True)
         for index, member in enumerate(unit['jobs']):
             row = dict(item, id=member['id'])
@@ -359,12 +406,18 @@ def batch(args, catalog):
         sessions.append(dict(item, id=unit['session'] or job['id'], jobs=[member['id'] for member in unit['jobs']],
                              boundary=job.get('boundary')))
         overall = 'failed' if any(row['status'] in ('failed', 'blocked') for row in results) else 'needs-review' if any(row['status'] == 'needs-review' for row in results) else 'passed'
-        report.write_json(args.output / 'batch-report.json', {'status': overall, 'jobs': results,
+        stop = interrupted or (policy == 'stop-on-setup-failure' and 'setup_failure' in item)
+        stop_reason = ({'kind': 'interrupted', 'job': job['id']} if interrupted else
+                       dict(item['setup_failure'], job=job['id']) if stop else None)
+        report.write_json(args.output / 'batch-report.json', {'status': overall, 'failure_policy': policy, 'jobs': results,
                           'sessions': sessions, 'launches_planned': len(units),
-                          'remaining': identifiers[len(results):], 'campaign': campaign.build(plan, jobs, results)})
+                          'remaining': identifiers[len(results):], 'stop_reason': stop_reason,
+                          'campaign': campaign.build(plan, jobs, results)})
         report.write_json(args.output / 'coverage.json', report.matrix(catalog, reports))
         if interrupted:
             return 130
+        if stop:
+            return 1
     return {'passed': 0, 'failed': 1, 'needs-review': 2}[overall]
 
 
@@ -425,6 +478,8 @@ def main(argv=None):
     command.add_argument('--set', dest='sets', action='append', default=[], help='Run a named set from the plan; repeatable')
     command.add_argument('--skip-jobs', help='Disable comma-separated jobs; required dependencies cannot be disabled')
     command.add_argument('--dry-run', action='store_true', help='Print resolved job selections as JSON without preparing profiles or launching games')
+    command.add_argument('--failure-policy', choices=batch_policy.POLICIES,
+                         help='Override plan failure_policy; stop-on-setup-failure saves a partial report and skips further launches')
     command.add_argument('--desktop-mode', choices=('auto', 'aerospace', 'current'),
                          help='Override desktop launch strategy for every selected job; otherwise use each plan option or the safe auto default')
     command = commands.add_parser('lock-pack', help='Resolve and hash the actual SurvivorQoL-selected.ini pack without launching the game')

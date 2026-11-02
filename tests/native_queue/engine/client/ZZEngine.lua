@@ -86,13 +86,13 @@ Events.OnServerCommand.Add(function(module,command,args)
     elseif command=='Invalidated' then invalidated=args
     elseif command=='Begin' then go=true elseif command=='Release' then released=true end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
     started=true;since=getTimestampMs()
     getCore():setOptionPauseOnFocusloss(false)
     if not isClient() then getPlayer():setGhostMode(true) end
     if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
     if not started or done or not isIngameState() then return end
     local ok,errorMessage=pcall(function()
         assert(getTimestampMs()-since<180000,'engine native stage deadline '..phase)

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import uuid
 from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw, preparation_process
 try:
     from .. import lua_compatibility
@@ -304,7 +305,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         raise ValueError("Runtime paths cannot contain loader/classpath separators or newlines")
     support = project / "tests/native_queue/support"
     suite = project / "tests/native_queue" / selection["suite"]
-    required = [support / name for name in ("ToolkitSmokeLauncher.java", "ToolkitWindowBootstrap.java", "ZZReleasePreflight.lua", "QueueEnergyPlacement.lua")]
+    required = [support / name for name in ("ToolkitSmokeLauncher.java", "ToolkitWindowBootstrap.java", "ZZReleasePreflight.lua", "QueuePreflight.lua", "QueueEnergyPlacement.lua")]
     required += [Path(lua_compatibility.HARNESS), Path(lua_compatibility.__file__).resolve(), game / 'stdlib.lbc']
     required += [project / "tools/check_action_queue.py", project / "tests/native_queue/catalog.json"]
     if not adapter and (not (suite / "client").is_dir() or not (suite / "shared").is_dir() or selection["kind"] == "mp" and not (suite / "server").is_dir()):
@@ -360,6 +361,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
     admission.require_disk(output, len(roles), len(roles) * (mod_bytes + fixture_bytes) + world_bytes)
     runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(launch_java), "server_name": "queue-smoke", "window_size": selection["window_size"], "roles": {}}
+    preflight_config = {'version': 1, 'token': uuid.uuid4().hex, 'roles': adapters.roles(selection, False)}
     output.mkdir(parents=True)
     if sys.platform == 'darwin':
         runtime['glfw'] = glfw.prepare(game, output / 'native', launch_java)
@@ -398,6 +400,8 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
             if (suite / side).is_dir():
                 shutil.copytree(suite / side, lua / side, dirs_exist_ok=True)
         shutil.copy2(support / "ZZReleasePreflight.lua", lua / "client")
+        shutil.copy2(support / "QueuePreflight.lua", lua / "shared")
+        (lua / 'shared/QueuePreflightConfig.lua').write_text('return ' + _lua(preflight_config) + '\n', encoding='utf-8')
         shutil.copy2(support / "QueueEnergyPlacement.lua", lua / "shared")
         if selection['suite'] == 'health':
             shutil.copy2(support / 'QueueScenarioChecks.lua', lua / 'shared')
@@ -458,6 +462,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         worlds.restore(template, world, output, runtime)
     if adapter:
         adapter.stage(project, output, game, jdk, selection, locations, runtime)
+    runtime['fixture']['preflight'] = preflight_config
     admission.require_disk(output, len(roles))
     for role in roles:
         path = output / role / 'options.ini'

@@ -374,12 +374,12 @@ Events.OnServerCommand.Add(function(module,command,args)
     elseif command=='Progressed' then progressReceipt=args
     elseif command=='Verified' then receipt=args end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
     started=true;since=getTimestampMs()
     getCore():setOptionPauseOnFocusloss(false)
     if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
     if not started or done or not isIngameState() then return end
     installMediaProbe()
     local ok,err=pcall(function()

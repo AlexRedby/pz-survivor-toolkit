@@ -117,6 +117,29 @@ class NativeSnapshotTests(unittest.TestCase):
         self.assert_window_size(output, [1600, 900])
         self.assertNotIn('window_size', self.selection)
 
+    def test_preflight_is_fresh_shared_and_sealed_after_adapter_staging(self):
+        def stage(project, output, game, jdk, selection, locations, runtime):
+            # Adapters may replace their fixture metadata rather than update it.
+            runtime['fixture'] = {'mods': [], 'server_ready': 'fixture-ready'}
+        tokens = []
+        for name in ('first', 'second'):
+            with patch.object(native.adapters, 'get', return_value=self.fixture_adapter(stage)):
+                output = self.prepare(name, kind='mp', languages=['EN', 'RU'])
+            config = report.read_json(output / 'runtime.json')['fixture']['preflight']
+            tokens.append(config['token'])
+            self.assertEqual(['client1', 'client2'], config['roles'])
+            self.assertRegex(config['token'], '^[a-f0-9]{32}$')
+            shared = 'mods/ActionQueueTest/42/media/lua/shared/'
+            configs = [(output / role / shared / 'QueuePreflightConfig.lua').read_bytes()
+                       for role in ('server', 'client1', 'client2')]
+            self.assertEqual(configs, [configs[0]] * 3)
+            self.assertIn(config['token'].encode(), configs[0])
+            self.assertEqual([], report.verify_manifest(output, 'snapshot-hashes.json'))
+            for role in config['roles']:
+                self.assertFalse((output / role / 'Lua/queue-preflight-setup.txt').exists())
+                self.assertFalse((output / role / 'Lua/queue-preflight-release.txt').exists())
+        self.assertNotEqual(tokens[0], tokens[1])
+
     def test_runtime_compatibility_checks_final_generated_owned_files_and_seals_receipt(self):
         def stage(project, output, game, jdk, selection, locations, runtime):
             cache = Path(runtime['roles']['client1']['cache'])

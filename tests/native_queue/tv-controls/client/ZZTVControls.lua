@@ -215,8 +215,8 @@ local function finish()
  state,localAuthority,ids,baselineReceipt,receipt,panels,tracks,commands,setup,order=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  initialQueue,editedQueue,edit,quiet=nil,nil,nil,nil;phase='prepare';since=now();diagnosed=false
 end
-Events.OnGameStart.Add(function()started=true;since=now()end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function()started=true;since=now()end)
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,error=pcall(function()
   local player=getPlayer();if not isIngameState()or not player or not player:getSquare()then return end

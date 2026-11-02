@@ -65,8 +65,8 @@ local function run()
   scriptCategoriesUnchanged=true,legacyOverride=true,role='client1'})
  emit('COMPLETE',{case='parity',role='client1'});done=true
 end
-Events.OnGameStart.Add(function() started=true;since=getTimestampMs() end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function() started=true;since=getTimestampMs() end)
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() or getTimestampMs()-since<2000 then return end
  local player=getPlayer();if not player or not player:getSquare() then return end
  local ok,err=pcall(run)

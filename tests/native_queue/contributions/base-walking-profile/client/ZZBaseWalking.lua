@@ -131,8 +131,8 @@ local function sample(time)
         phase=phase,x=x,y=y,z=z,moving=moving,tileChanged=changed,dt=time-lastTick}
     lastX,lastY,lastZ,lastTick=x,y,z,time
 end
-Events.OnGameStart.Add(function() started=true end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function() started=true end)
+require('QueuePreflight').onTick(Events,function()
     if done or not started or not isIngameState() then return end
     local ok,problem=pcall(function()
         local time=now()

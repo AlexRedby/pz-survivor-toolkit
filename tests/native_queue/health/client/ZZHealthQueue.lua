@@ -138,7 +138,7 @@ Events.OnPreUIDraw.Add(function()
  end
 end)
 Events.OnConnectFailed.Add(function(a,b) print('[QUEUE_TEST] FAIL HEALTH connect '..tostring(a)..' '..tostring(b));emit({event='error',reason='connect '..tostring(a)..' '..tostring(b)}) end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=getTimestampMs();since=started
  getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
@@ -148,7 +148,7 @@ Events.OnGameStart.Add(function()
  else print('[QUEUE_TEST] NATIVE_CONNECTED '..user..' actualPeer=true nativeDurations=true') end
  emit({event='setup',cases=caseIDs,expected=#caseIDs,language=language,nativeDurations=true,queueEnabled=PZSurvivorToolkit.Settings.actionQueue()})
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local now=getTimestampMs()
  if not ids or not session or (not session.active and not done) then

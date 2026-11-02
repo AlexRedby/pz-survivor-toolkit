@@ -153,7 +153,7 @@ function D.install(config,context)
    safe('Receipt.delayed',action,{transaction=args.transaction,delayMilliseconds=delay})
    return true
   end
-  Events.OnTick.Add(function()
+  require('QueuePreflight').onTick(Events,function()
    local saved=pendingReceipt
    if not saved or getTimestampMs()<saved.deadline then return end
    if saved.rows then

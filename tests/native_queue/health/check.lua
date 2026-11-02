@@ -6,7 +6,7 @@ assert(#AllCases==45)
 getActivatedMods=function() return {contains=function(_,id)return id=="MiniHealthPlus" end} end
 local TestSelection={kind='sp',mode='toolkit',cases={}}
 for _,spec in ipairs(AllCases) do TestSelection.cases[#TestSelection.cases+1]=spec.id end
-require=function(name)
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name=='QueueTestSelection' then return TestSelection end
  if name=='QueueHealthCases' then return AllCases end
  error('unexpected selection dependency '..name)
@@ -15,7 +15,7 @@ Selection=source('shared','QueueHealthSelection');Cases=Selection.cases
 local function select(kind,mode,ids)
  TestSelection.kind=kind;TestSelection.mode=mode;TestSelection.cases=ids
  local previous=require
- require=function(name) if name=='QueueTestSelection' then return TestSelection elseif name=='QueueHealthCases' then return AllCases end;return previous(name) end
+ require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; if name=='QueueTestSelection' then return TestSelection elseif name=='QueueHealthCases' then return AllCases end;return previous(name) end
  Selection=source('shared','QueueHealthSelection');Cases=Selection.cases
 end
 
@@ -138,7 +138,7 @@ function medicalVisualEffect(actor,handler)
   if actor.body.scratchTime>0 then actor.body.scratchFlag=true;addVisual(actor,'Base.Wound_LForearm_Scratch_Male') end
  end
 end
-require=function(name)
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name=='QueueHealthSelection' then return Selection end
  if name=='QueueHealthCases' then return AllCases end
  assert(name=='QueueEnergyPlacement')
@@ -340,7 +340,7 @@ bag.owner={};assert(not pcall(Authority.setBagHand,actor,bag,nil),'removed schoo
 
 ScenarioSource=assert(io.open(root..'/client/QueueHealthScenarios.lua')):read('*a')
 
-require=function(name) if name=='QueueHealthSelection' then return Selection elseif name=='QueueHealthCases' then return AllCases elseif name=='QueueHealthAuthority' then return Authority end;return {} end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; if name=='QueueHealthSelection' then return Selection elseif name=='QueueHealthCases' then return AllCases elseif name=='QueueHealthAuthority' then return Authority end;return {} end
 local actor=player('readiness');local identity=Authority.setup(actor)
 function actor:getX() return self.x end;function actor:getY() return self.y end;function actor:getZ() return self.z end
 local noSquare,moving,dark=false,false,false
@@ -384,7 +384,7 @@ require=AuthorityRequire
 select('sp','toolkit',{'expandedCancel','missingChildSupply'})
 Authority=source('shared','QueueHealthAuthority')
 
-require=function(name) if name=='QueueHealthSelection' then return Selection elseif name=='QueueHealthAuthority' then return Authority elseif name=='QueueEnergyPlacement' then return AuthorityRequire(name) end;return {} end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; if name=='QueueHealthSelection' then return Selection elseif name=='QueueHealthAuthority' then return Authority elseif name=='QueueEnergyPlacement' then return AuthorityRequire(name) end;return {} end
 local actor=player('bag-observer');local identity=Authority.setup(actor)
 function actor:getPlayerNum() return 0 end
 function actor:getX() return self.x end;function actor:getY() return self.y end;function actor:getZ() return self.z end
@@ -572,7 +572,7 @@ do
  end}end}
  getPlayerContextMenu=function()return context end
  Events={OnPlayerUpdate={Add=function(callback)observer=callback end,Remove=function(callback)assert(observer==callback);observer=nil end}}
- require=function(name)
+ require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
   if name=='QueueHealthSelection'then return Selection elseif name=='QueueHealthAuthority'then return Authority
   elseif name=='QueueEnergyPlacement'then return AuthorityRequire(name)end;return {}end
  local function send(command,args)
@@ -682,7 +682,7 @@ do
  end}end}
  getPlayerContextMenu=function()return context end
  Events={OnPlayerUpdate={Add=function()end,Remove=function()end}}
- require=function(name)
+ require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
   if name=='QueueHealthSelection'then return Selection elseif name=='QueueHealthAuthority'then return Authority
   elseif name=='QueueEnergyPlacement'then return AuthorityRequire(name)end;return {}end
  local verifies=0
@@ -765,7 +765,7 @@ for _,mode in ipairs({'native','toolkit'}) do for _,disconnect in ipairs({false,
   ActionQueuePolicy={setDiagnostics=function()end,inspect=function()return {}end},
   ActionQueueDefinitions={describe=function()return {title='treatment',target='patient'}end},
   ActionQueueOperations={run=function(fn,...)return fn(...)end}}
- require=function(name)if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return {}end
+ require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return {}end
  local stages,prepared,baselines,receipts={},{},{},{}
  source('client','QueueHealthScenarios')(function(_,fn)stages[#stages+1]=fn end,function()return q end,function()return #q.queue==0 end,
   {kind='mp',language='EN',ids=function()return {}end,preparations=prepared,baselines=baselines,receipts=receipts,
@@ -900,7 +900,7 @@ for _,mode in ipairs({'native','toolkit'})do
   local spec;for _,entry in ipairs(AllCases)do if entry.id==caseID then spec=entry end end
   local authority={position=function()end,clinicalReady=function()return true end}
   local selection={mode=mode,cases={spec},skipReason=function()end}
-  require=function(name)if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return {}end
+  require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return {}end
   local stages,prepared,baselines={},{},{}
   source('client','QueueHealthScenarios')(function(_,fn)stages[#stages+1]=fn end,function()return q end,function()return #q.queue==0 end,
    {kind=kind,language='EN',ids=function()return {username='client1'}end,preparations=prepared,baselines=baselines,
@@ -947,7 +947,7 @@ do
   for _,name in ipairs({'OnServerCommand','OnMainMenuEnter','OnPreUIDraw','OnConnectFailed','OnGameStart','OnTick'}) do
    local event={};event.Add=function(callback)event.callback=callback end;Events[name]=event
   end
-  require=function(name)
+  require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
    if name=='QueueTestSelection' then return {port=16261,options={mp_host=mpHost}} end
    if name=='QueueHealthSelection' then return {kind=kind,mode=mode,cases={{id='bandageApply'}}} end
    if name=='QueueHealthScenarios' then return function(stage)for i=1,3 do stage('stub',function()end)end end end

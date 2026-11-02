@@ -4,6 +4,8 @@ import shutil
 import subprocess
 import unittest
 
+from tests.lua_fixture_events import OFFLINE_FIXTURE_EVENTS
+
 ROOT = Path(__file__).resolve().parents[1]
 LUA = ROOT / 'tests/native_queue/contributions/animal-trailer/lua'
 
@@ -13,7 +15,7 @@ class AnimalSetupTests(unittest.TestCase):
         lua = shutil.which('lua5.4') or shutil.which('lua') or shutil.which('luajit')
         if not lua:
             self.skipTest('Lua interpreter unavailable')
-        result = subprocess.run([lua, '-', *map(str, sources)], input=code, text=True, capture_output=True)
+        result = subprocess.run([lua, '-', *map(str, sources)], input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_start_square_rejects_unsafe_neighbors_and_never_crosses_a_fence(self):

@@ -1,7 +1,7 @@
 -- Registration only: none of the game callbacks or stage bodies is executed.
 local root=assert(arg[1])
 local function event() return {Add=function() end} end
-require=function() end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; end
 for _,case in ipairs({{'crafting','chains',20},{'ui','chains',28},{'alternatives','alternatives',23}}) do
  Events={OnConnected=event(),OnMainMenuEnter=event(),OnPreUIDraw=event(),OnConnectFailed=event(),
   OnGameStart=event(),OnServerCommand=event(),OnTick=event(),OnServerStarted=event(),OnClientCommand=event()}

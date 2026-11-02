@@ -1,4 +1,5 @@
 local selection = require 'QueueTestSelection'
+local preflight = require 'QueuePreflight'
 local toolkit=false
 for _,id in ipairs(selection.mods) do if id=='PZSurvivorToolkit' then toolkit=true end end
 if toolkit then
@@ -24,6 +25,10 @@ Events.OnGameStart.Add(function()
         end
         print('[QUEUE_TEST] '..(isClient() and 'NATIVE_CONNECTED' or 'TRUE_SP'))
         print('[QUEUE_TEST] PREFLIGHT_COMPLETE mods=' .. count .. ' mode=' .. selection.mode)
+        preflight.complete()
     end)
-    if not ok then print('[QUEUE_TEST] FAIL release preflight ' .. tostring(problem)) end
+    if not ok then
+        preflight.fail('preflight', problem)
+        print('[QUEUE_TEST] FAIL release preflight ' .. tostring(problem))
+    end
 end)

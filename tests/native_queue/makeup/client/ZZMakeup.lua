@@ -331,8 +331,8 @@ Events.OnServerCommand.Add(function(module,name,args)
  elseif name=='Verified'then verified=args
  elseif name=='Failed'then print('[QUEUE_TEST] FAIL makeup authority '..tostring(args.error));done=true end
 end)
-Events.OnGameStart.Add(function()entered=true;since=now()end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function()entered=true;since=now()end)
+require('QueuePreflight').onTick(Events,function()
  if not entered or done then return end
  local ok,problem=pcall(function()
   local player=getPlayer();if not isIngameState()or not player or not player:getCurrentSquare()then return end

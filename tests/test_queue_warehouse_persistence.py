@@ -172,7 +172,7 @@ class WarehousePersistenceClientSamplesTests(unittest.TestCase):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute("""
 isServer = function() return false end
-require = function(name)
+require = function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name == 'QueueTestSelection' then return {cases = {'persist-reload'}} end
  error('Client must not initialize authority fixture dependency ' .. name)
 end
@@ -222,7 +222,7 @@ for i = 1, 2 do
  payload.containers[point.id] = record
 end
 print = function(message) assert(not message:find('FAIL', 1, true), message) end
-require = function(name)
+require = function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name == 'QueueTestSelection' then return {cases = {'persist-seed'}, kind = 'mp', mode = 'toolkit'} end
  if name == 'WarehouseManifestFixture' then return fixture end
  if name == 'PZSurvivorToolkit/ManifestModel' then return {SCHEMA = 2} end
@@ -348,7 +348,7 @@ LootSorter = {}
 Translator = {getLanguage = function() return {name = function() return 'RU' end} end}
 sendClientCommand = function() end
 print = function(message) logs[#logs + 1] = message end
-require = function(name)
+require = function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name == 'QueueTestSelection' then return {cases = {'persist-seed'}, kind = 'mp', mode = 'toolkit', port = 17343} end
  if name == 'WarehouseManifestPersistence' then return {module = 'WarehouseManifestPersistenceTest'} end
  if name == 'WarehouseManifestFixture' or name == 'PZSurvivorToolkit/ManifestClient' then return {} end

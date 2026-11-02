@@ -327,8 +327,8 @@ local function finish()
  baselineRequested,setupActual=nil,nil;since=now();phase='prepare'
  if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
 end
-Events.OnGameStart.Add(function()entered=true;since=now()end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function()entered=true;since=now()end)
+require('QueuePreflight').onTick(Events,function()
  if not entered or done then return end
  local ok,problem=pcall(function()
   local player=getPlayer();if not isIngameState()or not player or not player:getCurrentSquare()then return end

@@ -68,7 +68,7 @@ Events.OnServerCommand.Add(function(module,name,value)
  elseif name=='Prepared'then ids=value;trace('PREPARED_CLIENT',{vehicleId=ids.vehicleId,count=#ids.items})
  elseif name=='Verified'then receipt=value end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=now();getCore():setOptionPauseOnFocusloss(false)
  getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false);getPlayer():setGhostMode(true)
  installProfiles()
@@ -172,7 +172,7 @@ local function finish()
  emit({event='complete',cases=config.cases,expected=1,performed=1,failed=0,skipped=0})
  print('[INVENTORY_TRANSFER_TEST] COMPLETE');done=true
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState()or not getPlayer()or not getPlayer():getSquare()then return end
  local ok,problem=pcall(function()
   if now()-since>180000 then error('inventory transfer timeout '..phase)end

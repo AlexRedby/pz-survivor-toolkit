@@ -5,7 +5,7 @@ assert(CartTestArea and cartLabDrive and cartLabGait,'Load test-area.lua and the
 assert(getPlayer(),'Live actor required')
 require 'SaucedCarts/Core'
 require 'SaucedCarts/CartVisuals'
-if CartLabTick then Events.OnTick.Remove(CartLabTick) end
+if CartLabTick then require('QueuePreflight').removeTick(Events,CartLabTick) end
 if CartLabGate then Events.OnPlayerUpdate.Remove(CartLabGate) end
 local player=getPlayer()
 local expectedCart=config.cartType or 'SaucedWheelbarrow.WheelbarrowWood'
@@ -14,7 +14,7 @@ assert(expectedCart=='SaucedCarts.ShoppingCart' or expectedCart=='SaucedWheelbar
 require 'ISUI/ISUIHandler'
 assert(config.hideUI==nil or type(config.hideUI)=='boolean','CartMotionConfig.hideUI must be boolean')
 assert(cartLabCaptureUIRender and cartLabCaptureUIVisible and cartLabCaptureUIKeyBound,'Capture UI render bridge required')
-if CartLabCaptureUITick then Events.OnTick.Remove(CartLabCaptureUITick) end
+if CartLabCaptureUITick then require('QueuePreflight').removeTick(Events,CartLabCaptureUITick) end
 if CartLabCaptureUIRestore then
  Events.OnMainMenuEnter.Remove(CartLabCaptureUIRestore)
  CartLabCaptureUIRestore()
@@ -63,9 +63,9 @@ function cartLabCaptureUI(hidden)
  print('[CART_CAPTURE_UI] hidden=true toggle='..tostring(CartLabCaptureUIKey or 'callable-only'))
 end
 CartLabCaptureUITick=function()
- if not captureUIWorld() then CartLabCaptureUIRestore();Events.OnTick.Remove(CartLabCaptureUITick) end
+ if not captureUIWorld() then CartLabCaptureUIRestore();require('QueuePreflight').removeTick(Events,CartLabCaptureUITick) end
 end
-Events.OnTick.Add(CartLabCaptureUITick)
+require('QueuePreflight').onTick(Events,CartLabCaptureUITick)
 Events.OnMainMenuEnter.Add(CartLabCaptureUIRestore)
 -- Capture UI state end.
 if config.authoredClip~=nil then player:setVariable('ToolkitWoodCartClipPilot',config.authoredClip) end
@@ -136,7 +136,7 @@ local woodSince=getTimestampMs()
 local woodReady
 woodReady=function()
  if getTimestampMs()-woodSince<3000 then return end
- Events.OnTick.Remove(woodReady)
+ require('QueuePreflight').removeTick(Events,woodReady)
  local ok,err=pcall(function()
   assert(cartLabChunkWidth()>=200,'[CART_TEST_AREA] native chunk window too small')
   print('[CART_TEST_AREA] CHUNK_WINDOW tiles='..cartLabChunkWidth()..' screen='..getCore():getScreenWidth()..'x'..getCore():getScreenHeight())
@@ -162,4 +162,4 @@ woodReady=function()
  end)
  if not ok then cartLabDrive(-1);print('[WOOD_PROTOTYPE] BOOTSTRAP_FAIL '..tostring(err)) end
 end
-Events.OnTick.Add(woodReady)
+require('QueuePreflight').onTick(Events,woodReady)

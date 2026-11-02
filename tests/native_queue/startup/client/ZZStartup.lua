@@ -67,11 +67,11 @@ Events.OnPreUIDraw.Add(function()
  end
 end)
 Events.OnConnectFailed.Add(function(a,b) print('[QUEUE_TEST] FAIL startup connect '..tostring(a)..' '..tostring(b)) end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true
  print('[STARTUP_TEST] GAME_START kind='..config.kind..' mode='..config.mode)
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() then return end
  local player=getPlayer()
  if not player or player:isDead() or not player:getSquare() then return end

@@ -116,7 +116,7 @@ local function run()
         stage = 5; print('[VEHICLE_DOORS] COMPLETE close')
     end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
     if failed or stage == 5 or not isIngameState() or not getPlayer() or not getPlayer():getSquare() or getTimestampMs() < nextAt then return end
     nextAt = getTimestampMs() + 100
     local ok, err = pcall(run)

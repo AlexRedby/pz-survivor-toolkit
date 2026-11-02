@@ -157,7 +157,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  if command=='Prepared'then packet=args.target;role=args.role elseif command=='Start'then go=true
  elseif command=='Observe'then observe=true elseif command=='Done'then finished=true end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs();local player=getPlayer()
  player:setGodMod(true);player:setGhostMode(true)
  if selection.kind=='sp' then role='client1' end
@@ -428,7 +428,7 @@ local function tick()
   emit('COMPLETE',{case='edit',role=role});done=true
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() or getTimestampMs()<nextAt then return end
  local ok,err=pcall(function()assert(getTimestampMs()-since<180000,'Timeout phase='..phase);tick()end)
  if not ok then done=true;print('[CONTAINER_CONFIG] FAIL '..tostring(role)..' '..tostring(err))end

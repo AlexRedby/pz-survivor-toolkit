@@ -48,7 +48,7 @@ Events.OnPreUIDraw.Add(function()
     end)
     if not ok then fail(reason) end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
     started = true
     deadline = getTimestampMs() + 300000
     log('GAME_START version='..getCore():getVersion())
@@ -228,7 +228,7 @@ local function tick()
     end
 end
 
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
     local ok, reason = pcall(tick)
     if not ok then fail(reason) end
 end)

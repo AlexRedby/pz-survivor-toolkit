@@ -343,7 +343,7 @@ context={case=... ,events={}}
 for _,name in ipairs({'OnTick','OnGameStart','OnMainMenuEnter','OnPreUIDraw'})do
  context.events[name]={Add=function(fn)context.events[name].callback=fn end}
 end
-require=function(name)
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name=='QueueTestSelection'then return {cases={'inventory-work','inventory-freshness'}}end
  if name=='StorageProfileSession'then return {context=function()return context end}end
  return {}

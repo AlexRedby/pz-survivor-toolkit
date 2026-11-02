@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 
+from tests.lua_fixture_events import OFFLINE_FIXTURE_EVENTS
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import fitness
@@ -1312,7 +1314,7 @@ class FitnessAdapterTests(unittest.TestCase):
         observer_end=source.index("),'fitness native reader boundary observer unavailable')",helpers_start)
         observer_end+=len("),'fitness native reader boundary observer unavailable')")
         server_start=source.index('Events.OnServerCommand.Add(function(module,name,value)')
-        server_end=source.index('Events.OnGameStart.Add(',server_start)
+        server_end=source.index("require('QueuePreflight').onGameStart(",server_start)
         lua=LuaRuntime()
         lua.execute("""
             native=false;seen=true;state=nil;command=nil
@@ -2211,6 +2213,7 @@ class FitnessAdapterTests(unittest.TestCase):
                   hasTimedActions=function()return false end,tooDarkToRead=function()return true end}
                 end
             """)
+            lua.execute(OFFLINE_FIXTURE_EVENTS)
             lua.execute(source)
             lua.execute("""
                 handlers.OnGameStart()
@@ -2371,6 +2374,7 @@ class FitnessAdapterTests(unittest.TestCase):
         except ImportError:
             self.skipTest('Lupa is required for receipt ordering checks')
         lua=LuaRuntime()
+        lua.execute(OFFLINE_FIXTURE_EVENTS)
         lua.execute("""
             package.preload['QueueHealthEvents']=function()return {encode=function(row)return tostring(row)end}end
             now=0;logs={};dispatched={};ticks={};getTimestampMs=function()return now end

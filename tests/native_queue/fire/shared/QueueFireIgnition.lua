@@ -41,7 +41,7 @@ function Test.observe()
  end
 end
 local function observe()if not isClient() then Test.observe() end end
-Events.OnTick.Add(observe)
+require('QueuePreflight').onTick(Events,observe)
 -- MP completes after OnTick; observe next frame before native objects burn fuel.
 Events.OnTickEvenPaused.Add(observe)
 function Test.prepare(player,case)

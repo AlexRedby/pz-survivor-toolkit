@@ -350,7 +350,7 @@ if isServer() then
    else error('Unknown lifecycle request '..tostring(command)) end
   end)
  end)
- Events.OnTick.Add(function()
+ require('QueuePreflight').onTick(Events,function()
   if since and stage~='complete' then guarded(function() assert(now()-since<DEADLINE and now()-stageAt<120000,'Lifecycle server stage deadline: '..stage) end) end
  end)
  return M
@@ -529,7 +529,7 @@ Events.OnCreatePlayer.Add(function(index,p)
   end)
  end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=now();lastHello=0
  if resuming then
   assert(read(REJOIN)=='connecting','Native rejoin lacks its owned connecting checkpoint')
@@ -697,7 +697,7 @@ end
 Events.OnMainMenuEnter.Add(function() guarded(connectAgain) end)
 Events.OnPreUIDraw.Add(function() guarded(function() connectAgain();rejoinCreationTick();if isIngameState() then respawnTick() end end) end)
 Events.OnTickEvenPaused.Add(function() guarded(function() exitTick();if isIngameState() then respawnTick() end end) end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if done or failed then return end
  guarded(function()
   if since then assert(now()-since<DEADLINE,'Lifecycle client deadline phase='..tostring(phase)..' transition='..tostring(transition)) end

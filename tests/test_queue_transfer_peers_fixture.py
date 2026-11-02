@@ -21,7 +21,7 @@ for _,role in ipairs(F.roles)do
   getCharacterActions=function()return{isEmpty=function()return true end}end}
 end
 isServer=function()return true end;getTimestampMs=function()return 10 end
-require=function(name)if name=='QueueTestSelection'then return config elseif name=='QueueTransferPeers'then return F end;error(name)end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueTestSelection'then return config elseif name=='QueueTransferPeers'then return F end;error(name)end
 local command,tick
 Events={OnClientCommand={Add=function(f)command=f end},OnTick={Add=function(f)tick=f end}}
 sendServerCommand=function(player,module,name,row)sent[#sent+1]={player=player,name=name,row=row}end
@@ -81,7 +81,7 @@ os.exit(0)
 
     def test_recursive_actor_inventory_is_not_misreported_as_direct_root(self):
         source=r"""
-require=function()return{}end;instanceof=function(item,name)return item.bag==true end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;return{}end;instanceof=function(item,name)return item.bag==true end
 local function container(items)return{getItems=function()return{size=function()return #items end,get=function(_,i)return items[i+1]end}end}end
 local function item(id)return{getID=function()return id end}end
 local direct,nested=item(1),item(2);local bag=item(3);bag.bag=true
@@ -98,7 +98,7 @@ os.exit(0)
 
     def test_unknown_probe_count_brackets_recovery_preview(self):
         text=(ROOT/'tests/native_queue/queue-transfer-peers/client/ZZQueueTransferPeers.lua').read_text()
-        first=text.index('local function result()');body=text[first:text.index('Events.OnGameStart.Add',first)]
+        first=text.index('local function result()');body=text[first:text.index("require('QueuePreflight').onGameStart",first)]
         source=r"""
 local count=1
 R={tracks={},records={},state={ids={front={id=1,ft='Book',initial=216,total=220},tail={ft='Tail',initial=219,total=220}}},

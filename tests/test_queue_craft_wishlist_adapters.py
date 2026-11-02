@@ -7,6 +7,8 @@ import sys
 import subprocess
 import tempfile
 import unittest
+
+from tests.lua_fixture_events import OFFLINE_FIXTURE_EVENTS
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -126,7 +128,7 @@ for _,path in ipairs(paths) do
  local hooks={};Events=setmetatable({},{__index=function(t,k)
   local e={Add=function(fn) hooks[k]=hooks[k] or {};table.insert(hooks[k],fn) end};t[k]=e;return e
  end})
- require=function()end
+ require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;end
  ISHandcraftAction={performRecipe=function()end}
  local lines={'client1','ui,crafting,alternatives','host','12345','password'}
  getFileReader=function() local i=0;return {readLine=function()i=i+1;return lines[i]end,close=function()end}end
@@ -138,7 +140,7 @@ for _,path in ipairs(paths) do
 end
 print('PASS staged selected factories and single event dispatchers')
 '''
-            result = subprocess.run([lua, "-", *map(str, paths)], input=code, text=True, capture_output=True)
+            result = subprocess.run([lua, "-", *map(str, paths)], input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             text = paths[0].read_text()
             self.assertEqual(3, text.count("']=function(QueueCraftSession)"))
@@ -182,7 +184,7 @@ s=session();now=720001;s.tick();assert(s.phase=='quarantined')
 print('PASS lifecycle barriers, stale receipts, duplicates, reset failure and quarantine')
 '''
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueFixtureSession.lua")],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_grouped_verifier_preserves_each_case_stages_and_joint_clean_receipts(self):
@@ -258,7 +260,7 @@ assert(server.phase=='prepare')
 print('PASS deferred initial/next Prepare, missing/offline player, no resend and server role isolation')
 '''
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueFixtureSession.lua")],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_grouped_outcomes_pass_common_functional_gate_in_actor_then_selection_order(self):
@@ -303,7 +305,7 @@ assert(present[owned]and present[neighbor],'failed cleanup must preserve server 
 print('PASS exact native single-object removal, authoritative absence and untouched neighbor')
 '''
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueCraftSession.lua")],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_real_lua_skill_restore_uses_remote_safe_api_and_only_owned_changed_perks(self):
@@ -337,7 +339,7 @@ assert(not ok and err:find('actor=client1',1,true)and err:find('perk=Carving',1,
 print('PASS actual fixture remote-safe flags, exact fractions, unchanged/unrelated skills and failed-reset diagnostics')
 '''
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueCraftSession.lua")],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_installed_engine_skill_reset_harness(self):
@@ -414,7 +416,7 @@ print('PASS quiet replication polling, RPC drain, real Wishlist pending/forged r
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueFixtureSession.lua"),
                                  str(ROOT / "tests/native_queue/support/QueueCraftSession.lua"),
                                  str(ROOT / "tests/native_queue/contributions/shared-wishlist/client/ZZWishlist.lua")],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_real_lua_wishlist_server_visual_cleanup_guards_without_next(self):
@@ -472,7 +474,7 @@ assert(not pcall(fixture,{}),'preexisting unrelated fixture-named faction must b
 print('PASS real server visual empty-list/owner/storage/faction reset guards with next unavailable')
 '''
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/contributions/shared-wishlist/server/ZZWishlist_Server.lua")],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_grouped_wishlist_only_visual_then_standalone(self):
@@ -497,7 +499,7 @@ print('PASS grouped Wishlist generated Lua and single bootstrap')
 '''
             base = root / "client1/mods/WishlistTest/42/media/lua"
             result = subprocess.run([lua, "-", str(base / "client/ZZWishlist.lua"), str(base / "server/ZZWishlist_Server.lua")],
-                                    input=code, text=True, capture_output=True)
+                                    input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             for role in ("server", "client1", "client2"):
                 (root / (role + "-launch.log")).write_text(session_log(value, role))
@@ -623,7 +625,7 @@ print('PASS grouped Wishlist generated Lua and single bootstrap')
     def test_native_restore_roundtrip_and_fail_closed_guards(self):
         lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
         self.assertIsNotNone(lua, "Lua interpreter required for the retained native restore helper")
-        code = r'''require=function() return dofile(arg[2]) end
+        code = r'''require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; return dofile(arg[2]) end
 local restore = dofile(arg[1])
 local files, current, server, client = {}, '/fixture/world', true, false
 isServer=function() return server end
@@ -657,13 +659,13 @@ print('PASS native restore roundtrip and guards')
 '''
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueWishlistRestore.lua"),
                                  str(ROOT / "PZSurvivorToolkit/42/media/lua/shared/PZSurvivorWishlist/StorageIdentity.lua")],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_native_restore_rebinds_v3_and_preserves_a_corrupt_peer(self):
         lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
         self.assertIsNotNone(lua)
-        code = r'''require=function() return dofile(arg[2]) end
+        code = r'''require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; return dofile(arg[2]) end
 local Identity=require('PZSurvivorWishlist/StorageIdentity')
 local restore=dofile(arg[1])
 local source,world='/fixture/old','/fixture/new'
@@ -721,7 +723,7 @@ print('PASS exact v3 restore rebind, checksum and corrupt peer')
 '''
         result = subprocess.run([lua, "-", str(ROOT / "tests/native_queue/support/QueueWishlistRestore.lua"),
                                  str(ROOT / "PZSurvivorToolkit/42/media/lua/shared/PZSurvivorWishlist/StorageIdentity.lua")],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_store_prefix_bounds_path_and_legacy_retains_kahlua_utf16_units(self):
@@ -774,11 +776,11 @@ print('PASS exact v3 restore rebind, checksum and corrupt peer')
             self.assertEqual(contents, [contents[0]] * 3)
             self.assertTrue(contents[0].isascii(), "Kahlua's source lexer must only receive ASCII string literals")
             code = r'''local world, slots
-require=function() return function(a,b) world,slots=a,b end end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; return function(a,b) world,slots=a,b end end
 dofile(arg[1]); WishlistSeedRestore()
 io.write(world, '\0', slots.a)
 '''
-            result = subprocess.run([lua, "-", str(modules[0])], input=code.encode("ascii"), capture_output=True)
+            result = subprocess.run([lua, "-", str(modules[0])], input=(OFFLINE_FIXTURE_EVENTS + code).encode("ascii"), capture_output=True)
             self.assertEqual(0, result.returncode, result.stderr.decode("utf-8", errors="replace"))
             world = str(output / "server/Saves/Multiplayer/queue-smoke")
             self.assertEqual(world.encode("utf-8") + b"\0" + text.encode("utf-8"), result.stdout)

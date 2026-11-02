@@ -273,7 +273,7 @@ local function abortTick()
  local actual=U.originalProof(R.player,R.original);local affinityOptions=A and A.restore(R.affinityOptions);local ui=U.restore(R.player,R.ui)
  emit('ABORT',{restored=true,authority=reply,actual=actual,uiProof=ui,affinityOptions=affinityOptions,positionProof=position});done=true
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if done or not isClient()or not isIngameState()then return end
  if not started then
   local player=getPlayer();if not player or not player:getSquare()or not getPlayerInventory(player:getPlayerNum())or not getPlayerLoot(player:getPlayerNum())then return end

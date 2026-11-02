@@ -196,8 +196,8 @@ local function finish()
  state,authority,ids,authorityBaseline,removed,authorityFinal,input,quiet,tracks,commands,starts,cancellations,recoveries,admission,draining,body=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  phase='prepare';since=now()
 end
-Events.OnGameStart.Add(function()entered=true;since=now()end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function()entered=true;since=now()end)
+require('QueuePreflight').onTick(Events,function()
  if not entered or done then return end
  local ok,error=pcall(function()
   local p=getPlayer();if not isIngameState()or not p or not p:getSquare()then return end

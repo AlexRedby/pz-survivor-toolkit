@@ -171,7 +171,7 @@ end)
 
 end
 local tick,session
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  if config.kind=='sp'then tick=Session.singleplayer(config,factory)
  else
   session=Session.create(config,factory,false);session.prepare();tick=session.tick
@@ -183,4 +183,4 @@ Events.OnServerCommand.Add(function(module,command,args)
   if not ok then session.quarantine(reason)end
  end
 end)
-Events.OnTick.Add(function()if tick then tick()end end)
+require('QueuePreflight').onTick(Events,function()if tick then tick()end end)

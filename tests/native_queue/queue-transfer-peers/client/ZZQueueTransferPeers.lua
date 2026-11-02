@@ -196,8 +196,8 @@ local function result()
   blocked=blocked,keptIds=kept,queueIdle=empty(),unknown=R.unknown or false}
  R.sent=true;F.emit('CASE',row);request('Result',{result=row});R.phase='result'
 end
-Events.OnGameStart.Add(function()entered=true end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onGameStart(Events,function()entered=true end)
+require('QueuePreflight').onTick(Events,function()
  if not entered or done then return end
  local ok,problem=pcall(function()
   if not isIngameState()or not getPlayer()or not getPlayer():getSquare()then return end

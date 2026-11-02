@@ -6,6 +6,8 @@ import sys
 import tempfile
 import unittest
 
+from tests.lua_fixture_events import OFFLINE_FIXTURE_EVENTS
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import startup
@@ -132,7 +134,7 @@ handlers.OnCoopServerMessage('status',nil,'UI_ServerStatus_Started')
 handlers.OnMainMenuEnter();assert(connected==1 and launched==1)
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/startup/client/ZZStartup.lua')],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_actual_bootstrap_waits_for_game_start_tick_square_and_connection(self):
@@ -197,7 +199,7 @@ for index,kind in ipairs({'sp','mp','mp'})do
 end
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/startup/client/ZZStartup.lua')],
-                                input=code, text=True, capture_output=True)
+                                input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
 

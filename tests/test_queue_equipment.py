@@ -325,7 +325,7 @@ class EquipmentTests(unittest.TestCase):
         ids = ','.join(json.dumps(case) for case in equipment.CASES)
         source = "local expected={" + ids + "}\n" + r"""
 local config={cases=expected,kind='mp',mode='toolkit',clients=1,languages={'EN'},options={}}
-require=function(name)assert(name=='QueueTestSelection');return config end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;assert(name=='QueueTestSelection');return config end
 local selected=dofile(arg[1])
 assert(#selected.cases==#expected,'native selection omitted a declared report case')
 for i,id in ipairs(expected)do assert(selected.cases[i]==id,'native/report selection ordering differs')end
@@ -977,7 +977,7 @@ local function excerpt(source,first,last)
  assert(loadstring(source:sub(start,finish-1)))()
 end
 local checks=dofile(root..'/tests/native_queue/support/QueueScenarioChecks.lua')
-require=function(name)assert(name=='QueueScenarioChecks');return checks end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;assert(name=='QueueScenarioChecks');return checks end
 local rackControls=dofile(root..'/tests/native_queue/equipment/shared/QueueEquipmentRack.lua')
 Operations={};excerpt(read('PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua'),
  'function Operations.bounds(queue, action)','local canMerge =')
@@ -1357,7 +1357,7 @@ end
         script = r'''
 local root=arg[1]
 local function run(kind,fault)
- require=function(name)if name=='QueueEquipmentClothing'or name=='QueueEquipmentHotbar'then return dofile(root..'/tests/native_queue/equipment/shared/'..name..'.lua')end end
+ require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueEquipmentClothing'or name=='QueueEquipmentHotbar'then return dofile(root..'/tests/native_queue/equipment/shared/'..name..'.lua')end end
  isClient=function()return kind=='mp'end
  Events={OnGameStart={Add=function()end}}
  ISQueueActionsAction={start=function()end}
@@ -1532,7 +1532,7 @@ local function run(kind,mode,fault,equipment)
  ISQueueActionsAction={start=function()end}
  isClient=function()return kind=='mp'end
  Events={OnGameStart={Add=function()end}}
- require=function(name)if name=='QueueEquipmentClothing'or name=='QueueEquipmentHotbar'then return dofile(root..'/tests/native_queue/equipment/shared/'..name..'.lua')end end
+ require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueEquipmentClothing'or name=='QueueEquipmentHotbar'then return dofile(root..'/tests/native_queue/equipment/shared/'..name..'.lua')end end
  PZSurvivorToolkit={Settings={actionQueue=function()return enabled end}}
  local lifecycle=dofile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua')
  local toolkit=PZSurvivorToolkit

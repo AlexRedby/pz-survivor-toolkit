@@ -66,7 +66,7 @@ local function menuRecipes(item)
  end
  scan(context);context:hideAndChildren();return found
 end
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;inventory=getPlayer():getInventory()
  getPlayer():setGodMod(true);getPlayer():setGhostMode(true)
  assert(not getPlayer():isTimedActionInstant(),'native duration requires ordinary timed actions')
@@ -81,7 +81,7 @@ Events.OnGameStart.Add(function()
   damnInsert=type(DAMN and DAMN.OnCreate and DAMN.OnCreate.PlasticWeldingGunBatteryInsert),
   damnRemove=type(DAMN and DAMN.OnCreate and DAMN.OnCreate.PlasticWeldingGunBatteryRemoval)})
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not getPlayer()or not getPlayer():getSquare()then return end
  local ok,problem=pcall(function()
   if phase=='prepare'then

@@ -204,7 +204,7 @@ local function abortTick()
  end
  emit('ABORT',{restored=true,authority=reply,original=original,originalEquipment=R.actor and A.equipmentProof(R.actor),uiProof=ui,positionProof=position,lockProof=lockProof,profileCleanup=R.profileCleanup});reportAbortResult(true);done=true
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if done or(selection.kind=='mp'and not isClient())or not isIngameState()then return end
  if not started then
   local player=getPlayer();if not player or not player:getSquare()or not getPlayerInventory(player:getPlayerNum())or not getPlayerLoot(player:getPlayerNum())then return end
@@ -224,7 +224,7 @@ end)
 -- Fresh SP launch follows the same disposable creation route as storage-profile.
 if selection.kind=='sp'then
  local entered,starting,worldEntered=false,false,false
- Events.OnGameStart.Add(function()worldEntered=true end)
+ require('QueuePreflight').onGameStart(Events,function()worldEntered=true end)
  Events.OnMainMenuEnter.Add(function()entered=true end)
  Events.OnPreUIDraw.Add(function()
   if worldEntered and isIngameState()and isGamePaused()then setGameSpeed(1)end

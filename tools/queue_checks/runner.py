@@ -11,6 +11,7 @@ from .report import events, execution_issues, read_json, verify_manifest, write_
 from . import adapters, admission, pack, worlds, coop, desktop, glfw
 from .native import font_preload
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
+from .preflight import ClientPreflight, fail as setup_failure
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
@@ -152,6 +153,8 @@ def run(root, resource_wait=300):
         execution = {"status": "running", "platform": "darwin", "processes": {}, "peer_disconnected": False, 'attachments': [],
                      'resources': resources, 'input_guards': input_guards, 'desktop': window_manager.evidence}
         fixture_monitor = FixtureLoadMonitor(root, runtime, selection)
+        preflight = ClientPreflight(root, runtime, selection)
+        clients = adapters.roles(selection, False)
         game = Path(runtime["game"])
         base = [runtime["java"], "-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED",
                 "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED", "-Dzomboid.steam=0",
@@ -182,6 +185,8 @@ def run(root, resource_wait=300):
                 return getattr(window_manager, phase)(processes[role], *args)
             except Exception as error:
                 record_window_failure(role, error, phase)
+                if preflight.pending():
+                    setup_failure(execution, 'client-readiness', role, 'readiness', str(error), operation=phase)
                 raise
 
         def launch(role):
@@ -213,7 +218,10 @@ def run(root, resource_wait=300):
             environment = _fixture_environment(selection, role, cache, config.get('env', {}))
             if hosted and role == 'client1' and loader:
                 environment['JDK_JAVA_OPTIONS'] = coop.loader_options(loader[0])
-            process = subprocess.Popen(command, cwd=game, env=environment, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, text=True, start_new_session=True)
+            try:
+                process = subprocess.Popen(command, cwd=game, env=environment, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.PIPE, text=True, start_new_session=True)
+            except (OSError, subprocess.SubprocessError) as error:
+                setup_failure(execution, 'native-launch', role, 'readiness', str(error))
             processes[role] = process
             execution["processes"][role] = {"pid": process.pid}
             print(role + " PID " + str(process.pid), flush=True)
@@ -256,16 +264,16 @@ def run(root, resource_wait=300):
                     if hosted:
                         current['server'] = text('server')
                     check_fixture_loading(fixture_monitor, current, execution, 'readiness')
+                    preflight.check(current, execution, release=False)
                     if (runtime.get('fixture', {}).get('server_ready', '[QUEUE_TEST] SERVER_READY') in current['server']
                             and (not hosted or '[QUEUE_TEST] HOST_CHILD ' in current['client1'])):
                         break
                     if processes['client1' if hosted else 'server'].poll() is not None or time.monotonic() >= deadline:
-                        raise RuntimeError("Server readiness failed")
+                        setup_failure(execution, 'server-readiness', 'client1' if hosted else 'server', 'readiness', 'Server readiness failed')
                     time.sleep(1)
                 if hosted:
                     execution['processes']['server'] = {'pid': coop.child(text('client1'), processes['client1'].pid),
                                                         'parent_role': 'client1', 'cache': str(root / 'client1')}
-            clients = adapters.roles(selection, False)
             for index, role in enumerate(clients):
                 if index:
                     time.sleep(runtime.get('fixture', {}).get('client_launch_stagger_seconds', 0))
@@ -275,6 +283,7 @@ def run(root, resource_wait=300):
             while time.monotonic() < deadline:
                 current = {role: text(role) for role in adapters.roles(selection)}
                 check_fixture_loading(fixture_monitor, current, execution, 'execution')
+                preflight.check(current, execution, release=False)
                 for role in clients:
                     if processes[role].poll() is None:
                         window_action(role, 'check')
@@ -289,6 +298,14 @@ def run(root, resource_wait=300):
                 failure_markers = ['[QUEUE_TEST] FAIL ', *runtime.get('fixture', {}).get('failure_markers', [])]
                 if any(marker in value for value in current.values() for marker in failure_markers):
                     raise RuntimeError("Native fixture failed; see complete log audit")
+                if preflight.pending():
+                    for role, process in processes.items():
+                        if process.poll() is not None:
+                            setup_failure(execution, 'client-readiness' if role in clients else 'server-readiness',
+                                          role, 'readiness', 'Owned process exited before fixture readiness: ' + role)
+                    if guard.poll() is not None:
+                        setup_failure(execution, 'display-readiness', clients[0], 'readiness', 'Display guard stopped before fixture readiness')
+                preflight.check(current, execution)
                 for role, specs in runtime.get('fixture', {}).get('attach', {}).items():
                     if role not in clients:
                         raise RuntimeError('Probe target is not an owned client: ' + role)
@@ -307,11 +324,11 @@ def run(root, resource_wait=300):
                         raise RuntimeError("Patient may disconnect only after completing its doctor checks")
                     stop(processes["client1"])
                     execution["peer_disconnected"] = True
-                finished = all(adapter.complete(selection, role, current[role]) if adapter else any(event["event"] == "complete" for event in records[role]) for role in clients)
-                if runtime.get('fixture', {}).get('manual') and all(process.poll() == 0 for process in processes.values()):
+                finished = not preflight.pending() and all(adapter.complete(selection, role, current[role]) if adapter else any(event["event"] == "complete" for event in records[role]) for role in clients)
+                if not preflight.pending() and runtime.get('fixture', {}).get('manual') and all(process.poll() == 0 for process in processes.values()):
                     execution.update(status='completed', manual=True)
                     break
-                if finished:
+                if finished and not preflight.pending():
                     execution["status"] = "completed"
                     break
                 for role, process in processes.items():
@@ -319,13 +336,18 @@ def run(root, resource_wait=300):
                         error = desktop.IsolationError('process-exited', "Game process stopped unexpectedly: " + role)
                         if role in clients:
                             record_window_failure(role, error, 'process-exit')
+                        if preflight.pending():
+                            setup_failure(execution, 'client-readiness', role, 'readiness', str(error))
                         raise error
                 if guard.poll() is not None:
                     raise RuntimeError("Display guard stopped")
                 time.sleep(2)
             else:
+                if preflight.pending():
+                    preflight.failure(execution, 'Required client readiness/fixture setup deadline expired')
                 raise RuntimeError("Bounded native run deadline expired")
         except (Exception, KeyboardInterrupt) as error:
+            preflight.record_exception(execution, error)
             execution.update(status="failed", error=str(error), interrupted=isinstance(error, KeyboardInterrupt))
         finally:
             # Cleanup signals record failure without interrupting bounded waits or losing the report.
@@ -339,14 +361,14 @@ def run(root, resource_wait=300):
                             except (OSError, subprocess.SubprocessError, RuntimeError) as error:
                                 execution.setdefault('cleanup_errors', []).append('Probe close failed: ' + str(error))
                 for role, process in reversed(list(processes.items())):
-                    if hosted and role == 'client1' and 'server' in execution['processes'] and not execution.get('fixture_load_error'):
+                    if hosted and role == 'client1' and 'server' in execution['processes'] and not execution.get('fixture_load_error') and not execution.get('setup_failure'):
                         try:
                             saved = coop.save_host(process, execution['processes']['server']['pid'], lambda: text('client1'))
                             execution['host_save'] = saved
                             execution['processes']['server']['exit_code'] = saved['exit_code']
                         except (OSError, RuntimeError) as error:
                             execution.setdefault('cleanup_errors', []).append('Host save: ' + str(error))
-                    if role == 'server' and process.poll() is None and not execution.get('fixture_load_error'):
+                    if role == 'server' and process.poll() is None and not execution.get('fixture_load_error') and not execution.get('setup_failure'):
                         try:
                             process.stdin.write('save\nquit\n'); process.stdin.flush()
                             process.wait(timeout=30)
@@ -385,6 +407,10 @@ def run(root, resource_wait=300):
                         execution.setdefault('cleanup_errors', []).append('display guard: ' + str(error))
                 if execution.get('cleanup_errors'):
                     execution.update(status='failed', error='; '.join([execution.get('error', ''), *execution['cleanup_errors']]))
+                try:
+                    preflight.check({role: text(role) for role in clients}, execution, release=False)
+                except RuntimeError as error:
+                    execution.update(status='failed', error=str(error))
                 if execution['status'] == 'completed':
                     issues = execution_issues(root, selection, execution)
                     if issues:

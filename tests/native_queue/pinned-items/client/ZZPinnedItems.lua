@@ -470,7 +470,7 @@ local function run()
         scene=scene+1;phase='mode'
     end
 end
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
     local options=require 'BetterContainers/_Options'
     local helpers=require 'BetterContainers/Helpers'
     local advanced=config.options and config.options.advanced_categories==true
@@ -479,7 +479,7 @@ Events.OnGameStart.Add(function()
     print('[PIN_ITEMS] SETTINGS advancedCategories='..tostring(advanced))
     started=true;nextAt=getTimestampMs()+2000
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
     if done or not started or not isIngameState() or getTimestampMs()<nextAt then return end
     if not getPlayer() or not getPlayer():getSquare() then return end
     local ok,err=pcall(run)

@@ -320,7 +320,7 @@ if standalone then
 end
 local stageNames={};for _,spec in ipairs(stages)do stageNames[#stageNames+1]=spec[1]end
 WishlistTestFixture={stageCount=#stages,mode=config.mode,standalone=standalone,stageNames=stageNames,stages=stages,checkHighlight=checkHighlight,separate=separate}
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  print('[WISHLIST_TEST] CONNECTED '..user..' language='..tostring(getCore():getOptionLanguageName()))
  if user=='client2'and not reload and not Session then local p=getPlayer();p:teleportTo(math.floor(p:getX())+8,math.floor(p:getY())+8,0)end
  started=getTimestampMs();if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
@@ -342,7 +342,7 @@ local function finish(s,ok,err,now)
   if Session then Session.finish(failures==0,(not ok and s.barrier~=nil) or tostring(err):find('deadline',1,true)~=nil) end
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  local now=getTimestampMs()
  if aborted then return end
  if pending then

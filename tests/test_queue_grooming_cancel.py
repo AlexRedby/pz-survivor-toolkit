@@ -560,7 +560,7 @@ class GroomingCancellationTests(unittest.TestCase):
               local moved={q.queue[1]};for i=3,#q.queue do moved[#moved+1]=q.queue[i]end;moved[#moved+1]=tail;q.queue=moved;return true
             end}}
             local proof={closure=function()return true end}
-            require=function(name)if name=='QueueGroomingCancel'then return F elseif name=='QueueHealthEvents'then return {encode=function()return '{}'end}
+            require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueGroomingCancel'then return F elseif name=='QueueHealthEvents'then return {encode=function()return '{}'end}
               elseif name=='QueueTestSelection'then return config elseif name=='PZSurvivorToolkit/SourceProof'then return proof end end
             local file=assert(io.open(source));local contents=file:read('*a');file:close()
             local client=assert(loadstring(contents..'\nreturn {enqueue=enqueue,move=moveAtBoundary}'))()
@@ -598,7 +598,7 @@ class GroomingCancellationTests(unittest.TestCase):
         script=r"""
           function isClient()return false end
           function isServer()return false end
-          require=function(name)assert(name=='QueueEnergyPlacement');return function()end end
+          require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;assert(name=='QueueEnergyPlacement');return function()end end
           local F=assert(loadfile(arg[1]))()
           -- Execute actual preparation/target selection; equipment color/wire setup
           -- has its own source-backed test, so stub only that separate helper.
@@ -904,7 +904,7 @@ for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-
     q.queue={q.queue[1],q.queue[3],q.queue[4],tail};return true
    end}}
   local json={encode=function()return '{}'end};local proof={closure=function()return true end}
-  require=function(name)if name=='QueueGroomingCancel'then return F elseif name=='QueueTestSelection'then return config
+  require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueGroomingCancel'then return F elseif name=='QueueTestSelection'then return config
    elseif name=='QueueHealthEvents'then return json elseif name=='PZSurvivorToolkit/SourceProof'then return proof end end
   local file=assert(io.open(arg[1]));local source=file:read('*a');file:close()
   local client=assert(loadstring(source..'\nreturn {enqueue=enqueue,move=moveAtBoundary}'))()

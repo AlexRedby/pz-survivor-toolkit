@@ -55,12 +55,12 @@ Events.OnServerCommand.Add(function(module,command,value)
  assert(value.ok~=false,value.error)
  if command=='Prepared' then ids=value elseif command=='Invalidated' then invalidated=value elseif command=='Verified' then receipt=value end
 end)
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started=true;since=getTimestampMs();getCore():setOptionPauseOnFocusloss(false)
  if not isClient() then getPlayer():setGhostMode(true) end
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
 end)
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() then return end
  local ok,problem=pcall(function()
   local player=getPlayer()

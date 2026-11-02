@@ -11,7 +11,7 @@ local point, packet, boxes, stage, merged, observed, transactionId
 local authority, cleaned = {}, false
 local function emit(event,value) print('[QM_BATCH] '..event..' '..JSON.encode(value)) end
 local function queue() return ISTimedActionQueue.getTimedActionQueue(getPlayer()) end
-Events.OnGameStart.Add(function()
+require('QueuePreflight').onGameStart(Events,function()
  started, since = true, getTimestampMs()
  assert(isClient(), 'batch fixture requires menu Host')
  getPlayer():setGodMod(true); getPlayer():setGhostMode(true)
@@ -86,7 +86,7 @@ local function tick()
   done=true
  end
 end
-Events.OnTick.Add(function()
+require('QueuePreflight').onTick(Events,function()
  if not started or done or not isIngameState() or not getPlayer() or not getPlayer():getSquare()then return end
  local ok,problem=pcall(function()assert(getTimestampMs()-since<120000,'batch timeout phase='..phase);tick()end)
  if not ok then done=true;print('[QUEUE_TEST] FAIL batch '..tostring(problem))end
