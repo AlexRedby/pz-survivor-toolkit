@@ -27,7 +27,11 @@ CONTROLS = ('header-cancel', 'reader-child-cancel', 'move-equip', 'move-volume')
 CASES = tuple(source + '.' + control for source in SOURCES for control in CONTROLS) + tuple(source + '.return-child-cancel' for source in SOURCES if source != 'root')
 CAPACITY_CASES = tuple(source + '.' + control + '-capacity-lost' for source in SOURCES if source != 'root' for control in ('header-cancel', 'move-volume'))
 FAVORITE_CASES = ('world.header-cancel-favorite', 'world.move-volume-favorite')
+PROMOTE_DEVICE_ONLY_CASES = tuple(source + '.move-volume-device-only' for source in SOURCES)
+DEMOTE_DEVICE_ONLY_CASES = tuple(source + '.demote-reader-device-only' for source in SOURCES)
+DEVICE_ONLY_CASES = PROMOTE_DEVICE_ONLY_CASES + DEMOTE_DEVICE_ONLY_CASES
 CASES += CAPACITY_CASES + FAVORITE_CASES
+DECLARED_CASES = CASES + DEVICE_ONLY_CASES
 PREFIX = '[BOOK_CONTROLS] '
 ACTIVE_EDIT_CASES = tuple(source + '.header-cancel' for source in SOURCES)
 
@@ -87,7 +91,12 @@ def _same_action(left, right):
     return identity is not None and identity == _action_identity(right)
 
 
+def device_only(control):
+    return control in ('move-volume-device-only', 'demote-reader-device-only')
+
 def base_control(control):
+    if device_only(control):
+        return control.removesuffix('-device-only')
     return control.removesuffix('-capacity-lost') if control.endswith('-capacity-lost') else control.removesuffix('-favorite')
 
 def capacity_case(control):
@@ -113,18 +122,18 @@ GAME_INPUTS = (
 
 
 def definitions():
-    checks = {name: {case: dict(effectsVerified=True, serverAuthorityVerified=True) for case in CASES}
+    checks = {name: {case: dict(effectsVerified=True, serverAuthorityVerified=True) for case in DECLARED_CASES}
               for name in ('success-queued', 'server-authority')}
     return {'book-controls': dict(status='ready', clients=1, default_mods=list(MODS), game_inputs=list(GAME_INPUTS),
         scenario_actions={'source-bound-book-controls': dict(checks=checks,
             scope='Opt-in ordered twenty-case source/control bank. Carpentry skillbook from root, worn military bag or direct world shelf, with explicit mode-specific favorite-world probes; native onLiteratureItems/readItem owns pickup/read/return. Real Panel hit-tested singleton/header/reader-child cross, exact optional-return child cancellation that keeps reading and the book carried, or pending native Pen equip/TV RWM SetVolume drag before the progressed active reader. Empty authority hands and exact root Pen expose unrelated equipment/borrowed-return interactions. Queue-off controls run unchanged native producers naturally. Fresh reader and saved page, old Java drain, exact returned item/container, final explicit Pen hand intent, native durations/callback identity, Host equipment/radio outcomes, full inventory/worn/hands/appearance snapshots and independent native reader tail. All functional control denials are collected through normal native clear/drain, then the aggregate fails. One EN actor, full selected pack, disposable macOS SP/menu Host. Programmatic widget gestures, no physical pointer/rendering claim.')},
-        cases=[dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'], modes=['native', 'toolkit'], languages=['EN']) for case in CASES])}
+        cases=[dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'], modes=['native', 'toolkit'], languages=['EN']) for case in DECLARED_CASES])}
 
 
 def selected_cases(selection):
     cases = selection.get('cases')
-    if (not isinstance(cases, list) or not cases or any(not isinstance(case, str) or case not in CASES for case in cases)
-            or len(set(cases)) != len(cases) or cases != [case for case in CASES if case in cases]):
+    if (not isinstance(cases, list) or not cases or any(not isinstance(case, str) or case not in DECLARED_CASES for case in cases)
+            or len(set(cases)) != len(cases) or cases != [case for case in DECLARED_CASES if case in cases]):
         raise ValueError('Book controls require a nonempty unique ordered subset of the declared cases')
     return cases
 
@@ -145,9 +154,11 @@ def validate(selection):
     if type(active) is not bool:
         raise ValueError('active_edit_observation must be boolean')
     cases = selected_cases(selection)
+    if any(case in DEVICE_ONLY_CASES for case in cases) and not active:
+        raise ValueError('device-only variants require active_edit_observation=true')
     if active and (selection.get('options', {}).get('precise_timing') is not True
-                   or any(case not in ACTIVE_EDIT_CASES for case in cases)):
-        raise ValueError('active_edit_observation requires precise_timing=true and exact root/worn-bag/world header-cancel cases')
+                   or any(case not in ACTIVE_EDIT_CASES + DEVICE_ONLY_CASES for case in cases)):
+        raise ValueError('active_edit_observation requires precise_timing=true and exact root/worn-bag/world header-cancel or device-only move/demotion cases')
     if (selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients')) is not int or selection['clients'] != 1
@@ -237,7 +248,8 @@ def expected(ids, enabled, boundary, kind='mp'):
         for entry in value['items']:
             if entry['id'] == ids['front']['id']: entry['container'] = 'root'
     value['volume'] = ids['initialVolume'] if lost and not enabled else ids['targetVolume']
-    value['hands']['primary'] = False if lost and not enabled else ids['pen']['id']
+    if not device_only(ids['control']):
+        value['hands']['primary'] = False if lost and not enabled else ids['pen']['id']
     return value
 
 
@@ -684,6 +696,8 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         source, original_control = case.split('.', 1)
         control = base_control(original_control); lost = capacity_case(original_control); favorite_unmoved = favorite_case(original_control) and selection['kind'] == 'sp'
         keep = enabled and control == 'return-child-cancel'
+        device = device_only(original_control)
+        demote = control == 'demote-reader'
         ids, boundary, records = row['ids'], row['boundary'], row['records']
         errors.extend(_nonfinite_case_errors(row, ids, enabled))
         errors.extend(native_request_errors(row, case, selection, ids))
@@ -762,7 +776,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
             errors.append('Noncapacity case acquired a capacity intervention')
         if (len(admissions) != 1 or admissions[0].get('producer') != 'ISInventoryPaneContextMenu.onLiteratureItems/readItem'
                 or admissions[0].get('volumeProducer') != 'RWMVolume.onVolumeChange'
-                or admissions[0].get('equipProducer') != 'ISInventoryPaneContextMenu.equipWeapon'
+                or admissions[0].get('equipProducer') != (False if device else 'ISInventoryPaneContextMenu.equipWeapon')
                 or admissions[0].get('sourceBound') is not True or len(boundaries) != 1
                 or boundaries[0] != dict({k: v for k, v in boundary.items() if k not in ('drained', 'drainedAt')}, drained=False)):
             errors.append('Missing unique actual native producers and raw UI boundary')
@@ -772,15 +786,16 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
             errors.append('Exact old Java allocation removal receipt missing')
         admission = admissions[0].get('queue', []) if len(admissions) == 1 else []
         initial_roles = [r.get('role') for r in admission if r.get('role') != 'preparation']
-        if initial_roles != ((['pickup', 'front', 'return'] if source != 'root' else ['front']) + ['equip', 'volume', 'tail']):
+        if initial_roles != ((['pickup', 'front', 'return'] if source != 'root' else ['front']) + (['volume', 'tail'] if device else ['equip', 'volume', 'tail'])):
             errors.append('Actual literature source pickup/read/return or independent producer chain differs')
         if enabled:
             front_tokens = [r.get('token') for r in admission if r.get('role') in ('pickup', 'front', 'return')]
             separate = [r.get('token') for r in admission if r.get('role') in ('equip', 'volume', 'tail')]
             if (not front_tokens or type(front_tokens[0]) is not int or len(set(front_tokens)) != 1
-                    or any(type(t) is not int for t in separate) or len(set(separate + front_tokens[:1])) != 4):
+                    or any(type(t) is not int for t in separate) or len(set(separate + front_tokens[:1])) != (3 if device else 4)):
                 errors.append('Native source operation lost pickup/read/return identity or independent tokens')
-        if (boundary.get('requested') is not enabled or any(boundary.get(k) is not True for k in ('tailRetained', 'volumePending', 'equipPending', 'drained'))
+        if (boundary.get('requested') is not enabled or any(boundary.get(k) is not True for k in ('tailRetained', 'volumePending', 'drained'))
+                or boundary.get('equipPending') is not (not device)
                 or not _number(boundary.get('at')) or not _number(boundary.get('delta')) or not 0 < boundary['delta'] < 1
                 or boundary['before']['books']['front']['pages'] != ids['front']['initial'] + 1
                 or boundary['before']['books']['front']['characterPages'] != ids['front']['initial'] + 1
@@ -788,14 +803,16 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
             errors.append('Edit did not target one paid page, active read and untouched independent work')
         front = [r for r in records if r.get('role') == 'front']
         others = {name: [r for r in records if r.get('role') == name] for name in ('tail', 'equip', 'volume')}
-        moving = enabled and control.startswith('move-')
-        if len(front) != (2 if moving else 1) or any(len(v) != 1 for v in others.values()):
+        moving = enabled and (control.startswith('move-') or control == 'demote-reader')
+        if len(front) != (2 if moving else 1) or any(len(v) != (0 if device and name == 'equip' else 1) for name, v in others.items()):
             return errors + ['Duplicate/missing exact native reader, Pen equip, volume or unrelated tail']
-        original = front[0]; tail, equip, volume = (others[n][0] for n in ('tail', 'equip', 'volume'))
+        original = front[0]; tail, volume = (others[n][0] for n in ('tail', 'volume')); equip = others['equip'][0] if not device else None
+        if device and (row.get('equipSnapshot') is not False or any(r.get('type') in ('ISEquipWeaponAction', 'ISUnequipAction', 'ISEquipHeavyItem') for r in records + admission)):
+            errors.append('Device-only variant acquired an equipment action or snapshot')
         if (not _same_action(original.get('actionRef'), boundary.get('reader')) or original.get('nativeRef') != boundary.get('native')
                 or original.get('item') != ids['front']['id'] or original.get('started') is not True or original.get('progress') is not True
-                or tail.get('item') != ids['tail']['id'] or equip.get('item') != ids['pen']['id']
-                or equip.get('type') != 'ISEquipWeaponAction' or volume.get('type') != 'ISRadioAction'):
+                or tail.get('item') != ids['tail']['id'] or not device and (equip.get('item') != ids['pen']['id']
+                or equip.get('type') != 'ISEquipWeaponAction') or volume.get('type') != 'ISRadioAction'):
             errors.append('Exact active reader/independent native item identity differs')
         ui = boundary.get('ui')
         if enabled:
@@ -803,10 +820,10 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
                     or ui.get('input') != ('programmatic-drag' if moving else 'programmatic-press-release')
                     or any(ui.get(k) is not True for k in ('hitTested', 'pressCaptured', 'gestureCleared', 'accepted'))
                     or ui.get('feedback') is not False or ui.get('singleton') is not (source == 'root')
-                    or ui.get('header') is not (source != 'root' and control not in ('reader-child-cancel', 'return-child-cancel'))
+                    or ui.get('header') is not (device and demote or not demote and source != 'root' and control not in ('reader-child-cancel', 'return-child-cancel'))
                     or ui.get('decision', {}).get('reason') is not False or ui.get('decision', {}).get('source') != source):
                 errors.append('Actual hit-tested Panel gesture, exact header/child/singleton mapping or decision denied')
-            if ui.get('operation') != original.get('token') or type(original.get('token')) is not int:
+            if ui.get('operation') != (volume.get('token') if demote else original.get('token')) or type(original.get('token')) is not int:
                 errors.append('Real Panel operation identity missing')
             if keep:
                 retired = [r for r in records if r.get('role') == 'return' and r.get('token') == original.get('token')]
@@ -822,14 +839,22 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
                     errors.append('Optional return cross stopped the reader, ran the retired return or lost exact keep intent')
             if not keep and 'waiverIdentity' in ui:
                 errors.append('Non-return-child control acquired optional-return waiver evidence')
-            if moving and (ui.get('dragging') is not True or not _same_action(ui.get('movingAction'), (equip if control == 'move-equip' else volume).get('actionRef'))
-                    or ui.get('movingToken') != (equip if control == 'move-equip' else volume).get('token') or not ui.get('movingAnchor')):
+            if moving and (ui.get('dragging') is not True or not _same_action(ui.get('movingAction'), (original if demote else equip if control == 'move-equip' else volume).get('actionRef'))
+                    or ui.get('movingToken') != (original if demote else equip if control == 'move-equip' else volume).get('token') or not ui.get('movingAnchor')):
                 errors.append('Move gesture never crossed the drag threshold')
         elif ui is not False or row.get('reset') is not False:
             errors.append('Queue-off natural control performed an edit/reset')
+        if device and enabled:
+            approach=next((r for r in boundary.get('queue',[]) if r.get('role')=='preparation'and r.get('type')=='ISQueueActionsAction'and r.get('token')==volume.get('token')), {})
+            if (ui.get('commonActiveEdit') is not False or ui.get('dropAfter') is not demote
+                    or not _same_action(ui.get('targetAction'),volume.get('actionRef') if demote else original.get('actionRef'))
+                    or not _same_action(ui.get('target'),approach.get('actionRef') if demote else original.get('actionRef'))
+                    or not _same_action(ui.get('movingAnchor'),original.get('actionRef') if demote else approach.get('actionRef'))):
+                errors.append('Device-only actual gesture lost legacy authority, genuine volume-group anchor or requested direction')
         starts = row.get('starts', [])
         expected_roles = (['front', 'equip', 'front', 'volume', 'tail'] if control == 'move-equip' else
                           ['front', 'volume', 'front', 'equip', 'tail']) if moving else ['front'] if lost and not enabled else ['front', 'equip', 'volume', 'tail']
+        if device: expected_roles = [role for role in expected_roles if role != 'equip']
         by_sequence = {r.get('sequence'): r for r in records}
         if len(by_sequence) != len(records) or [by_sequence.get(i, {}).get('role') for i in starts if by_sequence.get(i, {}).get('role') in ('front', 'equip', 'volume', 'tail')] != expected_roles:
             errors.append('Pen/volume/read start order differs from the actual requested priority direction')
@@ -970,8 +995,208 @@ def native_binding_errors(value, extended=False):
     return []
 
 
+def _exact(value, wanted):
+    if type(value) is not type(wanted): return False
+    if isinstance(wanted, dict): return value.keys() == wanted.keys() and all(_exact(value[k], v) for k, v in wanted.items())
+    if isinstance(wanted, list): return len(value) == len(wanted) and all(_exact(a, b) for a, b in zip(value, wanted))
+    return value == wanted
+
+
+def _exact_action_record(value, wanted, action_fields):
+    """Exact record shape/scalars; compare only declared Lua action refs by class/address."""
+    return (type(value) is dict and value.keys() == wanted.keys()
+        and all(_same_action(value[key], expected) if key in action_fields else _exact(value[key], expected)
+                for key, expected in wanted.items()))
+
+
+def _exact_device_plan(value, wanted):
+    if (type(value) is not dict or value.keys() != wanted.keys()
+            or not _exact(value.get('kind'), wanted['kind']) or type(value.get('nodes')) is not list
+            or len(value['nodes']) != len(wanted['nodes'])):
+        return False
+    for actual, expected in zip(value['nodes'], wanted['nodes']):
+        if type(actual) is not dict or actual.keys() != expected.keys():
+            return False
+        for key, expected_field in expected.items():
+            if key == 'action':
+                if not _same_action(actual[key], expected_field): return False
+            elif key == 'returnEffect':
+                if not _exact_action_record(actual[key], expected_field, {'action'}): return False
+            elif not _exact(actual[key], expected_field): return False
+    return True
+
+
+def _exact_device_observer(value, wanted):
+    if type(value) is not dict or value.keys() != wanted.keys(): return False
+    if not _exact({k: v for k, v in value.items() if k != 'projection'},
+                  {k: v for k, v in wanted.items() if k != 'projection'}): return False
+    actual, expected = value['projection'], wanted['projection']
+    if expected is False: return actual is False
+    if type(actual) is not dict or actual.keys() != expected.keys(): return False
+    if not _exact_action_record({k: v for k, v in actual.items() if k != 'deferred'},
+                               {k: v for k, v in expected.items() if k != 'deferred'}, {'blocker'}): return False
+    return (type(actual['deferred']) is list and len(actual['deferred']) == 1
+            and _exact_action_record(actual['deferred'][0], expected['deferred'][0], {'action'}))
+
+
+def device_active_edit_errors(value, row, case, selection):
+    """Qualify one deferred native phase without granting a complete common edit."""
+    if not isinstance(value, dict):
+        return ['Missing device-only active-edit observation receipt']
+    errors = []
+    enabled = selection['mode'] == 'toolkit'
+    source = case.split('.', 1)[0]
+    boundary, records = row.get('boundary', {}), row.get('records', [])
+    volume = next((r for r in records if r.get('role') == 'volume'), {})
+    original = next((r for r in records if r.get('role') == 'front'), {})
+    tail = next((r for r in records if r.get('role') == 'tail'), {})
+    returns = [r for r in records if r.get('role') == 'return']
+    required = dict(schema=3 if enabled else 1, case=case, kind=selection['kind'], mode=selection['mode'], queueEnabled=enabled,
+        scope='active-edit-device-only-deferred-native-phase-observation' if enabled else 'active-edit-device-only-preempt-observation', mutationAuthorized=False, permissionsMeasured=False,
+        nativeStarted=True, nativeFinished=False, nativeForceComplete=False, qualifiedReturn=False,
+        effect=False, nativeFacts=False, aliasFacts=False, readOnly=True, uiUnchanged=True, passed=True, failure=False, source=source)
+    if any(type(value.get(k)) is not type(v) or value[k] != v for k, v in required.items()):
+        errors.append('Device-only active-edit checkpoint/read-only contract differs')
+    if (not _same_action(value.get('current'), boundary.get('reader'))
+            or not _same_action(value.get('currentNative'), boundary.get('native'))
+            or not _same_action(value.get('current'), original.get('actionRef'))
+            or not _same_action(value.get('currentNative'), original.get('nativeRef'))
+            or original.get('started') is not True or boundary.get('nativeCheckpoint') != dict(finished=False, forceComplete=False)
+            or type(value.get('currentLuaStartedPresent')) is not bool or type(value.get('currentLuaStarted')) is not bool
+            or not value.get('currentLuaStartedPresent') and value.get('currentLuaStarted') is not False
+            or not isinstance(value.get('liveItem'), str) or not value['liveItem']):
+        errors.append('Device-only genuine reader/native identity differs')
+    demote = base_control(case.split('.', 1)[1]) == 'demote-reader'
+    intent = dict(kind='move', action=boundary.get('reader') if demote else volume.get('actionRef'),
+                  target=volume.get('actionRef') if demote else boundary.get('reader'), after=demote)
+    if not _exact_action_record(value.get('intent'), intent, {'action', 'target'}):
+        errors.append('Device-only observation did not use the actual volume-to-reader move intent')
+    decision = dict(entrypoint='Policy.evaluateMove', allowed=enabled, reason=False if enabled else 'unavailable', whole=False, commonActiveEdit=False)
+    if not _exact(value.get('existingDecision'), decision):
+        errors.append('Device-only actual move must retain legacy authority')
+    observer = value.get('observer')
+    if not enabled:
+        wanted = dict(status='unhandled', reason='unavailable', allowedAbsent=True, projection=False, returns=0, unresolved=0)
+        if not _exact_device_observer(observer, wanted): errors.append('Device-only queue-off observer acquired a projection')
+    if enabled:
+        approach_rows=[(index,r) for index,r in enumerate(boundary.get('queue',[]),1)
+            if r.get('role')=='preparation'and r.get('type')=='ISQueueActionsAction'and r.get('token')==volume.get('token')]
+        approach_index,queued_approach=approach_rows[0] if len(approach_rows)==1 else (None,{})
+        preparations=[r for r in records if r.get('role')=='preparation'and r.get('type')=='ISQueueActionsAction'
+            and r.get('token')==volume.get('token')and _same_action(r.get('actionRef'),queued_approach.get('actionRef'))]
+        approach=preparations[0] if len(preparations)==1 else {}
+        endpoints=queued_approach.get('approach',{})
+        if not isinstance(endpoints,dict): endpoints={}
+        actor,target=endpoints.get('actor'),endpoints.get('targetSquare')
+        descriptor=dict(version=1,kind='deferred-spatial',actor=actor,targetSquare=target,
+            invalidates='all-resources',routing='native',expansion='native',outcome='native')
+        projection=dict(status='deferred',reason='edit_native_resolution',externalCapacity=True,allowedAbsent=True,
+            blocker=approach.get('actionRef'),evaluatedPrefix=1,
+            deferred=[dict(action=approach.get('actionRef'),index=2,descriptor=descriptor)])
+        wanted=dict(status='observed',reason=False,allowedAbsent=True,projection=projection,returns=0,unresolved=0)
+        if not _exact_device_observer(observer,wanted):
+            errors.append('Device-only projection lost the exact deferred native obligation or acquired forecast/permission fields')
+        ownership=dict(declared=True,owned=True,nativeConstructor=True,nativeResolver=True,ownedStart=True,actor=actor,targetSquare=target)
+        if (len(preparations)!=1 or type(approach.get('token')) is not int or not _exact(approach.get('approach'),ownership)
+                or not isinstance(actor,str)or not actor or not isinstance(target,str)or not target or actor==target
+                or len(approach_rows)!=1 or queued_approach.get('type')!='ISQueueActionsAction'or queued_approach.get('role')!='preparation'
+                or queued_approach.get('token')!=volume.get('token')or queued_approach.get('nativeRef')is not False
+                or queued_approach.get('current')is not False or not _exact(queued_approach.get('approach'),ownership)):
+            errors.append('Device-only native phase lacks the exact pending source-owned native volume approach record')
+        boundary_members=[original,*returns,approach,volume,tail]
+        actual_members=boundary.get('queue',[])
+        if (type(actual_members)is not list or len(actual_members)!=len(boundary_members)
+                or any(not _same_action(actual.get('actionRef'),expected.get('actionRef'))
+                       or actual.get('role')!=expected.get('role')or actual.get('type')!=expected.get('type')
+                       or not _exact(actual.get('token'),expected.get('token')) for actual,expected in zip(actual_members,boundary_members))):
+            errors.append('Device-only observed plan omitted or changed a real pending queue member')
+        if 'control' in value: errors.append('Device-only toolkit preempt mislabeled as a native control')
+        nodes = [dict(kind='checkpoint', action=boundary.get('reader'), complete=True, capacity='unchanged'),
+                 dict(kind='pending', action=approach.get('actionRef'), complete=False, capacity=False, deferred=descriptor),
+                 dict(kind='pending', action=volume.get('actionRef'), complete=True, capacity='unchanged'),
+                 dict(kind='resume', action=boundary.get('reader'), complete=True, capacity='unchanged')]
+        prototype = value.get('prototype', {})
+        for returning in returns:
+            return_effect = dict(version=1, complete=True, capacity='external', domain='item', id=row.get('ids', {}).get('front', {}).get('id'),
+                fullType=row.get('ids', {}).get('front', {}).get('type'), item=value.get('liveItem'), source=prototype.get('source') if isinstance(prototype, dict) else None,
+                destination=prototype.get('destination') if isinstance(prototype, dict) else None, action=returning.get('actionRef'), synthetic=False,
+                resources=1, requirements=1, effects=1, field='location')
+            nodes.append(dict(kind='pending', action=returning.get('actionRef'), complete=True, capacity='external', returnEffect=return_effect))
+        nodes.append(dict(kind='pending', action=tail.get('actionRef'), complete=True, capacity='unchanged'))
+        if (not _exact_device_plan(value.get('plan'), dict(kind='preempt', nodes=nodes)) or len(returns) != int(source != 'root')
+                or any(r.get('role') == 'equip' or r.get('type') in ('ISEquipWeaponAction', 'ISUnequipAction', 'ISEquipHeavyItem') for r in records)
+                or boundary.get('ui', {}).get('commonActiveEdit') is not False):
+            errors.append('Device-only plan lost exact native approach/volume order, introduced equipment or changed legacy authority')
+        diagnostics=value.get('diagnostics')
+        wanted_gaps=[]
+        wanted_nodes=[dict(kind=node['kind'],action=node['action'],complete=node['complete'],
+                           **({'deferred':node['deferred']} if 'deferred'in node else {})) for node in nodes]
+        if (not isinstance(diagnostics,dict)or set(diagnostics)!={'contractGaps','nodes','projectionBlockerType','gapsTruncated','nodesTruncated'}
+                or not _exact(diagnostics.get('contractGaps'),wanted_gaps)or diagnostics.get('projectionBlockerType')!='ISQueueActionsAction'
+                or diagnostics.get('gapsTruncated')is not False or diagnostics.get('nodesTruncated')is not False
+                or type(diagnostics.get('nodes'))is not list or len(diagnostics['nodes'])!=len(wanted_nodes)
+                or any(not _exact_action_record(actual,expected,{'action'}) for actual,expected in zip(diagnostics.get('nodes',[]),wanted_nodes))):
+            errors.append('Device-only diagnostics must identify one typed native phase, no contract gaps and complete remaining nodes')
+    elif value.get('plan') is not False or value.get('control') != 'queue-disabled':
+        errors.append('Device-only queue-disabled control acquired a transition plan')
+    ledger = value.get('ledgerBefore')
+    if not isinstance(ledger, dict) or ledger != value.get('ledgerAfter'):
+        errors.append('Device-only private ledger changed or missing')
+    else:
+        loans = ledger.get('borrowings')
+        borrowed = enabled and source != 'root'
+        if (ledger.get('status') != ('observed' if enabled else 'unhandled') or not isinstance(loans, list)
+                or len(loans) != int(borrowed) or type(ledger.get('earnedPreparations')) is not int
+                or ledger['earnedPreparations'] < int(borrowed)):
+            errors.append('Device-only genuine private loan/pickup evidence differs')
+        if borrowed:
+            prototype = value.get('prototype', {})
+            if (not isinstance(prototype, dict) or len(returns) != 1 or not _same_action(prototype.get('action'), returns[0].get('actionRef'))
+                    or prototype.get('pending') is not True or prototype.get('allowMissingItems') is not True
+                    or prototype.get('item') != value.get('liveItem') or prototype.get('sameItemReference') is not True):
+                errors.append('Device-only plan lost exact original pending native return prototype')
+            loan = loans[0] if isinstance(loans, list) and len(loans) == 1 else {}
+            book = row.get('ids', {}).get('front', {})
+            if (loan.get('id') != book.get('id') or loan.get('fullType') != book.get('type')
+                    or loan.get('state') != 'active' or loan.get('ambiguous') is not False
+                    or loan.get('returning') is not False or loan.get('plannedReturn') is not False
+                    or not isinstance(prototype, dict) or prototype.get('source') != loan.get('destination')
+                    or prototype.get('destination') != loan.get('source') or loan.get('source') == loan.get('destination')
+                    or not isinstance(loan.get('source'), str) or not loan['source']
+                    or not isinstance(loan.get('destination'), str) or not loan['destination']
+                    or not any(r.get('role') == 'pickup' and _number(r.get('performedAt')) for r in records)):
+                errors.append('Device-only pending return lost original earned borrowing')
+    bindings = value.get('sources', {})
+    if not isinstance(bindings, dict) or any(bindings.get(k) != v for k, v in dict(observer='ActionQueuePolicy.lua', cleanup='ActionQueueSettlement.lua', bulk='BulkActions.lua', compat='ActionQueueCompat.lua', carts='ActionQueueCarts.lua').items()):
+        errors.append('Device-only production source bindings missing')
+    performance = value.get('performance')
+    required_performance = dict(scope='paired-live-device-preempt-entrypoints', timer='System.nanoTime', units='ms', warmupPairs=1, pairs=3,
+        sameLiveIntent=True, whole=False, firstUseScope='first-call-after-untimed-identity-ledger-and-native-facts-diagnostics',
+        comparable=False, comparisonReason='deferred-native-phase-not-full-projection' if enabled else 'queue-disabled',
+        observerProjectionStatus='deferred' if enabled else False, observerProjectionReason='edit_native_resolution' if enabled else False, timerOverhead='included-not-subtracted',
+        sameOutputContract=False, completeEditMeasured=False, frameLoadMeasured=False, positiveTimingClaim=False, assessment='not-assessed')
+    if (not isinstance(performance, dict) or set(performance) != set(required_performance) | {'baseline', 'observer', 'baselineFirstMs', 'observerFirstMs'}
+            or any(type(performance.get(k)) is not type(v) or performance[k] != v for k, v in required_performance.items())):
+        errors.append('Device-only timing scope or unsupported timing/permission claim differs')
+    else:
+        for key in ('baselineFirstMs', 'observerFirstMs'):
+            if not _number(performance[key]) or performance[key] < 0: errors.append('Device-only first-use timing invalid')
+        for key in ('baseline', 'observer'):
+            timing = performance[key]
+            samples = timing.get('samplesMs') if isinstance(timing, dict) else None
+            if (not isinstance(samples, list) or len(samples) != 3 or any(not _number(v) or v < 0 for v in samples)
+                    or set(timing) != {'samplesMs', 'samples', 'minMs', 'medianMs', 'maxMs', 'meanMs'} or type(timing.get('samples')) is not int or timing['samples'] != 3):
+                errors.append('Device-only paired timing samples invalid'); continue
+            wanted = dict(minMs=min(samples), medianMs=sorted(samples)[1], maxMs=max(samples), meanMs=sum(samples)/3)
+            if any(not _number(timing.get(k)) or not math.isclose(timing[k], v, rel_tol=1e-9, abs_tol=1e-9) for k, v in wanted.items()):
+                errors.append('Device-only paired timing distribution differs')
+    return errors
+
+
 def active_edit_errors(value, row, case, selection):
     """Qualify the opt-in return-effect layer, without assigning edit/frame rights."""
+    if case in DEVICE_ONLY_CASES:
+        return device_active_edit_errors(value, row, case, selection)
     errors = []
     enabled = selection['mode'] == 'toolkit'
     source = case.split('.', 1)[0]
@@ -1044,6 +1269,8 @@ def active_edit_errors(value, row, case, selection):
             or not (projection.get('reason') is False or isinstance(projection.get('reason'), str))
             or projection.get('status') != 'allowed' and not projection.get('reason')):
         errors.append('Active-edit overall projection lost its unknown reason or acquired rights')
+    if enabled and (not isinstance(projection, dict) or projection.get('status') != 'unhandled' or projection.get('reason') != 'edit_unknown'):
+        errors.append('Mixed equipment header observation lost its explicit unknown projection')
     bindings = value.get('sources', {})
     expected_sources = dict(observer='ActionQueuePolicy.lua', cleanup='ActionQueueSettlement.lua',
                            bulk='BulkActions.lua', compat='ActionQueueCompat.lua', carts='ActionQueueCarts.lua')

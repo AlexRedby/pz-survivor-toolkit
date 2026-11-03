@@ -30,11 +30,18 @@ end
 local function result(status, reason, entry, key, field)
     return {status = status, reason = reason, blocker = entry and entry.action, resource = key, field = field}
 end
-local entryFields = {action = true, edit = true, active = true, snapshotOnly = true}
+local entryFields = {action = true, edit = true, deferred = true, active = true, snapshotOnly = true}
 local editFields = {version = true, complete = true, capacity = true, resources = true}
 local resourceFields = {domain = true, key = true, facts = true, requires = true, effects = true, bounds = true}
 local predicateFields = {field = true, equal = true, oneOf = true, min = true, max = true, above = true}
 local effectFields = {field = true, set = true, delta = true, toggle = true, cap = true, scale = true, deplete = true}
+local deferredFields = {version=true,kind=true,actor=true,targetSquare=true,invalidates=true,routing=true,expansion=true,outcome=true}
+local function deferredSpatial(value)
+    if not fields(value,deferredFields) or value.version~=1 or value.kind~="deferred-spatial"
+        or value.invalidates~="all-resources" or value.routing~="native" or value.expansion~="native" or value.outcome~="native" then return false end
+    local actor,target=type(value.actor),type(value.targetSquare)
+    return (actor=="table"or actor=="userdata")and(target=="table"or target=="userdata")
+end
 local boundFields = {min = true, max = true, reason = true}
 local boundReasons = {edit_resource_amount = true, edit_capacity = true}
 local function named(field)
@@ -89,6 +96,7 @@ function Model.evaluate(entries)
     local count = array(entries)
     if not count then return result("unhandled", "edit_unknown") end
     local domains, snapshots, plan = {}, {}, {}
+    local deferred,firstDeferred
     for i = 1, count do
         local entry = entries[i]
         if not fields(entry, entryFields) or not scalar(entry.action)
@@ -97,83 +105,109 @@ function Model.evaluate(entries)
             return result("unhandled", "edit_unknown")
         end
         if entry.active then return result("unhandled", "edit_in_flight", entry) end
-        local edit = entry.edit
-        if not fields(edit, editFields) or edit.version ~= 1 or edit.complete ~= true
-            or (edit.capacity ~= "unchanged" and edit.capacity ~= "modeled" and edit.capacity ~= "external") then
-            return result("unhandled", "edit_unknown", entry)
-        end
-        local resources = array(edit.resources)
-        if not resources then return result("unhandled", "edit_unknown", entry) end
-        local steps = {}
-        plan[#plan + 1] = {entry = entry, steps = steps}
-        for j = 1, resources do
-            local resource = edit.resources[j]
-            if not fields(resource, resourceFields) or not named(resource.domain) or not scalar(resource.key)
-                or not plain(resource.facts) or (resource.bounds ~= nil and not plain(resource.bounds)) then
+        if entry.deferred~=nil then
+            if entry.edit~=nil or entry.snapshotOnly==true or not deferredSpatial(entry.deferred) then
+                return result("unhandled","edit_unknown",entry)
+            end
+            firstDeferred=firstDeferred or i
+            deferred=deferred or {}
+            deferred[#deferred+1]={action=entry.action,index=i,descriptor=entry.deferred}
+            plan[#plan+1]={entry=entry,steps={},deferred=entry.deferred}
+        else
+            local edit = entry.edit
+            if not fields(edit, editFields) or edit.version ~= 1 or edit.complete ~= true
+                or (edit.capacity ~= "unchanged" and edit.capacity ~= "modeled" and edit.capacity ~= "external") then
                 return result("unhandled", "edit_unknown", entry)
             end
-            local key = resource.key
-            local domain = domains[resource.domain]
-            if not domain then domain = {}; domains[resource.domain] = domain end
-            local snapshot = domain[key]
-            if not snapshot then
-                snapshot = {facts = {}, bounds = {}, key = key, entry = entry}
-                domain[key] = snapshot; snapshots[#snapshots + 1] = snapshot
-            end
-            for field, value in pairs(resource.facts) do
-                if not named(field) or not scalar(value) then return result("unhandled", "edit_unknown", entry, key, field) end
-                local previous = snapshot.facts[field]
-                -- Opaque values are identities, including values with an __eq metamethod.
-                if previous ~= nil and not rawequal(previous, value) then
-                    return result("unhandled", "edit_unknown", entry, key, field)
+            local resources = array(edit.resources)
+            if not resources then return result("unhandled", "edit_unknown", entry) end
+            local steps = {}
+            plan[#plan + 1] = {entry = entry, steps = steps}
+            for j = 1, resources do
+                local resource = edit.resources[j]
+                if not fields(resource, resourceFields) or not named(resource.domain) or not scalar(resource.key)
+                    or not plain(resource.facts) or (resource.bounds ~= nil and not plain(resource.bounds)) then
+                    return result("unhandled", "edit_unknown", entry)
                 end
-                snapshot.facts[field] = value
-            end
-            for field, bound in pairs(resource.bounds or {}) do
-                if not named(field) or not fields(bound, boundFields) or not range(bound)
-                    or (bound.reason ~= nil and not boundReasons[bound.reason]) then
-                    return result("unhandled", "edit_unknown", entry, key, field)
+                local key = resource.key
+                local domain = domains[resource.domain]
+                if not domain then domain = {}; domains[resource.domain] = domain end
+                local snapshot = domain[key]
+                if not snapshot then
+                    snapshot = {facts = {}, bounds = {}, key = key, entry = entry}
+                    domain[key] = snapshot; snapshots[#snapshots + 1] = snapshot
                 end
-                local reason = bound.reason or "edit_resource_amount"
-                local previous = snapshot.bounds[field]
-                if previous and (previous.min ~= bound.min or previous.max ~= bound.max or previous.reason ~= reason) then
-                    return result("unhandled", "edit_unknown", entry, key, field)
+                for field, value in pairs(resource.facts) do
+                    if not named(field) or not scalar(value) then return result("unhandled", "edit_unknown", entry, key, field) end
+                    local previous = snapshot.facts[field]
+                    -- Opaque values are identities, including values with an __eq metamethod.
+                    if previous ~= nil and not rawequal(previous, value) then
+                        return result("unhandled", "edit_unknown", entry, key, field)
+                    end
+                    snapshot.facts[field] = value
                 end
-                snapshot.bounds[field] = {min = bound.min, max = bound.max, reason = reason}
-            end
-            local requires = resource.requires == nil and {} or resource.requires
-            local effects = resource.effects == nil and {} or resource.effects
-            local requirementCount, effectCount = array(requires), array(effects)
-            if not requirementCount or not effectCount then return result("unhandled", "edit_unknown", entry, key) end
-            for k = 1, requirementCount do
-                local predicate = requires[k]
-                if not validPredicate(predicate) then
-                    return result("unhandled", "edit_unknown", entry, key)
+                -- Bounds belong to the phase that declares them. Current facts
+                -- are one observation, but a later phase cannot constrain an
+                -- earlier effect after an all-resource native boundary.
+                local phase=firstDeferred and #deferred or nil
+                local bounds=snapshot.bounds
+                if phase then
+                    bounds=nil
+                    if resource.bounds~=nil then
+                        snapshot.laterBounds=snapshot.laterBounds or {}
+                        bounds=snapshot.laterBounds[phase]
+                        if not bounds then bounds={};snapshot.laterBounds[phase]=bounds end
+                    end
                 end
-            end
-            for k = 1, effectCount do
-                local effect = effects[k]
-                if not fields(effect, effectFields) or not named(effect.field) then return result("unhandled", "edit_unknown", entry, key) end
-                local operations = (effect.set ~= nil and 1 or 0) + (effect.delta ~= nil and 1 or 0)
-                    + (effect.toggle ~= nil and 1 or 0) + (effect.cap ~= nil and 1 or 0) + (effect.scale ~= nil and 1 or 0)
-                    + (effect.deplete ~= nil and 1 or 0)
-                if operations ~= 1 or (effect.set ~= nil and not scalar(effect.set))
-                    or (effect.delta ~= nil and not finite(effect.delta)) or (effect.toggle ~= nil and effect.toggle ~= true)
-                    or (effect.cap ~= nil and not finite(effect.cap))
-                    or (effect.scale ~= nil and (not finite(effect.scale) or effect.scale < 0))
-                    or (effect.deplete ~= nil and (not fields(effect.deplete, {amount=true,minimum=true})
-                        or not finite(effect.deplete.amount) or effect.deplete.amount < 0
-                        or not finite(effect.deplete.minimum) or effect.deplete.minimum < 0)) then
-                    return result("unhandled", "edit_unknown", entry, key, effect.field)
+                for field, bound in pairs(resource.bounds or {}) do
+                    if not named(field) or not fields(bound, boundFields) or not range(bound)
+                        or (bound.reason ~= nil and not boundReasons[bound.reason]) then
+                        return result("unhandled", "edit_unknown", entry, key, field)
+                    end
+                    local reason = bound.reason or "edit_resource_amount"
+                    local previous = bounds[field]
+                    if previous and (previous.min ~= bound.min or previous.max ~= bound.max or previous.reason ~= reason) then
+                        return result("unhandled", "edit_unknown", entry, key, field)
+                    end
+                    bounds[field] = {min = bound.min, max = bound.max, reason = reason}
                 end
+                local requires = resource.requires == nil and {} or resource.requires
+                local effects = resource.effects == nil and {} or resource.effects
+                local requirementCount, effectCount = array(requires), array(effects)
+                if not requirementCount or not effectCount then return result("unhandled", "edit_unknown", entry, key) end
+                for k = 1, requirementCount do
+                    local predicate = requires[k]
+                    if not validPredicate(predicate) then
+                        return result("unhandled", "edit_unknown", entry, key)
+                    end
+                end
+                for k = 1, effectCount do
+                    local effect = effects[k]
+                    if not fields(effect, effectFields) or not named(effect.field) then return result("unhandled", "edit_unknown", entry, key) end
+                    local operations = (effect.set ~= nil and 1 or 0) + (effect.delta ~= nil and 1 or 0)
+                        + (effect.toggle ~= nil and 1 or 0) + (effect.cap ~= nil and 1 or 0) + (effect.scale ~= nil and 1 or 0)
+                        + (effect.deplete ~= nil and 1 or 0)
+                    if operations ~= 1 or (effect.set ~= nil and not scalar(effect.set))
+                        or (effect.delta ~= nil and not finite(effect.delta)) or (effect.toggle ~= nil and effect.toggle ~= true)
+                        or (effect.cap ~= nil and not finite(effect.cap))
+                        or (effect.scale ~= nil and (not finite(effect.scale) or effect.scale < 0))
+                        or (effect.deplete ~= nil and (not fields(effect.deplete, {amount=true,minimum=true})
+                            or not finite(effect.deplete.amount) or effect.deplete.amount < 0
+                            or not finite(effect.deplete.minimum) or effect.deplete.minimum < 0)) then
+                        return result("unhandled", "edit_unknown", entry, key, effect.field)
+                    end
+                end
+                steps[#steps + 1] = {entry = entry, snapshot = snapshot, requires = requires, effects = effects, phase=phase}
             end
-            steps[#steps + 1] = {entry = entry, snapshot = snapshot, requires = requires, effects = effects}
         end
     end
     -- Check completeness and operand types even for removed commands; removal does not validate unknown semantics.
-    for _, action in ipairs(plan) do
+    for index, action in ipairs(plan) do
+        local beforeBoundary=not firstDeferred or index<firstDeferred
         for _, step in ipairs(action.steps) do
             local facts, key = step.snapshot.facts, step.snapshot.key
+            local bounds=step.snapshot.bounds
+            if step.phase then bounds=step.snapshot.laterBounds and step.snapshot.laterBounds[step.phase]end
             for _, predicate in ipairs(step.requires) do
                 local value = facts[predicate.field]
                 if value == nil or (predicate.equal == nil and predicate.oneOf == nil and not finite(value)) then
@@ -183,10 +217,27 @@ function Model.evaluate(entries)
             for _, effect in ipairs(step.effects) do
                 local value = facts[effect.field]
                 local numeric = effect.delta ~= nil or effect.cap ~= nil or effect.scale ~= nil or effect.deplete ~= nil
-                if value == nil or (numeric and numericEffect(effect, value) == nil)
+                if value == nil or (numeric and (not finite(value) or beforeBoundary and numericEffect(effect, value) == nil))
                     or (effect.toggle and type(value) ~= "boolean")
-                    or (effect.set ~= nil and step.snapshot.bounds[effect.field] and not finite(effect.set)) then
+                    or (effect.set ~= nil and bounds and bounds[effect.field] and not finite(effect.set)) then
                     return result("unhandled", "edit_unknown", step.entry, key, effect.field)
+                end
+            end
+        end
+    end
+    -- Validate every phase's bound operand types before any prefix denial.
+    -- Only the first phase's bounds/effects can be evaluated now; later native
+    -- admission must read its own fresh facts, limits and outcome.
+    if firstDeferred then
+        for _,snapshot in ipairs(snapshots)do
+            for field in pairs(snapshot.bounds)do
+                if not finite(snapshot.facts[field])then return result("unhandled","edit_unknown",snapshot.entry,snapshot.key,field)end
+            end
+            if snapshot.laterBounds then
+                for _,bounds in pairs(snapshot.laterBounds)do
+                    for field in pairs(bounds)do
+                        if not finite(snapshot.facts[field])then return result("unhandled","edit_unknown",snapshot.entry,snapshot.key,field)end
+                    end
                 end
             end
         end
@@ -194,11 +245,16 @@ function Model.evaluate(entries)
     for _, snapshot in ipairs(snapshots) do
         for field, bound in pairs(snapshot.bounds) do
             local value = snapshot.facts[field]
-            if not finite(value) then return result("unhandled", "edit_unknown", snapshot.entry, snapshot.key, field) end
+            if not firstDeferred and not finite(value) then return result("unhandled", "edit_unknown", snapshot.entry, snapshot.key, field) end
             if outside(value, bound) then return result("denied", bound.reason, snapshot.entry, snapshot.key, field) end
         end
     end
-    for _, action in ipairs(plan) do
+    for index, action in ipairs(plan) do
+        if firstDeferred and index==firstDeferred then
+            local value=result("deferred","edit_native_resolution",action.entry)
+            value.evaluatedPrefix,value.deferred=firstDeferred-1,deferred
+            return value
+        end
         if not action.entry.snapshotOnly then
             -- All of an action's preconditions precede all of its effects, across resources.
             for _, step in ipairs(action.steps) do

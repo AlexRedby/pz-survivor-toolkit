@@ -146,7 +146,7 @@ local path=arg[1]
 local function environment()
  local env=setmetatable({},{__index=_G});env._G=env
  local events={};env.Events={}
- for _,name in ipairs({'OnGameStart','OnTick'}) do
+ for _,name in ipairs({'OnGameStart','OnTick','OnTickEvenPaused'}) do
   local list={};events[name]=list
   env.Events[name]={Add=function(fn)list[#list+1]=fn end,Remove=function(fn)for i=#list,1,-1 do if list[i]==fn then table.remove(list,i)end end end}
  end
@@ -167,14 +167,31 @@ local P,files,logs,fire,env=environment()
 local nativeEvents=env.Events;local started,ticks=0,0
 P.onGameStart(env.Events,function()started=started+1 end)
 local tick=function()ticks=ticks+1 end;P.onTick(env.Events,tick)
-fire('OnGameStart');fire('OnTick');assert(started==0 and ticks==0)
-P.complete();fire('OnTick');assert(started==0 and ticks==0)
+-- Match the engine: a paused native client dispatches only EvenPaused.
+-- Ordinary fixture ticks must stay gated even when startup is admitted.
+local paused=true
+local function frame()
+ fire('OnTickEvenPaused')
+ if not paused then fire('OnTick')end
+end
+fire('OnGameStart');frame();assert(started==0 and ticks==0)
 files['queue-preflight-setup.txt']=string.rep('a',32)
-fire('OnTick');assert(started==1 and ticks==0 and logs[#logs]:find('setup%-ready'))
+frame();assert(started==0 and ticks==0,'setup token admitted work before raw readiness')
+files['queue-preflight-setup.txt']=nil
+P.complete();frame();assert(started==0 and ticks==0,'readiness bypassed the setup grant')
+files['queue-preflight-setup.txt']=string.rep('a',32)
+fire('OnTick');assert(started==0 and ticks==0,'coordinator ran on gameplay OnTick')
+frame();assert(started==1 and ticks==0 and logs[#logs]:find('setup%-ready'))
+frame();assert(started==1 and ticks==0,'paused startup callback ran twice')
+local setupReceipts=0
+for _,line in ipairs(logs)do if line:find('setup%-ready')then setupReceipts=setupReceipts+1 end end
+assert(setupReceipts==1,'setup-ready receipt was duplicated')
 files['queue-preflight-release.txt']=string.rep('a',32)
-fire('OnTick');assert(ticks==1 and env.Events==nativeEvents)
-P.removeTick(env.Events,tick);fire('OnTick');assert(ticks==1)
-P.fail('preflight','late rejection');P.onTick(env.Events,tick);fire('OnTick');assert(ticks==1)
+frame();frame();assert(started==1 and ticks==0 and env.Events==nativeEvents,
+ 'release synthesized a gameplay tick while paused')
+paused=false;frame();assert(ticks==1,'genuine native OnTick was not admitted after release')
+P.removeTick(env.Events,tick);frame();assert(ticks==1)
+P.fail('preflight','late rejection');P.onTick(env.Events,tick);frame();assert(ticks==1)
 P.complete();assert(logs[#logs]:find('late rejection'))
 local Q,qfiles,qlogs,qfire,qenv=environment()
 local case=0
@@ -182,13 +199,23 @@ Q.onGameStart(qenv.Events,function()error('fixture failed')end)
 Q.onGameStart(qenv.Events,function()case=case+1 end);Q.onTick(qenv.Events,function()case=case+1 end)
 qfire('OnGameStart');Q.complete();qfiles['queue-preflight-setup.txt']=string.rep('a',32)
 qfiles['queue-preflight-release.txt']=string.rep('a',32)
-qfire('OnTick');qfire('OnTick');assert(case==0 and qlogs[#qlogs]:find('fixture%-setup'))
+qfire('OnTickEvenPaused');qfire('OnTickEvenPaused');qfire('OnTick');assert(case==0 and qlogs[#qlogs]:find('fixture%-setup'))
 local R,rfiles,rlogs,rfire,renv=environment()
 R.onGameStart(renv.Events,function()error('must never start')end);rfire('OnGameStart')
 R.complete();R.fail('preflight','wrong viewport')
 rfiles['queue-preflight-setup.txt']=string.rep('a',32);rfiles['queue-preflight-release.txt']=string.rep('a',32)
-rfire('OnTick');assert(rlogs[#rlogs]:find('wrong viewport'))
-print('PASS fixture lifecycle two-phase barrier, failure dominance, removal and native Events ownership')
+rfire('OnTickEvenPaused');rfire('OnTick');assert(rlogs[#rlogs]:find('wrong viewport'))
+local S,sfiles,slogs,sfire,senv=environment()
+local rejected=0
+S.onGameStart(senv.Events,function()rejected=rejected+1 end)
+S.onTick(senv.Events,function()rejected=rejected+1 end)
+sfire('OnGameStart');S.complete()
+sfiles['queue-preflight-setup.txt']=string.rep('b',32)
+sfire('OnTickEvenPaused')
+sfiles['queue-preflight-setup.txt']=string.rep('a',32);sfiles['queue-preflight-release.txt']=string.rep('a',32)
+sfire('OnTickEvenPaused');sfire('OnTick')
+assert(rejected==0 and slogs[#slogs]:find('release token differs'),'bad token admitted paused fixture work')
+print('PASS paused native scheduler, two explicit grants, failure/token dominance, removal and native Events ownership')
 
 -- Reproduce the actual native release-preflight rejection, with the dependent
 -- callback registered first: callback registration order must not admit work.
@@ -207,7 +234,7 @@ B.onTick(benv.Events,function()cases=cases+1 end)
 local release=assert(loadfile(arg[2]));setfenv(release,benv);release()
 bfire('OnGameStart')
 bfiles['queue-preflight-setup.txt']=string.rep('a',32);bfiles['queue-preflight-release.txt']=string.rep('a',32)
-bfire('OnTick');bfire('OnTick')
+bfire('OnTickEvenPaused');bfire('OnTickEvenPaused');bfire('OnTick')
 assert(starts==0 and cases==0,'actual failed native preflight admitted dependent fixture callbacks')
 local structured=false
 for _,line in ipairs(blogs)do if line:find('"event":"failed"',1,true)and line:find('"phase":"preflight"',1,true)then structured=true end end

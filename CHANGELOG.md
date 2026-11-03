@@ -46,6 +46,14 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.341
+
+- **Internal:** Describe source-owned deferred approaches as explicit native phases in read-only active-edit plans. A bounded one-use lease preserves the actor, requested target and command dependencies without computing a route or predicting native children. The phase invalidates every future resource forecast; subsequent limits stay within their own phase, and malformed declarations remain unsupported. Native resolution is required and this observer still grants no edit, capacity or outcome permission.
+
+### 0.1.340
+
+- **Internal:** Extend the read-only active-reading edit plan with the exact location effect of an existing pending borrowed-book return. Preemption and body-cancel observations retain that original action rather than constructing another transfer, with fresh source/native and private-loan checks. Add precise missing-contract diagnostics; deferred routing remains explicitly unresolved and this observer grants no edit, capacity or execution permission.
+
 ### 0.1.339
 
 - **Internal:** Extend opt-in queue return-effect observations to detached Host singleton members through a native transaction-ID-resolution witness. Require exact native API/source semantics, supported detached leaf classes and the unique canonical root item plus earned private borrowing. Preserve the original queue, native admission/capacity/outcome checks and unknown fallbacks; no new cancel/reorder rights are enabled.
@@ -1577,6 +1585,14 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.87
+
+- **Internal:** Refresh the queue Policy compiler source gate for explicit deferred native phases, retaining existing native ownership and fallback checks.
+
+### 0.1.86
+
+- **Internal:** Refresh the queue Policy compiler source gate for the retained-return observation and diagnostics, retaining the existing native ownership and fallback checks.
 
 ### 0.1.85
 

@@ -26,6 +26,18 @@ local nativeForceCancel = ISBaseTimedAction.forceCancel
 local Proof = require "PZSurvivorToolkit/SourceProof"
 local editBindingCapture=Proof and Proof.captureBindings
 local editNativeMeta=toolkitLuaMetatableMatches
+local spatialOwner=Toolkit.ActionQueueApproach
+local spatialPrepare=spatialOwner and spatialOwner.prepareSpatialLease
+local spatialLine,spatialFilename=getFirstLineOfClosure,getFilenameOfClosure
+local spatialOrigin,spatialMatches=Proof and Proof.closure,Proof and Proof.matches
+local spatialSourcePinned
+local spatialModReader,spatialCall=getModFileReader,pcall
+local spatialPrerequisites=type(editBindingCapture)=="function"and editBindingCapture({
+    {owner=_G,keys={"getModFileReader","pcall","math","string"}},
+    {owner=math,keys={"floor"}},{owner=string,keys={"byte","sub","gsub","match"}},
+})
+-- Updated together with the source-owned factory; a same-file callback is not its role.
+local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=548,127328691
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
@@ -2217,6 +2229,37 @@ function Policy.evaluateCancel(queue, action, whole)
     return inDecision(queue, context, nil, evaluateCancel, queue, action, whole, context)
 end
 
+-- Source checks and metadata happen before any final physical observation.
+-- The returned validator is one-use and compares only captured dependencies.
+local function prepareDeferredSpatial(action)
+    if not spatialPrerequisites or not spatialPrerequisites()
+        or type(spatialOwner)~="table"or getmetatable(spatialOwner)~=nil
+        or Toolkit.ActionQueueApproach~=spatialOwner or type(spatialPrepare)~="function"
+        or spatialOwner.prepareSpatialLease~=spatialPrepare or type(spatialLine)~="function"
+        or getFirstLineOfClosure~=spatialLine or getFilenameOfClosure~=spatialFilename
+        or type(spatialOrigin)~="function"or Proof.closure~=spatialOrigin
+        or type(spatialMatches)~="function"or Proof.matches~=spatialMatches
+        or type(spatialModReader)~="function"or getModFileReader~=spatialModReader or pcall~=spatialCall
+        or type(editBindingCapture)~="function"
+        or Proof.captureBindings~=editBindingCapture then return end
+    local watch=editBindingCapture({
+        {owner=_G,keys={"getFirstLineOfClosure","getFilenameOfClosure","getModFileReader","pcall","PZSurvivorToolkit"}},
+        {owner=Toolkit,keys={"ActionQueueApproach"}},{owner=spatialOwner,keys={"prepareSpatialLease"}},
+        {owner=Proof,keys={"captureBindings","closure","matches"}},
+    })
+    if not watch or not spatialOrigin(spatialPrepare,"ActionQueueApproach.lua")then return end
+    local ok,line=spatialCall(spatialLine,spatialPrepare)
+    if not ok or line~=SPATIAL_PREPARE_LINE or not watch()or not spatialPrerequisites()then return end
+    if spatialSourcePinned==nil then
+        local matched=spatialMatches("media/lua/client/PZSurvivorToolkit/ActionQueueApproach.lua",SPATIAL_SOURCE_ADLER,"PZSurvivorToolkit",true)
+        if not watch()or not spatialPrerequisites()then return end
+        spatialSourcePinned=matched
+    end
+    if not spatialSourcePinned then return end
+    local ok,validate,descriptor=spatialCall(spatialPrepare,action)
+    if not ok or type(validate)~="function"or type(descriptor)~="table"or getmetatable(descriptor)~=nil or not watch()then return end
+    return validate,descriptor
+end
 local activeCleanupBinding
 -- Query-local Lua bindings only, not an inventory/world snapshot. Native getters
 -- happen later; finish with raw comparisons so late inspection cannot replace a
@@ -2267,8 +2310,9 @@ local function editSourceShape(members,queue)
     end
 end
 
--- Opt-in observation only. No UI/tick/commit path calls this while migration
--- is incomplete; a resource projection is never an edit permission.
+-- Opt-in read-only plan. UI/tick/commit paths do not consume it while
+-- deferred routing and other effect contracts remain incomplete. A resource
+-- projection grants no admission, capacity, execution or outcome authority.
 function Policy.observeActiveEdit(queue, intent)
     local function unknown(reason)return {status="unhandled",reason=reason or "edit_unknown"}end
     if type(intent)~="table"or getmetatable(intent)or type(queue)~="table"
@@ -2335,7 +2379,7 @@ function Policy.observeActiveEdit(queue, intent)
         else return unknown()end
         if rangeFirst>rangeLast then return unknown("edit_no_change")end
     else return unknown()end
-    local entries={}
+    local entries,contractGaps,spatialLeases={},{},{}
     for index,member in ipairs(queue.queue)do
         local contract=inspect(member,context)
         local edit
@@ -2347,7 +2391,18 @@ function Policy.observeActiveEdit(queue, intent)
             if readType~=bookType then edit=readEdit end
         else edit=contract and contract.edit end
         if not contract or contract.knownInputs==false or contract.unknownOutputs then edit=nil end
-        entries[index]={action=member,edit=edit,active=index==1 or member.action~=nil or member.started==true}
+        local deferred
+        if not edit and observed[index].Type=="ISQueueActionsAction"and member~=current then
+            local validate,descriptor=prepareDeferredSpatial(member)
+            if validate then
+                deferred=descriptor
+                spatialLeases[#spatialLeases+1]=validate
+            end
+        end
+        entries[index]={action=member,edit=edit,deferred=deferred,active=index==1 or member.action~=nil or member.started==true}
+        if not edit and not deferred then contractGaps[#contractGaps+1]={action=member,index=index,actionType=observed[index].Type,
+            reason=not contract and "contract_unavailable"or contract.knownInputs==false and "inputs_unknown"
+                or contract.unknownOutputs and "outputs_unknown"or "effects_unproven"}end
     end
     local item=currentItem
     local pages,total=item:getAlreadyReadPages(),item:getNumberOfPages()
@@ -2362,14 +2417,14 @@ function Policy.observeActiveEdit(queue, intent)
         or toolkitLuaMetatableMatches~=editNativeMeta then return unknown("unavailable")end
     local postBindings=editBindingCapture({
         {owner=_G,keys={"PZSurvivorToolkit","ISTimedActionQueue","type","getmetatable","rawequal","pairs","ipairs","toolkitLuaMetatableMatches"}},
-        {owner=Toolkit,keys={"ActionQueueEditTransition","ActionQueueSettlement"}},
+        {owner=Toolkit,keys={"ActionQueueEditTransition","ActionQueueSettlement","ActionQueueApproach"}},
         {owner=EditTransition,keys={"prepare","project"}},
         {owner=Proof,keys={"captureBindings"}},
         {owner=ISTimedActionQueue,keys={"queues"}},
         {owner=ISTimedActionQueue.queues,keys={queue.character}},
     })
     if not postBindings then return unknown("unavailable")end
-    if kind=="cancel-operation"then
+    if kind=="cancel-operation"or kind=="preempt"or kind=="cancel-body"then
         cleanupOwner=Toolkit.ActionQueueSettlement
         cleanupObserver=cleanupOwner and cleanupOwner.observeEditCleanup
         if type(cleanupObserver)~="function"or not Proof.closure(cleanupObserver,"ActionQueueSettlement.lua")
@@ -2385,6 +2440,9 @@ function Policy.observeActiveEdit(queue, intent)
     -- Validate modules/standard helpers and queue class ancestry before any
     -- ordinary indexing or model call after the final native facts boundary.
     if not postBindings()or not sourceUnchanged()then return unknown("unavailable")end
+    for _,validate in ipairs(spatialLeases)do
+        if not validate()then return unknown("unavailable")end
+    end
     if not rawequal(Toolkit.ActionQueueEditTransition,EditTransition)or EditTransition.prepare~=preparer then return unknown("unavailable")end
     local result=projector(entries,{kind=kind,first=rangeFirst,last=rangeLast,
         generation=queue.toolkitOperationGeneration or 0,checkpoint=checkpoint,ledger=ledger})
@@ -2407,6 +2465,12 @@ function Policy.observeActiveEdit(queue, intent)
     if result.status=="observed"then
         result.checkpoint={stage="before-stop",id=bookId,fullType=bookType,pages=pages,total=total,location=bookLocation}
         result.snapshot=snapshot
+        local resolved,missing={},{}
+        for _,node in ipairs(result.nodes)do
+            if node.action and type(node.edit)=="table"and getmetatable(node.edit)==nil and node.edit.complete==true then resolved[node.action]=true end
+        end
+        for _,gap in ipairs(contractGaps)do if not resolved[gap.action]then missing[#missing+1]=gap end end
+        result.contractGaps=missing
     end
     return result
 end

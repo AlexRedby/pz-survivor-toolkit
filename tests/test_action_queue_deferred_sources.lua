@@ -161,10 +161,11 @@ local function earnedObservation(bulkGuard,change)
     local result=settlement.observeEditCleanup(queue,current)
     toolkitLeafTransferFacts,toolkitLeafTransferAliasFacts=nil,nil
     assert(queue.current==current and queue.queue[2]==action and not queue.toolkitCancel,'joint observation changed native queue ownership')
-    return result,nativeReads
+    return result,nativeReads,action
 end
 for _,bulkGuard in ipairs({false,true})do
-    local result,reads=earnedObservation(bulkGuard)
+    local result,reads,returnAction=earnedObservation(bulkGuard)
+    assert(result.borrowings[1].returnAction==returnAction,'native return witness lost its exact pending action')
     assert(reads==1 and result.status=='observed'and result.borrowings[1].effect=='native-leaf-location',
         'actual central/Tidy/Settlement composition failed to qualify the final return effect: reads='..tostring(reads)..' status='..tostring(result.status)..' reason='..tostring(result.reason)..' effect='..tostring(result.borrowings and result.borrowings[1]and result.borrowings[1].effect))
 end

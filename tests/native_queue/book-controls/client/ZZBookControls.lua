@@ -29,6 +29,7 @@ local function timingNow()
 end
 local function case()return config.cases[index]end
 local function control()return ids and F.parseControl(ids.control)end
+local function deviceOnly()if not ids then return false end;local _,_,_,value=F.parseControl(ids.control);return value end
 local function capacityLost()if not ids then return false end;local _,lost=F.parseControl(ids.control);return lost end
 local function favoriteWorld()if not ids then return false end;local _,_,favorite=F.parseControl(ids.control);return favorite end
 local function favoriteUnmoved()return favoriteWorld()and not isClient()end
@@ -68,6 +69,13 @@ local function register(action)
  if name=='front'or name=='tail'then row.nativeSource=Proof.closure(ISReadABook.new,'ISReadABook.lua')end
  if name=='volume'then row.nativeSource=Proof.closure(ISRadioAction.new,'ISRadioAction.lua')end
  if name=='equip'then row.nativeSource=Proof.closure(ISEquipWeaponAction.new,'ISEquipWeaponAction.lua')end
+ if name=='preparation'and action.Type=='ISQueueActionsAction'and action.toolkitQueueApproach==true then
+  local approach=T.ActionQueueApproach
+  row.approach={declared=true,owned=approach and type(approach.isAction)=='function'and approach.isAction(action)==true or false,
+   nativeConstructor=Proof.closure(ISQueueActionsAction.new,'ISQueueActionsAction.lua'),
+   nativeResolver=Proof.closure(action.addActionsFunction,'ActionQueueApproach.lua'),ownedStart=Proof.closure(action.start,'ActionQueueOperations.lua')}
+  if deviceOnly()then local identity=F.spatialIdentity(state);row.approach.actor=ref(identity.actor);row.approach.targetSquare=ref(identity.targetSquare)end
+ end
  if type(duration)=='number'and duration>0 then row.durationBefore=action:adjustMaxTime(duration)end
  tracks[action]=row;records[#records+1]=row
  local class=getmetatable(action)
@@ -107,8 +115,8 @@ requestSample=function(action,row,point)
  sample.at=now();row.requestStates[#row.requestStates+1]=sample;raw('NATIVE_REQUEST',sample)
 end
 local function intact()
- assert(ISInventoryPaneContextMenu.onLiteratureItems==producer and ISInventoryPaneContextMenu.readItem==readProducer and RWMVolume.onVolumeChange==volumeProducer and ISInventoryPaneContextMenu.equipWeapon==equipProducer,'native producer callback changed after setup')
- assert(Proof.closure(producer,'ISInventoryPaneContextMenu.lua')and Proof.closure(readProducer,'ActionQueueOperations.lua')and Proof.closure(equipProducer,'ISInventoryPaneContextMenu.lua'),'native literature/equip producer source changed')
+ assert(ISInventoryPaneContextMenu.onLiteratureItems==producer and ISInventoryPaneContextMenu.readItem==readProducer and RWMVolume.onVolumeChange==volumeProducer and(deviceOnly()or ISInventoryPaneContextMenu.equipWeapon==equipProducer),'native producer callback changed after setup')
+ assert(Proof.closure(producer,'ISInventoryPaneContextMenu.lua')and Proof.closure(readProducer,'ActionQueueOperations.lua')and(deviceOnly()or Proof.closure(equipProducer,'ISInventoryPaneContextMenu.lua')),'native literature/equip producer source changed')
  assert(Proof.closure(ISReadABook.new,'ISReadABook.lua')and Proof.closure(ISReadABook.getDuration,'ISReadABook.lua')and Proof.closure(ISRadioAction.new,'ISRadioAction.lua'),'native constructors/timers replaced')
  if requestsEnabled then
   assert(T.ActionQueueSettlement==requestSettlement and requestSettlement.nativeRequestState==nativeRequestState,
@@ -317,7 +325,7 @@ Events.OnServerCommand.Add(function(module,command,args)
 end)
 local function queueEvidence()
  local rows={}
- for _,action in ipairs(queue().queue)do local r=register(action);rows[#rows+1]={sequence=r.sequence,type=r.type,role=r.role,token=tokenID(action.toolkitQueueOperation),actionRef=ref(action),nativeRef=ref(action.action),current=queue().current==action}end
+ for _,action in ipairs(queue().queue)do local r=register(action);rows[#rows+1]={sequence=r.sequence,type=r.type,role=r.role,token=tokenID(action.toolkitQueueOperation),actionRef=ref(action),nativeRef=ref(action.action),current=queue().current==action,approach=r.approach}end
  return rows
 end
 local function enqueue()
@@ -331,9 +339,11 @@ local function enqueue()
  producer({state.front},state.player:getPlayerNum())
  for _,action in ipairs(queue().queue)do register(action);if role(action)=='front'then assert(not front,'duplicate original reader');front=action end end
  assert(front and front.item:getID()==ids.front.id,'native literature producer omitted exact reader')
+ if not deviceOnly()then
  equipProducer(state.pen,true,false,state.player:getPlayerNum())
  for _,action in ipairs(queue().queue)do register(action);if role(action)=='equip'then assert(not equip,'duplicate equip setter');equip=action end end
  assert(equip and equip.item==state.pen and equip.primary and not equip.twoHands and equip.item:getContainer()==state.player:getInventory(),'native Pen equip admission differs')
+ end
  window=RWMMergedTV:new(-1000,-1000,300,100);window:initialise();window:instantiate();assert(window:readFromObject(state.player,state.tv,state.data,'IsoObject'))
  window.volumeBar.onVolumeChange(window,ids.targetVolume*window.volumeBar:getVolumeSteps())
  for _,action in ipairs(queue().queue)do register(action);if role(action)=='volume'then assert(not volume,'duplicate volume setter');volume=action end end
@@ -341,7 +351,7 @@ local function enqueue()
  producer({state.tail},state.player:getPlayerNum())
  for _,action in ipairs(queue().queue)do register(action);if role(action)=='tail'then assert(not tail,'duplicate tail reader');tail=action end end
  assert(tail and queue().queue[#queue().queue]==tail,'native independent tail missing')
- raw('ADMISSION',{case=case(),producer='ISInventoryPaneContextMenu.onLiteratureItems/readItem',volumeProducer='RWMVolume.onVolumeChange',equipProducer='ISInventoryPaneContextMenu.equipWeapon',sourceBound=true,queue=queueEvidence()})
+ raw('ADMISSION',{case=case(),producer='ISInventoryPaneContextMenu.onLiteratureItems/readItem',volumeProducer='RWMVolume.onVolumeChange',equipProducer=not deviceOnly()and'ISInventoryPaneContextMenu.equipWeapon'or false,sourceBound=true,queue=queueEvidence()})
  phase='boundary'
 end
 local function diagnostic(decision,action)
@@ -373,7 +383,8 @@ local function realGesture(preview)
   assert(list:rowUnderMouse(10,y)==row,'real expand hit target differs');list:onMouseDown(10,y);assert(list.pressedToggle==row.operation,'expand press failed');list:onMouseUp(10,y)
   assert(panel.expanded[row.operation],'expand release failed')
  end
- local targetAction=front
+ local demote=control()=='demote-reader'
+ local targetAction=demote and volume or front
  if keep then
   targetAction=nil
   for _,action in ipairs(queue().queue)do
@@ -381,11 +392,16 @@ local function realGesture(preview)
   end
   assert(targetAction,'exact native pending return missing')
  end
- local target=assert(rowFor(targetAction,grouped and control()~='reader-child-cancel'and not keep),'real reader/header/return target missing')
- local whole=target.header==true;local moving=control()=='move-volume'or control()=='move-equip';local movingAction=control()=='move-equip'and equip or volume
- local decision=moving and T.ActionQueuePolicy.evaluateMove(queue(),movingAction,front,false)or T.ActionQueuePolicy.evaluateCancel(queue(),target.item,whole)
+ local target=rowFor(targetAction,not demote and grouped and control()~='reader-child-cancel'and not keep)
+ if not target and demote then
+  for _,row in ipairs(list.items)do if row.header and row.operation==volume.toolkitQueueOperation then assert(not target,'ambiguous native TV operation header');target=row end end
+ end
+ assert(target,'real reader/header/return/TV-operation target missing')
+ local whole=target.header==true;local moving=control()=='move-volume'or control()=='move-equip'or demote;local movingAction=demote and front or control()=='move-equip'and equip or volume
+ local decision=moving and T.ActionQueuePolicy.evaluateMove(queue(),movingAction,demote and volume or front,demote)or T.ActionQueuePolicy.evaluateCancel(queue(),target.item,whole)
  local ui={source='ActionQueuePanel.List',input=moving and'programmatic-drag'or'programmatic-press-release',header=whole,singleton=not grouped,
   target=ref(target.item),operation=tokenID(target.operation),hitTested=true,decision=diagnostic(decision,moving and movingAction or target.item),at=now()}
+ if deviceOnly()then ui.commonActiveEdit=decision.commonActiveEdit==true;ui.dropAfter=demote;ui.targetAction=ref(targetAction) end
  if keep then
   ui.waiverIdentity={schema=1,case=case(),actor=state.player:getOnlineID(),source=ids.source,
    actionRef=ref(targetAction),token=tokenID(targetAction.toolkitQueueOperation),beforeAt=preview.at,
@@ -399,7 +415,7 @@ local function realGesture(preview)
   local from=rowFor(movingAction,false)or rowFor(movingAction,true)
   if not from then for _,row in ipairs(list.items)do if row.operation==movingAction.toolkitQueueOperation and row.header then from=row;break end end end
   assert(from,'real pending operation row missing');ui.movingAction=ref(movingAction);ui.movingAnchor=ref(from.item);ui.movingToken=tokenID(from.operation)
-  local x,fromY=35,list:topOfItem(from.index)+from.height/2;local toY=list:topOfItem(target.index)+2
+  local x,fromY=35,list:topOfItem(from.index)+from.height/2;local toY=list:topOfItem(target.index)+(demote and target.height-2 or 2)
   assert(list:rowUnderMouse(x,fromY)==from and list:rowUnderMouse(x,toY)==target,'real drag hit targets differ')
   pressMs,pressStartedMs,pressFinishedMs=timedHandler(list,'onMouseDown',x,fromY);ui.pressCaptured=list.dragAction==from.item
   -- The actual list onMouseMove reads native pointer coordinates. Use release's
@@ -457,11 +473,13 @@ local function performanceAtBoundary()
  local keep=control()=='return-child-cancel';local target=front
  if keep then for _,action in ipairs(list)do if role(action)=='return'and action.toolkitQueueOperation==front.toolkitQueueOperation then target=action;break end end end
  local whole=not keep and control()~='reader-child-cancel'and ids.source~='root'
- local moving=control()=='move-equip'and equip or volume
+ local demote=control()=='demote-reader'
+ local moving=demote and front or control()=='move-equip'and equip or volume
+ local moveTarget=demote and volume or front
  local entries={
-  {name='evaluateMove',kind='authoritative',call=function()return T.ActionQueuePolicy.evaluateMove(q,moving,front,false)end},
+  {name='evaluateMove',kind='authoritative',call=function()return T.ActionQueuePolicy.evaluateMove(q,moving,moveTarget,demote)end},
   {name='evaluateCancel',kind='authoritative',call=function()return T.ActionQueuePolicy.evaluateCancel(q,target,whole)end},
-  {name='previewMove',kind='advisory',call=function()return T.ActionQueuePolicy.previewMove(q,moving,front,false)end},
+  {name='previewMove',kind='advisory',call=function()return T.ActionQueuePolicy.previewMove(q,moving,moveTarget,demote)end},
   {name='previewCancel',kind='advisory',call=function()return T.ActionQueuePolicy.previewCancel(q,target,whole)end},
   {name='panelUpdate',kind='advisory',call=function()panel:update()end},
  }
@@ -585,7 +603,7 @@ local function atBoundary()
   local earned=false
   for _,row in ipairs(records)do if row.role=='pickup'and row.performedAt then earned=true end end
   activeEditReceipt=editObservation.run({toolkit=T,queue=queue(),front=front,state=state,fixture=F,ids=ids,
-   case=case(),kind=config.kind,mode=config.mode,native=native,control=control(),clock=timingNow,precise=preciseTiming,pickupEarned=earned})
+   case=case(),kind=config.kind,mode=config.mode,native=native,control=control(),clock=timingNow,precise=preciseTiming,pickupEarned=earned,volume=volume,deviceOnly=deviceOnly(),spatialIdentity=deviceOnly()and F.spatialIdentity(state)or nil})
   raw('ACTIVE_EDIT_OBSERVATION',activeEditReceipt)
   assert(activeEditReceipt.passed or activeEditReceipt.failure=='virtual-return-effect-unavailable'
    or activeEditReceipt.failure=='native-alias-facts-unavailable',
@@ -597,8 +615,8 @@ local function atBoundary()
  oldNative=front.action
  boundary={case=case(),at=now(),before=actual,reader=ref(front),native=ref(oldNative),token=tokenID(front.toolkitQueueOperation),
   nativeCheckpoint={finished=oldNative:finished(),forceComplete=oldNative:isForceComplete()},
-  delta=front:getJobDelta(),tailRetained=queue():indexOf(tail)~=-1,volumePending=not volume.action,equipPending=not equip.action,requested=not native,drained=false,queue=queueEvidence()}
- assert(boundary.tailRetained and boundary.volumePending and boundary.equipPending,'independent work started before reader edit boundary')
+  delta=front:getJobDelta(),tailRetained=queue():indexOf(tail)~=-1,volumePending=not volume.action,equipPending=equip~=nil and not equip.action,requested=not native,drained=false,queue=queueEvidence()}
+ assert(boundary.tailRetained and boundary.volumePending and(deviceOnly()and equip==nil or boundary.equipPending),'independent work started before reader edit boundary')
  if native then
   boundary.ui=false;raw('BOUNDARY',boundary)
   if capacityLost()then capacityRequestedAt=now();request('CapacityLost')end
@@ -670,10 +688,10 @@ local function finish()
  if failedReturnExpected()then row.returnSucceeded=false end
  emit(row);if not passed then failures=failures+1 end
  if not isClient()then previous=state end
- local completedPlayer,completedPen=state.player,state.pen
+ local completedPlayer,completedPen,completedEquip=state.player,state.pen,equip~=nil
  state,ids,front,tail,volume,equip,window,oldNative,authorityBaseline,authorityFinal=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  index=index+1;phase='between-cases';since=now()
- if case()then
+ if case()and completedEquip then
   -- Clear the completed explicit equip through the real native producer before
   -- authority seeds the next empty-hands baseline. No replica hand repair.
   raw('BETWEEN_CASE_UNEQUIP',{item=completedPen:getID(),producer='ISInventoryPaneContextMenu.onUnEquip',at=now()})

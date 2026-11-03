@@ -62,7 +62,9 @@ class BookControlTests(unittest.TestCase):
 
     def evidence(self, case='worn-bag.move-equip', kind='mp', mode='toolkit'):
         source, original_control = case.split('.', 1); control = a.base_control(original_control); lost = a.capacity_case(original_control); favorite_unmoved = a.favorite_case(original_control) and kind == 'sp'
-        enabled = mode == 'toolkit'; moving = enabled and control.startswith('move-'); keep = enabled and control == 'return-child-cancel'
+        device = a.device_only(original_control)
+        demote = control == 'demote-reader'
+        enabled = mode == 'toolkit'; moving = enabled and (control.startswith('move-') or demote); keep = enabled and control == 'return-child-cancel'
         spec = dict(case=case, source=source, control=original_control, actor=0, targetVolume=.25, initialVolume=.5,
                     front=dict(id=101, type='Base.BookCarpentry1', total=220, initial=218),
                     tail=dict(id=102, type='Base.BookCooking1', total=220, initial=219), pen=dict(id=103, type='Base.Pen'),
@@ -81,7 +83,7 @@ class BookControlTests(unittest.TestCase):
                  delta=.995, tailRetained=True, volumePending=True, equipPending=True, requested=enabled, drained=True, drainedAt=11)
         acks = []; records = []
         def record(seq, role, item, token, started=True, performed=True):
-            typ = {'front': 'ISReadABook', 'tail': 'ISReadABook', 'volume': 'ISRadioAction', 'equip': 'ISEquipWeaponAction', 'pickup': 'ISInventoryTransferAction', 'return': 'ISInventoryTransferAction'}[role]
+            typ = {'front': 'ISReadABook', 'tail': 'ISReadABook', 'volume': 'ISRadioAction', 'equip': 'ISEquipWeaponAction', 'pickup': 'ISInventoryTransferAction', 'return': 'ISInventoryTransferAction', 'preparation':'ISQueueActionsAction'}[role]
             r = dict(sequence=seq, role=role, item=item, token=token if enabled else False, type=typ, mode='SetVolume' if role == 'volume' else False,
                      actionRef='reader:1' if seq == 1 else 'lua:' + str(seq), duration=30 if role == 'volume' else 100, nativeSource=True,
                      started=started, progress=started, finishes=[], receipts=[])
@@ -107,15 +109,17 @@ class BookControlTests(unittest.TestCase):
                 queueOwned=True,nativePresent=True,bridgeStopped=True,nativeSource=True,finished=False,forceComplete=False,pages=219)
             original['stoppedRemoval'] = dict(at=11,actionRef=b['reader'],nativeRef=b['native'],sameNative=True,item=101,pages=219,
                 queueAbsent=True,nativeAbsent=True,finished=False,forceComplete=False)
-        equip = record(2, 'equip', 103, 20, started=enabled or not lost)
+        equip = record(2, 'equip', 103, 20, started=enabled or not lost) if not device else None
         volume = record(3, 'volume', False, 30, started=enabled or not lost)
         tail = record(4, 'tail', 102, 40, started=enabled or not lost)
+        approach=record(8,'preparation',False,30,started=False,performed=False) if device and enabled else None
+        if approach: approach.update(duration=-1,approach=dict(declared=True,owned=True,nativeConstructor=True,nativeResolver=True,ownedStart=True,actor='IsoPlayer@live',targetSquare='IsoGridSquare@tv'))
         if moving:
             resumed = record(5, 'front', 101, 10)
             resume = dict(oldAction=original['actionRef'], newAction=resumed['actionRef'], oldNative=original['nativeRef'], newNative=resumed['nativeRef'],
                           item=101, token=10, startPage=219, pages=219, oldNativeAbsent=True, at=15)
         else: resume = False
-        admission = [dict(sequence=r['sequence'], role=r['role'], type=r['type'], token=r['token'], actionRef=r['actionRef'], nativeRef=False, current=r is original) for r in (original, equip, volume, tail)]
+        admission = [dict(sequence=r['sequence'], role=r['role'], type=r['type'], token=r['token'], actionRef=r['actionRef'], nativeRef=False, current=r is original, **({'approach':copy.deepcopy(r['approach'])} if 'approach' in r else {})) for r in (original, equip, approach, volume, tail) if r is not None]
         if source != 'root':
             pickup = record(6, 'pickup', 101, 10); returned = record(7, 'return', 101, 10, started=not keep and not lost)
             if lost and kind == 'mp':
@@ -127,14 +131,19 @@ class BookControlTests(unittest.TestCase):
                     actionRef=returned['actionRef'], nativeRef=returned['nativeRef'], transaction=0 if enabled else 7, at=19, point='returned', returned=True, sameNative=True)
             admission.insert(0, dict(sequence=6, role='pickup', type=pickup['type'], token=pickup['token']))
             admission.insert(2, dict(sequence=7, role='return', type=returned['type'], token=returned['token']))
+            if device and enabled: admission[2].update(actionRef=returned['actionRef'],nativeRef=False,current=False)
         starts = [1, 2, 5, 3, 4] if moving and control == 'move-equip' else [1, 3, 5, 2, 4] if moving else [1] if lost and not enabled else [1, 2, 3, 4]
-        b['queue'] = copy.deepcopy(admission)
+        if device: starts = [sequence for sequence in starts if sequence != 2]; b['equipPending'] = False
+        b['queue'] = copy.deepcopy([r for r in admission if not (device and enabled and r['role']=='pickup')])
         b['ui'] = dict(source='ActionQueuePanel.List', input='programmatic-drag' if moving else 'programmatic-press-release',
-                       header=source != 'root' and control not in ('reader-child-cancel', 'return-child-cancel'), singleton=source == 'root', target=returned['actionRef'] if keep else original['actionRef'], operation=10,
+                       header=device and demote or not demote and source != 'root' and control not in ('reader-child-cancel', 'return-child-cancel'), singleton=source == 'root', target=returned['actionRef'] if keep else volume['actionRef'] if demote else original['actionRef'], operation=30 if demote else 10,
                        at=10, acceptedAt=10, hitTested=True, pressCaptured=True, gestureCleared=True, accepted=True, feedback=False,
                        bodyContinues=True, returnAbsent=True, bookRoot=True, operationCancelled=False,
-                       decision=dict(reason=False, source=source), dragging=True, movingAction=(equip if control == 'move-equip' else volume)['actionRef'],
-                       movingAnchor=(equip if control == 'move-equip' else volume)['actionRef'], movingToken=20 if control == 'move-equip' else 30) if enabled else False
+                       decision=dict(reason=False, source=source), dragging=True, movingAction=(original if demote else equip if control == 'move-equip' else volume)['actionRef'],
+                       movingAnchor=(original if demote else equip if control == 'move-equip' else volume)['actionRef'], movingToken=10 if demote else 20 if control == 'move-equip' else 30) if enabled else False
+        if device and enabled:
+            b['ui'].update(commonActiveEdit=False,dropAfter=demote,targetAction=volume['actionRef'] if demote else original['actionRef'],
+                target=approach['actionRef'] if demote else original['actionRef'],movingAnchor=original['actionRef'] if demote else approach['actionRef'])
         if keep:
             carried = dict(ref='Literature@carried', id=101, type=spec['front']['type'], container='root')
             identity = dict(requested=copy.deepcopy(carried), carried=copy.deepcopy(carried), rootMatches=1,
@@ -145,7 +154,7 @@ class BookControlTests(unittest.TestCase):
         final = a.expected(spec, enabled, b, kind)
         row = dict(event='case', suite='book-controls', kind=kind, mode=mode, actor='client1', id=case, status='passed', reason=False, ids=spec,
                    baseline=copy.deepcopy(seed), authorityBaseline=copy.deepcopy(seed), boundary=b, records=records, starts=starts,
-                   resume=resume, tailSnapshot=copy.deepcopy(final), volumeSnapshot=copy.deepcopy(before), equipSnapshot=copy.deepcopy(before),
+                   resume=resume, tailSnapshot=copy.deepcopy(final), volumeSnapshot=copy.deepcopy(before), equipSnapshot=False if device else copy.deepcopy(before),
                    client=copy.deepcopy(final), server=copy.deepcopy(final), nativeMethodsUnchanged=True, finishedAt=99, reset=False,replicaGaps=[],capacity=False,blockedReturn=False,failureUI=False)
         if lost:
             row['returnSucceeded'] = False
@@ -177,7 +186,7 @@ class BookControlTests(unittest.TestCase):
         row['performance']['probe32'] = probe
         row['tickSpacingMs'] = [16,17,16]
         admitted = dict(case=case, producer='ISInventoryPaneContextMenu.onLiteratureItems/readItem', volumeProducer='RWMVolume.onVolumeChange',
-                        equipProducer='ISInventoryPaneContextMenu.equipWeapon', sourceBound=True, queue=admission)
+                        equipProducer=False if device else 'ISInventoryPaneContextMenu.equipWeapon', sourceBound=True, queue=admission)
         raw_b = copy.deepcopy(b); raw_b['drained'] = False; raw_b.pop('drainedAt')
         drain = dict(case=case, reader=b['reader'], native=b['native'], at=b['drainedAt'], oldNativeAbsent=True)
         return row, spec, copy.deepcopy(seed), copy.deepcopy(final), [admitted], [raw_b], [drain], acks
@@ -359,7 +368,7 @@ class BookControlTests(unittest.TestCase):
 
     def test_actual_cli_catalog_selection_and_native_preflight_accept_safe_case_ids(self):
         catalog = cli.load_catalog(['book-controls'])
-        self.assertEqual([case['id'] for case in catalog['suites']['book-controls']['cases']], list(a.CASES))
+        self.assertEqual([case['id'] for case in catalog['suites']['book-controls']['cases']], list(a.DECLARED_CASES))
         self.assertTrue(all('/' not in case for case in a.CASES))
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
@@ -706,6 +715,7 @@ for _,moving in ipairs({false,true})do
  state={player={getPlayerNum=function()return 0 end}};ids={source='root'}
  local q={current=front,queue={front,equip,volume}}
  queue=function()return q end;control=function()return moving and'move-equip'or'reader-child-cancel'end
+ deviceOnly=function()return false end
  diagnostic=function()return{reason=false}end;ref=tostring;tokenID=function()return 1 end
  local rows={{item=front,operation=token,header=false,index=1,height=40},
   {item=equip,operation=equip.toolkitQueueOperation,header=false,index=2,height=40}}
@@ -1451,6 +1461,7 @@ os.exit(0)
     def active_edit_receipt(self, row, legacy_allowed=None):
         case, mode, kind = row['id'], row['mode'], row['kind']
         source = case.split('.')[0]; enabled = mode == 'toolkit'; borrowed = enabled and source != 'root'
+        device = case in a.DEVICE_ONLY_CASES
         if legacy_allowed is None: legacy_allowed = enabled
         item, root, destination = 'Literature@live', 'ItemContainer@root', 'ItemContainer@' + source
         book = row['ids']['front']; bag = row['ids']['bag']
@@ -1500,7 +1511,378 @@ os.exit(0)
             observerProjectionStatus=projection['status'] if projection else False, observerProjectionReason=projection['reason'] if projection else False,
             timerOverhead='included-not-subtracted', sameOutputContract=False, completeEditMeasured=False, frameLoadMeasured=False,
             positiveTimingClaim=False, assessment='not-assessed')
+        if device:
+            if enabled: value.pop('control', None)
+            value.update(schema=3 if enabled else 1,scope='active-edit-device-only-deferred-native-phase-observation' if enabled else 'active-edit-device-only-preempt-observation', qualifiedReturn=False, effect=False, nativeFacts=False, aliasFacts=False,
+                intent=dict(kind='move', action=row['boundary']['reader'] if a.base_control(row['ids']['control'])=='demote-reader' else next(r['actionRef'] for r in row['records'] if r['role']=='volume'), target=next(r['actionRef'] for r in row['records'] if r['role']=='volume') if a.base_control(row['ids']['control'])=='demote-reader' else row['boundary']['reader'], after=a.base_control(row['ids']['control'])=='demote-reader'))
+            value['existingDecision'] = dict(entrypoint='Policy.evaluateMove', allowed=enabled, reason=False if enabled else 'unavailable', whole=False, commonActiveEdit=False)
+            if enabled:
+                projection.update(status='deferred', reason='edit_native_resolution', externalCapacity=True)
+                approach=next(r for r in row['records'] if r['role']=='preparation'and r['type']=='ISQueueActionsAction'and r['token']==30)
+                phase=dict(version=1,kind='deferred-spatial',actor=approach['approach']['actor'],targetSquare=approach['approach']['targetSquare'],
+                    invalidates='all-resources',routing='native',expansion='native',outcome='native')
+                projection.update(blocker=approach['actionRef'],evaluatedPrefix=1,deferred=[dict(action=approach['actionRef'],index=2,descriptor=copy.deepcopy(phase))])
+                nodes = [dict(kind='checkpoint', action=row['boundary']['reader'], complete=True, capacity='unchanged'),
+                    dict(kind='pending',action=approach['actionRef'],complete=False,capacity=False,deferred=copy.deepcopy(phase)),
+                    dict(kind='pending', action=next(r['actionRef'] for r in row['records'] if r['role']=='volume'), complete=True, capacity='unchanged'),
+                    dict(kind='resume', action=row['boundary']['reader'], complete=True, capacity='unchanged')]
+                for returning in (r for r in row['records'] if r['role']=='return'):
+                    effect=dict(version=1,complete=True,capacity='external',domain='item',id=book['id'],fullType=book['type'],item=item,
+                        source=root,destination=destination,action=returning['actionRef'],synthetic=False,resources=1,requirements=1,effects=1,field='location')
+                    nodes.append(dict(kind='pending',action=returning['actionRef'],complete=True,capacity='external',returnEffect=effect))
+                nodes.append(dict(kind='pending', action=next(r['actionRef'] for r in row['records'] if r['role']=='tail'), complete=True, capacity='unchanged'))
+                value['plan'] = dict(kind='preempt', nodes=nodes)
+                at=next(index for index,r in enumerate(row['boundary']['queue'],1) if r.get('actionRef')==approach['actionRef'])
+                value['diagnostics']=dict(contractGaps=[],
+                    nodes=[dict(kind=n['kind'],action=n['action'],complete=n['complete'],**({'deferred':copy.deepcopy(n['deferred'])} if 'deferred'in n else {})) for n in nodes],projectionBlockerType='ISQueueActionsAction',gapsTruncated=False,nodesTruncated=False)
+            else: value['plan'] = False
+            observer['returns'] = 0
+            value['performance'].update(scope='paired-live-device-preempt-entrypoints', whole=False, comparable=False,
+                comparisonReason='deferred-native-phase-not-full-projection' if enabled else 'queue-disabled',
+                observerProjectionStatus='deferred' if enabled else False, observerProjectionReason='edit_native_resolution' if enabled else False)
         return value
+
+    def test_device_only_variants_use_native_device_chain_and_keep_pen_untouched(self):
+        self.assertEqual(a.PROMOTE_DEVICE_ONLY_CASES, tuple(source+'.move-volume-device-only' for source in a.SOURCES))
+        self.assertEqual(a.DEMOTE_DEVICE_ONLY_CASES, tuple(source+'.demote-reader-device-only' for source in a.SOURCES))
+        self.assertEqual(len(a.CASES), 20, 'existing mixed bank must remain unchanged')
+        self.assertEqual(set(a.DECLARED_CASES)-set(a.CASES), set(a.DEVICE_ONLY_CASES))
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for case in a.DEVICE_ONLY_CASES:
+                    with self.subTest(kind=kind, mode=mode, case=case):
+                        evidence = self.evidence(case, kind, mode)
+                        row, ids = evidence[:2]
+                        self.assertFalse(any(r['role']=='equip' or r['type']=='ISEquipWeaponAction' for r in row['records']))
+                        self.assertFalse(any(r['role']=='equip' for r in evidence[4][0]['queue']))
+                        self.assertIs(evidence[4][0]['equipProducer'], False)
+                        self.assertIs(row['boundary']['equipPending'], False)
+                        self.assertIs(row['equipSnapshot'], False)
+                        self.assertEqual(row['client']['hands'], ids['baseline']['hands'])
+                        self.assertEqual(next(i for i in row['client']['items'] if i['id']==ids['pen']['id']), next(i for i in ids['baseline']['items'] if i['id']==ids['pen']['id']))
+                        self.assertEqual(self.check(evidence, kind, mode), [])
+        selection=self.selection();selection['cases']=list(a.DEVICE_ONLY_CASES)
+        with self.assertRaisesRegex(ValueError, 'active_edit_observation'): a.validate(selection)
+        selection['options'].update(active_edit_observation=True, precise_timing=True)
+        a.validate(selection)
+        for bad in ('root.move-equip-device-only', 'world.move-volume-device-only-capacity-lost', 'world.move-volume-favorite-device-only'):
+            selection['cases']=[bad]
+            with self.assertRaises(ValueError): a.validate(selection)
+
+    def test_actual_device_only_fixture_omits_equip_producer_and_uses_move_observation(self):
+        lua=shutil.which('luajit')
+        if not lua: self.skipTest('LuaJIT not installed')
+        source=r"""
+local file=assert(io.open(arg[1]));local text=file:read('*a');file:close()
+local first=assert(text:find('local function enqueue()',1,true))
+local last=assert(text:find('\nlocal function diagnostic(',first,true))
+local enqueue=assert(loadstring(text:sub(first,last-1)..'\nreturn enqueue'))()
+local fixture=assert(loadfile(arg[2]))()
+for _,source in ipairs({'root','worn-bag','world'})do
+ local base,lost,favorite,only=fixture.parseControl('move-volume-device-only')
+ assert(base=='move-volume'and only and not lost and not favorite)
+ for _,device in ipairs({false,true})do
+  front,tail,volume,equip=nil,nil,nil,nil
+  local inv={};state={front={},tail={},pen={},tv={},data={}}
+  state.player={getPlayerNum=function()return 0 end,getInventory=function()return inv end,hasTrait=function()return false end,isTimedActionInstant=function()return false end}
+  ids={baseline={},pen={id=3},front={id=1},source=source,targetVolume=.25}
+  state.front.getID=function()return 1 end
+  local q={queue={}};queue=function()return q end
+  deviceOnly=function()return device end
+  F={snapshot=function()return{}end,same=function()return true end};authorityBaseline={};now=function()return 1 end
+  CharacterTrait={DISORGANIZED={},ILLITERATE={}}
+  local reads,equips,volumes=0,0,0
+  producer=function(items)reads=reads+1;q.queue[#q.queue+1]={role=items[1]==state.front and'front'or'tail',item=items[1]}end
+  equipProducer=function(item)equips=equips+1;q.queue[#q.queue+1]={role='equip',item=item,primary=true,twoHands=false};item.getContainer=function()return inv end end
+  RWMMergedTV={new=function()return{initialise=function()end,instantiate=function()end,readFromObject=function()return true end,
+   volumeBar={getVolumeSteps=function()return 4 end,onVolumeChange=function(window,value)
+    volumes=volumes+1;q.queue[#q.queue+1]={role='volume',secondaryItem=value/4,deviceData=state.data,maxTime=30}
+   end}}end}
+  role=function(action)return action.role end;register=function()end;queueEvidence=function()return{}end;case=function()return source..'.move-volume'end
+  raw=function(marker,value)if marker=='ADMISSION'then if device then assert(value.equipProducer==false)else assert(value.equipProducer=='ISInventoryPaneContextMenu.equipWeapon')end end end
+  enqueue()
+  assert(reads==2 and volumes==1 and equips==(device and 0 or 1))
+  assert((equip==nil)==device and front.item==state.front and tail.item==state.tail)
+ end
+end
+local run=assert(loadfile(arg[3]))().run
+local item={getID=function()return 1 end,getFullType=function()return'Base.Book'end}
+local native={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+local front={Type='ISReadABook',item=item,action=native,toolkitQueueOperation={}}
+local actor={getInventory=function()return{}end};local target={}
+local phase={version=1,kind='deferred-spatial',actor=actor,targetSquare=target,invalidates='all-resources',routing='native',expansion='native',outcome='native'}
+local volume,tail={Type='ISRadioAction',toolkitQueueOperation={}},{Type='ISReadABook'}
+local approach={Type='ISQueueActionsAction',toolkitQueueApproach=true,toolkitQueueOperation=volume.toolkitQueueOperation}
+local q={current=front,queue={front,approach,volume,tail}}
+local ui={size=function()return 0 end};UIManager={getUI=function()return ui end}
+local off,demoting,unexpected=false,false,false;local observations,moves=0,0
+local function observe(queue,intent)
+ observations=observations+1;assert(queue==q and intent.kind=='move'and intent.action==(demoting and front or volume)and intent.target==(demoting and volume or front)and intent.after==demoting)
+ if off then return{status='unhandled',reason='unavailable'}end
+ local edit={complete=true,capacity='unchanged'}
+ local result={status='observed',kind='preempt',unresolved={},nodes={{kind='checkpoint',action=front,edit=edit},{kind='pending',action=approach,deferred=phase},
+  {kind='pending',action=volume,edit=edit},{kind='resume',action=front,edit=edit},{kind='pending',action=tail,edit=edit}},
+  projection={status='deferred',reason='edit_native_resolution',blocker=approach,externalCapacity=true,evaluatedPrefix=1,deferred={{action=approach,index=2,descriptor=phase}}},contractGaps={}}
+ if unexpected then
+  result.nodes[3].edit=nil;result.contractGaps[1]={index=3,actionType='ISRadioAction',reason='effects_unproven'}
+  if unexpected=='bounded'then for index=2,40 do result.nodes[index]=result.nodes[3];result.contractGaps[index]=result.contractGaps[1]end end
+ end
+ return result
+end
+local function move(queue,action,target,after)moves=moves+1;assert(queue==q and action==(demoting and front or volume)and target==(demoting and volume or front)and after==demoting);return{allowed=not off,reason=off and'unavailable'or nil}end
+local function ledger()return{status=off and'unhandled'or'observed',steps={},borrowings={}}end
+local function owned(action)return action==approach end
+local toolkit={ActionQueuePolicy={observeActiveEdit=observe,evaluateMove=move},ActionQueueSettlement={editLedger=ledger},ActionQueueApproach={isAction=owned}}
+getFilenameOfClosure=function(fn)if fn==observe then return'ActionQueuePolicy.lua'elseif fn==ledger then return'ActionQueueSettlement.lua'elseif fn==owned then return'ActionQueueApproach.lua'end end
+ISInventoryTransferAction={}
+local tick=0;local context={toolkit=toolkit,queue=q,front=front,state={front=item,player=actor},spatialIdentity={actor=actor,targetSquare=target},
+ fixture={snapshot=function()return{}end,same=fixture.same},ids={source='root',front={id=1,type='Base.Book'}},case='root.move-volume-device-only',
+ kind='sp',mode='toolkit',native=false,control='move-volume',deviceOnly=true,volume=volume,precise=true,clock=function()tick=tick+1;return tick end}
+local receipt=run(context)
+assert(receipt.passed and receipt.readOnly and not receipt.existingDecision.commonActiveEdit and receipt.intent.action==tostring(volume))
+assert(receipt.schema==3 and receipt.plan.kind=='preempt'and #receipt.plan.nodes==5 and not receipt.plan.nodes[2].complete and receipt.observer.projection.status=='deferred'and receipt.observer.returns==0)
+assert(#receipt.diagnostics.contractGaps==0 and receipt.diagnostics.nodes[2].deferred.kind=='deferred-spatial'and receipt.diagnostics.projectionBlockerType=='ISQueueActionsAction'and not receipt.performance.comparable)
+assert(moves==5 and observations==5 and q.current==front and front.action==native)
+demoting=true;context.control='demote-reader';context.case='root.demote-reader-device-only'
+receipt=run(context);assert(receipt.passed and receipt.intent.action==tostring(front)and receipt.intent.target==tostring(volume)and receipt.intent.after==true and #receipt.plan.nodes==5)
+for _,change in ipairs({{'invalidates','position'},{'domain','position'},{'actor',{}},{'targetSquare',{}},{'complete',true},{'futureFacts',{}}})do
+ local field,value=change[1],change[2];local previous=phase[field];phase[field]=value
+ receipt=run(context);assert(not receipt.passed and receipt.readOnly,'raw malformed descriptor escaped native fixture qualification')
+ phase[field]=previous
+end
+unexpected=true;receipt=run(context);assert(not receipt.passed and receipt.readOnly and #receipt.diagnostics.contractGaps==1 and not receipt.diagnostics.nodes[3].complete)
+unexpected='bounded';receipt=run(context);assert(not receipt.passed and #receipt.diagnostics.nodes==32 and #receipt.diagnostics.contractGaps==32 and receipt.diagnostics.nodesTruncated and receipt.diagnostics.gapsTruncated)
+unexpected=false;off=true;context.native=true;context.mode='native'
+receipt=run(context);assert(receipt.passed and receipt.schema==1 and receipt.plan==false and receipt.observer.projection==false and receipt.existingDecision.commonActiveEdit==false)
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua'),
+            str(ROOT/'tests/native_queue/book-controls/shared/QueueBookControls.lua'),str(ROOT/'tests/native_queue/book-controls/shared/QueueBookEditObservation.lua')],check=True)
+
+    def test_reader_demotion_fixture_uses_actual_panel_drag_handlers_and_exact_return_resource(self):
+        lua=shutil.which('luajit')
+        if not lua: self.skipTest('LuaJIT not installed')
+        source=r"""
+local function read(path)local f=assert(io.open(path));local s=f:read('*a');f:close();return s end
+local text=read(arg[1]);local first=assert(text:find('local function timedHandler(',1,true));local last=assert(text:find('\nlocal function resetFailure(',first,true))
+local gesture=assert(loadstring(text:sub(first,last-1)..'\nreturn realGesture'))()
+text=read(arg[2]);first=assert(text:find('function List:onMouseDown(',1,true));last=assert(text:find('\nfunction List:onMouseUpOutside(',first,true))
+List={};assert(loadstring(text:sub(first,last-1)))()
+ISScrollingListBox={onMouseDown=function()end,onMouseMove=function()end,onMouseUp=function()end}
+cancelsOperation=function(row)return row.header==true end
+preciseTiming=true;local tick=0;timingNow=function()tick=tick+1;return tick end;now=function()return tick end
+ref=tostring;tokenID=function(token)return token.id end;deviceOnly=function()return true end
+control=function()return'demote-reader'end
+for _,source in ipairs({'root','worn-bag','world'})do
+ local readToken,volumeToken={id=10},{id=30};oldNative={};front={toolkitQueueOperation=readToken,action=oldNative};volume={toolkitQueueOperation=volumeToken};equip=nil
+ local approach={toolkitQueueOperation=volumeToken};local q={queue={front,approach,volume},current=front};queue=function()return q end
+ ids={source=source};state={player={getPlayerNum=function()return 0 end}}
+ local rows={{item=front,operation=readToken,header=source~='root',index=1,height=40},{item=approach,operation=volumeToken,header=true,index=2,height=40}}
+ local list=setmetatable({items=rows},{__index=List})
+ function list:clearGesture()self.dragAction=nil;self.dragging=nil;self.pressedCancel=nil;self.pressedToggle=nil;self.pressedOperation=nil end
+ function list:rowUnderMouse(x,y)return self.items[math.floor(y/40)+1]end
+ function list:topOfItem(index)return(index-1)*40 end
+ function list:cancelX()return 400 end
+ function list:setYScroll()end
+ function list:isVScrollBarVisible()return false end
+ local panel={list=list,expanded={},initialise=function()end,addToUIManager=function()end,update=function()end,removeFromUIManager=function()end}
+ list.parent=panel
+ local admission,moved=0,0
+ Toolkit={ActionQueue={moveReason=function(queue,action,target)
+  admission=admission+1;assert(queue==q and action==front and target==nil);return nil
+ end,move=function(queue,action,target,after)
+  moved=moved+1;assert(queue==q and action==front and target==approach and after==true)
+  q.toolkitCancel=front;return true
+ end}}
+ T={ActionQueuePanel={new=function()return panel end},ActionQueuePolicy={evaluateMove=function(queue,action,target,after)
+  assert(queue==q and action==front and target==volume and after==true);return{allowed=true}
+ end}}
+ diagnostic=function(decision)return{reason=false,source=source}end
+ local ui=gesture()
+ assert(admission==1 and moved==1 and ui.accepted and ui.pressCaptured and ui.dragging and ui.gestureCleared)
+ assert(ui.movingAction==tostring(front)and ui.movingAnchor==tostring(front)and ui.target==tostring(approach)and ui.targetAction==tostring(volume)and ui.operation==30 and ui.movingToken==10)
+ assert(ui.dropAfter==true and ui.commonActiveEdit==false and ui.toY>list:topOfItem(2)+20 and list.dragAction==nil)
+end
+text=read(arg[3]);last=assert(text:find('local function descriptor(',1,true))
+local summary=assert(loadstring(text:sub(1,last-1)..'return planSummary'))()
+local item,root,dest,action={},{},{},{}
+local edit={version=1,complete=true,capacity='external',resources={{domain='item',key=17,facts={item=item,location=root},requires={{field='location',equal=root}},effects={{field='location',set=dest}}}}}
+local plan={kind='preempt',nodes={{kind='pending',action=action,edit=edit}}}
+local result=summary(plan,action,item,root,dest,17,'Base.Book')
+local effect=result.nodes[1].returnEffect
+assert(effect.action==tostring(action)and effect.item==tostring(item)and effect.source==tostring(root)and effect.destination==tostring(dest)and effect.synthetic==false)
+local resource=edit.resources[1]
+for _,change in ipairs({
+ function()resource.key=18 end,function()resource.facts.item={}end,function()resource.facts.location=dest end,
+ function()resource.requires[1].equal=dest end,function()resource.effects[1].set=root end,
+ function()edit.capacity='unchanged'end,function()plan.nodes[1].action={}end,function()plan.nodes[1].kind='return'end,
+ function()edit.resources[2]=resource end,function()resource.effects[2]=resource.effects[1]end})do
+ resource.key=17;resource.facts.item=item;resource.facts.location=root;resource.requires[1].equal=root;resource.effects[1].set=dest
+ edit.capacity='external';plan.nodes[1].action=action;plan.nodes[1].kind='pending';edit.resources[2]=nil;resource.effects[2]=nil
+ change();assert(not pcall(summary,plan,action,item,root,dest,17,'Base.Book'),'retained return resource mutation was accepted')
+end
+os.exit(0)
+"""
+        subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua'),
+            str(ROOT/'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePanel.lua'),str(ROOT/'tests/native_queue/book-controls/shared/QueueBookEditObservation.lua')],check=True)
+
+    def test_device_action_refs_accept_expanded_dumps_only_for_the_same_class_and_address(self):
+        def replace(value, mapping):
+            if isinstance(value, dict): return {key: replace(field, mapping) for key, field in value.items()}
+            if isinstance(value, list): return [replace(field, mapping) for field in value]
+            return mapping.get(value, value) if isinstance(value, str) else value
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for case in a.DEVICE_ONLY_CASES:
+                    row=self.precise_evidence(case,kind,mode)[0]
+                    receipt=self.active_edit_receipt(row)
+                    compact={r['actionRef']: r['type']+' 0x'+format(r['sequence']+256,'x') for r in row['records']}
+                    expanded={key: value+'{ mode=SetVolume, maxTime=50, changed=true }' for key,value in compact.items()}
+                    row=replace(row,expanded);receipt=replace(receipt,compact)
+                    selection=self.selection(kind,mode)
+                    self.assertEqual(a.active_edit_errors(receipt,row,case,selection),[],(kind,mode,case))
+                    intent=receipt['intent']
+                    action_class,address=intent['action'].split(' ',1)
+                    wrong_refs=[action_class+' 0xdeadbeef','ForeignAction '+address,
+                                intent['action']+'{unterminated',intent['action']+' trailing',True,1,None,{}]
+                    for field in ('action','target'):
+                        for wrong in wrong_refs:
+                            changed=copy.deepcopy(receipt);changed['intent'][field]=wrong
+                            self.assertTrue(a.active_edit_errors(changed,row,case,selection),(kind,mode,case,field,wrong))
+                    for change in (lambda r:r['intent'].update(extra=True),lambda r:r['intent'].update(after=int(r['intent']['after'])),
+                                   lambda r:r['intent'].update(kind=True)):
+                        changed=copy.deepcopy(receipt);change(changed)
+                        self.assertTrue(a.active_edit_errors(changed,row,case,selection))
+                    if mode=='toolkit':
+                        for index in range(len(receipt['plan']['nodes'])):
+                            for change in (lambda r,i=index:r['plan']['nodes'][i].update(action='ForeignAction 0xdeadbeef'),
+                                           lambda r,i=index:r['plan']['nodes'][i].update(extra=True),
+                                           lambda r,i=index:r['plan']['nodes'][i].update(complete=int(r['plan']['nodes'][i]['complete']))):
+                                changed=copy.deepcopy(receipt);change(changed)
+                                self.assertTrue(a.active_edit_errors(changed,row,case,selection))
+                        changed=copy.deepcopy(receipt);changed['plan']['extra']=True
+                        self.assertTrue(a.active_edit_errors(changed,row,case,selection))
+                        changed=copy.deepcopy(receipt);changed['plan']['nodes'][1:3]=reversed(changed['plan']['nodes'][1:3])
+                        self.assertTrue(a.active_edit_errors(changed,row,case,selection))
+                        if not case.startswith('root.'):
+                            for field,wrong in [('action','ISInventoryTransferAction 0xdeadbeef'),('synthetic',0),('extra',True)]:
+                                changed=copy.deepcopy(receipt)
+                                next(node for node in changed['plan']['nodes'] if 'returnEffect' in node)['returnEffect'][field]=wrong
+                                self.assertTrue(a.active_edit_errors(changed,row,case,selection))
+                            changed=copy.deepcopy(receipt);changed['prototype']['action']='ForeignAction 0x'+format(7+256,'x')
+                            self.assertTrue(a.active_edit_errors(changed,row,case,selection))
+
+    def test_device_only_native_phase_requires_owned_record_and_every_other_effect_complete(self):
+        for case in a.DEVICE_ONLY_CASES:
+            row=self.precise_evidence(case)[0];selection=self.selection()
+            receipt=self.active_edit_receipt(row)
+            historical=copy.deepcopy(row)
+            actual_approach=next(r for r in historical['records'] if r.get('role')=='preparation')
+            for token in (10,30):
+                completed=copy.deepcopy(actual_approach);completed.update(sequence=900+token,actionRef='ISQueueActionsAction 0x'+format(900+token,'x'),token=token,started=True,performedAt=8)
+                historical['records'].insert(0,completed)
+            self.assertEqual(a.active_edit_errors(receipt,historical,case,selection),[], 'completed historical preparation cannot become the pending native TV phase')
+            for mutate in (lambda r:r['diagnostics']['contractGaps'].append(dict(index=999,actionType='ISQueueActionsAction',reason='effects_unproven')),
+                           lambda r:r['observer']['projection']['deferred'][0].update(index=999),
+                           lambda r:r['diagnostics']['contractGaps'].append(dict(index=4,actionType='ISRadioAction',reason='effects_unproven')),
+                           lambda r:r['diagnostics'].update(projectionBlockerType='ISRadioAction'),
+                           lambda r:r['diagnostics'].update(nodesTruncated=True),
+                           lambda r:r['plan']['nodes'][2].update(complete=False),
+                           lambda r:r['plan']['nodes'][1].update(capacity='unchanged'),
+                           lambda r:r['existingDecision'].update(commonActiveEdit=True),
+                           lambda r:r['performance'].update(comparable=True)):
+                changed=copy.deepcopy(receipt);mutate(changed)
+                self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,changed))
+            for mutate in (lambda r:next(x for x in r['records'] if x['role']=='preparation')['approach'].update(owned=False),
+                           lambda r:next(x for x in r['records'] if x['role']=='preparation').update(token=999),
+                           lambda r:next(x for x in r['boundary']['queue'] if x['role']=='preparation').update(type='ISRadioAction'),
+                           lambda r:next(x for x in r['boundary']['queue'] if x['role']=='preparation')['approach'].update(nativeResolver=False),
+                           lambda r:r['boundary']['queue'].append(dict(role='preparation',type='ForeignAction',actionRef='foreign',token=999)),
+                           lambda r:r['boundary']['ui'].update(movingAnchor='synthetic-anchor'),
+                           lambda r:r['boundary']['ui'].update(targetAction='foreign-target')):
+                changed=copy.deepcopy(row);mutate(changed)
+                if a.active_edit_errors(receipt,changed,case,selection): continue
+                evidence=list(self.precise_evidence(case));evidence[0]=changed
+                self.assertTrue(self.check(evidence),case)
+
+    def test_device_only_native_phase_descriptor_identity_shape_and_order_are_causal(self):
+        for case in a.DEVICE_ONLY_CASES:
+            row=self.precise_evidence(case)[0];selection=self.selection()
+            receipt=self.active_edit_receipt(row)
+            self.assertEqual(a.active_edit_errors(receipt,row,case,selection),[])
+            for path in ('projection','plan','diagnostics'):
+                def phase(value):
+                    if path=='projection': return value['observer']['projection']['deferred'][0]['descriptor']
+                    return value[path]['nodes'][1]['deferred']
+                for field,wrong in [('version',True),('version',2),('kind','native-noop'),('actor','IsoPlayer@foreign'),
+                        ('actor',False),('targetSquare','IsoGridSquare@foreign'),('targetSquare',42),
+                        ('invalidates','position'),('routing','direct'),('expansion','known'),('outcome','success'),
+                        ('complete',True),('resources',[]),('domain','position'),('futureFacts',{}),('position',{})]:
+                    changed=copy.deepcopy(receipt);phase(changed)[field]=wrong
+                    self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,path,field,wrong))
+                for field in receipt['plan']['nodes'][1]['deferred']:
+                    changed=copy.deepcopy(receipt);phase(changed).pop(field)
+                    self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,path,field))
+            for field in ('actor','targetSquare'):
+                changed=copy.deepcopy(receipt)
+                for descriptor in (changed['observer']['projection']['deferred'][0]['descriptor'],
+                        changed['plan']['nodes'][1]['deferred'],changed['diagnostics']['nodes'][1]['deferred']):
+                    descriptor[field]='foreign@identity'
+                self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,field,'all summaries'))
+            for mutate in (lambda r:r['observer']['projection'].update(evaluatedPrefix=True),
+                           lambda r:r['observer']['projection'].update(evaluatedPrefix=2),
+                           lambda r:r['observer']['projection'].update(blocker='ForeignAction 0xdead'),
+                           lambda r:r['observer']['projection']['deferred'].append(copy.deepcopy(r['observer']['projection']['deferred'][0])),
+                           lambda r:r['observer']['projection']['deferred'][0].update(index=True),
+                           lambda r:r['observer']['projection']['deferred'][0].update(action=r['current']),
+                           lambda r:r['observer']['projection']['deferred'][0].update(complete=True),
+                           lambda r:r['observer']['projection'].update(futureFacts={}),
+                           lambda r:r['plan']['nodes'][1].pop('deferred'),
+                           lambda r:r['plan']['nodes'][2].update(deferred=copy.deepcopy(r['plan']['nodes'][1]['deferred'])),
+                           lambda r:r['plan']['nodes'].__setitem__(slice(1,3),list(reversed(r['plan']['nodes'][1:3])))):
+                changed=copy.deepcopy(receipt);mutate(changed)
+                self.assertTrue(a.active_edit_errors(changed,row,case,selection),case)
+
+    def test_device_only_requires_exact_native_phase_and_real_legacy_authority(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                selection, client, server = self.log_bank(kind=kind, mode=mode, precise=True, active=True, cases=a.DEVICE_ONLY_CASES)
+                with tempfile.TemporaryDirectory() as directory:
+                    root=Path(directory);(root/'client1-launch.log').write_text(client);(root/'server-launch.log').write_text(server)
+                    result=a.verify(root,selection,{})
+                    self.assertEqual(result['issues'], [], (kind,mode,result['issues']))
+                for case in a.DEVICE_ONLY_CASES:
+                    row=self.precise_evidence(case,kind,mode)[0];receipt=self.active_edit_receipt(row)
+                    self.assertEqual(a.active_edit_errors(receipt,row,case,selection),[])
+                    mutations=[lambda r:r['intent'].update(kind='cancel'),lambda r:r['intent'].update(after=not r['intent']['after']),
+                        lambda r:r['intent'].update(action='synthetic-equip'),lambda r:r.update(qualifiedReturn=True),
+                        lambda r:r.update(readOnly=False),lambda r:r['existingDecision'].update(commonActiveEdit=True),
+                        lambda r:r['performance'].update(positiveTimingClaim=True),lambda r:r['performance'].update(completeEditMeasured=True)]
+                    if mode=='toolkit':
+                        mutations += [lambda r:r['observer']['projection'].update(status='allowed',reason=False),
+                            lambda r:r['observer']['projection'].update(allowed=True),lambda r:r['observer'].update(returns=1),
+                            lambda r:r['plan']['nodes'][1].update(complete=True),lambda r:r['plan']['nodes'][1].update(action='native-noop-equip'),
+                            lambda r:r['plan']['nodes'][0].update(complete=1),lambda r:r['intent'].update(after=int(r['intent']['after']))]
+                    else: mutations += [lambda r:r.update(plan={'kind':'preempt','nodes':[]}),lambda r:r['observer'].update(projection={'status':'allowed'})]
+                    if mode=='toolkit' and not case.startswith('root.'):
+                        for field, wrong in (('id',999),('fullType','Base.Pen'),('item','different-item'),('source','different-root'),
+                                ('destination','different-destination'),('action','synthetic-return'),('synthetic',True),('effects',2),('complete',False)):
+                            changed=copy.deepcopy(receipt)
+                            next(n for n in changed['plan']['nodes'] if 'returnEffect' in n)['returnEffect'][field]=wrong
+                            self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,field))
+                    for mutate in mutations:
+                        changed=copy.deepcopy(receipt);mutate(changed)
+                        self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,mode,changed))
+        mixed=self.precise_evidence('world.header-cancel')[0];value=self.active_edit_receipt(mixed)
+        value['observer']['projection'].update(status='allowed',reason=False)
+        value['performance'].update(observerProjectionStatus='allowed',observerProjectionReason=False)
+        self.assertTrue(a.active_edit_errors(value,mixed,mixed['id'],self.selection()))
+        row=self.evidence('world.move-volume-device-only')[0]
+        for mutate in (lambda r:r['records'].append(dict(role='equip',type='ISEquipWeaponAction')),
+                       lambda r:r['boundary']['ui'].update(commonActiveEdit=True),lambda r:r.update(equipSnapshot={} ),
+                       lambda r:r['client']['hands'].update(primary=r['ids']['pen']['id'])):
+            changed=copy.deepcopy(row);mutate(changed);evidence=list(self.evidence(row['id']));evidence[0]=changed
+            self.assertTrue(self.check(evidence))
 
     def test_active_edit_flag_is_strict_and_restricted_to_precise_real_header_cases(self):
         selection = self.selection(); selection['cases'] = list(a.ACTIVE_EDIT_CASES)

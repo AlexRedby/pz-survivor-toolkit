@@ -2255,6 +2255,7 @@ function Settlement.observeEditCleanup(queue, current)
                         and equal(facts.destination, value.destination) and equal(facts.location, value.source)
                         and facts.id == value.id and facts.fullType == value.fullType then
                         value.effect = "native-leaf-location"
+                        value.returnAction = prototype
                     end
                 end
             end
