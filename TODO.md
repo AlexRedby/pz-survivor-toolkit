@@ -1,3 +1,9 @@
+# Current stabilization batch
+
+- [ ] Integrate the latest `origin/main` with the completed cleanup, optional-compatibility and warehouse observer fixes. Preserve both sides' unfinished TODO work and qualify the affected fixture/queue consumers before accepting the combined candidate.
+- [ ] Reproduce and resolve the startup diagnostics blocking clean native qualification, using exact prepared dependencies and untouched controls. Fix demonstrated causes or classify narrowly proven baseline signatures, retain strict auditing, and require fresh warehouse/Wishlist Host reports.
+- [ ] Resolve every missing or ambiguous selected-mod source and required dependency without silently changing the selection. Install only the missing selected inputs, generate a fresh exact pack lock and validate its complete dependency closure before full-pack qualification.
+
 # Shared queue resources and container capacity
 
 Implementation and migration are conditional on the performance gate in [the design plan](docs/design/QUEUE_RESOURCE_CAPACITY.md). Keep the native executor and existing protections until each replacement is qualified.
