@@ -41,13 +41,13 @@ def window_start_counts(selection):
     return {}
 
 
-def validate(selection):
+def validate_selection(selection):
     if selection.get('cases') in (['legacy-seed'], ['legacy-reload']):
         from . import warehouse_legacy
         return warehouse_legacy.validate(selection)
     if selection.get('cases') in (['persist-seed'], ['persist-reload']):
         from . import warehouse_persistence
-        return warehouse_persistence.validate(selection)
+        return warehouse_persistence.validate_selection(selection)
     kind, options = selection.get('kind'), selection.get('options', {})
     clients = selection.get('clients', 2 if kind == 'mp' else 1)
     if (selection.get('cases') != ['snapshot'] or kind not in ('sp', 'mp')
@@ -59,6 +59,13 @@ def validate(selection):
             or kind == 'mp' and options.get('mp_host') is not True
             or kind == 'sp' and options.get('mp_host')):
         raise ValueError('Warehouse Manifest requires fresh SP or two-client menu Host, snapshot, Toolkit/BC and EN/RU')
+
+
+def validate(selection):
+    validate_selection(selection)
+    if selection.get('cases') in (['persist-seed'], ['persist-reload']):
+        from . import warehouse_persistence
+        warehouse_persistence.validate(selection)
 
 
 def sources(project, selection):

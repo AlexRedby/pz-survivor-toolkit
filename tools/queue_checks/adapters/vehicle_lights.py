@@ -22,7 +22,7 @@ def definitions():
                    'One actual local driver; remote passengers and visual acceptance require separate evidence.']}}
 
 
-def validate(selection):
+def validate_selection(selection):
     required = set(definitions()['vehicle-lights']['default_mods'])
     if (selection['cases'] != ['road'] or selection['kind'] not in ('sp', 'mp')
             or selection['mode'] != 'toolkit' or selection['clients'] != 1
@@ -45,8 +45,15 @@ def validate(selection):
         if options.get('dashboard_compare'):
             raise ValueError('Dashboard controls require the installed integration, not the deferred comparison')
     for key in ('ffmpeg', 'ffprobe'):
-        value = Path(selection['options'][key])
-        if not value.is_absolute() or not os.access(value, os.X_OK):
+        value = options.get(key)
+        if not isinstance(value, (str, Path)) or not Path(value).is_absolute():
+            raise ValueError('Vehicle lights needs an absolute executable ' + key)
+
+
+def validate(selection):
+    validate_selection(selection)
+    for key in ('ffmpeg', 'ffprobe'):
+        if not os.access(Path(selection['options'][key]), os.X_OK):
             raise ValueError('Vehicle lights needs an absolute executable ' + key)
 
 

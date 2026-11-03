@@ -28,7 +28,8 @@ class BatchTests(unittest.TestCase):
         self.preparation_waits = []
 
     def write_plan(self, jobs):
-        self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk', 'jobs': jobs}))
+        self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk', 'options': {
+            'ffmpeg': '/tools/ffmpeg', 'ffprobe': '/tools/ffprobe', 'patch_jar': '/tools/patch.jar'}, 'jobs': jobs}))
 
     def prepare(self, project, output, game, jdk, selection, workshop, *, resource_wait=300):
         output.mkdir()
@@ -66,11 +67,10 @@ class BatchTests(unittest.TestCase):
     def test_misspelled_cases_never_silently_runs_only_the_default_case(self):
         self.write_plan([{'id': 'typo', 'suite': 'engine', 'cases': ['repair', 'cancel']},
                          {'id': 'selected', 'suite': 'engine', 'case': 'missing-target,late-continuation'}])
-        self.assertEqual(self.invoke(), 1)
-        self.assertEqual([name for name, _ in self.calls], ['selected'])
-        self.assertEqual(self.calls[0][1]['cases'], ['missing-target', 'late-continuation'])
-        result = json.loads((self.args.output / 'batch-report.json').read_text())
-        self.assertIn("use 'case'", result['jobs'][0]['error'])
+        with self.assertRaisesRegex(ValueError, "Invalid batch job typo:.*use 'case'"):
+            self.invoke()
+        self.assertFalse(self.calls)
+        self.assertFalse(self.args.output.exists())
 
     def test_blocked_job_does_not_hide_remaining_jobs(self):
         self.write_plan([{'id': name, 'suite': 'video-recording'} for name in ('blocked', 'next')])
@@ -188,6 +188,82 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(self.invoke(), 0)
         self.assertEqual(self.calls[1][1]['options']['seed_run'], str((self.args.output / 'seed').resolve()))
 
+    def test_late_invalid_contract_stops_before_builds_leases_or_launches(self):
+        invalid = [
+            {'suite': 'shared-wishlist', 'case': 'standalone', 'mods': ['PZSurvivorToolkit', 'CleanUI']},
+            {'suite': 'shared-wishlist', 'options': {'native_startup_fixes': 'yes'}},
+            {'suite': 'startup', 'options': {'window_size': [0, 900]}},
+            {'suite': 'startup', 'options': {'preload_toolkit_fonts': True}},
+            {'suite': 'startup', 'options': {'preload_toolkit_fonts': 1}},
+            {'suite': 'startup', 'options': {'mod_sources': {'PZSurvivorToolkit': 'relative'}}},
+            {'suite': 'startup', 'options': {'mod_sources': {'NotSelected': '/unused-mod'}}},
+            {'suite': 'wooden_cart_motion', 'case': 'reverse', 'options': {'kotlin_home': 42}},
+            {'suite': 'startup', 'timeout': 0},
+            {'suite': 'startup', 'resource_wait': float('nan')},
+        ]
+        for policy in cli.batch_policy.POLICIES:
+            for dry_run in (False, True):
+                for job in invalid:
+                    with self.subTest(policy=policy, dry_run=dry_run, job=job):
+                        self.write_plan([{'id': 'first', 'suite': 'startup'}, dict(job, id='last')])
+                        self.args.failure_policy, self.args.dry_run = policy, dry_run
+                        with patch.object(cli.adapters, 'preflight') as build, \
+                                patch.object(cli.admission, 'preparing') as lease, \
+                                patch.object(cli.native, 'prepare') as prepare, \
+                                patch.object(cli.runner, 'run') as run:
+                            with self.assertRaisesRegex(ValueError, 'Invalid batch job last:'):
+                                cli.batch(self.args, self.catalog)
+                        for operation in (build, lease, prepare, run):
+                            operation.assert_not_called()
+                        self.assertFalse(self.args.output.exists())
+
+    def test_source_free_dry_run_checks_tools_and_future_seed_without_opening_them(self):
+        self.write_plan([{'id': 'video', 'suite': 'video-recording'},
+                         {'id': 'seed', 'suite': 'shared-wishlist', 'case': 'standalone'},
+                         {'id': 'reload', 'suite': 'shared-wishlist', 'case': 'reload', 'seed_job': 'seed'}])
+        self.args.dry_run = True
+        original = cli.report.read_json
+        def read_plan_only(path):
+            self.assertEqual(self.plan, Path(path))
+            return original(path)
+        with patch.object(cli.report, 'read_json', side_effect=read_plan_only), \
+                patch.object(cli.adapters.get('shared-wishlist'), '_seed',
+                             side_effect=AssertionError('future seed opened during admission')), \
+                patch.object(cli.native, '_locations', side_effect=AssertionError('mod sources opened')), \
+                patch('sys.stdout', io.StringIO()) as stdout:
+            self.assertEqual(0, self.invoke())
+        jobs = json.loads(stdout.getvalue())['jobs']
+        self.assertEqual(str((self.args.output / 'seed').resolve()), jobs[-1]['selection']['options']['seed_run'])
+        self.assertFalse(self.args.output.exists())
+        self.assertFalse(self.calls)
+
+    def test_reload_full_validation_still_opens_seed_only_after_structural_admission(self):
+        self.write_plan([{'id': 'seed', 'suite': 'shared-wishlist', 'case': 'standalone'},
+                         {'id': 'reload', 'suite': 'shared-wishlist', 'case': 'reload', 'seed_job': 'seed'}])
+        plan = json.loads(self.plan.read_text())
+        adapter = cli.adapters.get('shared-wishlist')
+        paths = {job['id']: self.args.output / job['id'] for job in plan['jobs']}
+        with patch.object(adapter, '_seed', side_effect=ValueError('seed evidence invalid')) as seed:
+            cli.validate_batch_jobs(plan, plan['jobs'], self.catalog, self.plan, self.args.output)
+            seed.assert_not_called()
+            selected = cli.batch_selection(plan, plan['jobs'][-1], self.catalog, self.plan, paths)
+            with self.assertRaisesRegex(ValueError, 'seed evidence invalid'):
+                adapter.validate(selected)
+            seed.assert_called_once_with(selected)
+
+    def test_warehouse_reload_admission_keeps_sealed_template_checks_at_preparation(self):
+        from queue_checks.adapters import warehouse_persistence
+        self.write_plan([{'id': 'reload', 'suite': 'warehouse-manifest', 'case': 'persist-reload', 'kind': 'mp',
+                          'options': {'mp_host': True, 'world_template': str(self.root / 'future-template')}}])
+        plan = json.loads(self.plan.read_text())
+        with patch.object(warehouse_persistence, '_seed', side_effect=ValueError('template evidence invalid')) as seed:
+            cli.validate_batch_jobs(plan, plan['jobs'], self.catalog, self.plan, self.args.output)
+            seed.assert_not_called()
+            selected = cli.batch_selection(plan, plan['jobs'][0], self.catalog, self.plan, {})
+            with self.assertRaisesRegex(ValueError, 'template evidence invalid'):
+                cli.adapters.get('warehouse-manifest').validate(selected)
+            seed.assert_called_once_with(selected)
+
     def test_missing_dependency_blocks_before_preparation_and_propagates_to_dependents(self):
         self.write_plan([{'id': 'blocked', 'suite': 'startup'},
                          {'id': 'candidate', 'suite': 'startup', 'control_job': 'blocked'},
@@ -247,6 +323,7 @@ class BatchTests(unittest.TestCase):
     def test_budget_and_wait_are_passed_per_job_and_ports_default_to_auto(self):
         self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk',
             'resources': {'heap_mib': 1024, 'cpu_per_instance': 0.5}, 'resource_wait': 15,
+            'options': {'ffmpeg': '/tools/ffmpeg', 'ffprobe': '/tools/ffprobe'},
             'jobs': [{'id': 'custom', 'suite': 'video-recording', 'resources': {'native_mib': 512}}]}))
         waits = []
         original = self.run_job
@@ -320,27 +397,32 @@ class BatchTests(unittest.TestCase):
         self.write_plan([{'id': 'vanilla', 'suite': 'startup', 'mode': 'native', 'mods': 'vanilla'},
                          {'id': 'empty', 'suite': 'startup', 'mode': 'native', 'mods': []},
                          {'id': 'wrong-suite', 'suite': 'video-recording', 'mode': 'native', 'mods': 'vanilla'}])
-        self.assertEqual(1, self.invoke())
-        self.assertEqual(['vanilla'], [name for name, _ in self.calls])
+        with self.assertRaisesRegex(ValueError, 'Invalid batch job empty:.*nonempty list'):
+            self.invoke()
+        self.assertFalse(self.calls)
+        self.assertFalse(self.args.output.exists())
+        self.write_plan([{'id': 'vanilla', 'suite': 'startup', 'mode': 'native', 'mods': 'vanilla'}])
+        self.assertEqual(0, self.invoke())
         self.assertEqual([], self.calls[0][1]['mods'])
-        cli.native._validate(self.calls[0][1])
 
-    def test_invalid_job_inputs_preserve_batch_report_and_later_jobs(self):
+    def test_invalid_job_inputs_reject_the_plan_before_any_preparation(self):
         jobs = [{'id': 'bad-options-' + str(i), 'suite': 'startup', 'options': value}
                 for i, value in enumerate((None, [], 'bad'))]
         jobs += [{'id': 'bad-case-' + str(i), 'suite': 'startup', 'case': value}
                  for i, value in enumerate(([], ['loaded'], False, 0, ''))]
         jobs += [{'id': 'bad-sources-' + str(i), 'suite': 'startup', 'options': {'mod_sources': value}}
                  for i, value in enumerate((None, [], 'bad'))]
-        self.write_plan(jobs + [{'id': 'valid', 'suite': 'startup'}])
-        self.assertEqual(1, self.invoke())
-        self.assertEqual(['valid'], [name for name, _ in self.calls])
-        result = json.loads((self.args.output / 'batch-report.json').read_text())
-        self.assertEqual(['blocked'] * len(jobs) + ['passed'], [job['status'] for job in result['jobs']])
-        self.assertEqual([], result['remaining'])
+        for job in jobs:
+            with self.subTest(job=job):
+                self.write_plan([{'id': 'valid', 'suite': 'startup'}, job])
+                with self.assertRaisesRegex(ValueError, 'Invalid batch job ' + job['id']):
+                    self.invoke()
+                self.assertFalse(self.calls)
+                self.assertFalse(self.args.output.exists())
 
     def test_job_source_overrides_merge_by_mod_id_without_mutating_plan(self):
         plan = {'game': '/game', 'jdk': '/jdk',
+                'mods': ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit'],
                 'options': {'mod_sources': {'PZSurvivorToolkit': '/frozen/toolkit-a',
                                             'PZToolkitJavaPatches': '/frozen/java-a'},
                             'ffmpeg': '/tools/plan-ffmpeg', 'retained': True},
@@ -362,7 +444,7 @@ class BatchTests(unittest.TestCase):
         self.assertTrue(toolkit['retained'] and java['retained'])
         self.assertEqual(json.dumps(plan, sort_keys=True), original)
 
-    def test_job_source_map_cannot_hide_invalid_plan_map_or_stop_later_reports(self):
+    def test_job_source_map_cannot_hide_invalid_plan_map(self):
         for index, invalid in enumerate((None, [], 'bad')):
             with self.subTest(plan_sources=invalid):
                 self.args.output = self.root / ('invalid-sources-' + str(index))
@@ -372,12 +454,10 @@ class BatchTests(unittest.TestCase):
                               'options': {'mod_sources': {'PZSurvivorToolkit': '/frozen/toolkit'}}},
                              {'id': 'clear', 'suite': 'startup', 'options': {'mod_sources': {}}},
                              {'id': 'later', 'suite': 'startup'}]}))
-                self.assertEqual(1, self.invoke())
-                self.assertEqual([], self.calls)
-                result = json.loads((self.args.output / 'batch-report.json').read_text())
-                self.assertEqual(['blocked'] * 3, [job['status'] for job in result['jobs']])
-                self.assertTrue(all('mod_sources' in job['error'] for job in result['jobs']))
-                self.assertEqual([], result['remaining'])
+                with self.assertRaisesRegex(ValueError, 'Invalid batch job first:.*mod_sources'):
+                    self.invoke()
+                self.assertFalse(self.calls)
+                self.assertFalse(self.args.output.exists())
 
     def test_explicit_empty_job_sources_clear_plan_pins_for_native_vanilla(self):
         self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk',
@@ -391,7 +471,7 @@ class BatchTests(unittest.TestCase):
         self.assertTrue(selected['options']['retained'])
         cli.native._validate(selected)
 
-    def test_invalid_plan_options_are_reported_for_every_unrun_job(self):
+    def test_invalid_plan_options_reject_before_any_preparation(self):
         for index, value in enumerate((None, [], 'bad')):
             with self.subTest(value=value):
                 self.write_plan([{'id': 'first', 'suite': 'startup'}, {'id': 'second', 'suite': 'startup'}])
@@ -399,11 +479,10 @@ class BatchTests(unittest.TestCase):
                 plan['options'] = value
                 self.plan.write_text(json.dumps(plan))
                 self.args.output = self.root / ('bad-plan-' + str(index))
-                self.assertEqual(1, self.invoke())
-                self.assertEqual([], self.calls)
-                result = json.loads((self.args.output / 'batch-report.json').read_text())
-                self.assertEqual(['blocked', 'blocked'], [job['status'] for job in result['jobs']])
-                self.assertEqual([], result['remaining'])
+                with self.assertRaisesRegex(ValueError, 'Invalid batch job first:.*options'):
+                    self.invoke()
+                self.assertFalse(self.calls)
+                self.assertFalse(self.args.output.exists())
 
     def test_explicit_empty_jobs_never_broadens_to_the_full_plan(self):
         self.write_plan([{'id': 'wanted', 'suite': 'item-tags'}, {'id': 'unrelated', 'suite': 'video-recording'}])
@@ -429,7 +508,7 @@ class BatchTests(unittest.TestCase):
     def test_dry_run_matches_execution_selection_without_preparing_or_writing(self):
         self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk',
             'resources': {'heap_mib': 1024}, 'resource_wait': 15,
-            'options': {'mod_sources': {'PZSurvivorToolkit': '/candidate', 'PZToolkitJavaPatches': '/java'}},
+            'options': {'mod_sources': {'PZSurvivorToolkit': '/candidate'}},
             'sets': {'wishlist': ['reload']},
             'jobs': [{'id': 'control', 'suite': 'shared-wishlist', 'mode': 'native'},
                      {'id': 'seed', 'suite': 'shared-wishlist', 'case': 'standalone', 'control_job': 'control'},
@@ -453,7 +532,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual([job['id'] for job in preview['jobs']], ['control', 'seed', 'reload'])
         self.assertEqual(preview['jobs'][1]['control'], str((self.args.output / 'control').resolve()))
         self.assertEqual(preview['jobs'][2]['selection']['options']['mod_sources'],
-                         {'PZSurvivorToolkit': '/updated', 'PZToolkitJavaPatches': '/java'})
+                         {'PZSurvivorToolkit': '/updated'})
         self.assertEqual(preview['jobs'][2]['resource_wait'], 15)
         self.args.sets = ['wishlist']
         self.assertEqual(0, self.invoke())

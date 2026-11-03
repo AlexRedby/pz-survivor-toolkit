@@ -181,6 +181,11 @@ class CartAdapterTests(unittest.TestCase):
         script = r'''
 local startup=STARTUP_SOURCE
 local originalPrint=print
+-- Preserve explicit event delivery for the startup ownership/probe harness.
+package.preload.QueuePreflight=function()return {
+ onGameStart=function(events,callback)events.OnGameStart.Add(callback)end,
+ onTick=function(events,callback)events.OnTick.Add(callback)end,
+}end
 for _,variant in ipairs({'default-wood','metal-wheelbarrow'}) do
  local expected=variant=='metal-wheelbarrow' and 'SaucedWheelbarrow.WheelbarrowMetal' or 'SaucedWheelbarrow.WheelbarrowWood'
  local config={cases={'interaction'}}
@@ -741,6 +746,11 @@ print('PASS actual selected-type ownership tick '..matrixCount..' cases')
         source=ROOT/'tests/native_queue/startup/client/ZZStartup.lua'
         script=r'''
 local source=SOURCE
+-- Preserve explicit event delivery for the checkpoint/reconnect harness.
+package.preload.QueuePreflight=function()return {
+ onGameStart=function(events,callback)events.OnGameStart.Add(callback)end,
+ onTick=function(events,callback)events.OnTick.Add(callback)end,
+}end
 for _,case in ipairs({'lease_lifecycle','owner_observer_motion'}) do
  for _,user in ipairs({'client1','client2'}) do
   for _,checkpoint in ipairs({'pending','connecting','verified','absent'}) do

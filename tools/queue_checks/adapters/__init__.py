@@ -22,6 +22,17 @@ def get(suite):
     return import_module('.' + MODULES[suite], __name__)
 
 
+def validate_selection(selection):
+    """Check declared contracts without reading native inputs or future seeds."""
+    adapter = get(selection['suite'])
+    if adapter is None:
+        return
+    resources = getattr(adapter, 'validate_resources', None)
+    if resources:
+        resources(selection)
+    getattr(adapter, 'validate_selection', adapter.validate)(selection)
+
+
 def preflight(selection):
     """Resolve and record build inputs without creating profiles or compiling fixtures."""
     adapter = get(selection['suite'])

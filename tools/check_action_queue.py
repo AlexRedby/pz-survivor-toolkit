@@ -197,6 +197,22 @@ def batch_selection(plan, job, catalog, config, runs, desktop_mode=None):
     return selection(namespace, catalog, options, desktop_mode=desktop_mode)
 
 
+def validate_batch_jobs(plan, jobs, catalog, config, output, desktop_mode=None):
+    """Admit the entire selected plan without opening inputs or future seeds."""
+    paths = {job['id']: (output / job['id']).resolve() for job in jobs}
+    for job in jobs:
+        try:
+            selected = batch_selection(plan, job, catalog, config, paths, desktop_mode)
+            native._validate(selected)
+            native.window_size(selected)
+            adapters.validate_selection(selected)
+            wait = job.get('resource_wait', plan.get('resource_wait', 300))
+            if type(wait) not in (int, float) or not math.isfinite(wait) or wait < 0:
+                raise ValueError('resource_wait must be a finite nonnegative number')
+        except (ValueError, KeyError, TypeError) as error:
+            raise ValueError('Invalid batch job ' + job['id'] + ': ' + str(error)) from error
+
+
 def batch_sessions(plan, jobs, catalog, config, output, desktop_mode=None):
     """Explicit groups only: validate every shared lifecycle before any preparation."""
     labels, previous = set(), None
@@ -233,7 +249,7 @@ def batch_sessions(plan, jobs, catalog, config, output, desktop_mode=None):
                 raise ValueError('Suite has no shared-session contract: ' + selected['suite'])
             if any(selected['options'].get(key) for key in ('world_template', 'seed_run', 'startup_connection')):
                 raise ValueError('Session jobs require a fresh lifecycle: ' + job['id'])
-            adapters.get(selected['suite']).validate(selected)
+            adapters.validate_selection(selected)
             selections.append(selected)
         def identity(selected):
             return json.dumps({key: value for key, value in selected.items()
@@ -252,7 +268,7 @@ def batch_sessions(plan, jobs, catalog, config, output, desktop_mode=None):
         combined = dict(first, cases=cases, expected_checks=len(cases) + 2,
                         timeout_seconds=sum(selected['timeout_seconds'] for selected in selections))
         native._validate(combined)
-        adapters.get(combined['suite']).validate(combined)
+        adapters.validate_selection(combined)
         unit['selection'] = combined
         unit['members'] = selections
     return units
@@ -293,6 +309,7 @@ def batch(args, catalog):
     if args.output.exists():
         raise FileExistsError('Fresh batch output directory required')
     units = batch_sessions(plan, jobs, catalog, args.plan, args.output, getattr(args, 'desktop_mode', None))
+    validate_batch_jobs(plan, jobs, catalog, args.plan, args.output, getattr(args, 'desktop_mode', None))
     paths = {job['id']: (args.output / job['id']).resolve() for job in jobs}
     try:
         for unit in units:

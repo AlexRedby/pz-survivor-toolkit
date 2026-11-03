@@ -31,7 +31,7 @@ def definitions():
     return result
 
 
-def validate(selection):
+def validate_selection(selection):
     suite = selection["suite"]
     if selection["kind"] != "mp":
         raise ValueError("Preserved crafting/wishlist fixtures require two-client MP")
@@ -72,11 +72,17 @@ def validate(selection):
         elif mods != ["PZSurvivorToolkit"]:
             raise ValueError("Wishlist standalone/visual/reload requires only PZSurvivorToolkit")
         if case == "reload":
-            _seed(selection)
+            _seed_path(selection)
     else:
         for required in FULL_MODS:
             if required not in mods:
                 raise ValueError("Wishlist full integration missing: " + required)
+
+
+def validate(selection):
+    validate_selection(selection)
+    if selection['suite'] == 'shared-wishlist' and selection['cases'] == ['reload']:
+        _seed(selection)
 
 
 def sources(project, selection):
@@ -406,11 +412,15 @@ def _seed_store_prefix(cache, name):
     return _legacy_store_prefix(cache, name)
 
 
-def _seed(selection):
+def _seed_path(selection):
     value = selection.get("options", {}).get("seed_run")
-    if not value:
+    if not isinstance(value, (str, Path)) or not value:
         raise ValueError("Wishlist reload requires options.seed_run from a completed full/standalone run")
-    root = Path(value).resolve()
+    return Path(value)
+
+
+def _seed(selection):
+    root = _seed_path(selection).resolve()
     try:
         initial, runtime, execution, report = [json.loads((root / name).read_text()) for name in ("selection.json", "runtime.json", "execution.json", "report.json")]
     except (OSError, ValueError) as error:

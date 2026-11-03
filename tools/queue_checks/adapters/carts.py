@@ -12,7 +12,7 @@ import sys
 import tempfile
 import zipfile
 
-from .auxiliary import _load, _path, _write
+from .auxiliary import _load, _path, _path_value, _write
 try:
     from ...cart_jvm import compile_sources, resolve_kotlin_home
 except ImportError:
@@ -268,9 +268,17 @@ def environment(selection, role, cache):
     return dict.fromkeys(allowed_env, 'true')
 
 
-def validate(selection):
+def _kotlin_home(selection):
+    home = selection.get('options', {}).get('kotlin_home')
+    if home is not None and (not isinstance(home, str) or not home):
+        raise ValueError('Cart options.kotlin_home must be a nonempty distribution path')
+    return home
+
+
+def validate_selection(selection):
     suite = selection['suite']
     options = selection.get('options', {})
+    _kotlin_home(selection)
     if 'cart_controls_extended' in options:
         if (suite != SP or selection['cases'] != ['controls'] or type(options['cart_controls_extended']) is not bool
                 or options['cart_controls_extended'] and options.get('cart_scenes') != ['shopping-cart']):
@@ -389,10 +397,6 @@ def validate(selection):
                 or any(options.get(flag, False) is not False for flag in ('cart_fast_motion', 'cart_actions', 'cart_hotkey_setdown'))
                 or 'cart_hotkey_key' in options):
             raise ValueError('cart_wall_exit requires wooden-wheelbarrow without fast/action/hotkey banks')
-        try:
-            importlib.import_module('numpy')
-        except ImportError as error:
-            raise ValueError('MP wall analyzers require working NumPy in ' + sys.executable) from error
     if 'cart_variant' in options and (not isinstance(options['cart_variant'], str) or options['cart_variant'] not in VARIANTS):
         raise ValueError('cart_variant requires an exact cart variant: ' + ', '.join(VARIANTS))
     variant = options.get('cart_variant', 'wooden-wheelbarrow')
@@ -405,7 +409,7 @@ def validate(selection):
         if not isinstance(meshes, dict) or not meshes or any(model not in SHOPPING_MODELS for model in meshes):
             raise ValueError('shopping-cart requires cart_mesh_fbx mapping exact shopping model names to FBX sources')
         for value in meshes.values():
-            if not isinstance(value, str) or not Path(value).is_absolute() or not Path(value).is_file():
+            if not isinstance(value, str) or not Path(value).is_absolute():
                 raise ValueError('cart_mesh_fbx requires absolute existing FBX files')
     if options.get('cart_hotkey_setdown') and not options.get('cart_actions'):
         raise ValueError('cart_hotkey_setdown requires cart_actions')
@@ -416,7 +420,30 @@ def validate(selection):
     overrides = selection.get('options', {}).get('mod_sources', {})
     for identifier in ('PZSurvivorToolkit', 'PZToolkitJavaPatches'):
         value = overrides.get(identifier)
-        if not isinstance(value, str) or not Path(value).is_absolute() or not Path(value).is_dir():
+        if not isinstance(value, str) or not Path(value).is_absolute():
+            raise ValueError('Explicit candidate options.mod_sources.' + identifier + ' is required')
+    for key in ('patch_jar', 'ffmpeg', 'ffprobe'):
+        _path_value(selection, key)
+    if suite == SP and selection['cases'][0] not in ('variants', 'controls', 'showcase', 'native-e', 'speed-parity'):
+        _path_value(selection, 'mesh_fbx')
+
+
+def validate(selection):
+    validate_selection(selection)
+    suite = selection['suite']
+    options = selection.get('options', {})
+    if 'cart_wall_exit' in options:
+        try:
+            importlib.import_module('numpy')
+        except ImportError as error:
+            raise ValueError('MP wall analyzers require working NumPy in ' + sys.executable) from error
+    if suite == SP and options.get('cart_variant', 'wooden-wheelbarrow') == 'shopping-cart' and selection['cases'] != ['speed-parity']:
+        for value in options['cart_mesh_fbx'].values():
+            if not Path(value).is_file():
+                raise ValueError('cart_mesh_fbx requires absolute existing FBX files')
+    overrides = options.get('mod_sources', {})
+    for identifier in ('PZSurvivorToolkit', 'PZToolkitJavaPatches'):
+        if not Path(overrides[identifier]).is_dir():
             raise ValueError('Explicit candidate options.mod_sources.' + identifier + ' is required')
     for key in ('patch_jar', 'ffmpeg', 'ffprobe'):
         _path(selection, key, executable=key != 'patch_jar')
@@ -450,9 +477,7 @@ def sources(project, selection):
 
 
 def preflight(selection):
-    home = selection.get('options', {}).get('kotlin_home')
-    if home is not None and (not isinstance(home, str) or not home):
-        raise ValueError('Cart options.kotlin_home must be a nonempty distribution path')
+    home = _kotlin_home(selection)
     try:
         return {'kotlin_home': str(resolve_kotlin_home(home))}
     except ValueError as error:

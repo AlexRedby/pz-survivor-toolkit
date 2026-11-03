@@ -7,7 +7,7 @@ import shutil
 import subprocess
 from .. import preparation_process
 import zipfile
-from .auxiliary import _load, _path
+from .auxiliary import _load, _path, _path_value
 
 
 MODS = ['ZombieBuddy', 'PZToolkitJavaPatches', 'PZSurvivorToolkit']
@@ -27,7 +27,7 @@ def definitions():
                       for case in ('fresh', 'reload', 'native-control')]}}
 
 
-def validate(selection):
+def validate_selection(selection):
     if (selection.get('cases') not in (['fresh'], ['reload'], ['native-control']) or selection.get('kind') != 'sp'
             or selection.get('mode') != 'toolkit' or selection.get('languages') != ['EN']
             or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
@@ -36,6 +36,12 @@ def validate(selection):
     template = selection.get('options', {}).get('world_template')
     if bool(template) != (selection['cases'] == ['reload']):
         raise ValueError('Basement hall reload requires a sealed world_template; fresh must create its own world')
+    for key in ('ffmpeg', 'ffprobe'):
+        _path_value(selection, key)
+
+
+def validate(selection):
+    validate_selection(selection)
     for key in ('ffmpeg', 'ffprobe'):
         _path(selection, key, executable=True)
 

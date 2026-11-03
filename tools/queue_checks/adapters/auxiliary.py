@@ -68,17 +68,22 @@ def _load(path):
     return module
 
 
-def _path(selection, key, executable=False):
+def _path_value(selection, key):
+    """Check a declared input path without consulting the filesystem."""
     value = selection.get('options', {}).get(key)
     if not isinstance(value, str) or not Path(value).is_absolute():
         raise ValueError('Explicit absolute options.' + key + ' is required')
-    path = Path(value).resolve(strict=True)
+    return Path(value)
+
+
+def _path(selection, key, executable=False):
+    path = _path_value(selection, key).resolve(strict=True)
     if not path.is_file() or executable and not os.access(path, os.X_OK):
         raise ValueError('Missing executable/file for options.' + key)
     return path
 
 
-def validate(selection):
+def validate_selection(selection):
     suite = selection['suite']
     if selection.get('mode') not in ('toolkit', 'native'):
         raise ValueError('Unsupported auxiliary queue mode')
@@ -125,9 +130,9 @@ def validate(selection):
     if suite == 'video-recording':
         required.add('PZToolkitJavaPatches')
         for key in ('ffmpeg', 'ffprobe'):
-            _path(selection, key, executable=True)
+            _path_value(selection, key)
     if suite == 'animal-trailer':
-        _path(selection, 'patch_jar')
+        _path_value(selection, 'patch_jar')
         if type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1:
             raise ValueError('Animal fixtures require one actual client')
         environments = {case == 'equipment-missing' for case in cases}
@@ -150,6 +155,15 @@ def validate(selection):
         selected = [mod for mod in selection['mods'] if mod in ITEM_MODS]
         if selected != ITEM_MODS and not selection.get('options', {}).get('pack_lock'):
             raise ValueError('Item-tag dependencies must retain the manifest load order')
+
+
+def validate(selection):
+    validate_selection(selection)
+    if selection['suite'] == 'video-recording':
+        for key in ('ffmpeg', 'ffprobe'):
+            _path(selection, key, executable=True)
+    if selection['suite'] == 'animal-trailer':
+        _path(selection, 'patch_jar')
 
 
 def environment(selection, role, cache):

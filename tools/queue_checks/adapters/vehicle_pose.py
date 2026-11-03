@@ -20,7 +20,7 @@ def definitions():
                        'kinds': ['sp', 'mp'], 'languages': ['EN'], 'modes': ['toolkit']}]}}
 
 
-def validate(selection):
+def validate_selection(selection):
     if (selection['cases'] != ['transitions'] or selection['kind'] not in ('sp', 'mp')
             or selection['mode'] != 'toolkit' or selection['clients'] != 1
             or selection['languages'] != ['EN'] or 'PZSurvivorToolkit' not in selection['mods']
@@ -35,8 +35,17 @@ def validate(selection):
     if options.get('vehicle_pose_new_music_probe') and (selection['kind'] != 'mp' or 'NewMusic' not in selection['mods']):
         raise ValueError('Early New Music probe requires menu Host and the selected NewMusic mod')
     if options.get('vehicle_pose_capture'):
-        ffmpeg = Path(options.get('ffmpeg', ''))
-        if not ffmpeg.is_absolute() or not ffmpeg.is_file() or not os.access(ffmpeg, os.X_OK):
+        ffmpeg = options.get('ffmpeg')
+        if not isinstance(ffmpeg, (str, Path)) or not Path(ffmpeg).is_absolute():
+            raise ValueError('Vehicle pose capture requires an absolute executable ffmpeg path')
+
+
+def validate(selection):
+    validate_selection(selection)
+    options = selection.get('options', {})
+    if options.get('vehicle_pose_capture'):
+        ffmpeg = Path(options['ffmpeg'])
+        if not ffmpeg.is_file() or not os.access(ffmpeg, os.X_OK):
             raise ValueError('Vehicle pose capture requires an absolute executable ffmpeg path')
 
 

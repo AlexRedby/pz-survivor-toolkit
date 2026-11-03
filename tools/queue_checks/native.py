@@ -46,15 +46,19 @@ def _json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def font_preload(cache, selection, game=None):
-    """Explicit local-JAR opt-in; ordinary approvals do not grant signed early loading."""
+def _font_preload_enabled(selection):
     enabled = selection.get('options', {}).get('preload_toolkit_fonts', False)
     if type(enabled) is not bool:
         raise ValueError('preload_toolkit_fonts must be boolean')
-    if not enabled:
-        return ''
-    if not {'ZombieBuddy', 'PZToolkitJavaPatches'} <= set(selection['mods']):
+    if enabled and not {'ZombieBuddy', 'PZToolkitJavaPatches'} <= set(selection['mods']):
         raise ValueError('Font preload requires selected ZombieBuddy and PZToolkitJavaPatches')
+    return enabled
+
+
+def font_preload(cache, selection, game=None):
+    """Explicit local-JAR opt-in; ordinary approvals do not grant signed early loading."""
+    if not _font_preload_enabled(selection):
+        return ''
     layer = Path(cache) / 'mods/PZToolkitJavaPatches/42'
     info = _metadata(layer / 'mod.info')
     package = 'net.alexredby.pztoolkitbootstrap'
@@ -84,13 +88,18 @@ def _approvals(cache, identifiers):
                     == '42/media/bootstrap/PZToolkitFonts.jar')]
 
 
-def _locations(project, workshop, identifiers, overrides=None):
+def _validate_overrides(identifiers, overrides):
     overrides = {} if overrides is None else overrides
     if not isinstance(overrides, dict) or any(not isinstance(id, str) or not isinstance(path, (str, Path))
             or not Path(path).is_absolute() for id, path in overrides.items()):
         raise ValueError('Mod source overrides must map Mod IDs to absolute paths')
     if set(overrides) - set(identifiers):
         raise ValueError('Mod source override is not selected')
+    return overrides
+
+
+def _locations(project, workshop, identifiers, overrides=None):
+    overrides = _validate_overrides(identifiers, overrides)
     local_infos = local_mod_infos(project)
     remote_infos = []
     for root in dict.fromkeys(path.resolve() for path in workshop):
@@ -147,6 +156,8 @@ def _validate(selection):
             raise ValueError("Duplicate IDs in " + key)
     if "ActionQueueTest" in selection["mods"]:
         raise ValueError("ActionQueueTest is reserved for the native fixture")
+    _validate_overrides(selection['mods'], selection.get('options', {}).get('mod_sources'))
+    _font_preload_enabled(selection)
     if selection['suite'] == 'health' and "PZSurvivorToolkit" not in selection["mods"]:
         raise ValueError("Native queue modes require PZSurvivorToolkit with its queue option toggled")
     if suite == 'health' and coop.enabled(selection) and 'remoteRemoved' in selection['cases']:

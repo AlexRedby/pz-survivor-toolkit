@@ -22,7 +22,7 @@ def _one(text, event):
     return rows[0]
 
 
-def validate(selection):
+def validate_selection(selection):
     options = selection.get('options', {})
     case = selection.get('cases')
     if (case not in ([CASES[0]], [CASES[1]]) or selection.get('kind') != 'mp'
@@ -33,6 +33,14 @@ def validate(selection):
             or bool(options.get('world_template')) != (case == [CASES[1]])):
         raise ValueError('Warehouse persistence requires separate two-client EN/RU menu Host seed/reload and a sealed template only for reload')
     if case == [CASES[1]]:
+        template = options['world_template']
+        if not isinstance(template, (str, Path)) or not Path(template).is_absolute():
+            raise ValueError('Warehouse reload requires an absolute sealed Host world template')
+
+
+def validate(selection):
+    validate_selection(selection)
+    if selection['cases'] == [CASES[1]]:
         _seed(selection)
 
 

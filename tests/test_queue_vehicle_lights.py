@@ -18,6 +18,13 @@ FIXTURE = ROOT / 'tests/native_queue/vehicle-lights'
 def fixture_runtime():
     lua = LuaRuntime()
     lua.globals().fixture_api = lua.execute((FIXTURE / 'shared/VehicleLightsFixture.lua').read_text())
+    # Route readiness-wrapped callbacks through the fixture's explicit event harness.
+    lua.execute('''
+    package.preload.QueuePreflight=function()return {
+      onGameStart=function(events,callback)events.OnGameStart.Add(callback)end,
+      onTick=function(events,callback)events.OnTick.Add(callback)end,
+    }end
+    ''')
     return lua
 
 

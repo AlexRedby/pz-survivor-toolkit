@@ -37,11 +37,15 @@ def definitions():
                        modes=['toolkit'], languages=['EN', 'RU'])]}}
 
 
-def _sandbox(selection):
+def _sandbox_path(selection):
     value = selection.get('options', {}).get('external_sandbox_path')
     if not isinstance(value, str) or not Path(value).is_absolute():
         raise ValueError('base-walking-profile requires absolute options.external_sandbox_path')
-    path = Path(value)
+    return Path(value)
+
+
+def _sandbox(selection):
+    path = _sandbox_path(selection)
     if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= 1024 * 1024:
         raise ValueError('External sandbox must be a nonempty regular file <= 1 MiB')
     return path.resolve()
@@ -56,7 +60,7 @@ def validate_resources(selection):
                          'prepare a fresh exclusive snapshot before resume')
 
 
-def validate(selection):
+def validate_selection(selection):
     validate_resources(selection)
     options = selection.get('options', {})
     if (selection.get('cases') != ['walk'] or selection.get('kind') != 'mp'
@@ -92,6 +96,11 @@ def validate(selection):
     if (options.get('base_walking', {}).get('verify_toolkit_newmusic_control')
             and options.get('base_walking', {}).get('disable_newmusic_inventory_probe')):
         raise ValueError('Toolkit verification must not remove callbacks through the fixture')
+    _sandbox_path(selection)
+
+
+def validate(selection):
+    validate_selection(selection)
     _sandbox(selection)
 
 
