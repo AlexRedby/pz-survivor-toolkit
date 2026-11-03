@@ -817,6 +817,21 @@ class NativeSnapshotTests(unittest.TestCase):
         self.write(self.project / "Toolkit/42/media/lua/shared/test.lua", "changed source")
         self.assertNotEqual(baseline, fingerprint(self.prepare("changed")))
 
+    def test_verifier_only_revision_preserves_runtime_comparison_and_strict_launch_seals(self):
+        verifier = self.project / 'tools/verify_only.py'
+        self.write(verifier, '# original verifier\n')
+        with patch.object(native.provenance, 'verifier_sources', return_value=[verifier]):
+            first = self.prepare('first-verifier')
+            self.write(verifier, '# corrected verifier\n')
+            second = self.prepare('second-verifier', mode='native')
+        self.assertEqual(report.read_json(first / 'settings-fingerprint.json')['sha256'],
+                         report.read_json(second / 'settings-fingerprint.json')['sha256'])
+        self.assertTrue(any(str(verifier) in issue for issue in report.verify_manifest(first, 'source-manifest.json', True)))
+        self.assertFalse(native.provenance.runtime_issues(first))
+        roles = report.read_json(first / native.provenance.SOURCE_ROLES)
+        self.assertIn(str(verifier), roles['verifier'])
+        self.assertNotIn(str(verifier), roles['runtime'])
+
     def test_mp_has_concurrent_roles_languages_ports_and_no_voice(self):
         output = self.prepare(kind="mp", languages=["EN", "RU"], ports=[17501, 17502])
         runtime = json.loads((output / "runtime.json").read_text())

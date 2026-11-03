@@ -15,7 +15,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-from queue_checks.adapters import book_controls as a
+from queue_checks.adapters import book_controls as adapter, book_controls_verifier as a
 from queue_checks import adapters, native
 import check_action_queue as cli
 
@@ -50,15 +50,15 @@ class BookControlTests(unittest.TestCase):
             self.assertTrue(a.native_binding_errors(changed, extended=True), key)
         selection = self.selection()
         selection['options']['require_extended_native_bindings'] = True
-        with self.assertRaises(ValueError): a.validate(selection)
+        with self.assertRaises(ValueError): adapter.validate(selection)
         selection['options']['require_native_bindings'] = True
-        a.validate(selection)
+        adapter.validate(selection)
         selection['options']['require_extended_native_bindings'] = 1
-        with self.assertRaises(ValueError): a.validate(selection)
+        with self.assertRaises(ValueError): adapter.validate(selection)
 
     def selection(self, kind='mp', mode='toolkit'):
-        return dict(suite='book-controls', cases=list(a.CASES), kind=kind, mode=mode, clients=1,
-                    languages=['EN'], mods=list(a.MODS), options=dict(book_controls=True, **({'mp_host': True} if kind == 'mp' else {})))
+        return dict(suite='book-controls', cases=list(adapter.CASES), kind=kind, mode=mode, clients=1,
+                    languages=['EN'], mods=list(adapter.MODS), options=dict(book_controls=True, **({'mp_host': True} if kind == 'mp' else {})))
 
     def evidence(self, case='worn-bag.move-equip', kind='mp', mode='toolkit'):
         source, original_control = case.split('.', 1); control = a.base_control(original_control); lost = a.capacity_case(original_control); favorite_unmoved = a.favorite_case(original_control) and kind == 'sp'
@@ -199,7 +199,7 @@ class BookControlTests(unittest.TestCase):
     def test_all_sources_controls_and_native_controls_qualify(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                for case in a.CASES:
+                for case in adapter.CASES:
                     with self.subTest(kind=kind, mode=mode, case=case):
                         self.assertEqual(self.check(self.evidence(case, kind, mode), kind, mode), [])
 
@@ -316,7 +316,7 @@ class BookControlTests(unittest.TestCase):
             for name, mutate in mutations.items():
                 with self.subTest(source=source, mutation=name):
                     evidence = self.evidence(case); mutate(evidence[0]); self.assertTrue(self.check(evidence))
-        self.assertNotIn('root.return-child-cancel', a.CASES)
+        self.assertNotIn('root.return-child-cancel', adapter.CASES)
 
     def test_capacity_loss_requires_exact_retained_debt_and_real_idle_keep(self):
         mutations = {
@@ -333,7 +333,7 @@ class BookControlTests(unittest.TestCase):
             'item lost after keep': lambda r: r['failureUI'].update(bookRetained=False),
             'independent tail discarded': lambda r: r['client']['books']['tail'].update(pages=219),
         }
-        for case in a.CAPACITY_CASES:
+        for case in adapter.CAPACITY_CASES:
             for name, mutate in mutations.items():
                 with self.subTest(case=case, mutation=name):
                     evidence = self.evidence(case); mutate(evidence[0]); self.assertTrue(self.check(evidence))
@@ -368,18 +368,18 @@ class BookControlTests(unittest.TestCase):
 
     def test_actual_cli_catalog_selection_and_native_preflight_accept_safe_case_ids(self):
         catalog = cli.load_catalog(['book-controls'])
-        self.assertEqual([case['id'] for case in catalog['suites']['book-controls']['cases']], list(a.DECLARED_CASES))
-        self.assertTrue(all('/' not in case for case in a.CASES))
+        self.assertEqual([case['id'] for case in catalog['suites']['book-controls']['cases']], list(adapter.DECLARED_CASES))
+        self.assertTrue(all('/' not in case for case in adapter.CASES))
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 with self.subTest(kind=kind, mode=mode):
-                    args = argparse.Namespace(suite='book-controls',cases=','.join(a.CASES),kind=kind,mode=mode,
+                    args = argparse.Namespace(suite='book-controls',cases=','.join(adapter.CASES),kind=kind,mode=mode,
                                               mods='selected',language='EN',config=None,mod_source=[],timeout=1800,ports=None)
                     options = dict(book_controls=True, **({'mp_host': True} if kind == 'mp' else {}))
                     selected = cli.selection(args, catalog, options=options)
                     native._validate(selected)
-                    a.validate(selected)
-                    self.assertEqual(selected['cases'], list(a.CASES))
+                    adapter.validate(selected)
+                    self.assertEqual(selected['cases'], list(adapter.CASES))
                     bad = copy.deepcopy(selected);bad['cases'] = [case.replace('.', '/', 1) for case in bad['cases']]
                     with self.assertRaisesRegex(ValueError, 'Expected nonempty IDs in cases'): native._validate(bad)
                     args.cases = ','.join(bad['cases'])
@@ -404,7 +404,7 @@ for _,invalid in ipairs({'world.header-cancel-favorite-capacity-lost','world.hea
 end
 os.exit(0)
 """
-        subprocess.run([lua, '-e', OFFLINE_FIXTURE_EVENTS + source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookControls.lua'), ','.join(a.CASES)], check=True)
+        subprocess.run([lua, '-e', OFFLINE_FIXTURE_EVENTS + source, '--', 'unused', str(ROOT / 'tests/native_queue/book-controls/shared/QueueBookControls.lua'), ','.join(adapter.CASES)], check=True)
 
     def test_32_probe_evidence_and_frozen_budgets_cannot_be_fabricated(self):
         mutations = {
@@ -561,7 +561,7 @@ os.exit(0)
     def test_current_observations_preserve_correctness_without_numerical_acceptance(self):
         for kind in ('sp','mp'):
             for mode in ('native','toolkit'):
-                for case in a.CASES:
+                for case in adapter.CASES:
                     with self.subTest(kind=kind,mode=mode,case=case):
                         evidence=self.current_measurements(self.evidence(case,kind,mode))
                         for bank in (evidence[0]['performance'],evidence[0]['performance']['probe32']):
@@ -634,7 +634,7 @@ os.exit(0)
                 cost=result['evidence']['performance']
                 self.assertEqual(cost['performanceAssessment'],'not-assessed')
                 self.assertEqual(cost['runtimeImpact'],'not-established')
-                self.assertEqual(len(cost['observations']),len(a.CASES)*10)
+                self.assertEqual(len(cost['observations']),len(adapter.CASES)*10)
                 self.assertTrue(all(r['p95Ms']==50 and r['maxMs']==50 for r in cost['observations']))
                 changed=client.replace('"p95Ms": 50','"p95Ms": 0',1)
                 (root/'client1-launch.log').write_text(changed)
@@ -672,7 +672,7 @@ os.exit(0)
         self.assertTrue(a.handler_timing_errors({'handlerTiming':timing},False,True))
         self.assertTrue(a.handler_timing_errors({'handlerTiming':timing},True,False))
         selection=self.selection();selection['options']['precise_timing']=1
-        with self.assertRaises(ValueError):a.validate(selection)
+        with self.assertRaises(ValueError):adapter.validate(selection)
 
     def test_timing_quantiles_and_budgets_cannot_alias_boolean_values(self):
         for precise in (False,True):
@@ -768,14 +768,14 @@ os.exit(0)
         self.assertTrue(any('Intended Toolkit32 authority edit denied' in reason for reason in self.check(evidence)))
 
     def test_world_nonfavorite_and_mode_specific_favorite_outcomes(self):
-        self.assertEqual(len(a.CASES), 20)
+        self.assertEqual(len(adapter.CASES), 20)
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                for case in ('world.header-cancel', 'world.header-cancel-capacity-lost', *a.FAVORITE_CASES):
+                for case in ('world.header-cancel', 'world.header-cancel-capacity-lost', *adapter.FAVORITE_CASES):
                     evidence = self.evidence(case, kind, mode)
                     self.assertEqual(self.check(evidence, kind, mode), [])
                     self.assertIs(evidence[1]['baseline']['books']['front']['favorite'], a.favorite_case(case))
-                    if case in a.FAVORITE_CASES:
+                    if case in adapter.FAVORITE_CASES:
                         self.assertEqual(evidence[0]['client']['books']['front']['container'], 'root' if kind == 'sp' else 'world')
                         self.assertIsInstance(evidence[0]['blockedReturn'], dict if kind == 'sp' and mode == 'toolkit' else bool)
         for case in ('world.header-cancel', 'world.header-cancel-capacity-lost'):
@@ -884,9 +884,9 @@ os.exit(0)
             root=Path(directory);(root/'server-launch.log').write_text(server)
             (root/'client1-launch.log').write_text(client);self.assertTrue(a.verify(root,selection,{})['issues'])
             opened=dict({k:v for k,v in gap.items() if k not in ('resolved','resolvedAt')},emitted=True)
-            client+='\n'+a.PREFIX+'REPLICA_GAP '+json.dumps(opened)+'\n'+a.PREFIX+'REPLICA_CONVERGED '+json.dumps(gap)
+            client+='\n'+adapter.PREFIX+'REPLICA_GAP '+json.dumps(opened)+'\n'+adapter.PREFIX+'REPLICA_CONVERGED '+json.dumps(gap)
             (root/'client1-launch.log').write_text(client);self.assertEqual(a.verify(root,selection,{})['issues'],[])
-            (root/'client1-launch.log').write_text(client.replace(a.PREFIX+'REPLICA_CONVERGED '+json.dumps(gap),a.PREFIX+'REPLICA_CONVERGED '+json.dumps(dict(gap,transaction=999))))
+            (root/'client1-launch.log').write_text(client.replace(adapter.PREFIX+'REPLICA_CONVERGED '+json.dumps(gap),adapter.PREFIX+'REPLICA_CONVERGED '+json.dumps(dict(gap,transaction=999))))
             self.assertTrue(a.verify(root,selection,{})['issues'])
 
 
@@ -998,13 +998,13 @@ os.exit(0)
         self.assertTrue(self.check(changed,'sp'))
 
     def test_selection_is_opt_in_ordered_nonempty_subset(self):
-        a.validate(self.selection())
-        self.assertEqual(adapters.get('book-controls'), a)
-        for field, value in [('cases', list(reversed(a.CASES))), ('cases', []), ('cases', [a.CASES[0], a.CASES[0]]), ('cases', ['unknown.case']), ('mods', a.MODS[:-1]), ('languages', ['RU']), ('clients', True), ('options', dict(mp_host=True))]:
+        adapter.validate(self.selection())
+        self.assertEqual(adapters.get('book-controls'), adapter)
+        for field, value in [('cases', list(reversed(adapter.CASES))), ('cases', []), ('cases', [adapter.CASES[0], adapter.CASES[0]]), ('cases', ['unknown.case']), ('mods', adapter.MODS[:-1]), ('languages', ['RU']), ('clients', True), ('options', dict(mp_host=True))]:
             selection = self.selection(); selection[field] = value
-            with self.subTest(field=field), self.assertRaises(ValueError): a.validate(selection)
+            with self.subTest(field=field), self.assertRaises(ValueError): adapter.validate(selection)
         selection = self.selection(); selection['options']['world_template'] = 'fixture'
-        with self.assertRaises(ValueError): a.validate(selection)
+        with self.assertRaises(ValueError): adapter.validate(selection)
 
     def test_passive_waiver_scan_uses_real_locations_without_rebinding(self):
         lua = shutil.which('luajit')
@@ -1122,19 +1122,19 @@ os.exit(0)
                     root = Path(directory); selection, client, server = self.log_bank(kind, mode, cases=cases)
                     (root / 'client1-launch.log').write_text(client); (root / 'server-launch.log').write_text(server)
                     self.assertEqual(a.verify(root, selection, {})['issues'], [])
-                    self.assertEqual(a.selected_cases(selection), cases)
-                    self.assertTrue(a.complete(selection, 'client1', client))
-                    line = next(line for line in client.splitlines() if a.PREFIX + 'ADMISSION ' in line)
+                    self.assertEqual(adapter.selected_cases(selection), cases)
+                    self.assertTrue(adapter.complete(selection, 'client1', client))
+                    line = next(line for line in client.splitlines() if adapter.PREFIX + 'ADMISSION ' in line)
                     for changed in (client + '\n' + line, client.replace(line, '', 1),
                                     client + '\n' + line.replace('root.header-cancel', 'world.header-cancel')):
                         (root / 'client1-launch.log').write_text(changed)
                         self.assertTrue(a.verify(root, selection, {})['issues'])
         selection = self.selection(); selection['cases'] = list(reversed(cases))
-        with self.assertRaises(ValueError): a.validate(selection)
+        with self.assertRaises(ValueError): adapter.validate(selection)
         selection['cases'] = [cases[0], cases[0]]
-        with self.assertRaises(ValueError): a.validate(selection)
+        with self.assertRaises(ValueError): adapter.validate(selection)
         selection['cases'] = ['foreign.case']
-        with self.assertRaises(ValueError): a.validate(selection)
+        with self.assertRaises(ValueError): adapter.validate(selection)
 
     def request_evidence(self, case='worn-bag.move-equip', kind='mp', mode='toolkit'):
         evidence = self.evidence(case, kind, mode)
@@ -1181,7 +1181,7 @@ os.exit(0)
             selection['options']['require_native_requests']=True
             self.assertEqual(a.native_request_errors(evidence[0],case,selection,evidence[1]),[],(kind,mode,case))
         selection=self.selection();selection['options']['require_native_requests']=1
-        with self.assertRaises(ValueError):a.validate(selection)
+        with self.assertRaises(ValueError):adapter.validate(selection)
 
     def test_native_request_pairing_can_describe_a_rejected_stop_without_success(self):
         evidence=self.request_evidence('worn-bag.header-cancel-capacity-lost');row,ids=evidence[:2]
@@ -1204,7 +1204,7 @@ os.exit(0)
     def test_native_transfer_rejection_requires_live_paired_stop_evidence(self):
         for mode in ('toolkit','native'):
             selection=self.selection(mode=mode);selection['options']['require_native_requests']=True
-            for case in a.CAPACITY_CASES:
+            for case in adapter.CAPACITY_CASES:
                 row,ids=self.request_evidence(case,mode=mode)[:2]
                 self.assertEqual(a.native_transfer_stop_errors(row,case,selection,ids),[])
                 mutations=[lambda r:r.pop('nativeStopEntry'),lambda r:r.pop('nativeStopReturned'),
@@ -1231,13 +1231,13 @@ os.exit(0)
                     changed=copy.deepcopy(row);record=next(r for r in changed['records']if r['role']=='return');mutate(record)
                     self.assertTrue(a.native_transfer_stop_errors(changed,case,selection,ids),(case,mode,index))
         selection=self.selection(kind='sp');selection['options']['require_native_requests']=True
-        row,ids=self.request_evidence(a.CAPACITY_CASES[0],kind='sp')[:2]
+        row,ids=self.request_evidence(adapter.CAPACITY_CASES[0],kind='sp')[:2]
         self.assertEqual(a.native_transfer_stop_errors(row,row['id'],selection,ids),[])
 
     def test_native_transfer_rejection_stays_strict_without_request_diagnostics(self):
         for mode in ('native', 'toolkit'):
             selection = self.selection(mode=mode)
-            for case in a.CAPACITY_CASES:
+            for case in adapter.CAPACITY_CASES:
                 row, ids = self.evidence(case, mode=mode)[:2]
                 self.assertEqual(a.native_transfer_stop_errors(row, case, selection, ids), [])
                 for key in ('nativeStopEntry', 'nativeStopReturned'):
@@ -1461,7 +1461,7 @@ os.exit(0)
     def active_edit_receipt(self, row, legacy_allowed=None):
         case, mode, kind = row['id'], row['mode'], row['kind']
         source = case.split('.')[0]; enabled = mode == 'toolkit'; borrowed = enabled and source != 'root'
-        device = case in a.DEVICE_ONLY_CASES
+        device = case in adapter.DEVICE_ONLY_CASES
         if legacy_allowed is None: legacy_allowed = enabled
         item, root, destination = 'Literature@live', 'ItemContainer@root', 'ItemContainer@' + source
         book = row['ids']['front']; bag = row['ids']['bag']
@@ -1543,13 +1543,13 @@ os.exit(0)
         return value
 
     def test_device_only_variants_use_native_device_chain_and_keep_pen_untouched(self):
-        self.assertEqual(a.PROMOTE_DEVICE_ONLY_CASES, tuple(source+'.move-volume-device-only' for source in a.SOURCES))
-        self.assertEqual(a.DEMOTE_DEVICE_ONLY_CASES, tuple(source+'.demote-reader-device-only' for source in a.SOURCES))
-        self.assertEqual(len(a.CASES), 20, 'existing mixed bank must remain unchanged')
-        self.assertEqual(set(a.DECLARED_CASES)-set(a.CASES), set(a.DEVICE_ONLY_CASES))
+        self.assertEqual(adapter.PROMOTE_DEVICE_ONLY_CASES, tuple(source+'.move-volume-device-only' for source in adapter.SOURCES))
+        self.assertEqual(adapter.DEMOTE_DEVICE_ONLY_CASES, tuple(source+'.demote-reader-device-only' for source in adapter.SOURCES))
+        self.assertEqual(len(adapter.CASES), 20, 'existing mixed bank must remain unchanged')
+        self.assertEqual(set(adapter.DECLARED_CASES)-set(adapter.CASES), set(adapter.DEVICE_ONLY_CASES))
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                for case in a.DEVICE_ONLY_CASES:
+                for case in adapter.DEVICE_ONLY_CASES:
                     with self.subTest(kind=kind, mode=mode, case=case):
                         evidence = self.evidence(case, kind, mode)
                         row, ids = evidence[:2]
@@ -1561,13 +1561,13 @@ os.exit(0)
                         self.assertEqual(row['client']['hands'], ids['baseline']['hands'])
                         self.assertEqual(next(i for i in row['client']['items'] if i['id']==ids['pen']['id']), next(i for i in ids['baseline']['items'] if i['id']==ids['pen']['id']))
                         self.assertEqual(self.check(evidence, kind, mode), [])
-        selection=self.selection();selection['cases']=list(a.DEVICE_ONLY_CASES)
-        with self.assertRaisesRegex(ValueError, 'active_edit_observation'): a.validate(selection)
+        selection=self.selection();selection['cases']=list(adapter.DEVICE_ONLY_CASES)
+        with self.assertRaisesRegex(ValueError, 'active_edit_observation'): adapter.validate(selection)
         selection['options'].update(active_edit_observation=True, precise_timing=True)
-        a.validate(selection)
+        adapter.validate(selection)
         for bad in ('root.move-equip-device-only', 'world.move-volume-device-only-capacity-lost', 'world.move-volume-favorite-device-only'):
             selection['cases']=[bad]
-            with self.assertRaises(ValueError): a.validate(selection)
+            with self.assertRaises(ValueError): adapter.validate(selection)
 
     def test_actual_device_only_fixture_omits_equip_producer_and_uses_move_observation(self):
         lua=shutil.which('luajit')
@@ -1733,7 +1733,7 @@ os.exit(0)
             return mapping.get(value, value) if isinstance(value, str) else value
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                for case in a.DEVICE_ONLY_CASES:
+                for case in adapter.DEVICE_ONLY_CASES:
                     row=self.precise_evidence(case,kind,mode)[0]
                     receipt=self.active_edit_receipt(row)
                     compact={r['actionRef']: r['type']+' 0x'+format(r['sequence']+256,'x') for r in row['records']}
@@ -1773,7 +1773,7 @@ os.exit(0)
                             self.assertTrue(a.active_edit_errors(changed,row,case,selection))
 
     def test_device_only_native_phase_requires_owned_record_and_every_other_effect_complete(self):
-        for case in a.DEVICE_ONLY_CASES:
+        for case in adapter.DEVICE_ONLY_CASES:
             row=self.precise_evidence(case)[0];selection=self.selection()
             receipt=self.active_edit_receipt(row)
             historical=copy.deepcopy(row)
@@ -1806,7 +1806,7 @@ os.exit(0)
                 self.assertTrue(self.check(evidence),case)
 
     def test_device_only_native_phase_descriptor_identity_shape_and_order_are_causal(self):
-        for case in a.DEVICE_ONLY_CASES:
+        for case in adapter.DEVICE_ONLY_CASES:
             row=self.precise_evidence(case)[0];selection=self.selection()
             receipt=self.active_edit_receipt(row)
             self.assertEqual(a.active_edit_errors(receipt,row,case,selection),[])
@@ -1846,12 +1846,12 @@ os.exit(0)
     def test_device_only_requires_exact_native_phase_and_real_legacy_authority(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                selection, client, server = self.log_bank(kind=kind, mode=mode, precise=True, active=True, cases=a.DEVICE_ONLY_CASES)
+                selection, client, server = self.log_bank(kind=kind, mode=mode, precise=True, active=True, cases=adapter.DEVICE_ONLY_CASES)
                 with tempfile.TemporaryDirectory() as directory:
                     root=Path(directory);(root/'client1-launch.log').write_text(client);(root/'server-launch.log').write_text(server)
                     result=a.verify(root,selection,{})
                     self.assertEqual(result['issues'], [], (kind,mode,result['issues']))
-                for case in a.DEVICE_ONLY_CASES:
+                for case in adapter.DEVICE_ONLY_CASES:
                     row=self.precise_evidence(case,kind,mode)[0];receipt=self.active_edit_receipt(row)
                     self.assertEqual(a.active_edit_errors(receipt,row,case,selection),[])
                     mutations=[lambda r:r['intent'].update(kind='cancel'),lambda r:r['intent'].update(after=not r['intent']['after']),
@@ -1885,24 +1885,24 @@ os.exit(0)
             self.assertTrue(self.check(evidence))
 
     def test_active_edit_flag_is_strict_and_restricted_to_precise_real_header_cases(self):
-        selection = self.selection(); selection['cases'] = list(a.ACTIVE_EDIT_CASES)
+        selection = self.selection(); selection['cases'] = list(adapter.ACTIVE_EDIT_CASES)
         for bad in (1, 'true', None, [], {}):
             selection['options']['active_edit_observation'] = bad
-            with self.assertRaises(ValueError): a.validate(selection)
+            with self.assertRaises(ValueError): adapter.validate(selection)
         selection['options']['active_edit_observation'] = True
-        with self.assertRaises(ValueError): a.validate(selection)
+        with self.assertRaises(ValueError): adapter.validate(selection)
         selection['options']['precise_timing'] = True
-        a.validate(selection)
+        adapter.validate(selection)
         for case in ('root.reader-child-cancel', 'worn-bag.header-cancel-capacity-lost', 'world.header-cancel-favorite'):
             selection['cases'] = [case]
-            with self.assertRaises(ValueError): a.validate(selection)
+            with self.assertRaises(ValueError): adapter.validate(selection)
         selection['options']['active_edit_observation'] = False
-        a.validate(selection)  # Legacy cases retain their previous options/evidence contract.
+        adapter.validate(selection)  # Legacy cases retain their previous options/evidence contract.
 
     def test_active_edit_exact_return_and_controls_keep_overall_unknown_visible(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                for case in a.ACTIVE_EDIT_CASES:
+                for case in adapter.ACTIVE_EDIT_CASES:
                     row = self.precise_evidence(case, kind, mode)[0]
                     selection = self.selection(kind, mode)
                     receipt = self.active_edit_receipt(row)
@@ -1957,7 +1957,7 @@ os.exit(0)
             for passed in (False, 'true', 1):
                 changed = copy.deepcopy(receipt); changed['passed'] = passed
                 self.assertTrue(a.active_edit_errors(changed, row, row['id'], selection), passed)
-        selection, client, server = self.log_bank(mode='native', precise=True, active=True, cases=a.ACTIVE_EDIT_CASES)
+        selection, client, server = self.log_bank(mode='native', precise=True, active=True, cases=adapter.ACTIVE_EDIT_CASES)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root/'server-launch.log').write_text(server)
             (root/'client1-launch.log').write_text(client.replace('"failure": false', '"failure": "nil"'))
@@ -2108,37 +2108,37 @@ os.exit(0)
     def test_active_edit_raw_setup_case_receipts_are_integrated_and_optional(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
-                selection, client, server = self.log_bank(kind=kind, mode=mode, precise=True, active=True, cases=a.ACTIVE_EDIT_CASES)
+                selection, client, server = self.log_bank(kind=kind, mode=mode, precise=True, active=True, cases=adapter.ACTIVE_EDIT_CASES)
                 with tempfile.TemporaryDirectory() as directory:
                     root = Path(directory); (root/'server-launch.log').write_text(server)
                     (root/'client1-launch.log').write_text(client)
                     result = a.verify(root, selection, {})
                     self.assertEqual(result['issues'], [], (kind, mode, result['issues']))
                     self.assertEqual(len(result['evidence']['activeEditObservation']), 3)
-                    rawline = next(line for line in client.splitlines() if line.startswith(a.PREFIX+'ACTIVE_EDIT_OBSERVATION '))
+                    rawline = next(line for line in client.splitlines() if line.startswith(adapter.PREFIX+'ACTIVE_EDIT_OBSERVATION '))
                     for name, changed in (
                         ('missing raw', client.replace(rawline, '', 1)), ('duplicate raw', client+'\n'+rawline),
                         ('foreign raw', client+'\n'+rawline.replace('root.header-cancel', 'foreign.case')),
                         ('setup false', client.replace('"activeEditObserved": true', '"activeEditObserved": false')),
                         ('setup missing', client.replace(', "activeEditObserved": true', '')),
                         ('case mismatch', client.replace('"readOnly": true, "uiUnchanged": true', '"readOnly": false, "uiUnchanged": true', 1)),
-                        ('malformed raw', client.replace(rawline, a.PREFIX+'ACTIVE_EDIT_OBSERVATION null', 1))):
+                        ('malformed raw', client.replace(rawline, adapter.PREFIX+'ACTIVE_EDIT_OBSERVATION null', 1))):
                         (root/'client1-launch.log').write_text(changed)
                         self.assertTrue(a.verify(root, selection, {})['issues'], (kind, mode, name))
                     selection['options']['active_edit_observation'] = False
                     (root/'client1-launch.log').write_text(client)
                     self.assertTrue(a.verify(root, selection, {})['issues'])
-                    old_selection, old_client, old_server = self.log_bank(kind=kind, mode=mode, precise=True, cases=a.ACTIVE_EDIT_CASES)
+                    old_selection, old_client, old_server = self.log_bank(kind=kind, mode=mode, precise=True, cases=adapter.ACTIVE_EDIT_CASES)
                     (root/'client1-launch.log').write_text(old_client); (root/'server-launch.log').write_text(old_server)
                     self.assertEqual(a.verify(root, old_selection, {})['issues'], [])
 
     def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False, current=False, sample_ms=None, cases=None, active=False):
         selection = self.selection(kind, mode); client, server = [], []
-        cases = list(a.CASES) if cases is None else list(cases); selection['cases'] = cases
+        cases = list(adapter.CASES) if cases is None else list(cases); selection['cases'] = cases
         if requests: selection['options']['require_native_requests']=True
         if precise: selection['options']['precise_timing']=True
         if active: selection['options']['active_edit_observation']=True
-        def raw(marker, value): return a.PREFIX + marker + ' ' + json.dumps(value)
+        def raw(marker, value): return adapter.PREFIX + marker + ' ' + json.dumps(value)
         def event(value): return '[QUEUE_CHECK] ' + json.dumps(value)
         client.append(event(dict(event='setup', suite='book-controls', cases=cases, queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests,timingClock=copy.deepcopy(a.CLOCK_INFO)if precise else False)))
         if active:
@@ -2179,25 +2179,29 @@ os.exit(0)
                 selection, client, server = self.log_bank(kind, mode)
                 (root / 'client1-launch.log').write_text(client); (root / 'server-launch.log').write_text(server)
                 self.assertEqual(a.verify(root, selection, {})['issues'], [])
-                self.assertTrue(a.complete(selection, 'client1', client))
-                self.assertFalse(a.complete(selection, 'server', client))
-                for bad in (client.replace('"performed": ' + str(len(a.CASES)), '"performed": 0'), client + '\n' + a.PREFIX + 'DENIED {}', client + '\n' + a.PREFIX + 'RESET {}', client.replace('"authorityEquipment": true', '"authorityEquipment": false')):
+                self.assertTrue(adapter.complete(selection, 'client1', client))
+                self.assertFalse(adapter.complete(selection, 'server', client))
+                for bad in (client.replace('"performed": ' + str(len(adapter.CASES)), '"performed": 0'), client + '\n' + adapter.PREFIX + 'DENIED {}', client + '\n' + adapter.PREFIX + 'RESET {}', client.replace('"authorityEquipment": true', '"authorityEquipment": false')):
                     (root / 'client1-launch.log').write_text(bad)
                     self.assertTrue(a.verify(root, selection, {})['issues'])
             # Diagnostic completion must stop the common runner after the whole
             # failed bank, while qualification still fails all denied features.
-            denied = a.PREFIX + 'COMPLETE ' + json.dumps(dict(cases=list(a.CASES), failed=len(a.CASES)))
-            self.assertTrue(a.complete(self.selection(), 'client1', denied))
-            self.assertFalse(a.complete(self.selection(), 'client1', denied + '\n' + denied))
+            denied = adapter.PREFIX + 'COMPLETE ' + json.dumps(dict(cases=list(adapter.CASES), failed=len(adapter.CASES)))
+            self.assertTrue(adapter.complete(self.selection(), 'client1', denied))
+            self.assertFalse(adapter.complete(self.selection(), 'client1', denied + '\n' + denied))
 
     def test_staging_and_source_sealing(self):
-        paths = a.sources(ROOT, self.selection())
+        paths = adapter.sources(ROOT, self.selection())
         self.assertTrue(all(path.is_file() for path in paths))
-        self.assertIn(Path(a.__file__).with_name('tv_controls.py'), paths)
-        self.assertIn(ROOT / 'tests/test_queue_book_controls.py', paths)
+        self.assertIn(Path(adapter.__file__).with_name('tv_controls.py'), paths)
+        self.assertNotIn(ROOT / 'tests/test_queue_book_controls.py', paths)
+        verifier_paths = adapter.verifier_sources(ROOT, self.selection())
+        self.assertEqual(verifier_paths, [Path(a.__file__), ROOT / 'tests/test_queue_book_controls.py'])
+        self.assertTrue(all(path.is_file() for path in verifier_paths))
+        self.assertFalse(set(paths) & set(verifier_paths))
         probe_source=ROOT / 'tests/native_queue/book-controls/java/Main.java'
         self.assertIn(probe_source,paths)
-        self.assertIn('media/lua/shared/TimedActions/ISBaseTimedAction.lua',a.GAME_INPUTS)
+        self.assertIn('media/lua/shared/TimedActions/ISBaseTimedAction.lua',adapter.GAME_INPUTS)
         self.assertIn('[QUEUE_TEST] FAIL book-controls-stop-observer',probe_source.read_text())
         with tempfile.TemporaryDirectory() as directory:
             runtime = dict(roles={role: dict(cache=str(Path(directory) / role)) for role in ('server', 'client1')})
@@ -2205,8 +2209,8 @@ os.exit(0)
             with zipfile.ZipFile(probe,'w') as jar:
                 jar.writestr('net/alexredby/bookcontrolsprobe/Main.class',b'compiled observation fixture')
                 jar.writestr('net/alexredby/bookcontrolsprobe/Main$Stopped.class',b'compiled stop advice')
-            with mock.patch.object(a, '_stop_probe', return_value=probe):
-                a.stage(ROOT, directory, None, None, self.selection(), {}, runtime)
+            with mock.patch.object(adapter, '_stop_probe', return_value=probe):
+                adapter.stage(ROOT, directory, None, None, self.selection(), {}, runtime)
             self.assertEqual(runtime['fixture']['mods'], ['BookControlsStopProbe'])
             for role in runtime['roles'].values():
                 cache=Path(role['cache']);layer=cache/'mods/BookControlsStopProbe/42'
@@ -2223,6 +2227,18 @@ os.exit(0)
                 for path in (ROOT / 'tests/native_queue/book-controls').rglob('*.lua'):
                     self.assertEqual(path.read_bytes(), (lua / path.relative_to(ROOT / 'tests/native_queue/book-controls')).read_bytes())
             self.assertEqual(runtime['fixture']['failure_markers'], ['[QUEUE_TEST] FAIL book-controls'])
+
+    def test_adapter_dispatches_post_run_verification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            selected, text, authority = self.log_bank()
+            (root / 'client1-launch.log').write_text(text)
+            (root / 'server-launch.log').write_text(authority)
+            with mock.patch.object(a, 'verify', side_effect=AssertionError('cached verifier')) as cached:
+                self.assertEqual([], adapter.verify(root, selected, {})['issues'])
+            cached.assert_not_called()
+        self.assertFalse(hasattr(adapter, 'check_case'))
+        self.assertFalse(hasattr(adapter, 'active_edit_errors'))
 
     def test_failed_return_footer_revision_cache_idle_layout_and_stale_press(self):
         lua = shutil.which('luajit')

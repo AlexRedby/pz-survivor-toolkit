@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import time
-from . import adapters, admission, coop
+from . import adapters, admission, coop, provenance
 from .report import read_json, verify_manifest, write_json
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 from .preflight import ClientPreflight, fail as setup_failure
@@ -174,4 +174,5 @@ def run(root, resource_wait=300):
             kernel.CloseHandle(job)
         kernel.ReleaseMutex(mutex);kernel.CloseHandle(mutex)
         write_json(root / 'execution.json', execution)
+        provenance.seal_execution(root)
     return execution

@@ -160,6 +160,17 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in kills], [101])
         self.assertEqual(result["processes"]["client1"]["exit_code"], -15)
 
+    def test_execution_seal_is_created_after_final_record_stream_close_and_owned_cleanup(self):
+        def seal(root):
+            value = json.loads((root / 'execution.json').read_text())
+            self.assertEqual('completed', value['status'])
+            self.assertEqual(-15, value['processes']['client1']['exit_code'])
+            self.assertTrue(all(stream.closed for stream in self.streams))
+            self.assertTrue(all(process.poll() is not None for process in self.processes))
+        with patch.object(runner.provenance, 'seal_execution', side_effect=seal) as sealed:
+            self.invoke()
+        sealed.assert_called_once_with(self.root)
+
     def test_completion_waits_for_fresh_setup_receipt_and_gameplay_release(self):
         waits = []
         def setup(seconds):

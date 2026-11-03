@@ -41,8 +41,6 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 - [ ] Qualify exact-object world cleanup in warehouse and grouped Wishlist Host runs with the complete current selected pack. Require loaded peer absence and clean runtime audits; keep uncertain publication quarantined. Native-fix-only profiles do not establish optional-mod integration coverage.
 
-- [ ] Support report-only reanalysis with separately recorded verifier provenance. Correcting only `book_controls.py` or its verifier tests currently marks unchanged native observations stale and requires game launches. Preserve and validate the original runtime/fixture snapshot and execution seals, record the new verifier separately, and reject runtime/fixture drift rather than weakening existing source checks.
-
 - [ ] Execute the resolved sets from `tests/native_queue/plans/in-game-campaign.example.json` after the remaining fixture compatibility gates are resolved, retaining its campaign coverage report. Group by exact source lock, SP/Host topology, language, sandbox, control mode and world lifecycle; record actual launch count and reasons for splits. Run setup checks first, stop dependent phases after setup/cleanup failures, and rerun only failed or newly affected phases. Preserve ordinary action durations, independent native/queue-disabled controls, desktop ownership and full runtime-log auditing; functional success alone does not close a gate.
 
 | Session group | Combine after fixture qualification | Required separate boundaries |

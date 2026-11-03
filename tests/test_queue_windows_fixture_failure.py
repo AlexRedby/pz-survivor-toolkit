@@ -138,6 +138,21 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         self.assertNotIn('fixture_load_error', result)
         adapter.complete.assert_called_once()
 
+    def test_execution_seal_follows_final_owned_job_cleanup_and_log_mirror(self):
+        def seal(root):
+            value = json.loads((root / 'execution.json').read_text())
+            self.assertEqual('completed', value['status'])
+            self.assertEqual(0, value['host_cleanup']['active_job_processes'])
+            text = (root / 'client1-launch.log').read_text()
+            self.assertTrue(text.startswith(self.normal))
+            self.assertIn('"event": "setup-ready"', text)
+            self.kernel.TerminateJobObject.assert_called_once()
+            self.kernel.QueryInformationJobObject.assert_called_once()
+            self.assertEqual([call.args[0] for call in self.kernel.CloseHandle.call_args_list], [42, 41])
+        with patch.object(windows.provenance, 'seal_execution', side_effect=seal) as sealed:
+            self.run_fake(self.normal)
+        sealed.assert_called_once_with(self.root.resolve())
+
     def test_foreign_require_warning_does_not_preempt_completion(self):
         warning = 'WARN : Lua at Lua((MOD:Foreign)).Foreign.lua> require("Missing") failed\n'
         result, adapter = self.run_fake(self.normal + warning)

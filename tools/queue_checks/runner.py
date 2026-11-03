@@ -8,7 +8,7 @@ import sys
 import time
 
 from .report import events, execution_issues, read_json, verify_manifest, write_json
-from . import adapters, admission, pack, worlds, coop, desktop, glfw
+from . import adapters, admission, pack, worlds, coop, desktop, glfw, provenance
 from .native import font_preload
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 from .preflight import ClientPreflight, fail as setup_failure
@@ -416,6 +416,7 @@ def run(root, resource_wait=300):
                     if issues:
                         execution.update(status='failed', error='; '.join(issues))
                 write_json(root / "execution.json", execution)
+                provenance.seal_execution(root)
             finally:
                 for sig, handler in previous.items():
                     signal.signal(sig, handler)

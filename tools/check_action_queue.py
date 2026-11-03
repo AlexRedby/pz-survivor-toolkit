@@ -481,6 +481,11 @@ def main(argv=None):
     command = commands.add_parser("report", help="Audit a run without launching anything")
     command.add_argument("output", type=Path)
     command.add_argument("--control", type=Path)
+    command = commands.add_parser('reanalyze', help='Recheck sealed observations with the current separated verifier; preserve the original run',
+        description='Requires an opted-in suite and a post-cleanup execution seal. Legacy runs need a fresh capture; book-controls is currently supported.')
+    command.add_argument('run', type=Path)
+    command.add_argument('output', type=Path, help='Fresh analysis directory outside the original run')
+    command.add_argument('--control', type=Path)
     command = commands.add_parser("matrix", help="List declared cases and actual evidence; never infer passes")
     command.add_argument("reports", type=Path, nargs="*")
     command.add_argument('--scenarios', action='store_true', help='Show behavior requirements per action, including implementation gaps')
@@ -558,6 +563,13 @@ def main(argv=None):
             value = worlds.export(args.run, args.output)
             print('Saved world template: ' + str(args.output.resolve()) + ' (' + str(len(value['files'])) + ' files)')
             return 0
+        if args.command == 'reanalyze':
+            from queue_checks import provenance, reanalysis
+            selected = provenance.read_json(args.run / 'selection.json')
+            catalog = load_catalog([selected['suite']])
+            value = reanalysis.write(args.run, args.output, catalog, args.control)
+            print(report.summary(value))
+            return {'passed': 0, 'failed': 1, 'needs-review': 2}[value['status']]
         if args.command == 'prepare':
             catalog = load_catalog([args.suite])
         elif args.command == 'matrix' and args.suite:

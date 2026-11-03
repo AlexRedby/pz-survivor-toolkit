@@ -522,10 +522,15 @@ def window_size_evidence(root, selection):
     return evidence
 
 
-def build_report(root, catalog, control=None):
+def build_report(root, catalog, control=None, *, reanalysis=False):
     root = Path(root).resolve()
+    from . import provenance
+    analysis_provenance = provenance.reanalysis_provenance(root) if reanalysis else None
     selection = read_json(root / "selection.json")
-    provenance_errors = verify_manifest(root, "source-manifest.json", absolute=True) + verify_manifest(root, "snapshot-hashes.json")
+    provenance_errors = ([] if reanalysis else
+        verify_manifest(root, "source-manifest.json", absolute=True) + verify_manifest(root, "snapshot-hashes.json"))
+    if not reanalysis and (root / provenance.SOURCE_ROLES).exists():
+        provenance_errors += provenance.observation_issues(root)
     result, coverage = functional(root, selection, catalog)
     roles = adapters.roles(selection)
     audits = audit_logs(root, roles, background_profile(root, selection, not provenance_errors),
@@ -545,6 +550,8 @@ def build_report(root, catalog, control=None):
               for severity in ("fatal", "unclassified", "background")}
     runtime_status = "failed" if counts["fatal_count"] else "unclassified-errors" if counts["unclassified_count"] else "background-only" if counts["background_count"] else "clean"
     fingerprint = read_json(root / "settings-fingerprint.json")["sha256"]
+    if not reanalysis and (root / provenance.SOURCE_ROLES).exists():
+        provenance_errors += provenance.observation_issues(root)
     report = {"schema_version": 1, "run": str(root), "selection": selection,
               "settings_fingerprint": fingerprint, "provenance": {"verified": not provenance_errors, "issues": provenance_errors,
                   'game_input_trees': list(GAME_INPUT_TREES) if not provenance_errors else []},
@@ -552,6 +559,12 @@ def build_report(root, catalog, control=None):
               "runtime": dict(counts, status="unavailable" if any(not row["available"] for row in audits.values()) else runtime_status, roles=audits, microphone=microphone),
               "limits": ["Callback-driven native fixture; physical UI, WAN and long sessions are separate coverage.",
                          "Native tree seal scope: media/lua and media/scripts; other asset/binary trees are outside this seal."]}
+    if analysis_provenance is not None:
+        # Recheck after the verifier: neither observations nor verifier bytes may
+        # change while this report is being computed.
+        if provenance.reanalysis_provenance(root) != analysis_provenance:
+            raise ValueError('Reanalysis inputs or verifier changed during verification')
+        report['provenance']['reanalysis'] = analysis_provenance
     if control is not None:
         report["comparison"] = compare(report, control)
         if report["comparison"]["compatible"] and not counts["fatal_count"] and counts["unclassified_count"]:

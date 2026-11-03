@@ -11,7 +11,7 @@ import sys
 import tempfile
 import zipfile
 import uuid
-from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw, preparation_process, borrowing_check
+from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw, preparation_process, borrowing_check, provenance
 try:
     from .. import lua_compatibility
 except ImportError:
@@ -339,6 +339,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
             if not asset.is_relative_to(game):
                 raise ValueError('Game input escapes installed game: ' + relative)
             sources.append(asset)
+    sources += [Path(provenance.__file__), *provenance.verifier_sources(project, selection)]
     if selection['suite'] == 'health':
         sources.append(support / 'QueueScenarioChecks.lua')
     host_bootstrap = project / 'tests/native_queue/startup/client/ZZStartup.lua'
@@ -363,6 +364,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
                 for identifier, source in locations.items()]
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
+    source_roles = provenance.source_roles(project, selection, source_manifest)
     roles = adapters.roles(selection)
     # Budget for ordinary-copy fallback and later private writes to clones;
     # allow allocation/metadata overhead, including sparse-file materialization.
@@ -535,6 +537,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         pack.validate(locked, project, game, selection['mods'])
     _json(output / "manifest.json", manifest)
     _json(output / "source-manifest.json", source_manifest)
+    _json(output / provenance.SOURCE_ROLES, source_roles)
     _json(output / 'game-inputs.json', game_input_manifest)
     _json(output / "runtime.json", runtime)
     initial_settings = {path.relative_to(output).as_posix(): path.read_bytes().decode("utf-8")
@@ -542,12 +545,12 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
                         if path.is_file()}
     _json(output / "initial-settings.json", initial_settings)
     comparison = {"selection": {key: value for key, value in selection.items() if key != "mode"},
-                  "mods": {row["id"]: row["files"] for row in manifest}, "sources": source_manifest,
+                  "mods": {row["id"]: row["files"] for row in manifest}, "sources": source_roles['runtime'],
                   "settings": initial_settings, "game_inputs": game_input_manifest}
     if selection.get('config_source'):
         config_path = selection['config_source']
         comparison['selection'] = dict(comparison['selection'], config_source='<suite-config>')
-        comparison['sources'] = dict(source_manifest)
+        comparison['sources'] = dict(source_roles['runtime'])
         comparison['sources']['<suite-config>'] = comparison['sources'].pop(config_path)
     if selection.get('ports_auto'):
         comparison['selection']['ports'] = '<automatic-endpoint>'
