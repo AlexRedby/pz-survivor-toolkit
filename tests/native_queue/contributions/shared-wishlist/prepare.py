@@ -8,7 +8,7 @@ import shutil
 HERE = Path(__file__).resolve().parent
 
 
-def prepare(cache, user, mode, host, port, password, mods):
+def prepare(cache, user, mode, host, port, password, mods, native_startup_fixes=False):
     selected = [mode] if isinstance(mode, str) else list(mode)
     if (user not in ("client1", "client2", "server") or not selected or len(selected) != len(set(selected))
             or any(case not in ("full", "standalone", "reload", "visual") for case in selected)
@@ -20,7 +20,12 @@ def prepare(cache, user, mode, host, port, password, mods):
         raise ValueError("Supply unique product mod IDs including PZSurvivorToolkit")
     if any(not re.fullmatch(r"[A-Za-z0-9_.-]+", mod) for mod in mods):
         raise ValueError("Invalid mod ID")
-    if any(case in ("standalone", "visual") for case in selected) and mods != ["PZSurvivorToolkit"]:
+    if type(native_startup_fixes) is not bool:
+        raise ValueError("native_startup_fixes must be boolean")
+    if native_startup_fixes and (not set(selected) <= {"visual", "standalone"}
+            or mods != ["ZombieBuddy", "PZToolkitJavaPatches", "PZSurvivorToolkit"]):
+        raise ValueError("Native startup qualification requires visual/standalone with exact native-fix mods")
+    if not native_startup_fixes and any(case in ("standalone", "visual") for case in selected) and mods != ["PZSurvivorToolkit"]:
         raise ValueError("Standalone/visual modes require only PZSurvivorToolkit")
     if "full" in selected and "PZSurvivorToolkit" not in mods:
         raise ValueError("Full mode requires PZSurvivorToolkit plus the declared integrations")
@@ -114,11 +119,14 @@ def main():
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--password-env", required=True, help="Name of an environment variable; never pass the password in argv")
     parser.add_argument("--mods", nargs="+", default=["PZSurvivorToolkit"])
+    parser.add_argument("--native-startup-fixes", action="store_true",
+                        help="qualify visual/standalone with native fix components; the runner must explicitly enable early fonts")
     args = parser.parse_args()
     if args.password_env not in os.environ:
         parser.error("Password environment variable is missing")
     try:
-        prepare(args.cache, args.user, args.mode, args.host, args.port, os.environ[args.password_env], args.mods)
+        prepare(args.cache, args.user, args.mode, args.host, args.port, os.environ[args.password_env], args.mods,
+                native_startup_fixes=args.native_startup_fixes)
     except ValueError as error:
         parser.error(str(error))
     print("Prepared helper only; no game, launcher, mods, world or server was started.")

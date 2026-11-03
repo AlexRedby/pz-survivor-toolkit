@@ -1,8 +1,3 @@
-# Current stabilization batch
-
-- [ ] Reproduce and resolve the startup diagnostics blocking clean native qualification, using exact prepared dependencies and untouched controls. Fix demonstrated causes or classify narrowly proven baseline signatures, retain strict auditing, and require fresh warehouse/Wishlist Host reports.
-- [ ] Resolve every missing or ambiguous selected-mod source and required dependency without silently changing the selection. Install only the missing selected inputs, generate a fresh exact pack lock and validate its complete dependency closure before full-pack qualification.
-
 # Shared queue resources and container capacity
 
 Implementation and migration are conditional on the performance gate in [the design plan](docs/design/QUEUE_RESOURCE_CAPACITY.md). Keep the native executor and existing protections until each replacement is qualified.
@@ -44,7 +39,7 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ## Preparation and fewer-launch execution
 
-- [ ] Obtain clean runtime audits for exact-object world cleanup in warehouse and grouped Wishlist Host runs after resolving the startup diagnostics below. Require loaded peer absence; keep uncertain publication quarantined. Complete selected-pack coverage after its installation gate is resolved.
+- [ ] Qualify exact-object world cleanup in warehouse and grouped Wishlist Host runs with the complete current selected pack. Require loaded peer absence and clean runtime audits; keep uncertain publication quarantined. Native-fix-only profiles do not establish optional-mod integration coverage.
 
 - [ ] Support report-only reanalysis with separately recorded verifier provenance. Correcting only `book_controls.py` or its verifier tests currently marks unchanged native observations stale and requires game launches. Preserve and validate the original runtime/fixture snapshot and execution seals, record the new verifier separately, and reject runtime/fixture drift rather than weakening existing source checks.
 
@@ -94,8 +89,6 @@ Group compatible visual checks around prepared vehicles. Keep speed/healing meas
 - [ ] Check trace samples during actual driving with the full selected B42.21 pack in an isolated macOS Host profile. Current EN/RU native checks cover the stationary occupied Base.CarNormal, real client/server toggles, confirmed states, separate files and close/reopen. JVM checks cover rotation and sampling beyond the former limits; native general runtime audits still report the stock font-page loading messages.
 
 ## Selected-mod block with input and installation gates
-
-- [ ] Reconcile installed sources with the selected profile before full-pack native qualification. Creating a fresh pack lock currently fails because selected dependency `damnlib` has no resolvable source. Install the selected dependencies when requested, or explicitly revise the selection, then regenerate the exact lock; minimal fixture-profile checks do not qualify the full pack.
 
 Prepare fixtures before launch where possible; add them to compatible inventory/vehicle/Host sessions only after their source and installation prerequisites are met. Keep all reload and second-player requirements.
 
@@ -156,8 +149,6 @@ Capture these during relevant campaign launches rather than adding an unrelated 
 - [ ] Retain the optional `start-host.ps1` / `start-host.command` files, packaging and launcher checks only until automatic Host loading has native macOS/Linux qualification as well as Windows. Remove those scripts and their packaging/test consumers once a normal client-only-loader launch on each platform starts a patched Host child with saved approvals and an inherited-loader control proves no duplicate agent. They remain fallback entrypoints for existing installations, not the normal user workflow.
 
 ### Runtime observations to resolve
-
-- [ ] Classify the startup diagnostics from earlier food-age SP/control runs: six font-page load errors, two container-name normalization errors, Piano icon fallback and one mannequin-zone property error. Matching untouched-source controls had the same signatures/counts, while a complete-pack baseline was clean. Minimal Host cleanup profiles also report native tile-property lookup errors (`WindowShape`, `ladderE`, `ladderS`). Reproduce with matching prepared and untouched dependencies, qualify or fix each source/caller before changing audit rules, and retain strict runtime auditing.
 
 - [ ] Resolve intermittent empty AeroSpace observations under the normal `auto` policy using the pre-cleanup `desktop-incident.json` on recurrence. Routed windows have become undiscoverable after bootstrap/world readiness, during shared-storage work and near the end of a cart injury bank; an imported-base ground-highlight control also failed before measurement. One cart failure closely followed automatic display sleep/session lock; another had no matching event and its expected native window left its space only when the client connection closed. Successful retries do not establish a fix. Compare saved last verified placement, failed CLI result, process liveness and owned-PID CoreGraphics/display/session metadata before selecting recovery. Two fresh inventory-render captures reproduced the empty AeroSpace result while CoreGraphics still reported the same owned window on screen, the process remained alive and the display was awake; each last verified placement was two seconds earlier. A subsequent capture also returned no owned window from both all-window and exact-workspace queries, excluding a simple monitor-filter explanation. Capture owned-app responsiveness and AeroSpace/Accessibility registration errors around the large-inventory mode transition before choosing a recovery. CoreGraphics existence alone does not establish AeroSpace placement; minimized windows can also be absent from workspace listings. Keep PID/window/desktop guards and avoid blind retries or display-state changes. `--monitor all` already includes hidden workspaces.
 
@@ -255,6 +246,8 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 
 # Process friction
+
+- [ ] Validate cheap adapter dependency/option contracts for every batch job before the first launch. A dry-run accepted an invalid Wishlist mod set, and the real batch discovered it only after earlier jobs completed. Preserve source-free dry-run support and separate expensive input/seed checks from early structural admission.
 
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.
 

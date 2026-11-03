@@ -621,6 +621,11 @@ print('PASS grouped Wishlist generated Lua and single bootstrap')
             result = adapter.verify(root, value, {"suites": adapter.definitions()})
             self.assertEqual([], result["issues"])
             self.assertEqual(37, result["evidence"]["preserved_stages_per_client"])
+            self.assertFalse(result["evidence"]["native_startup_fixes"])
+            qualified = dict(value, mods=list(adapter.NATIVE_STARTUP_MODS),
+                             options={"native_startup_fixes": True, "preload_toolkit_fonts": True})
+            adapter.validate(qualified)
+            self.assertTrue(adapter.verify(root, qualified, {"suites": adapter.definitions()})["evidence"]["native_startup_fixes"])
             self.assertEqual(4, len(result["outcomes"]))
             self.assertEqual([(role, case) for role in ("client1", "client2") for case in value["cases"]],
                              [(row["actor"], row["case"]) for row in result["outcomes"]])
@@ -710,6 +715,34 @@ print('PASS grouped Wishlist generated Lua and single bootstrap')
             self.assertEqual(["toolkit", "native"], spec["modes"])
             if case != "reload":
                 adapter.validate(dict(selection("shared-wishlist", case), mode="native"))
+
+    def test_native_startup_qualification_preserves_bare_toolkit_and_rejects_extra_mods(self):
+        for cases in (["visual"], ["standalone"], ["visual", "standalone"]):
+            bare=dict(selection("shared-wishlist",cases[0]),cases=cases,mods=["PZSurvivorToolkit"])
+            adapter.validate(bare)
+            native=dict(bare,mods=list(adapter.NATIVE_STARTUP_MODS),
+                        options=dict(native_startup_fixes=True,preload_toolkit_fonts=True))
+            adapter.validate(native)
+            with tempfile.TemporaryDirectory() as directory:
+                output=Path(directory)
+                runtime={"server_name":"queue-smoke","roles":{role:{} for role in ("server","client1","client2")}}
+                adapter.stage(ROOT,output,None,None,native,{},runtime)
+                for role in runtime["roles"]:
+                    text=(output/role/"Lua/wishlist-fixture.txt").read_text()
+                    self.assertIn(";".join(adapter.NATIVE_STARTUP_MODS),text)
+            for change in ({"options":{}},
+                           {"options":{"native_startup_fixes":True}},
+                           {"options":{"native_startup_fixes":True,"preload_toolkit_fonts":1}},
+                           {"options":{"native_startup_fixes":1,"preload_toolkit_fonts":True}},
+                           {"mods":["PZSurvivorToolkit"]},
+                           {"mods":list(adapter.NATIVE_STARTUP_MODS)+["CleanUI"]},
+                           {"mods":list(adapter.NATIVE_STARTUP_MODS)+["EURY_CONTAINERS"]},
+                           {"mods":list(reversed(adapter.NATIVE_STARTUP_MODS))}):
+                with self.subTest(cases=cases,change=change),self.assertRaises(ValueError):
+                    adapter.validate(dict(native,**change))
+        for suite,case in (("shared-wishlist","full"),("shared-wishlist","reload"),("crafting-plans","crafting")):
+            with self.assertRaisesRegex(ValueError,"supports only"):
+                adapter.validate(dict(selection(suite,case),options={"native_startup_fixes":True}))
 
     def test_staging_does_not_write_bytecode_into_preserved_sources(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -3,6 +3,7 @@
   "jdk": "/path/to/jdk25",
   "mods": "selected",
   "options": {
+    "preload_toolkit_fonts": true,
     "pack_lock": "/path/to/current-full-pack.lock.json",
     "patch_jar": "/path/to/PZToolkitJavaPatches.jar",
     "ffmpeg": "/path/to/ffmpeg",

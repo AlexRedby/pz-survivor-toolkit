@@ -8,6 +8,7 @@
   "clients": {"client1": "EN", "client2": "RU"},
   "dependencies": {
     "all_modes": ["PZSurvivorToolkit", "WishlistTest (this helper)"],
+    "native_startup_qualification": ["explicit native_startup_fixes=true for visual/standalone only", "exact ZombieBuddy;PZToolkitJavaPatches;PZSurvivorToolkit order", "explicit preload_toolkit_fonts=true; reported separately from Toolkit-only evidence"],
     "full_integrations": ["CleanUI", "Better Containers implementation exposing BetterContainers/Proximity", "Neat_Crafting", "Neat_Building_UIOnly", "Project_Cook"],
     "offline_check": ["Python 3", "Lua 5.1 or LuaJIT"],
     "future_native_launch": ["installed licensed game and JDK", "awake display", "common native runner with launch and ownership guards", "isolated server and two client caches", "matching product/mod snapshots on all roles"]

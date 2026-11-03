@@ -10,6 +10,7 @@ COUNTS = {"crafting-plans": {"crafting": 20, "ui": 28, "alternatives": 23},
 HELPERS = {"crafting-plans": "CraftPlanTest", "shared-wishlist": "WishlistTest"}
 PROJECT = Path(__file__).resolve().parents[3]
 FULL_MODS = ["NeatUI_Framework", "CleanUI", "PZSurvivorToolkit", "EURY_CONTAINERS", "Neat_Crafting", "Project_Cook", "Neat_Building_UIOnly"]
+NATIVE_STARTUP_MODS = ["ZombieBuddy", "PZToolkitJavaPatches", "PZSurvivorToolkit"]
 
 
 def definitions():
@@ -50,6 +51,12 @@ def validate(selection):
         raise ValueError("Preserved fixtures require an adjacent UDP port")
     case = selection["cases"][0]
     mods = selection["mods"]
+    options = selection.get("options", {})
+    startup_fixes = options.get("native_startup_fixes", False)
+    if type(startup_fixes) is not bool:
+        raise ValueError("native_startup_fixes must be boolean")
+    if startup_fixes and (suite != "shared-wishlist" or not set(cases) <= {"visual", "standalone"}):
+        raise ValueError("Native startup qualification supports only Wishlist visual/standalone")
     if "PZSurvivorToolkit" not in mods:
         raise ValueError("Preserved fixtures require PZSurvivorToolkit")
     if suite == "crafting-plans":
@@ -59,7 +66,10 @@ def validate(selection):
             if required not in mods:
                 raise ValueError("Craft plan dependency missing: " + required)
     elif case in ("standalone", "visual", "reload"):
-        if mods != ["PZSurvivorToolkit"]:
+        if startup_fixes:
+            if mods != NATIVE_STARTUP_MODS or options.get("preload_toolkit_fonts") is not True:
+                raise ValueError("Native startup qualification requires exact native-fix mods and explicit early fonts")
+        elif mods != ["PZSurvivorToolkit"]:
             raise ValueError("Wishlist standalone/visual/reload requires only PZSurvivorToolkit")
         if case == "reload":
             _seed(selection)
@@ -109,7 +119,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         args = [cache, role, chosen, "127.0.0.1", selection["ports"][0], "smoke-local-only"]
         if selection["suite"] == "shared-wishlist":
             args.append(selection["mods"])
-        namespace["prepare"](*args)
+        if selection["suite"] == "shared-wishlist":
+            namespace["prepare"](*args, native_startup_fixes=selection.get("options", {}).get("native_startup_fixes", False))
+        else:
+            namespace["prepare"](*args)
         if selection["suite"] == "shared-wishlist" and selection.get("options", {}).get("mp_host"):
             # The native runner already stages shared selection and role-local smoke-user.
             client = cache / "mods/ActionQueueTest/42/media/lua/client"
@@ -263,6 +276,7 @@ def verify(root, selection, catalog):
                          "kind": selection["kind"], "mode": selection["mode"], "actor": role, "status": "failed" if failed else "passed",
                          "outcome": {"preserved_stages": COUNTS[selection["suite"]][case]}})
     evidence = {"preserved_stages_per_client": COUNTS[selection["suite"]][case],
+                "native_startup_fixes": selection.get("options", {}).get("native_startup_fixes", False),
                 "source": "tests/native_queue/contributions/" + selection["suite"],
                 "visual_review": "Screenshots must be inspected separately; callback success does not certify pixels."}
     if selection["suite"] == "shared-wishlist" and case == "reload":
@@ -353,6 +367,7 @@ def _verify_session(root, selection, catalog):
     coverage.sort(key=lambda row: (row["actor"], selection["cases"].index(row["case"])))
     return {"issues": issues, "outcomes": coverage,
             "evidence": {"preserved_stages_per_client": sum(COUNTS[selection["suite"]][case] for case in cases),
+                         "native_startup_fixes": selection.get("options", {}).get("native_startup_fixes", False),
                          "session_cases": cases, "source": "tests/native_queue/contributions/" + selection["suite"],
                          "visual_review": "Screenshots must be inspected separately; callback success does not certify pixels."}}
 
