@@ -8,7 +8,7 @@ import sys
 import time
 
 from .report import events, execution_issues, read_json, verify_manifest, write_json
-from . import adapters, admission, pack, worlds, coop, desktop, glfw, provenance
+from . import adapters, admission, pack, worlds, coop, desktop, glfw, provenance, setup_diagnostics
 from .native import font_preload
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 from .preflight import ClientPreflight, fail as setup_failure
@@ -279,8 +279,8 @@ def run(root, resource_wait=300):
                     time.sleep(runtime.get('fixture', {}).get('client_launch_stagger_seconds', 0))
                 if role not in processes:
                     launch(role)
-            deadline = time.monotonic() + selection["timeout_seconds"]
-            while time.monotonic() < deadline:
+            preflight.begin(selection['timeout_seconds'])
+            while True:
                 current = {role: text(role) for role in adapters.roles(selection)}
                 check_fixture_loading(fixture_monitor, current, execution, 'execution')
                 preflight.check(current, execution, release=False)
@@ -342,13 +342,10 @@ def run(root, resource_wait=300):
                 if guard.poll() is not None:
                     raise RuntimeError("Display guard stopped")
                 time.sleep(2)
-            else:
-                if preflight.pending():
-                    preflight.failure(execution, 'Required client readiness/fixture setup deadline expired')
-                raise RuntimeError("Bounded native run deadline expired")
         except (Exception, KeyboardInterrupt) as error:
             preflight.record_exception(execution, error)
             execution.update(status="failed", error=str(error), interrupted=isinstance(error, KeyboardInterrupt))
+            setup_diagnostics.capture(root, runtime, processes, execution)
         finally:
             # Cleanup signals record failure without interrupting bounded waits or losing the report.
             cleaning = True

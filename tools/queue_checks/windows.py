@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import time
-from . import adapters, admission, coop, provenance
+from . import adapters, admission, coop, provenance, setup_diagnostics
 from .report import read_json, verify_manifest, write_json
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 from .preflight import ClientPreflight, fail as setup_failure
@@ -110,9 +110,9 @@ def run(root, resource_wait=300):
             execution['processes']['client1'] = {'pid': process.pid}
             write_json(root / 'execution.json', execution)
             print('client1 PID ' + str(process.pid), flush=True)
-            deadline = time.monotonic() + selection['timeout_seconds']
+            preflight.begin(selection['timeout_seconds'])
             adapter = adapters.get(selection['suite'])
-            while time.monotonic() < deadline:
+            while True:
                 coop.mirror_logs(root)
                 text = (root / 'client1-launch.log').read_text(errors='replace')
                 server_log = root / 'server-launch.log'
@@ -138,13 +138,10 @@ def run(root, resource_wait=300):
                         setup_failure(execution, 'client-readiness', 'client1', 'readiness', 'Owned client exited before fixture readiness')
                     raise RuntimeError('Owned client exited before fixture completion')
                 time.sleep(1)
-            else:
-                if preflight.pending():
-                    preflight.failure(execution, 'Required client readiness/fixture setup deadline expired')
-                raise RuntimeError('Bounded native Host deadline expired')
     except (Exception, KeyboardInterrupt) as error:
         preflight.record_exception(execution, error)
         execution.update(status='failed', error=str(error))
+        setup_diagnostics.capture(root, runtime, {'client1': process} if process is not None else {}, execution)
     finally:
         if job:
             kernel.TerminateJobObject(job, 0)

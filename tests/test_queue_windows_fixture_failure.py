@@ -28,7 +28,7 @@ class WindowsFixtureFailureTests(unittest.TestCase):
                           'timeout_seconds': 5, 'ports': [16761, 16762], 'options': {'mp_host': True}}
         self.runtime = {'game': str(self.root / 'game'), 'java': 'fake-java',
                         'fixture': {'mods': ['GeneratedFixture'], 'preflight': {
-                            'version': 1, 'token': self.token, 'roles': ['client1']}}, 'host_cache': str(self.cache),
+                            'version': 2, 'token': self.token, 'roles': ['client1'], 'setup_timeout_seconds': 120}}, 'host_cache': str(self.cache),
                         'roles': {'client1': {'cache': str(self.cache), 'classes': str(self.cache / 'classes')},
                                   'server': {'cache': str(self.root / 'server')}}}
         for name, value in (('selection.json', self.selection), ('runtime.json', self.runtime),
@@ -64,7 +64,7 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         self.kernel.GlobalMemoryStatusEx.side_effect = memory
         self.ntdll = SimpleNamespace(NtResumeProcess=Mock(return_value=0))
 
-    def run_fake(self, client, server='', complete=True):
+    def run_fake(self, client, server='', complete=True, *, setup_ready=True, advance=None):
         client += '[QUEUE_PREFLIGHT] ' + json.dumps({'event': 'ready', 'token': self.token, 'role': 'client1'}) + '\n'
         expected = [client]
         def popen(command, **kwargs):
@@ -77,7 +77,9 @@ class WindowsFixtureFailureTests(unittest.TestCase):
                 (root / 'server-launch.log').write_text(server)
 
         def sleep(seconds):
-            if (self.cache / 'Lua/queue-preflight-setup.txt').is_file() and len(expected) == 1:
+            if advance is not None:
+                advance(seconds)
+            if setup_ready and (self.cache / 'Lua/queue-preflight-setup.txt').is_file() and len(expected) == 1:
                 receipt = '[QUEUE_PREFLIGHT] ' + json.dumps({'event': 'setup-ready', 'token': self.token, 'role': 'client1'}) + '\n'
                 with (self.root / 'client1-launch.log').open('a') as stream:
                     stream.write(receipt)
@@ -152,6 +154,29 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         with patch.object(windows.provenance, 'seal_execution', side_effect=seal) as sealed:
             self.run_fake(self.normal)
         sealed.assert_called_once_with(self.root.resolve())
+
+    def test_missing_setup_tick_times_out_before_scenario_and_preserves_owned_cleanup(self):
+        self.selection['options']['fixture_setup_timeout_seconds'] = 2
+        self.runtime['fixture']['preflight']['setup_timeout_seconds'] = 2
+        self.selection['timeout_seconds'] = 90
+        for name, value in (('selection.json', self.selection), ('runtime.json', self.runtime)):
+            (self.root / name).write_text(json.dumps(value))
+        now = [0]
+        def advance(seconds):
+            now[0] += seconds
+        def capture(root, runtime, processes, execution):
+            self.assertIs(processes['client1'], self.process)
+            self.process.wait.assert_not_called()
+        with patch.object(windows.time, 'monotonic', side_effect=lambda: now[0]), \
+                patch.object(windows.setup_diagnostics, 'capture', side_effect=capture) as diagnosed:
+            result, adapter = self.run_fake(self.normal, setup_ready=False, advance=advance)
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('fixture-setup', result['setup_failure']['kind'])
+        self.assertEqual(2, result['setup_failure']['evidence']['elapsed_seconds'])
+        self.assertFalse((self.cache / 'Lua/queue-preflight-release.txt').exists())
+        self.assertEqual(2, now[0])
+        adapter.complete.assert_not_called()
+        diagnosed.assert_called_once()
 
     def test_foreign_require_warning_does_not_preempt_completion(self):
         warning = 'WARN : Lua at Lua((MOD:Foreign)).Foreign.lua> require("Missing") failed\n'

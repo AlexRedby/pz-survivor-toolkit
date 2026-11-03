@@ -154,6 +154,8 @@ class NativeSnapshotTests(unittest.TestCase):
             config = report.read_json(output / 'runtime.json')['fixture']['preflight']
             tokens.append(config['token'])
             self.assertEqual(['client1', 'client2'], config['roles'])
+            self.assertEqual(2, config['version'])
+            self.assertEqual(120, config['setup_timeout_seconds'])
             self.assertRegex(config['token'], '^[a-f0-9]{32}$')
             shared = 'mods/ActionQueueTest/42/media/lua/shared/'
             configs = [(output / role / shared / 'QueuePreflightConfig.lua').read_bytes()
@@ -165,6 +167,13 @@ class NativeSnapshotTests(unittest.TestCase):
                 self.assertFalse((output / role / 'Lua/queue-preflight-setup.txt').exists())
                 self.assertFalse((output / role / 'Lua/queue-preflight-release.txt').exists())
         self.assertNotEqual(tokens[0], tokens[1])
+
+    def test_explicit_setup_bound_is_frozen_independently_from_gameplay_timeout(self):
+        output = self.prepare('custom-setup-bound', options={'fixture_setup_timeout_seconds': 300}, timeout_seconds=45)
+        config = report.read_json(output / 'runtime.json')['fixture']['preflight']
+        self.assertEqual(300, config['setup_timeout_seconds'])
+        self.assertEqual(45, report.read_json(output / 'selection.json')['timeout_seconds'])
+        self.assertEqual([], report.verify_manifest(output, 'snapshot-hashes.json'))
 
     def test_runtime_compatibility_checks_final_generated_owned_files_and_seals_receipt(self):
         def stage(project, output, game, jdk, selection, locations, runtime):

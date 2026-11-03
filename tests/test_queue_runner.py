@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from queue_checks import runner, admission, coop
+from queue_checks.preflight import setup_timeout
 
 
 class Process:
@@ -90,7 +91,8 @@ class NativeRunnerTests(unittest.TestCase):
         # Tests change role counts and fixture options after setUp; seal their final inputs.
         selection = json.loads((self.root / 'selection.json').read_text())
         runtime = json.loads((self.root / 'runtime.json').read_text())
-        config = dict(version=1, token='0123456789abcdef' * 2, roles=runner.adapters.roles(selection, False))
+        config = dict(version=2, token='0123456789abcdef' * 2, roles=runner.adapters.roles(selection, False),
+                      setup_timeout_seconds=setup_timeout(selection))
         runtime.setdefault('fixture', {})['preflight'] = config
         self.runtime.setdefault('fixture', {})['preflight'] = config
         for role in config['roles']:
@@ -185,6 +187,45 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertTrue(result['preflight']['released'])
         self.assertEqual(self.runtime['fixture']['preflight']['token'] + '\n',
                          (self.root / 'client1/Lua/queue-preflight-release.txt').read_text())
+
+    def test_no_setup_ticks_fail_early_with_owned_diagnostics_before_cleanup(self):
+        self.selection.update(timeout_seconds=90, options={'fixture_setup_timeout_seconds': 3})
+        (self.root / 'selection.json').write_text(json.dumps(self.selection))
+        self.acknowledge_setup = lambda: None
+        now = [0]
+        def sleep(seconds):
+            now[0] += seconds
+        def capture(root, runtime, processes, execution):
+            self.assertIsNone(processes['client1'].poll())
+            self.assertEqual('fixture-setup', execution['setup_failure']['kind'])
+            self.assertTrue(execution['setup_failure']['evidence']['deadline_exceeded'])
+        with patch.object(runner.time, 'monotonic', side_effect=lambda: now[0]), \
+                patch.object(runner.setup_diagnostics, 'capture', side_effect=capture) as diagnosed:
+            result, _ = self.invoke(sleep=sleep)
+        self.assertEqual('failed', result['status'])
+        self.assertEqual(4, now[0])
+        self.assertEqual(-15, result['processes']['client1']['exit_code'])
+        self.assertFalse((self.root / 'client1/Lua/queue-preflight-release.txt').exists())
+        diagnosed.assert_called_once()
+
+    def test_successful_slow_setup_does_not_spend_the_gameplay_budget(self):
+        self.selection.update(timeout_seconds=6, options={'fixture_setup_timeout_seconds': 12})
+        (self.root / 'selection.json').write_text(json.dumps(self.selection))
+        self.complete = False
+        now, emitted = [0], [False]
+        acknowledge = self.acknowledge_setup
+        self.acknowledge_setup = lambda: acknowledge() if now[0] >= 8 else None
+        def sleep(seconds):
+            now[0] += seconds
+            if now[0] >= 12 and not emitted[0]:
+                self.client_streams['client1'].write(self.content)
+                self.client_streams['client1'].flush()
+                emitted[0] = True
+        with patch.object(runner.time, 'monotonic', side_effect=lambda: now[0]):
+            result, _ = self.invoke(sleep=sleep)
+        self.assertEqual('completed', result['status'])
+        self.assertEqual(8, result['preflight']['timing']['setup_elapsed_seconds'])
+        self.assertNotIn('setup_failure', result)
 
     def prepare_second_client(self):
         self.selection['clients'] = 2

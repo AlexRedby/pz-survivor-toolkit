@@ -195,6 +195,8 @@ class BatchTests(unittest.TestCase):
             {'suite': 'startup', 'options': {'window_size': [0, 900]}},
             {'suite': 'startup', 'options': {'preload_toolkit_fonts': True}},
             {'suite': 'startup', 'options': {'preload_toolkit_fonts': 1}},
+            {'suite': 'startup', 'options': {'fixture_setup_timeout_seconds': 0}},
+            {'suite': 'startup', 'options': {'fixture_setup_timeout_seconds': True}},
             {'suite': 'startup', 'options': {'mod_sources': {'PZSurvivorToolkit': 'relative'}}},
             {'suite': 'startup', 'options': {'mod_sources': {'NotSelected': '/unused-mod'}}},
             {'suite': 'wooden_cart_motion', 'case': 'reverse', 'options': {'kotlin_home': 42}},

@@ -13,6 +13,7 @@ local allowed=false
 for _,actor in ipairs(config.roles) do if actor==role then allowed=true end end
 assert(allowed,'preflight role is not required')
 local ready,failed,setup,running=false,false,false,false
+local setupStarted=false
 local starts={}
 local ticks={}
 local function quote(value)
@@ -21,9 +22,10 @@ local function quote(value)
   return escapes[c] or string.format('\\u%04x',string.byte(c))
  end)..'"'
 end
-local function emit(event,phase,reason)
+local function emit(event,phase,reason,paused)
  local fields='"event":'..quote(event)..',"token":'..quote(config.token)..',"role":'..quote(role)
  if phase then fields=fields..',"phase":'..quote(phase)..',"reason":'..quote(reason) end
+ if event=='setup-started' then fields=fields..',"paused":'..(type(paused)=='boolean'and tostring(paused)or'null') end
  print('[QUEUE_PREFLIGHT] {'..fields..'}')
 end
 function P.fail(phase,reason)
@@ -67,7 +69,14 @@ end
 -- paused. Gameplay callbacks above still require a genuine native OnTick.
 Events.OnTickEvenPaused.Add(function()
  if failed or not ready then return end
- if not setup and grant('queue-preflight-setup.txt') then
+ if not setupStarted and grant('queue-preflight-setup.txt') then
+  setupStarted=true
+  local paused=nil
+  if type(isGamePaused)=='function' then
+   local ok,value=pcall(isGamePaused)
+   if ok and type(value)=='boolean' then paused=value end
+  end
+  emit('setup-started',nil,nil,paused)
   for _,start in ipairs(starts) do
    local ok,reason=pcall(start.fn,unpack(start.args))
    if not ok then P.fail('fixture-setup',reason);return end

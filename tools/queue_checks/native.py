@@ -20,6 +20,7 @@ from .mod_selection import (
     MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots,
     mod_layers, mod_info, selected_mod_version, lua_sources,
 )
+from .preflight import setup_timeout
 
 
 def jdk_binary(jdk, name):
@@ -142,6 +143,7 @@ def window_size(selection):
 
 def _validate(selection):
     coop.enabled(selection)
+    setup_timeout(selection)
     suite = selection.get("suite")
     if type(selection.get("schema_version")) is not int or selection["schema_version"] != 1 or not isinstance(suite, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", suite):
         raise ValueError("Expected schema_version=1 and a valid suite name")
@@ -377,7 +379,8 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
     admission.require_disk(output, len(roles), len(roles) * (mod_bytes + fixture_bytes) + world_bytes)
     runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(launch_java), "server_name": "queue-smoke", "window_size": selection["window_size"], "roles": {}}
-    preflight_config = {'version': 1, 'token': uuid.uuid4().hex, 'roles': adapters.roles(selection, False)}
+    preflight_config = {'version': 2, 'token': uuid.uuid4().hex, 'roles': adapters.roles(selection, False),
+                        'setup_timeout_seconds': setup_timeout(selection)}
     # Hash selected sources before executing the source-backed gate. Subsequent
     # copies and normal live-input verification reject changed candidate bytes.
     borrowing = borrowing_check.qualify(project, game, locations) if borrowing_required else None

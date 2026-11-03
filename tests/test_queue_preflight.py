@@ -20,7 +20,8 @@ class ClientPreflightTests(unittest.TestCase):
         self.roles = ['client1', 'client2']
         self.token = 'a' * 32
         self.selection = {'kind': 'mp', 'clients': 2}
-        self.runtime = {'fixture': {'preflight': {'version': 1, 'token': self.token, 'roles': self.roles}},
+        self.runtime = {'fixture': {'preflight': {'version': 2, 'token': self.token, 'roles': self.roles,
+                                                'setup_timeout_seconds': 120}},
                         'roles': {role: {'cache': str(self.root / role)} for role in self.roles}}
         for role in self.roles:
             (self.root / role / 'Lua').mkdir(parents=True)
@@ -74,6 +75,27 @@ class ClientPreflightTests(unittest.TestCase):
     def test_setup_cannot_claim_success_before_runner_grant(self):
         with self.assertRaisesRegex(RuntimeError, 'preceded required preflights'):
             self.monitor.check({'client1': self.receipt('client1') + self.receipt('client1', 'setup-ready')}, self.execution)
+
+    def test_setup_started_pause_is_role_bound_and_does_not_release_gameplay(self):
+        logs = {role: self.receipt(role) for role in self.roles}
+        self.monitor.check(logs, self.execution)
+        for role, paused in (('client1', True), ('client2', None)):
+            logs[role] += self.receipt(role, 'setup-started', paused=paused)
+        self.assertFalse(self.monitor.check(logs, self.execution))
+        self.assertEqual(self.execution['preflight']['setup_started'],
+                         {'client1': {'line': 2, 'paused': True}, 'client2': {'line': 2, 'paused': None}})
+        self.assertFalse((self.root / 'client1/Lua' / RELEASE).exists())
+
+    def test_setup_started_rejects_nonboolean_pause_and_pregrant_receipts(self):
+        with self.assertRaises(RuntimeError):
+            self.monitor.check({'client1': self.receipt('client1') +
+                               self.receipt('client1', 'setup-started', paused=True)}, self.execution)
+        logs = {role: self.receipt(role) for role in self.roles}
+        self.monitor.check(logs, self.execution)
+        for paused in (0, 1, 'true', [], {}):
+            with self.subTest(paused=paused), self.assertRaises(RuntimeError):
+                self.monitor.check(dict(logs, client1=logs['client1'] +
+                                       self.receipt('client1', 'setup-started', paused=paused)), self.execution)
 
     def test_setup_failure_blocks_case_grant_for_every_peer(self):
         logs = {role: self.receipt(role) for role in self.roles}
@@ -165,11 +187,16 @@ local function environment()
 end
 local P,files,logs,fire,env=environment()
 local nativeEvents=env.Events;local started,ticks=0,0
-P.onGameStart(env.Events,function()started=started+1 end)
+P.onGameStart(env.Events,function()
+ assert(logs[#logs]:find('"event":"setup%-started"')and logs[#logs]:find('"paused":true'),
+  'setup callback ran before token/role-bound pause-at-start evidence')
+ started=started+1
+end)
 local tick=function()ticks=ticks+1 end;P.onTick(env.Events,tick)
 -- Match the engine: a paused native client dispatches only EvenPaused.
 -- Ordinary fixture ticks must stay gated even when startup is admitted.
 local paused=true
+env.isGamePaused=function()return paused end
 local function frame()
  fire('OnTickEvenPaused')
  if not paused then fire('OnTick')end
@@ -183,9 +210,15 @@ files['queue-preflight-setup.txt']=string.rep('a',32)
 fire('OnTick');assert(started==0 and ticks==0,'coordinator ran on gameplay OnTick')
 frame();assert(started==1 and ticks==0 and logs[#logs]:find('setup%-ready'))
 frame();assert(started==1 and ticks==0,'paused startup callback ran twice')
-local setupReceipts=0
-for _,line in ipairs(logs)do if line:find('setup%-ready')then setupReceipts=setupReceipts+1 end end
-assert(setupReceipts==1,'setup-ready receipt was duplicated')
+local setupReceipts,setupStarts,startIndex,readyIndex=0,0,nil,nil
+for i,line in ipairs(logs)do
+ if line:find('"event":"setup%-started"')then
+  setupStarts=setupStarts+1;startIndex=i
+  assert(line:find('"token":"'..string.rep('a',32)..'"')and line:find('"role":"client1"')and line:find('"paused":true'))
+ end
+ if line:find('"event":"setup%-ready"')then setupReceipts=setupReceipts+1;readyIndex=i end
+end
+assert(setupStarts==1 and setupReceipts==1 and startIndex<readyIndex,'setup receipts duplicated or reordered')
 files['queue-preflight-release.txt']=string.rep('a',32)
 frame();frame();assert(started==1 and ticks==0 and env.Events==nativeEvents,
  'release synthesized a gameplay tick while paused')
@@ -200,6 +233,35 @@ Q.onGameStart(qenv.Events,function()case=case+1 end);Q.onTick(qenv.Events,functi
 qfire('OnGameStart');Q.complete();qfiles['queue-preflight-setup.txt']=string.rep('a',32)
 qfiles['queue-preflight-release.txt']=string.rep('a',32)
 qfire('OnTickEvenPaused');qfire('OnTickEvenPaused');qfire('OnTick');assert(case==0 and qlogs[#qlogs]:find('fixture%-setup'))
+local failedStart=0
+for _,line in ipairs(qlogs)do
+ if line:find('"event":"setup%-started"')then failedStart=failedStart+1;assert(line:find('"paused":null'))end
+ assert(not line:find('"event":"setup%-ready"'),'throwing callback claimed setup-ready')
+end
+assert(failedStart==1,'throwing callback lost or duplicated setup-started')
+local T,tfiles,tlogs,tfire,tenv=environment()
+tenv.isGamePaused=function()return false end
+T.onGameStart(tenv.Events,function()coroutine.yield('stalled callback')end)
+local stalledTicks=0;T.onTick(tenv.Events,function()stalledTicks=stalledTicks+1 end)
+tfire('OnGameStart');T.complete()
+tfiles['queue-preflight-setup.txt']=string.rep('a',32);tfiles['queue-preflight-release.txt']=string.rep('a',32)
+local co=coroutine.create(function()tfire('OnTickEvenPaused')end)
+local ok,why=coroutine.resume(co);assert(ok and why=='stalled callback'and coroutine.status(co)=='suspended')
+tfire('OnTickEvenPaused');tfire('OnTick')
+local stalledStarts=0
+for _,line in ipairs(tlogs)do
+ if line:find('"event":"setup%-started"')then stalledStarts=stalledStarts+1;assert(line:find('"paused":false'))end
+ assert(not line:find('"event":"setup%-ready"'),'stalled callback claimed setup-ready')
+end
+assert(stalledStarts==1 and stalledTicks==0,'stalled setup repeated its callback or admitted gameplay')
+for _,probe in ipairs({function()error('pause probe unavailable')end,function()return 'unknown'end})do
+ local U,ufiles,ulogs,ufire,uenv=environment();uenv.isGamePaused=probe
+ local called=0;U.onGameStart(uenv.Events,function()called=called+1 end)
+ ufire('OnGameStart');U.complete();ufiles['queue-preflight-setup.txt']=string.rep('a',32)
+ ufire('OnTickEvenPaused');assert(called==1)
+ assert(ulogs[#ulogs-1]:find('"event":"setup%-started"')and ulogs[#ulogs-1]:find('"paused":null'),
+  'unavailable pause state was invented or prevented setup')
+end
 local R,rfiles,rlogs,rfire,renv=environment()
 R.onGameStart(renv.Events,function()error('must never start')end);rfire('OnGameStart')
 R.complete();R.fail('preflight','wrong viewport')

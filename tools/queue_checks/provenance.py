@@ -112,7 +112,8 @@ def observation_files(root):
     from . import report
     root = Path(root).resolve()
     selection = read_json(root / 'selection.json')
-    paths = {root / 'execution.json', *root.glob('*-launch.log'), *root.glob('*-probes.log')}
+    paths = {root / 'execution.json', *root.glob('*-launch.log'), *root.glob('*-probes.log'),
+             *root.glob('*-setup-threads.log')}
     for role in adapters.roles(selection):
         paths.update(report.log_paths(root, role))
     result = {}
