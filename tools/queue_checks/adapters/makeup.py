@@ -3,7 +3,7 @@ import copy
 import json
 import os
 import subprocess
-from .. import preparation_process
+from .. import placement, preparation_process
 import zipfile
 from pathlib import Path
 import re
@@ -699,6 +699,18 @@ def check_move_case(row,selection,prepared,receipt):
     return result
 
 
+def check_placements(text, prepared, kind):
+    client_proofs = raw(text, 'CLIENT_PLACEMENT')
+    assert len(client_proofs) == 1, 'missing/duplicate local-client placement proof'
+    assert prepared, 'missing prepared placement identity'
+    target = client_proofs[0]['target']
+    placement.validate(client_proofs[0], target, 'local')
+    for ids in prepared:
+        if 'placement' in ids:
+            assert ids['placement'] == target, 'makeup placement target changed'
+        placement.validate(ids['placementProof'], target, 'replica' if kind == 'mp' else 'local')
+
+
 def verify(root,selection,catalog):
     from ..report import events
     validate(selection);root=Path(root);text=(root/'client1-launch.log').read_text(errors='replace')
@@ -726,6 +738,8 @@ def verify(root,selection,catalog):
     except OSError:issues.append('Makeup native screenshot file missing')
     prepared,verified=raw(authority,'PREPARED'),raw(authority,'VERIFIED')
     if len(prepared)!=len(results) or len(verified)!=len(results):issues.append('Makeup authority case markers missing/duplicate')
+    try:check_placements(text,prepared,selection['kind'])
+    except (AssertionError,KeyError,TypeError,ValueError) as error:issues.append('Invalid makeup placement evidence: '+(str(error)or'schema differs'))
     expected_client=[point['client'] for row in results for point in row.get('checkpoints',[])]
     expected_authority=[point['authority'] for row in results for point in row.get('checkpoints',[])]
     if raw(text,'CLIENT_SNAPSHOT')!=expected_client:issues.append('Raw makeup client checkpoints differ')

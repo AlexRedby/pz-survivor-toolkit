@@ -1,16 +1,21 @@
--- Exercise the saved fixture's actual asynchronous placement code, without a game.
-local now, actorX, actorY, teleports, spawned, waits
+-- Exercise the saved fixture with the real shared asynchronous placement helper.
+local now, actorX, actorY, teleports, spawned, waits, staleSquare
 local function square(x,y,z)
  return {getX=function()return x end,getY=function()return y end,getZ=function()return z end,
   isFree=function()return true end,getRoom=function()end,getFloor=function()return {}end,
   getObjects=function()return {size=function()return 1 end}end,canReachTo=function(_,other)return math.abs(other:getX()-x)+math.abs(other:getY()-y)<=1 end}
 end
-local p={setGodMod=function()end,setGhostMode=function()end,setAutoDrink=function()end}
+local p={setGodMod=function()end,setGhostMode=function()end,setAutoDrink=function()end,
+ isLocalPlayer=function()return true end,hasTimedActions=function()return false end,
+ isPlayerMoving=function()return false end,getPath2=function()end}
 function p:getSquare()return square(math.floor(actorX),math.floor(actorY),0)end
-p.getCurrentSquare=p.getSquare
+function p:getCurrentSquare()return staleSquare or self:getSquare()end
 function p:getX()return actorX end;function p:getY()return actorY end;function p:getZ()return 0 end
+function p:getDeferredMovement(probe)return probe end
+Vector2={new=function()return {getX=function()return 0 end,getY=function()return 0 end}end}
+ISTimedActionQueue={getTimedActionQueue=function()return {queue={}}end}
 local target
-function p:teleportTo(x,y,z)teleports=teleports+1;target={x=math.floor(x),y=math.floor(y),z=z}end
+function p:teleportTo(x,y,z)teleports=teleports+1;target={x=x,y=y,z=z}end
 getCell=function()return {getGridSquare=function(_,x,y,z)return square(x,y,z)end}end
 getSquare=square
 getTimestampMs=function()return now end
@@ -27,34 +32,47 @@ require=function(name)
 end
 for _,case in ipairs({'pet-success','pet-invalid'})do
 for _,offset in ipairs({0,.5})do
- now,actorX,actorY,teleports,spawned,waits=100,100.5,100.5,0,0,0
+ now,actorX,actorY,teleports,spawned,waits,staleSquare=100,100.5,100.5,0,0,0,nil
+ local released=0;local previous={animal={getBehavior=function()return {setBlockMovement=function(_,value)assert(value==false);released=released+1 end}end}}
  local f=assert(loadfile(ProjectRoot..'/tests/native_queue/animal-terminal/shared/QueueAnimalTerminal.lua'))()
- assert(not f.prepare(p,case)and teleports==1 and spawned==0)
- assert(not f.prepare(p,case)and teleports==1 and spawned==0 and waits==1)
- now=now+4999;assert(not f.prepare(p,case)and waits==1)
- now=now+1;assert(not f.prepare(p,case)and waits==2)
+ assert(not f.prepare(p,case,previous)and teleports==0 and spawned==0 and released==0,'fixture must earn a quiet pre-teleport window')
+ now=599;assert(not f.prepare(p,case,previous)and teleports==0)
+ now=600;assert(not f.prepare(p,case,previous)and teleports==1 and spawned==0)
+ assert(not f.prepare(p,case,previous)and teleports==1 and spawned==0 and waits==1)
+ now=5100;assert(not f.prepare(p,case,previous)and waits==2,'waiting diagnostics must be bounded')
  assert(not f.at(p,target),'old tile must not satisfy asynchronous arrival')
- actorX,actorY=target.x+offset,target.y+offset
- assert(f.at(p,target),'native corner and centre positions belong to the requested tile')
- local ok,problem=pcall(f.prepare,p,case)
+ actorX,actorY=target.x+offset,target.y+offset;staleSquare=square(100,100,0)
+ assert(not f.at(p,target),'stale currentSquare cannot prove arrival')
+ now=5600;assert(not f.prepare(p,case,previous)and spawned==0)
+ staleSquare=nil;assert(f.at(p,target),'native corner and centre positions belong to the requested tile')
+ assert(not f.prepare(p,case,previous)and spawned==0 and released==0,'arrival requires its own stable window')
+ now=6099;assert(not f.prepare(p,case,previous)and spawned==0)
+ now=6100;local ok,problem=pcall(f.prepare,p,case,previous)
  assert(not ok and tostring(problem):find('fixture reached native spawn',1,true)
-  and spawned==1 and teleports==1,'settled arrival must advance once without another teleport')
+  and spawned==1 and teleports==1 and released==1,'settled arrival must advance once without another teleport')
 end
 end
--- A Host server observes the client's replicated target; it never teleports a remote actor.
+-- A Host server observes ordinary replication and never teleports the remote actor.
 isServer=function()return true end
-now,actorX,actorY,teleports,spawned,waits=100,100.5,100.5,0,0,0
+now,actorX,actorY,teleports,spawned,waits,staleSquare=100,100.5,100.5,0,0,0,nil
 local remote={x=98,y=98,z=0}
 local serverFixture=assert(loadfile(ProjectRoot..'/tests/native_queue/animal-terminal/shared/QueueAnimalTerminal.lua'))()
 assert(not serverFixture.prepare(p,'pet-success',nil,remote)and teleports==0 and spawned==0)
-assert(not pcall(serverFixture.prepare,p,'pet-success',nil,{x=99,y=98,z=0}), 'server target cannot change while waiting')
+assert(not pcall(serverFixture.prepare,p,'pet-success',nil,{x=99,y=98,z=0}),'server target cannot change while waiting')
 actorX,actorY=98,98
-local arrived,problem=pcall(serverFixture.prepare,p,'pet-success',nil,remote)
+assert(not serverFixture.prepare(p,'pet-success',nil,remote),'server must earn a stable replication window')
+now=600;local arrived,problem=pcall(serverFixture.prepare,p,'pet-success',nil,remote)
 assert(not arrived and tostring(problem):find('fixture reached native spawn',1,true)and teleports==0 and spawned==1,
- 'server must wait for exact replicated arrival without invoking the client-only helper')
+ 'server must wait for exact replicated arrival without moving the remote actor')
+now,actorX,actorY,spawned=100,100.5,100.5,0
+local stalled=assert(loadfile(ProjectRoot..'/tests/native_queue/animal-terminal/shared/QueueAnimalTerminal.lua'))()
+assert(not stalled.prepare(p,'pet-success',nil,remote));now=30100
+local ok,diagnostic=pcall(stalled.prepare,p,'pet-success',nil,remote)
+assert(not ok and tostring(diagnostic):find('placement timed out',1,true)and tostring(diagnostic):find('currentSquare=',1,true)
+ and spawned==0 and teleports==0,'stalled authority arrival must fail with bounded actual-square diagnostics')
 isServer=function()return false end
 print=output
-print('PASS saved animal fixture: actual placement helper, delayed native arrival, corner/centre positions and bounded wait diagnostics')
+print('PASS saved animal fixture: quiet window, one local teleport, delayed dual-square arrival, stable replica arrival and bounded diagnostics')
 
 local function read(path)local file=assert(io.open(path));local text=file:read('*a');file:close();return text:gsub('\r','')end
 local source=read(ProjectRoot..'/tests/native_queue/animal-terminal/client/ZZAnimalTerminal.lua')

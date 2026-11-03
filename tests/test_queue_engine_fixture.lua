@@ -108,6 +108,7 @@ do
   getPlayer=function()return actor end
   Events={OnTick={Add=function()end},OnServerCommand={Add=function()end},OnGameStart={Add=function()end}}
   require=function(name)
+   if name=='QueuePreflight'then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end}end
    if name=='QueueTestSelection' then return {mode=mode,kind=kind,suite='engine'} end
    if name=='QueueEngineAuthority' then return {} end
    return true

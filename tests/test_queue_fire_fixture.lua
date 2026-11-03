@@ -2,6 +2,7 @@
 local root=ProjectRoot or '.'
 local selection={mode='toolkit'}
 local modules={QueueFireIgnition={cases={}},QueueTestSelection=selection,QueueHealthEvents={encode=function()return '{}' end},['Camping/SCampfireSystem']=true}
+modules.QueuePreflight={onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end}
 local nativeRequire=require
 require=function(name)if modules[name]~=nil then return modules[name] end;return nativeRequire(name)end
 local nextID,removed,packets=10,{},0
@@ -241,6 +242,7 @@ do
   getPlayer=function()return actor end
   getTimestampMs=function()return 0 end
   require=function(name)
+   if name=='QueuePreflight'then return modules.QueuePreflight end
    if name=='QueueTestSelection' then return config end
    if name=='QueueFireIgnition' or name=='QueueHealthEvents' or name=='QueueFireTidy' then return {} end
    return true

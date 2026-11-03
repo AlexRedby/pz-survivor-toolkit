@@ -49,14 +49,10 @@ function F.placement(player)
   square=square and {x=square:getX(),y=square:getY(),z=square:getZ()}or false}
 end
 function F.validPlacement(tile)
- if type(tile)~='table'then return false end
- local count=0;for key,value in pairs(tile)do
-  if (key~='x'and key~='y'and key~='z')or type(value)~='number'or value~=math.floor(value)then return false end;count=count+1
- end;return count==3
+ local valid=pcall(require('QueueEnergyPlacement').target,tile);return valid
 end
 function F.atPlacement(player,tile)
- if not F.validPlacement(tile)then return false end
- local actual=F.placement(player);return F.same(actual.tile,tile)and F.same(actual.square,tile)
+ return F.validPlacement(tile)and require('QueueEnergyPlacement').at(player,tile)or false
 end
 local function members(container)
  local out={};local items=container:getItems()
@@ -273,7 +269,7 @@ function F.resolve(player,ids)
 end
 function F.prepare(player,case,previous,placement)
  assert(not isClient(),'makeup setup requires authority')
- if F.placed(case)then assert(F.atPlacement(player,placement),'makeup supply actor has not settled on exact placement tile')end
+ assert(F.atPlacement(player,placement),'makeup actor has not settled on exact placement tile')
  local root=player:getInventory()
  if previous and previous.held then player:setPrimaryHandItem(nil);player:setSecondaryHandItem(nil);if isServer()then sendEquip(player)end end
  cleanupSupply(player,previous)
@@ -290,7 +286,6 @@ function F.prepare(player,case,previous,placement)
   if isServer()then sendRemoveItemFromContainer(root,item)end;root:Remove(item)
  end
  player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
- if not F.placed(case)then require('QueueEnergyPlacement')(player)end
  assert(not player:isTimedActionInstant()and not getDebug(),'ordinary non-debug makeup timing required')
  local ids={case=case,actor=player:getOnlineID(),items={},types={},target='Base.MakeUp_Crow',alternate='Base.MakeUp_RedStripes2',
   different='Base.MakeUp_EyesShadowWhite',oldType='Base.MakeUp_RedStripes1',slot=tostring(ItemBodyLocation.MAKE_UP_EYES),

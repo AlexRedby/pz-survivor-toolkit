@@ -1,5 +1,5 @@
 if not isServer()then return end
-local F=require 'QueueMakeup';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
+local P=require 'QueueEnergyPlacement';local F=require 'QueueMakeup';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
 local state,previous,pending,placement=nil,nil,nil,nil;local index,sequence=1,0
 local function raw(marker,row)print('[MAKEUP_TEST] '..marker..' '..JSON.encode(row))end
 local function fail(player,problem)
@@ -12,13 +12,9 @@ Events.OnClientCommand.Add(function(module,name,player,args)
   assert(player:getUsername()=='client1'and args.case==config.cases[index],'makeup authority actor/case/order differs')
   if name=='Prepare'then
    assert(not state and not pending,'previous makeup case unsettled')
-   if config.options and (config.options.makeup_supplies==true or config.options.makeup_moves==true or config.options.makeup_carried_moves==true or config.options.makeup_world_moves==true or config.options.makeup_depletion_moves==true or config.options.makeup_held_moves==true) then
-    assert(F.validPlacement(args.placement)and(not placement or F.same(placement,args.placement)),'makeup authority placement target differs')
-    pending={prepare=true,since=getTimestampMs(),player=player,placement=args.placement,case=args.case}
-   else
-    state=F.prepare(player,args.case,previous);sequence=0;raw('PREPARED',state.ids)
-    sendServerCommand(player,module,'Prepared',state.ids)
-   end
+   local target=P.target(args.placement)
+   assert(not placement or F.same(placement,target),'makeup authority placement target differs')
+   pending={prepare=true,since=getTimestampMs(),player=player,placement=target,case=args.case,arrival=P.observe(player,target)}
   elseif name=='WearPrepared'then
    assert(state and not pending and args.item==state.ids.items.old,'prepared root acknowledgement differs')
    F.wearPrepared(state);raw('PREPARED',state.ids);sendServerCommand(player,module,'WornPrepared',state.ids)
@@ -38,10 +34,10 @@ Events.OnTick.Add(function()
  if not pending then return end
  local player=pending.player
  local ok,problem=pcall(function()
-  local time=getTimestampMs();assert(time-pending.since<30000,'makeup authority placement/checkpoint timed out')
+  local time=getTimestampMs();if not pending.prepare then assert(time-pending.since<30000,'makeup authority checkpoint timed out')end
   if pending.prepare then
-   if not F.atPlacement(player,pending.placement)then return end
-   placement=pending.placement;state=F.prepare(player,pending.case,previous,placement);sequence=0;if not state.ids.wearPending then raw('PREPARED',state.ids)end
+   local proof=P.poll(pending.arrival);if not proof then return end
+   placement=pending.placement;state=F.prepare(player,pending.case,previous,placement);state.ids.placementProof=proof;sequence=0;if not state.ids.wearPending then raw('PREPARED',state.ids)end
    sendServerCommand(player,'MakeupTest','Prepared',state.ids);pending=nil;return
   end
   if(pending.label=='after-body'or pending.label=='final')and(state.ids.depletion and not F.depletionReady(state)or state.ids.held and not F.handsReady(state,true))then pending.snapshot=nil;pending.quiet=nil;return end

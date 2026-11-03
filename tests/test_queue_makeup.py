@@ -15,6 +15,15 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 from queue_checks.adapters import makeup as m
 
 
+def placement_proof(mode, target=None):
+    target = dict(target or dict(x=10,y=20,z=0))
+    actual = dict(x=target['x']+(.5 if mode=='local' else 0),y=target['y']+(.5 if mode=='local' else 0),
+                  z=target['z'],square=dict(target),currentSquare=dict(target))
+    if mode=='local':actual.update(queued=0,timed=False,moving=False,hasPath=False,deferredX=0,deferredY=0)
+    return dict(mode=mode,target=target,actual=actual,teleports=int(mode=='local'),stableMs=500,
+                quietMs=500 if mode=='local' else 0,elapsedMs=1000 if mode=='local' else 500)
+
+
 class MakeupEvidenceTests(unittest.TestCase):
     def selection(self,mode='toolkit',kind='sp',supplies=False,moves=False,carried_moves=False,world_moves=False,depletion_moves=False,held_moves=False):
         value= dict(suite='makeup',cases=list(m.SP_CASES if kind=='sp' else m.MP_CASES),mode=mode,kind=kind,
@@ -35,7 +44,7 @@ class MakeupEvidenceTests(unittest.TestCase):
         types=dict(kit='Base.MakeupEyeshadow',front='Base.BookCarpentry1',tail='Base.BookFirstAid1',**({'old':m.OLD} if 'old'in items else {}))
         ids=dict(case=case,actor=7,items=items,types=types,target=m.TARGET,oldType=m.OLD,alternate=m.ALTERNATE,different=m.DIFFERENT,
                  slot=m.SLOT,otherSlot=m.OTHER_SLOT,producer='ISMakeUpUI.onApplyMakeUp',duration=1,kitUses=5,kitType='Eyes',
-                 frontTotal=100,frontInitial=97,tailTotal=100,tailInitial=99)
+                 frontTotal=100,frontInitial=97,tailTotal=100,tailInitial=99,placementProof=placement_proof('replica' if mp else 'local'))
         def worn(item,kind,slot,root):return dict(id=item,kind=kind,slot=slot,root=root,sameReference=root,container='root' if root else False)
         baseline=dict(case=case,actor=7,root=[dict(id=value,kind=types[name]) for name,value in items.items()],
                       worn=[worn(4,m.OLD,m.SLOT,True)] if 'old'in items else [],
@@ -192,6 +201,7 @@ class MakeupEvidenceTests(unittest.TestCase):
         def event(row):return '[QUEUE_CHECK] '+json.dumps(row)+'\n'
         context=dict(suite='makeup',kind=selection['kind'],mode=selection['mode'],actor='client1')
         client=event(dict(context,event='setup',cases=selection['cases'],queueEnabled=selection['mode']=='toolkit',nativeDurations=True,avatarSupported=True,captureSupported=True))
+        client+=raw('CLIENT_PLACEMENT',placement_proof('local'))
         authority=''
         for row in rows:
             authority+=raw('PREPARED',row['ids'])
@@ -229,6 +239,35 @@ class MakeupEvidenceTests(unittest.TestCase):
                     result=self.verify(selection,rows)
                     self.assertEqual(result['issues'],[])
                     self.assertTrue(all(row['status']=='passed'for row in result['outcomes']))
+
+    def test_placement_requires_independent_local_and_authority_arrivals(self):
+        mutations=('missing-client','duplicate-client','client-target','client-stale-square',
+                   'missing-authority','authority-target','authority-stale-square','authority-teleport','authority-mode')
+        for kind in ('sp','mp'):
+            selection=self.selection(kind=kind)
+            for mutation in mutations:
+                with self.subTest(kind=kind,mutation=mutation):
+                    rows=[self.evidence(case,selection)for case in selection['cases']]
+                    if mutation=='missing-authority':rows[-1]['ids'].pop('placementProof')
+                    elif mutation.startswith('authority-'):
+                        proof=rows[-1]['ids']['placementProof']
+                        if mutation=='authority-target':proof['target']['x']+=1
+                        elif mutation=='authority-stale-square':proof['actual']['currentSquare']['x']-=1
+                        elif mutation=='authority-teleport':proof['teleports']=int(kind=='mp')
+                        elif mutation=='authority-mode':proof['mode']='local'if kind=='mp'else'replica'
+                    with tempfile.TemporaryDirectory()as directory:
+                        root=Path(directory);self.write(root,selection,rows)
+                        path=root/'client1-launch.log';lines=path.read_text().splitlines()
+                        index=next(i for i,line in enumerate(lines)if m.PREFIX+'CLIENT_PLACEMENT 'in line)
+                        if mutation=='missing-client':lines.pop(index)
+                        elif mutation=='duplicate-client':lines.insert(index,lines[index])
+                        elif mutation.startswith('client-'):
+                            proof=json.loads(lines[index].split(m.PREFIX+'CLIENT_PLACEMENT ',1)[1])
+                            if mutation=='client-target':proof['target']['x']+=1
+                            else:proof['actual']['square']['x']-=1
+                            lines[index]=m.PREFIX+'CLIENT_PLACEMENT '+json.dumps(proof)
+                        path.write_text('\n'.join(lines)+'\n')
+                        self.assertTrue(any('placement' in issue.lower() for issue in m.verify(root,selection,{})['issues']))
 
     def test_own_identity_conservation_cost_and_renderer_falsifications_fail(self):
         for kind in ('sp','mp'):
@@ -1405,6 +1444,9 @@ sendServerCommand=function(actor,module,name,args)
 end
 package.loaded.QueueHealthEvents={encode=function()return '{}'end}
 package.loaded.QueueTestSelection={cases={'deplete-root-earlier'},options={makeup_depletion_moves=true}}
+package.loaded.QueueEnergyPlacement={target=function(v)assert(v==tile);return v end,
+ observe=function(actor,value)assert(actor==player and value==tile);return {}end,
+ poll=function()return {mode='replica',target=tile,teleports=0}end}
 package.loaded.QueueMakeup={validPlacement=function(v)return v==tile end,same=function(a,b)return a==b end,
  atPlacement=function(actor,value)return actor==player and value==tile end,
  prepare=function()return {ids={case='deplete-root-earlier',depletion=true}}end,
@@ -1529,6 +1571,9 @@ sendServerCommand=function(actor,module,name,args)
 end
 package.loaded.QueueHealthEvents={encode=function()return '{}'end}
 package.loaded.QueueTestSelection={cases={'move-earlier'},options={makeup_moves=true}}
+package.loaded.QueueEnergyPlacement={target=function(v)assert(v==tile);return v end,
+ observe=function(actor,value)assert(actor==player and value==tile);return {}end,
+ poll=function()return {mode='replica',target=tile,teleports=0}end}
 package.loaded.QueueMakeup={validPlacement=function(v)return v==tile end,same=function(a,b)return a==b end,
  atPlacement=function(actor,value)return actor==player and value==tile end,
  prepare=function()return {ids=ids}end,
@@ -1548,6 +1593,7 @@ assert(wears==1 and markers==1,'authority did not publish exact acknowledged wor
     def test_supply_placement_uses_floor_and_current_square_before_any_setup_mutation(self):
         source=Path(__file__).resolve().parents[1]/'tests/native_queue/makeup/shared/QueueMakeup.lua'
         script="""
+package.loaded.QueueEnergyPlacement=assert(loadfile((arg[1]:gsub('makeup/shared/QueueMakeup.lua$','support/QueueEnergyPlacement.lua'))))()
 package.preload['Definitions/MakeUpDefinitions']=function()end
 ItemBodyLocation={MAKE_UP_FULL_FACE='face',MAKE_UP_EYES='eyes',MAKE_UP_EYES_SHADOW='shadow',MAKE_UP_LIPS='lips'}
 isClient=function()return false end
@@ -1556,7 +1602,7 @@ local x,y,z=10.1,20.9,0
 local sx,sy,sz=10,20,0
 local square={getX=function()return sx end,getY=function()return sy end,getZ=function()return sz end}
 local player={getX=function()return x end,getY=function()return y end,getZ=function()return z end,
- getCurrentSquare=function()return square end,getInventory=function()error('setup mutated before settled placement')end}
+ getSquare=function()return square end,getCurrentSquare=function()return square end,getInventory=function()error('setup mutated before settled placement')end}
 local target={x=10,y=20,z=0}
 assert(F.atPlacement(player,target),'non-centered integer teleport destination should settle')
 sy=19;assert(not F.atPlacement(player,target),'stale currentSquare admitted')
@@ -1598,35 +1644,41 @@ for _,name in ipairs({'OnServerStarted','OnClientCommand','OnTick'})do
  Events[name]={Add=function(callback)handlers[name]=callback end}
 end
 local settled=false;local calls=0;local failures=0;local replies=0;local clock=0
-local target={x=10,y=20,z=0}
-local player={getUsername=function()return 'client1'end}
+local target={x=10,y=20,z=0};local caseName=arg[2]
+local square={getX=function()return settled and 10 or 9 end,getY=function()return 20 end,getZ=function()return 0 end}
+local player={getUsername=function()return 'client1'end,getX=function()return settled and 10 or 9 end,
+ getY=function()return 20 end,getZ=function()return 0 end,getSquare=function()return square end,getCurrentSquare=function()return square end}
+package.loaded.QueueEnergyPlacement=assert(loadfile((arg[1]:gsub('makeup/server/ZZMakeupServer.lua$','support/QueueEnergyPlacement.lua'))))()
 getTimestampMs=function()return clock end
 sendServerCommand=function(actor,module,name,args)
  assert(actor==player and module=='MakeupTest')
  if name=='Failed'then failures=failures+1 else assert(name=='Prepared');replies=replies+1 end
 end
 package.loaded.QueueHealthEvents={encode=function()return '{}'end}
-package.loaded.QueueTestSelection={cases={'apply-worn-bag'},options={makeup_supplies=true}}
+package.loaded.QueueTestSelection={cases={caseName},options=caseName=='apply-worn-bag'and{makeup_supplies=true}or{}}
 package.loaded.QueueMakeup={
  validPlacement=function(value)return value==target end,
  same=function(a,b)return a==b end,
- atPlacement=function(actor,value)assert(actor==player and value==target);return settled end,
+ atPlacement=function(actor,value)assert(actor==player and value.x==target.x and value.y==target.y and value.z==target.z);return settled end,
  prepare=function(actor,case,previous,value)
-  assert(settled and actor==player and case=='apply-worn-bag'and previous==nil and value==target)
+  assert(settled and actor==player and case==caseName and previous==nil and value.x==target.x and value.y==target.y and value.z==target.z)
   calls=calls+1;return {ids={case=case,placement=value}}
  end}
 assert(loadfile(arg[1]))()
-handlers.OnClientCommand('MakeupTest','Prepare',player,{case='apply-worn-bag'})
+handlers.OnClientCommand('MakeupTest','Prepare',player,{case=caseName})
 assert(failures==1 and calls==0,'missing placement was admitted')
-handlers.OnClientCommand('MakeupTest','Prepare',player,{case='apply-worn-bag',placement=target})
+handlers.OnClientCommand('MakeupTest','Prepare',player,{case=caseName,placement=target})
 assert(calls==0 and replies==0,'prepare seeded before authority position settled')
 clock=500;handlers.OnTick();assert(calls==0 and replies==0)
-settled=true;clock=1000;handlers.OnTick()
+settled=true;clock=1000;handlers.OnTick();assert(calls==0 and replies==0,'authority skipped stable arrival window')
+clock=1500;handlers.OnTick()
 assert(calls==1 and replies==1,'authority failed to acknowledge exact settled position')
 handlers.OnTick();assert(calls==1,'authority setup repeated after acknowledgement')
 """
-        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=script,capture_output=True,text=True)
-        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        for case in ('apply-worn-bag','preview-close'):
+            with self.subTest(case=case):
+                result=subprocess.run([shutil.which('luajit'),'-',str(source),case],input=script,capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
     def test_native_fixture_lua_parses(self):

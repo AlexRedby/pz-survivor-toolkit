@@ -17,7 +17,7 @@ Events.OnClientCommand.Add(function(module,name,player,args)
   if name=='Prepare'then
    assert(not state and not pending,'animal terminal previous case not settled')
    local target=F.placementTarget(args.placement)
-   if not prepared(player,target)then pending={player=player,target=target,since=getTimestampMs()};return end
+   if not prepared(player,target)then pending={player=player,target=target};return end
    result=state.ids;raw('PREPARED',result)
   elseif name=='Baseline'then
    assert(state and not baseline,'duplicate animal terminal baseline');baseline=F.snapshot(state)
@@ -38,7 +38,6 @@ Events.OnTick.Add(function()
  if not pending then return end
  local waiting=pending
  local ok,problem=pcall(function()
-  assert(getTimestampMs()-waiting.since<30000,'native fixture placement did not settle')
   if not prepared(waiting.player,waiting.target)then return end
   pending=nil;raw('PREPARED',state.ids);sendServerCommand(waiting.player,'AnimalTerminalTest','Prepared',state.ids)
  end)

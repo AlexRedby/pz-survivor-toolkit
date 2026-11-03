@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import struct
+from .. import placement
 from .tv_controls import MODS
 
 CASES = ['pet-success', 'pet-cancel', 'pet-invalid']
@@ -223,6 +224,22 @@ def check_case(row, selection, prepared, baseline, verified):
                 cancelled=case == 'pet-cancel', rejected=case == 'pet-invalid', originalTailPreserved=preserved)
 
 
+def check_placements(text, authority, prepared, kind):
+    assert prepared, 'missing prepared placement identity'
+    target = prepared[0]['placement']
+    mode = 'replica' if kind == 'mp' else 'local'
+    authority_proofs = raw(authority, 'PLACEMENT')
+    client_proofs = raw(text, 'CLIENT_PLACEMENT' if kind == 'mp' else 'PLACEMENT')
+    assert len(client_proofs) == 1, 'missing/duplicate local-client placement proof'
+    assert len(authority_proofs) == 1, 'missing/duplicate authority placement proof'
+    placement.validate(client_proofs[0], target, 'local')
+    placement.validate(authority_proofs[0], target, mode)
+    for ids in prepared:
+        assert ids['placement'] == target, 'initial animal placement target changed'
+        placement.validate(ids['placementProof'], target, mode)
+        assert ids['placementProof'] == authority_proofs[0], 'historical animal placement proof changed'
+
+
 def verify(root, selection, catalog):
     from ..report import events
     root = Path(root); issues = []; outcomes = []
@@ -238,11 +255,7 @@ def verify(root, selection, catalog):
         assert complete(selection, 'client1', text), 'missing exact raw completion'
         prepared, baselines, verified = (raw(authority, marker) for marker in ('PREPARED','BASELINE','VERIFIED'))
         assert len(prepared) == len(baselines) == len(verified) == 3, 'missing/duplicate authority raw snapshots'
-        placements=raw(authority,'PLACEMENT')
-        assert len(placements)==1 and placements[0]==dict(target=prepared[0]['placement'],arrived=True,teleports=1)
-        assert all(row['placement']==prepared[0]['placement'] for row in prepared)
-        if selection['kind']=='mp':
-            assert raw(text,'CLIENT_PLACEMENT')==placements, 'local-client arrival target differs from authority replicated arrival'
+        check_placements(text, authority, prepared, selection['kind'])
         expected_xp=[dict(case=row['id'],event=entry) for row in results for entry in row['receipt']['final']['xpLedger']]
         assert raw(authority,'XP')==expected_xp, 'raw native Husbandry event ledger differs'
         assert raw(text, 'TERMINAL') == [row.get('terminal') for row in results], 'raw terminal evidence differs'

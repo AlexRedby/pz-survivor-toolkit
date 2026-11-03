@@ -1,19 +1,9 @@
 -- All mutations are disposable fixture setup; snapshots only read native state.
 local F={cases={'pet-success','pet-cancel','pet-invalid'}}
-local placement,placed,active,placementPollAt
-local function at(player,target)
- local square=player:getSquare()
- return square and square:getX()==target.x and square:getY()==target.y and square:getZ()==target.z
-  and math.floor(player:getX())==target.x and math.floor(player:getY())==target.y and math.floor(player:getZ())==target.z
-end
-function F.at(player,target)return at(player,target)end
-function F.placementTarget(value)
- assert(type(value)=='table','missing local-client placement target')
- local count=0;for key in pairs(value)do assert(key=='x'or key=='y'or key=='z','foreign placement field');count=count+1 end
- assert(count==3,'placement target fields missing')
- for _,key in ipairs({'x','y','z'})do assert(type(value[key])=='number'and value[key]==value[key]and math.abs(value[key])<1000000 and value[key]%1==0,'placement target must contain finite integer coordinates')end
- return {x=value.x,y=value.y,z=value.z}
-end
+local P=require 'QueueEnergyPlacement'
+local placement,placementState,placementProof,active
+function F.at(player,target)return P.at(player,target)end
+function F.placementTarget(value)return P.target(value)end
 local function float32(value)local color=Color.new();color:set(value,0,0,1);return color:getR()end
 -- Read-only native XP event: Java publishes the post-multiplier amount after
 -- updating its float32 XP map. Nothing here invokes or replaces a pet callback.
@@ -54,36 +44,19 @@ function F.snapshot(state)
 end
 function F.prepare(player,caseID,previous,remoteTarget)
  assert(not isClient(),'animal setup requires authority')
- if isServer()then
-  local target=F.placementTarget(remoteTarget)
-  if placement then
-   assert(target.x==placement.x and target.y==placement.y and target.z==placement.z,'local-client placement target changed')
-  else
-   -- Only the local client can teleport its actor. Authority waits for the
-   -- exact target to arrive through ordinary player position replication.
-   player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
-   placement=target
-  end
+ if isServer()or remoteTarget then
+  local target=P.target(remoteTarget)
+  if placement then assert(target.x==placement.x and target.y==placement.y and target.z==placement.z,'local-client placement target changed')end
  end
- if not placement then
+ if not placementState then
   player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
-  local square=require('QueueEnergyPlacement')(player)
-  placement={x=square:getX(),y=square:getY(),z=square:getZ()}
-  return
+  placement=isServer()and P.target(remoteTarget)or P.choose(player)
+  placementState=isServer()and P.observe(player,placement)or P.begin(player,placement)
  end
- if not placed then
-  if not at(player,placement)then
-   local now=getTimestampMs()
-   if not placementPollAt or now-placementPollAt>=5000 then
-    placementPollAt=now;local square=player:getSquare()
-    print('[ANIMAL_TERMINAL] PLACEMENT_WAIT '..(require 'QueueHealthEvents').encode({target=placement,
-     actual={x=player:getX(),y=player:getY(),z=player:getZ()},
-     square=square and{x=square:getX(),y=square:getY(),z=square:getZ()}or false}))
-   end
-   return
-  end
-  placed=true
-  print('[ANIMAL_TERMINAL] PLACEMENT '..(require 'QueueHealthEvents').encode({target=placement,arrived=true,teleports=1}))
+ if not placementProof then
+  placementProof=P.poll(placementState)
+  if not placementProof then return end
+  print('[ANIMAL_TERMINAL] PLACEMENT '..(require 'QueueHealthEvents').encode(placementProof))
  end
  if previous then previous.animal:getBehavior():setBlockMovement(false)end
  local origin=player:getSquare();local target
@@ -102,7 +75,7 @@ function F.prepare(player,caseID,previous,remoteTarget)
  local total=book:getNumberOfPages();assert(total>1,'native book has no pages')
  book:setAlreadyReadPages(total-1);player:setAlreadyReadPages(book:getFullType(),total-1);player:setPerkLevelDebug(Perks.Doctor,0)
  local ids={case=caseID,actor=player:getOnlineID(),animal={id=animal:getAnimalID(),online=animal:getOnlineID(),type='hen',breed='rhodeisland'},
-  origin={x=origin:getX(),y=origin:getY(),z=origin:getZ()},placement=placement,book={id=book:getID(),type=book:getFullType(),total=total,initial=total-1},duration=400}
+  origin={x=origin:getX(),y=origin:getY(),z=origin:getZ()},placement=placement,placementProof=placementProof,book={id=book:getID(),type=book:getFullType(),total=total,initial=total-1},duration=400}
  local state={player=player,animal=animal,book=book,ids=ids,xpLedger={},lastXP=player:getXp():getXP(Perks.Husbandry)}
  local mult=SandboxVars.MultiplierConfig or{}
  ids.xpContext={boost=player:getXp():getPerkBoost(Perks.Husbandry),bookMultiplier=player:getXp():getMultiplier(Perks.Husbandry),

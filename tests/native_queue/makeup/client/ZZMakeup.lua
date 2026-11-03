@@ -13,7 +13,7 @@ local phase,index,since='prepare',1,0
 local state,ids,previous,ui,front,tail,body,submitted,second,beforeTail,edit,verified,pending,authority
 local checkpoints,sequence,outcomes,renderWitness,renderLabel,renderNext,bodyQuiet,finalQuiet
 local bodyRecord,applyQueues,transferStarts,submitting,placement
-local M={}
+local M={placementHelper=require 'QueueEnergyPlacement'}
 if config.options and config.options.makeup_held_moves==true then
  M.dropBinding=require 'QueueMakeupDropBinding';M.dropMatches=M.dropBinding.matches
  assert(M.dropBinding.start(),'reviewed force-drop factory was unavailable before installation')
@@ -160,8 +160,8 @@ local function command(name,args)
  args=args or{};args.case=case()
  if isClient()then sendClientCommand('MakeupTest',name,args);return end
  if name=='Prepare'then
-  if config.options and (config.options.makeup_supplies==true or moves) then assert(F.same(args.placement,placement)and F.atPlacement(getPlayer(),placement),'SP makeup supply placement is not settled')end
-  state=F.prepare(getPlayer(),case(),previous,args.placement);ids=state.ids;raw('PREPARED',ids)
+  assert(F.same(args.placement,placement)and M.placementProof and F.atPlacement(getPlayer(),placement),'SP makeup placement is not settled')
+  state=F.prepare(getPlayer(),case(),previous,args.placement);ids=state.ids;ids.placementProof=M.placementProof;raw('PREPARED',ids)
  elseif name=='Snapshot'then
   authority={case=case(),label=args.label,sequence=args.sequence,at=now(),snapshot=snapshot()};raw('SNAPSHOT',authority)
  elseif name=='Finish'then verified={case=case(),sequence=sequence,snapshot=snapshot()};raw('VERIFIED',verified)end
@@ -402,14 +402,16 @@ require('QueuePreflight').onTick(Events,function()
     if not makeupClientReady()then return end
    end
    if not empty()then return end
-   if config.options and (config.options.makeup_supplies==true or moves) then
-    if not placement then
-     local square=require('QueueEnergyPlacement')(player)
-     placement={x=square:getX(),y=square:getY(),z=square:getZ()};return
-    end
-    if index==1 and not F.atPlacement(player,placement)then return end
-    assert(F.atPlacement(player,placement),'makeup supply actor left the settled placement tile')
+   if not M.placementState then
+    player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
+    placement=M.placementHelper.choose(player);M.placementState=M.placementHelper.begin(player,placement)
    end
+   if not M.placementProof then
+    M.placementProof=M.placementHelper.poll(M.placementState)
+    if not M.placementProof then return end
+    raw('CLIENT_PLACEMENT',M.placementProof)
+   end
+   assert(F.atPlacement(player,placement),'makeup actor left the settled placement tile')
    checkpoints,sequence,outcomes,transferStarts,M.startOrder={},0,{},0,{};phase='prepared';command('Prepare',{placement=placement})
   elseif phase=='prepared'and ids then
    if not state then state=F.resolve(player,ids);if not state then return end end

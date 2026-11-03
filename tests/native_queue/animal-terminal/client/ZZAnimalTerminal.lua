@@ -2,14 +2,14 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'ISUI/Animal/ISAnimalContextMenu'
 require 'TimedActions/Animals/ISPetAnimal'
 require 'TimedActions/ISReadABook'
-local F=require 'QueueAnimalTerminal';local JSON=require 'QueueHealthEvents';local cfg=require 'QueueTestSelection'
+local P=require 'QueueEnergyPlacement';local F=require 'QueueAnimalTerminal';local JSON=require 'QueueHealthEvents';local cfg=require 'QueueTestSelection'
 local Proof=require 'PZSurvivorToolkit/SourceProof';local T=PZSurvivorToolkit;local native=cfg.mode=='native'
 local entered,ready,done=false,false,false
 local index,phase,since=1,'prepare',0
 local state,previous,ids,baseline,authorityBaseline,receipt,body,tail,recovery,tracks,classes,ack,quiet,terminal,intervention
 local producer=AnimalContextMenu.onPetAnimal
 local nativeAdjust=ISBaseTimedAction.adjustMaxTime
-local clientPlacement,clientPlacementSince,clientPlacementReady,clientPlacementPollAt
+local clientPlacement,clientPlacementState,clientPlacementProof
 local function now()return getTimestampMs()end
 local function case()return cfg.cases[index]end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
@@ -85,23 +85,14 @@ local function request(command)
  if isClient()then
   local args={case=case()}
   if command=='Prepare'then
-   if not clientPlacement then
+   if not clientPlacementState then
     local player=getPlayer();player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
-    local square=require('QueueEnergyPlacement')(player)
-    clientPlacement=F.placementTarget({x=square:getX(),y=square:getY(),z=square:getZ()})
-    clientPlacementSince=now();phase='mp-placement';return
+    clientPlacement=P.choose(player);clientPlacementState=P.begin(player,clientPlacement)
    end
-   if not clientPlacementReady then
-    assert(now()-clientPlacementSince<30000,'local-client fixture placement did not settle')
-    if not F.at(getPlayer(),clientPlacement)then
-     if not clientPlacementPollAt or now()-clientPlacementPollAt>=5000 then
-      clientPlacementPollAt=now();local player=getPlayer();local square=player:getSquare()
-      raw('CLIENT_PLACEMENT_WAIT',{target=clientPlacement,actual={x=player:getX(),y=player:getY(),z=player:getZ()},
-       square=square and{x=square:getX(),y=square:getY(),z=square:getZ()}or false})
-     end
-     phase='mp-placement';return
-    end
-    clientPlacementReady=true;raw('CLIENT_PLACEMENT',{target=clientPlacement,arrived=true,teleports=1})
+   if not clientPlacementProof then
+    clientPlacementProof=P.poll(clientPlacementState)
+    if not clientPlacementProof then phase='mp-placement';return end
+    raw('CLIENT_PLACEMENT',clientPlacementProof)
    end
    args.placement=clientPlacement;phase='prepared'
   end
