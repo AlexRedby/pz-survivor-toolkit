@@ -30,8 +30,8 @@ class BackfillGuardTests(unittest.TestCase):
         row = dict(root=str(root), phase=phase, pid=pid or os.getpid(), sequence=sequence,
                    queued_at=1, exclusive=request['exclusive'], kind=selection['kind'], reason='stale reason')
         if not legacy:
-            row['scheduling'] = dict(schema_version=1, budget=request, ports=selection.get('ports', []) if phase == 'running' else [],
-                                     backfill_count=0)
+            row['resource_request'] = dict(schema_version=1, budget=request,
+                                          ports=selection.get('ports', []) if phase == 'running' else [])
         admission._directory()
         with (self.fixture.state / (admission._key(root) + '.lease')).open('a+') as lease:
             fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -55,7 +55,17 @@ class BackfillGuardTests(unittest.TestCase):
         with self.waiting(legacy=True):
             self.assert_blocked('legacy waiter; no backfill contract')
             self.fixture.sample.assert_not_called()
-            self.assertEqual(0, admission.status()['waiting'][0]['backfill_remaining'])
+            self.assertNotIn('backfill_remaining', admission.status()['waiting'][0])
+
+    def test_obsolete_count_limited_waiter_remains_a_read_only_fifo_barrier(self):
+        with self.waiting(legacy=True) as path:
+            row = json.loads(path.read_text())
+            row['scheduling'] = dict(schema_version=1, budget=admission.budget(self.head[1]), ports=[], backfill_count=3)
+            path.write_text(json.dumps(row))
+            original = path.read_bytes()
+            self.assert_blocked('legacy waiter; no backfill contract')
+            self.fixture.sample.assert_not_called()
+            self.assertEqual(original, path.read_bytes())
 
     def test_reserved_predecessor_ports_preserve_fifo_even_when_memory_is_short(self):
         self.head[1]['ports'] = self.fixture.free_ports()
@@ -63,8 +73,9 @@ class BackfillGuardTests(unittest.TestCase):
         admission._directory()
         admission._save(dict(root=str(other), phase='prepared', caches=[], ports=self.head[1]['ports']))
         with self.waiting() as path:
+            original = path.read_bytes()
             self.assert_blocked('UDP ports reserved')
-            self.assertEqual(0, json.loads(path.read_text())['scheduling']['backfill_count'])
+            self.assertEqual(original, path.read_bytes())
 
     def test_busy_predecessor_endpoint_is_not_classified_as_only_resource_starved(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as busy:
@@ -90,13 +101,14 @@ class BackfillGuardTests(unittest.TestCase):
         with self.waiting():
             self.assert_blocked('profile has already launched')
 
-    def test_candidate_endpoint_failure_does_not_charge_predecessor(self):
+    def test_candidate_endpoint_failure_does_not_change_predecessor(self):
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as busy:
             busy.bind(('0.0.0.0', 0))
             config = self.fixture.run_config('busy-candidate', kind='mp', ports=[busy.getsockname()[1]])
             with self.waiting() as path:
+                original = path.read_bytes()
                 self.assert_blocked('UDP endpoint unavailable', config)
-                self.assertEqual(0, json.loads(path.read_text())['scheduling']['backfill_count'])
+                self.assertEqual(original, path.read_bytes())
 
     def test_actual_legacy_holder_cannot_be_bypassed(self):
         with self.waiting(), self.fixture.legacy.open('a+') as legacy:
@@ -107,9 +119,9 @@ class BackfillGuardTests(unittest.TestCase):
     def test_each_intermediate_predecessor_retains_priority_when_it_fits(self):
         second = self.fixture.run_config('second')
         with self.waiting() as first, self.waiting(second, sequence=2) as intermediate:
+            originals = [path.read_bytes() for path in (first, intermediate)]
             self.assert_blocked('resources available; FIFO priority')
-            for path in (first, intermediate):
-                self.assertEqual(0, json.loads(path.read_text())['scheduling']['backfill_count'])
+            self.assertEqual(originals, [path.read_bytes() for path in (first, intermediate)])
 
     def test_preparation_and_timing_priority_uses_the_predecessor_owner_rss(self):
         for phase, rss in [('preparing', admission.PREPARATION_MEMORY), ('timing', admission.timing_budget()['memory'])]:
@@ -123,6 +135,7 @@ class BackfillGuardTests(unittest.TestCase):
         self.fixture.sample.return_value = fixtures.snapshot(available=4 * fixtures.GIB)
         self.head[1]['resources']['heap_mib'] = 4096
         with self.waiting() as path:
+            original = path.read_bytes()
             for phase in ('preparing', 'timing'):
                 root = self.fixture.directory / ('backfill-' + phase)
                 root.mkdir()
@@ -131,54 +144,77 @@ class BackfillGuardTests(unittest.TestCase):
                 with context:
                     value = admission.status()
                     self.assertEqual(phase, value[phase][0]['phase'])
-                self.assertEqual(1 if phase == 'preparing' else 2, json.loads(path.read_text())['scheduling']['backfill_count'])
+                self.assertEqual(original, path.read_bytes())
 
     def test_same_live_sample_drives_predecessor_and_candidate_capacity(self):
         low = fixtures.snapshot(available=fixtures.GIB + 4 * admission.MIB)
         recovered = fixtures.snapshot(available=8 * fixtures.GIB)
         self.fixture.sample.side_effect = [low, recovered]  # second sample is cleanup, not a newer admission decision
         with self.waiting() as path:
+            original = path.read_bytes()
             with admission.acquire(*self.fixture.run_config('consistent-sample'), wait=0):
                 self.assertEqual(1, self.fixture.sample.call_count)
-                self.assertEqual(1, json.loads(path.read_text())['scheduling']['backfill_count'])
+                self.assertEqual(original, path.read_bytes())
         self.assertEqual(2, self.fixture.sample.call_count)
 
-    def test_failed_record_publication_conservatively_keeps_charged_slot(self):
+    def test_failed_record_publication_leaves_predecessor_unchanged(self):
         save = admission._save
         def failed(record, directory=None):
-            if record.get('phase') == 'running' and 'scheduling' not in record:
+            if record.get('phase') == 'running' and 'resource_request' not in record:
                 raise OSError('publication failed')
             return save(record, directory)
 
         with self.waiting() as path, patch.object(admission, '_save', side_effect=failed):
+            original = path.read_bytes()
             with self.assertRaisesRegex(OSError, 'publication failed'):
                 with admission.acquire(*self.fixture.run_config('failed-publication'), wait=0):
                     self.fail('Unpublished admission escaped')
             value = admission.status()
             self.assertEqual([], value['running'])
             self.assertFalse(value['legacy_lock']['busy'])
-            self.assertEqual(1, json.loads(path.read_text())['scheduling']['backfill_count'])
+            self.assertEqual(original, path.read_bytes())
 
-    def test_backfill_sampler_failure_is_closed_without_charging_quota(self):
+    def test_backfill_sampler_failure_is_closed_without_mutating_predecessor(self):
         with self.waiting() as path:
+            original = path.read_bytes()
             self.fixture.sample.side_effect = RuntimeError('sampler failed')
             with self.assertRaisesRegex(RuntimeError, 'sampler failed'):
                 with admission.acquire(*self.fixture.run_config('failed-sampling'), wait=0):
                     self.fail('Unsampled admission escaped')
-            self.assertEqual(0, json.loads(path.read_text())['scheduling']['backfill_count'])
+            self.assertEqual(original, path.read_bytes())
             self.fixture.sample.side_effect = None
             value = admission.status()
             self.assertFalse(value['legacy_lock']['busy'])
             self.assertEqual([str(self.head[0])], [row['root'] for row in value['waiting']])
 
-    def test_invalid_scheduling_inputs_fail_closed(self):
+    def test_repeated_backfills_do_not_extend_the_head_wait_deadline(self):
+        now, completed = [0], []
+        def sleep(seconds):
+            now[0] += seconds
+            candidate = self.fixture.run_config('during-wait-' + str(len(completed)))
+            with admission.acquire(*candidate, wait=0):
+                completed.append(candidate[0])
+
+        with patch.object(admission.time, 'monotonic', side_effect=lambda: now[0]), \
+                patch.object(admission.time, 'sleep', side_effect=sleep):
+            with self.assertRaisesRegex(RuntimeError, 'resource wait expired'):
+                with admission.acquire(*self.head, wait=8):
+                    self.fail('Starved request escaped its original deadline')
+        self.assertEqual(8, now[0])
+        self.assertEqual(4, len(completed))
+        value = admission.status()
+        self.assertFalse(value['waiting'])
+        self.assertFalse(value['running'])
+        self.assertFalse(value['legacy_lock']['busy'])
+
+    def test_invalid_resource_requests_fail_closed(self):
         with self.waiting() as path:
             original = json.loads(path.read_text())
-            variants = [dict(schema_version=True), dict(schema_version=2), dict(backfill_count=-1),
-                        dict(backfill_count=4), dict(backfill_count=True), dict(ports=['invalid']), dict(budget={})]
+            variants = [dict(schema_version=True), dict(schema_version=2), dict(backfill_count=0),
+                        dict(ports=['invalid']), dict(budget={})]
             for change in variants:
                 value = deepcopy(original)
-                value['scheduling'].update(change)
+                value['resource_request'].update(change)
                 path.write_text(json.dumps(value))
                 with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, 'Invalid native admission waiter'):
                     admission.status()

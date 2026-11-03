@@ -116,9 +116,6 @@ class FifoTests(unittest.TestCase):
         self.until(lambda: self.waiter(root)['reason'].startswith(prefix),
                    'Waiter did not report ' + prefix + ': ' + str(root))
 
-    def backfills(self, root):
-        return self.waiter(root)['scheduling']['backfill_count']
-
     def release(self, worker):
         process, root = worker
         (root / 'release').touch()
@@ -182,55 +179,68 @@ class FifoTests(unittest.TestCase):
                 small = self.start_worker(name + '-small')
                 self.admitted(small[1])
                 self.assertFalse((large[1] / 'admitted').exists())
-                self.assertEqual(self.backfills(large[1]), 1)
+                self.waiting([large[1]])
                 self.release(small)
                 self.set_memory(GIB + 6 * admission.MIB if resource == 'memory' else 8 * GIB,
                                 cpus=2 if resource == 'cpu' else 16)
                 self.admitted(large[1])
                 self.release(large)
 
-    def test_three_successful_backfills_exhaust_waiter_lifetime_allowance(self):
+    def test_repeated_backfills_continue_until_recovered_head_has_priority(self):
         self.set_memory(GIB + 4 * admission.MIB)
-        large = self.start_worker('bounded-large', heap_mib=7)
+        large = self.start_worker('starved-large', heap_mib=7)
         self.waiting([large[1]])
-        for count in range(1, 4):
-            small = self.start_worker('bounded-small-' + str(count))
+        original = self.waiter(large[1])
+        self.assertEqual(set(original['resource_request']), {'schema_version', 'budget', 'ports'})
+        self.assertEqual(original['resource_request']['schema_version'], 1)
+        self.assertNotIn('scheduling', original)
+        for index in range(6):
+            small = self.start_worker('fitting-small-' + str(index))
             self.admitted(small[1])
-            self.assertEqual(self.backfills(large[1]), count)
-            # Let the predecessor update its own resource reason while this
-            # reservation exists, then again after it disappears.
+            self.assertFalse((large[1] / 'admitted').exists())
             self.until(lambda: '%.2f CPU' % (16 - .25) in self.waiter(large[1])['reason'],
                        'Predecessor did not refresh resource availability')
             self.release(small)
             self.until(lambda: '16.00 CPU' in self.waiter(large[1])['reason'],
                        'Predecessor did not refresh released resources')
-            self.assertEqual(self.backfills(large[1]), count)
-        fourth = self.start_worker('bounded-fourth')
-        self.waiting([large[1], fourth[1]])
-        self.reason(fourth[1], 'FIFO:')
-        self.assertFalse((fourth[1] / 'admitted').exists())
-        self.assertEqual(self.backfills(large[1]), 3)
-        self.set_memory(GIB + 8 * admission.MIB)
-        self.admitted(large[1])
-        self.assertFalse((fourth[1] / 'admitted').exists())
-        self.release(large)
-        self.admitted(fourth[1])
-        self.release(fourth)
+            current = self.waiter(large[1])
+            for key in ('sequence', 'queued_at', 'resource_request'):
+                self.assertEqual(current[key], original[key])
 
-    def test_unsatisfied_follower_does_not_spend_backfill_allowance(self):
+        # Pause the older owner between checks so the later process itself
+        # must recognize that the recovered head now has priority.
+        (large[1] / 'pause-poll').touch()
+        self.until(lambda: (large[1] / 'poll-paused').exists(), 'Head did not pause between checks')
+        self.set_memory(GIB + 8 * admission.MIB)
+        later = self.start_worker('after-six-backfills')
+        self.waiting([large[1], later[1]])
+        self.reason(later[1], 'FIFO:')
+        self.assertFalse((later[1] / 'admitted').exists())
+        (large[1] / 'pause-poll').unlink()
+        self.admitted(large[1])
+        self.assertFalse((later[1] / 'admitted').exists())
+        self.release(large)
+        self.admitted(later[1])
+        self.release(later)
+
+    def test_unsatisfied_follower_preserves_head_registration_and_allows_fitting_work(self):
         self.set_memory(GIB + 4 * admission.MIB)
         large = self.start_worker('unsatisfied-head', heap_mib=5)
         self.waiting([large[1]])
+        original = self.waiter(large[1])
         denied = self.start_worker('unsatisfied-follower', heap_mib=7)
         self.waiting([large[1], denied[1]])
         self.reason(denied[1], 'Insufficient resources:')
-        self.assertEqual(self.backfills(large[1]), 0)
+        current = self.waiter(large[1])
+        for key in ('sequence', 'queued_at', 'resource_request'):
+            self.assertEqual(current[key], original[key])
+        self.assertFalse((denied[1] / 'admitted').exists())
         denied[0].kill()
         denied[0].communicate(timeout=4)
         self.waiting([large[1]])
         small = self.start_worker('after-unsatisfied')
         self.admitted(small[1])
-        self.assertEqual(self.backfills(large[1]), 1)
+        self.waiting([large[1]])
         self.release(small)
         self.set_memory(GIB + 6 * admission.MIB)
         self.admitted(large[1])
@@ -246,7 +256,6 @@ class FifoTests(unittest.TestCase):
         self.waiting([large[1], small[1]])
         self.reason(small[1], 'FIFO:')
         self.assertFalse((small[1] / 'admitted').exists())
-        self.assertEqual(self.backfills(large[1]), 0)
         (large[1] / 'pause-poll').unlink()
         self.admitted(large[1])
         self.assertFalse((small[1] / 'admitted').exists())
@@ -254,7 +263,7 @@ class FifoTests(unittest.TestCase):
         self.admitted(small[1])
         self.release(small)
 
-    def test_successful_backfill_counts_each_resource_starved_predecessor(self):
+    def test_successful_backfill_can_pass_multiple_resource_starved_predecessors(self):
         self.set_memory(GIB + 4 * admission.MIB)
         first = self.start_worker('multiple-first', heap_mib=5)
         self.waiting([first[1]])
@@ -262,7 +271,8 @@ class FifoTests(unittest.TestCase):
         self.waiting([first[1], second[1]])
         small = self.start_worker('multiple-small')
         self.admitted(small[1])
-        self.assertEqual([self.backfills(worker[1]) for worker in (first, second)], [1, 1])
+        self.waiting([first[1], second[1]])
+        self.assertTrue(all(not (worker[1] / 'admitted').exists() for worker in (first, second)))
         self.release(small)
         self.set_memory(GIB + 6 * admission.MIB)
         self.admitted(first[1])

@@ -537,13 +537,13 @@ def main(argv=None):
                         item['root'], item['pid'], ' (owner exited; worker lease held)' if not item.get('owner_alive', True) else '',
                         item['bank']))
                 print('Waiting: ' + str(len(value['waiting'])))
+                if value.get('queue_policy'):
+                    print('Queue policy: ' + value['queue_policy']['name'])
                 for item in value['waiting']:
                     print('  #%s %s | PID %s | %.0fs | %s | %s | %s' % (
                         item['position'], item['root'], item['pid'], item['wait_seconds'],
                         'exclusive' if item['exclusive'] else 'shared',
                         item.get('phase', 'running') + (' ' + item['bank'] if item.get('bank') else ''), item['reason']))
-                    if 'backfill_remaining' in item:
-                        print('     Backfill slots remaining: ' + str(item['backfill_remaining']))
                 print('Prepared port reservations: ' + str(len(value['prepared'])))
                 lock = value['legacy_lock']
                 print('Legacy lock: ' + ('exclusive' if lock['exclusive'] else 'shared/busy' if lock['busy'] else 'free'))

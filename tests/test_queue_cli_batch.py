@@ -647,7 +647,8 @@ class StatusTests(unittest.TestCase):
                          'exclusive': True, 'reason': 'Legacy or exclusive native run is using the desktop'}],
             'prepared': [{'root': '/prepared', 'ports': [24000, 24001]}],
             'legacy_lock': {'path': '/lock', 'busy': True, 'exclusive': False},
-            'limits': ['FIFO applies to updated runners only.']}
+            'queue_policy': {'name': 'resource-ready-fifo'},
+            'limits': ['Eligible older requests have priority; CPU/memory-starved requests allow fitting later work.']}
 
     def invoke(self, arguments):
         output = io.StringIO()
@@ -668,13 +669,15 @@ class StatusTests(unittest.TestCase):
         for expected in ('Running: 1', '/old/run | PID 10 (owner exited)', 'game PIDs 11', 'Waiting: 1',
                          'Preparing: 1', '/build/run | PID 20 | food/mp/toolkit | shared | snapshot preparation',
                          '#1 /new/run | PID 12', '5s | exclusive', self.value['waiting'][0]['reason'],
-                         'Prepared port reservations: 1', 'Legacy lock: shared/busy', self.value['limits'][0]):
+                         'Queue policy: resource-ready-fifo', 'Prepared port reservations: 1',
+                         'Legacy lock: shared/busy', self.value['limits'][0]):
             self.assertIn(expected, value)
 
-    def test_status_exposes_remaining_backfill_quota(self):
-        self.value['waiting'][0]['backfill_remaining'] = 0
-        self.assertIn('Backfill slots remaining: 0', self.invoke(['status']))
-        self.assertEqual(0, json.loads(self.invoke(['status', '--json']))['waiting'][0]['backfill_remaining'])
+    def test_status_exposes_resource_ready_fifo_policy_without_a_backfill_quota(self):
+        value = json.loads(self.invoke(['status', '--json']))
+        self.assertEqual(value['queue_policy'], {'name': 'resource-ready-fifo'})
+        self.assertNotIn('backfill_remaining', value['waiting'][0])
+        self.assertNotIn('Backfill slots remaining:', self.invoke(['status']))
 
     def test_empty_status_and_legacy_exclusive_status(self):
         self.value.update(running=[], preparing=[], waiting=[], prepared=[])
