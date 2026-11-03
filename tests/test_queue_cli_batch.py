@@ -671,6 +671,11 @@ class StatusTests(unittest.TestCase):
                          'Prepared port reservations: 1', 'Legacy lock: shared/busy', self.value['limits'][0]):
             self.assertIn(expected, value)
 
+    def test_status_exposes_remaining_backfill_quota(self):
+        self.value['waiting'][0]['backfill_remaining'] = 0
+        self.assertIn('Backfill slots remaining: 0', self.invoke(['status']))
+        self.assertEqual(0, json.loads(self.invoke(['status', '--json']))['waiting'][0]['backfill_remaining'])
+
     def test_empty_status_and_legacy_exclusive_status(self):
         self.value.update(running=[], preparing=[], waiting=[], prepared=[])
         self.value['legacy_lock'].update(busy=False, exclusive=False)

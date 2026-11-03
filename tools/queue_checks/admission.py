@@ -25,6 +25,7 @@ DISK_PER_ROLE = 1024 ** 3
 # Preparation hashes/copies inputs and compiles helpers; it does not start role JVMs.
 PREPARATION_MEMORY = 1024 ** 3
 PREPARATION_CPU = 1.0
+MAX_BACKFILLS = 3
 WINDOWS_HOST_MUTEX = 'Local\\PZToolkitNativeWindowsHost'
 
 
@@ -134,7 +135,7 @@ def _held(root):
 
 def _waiters():
     # Old runners only understand prepared/running in STATE/*.json.
-    # shortcut: FIFO orders updated runners only; migrate remaining callers before relying on global fairness.
+    # shortcut: queue ordering covers updated runners only; legacy callers do not register waiters.
     directory = STATE / 'waiters'
     _directory(directory)
     result = []
@@ -149,6 +150,8 @@ def _waiters():
                     or not isinstance(item['reason'], str) or type(item['exclusive']) is not bool
                     or item.get('phase', 'running') not in ('running', 'preparing', 'timing')):
                 raise ValueError('invalid waiter')
+            if 'scheduling' in item:
+                _validate_scheduling(item)
             if _held(item['root']):
                 result.append(item)
             else:
@@ -158,6 +161,96 @@ def _waiters():
     if len({item['sequence'] for item in result}) != len(result):
         raise RuntimeError('Duplicate native admission waiter sequence')
     return sorted(result, key=lambda item: item['sequence'])
+
+
+def _validate_scheduling(item):
+    """Legacy waiters stay FIFO; partial/unknown new contracts fail closed."""
+    value = item['scheduling']
+    if (not isinstance(value, dict) or set(value) != {'schema_version', 'budget', 'ports', 'backfill_count'}
+            or type(value['schema_version']) is not int or value['schema_version'] != 1
+            or type(value['backfill_count']) is not int or not 0 <= value['backfill_count'] <= MAX_BACKFILLS
+            or not isinstance(value['budget'], dict) or not isinstance(value['ports'], list)
+            or len(set(value['ports'])) != len(value['ports'])
+            or any(type(port) is not int or not 1024 <= port <= 65535 for port in value['ports'])):
+        raise ValueError('invalid scheduling contract')
+    saved = value['budget']
+    if (type(saved.get('exclusive')) is not bool or type(saved.get('memory')) is not int or saved['memory'] <= 0
+            or type(saved.get('cpu')) not in (int, float) or not math.isfinite(saved['cpu']) or saved['cpu'] <= 0):
+        raise ValueError('invalid scheduling resource estimates')
+    phase = item.get('phase', 'running')
+    if phase == 'preparing':
+        expected = {'memory': PREPARATION_MEMORY, 'cpu': PREPARATION_CPU, 'exclusive': item['exclusive']}
+    else:
+        if type(saved.get('instances')) is not int or saved['instances'] <= 0:
+            raise ValueError('invalid scheduling instances')
+        if phase == 'running' and (item.get('kind') not in ('sp', 'mp')
+                or saved['instances'] < (2 if item['kind'] == 'mp' else 1)):
+            raise ValueError('invalid running scheduling roles')
+        expected = budget({'kind': 'sp', 'clients': saved['instances'],
+                           'resources': {key: saved[key] for key in DEFAULTS}})
+        if phase == 'timing' and saved != timing_budget(saved['heap_mib'], saved['native_mib'], saved['cpu_per_instance']):
+            raise ValueError('invalid timing scheduling budget')
+    if saved != expected or saved['exclusive'] != item['exclusive'] or (phase != 'running' and value['ports']):
+        raise ValueError('invalid scheduling budget or ports')
+
+
+def _backfill_before(predecessors, legacy):
+    """Prove each predecessor is blocked solely by live CPU/memory capacity.
+
+    Called under the registry mutex. Probe each predecessor's lifetime lock
+    before sampling, then release it before the candidate's normal admission.
+    No saved reason string grants scheduling permission.
+    """
+    snapshot = records = None
+    for item in predecessors:
+        prefix = 'FIFO: waiting behind ' + item['root']
+        scheduling = item.get('scheduling')
+        if scheduling is None:
+            return prefix + ' (legacy waiter; no backfill contract)', [], None
+        if scheduling['backfill_count'] >= MAX_BACKFILLS:
+            return prefix + ' (backfill limit reached: %s/%s)' % (MAX_BACKFILLS, MAX_BACKFILLS), [], None
+        try:
+            fcntl.flock(legacy, (fcntl.LOCK_EX if item['exclusive'] else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return prefix + ' (legacy or exclusive resource lease is busy)', [], None
+        try:
+            if snapshot is None:
+                snapshot = host.sample()
+                records = _records(snapshot) + _preparations() + _timings()
+            request = scheduling['budget']
+            peers = [record for record in records if record['root'] != item['root']]
+            if any(record['phase'] in ('running', 'preparing', 'timing')
+                   and (request['exclusive'] or record['budget']['exclusive']) for record in peers):
+                return prefix + ' (exclusive work is active)', [], None
+            if any(owned(record, snapshot) for record in records if record['root'] == item['root']):
+                return prefix + ' (existing profile process)', [], None
+            if item.get('phase', 'running') == 'running':
+                roles = adapters.roles({'kind': item['kind'],
+                                        'clients': request['instances'] - (item['kind'] == 'mp')})
+                if owned({'caches': [str(Path(item['root']) / role) for role in roles]}, snapshot):
+                    return prefix + ' (existing profile process)', [], None
+            if item.get('phase', 'running') == 'running' and (
+                    (Path(item['root']) / 'execution.json').exists() or list(Path(item['root']).glob('*-launch.log'))):
+                return prefix + ' (profile has already launched)', [], None
+            reserved = {port for record in peers for port in record.get('ports', [])}
+            if reserved.intersection(scheduling['ports']):
+                return prefix + ' (UDP ports reserved)', [], None
+            if item.get('phase', 'running') != 'timing':
+                instances = 0 if item.get('phase') == 'preparing' else request['instances']
+                if not disk_capacity(Path(item['root']), instances, peers)[0]:
+                    return prefix + ' (insufficient disk space)', [], None
+            try:
+                with _udp(scheduling['ports']):
+                    pass
+            except OSError:
+                return prefix + ' (UDP endpoint unavailable)', [], None
+            permitted, _ = capacity(snapshot, peers, request,
+                item['pid'] if item.get('phase') in ('preparing', 'timing') else None)
+            if permitted:
+                return prefix + ' (resources available; FIFO priority)', [], None
+        finally:
+            fcntl.flock(legacy, fcntl.LOCK_UN)
+    return None, predecessors, (snapshot, records)
 
 
 def _metadata(selection):
@@ -173,7 +266,8 @@ def status(legacy_lock=None):
         preparations = _preparations()
         timings = _timings()
         now = time.time()
-        waiting = [dict(item, position=index, wait_seconds=max(0, now - item['queued_at']))
+        waiting = [dict(item, position=index, wait_seconds=max(0, now - item['queued_at']),
+                        backfill_remaining=MAX_BACKFILLS - item['scheduling']['backfill_count'] if 'scheduling' in item else 0)
                    for index, item in enumerate(_waiters(), 1)]
         running = []
         for item in records:
@@ -200,7 +294,9 @@ def status(legacy_lock=None):
                     process['pid'] == item['pid'] for process in snapshot['processes'])) for item in timings],
                 'waiting': waiting, 'prepared': [item for item in records if item['phase'] == 'prepared'],
                 'legacy_lock': dict(locks, path=str(lock)),
-                'limits': ['FIFO applies to updated runners; older runners do not register waiters.',
+                'queue_policy': {'name': 'bounded-resource-backfill', 'max_backfills': MAX_BACKFILLS},
+                'limits': ['Updated runners permit at most %s backfills per CPU/memory-starved waiter; other blockers retain FIFO.' % MAX_BACKFILLS,
+                           'Older runners and waiters without scheduling inputs retain legacy/FIFO behavior.',
                            'An unregistered legacy lock owner cannot be identified reliably.']}
 
 
@@ -381,8 +477,9 @@ def acquire(root, selection, runtime, wait=300, legacy_lock=None):
 def preparing(root, selection, wait=300, legacy_lock=None):
     """Admit hashing, copying and compilation with a 1 GiB / 1 CPU estimate.
 
-    POSIX preparations share run FIFO/exclusive locks. Windows uses the existing
-    Host mutex conservatively (serial admission; no FIFO or CPU inventory).
+    POSIX preparations share bounded-backfill ordering and run exclusive locks.
+    Windows uses the existing Host mutex conservatively (serial admission; no
+    FIFO or CPU inventory).
     """
     _validate_wait(wait)
     request = preparation_budget(selection)
@@ -401,7 +498,7 @@ def preparing(root, selection, wait=300, legacy_lock=None):
 
 @contextmanager
 def measuring(root, bank, wait=300, heap_mib=2048, native_mib=512, cpu=1):
-    """Reserve a headless measurement through the same FIFO and lifetime locks."""
+    """Reserve a headless measurement through the shared queue and lifetime locks."""
     _validate_wait(wait)
     if not isinstance(bank, str) or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', bank) is None:
         raise ValueError('Timing bank must be a nonempty protocol-safe identifier')
@@ -476,30 +573,41 @@ def _admit(root, selection, record, wait, legacy_lock):
                 waiters = _waiters()
                 waiter = dict(_metadata(selection), root=str(root), pid=os.getpid(),
                               sequence=max((item['sequence'] for item in waiters), default=0) + 1,
-                              queued_at=time.time(), exclusive=request['exclusive'], phase=record['phase'], reason='Checking admission')
+                              queued_at=time.time(), exclusive=request['exclusive'], phase=record['phase'], reason='Checking admission',
+                              scheduling={'schema_version': 1, 'budget': request, 'ports': record.get('ports', []), 'backfill_count': 0})
                 if headless:
                     waiter['bank'] = record['bank']
                 _save(waiter, waiting_path.parent)
             while True:
                 reason = None
                 details, peers = None, None
+                skipped = []
+                scheduling_state = None
                 with _locked():
                     waiters = _waiters()
                     if not waiters or not any(item['root'] == str(root) for item in waiters):
                         raise RuntimeError('Native admission waiter disappeared: ' + str(root))
                     position = next(index for index, item in enumerate(waiters, 1) if item['root'] == str(root))
-                    if waiters[0]['root'] != str(root):
-                        reason = 'FIFO: waiting behind ' + waiters[0]['root']
-                    else:
+                    # Another owner may have charged our quota while we slept.
+                    waiter = waiters[position - 1]
+                    if position > 1:
+                        reason, skipped, scheduling_state = _backfill_before(waiters[:position - 1], legacy)
+                    if reason is None:
                         try:
-                            # Only the head takes the lifetime lock; blocked requests release it below.
+                            # Candidate admission retains every original lifetime/resource guard.
                             fcntl.flock(legacy, (fcntl.LOCK_EX if request['exclusive'] else fcntl.LOCK_SH) | fcntl.LOCK_NB)
                         except BlockingIOError:
                             reason = ('Legacy or exclusive native work owns the resource lease' if headless else
                                       'Legacy or exclusive native run is using the desktop')
                     if reason is None:
-                        snapshot = host.sample()
-                        records = _records(snapshot) + _preparations() + _timings()
+                        # One live observation decides both predecessor priority
+                        # and candidate capacity; no stale starvation proof is
+                        # combined with a newer, recovered capacity sample.
+                        if scheduling_state is None:
+                            snapshot = host.sample()
+                            records = _records(snapshot) + _preparations() + _timings()
+                        else:
+                            snapshot, records = scheduling_state
                         peers = [item for item in records if item['root'] != str(root)]
                         current = (owned(record, snapshot) if not contained else
                                    [process for item in records if item['root'] == str(root)
@@ -529,6 +637,12 @@ def _admit(root, selection, record, wait, legacy_lock):
                             try:
                                 with (nullcontext() if headless else _udp(record.get('ports', []))):
                                     endpoints_available = True
+                                    # Charge under the same mutex before publishing admission.
+                                    # A crash/write failure can conservatively consume a slot,
+                                    # but can never publish an uncharged fourth backfill.
+                                    for previous in skipped:
+                                        previous['scheduling']['backfill_count'] += 1
+                                        _save(previous, waiting_path.parent)
                                     record['started_at'] = time.time()
                                     _directory(record_directory)
                                     _save(record, record_directory)
@@ -544,7 +658,8 @@ def _admit(root, selection, record, wait, legacy_lock):
                             waiter['reason'] = reason
                             _save(waiter, waiting_path.parent)
                 if admitted:
-                    updates.update(position=position, remaining_seconds=round(max(0, deadline - time.monotonic()), 1))
+                    updates.update(position=position, backfilled=len(skipped),
+                        remaining_seconds=round(max(0, deadline - time.monotonic()), 1))
                     updates.finish('admitted')
                     progress_finished = True
                     if contained:
@@ -558,6 +673,7 @@ def _admit(root, selection, record, wait, legacy_lock):
                     owners = [dict(suite=item.get('suite'), phase=item['phase']) for item in peers
                               if item['phase'] in ('running', 'preparing', 'timing')][:8]
                 updates.update(reason=reason, position=position,
+                    backfill_remaining=MAX_BACKFILLS - waiter['scheduling']['backfill_count'],
                     remaining_seconds=round(max(0, deadline - time.monotonic()), 1),
                     active_suites=owners,
                     available_memory_gib=round(details['memory_available'] / 1024**3, 2) if details is not None else None,

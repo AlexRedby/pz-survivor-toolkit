@@ -25,6 +25,13 @@ admission.STATE = directory / 'state'
 admission.LEGACY_LOCK = directory / 'legacy.lock'
 admission.host.sample = lambda: json.loads((directory / 'snapshot.json').read_text())
 admission.shutil.disk_usage = lambda path: type('Disk', (), {'free': 100 * 1024**3})()
+sleep = time.sleep
+def poll(seconds):
+    while (root / 'pause-poll').exists():
+        (root / 'poll-paused').touch()
+        sleep(.01)
+    sleep(min(.02, seconds))
+admission.time.sleep = poll
 selection = json.loads(sys.argv[4])
 runtime = {'roles': {'client1': {'cache': str(root / 'client1')}}}
 deadline = time.monotonic() + 20
@@ -34,7 +41,7 @@ try:
         while not (root / 'release').exists():
             if time.monotonic() >= deadline:
                 raise RuntimeError('worker release barrier timed out')
-            time.sleep(.01)
+            sleep(.01)
 except Exception as error:
     (root / 'error').write_text(str(error))
     raise
@@ -58,20 +65,22 @@ class FifoTests(unittest.TestCase):
     def sample(self):
         return json.loads((self.directory / 'snapshot.json').read_text())
 
-    def set_memory(self, available):
+    def set_memory(self, available, cpus=16):
         temporary = self.directory / 'snapshot.tmp'
         temporary.write_text(json.dumps({'total_memory': 10 * GIB, 'available_memory': available,
-                                         'cpu_count': 16, 'processes': []}))
+                                         'cpu_count': cpus, 'processes': []}))
         temporary.replace(self.directory / 'snapshot.json')
 
-    def start_worker(self, name, exclusive=False, heap_mib=1):
+    def start_worker(self, name, exclusive=False, heap_mib=1, cpu=.25, paused=False):
         root = self.directory / name
         root.mkdir(exist_ok=True)
-        for marker in ('admitted', 'release', 'error'):
+        for marker in ('admitted', 'release', 'error', 'poll-paused', 'pause-poll'):
             (root / marker).unlink(missing_ok=True)
+        if paused:
+            (root / 'pause-poll').touch()
         selection = {'kind': 'sp', 'clients': 1,
                      'resources': {'heap_mib': heap_mib, 'native_mib': 1,
-                                   'cpu_per_instance': .25, 'exclusive': exclusive}}
+                                   'cpu_per_instance': cpu, 'exclusive': exclusive}}
         process = subprocess.Popen([sys.executable, '-c', WORKER,
                                     str(Path(__file__).resolve().parents[1] / 'tools'),
                                     str(self.directory), str(root), json.dumps(selection)],
@@ -100,6 +109,16 @@ class FifoTests(unittest.TestCase):
     def admitted(self, root):
         self.until(lambda: (root / 'admitted').exists(), 'Worker was not admitted: ' + str(root))
 
+    def waiter(self, root):
+        return next(row for row in admission.status()['waiting'] if row['root'] == str(root))
+
+    def reason(self, root, prefix):
+        self.until(lambda: self.waiter(root)['reason'].startswith(prefix),
+                   'Waiter did not report ' + prefix + ': ' + str(root))
+
+    def backfills(self, root):
+        return self.waiter(root)['scheduling']['backfill_count']
+
     def release(self, worker):
         process, root = worker
         (root / 'release').touch()
@@ -109,6 +128,7 @@ class FifoTests(unittest.TestCase):
     def stop_workers(self):
         for _, root in self.workers:
             (root / 'release').touch()
+            (root / 'pause-poll').unlink(missing_ok=True)
         for process, _ in self.workers:
             if process.poll() is None:
                 process.kill()
@@ -149,21 +169,108 @@ class FifoTests(unittest.TestCase):
         self.release(later)
         self.release(holder)
 
-    def test_smaller_request_waits_behind_capacity_blocked_older_request(self):
-        self.set_memory(GIB + 4 * admission.MIB)
-        large = self.start_worker('large', heap_mib=5)
-        self.waiting([large[1]])
-        small = self.start_worker('small')
-        self.waiting([large[1], small[1]])
-        self.assertFalse((small[1] / 'admitted').exists())
+    def test_smaller_request_backfills_memory_or_cpu_starved_predecessor(self):
+        for resource, exclusive in [('memory', False), ('cpu', False), ('memory', True)]:
+            with self.subTest(resource=resource, exclusive=exclusive):
+                name = resource + str(exclusive)
+                self.set_memory(GIB + 4 * admission.MIB if resource == 'memory' else 8 * GIB,
+                                cpus=1 if resource == 'cpu' else 16)
+                large = self.start_worker(name + '-large', exclusive=exclusive,
+                                          heap_mib=5 if resource == 'memory' else 1,
+                                          cpu=2 if resource == 'cpu' else .25)
+                self.waiting([large[1]])
+                small = self.start_worker(name + '-small')
+                self.admitted(small[1])
+                self.assertFalse((large[1] / 'admitted').exists())
+                self.assertEqual(self.backfills(large[1]), 1)
+                self.release(small)
+                self.set_memory(GIB + 6 * admission.MIB if resource == 'memory' else 8 * GIB,
+                                cpus=2 if resource == 'cpu' else 16)
+                self.admitted(large[1])
+                self.release(large)
 
+    def test_three_successful_backfills_exhaust_waiter_lifetime_allowance(self):
+        self.set_memory(GIB + 4 * admission.MIB)
+        large = self.start_worker('bounded-large', heap_mib=7)
+        self.waiting([large[1]])
+        for count in range(1, 4):
+            small = self.start_worker('bounded-small-' + str(count))
+            self.admitted(small[1])
+            self.assertEqual(self.backfills(large[1]), count)
+            # Let the predecessor update its own resource reason while this
+            # reservation exists, then again after it disappears.
+            self.until(lambda: '%.2f CPU' % (16 - .25) in self.waiter(large[1])['reason'],
+                       'Predecessor did not refresh resource availability')
+            self.release(small)
+            self.until(lambda: '16.00 CPU' in self.waiter(large[1])['reason'],
+                       'Predecessor did not refresh released resources')
+            self.assertEqual(self.backfills(large[1]), count)
+        fourth = self.start_worker('bounded-fourth')
+        self.waiting([large[1], fourth[1]])
+        self.reason(fourth[1], 'FIFO:')
+        self.assertFalse((fourth[1] / 'admitted').exists())
+        self.assertEqual(self.backfills(large[1]), 3)
+        self.set_memory(GIB + 8 * admission.MIB)
+        self.admitted(large[1])
+        self.assertFalse((fourth[1] / 'admitted').exists())
+        self.release(large)
+        self.admitted(fourth[1])
+        self.release(fourth)
+
+    def test_unsatisfied_follower_does_not_spend_backfill_allowance(self):
+        self.set_memory(GIB + 4 * admission.MIB)
+        large = self.start_worker('unsatisfied-head', heap_mib=5)
+        self.waiting([large[1]])
+        denied = self.start_worker('unsatisfied-follower', heap_mib=7)
+        self.waiting([large[1], denied[1]])
+        self.reason(denied[1], 'Insufficient resources:')
+        self.assertEqual(self.backfills(large[1]), 0)
+        denied[0].kill()
+        denied[0].communicate(timeout=4)
+        self.waiting([large[1]])
+        small = self.start_worker('after-unsatisfied')
+        self.admitted(small[1])
+        self.assertEqual(self.backfills(large[1]), 1)
+        self.release(small)
         self.set_memory(GIB + 6 * admission.MIB)
         self.admitted(large[1])
-        self.waiting([small[1]])
+        self.release(large)
+
+    def test_fresh_capacity_recovery_preserves_predecessor_priority(self):
+        self.set_memory(GIB + 4 * admission.MIB)
+        large = self.start_worker('recovered-head', heap_mib=5, paused=True)
+        self.waiting([large[1]])
+        self.until(lambda: (large[1] / 'poll-paused').exists(), 'Head did not pause between checks')
+        self.set_memory(GIB + 6 * admission.MIB)
+        small = self.start_worker('after-recovery')
+        self.waiting([large[1], small[1]])
+        self.reason(small[1], 'FIFO:')
+        self.assertFalse((small[1] / 'admitted').exists())
+        self.assertEqual(self.backfills(large[1]), 0)
+        (large[1] / 'pause-poll').unlink()
+        self.admitted(large[1])
         self.assertFalse((small[1] / 'admitted').exists())
         self.release(large)
         self.admitted(small[1])
         self.release(small)
+
+    def test_successful_backfill_counts_each_resource_starved_predecessor(self):
+        self.set_memory(GIB + 4 * admission.MIB)
+        first = self.start_worker('multiple-first', heap_mib=5)
+        self.waiting([first[1]])
+        second = self.start_worker('multiple-second', heap_mib=7)
+        self.waiting([first[1], second[1]])
+        small = self.start_worker('multiple-small')
+        self.admitted(small[1])
+        self.assertEqual([self.backfills(worker[1]) for worker in (first, second)], [1, 1])
+        self.release(small)
+        self.set_memory(GIB + 6 * admission.MIB)
+        self.admitted(first[1])
+        self.assertFalse((second[1] / 'admitted').exists())
+        self.release(first)
+        self.set_memory(GIB + 8 * admission.MIB)
+        self.admitted(second[1])
+        self.release(second)
 
     def test_restarted_root_joins_after_existing_waiter(self):
         self.set_memory(GIB + 4 * admission.MIB)

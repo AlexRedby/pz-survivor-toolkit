@@ -248,8 +248,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.
 
-- [ ] Define bounded handling for a resource-starved FIFO head. An oversized menu-Host request can keep an otherwise eligible SP job waiting while no test clients are running. Preserve hard resource and exclusive-desktop guards; qualify an explicit fair timeout/requeue or bounded backfill policy, with truthful owner/queue diagnostics and unchanged result provenance. Do not silently bypass the head from an individual test task.
-
 - [ ] Give native fixtures a shared role-aware asynchronous placement contract. `QueueEnergyPlacement` returns the chosen square before arrival, and calling `teleportTo` on a server's remote actor did not move the Host client. Require one local-client placement, exact settled tile confirmation on both roles, corner/centre tolerance and bounded wait diagnostics so each suite does not rediscover these constraints.
 
 

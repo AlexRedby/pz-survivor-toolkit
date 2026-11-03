@@ -440,7 +440,7 @@ def batch(args, catalog):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    command = commands.add_parser('status', help='Show native stand owners, FIFO waiters and blocking reasons without launching the game')
+    command = commands.add_parser('status', help='Show native stand owners, queued requests and blocking reasons without launching the game')
     command.add_argument('--json', action='store_true', help='Print the machine-readable admission snapshot')
     for name in ("prepare", "run"):
         command = commands.add_parser(name)
@@ -542,6 +542,8 @@ def main(argv=None):
                         item['position'], item['root'], item['pid'], item['wait_seconds'],
                         'exclusive' if item['exclusive'] else 'shared',
                         item.get('phase', 'running') + (' ' + item['bank'] if item.get('bank') else ''), item['reason']))
+                    if 'backfill_remaining' in item:
+                        print('     Backfill slots remaining: ' + str(item['backfill_remaining']))
                 print('Prepared port reservations: ' + str(len(value['prepared'])))
                 lock = value['legacy_lock']
                 print('Legacy lock: ' + ('exclusive' if lock['exclusive'] else 'shared/busy' if lock['busy'] else 'free'))
