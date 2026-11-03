@@ -3,7 +3,9 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('native_tags', Path(__file__).parent / 'native_tags/run.py')
 native_tags = importlib.util.module_from_spec(spec)
@@ -295,6 +297,80 @@ class PlantingResetChecks(unittest.TestCase):
         with self.assertRaisesRegex(LuaError, 'food exclusion did not move original beans'):
             restore()
         self.assertEqual(len(lua.globals().actions), 0)
+
+
+class RestartArtifactPolicyTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.run, self.prepared = self.root / 'seed/run', self.root / 'prepared'
+        self.run.mkdir(parents=True)
+        self.prepared.mkdir()
+        self.manifest = [dict(id='Toolkit', input_policy=native_tags.mod_inputs.POLICY,
+                              files={'42/mod.info': 'a' * 64})]
+        for root in (self.run, self.prepared):
+            native_tags.write_json(root / 'manifest.json', self.manifest)
+        for role in native_tags.ROLES:
+            for directory in ('Saves', 'db', 'Server'):
+                path = self.run / role / directory
+                path.mkdir(parents=True)
+                (path / 'data').write_text('persisted ' + role + '/' + directory)
+            if role != 'server':
+                path = self.run / role / 'Lua'
+                path.mkdir()
+                (path / 'PZSurvivorToolkit_TagFilters_test.txt').write_text('native preset')
+        git_state = self.run / 'client1/Saves/.git'
+        git_state.mkdir()
+        (git_state / 'config').write_text('state stays strict despite its name')
+        self.seed = dict(output=self.root / 'seed', selection={'ports': [17001, 17002]},
+                         runtime={'server_name': 'test-server'}, states={}, files=native_tags.persisted_files(self.run))
+        for name, value in (('selection.json', self.seed['selection']), ('runtime.json', self.seed['runtime']),
+                            ('initial-settings.json', {}), ('settings-fingerprint.json', {'inputs': {}}),
+                            ('snapshot-hashes.json', {})):
+            native_tags.write_json(self.prepared / name, value)
+
+    def test_restart_requires_same_explicit_artifact_policy_and_exact_mod_bytes(self):
+        native_tags.restore_seed(self.seed, self.prepared)
+        copied = self.prepared / 'client1/Saves/.git/config'
+        self.assertEqual('state stays strict despite its name', copied.read_text())
+        for policy in (None, 'legacy-whole-tree'):
+            changed = copy.deepcopy(self.manifest)
+            changed[0]['input_policy'] = policy
+            native_tags.write_json(self.run / 'manifest.json', changed)
+            with self.subTest(policy=policy), self.assertRaisesRegex(ValueError, 'policy differs.*fresh snapshot'):
+                native_tags.restore_seed(self.seed, self.prepared)
+        native_tags.write_json(self.run / 'manifest.json', self.manifest)
+        changed = copy.deepcopy(self.manifest)
+        changed[0]['files']['42/mod.info'] = 'b' * 64
+        native_tags.write_json(self.prepared / 'manifest.json', changed)
+        with self.assertRaisesRegex(AssertionError, 'product/mod bytes changed'):
+            native_tags.restore_seed(self.seed, self.prepared)
+
+    def test_git_named_saved_state_is_not_excluded_or_weakened(self):
+        (self.run / 'client1/Saves/.git/config').write_text('modified state')
+        with self.assertRaisesRegex(AssertionError, 'Seed changed before copy'):
+            native_tags.restore_seed(self.seed, self.prepared)
+
+    def test_local_product_freeze_excludes_git_only_from_selected_mod_artifacts(self):
+        project = self.root / 'project'
+        source = project / 'PZSurvivorToolkit'
+        for relative in ('42/mod.info', '.git/config', '.gitignore', '42/media/.git/object'):
+            path = source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('product input')
+        for relative in ('tools/tool.py', 'tests/native_queue/support.lua', 'tests/native_tags/run.py'):
+            path = project / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('strict harness input')
+        (project / 'SurvivorQoL-selected.ini').write_text('Mods=Toolkit\n')
+        output = self.root / 'product-freeze'
+        with patch.object(native_tags, 'ROOT', project), patch.object(native_tags, 'HERE', project / 'tests/native_tags'):
+            native_tags.stage_sources(output)
+        self.assertFalse((output / 'PZSurvivorToolkit/.git').exists())
+        self.assertFalse((output / 'PZSurvivorToolkit/42/media/.git').exists())
+        self.assertEqual('product input', (output / 'PZSurvivorToolkit/.gitignore').read_text())
+        self.assertEqual('strict harness input', (output / 'tools/tool.py').read_text())
 
 
 if __name__ == '__main__':

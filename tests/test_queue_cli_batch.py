@@ -78,6 +78,18 @@ class BatchTests(unittest.TestCase):
         self.assertFalse(self.calls)
         self.assertFalse(self.args.output.exists())
 
+    def test_implicit_mod_ids_do_not_read_legacy_lock_with_filtered_semantics(self):
+        self.write_plan([dict(id='locked', suite='startup')])
+        lock = self.root / 'legacy-pack.json'
+        lock.write_text(json.dumps({'schema_version': 1, 'mods': []}))
+        plan = json.loads(self.plan.read_text())
+        plan['options']['pack_lock'] = str(lock)
+        self.plan.write_text(json.dumps(plan))
+        with self.assertRaisesRegex(ValueError, 'Invalid batch job locked:.*schema 1.*regenerate.*lock-pack'):
+            self.invoke()
+        self.assertFalse(self.calls)
+        self.assertFalse(self.args.output.exists())
+
     def test_blocked_job_does_not_hide_remaining_jobs(self):
         self.write_plan([{'id': name, 'suite': 'video-recording'} for name in ('blocked', 'next')])
         self.assertEqual(self.invoke(), 1)

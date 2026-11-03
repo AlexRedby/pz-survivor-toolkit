@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
 from JavaPatches import build
 from JavaPatches.tests import test_build_kotlin as kotlin_fixture
-from queue_checks import adapters, native
+from queue_checks import adapters, native, snapshot_copy
 from queue_checks.adapters import carts
 from tests import test_queue_native_snapshot as snapshot_fixture
 
@@ -174,7 +174,7 @@ class QueueKotlinPreflightTests(unittest.TestCase):
                                               world_template=str(self.root / 'saved-world')))
                 output = self.root / ('native-' + case)
                 with patch.object(native.shutil, 'copytree') as copy_mods, \
-                        patch.object(native.snapshot_copy, 'copy_file') as copy_file, \
+                        patch.object(snapshot_copy, 'copy_file') as copy_file, \
                         patch.object(native.worlds, 'validate') as validate_world, \
                         patch.object(native.worlds, 'restore') as restore_world, \
                         patch.object(carts, '_compile') as compile_cart, \

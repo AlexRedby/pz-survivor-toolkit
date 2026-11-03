@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from tests import test_queue_native_snapshot as snapshots
-from queue_checks import admission, native
+from queue_checks import admission, native, snapshot_copy
 
 
 class PreparationFlowTests(unittest.TestCase):
@@ -15,7 +15,7 @@ class PreparationFlowTests(unittest.TestCase):
 
     def test_hash_copy_and_compile_share_one_lease_until_snapshot_is_complete(self):
         output = self.fixture.root / 'run'
-        original_sources, original_copy = native._source_inputs, native.snapshot_copy.copy_file
+        original_sources, original_copy = native._source_inputs, snapshot_copy.copy_file
         original_compile = self.fixture.compile
         stages = []
 
@@ -38,7 +38,7 @@ class PreparationFlowTests(unittest.TestCase):
 
         self.fixture.compile_mock.side_effect = compile
         with patch.object(native, '_source_inputs', side_effect=sources), \
-                patch.object(native.snapshot_copy, 'copy_file', side_effect=copy), \
+                patch.object(snapshot_copy, 'copy_file', side_effect=copy), \
                 patch.object(admission, 'preparing', wraps=admission.preparing) as lease:
             result = self.fixture.prepare()
         self.assertEqual(result, output)

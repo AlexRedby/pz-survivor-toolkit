@@ -11,7 +11,7 @@ import sys
 import tempfile
 import zipfile
 import uuid
-from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw, preparation_process, borrowing_check, provenance, progress
+from . import adapters, worlds, pack, admission, report, coop, glfw, preparation_process, borrowing_check, provenance, progress, mod_inputs
 try:
     from .. import lua_compatibility
 except ImportError:
@@ -107,12 +107,12 @@ def _locations(project, workshop, identifiers, overrides=None):
     for root in dict.fromkeys(path.resolve() for path in workshop):
         if not root.is_dir():
             raise ValueError("Workshop root does not exist: " + str(root))
-        remote_infos.extend(root.rglob("mod.info"))
+        remote_infos.extend(mod_inputs.infos(root))
     result = {}
     for identifier in identifiers:
         if identifier in overrides:
             explicit = Path(overrides[identifier]).resolve()
-            found = matching_roots(explicit.rglob('mod.info'), identifier) if explicit.is_dir() else set()
+            found = matching_roots(mod_inputs.infos(explicit), identifier) if explicit.is_dir() else set()
         else:
             found = matching_roots(local_infos, identifier)
         if not found and identifier not in overrides:
@@ -344,7 +344,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
             if not asset.is_relative_to(game):
                 raise ValueError('Game input escapes installed game: ' + relative)
             sources.append(asset)
-    sources += [Path(provenance.__file__), *provenance.verifier_sources(project, selection)]
+    sources += [Path(provenance.__file__), Path(mod_inputs.__file__), *provenance.verifier_sources(project, selection)]
     if selection['suite'] == 'health':
         sources.append(support / 'QueueScenarioChecks.lua')
     host_bootstrap = project / 'tests/native_queue/startup/client/ZZStartup.lua'
@@ -369,7 +369,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         for path in sources:
             source_manifest[str(path)] = sha256(path)
             progress.file(path)
-        manifest = [{"id": identifier, "source": str(source), "files": hashes(source)}
+        manifest = [{"id": identifier, "source": str(source), "input_policy": mod_inputs.POLICY, "files": mod_inputs.hashes(source)}
                     for identifier, source in locations.items()]
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
@@ -407,7 +407,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         with progress.Phase('copy-mod-snapshots', role=role):
             for identifier, source in locations.items():
                 target = cache / "mods" / identifier
-                shutil.copytree(source, target, copy_function=snapshot_copy.copy_file)
+                mod_inputs.copy_tree(source, target)
                 expected = next(row["files"] for row in manifest if row["id"] == identifier)
                 if hashes(target) != expected:
                     raise RuntimeError("Mod changed while copying snapshot: " + identifier)
@@ -574,6 +574,9 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
     for path, digest in source_manifest.items():
         if sha256(Path(path)) != digest:
             raise RuntimeError("Source changed while preparing snapshot: " + path)
+    membership_issues = report.verify_mod_sources(output, source_manifest)
+    if membership_issues:
+        raise RuntimeError('Mod sources changed while preparing snapshot: ' + '; '.join(membership_issues))
     frozen = {path.name: sha256(path) for path in sorted(output.iterdir()) if path.is_file()}
     if sys.platform == 'darwin':
         frozen.update({'native/' + relative: digest for relative, digest in hashes(output / 'native').items()})

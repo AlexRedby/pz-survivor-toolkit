@@ -99,6 +99,7 @@ def runtime_issues(root):
     root = Path(root).resolve()
     value = _roles(root)
     errors = report.verify_manifest(root, 'snapshot-hashes.json') + report.verify_game_inputs(root)
+    errors += report.verify_mod_sources(root, {**value['runtime'], **value['verifier']})
     frozen = read_json(root / 'snapshot-hashes.json')
     if SOURCE_ROLES not in frozen:
         errors.append('Prepared source roles are not sealed; prepare a fresh snapshot')

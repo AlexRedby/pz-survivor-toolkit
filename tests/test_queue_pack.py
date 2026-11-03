@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
-from queue_checks import pack
+from queue_checks import pack, mod_inputs
 
 
 class PackLockTests(unittest.TestCase):
@@ -34,6 +34,8 @@ class PackLockTests(unittest.TestCase):
 
     def test_lock_preserves_actual_order_versions_settings_and_exact_sources(self):
         value = self.create()
+        self.assertEqual(2, value['schema_version'])
+        self.assertEqual(mod_inputs.POLICY, value['input_policy'])
         self.assertEqual(['First', 'Second'], [row['id'] for row in value['mods']])
         self.assertEqual(['1', '2'], value['workshop_ids'])
         self.assertEqual(['1.2.3', '1.2.3'], [row['version'] for row in value['mods']])
@@ -155,3 +157,54 @@ class PackLockTests(unittest.TestCase):
         self.output.write_text(json.dumps(value))
         with self.assertRaisesRegex(ValueError, 'actual selected INI'):
             self.validate(['First'])
+
+    def test_git_metadata_is_excluded_but_other_hidden_artifacts_remain_locked(self):
+        source = self.root / 'First'
+        for relative in ('.git/objects/data', '42/.git/config', '.github/runtime.yml', '.gitignore', '.gitkeep', 'notes.git'):
+            path = source / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('original artifact')
+        value = self.create()
+        files = value['mods'][0]['files']
+        self.assertFalse(any('.git' in Path(name).parts for name in files))
+        for relative in ('.github/runtime.yml', '.gitignore', '.gitkeep', 'notes.git'):
+            self.assertIn(relative, files)
+        (source / '.git/objects/data').write_text('changed Git object')
+        (source / '42/.git/config').write_text('changed Git config')
+        self.validate()
+        for relative in ('.github/runtime.yml', '.gitignore', '.gitkeep', 'notes.git'):
+            path = source / relative
+            path.write_text('changed runtime artifact')
+            with self.subTest(relative=relative), self.assertRaisesRegex(ValueError, 'changed locked mod'):
+                self.validate()
+            path.write_text('original artifact')
+
+    def test_git_pointer_file_and_git_symlink_are_never_opened_as_artifacts(self):
+        git = self.root / 'First/.git'
+        git.write_text('gitdir: /unavailable/private/metadata')
+        self.create()
+        git.write_text('gitdir: /different/metadata')
+        self.validate()
+        git.unlink()
+        git.symlink_to(self.root / 'missing-git-data')
+        self.validate()
+
+    def test_schema_one_and_unknown_policies_require_explicit_lock_regeneration(self):
+        original = self.create()
+        legacy = dict(original, schema_version=1)
+        legacy.pop('input_policy')
+        self.output.write_text(json.dumps(legacy))
+        for check in (lambda: pack.read(self.output), self.validate):
+            with self.assertRaisesRegex(ValueError, 'schema 1.*regenerate.*lock-pack'):
+                check()
+        for policy in (None, 'whole-tree', 'future-policy'):
+            self.output.write_text(json.dumps(dict(original, input_policy=policy)))
+            with self.subTest(policy=policy), self.assertRaisesRegex(ValueError, 'input_policy.*regenerate'):
+                self.validate()
+
+    def test_v2_lock_cannot_include_git_entries_despite_its_declared_policy(self):
+        value = self.create()
+        value['mods'][0]['files']['.git/config'] = 'a' * 64
+        self.output.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, 'mod file entry'):
+            pack.read(self.output)

@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import shutil
 
-from .. import report
+from .. import report, mod_inputs
 
 
 SUITE = 'quartermaster-presets'
@@ -89,7 +89,6 @@ def sources(project, selection):
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
-    from ..native import hashes
     validate(selection)
     cache = Path(runtime['roles']['client1']['cache'])
     client = cache / 'mods/ActionQueueTest/42/media/lua/client'
@@ -100,8 +99,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         seed, stores = _seed(selection)
         if Path(report.read_json(seed / 'runtime.json')['game']) != Path(game):
             raise ValueError('Quartermaster seed uses a different game')
-        before = {row['id']: row['files'] for row in report.read_json(seed / 'manifest.json')}
-        if before != {identifier: hashes(Path(path)) for identifier, path in locations.items()}:
+        before = mod_inputs.manifest_files(report.read_json(seed / 'manifest.json'))
+        if before != {identifier: mod_inputs.hashes(Path(path)) for identifier, path in locations.items()}:
             raise ValueError('Quartermaster seed uses different mod contents')
         for source in stores:
             shutil.copyfile(source, cache / 'Lua' / source.name)

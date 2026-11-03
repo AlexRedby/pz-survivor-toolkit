@@ -13,7 +13,7 @@ import tarfile
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'tools'))
-from queue_checks import native, runner
+from queue_checks import native, runner, mod_inputs
 from queue_checks.mod_selection import metadata, mod_ids
 
 BASELINE = ['configure', 'reopen', 'sort', 'baseline-reconnect']
@@ -42,7 +42,7 @@ def stage_sources(source, source_ref=None):
         with tarfile.open(fileobj=io.BytesIO(archive)) as files:
             files.extractall(source, filter='data')
     else:
-        shutil.copytree(ROOT / 'PZSurvivorToolkit', source / 'PZSurvivorToolkit')
+        mod_inputs.copy_tree(ROOT / 'PZSurvivorToolkit', source / 'PZSurvivorToolkit')
         shutil.copy2(ROOT / 'SurvivorQoL-selected.ini', source)
     for name in ('tools', 'tests/native_queue'):
         shutil.copytree(ROOT / name, source / name, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
@@ -236,7 +236,7 @@ def restore_seed(seed, prepared):
     assert runtime['server_name'] == seed['runtime']['server_name'], 'Restart server name changed'
     before = json.loads((run / 'manifest.json').read_text())
     after = json.loads((prepared / 'manifest.json').read_text())
-    assert {row['id']: row['files'] for row in before} == {row['id']: row['files'] for row in after}, 'Restart product/mod bytes changed'
+    assert mod_inputs.manifest_files(before) == mod_inputs.manifest_files(after), 'Restart product/mod bytes changed'
     no_symlinks(run)
     assert persisted_files(run) == seed['files'], 'Seed changed before copy'
     for name, expected in seed['files'].items():

@@ -1,6 +1,7 @@
 """Locked integration checks consume the same effective files as Build 42."""
 from contextlib import redirect_stdout
 import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -128,6 +129,21 @@ class ModIntegrations(unittest.TestCase):
         self.assertEqual(self.nav / 'MonitorRender.lua', args.integration_sources['test_navigator.lua']['NativeNavigatorRender'])
         self.assertIsNone(args.native_action_root)
         self.assertEqual({}, self.bound(args, 'test_tv_videos.lua'))
+
+    def test_locked_source_binding_accepts_only_v2_policy_and_ignores_git_metadata_drift(self):
+        git = self.root / 'Navigator/.git'
+        git.mkdir()
+        (git / 'config').write_text('initial Git metadata')
+        self.lock_sources()
+        (git / 'config').write_text('changed Git metadata')
+        args, _ = self.configure(['Navigator'])
+        self.assertEqual(self.nav / 'MonitorRender.lua', args.integration_sources['test_navigator.lua']['NativeNavigatorRender'])
+        value = json.loads(self.lock.read_text())
+        value.update(schema_version=1)
+        value.pop('input_policy')
+        self.lock.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, 'schema 1.*regenerate.*lock-pack'):
+            self.configure(['Navigator'])
 
     def test_common_only_tv_named_check_does_not_require_window_or_native_radio(self):
         (self.tv.parent.parent / 'ISRadioWindow.lua').unlink()

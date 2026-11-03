@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-from queue_checks import native, worlds, pack, runner, admission, report, snapshot_copy, borrowing_check
+from queue_checks import native, worlds, pack, runner, admission, report, snapshot_copy, borrowing_check, mod_inputs
 
 
 class NativeSnapshotTests(unittest.TestCase):
@@ -284,6 +284,37 @@ class NativeSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'symlinks are unsupported'):
             native.hashes(root_link)
         self.assertEqual((outside / 'linked.lua').read_text(), 'external source')
+
+    def test_mod_git_metadata_is_omitted_but_frozen_membership_and_live_runtime_inputs_stay_strict(self):
+        source = self.project / 'Toolkit'
+        self.write(source / '.git/HEAD', 'original branch')
+        self.write(source / '42/media/.git', 'gitdir: /private-build-state')
+        self.write(source / '42/media/.hidden-input', 'retained hidden bytes')
+        output = self.prepare('without-git')
+        rows = report.read_json(output / 'manifest.json')
+        self.assertEqual(mod_inputs.POLICY, rows[0]['input_policy'])
+        expected = mod_inputs.hashes(source)
+        self.assertEqual(expected, native.hashes(output / 'client1/mods/PZSurvivorToolkit'))
+        original = report.read_json(output / 'source-manifest.json')
+        self.assertFalse(any(mod_inputs.excluded(Path(name).relative_to(source))
+            for name in original if Path(name).is_relative_to(source)))
+        self.write(source / '.git/HEAD', 'changed irrelevant branch')
+        self.assertFalse(report.verify_manifest(output, 'source-manifest.json', True))
+        extra = source / '42/media/lua/shared/new-runtime.lua'
+        self.write(extra, 'return true')
+        self.assertTrue(any('membership changed' in error for error in report.verify_manifest(output, 'source-manifest.json', True)))
+        extra.unlink()
+        self.write(output / 'client1/mods/PZSurvivorToolkit/.git/HEAD', 'injected output metadata')
+        self.assertTrue(any('Frozen file set differs' in error for error in report.verify_manifest(output, 'snapshot-hashes.json')))
+
+    def test_runtime_file_added_during_staging_refuses_snapshot_acceptance(self):
+        def stage(project, output, game, jdk, selection, locations, runtime):
+            self.write(self.project / 'Toolkit/42/media/lua/shared/late.lua', 'return true')
+
+        with patch.object(native.adapters, 'get', return_value=self.fixture_adapter(stage)):
+            with self.assertRaisesRegex(RuntimeError, 'membership changed'):
+                self.prepare()
+        self.assertFalse((self.root / 'run/snapshot-hashes.json').exists())
 
     def test_host_prepares_and_seals_the_actual_shared_server_settings(self):
         shutil.copytree(ROOT / 'tests/native_queue/startup', self.project / 'tests/native_queue/startup')
@@ -700,7 +731,7 @@ class NativeSnapshotTests(unittest.TestCase):
         pack.create(self.project, lock, self.game)
         output = self.prepare(options={'pack_lock': str(lock)})
         self.write(self.project / 'Toolkit/42/media/lua/shared/unexpected.lua', 'return true\n')
-        with self.assertRaisesRegex(ValueError, 'changed locked mod'):
+        with self.assertRaisesRegex(ValueError, 'membership changed'):
             runner.run(output)
 
     def locked_pack(self):

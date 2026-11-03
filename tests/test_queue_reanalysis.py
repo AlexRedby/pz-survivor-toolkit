@@ -13,7 +13,7 @@ from tests import test_queue_report as fixtures
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools'))
-from queue_checks import provenance, reanalysis, report, runner, native
+from queue_checks import provenance, reanalysis, report, runner, native, mod_inputs
 
 spec = importlib.util.spec_from_file_location('reanalysis_cli', ROOT / 'tools/check_action_queue.py')
 cli = importlib.util.module_from_spec(spec)
@@ -124,6 +124,32 @@ class ReanalysisTests(unittest.TestCase):
         path.write_text('return true')
         with self.assertRaisesRegex(ValueError, 'Added native game input'):
             reanalysis.write(root, self.base / 'analysis', self.catalog)
+
+    def test_policy_bound_mod_membership_allows_git_churn_but_refuses_added_runtime_source(self):
+        root = self.capture(seal=False)
+        source = self.base / 'mod-source'
+        source.mkdir()
+        (source / 'mod.info').write_text('id=Fixture\n')
+        original = report.read_json(root / 'source-manifest.json')
+        files = mod_inputs.hashes(source)
+        original.update({str(source / name): digest for name, digest in files.items()})
+        report.write_json(root / 'source-manifest.json', original)
+        report.write_json(root / 'manifest.json', [dict(id='Fixture', source=str(source),
+                          input_policy=mod_inputs.POLICY, files=files)])
+        selection = report.read_json(root / 'selection.json')
+        report.write_json(root / provenance.SOURCE_ROLES, provenance.source_roles(self.base, selection, original))
+        self.fixtures.freeze(root)
+        frozen = report.read_json(root / 'snapshot-hashes.json')
+        frozen[provenance.SOURCE_ROLES] = provenance.digest(root / provenance.SOURCE_ROLES)
+        report.write_json(root / 'snapshot-hashes.json', frozen)
+        provenance.seal_execution(root)
+        (source / '.git').write_text('gitdir: unrelated-vcs-state\n')
+        self.assertFalse(provenance.runtime_issues(root))
+        (source / 'new-runtime.lua').write_text('return true')
+        output = self.base / 'changed-mod-analysis'
+        with self.assertRaisesRegex(ValueError, 'membership changed'):
+            reanalysis.write(root, output, self.catalog)
+        self.assertFalse(output.exists())
 
     def test_debug_and_probe_log_membership_and_symlinks_are_guarded(self):
         for name in ('client1-probes.log', 'client1/console.txt', 'client1/Logs/game_DebugLog.txt'):

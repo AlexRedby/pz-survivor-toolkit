@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from . import adapters, batch_policy, progress
+from . import adapters, batch_policy, progress, mod_inputs
 
 
 MARKER = "[QUEUE_CHECK] "
@@ -111,6 +111,7 @@ def verify_manifest(root, filename, absolute=False):
             errors.append("Changed input: " + str(path))
         progress.file(path)
     if filename == 'source-manifest.json' and absolute:
+        errors += verify_mod_sources(root, manifest)
         errors += verify_game_inputs(root)
     if filename == "snapshot-hashes.json" and not absolute:
         required = {"selection.json", "runtime.json", "settings-fingerprint.json", "source-manifest.json", "manifest.json", "initial-settings.json", "game-inputs.json"}
@@ -134,6 +135,30 @@ def verify_manifest(root, filename, absolute=False):
         except (OSError, ValueError, KeyError, TypeError) as error:
             errors.append("Cannot verify frozen file set: " + str(error))
     return errors
+
+
+def verify_mod_sources(root, source_manifest):
+    """Check policy-bound source membership without rehashing already checked files."""
+    try:
+        rows = read_json(Path(root) / 'manifest.json')
+        if not isinstance(rows, list) or not any(isinstance(row, dict) and 'input_policy' in row for row in rows):
+            return []  # Legacy archives retain their original per-file source seal.
+        maps = mod_inputs.manifest_files(rows)
+        errors = []
+        for row in rows:
+            source = row.get('source')
+            if not isinstance(source, str) or not Path(source).is_absolute():
+                raise ValueError('Policy-bound mod source must be absolute')
+            source = Path(source)
+            expected = maps[row['id']]
+            if any(source_manifest.get(str(source / name)) != value for name, value in expected.items()):
+                errors.append('Mod file map differs from original source seal: ' + row['id'])
+            actual = {path.relative_to(source).as_posix() for path in mod_inputs.files(source)}
+            if actual != expected.keys():
+                errors.append('Mod source file membership changed: ' + row['id'])
+        return errors
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return ['Cannot verify policy-bound mod sources: ' + str(error)]
 
 
 def events(text):

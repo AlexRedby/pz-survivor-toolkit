@@ -80,7 +80,7 @@ def selection(args, catalog, options=None, desktop_mode=None):
     if getattr(args, 'pack_lock', None):
         options['pack_lock'] = str(args.pack_lock.resolve())
     if options.get('pack_lock') and not args.mods:
-        locked = report.read_json(options['pack_lock'])
+        locked = pack.read(options['pack_lock'])
         mods = [row['id'] for row in locked['mods']]
     if set(required_mods) - set(mods):
         raise ValueError('Scenario requires enabled mods: ' + ', '.join(required_mods))

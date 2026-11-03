@@ -244,8 +244,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Exclude dependency VCS metadata from pack hashing and native snapshots through one consistent input contract. `native.hashes` and snapshot copying currently include thousands of `.git` files present in the resolved VanillaVehiclesAnimated and NepHighBeams sources, including hooks and repository configuration, which adds unrelated hashing/copy work. Audit required runtime/build inputs, migrate pack/source/snapshot membership together, and qualify exact runtime contents plus changed/added-file detection before excluding these files.
-
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.

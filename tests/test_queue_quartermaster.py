@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import quartermaster as adapter
 from queue_checks.adapters import quartermaster_distribution as distribution
 from queue_checks.adapters import quartermaster_crafting as crafting
+from queue_checks import mod_inputs
 
 
 def group_evidence(root):
@@ -116,7 +117,12 @@ class QuartermasterPresets(unittest.TestCase):
         self.initial = dict(self.selection, cases=['seed'], options={})
         self.write('selection.json', self.initial)
         self.write('runtime.json', {'game': str(self.game), 'roles': {'client1': {'cache': str(self.seed / 'client1')}}})
-        self.write('manifest.json', [{'id': name, 'files': {}} for name in adapter.MODS])
+        self.mod_sources = {name: self.root / 'mods' / name for name in adapter.MODS}
+        for name, path in self.mod_sources.items():
+            (path / '42').mkdir(parents=True)
+            (path / '42/mod.info').write_text('id=' + name + '\n')
+        self.write('manifest.json', [{'id': name, 'input_policy': mod_inputs.POLICY,
+                                     'files': mod_inputs.hashes(path)} for name, path in self.mod_sources.items()])
         self.text = ('[QM_PRESET] RULE index=1 gen=123 rev=2 creator=s00410042 mode=all resolved=true\n'
                      '[QM_PRESET] RULE index=2 gen=456 rev=2 creator=nil mode=any resolved=true\n')
         (self.seed / 'client1-launch.log').write_text(self.text + '[QM_PRESET] COMPLETE case=seed\n')
@@ -213,7 +219,25 @@ class QuartermasterPresets(unittest.TestCase):
             adapter._seed(self.selection)
 
     def test_reload_refuses_mismatched_mod_contents(self):
-        self.write('manifest.json', [{'id': name, 'files': {'unexpected.lua': 'changed'}} for name in adapter.MODS])
+        self.write('manifest.json', [{'id': name, 'input_policy': mod_inputs.POLICY,
+                                     'files': {'unexpected.lua': 'a' * 64}} for name in adapter.MODS])
+        with self.assertRaisesRegex(ValueError, 'different mod contents'):
+            self.stage()
+
+    def test_reload_ignores_only_git_drift_and_refuses_legacy_manifest_policy(self):
+        root = self.mod_sources[adapter.MODS[0]]
+        (root / '.git').mkdir()
+        (root / '.git/config').write_text('new Git metadata after seed')
+        self.stage()
+        original = adapter.report.read_json(self.seed / 'manifest.json')
+        for policy in (None, 'whole-tree-v1'):
+            changed = copy.deepcopy(original)
+            changed[0]['input_policy'] = policy
+            self.write('manifest.json', changed)
+            with self.subTest(policy=policy), self.assertRaisesRegex(ValueError, 'policy differs.*fresh snapshot'):
+                self.stage()
+        self.write('manifest.json', original)
+        (root / '.gitignore').write_text('new retained build configuration')
         with self.assertRaisesRegex(ValueError, 'different mod contents'):
             self.stage()
 

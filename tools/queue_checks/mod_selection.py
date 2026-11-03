@@ -1,5 +1,6 @@
 """Mod identities and active source layers shared by preparation and source checks."""
 import re
+from . import mod_inputs
 
 MOD_ID = re.compile(r"[A-Za-z0-9_.-]+")
 VERSION = re.compile(r"\d+(?:\.\d+)*")
@@ -25,7 +26,7 @@ def local_mod_infos(project):
     infos.extend(patches.glob("*/mod.info"))
     if (patches / "mod.info").is_file():
         infos.append(patches / "mod.info")
-    return infos
+    return [path for path in infos if not mod_inputs.excluded(path.relative_to(project))]
 
 
 def matching_roots(infos, identifier):
@@ -68,7 +69,8 @@ def lua_sources(folder):
     effective = {}
     for layer in mod_layers(folder):
         lua = layer / 'media/lua'
-        effective.update({path.relative_to(lua): path for path in lua.rglob('*.lua') if path.is_file()})
+        if lua.is_dir() or lua.is_symlink():
+            effective.update({path.relative_to(lua): path for path in mod_inputs.files(lua) if path.suffix == '.lua'})
     return sorted(effective.values())
 
 
