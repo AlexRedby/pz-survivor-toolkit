@@ -592,7 +592,7 @@ internal object CartTransition {
             pickupHandoffs.remove(player)
             states[player] = state
         }
-        val current = state ?: throw NullPointerException()
+        val current = state
         current.placement = pose.placement()
         val now = System.nanoTime()
         if (!nativeAction) {
@@ -739,7 +739,7 @@ internal object CartTransition {
                 !"perform".equals(scope.phase) ||
                 scope.action !== (action ?: throw NullPointerException()).getTable() ||
                 scope.callback == null ||
-                scope.callback !== (scope.action ?: throw NullPointerException()).rawget("perform")
+                scope.callback !== scope.action.rawget("perform")
         )
             return
         val player = action.chr as? IsoPlayer ?: return
@@ -1768,7 +1768,6 @@ internal object CartTransition {
     fun dropPose(player: IsoPlayer?, item: InventoryItem?): KahluaTable? {
         if (!Main.CART_TRANSITION_SUPPORTED || player == null || !supported(item)) return null
         val model = model(item) ?: return null
-        val direction = player.getForwardDirection()
         val profile = CartWheelbarrow.forItem(item)
         val pose =
             if (profile == null)
@@ -1778,7 +1777,7 @@ internal object CartTransition {
                     player.getX(),
                     player.getY(),
                     player.getZ(),
-                    direction.getDirection() + Math.PI.toFloat() / 2,
+                    player.getDirectionAngleRadians() + Math.PI.toFloat() / 2,
                     (item ?: throw NullPointerException()).worldScale,
                 )
             else
@@ -1788,7 +1787,7 @@ internal object CartTransition {
                     player.getX(),
                     player.getY(),
                     player.getZ(),
-                    direction.getDirection() + Math.PI.toFloat() / 2,
+                    player.getDirectionAngleRadians() + Math.PI.toFloat() / 2,
                     (item ?: throw NullPointerException()).worldScale,
                     profile.pickupStanceBack(),
                     profile,

@@ -8,6 +8,10 @@ KOTLIN_VERSION = '2.4.21'
 JVM_TARGET = '25'
 KOTLIN_MODULE = 'pz_toolkit_java_patches'
 KOTLIN_RUNTIME_PACKAGE = 'net/alexredby/pztoolkitruntime/kotlin'
+# Match pinned bin/kotlinc on JDK 24+: Jansi needs native access and fast
+# JAR-buffer cleanup uses Unsafe. Its known JVM notice is suppressed only in
+# this compiler process; source diagnostics and all runtime JVMs stay unchanged.
+KOTLIN_COMPILER_JAVA_OPTIONS = ('--enable-native-access=ALL-UNNAMED', '--sun-misc-unsafe-memory-access=allow')
 SOURCE_MANIFEST = 'META-INF/pztoolkit-build-inputs.json'
 
 
@@ -91,7 +95,8 @@ def _run_compiler(command):
 def compile_kotlin(jdk, home, classpath, destination, sources, *,
                    module_name=KOTLIN_MODULE, options=(), run=None):
     """Share compiler policy while callers retain classpaths, source order and execution policy."""
-    command = [str(Path(jdk) / 'bin/java'), '-jar', str(Path(home) / 'lib/kotlin-compiler.jar'),
+    command = [str(Path(jdk) / 'bin/java'), *KOTLIN_COMPILER_JAVA_OPTIONS,
+               '-jar', str(Path(home) / 'lib/kotlin-compiler.jar'),
                '-kotlin-home', str(home), '-jvm-target', JVM_TARGET, '-module-name', module_name,
                '-no-stdlib', '-no-reflect', *options, '-classpath', classpath,
                '-d', str(destination), *map(str, sources)]

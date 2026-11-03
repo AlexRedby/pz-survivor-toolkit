@@ -54,7 +54,7 @@ internal object CartGrip {
         for (data in (slot ?: throw NullPointerException()).modelData) if (
             data.modelInstance === owner &&
                 data.matrixPalette != null &&
-                (owner ?: throw NullPointerException()).model != null &&
+                owner.model != null &&
                 owner.model.tag is SkinningData
         ) {
             val skin = owner.model.tag as SkinningData
@@ -1727,7 +1727,7 @@ internal object CartGrip {
         for (body in (slot ?: throw NullPointerException()).modelData) if (
             body.modelInstance === owner &&
                 body.matrixPalette != null &&
-                (owner ?: throw NullPointerException()).model.tag is SkinningData
+                owner.model.tag is SkinningData
         ) {
             val skin = owner.model.tag as SkinningData
             val actor = owner.animPlayer.getSkinningData()

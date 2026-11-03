@@ -461,10 +461,10 @@ object CartShoppingTurnTest {
                         fun flat(a: Vector3f, b: Vector3f) =
                             kotlin.math.hypot((a.x - b.x).toDouble(), (a.z - b.z).toDouble())
                         if (jitter) {
-                            jitterDrift += flat(points[i], previous!![i])
+                            jitterDrift += flat(points[i], previous[i])
                             jitterNative += flat(nativePoints[i], previousNative!![i])
                         } else {
-                            supportDrift += flat(points[i], previous!![i])
+                            supportDrift += flat(points[i], previous[i])
                             nativeDrift += flat(nativePoints[i], previousNative!![i])
                         }
                         fullSupport++
@@ -582,7 +582,7 @@ object CartShoppingTurnTest {
         }
         val fading = release.update(root, lastView.copy(walk = .5f), actor, baseline, .51)
         check(
-            last != null && fading != null && fading.influence < last!!.influence,
+            last != null && fading != null && fading.influence < last.influence,
             "paused root/phase cannot reuse a stale full-weight contact during release",
         )
         check(

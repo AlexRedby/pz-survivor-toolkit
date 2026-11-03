@@ -143,7 +143,7 @@ object MannequinZoneDataLogic {
     }
 
     private fun noOverrides(zone: MannequinZone): Boolean =
-        zone.female.toInt() == -1 &&
+        zone.female == -1 &&
             zone.dir == null &&
             zone.mannequinScript == null &&
             zone.outfit == null &&

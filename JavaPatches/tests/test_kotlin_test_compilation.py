@@ -290,6 +290,9 @@ public class KotlinRuntimeChecks { public static void main(String[] args) { Syst
         self.assertIn('-Xjava-source-roots=' + str(self.root / 'tests'), kotlin)
         runtime = [command for command in commands if any(arg.startswith('-javaagent:') for arg in command)]
         self.assertEqual([command[-1] for command in runtime], [self.kotlin_name, self.cold_name])
+        for flag in ('--enable-native-access=ALL-UNNAMED', '--sun-misc-unsafe-memory-access=allow'):
+            self.assertIn(flag, kotlin[:kotlin.index('-jar')])
+        self.assertTrue(all('--sun-misc-unsafe-memory-access=allow' not in command for command in runtime))
         cold_path = runtime[-1][runtime[-1].index('-cp') + 1]
         self.assertNotIn('PZToolkitJavaPatches.jar', cold_path)
         self.assertNotIn('PZToolkitFonts.jar', cold_path)

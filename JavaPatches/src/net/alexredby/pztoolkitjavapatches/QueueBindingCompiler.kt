@@ -611,7 +611,6 @@ internal object QueueBindingCompiler {
                     val actual = current.coroutine.getParentNoAssert(1)?.closure
                     val provenance =
                         authentic &&
-                            caller != null &&
                             actual === caller &&
                             actual.prototype === owner &&
                             actual.env === env &&

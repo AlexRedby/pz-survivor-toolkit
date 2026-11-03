@@ -205,6 +205,11 @@ class KotlinBuild(unittest.TestCase):
             self.run_build()
         kotlin = next(command for command in self.commands if '-jar' in command)
         java = next(command for command in self.commands if '--release' in command)
+        for flag in ('--enable-native-access=ALL-UNNAMED', '--sun-misc-unsafe-memory-access=allow'):
+            self.assertIn(flag, kotlin[:kotlin.index('-jar')])
+            self.assertTrue(all(flag not in command for command in self.commands if command is not kotlin))
+        self.assertNotIn('-nowarn', kotlin)
+        self.assertFalse(any('use-fast-jar-file-system=false' in arg for arg in kotlin))
         self.assertLess(self.commands.index(kotlin), self.commands.index(java))
         self.assertEqual(kotlin[kotlin.index('-jvm-target') + 1], '25')
         self.assertEqual(java[java.index('--release') + 1], '25')

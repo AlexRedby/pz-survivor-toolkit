@@ -237,7 +237,7 @@ internal object CartShoppingTurn {
                 player.getSecondaryHandItem() !== state.item
         )
             return
-        val owner = source?.model ?: return
+        val owner = source.model ?: return
         if (slot.character !== player || slot.`object` !== player || owner.`object` !== player)
             return
         val animation = owner.animPlayer

@@ -112,7 +112,7 @@ internal object CartEmergencyDrop {
                 !CartTransition.wheelbarrow(item) ||
                 player.getPrimaryHandItem() !== item ||
                 player.getSecondaryHandItem() !== item ||
-                item!!.getContainer() !== player.getInventory() ||
+                item.getContainer() !== player.getInventory() ||
                 item.getWorldItem() != null
         )
             return null

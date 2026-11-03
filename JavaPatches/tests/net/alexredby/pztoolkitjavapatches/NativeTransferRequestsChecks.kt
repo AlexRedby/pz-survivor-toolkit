@@ -340,7 +340,7 @@ object NativeTransferRequestsChecks {
             type.getDeclaredField(name).apply { isAccessible = true }
         val nativeQueue =
             field(TransactionManager::class.java, "transactions").get(null)
-                as ConcurrentLinkedQueue<Transaction>
+                as ConcurrentLinkedQueue<*>
         val nextId = field(Transaction::class.java, "lastId")
         val savedId = nextId.getByte(null)
         val savedConnection = GameClient.connection
@@ -450,7 +450,7 @@ object NativeTransferRequestsChecks {
             println(
                 "NATIVE_TRANSFER_HANDLE_VM_PROBE environment_match=$replacedEnvironmentMatches vm_match=$replacedVmMatches",
             )
-            val firstPacket = nativeQueue.single()
+            val firstPacket = nativeQueue.single() as Transaction
             val packetId = field(Transaction::class.java, "id")
             val packetEntries =
                 field(Transaction::class.java, "entries").get(firstPacket) as List<*>

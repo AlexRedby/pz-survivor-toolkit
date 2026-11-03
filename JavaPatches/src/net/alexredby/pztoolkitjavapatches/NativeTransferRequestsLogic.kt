@@ -365,6 +365,10 @@ internal object NativeTransferRequestsLogic {
             !canonicalApi(api.javaFunction) ||
                 api.javaFunction !== env.delegate["createItemTransaction"] ||
                 api.nArguments != 4 ||
+                actor == null ||
+                items == null ||
+                source == null ||
+                destination == null ||
                 api.get(0) !== actor ||
                 api.get(1) !== items ||
                 api.get(2) !== source ||
@@ -406,10 +410,6 @@ internal object NativeTransferRequestsLogic {
             action.delegate["character"] !== actor ||
                 action.delegate["srcContainer"] !== source ||
                 action.delegate["destContainer"] !== destination ||
-                actor == null ||
-                items == null ||
-                source == null ||
-                destination == null ||
                 source === destination
         )
             return null

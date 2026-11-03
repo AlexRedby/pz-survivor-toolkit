@@ -100,7 +100,10 @@ object CartMotionSyncTest {
             direction = Vector2(x, y)
         }
 
+        @Deprecated("The native pathfinder still reads this getter; angles use getDirectionAngleRadians.")
         override fun getForwardDirection(): Vector2? = direction
+
+        override fun getDirectionAngleRadians(): Float = direction!!.getDirection()
     }
 
     private fun check(value: Boolean, message: String) {

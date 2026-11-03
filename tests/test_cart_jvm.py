@@ -151,6 +151,10 @@ class CartJVMCompilation(unittest.TestCase):
             self.compile(classes, [self.kotlin, self.java])
         self.assertEqual(len(self.commands), 4)
         kotlin, java, relocator, relocation = [command for command, _ in self.commands]
+        for flag in ('--enable-native-access=ALL-UNNAMED', '--sun-misc-unsafe-memory-access=allow'):
+            self.assertIn(flag, kotlin[:kotlin.index('-jar')])
+            self.assertTrue(all(flag not in command for command in (java, relocator, relocation)))
+        self.assertNotIn('-nowarn', kotlin)
         self.assertEqual(kotlin[kotlin.index('-module-name') + 1], 'cart_lab')
         self.assertEqual(kotlin[kotlin.index('-jvm-target') + 1], build.JVM_TARGET)
         self.assertIn('-no-stdlib', kotlin)

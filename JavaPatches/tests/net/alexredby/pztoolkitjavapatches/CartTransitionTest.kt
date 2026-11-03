@@ -60,8 +60,8 @@ object CartTransitionTest {
     private class Player : IsoPlayer(null, null, 0, 0, 0) {
         @JvmField var primary: InventoryItem? = null
         @JvmField var secondary: InventoryItem? = null
-        @JvmField var inventory: ItemContainer? = null
-        @JvmField var square: IsoGridSquare? = null
+        @JvmField var testInventory: ItemContainer? = null
+        @JvmField var testSquare: IsoGridSquare? = null
         @JvmField var variables: MutableMap<String?, Float>? = null
         @JvmField var actions: java.util.Stack<BaseAction>? = null
         @JvmField var machine: zombie.ai.StateMachine? = null
@@ -93,13 +93,13 @@ object CartTransitionTest {
 
         override fun getZ(): Float = if (otherFloor) 3f else 2f
 
-        override fun getCurrentSquare(): IsoGridSquare? = square
+        override fun getCurrentSquare(): IsoGridSquare? = testSquare
 
         override fun getPrimaryHandItem(): InventoryItem? = primary
 
         override fun getSecondaryHandItem(): InventoryItem? = secondary
 
-        override fun getInventory(): ItemContainer? = inventory
+        override fun getInventory(): ItemContainer? = testInventory
 
         override fun setPrimaryHandItem(item: InventoryItem?) {
             handWrites++
@@ -152,9 +152,9 @@ object CartTransitionTest {
         override fun isGettingUp(): Boolean = protection == 6
 
         override fun getVehicle(): zombie.vehicles.BaseVehicle? =
-            if (protection == 7) vehicle else null
+            if (protection == 7) testVehicle else null
 
-        @JvmField var vehicle: zombie.vehicles.BaseVehicle? = null
+        @JvmField var testVehicle: zombie.vehicles.BaseVehicle? = null
 
         override fun isGrappling(): Boolean = protection == 8
 
@@ -279,7 +279,7 @@ object CartTransitionTest {
     }
 
     private class Cart : InventoryItem(null, null, null, nullValue<String>()) {
-        @JvmField var container: ItemContainer? = null
+        @JvmField var testContainer: ItemContainer? = null
         @JvmField var world: IsoWorldInventoryObject? = null
         @JvmField var kind: String? = null
         @JvmField var model: String? = null
@@ -291,7 +291,7 @@ object CartTransitionTest {
 
         override fun getStaticModel(): String? = if (model == null) "WheelbarrowWood" else model
 
-        override fun getContainer(): ItemContainer? = container
+        override fun getContainer(): ItemContainer? = testContainer
 
         override fun getWorldItem(): IsoWorldInventoryObject? = world
 
@@ -320,8 +320,8 @@ object CartTransitionTest {
 
     private class WorldItem : IsoWorldInventoryObject(nullValue<zombie.iso.IsoCell>()) {
         @JvmField var invalidations = 0
-        @JvmField var item: InventoryItem? = null
-        @JvmField var square: IsoGridSquare? = null
+        @JvmField var testItem: InventoryItem? = null
+        @JvmField var testSquare: IsoGridSquare? = null
         @JvmField var probeNative = false
 
         override fun getWorldPosX(): Float = 10.25f
@@ -330,11 +330,11 @@ object CartTransitionTest {
 
         override fun getWorldPosZ(): Float = 2f
 
-        override fun getItem(): InventoryItem? = item
+        override fun getItem(): InventoryItem? = testItem
 
-        override fun getSquare(): IsoGridSquare? = square
+        override fun getSquare(): IsoGridSquare? = testSquare
 
-        override fun getRenderSquare(): IsoGridSquare? = square
+        override fun getRenderSquare(): IsoGridSquare? = testSquare
 
         override fun getSpriteModel(): zombie.iso.SpriteModel? {
             if (probeNative) throw NativePass()
@@ -379,7 +379,7 @@ object CartTransitionTest {
         cart.world = world
         cart.alpha = 0.7f
         cart.worldScale = 1f
-        world.item = cart
+        world.testItem = cart
         val renderer = zombie.core.skinnedmodel.model.ItemModelRenderer()
         val outlineType = zombie.iso.fboRenderChunk.FBORenderObjectOutline::class.java
         val outline = allocate(outlineType)
@@ -403,7 +403,7 @@ object CartTransitionTest {
         jobModels.set(job, arrayOf(renderer, renderer, renderer))
         val jobRender = jobType.getDeclaredMethod("renderMain")
         jobRender.setAccessible(true)
-        world.square = allocate(IsoGridSquare::class.java)
+        world.testSquare = allocate(IsoGridSquare::class.java)
         val core = zombie.core.Core.getInstance()
         val previous3D: Boolean = core.isOption3DGroundItem()
         try {
@@ -504,11 +504,11 @@ object CartTransitionTest {
 
     private fun bridge() {
         var player = allocate(Player::class.java)
-        player.inventory = allocate(ItemContainer::class.java)
-        player.square = allocate(IsoGridSquare::class.java)
+        player.testInventory = allocate(ItemContainer::class.java)
+        player.testSquare = allocate(IsoGridSquare::class.java)
         val cart = allocate(Cart::class.java)
         cart.kind = "SaucedWheelbarrow.WheelbarrowWood"
-        cart.container = player.inventory
+        cart.testContainer = player.testInventory
         player.primary = cart
         player.secondary = cart
         try {
@@ -522,7 +522,7 @@ object CartTransitionTest {
             )
             CartTransition.endDrop()
             check(
-                CartTransition.place(player.square, cart) == null,
+                CartTransition.place(player.testSquare, cart) == null,
                 "closed context must not redirect later drops",
             )
             for (invalid in
@@ -546,13 +546,13 @@ object CartTransitionTest {
                     "invalid pose accepted",
                 )
                 check(
-                    CartTransition.place(player.square, cart) == null,
+                    CartTransition.place(player.testSquare, cart) == null,
                     "invalid begin retained older pending pose",
                 )
             }
             var foreign = allocate(Cart::class.java)
             foreign.kind = cart.kind
-            foreign.container = player.inventory
+            foreign.testContainer = player.testInventory
             check(
                 !CartTransition.beginDrop(player, foreign, 11.0, 20.0, 2.0, 0.0),
                 "foreign held identity accepted",
@@ -563,12 +563,12 @@ object CartTransitionTest {
                 "one-handed cart accepted",
             )
             player.secondary = cart
-            cart.container = allocate(ItemContainer::class.java)
+            cart.testContainer = allocate(ItemContainer::class.java)
             check(
                 !CartTransition.beginDrop(player, cart, 11.0, 20.0, 2.0, 0.0),
                 "foreign inventory accepted",
             )
-            cart.container = player.inventory
+            cart.testContainer = player.testInventory
             cart.kind = "SaucedWheelbarrow.WheelbarrowMetal"
             check(
                 CartTransition.beginDrop(player, cart, 11.0, 20.0, 2.0, 0.0),
@@ -598,7 +598,7 @@ object CartTransitionTest {
                 "valid final context",
             )
             check(
-                CartTransition.place(player.square, foreign) == null,
+                CartTransition.place(player.testSquare, foreign) == null,
                 "different item bypassed scope",
             )
             CartTransition.endDrop()
@@ -659,19 +659,19 @@ object CartTransitionTest {
 
     private fun recovery(pickup: Boolean): Recovery {
         var player = allocate(Player::class.java)
-        player.inventory = allocate(ItemContainer::class.java)
-        player.square = allocate(IsoGridSquare::class.java)
-        player.vehicle = allocate(zombie.vehicles.BaseVehicle::class.java)
+        player.testInventory = allocate(ItemContainer::class.java)
+        player.testSquare = allocate(IsoGridSquare::class.java)
+        player.testVehicle = allocate(zombie.vehicles.BaseVehicle::class.java)
         val cart = allocate(Cart::class.java)
         cart.kind = "SaucedWheelbarrow.WheelbarrowWood"
         cart.alpha = 0.7f
         cart.worldScale = 1f
         var world = allocate(WorldItem::class.java)
-        world.item = cart
-        world.square = player.square
+        world.testItem = cart
+        world.testSquare = player.testSquare
         if (pickup) cart.world = world
         else {
-            cart.container = player.inventory
+            cart.testContainer = player.testInventory
             player.primary = cart
             player.secondary = cart
         }
@@ -772,7 +772,7 @@ object CartTransitionTest {
                 )
                 check(
                     cart.world === (if (pickup) fixture.world else null) &&
-                        cart.container === (if (pickup) null else player.inventory) &&
+                        cart.testContainer === (if (pickup) null else player.testInventory) &&
                         player.primary === (if (pickup) null else cart) &&
                         player.secondary === (if (pickup) null else cart),
                     "recovery transferred the cart",
@@ -1128,7 +1128,7 @@ object CartTransitionTest {
                 check(
                     player.handWrites == 0 &&
                         fixture.cart.world === (if (pickup) fixture.world else null) &&
-                        fixture.cart.container === (if (pickup) null else player.inventory) &&
+                        fixture.cart.testContainer === (if (pickup) null else player.testInventory) &&
                         player.primary === (if (pickup) null else fixture.cart) &&
                         player.secondary === player.primary,
                     "restart handoff changed authoritative item ownership",
@@ -1185,11 +1185,11 @@ object CartTransitionTest {
                         item.worldScale = 1f
                         if (pickup) {
                             var world = allocate(WorldItem::class.java)
-                            world.item = item
-                            world.square = player.square
+                            world.testItem = item
+                            world.testSquare = player.testSquare
                             item.world = world
                         } else {
-                            item.container = player.inventory
+                            item.testContainer = player.testInventory
                             player.primary = item
                             player.secondary = item
                         }
@@ -1199,27 +1199,27 @@ object CartTransitionTest {
                         if (direction) fixture.cart.world = fixture.world
                         else {
                             fixture.cart.world = null
-                            fixture.cart.container = player.inventory
+                            fixture.cart.testContainer = player.testInventory
                             player.primary = item
                             player.secondary = item
                         }
                     }
                     "world" -> {
                         var world = allocate(WorldItem::class.java)
-                        world.item = item
-                        world.square = player.square
+                        world.testItem = item
+                        world.testSquare = player.testSquare
                         item.world = world
                     }
-                    "world-item" -> required(fixture.world).item = allocate(Cart::class.java)
+                    "world-item" -> required(fixture.world).testItem = allocate(Cart::class.java)
                     "world-square" ->
-                        required(fixture.world).square = allocate(IsoGridSquare::class.java)
-                    "world-unloaded" -> required(fixture.world).square = null
+                        required(fixture.world).testSquare = allocate(IsoGridSquare::class.java)
+                    "world-unloaded" -> required(fixture.world).testSquare = null
                     "world-placement" -> item.worldScale = 1.1f
                     "hands" -> {
                         if (pickup) player.primary = allocate(Cart::class.java)
                         else player.secondary = null
                     }
-                    "inventory" -> item.container = allocate(ItemContainer::class.java)
+                    "inventory" -> item.testContainer = allocate(ItemContainer::class.java)
                     "protected" -> player.protection = 3
                     "protected-tick" -> {
                         player.protection = 3
@@ -1568,7 +1568,7 @@ object CartTransitionTest {
                         player.overridePrimaryHandModel = foreign
                     }
                     "physical-owner" -> {
-                        if (pickup) required(fixture.world).item = allocate(Cart::class.java)
+                        if (pickup) required(fixture.world).testItem = allocate(Cart::class.java)
                         else player.secondary = null
                     }
                     "timeout",
@@ -1797,14 +1797,14 @@ object CartTransitionTest {
                     8 -> player.primary = if (pickup) allocate(Cart::class.java) else null
                     9 -> {
                         if (pickup) cart.world = null
-                        else cart.container = allocate(ItemContainer::class.java)
+                        else cart.testContainer = allocate(ItemContainer::class.java)
                     }
                     10 -> {
-                        if (pickup) required(fixture.world).item = allocate(Cart::class.java)
+                        if (pickup) required(fixture.world).testItem = allocate(Cart::class.java)
                         else cart.world = fixture.world
                     }
                     11 -> {
-                        if (pickup) required(fixture.world).square = null
+                        if (pickup) required(fixture.world).testSquare = null
                         else player.secondary = null
                     }
                     12 -> {
@@ -2281,7 +2281,7 @@ object CartTransitionTest {
                     )
                     check(
                         fixture.cart.world === (if (pickup) fixture.world else null) &&
-                            fixture.cart.container === (if (pickup) null else player.inventory),
+                            fixture.cart.testContainer === (if (pickup) null else player.testInventory),
                         "visual suppression moved the exact cart",
                     )
                 } finally {
@@ -2346,7 +2346,7 @@ object CartTransitionTest {
                 player.overrideSecondaryHandModel = empty
                 player.performingAction = "ToolkitWoodCart"
                 player.performing = true
-                item.container = player.inventory
+                item.testContainer = player.testInventory
                 var candidate = pose
                 when (gate) {
                     "secondary" -> player.overrideSecondaryHandModel = "Mug"
@@ -2369,14 +2369,14 @@ object CartTransitionTest {
                                 0f,
                                 0.85f,
                             )
-                    "container" -> item.container = allocate(ItemContainer::class.java)
+                    "container" -> item.testContainer = allocate(ItemContainer::class.java)
                 }
                 check(
                     !CartTransition.remote(player, candidate, 0.4f) && state(player) == null,
                     "remote action borrowed unrelated native ownership: " + gate,
                 )
             }
-            item.container = player.inventory
+            item.testContainer = player.testInventory
             player.performing = true
             player.performingAction = "ToolkitWoodCart"
             ai.setOverride(true, "WheelbarrowWood", empty)
@@ -2463,7 +2463,7 @@ object CartTransitionTest {
                 player.handWrites == 0 &&
                     player.primary === item &&
                     player.secondary === item &&
-                    item.container === player.inventory,
+                    item.testContainer === player.testInventory,
                 "remote action presentation changed native item ownership",
             )
         } finally {
@@ -2606,8 +2606,8 @@ object CartTransitionTest {
                 player.protection = 1
                 var square = allocate(IsoGridSquare::class.java)
                 value(square, "worldObjects", java.util.ArrayList(listOf(fixture.world)))
-                required(fixture.world).square = square
-                player.square = square
+                required(fixture.world).testSquare = square
+                player.testSquare = square
                 chunk.squares[0][4 * 8 + 2] = square
                 check(
                     cell.getGridSquare(10, 20, 2) === square,
@@ -2780,8 +2780,8 @@ object CartTransitionTest {
                         player.handWrites == 0 &&
                             player.primary == null &&
                             player.secondary == null &&
-                            required(fixture.world).item === item &&
-                            item.container == null,
+                            required(fixture.world).testItem === item &&
+                            item.testContainer == null,
                         "remote model binding changed native ownership: " + gate,
                     )
                 } finally {
@@ -2821,7 +2821,7 @@ object CartTransitionTest {
         val oldConnection = zombie.network.GameClient.connection
         var field = CartTransition::class.java.getDeclaredField("pickupHandoffs")
         field.setAccessible(true)
-        val handoffs = (field.get(null) as MutableMap<IsoPlayer, Any?>)
+        val handoffs = field.get(null) as Map<*, *>
         try {
             LuaManager.platform = se.krka.kahlua.j2se.J2SEPlatform()
             LuaManager.env = LuaManager.platform.newTable()
@@ -2956,7 +2956,7 @@ object CartTransitionTest {
                         }
                         if (!variant.startsWith("later-")) {
                             source.world = null
-                            held.container = player.inventory
+                            held.testContainer = player.testInventory
                             player.setPrimaryHandItem(held)
                             player.setSecondaryHandItem(held)
                         }
@@ -2984,7 +2984,7 @@ object CartTransitionTest {
                 if (variant.equals("no-receipt")) {
                     CartTransition.end(player)
                     source.world = null
-                    held.container = player.inventory
+                    held.testContainer = player.testInventory
                     player.setPrimaryHandItem(held)
                     player.setSecondaryHandItem(held)
                 } else if (
@@ -2999,7 +2999,7 @@ object CartTransitionTest {
                 LuaManager.env.rawset("PZSurvivorToolkit", toolkit)
                 if (variant.startsWith("later-")) {
                     source.world = null
-                    held.container = player.inventory
+                    held.testContainer = player.testInventory
                     player.setPrimaryHandItem(held)
                     if (variant.equals("later-partial-original"))
                         check(
@@ -3049,7 +3049,7 @@ object CartTransitionTest {
                     replacement.kind = held.kind
                     replacement.model = held.model
                     replacement.setID(held.getID())
-                    replacement.container = player.inventory
+                    replacement.testContainer = player.testInventory
                     player.secondary = replacement
                     player.primary = player.secondary
                     check(
@@ -3273,11 +3273,11 @@ object CartTransitionTest {
                 parseNativeEquip(player, serialized, connection, incomplete)
                 val received = player.primary
                 check(
-                    received is zombie.inventory.types.InventoryContainer &&
-                        received !== source &&
+                    received !== source &&
+                        received is zombie.inventory.types.InventoryContainer &&
                         received.getID() == source.getID() &&
                         player.secondary === received &&
-                        received.getContainer() === player.inventory,
+                        received.getContainer() === player.testInventory,
                     "native full packet did not deserialize/bind exact new remote cart",
                 )
                 check(
@@ -3319,7 +3319,7 @@ object CartTransitionTest {
                             target = allocate(Player::class.java)
                             target.onlineID = 1
                             target.protection = 1
-                            target.inventory = allocate(ItemContainer::class.java)
+                            target.testInventory = allocate(ItemContainer::class.java)
                             zombie.network.GameClient.IDToPlayerMap.put(
                                 target.getOnlineID(),
                                 target,
@@ -3349,7 +3349,7 @@ object CartTransitionTest {
                                 player.primary !== source &&
                                 player.secondary === player.primary &&
                                 required(player.primary).getID() == source.getID() &&
-                                required(player.primary).getContainer() === player.inventory,
+                                required(player.primary).getContainer() === player.testInventory,
                             "second native complete packet did not supply a distinct exact held clone",
                         )
                         check(
@@ -3398,7 +3398,7 @@ object CartTransitionTest {
                         replacement.kind = source.kind
                         replacement.model = source.model
                         replacement.setID(source.getID())
-                        replacement.container = player.inventory
+                        replacement.testContainer = player.testInventory
                         player.secondary = replacement
                         player.primary = player.secondary
                         check(
@@ -3415,8 +3415,8 @@ object CartTransitionTest {
                     source.world ===
                         (if (gate.equals("native-replaced-world-cleared")) null
                         else fixture.world) &&
-                        required(fixture.world).item === source &&
-                        source.container == null &&
+                        required(fixture.world).testItem === source &&
+                        source.testContainer == null &&
                         java.lang.Double.valueOf(42.0)
                             .equals(required(received).getModData().rawget("nativeCargoMarker")),
                     "render receipt changed source/cargo ownership",
@@ -3445,7 +3445,7 @@ object CartTransitionTest {
         var connection = allocate(zombie.core.raknet.UdpConnection::class.java)
         val map = CartTransition::class.java.getDeclaredField("pickupHandoffs")
         map.setAccessible(true)
-        val handoffs = (map.get(null) as MutableMap<IsoPlayer, Any?>)
+        val handoffs = map.get(null) as Map<*, *>
         try {
             zombie.network.GameClient.client = true
             zombie.network.GameClient.connection = connection
@@ -3509,14 +3509,14 @@ object CartTransitionTest {
                     nativeHeld.kind = item.kind
                     nativeHeld.model = item.model
                     nativeHeld.setID(item.getID())
-                    nativeHeld.container = player.inventory
+                    nativeHeld.testContainer = player.testInventory
                     player.secondary = nativeHeld
                     player.primary = player.secondary
                     if (!gate.equals("unreceipted"))
                         CartTransition.pickupEquipped(player, connection)
                 } else {
                     item.world = null
-                    item.container = player.inventory
+                    item.testContainer = player.testInventory
                     player.secondary = item
                     player.primary = player.secondary
                 }
@@ -3548,7 +3548,7 @@ object CartTransitionTest {
                         replacement.kind = item.kind
                         replacement.model = item.model
                         replacement.setID(item.getID())
-                        replacement.container = player.inventory
+                        replacement.testContainer = player.testInventory
                         player.secondary = replacement
                         player.primary = player.secondary
                     }
@@ -3632,7 +3632,7 @@ object CartTransitionTest {
                     check(
                         player.primary === nativeHeld &&
                             player.secondary === nativeHeld &&
-                            nativeHeld.container === player.inventory,
+                            nativeHeld.testContainer === player.testInventory,
                         "completion bridge changed exact native hands/inventory",
                     )
                     check(
