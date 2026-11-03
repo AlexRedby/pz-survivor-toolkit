@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from . import adapters, batch_policy
+from . import adapters, batch_policy, progress
 
 
 MARKER = "[QUEUE_CHECK] "
@@ -43,6 +43,7 @@ def write_json(path, value):
     Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+@progress.operation('hash-game-inputs')
 def game_inputs(game):
     """Seal live Lua/script trees; binary and other asset trees are outside this scope."""
     game = Path(game).resolve()
@@ -53,7 +54,8 @@ def game_inputs(game):
             if path.is_symlink():
                 raise ValueError('Native game input symlinks are unsupported: ' + str(path))
             if path.is_file():
-                files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+                files[path.relative_to(root).as_posix()] = progress.hash_file(path)
+                progress.file(path)
         trees[tree] = files
     return {'game': str(game), 'trees': trees}
 
@@ -83,6 +85,7 @@ def verify_game_inputs(root):
         return ['Cannot verify native Lua/script inputs; prepare a fresh snapshot: ' + str(error)]
 
 
+@progress.operation('verify-manifest')
 def verify_manifest(root, filename, absolute=False):
     root = Path(root).resolve()
     errors = []
@@ -92,6 +95,7 @@ def verify_manifest(root, filename, absolute=False):
         return ["Cannot read manifest " + filename + ": " + str(error)]
     if not isinstance(manifest, dict) or not manifest:
         return ["Manifest is empty or invalid: " + filename]
+    progress.total(len(manifest), manifest=filename, run=root.name)
     for name, expected in manifest.items():
         if not isinstance(name, str) or not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
             errors.append("Invalid manifest entry: " + str(name)); continue
@@ -103,8 +107,9 @@ def verify_manifest(root, filename, absolute=False):
             continue
         if not path.is_file():
             errors.append("Missing input: " + str(path))
-        elif hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        elif progress.hash_file(path) != expected:
             errors.append("Changed input: " + str(path))
+        progress.file(path)
     if filename == 'source-manifest.json' and absolute:
         errors += verify_game_inputs(root)
     if filename == "snapshot-hashes.json" and not absolute:

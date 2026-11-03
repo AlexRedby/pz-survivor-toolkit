@@ -36,16 +36,23 @@ class BatchSessionTests(unittest.TestCase):
         def prepare(project, output, game, jdk, selection, workshop, *, resource_wait=300):
             output.mkdir()
             self.calls.append(copy.deepcopy(selection))
+            (output / 'selection.json').write_text(json.dumps(selection))
+            (output / 'snapshot-hashes.json').write_text(json.dumps({
+                'selection.json': cli.provenance.digest(output / 'selection.json')}))
         def run(output, resource_wait=300):
             self.runs.append(output)
+            if getattr(self, 'blocked_before_launch', False):
+                raise RuntimeError('Resources unavailable before launch')
             value = {'status': 'completed', 'processes': {'client1': {'pid': 123}}}
             value.update(getattr(self, 'execution_fields', {}))
             (output / 'execution.json').write_text(json.dumps(value))
             return value
         def report(output, catalog, control=None):
             self.report_paths.append(output)
-            return {'status': self.report_status,
-                    'functional': {'status': self.report_status}, 'runtime': {'status': 'clean'}}
+            value = {'status': self.report_status,
+                     'functional': {'status': self.report_status}, 'runtime': {'status': 'clean'}}
+            (output / 'report.json').write_text(json.dumps(value))
+            return value
         with patch.object(cli.native, 'prepare', side_effect=prepare), \
              patch.object(cli.runner, 'run', side_effect=run), \
              patch.object(cli, 'save_report', side_effect=report), \
@@ -84,6 +91,43 @@ class BatchSessionTests(unittest.TestCase):
         self.assertEqual(['failed'] * 3, [row['status'] for row in value['jobs']])
         self.assertEqual(1, len(value['sessions']))
         self.assertEqual('client1', value['stop_reason']['role'])
+
+    def test_resume_updates_only_all_members_of_its_one_bound_session(self):
+        self.plan['failure_policy'] = 'stop-on-setup-failure'
+        self.plan['jobs'].append(dict(id='later', suite='startup', boundary='Independent startup.'))
+        self.plan['campaign'] = [dict(id='torch', title='Torch', todo='TODO.md#torch',
+                                     jobs=[job['id'] for job in self.plan['jobs']], gates=[])]
+        self.blocked_before_launch = True
+        with patch.object(cli.native, 'source_inputs'):
+            self.assertEqual(1, self.invoke()[0])
+        path = self.args.output / 'batch-report.json'
+        original = cli.report.read_json(path)
+        run = self.args.output / self.jobs[0]['id']
+        selected = cli.report.read_json(run / 'selection.json')
+        def launch(output, **kwargs):
+            (output / 'execution-seal.json').write_text('{}')
+            return {'status': 'completed'}
+        def saved_report(output, catalog, control=None):
+            value = dict(run=str(output.resolve()), selection=selected, status='passed',
+                         provenance={'verified': True}, functional={'status': 'passed'}, runtime={'status': 'clean'},
+                         execution={'status': 'completed'})
+            cli.report.write_json(output / 'report.json', value)
+            return value
+        with patch.object(cli.runner, 'run', side_effect=launch) as launched, \
+                patch.object(cli, 'load_catalog', return_value=self.catalog), \
+                patch.object(cli, 'save_report', side_effect=saved_report), \
+                patch.object(cli.report, 'matrix', return_value={'rows': []}), \
+                patch.object(cli.report, 'summary', return_value='checked'), patch('sys.stdout', io.StringIO()):
+            self.assertEqual(0, cli.main(['resume', str(run)]))
+        launched.assert_called_once()
+        value = cli.report.read_json(path)
+        self.assertEqual(['passed'] * 3, [row['status'] for row in value['jobs']])
+        self.assertEqual(['later'], value['remaining'])
+        self.assertEqual(['passed', 'passed', 'passed', 'pending'],
+                         [job['status'] for job in value['campaign']['blocks'][0]['jobs']])
+        self.assertEqual([row['attempts'][0] for row in value['jobs']], original['jobs'])
+        self.assertEqual(original['sessions'][0], value['sessions'][0]['attempts'][0])
+        self.assertFalse((self.args.output / 'later').exists())
 
     def test_sp_and_host_are_two_explicit_launch_groups(self):
         host = [dict(job, id='host-' + job['id'], session='torch-host', kind='mp', options={'mp_host': True})

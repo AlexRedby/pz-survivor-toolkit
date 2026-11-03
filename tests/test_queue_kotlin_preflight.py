@@ -142,13 +142,17 @@ class QueueKotlinPreflightTests(unittest.TestCase):
                     else:
                         self.assertEqual(adapters.preflight(selected), {'kotlin_home': str(self.home)})
                     output.mkdir()
+                    (output / 'snapshot-hashes.json').write_text('{}')
 
                 passed = dict(status='passed', functional={'status': 'passed'}, runtime={'status': 'clean'})
+                def saved_report(output, *args):
+                    (output / 'report.json').write_text(json.dumps(passed))
+                    return passed
                 with patch.dict(os.environ, {'KOTLIN_HOME': str(self.home)}), \
                         patch.object(cli, 'ROOT', self.fixture.project), \
                         patch.object(cli.native, 'prepare', side_effect=prepare), \
                         patch.object(cli.runner, 'run', return_value={'status': 'completed'}) as run, \
-                        patch.object(cli, 'save_report', return_value=passed), \
+                        patch.object(cli, 'save_report', side_effect=saved_report), \
                         patch.object(cli.report, 'matrix', return_value={}), \
                         patch.object(cli.report, 'summary', return_value='checked'), \
                         patch.object(carts, '_compile') as compile_cart, \

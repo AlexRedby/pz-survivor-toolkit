@@ -1,5 +1,6 @@
 """Keep runnable checks and unresolved acceptance gates in one campaign report."""
 import re
+from copy import deepcopy
 
 
 def validate(plan):
@@ -57,3 +58,25 @@ def build(plan, selected, results=(), planned=False):
     return {'status': 'failed' if 'failed' in statuses else 'passed' if statuses == {'passed'} else 'pending',
             'blocks': blocks,
             'remaining_gates': sum(len(item['gates']) for item in plan['campaign'])}
+
+
+def refresh(value, results):
+    """Use stored campaign membership/gates; pending and unselected work stay visible."""
+    if value is None:
+        return None
+    value = deepcopy(value)
+    by_id = {row['id']: row for row in results}
+    for block in value['blocks']:
+        for job in block['jobs']:
+            if job['id'] in by_id:
+                row = by_id[job['id']]
+                job.update(status=row['status'], run=row['run'])
+                if row.get('report'):
+                    job.update(report=row['report'], report_sha256=row['report_sha256'])
+        states = {job['status'] for job in block['jobs']}
+        block['status'] = ('failed' if states & {'failed', 'blocked'} else
+                           'needs-review' if states & {'needs-review', 'captured'} else
+                           'passed' if states == {'passed'} and not block['gates'] else 'pending')
+    states = {block['status'] for block in value['blocks']}
+    value['status'] = 'failed' if 'failed' in states else 'passed' if states == {'passed'} else 'pending'
+    return value

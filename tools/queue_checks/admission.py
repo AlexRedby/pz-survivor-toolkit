@@ -14,7 +14,7 @@ import shutil
 import socket
 import time
 
-from . import adapters, host, preparation_process
+from . import adapters, host, preparation_process, progress
 
 MIB = 1024 ** 2
 STATE = Path('/tmp') / ('pz-native-' + str(os.getuid() if hasattr(os, 'getuid') else 'unsupported'))
@@ -425,6 +425,23 @@ def _validate_wait(wait):
         raise ValueError('Resource wait must be finite and nonnegative')
 
 
+def _progress_owners(root):
+    """Read only registered held leases; diagnostic data never grants admission."""
+    owners = []
+    for directory in (STATE, STATE / 'preparing', STATE / 'timing'):
+        for path in sorted(directory.glob('*.json')):
+            try:
+                row = json.loads(path.read_text())
+                if (row.get('phase') in ('running', 'preparing', 'timing') and row.get('root') != str(root)
+                        and isinstance(row.get('root'), str) and _held(row['root'])):
+                    owners.append(dict(suite=row.get('suite'), phase=row['phase']))
+                    if len(owners) == 8:
+                        return owners
+            except (OSError, ValueError, TypeError, AttributeError):
+                continue
+    return owners or None
+
+
 @contextmanager
 def _admit(root, selection, record, wait, legacy_lock):
     _validate_wait(wait)
@@ -442,7 +459,10 @@ def _admit(root, selection, record, wait, legacy_lock):
         except BlockingIOError as error:
             raise RuntimeError('This native profile is already admitted or waiting: ' + str(root)) from error
         admitted = False
-        last_message = None
+        updates = progress.Phase('admission', suite=selection.get('suite'), request_phase=phase,
+            request_memory_gib=round(request['memory'] / 1024**3, 2), request_cpu=request['cpu'],
+            wait_limit_seconds=wait)
+        progress_finished = False
         waiting_path = STATE / 'waiters' / (_key(root) + '.json')
         try:
             with _locked():
@@ -462,10 +482,12 @@ def _admit(root, selection, record, wait, legacy_lock):
                 _save(waiter, waiting_path.parent)
             while True:
                 reason = None
+                details, peers = None, None
                 with _locked():
                     waiters = _waiters()
                     if not waiters or not any(item['root'] == str(root) for item in waiters):
                         raise RuntimeError('Native admission waiter disappeared: ' + str(root))
+                    position = next(index for index, item in enumerate(waiters, 1) if item['root'] == str(root))
                     if waiters[0]['root'] != str(root):
                         reason = 'FIFO: waiting behind ' + waiters[0]['root']
                     else:
@@ -522,20 +544,33 @@ def _admit(root, selection, record, wait, legacy_lock):
                             waiter['reason'] = reason
                             _save(waiter, waiting_path.parent)
                 if admitted:
+                    updates.update(position=position, remaining_seconds=round(max(0, deadline - time.monotonic()), 1))
+                    updates.finish('admitted')
+                    progress_finished = True
                     if contained:
                         with preparation_process.inherit((lease.fileno(), legacy.fileno())):
                             yield details
                     else:
                         yield details
                     return
+                owners = _progress_owners(root) if peers is None else []
+                if peers is not None:
+                    owners = [dict(suite=item.get('suite'), phase=item['phase']) for item in peers
+                              if item['phase'] in ('running', 'preparing', 'timing')][:8]
+                updates.update(reason=reason, position=position,
+                    remaining_seconds=round(max(0, deadline - time.monotonic()), 1),
+                    active_suites=owners,
+                    available_memory_gib=round(details['memory_available'] / 1024**3, 2) if details is not None else None,
+                    available_cpu=round(details['cpu_available'], 2) if details is not None else None)
                 if time.monotonic() >= deadline:
+                    updates.finish('expired')
+                    progress_finished = True
                     raise RuntimeError(reason + ('; resource wait expired (no timing JVM launched)' if headless else
                                                  '; resource wait expired (no game launched)'))
-                if reason != last_message:
-                    print('WAIT ' + reason, flush=True)
-                    last_message = reason
                 time.sleep(min(2, max(0, deadline - time.monotonic())))
         finally:
+            if not progress_finished:
+                updates.finish('failed')
             with _locked():
                 waiting_path.unlink(missing_ok=True)
                 # Failed sampling/cleanup must retain the record for the next admission to reconcile.
@@ -569,6 +604,10 @@ def _windows_preparing(request, wait):
         raise ctypes.WinError(ctypes.get_last_error())
     acquired = False
     deadline = time.monotonic() + wait
+    updates = progress.Phase('admission', request_phase='preparing', wait_limit_seconds=wait,
+        request_memory_gib=round(request['memory'] / 1024**3, 2), request_cpu=request['cpu'],
+        policy='Windows serial preparation/Host mutex')
+    progress_finished = False
     try:
         # Slice large waits to avoid DWORD overflow and retain cancellation points.
         while True:
@@ -579,6 +618,7 @@ def _windows_preparing(request, wait):
                 break
             if result != 0x102:
                 raise RuntimeError('Cannot acquire Windows native preparation lease: ' + str(result))
+            updates.update(remaining_seconds=round(max(0, deadline - time.monotonic()), 1), reason='Windows preparation or Host lease is busy')
             if time.monotonic() >= deadline:
                 raise RuntimeError('Another Windows preparation or Host run owns the lease; resource wait expired (no game launched)')
 
@@ -597,10 +637,15 @@ def _windows_preparing(request, wait):
         margin = max(1024**3, memory.total // 10)
         if memory.available - margin < request['memory']:
             raise RuntimeError('Insufficient available memory after the live host and safety margin; no game launched')
+        updates.update(available_memory_gib=round((memory.available - margin) / 1024**3, 2))
+        updates.finish('admitted')
+        progress_finished = True
         yield {'budget': request, 'memory_available': memory.available - margin,
                'host_available_memory': memory.available, 'host_memory_margin': margin,
                'limits': ['Windows preparation and Host runs use a serial named mutex; no FIFO or CPU inventory.']}
     finally:
+        if not progress_finished:
+            updates.finish('failed')
         if acquired:
             kernel.ReleaseMutex(mutex)
         kernel.CloseHandle(mutex)

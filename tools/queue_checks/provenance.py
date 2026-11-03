@@ -7,7 +7,7 @@ import re
 import stat
 from types import ModuleType
 
-from . import adapters
+from . import adapters, progress
 
 
 SOURCE_ROLES = 'source-roles.json'
@@ -45,6 +45,7 @@ def digest(path):
     with _regular_file(path) as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b''):
             value.update(chunk)
+            progress.pulse(path)
     return value.hexdigest()
 
 
@@ -91,6 +92,7 @@ def _roles(root):
     return value
 
 
+@progress.operation('verify-runtime-inputs')
 def runtime_issues(root):
     """Verify all prepared bytes while allowing only the declared verifier to change."""
     from . import report
@@ -104,6 +106,7 @@ def runtime_issues(root):
         path = Path(name)
         if not path.is_file() or path.is_symlink() or digest(path) != expected:
             errors.append('Changed or missing runtime/fixture input: ' + name)
+        progress.file(path)
     return errors
 
 
@@ -126,6 +129,7 @@ def observation_files(root):
     return result
 
 
+@progress.operation('seal-execution-observations')
 def seal_execution(root):
     """Called once by the runner after process cleanup, log closure and final execution."""
     root = Path(root).resolve()

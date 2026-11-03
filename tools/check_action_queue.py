@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios, campaign, batch_policy
+from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios, campaign, batch_policy, batch_resume, provenance
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
@@ -287,14 +287,13 @@ def batch_input_failure(args, plan, jobs, units, unit, catalog, policy, error):
             row.update(session=unit['session'], cases=unit['members'][index]['cases'])
     attempted = {job['id'] for job in members}
     args.output.mkdir(parents=True)
-    report.write_json(args.output / 'batch-report.json', dict(
+    batch_resume.write_accounting(args.output / 'batch-report.json', dict(
         status='failed', failure_policy=policy, jobs=results,
         sessions=[dict(item, id=unit['session'] or members[0]['id'],
                        jobs=[job['id'] for job in members], boundary=members[0].get('boundary'))],
         launches_planned=len(units), remaining=[job['id'] for job in jobs if job['id'] not in attempted],
         stop_reason=dict(finding, kind='interrupted' if interrupted else finding['kind'], job=members[0]['id']),
-        campaign=campaign.build(plan, jobs, results)))
-    report.write_json(args.output / 'coverage.json', report.matrix(catalog, []))
+        campaign=campaign.build(plan, jobs, results)), catalog)
     print('BLOCKED ' + members[0]['id'] + ': ' + item['error'], flush=True)
     return 130 if interrupted else 1
 
@@ -364,7 +363,7 @@ def batch(args, catalog):
                           'campaign': campaign.build(plan, jobs, planned=True)}, indent=2))
         return 0
     args.output.mkdir(parents=True)
-    results, reports, completed, sessions, accepted = [], [], {}, [], set()
+    results, completed, sessions, accepted = [], {}, [], set()
     for unit in units:
         job, output = unit['jobs'][0], unit['output']
         item = {'run': str(output.resolve())}
@@ -387,6 +386,7 @@ def batch(args, catalog):
             stage = 'prepare'
             native.prepare(ROOT, output, Path(plan['game']), Path(plan['jdk']), selected, [Path(p) for p in plan.get('workshop', [])],
                            resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
+            item.update(batch_resume.anchor(output, control))
             stage = 'run'
             execution = runner.run(output, resource_wait=job.get('resource_wait', plan.get('resource_wait', 300)))
             interrupted = execution.get('interrupted', False)
@@ -395,9 +395,9 @@ def batch(args, catalog):
                 item['setup_failure'] = failure
             stage = 'report'
             value = save_report(output, catalog, control)
+            item['report_sha256'] = provenance.digest(output / 'report.json')
             if failure:
                 value = dict(value, status='failed')
-            reports.append(value)
             for member in unit['jobs']:
                 if not failure:
                     completed[member['id']] = output.resolve()
@@ -426,11 +426,10 @@ def batch(args, catalog):
         stop = interrupted or (policy == 'stop-on-setup-failure' and 'setup_failure' in item)
         stop_reason = ({'kind': 'interrupted', 'job': job['id']} if interrupted else
                        dict(item['setup_failure'], job=job['id']) if stop else None)
-        report.write_json(args.output / 'batch-report.json', {'status': overall, 'failure_policy': policy, 'jobs': results,
+        batch_resume.write_accounting(args.output / 'batch-report.json', {'status': overall, 'failure_policy': policy, 'jobs': results,
                           'sessions': sessions, 'launches_planned': len(units),
                           'remaining': identifiers[len(results):], 'stop_reason': stop_reason,
-                          'campaign': campaign.build(plan, jobs, results)})
-        report.write_json(args.output / 'coverage.json', report.matrix(catalog, reports))
+                          'campaign': campaign.build(plan, jobs, results)}, catalog)
         if interrupted:
             return 130
         if stop:
@@ -601,9 +600,15 @@ def main(argv=None):
             print("Prepared: " + str(args.output.resolve()), flush=True)
             if args.command == "prepare":
                 return 0
+        resume_context = None
+        if args.command == 'resume':
+            resume_context, args.control = batch_resume.resolve(args.output, args.control)
         if args.command in ("run", "resume"):
             runner.run(args.output, resource_wait=args.resource_wait)
         value = save_report(args.output, catalog, args.control)
+        if resume_context is not None:
+            updated = batch_resume.record(resume_context, value, catalog)
+            print('Updated batch accounting: ' + str(updated), flush=True)
         print(report.summary(value))
         if value['execution'].get('interrupted'):
             return 130

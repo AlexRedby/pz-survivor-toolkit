@@ -8,7 +8,7 @@ import sys
 import time
 
 from .report import events, execution_issues, read_json, verify_manifest, write_json
-from . import adapters, admission, pack, worlds, coop, desktop, glfw, provenance, setup_diagnostics
+from . import adapters, admission, pack, worlds, coop, desktop, glfw, provenance, setup_diagnostics, progress
 from .native import font_preload
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 from .preflight import ClientPreflight, fail as setup_failure
@@ -155,6 +155,7 @@ def run(root, resource_wait=300):
         fixture_monitor = FixtureLoadMonitor(root, runtime, selection)
         preflight = ClientPreflight(root, runtime, selection)
         clients = adapters.roles(selection, False)
+        fixture_progress = progress.Fixture(selection)
         game = Path(runtime["game"])
         base = [runtime["java"], "-Djava.awt.headless=true", "--enable-native-access=ALL-UNNAMED",
                 "--add-exports=java.base/jdk.internal.misc=ALL-UNNAMED", "-Dzomboid.steam=0",
@@ -306,6 +307,7 @@ def run(root, resource_wait=300):
                     if guard.poll() is not None:
                         setup_failure(execution, 'display-readiness', clients[0], 'readiness', 'Display guard stopped before fixture readiness')
                 preflight.check(current, execution)
+                fixture_progress.update(current, execution)
                 for role, specs in runtime.get('fixture', {}).get('attach', {}).items():
                     if role not in clients:
                         raise RuntimeError('Probe target is not an owned client: ' + role)
@@ -347,6 +349,7 @@ def run(root, resource_wait=300):
             execution.update(status="failed", error=str(error), interrupted=isinstance(error, KeyboardInterrupt))
             setup_diagnostics.capture(root, runtime, processes, execution)
         finally:
+            fixture_progress.finish(execution['status'])
             # Cleanup signals record failure without interrupting bounded waits or losing the report.
             cleaning = True
             try:

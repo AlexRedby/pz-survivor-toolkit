@@ -5,12 +5,13 @@ from pathlib import Path
 import re
 import shutil
 
-from . import adapters, report, coop
+from . import adapters, report, coop, progress
 
 
 SERVER_SETTINGS = ('Map', 'PVP', 'DoLuaChecksum', 'SleepAllowed', 'SleepNeeded')
 
 
+@progress.operation('hash-world-files')
 def files(root):
     from .native import hashes
     if root.is_symlink() or any(path.is_symlink() for path in root.rglob('*')):
@@ -216,6 +217,7 @@ def export(run, output):
     return value
 
 
+@progress.operation('verify-world-template')
 def validate(template, selection, game):
     from .native import sha256
     template = Path(template)
@@ -240,6 +242,7 @@ def validate(template, selection, game):
     return template, value
 
 
+@progress.operation('restore-world-template')
 def restore(template, value, output, runtime):
     from .native import sha256
     template, output = Path(template), Path(output)
@@ -258,6 +261,7 @@ def restore(template, value, output, runtime):
         shutil.copyfile(template / 'state' / name, target)
         if sha256(target) != digest:
             raise ValueError('World template changed while copying: ' + name)
+        progress.file(target)
     if files(template / 'state') != value['files'] or report.read_json(template / 'world.json') != value:
         raise ValueError('World template changed while copying')
     report.write_json(output / 'world-template.json', dict(value, template=str(template)))

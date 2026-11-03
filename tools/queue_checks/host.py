@@ -100,4 +100,10 @@ def sample():
         return {'total_memory': total, 'available_memory': min(total, available),
                 'cpu_count': cpus, 'processes': parse_processes(stats, commands)}
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        raise RuntimeError('Cannot sample host resources: ' + str(error)) from error
+        detail = getattr(error, 'stderr', '') or ''
+        if isinstance(detail, bytes):
+            detail = detail.decode(errors='replace')
+        reason = str(error) + (': ' + detail.strip()[:1000] if detail.strip() else '')
+        if any(marker in reason.lower() for marker in ('operation not permitted', 'permission denied')):
+            reason += '; host probes require the logged-in host session outside the sandbox (prepare/status/resume)'
+        raise RuntimeError('Cannot sample host resources: ' + reason) from error

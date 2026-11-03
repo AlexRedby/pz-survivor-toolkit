@@ -58,7 +58,7 @@ Collect the outstanding native checks below into one coordinated campaign. Reuse
 
 ### Item catalogue test world
 
-- [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen with the complete current source lock. The earlier isolated macOS run verified 4,898 distinct item types entering 210 crates, matching the exported index, and readable Russian HUD text, but omitted seven selected mods; five startup font errors also remain unclassified.
+- [ ] Inspect catalogue aisle access, native inventory tags and clipboard context-menu details during manual browsing; then quit normally and verify sealed-world export/reopen with the complete current source lock. Current full-pack macOS population produced 5,490 distinct item types in 222 crates, matching the generated index, with clean runtime audits. That controlled run was interrupted after readiness to qualify exclusive resource waiting; it does not establish manual aisle/context-menu review or normal quit/export/reopen. Russian HUD readability was previously checked with a partial pack.
 
 ## Vehicle and cart block
 
@@ -244,13 +244,13 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
+- [ ] Exclude dependency VCS metadata from pack hashing and native snapshots through one consistent input contract. `native.hashes` and snapshot copying currently include thousands of `.git` files present in the resolved VanillaVehiclesAnimated and NepHighBeams sources, including hooks and repository configuration, which adds unrelated hashing/copy work. Audit required runtime/build inputs, migrate pack/source/snapshot membership together, and qualify exact runtime contents plus changed/added-file detection before excluding these files.
+
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.
 
 - [ ] Reduce existing Java build diagnostic noise: the focused queue-view build succeeds but emits cart nullability/deprecation warnings and Kotlin compiler Jansi/Unsafe notices (`JavaPatches/build.py --test QueueViewChecks`). Review the named Kotlin call sites and supported compiler launch options so new warnings remain visible without globally suppressing diagnostics.
 
 - [ ] Define bounded handling for a resource-starved FIFO head. An oversized menu-Host request can keep an otherwise eligible SP job waiting while no test clients are running. Preserve hard resource and exclusive-desktop guards; qualify an explicit fair timeout/requeue or bounded backfill policy, with truthful owner/queue diagnostics and unchanged result provenance. Do not silently bypass the head from an individual test task.
-
-- [ ] Expose bounded preparation/admission progress in the native runner output. Full-pack `inventory-work` preparation, bulk food-fixture setup and waiting for an active interactive catalogue can remain silent or report only a generic desktop wait. Imported-base manifest verification can also spend several CPU-active minutes after `Prepared` before appearing in the admission queue; report that verification phase and its file progress. Report the current phase, fixture stage/item count, queue position and active suite/deadline without requiring separate status probes. Cover an imported-base profile and selected-pack Smart Deposit Host exhausting the default 300-second resource wait behind an exclusive native run, then resuming with `resume --resource-wait 1800` while retaining the valid snapshot. Keep host-resource access errors explicit for sandboxed `status --json` and `prepare`, and describe the required execution context. Verify progress during setup and contention without changing exclusive timing isolation, resource admission or input guards. After a successful resume, let campaign coverage reference the resumed result while retaining the first blocked attempt.
 
 - [ ] Give native fixtures a shared role-aware asynchronous placement contract. `QueueEnergyPlacement` returns the chosen square before arrival, and calling `teleportTo` on a server's remote actor did not move the Host client. Require one local-client placement, exact settled tile confirmation on both roles, corner/centre tolerance and bounded wait diagnostics so each suite does not rediscover these constraints.
 

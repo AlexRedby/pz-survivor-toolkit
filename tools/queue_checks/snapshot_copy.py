@@ -5,6 +5,7 @@ import os
 import shutil
 import stat
 import sys
+from . import progress
 
 
 def _load_clonefile():
@@ -30,10 +31,13 @@ def copy_file(src, dst):
     if _CLONEFILE is not None and stat.S_ISREG(os.stat(src, follow_symlinks=False).st_mode):
         if _CLONEFILE(os.fsencode(src), os.fsencode(dst), 0) == 0:
             shutil.copystat(src, dst)
+            progress.file(src)
             return dst
         error = ctypes.get_errno()
         # Existing destinations use copy2's overwrite rules. Real I/O failures
         # must stop preparation rather than retrying an allocating copy.
         if error not in _COPY_FALLBACK:
             raise OSError(error, os.strerror(error), os.fspath(src), None, os.fspath(dst))
-    return shutil.copy2(src, dst)
+    result = shutil.copy2(src, dst)
+    progress.file(src)
+    return result

@@ -11,7 +11,7 @@ import sys
 import tempfile
 import zipfile
 import uuid
-from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw, preparation_process, borrowing_check, provenance
+from . import adapters, worlds, pack, admission, report, coop, snapshot_copy, glfw, preparation_process, borrowing_check, provenance, progress
 try:
     from .. import lua_compatibility
 except ImportError:
@@ -28,11 +28,7 @@ def jdk_binary(jdk, name):
 
 
 def sha256(path):
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return progress.hash_file(path)
 
 
 def hashes(root):
@@ -40,7 +36,12 @@ def hashes(root):
     for path in [root, *paths]:
         if path.is_symlink():
             raise ValueError('Hashed input symlinks are unsupported: ' + str(path))
-    return {path.relative_to(root).as_posix(): sha256(path) for path in paths if path.is_file()}
+    result = {}
+    for path in paths:
+        if path.is_file():
+            result[path.relative_to(root).as_posix()] = sha256(path)
+            progress.file(path)
+    return result
 
 
 def _json(path, value):
@@ -207,6 +208,7 @@ def source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None
                                   pack_cache=pack_cache, validate_adapter=validate_adapter)
 
 
+@progress.operation('resolve-inputs')
 def _source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None, validate_adapter=True):
     """Validate launch inputs and pin build options without writing a profile.
 
@@ -278,6 +280,7 @@ def runtime_lua_sources(runtime, selection, *, fixtures_only=False):
     return sorted(sources)
 
 
+@progress.operation('prepare')
 def prepare(project: Path, output: Path, game: Path, jdk: Path,
             selection: dict, workshop: list[Path] = (), *, resource_wait=300) -> Path:
     """Admit preparation before hashing, copying or compiling any native inputs."""
@@ -361,9 +364,13 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
     # File membership matters too: newly added Lua/scripts are live game inputs.
     game_input_manifest = report.game_inputs(game)
     sources += [game / tree / name for tree, files in game_input_manifest['trees'].items() for name in files]
-    source_manifest = {str(path): sha256(path) for path in sources}
-    manifest = [{"id": identifier, "source": str(source), "files": hashes(source)}
-                for identifier, source in locations.items()]
+    with progress.Phase('hash-source-inputs'):
+        source_manifest = {}
+        for path in sources:
+            source_manifest[str(path)] = sha256(path)
+            progress.file(path)
+        manifest = [{"id": identifier, "source": str(source), "files": hashes(source)}
+                    for identifier, source in locations.items()]
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
     source_roles = provenance.source_roles(project, selection, source_manifest)
@@ -397,28 +404,29 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         cache = output / role
         for directory in ("mods", "Lua", "classes", "zombie-buddy"):
             (cache / directory).mkdir(parents=True)
-        for identifier, source in locations.items():
-            target = cache / "mods" / identifier
-            shutil.copytree(source, target, copy_function=snapshot_copy.copy_file)
-            expected = next(row["files"] for row in manifest if row["id"] == identifier)
-            if hashes(target) != expected:
-                raise RuntimeError("Mod changed while copying snapshot: " + identifier)
-            versions = [p for p in target.iterdir() if p.is_dir() and VERSION.fullmatch(p.name)]
-            layers = [target, target / 'common', *versions]
-            selected = selected_mod_version(target)
-            if selected not in layers:
-                # B42 still scans its default 42.0 layer when no branch matches,
-                # including common content alongside future-only versions.
-                layers.append(selected)
-            for layer in layers:
-                if layer != target or (layer / "media").is_dir():
-                    for sub in ("AnimSets", "actiongroups"):
-                        (layer / "media" / sub).mkdir(parents=True, exist_ok=True)
-        helper = cache / "mods/ActionQueueTest"
-        for layer in ("common", "42"):
-            for sub in ("AnimSets", "actiongroups"):
-                (helper / layer / "media" / sub).mkdir(parents=True)
-        (helper / "42/mod.info").write_text("name=Isolated native queue test\nid=ActionQueueTest\nversionMin=42.21\n", encoding="utf-8")
+        with progress.Phase('copy-mod-snapshots', role=role):
+            for identifier, source in locations.items():
+                target = cache / "mods" / identifier
+                shutil.copytree(source, target, copy_function=snapshot_copy.copy_file)
+                expected = next(row["files"] for row in manifest if row["id"] == identifier)
+                if hashes(target) != expected:
+                    raise RuntimeError("Mod changed while copying snapshot: " + identifier)
+                versions = [p for p in target.iterdir() if p.is_dir() and VERSION.fullmatch(p.name)]
+                layers = [target, target / 'common', *versions]
+                selected = selected_mod_version(target)
+                if selected not in layers:
+                    # B42 still scans its default 42.0 layer when no branch matches,
+                    # including common content alongside future-only versions.
+                    layers.append(selected)
+                for layer in layers:
+                    if layer != target or (layer / "media").is_dir():
+                        for sub in ("AnimSets", "actiongroups"):
+                            (layer / "media" / sub).mkdir(parents=True, exist_ok=True)
+            helper = cache / "mods/ActionQueueTest"
+            for layer in ("common", "42"):
+                for sub in ("AnimSets", "actiongroups"):
+                    (helper / layer / "media" / sub).mkdir(parents=True)
+            (helper / "42/mod.info").write_text("name=Isolated native queue test\nid=ActionQueueTest\nversionMin=42.21\n", encoding="utf-8")
         lua = helper / "42/media/lua"
         for side in ("shared", "client", "server"):
             (lua / side).mkdir(parents=True, exist_ok=True)

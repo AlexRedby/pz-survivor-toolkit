@@ -37,6 +37,8 @@ class BatchTests(unittest.TestCase):
         self.preparation_waits.append(resource_wait)
         if output.name == 'blocked':
             raise ValueError('Missing declared dependency')
+        (output / 'selection.json').write_text(json.dumps(selection))
+        (output / 'snapshot-hashes.json').write_text('{}')
 
     def run_job(self, output, resource_wait=300):
         result = {'status': 'failed' if output.name == 'interrupt' else 'completed',
@@ -49,9 +51,13 @@ class BatchTests(unittest.TestCase):
                 'functional': {'status': 'passed'}, 'runtime': {'status': 'clean'}}
 
     def invoke(self):
+        def saved_report(output, catalog, control=None):
+            value = self.report(output, catalog, control)
+            (output / 'report.json').write_text(json.dumps(value))
+            return value
         with patch.object(cli.native, 'prepare', side_effect=self.prepare), \
              patch.object(cli.runner, 'run', side_effect=self.run_job), \
-             patch.object(cli, 'save_report', side_effect=self.report), \
+             patch.object(cli, 'save_report', side_effect=saved_report), \
              patch.object(cli.report, 'matrix', return_value={'rows': []}), \
              patch.object(cli.report, 'summary', return_value='checked'):
             return cli.batch(self.args, self.catalog)

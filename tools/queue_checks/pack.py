@@ -1,7 +1,7 @@
 """Lock the actual selected modpack and reject drift before native launch."""
 from pathlib import Path
 
-from . import report
+from . import report, progress
 from .mod_selection import mod_ids, mod_info
 
 
@@ -28,6 +28,7 @@ def create(project, output, game, workshop=(), overrides=None):
     return value
 
 
+@progress.operation('verify-selected-pack')
 def validate(path, project, game, mods):
     from .native import hashes, sha256, MOD_ID, _metadata
     path = Path(path)

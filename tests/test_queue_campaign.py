@@ -6,8 +6,11 @@ import io
 import json
 from pathlib import Path
 import re
+import os
+import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from unittest.mock import patch
@@ -115,10 +118,12 @@ class CampaignTests(unittest.TestCase):
                 prepared=[]
                 def prepare(project,output,*args,**kwargs):
                     output.mkdir();prepared.append(output.name)
+                    (output/'snapshot-hashes.json').write_text('{}')
                 def run(output,**kwargs):
                     (output/'execution.json').write_text('{}');return {}
                 def report(output,*args):
-                    return dict(status=status if output.name=='first' else 'passed',functional={'status':'passed'},runtime={'status':'clean'})
+                    value=dict(status=status if output.name=='first' else 'passed',functional={'status':'passed'},runtime={'status':'clean'})
+                    (output/'report.json').write_text(json.dumps(value));return value
                 with patch.object(cli.native,'source_inputs'), patch.object(cli.native,'prepare',side_effect=prepare), patch.object(cli.runner,'run',side_effect=run), patch.object(cli,'save_report',side_effect=report), patch.object(cli.report,'summary',return_value='checked'), patch.object(cli.report,'matrix',return_value={}), patch('sys.stdout',io.StringIO()):
                     self.assertEqual(cli.batch(args,cli.load_catalog()),1)
                 self.assertEqual(prepared,['first','independent'])
@@ -207,6 +212,259 @@ class CampaignTests(unittest.TestCase):
             value=json.loads(out.getvalue())
             self.assertEqual(value['jobs_without_reuse'],len(plan['sets']['qualification']))
             self.assertTrue(any(job['status']=='not-selected' for item in value['campaign']['blocks'] for job in item['jobs']))
+
+
+class CampaignResumeTests(unittest.TestCase):
+    """Normal resume refreshes anchored accounting using real strict health reports."""
+    def setUp(self):
+        from tests.test_queue_report import QueueReportTests
+        self.fixtures = QueueReportTests()
+        self.fixtures.setUp()
+        self.addCleanup(self.fixtures.doCleanups)
+        self.root, self.catalog = self.fixtures.base, self.fixtures.catalog
+        self.output, self.path = self.root / 'batch', self.root / 'plan.json'
+        self.observations, self.launches = {}, []
+        self.blocked = {'first'}
+        self.plan = dict(game='/game', jdk='/jdk', failure_policy='stop-on-setup-failure',
+            jobs=[self.job('first')], campaign=[dict(id='health', title='Health', todo='TODO.md#health',
+                                                   jobs=['first'], gates=[])])
+
+    @staticmethod
+    def job(identifier, **fields):
+        return dict(id=identifier, suite='health', kind='sp', case='bandageApply',
+                    boundary='Independent native lifecycle.', **fields)
+
+    def prepare(self, project, output, game, jdk, selection, workshop, **kwargs):
+        output = output.resolve()
+        capture = self.fixtures.fixture(str(output.relative_to(self.root)), mode=selection['mode'])
+        manifest = cli.provenance.read_json(capture / 'source-manifest.json')
+        cli.report.write_json(capture / cli.provenance.SOURCE_ROLES,
+                              cli.provenance.source_roles(self.root, selection, manifest))
+        self.fixtures.freeze(capture)
+        frozen = cli.report.read_json(capture / 'snapshot-hashes.json')
+        frozen[cli.provenance.SOURCE_ROLES] = cli.provenance.digest(capture / cli.provenance.SOURCE_ROLES)
+        cli.report.write_json(capture / 'snapshot-hashes.json', frozen)
+        observations = [capture / 'execution.json', *capture.glob('*-launch.log')]
+        self.observations[str(capture)] = {path.name: path.read_bytes() for path in observations}
+        for path in observations:
+            path.unlink()
+
+    def launch(self, output, **kwargs):
+        output = output.resolve()
+        self.launches.append(output.name)
+        if output.name in self.blocked:
+            raise RuntimeError('Resource wait expired before native launch')
+        for name, content in self.observations[str(output)].items():
+            (output / name).write_bytes(content)
+        cli.provenance.seal_execution(output)
+        return cli.report.read_json(output / 'execution.json')
+
+    def batch(self, *, only=None):
+        self.path.write_text(json.dumps(self.plan))
+        args = argparse.Namespace(plan=self.path, output=self.output, jobs=only)
+        with patch.object(cli.native, 'source_inputs'), patch.object(cli.native, 'prepare', side_effect=self.prepare), \
+                patch.object(cli.runner, 'run', side_effect=self.launch), patch('sys.stdout', io.StringIO()):
+            return cli.batch(args, self.catalog)
+
+    def resume(self, name='first', control=None):
+        command = ['resume', str(self.output / name)]
+        if control:
+            command += ['--control', str(control)]
+        with patch.object(cli, 'load_catalog', return_value=self.catalog), \
+                patch.object(cli.runner, 'run', side_effect=self.launch) as run, \
+                patch.object(cli.native, 'prepare') as prepare, \
+                patch('sys.stdout', io.StringIO()), patch('sys.stderr', io.StringIO()):
+            result = cli.main(command)
+        prepare.assert_not_called()
+        return result, run.call_count
+
+    def accounting(self):
+        return cli.report.read_json(self.output / 'batch-report.json')
+
+    def test_successful_sole_job_resume_preserves_blocked_attempt_and_first_stop(self):
+        self.assertEqual(1, self.batch())
+        original = self.accounting()
+        self.assertNotIn('execution.json', {path.name for path in (self.output / 'first').iterdir()})
+        self.blocked.clear()
+        self.assertEqual((0, 1), self.resume())
+        current = self.accounting()
+        row = current['jobs'][0]
+        self.assertEqual('passed', current['status'])
+        self.assertEqual('passed', current['campaign']['status'])
+        self.assertEqual(original['jobs'][0], row['attempts'][0])
+        self.assertEqual(original['sessions'][0], current['sessions'][0]['attempts'][0])
+        self.assertEqual([original['stop_reason']], current['stop_history'])
+        self.assertIsNone(current['stop_reason'])
+        self.assertEqual(cli.provenance.digest(self.output / 'first/report.json'), row['report_sha256'])
+        self.assertEqual(str(self.output / 'first/report.json'), current['campaign']['blocks'][0]['jobs'][0]['report'])
+        coverage = cli.report.read_json(self.output / 'coverage.json')
+        self.assertTrue(any(row['status'] == 'passed' for row in coverage['rows']))
+
+    def test_remaining_jobs_gates_and_unselected_jobs_are_never_promoted(self):
+        self.plan['jobs'].append(self.job('later', control_job='first'))
+        self.plan['campaign'][0]['jobs'].append('later')
+        self.plan['campaign'][0]['gates'] = ['Inspect native UI.']
+        self.assertEqual(1, self.batch())
+        self.blocked.clear()
+        self.assertEqual((0, 1), self.resume())
+        value = self.accounting()
+        self.assertEqual(['later'], value['remaining'])
+        self.assertEqual('pending', value['status'])
+        self.assertEqual('pending', value['campaign']['status'])
+        self.assertEqual(['passed', 'pending'], [row['status'] for row in value['campaign']['blocks'][0]['jobs']])
+        self.assertEqual(['first', 'first'], self.launches)
+        selected = campaign.refresh(dict(status='pending', remaining_gates=0, blocks=[dict(
+            id='other', jobs=[dict(id='first', status='blocked'), dict(id='unselected', status='not-selected')], gates=[])]), value['jobs'])
+        self.assertEqual('not-selected', selected['blocks'][0]['jobs'][1]['status'])
+
+    def test_dependency_blocked_rows_remain_blocked_after_control_resume(self):
+        self.plan['failure_policy'] = 'continue'
+        self.plan['jobs'].append(self.job('candidate', control_job='first'))
+        self.plan['campaign'][0]['jobs'].append('candidate')
+        self.assertEqual(1, self.batch())
+        dependency = self.accounting()['jobs'][1]
+        self.blocked.clear()
+        self.assertEqual((0, 1), self.resume())
+        self.assertEqual(dependency, self.accounting()['jobs'][1])
+        self.assertEqual('failed', self.accounting()['campaign']['status'])
+        self.assertFalse((self.output / 'candidate').exists())
+
+    def test_stored_control_is_restored_and_wrong_override_refuses_before_launch(self):
+        self.blocked = {'candidate'}
+        self.plan['jobs'] = [self.job('control', mode='native'), self.job('candidate', control_job='control')]
+        self.plan['campaign'][0]['jobs'] = ['control', 'candidate']
+        self.assertEqual(1, self.batch())
+        original = (self.output / 'batch-report.json').read_bytes()
+        self.assertEqual((1, 0), self.resume('candidate', self.root / 'wrong-control'))
+        self.assertEqual(original, (self.output / 'batch-report.json').read_bytes())
+        self.blocked.clear()
+        self.assertEqual((0, 1), self.resume('candidate'))
+        value = cli.report.read_json(self.output / 'candidate/report.json')
+        self.assertTrue(value['comparison']['compatible'])
+        self.assertEqual('passed', self.accounting()['campaign']['status'])
+
+    def test_changed_snapshot_or_control_binding_refuses_before_launch(self):
+        self.assertEqual(1, self.batch())
+        snapshot = self.output / 'first/snapshot-hashes.json'
+        snapshot.write_text(snapshot.read_text() + '\n')
+        self.blocked.clear()
+        self.assertEqual((1, 0), self.resume())
+        self.assertEqual('blocked', self.accounting()['jobs'][0]['status'])
+
+    def test_changed_control_snapshot_refuses_before_launch(self):
+        self.blocked = {'candidate'}
+        self.plan['jobs'] = [self.job('control', mode='native'), self.job('candidate', control_job='control')]
+        self.plan['campaign'][0]['jobs'] = ['control', 'candidate']
+        self.assertEqual(1, self.batch())
+        snapshot = self.output / 'control/snapshot-hashes.json'
+        snapshot.write_text(snapshot.read_text() + '\n')
+        self.blocked.clear()
+        self.assertEqual((1, 0), self.resume('candidate'))
+        self.assertEqual('blocked', self.accounting()['jobs'][1]['status'])
+
+    def test_legacy_and_preprepare_failures_do_not_gain_campaign_bindings(self):
+        self.assertEqual(1, self.batch())
+        value = self.accounting()
+        for row in [*value['jobs'], *value['sessions']]:
+            for key in ('snapshot_sha256', 'control_run', 'control_snapshot_sha256'):
+                row.pop(key, None)
+        cli.report.write_json(self.output / 'batch-report.json', value)
+        original = (self.output / 'batch-report.json').read_bytes()
+        self.blocked.clear()
+        self.assertEqual((0, 1), self.resume())
+        self.assertEqual(original, (self.output / 'batch-report.json').read_bytes())
+        self.assertEqual((None, None), cli.batch_resume.resolve(self.output / 'unprepared'))
+
+    def test_preprepare_failure_cannot_bind_a_later_unrelated_preparation(self):
+        self.path.write_text(json.dumps(self.plan))
+        args = argparse.Namespace(plan=self.path, output=self.output)
+        def incomplete(project, output, *args, **kwargs):
+            output.mkdir()
+            raise ValueError('Preparation did not produce a sealed snapshot')
+        with patch.object(cli.native, 'source_inputs'), patch.object(cli.native, 'prepare', side_effect=incomplete), \
+                patch.object(cli.runner, 'run') as run, patch('sys.stdout', io.StringIO()):
+            self.assertEqual(1, cli.batch(args, self.catalog))
+        run.assert_not_called()
+        original = (self.output / 'batch-report.json').read_bytes()
+        self.assertNotIn('snapshot_sha256', self.accounting()['jobs'][0])
+        (self.output / 'first').rmdir()
+        self.prepare(None, self.output / 'first', None, None, {'suite': 'health', 'mode': 'toolkit'}, [])
+        self.blocked.clear()
+        self.assertEqual((0, 1), self.resume())
+        self.assertEqual(original, (self.output / 'batch-report.json').read_bytes())
+
+    def test_live_runtime_drift_can_never_upgrade_campaign_to_passed(self):
+        self.assertEqual(1, self.batch())
+        self.fixtures.source.write_text('changed runtime input')
+        self.blocked.clear()
+        self.assertEqual((1, 1), self.resume())
+        value = self.accounting()
+        self.assertEqual('failed', value['campaign']['status'])
+        self.assertEqual('blocked', value['jobs'][0]['attempts'][0]['status'])
+
+    def test_later_batch_write_keeps_a_resume_recorded_between_units(self):
+        self.assertEqual(1, self.batch())
+        stale_batch_state = self.accounting()
+        self.blocked.clear()
+        self.assertEqual((0, 1), self.resume())
+        resumed = self.accounting()
+        cli.batch_resume.write_accounting(self.output / 'batch-report.json', stale_batch_state, self.catalog)
+        current = self.accounting()
+        self.assertEqual(resumed['jobs'], current['jobs'])
+        self.assertEqual(resumed['sessions'], current['sessions'])
+        self.assertEqual(resumed['stop_history'], current['stop_history'])
+        self.assertEqual('passed', current['campaign']['status'])
+
+    def test_accounting_lock_survives_owner_death_without_stale_ownership(self):
+        self.assertEqual(1, self.batch())
+        path = self.output / 'batch-report.json'
+        original = path.read_bytes()
+        ready = self.root / 'lock-ready'
+        script = '''import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from queue_checks.batch_resume import _locked
+with _locked(Path(sys.argv[2])):
+    Path(sys.argv[3]).write_text('held')
+    sys.stdin.buffer.read()
+'''
+        process = subprocess.Popen([sys.executable, '-c', script, str(ROOT / 'tools'), str(path), str(ready)],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 5
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertTrue(ready.exists(), 'Owned lock holder failed to acquire its accounting lock')
+            with self.assertRaisesRegex(RuntimeError, 'busy'):
+                cli.batch_resume.write_accounting(path, self.accounting(), self.catalog)
+            self.assertEqual(original, path.read_bytes())
+            lock = path.with_name('batch-report.resume.lock')
+            identity = lock.stat().st_ino
+            process.kill()
+            process.wait(timeout=5)
+            with cli.batch_resume._locked(path):
+                self.assertEqual(identity, lock.stat().st_ino)
+            cli.batch_resume.write_accounting(path, self.accounting(), self.catalog)
+            self.assertEqual('blocked', self.accounting()['jobs'][0]['status'])
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
+
+    def test_windows_accounting_lock_uses_nonblocking_byte_lock_and_closes_descriptor(self):
+        calls = []
+        backend = types.SimpleNamespace(LK_NBLCK=17, locking=lambda *args: calls.append(args))
+        path = self.root / 'batch-report.json'
+        with patch.object(cli.batch_resume, 'fcntl', None), patch.dict(sys.modules, {'msvcrt': backend}):
+            with cli.batch_resume._locked(path):
+                self.assertEqual(1, len(calls))
+                descriptor, mode, size = calls[0]
+                self.assertEqual((17, 1), (mode, size))
+                self.assertEqual(0, os.lseek(descriptor, 0, os.SEEK_CUR))
+                self.assertEqual(1, os.fstat(descriptor).st_size)
+        with self.assertRaises(OSError):
+            os.fstat(descriptor)
+        self.assertTrue(path.with_name('batch-report.resume.lock').is_file())
 
 
 if __name__ == '__main__': unittest.main()

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import subprocess
 import time
-from . import adapters, admission, coop, provenance, setup_diagnostics
+from . import adapters, admission, coop, provenance, setup_diagnostics, progress
 from .report import read_json, verify_manifest, write_json
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 from .preflight import ClientPreflight, fail as setup_failure
@@ -28,6 +28,7 @@ def run(root, resource_wait=300):
     root = Path(root).resolve()
     selection, runtime = read_json(root / 'selection.json'), read_json(root / 'runtime.json')
     preflight = ClientPreflight(root, runtime, selection)
+    fixture_progress = progress.Fixture(selection)
     if selection['suite'] not in ('forge', 'startup') or not coop.enabled(selection) or selection.get('clients') != 1:
         raise ValueError('Windows launch currently supports one-client forge/startup Host only')
     if selection.get('ports_auto'):
@@ -129,6 +130,7 @@ def run(root, resource_wait=300):
                 if preflight.pending() and process.poll() is not None:
                     setup_failure(execution, 'client-readiness', 'client1', 'readiness', 'Owned client exited before fixture readiness')
                 preflight.check({'client1': text}, execution)
+                fixture_progress.update({'client1': text}, execution)
                 if not preflight.pending() and adapter.complete(selection, 'client1', text):
                     if 'server' not in execution['processes']:
                         raise RuntimeError('Missing owned native Host child evidence')
@@ -143,6 +145,7 @@ def run(root, resource_wait=300):
         execution.update(status='failed', error=str(error))
         setup_diagnostics.capture(root, runtime, {'client1': process} if process is not None else {}, execution)
     finally:
+        fixture_progress.finish(execution['status'])
         if job:
             kernel.TerminateJobObject(job, 0)
         if process:

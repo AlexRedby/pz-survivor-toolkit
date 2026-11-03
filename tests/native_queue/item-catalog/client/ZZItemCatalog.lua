@@ -18,6 +18,16 @@ local function guarded()
 end
 local function label(category) return getTextOrNull('IGUI_ItemCat_' .. category) or category end
 local function status(message) if hud then hud.message = message end end
+local progressAt, progressPhase, progressCount
+local function progress(completed, total, measuredPhase)
+    local now = getTimestampMs()
+    local reportedPhase = measuredPhase or phase
+    if reportedPhase ~= progressPhase or not progressAt or now - progressAt >= 5000
+            or completed == total and progressCount ~= completed then
+        print('[ITEM_CATALOG] PROGRESS phase=' .. reportedPhase .. ' completed=' .. completed .. ' total=' .. total)
+        progressAt, progressPhase, progressCount = now, reportedPhase, completed
+    end
+end
 local function itemDescription(item)
     local ids, names = Tags.forItem(item), {}
     for _, id in ipairs(ids) do names[#names + 1] = Tags.label(id) end
@@ -117,7 +127,7 @@ local function populate()
     if phase == 'items' then
         for _ = 1, 16 do
             local entry = scripts[cursor]
-            if not entry then preflightPlatform(); return end
+            if not entry then progress(cursor - 1, #scripts); preflightPlatform(); return end
             cursor = cursor + 1
             local ok, item = pcall(instanceItem, entry.fullType)
             if ok and item then
@@ -132,6 +142,7 @@ local function populate()
             end
         end
         status(tr('Items') .. ' ' .. (cursor - 1) .. '/' .. #scripts)
+        progress(cursor - 1, #scripts)
     elseif phase == 'floor' then
         local cell, chunks = getCell(), {}
         for _ = 1, 32 do
@@ -146,6 +157,7 @@ local function populate()
         end
         for chunk in pairs(chunks) do cell:setCacheChunk(chunk) end
         status(tr('Floor') .. ' ' .. floorCursor .. '/' .. width * height)
+        progress(floorCursor, width * height, 'floor')
     elseif phase == 'crates' then
         local spec = crates[crateCursor]
         if not spec then
@@ -175,6 +187,7 @@ local function populate()
         record.crates[#record.crates + 1] = {x = square:getX(), y = square:getY(), name = name}
         crateCursor = crateCursor + 1
         status(tr('Crates') .. ' ' .. #record.crates .. '/' .. #crates)
+        progress(#record.crates, #crates)
     end
 end
 
