@@ -9,6 +9,9 @@ local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local T=PZSurvivorToolkit
 local native=config.mode=='native'
+local spatialRequested=config.options and config.options.tv_spatial_controls==true
+local spatialControls=spatialRequested and not native
+local spatialPrelude,spatialResult,decisionTiming
 local started,ready,done=false,false,false
 local phase,index,since='prepare',1,0
 local diagnosed=false
@@ -32,7 +35,7 @@ local function fail(error)
 end
 local placement,placementState,clientPlacement
 local function request(command)
- assert(command=='Prepare'or command=='Baseline'or command=='Verify','unknown TV authority command')
+ assert(command=='Prepare'or command=='Baseline'or command=='Verify'or command=='SpatialVerify'or command=='SpatialCleanup','unknown TV authority command')
  local args={case=case()}
  if command=='Prepare'then
   assert(clientPlacement and P.at(getPlayer(),placement),'TV Prepare requires fresh settled placement')
@@ -41,6 +44,10 @@ local function request(command)
  if isClient()then sendClientCommand('TVControlsTest',command,args);return end
  if command=='Prepare'then
   localAuthority=F.prepare(getPlayer(),case(),config.mode,placement,clientPlacement);ids=localAuthority.ids;raw('PREPARED',ids)
+ elseif command=='SpatialVerify'or command=='SpatialCleanup'then
+  local value=assert(command=='SpatialVerify'and F.verifySpatial(localAuthority)or F.cleanupSpatial(localAuthority))
+  raw(command=='SpatialVerify'and'SPATIAL_VERIFIED'or'SPATIAL_CLEANED',value)
+  spatialPrelude:authorityReply(command,value)
  elseif command=='Baseline'then baselineReceipt=assert(F.baseline(localAuthority));raw('BASELINE',baselineReceipt)
  else receipt=assert(F.verify(localAuthority));raw('VERIFIED',receipt)end
 end
@@ -129,6 +136,7 @@ local function pairPreparation(action,setter)
  local record=assert(preparations[action],'unobserved native preparation')
  assert(action.toolkitQueueOperation==setter.toolkitQueueOperation and type(action.toolkitQueueOperation)=='table',
   'native preparation/setter operation differs')
+ record.setter=setter
  record.proof.sameOperation=true
  return record.proof
 end
@@ -163,8 +171,14 @@ local function watchPreparations()
   end,
   begin=function(action,step)
    local record=preparations[action];if not record or step~='perform'then return end
-   assert(T.ActionQueueApproach.isAction(action)and queue().current==action,'preparation lost resolver ownership')
-   record.proof.children=action._numAddedActions
+   local q=queue()
+   assert(T.ActionQueueApproach.isAction(action)and q.current==action and q.queue[1]==action,'preparation lost resolver ownership')
+   if record.setter then assert(q.queue[2]==record.setter,'adjacent native preparation inserted work before its setter')end
+   local children=0
+   for _,member in ipairs(q.queue)do
+    if member~=action and member~=record.setter and member.toolkitQueueOperation==action.toolkitQueueOperation then children=children+1 end
+   end
+   record.proof.children=children
    assert(record.proof.children==0,'adjacent preparation inserted native walking work')
   end,
   finish=function(action,step,succeeded)
@@ -172,6 +186,65 @@ local function watchPreparations()
    record.proof.completed=true;record.proof.succeeded=succeeded==true
   end,
  }),'native preparation observer unavailable')
+end
+local function decisionSummary(value)
+ return {allowed=value.allowed,reason=value.reason or false,first=value.first or false,last=value.last or false,
+  blockerType=value.blocker and value.blocker.Type or false,blockerMode=value.blocker and value.blocker.mode or false,
+  blockerIndex=value.blocker and queue():indexOf(value.blocker)or false,
+  blockerRemovesMedia=value.blocker and value.blocker.isRemove==true or false,
+  spatialValidated=value.spatialValidated==true}
+end
+local function queueSourceNames()
+ local function source(callback)
+  local ok,path=pcall(getFilenameOfClosure,callback)
+  return ok and type(path)=='string'and(path:gsub('\\','/'):match('([^/]+)$')or path)or false
+ end
+ local result={}
+ for i,action in ipairs(queue().queue)do
+  result[#result+1]={index=i,type=action.Type,mode=action.mode or false,isRemove=action.isRemove==true,
+   performSource=source(action.perform),completeSource=source(action.complete),validitySource=source(action.isValid)}
+ end
+ return result
+end
+local function spatialDiagnostic(setter)
+ local ok,value=pcall(function()
+  local player=getPlayer();local q=queue();local preparation,record
+  for action,candidate in pairs(preparations)do
+   if candidate.setter==setter then assert(not preparation,'ambiguous diagnostic preparation');preparation,record=action,candidate end
+  end
+  local function square(value)
+   return value and {x=value:getX(),y=value:getY(),z=value:getZ()}or false
+  end
+  local command=preparation and preparation.toolkitQueueCommand
+  local request=command and command.snapshot
+  local args=request and request.args
+  local device=record and record.device or setter and setter.device
+  local data=setter and setter.deviceData
+  local target=args and args[2]
+  local read,near=false,false
+  if type(toolkitQueueSpatialNoMovement)=='function'and args then
+   read,near=pcall(toolkitQueueSpatialNoMovement,player,target,args[4],device)
+  end
+  local checked,canonical=false,false
+  if type(toolkitQueueSpatialApiMatches)=='function'then
+   checked,canonical=pcall(toolkitQueueSpatialApiMatches,toolkitQueueSpatialNoMovement)
+  end
+  return {x=player:getX(),y=player:getY(),z=player:getZ(),square=square(player:getSquare()),
+   currentSquare=square(player:getCurrentSquare()),isMoving=player:isMoving(),isPlayerMoving=player:isPlayerMoving(),
+   isPathfindRunning=player:isPathfindRunning(),hasPath2=player:getPath2()~=nil,
+   target=square(target),deviceSquare=square(device and device:getSquare()),
+   requestMatchesDevice=target~=nil and device~=nil and target==device:getSquare(),
+   deviceIndex=device and device:getObjectIndex()or false,
+   deviceDataBound=device~=nil and data~=nil and data==device:getDeviceData(),
+   deviceParentBound=device~=nil and data~=nil and data:getParent()==device,
+   preparationIndex=preparation and q:indexOf(preparation)or false,bodyIndex=setter and q:indexOf(setter)or false,
+   sameOperation=preparation~=nil and preparation.toolkitQueueOperation==setter.toolkitQueueOperation,
+   preparationNative=preparation~=nil and preparation.action~=nil,bodyNative=setter~=nil and setter.action~=nil,
+   queueCount=#q.queue,currentType=q.current and q.current.Type or false,operationGeneration=q.toolkitOperationGeneration or 0,
+   canonicalCheckSucceeded=checked,canonical=checked and canonical==true,
+   noMovementCallSucceeded=read,noMovement=read and near==true,noMovementError=not read and tostring(near)or false}
+ end)
+ return ok and value or {diagnosticError=tostring(value)}
 end
 local function nativeUI(name,rows,invoke,kind,mode)
  local emitted,declared,before,beforeAt={},{},{},{};local add=ISTimedActionQueue.add
@@ -270,9 +343,21 @@ local function pending()
  initialQueue=names();initialPhysicalQueue=physicalNames()
  assert(same(initialQueue,{'front','volume','redundant','mute','unmute','channel','eject','tail'}),'native TV producer sequence differs')
  edit={reordered=false,cancelled={},untouched=false,atomic=true}
+ if spatialControls then decisionTiming=require('QueueTVSpatialObservation').capture(queue(),actions.redundant,actions.volume,
+  actions.redundant,function()return JSON.encode(F.snapshot(state))end)end
+ if spatialControls then
+  raw('SPATIAL_BOUNDARY',{case=case(),spatial=spatialResult,timing=decisionTiming,
+   pose=spatialDiagnostic(actions.redundant),physicalQueue=initialPhysicalQueue,queueSources=queueSourceNames(),commands=commands})
+ end
  if not native then
   assert(T.ActionQueue.move(queue(),actions.eject,actions.channel),'independent eject/channel reorder denied')
-  assert(T.ActionQueue.cancelOperation(queue(),actions.redundant),'redundant pending setter cancellation denied')
+  local cancelled,cancelReason=T.ActionQueue.cancelOperation(queue(),actions.redundant)
+  if not cancelled then
+   local fresh=T.ActionQueuePolicy.evaluateCancel(queue(),actions.redundant,true)
+   raw('EDIT_DENIED',{case=case(),kind='cancel-redundant',cancelled=cancelled,reason=cancelReason or false,
+    fresh=decisionSummary(fresh),pose=spatialDiagnostic(actions.redundant),physicalQueue=physicalNames(),queueSources=queueSourceNames()})
+  end
+  assert(cancelled,'redundant pending setter cancellation denied: '..tostring(cancelReason))
   cancelPreparation('redundant');tracks[actions.redundant].cancelled=true;edit.cancelled={'redundant'};edit.reordered=true
  end
  editedQueue=names();editedPhysicalQueue=physicalNames()
@@ -296,7 +381,10 @@ local function finish()
  end end
  emit({event='case',id=case(),status='passed',ids=ids,clientPlacement=clientPlacement,input=state.input,baseline=state.baseline,
   authorityBaseline=baselineReceipt,client=client,server=receipt,setup=setup,commands=commands,
-  initialQueue=initialQueue,editedQueue=editedQueue,initialPhysicalQueue=initialPhysicalQueue,editedPhysicalQueue=editedPhysicalQueue,order=order,edit=edit,queueIdle=true,settleMilliseconds=now()-quiet})
+  initialQueue=initialQueue,editedQueue=editedQueue,initialPhysicalQueue=initialPhysicalQueue,editedPhysicalQueue=editedPhysicalQueue,
+  order=order,edit=edit,queueIdle=true,settleMilliseconds=now()-quiet,spatial=spatialResult,timing=decisionTiming,
+  spatialControl=spatialRequested and native and {status='not-applicable',scope='optional-spatial-prelude-and-decision-timing',
+   reason='queue-disabled-native-control',movementQualified=false,timingQualified=false,probeInactive=true}or nil})
  index=index+1
  if not case()then
   emit({event='complete',cases=config.cases,performed=index-1,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return
@@ -305,6 +393,7 @@ local function finish()
  preparations={};initialPhysicalQueue,editedPhysicalQueue=nil,nil
  placement,placementState,clientPlacement=nil,nil,nil
  initialQueue,editedQueue,edit,quiet=nil,nil,nil,nil;phase='prepare';since=now();diagnosed=false
+ spatialPrelude,spatialResult,decisionTiming=nil,nil,nil
 end
 require('QueuePreflight').onGameStart(Events,function()started=true;since=now()end)
 require('QueuePreflight').onTick(Events,function()
@@ -315,6 +404,7 @@ require('QueuePreflight').onTick(Events,function()
    if isClient()~=(config.kind=='mp')or isClient()and (player:getOnlineID()<0 or player:getUsername()~='client1')then return end
    PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native)
    assert(T.Settings.actionQueue()==not native and not player:isTimedActionInstant())
+   if spatialRequested and native then assert(tvSpatialProbe and tvSpatialProbe('status').active==false,'native spatial control probe is not inactive')end
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false)
    player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
@@ -326,11 +416,14 @@ require('QueuePreflight').onTick(Events,function()
    raw('WAIT',{case=case(),phase=phase,current=queue().current and queue().current.Type or '',
     queueCount=#queue().queue,actual=ok and value or tostring(value),commands=commands,setup=setup})
   end
-  assert(now()-since<150000,'TV controls timeout '..tostring(case())..' phase='..phase)
+  assert(now()-since<(phase=='spatial'and 180000 or 150000),'TV controls timeout '..tostring(case())..' phase='..phase)
   if tracks then observe()end
   if phase=='prepare'then
    assert(empty(),'TV case initial queue not empty')
-   if not placementState then placement=P.choose(player);placementState=P.begin(player,placement)end
+   if not placementState then
+    placement=spatialControls and F.spatialEnabled(case())and F.chooseSpatialPlacement(player)or P.choose(player)
+    placementState=P.begin(player,placement)
+   end
    if not clientPlacement then
     clientPlacement=P.poll(placementState);if not clientPlacement then return end
     raw('CLIENT_PLACEMENT',{case=case(),proof=clientPlacement})
@@ -338,12 +431,20 @@ require('QueuePreflight').onTick(Events,function()
    phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
    state=F.resolve(player,ids);if not state or player:tooDarkToRead()then return end
+   if spatialControls and F.spatialEnabled(case())and not spatialResult then
+    local spatialState=F.resolveSpatial(player,ids);if not spatialState then return end
+    spatialPrelude=require('QueueTVSpatialPrelude').new(spatialState,request)
+    phase='spatial';since=now();return
+   end
    assert(empty(),'scene setup queued unexpected work')
    tracks,commands,setup,order={},{},{},{};state.input=F.snapshot(state)
    assert(state.input.originalCount==1,'initial exact VHS not present')
    createPanels()
    nativeUI('insert',setup,function()RWMMedia.addMediaAux(panels.tv,state.tape)end,'ISDeviceMediaAction')
    phase='insert'
+  elseif phase=='spatial'then
+   spatialResult=spatialPrelude:poll()
+   if spatialResult then phase='prepared';since=now()end
   elseif phase=='insert'and empty()then
    if not state.data:hasMedia()or player:getInventory():getItemById(ids.tape.id)then return end
    if case()=='eject-playing'then

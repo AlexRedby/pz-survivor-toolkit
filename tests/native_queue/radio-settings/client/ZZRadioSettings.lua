@@ -1,5 +1,6 @@
 require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'RadioCom/ISRadioAction'
+require 'TimedActions/WalkToTimedAction'
 require 'RadioCom/ISUIRadio/ISItemDropBox'
 require 'RadioCom/ISUIRadio/ISSpeakerButton'
 require 'RadioCom/ISUIRadio/ISVolumeBar'
@@ -18,6 +19,7 @@ local API,Ops=T.ActionQueue,T.ActionQueueOperations
 local started,ready,done,phase,index,since=false,false,false,'prepare',1,0
 local ids,state,authority,previous,receipt,panels,commands,actions,order,edit,quiet
 local initialQueue,editedQueue,initialPhysicalQueue,editedPhysicalQueue
+local preparationDiagnostic
 local function case()return config.cases[index]end
 local function now()return getTimestampMs()end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
@@ -32,7 +34,8 @@ local function fail(problem)
  if state then local ok,value=pcall(F.snapshot,state);if ok then client=value end end
  emit({event='case',id=case(),status='failed',reason=tostring(problem),ids=ids,
   commands=commands,order=order,edit=edit,initialQueue=initialQueue,editedQueue=editedQueue,
-  client=client,server=receipt})
+  initialPhysicalQueue=initialPhysicalQueue,editedPhysicalQueue=editedPhysicalQueue,
+  preparations=preparationDiagnostic and preparationDiagnostic()or false,client=client,server=receipt})
  print('[QUEUE_TEST] FAIL radio-settings '..tostring(problem));done=true
 end
 local placement,placementState,clientPlacement
@@ -119,6 +122,99 @@ end
 -- A deferred walkAdj dispatcher is physical preparation owned by its setter.
 -- Native adjacency is resolved at execution; observe it without replacing callbacks.
 local preparations={}
+local walking,walkMethods,walkClass,walkParent={},nil,nil,nil
+local walkNames={'new','begin','create','start','update','stop','perform','complete','isValid','waitToStart',
+ 'isValidStart','adjustMaxTime','getDuration','animEvent','serverStart','serverStop',
+ 'forceComplete','forceStop','forceCancel','invoke','isStarted'}
+local function nativeWalkUnchanged(action)
+ local binding=walking[action]
+ if binding then
+  binding.proof.sameOperation=rawequal(action.toolkitQueueOperation,binding.token)
+   and rawequal(binding.preparation.toolkitQueueOperation,binding.token)
+   and binding.setter~=nil and rawequal(binding.record.setter,binding.setter)
+   and rawequal(binding.setter.toolkitQueueOperation,binding.token)
+  if not binding.proof.sameOperation then return false end
+ end
+ if not walkMethods or ISWalkToTimedAction~=walkClass or type(action)~='table'or getmetatable(action)~=walkClass
+  or getmetatable(walkClass)~=walkParent or rawget(walkClass,'__index')~=walkClass
+  or walkParent and rawget(walkParent,'__index')~=walkParent or action.Type~='ISWalkToTimedAction'
+  or action.maxTime~=-1 or action.stopOnWalk~=false or action.stopOnRun~=false
+  or action.allowedWhileDraggingCorpses~=true
+  or action.additionalTest or action.additionalContext or action.onCompleteFunc or action.onFailFunc then return false end
+ for _,name in ipairs(walkNames)do if action[name]~=walkMethods[name]then return false end end
+ for _,value in pairs(action)do if type(value)=='function'then return false end end
+ return true
+end
+local function nativeNear(player,target)
+ local x,y=player:getX(),player:getY()
+ local west,north=target:has(IsoFlagType.collideW),target:has(IsoFlagType.collideN)
+ local corrected=target
+ if west and x<target:getX()then corrected=getCell():getGridSquare(target:getX()+1,target:getY(),target:getZ())
+ elseif north and y<target:getY()then corrected=getCell():getGridSquare(target:getX(),target:getY()+1,target:getZ())end
+ assert(corrected,'native radio correction target unloaded')
+ local dx,dy=math.abs(corrected:getX()+.5-x),math.abs(corrected:getY()+.5-y)
+ local reach=dx<=1.6 and dy<=1.6
+ local canReach=reach and player:getSquare():canReachTo(corrected)or false
+ local function point(s)return{x=s:getX(),y=s:getY(),z=s:getZ()}end
+ return {version=1,noMovement=reach and canReach,actor={x=x,y=y,z=player:getZ()},square=point(player:getSquare()),
+  target=point(target),correctedTarget=point(corrected),collideW=west,collideN=north,diffX=dx,diffY=dy,
+  reachEvaluated=reach,canReach=canReach}
+end
+local function observeWalking()
+ for action,entry in pairs(walking)do
+  assert(nativeWalkUnchanged(action),'native radio walking callbacks/duration changed')
+  local proof=entry.proof
+  if queue().current==action and action:isStarted()and proof.startPosition then
+   local player=getPlayer()
+   if math.abs(player:getX()-proof.startPosition.x)+math.abs(player:getY()-proof.startPosition.y)>.02 then
+    proof.progress=true;proof.progressAt=proof.progressAt or getTimestampMs()
+   end
+  end
+ end
+end
+local diagnosticActions,diagnosticTokens={},{}
+local diagnosticActionSerial,diagnosticTokenSerial=0,0
+local function actionId(action)
+ if not action then return false end
+ if not diagnosticActions[action]then diagnosticActionSerial=diagnosticActionSerial+1;diagnosticActions[action]=diagnosticActionSerial end
+ return diagnosticActions[action]
+end
+local function tokenId(token)
+ if type(token)~='table'then return false end
+ if not diagnosticTokens[token]then diagnosticTokenSerial=diagnosticTokenSerial+1;diagnosticTokens[token]=diagnosticTokenSerial end
+ return diagnosticTokens[token]
+end
+preparationDiagnostic=function(selected)
+ local q=queue();local player=getPlayer();local records,members={},{}
+ local function square(value)return value and{x=value:getX(),y=value:getY(),z=value:getZ()}or false end
+ local function bodyName(action)
+  for name,body in pairs(actions or{})do if action==body then return name end end
+  return false
+ end
+ for action,record in pairs(preparations)do
+  records[#records+1]={name=record.proof.name,action=actionId(action),setter=actionId(record.setter),
+   setterName=bodyName(record.setter),index=q:indexOf(action),setterIndex=record.setter and q:indexOf(record.setter)or false,
+   token=tokenId(action.toolkitQueueOperation),setterToken=record.setter and tokenId(record.setter.toolkitQueueOperation)or false,
+   proof=record.proof,begin=record.begin or false}
+ end
+ table.sort(records,function(a,b)return a.name<b.name end)
+ for i,action in ipairs(q.queue)do
+  local record=preparations[action]
+  members[#members+1]={index=i,action=actionId(action),name=record and record.proof.name..':approach'or bodyName(action),
+   type=action.Type,mode=action.mode or false,token=tokenId(action.toolkitQueueOperation),
+   native=action.action~=nil,started=action.started==true,location=square(action.location),
+   selectedOperation=selected~=nil and action.toolkitQueueOperation==selected.toolkitQueueOperation}
+ end
+ local pose=false
+ if player and player.getX and player.getSquare then
+  pose={x=player:getX(),y=player:getY(),z=player:getZ(),square=square(player:getSquare()),currentSquare=square(player:getCurrentSquare()),
+   isMoving=player:isMoving(),isPlayerMoving=player:isPlayerMoving(),isPathfindRunning=player:isPathfindRunning(),hasPath2=player:getPath2()~=nil}
+ end
+ local record=selected and preparations[selected]
+ return {case=case(),name=record and record.proof.name or false,selected=actionId(selected),
+  setter=record and actionId(record.setter)or false,setterName=record and bodyName(record.setter)or false,
+  current=actionId(q.current),queue=members,records=records,pose=pose}
+end
 local function ownedPreparation(action,device)
  local owner=T.ActionQueueApproach
  if not owner or not owner.isAction(action)or not owner.capture(action)then return false end
@@ -140,6 +236,10 @@ local function pairPreparation(action,setter)
  local record=assert(preparations[action],'unobserved native preparation')
  assert(action.toolkitQueueOperation==setter.toolkitQueueOperation and type(action.toolkitQueueOperation)=='table',
   'native preparation/setter operation differs')
+ record.setter=setter
+ for _,entry in pairs(walking)do
+  if entry.record==record then assert(not entry.setter or entry.setter==setter,'native walking setter changed');entry.setter=setter end
+ end
  record.proof.sameOperation=true
  return record.proof
 end
@@ -157,28 +257,92 @@ local function cancelPreparation(name)
  end end
 end
 local function verifyPreparations()
+ observeWalking()
  for action,record in pairs(preparations)do
   local proof=record.proof
   assert(proof.sameOperation and queue():indexOf(action)==-1,'native preparation retained or unpaired')
   if proof.cancelled then assert(not proof.started and not proof.completed,'cancelled preparation executed')
-  else assert(proof.started and proof.completed and proof.succeeded and proof.children==0,
-   'adjacent native preparation did not complete without inserted work')end
+  else
+   assert(proof.started and proof.completed and proof.succeeded and proof.resolution and proof.walks
+    and proof.children==#proof.walks,'native radio preparation did not complete with its exact expansion')
+   assert(proof.children==(proof.resolution.noMovement and 0 or 1),'native radio expansion differs from the native near predicate')
+   for _,walk in ipairs(proof.walks)do assert(walk.started and walk.progress and walk.completed and walk.succeeded
+    and walk.atDestination and walk.nativeCallbacks and walk.sameOperation and walk.starts==1 and walk.duration==-1,
+    'native radio walking child lifecycle/arrival missing')end
+  end
  end
 end
 watchPreparations=function()
+ walkClass,walkParent=ISWalkToTimedAction,getmetatable(ISWalkToTimedAction)
+ walkMethods={}
+ for _,name in ipairs(walkNames)do walkMethods[name]=ISWalkToTimedAction[name]end
+ for _,name in ipairs({'new','start','update','stop','perform','isValid'})do
+  local ok,path=pcall(getFilenameOfClosure,walkMethods[name])
+  assert(ok and type(path)=='string'and path:gsub('\\','/'):match('([^/]+)$')=='WalkToTimedAction.lua',
+   'native radio walking method source differs: '..name)
+ end
  assert(T.ActionQueueLifecycle.registerObserver('fixture.radio-settings-preparation',{
   started=function(action)
+   local entry=walking[action]
+   if entry then
+    assert(nativeWalkUnchanged(action)and queue().current==action and queue().queue[1]==action,'native radio walking ownership changed')
+    local proof=entry.proof;proof.starts=proof.starts+1;assert(proof.starts==1,'native radio walking child replayed')
+    proof.started=true;proof.startedAt=getTimestampMs()
+    proof.startPosition={x=getPlayer():getX(),y=getPlayer():getY(),z=getPlayer():getZ()};return
+   end
    local record=preparations[action];if not record then return end
    assert(T.ActionQueueApproach.isAction(action)and queue().current==action,'preparation started without ownership')
    record.proof.started=true
   end,
   begin=function(action,step)
    local record=preparations[action];if not record or step~='perform'then return end
-   assert(T.ActionQueueApproach.isAction(action)and queue().current==action,'preparation lost resolver ownership')
-   record.proof.children=action._numAddedActions
-   assert(record.proof.children==0,'adjacent preparation inserted native walking work')
+   local q=queue()
+   if type(raw)=='function'then
+    local diagnostic=preparationDiagnostic(action)
+    record.begin={name=diagnostic.name,setter=diagnostic.setter,setterName=diagnostic.setterName,
+     selected=diagnostic.selected,current=diagnostic.current,queue=diagnostic.queue,pose=diagnostic.pose}
+    raw('PREPARATION_BEGIN',diagnostic)
+   end
+   assert(T.ActionQueueApproach.isAction(action)and q.current==action and q.queue[1]==action,'preparation lost resolver ownership')
+   local args=action.toolkitQueueCommand.snapshot.args
+   assert(args.n==3 and args[1]==getPlayer()and args[2]==record.device:getSquare()and args[3]==true,'native radio route intent changed')
+   local resolution=nativeNear(getPlayer(),args[2]);local children,seen={},{}
+   if record.setter then assert(record.setter.toolkitQueueOperation==action.toolkitQueueOperation,'native radio setter operation changed')end
+   local index=2
+   while q.queue[index]and q.queue[index]~=record.setter do
+    local child=q.queue[index]
+    if not record.setter and child.toolkitQueueOperation~=action.toolkitQueueOperation then break end
+    assert(child.character==getPlayer()and child.toolkitQueueOperation==action.toolkitQueueOperation
+     and nativeWalkUnchanged(child)and not child.action and not child.started,'foreign or active radio walking child')
+    assert(not walking[child],'native radio child admitted twice')
+    local location=child.location
+    assert(instanceof(location,'IsoGridSquare')and getCell():getGridSquare(location:getX(),location:getY(),location:getZ())==location,
+     'native radio child destination is unavailable')
+    local proof={type=child.Type,duration=child.maxTime,sameOperation=true,nativeCallbacks=true,starts=0,
+     started=false,progress=false,completed=false,succeeded=false,atDestination=false,
+     destination={x=location:getX(),y=location:getY(),z=location:getZ()}}
+    children[#children+1]=proof;seen[child]=true
+    walking[child]={proof=proof,record=record,preparation=action,setter=record.setter,token=action.toolkitQueueOperation}
+    index=index+1
+   end
+   if record.setter then assert(q.queue[index]==record.setter,'native radio expansion lost its exact original setter')end
+   for _,member in ipairs(q.queue)do
+    assert(member==action or member==record.setter or member.toolkitQueueOperation~=action.toolkitQueueOperation or seen[member],
+     'unexpected work shares the native radio operation')
+   end
+   record.proof.resolution,record.proof.walks,record.proof.children=resolution,children,#children
+   assert(#children==(resolution.noMovement and 0 or 1),'native radio child count differs from the native near predicate')
   end,
   finish=function(action,step,succeeded)
+   local entry=walking[action]
+   if entry and step=='perform'then
+    local proof=entry.proof;local player=getPlayer()
+    assert(nativeWalkUnchanged(action),'native radio child callback changed before completion')
+    proof.completed=succeeded==true;proof.succeeded=action.result==BehaviorResult.Succeeded
+    proof.completedAt=getTimestampMs()
+    proof.atDestination=player:getSquare()==action.location and player:getCurrentSquare()==action.location
+    proof.arrival={x=player:getX(),y=player:getY(),z=player:getZ()};return
+   end
    local record=preparations[action];if not record or step~='perform'then return end
    record.proof.completed=true;record.proof.succeeded=succeeded==true
   end,
@@ -255,6 +419,7 @@ local function enqueue(name,mode,target,value)
  return action
 end
 local function observe()
+ observeWalking()
  local current=queue().current
  for _,command in ipairs(commands)do
   local action=actions[command.name]
@@ -360,6 +525,7 @@ local function finish()
  end
  ids,state,authority,receipt,panels,commands,actions,order,edit,quiet=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  preparations={};initialPhysicalQueue,editedPhysicalQueue=nil,nil
+ walking={}
  placement,placementState,clientPlacement=nil,nil,nil
  initialQueue,editedQueue=nil,nil;phase='prepare';since=now()
 end

@@ -26,7 +26,11 @@ def preparation_proof(name, target, cancelled=False):
                   argumentCount=3, keepActions=True, owned=True, constructor=True, resolver=True,
                   sameOperation=True, started=not cancelled, completed=not cancelled, cancelled=cancelled)
     if not cancelled:
-        result.update(children=0, succeeded=True)
+        point={key:target[key] for key in ('x','y','z')}
+        actor=dict(x=point['x']+1.5,y=point['y']+.5,z=point['z'])
+        result.update(children=0, succeeded=True,walks=[],resolution=dict(version=1,noMovement=True,actor=actor,
+            square=dict(x=point['x']+1,y=point['y'],z=point['z']),target=dict(point),correctedTarget=dict(point),
+            collideW=False,collideN=False,diffX=1,diffY=0,reachEvaluated=True,canReach=True))
     return result
 
 
@@ -132,6 +136,52 @@ class RadioSettingsAdapterTests(unittest.TestCase):
     def matrix(self):
         return itertools.product(adapter.CASES, ('sp', 'mp'), ('native', 'toolkit'))
 
+    def test_native_expansion_is_conditional_and_requires_exact_child_completion(self):
+        for kind in ('sp','mp'):
+            selection=self.selection('cancel',kind)
+            evidence=self.evidence('cancel',kind)
+            proof=next(c for c in evidence[0]['commands'] if c['name']=='channel')['preparation']
+            proof['resolution'].update(noMovement=False,canReach=False)
+            destination=copy.deepcopy(proof['resolution']['square'])
+            start=copy.deepcopy(proof['resolution']['actor'])
+            proof.update(children=1,walks=[dict(type='ISWalkToTimedAction',duration=-1,sameOperation=True,
+                nativeCallbacks=True,starts=1,started=True,progress=True,completed=True,succeeded=True,
+                atDestination=True,destination=destination,startPosition=start,
+                arrival=dict(x=destination['x']+.5,y=destination['y']+.5,z=destination['z']),
+                startedAt=1000,progressAt=1010,completedAt=1020)])
+            self.assertEqual(self.verify(selection,evidence)['issues'],[])
+            mutations={
+                'no child when native predicate false':lambda p:p.update(children=0,walks=[]),
+                'invented native predicate':lambda p:p['resolution'].update(noMovement=True),
+                'wrong correction':lambda p:p['resolution']['correctedTarget'].update(x=99),
+                'wrong native distance':lambda p:p['resolution'].update(diffX=0),
+                'foreign child type':lambda p:p['walks'][0].update(type='FixtureWalk'),
+                'foreign callback':lambda p:p['walks'][0].update(nativeCallbacks=False),
+                'foreign operation':lambda p:p['walks'][0].update(sameOperation=False),
+                'duration changed':lambda p:p['walks'][0].update(duration=1),
+                'unobserved start':lambda p:p['walks'][0].update(started=False),
+                'no walking progress':lambda p:p['walks'][0].update(progress=False),
+                'failed walking':lambda p:p['walks'][0].update(succeeded=False),
+                'missing native completion':lambda p:p['walks'][0].update(completed=False),
+                'wrong arrival':lambda p:p['walks'][0]['arrival'].update(x=99),
+                'stale completion ordering':lambda p:p['walks'][0].update(completedAt=999),
+                'completion after setter observation':lambda p:p['walks'][0].update(completedAt=1500),
+                'no arrival proof':lambda p:p['walks'][0].update(atDestination=False),
+                'replayed child':lambda p:p['walks'][0].update(starts=2),
+                'duplicate child':lambda p:p['walks'].append(copy.deepcopy(p['walks'][0])),
+            }
+            for label,mutate in mutations.items():
+                with self.subTest(kind=kind,mutation=label):
+                    changed=copy.deepcopy(evidence)
+                    candidate=next(c for c in changed[0]['commands'] if c['name']=='channel')['preparation']
+                    mutate(candidate);self.assertTrue(self.verify(selection,changed)['issues'])
+            # Native wall correction order is independently recomputed by the
+            # verifier; a west correction wins when both flags are present.
+            resolution=proof['resolution'];resolution['actor']['x']=proof['target']['x']-.5
+            resolution.update(collideW=True,collideN=True,diffX=2,diffY=0,reachEvaluated=False,canReach=False)
+            resolution['correctedTarget']['x']+=1
+            self.assertEqual(self.verify(selection,evidence)['issues'],[])
+
     def test_placement_proofs_require_independent_roles_and_settled_squares(self):
         for kind in ('sp', 'mp'):
             selection = self.selection('reorder', kind)
@@ -233,7 +283,24 @@ class RadioSettingsAdapterTests(unittest.TestCase):
         helper = 'local preparations={}' + source.split('local preparations={}', 1)[1].split('local function queueNames', 1)[0]
         prefix = """
             local native=false;local watchPreparations
-            local player={};local square={getX=function()return 10 end,getY=function()return 20 end,getZ=function()return 0 end}
+            local square={getX=function()return 10 end,getY=function()return 20 end,getZ=function()return 0 end,
+                has=function()return false end}
+            local reach=true;local playerX=11.5
+            local origin={getX=function()return 11 end,getY=function()return 20 end,getZ=function()return 0 end,
+                canReachTo=function()return reach end}
+            local player={getX=function()return playerX end,getY=function()return 20.5 end,getZ=function()return 0 end,
+                getSquare=function()return origin end,getCurrentSquare=function()return origin end,
+                isMoving=function()return false end,isPlayerMoving=function()return false end,
+                isPathfindRunning=function()return false end,getPath2=function()end}
+            IsoFlagType={collideW='west',collideN='north'}
+            getCell=function()return {getGridSquare=function(_,x,y,z)return x==10 and square or origin end}end
+            ISWalkToTimedAction={Type='ISWalkToTimedAction'};ISWalkToTimedAction.__index=ISWalkToTimedAction
+            for _,name in ipairs({'new','start','update','stop','perform','isValid'})do ISWalkToTimedAction[name]=function()end end
+            ISWalkToTimedAction.isStarted=function(self)return self.started==true end
+            instanceof=function(value,name)return name=='IsoGridSquare'and(value==origin or value==square)end
+            BehaviorResult={Succeeded='succeeded'}
+            getTimestampMs=function()return 1000 end
+            getFilenameOfClosure=function()return 'media/lua/client/TimedActions/WalkToTimedAction.lua'end
             local device={getSquare=function()return square end}
             local q={queue={},indexOf=function(self,a)for i,v in ipairs(self.queue)do if v==a then return i end end;return -1 end}
             local function queue()return q end
@@ -243,18 +310,21 @@ class RadioSettingsAdapterTests(unittest.TestCase):
                 ActionQueueOperations={commandConstructionTrusted=function()return true end},
                 ActionQueueLifecycle={registerObserver=function(_,value)observers=value;return true end}}
             local function action()
-                return {character=player,toolkitQueueOperation={},_numAddedActions=0,
+                return {character=player,toolkitQueueOperation={},
                     toolkitQueueCommand={snapshot={binding={owner=luautils,name='walkAdj'},args={n=3,player,square,true}}}}
             end
         """
         suffix = """
+            local beginDiagnostics={}
+            raw=function(marker,value)assert(marker=='PREPARATION_BEGIN');beginDiagnostics[#beginDiagnostics+1]=value end
+            case=function()return 'case'end
             watchPreparations()
             local first=action()
             local proof=capturePreparation(first,'anchor',device)
             -- Native add may start/resolve the anchor before its setter exists.
-            q.current=first;observers.started(first);first.action={}
+            q.current=first;q.queue={first};observers.started(first);first.action={};first._numAddedActions=nil
             assert(observers.begin(first,'perform')==nil);observers.finish(first,'perform',true)
-            q.current=nil
+            q.current=nil;q.queue={}
             assert(pairPreparation(first,{toolkitQueueOperation=first.toolkitQueueOperation})==proof)
             verifyPreparations();assert(proof.started and proof.completed and proof.children==0)
             for _,mutate in ipairs({
@@ -272,10 +342,80 @@ class RadioSettingsAdapterTests(unittest.TestCase):
             q.queue={pending};assert(not pcall(cancelPreparation,'cancelled'))
             q.queue={};cancelPreparation('cancelled');verifyPreparations()
             local walked=action();capturePreparation(walked,'walked',device)
-            pairPreparation(walked,{toolkitQueueOperation=walked.toolkitQueueOperation})
-            q.current=walked;observers.started(walked);walked.action={};walked._numAddedActions=1
+            local setter={toolkitQueueOperation=walked.toolkitQueueOperation}
+            pairPreparation(walked,setter)
+            local child={Type='ISWalkToTimedAction',toolkitQueueOperation=walked.toolkitQueueOperation}
+            q.queue={walked,child,setter};q.current=walked;observers.started(walked);walked.action={};walked._numAddedActions=nil
             assert(not pcall(observers.begin,walked,'perform'));observers.finish(walked,'perform',true)
+            local diagnostic=beginDiagnostics[#beginDiagnostics]
+            assert(diagnostic.name=='walked'and diagnostic.queue[2].type=='ISWalkToTimedAction')
+            assert(diagnostic.queue[2].selectedOperation and diagnostic.queue[1].token==diagnostic.queue[2].token)
+            assert(diagnostic.setter==diagnostic.queue[3].action and diagnostic.setter~=diagnostic.queue[2].action)
+            assert(q.queue[1]==walked and q.queue[2]==child and q.queue[3]==setter,'diagnostics mutated the native queue')
             q.current=nil;assert(not pcall(verifyPreparations))
+            -- A real native-class child is required when the copied native
+            -- near predicate is false; no constructor/callback is replayed.
+            preparations={};walking={};reach=false
+            local routed=action();capturePreparation(routed,'routed',device)
+            local routedSetter={toolkitQueueOperation=routed.toolkitQueueOperation}
+            pairPreparation(routed,routedSetter)
+            local nativeChild=setmetatable({character=player,toolkitQueueOperation=routed.toolkitQueueOperation,
+                maxTime=-1,stopOnWalk=false,stopOnRun=false,allowedWhileDraggingCorpses=true,location=origin},ISWalkToTimedAction)
+            q.current=routed;q.queue={routed,nativeChild,routedSetter};observers.started(routed)
+            observers.begin(routed,'perform');observers.finish(routed,'perform',true)
+            local proof=preparations[routed].proof
+            assert(not proof.resolution.noMovement and proof.children==1 and #proof.walks==1)
+            q.current=nativeChild;q.queue={nativeChild,routedSetter};observers.started(nativeChild);nativeChild.started=true
+            playerX=11.55;observeWalking();nativeChild.result=BehaviorResult.Succeeded
+            observers.finish(nativeChild,'perform',true)
+            q.current=nil;q.queue={};verifyPreparations()
+            assert(proof.walks[1].progress and proof.walks[1].atDestination and proof.walks[1].starts==1)
+            assert(not pcall(observers.started,nativeChild),'a native child cannot replay')
+            for _,kind in ipairs({'foreign-callback','foreign-token','foreign-class','wrong-duration','wrong-flags',
+                'foreign-selector','wrong-setter-token','extra-after-setter','missing-child','unexpected-near-child'})do
+                preparations={};walking={};reach=kind=='unexpected-near-child'
+                local prep=action();capturePreparation(prep,kind,device)
+                local body={toolkitQueueOperation=prep.toolkitQueueOperation};pairPreparation(prep,body)
+                local value=setmetatable({character=player,toolkitQueueOperation=prep.toolkitQueueOperation,
+                    maxTime=-1,stopOnWalk=false,stopOnRun=false,allowedWhileDraggingCorpses=true,location=origin},ISWalkToTimedAction)
+                local forbiddenCalls=0
+                if kind=='foreign-callback'then value.isValid=function()forbiddenCalls=forbiddenCalls+1;error('foreign child callback')end
+                elseif kind=='foreign-token'then value.toolkitQueueOperation={}
+                elseif kind=='foreign-class'then setmetatable(value,{__index=ISWalkToTimedAction})
+                elseif kind=='wrong-duration'then value.maxTime=1
+                elseif kind=='wrong-flags'then value.stopOnRun=true
+                elseif kind=='foreign-selector'then value.additionalTest=function()forbiddenCalls=forbiddenCalls+1;error('foreign selector')end
+                elseif kind=='wrong-setter-token'then body.toolkitQueueOperation={}end
+                q.current=prep;q.queue={prep,value,body};observers.started(prep)
+                if kind=='missing-child'then q.queue={prep,body}
+                elseif kind=='extra-after-setter'then q.queue[4]={Type='ISReadABook',toolkitQueueOperation=prep.toolkitQueueOperation}end
+                assert(not pcall(observers.begin,prep,'perform'),'malformed native child accepted: '..kind)
+                assert(forbiddenCalls==0,'observer executed a foreign child callback')
+            end
+            for _,phase in ipairs({'started','progress','finish','verify'})do
+             for _,owner in ipairs({'child','preparation','setter'})do
+                preparations={};walking={};reach=false;playerX=11.5
+                local prep=action();capturePreparation(prep,'late-token',device)
+                local body={toolkitQueueOperation=prep.toolkitQueueOperation};pairPreparation(prep,body)
+                local value=setmetatable({character=player,toolkitQueueOperation=prep.toolkitQueueOperation,
+                    maxTime=-1,stopOnWalk=false,stopOnRun=false,allowedWhileDraggingCorpses=true,location=origin},ISWalkToTimedAction)
+                q.current=prep;q.queue={prep,value,body};observers.started(prep)
+                observers.begin(prep,'perform');observers.finish(prep,'perform',true)
+                local target=owner=='child'and value or owner=='preparation'and prep or body
+                q.current=value;q.queue={value,body}
+                if phase~='started'then observers.started(value);value.started=true end
+                if phase=='finish'or phase=='verify'then playerX=11.55;observeWalking();value.result=BehaviorResult.Succeeded end
+                if phase=='verify'then observers.finish(value,'perform',true);q.current=nil;q.queue={}end
+                target.toolkitQueueOperation={}
+                local accepted
+                if phase=='started'then accepted=pcall(observers.started,value)
+                elseif phase=='progress'then accepted=pcall(observeWalking)
+                elseif phase=='finish'then accepted=pcall(observers.finish,value,'perform',true)
+                else accepted=pcall(verifyPreparations)end
+                assert(not accepted,'post-collection token mutation accepted: '..owner..'/'..phase)
+                assert(not preparations[prep].proof.walks[1].sameOperation,'stale sameOperation receipt survived token replacement')
+             end
+            end
         """
         lua = LuaRuntime()
         lua.execute(prefix + helper + suffix)

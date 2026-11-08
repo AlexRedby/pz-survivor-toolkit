@@ -246,6 +246,15 @@ function Queue.move(queue, action, target, after)
     local world = Toolkit.ActionQueueWorld
     local acknowledgement = preempt and world and world.buildAcknowledgement and world.buildAcknowledgement(queue.current)
     if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
+    if decision.spatialValidated then
+        -- Settings, reading and acknowledgement callbacks above can change
+        -- geometry. Recheck this capability after them, then apply only the
+        -- exact prepared plan without another callback-bearing freshness pass.
+        local fresh = Policy.evaluateMove(queue, action, target, after)
+        if not fresh.allowed then return false, fresh.reason end
+        if fresh.to ~= to or fresh.first ~= first or fresh.last ~= last
+            or fresh.preempt ~= preempt or fresh.demote ~= decision.demote then return false, "unavailable" end
+    end
     local moved = {}
     for i = first, last do moved[#moved + 1] = table.remove(queue.queue, first) end
     if preempt then to = 2 end

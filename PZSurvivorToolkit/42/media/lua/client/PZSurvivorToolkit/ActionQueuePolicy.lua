@@ -28,6 +28,12 @@ local editBindingCapture=Proof and Proof.captureBindings
 local editNativeMeta=toolkitLuaMetatableMatches
 local spatialOwner=Toolkit.ActionQueueApproach
 local spatialPrepare=spatialOwner and spatialOwner.prepareSpatialLease
+local spatialEdits={factory=spatialOwner and spatialOwner.prepareSpatialEditLease,line=728,maxMembers=32,equal=rawequal}
+spatialEdits.shape={kind=type,meta=getmetatable,each=pairs,array=ipairs,equal=rawequal,call=pcall}
+spatialEdits.shapeWatch=editBindingCapture and editBindingCapture({
+    {owner=_G,keys={'type','getmetatable','pairs','ipairs','rawequal','pcall','toolkitLuaMetatableMatches'}},
+})
+local editSourceShape
 local spatialLine,spatialFilename=getFirstLineOfClosure,getFilenameOfClosure
 local spatialOrigin,spatialMatches=Proof and Proof.closure,Proof and Proof.matches
 local spatialSourcePinned
@@ -37,7 +43,7 @@ local spatialPrerequisites=type(editBindingCapture)=="function"and editBindingCa
     {owner=math,keys={"floor"}},{owner=string,keys={"byte","sub","gsub","match"}},
 })
 -- Updated together with the source-owned factory; a same-file callback is not its role.
-local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=548,127328691
+local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=656,198233304
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
@@ -1228,6 +1234,57 @@ local function mayConnect(index, footprint)
     return false
 end
 
+-- Only pending, complete source-owned operation pairs can provision the native
+-- no-movement proof. It stays private to this decision until final validation;
+-- ordinary inspection and idle UI rows never read geometry.
+function spatialEdits.provision(queue,members,context)
+    local scope=activeDecision
+    if not scope or not spatialEdits.equal(scope.queue,queue)or not spatialEdits.equal(scope.context,context)or #members>spatialEdits.maxMembers
+        or type(toolkitQueueSpatialNoMovement)~='function'or type(toolkitQueueSpatialApiMatches)~='function'
+        or type(spatialEdits.prepare)~='function'then return end
+    for index,member in ipairs(members)do
+        local contract,source=inspect(member,context)
+        if source=='toolkit.approach'and contract and not contract.edit and not member.action then
+            local first,last=Operations.bounds(queue,member)
+            local body=members[index+1]
+            local token=member.toolkitQueueOperation
+            if first==index and last==index+1 and type(body)=='table'and type(token)=='table'
+                and spatialEdits.equal(body.toolkitQueueOperation,token)and not token.toolkitStarted and not token.toolkitCancelled
+                and spatialEdits.equal(member.character,queue.character)and spatialEdits.equal(body.character,queue.character)and not body.action then
+                local following=inspect(body,context)
+                local target,count=nil,0
+                if following and following.knownInputs~=false and not following.unknownOutputs then
+                    for object in pairs(following.targets or{})do target=object;count=count+1 end
+                end
+                if count==1 then
+                    local watch=editBindingCapture and editBindingCapture({
+                        {owner=body,exact=true},{owner=token,keys={'toolkitStarted','toolkitCancelled'}},
+                        {owner=following.targets,exact=true},
+                    })
+                    local check,edit=spatialEdits.prepare(member,target)
+                    if watch and check and edit then
+                        scope.spatial=scope.spatial or{}
+                        scope.spatial[#scope.spatial+1]={action=member,check=check,watch=watch,contract=contract,edit=edit}
+                        contract.edit=edit
+                    end
+                end
+            end
+        end
+    end
+end
+
+function spatialEdits.rollback(scope,mark)
+    if not scope or not scope.spatial then return end
+    for index=#scope.spatial,mark+1,-1 do
+        local proof=scope.spatial[index]
+        if spatialEdits.equal(proof.contract.edit,proof.edit)then proof.contract.edit=nil end
+        scope.spatial[index]=nil
+    end
+    -- Source checks may have invoked metadata callbacks before falling back.
+    -- Retain their raw shape guard even when no new spatial edit is granted.
+    if #scope.spatial==0 then scope.spatial=nil end
+end
+
 local function editComponent(queue, members, component, context)
     if not EditModel then return {status = "unhandled"} end
     local contracts = {}
@@ -1301,15 +1358,36 @@ local function evaluateComponent(projection, entries)
 end
 
 local function proposedEdit(queue, first, last, to, context)
+    local needsSpatial=false
+    if #queue.queue<=spatialEdits.maxMembers and type(toolkitQueueSpatialNoMovement)=='function'
+        and type(toolkitQueueSpatialApiMatches)=='function'then
+        for index=first,last do
+            if queue.queue[index].toolkitQueueApproach==true then needsSpatial=true;break end
+        end
+    end
+    local scope=activeDecision
+    local mark=scope and scope.spatial and #scope.spatial or 0
+    if needsSpatial then
+        if not scope or not spatialEdits.shapeWatch or not spatialEdits.shapeWatch()then return{status='unhandled'}end
+        scope.spatialQueueWatch=scope.spatialQueueWatch or editSourceShape(queue.queue,queue)
+        if not scope.spatialQueueWatch then return{status='unhandled'}end
+        spatialEdits.provision(queue,queue.queue,context)
+    end
     local selected, component = {}, {}
     for i = first, last do
         local member = queue.queue[i]
         local contract = inspect(member, context)
-        if not contract or not contract.edit then return {status = "unhandled"} end
+        if not contract or not contract.edit then
+            if needsSpatial then spatialEdits.rollback(scope,mark)end
+            return {status = "unhandled"}
+        end
         selected[member], component[member] = true, true
     end
     local projection = editComponent(queue, queue.queue, component, context)
-    if projection.status ~= "allowed" then return projection end
+    if projection.status ~= "allowed" then
+        if needsSpatial then spatialEdits.rollback(scope,mark)end
+        return projection
+    end
     local contracts = projection.contracts
     local entries = {}
     local function add(member)
@@ -1325,7 +1403,9 @@ local function proposedEdit(queue, first, last, to, context)
             entries[#entries + 1] = {action = member, edit = contracts[member].edit, snapshotOnly = true}
         end
     end
-    return evaluateComponent(projection, entries)
+    local result=evaluateComponent(projection, entries)
+    if needsSpatial and result.status~='allowed'then spatialEdits.rollback(scope,mark)end
+    return result
 end
 
 local capacityNeutral = {ISReadABook = true, ISWalkToTimedAction = true, ISWalkToTimedActionF = true, ISPathFindAction = true}
@@ -2203,10 +2283,33 @@ local function freshDecisionContext(output)
 end
 local function inDecision(queue, context, output, callback, ...)
     local previous = activeDecision
-    activeDecision = {queue = queue, context = context, failures = {}, executions = {}, native = {}}
+    local scope={queue = queue, context = context, failures = {}, executions = {}, native = {}}
+    activeDecision = scope
     local ok, result = pcall(callback, ...)
+    if ok and scope.spatialQueueWatch and result.reason==nil and result.allowed~=false then
+        local valid=spatialEdits.shapeWatch()and scope.spatialQueueWatch()
+        for _,proof in spatialEdits.shape.array(scope.spatial or{})do
+            if not valid then break end
+            local accepted,proofValid=spatialEdits.shape.call(function()return proof.watch()and proof.check()and proof.watch()end)
+            if not accepted or not proofValid then
+                result.reason,result.blocker='unavailable',proof.action
+                if result.allowed~=nil then result.allowed=false end
+                if result.rawResults then result.rawResults[1]='unavailable'end
+                break
+            end
+        end
+        if result.reason==nil and(not valid or not spatialEdits.shapeWatch()or not scope.spatialQueueWatch())then
+            result.reason='unavailable'
+            if result.allowed~=nil then result.allowed=false end
+            if result.rawResults then result.rawResults[1]='unavailable'end
+        end
+        if result.reason==nil and scope.spatial then result.spatialValidated=true end
+    end
+    -- A provisional no-movement contract is not a reusable public inspection
+    -- fact. The decision alone survives; callers receive the ordinary cache.
+    if scope.spatial then spatialEdits.rollback(scope,0)end
     activeDecision = previous
-    if output then for _, name in ipairs(decisionContextFields) do output[name] = context[name] end end
+    if output then for _, name in spatialEdits.shape.array(decisionContextFields) do output[name] = context[name] end end
     if not ok then error(result, 0) end
     return result
 end
@@ -2227,6 +2330,35 @@ end
 function Policy.evaluateCancel(queue, action, whole)
     local context = freshDecisionContext()
     return inDecision(queue, context, nil, evaluateCancel, queue, action, whole, context)
+end
+
+-- Legacy reason tuples remain advisory, but use the same fresh decision and
+-- final spatial proof as previews and authoritative click rechecks.
+spatialEdits.reasons={move=Policy.moveReason,cancel=Policy.cancelReason,operation=Policy.cancelOperationReason}
+function spatialEdits.reasonDecision(queue,context,callback,...)
+    if activeDecision and spatialEdits.equal(activeDecision.queue,queue)and spatialEdits.equal(activeDecision.context,context)then
+        return callback(...)
+    end
+    local fresh,output=freshDecisionContext(context)
+    local arguments={n=select('#',...),...}
+    arguments[arguments.n]=fresh
+    local function collect(...)
+        local values={n=select('#',...),...}
+        return {reason=values[1],rawResults=values}
+    end
+    local result=inDecision(queue,fresh,output,function()
+        return collect(callback(unpack(arguments,1,arguments.n)))
+    end)
+    return unpack(result.rawResults,1,result.rawResults.n)
+end
+function Policy.moveReason(queue,action,target,after,context)
+    return spatialEdits.reasonDecision(queue,context,spatialEdits.reasons.move,queue,action,target,after,context)
+end
+function Policy.cancelReason(queue,action,context)
+    return spatialEdits.reasonDecision(queue,context,spatialEdits.reasons.cancel,queue,action,context)
+end
+function Policy.cancelOperationReason(queue,action,context)
+    return spatialEdits.reasonDecision(queue,context,spatialEdits.reasons.operation,queue,action,context)
 end
 
 -- Source checks and metadata happen before any final physical observation.
@@ -2260,11 +2392,39 @@ local function prepareDeferredSpatial(action)
     if not ok or type(validate)~="function"or type(descriptor)~="table"or getmetatable(descriptor)~=nil or not watch()then return end
     return validate,descriptor
 end
+function spatialEdits.prepare(action,target)
+    local factory=spatialEdits.factory
+    if not spatialPrerequisites or not spatialPrerequisites()or type(factory)~='function'
+        or Toolkit.ActionQueueApproach~=spatialOwner or spatialOwner.prepareSpatialEditLease~=factory
+        or type(spatialLine)~='function'or getFirstLineOfClosure~=spatialLine
+        or getFilenameOfClosure~=spatialFilename or Proof.captureBindings~=editBindingCapture
+        or Proof.closure~=spatialOrigin or Proof.matches~=spatialMatches
+        or getModFileReader~=spatialModReader or pcall~=spatialCall then return end
+    local watch=editBindingCapture({
+        {owner=_G,keys={'getFirstLineOfClosure','getFilenameOfClosure','getModFileReader','pcall','PZSurvivorToolkit'}},
+        {owner=Toolkit,keys={'ActionQueueApproach'}},{owner=spatialOwner,keys={'prepareSpatialEditLease'}},
+        {owner=Proof,keys={'captureBindings','closure','matches'}},
+    })
+    if not watch or not spatialOrigin(factory,'ActionQueueApproach.lua')then return end
+    local ok,line=spatialCall(spatialLine,factory)
+    if not ok or line~=spatialEdits.line or not watch()or not spatialPrerequisites()then return end
+    if spatialSourcePinned==nil then
+        local matched=spatialMatches('media/lua/client/PZSurvivorToolkit/ActionQueueApproach.lua',SPATIAL_SOURCE_ADLER,'PZSurvivorToolkit',true)
+        if not watch()or not spatialPrerequisites()then return end
+        spatialSourcePinned=matched
+    end
+    if not spatialSourcePinned then return end
+    local ok,check,edit=spatialCall(factory,action,target)
+    if not ok or type(check)~='function'or type(edit)~='table'or getmetatable(edit)~=nil or not watch()then return end
+    return function()return watch()and spatialPrerequisites()and check()and watch()end,edit
+end
 local activeCleanupBinding
 -- Query-local Lua bindings only, not an inventory/world snapshot. Native getters
 -- happen later; finish with raw comparisons so late inspection cannot replace a
 -- reviewed action, callback, class or singleton group without invalidating it.
-local function editSourceShape(members,queue)
+editSourceShape=function(members,queue)
+    local type,getmetatable,pairs,ipairs,rawequal=spatialEdits.shape.kind,spatialEdits.shape.meta,
+        spatialEdits.shape.each,spatialEdits.shape.array,spatialEdits.shape.equal
     local seen,records={},{}
     local function capture(value,depth)
         if value==nil or seen[value]then return true end

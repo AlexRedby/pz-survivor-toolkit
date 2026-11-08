@@ -544,7 +544,7 @@ local function spatialInheritance(action)
     end
     return p.capture(specifications)
 end
-function Approach.prepareSpatialLease(action)
+local function prepareSpatialRequest(action)
     local p=spatialPrimitives
     if not spatialPrimitiveWatch or not spatialPrimitiveWatch()
         or p.meta(p.globals)~=nil or not spatialPlain(Toolkit)or not spatialPlain(Approach)
@@ -648,12 +648,85 @@ function Approach.prepareSpatialLease(action)
         invalidates='all-resources',routing='native',expansion='native',outcome='native'}
     local descriptorWatch=p.capture({{owner=description,exact=true}})
     if not descriptorWatch then return end
+    return function()
+        return rootWatch()and requestWatch()and inheritanceWatch()and descriptorWatch()
+    end,description
+end
+function Approach.prepareSpatialLease(action)
+    local watch,description=prepareSpatialRequest(action)
+    if not watch then return end
     local used=false
     return function()
         if used then return false end
         used=true
-        return rootWatch()and requestWatch()and inheritanceWatch()and descriptorWatch()
+        return watch()
     end,description
 end
 spatialFactory=Approach.prepareSpatialLease
+
+-- The canonical checker is a trusted native bootstrap root, like the existing
+-- actual-metatable helper. Its Java implementation certifies its own exact
+-- entry and the geometry helper's reflected Method, not merely invoker classes.
+-- Replacing every bootstrap root before Toolkit loads is outside this model.
+local spatialEditFactory
+local spatialEditApis={read=toolkitQueueSpatialNoMovement,check=toolkitQueueSpatialApiMatches,
+    className=getClassSimpleName,call=pcall}
+local function prepareSpatialEdit(action,targetObject)
+    local p,api=spatialPrimitives,spatialEditApis
+    if not spatialPrimitiveWatch or not spatialPrimitiveWatch()or not spatialPlain(Approach)
+        or not p.equal(p.raw(Approach,'prepareSpatialEditLease'),spatialEditFactory)
+        or not p.equal(p.raw(Approach,'prepareSpatialLease'),spatialFactory)
+        or not spatialPlain(p.globals)or p.kind(api.read)~='function'or p.kind(api.check)~='function'
+        or p.kind(api.className)~='function'or p.kind(api.call)~='function'then return end
+    local bindings=p.capture({
+        {owner=p.globals,keys={'toolkitQueueSpatialNoMovement','toolkitQueueSpatialApiMatches','getClassSimpleName','pcall'}},
+        {owner=Approach,keys={'prepareSpatialEditLease','prepareSpatialLease'}},
+    })
+    local function unchanged()
+        return bindings()and p.equal(p.raw(p.globals,'toolkitQueueSpatialNoMovement'),api.read)
+            and p.equal(p.raw(p.globals,'toolkitQueueSpatialApiMatches'),api.check)
+            and p.equal(p.raw(p.globals,'getClassSimpleName'),api.className)and p.equal(p.raw(p.globals,'pcall'),api.call)
+    end
+    if not bindings or not unchanged()or p.kind(action)~='table'then return end
+    local record=p.own(action,'toolkitQueueCommand')
+    local request=spatialPlain(record)and p.own(record,'snapshot')
+    local args=spatialPlain(request)and p.own(request,'args')
+    if not spatialPlain(args)or args[3]~=true then return end
+    -- Class is only a bootstrap gate for the dedicated trusted checker. That
+    -- checker's exact self/env/frame certificate then proves the geometry API.
+    local class=api.className(api.check)
+    if class~='LuaJavaInvoker'and class~='MultiLuaJavaInvoker'or not unchanged()or api.check(api.read)~=true then return end
+    local sourceCheck=prepareSpatialRequest(action)
+    if not sourceCheck or not unchanged()then return end
+    local actor,target,exclusions=args[1],args[2],args[4]
+    -- Provision only an initially eligible no-op. Unsupported/far requests
+    -- retain the ordinary legacy edit policy rather than acquiring a proof
+    -- that would subsequently turn its existing allowance into a denial.
+    if not sourceCheck()then return end
+    local certified,canonical=api.call(api.check,api.read)
+    if not certified or canonical~=true or not unchanged()or not sourceCheck()then return end
+    local observed,near=api.call(api.read,actor,target,exclusions,targetObject)
+    if not observed or near~=true or not unchanged()or not sourceCheck()then return end
+    local edit={version=1,complete=true,capacity='unchanged',resources={}}
+    local editWatch=p.capture({{owner=edit,exact=true},{owner=edit.resources,exact=true}})
+    if not editWatch then return end
+    local used=false
+    return function()
+        if used then return false end
+        used=true
+        -- Check the immutable source/request both sides of the certified,
+        -- callback-free Java reader. No Lua engine getter or route runs.
+        local valid=sourceCheck()
+        if not valid or not unchanged()or not editWatch()then return false end
+        local ok,canonical=api.call(api.check,api.read)
+        if not ok or canonical~=true or not unchanged()then return false end
+        local observed,near=api.call(api.read,actor,target,exclusions,targetObject)
+        return observed and near==true and unchanged()and sourceCheck()and editWatch()
+    end,edit
+end
+function Approach.prepareSpatialEditLease(action,targetObject)
+    local ok,check,edit=spatialEditApis.call(prepareSpatialEdit,action,targetObject)
+    if ok then return check,edit end
+end
+spatialEditFactory=Approach.prepareSpatialEditLease
 return Approach

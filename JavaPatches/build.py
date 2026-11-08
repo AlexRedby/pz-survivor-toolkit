@@ -194,6 +194,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryTest'] = 'CART_INJURY_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CleanUIFoodAgeChecks'] = 'CLEANUI_FOOD_AGE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueLeafTransferFactsChecks'] = 'QUEUE_LEAF_TRANSFER_FACTS_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.QueueSpatialFactsChecks'] = 'QUEUE_SPATIAL_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingCompilerChecks'] = 'QUEUE_BINDING_COMPILER_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingSourceChecks'] = 'QUEUE_BINDING_SOURCE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingParametricChecks'] = 'QUEUE_BINDING_PARAMETRIC_CHECKS_PASS'
@@ -430,7 +431,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.87',
+    'version': '0.1.88',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

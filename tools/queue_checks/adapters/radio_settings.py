@@ -25,7 +25,7 @@ def definitions():
     }
     return {'radio-settings': {'status': 'ready', 'clients': 1, 'default_mods': MODS,
         'scenario_actions': {'world-radio-settings': {'mods': MODS, 'checks': checks,
-            'scope': 'Native RWM callbacks on two adjacent mains-powered world radios. Reorder repeated volume and independent microphone/channel setters, cancel pending volume/microphone setters, and retain the native channel-before-power-off dependency (followed by power restoration and mute). Native controls execute the original order. Host authority covers volume/channel; world-device microphone mute is a native client-local field.'}},
+            'scope': 'Native RWM callbacks on two mains-powered world radios initially adjacent to the settled player square. Reorder repeated volume and independent microphone/channel setters, cancel pending volume/microphone setters, and retain the native channel-before-power-off dependency (followed by power restoration and mute). Each deferred approach independently classifies the native wall-corrected near predicate at execution: zero children when true, otherwise the exact original native walking child before its setter with lifecycle, progress, arrival and no replay evidence. Native controls execute the original order. Host authority covers volume/channel; world-device microphone mute is a native client-local field.'}},
         'cases': [dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'],
                       modes=['native', 'toolkit'], languages=['EN']) for case in CASES]}}
 
@@ -98,11 +98,47 @@ def _preparation(value, name, target, cancelled):
                     argumentCount=3, keepActions=True, owned=True, constructor=True, resolver=True,
                     sameOperation=True, started=not cancelled, completed=not cancelled, cancelled=cancelled)
     if not cancelled:
-        expected.update(children=0, succeeded=True)
-    return (isinstance(value, dict) and set(value) == set(expected)
+        expected.update(succeeded=True)
+    basic = (isinstance(value, dict) and set(value) == set(expected) | (set() if cancelled else {'children', 'resolution', 'walks'})
             and isinstance(value.get('target'), dict) and set(value['target']) == {'x', 'y', 'z'}
             and all(type(v) is int for v in value['target'].values())
             and all(type(value[key]) is type(wanted) and value[key] == wanted for key, wanted in expected.items()))
+    if not basic or cancelled:
+        return basic
+    resolution, walks = value['resolution'], value['walks']
+    point = lambda p, integer=False: (isinstance(p, dict) and set(p) == {'x', 'y', 'z'}
+        and all(type(v) is int if integer else type(v) in (int, float) and math.isfinite(v) for v in p.values()))
+    if (not isinstance(resolution, dict) or set(resolution) != {'version', 'noMovement', 'actor', 'square', 'target',
+            'correctedTarget', 'collideW', 'collideN', 'diffX', 'diffY', 'reachEvaluated', 'canReach'}
+            or type(resolution['version']) is not int or resolution['version'] != 1
+            or not point(resolution['actor']) or not point(resolution['square'], True)
+            or not point(resolution['target'], True)or resolution['target'] != value['target'] or not point(resolution['correctedTarget'], True)
+            or any(type(resolution[k]) is not bool for k in ('noMovement', 'collideW', 'collideN', 'reachEvaluated', 'canReach'))):
+        return False
+    corrected = dict(value['target']);actor = resolution['actor']
+    if resolution['collideW'] and actor['x'] < corrected['x']:
+        corrected['x'] += 1
+    elif resolution['collideN'] and actor['y'] < corrected['y']:
+        corrected['y'] += 1
+    dx, dy = abs(corrected['x']+.5-actor['x']), abs(corrected['y']+.5-actor['y'])
+    near = dx <= 1.6 and dy <= 1.6
+    if (resolution['correctedTarget'] != corrected or not _close(resolution['diffX'], dx) or not _close(resolution['diffY'], dy)
+            or resolution['reachEvaluated'] is not near or not near and resolution['canReach']
+            or resolution['noMovement'] is not (near and resolution['canReach'])
+            or not isinstance(walks, list) or type(value['children']) is not int
+            or value['children'] != len(walks) or len(walks) != (0 if resolution['noMovement'] else 1)):
+        return False
+    for walk in walks:
+        if (not isinstance(walk, dict) or walk.get('type') != 'ISWalkToTimedAction'
+                or walk.get('duration') != -1 or type(walk.get('starts')) is not int or walk['starts'] != 1
+                or any(walk.get(k) is not True for k in ('sameOperation', 'nativeCallbacks', 'started', 'progress', 'completed', 'succeeded', 'atDestination'))
+                or any(type(walk.get(k)) not in (int, float) or not math.isfinite(walk[k]) for k in ('startedAt', 'progressAt', 'completedAt'))
+                or not walk['startedAt'] <= walk['progressAt'] <= walk['completedAt']
+                or not point(walk.get('destination'), True) or not point(walk.get('startPosition')) or not point(walk.get('arrival'))
+                or any(math.floor(walk['arrival'][k]) != walk['destination'][k] for k in ('x', 'y'))
+                or not _close(walk['arrival']['z'], walk['destination']['z'])):
+            return False
+    return True
 
 
 def check_case(row, case, selection, prepared, verified):
@@ -162,7 +198,14 @@ def check_case(row, case, selection, prepared, verified):
             removed = name in cancelled
             if mode == 'toolkit':
                 if not _preparation(command.get('preparation'), name, ids[target], removed):
-                    issues.append('Exact owned radio approach/zero-child completion differs: ' + name)
+                    issues.append('Exact owned radio approach/native expansion completion differs: ' + name)
+                elif not removed:
+                    # startedAt is this fixture's outer OnTick observation,
+                    # not synchronous native begin inside the child's perform.
+                    for walk in command['preparation']['walks']:
+                        if (type(command.get('startedAt')) not in (int, float)or not math.isfinite(command['startedAt'])
+                                or walk['completedAt'] > command['startedAt']):
+                            issues.append('Walking completion follows observed original setter start: ' + name)
             elif command.get('preparation') is not None:
                 issues.append('Unexpected native-mode radio approach dispatcher: ' + name)
             if (not isinstance(command, dict) or command.get('name') != name or command.get('mode') != action

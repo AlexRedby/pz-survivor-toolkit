@@ -28,6 +28,24 @@ def preparation_proof(name, target, cancelled=False):
     return result
 
 
+def timing_proof(movement=False, cancel_allowed=True, cold=False):
+    metrics = []
+    for name in ('previewMove', 'evaluateMove', 'previewCancel', 'evaluateCancel'):
+        allowed = not movement if name.endswith('Move') else cancel_allowed
+        sample = dict(milliseconds=.25, allowed=allowed, reason=False if allowed else 'move_dependent',
+                      counts=dict(active=False, gameSourceReads=0, modSourceReads=0,
+                                  spatialReads=0 if movement else 2, apiChecks=4))
+        metrics.append(dict(name=name, decisionKind='advisory' if name.startswith('preview') else 'authoritative',
+                            first=copy.deepcopy(sample), warm=[copy.deepcopy(sample) for _ in range(3)]))
+    if cold:metrics[0]['first']['counts'].update(gameSourceReads=3,modSourceReads=1)
+    return dict(schema=1, scope='bounded-live-pending-device-entrypoints', timer='System.nanoTime', units='ms',
+                cacheState='cold-positive' if cold else 'warm-after-positive-bank',
+                firstUseScope='first-positive-device-query-before-other-policy-probes' if cold else 'source-cache-warmed-by-cold-positive-bank', warmSamples=3,
+                queueCount=10, readOnly=True, bindingsUnchanged=True, disabledBeforeEdit=True, metrics=metrics,
+                completeEditMeasured=False, inputFrameMeasured=False, positiveTimingClaim=False,
+                timerOverhead='included-not-subtracted')
+
+
 class TVControlsTests(unittest.TestCase):
     def selection(self, kind='mp', mode='toolkit'):
         return dict(suite='tv-controls', cases=list(a.CASES), kind=kind, mode=mode,
@@ -101,6 +119,189 @@ class TVControlsTests(unittest.TestCase):
         row, ids, baseline, final, acks = evidence
         selection = selection or self.selection()
         return a.check_case(row, row['id'], selection, ids, baseline, final, acks)
+
+    def spatial_evidence(self, kind='mp'):
+        evidence = self.evidence('eject-idle', kind)
+        row, ids, baseline, final, _ = evidence
+        spec = dict(tv=dict(x=ids['origin']['x']-5, y=20, z=0, index=1),
+                    hold=dict(id=501, type='Base.BookForaging1', pages=220, initial=218),
+                    tail=dict(id=502, type='Base.BookTrapping1', pages=220, initial=218))
+        ids['spatial'] = spec;row['ids'] = copy.deepcopy(ids)
+        for snapshot in [row[k] for k in ('input', 'baseline', 'authorityBaseline', 'client', 'server')] + [baseline, final]:
+            for field in ('rootIds', 'carriedIds'):
+                snapshot[field] = sorted(set(snapshot[field]) | {501, 502})
+        def snapshot(completed):
+            books = {name: dict(id=seed['id'], type=seed['type'], root=True, count=1,
+                                pages=220 if completed else 219 if name == 'hold' else 218,
+                                characterPages=220 if completed else 219 if name == 'hold' else 218)
+                     for name, seed in spec.items() if name != 'tv'}
+            return dict(case='eject-idle', tv=copy.deepcopy(spec['tv']), volume=.75 if completed else .5,
+                        on=True, powered=True, books=books)
+        names = ['hold', 'first:approach', 'first', 'last:approach', 'last', 'tail', 'return']
+        commands = []
+        preparations = {name: dict(sameOperation=True, children=1 if name == 'first' else 0, completed=True)
+                        for name in ('first', 'last')}
+        ack_rows = []
+        for name in names:
+            book = name in ('hold', 'tail');prep = ':' in name
+            kind_name = 'ISReadABook' if book else 'ISQueueActionsAction' if prep else 'ISWalkToTimedAction' if name == 'return' else 'ISRadioAction'
+            command = dict(name=name, type=kind_name, constructorDuration=52800 if book else -1 if prep or name == 'return' else 30,
+                           started=True, progress=not prep, starts=1, completed=True)
+            if book: command['itemId'] = spec[name]['id']
+            if prep: command['preparation'] = copy.deepcopy(preparations[name.split(':')[0]])
+            if name in ('first', 'last'):
+                command.update(value=.25 if name == 'first' else .75, preparation=copy.deepcopy(preparations[name]))
+                if kind == 'mp':
+                    token = '11111111' if name == 'first' else '22222222'
+                    ack = dict(kind='ISRadioAction', transaction=31 if name == 'first' else 32,
+                               token=token+'-1234-1234-1234-123456789abc', state='completed')
+                    command['ack'] = ack
+                    ack_rows.extend(dict(name=name, **{key: ack[key] for key in ('kind', 'transaction', 'token')}, state=status)
+                                    for status in ('started', 'completed'))
+            commands.append(command)
+        row['timing'] = timing_proof()
+        row['spatial'] = dict(schema=1, case='eject-idle', scope='native-walking-success-move-denial-and-legacy-cancel-parity',
+            denied=dict(move=True, cancel=False, cancelLegacyAllowed=True, cancelParity=True, cancelApplied=False, queueUnchanged=True),
+            before=snapshot(False), client=snapshot(True), authority=snapshot(True),
+            cleanup=dict(case='eject-idle', tv=copy.deepcopy(spec['tv']), removed=True), commands=commands,
+            children=[dict(type='ISWalkToTimedAction', owner='first', duration=-1, starts=1, started=True,
+                           completed=True, progress=True, destination=dict(x=7, y=20, z=0))],
+            order=names, acks=ack_rows, timing=timing_proof(movement=True), settleMilliseconds=1000,
+            returnedToOrigin=True, returnSettleMilliseconds=1000, lifecycleUnchanged=True, queueIdle=True,
+            noReplay=True, lateLossQualified=False, lateLossReason='native-device-validity-does-not-bind-object-liveness')
+        cold=[]
+        for name in ('cold-first:approach','cold-first','cold-last:approach','cold-last'):
+            prep=':' in name
+            entry=dict(name=name,type='ISQueueActionsAction' if prep else 'ISRadioAction',constructorDuration=-1 if prep else 30,
+                       started=False,progress=False,completed=False,cancelled=True,starts=0,
+                       preparation=dict(sameOperation=True,children=False,completed=False))
+            if not prep:entry['value']=.5
+            cold.append(entry)
+        row['spatial']['coldPositive']=dict(schema=1,status='performed',scope='cold-positive-native-pending-device-decisions',
+            device=ids['tv'],queueBefore=1,queueAfter=1,queueRestoredToHold=True,sameCurrentNative=True,worldUnchanged=True,
+            cancelledTogether=True,commands=cold,timing=timing_proof(cold=True),noReplay=True)
+        return evidence
+
+    def test_optional_spatial_prelude_is_separate_and_fails_closed(self):
+        for kind in ('sp', 'mp'):
+            selection = self.selection(kind);selection['options']['tv_spatial_controls'] = True
+            evidence = self.spatial_evidence(kind)
+            self.assertEqual(self.check(evidence, selection), [])
+            self.assertTrue(self.check(evidence, self.selection(kind)), 'unrequested prelude must not qualify')
+            mutations = {
+                'lost movement denial': lambda r: r['spatial']['denied'].update(move=False),
+                'legacy cancel rewritten': lambda r: r['spatial']['denied'].update(cancel=True),
+                'cancel applied': lambda r: r['spatial']['denied'].update(cancelApplied=True),
+                'zero native expansion': lambda r: r['spatial']['commands'][1]['preparation'].update(children=0),
+                'child never moved': lambda r: r['spatial']['children'][0].update(progress=False),
+                'child never completed': lambda r: r['spatial']['children'][0].update(completed=False),
+                'native replay': lambda r: r['spatial']['children'][0].update(starts=2),
+                'foreign owner': lambda r: r['spatial']['children'][0].update(owner='return'),
+                'failed independent tail': lambda r: r['spatial']['client']['books']['tail'].update(pages=218),
+                'authority body missing': lambda r: r['spatial']['authority'].update(volume=.5),
+                'extra repair teleport': lambda r: r['spatial'].update(returnedToOrigin=False),
+                'cleanup missing': lambda r: r['spatial']['cleanup'].update(removed=False),
+                'unproved late failure claim': lambda r: r['spatial'].update(lateLossQualified=True),
+                'timing missing': lambda r: r.pop('timing'),
+                'instrumentation active': lambda r: r['timing'].update(disabledBeforeEdit=False),
+                'warm source IO': lambda r: r['timing']['metrics'][0]['warm'][0]['counts'].update(gameSourceReads=1),
+                'no actual world proof': lambda r: r['timing']['metrics'][1]['first']['counts'].update(spatialReads=0),
+                'invented timing claim': lambda r: r['timing'].update(positiveTimingClaim=True),
+                'negative elapsed': lambda r: r['timing']['metrics'][0]['first'].update(milliseconds=-1),
+                'cold bank missing': lambda r: r['spatial'].pop('coldPositive'),
+                'cold groups replayed': lambda r: r['spatial']['coldPositive']['commands'][1].update(started=True),
+                'warm cache called cold': lambda r: r['spatial']['coldPositive']['timing']['metrics'][0]['first']['counts'].update(gameSourceReads=0),
+                'advisory mislabeled': lambda r: r['timing']['metrics'][0].update(decisionKind='authoritative'),
+            }
+            for label, mutate in mutations.items():
+                with self.subTest(kind=kind, mutation=label):
+                    changed=copy.deepcopy(evidence);mutate(changed[0]);self.assertTrue(self.check(changed, selection))
+            if kind == 'mp':
+                changed=copy.deepcopy(evidence);changed[0]['spatial']['acks'].pop()
+                self.assertTrue(self.check(changed, selection))
+            second=self.evidence('eject-playing',kind);second[0]['timing']=timing_proof()
+            self.assertEqual(self.check(second,selection),[])
+            second[0]['spatial']=copy.deepcopy(evidence[0]['spatial'])
+            self.assertTrue(self.check(second,selection),'prelude may run only once per session')
+
+    def test_readonly_timing_probe_stops_before_errors_or_functional_edits(self):
+        from lupa.lua51 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute('''
+            active=false;calls=0;clock=0
+            local function decide()calls=calls+1;return {allowed=true}end
+            local function preview()calls=calls+1;return {}end
+            getGameFilesInput=function()end;getModFileReader=function()end
+            toolkitQueueSpatialNoMovement=function()end;toolkitQueueSpatialApiMatches=function()end
+            PZSurvivorToolkit={ActionQueuePolicy={previewMove=preview,evaluateMove=decide,previewCancel=preview,evaluateCancel=decide}}
+            tvSpatialProbe=function(command)
+                if command=='begin'then assert(not active);active=true;return true end
+                if command=='clock'then clock=clock+.01;return clock end
+                if command=='end'then assert(active);active=false;return {active=false,gameSourceReads=0,modSourceReads=0,spatialReads=1,apiChecks=2}end
+                assert(command=='status');return {active=active}
+            end
+            action={toolkitQueueOperation={}};q={queue={action},current=action}
+        ''')
+        observation=lua.execute((ROOT/'tests/native_queue/tv-controls/shared/QueueTVSpatialObservation.lua').read_text())
+        lua.globals().observation=observation
+        lua.execute('result=observation.capture(q,action,action,action,function()return "same"end);assert(calls==16 and result.disabledBeforeEdit and not active)')
+        lua.execute('PZSurvivorToolkit.ActionQueuePolicy.previewMove=function()error("native decision failed")end;assert(not pcall(observation.capture,q,action,action,action,function()return "same"end));assert(not active)')
+
+    def test_spatial_raw_authority_and_probe_staging_are_explicit(self):
+        from unittest.mock import patch
+        selection=self.selection();selection['options']['tv_spatial_controls']=True
+        for bad in ('true', 1, None):
+            changed=copy.deepcopy(selection);changed['options']['tv_spatial_controls']=bad
+            with self.assertRaises(ValueError):a.validate(changed)
+        changed=self.selection(mode='native');changed['options']['tv_spatial_controls']=True
+        a.validate(changed)
+        for case in a.CASES:
+            native=self.evidence(case,mode='native')
+            native[0]['spatialControl']=dict(status='not-applicable',scope='optional-spatial-prelude-and-decision-timing',
+                reason='queue-disabled-native-control',movementQualified=False,timingQualified=False,probeInactive=True)
+            self.assertEqual(self.check(native,changed),[])
+            native[0]['spatialControl']['movementQualified']=True
+            self.assertTrue(self.check(native,changed))
+        a.validate(selection)
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);client=['[QUEUE_CHECK] '+json.dumps(dict(suite='tv-controls',event='setup',cases=list(a.CASES),queueEnabled=True,nativeDurations=True))];server=[]
+            for case in a.CASES:
+                evidence=self.spatial_evidence() if case==a.CASES[0] else self.evidence(case)
+                row,ids,baseline,final,acks=evidence
+                if case!=a.CASES[0]:row['timing']=timing_proof()
+                client.append(a.PREFIX+'CLIENT_PLACEMENT '+json.dumps(dict(case=case,proof=row['clientPlacement'])))
+                client.append('[QUEUE_CHECK] '+json.dumps(row));client.extend(a.PREFIX+'ACK '+json.dumps(v) for v in acks)
+                server.append(a.PREFIX+'PREPARED '+json.dumps(ids))
+                if case==a.CASES[0]:
+                    server.extend(a.PREFIX+marker+' '+json.dumps(row['spatial'][key])
+                                  for marker,key in [('SPATIAL_VERIFIED','authority'),('SPATIAL_CLEANED','cleanup')])
+                server.extend(a.PREFIX+marker+' '+json.dumps(value) for marker,value in [('BASELINE',baseline),('VERIFIED',final)])
+            client.append('[QUEUE_CHECK] '+json.dumps(dict(suite='tv-controls',event='complete',cases=list(a.CASES),performed=2,failed=0,skipped=0)))
+            client.append(a.PREFIX+'COMPLETE '+json.dumps(dict(cases=list(a.CASES))))
+            (root/'client1-launch.log').write_text('\n'.join(client));(root/'server-launch.log').write_text('\n'.join(server))
+            self.assertEqual(a.verify(root,selection,{})['issues'],[])
+            position=next(i for i,line in enumerate(server) if 'SPATIAL_VERIFIED ' in line)
+            for mutation in ('missing','duplicate','different'):
+                changed=server.copy()
+                if mutation=='missing':changed.pop(position)
+                elif mutation=='duplicate':changed.insert(position,changed[position])
+                else:
+                    value=json.loads(changed[position].split('SPATIAL_VERIFIED ',1)[1]);value['volume']=.5
+                    changed[position]=a.PREFIX+'SPATIAL_VERIFIED '+json.dumps(value)
+                (root/'server-launch.log').write_text('\n'.join(changed))
+                self.assertTrue(a.verify(root,selection,{})['issues'],mutation)
+            cache=root/'cache';lua=cache/'mods/ActionQueueTest/42/media/lua'
+            for side in ('client','server','shared'):(lua/side).mkdir(parents=True)
+            probe=root/'TVSpatialProbe.jar';probe.write_bytes(b'fixture-probe')
+            runtime={'roles':{'client1':{'cache':str(cache)}}}
+            with patch.object(a,'_spatial_probe',return_value=probe) as compile_probe:
+                a.stage(ROOT,root,None,None,selection,None,runtime)
+                compile_probe.assert_called_once()
+            self.assertEqual(runtime['fixture']['mods'],['TVSpatialProbe'])
+            layer=cache/'mods/TVSpatialProbe/42'
+            self.assertEqual((layer/'media/java/TVSpatialProbe.jar').read_bytes(),b'fixture-probe')
+            self.assertIn('javaPkgName=net.alexredby.tvspatialprobe',(layer/'mod.info').read_text())
+            self.assertIn(ROOT/'tests/native_queue/tv-controls/java/Main.java',a.sources(ROOT,selection))
 
     def test_placement_proofs_require_independent_roles_and_settled_squares(self):
         for kind in ('sp', 'mp'):
@@ -186,7 +387,7 @@ class TVControlsTests(unittest.TestCase):
                 ActionQueueOperations={commandConstructionTrusted=function()return true end},
                 ActionQueueLifecycle={registerObserver=function(_,value)observers=value;return true end}}
             local function action()
-                return {character=player,toolkitQueueOperation={},_numAddedActions=0,
+                return {character=player,toolkitQueueOperation={},
                     toolkitQueueCommand={snapshot={binding={owner=luautils,name='walkAdj'},args={n=3,player,square,true}}}}
             end
         """
@@ -195,9 +396,9 @@ class TVControlsTests(unittest.TestCase):
             local first=action()
             local proof=capturePreparation(first,'anchor',device)
             -- Native add may start/resolve the anchor before its setter exists.
-            q.current=first;observers.started(first);first.action={}
+            q.current=first;q.queue={first};observers.started(first);first.action={};first._numAddedActions=nil
             assert(observers.begin(first,'perform')==nil);observers.finish(first,'perform',true)
-            q.current=nil
+            q.current=nil;q.queue={}
             assert(pairPreparation(first,{toolkitQueueOperation=first.toolkitQueueOperation})==proof)
             verifyPreparations();assert(proof.started and proof.completed and proof.children==0)
             for _,mutate in ipairs({
@@ -215,8 +416,10 @@ class TVControlsTests(unittest.TestCase):
             q.queue={pending};assert(not pcall(cancelPreparation,'cancelled'))
             q.queue={};cancelPreparation('cancelled');verifyPreparations()
             local walked=action();capturePreparation(walked,'walked',device)
-            pairPreparation(walked,{toolkitQueueOperation=walked.toolkitQueueOperation})
-            q.current=walked;observers.started(walked);walked.action={};walked._numAddedActions=1
+            local setter={toolkitQueueOperation=walked.toolkitQueueOperation}
+            pairPreparation(walked,setter)
+            local child={Type='ISWalkToTimedAction',toolkitQueueOperation=walked.toolkitQueueOperation}
+            q.queue={walked,child,setter};q.current=walked;observers.started(walked);walked.action={};walked._numAddedActions=nil
             assert(not pcall(observers.begin,walked,'perform'));observers.finish(walked,'perform',true)
             q.current=nil;assert(not pcall(verifyPreparations))
         """

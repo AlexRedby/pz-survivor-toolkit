@@ -19,7 +19,9 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    assert(type(args.clientPlacement)=='table'and args.clientPlacement.mode=='local','TV owning-client placement proof missing')
    pending={command='Prepare',player=player,case=args.case,since=getTimestampMs(),target=target,arrival=P.observe(player,target)}
   else
-   assert((command=='Baseline'or command=='Verify')and state and state.player==player and not pending,'unexpected TV authority request')
+   assert((command=='Baseline'or command=='Verify'or command=='SpatialVerify'or command=='SpatialCleanup')
+    and state and state.player==player and not pending,'unexpected TV authority request')
+   if command=='SpatialVerify'or command=='SpatialCleanup'then assert(F.spatialEnabled(args.case)and state.spatial,'spatial authority request is not enabled')end
    pending={command=command,since=getTimestampMs()}
   end
  end)
@@ -38,14 +40,20 @@ Events.OnTick.Add(function()
   if not ok then fail(player,problem)end
   return
  end
- local ok,receipt,actual=pcall(pending.command=='Baseline'and F.baseline or F.verify,state)
+ local command=pending.command
+ local inspect=command=='Baseline'and F.baseline or command=='SpatialVerify'and F.verifySpatial
+  or command=='SpatialCleanup'and F.cleanupSpatial or F.verify
+ local ok,receipt,actual=pcall(inspect,state)
  if ok and receipt then
-  local command=pending.command;raw(command=='Baseline'and 'BASELINE'or 'VERIFIED',receipt)
-  sendServerCommand(state.player,'TVControlsTest',command=='Baseline'and 'Baselined'or 'Verified',receipt)
+  local marker=command=='Baseline'and'BASELINE'or command=='SpatialVerify'and'SPATIAL_VERIFIED'
+   or command=='SpatialCleanup'and'SPATIAL_CLEANED'or'VERIFIED'
+  local reply=command=='Baseline'and'Baselined'or command=='SpatialVerify'and'SpatialVerified'
+   or command=='SpatialCleanup'and'SpatialCleaned'or'Verified'
+  raw(marker,receipt);sendServerCommand(state.player,'TVControlsTest',reply,receipt)
   pending=nil
   if command=='Verify'then state=nil;index=index+1 end
  elseif not ok or getTimestampMs()-pending.since>20000 then
-  fail(state.player,ok and JSON.encode(actual or F.snapshot(state))or receipt)
+  fail(state.player,ok and JSON.encode(actual or(command=='SpatialVerify'and F.spatialSnapshot(state)or F.snapshot(state)))or receipt)
  elseif not pending.diagnosed and getTimestampMs()-pending.since>2000 then
   pending.diagnosed=true;raw('AUTHORITY_WAIT',{command=pending.command,actual=actual or F.snapshot(state)})
  end

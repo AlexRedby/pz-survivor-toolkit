@@ -1,11 +1,14 @@
 """Native TV media/control receipts, exact new VHS identity and unrelated book tail."""
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shutil
+import zipfile
 
 from .. import report
+from .. import preparation_process
 from ..placement import validate as validate_placement
 from ..mod_selection import metadata, mod_ids
 
@@ -28,12 +31,15 @@ def definitions():
         checks[name] = {case: {'effectsVerified': True, 'pendingEditsVerified': True} for case in CASES}
     return {'tv-controls': {'status': 'ready', 'clients': 1, 'default_mods': list(MODS),
         'scenario_actions': {'tv-eject-controls': {'mods': list(MODS), 'checks': checks,
-            'scope': 'Two ordered full-selected-pack SP/menu-Host cases: native UI insertion and optional playback before baseline; eject across a channel setter and redundant pending volume cancellation only with queue enabled. Actual volume/mute/unmute/channel callbacks and two naturally completed root books. Exact new VHS ID/index/type, independent authoritative media/settings/pages and ordered native Host control receipts. Adjacent TV requires no emitted walk; no physical input, video/audio rendering, arbitrary inventory output capacity or playback-toggle projection coverage implied.'}},
+            'scope': 'Two ordered full-selected-pack SP/menu-Host cases: native UI insertion and optional playback before baseline; eject across a channel setter and redundant pending volume cancellation only with queue enabled. Actual volume/mute/unmute/channel callbacks and two naturally completed root books. Exact new VHS ID/index/type, independent authoritative media/settings/pages and ordered native Host control receipts. Main adjacent TV requires no emitted walk. Optional tv_spatial_controls=true adds a separate Toolkit cold positive decision bank and native walking-success/move-denial prelude in the first case, warm decision timing in both cases, and explicitly not-applicable native-mode controls. No late-loss/failure, physical input, video/audio rendering, arbitrary inventory output capacity or playback-toggle projection coverage implied.'}},
         'cases': [dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'],
                        modes=['native', 'toolkit'], languages=['EN']) for case in CASES]}}
 
 
 def validate(selection):
+    spatial = selection.get('options', {}).get('tv_spatial_controls', False)
+    if type(spatial) is not bool:
+        raise ValueError('tv_spatial_controls must be boolean')
     if (selection.get('cases') != list(CASES) or selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients')) is not int or selection['clients'] != 1
@@ -44,15 +50,46 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / 'tv-controls').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
+    return [*sorted(path for path in (root / 'tv-controls').rglob('*') if path.suffix in ('.lua', '.java')),
+            *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua',
             Path(__file__).resolve().parents[1] / 'placement.py']
+
+
+def _spatial_probe(project, output, game, jdk):
+    classes = Path(output) / 'tv-spatial-probe/classes'
+    classes.mkdir(parents=True)
+    classpath = os.pathsep.join(str(Path(game) / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar'))
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+                            str(Path(project) / 'tests/native_queue/tv-controls/java/Main.java')],
+                            check=True, capture_output=True, text=True, timeout=60)
+    compiled = sorted(classes.rglob('*.class'))
+    if not compiled:
+        raise ValueError('TV spatial observation probe compilation produced no classes')
+    jar = classes.parent / 'TVSpatialProbe.jar'
+    with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as archive:
+        for path in compiled:
+            entry = zipfile.ZipInfo(path.relative_to(classes).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+            entry.create_system = 3;entry.external_attr = 0o100644 << 16;entry.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(entry, path.read_bytes())
+    return jar
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     root = Path(project) / 'tests/native_queue'
+    spatial = selection.get('options', {}).get('tv_spatial_controls', False)
+    probe = _spatial_probe(project, output, game, jdk) if spatial else None
+    if probe:
+        runtime.setdefault('fixture', {}).setdefault('mods', []).append('TVSpatialProbe')
     for role in runtime['roles'].values():
+        if probe:
+            layer = Path(role['cache']) / 'mods/TVSpatialProbe/42'
+            (layer / 'media/java').mkdir(parents=True, exist_ok=True)
+            (layer / 'mod.info').write_text('name=Disposable TV spatial observation probe\nid=TVSpatialProbe\nversionMin=42.21\n'
+                                          'require=\\ZombieBuddy\njavaPkgName=net.alexredby.tvspatialprobe\n'
+                                          'javaJarFile=media/java/TVSpatialProbe.jar\n')
+            shutil.copy2(probe, layer / 'media/java/TVSpatialProbe.jar')
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
         for side, name in [('client', 'ZZStartup.lua'), ('server', 'ZZStartupServer.lua')]:
             shutil.copy2(root / 'startup' / side / name, lua / side / name)
@@ -162,6 +199,169 @@ def _preparation(value, name, target, cancelled):
             and all(type(value[key]) is type(wanted) and value[key] == wanted for key, wanted in expected.items()))
 
 
+def _timing(value, *, movement=False, cancel_allowed=True, cold=False):
+    if (not isinstance(value, dict) or type(value.get('schema')) is not int or value['schema'] != 1
+            or value.get('scope') != 'bounded-live-pending-device-entrypoints'
+            or value.get('timer') != 'System.nanoTime' or value.get('units') != 'ms'
+            or value.get('cacheState') != ('cold-positive' if cold else 'warm-after-positive-bank')
+            or value.get('firstUseScope') != ('first-positive-device-query-before-other-policy-probes' if cold
+                                             else 'source-cache-warmed-by-cold-positive-bank')
+            or value.get('warmSamples') != 3 or type(value.get('queueCount')) is not int or value['queueCount'] < 4
+            or any(value.get(key) is not True for key in ('readOnly', 'bindingsUnchanged', 'disabledBeforeEdit'))
+            or any(value.get(key) is not False for key in ('completeEditMeasured', 'inputFrameMeasured', 'positiveTimingClaim'))
+            or value.get('timerOverhead') != 'included-not-subtracted'):
+        return False
+    metrics = value.get('metrics')
+    if not isinstance(metrics, list) or [r.get('name') for r in metrics if isinstance(r, dict)] != [
+            'previewMove', 'evaluateMove', 'previewCancel', 'evaluateCancel']:
+        return False
+    for metric in metrics:
+        if metric.get('decisionKind') != ('advisory' if metric['name'].startswith('preview') else 'authoritative'):
+            return False
+        first, warm = metric.get('first'), metric.get('warm')
+        if not isinstance(first, dict) or not isinstance(warm, list) or len(warm) != 3:
+            return False
+        expected = not movement if metric['name'].endswith('Move') else cancel_allowed
+        for i, sample in enumerate([first, *warm]):
+            if (not isinstance(sample, dict) or set(sample) != {'milliseconds', 'allowed', 'reason', 'counts'}
+                    or not _number(sample['milliseconds']) or sample['milliseconds'] < 0
+                    or sample['allowed'] is not expected or sample['reason'] != first.get('reason')
+                    or expected and sample['reason'] is not False):
+                return False
+            counts = sample['counts']
+            if (not isinstance(counts, dict) or set(counts) != {'active', 'gameSourceReads', 'modSourceReads', 'spatialReads', 'apiChecks'}
+                    or counts['active'] is not False
+                    or any(not _number(counts[k]) or counts[k] < 0 or counts[k] % 1 for k in counts if k != 'active')
+                    or i > 0 and (counts['gameSourceReads'] != 0 or counts['modSourceReads'] != 0)):
+                return False
+            if not movement and counts['spatialReads'] < 1:
+                return False
+    if cold:
+        counts = metrics[0]['first']['counts']
+        if counts['gameSourceReads'] < 1 or counts['modSourceReads'] < 1:
+            return False
+    return True
+
+
+def _cold_positive(value, ids):
+    if (not isinstance(value, dict) or type(value.get('schema')) is not int or value['schema'] != 1
+            or value.get('status') != 'performed' or value.get('scope') != 'cold-positive-native-pending-device-decisions'
+            or value.get('device') != ids['tv'] or type(value.get('queueBefore')) is not int or value['queueBefore'] != 1
+            or type(value.get('queueAfter')) is not int or value['queueAfter'] != 1
+            or any(value.get(k) is not True for k in ('queueRestoredToHold', 'sameCurrentNative', 'worldUnchanged', 'cancelledTogether', 'noReplay'))
+            or not _timing(value.get('timing'), cold=True)):
+        return False
+    rows = value.get('commands')
+    if not isinstance(rows, list) or [r.get('name') for r in rows] != ['cold-first:approach', 'cold-first', 'cold-last:approach', 'cold-last']:
+        return False
+    for row in rows:
+        prep = ':' in row['name']
+        if (row.get('type') != ('ISQueueActionsAction' if prep else 'ISRadioAction')
+                or row.get('constructorDuration') != (-1 if prep else 30)
+                or any(row.get(k) is not False for k in ('started', 'progress', 'completed'))
+                or row.get('cancelled') is not True or type(row.get('starts')) is not int or row['starts'] != 0): return False
+        if row.get('preparation') != dict(sameOperation=True, children=False, completed=False): return False
+        if not prep and not _close(row.get('value'), .5): return False
+    return True
+
+
+def _spatial_snapshot(value, ids, *, final):
+    if (not isinstance(value, dict) or value.get('case') != ids['case'] or value.get('tv') != ids['spatial']['tv']
+            or value.get('on') is not True or value.get('powered') is not True
+            or not _close(value.get('volume'), .75 if final else .5)
+            or not isinstance(value.get('books'), dict) or set(value['books']) != {'hold', 'tail'}):
+        return False
+    for name, row in value['books'].items():
+        seed = ids['spatial'][name]
+        if (not isinstance(row, dict) or row.get('id') != seed['id'] or row.get('type') != seed['type']
+                or row.get('root') is not True or type(row.get('count')) is not int or row['count'] != 1
+                or type(row.get('pages')) is not int or type(row.get('characterPages')) is not int
+                or row['pages'] != row['characterPages']):
+            return False
+        if final:
+            if row['pages'] != seed['pages']: return False
+        elif name == 'tail':
+            if row['pages'] != seed['initial']: return False
+        elif not seed['initial'] < row['pages'] < seed['pages']:
+            return False
+    return True
+
+
+def _spatial(value, ids, kind):
+    try:
+        spec = ids['spatial']
+        if (not isinstance(spec, dict) or set(spec) != {'tv', 'hold', 'tail'}
+                or set(spec['tv']) != {'x', 'y', 'z', 'index'} or any(type(v) is not int for v in spec['tv'].values())
+                or spec['tv']['x'] != ids['origin']['x'] - 5
+                or any(spec['tv'][key] != ids['origin'][key] for key in ('y', 'z')) or spec['tv']['index'] < 0):
+            return False
+        for name, item_type in [('hold', 'Base.BookForaging1'), ('tail', 'Base.BookTrapping1')]:
+            seed = spec[name]
+            if (not isinstance(seed, dict) or seed.get('type') != item_type
+                    or any(type(seed.get(k)) is not int for k in ('id', 'pages', 'initial'))
+                    or seed['initial'] != seed['pages'] - 2 or seed['initial'] < 0): return False
+        if len({spec['hold']['id'], spec['tail']['id'], ids['front']['id'], ids['tail']['id'], ids['tape']['id']}) != 5:
+            return False
+        if (not isinstance(value, dict) or type(value.get('schema')) is not int or value['schema'] != 1 or value.get('case') != ids['case']
+                or value.get('scope') != 'native-walking-success-move-denial-and-legacy-cancel-parity'
+                or any(value.get(k) is not True for k in ('returnedToOrigin', 'lifecycleUnchanged', 'queueIdle', 'noReplay'))
+                or any(not _number(value.get(k)) or value[k] < 1000 for k in ('settleMilliseconds', 'returnSettleMilliseconds'))
+                or value.get('lateLossQualified') is not False
+                or value.get('lateLossReason') != 'native-device-validity-does-not-bind-object-liveness'):
+            return False
+        denied = value.get('denied', {})
+        if (not isinstance(denied, dict) or any(denied.get(k) is not True for k in ('move', 'cancelParity', 'queueUnchanged'))
+                or denied.get('cancelApplied') is not False or type(denied.get('cancelLegacyAllowed')) is not bool
+                or denied.get('cancel') is not (not denied['cancelLegacyAllowed'])):
+            return False
+        if not _timing(value.get('timing'), movement=True, cancel_allowed=denied['cancelLegacyAllowed']): return False
+        if not _cold_positive(value.get('coldPositive'), ids): return False
+        if (not _spatial_snapshot(value.get('before'), ids, final=False)
+                or not _spatial_snapshot(value.get('client'), ids, final=True)
+                or not _spatial_snapshot(value.get('authority'), ids, final=True)
+                or value.get('cleanup') != dict(case=ids['case'], tv=spec['tv'], removed=True)):
+            return False
+        expected = ['hold', 'first:approach', 'first', 'last:approach', 'last', 'tail', 'return']
+        rows = value.get('commands')
+        if (value.get('order') != expected or not isinstance(rows, list) or [r.get('name') for r in rows] != expected): return False
+        by_name = {r['name']: r for r in rows}
+        for name, row in by_name.items():
+            expected_type = 'ISReadABook' if name in ('hold', 'tail') else 'ISQueueActionsAction' if ':' in name else 'ISWalkToTimedAction' if name == 'return' else 'ISRadioAction'
+            duration = row.get('constructorDuration')
+            if (row.get('type') != expected_type or row.get('started') is not True or row.get('completed') is not True
+                    or type(row.get('starts')) is not int or row['starts'] != 1
+                    or not _number(duration) or (duration != -1 if ':' in name or name == 'return' else duration <= 0)
+                    or ':' not in name and row.get('progress') is not True): return False
+            if name in ('first', 'last') and (duration != 30 or not _close(row.get('value'), .25 if name == 'first' else .75)): return False
+            if name in ('hold', 'tail') and row.get('itemId') != spec[name]['id']: return False
+        children = value.get('children')
+        if not isinstance(children, list) or not 1 <= len(children) <= 32 or not any(r.get('progress') is True for r in children): return False
+        for row in children:
+            if (row.get('type') != 'ISWalkToTimedAction' or row.get('owner') not in ('first', 'last')
+                    or row.get('duration') != -1 or type(row.get('starts')) is not int or row['starts'] != 1 or row.get('started') is not True
+                    or row.get('completed') is not True or not isinstance(row.get('destination'), dict)
+                    or set(row['destination']) != {'x', 'y', 'z'} or any(type(v) is not int for v in row['destination'].values())): return False
+        for name in ('first', 'last'):
+            preparation = by_name[name + ':approach'].get('preparation', {})
+            count = sum(r['owner'] == name for r in children)
+            if (preparation.get('sameOperation') is not True or preparation.get('completed') is not True
+                    or type(preparation.get('children')) is not int or preparation['children'] != count
+                    or by_name[name].get('preparation') != preparation or name == 'first' and count < 1): return False
+        acks = value.get('acks')
+        if kind == 'sp': return acks == []
+        expected_acks = []
+        for name in ('first', 'last'):
+            ack = by_name[name].get('ack', {})
+            if (ack.get('kind') != 'ISRadioAction' or ack.get('state') != 'completed'
+                    or type(ack.get('transaction')) is not int or not -128 <= ack['transaction'] <= 127 or ack['transaction'] == 0
+                    or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', str(ack.get('token')))): return False
+            expected_acks.extend(dict(name=name, **{k: ack[k] for k in ('kind', 'transaction', 'token')}, state=state)
+                                 for state in ('started', 'completed'))
+        return acks == expected_acks and by_name['first']['ack']['token'] != by_name['last']['ack']['token']
+    except (KeyError, TypeError, AttributeError):
+        return False
+
+
 def check_case(row, case, selection, prepared, authority_baseline, verified, acks):
     issues = []
     mode = selection['mode']
@@ -196,6 +396,24 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, ack
         if not _snapshot(row.get(key), ids, case, phase): issues.append('Wrong exact TV/media/books snapshot: ' + key)
     if row.get('authorityBaseline') != authority_baseline or row.get('server') != verified:
         issues.append('Authoritative raw readbacks do not match reported evidence')
+    spatial = selection.get('options', {}).get('tv_spatial_controls', False)
+    if spatial and mode == 'native':
+        if row.get('spatialControl') != dict(status='not-applicable', scope='optional-spatial-prelude-and-decision-timing',
+                                           reason='queue-disabled-native-control', movementQualified=False, timingQualified=False, probeInactive=True):
+            issues.append('Queue-disabled spatial control must be explicitly not applicable')
+        if any(key in row for key in ('spatial', 'timing')) or 'spatial' in ids:
+            issues.append('Queue-disabled control acquired spatial gameplay/timing claims')
+    elif spatial:
+        if 'spatialControl' in row:
+            issues.append('Toolkit spatial qualification cannot claim the native not-applicable control')
+        if not _timing(row.get('timing')):
+            issues.append('Missing bounded read-only pending TV decision timings/counters')
+        if case == CASES[0] and not _spatial(row.get('spatial'), ids, selection['kind']):
+            issues.append('Missing exact native walking prelude/denial/authority evidence')
+        if case != CASES[0] and ('spatial' in row or 'spatial' in ids):
+            issues.append('Spatial prelude unexpectedly repeated in the second TV case')
+    elif any(key in row for key in ('spatial', 'timing', 'spatialControl')) or 'spatial' in ids:
+        issues.append('Unrequested spatial prelude/timing evidence')
     if not issues:
         if not _conserved(row['baseline'], row['client']) or not _conserved(row['authorityBaseline'], verified):
             issues.append('Root inventory changed beyond one exact newly returned VHS')
@@ -287,6 +505,17 @@ def verify(root, selection, catalog):
         prepared, baseline, verified = (_raw(authority, m) for m in ('PREPARED', 'BASELINE', 'VERIFIED'))
         acks = _raw(text, 'ACK')
         placements = _raw(text, 'CLIENT_PLACEMENT')
+        spatial_verified, spatial_cleaned = (_raw(authority, m) for m in ('SPATIAL_VERIFIED', 'SPATIAL_CLEANED'))
+        spatial = selection.get('options', {}).get('tv_spatial_controls', False) and selection['mode'] == 'toolkit'
+        if spatial:
+            expected_case = [CASES[0]]
+            if ([r.get('case') for r in spatial_verified] != expected_case
+                    or [r.get('case') for r in spatial_cleaned] != expected_case
+                    or not rows or spatial_verified != [rows[0].get('spatial', {}).get('authority')]
+                    or spatial_cleaned != [rows[0].get('spatial', {}).get('cleanup')]):
+                issues.append('Spatial authority verification/cleanup missing, duplicated or not independently read back')
+        elif spatial_verified or spatial_cleaned:
+            issues.append('Unrequested spatial authority evidence')
         if [value.get('case') for value in placements] != selection['cases']:
             issues.append('Client TV placement missing, duplicated or out of order')
         if ([r.get('id') for r in rows] != selection['cases'] or any([r.get('case') for r in values] != selection['cases'] for values in (prepared, baseline, verified))):
@@ -304,10 +533,19 @@ def verify(root, selection, catalog):
             outcomes.append(dict(actor='client1', case=case, status='failed' if errors else 'passed', reason='; '.join(errors),
                 outcome=dict(effectsVerified=not errors, tailCompleted=not errors, serverAuthorityVerified=not errors,
                              pendingEditsVerified=not errors and selection['mode'] == 'toolkit')))
+            if selection.get('options', {}).get('tv_spatial_controls', False):
+                if selection['mode'] == 'toolkit':
+                    outcomes[-1]['outcome']['boundedDecisionCostCaptured'] = not errors
+                    if case == CASES[0]:
+                        outcomes[-1]['outcome'].update(nativeSpatialWalkVerified=not errors, coldPositiveDecisionCostCaptured=not errors)
+                else:
+                    outcomes[-1]['outcome']['spatialControlStatus'] = 'not-applicable'
         if any(a.get('case') not in selection['cases'] for a in acks): issues.append('Unknown-case TV wire receipt')
         if not complete(selection, 'client1', text): issues.append('Missing unique TV completion marker')
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as error:
         issues.append('TV verifier ' + type(error).__name__ + ': ' + str(error))
     return {'issues': issues, 'outcomes': outcomes, 'evidence': {'limits': [
         'Native UI callbacks are invoked programmatically; no physical input, audio or video rendering claim.',
-        'Adjacent powered TV, exact retail VHS and two native root books in one-client full-pack SP/menu Host.']}}
+        'Adjacent powered TV, exact retail VHS and two native root books in one-client full-pack SP/menu Host.',
+        'Optional spatial prelude qualifies real native walking success and existing pending edit permissions; late target-loss and failed/stopped child outcomes remain unqualified.',
+        'Optional timings measure bounded read-only public decisions with inactive-after-sample JVM counters; no complete input or frame-cost claim.']}}

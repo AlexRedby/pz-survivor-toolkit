@@ -1,6 +1,26 @@
 local P=require 'QueueEnergyPlacement'
 local F={}
 local cases={['eject-idle']=true,['eject-playing']=true}
+function F.spatialEnabled(case)
+ local config=require 'QueueTestSelection'
+ return config.options and config.options.tv_spatial_controls==true and config.mode=='toolkit'and case=='eject-idle'
+end
+-- Select the complete optional walking footprint before the single placement
+-- teleport. No tile, collision property or actor state is repaired here.
+function F.chooseSpatialPlacement(player)
+ local chosen=P.choose(player);local cell=getCell()
+ for radius=0,12 do for dx=-radius,radius do for dy=-radius,radius do
+  if radius==0 or math.abs(dx)==radius or math.abs(dy)==radius then
+   local x,y,z=chosen.x+dx,chosen.y+dy,chosen.z;local clear=true
+   for a=-6,1 do for b=-1,1 do local square=cell:getGridSquare(x+a,y+b,z)
+    if not square or not square:getFloor()or not square:TreatAsSolidFloor()or square:getRoom()
+     or not square:isFree(false)or square:getObjects():size()>1 or square:isVehicleIntersecting()then clear=false end
+   end end
+   if clear then return P.target({x=x,y=y,z=z})end
+  end
+ end end end
+ error('No clear loaded native TV walking corridor before placement')
+end
 local function rootIds(root,nested)
  local ids={}
  local items=root:getItems()
@@ -60,12 +80,28 @@ function F.prepare(player,case,mode,placement,proof)
  local ids={case=case,mode=mode,tv=identity(tv),front=frontId,tail=tailId,
   tape={id=tape:getID(),type=tape:getFullType(),index=tape:getRecordedMediaIndex(),mediaType=tape:getMediaType()},
   origin={x=x,y=y,z=z},placementProof=proof}
+ local spatial
+ if F.spatialEnabled(case)then
+  assert(mode=='toolkit','TV spatial prelude requires queue enabled')
+  local farSquare=assert(getCell():getGridSquare(x-5,y,z))
+  local far=IsoTelevision.new(getCell(),farSquare,assert(getSprite('appliances_television_01_4')))
+  farSquare:AddSpecialObject(far)
+  local farData=far:getDeviceData();farData:setMediaType(1);farData:setIsBatteryPowered(false)
+  farData:setIsPortable(false);farData:setPower(1);farData:setTurnedOnRaw(true);farData:setDeviceVolumeRaw(.5)
+  farData:setChannelRaw(90000)
+  assert(farData:canBePoweredHere()and farSquare:haveElectricity(),'spatial TV is not mains powered')
+  local hold,holdId=book(player,'Base.BookForaging1');local independent,independentId=book(player,'Base.BookTrapping1')
+  ids.spatial={tv=identity(far),hold=holdId,tail=independentId}
+  spatial={tv=far,data=farData,hold=hold,tail=independent}
+  if isServer()then far:transmitCompleteItemToClients();sendAddItemToContainer(player:getInventory(),hold)
+   sendAddItemToContainer(player:getInventory(),independent)end
+ end
  assert(ids.tape.index>=0 and ids.tape.mediaType==1 and count(player:getInventory(),ids.tape.id)==1)
  if isServer()then
   tv:transmitCompleteItemToClients()
   for _,item in ipairs({front,tail,tape})do sendAddItemToContainer(player:getInventory(),item)end
  end
- return {player=player,tv=tv,data=data,front=front,tail=tail,tape=tape,ids=ids,generator=generator}
+ return {player=player,tv=tv,data=data,front=front,tail=tail,tape=tape,ids=ids,generator=generator,spatial=spatial}
 end
 local function television(id)
  local square=getCell():getGridSquare(id.x,id.y,id.z)
@@ -74,6 +110,45 @@ local function television(id)
   local o=square:getObjects():get(i)
   if o:getObjectIndex()==id.index and instanceof(o,'IsoTelevision')then return o end
  end
+end
+function F.resolveSpatial(player,ids)
+ local spec=ids.spatial;if not spec then return end
+ local tv=television(spec.tv);local root=player:getInventory()
+ local hold,tail=root:getItemById(spec.hold.id),root:getItemById(spec.tail.id)
+ if not tv or not hold or not tail or hold:getContainer()~=root or tail:getContainer()~=root then return end
+ local data=tv:getDeviceData()
+ if not data:getIsTurnedOn()or not data:canBePoweredHere()or math.abs(data:getDeviceVolume()-.5)>.00001 then return end
+ for name,item in pairs({hold=hold,tail=tail})do
+  local seed=spec[name];assert(item:getFullType()==seed.type and item:getNumberOfPages()==seed.pages)
+  item:setAlreadyReadPages(seed.initial);player:setAlreadyReadPages(seed.type,seed.initial)
+ end
+ return {player=player,ids=ids,nearTV=assert(television(ids.tv)),spatial={tv=tv,data=data,hold=hold,tail=tail}}
+end
+function F.spatialSnapshot(state)
+ local s=assert(state.spatial);local p=state.player;local root=p:getInventory();local result={case=state.ids.case,
+  tv=identity(s.tv),volume=s.data:getDeviceVolume(),on=s.data:getIsTurnedOn(),powered=s.data:canBePoweredHere(),books={}}
+ assert(television(state.ids.spatial.tv)==s.tv and s.data:getParent()==s.tv,'spatial TV identity changed')
+ for _,name in ipairs({'hold','tail'})do local item=s[name];local id=state.ids.spatial[name]
+  result.books[name]={id=item:getID(),type=item:getFullType(),root=item:getContainer()==root,count=count(root,id.id),
+   pages=item:getAlreadyReadPages(),characterPages=p:getAlreadyReadPages(id.type)}
+ end
+ return result
+end
+function F.verifySpatial(state)
+ local value=F.spatialSnapshot(state)
+ if not value.on or not value.powered or math.abs(value.volume-.75)>.00001 then return end
+ for name,row in pairs(value.books)do local id=state.ids.spatial[name]
+  if row.id~=id.id or row.type~=id.type or not row.root or row.count~=1
+   or row.pages~=id.pages or row.characterPages~=id.pages then return end
+ end
+ return value
+end
+function F.cleanupSpatial(state)
+ local s=assert(state.spatial);assert(F.verifySpatial(state),'spatial effects must settle before cleanup')
+ local square=s.tv:getSquare();assert(television(state.ids.spatial.tv)==s.tv)
+ square:transmitRemoveItemFromSquare(s.tv)
+ for i=0,square:getObjects():size()-1 do assert(square:getObjects():get(i)~=s.tv,'spatial TV cleanup retained object')end
+ return {case=state.ids.case,tv=state.ids.spatial.tv,removed=true}
 end
 function F.resolve(player,ids)
  local root=player:getInventory();local tv=television(ids.tv)
