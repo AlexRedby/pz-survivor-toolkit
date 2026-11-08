@@ -59,7 +59,8 @@ require = function(name)
     end
     if name == 'PZSurvivorToolkit/ItemBaitTags' or name == 'PZSurvivorToolkit/ItemRepairTags'
         or name == 'PZSurvivorToolkit/ItemLaundryTags' or name == 'PZSurvivorToolkit/ItemSmeltingTags'
-        or name == 'PZSurvivorToolkit/ItemSharpeningTags' or name == 'PZSurvivorToolkit/ItemBrokenTags' then
+        or name == 'PZSurvivorToolkit/ItemSharpeningTags' or name == 'PZSurvivorToolkit/ItemBrokenTags'
+        or name == 'PZSurvivorToolkit/ItemRecipeCatalog' then
         return dofile(shared .. name .. '.lua')
     end
     error(name)
