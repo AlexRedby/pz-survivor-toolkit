@@ -29,13 +29,12 @@ Create one canonical `case.md` under `.codex/investigations/performance/<scenari
 - Collector, measured boundaries/window and overhead limits:
 - Fixed exclusions, invalidation rules and repetition/sample plan:
 
-## Budget (shared by continuations)
-- Start and deadline:
-- Experiment time consumed/remaining, including preparation, startup and waits:
-- Limits: diagnostic hypotheses / implementation rounds / native executions:
-- Consumed and remaining counters, including failed/invalid runs:
-- Current planned finite series and its maximum cost:
-- Stop conditions and reopening conditions:
+## Continuation decision
+- Unresolved question and expected value of the next step:
+- Planned observations and how their results change the decision:
+- Evidence of progress versus repeated inconclusive work:
+- Explicit user constraints, if any:
+- Stop conditions and what would justify revisiting the result:
 
 ## Baseline and bottleneck evidence
 - Symptom reproduced? Artifact and exact interval:
@@ -58,7 +57,7 @@ Create one canonical `case.md` under `.codex/investigations/performance/<scenari
 
 ## Per-experiment template
 
-Save one `experiment-<id>.md` before execution and fill its observed result immediately afterward, including invalid or aborted attempts. Reference immutable raw artifacts rather than replacing previous measurements. Interrupted work keeps a pending/aborted verdict and still consumes the attempts already made.
+Save one `experiment-<id>.md` before execution and fill its observed result immediately afterward, including invalid or aborted attempts. Reference immutable raw artifacts rather than replacing previous measurements. Interrupted work keeps a pending/aborted verdict and its evidence; record what needs to change before a useful retry.
 
 ```markdown
 # <scenario-id> / <experiment-id>
@@ -68,7 +67,7 @@ Save one `experiment-<id>.md` before execution and fill its observed result imme
 - Falsifiable hypothesis and predicted observation:
 - Changed factor and protected invariants:
 - Baseline/control and candidate source/input identities:
-- Procedure/commands, finite repeats, duration and counter cost:
+- Procedure/commands, planned repetitions and measurement window, and why they answer the question:
 - Validity and predeclared acceptance/rejection criteria:
 
 | Run | Source/control | Phase | Raw evidence | Primary value/unit | Validity/reason |
@@ -81,11 +80,11 @@ Save one `experiment-<id>.md` before execution and fill its observed result imme
 - Interpretation and limits; useful information gained:
 - Change disposition: retained | reverted | diagnostic only | unverified candidate
 - Exact condition for retry/reopening:
-- Updated case counters and next decision:
+- Updated evidence, next decision and why further work is or is not useful:
 ```
 
 ## Durable cross-chat handoff
 
-Use the cumulative-memory skill's current API, with project scope and English explanatory text. Store a granular conclusion likely to prevent repeat work, its exact scenario/source applicability, evidence identity and reopening condition. Anchor code-derived claims to the relevant source files. A failed attempt can be durable evidence; it must not become a universal claim that the technique never works. Keep active ownership, run-by-run transcripts and transient counters in the canonical case and use available chat/worktree discovery for coordination.
+Use the cumulative-memory skill's current API, with project scope and English explanatory text. Store a granular conclusion likely to prevent repeat work, its exact scenario/source applicability, evidence identity and reopening condition. Anchor code-derived claims to the relevant source files. A failed attempt can be durable evidence; it must not become a universal claim that the technique never works. Keep active ownership, run details and current continuation decisions in the canonical case and use available chat/worktree discovery for coordination.
 
 Example of the needed distinction: a cold-route versus repeated-route comparison can support a warming effect under its tested conditions; it does not by itself identify which cache or generation mechanism caused it. A missing difference in a noisy experiment is inconclusive unless the data excludes the declared useful gain.

@@ -1,4 +1,4 @@
 interface:
   display_name: "PZ Performance"
-  short_description: "Bounded gameplay profiling with reusable evidence"
-  default_prompt: "Use $pz-performance to investigate the reported slowdown, reuse prior evidence, and stop with a clear result within a finite experiment budget."
+  short_description: "Evidence-driven profiling without circular experiments"
+  default_prompt: "Use $pz-performance to investigate the reported slowdown, reuse prior evidence, test useful hypotheses, and stop when further experiments no longer help the decision."

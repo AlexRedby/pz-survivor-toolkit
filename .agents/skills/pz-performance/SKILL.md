@@ -1,9 +1,9 @@
 ---
 name: pz-performance
-description: Investigate PZ Survivor Toolkit performance problems with reproducible gameplay scenarios, evidence-driven bottleneck selection, bounded experiments and cross-chat reuse of negative results. Use for stutter, slow menus, loading delays, profiling and optimization requests; ordinary functional fixes do not require a performance investigation.
+description: Investigate PZ Survivor Toolkit performance problems with reproducible gameplay scenarios, evidence-driven bottleneck selection, purposeful experiments and cross-chat reuse of negative results. Use for stutter, slow menus, loading delays, profiling and optimization requests; ordinary functional fixes do not require a performance investigation.
 ---
 
-# Bounded performance investigation
+# Evidence-driven performance investigation
 
 Deliver a useful decision about a named player-visible problem: a verified improvement, a justified deferral, or a precise evidence gap. A stopped investigation is a valid result; do not manufacture optimizations to keep working.
 
@@ -13,12 +13,12 @@ Follow [project rules](../../../AGENTS.md), the relevant sections of [developmen
 
 - Search project-scoped cumulative memory for the symptom, scenario, suspected component and failed experiments. Read useful full notes; treat candidates as leads and recheck version-sensitive claims.
 - Inspect relevant existing reports, TODO and active worktrees/chats through available read-only tools. Search targeted `.codex/investigations/performance/` directories and known older evidence locations, rather than auditing every worktree. Existing evidence can come from another branch; record its exact source state.
-- Reuse one stable scenario ID across chats. Find its owner, canonical case record, tested hypotheses and remaining budget. One chat owns implementation and measurement for a case; other agents may analyze its saved evidence. If another chat owns active experiments, finish useful read-only analysis and report the ownership instead of starting a competing run. Do not take over or reset ownership merely because an owner is quiet.
-- Continue an existing case rather than renaming it to reset limits. A successor in a new worktree references the previous case, inherits its counters and conclusions, and records the handoff. Never edit another chat's checkout. For an existing case, if ownership or remaining budget cannot be established, resolve that gap before new measurements.
+- Reuse one stable scenario ID across chats. Find its owner, canonical case record, tested hypotheses and unresolved questions. One chat owns implementation and measurement for a case; other agents may analyze its saved evidence. If another chat owns active experiments, finish useful read-only analysis and report the ownership instead of starting a competing run. Do not take over or reset ownership merely because an owner is quiet.
+- Continue an existing case rather than renaming it to repeat discarded work. A successor in a new worktree references the previous case, inherits its evidence and conclusions, and records the handoff. Never edit another chat's checkout. Resolve unclear ownership before competing measurements; recover enough prior evidence to identify a useful next question.
 
 Use [the case and experiment template](references/experiment-record.md) before the first experiment. Store working records in `.codex/investigations/performance/<scenario-id>/` in the owning worktree; retain raw artifacts in an ignored or external output directory. Record their locations in the case and report. Neither TODO nor chat prose alone is the experiment history.
 
-## 2. Define the question and a finite budget
+## 2. Define the question and why the next step is useful
 
 Record before running:
 
@@ -26,11 +26,11 @@ Record before running:
 - Reproduction command/procedure, route or item population, world/save snapshot, game/JVM/mod versions and order, baseline source identity including relevant uncommitted changes, settings and measurement window.
 - Primary outcome, practical minimum gain, protected behavior/quality and regression tolerance. Derive thresholds from the request and baseline; label inferred targets. Do not silently impose a universal percentage, FPS target or percentile.
 - Cold/first-use versus warmed/repeated behavior, fixed exclusions, repetition plan, and evidence needed to distinguish the leading explanations.
-- Budget, owner, start/deadline, run counter and stop/reopen rules. Read-only recovery comes first and may avoid all runs.
+- Owner, unresolved question, expected value of the next experiment and conditions for continuing, stopping or revisiting a conclusion. Read-only recovery comes first and may avoid all runs.
 
-If unspecified, use these **project workflow defaults**, not scientific significance thresholds: at most 3 diagnostic hypotheses, 3 implementation rounds, 8 native scenario executions, and 60 minutes of experiment work from first preparation, including builds, startup, waits and failed attempts. Stop at the first exhausted limit. A native scenario execution means one runner invocation, including all its Host processes; separate retries count again. Set a smaller plan when sufficient; ordinary focused tests need not use the native allowance. Count pilot, baseline, invalid, confirmation and reviewer reruns against the applicable run/time limits. Bound each command by the remaining time. A round's finite run series must fit the remaining budget before starting it.
+Continue autonomously within the authorized task while the next step can resolve a named uncertainty, test a supported explanation or verify a useful retained change. Before another run or edit, explain what its possible results would change about the next decision. Choose enough comparable observations to answer that question; avoid repeats that merely seek a more favorable result.
 
-Use an explicit user budget instead when supplied. Do not enlarge or renew an exhausted budget autonomously, across sessions or by switching hypotheses. Finish analysis and report a concrete proposed next step; explicit authorization for a new bounded investigation may reopen it.
+Do not impose default quotas on hypotheses, implementation rounds, launches, elapsed investigation time or collector repairs, and do not request permission to renew them. Historical quota exhaustion is not a blocker: recover the prior findings and decide whether the current question merits further work. Respect explicit task limits supplied by the user; ordinary tool timeouts, resource admission and safety guards remain in force.
 
 ## 3. Validate the measurement path
 
@@ -41,13 +41,13 @@ Pilot the actual slow journey with the existing tools. Check that the intended s
 - Startup/first use: include the relevant loading or initialization phase. Warm steady state cannot validate a cold-start fix. Separate cache warming from world generation or other unproven mechanisms.
 - Repeated-use degradation: use a bounded repetition count with memory/latency observations and a defined settled-state signal.
 
-Repeat a comparable baseline enough to expose variation under the planned workload. A few deterministic repeats are a pilot, not automatic statistical proof. Frames within one run are correlated; many frames do not substitute for independent repeated runs. Do not prescribe more runs unless they can answer a named uncertainty within the budget.
+Repeat a comparable baseline enough to expose variation under the planned workload. A few deterministic repeats are a pilot, not automatic statistical proof. Frames within one run are correlated; many frames do not substitute for independent repeated runs. Run additional samples only when they can resolve a named uncertainty that matters to the decision.
 
 Keep source bytes, save identity, mods, route/speed, camera, resolution/framebuffer, frame cap/VSync, cache phase and instrumentation comparable except for the intended factor. Record unavoidable differences. Alternate baseline and candidate order when feasible; restore equivalent state for each run. Collision damage, changed content or differing route exposure can invalidate a comparison. Keep invalid runs with reasons; exclusions must not be chosen to favor a candidate.
 
 Run performance comparisons serially on shared hardware, using the runner's exclusive admission. Resource admission alone does not establish comparability. Coordinate agent-owned builds, tests and captures; never stop unrelated user processes. Follow the existing macOS placement/focus policy without inventing a bypass. Use isolated settings/saves; installation into the user's game is a separate request. Test macOS as supported here; do not turn this skill into a Windows verification obligation or generalize results across platforms.
 
-If the symptom is absent or collection is broken, spend at most one bounded repair attempt on a named reproduction/collector defect, inside the same budget. Otherwise stop as not reproduced or inconclusive. A new synthetic load may help diagnosis but needs validation against the complaint before it can be an acceptance scenario.
+If the symptom is absent or collection is broken, correct an identified reproduction/collector defect when there is a concrete reason to expect a valid next observation. Reassess after the repair: repeated setup changes or retries without diagnostic progress are a reason to stop as not reproduced or inconclusive. A new synthetic load may help diagnosis but needs validation against the complaint before it can be an acceptance scenario.
 
 ## 4. Locate the limiting work before selecting a fix
 
@@ -63,24 +63,24 @@ Defer a candidate when its best plausible benefit is below the declared useful g
 
 ## 5. Run one falsifiable experiment at a time
 
-Before each experiment, save: hypothesis, existing evidence, predicted distinguishing observation, one changed factor, baseline/control, finite run count/duration, validity conditions and acceptance/rejection criteria. A diagnostic exclusion of a component is useful progress even without a code improvement. If no possible result would change the next decision, skip the experiment.
+Before each experiment, save: hypothesis, existing evidence, predicted distinguishing observation, one changed factor, baseline/control, planned observations and why they are sufficient, validity conditions and acceptance/rejection criteria. A diagnostic exclusion of a component is useful progress even without a code improvement. If no possible result would change the next decision, skip the experiment.
 
 Implement the smallest reversible change that tests a supported cause, preserving requested behavior and quality. Reduced resolution, disabled content, shortened actions or delayed work are tradeoffs or diagnostic controls, not equivalent gameplay improvements. Verify that caching, batching or deferral does not lose freshness, effects or correctness. Keep owner implementation serial; independent review can use saved artifacts without competing for measured resources.
 
 Compare end-to-end outcomes and affected correctness. Report absolute values, deltas, variation, sample counts and limitations; neither one lucky run nor statistical significance alone establishes a useful gain. An effect unresolved by the measurement is **inconclusive**, not proven zero. Where feasible, state the effect range still compatible with the data instead of inventing confidence.
 
-Keep only repeatable, practically meaningful gains with no disallowed regression. Revert only this experiment's unsuccessful edits. After a retained gain, recheck the changed limiter and the final combined state within the same budget; independent wins do not automatically add up. If final verification is missing, report the candidate as unverified. Use independent evidence review for a material or ambiguous conclusion when available; review absence narrows confidence and does not create an endless rerun gate.
+Keep only repeatable, practically meaningful gains with no disallowed regression. Revert only this experiment's unsuccessful edits. After a retained gain, recheck the changed limiter and verify the final combined state; independent wins do not automatically add up. If final verification is missing, report the candidate as unverified. Use independent evidence review for a material or ambiguous conclusion when available; review absence narrows confidence and does not create an endless rerun gate.
 
 ## 6. Stop, retain evidence, and define reopening
 
-Stop when the target is already met or achieved, the relevant budget is exhausted, two consecutive implementation rounds retain no useful gain, further work has insufficient expected payoff, or progress needs unavailable evidence/capability or a user-owned tradeoff. Successful diagnostic narrowing is not a failed implementation round. Preparation/collector repair cannot become its own open-ended infrastructure task.
+Stop when the target is met and the final state is verified, no supported next hypothesis has a plausible useful payoff, experiments keep returning the same unresolved result without improving the evidence, or progress needs unavailable evidence/capability or a user-owned tradeoff. A failed implementation or invalid launch alone is not a stopping rule; continue when the next step addresses its cause and can change the decision. Diagnostic narrowing is progress, but preparation and collector repair must remain tied to the player problem rather than becoming a separate open-ended infrastructure task.
 
-Report one outcome: **target met**, **improved but target unmet**, **no retained useful improvement**, **not reproduced**, or **inconclusive**. Include before/after when meaningful, retained/discarded hypotheses, conditions actually tested, evidence paths, consumed/remaining budget, and one concrete reopening condition. A cap ending the investigation does not prove impossibility.
+Report one outcome: **target met**, **improved but target unmet**, **no retained useful improvement**, **not reproduced**, or **inconclusive**. Include before/after when meaningful, retained/discarded hypotheses, conditions actually tested, evidence paths, why further work is or is not worthwhile, and a concrete condition for revisiting the result. A decision to stop does not prove impossibility.
 
-Before ending, save every attempted hypothesis and verdict using the record template. Keep TODO limited to practical unfinished actions; it must not accumulate completed attempts. Persist durable findings, failed approaches with their applicability limits, stop decisions and reopening conditions through cumulative-agent-memory with evidence anchors. Do not dump raw logs or temporary counters into memory. Active counters remain in the canonical case; a stopped case's durable summary states what scope was exhausted and why. Reuse semantic experiment identity when citing the same evidence; a second chat is not an independent observation. Use available chat/worktree discovery to locate active records, with memory supplying durable conclusions after a worktree is gone.
+Before ending, save every attempted hypothesis and verdict using the record template. Keep TODO limited to practical unfinished actions; it must not accumulate completed attempts. Persist durable findings, failed approaches with their applicability limits, stop decisions and reopening conditions through cumulative-agent-memory with evidence anchors. Do not dump raw logs or routine run bookkeeping into memory. Keep experiment details in the canonical case; a stopped case's durable summary states the checked scope, evidence gap and reason for stopping. Reuse semantic experiment identity when citing the same evidence; a second chat is not an independent observation. Use available chat/worktree discovery to locate active records, with memory supplying durable conclusions after a worktree is gone.
 
-Reopen a rejected or stopped line only for an explicit new budget/goal, new contradictory evidence, a relevant source/runtime/workload change, or a materially better measurement method. Name exactly what changed and which prior conclusion it could invalidate. New evidence can reopen a conclusion but does not replenish an exhausted budget; obtain explicit authorization for a new finite experiment budget in that case. A changed unrelated file, missing raw artifact, new chat, new agent or passage of time alone is insufficient. If the record is missing or ambiguous, recover its summary first and report the evidence gap rather than automatically repeating it. Preserve decisive evidence during cleanup; remove only owned scratch/processes whose loss does not undermine the result.
+Revisit a rejected or inconclusive hypothesis when new contradictory evidence, a relevant source/runtime/workload change, a materially better measurement method or an explicitly changed user goal gives the experiment a different decision value. State what changed and which prior conclusion it could affect; a new goal does not make old evidence false. A changed unrelated file, missing raw artifact, new chat, new agent or passage of time alone does not justify repeating the same work. If a case stopped only because of a former numeric quota, retain its findings and assess the useful next question without asking for a budget renewal. If the record is missing or ambiguous, recover its summary first and report the evidence gap rather than automatically repeating it. Preserve decisive evidence during cleanup; remove only owned scratch/processes whose loss does not undermine the result.
 
 ## Basis and calibration
 
-See [sources and adaptation notes](references/sources.md) when explaining or revising this procedure. Numeric budgets are local workflow choices. Revisit them using observed usefulness; do not quietly relax them during an unsuccessful investigation.
+See [sources and adaptation notes](references/sources.md) when explaining or revising this procedure. Continuation and stopping depend on expected decision value, observed progress and the user-visible goal. There are no default numeric investigation quotas.

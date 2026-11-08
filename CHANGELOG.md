@@ -48,6 +48,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.343
 
+- **Fixed:** Allow reviewed pending TV cancellation and radio volume reordering across source-owned approaches when fresh native actor/target proofs preserve the command dependencies.
 - **Fixed:** Refuse reviewed pending TV/radio commands when their original world object, square or DeviceData binding has disappeared or moved. Reuse the operation ledger to preserve already-paid preparation and independent work without starting or replaying the rejected command. Unknown source/history, active actions and in-flight requests retain native handling.
 - **Internal:** Keep private device-action provenance checks uncached to avoid retaining retired actions and world references in the callback-source memo.
 
