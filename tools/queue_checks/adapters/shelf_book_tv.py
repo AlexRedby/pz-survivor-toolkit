@@ -1,8 +1,10 @@
 """Real shelf-book pickup/read/return interrupted by selected TV media commands."""
+import json
 from pathlib import Path
 import re
 import shutil
 
+from ..placement import validate as validate_placement
 from ..mod_selection import metadata, mod_ids
 
 PROJECT = Path(__file__).resolve().parents[3]
@@ -32,7 +34,8 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return (sorted((root / 'shelf-book-tv').rglob('*.lua')) + sorted((root / 'startup').rglob('*.lua'))
-            + [root / 'support/QueueEnergyPlacement.lua'])
+            + [root / 'support/QueueEnergyPlacement.lua', root / 'health/shared/QueueHealthEvents.lua',
+               Path(__file__).parents[1] / 'placement.py'])
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
@@ -49,6 +52,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         shared.mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / 'shelf-book-tv/shared/QueueShelfBookTV.lua', shared / 'QueueShelfBookTV.lua')
         shutil.copy2(root / 'support/QueueEnergyPlacement.lua', shared / 'QueueEnergyPlacement.lua')
+        shutil.copy2(root / 'health/shared/QueueHealthEvents.lua', shared / 'QueueHealthEvents.lua')
         client_startup = lua / 'client/ZZStartup.lua'
         shutil.copy2(root / 'startup/client/ZZStartup.lua', client_startup)
         server_startup = lua / 'server/ZZStartupServer.lua'
@@ -95,7 +99,7 @@ def verify(root, selection, catalog):
         if any(len(found) != 1 for found in matches) or MARKER + 'FAIL ' in client:
             issues.append('Missing or duplicate real shelf-book/TV interaction evidence')
         evidence['clientMarkers'] = [line[line.find(MARKER) + len(MARKER):] for line in client.splitlines() if MARKER in line]
-        sequence = ['PREPARED'] + (['BAG_PREPARED'] if bag_case else []) + ['PROGRESS', 'READ', 'COMMANDS']
+        sequence = ['CLIENT_PLACEMENT', 'PREPARED_IDS', 'PREPARED'] + (['BAG_PREPARED'] if bag_case else []) + ['PROGRESS', 'READ', 'COMMANDS']
         if bag_case:
             sequence.append('PICKUP_QUEUED')
         sequence.append('PROMOTED' if selection['mode'] == 'toolkit' else 'CONTROL')
@@ -104,7 +108,7 @@ def verify(root, selection, catalog):
         sequence += ['POWER_EFFECT'] + (['PICKUP_EFFECT'] if bag_case else []) + ['INSERT_EFFECT', 'PLAY_EFFECT']
         if selection['mode'] == 'toolkit':
             sequence.append('RESUMED')
-        sequence += ['ACTIONS'] + (['BAG_AUTHORITY'] if bag_case else []) + ['RETURN', 'MEDIA', 'COMPLETE']
+        sequence += ['ACTIONS'] + (['BAG_AUTHORITY'] if bag_case else []) + ['RETURN', 'MEDIA', 'CASE', 'COMPLETE']
         lines = client.splitlines()
         positions = []
         for prefix in sequence:
@@ -188,9 +192,29 @@ def verify(root, selection, catalog):
                     issues.append('Client prepared shelf/book/TV/tape IDs differ from server-owned exact identities')
                 evidence['serverBagAuthority'] = server_bag_authority
             evidence['serverAuthority'] = authority
+        def raw(text, marker):
+            return [json.loads(m.group(1)) for m in re.finditer(re.escape(MARKER + marker + ' ') + r'([^\n]+)', text)]
+        prepared_ids = raw(client, 'PREPARED_IDS')
+        rows, placements = raw(client, 'CASE'), raw(client, 'CLIENT_PLACEMENT')
+        if len(prepared_ids) != 1 or len(rows) != 1 or placements != [dict(case=case, proof=rows[0].get('clientPlacement'))]:
+            raise ValueError('Missing unique exact shelf/TV placement and case receipts')
+        ids = prepared_ids[0]
+        if ids.get('case') != case or rows[0].get('case') != case or rows[0].get('ids') != ids:
+            raise ValueError('Shelf/TV case placement identity differs')
+        target = ids.get('placement')
+        validate_placement(rows[0].get('clientPlacement'), target, 'local')
+        validate_placement(ids.get('placementProof'), target, 'replica' if selection['kind'] == 'mp' else 'local')
+        if (len(prepared_client) != 1 or tuple(str(ids.get(k)) for k in ('shelf', 'book', 'x', 'y', 'z', 'tape', 'mediaIndex', 'mediaType')) != prepared_client[0]
+                or (ids.get('shelfX'), ids.get('shelfY'), ids.get('shelfZ')) != (target['x']-1, target['y'], target['z'])
+                or (ids.get('x'), ids.get('y'), ids.get('z')) != (target['x']+1, target['y'], target['z'])
+                or (ids.get('generatorX'), ids.get('generatorY'), ids.get('generatorZ')) != (target['x'], target['y']+1, target['z'])):
+            raise ValueError('Shelf/TV placement target differs from exact scene footprint')
+        if selection['kind'] == 'mp' and raw(server, 'PREPARED_IDS') != prepared_ids:
+            raise ValueError('Shelf/TV prepared placement differs from authority')
+        evidence['placement'] = dict(client=rows[0]['clientPlacement'], authority=ids['placementProof'])
         if not complete(selection, 'client1', client):
             issues.append('Missing unique shelf-book/TV completion')
-    except OSError as error:
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
         issues.append(str(error))
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': case,
             'status': 'failed' if issues else 'passed', 'reason': '; '.join(issues)}],

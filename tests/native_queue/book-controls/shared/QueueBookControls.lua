@@ -192,15 +192,17 @@ function F.parseControl(control)
  elseif control:sub(-9)=='-favorite'then base=control:sub(1,-10);favorite=true end
  return base,lost,favorite,deviceOnly
 end
-function F.prepare(player,case,previous)
+function F.prepare(player,case,previous,placement)
  assert(not isClient(),'book controls scene requires authority')
- if previous then F.dispose(previous)end
  local source,control=case:match('^(.-)%.(.+)$');local base,lost,favorite,deviceOnly=F.parseControl(control);assert(not deviceOnly or base=='move-volume'or base=='demote-reader','unknown device-only control');assert(source and(base=='header-cancel'or base=='reader-child-cancel'or base=='move-volume'or base=='move-equip'or base=='demote-reader'or base=='return-child-cancel'),'unknown book controls case')
  assert((base~='return-child-cancel'and not lost)or source~='root','a root book has no native borrowed return')
  assert(not lost or source~='root'and(base=='header-cancel'or base=='move-volume'),'unknown capacity control');assert(not favorite or source=='world'and(base=='header-cancel'or base=='move-volume'),'unknown favorite control')
+ local P=require 'QueueEnergyPlacement';placement=P.target(placement)
+ assert(P.at(player,placement),'book actor has not settled on exact placement tile')
+ if previous then F.dispose(previous)end
  player:setPrimaryHandItem(nil);player:setSecondaryHandItem(nil)
  player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
- local origin=require('QueueEnergyPlacement')(player);local x,y,z=origin:getX(),origin:getY(),origin:getZ()
+ local x,y,z=placement.x,placement.y,placement.z
  local shelfSquare=assert(getCell():getGridSquare(x,y-1,z));local tvSquare=assert(getCell():getGridSquare(x-1,y,z))
  local generator=IsoGenerator.new(assert(instanceItem('Base.Generator')),getCell(),assert(getCell():getGridSquare(x,y+1,z)))
  generator:setCondition(100);generator:setFuel(10);generator:setActivated(true)
@@ -238,6 +240,7 @@ end
 local seeded={}
 function F.resolve(player,ids)
  if isClient()and player:getOnlineID()~=ids.actor then return end
+ if not require('QueueEnergyPlacement').at(player,ids.origin)then return end
  local s={player=player,ids=ids};if not F.refresh(s)then return end
  if not seeded[ids]then
   -- Actor-local reading caches are not equipment replication. First wait for

@@ -1,4 +1,5 @@
 if not isServer()then return end
+local P=require 'QueueEnergyPlacement'
 local F=require 'QueueTVControls'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
@@ -14,10 +15,11 @@ Events.OnClientCommand.Add(function(module,command,player,args)
   assert(player:getUsername()=='client1'and args.case==config.cases[index],'unexpected TV actor/case order')
   if command=='Prepare'then
    assert(not state and not pending,'duplicate TV prepare')
-   state=F.prepare(player,args.case,config.mode);raw('PREPARED',state.ids)
-   sendServerCommand(player,module,'Prepared',state.ids)
+   local target=P.target(args.placement)
+   assert(type(args.clientPlacement)=='table'and args.clientPlacement.mode=='local','TV owning-client placement proof missing')
+   pending={command='Prepare',player=player,case=args.case,since=getTimestampMs(),target=target,arrival=P.observe(player,target)}
   else
-   assert((command=='Baseline'or command=='Verify')and state and not pending,'unexpected TV authority request')
+   assert((command=='Baseline'or command=='Verify')and state and state.player==player and not pending,'unexpected TV authority request')
    pending={command=command,since=getTimestampMs()}
   end
  end)
@@ -25,6 +27,17 @@ Events.OnClientCommand.Add(function(module,command,player,args)
 end)
 Events.OnTick.Add(function()
  if not pending then return end
+ if pending.command=='Prepare'then
+  local player=pending.player
+  local ok,problem=pcall(function()
+   local proof=P.poll(pending.arrival);if not proof then return end
+   assert(P.at(player,pending.target),'TV replica left settled placement before preparation')
+   state=F.prepare(player,pending.case,config.mode,pending.target,proof)
+   raw('PREPARED',state.ids);sendServerCommand(player,'TVControlsTest','Prepared',state.ids);pending=nil
+  end)
+  if not ok then fail(player,problem)end
+  return
+ end
  local ok,receipt,actual=pcall(pending.command=='Baseline'and F.baseline or F.verify,state)
  if ok and receipt then
   local command=pending.command;raw(command=='Baseline'and 'BASELINE'or 'VERIFIED',receipt)

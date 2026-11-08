@@ -155,7 +155,7 @@ def complete(selection, role, text):
 
 
 def verifier_sources(project, selection):
-    return [Path(__file__).with_name('book_controls_verifier.py'),
+    return [Path(__file__).with_name('book_controls_verifier.py'), Path(__file__).parents[1] / 'placement.py',
             Path(project) / 'tests/test_queue_book_controls.py']
 
 

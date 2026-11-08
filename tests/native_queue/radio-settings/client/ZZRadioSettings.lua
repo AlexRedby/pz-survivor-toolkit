@@ -8,6 +8,7 @@ require 'RadioCom/RadioWindowModules/RWMVolume'
 require 'RadioCom/RadioWindowModules/RWMGridPower'
 require 'RadioCom/RadioWindowModules/RWMChannel'
 require 'RadioCom/RadioWindowModules/RWMMicrophone'
+local P=require 'QueueEnergyPlacement'
 local F=require 'QueueRadioSettings'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
@@ -16,7 +17,7 @@ local T=PZSurvivorToolkit
 local API,Ops=T.ActionQueue,T.ActionQueueOperations
 local started,ready,done,phase,index,since=false,false,false,'prepare',1,0
 local ids,state,authority,previous,receipt,panels,commands,actions,order,edit,quiet
-local initialQueue,editedQueue
+local initialQueue,editedQueue,initialPhysicalQueue,editedPhysicalQueue
 local function case()return config.cases[index]end
 local function now()return getTimestampMs()end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
@@ -34,10 +35,17 @@ local function fail(problem)
   client=client,server=receipt})
  print('[QUEUE_TEST] FAIL radio-settings '..tostring(problem));done=true
 end
+local placement,placementState,clientPlacement
 local function request(name)
- if isClient()then sendClientCommand('RadioSettingsTest',name,{case=case()});return end
+ assert(name=='Prepare'or name=='Verify','unknown radio authority command')
+ local args={case=case()}
  if name=='Prepare'then
-  authority=F.prepare(getPlayer(),case(),config.mode,previous);previous=nil;ids=authority.ids;raw('PREPARED',ids)
+  assert(clientPlacement and P.at(getPlayer(),placement),'radio Prepare requires fresh settled placement')
+  args.placement=placement;args.clientPlacement=clientPlacement
+ end
+ if isClient()then sendClientCommand('RadioSettingsTest',name,args);return end
+ if name=='Prepare'then
+  authority=F.prepare(getPlayer(),case(),config.mode,previous,placement,clientPlacement);previous=nil;ids=authority.ids;raw('PREPARED',ids)
  else receipt=F.snapshot(authority);raw('VERIFIED',receipt)end
 end
 Events.OnServerCommand.Add(function(module,name,value)
@@ -48,6 +56,7 @@ Events.OnServerCommand.Add(function(module,name,value)
  elseif name=='Verified'and value.case==case()then receipt=value end
 end)
 require('QueuePreflight').onGameStart(Events,function()started=true;since=now()end)
+local watchPreparations
 local function initialize()
  local player=getPlayer()
  if not isIngameState()or not player or not player:getSquare()or player:isDead()then return false end
@@ -60,7 +69,7 @@ local function initialize()
  getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false)
  player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
- ready=true;since=now()
+ watchPreparations();ready=true;since=now()
  emit({event='setup',cases=config.cases,expected=#config.cases,queueEnabled=not native,
   nativeDurations=true,producer='native RWM callbacks with native doWalkTo'})
  return true
@@ -107,14 +116,91 @@ local function createPanels()
   panels[key]={volume=panel(RWMVolume,device),power=panel(RWMGridPower,device),channel=panel(RWMChannel,device),mic=panel(RWMMicrophone,device)}
  end
 end
+-- A deferred walkAdj dispatcher is physical preparation owned by its setter.
+-- Native adjacency is resolved at execution; observe it without replacing callbacks.
+local preparations={}
+local function ownedPreparation(action,device)
+ local owner=T.ActionQueueApproach
+ if not owner or not owner.isAction(action)or not owner.capture(action)then return false end
+ local request=action.toolkitQueueCommand.snapshot
+ return T.ActionQueueOperations.commandConstructionTrusted()and action.character==getPlayer()
+  and request.binding.owner==luautils and request.binding.name=='walkAdj'and request.args.n==3
+  and request.args[1]==getPlayer()and request.args[2]==device:getSquare()and request.args[3]==true
+end
+local function capturePreparation(action,name,device)
+ assert(not native and ownedPreparation(action,device),'foreign native approach dispatcher '..name)
+ local square=device:getSquare()
+ local proof={name=name,helper='walkAdj',target={x=square:getX(),y=square:getY(),z=square:getZ()},
+  argumentCount=3,keepActions=true,owned=true,constructor=true,resolver=true,sameOperation=false,
+  started=false,completed=false,cancelled=false}
+ preparations[action]={proof=proof,device=device}
+ return proof
+end
+local function pairPreparation(action,setter)
+ local record=assert(preparations[action],'unobserved native preparation')
+ assert(action.toolkitQueueOperation==setter.toolkitQueueOperation and type(action.toolkitQueueOperation)=='table',
+  'native preparation/setter operation differs')
+ record.proof.sameOperation=true
+ return record.proof
+end
+local function preparationName(action)
+ local record=preparations[action]
+ if not record then return end
+ assert(ownedPreparation(action,record.device),'queued preparation binding changed')
+ return record.proof.name..':approach'
+end
+local function cancelPreparation(name)
+ for action,record in pairs(preparations)do if record.proof.name==name then
+  assert(not record.proof.started and not record.proof.completed and queue():indexOf(action)==-1,
+   'cancelled setter retained or ran native preparation')
+  record.proof.cancelled=true
+ end end
+end
+local function verifyPreparations()
+ for action,record in pairs(preparations)do
+  local proof=record.proof
+  assert(proof.sameOperation and queue():indexOf(action)==-1,'native preparation retained or unpaired')
+  if proof.cancelled then assert(not proof.started and not proof.completed,'cancelled preparation executed')
+  else assert(proof.started and proof.completed and proof.succeeded and proof.children==0,
+   'adjacent native preparation did not complete without inserted work')end
+ end
+end
+watchPreparations=function()
+ assert(T.ActionQueueLifecycle.registerObserver('fixture.radio-settings-preparation',{
+  started=function(action)
+   local record=preparations[action];if not record then return end
+   assert(T.ActionQueueApproach.isAction(action)and queue().current==action,'preparation started without ownership')
+   record.proof.started=true
+  end,
+  begin=function(action,step)
+   local record=preparations[action];if not record or step~='perform'then return end
+   assert(T.ActionQueueApproach.isAction(action)and queue().current==action,'preparation lost resolver ownership')
+   record.proof.children=action._numAddedActions
+   assert(record.proof.children==0,'adjacent preparation inserted native walking work')
+  end,
+  finish=function(action,step,succeeded)
+   local record=preparations[action];if not record or step~='perform'then return end
+   record.proof.completed=true;record.proof.succeeded=succeeded==true
+  end,
+ }),'native preparation observer unavailable')
+end
 local function queueNames()
  local names={}
  for _,action in ipairs(queue().queue)do
   local name
   for key,value in pairs(actions or {})do if value==action then name=key;break end end
-  names[#names+1]=assert(name,'unexpected queue member '..tostring(action.Type))
+  if not preparationName(action)then names[#names+1]=assert(name,'unexpected queue member '..tostring(action.Type))end
  end
  return names
+end
+local function physicalNames()
+ local result={}
+ for _,action in ipairs(queue().queue)do
+  local name=preparationName(action)
+  if not name then for key,value in pairs(actions or {})do if action==value then name=key;break end end end
+  result[#result+1]=assert(name,'untracked physical radio queue member')
+ end
+ return result
 end
 local function sameOrder(left,right)
  if #left~=#right then return false end
@@ -127,6 +213,7 @@ local function enqueue(name,mode,target,value)
  ISTimedActionQueue.add=function(action)
   emitted[#emitted+1]=action
   declared[#emitted]=action.maxTime
+  if action.Type=='ISQueueActionsAction'then capturePreparation(action,name,state[target])end
   return original(action)
  end
  local ok,problem=pcall(function()
@@ -153,15 +240,16 @@ local function enqueue(name,mode,target,value)
  ISTimedActionQueue.add=original
  assert(ok,problem)
  -- Both objects must actually be adjacent. Never replace walkAdj or discard an emitted walk.
- assert(#emitted==1,'native '..name..' producer emitted '..#emitted..' actions; fixture is not adjacent')
- local action=emitted[1]
+ assert(#emitted==(native and 1 or 2),'native radio producer shape differs '..name..' count='..#emitted)
+ local index=native and 1 or 2;local action=emitted[index]
+ local preparation=not native and pairPreparation(emitted[1],action)or nil
  assert(getmetatable(action)==ISRadioAction and action.mode==mode and action.device==state[target],
   'native radio producer binding differs '..name)
  if mode~='MuteVolume'then assert(action.secondaryItem==value,'native radio value differs '..name)end
- assert(declared[1]==30 and action.stopOnWalk==false and action.stopOnRun==true and action.ignoreHandsWounds==true,
+ assert(declared[index]==30 and action.stopOnWalk==false and action.stopOnRun==true and action.ignoreHandsWounds==true,
   'native radio duration/flags differ '..name)
  if not native then assert(type(action.toolkitQueueOperation)=='table','command operation was not captured '..name)end
- local row={name=name,mode=mode,target=target,value=value,duration=declared[1],
+ local row={name=name,mode=mode,target=target,value=value,duration=declared[index],preparation=preparation,
   started=false,progress=false,cancelled=false,producer='native RWM callback'}
  commands[#commands+1]=row;actions[name]=action
  return action
@@ -211,7 +299,7 @@ local function pending()
   enqueue('mic','MuteMicrophone','a',true)
  end
  enqueue('tail','SetChannel','b',96000)
- initialQueue=queueNames()
+ initialQueue=queueNames();initialPhysicalQueue=physicalNames()
  local expected=case()=='barrier'and {'anchor','firstVolume','channel','powerOff','powerOn','legacyMute','tail'}
   or {'anchor','firstVolume','channel','lastVolume','mic','tail'}
  assert(sameOrder(initialQueue,expected),'native producer order differs')
@@ -230,6 +318,7 @@ local function pending()
     assert(API.cancelOperation(queue(),actions[name]),'pending cancellation rejected '..name)
     for _,command in ipairs(commands)do if command.name==name then command.cancelled=true end end
     edit.cancelled[#edit.cancelled+1]=name
+    cancelPreparation(name)
     assert(queue():indexOf(actions[name])==-1,'cancelled member retained '..name)
    end
    expected={'anchor','firstVolume','channel','tail'}
@@ -239,7 +328,7 @@ local function pending()
    edit.denied=true;edit.reason=reason
   else error('unknown radio settings case '..tostring(case()))end
  end
- editedQueue=queueNames()
+ editedQueue=queueNames();editedPhysicalQueue=physicalNames()
  assert(sameOrder(editedQueue,expected),'edited queue member order differs')
  edit.untouchedBefore=unchangedValues(before,F.snapshot(state))
  assert(edit.untouchedBefore,'pending producer/edit wrote native device state')
@@ -248,7 +337,7 @@ local function pending()
  edit.before=before;phase='running';quiet=nil
 end
 local function finish()
- assert(empty(),'native queue restarted before verification')
+ assert(empty(),'native queue restarted before verification');verifyPreparations()
  local client=F.snapshot(state)
  checkReceipt(client,F.expected(case(),config.mode,false),'client')
  checkReceipt(receipt,F.expected(case(),config.mode,isClient()),isClient()and 'server'or 'single-player authority')
@@ -261,8 +350,8 @@ local function finish()
     'cancelled command executed '..command.name)
   else assert(command.started and command.progress,'native start/progress missing '..command.name)end
  end
- emit({event='case',id=case(),status='passed',ids=ids,commands=commands,order=order,edit=edit,
-  initialQueue=initialQueue,editedQueue=editedQueue,client=client,server=receipt,queueIdle=true,
+ emit({event='case',id=case(),status='passed',ids=ids,clientPlacement=clientPlacement,commands=commands,order=order,edit=edit,
+  initialQueue=initialQueue,editedQueue=editedQueue,initialPhysicalQueue=initialPhysicalQueue,editedPhysicalQueue=editedPhysicalQueue,client=client,server=receipt,queueIdle=true,
   settleMilliseconds=now()-quiet})
  previous=authority;index=index+1
  if not case()then
@@ -270,6 +359,8 @@ local function finish()
   print('[RADIO_SETTINGS] COMPLETE');done=true;return
  end
  ids,state,authority,receipt,panels,commands,actions,order,edit,quiet=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
+ preparations={};initialPhysicalQueue,editedPhysicalQueue=nil,nil
+ placement,placementState,clientPlacement=nil,nil,nil
  initialQueue,editedQueue=nil,nil;phase='prepare';since=now()
 end
 require('QueuePreflight').onTick(Events,function()
@@ -281,6 +372,11 @@ require('QueuePreflight').onTick(Events,function()
   assert(now()-since<90000,'radio settings timeout '..tostring(case())..' phase='..phase)
   if phase=='prepare'then
    assert(empty(),'radio settings require an empty initial native queue')
+   if not placementState then placement=P.choose(player);placementState=P.begin(player,placement)end
+   if not clientPlacement then
+    clientPlacement=P.poll(placementState);if not clientPlacement then return end
+    raw('CLIENT_PLACEMENT',{case=case(),proof=clientPlacement})
+   end
    phase='prepared';request('Prepare');return
   elseif phase=='prepared'and ids then
    state=F.resolve(player,ids);if not state or not initialReady()then return end

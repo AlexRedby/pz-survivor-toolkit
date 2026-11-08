@@ -1,5 +1,6 @@
 -- Authority owns all scene mutations; snapshots after preparation are read-only.
 local F={}
+local P=require 'QueueEnergyPlacement'
 local function ids(root,nested)
  local result={};local items=root:getItems()
  for i=0,items:size()-1 do local item=items:get(i);result[#result+1]=item:getID()
@@ -20,9 +21,12 @@ local function book(player,kind,left)
  item:setAlreadyReadPages(pages-left);player:setAlreadyReadPages(kind,pages-left)
  return item,{id=item:getID(),type=kind,pages=pages,initial=pages-left}
 end
-function F.prepare(player,case,mode)
+function F.prepare(player,case,mode,target,proof)
  assert(case=='movement-cancel'or case=='clear-queue')
- local origin=require('QueueEnergyPlacement')(player);local x,y,z=origin:getX(),origin:getY(),origin:getZ()
+ target=P.target(target)
+ assert(P.at(player,target),'recovery authority actor left settled placement')
+ assert(proof and proof.mode==(isServer()and'replica'or'local'),'recovery authority placement role differs')
+ local x,y,z=target.x,target.y,target.z
  local generator=IsoGenerator.new(assert(instanceItem('Base.Generator')),getCell(),getCell():getGridSquare(x,y+1,z))
  generator:setCondition(100);generator:setFuel(10);generator:setActivated(true)
  local square=assert(getCell():getGridSquare(x-1,y,z))
@@ -31,7 +35,7 @@ function F.prepare(player,case,mode)
  data:setPower(1);data:setMinChannelRange(88000);data:setMaxChannelRange(108000);data:setChannelRaw(90000)
  data:setDeviceVolumeRaw(.5);data:setMicIsMuted(false);data:setTurnedOnRaw(true);getGameTime():setTimeOfDay(12)
  local front,frontId=book(player,'Base.BookCarpentry1',3);local tail,tailId=book(player,'Base.BookCooking1',2)
- local spec={case=case,mode=mode,tv=identity(tv),front=frontId,tail=tailId,origin={x=x,y=y,z=z}}
+ local spec={case=case,mode=mode,tv=identity(tv),front=frontId,tail=tailId,origin=target,placementProof=proof}
  if isServer()then tv:transmitCompleteItemToClients();for _,item in ipairs({front,tail})do sendAddItemToContainer(player:getInventory(),item)end end
  return{player=player,tv=tv,data=data,front=front,tail=tail,ids=spec,generator=generator}
 end
@@ -45,8 +49,7 @@ function F.resolve(player,spec)
  local root=player:getInventory();local tv=television(spec.tv)
  local front,tail=root:getItemById(spec.front.id),root:getItemById(spec.tail.id)
  if not tv or not front or not tail or front:getContainer()~=root or tail:getContainer()~=root then return end
- local p=spec.origin
- if math.floor(player:getX())~=p.x or math.floor(player:getY())~=p.y or math.floor(player:getZ())~=p.z then player:teleportTo(p.x+.5,p.y+.5,p.z);return end
+ assert(P.at(player,spec.origin),'recovery client actor left settled placement')
  -- Actor-local seed is established before the first paid prefix/native action.
  for _,name in ipairs({'front','tail'})do local item=name=='front'and front or tail;local s=spec[name]
   assert(item:getFullType()==s.type and item:getNumberOfPages()==s.pages)

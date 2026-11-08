@@ -19,8 +19,69 @@ from queue_checks.adapters import book_controls as adapter, book_controls_verifi
 from queue_checks import adapters, native
 import check_action_queue as cli
 
+def placement_proof(mode, target):
+    actual = dict(target, square=dict(target), currentSquare=dict(target))
+    if mode == 'local':
+        actual.update(queued=0, timed=False, moving=False, hasPath=False, deferredX=0, deferredY=0)
+    else:
+        actual['x'] += .25
+    return dict(mode=mode, target=dict(target), actual=actual, teleports=1 if mode == 'local' else 0,
+                stableMs=500, quietMs=500 if mode == 'local' else 0, elapsedMs=1100 if mode == 'local' else 600)
+
 
 class BookControlTests(unittest.TestCase):
+    def test_placement_requires_independent_settled_client_and_authority_roles(self):
+        self.assertEqual(self.check(self.evidence()), [])
+        for mutate in (
+                lambda r: r.pop('clientPlacement'),
+                lambda r: r['clientPlacement'].update(teleports=2),
+                lambda r: r['clientPlacement']['actual'].update(moving=True),
+                lambda r: r['clientPlacement']['actual']['currentSquare'].update(x=99),
+                lambda r: r['ids'].update(placementProof=copy.deepcopy(r['clientPlacement'])),
+                lambda r: r['ids']['placementProof'].update(stableMs=499),
+                lambda r: r['ids']['placementProof']['actual'].update(x=99),
+                lambda r: r['ids']['origin'].update(x=99)):
+            evidence=self.evidence();mutate(evidence[0]);self.assertTrue(self.check(evidence))
+
+    def test_authority_waits_for_replica_and_fresh_arrival_before_any_preparation(self):
+        lua=shutil.which('luajit') or shutil.which('lua')
+        if not lua:self.skipTest('Lua runtime unavailable')
+        script=r"""
+local command,tick,settled,at,prepares,received=false,false,false,true,0,{}
+Events={OnClientCommand={Add=function(f)command=f end},OnTick={Add=function(f)tick=f end}}
+function isServer()return true end
+function getTimestampMs()return 100 end
+function sendServerCommand(_,_,name,args)received[#received+1]=name end
+local target={x=10,y=20,z=0}
+local player={getUsername=function()return 'client1'end,hasTimedActions=function()return false end,
+ getCharacterActions=function()return {isEmpty=function()return true end}end}
+local F={same=function(a,b)return a==b or a.case~=nil and a.case==b.case end,restoreCapacity=function()end}
+function F.prepare(p,case,previous,placement)
+ assert(at and settled and placement==target);prepares=prepares+1
+ if prepares==2 then assert(previous and previous.ids.case=='root.header-cancel')end
+ return {ids={case=case,origin=target}}
+end
+function F.snapshot(s)return {case=s.ids.case}end
+package.preload.QueueBookControls=function()return F end
+package.preload.QueueEnergyPlacement=function()return {target=function(v)return v end,
+ observe=function(p,t)assert(p==player and t==target);return {}end,
+ poll=function()return settled and {mode='replica'}or nil end,at=function()return at end}end
+package.preload.QueueHealthEvents=function()return {encode=function()return '{}'end}end
+package.preload.QueueTestSelection=function()return {cases={'root.header-cancel','world.header-cancel'}}end
+assert(loadfile(arg[1]))()
+local function prepare(case)
+ command('BookControlsTest','Prepare',player,{case=case,placement=target,clientPlacement={mode='local',teleports=1,target=target}})
+end
+prepare('root.header-cancel');tick();tick();assert(prepares==0 and #received==0)
+settled=true;tick();assert(prepares==1 and received[1]=='Prepared')
+command('BookControlsTest','Verify',player,{case='root.header-cancel',expected={case='root.header-cancel'}});tick()
+settled=false;prepare('world.header-cancel');tick();assert(prepares==1)
+settled=true;at=false;tick();assert(prepares==1 and received[#received]=='Failed')
+at=true;prepare('world.header-cancel');tick();assert(prepares==2)
+"""
+        checked=subprocess.run([lua,'-',str(ROOT/'tests/native_queue/book-controls/server/ZZBookControlsServer.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(checked.returncode,0,checked.stdout+checked.stderr)
+
     def test_native_binding_evidence_requires_compiled_sources_and_supported_environment(self):
         value = dict(compatFactories=2, cartFactories=1, canonicalPairs=True, plainEnvironment=True,
                      debugDisabled=True, readOnly=True, scope='source-owned-upvalues-no-guard-calls')
@@ -69,6 +130,7 @@ class BookControlTests(unittest.TestCase):
                     front=dict(id=101, type='Base.BookCarpentry1', total=220, initial=218),
                     tail=dict(id=102, type='Base.BookCooking1', total=220, initial=219), pen=dict(id=103, type='Base.Pen'),
                     bag=dict(id=104, type='Base.Bag_Military', location='base:back') if source == 'worn-bag' else False)
+        spec.update(origin=dict(x=10,y=20,z=0), placementProof=placement_proof('replica' if kind == 'mp' else 'local', dict(x=10,y=20,z=0)))
         where = 104 if source == 'worn-bag' else source
         items = [dict(id=spec[n]['id'], type=spec[n]['type'], container=where if n == 'front' else 'root', condition=10, favorite=n != 'front' or source != 'world' or a.favorite_case(original_control), count=1) for n in ('front', 'tail', 'pen')]
         if source == 'worn-bag': items.append(dict(id=104, type=spec['bag']['type'], container='root', condition=10, favorite=False, count=1))
@@ -152,7 +214,7 @@ class BookControlTests(unittest.TestCase):
                 actionRef=returned['actionRef'], token=returned['token'], beforeAt=9, previewCheckedAt=10, afterAt=10, groupUnchangedAfterCommit=True,
                 before=copy.deepcopy(identity), after=copy.deepcopy(identity), previewUnchanged=True, actualReplicaReplacement=False)
         final = a.expected(spec, enabled, b, kind)
-        row = dict(event='case', suite='book-controls', kind=kind, mode=mode, actor='client1', id=case, status='passed', reason=False, ids=spec,
+        row = dict(event='case', suite='book-controls', kind=kind, mode=mode, actor='client1', id=case, status='passed', reason=False, ids=spec, clientPlacement=placement_proof('local',spec['origin']),
                    baseline=copy.deepcopy(seed), authorityBaseline=copy.deepcopy(seed), boundary=b, records=records, starts=starts,
                    resume=resume, tailSnapshot=copy.deepcopy(final), volumeSnapshot=copy.deepcopy(before), equipSnapshot=False if device else copy.deepcopy(before),
                    client=copy.deepcopy(final), server=copy.deepcopy(final), nativeMethodsUnchanged=True, finishedAt=99, reset=False,replicaGaps=[],capacity=False,blockedReturn=False,failureUI=False)
@@ -390,6 +452,7 @@ class BookControlTests(unittest.TestCase):
         if not lua: self.skipTest('LuaJIT not installed')
         source = r"""
 isClient=function()return false end
+package.preload.QueueEnergyPlacement=function()return {target=function(v)return v end,at=function()return true end}end
 local F=assert(loadfile(arg[1]))()
 local player={setPrimaryHandItem=function()error('PASSED_ID_PARSING')end}
 for case in arg[2]:gmatch('[^,]+')do
@@ -2151,6 +2214,7 @@ os.exit(0)
                     for metric in bank['metrics']:metric.update(rawMs=[sample_ms]*20,p95Ms=sample_ms,p99Ms=sample_ms)
             row, spec, baseline, final, admissions, boundaries, drains, acks = evidence
             authority = server if kind == 'mp' else client
+            client.append(raw('CLIENT_PLACEMENT',dict(case=case,proof=row['clientPlacement'])))
             authority.extend([raw('PREPARED', spec), raw('BASELINE', baseline), raw('VERIFIED', final)])
             if row.get('capacity') is not False: authority.append(raw('CAPACITY_LOST', row['capacity']))
             if row.get('blockedReturn') is not False:
@@ -2196,7 +2260,7 @@ os.exit(0)
         self.assertIn(Path(adapter.__file__).with_name('tv_controls.py'), paths)
         self.assertNotIn(ROOT / 'tests/test_queue_book_controls.py', paths)
         verifier_paths = adapter.verifier_sources(ROOT, self.selection())
-        self.assertEqual(verifier_paths, [Path(a.__file__), ROOT / 'tests/test_queue_book_controls.py'])
+        self.assertEqual(verifier_paths, [Path(a.__file__), ROOT / 'tools/queue_checks/placement.py', ROOT / 'tests/test_queue_book_controls.py'])
         self.assertTrue(all(path.is_file() for path in verifier_paths))
         self.assertFalse(set(paths) & set(verifier_paths))
         probe_source=ROOT / 'tests/native_queue/book-controls/java/Main.java'

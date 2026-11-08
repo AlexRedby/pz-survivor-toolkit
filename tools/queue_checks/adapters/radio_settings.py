@@ -6,6 +6,7 @@ import re
 import shutil
 
 from .. import report
+from ..placement import validate as validate_placement
 from ..mod_selection import metadata, mod_ids
 
 MODS = mod_ids(metadata(Path(__file__).resolve().parents[3] / 'SurvivorQoL-selected.ini')['Mods'])
@@ -43,7 +44,8 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [*sorted((root / 'radio-settings').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
-            root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
+            root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua',
+            Path(__file__).resolve().parents[1] / 'placement.py']
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
@@ -91,6 +93,18 @@ def _raw(text, marker):
     return rows
 
 
+def _preparation(value, name, target, cancelled):
+    expected = dict(name=name, helper='walkAdj', target={key: target[key] for key in ('x', 'y', 'z')},
+                    argumentCount=3, keepActions=True, owned=True, constructor=True, resolver=True,
+                    sameOperation=True, started=not cancelled, completed=not cancelled, cancelled=cancelled)
+    if not cancelled:
+        expected.update(children=0, succeeded=True)
+    return (isinstance(value, dict) and set(value) == set(expected)
+            and isinstance(value.get('target'), dict) and set(value['target']) == {'x', 'y', 'z'}
+            and all(type(v) is int for v in value['target'].values())
+            and all(type(value[key]) is type(wanted) and value[key] == wanted for key, wanted in expected.items()))
+
+
 def check_case(row, case, selection, prepared, verified):
     issues = []
     mode = selection['mode']
@@ -99,7 +113,7 @@ def check_case(row, case, selection, prepared, verified):
             or type(row.get('settleMilliseconds')) not in (int, float)
             or not math.isfinite(row['settleMilliseconds']) or row['settleMilliseconds'] < 500):
         issues.append('Missing completed native execution and idle settling')
-    if (not isinstance(ids, dict) or set(ids) != {'case', 'mode', 'a', 'b'} or ids.get('case') != case
+    if (not isinstance(ids, dict) or set(ids) != {'case', 'mode', 'a', 'b', 'origin', 'placementProof'} or ids.get('case') != case
             or ids.get('mode') != mode or prepared != ids):
         issues.append('Preparation does not match authoritative case/device identities')
     try:
@@ -112,6 +126,15 @@ def check_case(row, case, selection, prepared, verified):
             raise ValueError('radios are not adjacent to the common player square')
     except (KeyError, TypeError, ValueError):
         return issues + ['Invalid exact radio identities']
+    try:
+        validate_placement(row.get('clientPlacement'), ids.get('origin'), 'local')
+        validate_placement(ids.get('placementProof'), ids.get('origin'),
+                           'replica' if selection['kind'] == 'mp' else 'local')
+        if (ids['a']['x'] != ids['origin']['x'] + 1 or ids['b']['x'] != ids['origin']['x'] - 1
+                or any(ids[name][key] != ids['origin'][key] for name in ('a', 'b') for key in ('y', 'z'))):
+            raise ValueError('radio offsets differ from placement')
+    except (ValueError, TypeError, KeyError) as error:
+        issues.append('Invalid settled radio placement: ' + str(error))
     specs = [('anchor', 'SetVolume', 'b', .25), ('firstVolume', 'SetVolume', 'a', .25)]
     if case == 'barrier':
         specs += [('channel', 'SetChannel', 'a', 95000), ('powerOff', 'ToggleOnOff', 'a', None),
@@ -126,15 +149,25 @@ def check_case(row, case, selection, prepared, verified):
                 else ['anchor', 'lastVolume', 'firstVolume', 'mic', 'channel', 'tail'])
     if row.get('initialQueue') != original or row.get('editedQueue') != expected or row.get('order') != expected:
         issues.append('Native dispatch/edit/start order differs')
+    def physical(names):
+        return [part for name in names for part in ([name + ':approach', name]
+                if mode == 'toolkit' and name != 'anchor' else [name])]
+    if row.get('initialPhysicalQueue') != physical(original) or row.get('editedPhysicalQueue') != physical(expected):
+        issues.append('Exact physical radio preparation/setter queue differs')
     commands = row.get('commands', [])
     if not isinstance(commands, list) or len(commands) != len(specs):
         issues.append('Missing exact native commands')
     else:
         for command, (name, action, target, value) in zip(commands, specs):
             removed = name in cancelled
+            if mode == 'toolkit':
+                if not _preparation(command.get('preparation'), name, ids[target], removed):
+                    issues.append('Exact owned radio approach/zero-child completion differs: ' + name)
+            elif command.get('preparation') is not None:
+                issues.append('Unexpected native-mode radio approach dispatcher: ' + name)
             if (not isinstance(command, dict) or command.get('name') != name or command.get('mode') != action
                     or command.get('target') != target or type(command.get('value')) is not type(value)
-                    or command['value'] != value or command.get('producer') != 'native RWM callback'
+                    or command.get('value') != value or command.get('producer') != 'native RWM callback'
                     or not _close(command.get('duration'), 30) or command.get('started') is not (not removed)
                     or command.get('progress') is not (not removed) or command.get('cancelled') is not removed
                     or not removed and (type(command.get('effectiveDuration')) not in (int, float)
@@ -177,6 +210,9 @@ def verify(root, selection, catalog):
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else client
         rows = [r for r in report.events(client) if r.get('suite') == 'radio-settings' and r.get('event') == 'case']
         prepared, verified = _raw(authority, 'PREPARED'), _raw(authority, 'VERIFIED')
+        placements = _raw(client, 'CLIENT_PLACEMENT')
+        if [value.get('case') for value in placements] != selection['cases']:
+            issues.append('Client radio placement missing, duplicated or out of order')
         if [r.get('id') for r in rows] != selection['cases']:
             issues.append('Radio case evidence missing, duplicated or out of order')
         if [r.get('case') for r in prepared] != selection['cases'] or [r.get('case') for r in verified] != selection['cases']:
@@ -185,6 +221,8 @@ def verify(root, selection, catalog):
             row = rows[index] if index < len(rows) else {}
             errors = check_case(row, case, selection, prepared[index] if index < len(prepared) else None,
                                 verified[index] if index < len(verified) else None)
+            if index >= len(placements) or placements[index] != {'case': case, 'proof': row.get('clientPlacement')}:
+                errors.append('Raw client radio placement differs from case proof')
             if row.get('actor') != 'client1' or row.get('kind') != selection['kind'] or row.get('mode') != selection['mode']:
                 errors.append('Case actor/kind/mode differs')
             issues += [case + ': ' + error for error in errors]

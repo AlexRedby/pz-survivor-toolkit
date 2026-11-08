@@ -6,6 +6,7 @@ import re
 import shutil
 
 from .. import report
+from ..placement import validate as validate_placement
 from ..mod_selection import metadata, mod_ids
 
 PROJECT = Path(__file__).resolve().parents[3]
@@ -44,7 +45,8 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [*sorted((root / 'tv-controls').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
-            root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
+            root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua',
+            Path(__file__).resolve().parents[1] / 'placement.py']
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
@@ -148,6 +150,18 @@ def _duration(row):
             and abs(after - before) <= max(.001, row['duration'] * .00001)
             and min(before, after) - .001 <= effective <= max(before, after) + .001)
 
+def _preparation(value, name, target, cancelled):
+    expected = dict(name=name, helper='walkAdj', target={key: target[key] for key in ('x', 'y', 'z')},
+                    argumentCount=3, keepActions=True, owned=True, constructor=True, resolver=True,
+                    sameOperation=True, started=not cancelled, completed=not cancelled, cancelled=cancelled)
+    if not cancelled:
+        expected.update(children=0, succeeded=True)
+    return (isinstance(value, dict) and set(value) == set(expected)
+            and isinstance(value.get('target'), dict) and set(value['target']) == {'x', 'y', 'z'}
+            and all(type(v) is int for v in value['target'].values())
+            and all(type(value[key]) is type(wanted) and value[key] == wanted for key, wanted in expected.items()))
+
+
 def check_case(row, case, selection, prepared, authority_baseline, verified, acks):
     issues = []
     mode = selection['mode']
@@ -166,6 +180,15 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, ack
                 raise ValueError('native book seed differs')
     except (KeyError, TypeError, ValueError):
         return ['Missing exact authoritative TV/item identities']
+    try:
+        validate_placement(row.get('clientPlacement'), ids.get('origin'), 'local')
+        validate_placement(ids.get('placementProof'), ids.get('origin'),
+                           'replica' if selection['kind'] == 'mp' else 'local')
+        if (ids['tv']['x'] != ids['origin']['x'] - 1
+                or any(ids['tv'][key] != ids['origin'][key] for key in ('y', 'z'))):
+            raise ValueError('TV offset differs from placement')
+    except (ValueError, TypeError, KeyError) as error:
+        issues.append('Invalid settled TV placement: ' + str(error))
     if (row.get('status') != 'passed' or row.get('queueIdle') is not True
             or not _number(row.get('settleMilliseconds')) or row['settleMilliseconds'] < 1000):
         issues.append('Missing native completion/idle settling')
@@ -181,6 +204,11 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, ack
     expected = EDITED if mode == 'toolkit' else ORIGINAL
     if row.get('initialQueue') != ORIGINAL or row.get('editedQueue') != expected or row.get('order') != expected:
         issues.append('Native queue, atomic edit or actual start order differs')
+    def physical(names):
+        return [part for name in names for part in ([name + ':approach', name]
+                if mode == 'toolkit' and name in ('volume', 'redundant') else [name])]
+    if row.get('initialPhysicalQueue') != physical(ORIGINAL) or row.get('editedPhysicalQueue') != physical(expected):
+        issues.append('Exact physical TV preparation/setter queue differs')
     edit = row.get('edit', {})
     if (not isinstance(edit, dict) or edit.get('reordered') is not (mode == 'toolkit')
             or edit.get('cancelled') != (['redundant'] if mode == 'toolkit' else [])
@@ -199,6 +227,12 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, ack
                 or r.get('cancelled') is not cancelled or r.get('started') is not (not cancelled) or r.get('progress') is not (not cancelled)
                 or not _number(r.get('duration')) or r['duration'] <= 0 or not book and r['duration'] != 30):
             issues.append('Native command/cancellation differs: ' + str(name)); continue
+        scoped = mode == 'toolkit' and name in ('volume', 'redundant')
+        if scoped:
+            if not _preparation(r.get('preparation'), name, ids['tv'], cancelled):
+                issues.append('Exact owned TV approach/zero-child completion differs: ' + str(name))
+        elif r.get('preparation') is not None:
+            issues.append('Unexpected TV approach dispatcher: ' + str(name))
         if cancelled:
             if r.get('ack') is not None: issues.append('Cancelled setter received a native transaction')
             continue
@@ -252,6 +286,9 @@ def verify(root, selection, catalog):
             issues.append('Missing exact TV setup/completion gate')
         prepared, baseline, verified = (_raw(authority, m) for m in ('PREPARED', 'BASELINE', 'VERIFIED'))
         acks = _raw(text, 'ACK')
+        placements = _raw(text, 'CLIENT_PLACEMENT')
+        if [value.get('case') for value in placements] != selection['cases']:
+            issues.append('Client TV placement missing, duplicated or out of order')
         if ([r.get('id') for r in rows] != selection['cases'] or any([r.get('case') for r in values] != selection['cases'] for values in (prepared, baseline, verified))):
             issues.append('TV case/authority evidence missing, duplicated or out of order')
         for i, case in enumerate(selection['cases']):
@@ -259,6 +296,8 @@ def verify(root, selection, catalog):
             errors = check_case(row, case, selection, prepared[i] if i < len(prepared) else None,
                                 baseline[i] if i < len(baseline) else None, verified[i] if i < len(verified) else None,
                                 [a for a in acks if a.get('case') == case])
+            if i >= len(placements) or placements[i] != {'case': case, 'proof': row.get('clientPlacement')}:
+                errors.append('Raw client TV placement differs from case proof')
             if row.get('actor') != 'client1' or row.get('kind') != selection['kind'] or row.get('mode') != selection['mode']:
                 errors.append('TV actor/kind/mode differs')
             issues += [case + ': ' + e for e in errors]

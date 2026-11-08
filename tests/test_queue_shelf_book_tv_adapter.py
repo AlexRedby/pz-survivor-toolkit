@@ -1,4 +1,6 @@
 """Strict log-contract checks for the shelf-book/TV live fixture."""
+import copy
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,6 +16,22 @@ from queue_checks.adapters import shelf_book_tv as adapter
 STAMP = '2026-10-20 12:00:00 '
 MARK = '[SHELF_TV] '
 
+def placement_proof(mode, target):
+    actual = dict(target, square=dict(target), currentSquare=dict(target))
+    if mode == 'local':
+        actual.update(queued=0, timed=False, moving=False, hasPath=False, deferredX=0, deferredY=0)
+    else:
+        actual['x'] += .25
+    return dict(mode=mode, target=dict(target), actual=actual, teleports=1 if mode == 'local' else 0,
+                stableMs=500, quietMs=500 if mode == 'local' else 0, elapsedMs=1100 if mode == 'local' else 600)
+
+
+def placement_ids(kind, case):
+    target=dict(x=9,y=20,z=0)
+    return dict(case=case, placement=target, placementProof=placement_proof('replica' if kind=='mp' else 'local',target),
+                shelf=11, book=22, tape=33, mediaIndex=44, mediaType=1, x=10,y=20,z=0,
+                shelfX=8,shelfY=20,shelfZ=0,generatorX=9,generatorY=21,generatorZ=0)
+
 
 class ShelfBookTVAdapterTests(unittest.TestCase):
     def setUp(self):
@@ -26,7 +44,7 @@ class ShelfBookTVAdapterTests(unittest.TestCase):
                     clients=1, languages=['EN'], mods=list(adapter.MODS),
                     options={'mp_host': True} if kind == 'mp' else {})
 
-    def client_log(self, mode='toolkit', case='demote-and-control'):
+    def client_log(self, mode='toolkit', case='demote-and-control', kind='sp'):
         lines = [
             'PREPARED shelfId=11 bookId=22 tv=10,20,0 tapeId=33 mediaIndex=44 mediaType=1 power=electric daylight=true',
             'PROGRESS authority=server pagesBefore=16 pagesCommitted=17',
@@ -58,6 +76,9 @@ class ShelfBookTVAdapterTests(unittest.TestCase):
             lines.insert(lines.index('RETURN sameBook=true exactCount=1'),
                          'BAG_AUTHORITY bagId=55 location=Back worn=true root=true sameContainer=true empty=true tapeRemoved=true actor=client1')
             lines[-1] = 'COMPLETE case=worn-bag'
+        ids=placement_ids(kind,case);proof=placement_proof('local',ids['placement'])
+        lines[:0]=['CLIENT_PLACEMENT '+json.dumps(dict(case=case,proof=proof)), 'PREPARED_IDS '+json.dumps(ids)]
+        lines.insert(len(lines)-1,'CASE '+json.dumps(dict(case=case,ids=ids,clientPlacement=proof)))
         return '\n'.join(STAMP + MARK + line for line in lines) + '\n'
 
     def server_log(self, case='demote-and-control'):
@@ -69,10 +90,11 @@ class ShelfBookTVAdapterTests(unittest.TestCase):
         if case == 'worn-bag':
             lines.insert(1, 'BAG_PREPARED bagId=55 location=Back tapeId=33 worn=true root=true tapeInBag=true')
             lines.append('BAG_AUTHORITY bagId=55 location=Back worn=true root=true sameContainer=true empty=true tapeRemoved=true actor=client1')
+        lines.insert(0,'PREPARED_IDS '+json.dumps(placement_ids('mp',case)))
         return '\n'.join(STAMP + MARK + line for line in lines) + '\n'
 
     def verify(self, kind='sp', mode='toolkit', client=None, server=None, case='demote-and-control'):
-        (self.root / 'client1-launch.log').write_text(self.client_log(mode, case) if client is None else client)
+        (self.root / 'client1-launch.log').write_text(self.client_log(mode, case, kind) if client is None else client)
         if kind == 'mp':
             (self.root / 'server-launch.log').write_text(self.server_log(case) if server is None else server)
         return adapter.verify(self.root, self.selection(kind, mode, case), {})
@@ -85,6 +107,44 @@ class ShelfBookTVAdapterTests(unittest.TestCase):
                         result = self.verify(kind, mode, case=case)
                         self.assertEqual(result['issues'], [])
                         self.assertEqual(result['outcomes'][0]['case'], case)
+
+    def test_placement_receipts_reject_unsettled_wrong_role_and_mismatched_targets(self):
+        client=self.client_log(kind='mp')
+        def changed(marker,mutate):
+            lines=client.splitlines()
+            for index,line in enumerate(lines):
+                prefix=STAMP+MARK+marker+' '
+                if line.startswith(prefix):
+                    row=json.loads(line[len(prefix):]);mutate(row);lines[index]=prefix+json.dumps(row)
+            return '\n'.join(lines)+'\n'
+        for marker,mutate in (
+                ('CLIENT_PLACEMENT',lambda r:r['proof'].update(teleports=2)),
+                ('CLIENT_PLACEMENT',lambda r:r['proof']['actual'].update(hasPath=True)),
+                ('CASE',lambda r:r.pop('clientPlacement')),
+                ('CASE',lambda r:r['clientPlacement']['actual']['square'].update(x=99)),
+                ('PREPARED_IDS',lambda r:r['placement'].update(x=99)),
+                ('PREPARED_IDS',lambda r:r['placementProof'].update(mode='local'))):
+            with self.subTest(marker=marker):self.assertTrue(self.verify('mp',client=changed(marker,mutate))['issues'])
+        local_line=next(line for line in client.splitlines()if MARK+'CLIENT_PLACEMENT 'in line)
+        self.assertTrue(self.verify('mp',client=client+'\n'+local_line)['issues'])
+        self.assertTrue(self.verify('mp',client=client.replace(local_line,'',1))['issues'])
+
+    def test_authority_preparation_rejects_unsettled_actor_before_scene_mutations(self):
+        lua=shutil.which('luajit') or shutil.which('lua')
+        if not lua:self.skipTest('Lua runtime unavailable')
+        script=r"""
+function isClient()return false end
+local checks=0
+package.preload.QueueEnergyPlacement=function()return {target=function(v)return v end,at=function()checks=checks+1;return false end}end
+local F=assert(loadfile(arg[1]))()
+for _,case in ipairs({'demote-and-control','worn-bag'})do
+ local ok,problem=pcall(F.prepare,{},case,{x=1,y=2,z=0})
+ assert(not ok and tostring(problem):find('has not settled',1,true),'scene touched before settled arrival: '..tostring(problem))
+end
+assert(checks==2)
+"""
+        checked=subprocess.run([lua,'-',str(ROOT/'tests/native_queue/shelf-book-tv/shared/QueueShelfBookTV.lua')],input=script,text=True,capture_output=True)
+        self.assertEqual(checked.returncode,0,checked.stdout+checked.stderr)
 
     def test_case_selection_requires_one_known_case(self):
         self.assertEqual([case['id'] for case in adapter.definitions()['shelf-book-tv']['cases']], list(adapter.CASES))
@@ -237,7 +297,7 @@ assert(Fixture.pickupArrived(state,insert) and state.pickedTape==old and state.t
         checked = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/shelf-book-tv/shared/QueueShelfBookTV.lua')],
                                  input=script, capture_output=True, text=True)
         self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
-        client = self.client_log(case='worn-bag').replace('exactTape=true root=true\n',
+        client = self.client_log(case='worn-bag',kind='mp').replace('exactTape=true root=true\n',
                                                         'exactTape=true root=true replicaChanged=true\n')
         self.assertEqual(self.verify('mp', client=client, case='worn-bag')['issues'], [])
 

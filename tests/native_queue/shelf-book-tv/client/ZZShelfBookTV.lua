@@ -2,6 +2,9 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'ISUI/ISInventoryPaneContextMenu'
 require 'RadioCom/ISRadioWindow'
 local Fixture=require 'QueueShelfBookTV'
+local P=require 'QueueEnergyPlacement';local JSON=require 'QueueHealthEvents'
+local placement,target,clientPlacement
+local function raw(marker,row)print('[SHELF_TV] '..marker..' '..JSON.encode(row))end
 local config=require 'QueueTestSelection'
 local case=config.cases[1]
 assert(#config.cases==1 and (case=='demote-and-control' or case=='worn-bag'),'select one shelf/TV case')
@@ -351,6 +354,10 @@ local function queueTV()
     end
     phase='running'
 end
+local function completed()
+    raw('CASE',{case=case,ids=ids,clientPlacement=clientPlacement})
+    print(MARK..'COMPLETE case='..case);done=true
+end
 local function finish()
     local value=Fixture.verify(state)
     if config.kind=='mp' then
@@ -364,13 +371,15 @@ local function finish()
     end
     print(MARK..'RETURN sameBook=true exactCount=1')
     print(MARK..'MEDIA tapeDebited=true exactTape=true mediaIndex='..value.mediaIndex..' mediaType='..value.mediaType..' title=Carzone playing=true')
-    print(MARK..'COMPLETE case='..case);done=true
+    completed()
 end
 
 Events.OnServerCommand.Add(function(module,command,args)
     if module~='ShelfBookTVTest' then return end
     assert(args.ok~=false,args.error)
-    if command=='Prepared' then ids=args.ids;phase='wait-fixture';since=getTimestampMs()
+    if command=='Prepared' then
+        assert(phase=='prepare-wait'and args.ids.case==case and Fixture.same(args.ids.placement,target),'unexpected shelf/TV preparation receipt')
+        ids=args.ids;raw('PREPARED_IDS',ids);phase='wait-fixture';since=getTimestampMs()
     elseif command=='Progressed' then progressReceipt=args
     elseif command=='Verified' then receipt=args end
 end)
@@ -387,13 +396,20 @@ require('QueuePreflight').onTick(Events,function()
         local player=getPlayer();if not player or not player:getSquare() then return end
         assert(Toolkit.Settings.actionQueue()==(config.mode=='toolkit'),'wrong queue mode')
         if phase=='prepare' then
+            if config.kind=='mp' then assert(isClient(),'Host client connection not ready')
+            else assert(not isClient() and not isServer(),'SP fixture expected')end
+            target=P.choose(player);placement=P.begin(player,target);phase='placement';return
+        end
+        if phase=='placement' then
+            clientPlacement=P.poll(placement);if not clientPlacement then return end
+            assert(P.at(player,target),'shelf/TV placement changed before preparation')
+            raw('CLIENT_PLACEMENT',{case=case,proof=clientPlacement})
             if config.kind=='mp' then
-                assert(isClient(),'Host client connection not ready')
-                sendClientCommand('ShelfBookTVTest','Prepare',{case=case})
+                sendClientCommand('ShelfBookTVTest','Prepare',{case=case,placement=target,clientPlacement=clientPlacement})
                 phase='prepare-wait';return
             end
-            assert(not isClient() and not isServer(),'SP fixture expected')
-            state=Fixture.prepare(player,case);ids=state.ids;phase='start-read';return
+            state=Fixture.prepare(player,case,target);ids=state.ids;ids.placementProof=clientPlacement
+            raw('PREPARED_IDS',ids);phase='start-read';return
         end
         if phase=='prepare-wait' then return end
         if phase=='wait-fixture' then
@@ -401,6 +417,7 @@ require('QueuePreflight').onTick(Events,function()
             phase='start-read';return
         end
         if phase=='start-read' then
+            assert(P.at(player,ids.placement),'shelf/TV placement changed before native read')
             assert(#queue().queue==0 and not player:hasTimedActions(),'fixture queue not empty')
             if not state.data:canBePoweredHere() or player:tooDarkToRead() then return end
             assert(state.data:canBePoweredHere() and not player:tooDarkToRead(),'fixture electricity/daylight precondition differs')
@@ -424,7 +441,7 @@ require('QueuePreflight').onTick(Events,function()
             readerOperation=reader.toolkitQueueOperation
             if config.mode=='toolkit' then assert(type(readerOperation)=='table','reading operation token was not captured') end
             if config.kind=='mp' then
-                sendClientCommand('ShelfBookTVTest','Progress',{book=ids.book,pagesBefore=initialPages})
+                sendClientCommand('ShelfBookTVTest','Progress',{case=case,book=ids.book,pagesBefore=initialPages})
                 phase='wait-progress';since=getTimestampMs();return
             end
             committedPages=state.book:getAlreadyReadPages()
@@ -498,7 +515,7 @@ require('QueuePreflight').onTick(Events,function()
             end
             print(MARK..'RETURN sameBook=true exactCount=1')
             print(MARK..'MEDIA tapeDebited=true exactTape=true mediaIndex='..receipt.mediaIndex..' mediaType='..receipt.mediaType..' title=Carzone playing=true')
-            print(MARK..'COMPLETE case='..case);done=true
+            completed()
         end
     end)
     if not ok then done=true;print('[QUEUE_TEST] FAIL shelf-book-tv '..tostring(err)) end

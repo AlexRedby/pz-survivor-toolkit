@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 from .. import report
+from ..placement import validate as validate_placement
 from .book_controls import (
     CAPACITY_CASES, DEVICE_ONLY_CASES, FAVORITE_CASES, complete, raw, selected_cases, validate,
 )
@@ -562,6 +563,8 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         device = device_only(original_control)
         demote = control == 'demote-reader'
         ids, boundary, records = row['ids'], row['boundary'], row['records']
+        validate_placement(row.get('clientPlacement'), ids.get('origin'), 'local')
+        validate_placement(ids.get('placementProof'), ids.get('origin'), 'replica' if selection['kind'] == 'mp' else 'local')
         errors.extend(_nonfinite_case_errors(row, ids, enabled))
         errors.extend(native_request_errors(row, case, selection, ids))
         errors.extend(native_transfer_stop_errors(row, case, selection, ids))
@@ -1301,6 +1304,9 @@ def verify(root, selection, catalog):
         prepared, baselines, verified = (raw(authority, marker) for marker in ('PREPARED', 'BASELINE', 'VERIFIED'))
         if [r.get('id') for r in rows] != cases or any([r.get('case') for r in values] != cases for values in (prepared, baselines, verified)):
             issues.append('Cases or raw authoritative snapshots missing, duplicated or reordered')
+        placements = raw(text, 'CLIENT_PLACEMENT')
+        if placements != [dict(case=row.get('id'), proof=row.get('clientPlacement')) for row in rows] or [r.get('case') for r in placements] != cases:
+            issues.append('Client placement receipts missing, duplicated, foreign or reordered')
         capacities = raw(authority, 'CAPACITY_LOST')
         if [r.get('case') for r in capacities] != [case for case in cases if case in CAPACITY_CASES]: issues.append('Capacity interventions missing, duplicated or reordered')
         admissions, boundaries, drains, acks = (raw(text, marker) for marker in ('ADMISSION', 'BOUNDARY', 'DRAIN', 'ACK'))

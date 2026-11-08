@@ -13,6 +13,23 @@ from queue_checks import report
 from queue_checks.adapters import radio_settings as adapter
 
 
+def placement_proof(target, mode='local'):
+    actual = dict(target, square=dict(target), currentSquare=dict(target))
+    if mode == 'local':
+        actual.update(queued=0, timed=False, moving=False, hasPath=False, deferredX=0, deferredY=0)
+    return dict(mode=mode, target=dict(target), actual=actual, teleports=1 if mode == 'local' else 0,
+                stableMs=500, quietMs=500 if mode == 'local' else 0, elapsedMs=1500)
+
+
+def preparation_proof(name, target, cancelled=False):
+    result = dict(name=name, helper='walkAdj', target={key: target[key] for key in ('x', 'y', 'z')},
+                  argumentCount=3, keepActions=True, owned=True, constructor=True, resolver=True,
+                  sameOperation=True, started=not cancelled, completed=not cancelled, cancelled=cancelled)
+    if not cancelled:
+        result.update(children=0, succeeded=True)
+    return result
+
+
 class RadioSettingsAdapterTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -27,6 +44,9 @@ class RadioSettingsAdapterTests(unittest.TestCase):
     def evidence(self, case, kind='sp', mode='toolkit'):
         ids = dict(case=case, mode=mode, a=dict(x=11, y=20, z=0, index=2),
                    b=dict(x=9, y=20, z=0, index=1))
+
+        ids['origin'] = dict(x=10, y=20, z=0)
+        ids['placementProof'] = placement_proof(ids['origin'], 'replica' if kind == 'mp' else 'local')
 
         def snapshot(initial=False, server=False):
             devices = {}
@@ -62,25 +82,33 @@ class RadioSettingsAdapterTests(unittest.TestCase):
             if not removed:
                 command.update(effectiveDuration=30, nativeDurationExpected=30,
                                startedAt=1000 + expected.index(name) * 100)
+            if mode == 'toolkit':
+                command['preparation'] = preparation_proof(name, ids[target], removed)
             commands.append(command)
         before = snapshot(initial=True)
         client = snapshot()
         authority = snapshot(server=kind == 'mp')
         row = dict(suite='radio-settings', event='case', id=case, kind=kind, mode=mode,
-                   actor='client1', status='passed', ids=copy.deepcopy(ids), commands=commands,
+                   actor='client1', status='passed', ids=copy.deepcopy(ids), clientPlacement=placement_proof(ids['origin']), commands=commands,
                    initialQueue=initial, editedQueue=list(expected), order=list(expected),
                    edit=dict(reordered=case == 'reorder' and mode == 'toolkit', cancelled=cancelled,
                              denied=case == 'barrier' and mode == 'toolkit', reason='move_dependent',
                              untouchedBefore=True, nativeDurations=True, before=before),
                    client=client, server=copy.deepcopy(authority), queueIdle=True, settleMilliseconds=2000)
+        def physical(names):
+            return [part for name in names for part in ([name + ':approach', name]
+                    if mode == 'toolkit' and name != 'anchor' else [name])]
+        row.update(initialPhysicalQueue=physical(initial), editedPhysicalQueue=physical(expected))
         return row, ids, authority
 
     def verify(self, selection, evidence, *, prepared=True, verified=True, malformed_raw=None,
-               completion='[RADIO_SETTINGS] COMPLETE'):
+               completion='[RADIO_SETTINGS] COMPLETE', placements=None):
         row, ids, receipt = evidence
         # Use timestamped records just as the live launcher does.
         stamp = 'LOG : General > '
-        client = stamp + '[QUEUE_CHECK] ' + json.dumps(row) + '\n' + completion + '\n'
+        placement_rows = [{'case': row['id'], 'proof': row.get('clientPlacement')}] if placements is None else placements
+        client = ''.join(stamp + '[RADIO_SETTINGS] CLIENT_PLACEMENT ' + json.dumps(value) + '\n' for value in placement_rows)
+        client += stamp + '[QUEUE_CHECK] ' + json.dumps(row) + '\n' + completion + '\n'
         client += ''.join('[QUEUE_TEST] ' + marker + '\n' for marker in
                           ('VOICE_DISABLED', 'DISPLAY_READY', 'PREFLIGHT_COMPLETE',
                            'NATIVE_CONNECTED' if selection['kind'] == 'mp' else 'TRUE_SP'))
@@ -103,6 +131,215 @@ class RadioSettingsAdapterTests(unittest.TestCase):
 
     def matrix(self):
         return itertools.product(adapter.CASES, ('sp', 'mp'), ('native', 'toolkit'))
+
+    def test_placement_proofs_require_independent_roles_and_settled_squares(self):
+        for kind in ('sp', 'mp'):
+            selection = self.selection('reorder', kind)
+            for location in ('client', 'authority'):
+                for mutation in ('missing', 'wrong-role', 'teleports', 'unsettled', 'stale-square', 'target', 'motion'):
+                    if location == 'authority' and kind == 'mp' and mutation == 'motion':
+                        continue
+                    with self.subTest(kind=kind, location=location, mutation=mutation):
+                        evidence = self.evidence('reorder', kind)
+                        row, ids = evidence[:2]
+                        owner = row if location == 'client' else ids
+                        key = 'clientPlacement' if location == 'client' else 'placementProof'
+                        proof = owner[key]
+                        if mutation == 'missing': owner.pop(key)
+                        elif mutation == 'wrong-role': proof['mode'] = 'replica' if proof['mode'] == 'local' else 'local'
+                        elif mutation == 'teleports': proof['teleports'] += 1
+                        elif mutation == 'unsettled': proof['stableMs'] = 499
+                        elif mutation == 'stale-square': proof['actual']['currentSquare']['x'] += 1
+                        elif mutation == 'target': proof['target']['x'] += 1
+                        else: proof['actual']['hasPath'] = True
+                        if location == 'authority': row['ids'] = copy.deepcopy(ids)
+                        self.assertTrue(self.verify(selection, evidence)['issues'])
+        evidence = self.evidence('reorder', 'mp')
+        row, ids = evidence[:2]
+        # Ordinary replicated coordinates/timing can differ from the local receipt.
+        ids['placementProof']['actual']['x'] += .25
+        ids['placementProof']['stableMs'] = 600
+        row['ids'] = copy.deepcopy(ids)
+        self.assertEqual(self.verify(self.selection('reorder', 'mp'), evidence)['issues'], [])
+
+    def test_raw_client_placement_must_be_unique_matching_and_case_correlated(self):
+        for kind in ('sp', 'mp'):
+            evidence = self.evidence('reorder', kind)
+            value = dict(case='reorder', proof=evidence[0]['clientPlacement'])
+            for placements in ([], [value, value], [dict(value, case='cancel')],
+                               [dict(value, proof=placement_proof(dict(x=50, y=20, z=0)))]):
+                with self.subTest(kind=kind, placements=placements):
+                    self.assertTrue(self.verify(self.selection('reorder', kind), evidence, placements=placements)['issues'])
+
+    def test_approach_proof_and_physical_queue_fail_closed(self):
+        for kind in ('sp', 'mp'):
+            for location, value in (
+                ('helper', 'walkAdjWall'), ('argumentCount', 4), ('keepActions', False), ('owned', False),
+                ('constructor', False), ('resolver', False), ('sameOperation', False), ('started', False),
+                ('completed', False), ('succeeded', False), ('children', 1), ('children', False),
+                ('cancelled', True), ('name', 'other')):
+                with self.subTest(kind=kind, field=location, value=value):
+                    evidence = self.evidence('reorder', kind)
+                    row = evidence[0]
+                    command = next(c for c in row['commands'] if c['name'] == 'firstVolume')
+                    command['preparation'][location] = value
+                    self.assertTrue(self.verify(self.selection('reorder', kind), evidence)['issues'])
+            for field in ('initialPhysicalQueue', 'editedPhysicalQueue'):
+                evidence = self.evidence('reorder', kind)
+                evidence[0][field] = list(evidence[0]['initialQueue'])
+                self.assertTrue(self.verify(self.selection('reorder', kind), evidence)['issues'])
+            for field in ('preparation',):
+                evidence = self.evidence('reorder', kind)
+                next(c for c in evidence[0]['commands'] if c['name'] == 'firstVolume').pop(field)
+                self.assertTrue(self.verify(self.selection('reorder', kind), evidence)['issues'])
+            evidence = self.evidence('reorder', kind)
+            next(c for c in evidence[0]['commands'] if c['name'] == 'firstVolume')['preparation']['target']['x'] += 1
+            self.assertTrue(self.verify(self.selection('reorder', kind), evidence)['issues'])
+            evidence = self.evidence('reorder', kind, 'native')
+            next(c for c in evidence[0]['commands'] if c['name'] == 'firstVolume')['preparation'] = preparation_proof('firstVolume', evidence[1]['a'])
+            self.assertTrue(self.verify(self.selection('reorder', kind, 'native'), evidence)['issues'])
+
+    def test_cancelled_dispatcher_cannot_execute_or_remain_in_physical_queue(self):
+        for kind in ('sp', 'mp'):
+            for mutation in ('started', 'completed', 'retained'):
+                evidence = self.evidence('cancel', kind)
+                row = evidence[0]
+                preparation = next(c for c in row['commands'] if c['name'] == 'lastVolume')['preparation']
+                if mutation == 'retained': row['editedPhysicalQueue'].insert(1, 'lastVolume:approach')
+                else: preparation[mutation] = True
+                self.assertTrue(self.verify(self.selection('cancel', kind), evidence)['issues'])
+
+    def test_native_nil_toggle_argument_can_be_omitted_but_setter_values_remain_required(self):
+        for kind in ('sp', 'mp'):
+            selection = self.selection('barrier', kind, 'native')
+            evidence = self.evidence('barrier', kind, 'native')
+            for command in evidence[0]['commands']:
+                if command['mode'] == 'ToggleOnOff':
+                    command.pop('value')
+            self.assertEqual(self.verify(selection, evidence)['issues'], [])
+            for name, value in (('powerOff', False), ('powerOn', 0), ('firstVolume', None), ('channel', None)):
+                with self.subTest(kind=kind, name=name):
+                    changed = copy.deepcopy(evidence)
+                    command = next(c for c in changed[0]['commands'] if c['name'] == name)
+                    if value is None:
+                        command.pop('value')
+                    else:
+                        command['value'] = value
+                    self.assertTrue(self.verify(selection, changed)['issues'])
+
+    def test_lua_preparation_proves_exact_intent_and_observes_synchronous_completion(self):
+        from lupa.lua51 import LuaRuntime
+        source = (ROOT / 'tests/native_queue/radio-settings/client/ZZRadioSettings.lua').read_text()
+        helper = 'local preparations={}' + source.split('local preparations={}', 1)[1].split('local function queueNames', 1)[0]
+        prefix = """
+            local native=false;local watchPreparations
+            local player={};local square={getX=function()return 10 end,getY=function()return 20 end,getZ=function()return 0 end}
+            local device={getSquare=function()return square end}
+            local q={queue={},indexOf=function(self,a)for i,v in ipairs(self.queue)do if v==a then return i end end;return -1 end}
+            local function queue()return q end
+            getPlayer=function()return player end;luautils={}
+            local observers
+            local T={ActionQueueApproach={isAction=function(a)return not a.foreign end,capture=function(a)return not a.unsealed and not a.action end},
+                ActionQueueOperations={commandConstructionTrusted=function()return true end},
+                ActionQueueLifecycle={registerObserver=function(_,value)observers=value;return true end}}
+            local function action()
+                return {character=player,toolkitQueueOperation={},_numAddedActions=0,
+                    toolkitQueueCommand={snapshot={binding={owner=luautils,name='walkAdj'},args={n=3,player,square,true}}}}
+            end
+        """
+        suffix = """
+            watchPreparations()
+            local first=action()
+            local proof=capturePreparation(first,'anchor',device)
+            -- Native add may start/resolve the anchor before its setter exists.
+            q.current=first;observers.started(first);first.action={}
+            assert(observers.begin(first,'perform')==nil);observers.finish(first,'perform',true)
+            q.current=nil
+            assert(pairPreparation(first,{toolkitQueueOperation=first.toolkitQueueOperation})==proof)
+            verifyPreparations();assert(proof.started and proof.completed and proof.children==0)
+            for _,mutate in ipairs({
+                function(a)a.foreign=true end,function(a)a.unsealed=true end,function(a)a.character={}end,
+                function(a)a.toolkitQueueCommand.snapshot.binding.owner={}end,
+                function(a)a.toolkitQueueCommand.snapshot.binding.name='walkAdjWall'end,
+                function(a)a.toolkitQueueCommand.snapshot.args.n=4 end,
+                function(a)a.toolkitQueueCommand.snapshot.args[1]={}end,
+                function(a)a.toolkitQueueCommand.snapshot.args[2]={}end,
+                function(a)a.toolkitQueueCommand.snapshot.args[3]=false end,
+            })do local bad=action();mutate(bad);assert(not pcall(capturePreparation,bad,'bad',device))end
+            local pending=action();capturePreparation(pending,'cancelled',device)
+            assert(not pcall(pairPreparation,pending,{toolkitQueueOperation={}}))
+            pairPreparation(pending,{toolkitQueueOperation=pending.toolkitQueueOperation})
+            q.queue={pending};assert(not pcall(cancelPreparation,'cancelled'))
+            q.queue={};cancelPreparation('cancelled');verifyPreparations()
+            local walked=action();capturePreparation(walked,'walked',device)
+            pairPreparation(walked,{toolkitQueueOperation=walked.toolkitQueueOperation})
+            q.current=walked;observers.started(walked);walked.action={};walked._numAddedActions=1
+            assert(not pcall(observers.begin,walked,'perform'));observers.finish(walked,'perform',true)
+            q.current=nil;assert(not pcall(verifyPreparations))
+        """
+        lua = LuaRuntime()
+        lua.execute(prefix + helper + suffix)
+
+    def test_lua_prepare_sends_only_after_one_local_settled_placement(self):
+        from lupa.lua51 import LuaRuntime
+        source = (ROOT / 'tests/native_queue/radio-settings/client/ZZRadioSettings.lua').read_text()
+        request = 'local placement,placementState,clientPlacement' + source.split('local placement,placementState,clientPlacement', 1)[1].split('Events.OnServerCommand.Add', 1)[0]
+        prepare = source.split("if phase=='prepare'then", 1)[1].split("elseif phase=='prepared'and ids then", 1)[0]
+        lua = LuaRuntime()
+        lua.execute("""
+            sent=0;begins=0;chooses=0;polls=0;ready=false;fresh=true;raws=0
+            local target={x=10,y=20,z=0};local player={};local receipt={mode='local',target=target}
+            P={choose=function(p)assert(p==player);chooses=chooses+1;return target end,
+                begin=function(p,t)assert(p==player and t==target);begins=begins+1;return {}end,
+                poll=function()polls=polls+1;return ready and receipt or nil end,
+                at=function(p,t)assert(p==player and t==target);return fresh end}
+            getPlayer=function()return player end;isClient=function()return true end
+            sendClientCommand=function(module,command,args)
+                assert(command=='Prepare' and args.case=='case' and args.placement==target and args.clientPlacement==receipt)
+                sent=sent+1
+            end
+            raw=function(marker,args)assert(marker=='CLIENT_PLACEMENT'and args.case=='case'and args.proof==receipt);raws=raws+1 end
+            empty=function()return true end;case=function()return 'case'end
+            local phase='prepare'
+        """ + request + "\nstep=function()local player=getPlayer();if phase=='prepare'then " + prepare + " end end\nrequestForTest=request")
+        lua.execute('step();assert(sent==0 and begins==1 and chooses==1 and polls==1);step();assert(sent==0 and begins==1 and chooses==1 and polls==2)')
+        lua.execute('ready=true;step();assert(sent==1 and begins==1 and chooses==1 and polls==3 and raws==1);step();assert(sent==1)')
+        lua.execute("fresh=false;assert(not pcall(requestForTest,'Prepare'));assert(not pcall(requestForTest,'Unknown'));assert(sent==1)")
+
+    def test_lua_authority_defers_whole_prepare_and_rechecks_position(self):
+        from lupa.lua51 import LuaRuntime
+        source = (ROOT / 'tests/native_queue/radio-settings/server/ZZRadioSettingsServer.lua').read_text()
+        for left_tile in (False, True):
+            lua = LuaRuntime()
+            lua.execute("""
+                callbacks={};calls=0;settled=false;fresh=true
+                isServer=function()return true end
+                getTimestampMs=function()return 1000 end
+                print=function()end
+                Events={OnClientCommand={Add=function(f)callbacks.command=f end},OnTick={Add=function(f)callbacks.tick=f end}}
+                sendServerCommand=function(player,module,command,args)lastCommand=command end
+                player={getUsername=function()return 'client1'end}
+                target={x=10,y=20,z=0}
+                P={target=function(t)return t end,observe=function(p,t)assert(p==player and t==target);return {}end,
+                   poll=function()return settled and {mode='replica'}or nil end,at=function()return fresh end}
+                F={prepare=function(...)calls=calls+1;return {ids={case='reorder'}}end}
+                package.preload.QueueEnergyPlacement=function()return P end
+                package.preload.QueueRadioSettings=function()return F end
+                package.preload.QueueHealthEvents=function()return {encode=function()return '{}'end}end
+                package.preload.QueueTestSelection=function()return {cases={'reorder'},mode='toolkit'}end
+            """)
+            lua.execute(source)
+            lua.execute("callbacks.command('RadioSettingsTest','Prepare',player,{case='reorder',placement=target,clientPlacement={mode='local'}});assert(calls==0);callbacks.tick();assert(calls==0)")
+            lua.globals().fresh = not left_tile
+            lua.execute('settled=true;callbacks.tick()')
+            self.assertEqual(lua.globals().calls, 0 if left_tile else 1)
+            self.assertEqual(lua.globals().lastCommand, 'Failed' if left_tile else 'Prepared')
+        lua = LuaRuntime()
+        lua.execute("isServer=function()return true end;package.preload.QueueEnergyPlacement=function()return {target=function(t)return t end,at=function()return false end}end")
+        fixture = lua.execute((ROOT / 'tests/native_queue/radio-settings/shared/QueueRadioSettings.lua').read_text())
+        # No getCell/item constructors exist: precondition must fail before scene or inventory mutations.
+        with self.assertRaisesRegex(Exception, 'left settled placement'):
+            fixture.prepare(lua.table(), 'reorder', 'toolkit', None, lua.table(x=10, y=20, z=0))
 
     def test_valid_evidence_for_all_cases_modes_and_sp_host(self):
         for case, kind, mode in self.matrix():

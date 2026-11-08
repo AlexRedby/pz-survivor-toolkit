@@ -1,3 +1,4 @@
+local P=require 'QueueEnergyPlacement'
 local Fixture={}
 local cases={reorder=true,cancel=true,barrier=true}
 
@@ -21,10 +22,12 @@ local function radio(square)
  return object,data
 end
 
-function Fixture.prepare(player,case,mode,previous)
+function Fixture.prepare(player,case,mode,previous,placement,proof)
  assert(cases[case] and (mode=='native' or mode=='toolkit'),'unknown radio-settings selection')
- local origin=require('QueueEnergyPlacement')(player)
- local x,y,z=origin:getX(),origin:getY(),origin:getZ()
+ local origin=P.target(placement)
+ assert(P.at(player,origin),'radio preparation actor left settled placement')
+ assert(type(proof)=='table'and proof.mode==(isServer()and'replica'or'local'),'radio preparation placement role differs')
+ local x,y,z=origin.x,origin.y,origin.z
  local generator=IsoGenerator.new(assert(instanceItem('Base.Generator')),getCell(),getCell():getGridSquare(x,y+1,z))
  generator:setCondition(100);generator:setFuel(10);generator:setActivated(true)
  local a,dataA=radio(getCell():getGridSquare(x+1,y,z))
@@ -32,7 +35,7 @@ function Fixture.prepare(player,case,mode,previous)
  assert(a:getSquare():haveElectricity() and b:getSquare():haveElectricity()
   and dataA:canBePoweredHere() and dataB:canBePoweredHere(),'radio fixture has no mains power')
  if isServer() then a:transmitCompleteItemToClients();b:transmitCompleteItemToClients() end
- local ids={case=case,mode=mode,a=identity(a),b=identity(b)}
+ local ids={case=case,mode=mode,a=identity(a),b=identity(b),origin=origin,placementProof=proof}
  return {player=player,a=a,b=b,dataA=dataA,dataB=dataB,generator=generator,ids=ids}
 end
 
@@ -48,13 +51,7 @@ end
 function Fixture.resolve(player,ids)
  local a,b=resolveDevice(ids.a),resolveDevice(ids.b)
  if not a or not b then return end
- -- The server's fixture teleport does not position the owning client synchronously.
- -- Arrange the local actor before invoking the real walk-to callbacks.
- local x,y,z=(ids.a.x+ids.b.x)/2,ids.a.y,ids.a.z
- if math.floor(player:getX())~=x or math.floor(player:getY())~=y or math.floor(player:getZ())~=z then
-  player:teleportTo(x+.5,y+.5,z)
-  return
- end
+ if not P.at(player,ids.origin)then return end
  local dataA,dataB=a:getDeviceData(),b:getDeviceData()
  for _,data in ipairs({dataA,dataB}) do
   if not data:getIsTurnedOn() or data:getPower()<=0 or not data:canBePoweredHere()

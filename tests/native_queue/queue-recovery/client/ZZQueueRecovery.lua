@@ -2,6 +2,7 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'RadioCom/RadioWindowModules/RWMMergedTV'
 require 'TimedActions/ISReadABook'
 local F=require 'QueueRecovery'
+local P=require 'QueueEnergyPlacement'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local T=PZSurvivorToolkit
@@ -13,6 +14,7 @@ local native=config.mode=='native'
 local started,ready,done=false,false,false
 local phase,index,since='prepare',1,0
 local state,authority,ids,baselineReceipt,receipt,tracks,commands,order,panel,quiet
+local placementState,clientPlacement
 local cancelled,restoration,oldActions,oldNatives,oldTokens,restoredQueue
 local tokenIds,tokenSerial={},0
 local function tokenId(token)
@@ -39,8 +41,14 @@ local function fail(error)
  print('[QUEUE_TEST] FAIL queue-recovery '..tostring(error));done=true
 end
 local function request(command)
- if isClient()then sendClientCommand('QueueRecoveryTest',command,{case=case()});return end
- if command=='Prepare'then authority=F.prepare(getPlayer(),case(),config.mode);ids=authority.ids;raw('PREPARED',ids)
+ assert(command=='Prepare'or command=='Baseline'or command=='Verify','unknown recovery authority command')
+ local args={case=case()}
+ if command=='Prepare'then
+  assert(clientPlacement and P.at(getPlayer(),clientPlacement.target),'recovery client placement missing or stale')
+  args.placement=P.target(clientPlacement.target);args.clientPlacement=clientPlacement
+ end
+ if isClient()then sendClientCommand('QueueRecoveryTest',command,args);return end
+ if command=='Prepare'then authority=F.prepare(getPlayer(),case(),config.mode,args.placement,clientPlacement);ids=authority.ids;raw('PREPARED',ids)
  elseif command=='Baseline'then baselineReceipt=assert(F.baseline(authority));raw('BASELINE',baselineReceipt)
  else receipt=assert(F.verify(authority));raw('VERIFIED',receipt)end
 end
@@ -264,12 +272,13 @@ local function finish()
  local expected=native and{'prefix','front'}or{'prefix','front','restoredFront','restoredVolume','restoredTail'}
  assert(same(order,expected),'actual native starts differ '..JSON.encode(order))
  emit({event='case',id=case(),status='passed',ids=ids,input=state.input,baseline=state.baseline,authorityBaseline=baselineReceipt,
-  client=client,server=receipt,commands=commands,order=order,cancellation=cancelled,recovery=restoration,wishlist=wishlistReceipt,restoredQueue=restoredQueue or{},queueIdle=true,settleMilliseconds=now()-quiet})
+  client=client,server=receipt,clientPlacement=clientPlacement,commands=commands,order=order,cancellation=cancelled,recovery=restoration,wishlist=wishlistReceipt,restoredQueue=restoredQueue or{},queueIdle=true,settleMilliseconds=now()-quiet})
  index=index+1
  if not case()then emit({event='complete',cases=config.cases,performed=2,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
  state,authority,ids,baselineReceipt,receipt,tracks,commands,order,panel,quiet=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  cancelled,restoration,oldActions,oldNatives,oldTokens,restoredQueue=nil,nil,nil,nil,nil,nil
  wishlistGate,wishlistReceipt,previewWorkload=nil,nil,nil;phase='prepare';since=now()
+ placementState,clientPlacement=nil,nil
 end
 Events.OnPostUIDraw.Add(function()
  if not wishlistGate or done then return end
@@ -290,7 +299,12 @@ require('QueuePreflight').onTick(Events,function()
   end
   assert(now()-since<150000,'recovery timeout '..tostring(case())..' phase='..phase)
   observe()
-  if phase=='prepare'then assert(empty());phase='prepared';request('Prepare')
+  if phase=='prepare'then
+   assert(empty())
+   if not placementState then placementState=P.begin(player,P.choose(player))end
+   clientPlacement=P.poll(placementState);if not clientPlacement then return end
+   raw('CLIENT_PLACEMENT',{case=case(),proof=clientPlacement})
+   phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
    state=F.resolve(player,ids);if not state or player:tooDarkToRead()or not F.approach(state)then return end
    tracks,commands,order={},{},{};state.input=F.snapshot(state)

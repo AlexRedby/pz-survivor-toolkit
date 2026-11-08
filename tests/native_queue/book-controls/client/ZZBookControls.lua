@@ -6,6 +6,7 @@ local T=PZSurvivorToolkit;local Proof=require 'PZSurvivorToolkit/SourceProof';lo
 local phase,index,since='prepare',1,0;local entered,ready,done=false,false,false
 local state,previous,ids,authorityBaseline,authorityFinal,baseline,tracks,records,starts,boundary,front,tail,volume,equip,window
 local oldNative,resume,quiet,failure,draining,tailSnapshot,volumeSnapshot,equipSnapshot
+local placementSetup={helper=require 'QueueEnergyPlacement'}
 local capacityReceipt,capacityRequestedAt,blockedEvidence,failureUI,nativeDebtAbsent
 local performance,tickSpacing,lastTick,transferEpisode,replicaGaps
 local failures=0;local serial,tokenSerial=0,0;local tokens={};local classes={}
@@ -295,8 +296,10 @@ local function lifecycleFinish(action,step,succeeded)
  end
 end
 local function request(command)
- if isClient()then sendClientCommand('BookControlsTest',command,{case=case(),expected=command=='Verify'and F.snapshot(state)or false,requestedAt=capacityRequestedAt,acceptedAt=boundary and boundary.ui and boundary.ui.acceptedAt or false});return end
- if command=='Prepare'then state=F.prepare(getPlayer(),case(),previous);previous=nil;ids=state.ids;raw('PREPARED',ids)
+ if isClient()then sendClientCommand('BookControlsTest',command,{case=case(),expected=command=='Verify'and F.snapshot(state)or false,requestedAt=capacityRequestedAt,acceptedAt=boundary and boundary.ui and boundary.ui.acceptedAt or false,placement=command=='Prepare'and placementSetup.target or nil,clientPlacement=command=='Prepare'and placementSetup.proof or nil});return end
+ if command=='Prepare'then
+  assert(placementSetup.proof and F.same(placementSetup.proof.target,placementSetup.target)and placementSetup.helper.at(getPlayer(),placementSetup.target),'SP book placement is not settled')
+  state=F.prepare(getPlayer(),case(),previous,placementSetup.target);previous=nil;ids=state.ids;ids.placementProof=placementSetup.proof;raw('PREPARED',ids)
  elseif command=='CapacityLost'then capacityReceipt=F.capacityLost(state,capacityRequestedAt,boundary.ui and boundary.ui.acceptedAt or false);raw('CAPACITY_LOST',capacityReceipt)
  elseif command=='Baseline'then authorityBaseline=F.snapshot(state);raw('BASELINE',authorityBaseline)
  elseif command=='Verify'then authorityFinal=F.snapshot(state);raw('VERIFIED',authorityFinal);F.restoreCapacity(state)end
@@ -304,7 +307,8 @@ end
 Events.OnServerCommand.Add(function(module,command,args)
  if done then return end
  if module=='BookControlsTest'then
-  if command=='Prepared'then ids=args
+  if command=='Prepared'then
+   assert(phase=='prepared'and args.case==case()and F.same(args.origin,placementSetup.target),'unexpected book preparation receipt');ids=args
   elseif command=='Baselined'then authorityBaseline=args
   elseif command=='CapacityLost'then capacityReceipt=args
   elseif command=='Verified'then authorityFinal=args
@@ -682,7 +686,7 @@ local function finish()
  if not failure and not native and performance and not performance.probe32.authorityAllowed then failure='Toolkit32 intended edit denied'end
  if not failure and activeEditReceipt and not activeEditReceipt.passed then failure='active edit observation: '..activeEditReceipt.failure end
  local passed=not failure
- local row={event='case',id=case(),status=passed and'passed'or'failed',reason=failure or false,ids=ids,baseline=baseline,authorityBaseline=authorityBaseline,
+ local row={event='case',id=case(),status=passed and'passed'or'failed',reason=failure or false,ids=ids,clientPlacement=placementSetup.proof,baseline=baseline,authorityBaseline=authorityBaseline,
   boundary=boundary,records=records,starts=starts,resume=resume or false,tailSnapshot=tailSnapshot or false,volumeSnapshot=volumeSnapshot or false,equipSnapshot=equipSnapshot or false,
   client=actual,server=authorityFinal,performance=performance or false,activeEditObservation=activeEditReceipt or false,replicaGaps=replicaGaps or{},finishedAt=now(),tickSpacingMs=tickSpacing or {},capacity=capacityReceipt or false,nativeDebtAbsent=nativeDebtAbsent,blockedReturn=blockedEvidence or false,failureUI=failureUI or false,nativeMethodsUnchanged=true,reset=draining and{entrypoint='ISTimedActionQueue.clear',drained=true,at=draining.at}or false}
  if failedReturnExpected()then row.returnSucceeded=false end
@@ -690,6 +694,7 @@ local function finish()
  if not isClient()then previous=state end
  local completedPlayer,completedPen,completedEquip=state.player,state.pen,equip~=nil
  state,ids,front,tail,volume,equip,window,oldNative,authorityBaseline,authorityFinal=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
+ placementSetup.state,placementSetup.target,placementSetup.proof=nil,nil,nil
  index=index+1;phase='between-cases';since=now()
  if case()and completedEquip then
   -- Clear the completed explicit equip through the real native producer before
@@ -763,7 +768,13 @@ require('QueuePreflight').onTick(Events,function()
    if not observe()then return end
   end
   if phase=='between-cases'then if empty()then phase='prepare'end
-  elseif phase=='prepare'then assert(empty(),'fresh case requires drained native queue');tracks=nil;phase='prepared';request('Prepare')
+  elseif phase=='prepare'then
+   assert(empty(),'fresh case requires drained native queue');tracks=nil
+   placementSetup.target=placementSetup.helper.choose(player);placementSetup.state=placementSetup.helper.begin(player,placementSetup.target);phase='placement'
+  elseif phase=='placement'then
+   placementSetup.proof=placementSetup.helper.poll(placementSetup.state);if not placementSetup.proof then return end
+   assert(placementSetup.helper.at(player,placementSetup.target),'book placement changed before preparation')
+   raw('CLIENT_PLACEMENT',{case=case(),proof=placementSetup.proof});phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
    if not state then state=F.resolve(player,ids);if not state then return end end
    if player:isPlayerMoving()or player:tooDarkToRead()then return end

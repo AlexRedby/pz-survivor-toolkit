@@ -1,4 +1,10 @@
 local Fixture = {}
+function Fixture.same(a,b)
+    if type(a)~=type(b)then return false end
+    if type(a)~='table'then return a==b end
+    for k,v in pairs(a)do if not Fixture.same(v,b[k])then return false end end
+    for k in pairs(b)do if a[k]==nil then return false end end;return true
+end
 
 local function countId(container,id)
     local count=0
@@ -16,12 +22,14 @@ local function free(square)
         and square:getObjects():size() <= 1 and square:getSpecialObjects():size() == 0
 end
 
-function Fixture.prepare(player, case)
+function Fixture.prepare(player, case, placement)
     assert(case=='demote-and-control' or case=='worn-bag', 'unknown shelf/TV case')
-    local origin = require('QueueEnergyPlacement')(player)
-    local y, z = origin:getY(), origin:getZ()
-    local shelfSquare, tvSquare = getCell():getGridSquare(origin:getX() - 1, y, z), getCell():getGridSquare(origin:getX() + 1, y, z)
-    local generatorSquare = getCell():getGridSquare(origin:getX(), y + 1, z)
+    assert(not isClient(),'shelf/TV preparation requires authority')
+    local P=require 'QueueEnergyPlacement';placement=P.target(placement)
+    assert(P.at(player,placement),'shelf/TV actor has not settled on exact placement tile')
+    local x,y,z=placement.x,placement.y,placement.z
+    local shelfSquare, tvSquare = getCell():getGridSquare(x - 1, y, z), getCell():getGridSquare(x + 1, y, z)
+    local generatorSquare = getCell():getGridSquare(x, y + 1, z)
     assert(free(shelfSquare) and free(tvSquare) and free(generatorSquare), 'deterministic shelf/TV/power footprint became occupied')
 
     local generatorItem = assert(instanceItem('Base.Generator'))
@@ -81,18 +89,17 @@ function Fixture.prepare(player, case)
             sendClothing(player,bagLocation,bag)
         else sendAddItemToContainer(player:getInventory(), tape) end
     end
-    player:teleportTo(origin:getX() + 0.5, y + 0.5, z)
-    -- Lighting catches up after teleport; the client waits for native readability before starting.
     return {player=player, shelf=shelf, source=source, book=book, tv=tv, data=data, tape=tape,
         mediaIndex=tapeIndex,mediaType=tapeType,generator=generator,bag=bag,bagSource=bag and tapeSource,
         ids={shelf=shelf:getObjectIndex(), book=book:getID(), tape=tape:getID(), mediaIndex=tapeIndex,mediaType=tapeType,
-            case=case,bag=bag and bag:getID(),bagLocation=bag and tostring(bagLocation),
+            case=case,placement=P.target(placement),bag=bag and bag:getID(),bagLocation=bag and tostring(bagLocation),
             initialPages=pages-4,shelfX=shelfSquare:getX(),shelfY=shelfSquare:getY(),shelfZ=shelfSquare:getZ(),
             generatorIndex=generator:getObjectIndex(),generatorX=generatorSquare:getX(),generatorY=generatorSquare:getY(),generatorZ=generatorSquare:getZ(),
             x=tvSquare:getX(),y=tvSquare:getY(),z=tvSquare:getZ(),pages=pages}}
 end
 
 function Fixture.resolve(player, ids)
+    if not require('QueueEnergyPlacement').at(player,ids.placement)then return end
     local square = getCell():getGridSquare(ids.shelfX, ids.shelfY, ids.shelfZ)
     local shelf
     if square then

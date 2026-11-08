@@ -3,6 +3,7 @@ require 'RadioCom/RadioWindowModules/RWMMergedTV'
 require 'RadioCom/RadioWindowModules/RWMMedia'
 require 'RadioCom/RadioWindowModules/RWMVolume'
 require 'TimedActions/ISReadABook'
+local P=require 'QueueEnergyPlacement'
 local F=require 'QueueTVControls'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
@@ -11,6 +12,7 @@ local native=config.mode=='native'
 local started,ready,done=false,false,false
 local phase,index,since='prepare',1,0
 local diagnosed=false
+local initialPhysicalQueue,editedPhysicalQueue
 local state,localAuthority,ids,baselineReceipt,receipt,panels,tracks,commands,setup,order,initialQueue,editedQueue,edit,quiet
 local function now()return getTimestampMs()end
 local function case()return config.cases[index]end
@@ -28,10 +30,17 @@ local function fail(error)
   phase=phase,commands=commands,setup=setup,order=order})
  print('[QUEUE_TEST] FAIL tv-controls '..tostring(error));done=true
 end
+local placement,placementState,clientPlacement
 local function request(command)
- if isClient()then sendClientCommand('TVControlsTest',command,{case=case()});return end
+ assert(command=='Prepare'or command=='Baseline'or command=='Verify','unknown TV authority command')
+ local args={case=case()}
  if command=='Prepare'then
-  localAuthority=F.prepare(getPlayer(),case(),config.mode);ids=localAuthority.ids;raw('PREPARED',ids)
+  assert(clientPlacement and P.at(getPlayer(),placement),'TV Prepare requires fresh settled placement')
+  args.placement=placement;args.clientPlacement=clientPlacement
+ end
+ if isClient()then sendClientCommand('TVControlsTest',command,args);return end
+ if command=='Prepare'then
+  localAuthority=F.prepare(getPlayer(),case(),config.mode,placement,clientPlacement);ids=localAuthority.ids;raw('PREPARED',ids)
  elseif command=='Baseline'then baselineReceipt=assert(F.baseline(localAuthority));raw('BASELINE',baselineReceipt)
  else receipt=assert(F.verify(localAuthority));raw('VERIFIED',receipt)end
 end
@@ -96,23 +105,94 @@ local function register(name,action,rows,producer,duration,before,beforeAt)
  row.durationSampleBefore=beforeAt or now();row.durationSamples=1
  tracks[action]=row;rows[#rows+1]=row;captureDuration(action,row);return action,row
 end
+-- A deferred walkAdj dispatcher is physical preparation owned by its setter.
+-- Native adjacency is resolved at execution; observe it without replacing callbacks.
+local preparations={}
+local function ownedPreparation(action,device)
+ local owner=T.ActionQueueApproach
+ if not owner or not owner.isAction(action)or not owner.capture(action)then return false end
+ local request=action.toolkitQueueCommand.snapshot
+ return T.ActionQueueOperations.commandConstructionTrusted()and action.character==getPlayer()
+  and request.binding.owner==luautils and request.binding.name=='walkAdj'and request.args.n==3
+  and request.args[1]==getPlayer()and request.args[2]==device:getSquare()and request.args[3]==true
+end
+local function capturePreparation(action,name,device)
+ assert(not native and ownedPreparation(action,device),'foreign native approach dispatcher '..name)
+ local square=device:getSquare()
+ local proof={name=name,helper='walkAdj',target={x=square:getX(),y=square:getY(),z=square:getZ()},
+  argumentCount=3,keepActions=true,owned=true,constructor=true,resolver=true,sameOperation=false,
+  started=false,completed=false,cancelled=false}
+ preparations[action]={proof=proof,device=device}
+ return proof
+end
+local function pairPreparation(action,setter)
+ local record=assert(preparations[action],'unobserved native preparation')
+ assert(action.toolkitQueueOperation==setter.toolkitQueueOperation and type(action.toolkitQueueOperation)=='table',
+  'native preparation/setter operation differs')
+ record.proof.sameOperation=true
+ return record.proof
+end
+local function preparationName(action)
+ local record=preparations[action]
+ if not record then return end
+ assert(ownedPreparation(action,record.device),'queued preparation binding changed')
+ return record.proof.name..':approach'
+end
+local function cancelPreparation(name)
+ for action,record in pairs(preparations)do if record.proof.name==name then
+  assert(not record.proof.started and not record.proof.completed and queue():indexOf(action)==-1,
+   'cancelled setter retained or ran native preparation')
+  record.proof.cancelled=true
+ end end
+end
+local function verifyPreparations()
+ for action,record in pairs(preparations)do
+  local proof=record.proof
+  assert(proof.sameOperation and queue():indexOf(action)==-1,'native preparation retained or unpaired')
+  if proof.cancelled then assert(not proof.started and not proof.completed,'cancelled preparation executed')
+  else assert(proof.started and proof.completed and proof.succeeded and proof.children==0,
+   'adjacent native preparation did not complete without inserted work')end
+ end
+end
+local function watchPreparations()
+ assert(T.ActionQueueLifecycle.registerObserver('fixture.tv-controls-preparation',{
+  started=function(action)
+   local record=preparations[action];if not record then return end
+   assert(T.ActionQueueApproach.isAction(action)and queue().current==action,'preparation started without ownership')
+   record.proof.started=true
+  end,
+  begin=function(action,step)
+   local record=preparations[action];if not record or step~='perform'then return end
+   assert(T.ActionQueueApproach.isAction(action)and queue().current==action,'preparation lost resolver ownership')
+   record.proof.children=action._numAddedActions
+   assert(record.proof.children==0,'adjacent preparation inserted native walking work')
+  end,
+  finish=function(action,step,succeeded)
+   local record=preparations[action];if not record or step~='perform'then return end
+   record.proof.completed=true;record.proof.succeeded=succeeded==true
+  end,
+ }),'native preparation observer unavailable')
+end
 local function nativeUI(name,rows,invoke,kind,mode)
  local emitted,declared,before,beforeAt={},{},{},{};local add=ISTimedActionQueue.add
  ISTimedActionQueue.add=function(action)
   emitted[#emitted+1]=action;declared[#emitted]=action.maxTime
-  before[#emitted]=action:adjustMaxTime(action.maxTime);beforeAt[#emitted]=now()
+  if action.Type=='ISQueueActionsAction'then capturePreparation(action,name,state.tv)
+  else before[#emitted]=action:adjustMaxTime(action.maxTime);beforeAt[#emitted]=now()end
   return add(action)
  end
  local ok,error=pcall(invoke);ISTimedActionQueue.add=add;assert(ok,error)
- if #emitted~=1 then raw('APPROACH_FAILURE',{case=case(),name=name,actual=F.approach(state),emitted=#emitted})end
- assert(#emitted==1,'adjacent native UI producer emitted unexpected work '..name..' count='..#emitted)
- local a=emitted[1]
+ local scoped=not native and(name=='volume'or name=='redundant')
+ assert(#emitted==(scoped and 2 or 1),'native TV producer shape differs '..name..' count='..#emitted)
+ local index=scoped and 2 or 1;local a=emitted[index]
+ local preparation=scoped and pairPreparation(emitted[1],a)or nil
  assert(a.Type==kind and (not mode or a.mode==mode),'wrong native TV UI action '..name)
- assert(declared[1]==30 and a.stopOnWalk==false and a.stopOnRun==true and a.ignoreHandsWounds==true,
+ assert(declared[index]==30 and a.stopOnWalk==false and a.stopOnRun==true and a.ignoreHandsWounds==true,
   'native TV UI timing/flags changed '..name)
  if kind=='ISRadioAction'then assert(a.device==state.tv and a.deviceData==state.data)
  else assert(a.deviceData==state.data and a.parameter==state.tv:getSquare())end
- register(name,a,rows,'native RWM callback',declared[1],before[1],beforeAt[1]);return a
+ local _,row=register(name,a,rows,'native RWM callback',declared[index],before[index],beforeAt[index])
+ row.preparation=preparation;return a
 end
 local function book(name,item)
  local a=ISReadABook:new(getPlayer(),item);register(name,a,commands,'native ISReadABook constructor')
@@ -152,7 +232,16 @@ local function allReceipts()
 end
 local function names()
  local result={}
- for _,a in ipairs(queue().queue)do result[#result+1]=assert(tracks[a],'unexpected queue action '..tostring(a.Type)).name end
+ for _,a in ipairs(queue().queue)do
+  if not preparationName(a)then result[#result+1]=assert(tracks[a],'unexpected queue action '..tostring(a.Type)).name end
+ end
+ return result
+end
+local function physicalNames()
+ local result={}
+ for _,action in ipairs(queue().queue)do
+  result[#result+1]=preparationName(action)or assert(tracks[action],'untracked physical TV queue member').name
+ end
  return result
 end
 local function same(a,b)
@@ -178,15 +267,15 @@ local function pending()
  assert(actions.eject.isRemove==true and actions.eject.secondaryItem==nil,'native eject constructor differs')
  assert(actions.channel.secondaryItem==95000 and actions.unmute.secondaryItem==.25,'native setting value differs')
  state.tailAction=book('tail',state.tail)
- initialQueue=names()
+ initialQueue=names();initialPhysicalQueue=physicalNames()
  assert(same(initialQueue,{'front','volume','redundant','mute','unmute','channel','eject','tail'}),'native TV producer sequence differs')
  edit={reordered=false,cancelled={},untouched=false,atomic=true}
  if not native then
   assert(T.ActionQueue.move(queue(),actions.eject,actions.channel),'independent eject/channel reorder denied')
   assert(T.ActionQueue.cancelOperation(queue(),actions.redundant),'redundant pending setter cancellation denied')
-  tracks[actions.redundant].cancelled=true;edit.cancelled={'redundant'};edit.reordered=true
+  cancelPreparation('redundant');tracks[actions.redundant].cancelled=true;edit.cancelled={'redundant'};edit.reordered=true
  end
- editedQueue=names()
+ editedQueue=names();editedPhysicalQueue=physicalNames()
  local expected=native and initialQueue or {'front','volume','mute','unmute','eject','channel','tail'}
  assert(same(editedQueue,expected),'edited TV sequence differs')
  local after=F.snapshot(state)
@@ -196,7 +285,7 @@ local function pending()
  phase='running'
 end
 local function finish()
- assert(empty()and allReceipts(),'TV final queue/ACKs unsettled')
+ assert(empty()and allReceipts(),'TV final queue/ACKs unsettled');verifyPreparations()
  local client=assert(F.verify(state),'client TV output/settings/books not settled')
  assert(receipt and receipt.case==case(),'server TV receipt missing')
  local expected=native and initialQueue or {'front','volume','mute','unmute','eject','channel','tail'}
@@ -205,14 +294,16 @@ local function finish()
   assert(row.cancelled and not row.started and not row.progress or not row.cancelled and row.started and row.progress,
    'native action progress/cancellation missing '..row.name)
  end end
- emit({event='case',id=case(),status='passed',ids=ids,input=state.input,baseline=state.baseline,
+ emit({event='case',id=case(),status='passed',ids=ids,clientPlacement=clientPlacement,input=state.input,baseline=state.baseline,
   authorityBaseline=baselineReceipt,client=client,server=receipt,setup=setup,commands=commands,
-  initialQueue=initialQueue,editedQueue=editedQueue,order=order,edit=edit,queueIdle=true,settleMilliseconds=now()-quiet})
+  initialQueue=initialQueue,editedQueue=editedQueue,initialPhysicalQueue=initialPhysicalQueue,editedPhysicalQueue=editedPhysicalQueue,order=order,edit=edit,queueIdle=true,settleMilliseconds=now()-quiet})
  index=index+1
  if not case()then
   emit({event='complete',cases=config.cases,performed=index-1,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return
  end
  state,localAuthority,ids,baselineReceipt,receipt,panels,tracks,commands,setup,order=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
+ preparations={};initialPhysicalQueue,editedPhysicalQueue=nil,nil
+ placement,placementState,clientPlacement=nil,nil,nil
  initialQueue,editedQueue,edit,quiet=nil,nil,nil,nil;phase='prepare';since=now();diagnosed=false
 end
 require('QueuePreflight').onGameStart(Events,function()started=true;since=now()end)
@@ -227,7 +318,7 @@ require('QueuePreflight').onTick(Events,function()
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false)
    player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
-   ready=true;since=now();emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true})
+   watchPreparations();ready=true;since=now();emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true})
   end
   if not diagnosed and now()-since>30000 then
    diagnosed=true
@@ -238,7 +329,13 @@ require('QueuePreflight').onTick(Events,function()
   assert(now()-since<150000,'TV controls timeout '..tostring(case())..' phase='..phase)
   if tracks then observe()end
   if phase=='prepare'then
-   assert(empty(),'TV case initial queue not empty');phase='prepared';request('Prepare')
+   assert(empty(),'TV case initial queue not empty')
+   if not placementState then placement=P.choose(player);placementState=P.begin(player,placement)end
+   if not clientPlacement then
+    clientPlacement=P.poll(placementState);if not clientPlacement then return end
+    raw('CLIENT_PLACEMENT',{case=case(),proof=clientPlacement})
+   end
+   phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
    state=F.resolve(player,ids);if not state or player:tooDarkToRead()then return end
    assert(empty(),'scene setup queued unexpected work')

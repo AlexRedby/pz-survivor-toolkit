@@ -1,3 +1,7 @@
+if not isServer()then return end
+local P=require 'QueueEnergyPlacement';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
+local placements={}
+local function raw(marker,row)print('[SHELF_TV] '..marker..' '..JSON.encode(row))end
 local Fixture=require 'QueueShelfBookTV'
 local sessions={}
 local progressWaiting={}
@@ -21,18 +25,14 @@ end
 
 local function execute(command,player,args)
     local key=player:getUsername()
+    assert(type(args)=='table'and key=='client1'and args.case==config.cases[1]and not placements[key],
+        'unexpected shelf/TV actor/case/request')
     if command=='Prepare' then
-        assert((args.case=='demote-and-control' or args.case=='worn-bag') and not sessions[key],'unexpected or duplicate shelf/TV preparation')
-        local state=Fixture.prepare(player,args.case)
-        sessions[key]=state
-        print('[SHELF_TV] PREPARED shelfId='..state.ids.shelf..' bookId='..state.ids.book
-            ..' tv='..state.ids.x..','..state.ids.y..','..state.ids.z..' tapeId='..state.ids.tape
-            ..' mediaIndex='..state.ids.mediaIndex..' mediaType='..state.ids.mediaType..' power=electric daylight=true')
-        if state.bag then
-            print('[SHELF_TV] BAG_PREPARED bagId='..state.ids.bag..' location='..state.ids.bagLocation
-                ..' tapeId='..state.ids.tape..' worn=true root=true tapeInBag=true')
-        end
-        sendServerCommand(player,MODULE,'Prepared',{ok=true,ids=state.ids})
+        assert(not sessions[key],'unexpected or duplicate shelf/TV preparation')
+        local target=P.target(args.placement);local proof=args.clientPlacement
+        assert(type(proof)=='table'and proof.mode=='local'and proof.teleports==1
+            and Fixture.same(P.target(proof.target),target),'invalid client shelf/TV placement receipt')
+        placements[key]={player=player,case=args.case,target=target,arrival=P.observe(player,target)}
     elseif command=='Progress' then
         progress(player,args)
     elseif command=='Verify' then
@@ -68,6 +68,28 @@ Events.OnClientCommand.Add(function(module,command,player,args)
 end)
 
 Events.OnTick.Add(function()
+    for key,pending in pairs(placements)do
+        local player=pending.player
+        local ok,err=pcall(function()
+            local proof=P.poll(pending.arrival);if not proof then return end
+            assert(P.at(player,pending.target),'authority shelf/TV placement changed before setup')
+            local state=Fixture.prepare(player,pending.case,pending.target);state.ids.placementProof=proof
+            sessions[key]=state;raw('PREPARED_IDS',state.ids)
+            print('[SHELF_TV] PREPARED shelfId='..state.ids.shelf..' bookId='..state.ids.book
+                ..' tv='..state.ids.x..','..state.ids.y..','..state.ids.z..' tapeId='..state.ids.tape
+                ..' mediaIndex='..state.ids.mediaIndex..' mediaType='..state.ids.mediaType..' power=electric daylight=true')
+            if state.bag then
+                print('[SHELF_TV] BAG_PREPARED bagId='..state.ids.bag..' location='..state.ids.bagLocation
+                    ..' tapeId='..state.ids.tape..' worn=true root=true tapeInBag=true')
+            end
+            sendServerCommand(player,MODULE,'Prepared',{ok=true,ids=state.ids})
+            placements[key]=nil
+        end)
+        if not ok then
+            placements[key]=nil;print('[QUEUE_TEST] FAIL shelf-book-tv server placement '..tostring(err))
+            sendServerCommand(player,MODULE,'Prepared',{ok=false,error=tostring(err)})
+        end
+    end
     for key,pending in pairs(progressWaiting) do
         local ok,done=pcall(progress,pending.player,pending.request)
         if not ok then

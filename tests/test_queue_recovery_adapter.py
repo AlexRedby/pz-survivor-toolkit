@@ -12,6 +12,13 @@ from queue_checks.adapters import queue_recovery as a
 from queue_checks.mod_selection import metadata, mod_ids
 
 
+def placement_proof(target,mode):
+    actual=dict(target,square=dict(target),currentSquare=dict(target))
+    if mode=='local':actual.update(queued=0,timed=False,moving=False,hasPath=False,deferredX=0,deferredY=0)
+    return dict(mode=mode,target=dict(target),actual=actual,teleports=1 if mode=='local'else 0,
+                stableMs=500,quietMs=500 if mode=='local'else 0,elapsedMs=1100 if mode=='local'else 600)
+
+
 class RecoveryAdapterTests(unittest.TestCase):
     def selection(self,kind='mp',mode='toolkit'):
         return dict(suite='queue-recovery',cases=list(a.CASES),kind=kind,mode=mode,clients=1,languages=['EN'],mods=list(a.MODS),options={'mp_host':True}if kind=='mp'else{})
@@ -19,6 +26,7 @@ class RecoveryAdapterTests(unittest.TestCase):
     def evidence(self,case='movement-cancel',kind='mp',mode='toolkit'):
         spec=dict(case=case,mode=mode,tv=dict(x=9,y=20,z=0,index=1),origin=dict(x=10,y=20,z=0),
                   front=dict(id=101,type='Base.BookCarpentry1',pages=220,initial=217),tail=dict(id=102,type='Base.BookCooking1',pages=220,initial=218))
+        spec['placementProof']=placement_proof(spec['origin'],'replica'if kind=='mp'else'local')
         def snapshot(phase):
             return dict(case=case,tv=copy.deepcopy(spec['tv']),rootIds=[101,102],carriedIds=[101,102],
                         device=dict(on=True,power=1,powerable=True,volume=.5 if phase=='input'else .25 if phase=='final'and mode=='toolkit'else .4,channel=90000,hasMedia=False),
@@ -65,6 +73,7 @@ class RecoveryAdapterTests(unittest.TestCase):
         wishlist=dict(empty=copy.deepcopy(idle),collapsed=copy.deepcopy(idle),
                       expanded=dict(amount=7,carried=1,firstDrawFresh=True),reopened=True,removed=True,restored=True)
         row=dict(suite='queue-recovery',event='case',id=case,actor='client1',kind=kind,mode=mode,status='passed',ids=copy.deepcopy(spec),
+                 clientPlacement=placement_proof(spec['origin'],'local'),
                  input=snapshot('input'),baseline=copy.deepcopy(baseline),authorityBaseline=copy.deepcopy(baseline),client=copy.deepcopy(final),server=copy.deepcopy(final),
                  commands=commands,order=list(a.STARTS if mode=='toolkit'else a.STARTS[:2]),
                  cancellation=dict(entrypoint='IsoGameCharacter.StopAllActionQueueWalking'if case=='movement-cancel'else'ISTimedActionQueue.clear',before=copy.deepcopy(baseline),initialQueue=['front','approach','volume','tail']if mode=='toolkit'else list(a.ORIGINAL),steps=physical_steps([2,3,4]),drained=True,movementStopped=True,nativeCount=1,oldTokens=[dict(id=i,cancelled=True)for i in (2,3,4)]),
@@ -150,6 +159,22 @@ class RecoveryAdapterTests(unittest.TestCase):
                        lambda r:r['client']['books']['tail'].update(pages=220,characterPages=220),lambda r:r['order'].append('restoredTail')):
             evidence=self.evidence(mode='native');change(evidence[0]);self.assertTrue(self.check(evidence,self.selection(mode='native')))
 
+    def test_placement_requires_independent_settled_roles(self):
+        for kind in ('sp','mp'):
+            for label,change in {
+                'missing local':lambda r,s:r.pop('clientPlacement'),
+                'wrong local role':lambda r,s:r['clientPlacement'].update(mode='replica'),
+                'local motion':lambda r,s:r['clientPlacement']['actual'].update(deferredX=.01),
+                'local square':lambda r,s:r['clientPlacement']['actual']['currentSquare'].update(x=9),
+                'missing authority':lambda r,s:s.pop('placementProof'),
+                'wrong authority role':lambda r,s:s['placementProof'].update(mode='local'if kind=='mp'else'replica'),
+                'authority square':lambda r,s:s['placementProof']['actual']['square'].update(y=19),
+                'authority unstable':lambda r,s:s['placementProof'].update(stableMs=499),
+            }.items():
+                with self.subTest(kind=kind,label=label):
+                    e=self.evidence(kind=kind);change(e[0],e[1]);e[0]['ids']=copy.deepcopy(e[1])
+                    self.assertTrue(self.check(e,self.selection(kind)))
+
     def test_production_projection_receipts_are_required_and_exact(self):
         for phase in ('cancellation','recovery'):
             changes={
@@ -198,6 +223,7 @@ class RecoveryAdapterTests(unittest.TestCase):
             root=Path(temp);client=['[QUEUE_CHECK] '+json.dumps(dict(suite='queue-recovery',event='setup',cases=list(a.CASES),queueEnabled=True,nativeDurations=True))];server=[]
             for case in a.CASES:
                 row,spec,baseline,final,acks=self.evidence(case)
+                client.append(a.PREFIX+'CLIENT_PLACEMENT '+json.dumps(dict(case=case,proof=row['clientPlacement'])))
                 client.append('[QUEUE_CHECK] '+json.dumps(row));client.extend(a.PREFIX+'ACK '+json.dumps(v)for v in acks)
                 server.extend(a.PREFIX+marker+' '+json.dumps(value)for marker,value in [('PREPARED',spec),('BASELINE',baseline),('VERIFIED',final)])
             client.extend(['[QUEUE_CHECK] '+json.dumps(dict(suite='queue-recovery',event='complete',cases=list(a.CASES),performed=2,failed=0,skipped=0)),a.PREFIX+'COMPLETE '+json.dumps(dict(cases=list(a.CASES)))])
@@ -205,6 +231,21 @@ class RecoveryAdapterTests(unittest.TestCase):
             self.assertEqual(a.verify(root,selection,{})['issues'],[])
             for bad in (server[::-1],server+[server[-1]],server[:-1]):
                 (root/'server-launch.log').write_text('\n'.join(bad));self.assertTrue(a.verify(root,selection,{})['issues'])
+            (root/'server-launch.log').write_text('\n'.join(server))
+            placements=[i for i,line in enumerate(client)if line.startswith(a.PREFIX+'CLIENT_PLACEMENT ')]
+            for mutation in ('missing','duplicate','order','case','proof'):
+                with self.subTest(client_placement=mutation):
+                    bad=list(client)
+                    if mutation=='missing':bad.pop(placements[0])
+                    elif mutation=='duplicate':bad.insert(placements[0],bad[placements[0]])
+                    elif mutation=='order':bad[placements[0]],bad[placements[1]]=bad[placements[1]],bad[placements[0]]
+                    else:
+                        value=json.loads(bad[placements[0]].split('CLIENT_PLACEMENT ',1)[1])
+                        if mutation=='case':value['case']='foreign'
+                        else:value['proof']['actual']['square']['x']=99
+                        bad[placements[0]]=a.PREFIX+'CLIENT_PLACEMENT '+json.dumps(value)
+                    (root/'client1-launch.log').write_text('\n'.join(bad))
+                    self.assertTrue(a.verify(root,selection,{})['issues'])
 
     def test_registration_full_pack_selection_and_staging(self):
         from queue_checks import adapters

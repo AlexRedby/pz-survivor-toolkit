@@ -1,3 +1,4 @@
+local P=require 'QueueEnergyPlacement'
 local F={}
 local cases={['eject-idle']=true,['eject-playing']=true}
 local function rootIds(root,nested)
@@ -29,9 +30,12 @@ local function book(player,kind)
  item:setAlreadyReadPages(pages-2);player:setAlreadyReadPages(kind,pages-2)
  return item,{id=item:getID(),type=kind,pages=pages,initial=pages-2}
 end
-function F.prepare(player,case,mode)
+function F.prepare(player,case,mode,placement,proof)
  assert(cases[case] and (mode=='native'or mode=='toolkit'),'unknown TV controls selection')
- local origin=require('QueueEnergyPlacement')(player);local x,y,z=origin:getX(),origin:getY(),origin:getZ()
+ local origin=P.target(placement)
+ assert(P.at(player,origin),'TV preparation actor left settled placement')
+ assert(type(proof)=='table'and proof.mode==(isServer()and'replica'or'local'),'TV preparation placement role differs')
+ local x,y,z=origin.x,origin.y,origin.z
  local generator=IsoGenerator.new(assert(instanceItem('Base.Generator')),getCell(),getCell():getGridSquare(x,y+1,z))
  generator:setCondition(100);generator:setFuel(10);generator:setActivated(true)
  -- The TV sprite gains collideW when its square flags refresh. Stand east
@@ -55,7 +59,7 @@ function F.prepare(player,case,mode)
  tape:setRecordedMediaData(assert(getZomboidRadio():getRecordedMedia():getMediaData('07b0cd73-7563-4699-9fb4-99316a0fc0bd')))
  local ids={case=case,mode=mode,tv=identity(tv),front=frontId,tail=tailId,
   tape={id=tape:getID(),type=tape:getFullType(),index=tape:getRecordedMediaIndex(),mediaType=tape:getMediaType()},
-  origin={x=x,y=y,z=z}}
+  origin={x=x,y=y,z=z},placementProof=proof}
  assert(ids.tape.index>=0 and ids.tape.mediaType==1 and count(player:getInventory(),ids.tape.id)==1)
  if isServer()then
   tv:transmitCompleteItemToClients()
@@ -76,10 +80,7 @@ function F.resolve(player,ids)
  local front,tail,tape=root:getItemById(ids.front.id),root:getItemById(ids.tail.id),root:getItemById(ids.tape.id)
  if not tv or not front or not tail or not tape then return end
  for _,item in ipairs({front,tail,tape})do if item:getContainer()~=root then return end end
- local p=ids.origin
- if math.floor(player:getX())~=p.x or math.floor(player:getY())~=p.y or math.floor(player:getZ())~=p.z then
-  player:teleportTo(p.x+.5,p.y+.5,p.z);return
- end
+ if not P.at(player,ids.origin)then return end
  local data=tv:getDeviceData()
  if data:hasMedia()or not data:getIsTurnedOn()or not data:canBePoweredHere()
   or data:getChannel()~=90000 or math.abs(data:getDeviceVolume()-.5)>.00001 then return end

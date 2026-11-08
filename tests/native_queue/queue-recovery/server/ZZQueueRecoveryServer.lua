@@ -1,5 +1,6 @@
 if not isServer()then return end
 local F=require 'QueueRecovery'
+local P=require 'QueueEnergyPlacement'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local state,pending;local index=1
@@ -11,13 +12,17 @@ end
 Events.OnClientCommand.Add(function(module,command,player,args)
  if module~='QueueRecoveryTest'then return end
  local ok,error=pcall(function()
-  assert(player:getUsername()=='client1'and args.case==config.cases[index],'unexpected recovery actor/case order')
+  assert(type(args)=='table'and player:getUsername()=='client1'and args.case==config.cases[index],'unexpected recovery actor/case order')
   if command=='Prepare'then
    assert(not state and not pending,'duplicate recovery prepare')
-   state=F.prepare(player,args.case,config.mode);raw('PREPARED',state.ids)
-   sendServerCommand(player,module,'Prepared',state.ids)
+   local target=P.target(args.placement)
+   local proof=args.clientPlacement
+   assert(type(proof)=='table'and proof.mode=='local'and proof.teleports==1,'missing recovery owning-client placement')
+   local requested=P.target(proof.target)
+   assert(requested.x==target.x and requested.y==target.y and requested.z==target.z,'recovery client placement target differs')
+   pending={command=command,player=player,case=args.case,target=target,arrival=P.observe(player,target),since=getTimestampMs()}
   else
-   assert((command=='Baseline'or command=='Verify')and state and not pending,'unexpected recovery authority request')
+   assert((command=='Baseline'or command=='Verify')and state and state.player==player and not pending,'unexpected recovery authority request')
    pending={command=command,since=getTimestampMs()}
   end
  end)
@@ -25,6 +30,16 @@ Events.OnClientCommand.Add(function(module,command,player,args)
 end)
 Events.OnTick.Add(function()
  if not pending then return end
+ if pending.command=='Prepare'then
+  local player=pending.player
+  local ok,error=pcall(function()
+   local proof=P.poll(pending.arrival);if not proof then return end
+   state=F.prepare(player,pending.case,config.mode,pending.target,proof)
+   raw('PREPARED',state.ids);sendServerCommand(player,'QueueRecoveryTest','Prepared',state.ids);pending=nil
+  end)
+  if not ok then fail(player,error)end
+  return
+ end
  local ok,receipt,actual=pcall(pending.command=='Baseline'and F.baseline or F.verify,state)
  if ok and receipt then
   local command=pending.command;raw(command=='Baseline'and 'BASELINE'or 'VERIFIED',receipt)

@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import shutil
 
-from .. import report
+from .. import placement, report
 from .recovery_selection import validate as validate_recovery_selection
 from .tv_controls import MODS, _close, _duration, _ids, _number
 
@@ -32,6 +32,7 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [Path(__file__).with_name('tv_controls.py'), Path(__file__).with_name('recovery_selection.py'),
+            Path(placement.__file__),
             *sorted((root / 'queue-recovery').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
 
@@ -169,6 +170,11 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, ack
         if spec['front']['id'] == spec['tail']['id']: raise ValueError()
     except (KeyError, ValueError, TypeError):
         return ['Missing exact authoritative recovery identities']
+    try:
+        placement.validate(row.get('clientPlacement'), spec['origin'], 'local')
+        placement.validate(spec.get('placementProof'), spec['origin'], 'replica' if selection['kind'] == 'mp' else 'local')
+    except ValueError as error:
+        errors.append(str(error))
     enabled = selection['mode'] == 'toolkit'
     if (row.get('status') != 'passed' or row.get('queueIdle') is not True
             or not _number(row.get('settleMilliseconds')) or row['settleMilliseconds'] < 1000):
@@ -302,7 +308,9 @@ def verify(root, selection, catalog):
             issues.append('Missing exact recovery setup/completion gate')
         prepared, baseline, verified = (_raw(authority, marker) for marker in ('PREPARED', 'BASELINE', 'VERIFIED'))
         acks = _raw(text, 'ACK')
+        client_placements = _raw(text, 'CLIENT_PLACEMENT')
         if ([r.get('id') for r in rows] != list(CASES)
+                or [r.get('case') for r in client_placements] != list(CASES)
                 or any([r.get('case') for r in values] != list(CASES) for values in (prepared, baseline, verified))):
             issues.append('Case/authority evidence missing, duplicated or out of order')
         for i, case in enumerate(CASES):
@@ -310,6 +318,9 @@ def verify(root, selection, catalog):
             errors = check_case(row, case, selection, prepared[i] if i < len(prepared) else None,
                                 baseline[i] if i < len(baseline) else None, verified[i] if i < len(verified) else None,
                                 [a for a in acks if a.get('case') == case])
+            local_receipt = client_placements[i] if i < len(client_placements) else {}
+            if (set(local_receipt) != {'case', 'proof'} or local_receipt.get('proof') != row.get('clientPlacement')):
+                errors.append('Independent raw owning-client placement differs')
             if row.get('actor') != 'client1' or row.get('kind') != selection['kind'] or row.get('mode') != selection['mode']:
                 errors.append('Recovery actor/kind/mode differs')
             issues += [case + ': ' + error for error in errors]
