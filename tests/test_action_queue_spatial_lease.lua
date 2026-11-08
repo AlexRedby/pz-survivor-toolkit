@@ -36,9 +36,9 @@ local function fresh(corrupt)
     actor.getX,actor.getY,actor.getSquare,actor.getCurrentSquare=forbidden,forbidden,forbidden,forbidden
     local queue=f.queue(f.action(ISReadABook,{}))
     local target={getX=forbidden,getY=forbidden,getZ=forbidden}
-    local function command(exclusions)
+    local function command(exclusions,keep)
         local n=#queue.queue
-        operations.run(function()assert(luautils.walkAdj(actor,target,false,exclusions))end)
+        operations.run(function()assert(luautils.walkAdj(actor,target,keep or false,exclusions))end)
         assert(#queue.queue==n+1,'fixture must create a genuine deferred command')
         return queue.queue[n+1]
     end
@@ -188,5 +188,84 @@ for _,path in ipairs({'media/lua/shared/luautils.lua',
 end
 math.SpatialLeaseUnrelated,table.SpatialLeaseUnrelated,string.SpatialLeaseUnrelated=nil,nil,nil
 assert(helperCalls==0)
+-- Device ownership retains immutable route intent across allocation and paid
+-- progress. Unlike the one-use edit lease, this is not a no-movement claim.
+do
+    local g=fresh();local a=g.command(nil,true)
+    local watch,square=g.approach.prepareDevicePosition(a)
+    assert(watch and square==g.target and watch()and watch())
+    a.action={};a.started=true;a.toolkitQueueOperation.toolkitStarted=true
+    a._isAddingActions=true;a._numAddedActions=1
+    g.setHook(function()error('position watch read metadata after allocation')end)
+    assert(watch(),'paid preparation lost immutable source ownership')
+    g.setHook(nil)
+    assert(not g.approach.prepareDevicePosition(a),'cannot mint new authority after allocation')
+end
+for _,mutate in ipairs({
+    function(a)request(a).args[2]={}end,
+    function(a)request(a).args[3]=false end,
+    function(a)record(a).args[1]={}end,
+    function(a)a.toolkitQueueOperation={}end,
+    function(a)a.waitToStart=function()error('foreign callback executed')end end,
+    function(a)a.onFailFunc=function()error('foreign failure executed')end end,
+    function(a)request(a).binding.spec.arrays[1]=3 end,
+})do
+    local g=fresh();local a=g.command(nil,true)
+    local watch=assert(g.approach.prepareDevicePosition(a));assert(watch())
+    mutate(a);assert(not watch(),'device route source changed after capture')
+end
+do
+    local g=fresh();assert(not g.approach.prepareDevicePosition(g.command()))
+end
+-- Execute the real captured native helper only to produce its real child.
+-- Geometry is an explicit double; no child or action callback is substituted.
+local function nativeChild()
+    local g=fresh();g.f.native('client/TimedActions/WalkToTimedAction.lua')
+    local parent=g.command(nil,true)
+    local sourceWatch=assert(g.approach.prepareDevicePosition(parent))
+    local square=g.target
+    square.getX=function()return 8 end;square.getY=function()return 0 end;square.getZ=function()return 0 end
+    square.has=function()return false end
+    g.actor.getX=function()return .5 end;g.actor.getY=function()return .5 end
+    g.actor.getSquare=function()return square end;g.actor.getCurrentSquare=g.actor.getSquare
+    getCell=function()return{getGridSquare=function(_,x,y,z)if x==8 and y==0 and z==0 then return square end end}end
+    IsoFlagType={collideW={},collideN={}}
+    AdjacentFreeTileFinder={Find=function(target,actor)assert(target==square and actor==g.actor);return square end}
+    local child,childWatch
+    PZSurvivorToolkit.ActionQueueDeviceTargets={enqueued=function()end,positionEnqueued=function(action,owner)
+        assert(owner==parent)
+        child=action
+        local target;childWatch,target=g.approach.prepareDevicePosition(action,owner)
+        assert(childWatch and target==square,'real native child lost its source-owned parent')
+    end}
+    g.queue.queue={parent};g.queue.current=parent
+    g.operations.runWith(parent.toolkitQueueOperation,function()
+        parent:beginAddingActions()
+        parent.addActionsFunction(g.actor,unpack(parent.args))
+        parent:endAddingActions()
+    end)
+    assert(child and getmetatable(child)==ISWalkToTimedAction and g.queue.queue[2]==child)
+    assert(sourceWatch()and childWatch(),'native expansion revoked immutable intent')
+    return g,parent,child,childWatch
+end
+do
+    local g,parent,child,watch=nativeChild()
+    child.action={};child.started=true;child.pathIndex=8;child.result={}
+    parent.toolkitQueueOperation.toolkitStarted=true
+    g.setHook(function()error('paid child source watcher read metadata')end)
+    assert(watch()and watch(),'paid child progress revoked immutable source intent')
+    g.setHook(nil)
+    assert(not g.approach.prepareDevicePosition(child,parent),'cannot mint child proof outside native expansion')
+end
+for _,mutate in ipairs({
+    function(parent,child)child.location={}end,
+    function(parent,child)child.additionalTest=function()error('test callback executed')end end,
+    function(parent,child)child.perform=function()error('perform executed')end end,
+    function(parent,child)record(parent).args[1]={}end,
+    function(parent,child)request(parent).args[2]={}end,
+})do
+    local g,parent,child,watch=nativeChild();mutate(parent,child)
+    assert(not watch(),'changed native child source retained device authority')
+end
 print('Deferred spatial lease: real owned walkAdj, bounded immutable intent, callback-free one-use watcher, source revocation and native gaps passed.')
 if TestCoverage then TestCoverage('source-contract','passed')end

@@ -13,7 +13,9 @@ Implementation and migration are conditional on the performance gate in [the des
 
 # Queue edit and performance qualification
 
-- [ ] Qualify native admission/outcomes for source-owned spatial phases that require movement before extending common edit consumers: fresh head-time source/actor/target ownership, exact native child expansion, accepted routing versus arrival, unavailable/deleted/moved targets, stopped/failed children and conditional continuation. Preserve earned cleanup and independent work, then re-read resource facts and limits; never reuse a pre-route forecast or infer success from a missing action. Native device validity does not bind object liveness, so late object loss remains an explicit unqualified boundary.
+- [ ] Qualify broader native spatial admission/outcomes before extending common edit consumers: item-using media/battery groups, multiple device bodies, larger histories/queues, stopped/failed children and conditional continuation beyond the pending TV/radio refusal slice. Require fresh source/actor/target ownership, exact native expansion and authoritative outcomes. Preserve earned cleanup and independent work, then re-read resource facts and limits; never reuse a pre-route forecast or infer success from a missing action. Active/in-flight commands and unsupported histories retain native handling.
+- [ ] Reproduce and resolve media/battery constructor ambiguity with multiple world devices on one square: native square-only lookup selects the first device, which need not be the UI panel's intended object. Bind and verify the exact intended device before item consumption; keep inventory/vehicle identity models separate.
+- [ ] Qualify identity reuse for already encoded world-device state packets: the native server resolves xyz/object index without stable object identity. Reproduce removal/replacement after encoding before choosing a protocol fix; pending admission checks do not cover that in-flight race.
 - [ ] Finish one usable borrowed-book edit slice through that contract, then qualify cancellation and promotion/demotion with retained returns, paid pages, independent work, changed capacity/endpoints and native failures. Hand-changing equip still needs its own source-backed effect contract. Compile only proven effects and grant new permissions only after the corresponding outcome/cost gates pass.
 - [ ] Assess useful complete-decision/input cost before extending authoritative spatial consumers. General `deferred` phase observations are not edit permissions or completed resource projections. Reject unsupported capabilities cheaply before full source/cleanup analysis, keep the observer off hover/tick/commit paths, and retain native execution/current policy guards. Remove each legacy check only after its callback/structural, spatial, capacity, checkpoint and outcome protection has a qualified replacement.
 
@@ -243,6 +245,10 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 
 # Process friction
+
+- [ ] Stop native batch follow-up launches after audited per-case setup failures: a device-target-loss corridor failure after initial fixture readiness currently lets `stop-on-setup-failure` continue to the next job. Add explicit adapter stage receipts and policy regressions; preserve failed evidence and allow only independent qualified jobs to continue.
+
+- [ ] Handle slow host-resource probes while native admission is waiting under memory pressure: `tools/queue_checks/host.py` can time out its 10-second `ps` sample and abort an otherwise queued run. Keep capacity unknown and preserve resource guards; add bounded retry/cancellation diagnostics without admitting from stale data.
 
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.
 

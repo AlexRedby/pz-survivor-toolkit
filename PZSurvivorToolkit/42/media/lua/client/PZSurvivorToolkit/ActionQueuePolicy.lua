@@ -28,7 +28,7 @@ local editBindingCapture=Proof and Proof.captureBindings
 local editNativeMeta=toolkitLuaMetatableMatches
 local spatialOwner=Toolkit.ActionQueueApproach
 local spatialPrepare=spatialOwner and spatialOwner.prepareSpatialLease
-local spatialEdits={factory=spatialOwner and spatialOwner.prepareSpatialEditLease,line=728,maxMembers=32,equal=rawequal}
+local spatialEdits={factory=spatialOwner and spatialOwner.prepareSpatialEditLease,line=730,maxMembers=32,equal=rawequal}
 spatialEdits.shape={kind=type,meta=getmetatable,each=pairs,array=ipairs,equal=rawequal,call=pcall}
 spatialEdits.shapeWatch=editBindingCapture and editBindingCapture({
     {owner=_G,keys={'type','getmetatable','pairs','ipairs','rawequal','pcall','toolkitLuaMetatableMatches'}},
@@ -43,7 +43,7 @@ local spatialPrerequisites=type(editBindingCapture)=="function"and editBindingCa
     {owner=math,keys={"floor"}},{owner=string,keys={"byte","sub","gsub","match"}},
 })
 -- Updated together with the source-owned factory; a same-file callback is not its role.
-local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=656,198233304
+local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=658,3570298766
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"

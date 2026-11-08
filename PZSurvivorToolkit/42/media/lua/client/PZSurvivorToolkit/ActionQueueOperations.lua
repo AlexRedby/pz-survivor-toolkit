@@ -356,6 +356,8 @@ local function stamp(action, token)
     if settlement then settlement.track(action, "body") end
     local execution = PZSurvivorToolkit.ActionQueueExecution
     if execution then execution.enqueued(action) end
+    local targets = PZSurvivorToolkit.ActionQueueDeviceTargets
+    if targets then targets.enqueued(action) end
     -- Keep original pickup locations after native transfers merge or leave the queue.
     local operation = action.toolkitQueueOperation
     if type(operation) == "table" and action.toolkitQueuePriority == "urgent" then operation.toolkitPriority = "urgent" end

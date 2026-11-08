@@ -46,6 +46,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.343
+
+- **Fixed:** Refuse reviewed pending TV/radio commands when their original world object, square or DeviceData binding has disappeared or moved. Reuse the operation ledger to preserve already-paid preparation and independent work without starting or replaying the rejected command. Unknown source/history, active actions and in-flight requests retain native handling.
+- **Internal:** Keep private device-action provenance checks uncached to avoid retaining retired actions and world references in the callback-source memo.
+
+
 ### 0.1.341
 
 - **Internal:** Describe source-owned deferred approaches as explicit native phases in read-only active-edit plans. A bounded one-use lease preserves the actor, requested target and command dependencies without computing a route or predicting native children. The phase invalidates every future resource forecast; subsequent limits stay within their own phase, and malformed declarations remain unsupported. Native resolution is required and this observer still grants no edit, capacity or outcome permission.
@@ -1585,6 +1591,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.89
+
+- **Internal:** Expose a callback-free, build-checked world-device identity observation for pending queue admission. An opaque snapshot binds the original TV/radio, native data and loaded square; unsupported worlds and invocations remain unknown. Refresh the reviewed Lua source pins without changing native device effects or packet authority.
 
 ### 0.1.87
 

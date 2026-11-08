@@ -56,6 +56,22 @@ end
 function Media.matches(action)return describe(action)~=nil end
 function Media.inspect(action)return describe(action)end
 function Media.isInstalled()return unchanged()end
+-- Admission captures provenance before a world target can disappear. Unlike
+-- inspect/describe this checks callbacks only, without dereferencing the target.
+function Media.pendingDeviceSupported(action)
+ if not unchanged()or type(action.isRemove)~='boolean'then return false end
+ if getmetatable(action)==snapshot.class then return callbacksTrusted(action,false,action.isRemove)end
+ if getmetatable(action)~=snapshot.helper or not snapshot.batteryTrusted
+  or action.Type~=snapshot.helper.Type or action.maxTime~=30
+  or action.stopOnWalk~=false or action.stopOnRun~=true or action.ignoreHandsWounds~=true
+  or action.onStartFunc or action.onCompleteFunc or action.onCancelFunc or action.onFailFunc
+  or action.additionalTest or action.retriggerLastAction then return false end
+ for name,callback in pairs(snapshot.batteryMethods)do if (action[name]or false)~=callback then return false end end
+ for name,callback in pairs(action)do
+  if type(callback)=='function'and callback~=snapshot.batteryMethods[name]then return false end
+ end
+ return true
+end
 -- Ejection creates a new item ID; it does not restore the original inserted item.
 -- Keep insertion's public receipt separate: reading promotion consumes that API.
 local function ejectTarget(action,completing)
@@ -325,10 +341,24 @@ function Media.install()
  end
  local helperMethods={getDeviceDataParameter=helper.getDeviceDataParameter,getDeviceDataFromParameter=helper.getDeviceDataFromParameter}
  for _,callback in pairs(helperMethods)do trusted=trusted and from(callback,'ISDeviceBatteryAction.lua')end
+ local batteryMethods,batteryOwn,batteryTrusted={},{},trusted
+ for name,callback in pairs(helper)do
+  if type(callback)=='function'then
+   batteryMethods[name],batteryOwn[name]=callback,true
+   if name~='derive'then batteryTrusted=batteryTrusted and from(callback,'ISDeviceBatteryAction.lua')end
+  end
+ end
+ for _,name in ipairs(lifecycle)do
+  local callback=helper[name];batteryMethods[name]=callback or false
+  if callback and not batteryOwn[name]then
+   batteryTrusted=batteryTrusted and (from(callback,'ISBaseTimedAction.lua')
+    or (name=='begin'or name=='stop')and from(callback,'ActionQueue.lua'))
+  end
+ end
  local baseMethods={new=base.new,perform=base.perform}
  for _,callback in pairs(baseMethods)do trusted=trusted and from(callback,'ISBaseTimedAction.lua')end
  snapshot={class=class,helper=helper,base=base,methods=methods,helperMethods=helperMethods,baseMethods=baseMethods,
-  binding=binding,trusted=trusted}
+  binding=binding,trusted=trusted,batteryMethods=batteryMethods,batteryTrusted=batteryTrusted}
  if trusted then
   local nativeValid=class.isValid
   class.isValid=function(action)

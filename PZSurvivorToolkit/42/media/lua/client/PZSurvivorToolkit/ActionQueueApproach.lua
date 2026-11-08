@@ -231,6 +231,8 @@ local function resolve(character,request)
                 local record={class=getmetatable(action),token=current.toolkitQueueOperation,
                     stop=action.stop,update=action.update,perform=action.perform,valid=action.isValid}
                 walking[action]=record
+                local targets=Toolkit.ActionQueueDeviceTargets
+                if targets then targets.positionEnqueued(action,current)end
                 if action.Type=='ISPathFindAction'and not action.onFailFunc
                     and not action.runActionsAfterFailing and native(action.setOnFail)then
                     action:setOnFail(pathFailed,action)
@@ -729,4 +731,74 @@ function Approach.prepareSpatialEditLease(action,targetObject)
     if ok then return check,edit end
 end
 spatialEditFactory=Approach.prepareSpatialEditLease
+
+-- Capture while this module still owns the constructor/resolver evidence.
+-- The returned watch names immutable source/arguments, not mutable native
+-- allocation or progress. It never grants a spatial projection or replays work.
+function Approach.prepareDevicePosition(action,parent)
+    local p=spatialPrimitives
+    if not spatialPrimitiveWatch or not spatialPrimitiveWatch()then return end
+    local square,request,record,class
+    if not parent then
+        local check,description=prepareSpatialRequest(action)
+        if not check or not check()then return end
+        record=action.toolkitQueueCommand;request=record.snapshot
+        if request.args[3]~=true then return end
+        square,class=description.targetSquare,commandClass
+    else
+        local queue=ownedQueue(parent.character)
+        local captured=walking[action]
+        record=parent.toolkitQueueCommand;request=record and record.snapshot
+        if not queue or queue.current~=parent or queue.queue[1]~=parent
+            or not parent._isAddingActions or not Approach.isAction(parent)
+            or not captured or getmetatable(action)~=ISWalkToTimedAction
+            or captured.class~=ISWalkToTimedAction or captured.token~=parent.toolkitQueueOperation
+            or action.character~=parent.character or action.toolkitQueueOperation~=captured.token
+            or action.action or action.started or action.additionalTest or action.additionalContext
+            or action.onCompleteFunc or action.onCompleteArgs or action.onFailFunc
+            or not request or request.binding.owner~=luautils or request.binding.name~='walkAdj'
+            or request.args[3]~=true or request.args[1]~=action.character then return end
+        local found=false
+        for index=2,1+parent._numAddedActions do if queue.queue[index]==action then found=true end end
+        if not found or not native(action.stop)or not native(action.update)or not native(action.perform)then return end
+        if not p.matches('media/lua/client/TimedActions/WalkToTimedAction.lua',2037641019,nil,true)then return end
+        square,class=request.args[2],ISWalkToTimedAction
+    end
+    if action.maxTime~=-1 or action.stopOnWalk~=false or action.stopOnRun~=false
+        or action.onCompleteFunc or action.onStartFunc or action.onCancelFunc or action.onFailFunc
+        or action.additionalTest or action.retriggerLastAction then return end
+    local keys={'character','toolkitQueueOperation','toolkitQueueCommand','args','addActionsFunction',
+        'location','maxTime','stopOnAim','stopOnWalk','stopOnRun','additionalTest','additionalContext',
+        'onCompleteFunc','onCompleteArgs','onStartFunc','onCancelFunc','onFailFunc','retriggerLastAction'}
+    local methods={}
+    for name,callback in p.pairs(action)do if p.kind(callback)=='function'then methods[name]=callback end end
+    for _,name in p.each({'new','begin','create','start','update','stop','perform','complete',
+        'isValid','isValidStart','waitToStart','forceCancel','forceComplete','forceStop','invoke'})do
+        keys[#keys+1]=name
+    end
+    local specs={{owner=action,keys=keys},{owner=class,exact=true},{owner=baseClass,exact=true},
+        {owner=Toolkit,keys={'ActionQueueApproach','ActionQueueOperations'}},
+        {owner=Approach,keys={'prepareDevicePosition'}},{owner=Operations,keys={'command','expandCommand','runWith'}},
+        {owner=_G,keys={'ISQueueActionsAction','ISWalkToTimedAction','ISBaseTimedAction'}},
+        {owner=record,exact=true},{owner=record.marker,exact=true},{owner=record.args,exact=true},
+        {owner=request,exact=true},{owner=request.args,exact=true},
+        {owner=request.binding,exact=true},{owner=request.binding.spec,exact=true},
+        {owner=request.binding.spec.arrays,exact=true},{owner=request.guards,exact=true},
+        {owner=luautils,keys={'walkAdj','getCorrectSquareForWall'}},
+        {owner=installed,keys={luautils}},{owner=installed[luautils],keys={'walkAdj'}},
+        {owner=knownWrappers,keys={request.binding.wrapper}},
+        {owner=attestations,keys={request.binding}}}
+    for _,guard in p.each(request.guards)do specs[#specs+1]={owner=guard,exact=true}end
+    if request.args[4]then specs[#specs+1]={owner=request.args[4],exact=true}end
+    local watch=p.capture(specs)
+    if not watch or not watch()or not spatialPrimitiveWatch()then return end
+    return function()
+        if not spatialPrimitiveWatch()or not watch()then return false end
+        for name,callback in p.pairs(action)do
+            if p.kind(callback)=='function'and not p.equal(methods[name],callback)then return false end
+        end
+        for name,callback in p.pairs(methods)do if not p.equal(p.raw(action,name),callback)then return false end end
+        return true
+    end,square
+end
 return Approach

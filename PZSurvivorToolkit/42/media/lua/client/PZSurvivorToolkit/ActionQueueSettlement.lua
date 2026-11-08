@@ -10,7 +10,8 @@ local executionProof = require "PZSurvivorToolkit/SourceProof"
 -- Unknown factories must never receive private callbacks or attempt records.
 local function transferOutcomes(module)
     if type(module) ~= "table" or getmetatable(module) ~= nil or not executionProof
-        or type(executionProof.own) ~= "function" or type(executionProof.closure) ~= "function" then return end
+        or type(executionProof.own) ~= "function" or type(executionProof.closure) ~= "function"
+        or type(executionProof.captureBindings) ~= "function" then return end
     local own, origin = executionProof.own, executionProof.closure
     local member = own(module, "sameMember")
     local retained = own(module, "retained")
@@ -2870,6 +2871,296 @@ end
 local sourceAdapters=Toolkit.ActionQueueItemEditAdapters
 if sourceAdapters and sourceAdapters.registerSourceFactory then
     sourceAdapters.registerSourceFactory(Settlement,"transferListenerBinding",Settlement.transferListenerBinding)
+end
+
+-- Source-owned device admission uses the existing private operation steps.
+local deviceBinding
+local deviceCall = pcall
+local deviceRaw, deviceSet, deviceKind, deviceMeta, deviceEach, devicePairs, deviceEqual = rawget, rawset, type, getmetatable, ipairs, pairs, rawequal
+local function deviceOwner()
+    local owner = Toolkit.ActionQueueDeviceTargets
+    if type(owner) ~= "table" or getmetatable(owner) ~= nil or not executionProof
+        or type(executionProof.own) ~= "function" or type(executionProof.closure) ~= "function" then return end
+    if not deviceBinding then
+        local methods = {}
+        for _, name in ipairs({"owns", "validateNativeRole", "worldLost", "watchSources"}) do
+            local method = executionProof.own(owner, name)
+            if not executionProof.closure(method, "ActionQueueDeviceTargets.lua") then return end
+            methods[name] = method
+        end
+        deviceBinding = {owner = owner, methods = methods, proof = executionProof,
+            own = executionProof.own, origin = executionProof.closure, capture = executionProof.captureBindings}
+    end
+    local saved = deviceBinding
+    if PZSurvivorToolkit ~= Toolkit or Toolkit.ActionQueueSettlement ~= Settlement
+        or owner ~= saved.owner or executionProof ~= saved.proof
+        or executionProof.own ~= saved.own or executionProof.closure ~= saved.origin
+        or executionProof.captureBindings ~= saved.capture then return end
+    for name, method in pairs(saved.methods) do if saved.own(owner, name) ~= method then return end end
+    return saved
+end
+local function acceptedDevice(callback, ...)
+    local ok, result = deviceCall(callback, ...)
+    return ok and result == true
+end
+function Settlement.bindDeviceStep(action, descriptor)
+    local owner = deviceOwner()
+    if not owner or type(action) ~= "table"
+        or not acceptedDevice(owner.methods.owns, action, descriptor) then return false end
+    local record = operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    if not step or step.device ~= nil or step.started or step.state ~= "pending"
+        or action.action or action.started then return false end
+    step.device = descriptor
+    return true
+end
+function Settlement.deviceStep(action)
+    local owner = deviceOwner()
+    local record = owner and action and operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    if step and step.device and acceptedDevice(owner.methods.owns, action, step.device) then return step.device end
+end
+
+-- Queue order, not ledger insertion order, selects the exact pending suffix.
+-- A retained paid position head is never removed, canceled or invalidated.
+function Settlement.prepareDeviceRefusal(queue, current, members)
+    -- Unknown cleanup providers may retain obligations outside these steps.
+    -- Refusal never calls their retain/ownsPickup callbacks to guess otherwise.
+    if #providers > 0 then return end
+    local deviceProviderRevision = providerRevision
+    local raw, set, kind, meta, each, pairsOf, equal = deviceRaw, deviceSet, deviceKind, deviceMeta, deviceEach, devicePairs, deviceEqual
+    local owner = deviceOwner()
+    if not owner or kind(queue) ~= "table" or kind(current) ~= "table" or kind(members) ~= "table"
+        or meta(members) ~= nil or #members < 1 or #members > 32
+        or kind(members[1]) ~= "table" then return end
+    local memberToken = raw(members[1], "toolkitQueueOperation")
+    if kind(memberToken) ~= "table" or meta(memberToken) ~= nil then return end
+    local record = operation(queue.character, memberToken)
+    if not record then return end
+    local function own(value, key)
+        for name, entry in pairsOf(value) do if equal(name, key) then return entry end end
+    end
+    local token, actor, list, generation = record.token, record.character, queue.queue, record.generation
+    if kind(list) ~= "table" or meta(list) ~= nil or #list < 1 or #list > 128 then return end
+    local function array(values, maximum)
+        if kind(values) ~= "table" or meta(values) ~= nil or #values > maximum then return false end
+        local count = 0
+        for key in pairsOf(values) do
+            count = count + 1
+            if count > maximum or kind(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > #values then return false end
+        end
+        return count == #values
+    end
+    local methods, targets = owner.methods, {}
+    local memberCount = 0
+    for key, action in pairsOf(members) do
+        if kind(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > #members
+            or kind(action) ~= "table" or targets[action] then return end
+        memberCount = memberCount + 1; targets[action] = true
+    end
+    if memberCount ~= #members then return end
+    local failed, descriptor, removedCurrent
+    local function role(action, step, stage)
+        if step.device == nil or not acceptedDevice(methods.owns, action, step.device) then return end
+        local ok, result = pcall(methods.validateNativeRole, action, step.device, stage)
+        if ok and (result == "device" or result == "position") then return result end
+    end
+    local function pending(action, step)
+        return step.started ~= true and not own(action, "action") and not own(action, "started")
+            and own(action, "toolkitNativeTransaction") == nil and own(action, "toolkitNativeKind") == nil
+            and (own(action, "transactionId") == nil or own(action, "transactionId") == 0)
+    end
+    local function eligible()
+        if #providers > 0 or providerRevision ~= deviceProviderRevision then return false end
+        local fresh = deviceOwner()
+        local liveRecord = operation(actor, token)
+        if fresh ~= owner or liveRecord ~= record or record.token ~= token or record.queue ~= queue
+            or record.character ~= actor or record.generation ~= generation
+            or kind(generation) ~= "number" or generation % 1 ~= 0
+            or rawget ~= raw or rawset ~= set or type ~= kind or getmetatable ~= meta
+            or ipairs ~= each or pairs ~= pairsOf or rawequal ~= equal or pcall ~= deviceCall
+            or not operationLive(record) or not actor:isLocalPlayer() or actor:isAsleep()
+            or getSpecificPlayer(actor:getPlayerNum()) ~= actor
+            or ISTimedActionQueue.queues[actor] ~= queue or queue.character ~= actor
+            or queue.queue ~= list or queue.current ~= current or list[1] ~= current
+            or own(current, "character") ~= actor or meta(record) ~= nil
+            or not array(list, 128) or not array(record.steps, 32) or not array(record.borrowings, 32)
+            or kind(record.actions) ~= "table" or meta(record.actions) ~= nil
+            or queue.toolkitCancel or queue.toolkitGroupCancel or queue.toolkitResume
+            or queue.toolkitOutcomeWait or queue.toolkitStopIntent
+            or (record.phase ~= "prepare" and record.phase ~= "body")
+            or (raw(token, "toolkitContinuations") ~= nil and raw(token, "toolkitContinuations") ~= 0)
+            or raw(token, "toolkitCancelled")
+            or record.preparationScope ~= nil
+            or record.settlement ~= nil or #record.borrowings ~= 0 or raw(token, "toolkitPickups") ~= nil
+            or cancellations[queue] or queue.toolkitOperationsInvalid
+            or record.phase == "cleanup" then return false end
+        local positions, queued = {}, {}
+        for index, action in each(list) do
+            if kind(action) ~= "table" then return false end
+            if own(action, "toolkitQueueOperation") == token then
+                if not record.actions[action] or queued[action] then return false end
+                queued[action], positions[action] = true, index
+            end
+        end
+        local deviceAction, deviceDescriptor, count, steps = nil, nil, 0, {}
+        for _, step in each(record.steps) do
+            if kind(step) ~= "table" or meta(step) ~= nil then return false end
+            local action = step.action
+            if steps[action] then return false end
+            steps[action] = step
+            if kind(step) ~= "table" or meta(step) ~= nil or step.operation ~= record
+                or kind(action) ~= "table" or record.actions[action] ~= step
+                or own(action, "character") ~= actor or own(action, "toolkitQueueOperation") ~= token
+                or step.state ~= "pending" or (step.phase ~= "prepare" and step.phase ~= "body") or step.required or step.receipt
+                or step.prerequisites ~= nil or step.returning or step.preparation or step.borrowing
+                or own(action, "onCompleteFunc") or own(action, "onCancelFunc") or own(action, "onStartFunc")
+                or own(action, "toolkitQueueContinuation") then return false end
+            local index, nativeRole = positions[action]
+            if targets[action] then
+                if not index or not pending(action, step) then return false end
+                nativeRole = role(action, step, "pending")
+                if not nativeRole then return false end
+                if nativeRole == "device" then
+                    count = count + 1; deviceAction, deviceDescriptor = action, step.device
+                end
+            elseif action == current then
+                if index ~= 1 or not step.started or not own(action, "action")
+                    or role(action, step, "current-position") ~= "position" then return false end
+            else
+                if index or not step.started or role(action, step, "completed-position") ~= "position" then return false end
+            end
+        end
+        local stepCount = 0
+        for action, step in pairsOf(record.actions) do
+            stepCount = stepCount + 1
+            if stepCount > 32 or steps[action] ~= step then return false end
+        end
+        if stepCount ~= #record.steps then return false end
+        -- One source-owned device body and its position steps only. Broader
+        -- producers must supply an explicit common-target contract first.
+        if count ~= 1 then return false end
+        local last = 0
+        for _, action in each(members) do
+            if not targets[action] or not positions[action] or positions[action] <= last then return false end
+            last = positions[action]
+        end
+        if failed and (deviceAction ~= failed or deviceDescriptor ~= descriptor) then return false end
+        failed, descriptor, removedCurrent = deviceAction, deviceDescriptor, targets[current] == true
+        return true
+    end
+    if not eligible() or #providers > 0 or providerRevision ~= deviceProviderRevision then return end
+
+    -- Only primitive table/identity reads occur through this mirror. It is
+    -- query-local, not a second operation ledger or an authorization cache.
+    local watches = {}
+    local function watch(value, keys, exact)
+        if kind(value) ~= "table" then return false end
+        local entries = {}
+        if exact then
+            local count = 0
+            for key, entry in pairsOf(value) do
+                count = count + 1; if count > 128 then return false end
+                entries[#entries + 1] = {key = key, value = entry}
+            end
+        else
+            for _, key in each(keys) do entries[#entries + 1] = {key = key, value = own(value, key)} end
+        end
+        watches[#watches + 1] = {owner = value, meta = meta(value), entries = entries, exact = exact}
+        return true
+    end
+    watch(_G, {"PZSurvivorToolkit", "ISTimedActionQueue", "rawget", "rawset", "type", "getmetatable", "ipairs", "pairs", "rawequal", "pcall", "getSpecificPlayer"})
+    watch(Toolkit, {"ActionQueueSettlement", "ActionQueueDeviceTargets", "Settings"})
+    watch(Toolkit.Settings, {"actionQueue"})
+    watch(owner.owner, {"owns", "validateNativeRole", "worldLost", "watchSources"})
+    watch(executionProof, {"own", "closure", "captureBindings"})
+    watch(ISTimedActionQueue, {"queues"}); watch(ISTimedActionQueue.queues, {actor})
+    watch(cancellations, {queue})
+    if not watch(queue, nil, true) or not watch(list, nil, true) or not watch(members, nil, true)
+        or not watch(providers, nil, true)
+        or not watch(token, nil, true) or not watch(record, nil, true)
+        or not watch(record.steps, nil, true) or not watch(record.actions, nil, true)
+        or not watch(record.borrowings, nil, true) then return end
+    for _, step in each(record.steps) do
+        if not watch(step, nil, true) or not watch(step.action, nil, true) then return end
+    end
+    if not record.actions[current] and not watch(current,nil,true)then return end
+    local seen={}
+    for _,entry in each(watches)do seen[entry.owner]=true end
+    local function ancestry(value,depth)
+        if value==nil then return true end
+        if kind(value)~='table'or depth>8 then return false end
+        if seen[value]then return true end
+        seen[value]=true
+        if not watch(value,nil,true)then return false end
+        local index=own(value,'__index')
+        if index~=nil and kind(index)~='table'then return false end
+        return ancestry(meta(value),depth+1)and(index==nil or equal(index,value)or ancestry(index,depth+1))
+    end
+    if not ancestry(meta(current),1)then return end
+    for _,step in each(record.steps)do if not ancestry(meta(step.action),1)then return end end
+    local specifications,certificates={},{}
+    for _,entry in each(watches)do
+        local spec={owner=entry.owner,exact=entry.exact}
+        if not entry.exact then
+            spec.keys={}
+            for _,field in each(entry.entries)do spec.keys[#spec.keys+1]=field.key end
+        end
+        specifications[#specifications+1]=spec
+        if #specifications==32 then
+            local certificate=owner.capture(specifications)
+            if kind(certificate)~='function'or not certificate()then return end
+            certificates[#certificates+1]=certificate;specifications={}
+        end
+    end
+    if #specifications>0 then
+        local certificate=owner.capture(specifications)
+        if kind(certificate)~='function'or not certificate()then return end
+        certificates[#certificates+1]=certificate
+    end
+    -- This retained primitive checks the real table metatable, including a
+    -- protected replacement reporting the old public __metatable value. It
+    -- never executes Lua getters, metadata readers or world callbacks.
+    local function actualTables()
+        for _,certificate in each(certificates)do if not certificate()then return false end end
+        return true
+    end
+    if not actualTables()then return end
+    local function unchanged()
+        if providerRevision ~= deviceProviderRevision then return false end
+        for _, entry in each(watches) do
+            if not equal(meta(entry.owner), entry.meta) then return false end
+            for _, field in each(entry.entries) do
+                if not equal(own(entry.owner, field.key), field.value) then return false end
+            end
+            if entry.exact then
+                local count = 0
+                for _ in pairsOf(entry.owner) do count = count + 1; if count > #entry.entries then return false end end
+                if count ~= #entry.entries then return false end
+            end
+        end
+        return true
+    end
+    local used = false
+    return function(checkWorld, watchSources)
+        if used then return false end
+        used = true
+        if checkWorld ~= methods.worldLost or watchSources ~= methods.watchSources
+            or not unchanged() or not eligible() or not unchanged() then return false end
+        if not acceptedDevice(watchSources, failed, descriptor) or not unchanged() then return false end
+        if not acceptedDevice(checkWorld, failed, descriptor) then return false end
+        -- No Settings/isDead/operationLive/owner/native callback beyond here.
+        if not unchanged() or not actualTables() then return false end
+        local size = #list
+        for index = size, 1, -1 do
+            if targets[raw(list, index)] then
+                for offset = index, size - 1 do set(list, offset, raw(list, offset + 1)) end
+                set(list, size, nil); size = size - 1
+            end
+        end
+        if removedCurrent then set(queue, "current", raw(list, 1)) end
+        return true, removedCurrent
+    end
 end
 
 return Settlement

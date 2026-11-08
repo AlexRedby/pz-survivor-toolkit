@@ -19,6 +19,7 @@ require "PZSurvivorToolkit/BulkActions"
 require "PZSurvivorToolkit/ActionQueueExecution"
 require "PZSurvivorToolkit/ActionQueuePickupFailure"
 require "RadioCom/ISRadioAction"
+require "PZSurvivorToolkit/ActionQueueDeviceTargets"
 
 local Toolkit = PZSurvivorToolkit
 local Queue = {}
@@ -62,6 +63,8 @@ ISBaseTimedAction.begin = function(action)
     -- Initialize disabled-mode bookkeeping before native allocation/receipts.
     -- Its first tick must not revoke a freshly captured media transaction.
     updateOperationState(ISTimedActionQueue.queues[action.character])
+    local targets = Toolkit.ActionQueueDeviceTargets
+    if targets then targets.admitting(action) end
     local media = Toolkit.ActionQueueMedia
     if media then media.start(action) end
     local intent=Toolkit.ActionQueueTidyIntent
@@ -228,6 +231,8 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         end
     end
     if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.completeCancellation(queue, action) end
+    local targets = Toolkit.ActionQueueDeviceTargets
+    if targets then targets.skipUnavailable(queue,action) end
     completed(queue, action)
     if Execution then Execution.completed(action) end
     if PickupFailure then PickupFailure.completed(action) end
@@ -562,5 +567,6 @@ require "PZSurvivorToolkit/ActionQueueAnimalStops"
 require "PZSurvivorToolkit/ActionQueueReading"
 require "PZSurvivorToolkit/ActionQueueMedia"
 if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.install() end
+if Toolkit.ActionQueueDeviceTargets then Toolkit.ActionQueueDeviceTargets.install() end
 require "PZSurvivorToolkit/ActionQueueRecovery"
 return Queue

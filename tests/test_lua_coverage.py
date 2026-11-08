@@ -275,11 +275,70 @@ class LuaCoverageTests(unittest.TestCase):
 class CoverageConsumerTests(unittest.TestCase):
     """The migrated scripts must keep declarations, receipts and syntax aligned."""
 
-    def test_declared_source_checks_compile_and_have_both_outcomes(self):
+    def receipt_outcomes(self, name, source):
+        receipt = re.compile(r'''TestCoverage\(\s*(?:(['"])([^'"]*)\1|(\w+))\s*,\s*(['"])([^'"]*)\4(?=\s*[,\)])''')
+        matches = list(receipt.finditer(source))
+        self.assertEqual(len(matches), len(re.findall(r'\bTestCoverage\s*\(', source)),
+                         'Every receipt needs a supported ID producer and a literal state')
+        outcomes, dynamic = {}, []
+        for match in matches:
+            if match[2] is not None:
+                outcomes.setdefault(match[2], set()).add(match[5])
+            else:
+                dynamic.append((match[3], match[5]))
+        if dynamic:
+            # The composition bank has a finite skipped list and one passed
+            # receipt inside a literal mode loop. Resolve those actual producers
+            # rather than requiring duplicate literal receipts in the Lua test.
+            self.assertEqual(name, 'test_action_queue_borrowing_composition.lua')
+            self.assertEqual(dynamic, [('id', 'skipped'), ('mode', 'passed')])
+            lua = LuaRuntime(unpack_returned_tuples=True)
+            # Only ipairs and the receipt sink are available. A missing early
+            # return cannot read files, load project code or fake bound inputs.
+            execute = lua.eval('''function(source)
+                local receipts={}
+                local function sink(id,state,reason)
+                    receipts[#receipts+1]={id=id,state=state,reason=reason}
+                end
+                local body=assert(loadstring(source))
+                setfenv(body,{ipairs=ipairs,TestCoverage=sink})
+                body()
+                return receipts
+            end''')
+            receipts = execute(source)
+            skipped = [(receipts[i]['id'], receipts[i]['state'], receipts[i]['reason'])
+                       for i in range(1, len(receipts) + 1)]
+            self.assertEqual(len(skipped), len({row[0] for row in skipped}))
+            for identifier, state, reason in skipped:
+                self.assertEqual(state, 'skipped')
+                self.assertTrue(isinstance(reason, str) and reason.strip())
+                outcomes.setdefault(identifier, set()).add(state)
+            loops = re.finditer(r"(?ms)^for _,mode in ipairs\((\{[^}\n]+\})\)do\n(.*?)^end\b", source)
+            passed = [match for match in loops if re.search(r"TestCoverage\(\s*mode\s*,\s*['\"]passed['\"]\)", match[2])]
+            self.assertEqual(len(passed), 1, 'Dynamic pass receipt needs one bounded literal mode loop')
+            literal = passed[0][1]
+            ids = re.findall(r'''(['"])([\w-]+)\1''', literal)
+            remainder = re.sub(r'''(['"])[\w-]+\1''', '', literal)
+            self.assertRegex(remainder, r'^\{[\s,]*\}$', 'Mode enumeration must contain only literal receipt IDs')
+            self.assertTrue(0 < len(ids) <= 32)
+            self.assertEqual(len(ids), len({identifier for _, identifier in ids}))
+            for _, identifier in ids:
+                outcomes.setdefault(identifier, set()).add('passed')
+        return outcomes
+
+    def assert_receipts(self, name, source, expected):
+        outcomes = self.receipt_outcomes(name, source)
+        self.assertEqual(set(expected), set(outcomes))
+        for values in outcomes.values():
+            self.assertIn('passed', values)
+            self.assertLessEqual(values, {'passed', 'skipped'})
+            if name not in run_tests.REQUIRED_INPUTS:
+                self.assertIn('skipped', values)
+
+    def test_declared_source_checks_compile_and_have_required_outcomes(self):
         root = Path(__file__).resolve().parents[1]
         lua = LuaRuntime(unpack_returned_tuples=True)
         compile_source = lua.eval('function(source) local f,err=loadstring(source); return f~=nil,err end')
-        receipt = re.compile(r'''TestCoverage\(\s*(['"])([\w-]+)\1\s*,\s*(['"])(passed|skipped)\3''')
         for name, expected in run_tests.SOURCE_CHECKS.items():
             with self.subTest(test=name):
                 source = (root / 'tests' / name).read_text()
@@ -289,11 +348,35 @@ class CoverageConsumerTests(unittest.TestCase):
                     # This fixture uses sourceCheck/completed helpers; its seven
                     # paths also have direct source-backed execution coverage.
                     continue
-                outcomes = {}
-                for match in receipt.finditer(source):
-                    outcomes.setdefault(match[2], set()).add(match[4])
-                self.assertEqual(set(expected), set(outcomes))
-                self.assertTrue(all(values == {'passed', 'skipped'} for values in outcomes.values()), outcomes)
+                self.assert_receipts(name, source, expected)
+
+    def test_dynamic_receipt_ids_and_states_are_checked_without_source_inputs(self):
+        root = Path(__file__).resolve().parents[1]
+        name = 'test_action_queue_borrowing_composition.lua'
+        source = (root / 'tests' / name).read_text()
+        expected = set(run_tests.SOURCE_CHECKS[name])
+        self.assertEqual(set(self.receipt_outcomes(name, source)), expected)
+        changed_modes = source.replace("ipairs({'plain','singleton-guarded','merge-preserving'})", "ipairs({'unknown','singleton-guarded','merge-preserving'})", 1)
+        self.assertNotEqual(set(self.receipt_outcomes(name, changed_modes)), expected)
+        for changed in (source.replace("TestCoverage(mode,'passed')", "TestCoverage(mode,'failed')"),
+                        source.replace("TestCoverage(id,'skipped'", "TestCoverage(id,'passed'")):
+            with self.assertRaises(AssertionError):
+                self.receipt_outcomes(name, changed)
+
+    def test_mandatory_input_tests_need_pass_receipts_without_fake_skips(self):
+        name = 'required.lua'
+        passed = "TestCoverage('actual','passed')"
+        with patch.dict(run_tests.REQUIRED_INPUTS, {name: ('native_action_root', '--game')}):
+            self.assert_receipts(name, passed, ('actual',))
+            for invalid in ("TestCoverage('actual','skipped','unavailable')",
+                            passed + "; TestCoverage('actual','failed')",
+                            passed + "; TestCoverage('actual','unexpected state')",
+                            passed + "; TestCoverage('unknown','passed')",
+                            passed + "; TestCoverage('actual',state)"):
+                with self.subTest(invalid=invalid), self.assertRaises(AssertionError):
+                    self.assert_receipts(name, invalid, ('actual',))
+        with self.assertRaises(AssertionError):
+            self.assert_receipts(name, passed, ('actual',))
 
     def test_runnable_lua_checks_do_not_report_coverage_by_printing_skip(self):
         root = Path(__file__).resolve().parents[1]

@@ -20,6 +20,7 @@ import zombie.iso.SpriteDetails.IsoFlagType
 import zombie.iso.objects.*
 import zombie.iso.sprite.IsoSprite
 import zombie.network.GameServer
+import zombie.radio.devices.DeviceData
 import zombie.util.list.PZArrayList
 
 /** Callback-free final observation of the pinned native walkAdj zero-child branch. */
@@ -58,6 +59,9 @@ object QueueSpatialFacts {
             "se/krka/kahlua/integration/expose/LuaJavaClassExposer.class" to "4c8dc24c94de2cb814741f135d7d9baf8bc09062dd821d3c56cc4b09f322c0bd",
     ).all { (path, hash) -> BytecodeSupport.supports(path, hash) }
 
+    @JvmField internal val DEVICE_SUPPORTED = SUPPORTED && BytecodeSupport.supports(
+        "zombie/radio/devices/DeviceData.class", "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102")
+
     private fun field(owner: Class<*>, name: String) = if (!SUPPORTED) null else try {
         owner.getDeclaredField(name).apply { isAccessible = true }
     } catch (_: Exception) { null }
@@ -66,6 +70,8 @@ object QueueSpatialFacts {
     private val ignoredSprites = field(IsoGridSquare::class.java, "ignoreBlockingSprites")
     private val readMethod = QueueSpatialFacts::class.java.getMethod("noMovement", Any::class.java, Any::class.java, Any::class.java, Any::class.java)
     private val checkMethod = QueueSpatialFacts::class.java.getMethod("apiMatches", Any::class.java)
+    private val deviceMethod = QueueSpatialFacts::class.java.getMethod("deviceTarget", Any::class.java, Any::class.java, Any::class.java, Any::class.java)
+    private val deviceCheckMethod = QueueSpatialFacts::class.java.getMethod("deviceApiMatches", Any::class.java)
     private val getCellMethod = LuaManager.GlobalObject::class.java.getMethod("getCell")
     private val standardLibrary = J2SEPlatform().newEnvironment() as KahluaTableImpl
     private val standardAbs = (standardLibrary.delegate["math"] as KahluaTableImpl).delegate["abs"]
@@ -184,6 +190,72 @@ object QueueSpatialFacts {
         entry("toolkitQueueSpatialNoMovement", readMethod, arrayOf(actor, target, exclusions, targetObject)) &&
             read(actor, target, exclusions, targetObject, SUPPORTED, true, true)
     } catch (_: Exception) { false } catch (_: AssertionError) { false }
+
+    // Opaque to Lua: no mutable table, registry or exposed accessors retain ownership.
+    private class DeviceAnchor(
+        val device: IsoWaveSignal,
+        val data: DeviceData,
+        val square: IsoGridSquare,
+        val cell: IsoCell,
+        val x: Int,
+        val y: Int,
+        val z: Int,
+    )
+
+    @JvmStatic @LuaMethod(name = "toolkitQueueDeviceApiMatches", global = true)
+    fun deviceApiMatches(function: Any?): Boolean = try {
+        DEVICE_SUPPORTED && entry("toolkitQueueDeviceApiMatches", deviceCheckMethod, arrayOf(function)) &&
+            canonicalApi(function, deviceMethod) &&
+            plain(LuaManager.env)?.delegate?.get("toolkitQueueDeviceTarget") === function
+    } catch (_: Exception) { false } catch (_: AssertionError) { false }
+
+    /**
+     * Four explicit Lua arguments, including nil for absent anchor/routeSquare.
+     * Capture returns an opaque anchor or nil; validation returns true/live,
+     * false/definite binding loss, or nil/unsupported or currently unknown world.
+     * A nil device resolves the native parent only during capture; checks use
+     * the original anchor body. routeSquare must identify the original square.
+     */
+    @JvmStatic @LuaMethod(name = "toolkitQueueDeviceTarget", global = true)
+    fun deviceTarget(device: Any?, data: Any?, anchor: Any?, routeSquare: Any?): Any? = try {
+        if (!entry("toolkitQueueDeviceTarget", deviceMethod, arrayOf(device, data, anchor, routeSquare))) null
+        else readDeviceTarget(device, data, anchor, routeSquare, DEVICE_SUPPORTED, true)
+    } catch (_: Exception) { null } catch (_: AssertionError) { null }
+
+    /** Explicit negative-test seams; production always obtains build/owner from entry. */
+    internal fun readDeviceTarget(deviceValue: Any?, dataValue: Any?, anchorValue: Any?, routeSquare: Any?, supported: Boolean, owner: Boolean): Any? {
+        return try {
+            if (!supported || !owner || GameServer.server || dataValue?.javaClass != DeviceData::class.java) return null
+            val data = dataValue as DeviceData
+            val anchor = if (anchorValue == null) null else anchorValue as? DeviceAnchor
+            if (anchorValue != null && anchor == null) return null
+            // Only capture resolves the native parent. Validation retains the original
+            // body even if the captured DeviceData was subsequently rebound elsewhere.
+            val candidate = deviceValue ?: anchor?.device ?: data.getParent()
+            if (candidate?.javaClass != IsoTelevision::class.java && candidate?.javaClass != IsoRadio::class.java) return null
+            val device = candidate as IsoWaveSignal
+            if (anchor != null && (anchor.device !== device || anchor.data !== data) ||
+                routeSquare != null && routeSquare !== (anchor?.square ?: device.getSquare())) return null
+            if (anchor != null && (device.getSquare() !== anchor.square ||
+                device.getDeviceData() !== data || data.getParent() !== device ||
+                anchor.square.getX() != anchor.x || anchor.square.getY() != anchor.y ||
+                anchor.square.getZ() != anchor.z)) return false
+            val square = device.getSquare()
+            val world = IsoWorld.instance
+            val cell = world?.currentCell
+            if (square?.javaClass != IsoGridSquare::class.java ||
+                world?.javaClass != IsoWorld::class.java || cell?.javaClass != IsoCell::class.java ||
+                anchor != null && cell !== anchor.cell || !loaded(square, cell)) return null
+            val objects = square.getObjects()
+            if (objects?.javaClass != PZArrayList::class.java || objects.size > 256) return null
+            var member = false
+            for (index in 0 until objects.size) if (objects[index] === device) { member = true; break }
+            if (!member || device.getDeviceData() !== data || data.getParent() !== device) {
+                if (anchor != null) false else null
+            } else anchor?.let { true } ?: DeviceAnchor(device, data, square, cell,
+                square.getX(), square.getY(), square.getZ())
+        } catch (_: Exception) { null } catch (_: AssertionError) { null }
+    }
 
     private val objectClasses = setOf(IsoObject::class.java, IsoDoor::class.java, IsoWindow::class.java,
         IsoThumpable::class.java, IsoBarricade::class.java, IsoTelevision::class.java, IsoRadio::class.java,

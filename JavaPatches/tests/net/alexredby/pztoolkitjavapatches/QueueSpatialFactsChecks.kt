@@ -23,6 +23,12 @@ import zombie.iso.IsoMovingObject
 import zombie.iso.IsoObject
 import zombie.iso.IsoWorld
 import zombie.iso.SpriteDetails.IsoFlagType
+import zombie.iso.objects.IsoWaveSignal
+import zombie.iso.objects.IsoTelevision
+import zombie.iso.objects.IsoRadio
+import zombie.radio.devices.DeviceData
+import zombie.inventory.types.Radio as InventoryRadio
+import zombie.vehicles.VehiclePart
 import zombie.network.GameServer
 import zombie.pathfind.Path
 import zombie.util.list.PZArrayList
@@ -84,12 +90,94 @@ object QueueSpatialFactsChecks {
     private class ForeignList : ArrayList<IsoObject>() {
         override fun get(index: Int): IsoObject { forbiddenCalls++;error("foreign world-list getter invoked") }
     }
+    private class ForeignDevice : IsoTelevision(null) {
+        override fun getSquare(): IsoGridSquare? { forbiddenCalls++;error("foreign device getter invoked") }
+    }
+    @JvmStatic fun foreignDevice(device: Any?, data: Any?, anchor: Any?, route: Any?): Any? {
+        forbiddenCalls++;error("foreign device API invoked")
+    }
+    @JvmStatic fun forwardingDevice(device: Any?, data: Any?, anchor: Any?, route: Any?): Any? =
+        QueueSpatialFacts.deviceTarget(device, data, anchor, route)
+
+    private fun deviceChecks(f: Fixture) {
+        for (type in arrayOf(IsoTelevision::class.java, IsoRadio::class.java)) {
+            val device = bare(type)
+            val data = bare(DeviceData::class.java)
+            field(IsoObject::class.java, device, "square", f.current)
+            field(IsoWaveSignal::class.java, device, "deviceData", data)
+            field(DeviceData::class.java, data, "parent", device)
+            f.current.getObjects().add(device)
+            fun read(anchor: Any? = null, route: Any? = null, supported: Boolean = true, owner: Boolean = true): Any? =
+                QueueSpatialFacts.readDeviceTarget(device, data, anchor, route, supported, owner)
+            fun implicit(anchor: Any? = null, route: Any? = null): Any? =
+                QueueSpatialFacts.readDeviceTarget(null, data, anchor, route, true, true)
+            val anchor = checkNotNull(read()) { "stock device capture" }
+            val implicitAnchor = checkNotNull(implicit(route = f.current)) { "native DeviceData parent capture" }
+            check(implicit(implicitAnchor) == true && implicit(anchor, f.current) == true)
+            check(implicit(route = f.east) == null && implicit(implicitAnchor, f.east) == null)
+            check(anchor !is Boolean && anchor !is KahluaTableImpl) { "capture must be opaque immutable Java data" }
+            check(read(anchor) == true)
+            check(read(anchor, f.current) == true)
+            check(read(route = f.current) != null)
+            check(read(route = f.east) == null && read(anchor, f.east) == null) { "wrong route binding" }
+            check(read(anchor, table()) == null && read(table()) == null) { "malformed route/snapshot" }
+            check(read(supported = false) == null && read(owner = false) == null)
+            GameServer.server = true;check(read(anchor) == null);GameServer.server = false
+            // Removing unrelated objects shifts the index without losing the actual target.
+            f.current.getObjects().remove(f.targetObject)
+            check(read(anchor) == true) { "unrelated index shift rejected live device" }
+            f.current.getObjects().add(f.targetObject)
+            device.removeFromSquare()
+            check(device.getSquare() == null && read(anchor) == false && read() == null) { "native detach" }
+            check(implicit(implicitAnchor) == false && implicit() == null) { "nil-device native detach" }
+            device.setSquare(f.current);f.current.getObjects().add(device)
+            check(read(anchor) == true)
+            f.current.getObjects().remove(device)
+            check(read(anchor) == false) { "list-only removal" }
+            device.setSquare(f.east);f.east.getObjects().add(device)
+            check(read(anchor) == false) { "same body moved" }
+            check(implicit(implicitAnchor, f.current) == false) { "nil-device same body moved" }
+            check(read(anchor, f.current) == false && read(anchor, f.east) == null) { "route must bind original anchor" }
+            f.east.getObjects().remove(device);device.setSquare(f.current);f.current.getObjects().add(device)
+            val replacement = bare(DeviceData::class.java)
+            field(IsoWaveSignal::class.java, device, "deviceData", replacement)
+            check(read(anchor) == false && read() == null) { "DeviceData replaced" }
+            check(implicit(implicitAnchor) == false && implicit() == null) { "nil-device Data replaced" }
+            check(QueueSpatialFacts.readDeviceTarget(device, replacement, anchor, null, true, true) == null) { "foreign anchor/data pair" }
+            field(IsoWaveSignal::class.java, device, "deviceData", data)
+            field(DeviceData::class.java, data, "parent", bare(IsoRadio::class.java))
+            check(read(anchor) == false && read() == null) { "parent replaced" }
+            check(implicit(implicitAnchor) == false) { "nil-device validation reacquired replacement parent" }
+            for (foreignParent in arrayOf<Any>(bare(InventoryRadio::class.java), bare(VehiclePart::class.java))) {
+                field(DeviceData::class.java, data, "parent", foreignParent)
+                check(implicit() == null) { "inventory/vehicle parent captured as world device" }
+                check(implicit(implicitAnchor) == false) { "original world parent replacement was not definite" }
+            }
+            field(DeviceData::class.java, data, "parent", null)
+            check(implicit() == null && implicit(implicitAnchor) == false) { "null native parent" }
+            field(DeviceData::class.java, data, "parent", device)
+            field(IsoGridSquare::class.java, f.current, "x", 3)
+            check(read(anchor) == false) { "same square coordinates changed" }
+            field(IsoGridSquare::class.java, f.current, "x", 2)
+            f.grid[0][2 + 2 * 8] = square(2,2)
+            check(read(anchor) == null) { "unloaded/replaced square is unknown" }
+            f.grid[0][2 + 2 * 8] = f.current
+            check(read(anchor) == true)
+            check(QueueSpatialFacts.readDeviceTarget(bare(ForeignDevice::class.java), data, null, null, true, true) == null)
+            check(QueueSpatialFacts.readDeviceTarget(device, Any(), null, null, true, true) == null)
+            f.current.getObjects().remove(device)
+        }
+        check(forbiddenCalls == 0) { "device observation invoked a foreign callback" }
+    }
+
     @JvmStatic fun foreign(actor: Any?, target: Any?, excluded: Any?, targetObject: Any?): Boolean = true
     @JvmStatic fun forwarding(actor: Any?, target: Any?, excluded: Any?, targetObject: Any?): Boolean =
         QueueSpatialFacts.noMovement(actor, target, excluded, targetObject)
 
     @JvmStatic fun main(arguments: Array<String>) {
         check(QueueSpatialFacts.SUPPORTED) { "native spatial classes are unsupported" }
+        check(QueueSpatialFacts.DEVICE_SUPPORTED) { "native device data is unsupported" }
+        check(java.lang.reflect.Modifier.isFinal(DeviceData::class.java.modifiers))
         check(java.lang.reflect.Modifier.isFinal(IsoGridSquare::class.java.modifiers))
         check(java.lang.reflect.Modifier.isFinal(IsoCell::class.java.modifiers))
         val f = Fixture()
@@ -149,6 +237,8 @@ object QueueSpatialFactsChecks {
         f.actor.setPathfindRunning(true);check(!f.read());f.actor.setPathfindRunning(false)
         field(IsoGameCharacter::class.java,f.actor,"isMoving",false)
         check(forbiddenCalls == 0) { "foreign native getter/list callback was invoked and swallowed" }
+
+        deviceChecks(f)
 
         LuaManager.platform = J2SEPlatform();LuaManager.env = LuaManager.platform.newEnvironment()
         val converters = KahluaConverterManager();KahluaNumberConverter.install(converters)
@@ -219,6 +309,55 @@ object QueueSpatialFactsChecks {
         var result = true
         Thread { result = QueueSpatialFacts.noMovement(f.actor, f.current, null, null) }.apply { start();join() }
         check(!result) { "foreign thread retained native ownership" }
+        val deviceHelper = LuaManager.env.rawget("toolkitQueueDeviceTarget")
+        val deviceChecker = LuaManager.env.rawget("toolkitQueueDeviceApiMatches")
+        check(deviceHelper is LuaJavaInvoker && deviceChecker is LuaJavaInvoker)
+        check(thread.call(deviceChecker, arrayOf(deviceHelper)) == true) { "canonical device API certificate" }
+        check(thread.call(checker, arrayOf(deviceHelper)) == false)
+        check(thread.call(deviceChecker, arrayOf(helper)) == false) { "spatial role cannot certify device API" }
+        val radio = bare(IsoRadio::class.java)
+        val radioData = bare(DeviceData::class.java)
+        field(IsoObject::class.java, radio, "square", f.current)
+        field(IsoWaveSignal::class.java, radio, "deviceData", radioData)
+        field(DeviceData::class.java, radioData, "parent", radio)
+        f.current.getObjects().add(radio)
+        val deviceArgs = arrayOf<Any?>(radio, radioData, null, f.current)
+        val deviceAnchor = checkNotNull(thread.call(deviceHelper, deviceArgs))
+        val implicitDeviceAnchor = checkNotNull(thread.call(deviceHelper, arrayOf(null, radioData, null, f.current)))
+        check(thread.call(deviceHelper, arrayOf(null, radioData, implicitDeviceAnchor, null)) == true) { "framed nil-device capture/live" }
+        check(thread.call(deviceHelper, arrayOf(radio, radioData, deviceAnchor, f.current)) == true)
+        LuaManager.env.rawset("fixtureDevice", radio);LuaManager.env.rawset("fixtureDeviceData", radioData)
+        check(lua("local ok,value=pcall(toolkitQueueDeviceTarget,fixtureDevice,fixtureDeviceData,nil); return not ok or value==nil") == true) {
+            "omitted fourth argument must not obtain an entry capability"
+        }
+        check(QueueSpatialFacts.deviceTarget(radio, radioData, deviceAnchor, f.current) == null) { "unframed device Java call" }
+        LuaManager.env.rawset("originalDeviceHelper", deviceHelper)
+        LuaManager.env.rawset("originalDeviceChecker", deviceChecker)
+        lua("toolkitQueueDeviceTarget=function(...) callbacks=callbacks+1; return originalDeviceHelper(...) end")
+        check(thread.call(deviceChecker, arrayOf(deviceHelper)) == false)
+        check(thread.call(deviceHelper, deviceArgs) == null) { "replaced env device helper" }
+        LuaManager.env.rawset("toolkitQueueDeviceTarget", deviceHelper)
+        lua("toolkitQueueDeviceApiMatches=function(...) return originalDeviceChecker(...) end")
+        check(thread.call(deviceChecker, arrayOf(deviceHelper)) == false) { "replaced env device checker" }
+        LuaManager.env.rawset("toolkitQueueDeviceApiMatches", deviceChecker)
+        for (name in listOf("foreignDevice", "forwardingDevice")) {
+            LuaManager.env.rawset("foreignDeviceHelper", null)
+            val method = QueueSpatialFactsChecks::class.java.getMethod(name, Any::class.java, Any::class.java, Any::class.java, Any::class.java)
+            LuaManager.exposer.exposeGlobalClassFunction(LuaManager.env, QueueSpatialFactsChecks::class.java, method, "foreignDeviceHelper")
+            val foreign = LuaManager.env.rawget("foreignDeviceHelper")
+            LuaManager.env.rawset("toolkitQueueDeviceTarget", foreign)
+            check(thread.call(deviceChecker, arrayOf(foreign)) == false) { "foreign device method certified" }
+            if (name == "forwardingDevice") check(thread.call(foreign, deviceArgs) == null)
+        }
+        LuaManager.env.rawset("toolkitQueueDeviceTarget", deviceHelper)
+        thread.debugOwnerThread = null;check(thread.call(deviceHelper, deviceArgs) == null)
+        check(thread.call(deviceChecker, arrayOf(deviceHelper)) == false)
+        thread.debugOwnerThread = Thread.currentThread()
+        check(thread.call(deviceHelper, arrayOf(radio, radioData, deviceAnchor, null)) == true)
+        var foreignDeviceResult: Any? = true
+        Thread { foreignDeviceResult = QueueSpatialFacts.deviceTarget(radio, radioData, deviceAnchor, null) }.apply { start();join() }
+        check(foreignDeviceResult == null) { "foreign thread device ownership" }
+        check(forbiddenCalls == 0 && LuaManager.env.rawget("callbacks") == 0.0) { "device APIs invoked foreign callbacks" }
         println("QUEUE_SPATIAL_FACTS_CHECKS_PASS")
     }
 }
