@@ -65,11 +65,11 @@ local function corridor(player)
  return origin
 end
 function F.prepare(player,case,mode)
- assert(case=='bush' or case=='manual-grass')
- -- Validate both cases before the first scene mutation. Native flags stay untouched.
+ assert(case=='bush'or case=='manual-grass'or case=='direct-bush')
+ -- Validate all cases before the first scene mutation. Native flags stay untouched.
  local bush=stockSprite('f_bushes_1_0',IsoFlagType.canBeCut)
  local grass=stockSprite('e_newgrass_1_0',IsoFlagType.canBeRemoved)
- local s=case=='bush'and bush or grass
+ local s=case~='manual-grass'and bush or grass
  local origin=corridor(player)
  local spec={case=case,mode=mode,origin=origin,targets={}}
  for i,name in ipairs({'first','second'})do
@@ -124,8 +124,7 @@ end
 function F.verify(state)
  local v=F.snapshot(state);local enabled=state.ids.mode=='toolkit'
  if #v.targets.first.objects~=(enabled and 0 or 1)or #v.targets.second.objects~=0 then return nil,v end
- local nativeHost=state.ids.mode=='native'and require('QueueTestSelection').kind=='mp'
- local pages=nativeHost and state.ids.book.initial or state.ids.book.pages
+ local pages=state.ids.book.pages
  if v.book.pages~=pages or v.book.characterPages~=pages then return nil,v end
  return v
 end

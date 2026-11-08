@@ -34,6 +34,10 @@ Implementation and migration are conditional on the performance gate in [the des
 - [ ] Finish qualifying the shared native-live/exact-item execution capability for a single earned optional return: retain guarded merge exclusion, pre-start admission failure, completed SP no-effect outcomes and the remaining protocol outcomes listed above. Retain blocked return debt visibly and never infer success or replay an uncertain transfer; preserve native controls and independent tails. Late/reused-byte, silent post-Accept failure, partial/batch and disconnect outcomes plus a reasoned performance assessment remain required before extending the capacity exception.
 - [ ] Grant the equipment/return capacity exception only through that verified execution contract, preserving ownership, callback, active-step and real dependency gates. Qualify runtime failures and the real panel source/control bank together before shipping the exception.
 
+# Historical native snapshot storage
+
+- [ ] Add an explicit compaction workflow for stopped native runs: deduplicate generated mod trees into self-contained content archives, verify complete SHA256 recovery and restoration, and preserve source dependencies, active/preparing/waiting reservations, fixtures, saves and reports. Report actual filesystem free-space changes separately from summed snapshot sizes on copy-on-write filesystems. Completed runs currently accumulate hundreds of repeated selected-pack copies.
+
 # Shared in-game verification campaign
 
 Collect the outstanding native checks below into one coordinated campaign. Reuse compatible game sessions instead of launching once per TODO item; retain separate case evidence and unfinished gates. The executable selections and remaining gates are mapped in `tests/native_queue/plans/in-game-campaign.example.json`; a block is not a claim of runtime coverage. Implementation/audit tasks below the campaign keep their acceptance requirements and join when ready.

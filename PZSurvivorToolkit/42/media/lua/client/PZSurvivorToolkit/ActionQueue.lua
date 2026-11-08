@@ -76,6 +76,7 @@ ISBaseTimedAction.begin = function(action)
     if type(token) == "table" then token.toolkitStarted = true end
     local result = begin(action)
     if Execution then Execution.bind(action) end
+    if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.started(action) end
     if media then media.bind(action) end
     if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.bindCancellation(action) end
     return result
@@ -177,7 +178,12 @@ end
 
 local completed = ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted = function(queue, action)
-    if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.completed(action) end
+    -- Enabled queue callbacks belong to their old episode, never a replacement
+    -- head. Disabled controls retain the native completion/retrigger behavior.
+    local protectCompletion=Toolkit.Settings.actionQueue()
+    if protectCompletion and (ISTimedActionQueue.queues[queue.character]~=queue
+        or queue.current~=action or queue.queue[1]~=action)then return end
+    local completionList=queue.queue
     if Toolkit.ActionQueueRecovery then Toolkit.ActionQueueRecovery.completed(action) end
     if Toolkit.ActionQueueLifecycle.deferCompletion(queue, action) then return end
     if Operations.deferCompletion and Operations.deferCompletion(queue, action) then return end
@@ -185,6 +191,12 @@ ISTimedActionQueue.onCompleted = function(queue, action)
         queue.toolkitOutcomeWait.localCompleted = true
         return
     end
+    local approach=Toolkit.ActionQueueApproach
+    if approach and approach.beforeComplete then
+        local phase=approach.beforeComplete(queue,action)
+        if phase=='waiting'or phase=='stale'then return end
+    end
+    if approach then approach.completed(action)end
     if Batch and queue.current == action and queue.queue[1] == action and not queue.toolkitCancelStopped
         and not (action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled)
         and not (action.action and action.action.hasStalled and action.action:hasStalled()) then Batch.completed(action) end
@@ -233,6 +245,8 @@ ISTimedActionQueue.onCompleted = function(queue, action)
     if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.completeCancellation(queue, action) end
     local targets = Toolkit.ActionQueueDeviceTargets
     if targets then targets.skipUnavailable(queue,action) end
+    if protectCompletion and (ISTimedActionQueue.queues[queue.character]~=queue or queue.queue~=completionList
+        or queue.current~=action or queue.queue[1]~=action)then return end
     completed(queue, action)
     if Execution then Execution.completed(action) end
     if PickupFailure then PickupFailure.completed(action) end
@@ -439,6 +453,7 @@ ISTimedActionQueue.tick = function(queue)
         clearStop(queue)
         return
     end
+    if Toolkit.ActionQueueApproach and Toolkit.ActionQueueApproach.prune then Toolkit.ActionQueueApproach.prune(queue)end
     -- Walking may continue native inventory actions. Keep their completed callback
     -- until Java removes the action; native stop/reset still revokes completion.
     if not live(queue) then
@@ -526,6 +541,8 @@ ISTimedActionQueue.tick = function(queue)
     -- Native idle clear is housekeeping; explicit clear still revokes late continuations.
     if not queue.queue[1] then return end
     local current, health = queue.queue[1], Toolkit.ActionQueueHealth
+    local approach=Toolkit.ActionQueueApproach
+    if approach and approach.skipUnavailable and approach.skipUnavailable(queue,current)then return end
     -- An admitted single earned return can fail before its native start. Its
     -- isolated admission result retains the exact item/debt, not a success.
     if Toolkit.Settings.actionQueue() and live(queue) and queue.current == current and current.action

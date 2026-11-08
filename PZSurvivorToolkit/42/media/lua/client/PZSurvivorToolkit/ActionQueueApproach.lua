@@ -1,5 +1,6 @@
 -- Native approach is preparation, not a request to replace the player's queue.
 -- Resolve the complete routing entrypoint at its turn, including native fallbacks.
+require "TimedActions/WalkToTimedAction"
 local Proof = require "PZSurvivorToolkit/SourceProof"
 local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
@@ -19,6 +20,14 @@ local spatialPrimitiveWatch=Proof.captureBindings({
 })
 local spatialFactory,spatialSources
 local walking = setmetatable({}, {__mode='k'})
+-- One execution episode per actor. These are native outcomes, never edit leases.
+local spatialActions,spatialActors={},{}
+local spatialSweep
+local walkClass,walkMethods=ISWalkToTimedAction,{}
+for name,callback in pairs(walkClass or{})do
+    if type(callback)=='function'then walkMethods[name]=callback end
+end
+local executionSources
 local resolving, preparing = 0, 0
 local nativeBatch
 local nativeRoot
@@ -179,7 +188,9 @@ local function reject(action)
     local queue=ownedQueue(action.character)
     if not queue or queue.current~=action or queue.queue[1]~=action then return end
     Operations.invalidate(action.toolkitQueueOperation)
-    queue.toolkitGroupCancel={action=action,token=action.toolkitQueueOperation,reason='approach_unavailable'}
+    if not queue.toolkitGroupCancel then
+        queue.toolkitGroupCancel={action=action,token=action.toolkitQueueOperation,reason='approach_unavailable'}
+    end
 end
 local function pathFailed(action)
     local record=walking[action]
@@ -204,25 +215,188 @@ local function routeAccepted(request,result)
     end
     return false
 end
-local function resolve(character,request)
+local resolve
+local function headOwned(owner,action)
+    local queue=owner.queue
+    return ISTimedActionQueue.queues[owner.actor]==queue and queue.character==owner.actor
+        and queue.queue==owner.list and queue.current==action and queue.queue[1]==action
+        and action.character==owner.actor and action.toolkitQueueOperation==owner.token
+        and (queue.toolkitOperationGeneration or 0)==owner.generation
+        and queue.toolkitOperationsInvalid==owner.invalid
+end
+local function commandOwned(owner)
+    local action,record=owner.command,owner.commandRecord
+    return headOwned(owner,action)and action.action==owner.commandNative
+        and action.toolkitQueueCommand==record and record.snapshot==owner.request
+        and record.callback==resolve and record.args==action.args and record.args[1]==owner.request
+        and Operations.isCommand(action)
+end
+local function retireSpatial(phase)
+    if spatialActions[phase.command]==phase then spatialActions[phase.command]=nil end
+    if phase.child and spatialActions[phase.child]==phase then spatialActions[phase.child]=nil end
+    if spatialActors[phase.actor]==phase then spatialActors[phase.actor]=nil end
+    if phase.sweepNext then
+        if phase.sweepNext==phase then spatialSweep=nil
+        else
+            phase.sweepPrevious.sweepNext=phase.sweepNext
+            phase.sweepNext.sweepPrevious=phase.sweepPrevious
+            if spatialSweep==phase then spatialSweep=phase.sweepNext end
+        end
+        phase.sweepNext,phase.sweepPrevious=nil,nil
+    end
+end
+local function linkSpatial(phase)
+    if spatialSweep then
+        phase.sweepNext,phase.sweepPrevious=spatialSweep,spatialSweep.sweepPrevious
+        spatialSweep.sweepPrevious.sweepNext=phase
+        spatialSweep.sweepPrevious=phase
+    else
+        phase.sweepNext,phase.sweepPrevious=phase,phase
+        spatialSweep=phase
+    end
+end
+local function walkUnchanged(action)
+    if not walkClass or ISWalkToTimedAction~=walkClass or getmetatable(action)~=walkClass
+        or action.Type~='ISWalkToTimedAction' or action.additionalTest or action.additionalContext
+        or action.onCompleteFunc or action.onStartFunc or action.onCancelFunc or action.onFailFunc
+        or action.retriggerLastAction or action._isAddingActions
+        or action.stopOnWalk~=false or action.stopOnRun~=false or action.maxTime~=-1 then return false end
+    for name,callback in pairs(walkMethods)do
+        if walkClass[name]~=callback or action[name]~=callback or name~='derive'and not native(callback)then return false end
+    end
+    for name,callback in pairs(walkClass)do
+        if type(callback)=='function'and walkMethods[name]~=callback then return false end
+    end
+    for _,value in pairs(action)do if type(value)=='function'then return false end end
+    return squareExists(action.location)
+end
+local function spatialRequestWatch(request)
+    if type(request)~='table'or getmetatable(request)then return end
+    local args,guards,binding=Proof.own(request,'args'),Proof.own(request,'guards'),Proof.own(request,'binding')
+    if type(binding)~='table'or getmetatable(binding)then return end
+    if type(args)~='table'or getmetatable(args)
+        or type(guards)~='table'or getmetatable(guards)then return end
+    local fields={{owner=request,exact=true},{owner=request.binding,exact=true},
+        {owner=args,exact=true},{owner=guards,exact=true}}
+    for _,guard in ipairs(guards)do fields[#fields+1]={owner=guard,exact=true}end
+    local bounded=true
+    if binding.name=='walkAdj'and args[4]~=nil then
+        bounded=type(args[4])=='table'and getmetatable(args[4])==nil
+        local count=0
+        if bounded then
+            for key in pairs(args[4])do
+                count=count+1
+                if count>32 or type(key)~='number'or key%1~=0 or key<1 or key>32 then bounded=false;break end
+            end
+            bounded=bounded and count==#args[4]
+        end
+        -- Large/custom native exclusions keep their existing route; they do
+        -- not earn this bounded outcome contract or pay for a deep snapshot.
+        if bounded then fields[#fields+1]={owner=args[4],exact=true}end
+    end
+    return Proof.captureBindings(fields),bounded
+end
+local function executionLifecycleWatch()
+    if ISBaseTimedAction~=baseClass or ISWalkToTimedAction~=walkClass then return end
+    local keys={'new','begin','create','isValidStart','isValid','forceComplete','forceStop','forceCancel',
+        'waitToStart','perform','complete','stop','adjustMaxTime','beginAddingActions','endAddingActions'}
+    for _,name in ipairs(keys)do
+        local callback=baseClass[name]
+        if type(callback)=='function'and not native(callback)
+            and not ((name=='begin'or name=='stop')and Proof.closure(callback,'ActionQueue.lua'))then return end
+    end
+    return Proof.captureBindings({{owner=_G,keys={'ISBaseTimedAction','ISWalkToTimedAction'}},
+        {owner=walkClass,exact=true},{owner=baseClass,keys=keys}})
+end
+local function executionSupported(owner)
+    local request,args=owner.request,owner.request.args
+    if not owner.bounded or request.binding.owner~=luautils or request.binding.name~='walkAdj'
+        or request.binding.spec.receiver or request.binding.spec.cursor
+        or args[1]~=owner.actor or type(args.n)~='number'or args.n%1~=0 or args.n<2 or args.n>4
+        or args[3]~=nil and type(args[3])~='boolean'
+        or type(owner.token)~='table'or owner.token.toolkitCancelled
+        or not Toolkit.Settings.actionQueue()or not walkClass
+        or type(getGameFilesInput)~='function'then return false end
+    if executionSources==nil then
+        executionSources=Proof.matches('media/lua/shared/luautils.lua',937393183,nil,true)
+            and Proof.matches('media/lua/client/TimedActions/WalkToTimedAction.lua',2037641019,nil,true)
+            and Proof.matches('media/lua/client/TimedActions/ISQueueActionsAction.lua',687313299,nil,true)
+            and Proof.matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)
+    end
+    if executionSources~=true or not owner.watch or not owner.watch()or not commandOwned(owner)then return false end
+    owner.lifecycleWatch=executionLifecycleWatch()
+    return owner.lifecycleWatch~=nil and owner.lifecycleWatch()and owner.watch()and commandOwned(owner)
+end
+local function armSpatial(owner,firstAdded,lastAdded,beforeCount,accepted)
+    if not accepted or not executionSupported(owner)then return end
+    if not commandOwned(owner)or not owner.watch()then return end
+    local count=lastAdded-firstAdded
+    if count~=0 and count~=1 or #owner.list~=beforeCount+count then
+        return
+    end
+    local child=count==1 and owner.list[2+firstAdded]or nil
+    if child and (child.character~=owner.actor or child.toolkitQueueOperation~=owner.token
+        or child.action or not walkUnchanged(child))then return end
+    if not commandOwned(owner)or not owner.watch()or not owner.lifecycleWatch()then return end
+    local previous=spatialActors[owner.actor]
+    if previous then retireSpatial(previous)end
+    owner.child,owner.destination=child,child and child.location
+    owner.state=child and 'walking'or 'accepted-no-movement'
+    spatialActions[owner.command],spatialActors[owner.actor]=owner,owner
+    if child then spatialActions[child]=owner end
+    linkSpatial(owner)
+end
+-- Fresh native near/reach facts only; never run the routing helper or isValid again.
+local function continuationAvailable(phase)
+    local args=phase.request.args
+    if not phase.watch()or not live(phase.request)or not available(phase.request)then return false end
+    local here=phase.actor:getCurrentSquare()
+    for _,excluded in ipairs(args[4]or{})do if excluded==here then return false end end
+    local target=luautils.getCorrectSquareForWall(phase.actor,args[2])
+    if not squareExists(target)or not here then return false end
+    local dx=math.abs(target:getX()+.5-phase.actor:getX())
+    local dy=math.abs(target:getY()+.5-phase.actor:getY())
+    return dx<=1.6 and dy<=1.6 and here:canReachTo(target)and phase.watch()
+end
+resolve=function(character,request)
     local queue=ownedQueue(character)
     local current=queue and queue.current
-    if not current or not Operations.isCommand(current)or not live(request)or not available(request)
-        or not selectedAvailable(request)then
-        if current then reject(current)end
+    local record=current and current.toolkitQueueCommand
+    -- A captured callback can outlive a reset or be invoked with another head.
+    -- Only its exact request may resolve; never reject or route for a foreign one.
+    if not current or queue.queue[1]~=current or not Operations.isCommand(current)
+        or not record or record.callback~=resolve or record.snapshot~=request
+        or current.character~=character or type(request)~='table'then return end
+    local owner={queue=queue,list=queue.queue,actor=character,command=current,commandRecord=record,
+        commandNative=current.action,token=current.toolkitQueueOperation,
+        generation=queue.toolkitOperationGeneration or 0,invalid=queue.toolkitOperationsInvalid,request=request}
+    owner.watch,owner.bounded=spatialRequestWatch(request)
+    if type(owner.token)=='table'and owner.token.toolkitCancelled
+        or queue.toolkitGroupCancel and queue.toolkitGroupCancel.action==current then reject(current);return end
+    if not owner.watch or not live(request)or request.binding.spec.actor(request.args)~=character
+        or not available(request)or not selectedAvailable(request)
+        or not commandOwned(owner)or not owner.watch()then
+        if commandOwned(owner)then reject(current)end
         return
     end
     if not routeAvailable(request.binding,request.args)then
-        if not routeAccepted(request,false)then reject(current)end
+        if commandOwned(owner)and not routeAccepted(request,false)then reject(current)end
         return
     end
+    local firstAdded,beforeCount=current._numAddedActions,#queue.queue
     -- Native helpers may clear/replace their own inserted walking alternatives.
     -- The executor's beginAddingActions boundary protects existing tasks.
     resolving,preparing=resolving+1,preparing+1
     local result={pcall(request.binding.callback,unpack(request.args,1,request.args.n))}
     resolving,preparing=resolving-1,preparing-1
     if not result[1]then error(result[2],0)end
-    if not routeAccepted(request,result[2])then reject(current);return end
+    if not commandOwned(owner)or not owner.watch()then
+        if headOwned(owner,current)then reject(current)end
+        return
+    end
+    local accepted=routeAccepted(request,result[2])
+    if not accepted then reject(current);return end
+    armSpatial(owner,firstAdded,current._numAddedActions,beforeCount,accepted)
     for index=2,1+current._numAddedActions do
         local action=queue.queue[index]
         if action and (action.Type=='ISWalkToTimedAction' or action.Type=='ISPathFindAction'
@@ -481,13 +655,110 @@ local function pruneWalking()
         if not found then walking[action]=nil end
     end
 end
+-- Queue.begin calls this after native allocation. Rebinding a Lua table to a
+-- different native attempt never inherits the preceding episode's outcome.
+function Approach.started(action)
+    local phase=spatialActions[action]
+    if not phase or phase.child~=action then return end
+    if headOwned(phase,action)and phase.watch()and phase.lifecycleWatch()and walkUnchanged(action)
+        and action.location==phase.destination and action.action and headOwned(phase,action)then
+        if phase.native and phase.native~=action.action then phase.invalidChild=true
+        else phase.native=action.action end
+    else phase.invalidChild=true end
+end
+-- Called only after shared completion deferral and before native advancement.
+-- No route acceptance, missing action or completion callback alone proves arrival.
+function Approach.beforeComplete(queue,action)
+    local phase=spatialActions[action]
+    if not phase then return end
+    if not headOwned(phase,action)or queue~=phase.queue then retireSpatial(phase);return 'stale' end
+    if not Toolkit.Settings.actionQueue()then retireSpatial(phase);return end
+    local active=action.action and phase.actor:getCharacterActions():contains(action.action)
+    if not headOwned(phase,action)then retireSpatial(phase);return 'stale' end
+    if active then
+        if action.action.hasStalled and action.action:hasStalled()and not phase.stallStopped and headOwned(phase,action)then
+            phase.stallStopped=true
+            local walk=walking[action];if walk then walk.failed=true end
+            action:forceStop()
+        end
+        return 'waiting'
+    end
+    if action==phase.command and phase.child then
+        if not commandOwned(phase)or not phase.watch()or not phase.lifecycleWatch()then reject(action);retireSpatial(phase);return 'rejected' end
+        spatialActions[action]=nil
+        return 'walking'
+    end
+    local succeeded=phase.lifecycleWatch()and(not phase.child and commandOwned(phase)
+        or phase.child==action and not phase.invalidChild and not phase.unresolved
+            and phase.native~=nil and action.action==phase.native and walkUnchanged(action)
+            and action.location==phase.destination and action.result==BehaviorResult.Succeeded)
+    if not headOwned(phase,action)then retireSpatial(phase);return 'stale' end
+    local ok,availableNow=true,false
+    if succeeded then ok,availableNow=pcall(continuationAvailable,phase)end
+    if not headOwned(phase,action)then retireSpatial(phase);return 'stale' end
+    if not succeeded or not ok or not availableNow then
+        if headOwned(phase,action)then reject(action)end
+        retireSpatial(phase)
+        return 'rejected'
+    end
+    local result=phase.child and 'native-arrival'or 'native-no-movement'
+    retireSpatial(phase)
+    return result
+end
+-- Native tick otherwise clears every task when a walking action disappears.
+-- Keep movement already paid; discard only this route's dependent remainder.
+function Approach.skipUnavailable(queue,action)
+    local phase=spatialActions[action]
+    if not phase or phase.child~=action or not headOwned(phase,action)or queue~=phase.queue
+        or not Toolkit.Settings.actionQueue()or not action.action or action.action~=phase.native
+        or phase.actor:isDead()or phase.actor:isPlayerMoving()or phase.actor:pressedMovement(false)
+        or phase.actor:pressedCancelAction()or phase.actor:getCharacterActions():contains(action.action)
+        or not walkUnchanged(action)then return false end
+    if not headOwned(phase,action)then retireSpatial(phase);return false end
+    phase.unresolved=true
+    reject(action)
+    action:forceCancel()
+    queue:onCompleted(action)
+    return true
+end
+local function pruneSpatial(phase)
+    if not phase then return end
+    local p=spatialPrimitives
+    local class=p.raw(p.globals,'ISTimedActionQueue')
+    local queues=p.kind(class)=='table'and p.raw(class,'queues')
+    local queue,current=phase.queue,p.raw(phase.queue,'current')
+    if p.kind(queues)~='table'or not p.equal(p.raw(queues,phase.actor),queue)
+        or not p.equal(p.raw(queue,'queue'),phase.list)
+        or (p.raw(queue,'toolkitOperationGeneration')or 0)~=phase.generation
+        or not p.equal(current,phase.command)and(phase.child==nil or not p.equal(current,phase.child))
+        or not p.equal(p.raw(phase.list,1),current)then
+        Operations.invalidate(phase.token)
+        retireSpatial(phase)
+    end
+end
+-- Queue tick handles its actor immediately. The global round-robin below also
+-- retires detached actors whose old queue is no longer ticked. It inspects one
+-- admitted episode per frame, with no queue scan, world getter or allocation.
+function Approach.prune(queue)
+    pruneSpatial(spatialActors[queue.character])
+end
+local function sweepSpatial()
+    local phase=spatialSweep
+    if not phase then return end
+    spatialSweep=phase.sweepNext
+    pruneSpatial(phase)
+end
 function Approach.completed(action)
     walking[action]=nil
     -- Kahlua does not implement weak-key collection. Remove canceled siblings
     -- as well, without retaining old actions until another queue reset.
     pruneWalking()
+    local queue=ownedQueue(action.character)
+    if queue then Approach.prune(queue)end
 end
 function Approach.reset(queue)
+    local phase=spatialActors[queue.character]
+    if phase and phase.queue==queue then retireSpatial(phase)end
     for _,action in ipairs(queue.queue or{})do walking[action]=nil end
 end
 -- Consumers with a verified transfer contract can include its exact shared
@@ -664,6 +935,17 @@ function Approach.prepareSpatialLease(action)
         return watch()
     end,description
 end
+local function clearSpatialEpisodes()
+    while spatialSweep do
+        local phase=spatialSweep
+        Operations.invalidate(phase.token)
+        retireSpatial(phase)
+    end
+    spatialActions,spatialActors={},{}
+end
+if Events and Events.OnTick then Events.OnTick.Add(sweepSpatial)end
+if Events and Events.OnGameStart then Events.OnGameStart.Add(clearSpatialEpisodes)end
+if Events and Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(clearSpatialEpisodes)end
 spatialFactory=Approach.prepareSpatialLease
 
 -- The canonical checker is a trusted native bootstrap root, like the existing

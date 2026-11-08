@@ -45,6 +45,8 @@ LuaTimedActionNew={new=function(action)
  native.forceComplete=function(self)self.forced=true end
  native.reset=function()end
  native.forceStop=function()error('unexpected native cancellation')end
+ native.setPathfinding=function()end
+ native.setAllowedWhileDraggingCorpses=function()end
  allocations[#allocations+1]=native;return native
 end}
 actor.StartAction=function(_,native)native.started=true end
@@ -53,15 +55,28 @@ local function square(x)
  return {class='IsoGridSquare',x=x,getX=function()return x end,getY=function()return 0 end,getZ=function()return 0 end,
   has=function()return false end,canReachTo=function()return true end}
 end
-local origin,target,moved=square(0),square(1),square(4);actor.square=origin
-getCell=function()return {getGridSquare=function(_,x)if x==0 then return origin elseif x==1 then return target else return moved end end}end
+local origin,target,moved,far=square(0),square(1),square(4),square(7);actor.square=origin
+local grid={[0]=origin,[1]=target,[4]=moved,[7]=far}
+getCell=function()return {getGridSquare=function(_,x,y,z)if y==0 and z==0 then return grid[x]end end}end
 IsoFlagType={collideW='collideW',collideN='collideN'}
 luautils={}
 local utilities=text(NativeActionRoot..'/shared/luautils.lua')
 assert(loadstring(assert(utilities:match('(function luautils.walkAdj%(.-\nend)'))..'\n'..
  assert(utilities:match('(luautils.getCorrectSquareForWall = function.-\nend)')),
  '@'..NativeActionRoot..'/shared/luautils.lua'))()
-AdjacentFreeTileFinder={Find=function()error('adjacent live control must not pathfind')end}
+local routeCalls,pathCalls=0,0
+AdjacentFreeTileFinder={Find=function(destination)
+ assert(destination==far,'adjacent live control must not pathfind')
+ routeCalls=routeCalls+1;return far
+end}
+BehaviorResult={Working='working',Succeeded='succeeded',Failed='failed'}
+local path={cancel=function()end,pathToLocation=function(_,x,y,z)
+ assert(x==far.x and y==0 and z==0,'native walker changed the source-selected destination')
+ pathCalls=pathCalls+1
+end,update=function()return actor.pathResult end}
+actor.getPathFindBehavior2=function()return path end
+actor.setPath2=function()end
+actor.pressedCancelAction=function()return false end
 local function noMovement(character,destination)return character==actor and destination==target end
 local function spatialMatches(callback)return callback==noMovement end
 toolkitQueueSpatialNoMovement,toolkitQueueSpatialApiMatches=noMovement,spatialMatches
@@ -104,13 +119,22 @@ f.project('ActionQueue')
 local toolkit=PZSurvivorToolkit
 local lifecycle,settlement,module=toolkit.ActionQueueLifecycle,toolkit.ActionQueueSettlement,toolkit.ActionQueueDeviceTargets
 assert(media.isInstalled()and module.install(),'real Queue bottom must install Media and Device owners')
+-- Observe the actual common executor result; no phase is synthesized and no
+-- native callback or validity/duration method is replaced for these controls.
+local spatialResults={}
+local beforeComplete=approach.beforeComplete
+approach.beforeComplete=function(queue,action)
+ local result=beforeComplete(queue,action)
+ if result and result~='waiting'then spatialResults[#spatialResults+1]={action=action,result=result}end
+ return result
+end
 local observed={}
 assert(lifecycle.registerObserver('device-full-core-test',{
  started=function(action)observed[action]=(observed[action]or 0)+1 end,
  begin=function()end,finish=function()end,settled=function()end}))
 local effects=0
-local function device(kind)
- local value={class=kind,square=target,present=true}
+local function device(kind,location)
+ local value={class=kind,square=location or target,present=true}
  local data={class='DeviceData',parent=value,volume=.5};value.data=data
  value.getDeviceData=function()return data end;value.getSquare=function()return value.square end
  value.getObjectIndex=function()return value.present and 0 or -1 end
@@ -124,10 +148,10 @@ end
 local function neutral()
  local action=ISBaseTimedAction:new(actor);action.maxTime=1;return action
 end
-local function perform(action)
+local function perform(action,alreadyStarted)
  -- Java normally delivers these boundaries around the unchanged native Lua
  -- callback. Never call Module/Kernel admission methods directly in this test.
- action:start()
+ if not alreadyStarted then action:start()end
  lifecycle.begin(action,'perform')
  local ok,result=pcall(function()return action:perform()end)
  lifecycle.finish(action,'perform',ok and result~=false)
@@ -177,6 +201,61 @@ for _,kind in ipairs({'IsoTelevision','IsoRadio'})do
   assert(queue.current==tail and #queue.queue==1 and queue.queue[1]==tail and observed[tail]==1,
    'real onCompleted lost or failed to admit the independent tail')
   perform(tail);assert(queue.current==nil and #queue.queue==0,'real tail failed to complete')
+  cases=cases+1
+ end
+end
+-- Exercise the overlap with a real native walking child. Device source/ledger
+-- ownership and the new spatial execution episode must both remain effective:
+-- exact arrival pays movement, then the still-pending setter is admitted or
+-- refused independently from its already-completed preparation.
+for _,kind in ipairs({'IsoTelevision','IsoRadio'})do
+ for _,loss in ipairs({'live','remove','move'})do
+  effects=0;actor.square=origin;actor.x,actor.y=.5,.5;actor.pathResult=BehaviorResult.Working
+  local object,data=device(kind,far)
+  local queue=ISTimedActionQueue:new(actor)
+  local hold=neutral();ISTimedActionQueue.add(hold)
+  local body
+  ops.run(function()
+   assert(luautils.walkAdj(actor,far,true))
+   body=ISRadioAction:new('SetVolume',actor,object,.75);ISTimedActionQueue.add(body)
+  end)
+  local prep=queue.queue[2]
+  local tail=neutral();ISTimedActionQueue.add(tail)
+  local token=body.toolkitQueueOperation
+  assert(settlement.deviceStep(prep)and settlement.deviceStep(body),'far enqueue lost its native device position binding')
+  local routeBefore,pathBefore,phaseBefore=routeCalls,pathCalls,#spatialResults
+  perform(hold);assert(queue.current==prep and not body.action)
+  perform(prep)
+  local walking=queue.current
+  assert(getmetatable(walking)==ISWalkToTimedAction and walking.location==far and walking.maxTime==-1,
+   'far source did not expand to the exact native walking child')
+  assert(walking.toolkitQueueOperation==token and settlement.deviceStep(walking),
+   'native child failed to inherit its real device-position seal')
+  assert(observed[walking]==1 and not body.action and not observed[body],
+   'far device body crossed admission before its child completed')
+  assert(#spatialResults==phaseBefore+1 and spatialResults[#spatialResults].action==prep
+   and spatialResults[#spatialResults].result=='walking','far preparation did not arm actual spatial execution')
+  walking:start();actor.square=far;actor.x=far.x+.5;actor.pathResult=BehaviorResult.Succeeded
+  walking:update()
+  assert(walking.result==BehaviorResult.Succeeded and walking.action.forced and effects==0,
+   'native walking did not earn its own successful outcome')
+  if loss=='remove'then object.square=nil;object.present=false elseif loss=='move'then object.square=moved end
+  perform(walking,true)
+  assert(#spatialResults==phaseBefore+2 and spatialResults[#spatialResults].action==walking
+   and spatialResults[#spatialResults].result=='native-arrival','device binding prevented actual native arrival qualification')
+  assert(routeCalls==routeBefore+1 and pathCalls==pathBefore+1,
+   'combined native admission replayed routing or paid movement')
+  assert(not token.toolkitCancelled,'lost device refusal revoked already-paid position ownership')
+  if loss=='live'then
+   assert(queue.current==body and observed[body]==1 and body.action,'live far device body failed admission after arrival')
+   perform(body);assert(effects==1 and data.volume==.75,'live far native setter failed its one exact effect')
+  else
+   assert(not body.action and not observed[body]and effects==0 and data.volume==.5,
+    'lost far device body crossed admission after its paid movement')
+  end
+  assert(queue.current==tail and queue.queue[1]==tail and #queue.queue==1 and observed[tail]==1,
+   'combined device/spatial completion lost its independent tail')
+  perform(tail);assert(queue.current==nil and #queue.queue==0)
   cases=cases+1
  end
 end

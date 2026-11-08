@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.344
+
+- **Fixed:** Reviewed deferred adjacent approaches bind to their exact current operation and recheck the loaded target and native reach before dependent work. Native walking must actually succeed; stalled or vanished walking steps retain earned cleanup and independent queued tasks. With the queue enabled, late completion callbacks cannot advance a replacement queue; disabled mode keeps native completion behavior. This execution correction preserves the current editor permissions.
+
 ### 0.1.343
 
 - **Fixed:** Allow reviewed pending TV cancellation and radio volume reordering across source-owned approaches when fresh native actor/target proofs preserve the command dependencies.
@@ -1592,6 +1596,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.90
+
+- **Internal:** Refresh the queue binding compiler's exact Policy source pin for the shared deferred-approach execution correction; retain original bytecode serialization and unknown-source fallback.
 
 ### 0.1.89
 
