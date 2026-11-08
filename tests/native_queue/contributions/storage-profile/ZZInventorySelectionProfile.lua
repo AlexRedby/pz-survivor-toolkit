@@ -1,5 +1,12 @@
 -- Bounded SP diagnostic: actual refresh callbacks, native items, no bypassed work.
 local Profile = require 'InventorySelectionProfile'
+local Config = require 'InventorySelectionConfig'
+local Usage = require 'PZSurvivorToolkit/ItemUsageTags'
+local cohorts={['Base.Nails']={branch='nonfluid',fluidType='none',usage={fuel=false,disinfectant=false}},
+    ['Base.PetrolCan']={branch='fluid',fluidType='Petrol',usage={fuel=true,disinfectant=false,beverage=false,alcoholic=false,empty=false}},
+    ['Base.Whiskey']={branch='fluid',fluidType='Whiskey',usage={fuel=false,disinfectant=true,beverage=true,alcoholic=true,empty=false}}}
+local cohort=assert(type(Config)=='table' and cohorts[Config.itemType],'unsupported selection item cohort')
+local fluidAmount,fluidCapacity,setupLogged=0,0,false
 local entered, starting, ready, done = false, false, false, false
 local player, inventory, pane, initial, originalMode, owned, ids = nil, nil, nil, nil, nil, {}, {}
 local initialCount=0
@@ -31,11 +38,34 @@ local function identity()
 end
 local function verify()
     for item,id in pairs(initial) do assert(item:getContainer()==inventory and item:getID()==id,'original inventory changed') end
-    for _,item in ipairs(owned) do assert(item:getContainer()==inventory and ids[item:getID()]==item,'probe item identity changed') end
+    for _,item in ipairs(owned) do
+        assert(item:getContainer()==inventory and ids[item:getID()]==item,'probe item identity changed')
+        assert(item:getFullType()==Config.itemType and item:IsDrainable()==false,'probe type or drainability changed')
+        local container=item:getFluidContainer()
+        if cohort.branch=='fluid' then
+            assert(container and not container:isEmpty(),'probe fluid component absent or empty')
+            assert(container:getCapacity()==fluidCapacity and container:getAmount()==fluidAmount
+                and container:getSpecificFluidAmount(Fluid[cohort.fluidType])==fluidAmount,
+                'probe fluid quantity or contents changed')
+        else assert(container==nil,'nonfluid probe gained fluid component') end
+    end
+    assert(#owned==4800,'probe cohort incomplete')
     assert(inventory:getItems():size()==#owned+initialCount,'probe population changed')
+    local usage,_,isFluid=Usage.read(nil,owned[1])
+    assert(isFluid==(cohort.branch=='fluid'),'public usage branch differs')
+    local witness={}
+    for name,value in pairs(cohort.usage) do
+        assert(usage[name]==value,'public usage role differs: '..name);witness[name]=usage[name]
+    end
+    return {itemType=Config.itemType,branch=cohort.branch,isFluid=isFluid,isDrainable=false,
+        fluidType=cohort.fluidType,fluidAmount=fluidAmount,fluidCapacity=fluidCapacity,
+        fillPolicy=cohort.branch=='fluid' and 'setup-full-capacity' or 'native-nonfluid',
+        verifiedItems=#owned,stateVerified=true,usageWitness=witness}
 end
 local function cleanup()
     if not inventory then return end
+    local valid,before=true,nil
+    if #owned==4800 then valid,before=pcall(verify) end
     for _,item in ipairs(owned) do if item:getContainer()==inventory then inventory:Remove(item) end end
     for _,item in ipairs(owned) do assert(item:getContainer()~=inventory,'probe item survived cleanup') end
     if initial then
@@ -43,6 +73,8 @@ local function cleanup()
         assert(inventory:getItems():size()==initialCount,'cleanup population differs')
     end
     if originalMode~=nil then CleanUI_setCleanInventoryUIEnabled(originalMode) end
+    assert(valid,before)
+    return before
 end
 local function setup()
     assert(not isClient() and not isServer(),'one SP client required')
@@ -53,11 +85,24 @@ local function setup()
     initialCount=count
     player:setGodMod(true);player:setGhostMode(true)
     if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
-    log('SETUP',{count=4800,clock='System.nanoTime',sampleWindow='synchronous actual refresh',physicalInput=false,fpsMeasurement=false})
 end
 local function add()
     for attempt=1,32 do
-        local item=assert(instanceItem('Base.Nails'))
+        local item=assert(instanceItem(Config.itemType))
+        assert(item:getFullType()==Config.itemType and item:IsDrainable()==false,'factory type or drainability differs')
+        local container=item:getFluidContainer()
+        if cohort.branch=='fluid' then
+            assert(container and Fluid[cohort.fluidType],'native fluid component or identity missing')
+            local capacity=container:getCapacity()
+            assert(capacity>0.15,'probe fluid capacity cannot exercise expected usage')
+            -- Native initial quantities may vary. Normalize only during setup;
+            -- the reader and timed callbacks never fill or mutate these items.
+            container:Empty();container:addFluid(Fluid[cohort.fluidType],capacity)
+            assert(container:getAmount()==capacity and not container:isEmpty()
+                and container:getSpecificFluidAmount(Fluid[cohort.fluidType])==capacity,'native fluid fill differs')
+            if #owned==0 then fluidAmount,fluidCapacity=capacity,capacity end
+            assert(capacity==fluidCapacity,'cohort fluid capacities differ')
+        else assert(container==nil,'nonfluid factory item has fluid component') end
         local id=item:getID()
         if not ids[id] then
             ids[id]=item;owned[#owned+1]=item
@@ -69,6 +114,11 @@ local function add()
     error('unique probe item allocation exhausted')
 end
 local function configure()
+    if not setupLogged then
+        local evidence=verify();evidence.count=4800;evidence.clock='System.nanoTime'
+        evidence.sampleWindow='synchronous actual refresh';evidence.physicalInput=false;evidence.fpsMeasurement=false
+        log('SETUP',evidence);setupLogged=true
+    end
     local cell=cells[phase]
     CleanUI_setCleanInventoryUIEnabled(cell.mode=='clean')
     local page=getPlayerInventory(0);page:setVisible(true);pane=page.inventoryPane
@@ -107,7 +157,8 @@ local function witness(cell)
 end
 local function measure()
     local cell=cells[phase]
-    table.wipe(pane.selected);verify();local observed=witness(cell)
+    table.wipe(pane.selected);local state=verify();local observed=witness(cell)
+    for key,value in pairs(state) do observed[key]=value end
     for key,value in pairs(pane:saveSelection({})) do
         if key=='_cleanUISelectedGroups' then for _ in pairs(value) do error('saved group selection is nonempty') end
         else error('saved item selection is nonempty') end
@@ -131,6 +182,7 @@ local function measure()
     for _,m in pairs(receipt.metrics) do assert(m.errors==0 and m.exclusiveMs>=0 and m.inclusiveMs>=m.exclusiveMs,'invalid nested spans') end
     receipt.index=index;receipt.kind=index==1 and 'first-measured-after-setup' or 'repeated'
     receipt.outerMs=elapsed;receipt.count=#owned;receipt.emptySelection=true;receipt.identityVerified=true
+    for key,value in pairs(state) do receipt[key]=value end
     receipt.workload=observed
     log('SAMPLE',receipt);samples[#samples+1]=true
     if #samples==7 then phase=phase+1;stage=phase>#cells and 'finish' or 'configure' else nextAt=getTimestampMs()+250 end
@@ -157,7 +209,11 @@ require('QueuePreflight').onTick(Events,function()
         elseif stage=='fill' then for i=1,100 do if #owned<4800 then add() end end;if #owned==4800 then stage='configure' end
         elseif stage=='configure' then configure()
         elseif stage=='measure' and getTimestampMs()>=nextAt then measure()
-        elseif stage=='finish' then verify();cleanup();log('RESTORED',{ownedRemoved=#owned,originals=initialCount,phases=#cells,identityVerified=true,remaining=inventory:getItems():size()});print('[STORAGE_PROFILE] COMPLETE');done=true end
+        elseif stage=='finish' then
+            local evidence=cleanup();evidence.ownedRemoved=#owned;evidence.originals=initialCount;evidence.phases=#cells
+            evidence.identityVerified=true;evidence.remaining=inventory:getItems():size()
+            log('RESTORED',evidence);print('[STORAGE_PROFILE] COMPLETE');done=true
+        end
     end)
     if not ok then local restored,restoreError=pcall(cleanup);log('FAIL',{error=tostring(problem),restored=restored,restoreError=tostring(restoreError)});print('[STORAGE_PROFILE] FAIL selection');done=true end
 end)

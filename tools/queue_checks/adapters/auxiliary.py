@@ -89,6 +89,14 @@ def validate_selection(selection):
         raise ValueError('Unsupported auxiliary queue mode')
     spec = definitions()[suite]
     cases = selection['cases']
+    if 'inventory_selection_item' in selection.get('options', {}):
+        options = selection['options']
+        if (options['inventory_selection_item'] not in ('Base.Nails', 'Base.PetrolCan', 'Base.Whiskey')
+                or suite != 'storage-profile' or cases != ['inventory-selection'] or selection.get('kind') != 'sp'
+                or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
+                or selection.get('resources', {}).get('exclusive') is not True
+                or any(options.get(key) for key in ('seed_run', 'world_template', 'startup_connection', 'mp_host'))):
+            raise ValueError('inventory_selection_item requires Nails/PetrolCan/Whiskey in exclusive fresh one-client SP inventory-selection')
     if 'inventory_work_renderer' in selection.get('options', {}):
         options = selection['options']
         if (options['inventory_work_renderer'] not in ('clean', 'vanilla')
@@ -99,7 +107,9 @@ def validate_selection(selection):
     storage_session = suite == 'storage-profile' and cases == ['inventory-work', 'inventory-freshness']
     if suite == 'storage-profile' and cases == ['inventory-selection']:
         if (selection.get('resources', {}).get('exclusive') is not True
-                or any(selection.get('options', {}).get(key) for key in ('seed_run', 'world_template', 'mp_host'))):
+                or selection.get('kind') != 'sp'
+                or type(selection.get('clients', 1)) is not int or selection.get('clients', 1) != 1
+                or any(selection.get('options', {}).get(key) for key in ('seed_run', 'world_template', 'startup_connection', 'mp_host'))):
             raise ValueError('Selection timing requires exclusive admission and fresh standalone SP')
     if not cases or len(set(cases)) != len(cases) or any(case not in [row['id'] for row in spec['cases']] for case in cases) or suite != 'animal-trailer' and len(cases) != 1 and not storage_session:
         raise ValueError('Auxiliary fixtures require exactly one supported case per fresh run')
@@ -227,6 +237,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                     prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, cases=selection['cases'])
                 else:
                     prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, case=selection['cases'][0])
+                if selection['cases'] == ['inventory-selection']:
+                    item_type = selection.get('options', {}).get('inventory_selection_item', 'Base.Nails')
+                    _write(cache / 'mods' / identifier / '42/media/lua/shared/InventorySelectionConfig.lua',
+                           'return {itemType=' + json.dumps(item_type) + '}\n')
             elif suite == 'smart-deposit':
                 prepare(locations['PZSurvivorToolkit'], cache / 'mods' / identifier, host=selection['kind'] == 'mp')
             else:
