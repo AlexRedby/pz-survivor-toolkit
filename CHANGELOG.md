@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.348
+
+- **Internal:** Remove the rejected eager active-reading projection and its diagnostic-only physical-validation branches. Preserve the original native edit checks, exact returns, paid reading progress and the qualified full observer. Prepared transfer-source descriptions remain in use; no persistent action graph or new edit permission is introduced.
+
 ### 0.1.347
 
 - **Internal:** Prepare registered transfer-source descriptions once when their registry changes. Each decision still captures fresh source bindings, exact action/queue state and native facts; Host alias callbacks remain query-local. This removes repeated registry regrouping without caching edit permissions or changing transfer behavior.
@@ -1608,6 +1612,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.93
+
+- **Internal:** Refresh the exact Policy compiler source binding after removing the rejected eager projection. Native transformations and transfer admission remain unchanged.
 
 ### 0.1.92
 

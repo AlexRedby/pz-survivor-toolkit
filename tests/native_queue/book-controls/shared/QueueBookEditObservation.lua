@@ -306,10 +306,6 @@ function O.run(context)
    receipt.existingDecision.commonActiveEdit=baseline.commonActiveEdit==true
    receipt.existingDecision.route=baseline.commonActiveEditRoute or false
    receipt.existingDecision.spatialValidated=baseline.spatialValidated==true
-   if not context.native and not baseline.commonActiveEdit then
-    receipt.consumerRefusal={stage=baseline.commonActiveEditFallback or false,
-     leafClass=kind(toolkitLeafTransferFacts)=='function'and getClassSimpleName(toolkitLeafTransferFacts)or false}
-   end
   end
   receipt.observer=observedSummary(result,spatial)
   if deviceOnly then receipt.diagnostics=failureDiagnostics(result,spatial)end

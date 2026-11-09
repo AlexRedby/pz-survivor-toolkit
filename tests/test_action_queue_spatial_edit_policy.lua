@@ -75,7 +75,6 @@ actor.square,actor.currentSquare=origin,origin
 -- original function identities receive the native-class certificate. The JVM
 -- suite separately verifies the implementation against native method handles.
 local bridgeCalls=0
-local bridgeHook
 local function spatialNoMovement(player,destination,excluded,targetObject)
     bridgeCalls=bridgeCalls+1
     if player~=actor or player.class~='IsoPlayer'or not player.square or not destination
@@ -100,42 +99,19 @@ local function spatialNoMovement(player,destination,excluded,targetObject)
     local near=loaded(corrected)and math.abs(corrected.x+.5-player.x)<=1.6
         and math.abs(corrected.y+.5-player.y)<=1.6 and player.square.z==corrected.z
         and player.square.reachable and corrected.reachable
-    if bridgeHook then bridgeHook()end
     return near
 end
--- Explicit native-facts state double for this source fixture. It witnesses
--- only the exact unequipped book/root/endpoints below, not native JVM behavior.
-local leafReads,leafMode,leafClass=0,nil,'LuaJavaInvoker'
-local function leafFacts(player,item,source,destination,id,fullType)
-    leafReads=leafReads+1
-    if player~=actor or source~=actor.inventory or not item or item:getContainer()~=source
-        or item:getID()~=id or item:getFullType()~=fullType or source==destination
-        or actor:isEquipped(item)or item:getEquipParent()or item:getAttachedSlot()>=0 then return end
-    if leafMode=='missing'then return end
-    local facts={schema=2,item=item,source=source,destination=destination,location=source,id=id,fullType=fullType}
-    if leafMode=='schema'then facts.schema=1
-    elseif leafMode=='item'then facts.item={}
-    elseif leafMode=='source'then facts.source={}
-    elseif leafMode=='destination'then facts.destination={}
-    elseif leafMode=='location'then facts.location=destination
-    elseif leafMode=='id'then facts.id=id+1
-    elseif leafMode=='fullType'then facts.fullType='Base.Pen'
-    elseif leafMode=='late-geometry'then actor.x=20 end
-    return facts
-end
-toolkitLeafTransferFacts=leafFacts
 local function spatialApiMatches(callback)return rawequal(callback,spatialNoMovement)end
 toolkitQueueSpatialApiMatches,toolkitQueueSpatialNoMovement=spatialApiMatches,spatialNoMovement
 getClassSimpleName=function(value)
-    if rawequal(value,leafFacts)then return leafClass end
     if rawequal(value,spatialApiMatches)or rawequal(value,spatialNoMovement)then return 'LuaJavaInvoker'end
     return type(value)=='function'and'LuaClosure'or type(value)=='table'and value.class or nil
 end
 local approach=f.project('ActionQueueApproach');assert(approach.install())
 local policy=f.project('ActionQueuePolicy')
-local settlement=assert(PZSurvivorToolkit.ActionQueueSettlement,'early Policy must require its retained source owner')
-assert(type(settlement.prepareRetainedTransferBinding)=='function','early Policy captured an incomplete dependency')
+assert(policy.observeActiveResourceCandidate==nil,'rejected eager active-resource API must remain absent')
 f.project('ActionQueueLabels');local Queue=f.project('ActionQueue')
+local settlement=assert(PZSurvivorToolkit.ActionQueueSettlement)
 local effects,routes=0,0
 AdjacentFreeTileFinder={Find=function()routes=routes+1;error('edit inspection executed native route selection')end}
 local function device(kind,location)
@@ -502,7 +478,7 @@ for _,entrypoint in ipairs({'previewMove','evaluateMove','moveReason'})do
     end
 end
 f.project('ActionQueueReading')
--- The common active consumer projects device effects only. Original native
+-- The common active route retains the native/stateless guards. Original
 -- returns stay intact; these source fixtures do not attest transfer outcomes.
 do
     local inventory=actor.inventory
@@ -538,14 +514,7 @@ do
             and returning.destContainer==destination and returning.toolkitQueueOperation==head.toolkitQueueOperation,
             'common active edit changed the original return item/endpoints/owner')
         assert(not returning.action and not returning.started,'common active edit executed the retained native return')
-        assert(effects==0 and routes==0 and geometryCalls==0,'common active proof executed actions or Lua geometry')
-    end
-    local function candidate(q,action,targetAction,after)
-        local result=policy.observeActiveResourceCandidate(q,{kind='move',action=action,target=targetAction,after=after})
-        assert(result.status=='observed'and result.mutationAuthorized==false and result.permissionsGranted==false
-            and result.allowed==nil and result.snapshot==nil and result.decision.snapshot==nil,
-            'prototype observer exposed edit authority')
-        return result.decision
+        assert(effects==0 and routes==0 and geometryCalls==0,'native-stateless route executed actions or Lua geometry')
     end
     for _,demote in ipairs({false,true})do
         local q,first,last,firstPreparation,lastPreparation,head,tail,returning=activeScene(true)
@@ -553,24 +522,17 @@ do
         local item,source,destination=returning.item,returning.srcContainer,returning.destContainer
         local action,targetAction,after=first,head,false
         if demote then action,targetAction,after=head,last,true end
-        local ledger=settlement.editLedger(q,head)
-        local v,alias,watch=settlement.prepareRetainedTransferBinding(q,head,returning,PZSurvivorToolkit.ActionQueueItemEditAdapters.deferredTransferBinding)
-        assert(ledger.status=='observed'and type(v)=='function'and type(watch)=='function',
-            'source fixture retained binding: '..tostring(ledger.status)..'/'..tostring(ledger.reason)..'/'..type(v)..'/'..type(watch))
-        local nativeBridgeReads,nativeLeafReads=bridgeCalls,leafReads
+        local nativeBridgeReads=bridgeCalls
         local decision=policy.evaluateMove(q,action,targetAction,after)
-        assert(bridgeCalls==nativeBridgeReads and leafReads==nativeLeafReads,
-            'native-stateless decision prepared an unnecessary spatial/return proof')
-        local prototype=candidate(q,action,targetAction,after)
-        assert(prototype.allowed and prototype.commonActiveEdit and prototype.route=='projected-candidate'
-            and prototype.spatialValidated,'qualified eager diagnostic lost its explicit prototype route')
+        assert(bridgeCalls==nativeBridgeReads,
+            'native-stateless decision inspected unnecessary geometry')
         assert(decision.allowed and decision.commonActiveEdit==true and decision.commonActiveEditRoute=='native-stateless'
             and not decision.spatialValidated,
-            'eligible borrowed reader edit missed common device proof: '..tostring(decision.reason))
-        assert(decision.preempt and (decision.demote==true)==demote,'common proof lost preempt/demotion semantics')
+            'eligible borrowed reader edit missed native-stateless route: '..tostring(decision.reason))
+        assert(decision.preempt and (decision.demote==true)==demote,'native-stateless route lost preempt/demotion semantics')
         retained(q,head,returning,item,source,destination)
         assert(Queue.move(q,action,targetAction,after),'eligible common active move failed at commit')
-        assert(q.toolkitResume==(demote and last or first)and q.toolkitCancel==head,'common proof lost native stop/resume anchor')
+        assert(q.toolkitResume==(demote and last or first)and q.toolkitCancel==head,'native-stateless route lost native stop/resume anchor')
         if demote then
             assert(q.queue[2]==firstPreparation and q.queue[3]==first and q.queue[4]==lastPreparation
                 and q.queue[5]==last and q.queue[6]==returning,'demotion detached original return')
@@ -584,7 +546,7 @@ do
         local q,first,_,_,_,head=activeScene(false)
         local decision=policy.evaluateMove(q,first,head)
         assert(decision.allowed and decision.commonActiveEdit==true,
-            'eligible root reader did not use common active device proof')
+            'eligible root reader did not use native-stateless route')
         assert(not q.toolkitCancel and not q.toolkitResume and effects==0 and routes==0)
     end
     -- Suffix device prerequisites keep the same state/order after the two
@@ -602,24 +564,6 @@ do
             and mute.mode=='MuteVolume'and unmute.mode=='UnMuteVolume',
             'adjacent active edit altered same-device suffix order/prerequisites')
     end
-    do
-        local q,first,_,_,_,head=activeScene(true)
-        leafClass='MultiLuaJavaInvoker'
-        local decision=candidate(q,first,head)
-        assert(decision.allowed and decision.commonActiveEdit,'native overloaded invoker rejected')
-        leafClass='LuaClosure'
-        assert(not candidate(q,first,head).commonActiveEdit,'non-native facts function accepted')
-        leafClass='LuaJavaInvoker'
-    end
-    for _,change in ipairs({'missing','schema','item','source','destination','location','id','fullType','late-geometry'})do
-        local q,first,_,_,_,head=activeScene(true)
-        leafMode=change;local beforeReads=leafReads
-        local decision=candidate(q,first,head)
-        leafMode=nil;actor.x=.5
-        assert(leafReads>beforeReads and not decision.allowed and decision.reason=='unavailable',
-            'unproved/mutated native retained-return facts escaped: '..change)
-        assert(not decision.commonActiveEdit and not q.toolkitCancel and not q.toolkitResume)
-    end
     for _,change in ipairs({'reader-callback','device-callback','equipment','far'})do
         local q,first,last,_,_,head=activeScene(true)
         local calls=0;local foreign=function()calls=calls+1;error('unsupported active callback executed')end
@@ -630,62 +574,15 @@ do
             equipment.toolkitQueueOperation=first.toolkitQueueOperation
             table.insert(q.queue,q:indexOf(first)+1,equipment)
         else actor.x=20 end
-        local bridge=toolkitQueueSpatialNoMovement;toolkitQueueSpatialNoMovement=nil
-        local legacy=policy.evaluateMove(q,first,head);toolkitQueueSpatialNoMovement=bridge
-        local decision=candidate(q,first,head)
-        assert(not decision.commonActiveEdit,'unsupported active proof accepted '..change)
+        local framework=PZSurvivorToolkit.ActionQueueEditModel;PZSurvivorToolkit.ActionQueueEditModel=nil
+        local legacy=policy.evaluateMove(q,first,head);PZSurvivorToolkit.ActionQueueEditModel=framework
+        local decision=policy.evaluateMove(q,first,head)
         if change=='far'then
             assert(decision.allowed==legacy.allowed and decision.reason==legacy.reason,
                 'initially far active edit changed legacy authority')
-        else assert(not decision.allowed,'unsupported active callbacks/equipment were accepted: '..change)end
+        else assert(not decision.allowed and not decision.commonActiveEdit,
+            'unsupported active callbacks/equipment were accepted: '..change)end
         assert(calls==0 and effects==0 and routes==0)
-    end
-    for _,change in ipairs({'equipped-book','attached-book','alias-member','batched-return'})do
-        local q,first,_,_,_,head,_,returning=activeScene(true)
-        local equipped=actor.isEquipped
-        if change=='equipped-book'then actor.isEquipped=function()return true end
-        elseif change=='attached-book'then head.item.getAttachedSlot=function()return 1 end
-        elseif change=='alias-member'then returning.queueList[1].items[1]=f.item('Base.BookCooking1')
-        else returning.queueList[1].items[2]=f.item('Base.BookCooking1')end
-        local bridge=toolkitQueueSpatialNoMovement;toolkitQueueSpatialNoMovement=nil
-        local legacy=policy.evaluateMove(q,first,head);toolkitQueueSpatialNoMovement=bridge
-        local decision=candidate(q,first,head)
-        actor.isEquipped=equipped
-        assert(not decision.commonActiveEdit,'unproven physical return acquired common device authority: '..change)
-        assert(decision.allowed==legacy.allowed and decision.reason==legacy.reason,
-            'unsupported physical return changed legacy authority: '..change)
-    end
-    for _,change in ipairs({'geometry','helper','return-item','return-endpoint'})do
-        local q,first,last,_,_,head,_,returning=activeScene(true)
-        local changed=false
-        -- The explicit bridge double supplies a one-shot boundary mutation;
-        -- real native bridge calls remain callback-free, as verified separately.
-        bridgeHook=function()
-            bridgeHook=nil;changed=true
-            if change=='geometry'then actor.x=20
-            elseif change=='helper'then toolkitQueueSpatialNoMovement=nil
-            elseif change=='return-item'then returning.item=f.item('Base.BookCooking1')
-            else returning.destContainer=actor.inventory end
-        end
-        local decision=candidate(q,first,head);bridgeHook=nil
-        toolkitQueueSpatialNoMovement=spatialNoMovement
-        assert(changed and not decision.allowed and decision.reason=='unavailable',
-            'late active mutation escaped final proof: '..change..' changed='..tostring(changed)..' reason='..tostring(decision.reason))
-        assert(q.queue[2]==returning and not q.toolkitCancel and not q.toolkitResume)
-    end
-    -- All live reader getters precede the final certified geometry read. A
-    -- late getter must never move the actor after that one-use lease is spent.
-    do
-        local q,first,_,_,_,head=activeScene(true)
-        local getter,initial,changed=actor.getInventory,bridgeCalls,false
-        actor.getInventory=function(self)
-            if bridgeCalls>=initial+2 then changed=true;actor.x=20 end
-            return getter(self)
-        end
-        local decision=candidate(q,first,head)
-        actor.getInventory=getter
-        assert(not changed or not decision.allowed and decision.reason=='unavailable',
-            'reader getter ran after the final certified spatial proof without revalidation')
     end
     actor.inventory=inventory
 end
