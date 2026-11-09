@@ -51,12 +51,13 @@ function F.seed(s,case,index)
  local ids={case=case,index=index,token='queue-peers:'..getTimestampMs()..':'..index,actors={},items={},stores={},originalRootIds={},origin=s.origin}
  s.owned={};s.seed=ids
  for _,key in ipairs({'source1','source2'})do s.stores[key]:setCapacity(100);ids.stores[#ids.stores+1]=point(s.objects[key],key)end
- local shared=case=='shared-capacity'or case=='contested-pickup'
+ local shared=case=='shared-capacity'or case=='contested-pickup'or case=='partial-accepted'
  local sharedFront
  local function add(container,ft,where)
   local item=assert(container:AddItem(ft));item:setFavorite(false);item:getModData()[owner]=ids.token
-  local total=item:getNumberOfPages();local initial=total-(ft=='Base.BookCarpentry1'and 4 or 1)
-  assert(initial>0);item:setAlreadyReadPages(initial)
+  local total=instanceof(item,'Literature')and item:getNumberOfPages()or 1
+  local initial=instanceof(item,'Literature')and(total-(ft=='Base.BookCarpentry1'and 4 or 1))or 0
+  if instanceof(item,'Literature')then assert(initial>0);item:setAlreadyReadPages(initial)end
   local spec={id=item:getID(),ft=ft,total=total,initial=initial};assert(not s.owned[spec.id],'duplicate owned item')
   s.owned[spec.id]=spec;ids.items[#ids.items+1]={id=spec.id,ft=ft,initialEndpoint=where}
   sendAddItemToContainer(container,item);return spec
@@ -64,9 +65,9 @@ function F.seed(s,case,index)
  for i,role in ipairs(F.roles)do
   local player=s.players[role];local key=shared and'source1'or('source'..i)
   local front
-  if case=='contested-pickup'and sharedFront then front=sharedFront else front=add(s.stores[key],'Base.BookCarpentry1',key);sharedFront=front end
+  if case=='contested-pickup'and sharedFront then front=sharedFront else front=add(s.stores[key],case=='partial-accepted'and'Base.Nails'or'Base.BookCarpentry1',key);sharedFront=front end
   local tail=add(player:getInventory(),'Base.BookCooking1',role..'-root')
-  player:setAlreadyReadPages(front.ft,front.initial);player:setAlreadyReadPages(tail.ft,tail.initial)
+  if case~='partial-accepted'then player:setAlreadyReadPages(front.ft,front.initial)end;player:setAlreadyReadPages(tail.ft,tail.initial)
   player:setPerkLevelDebug(Perks.Woodwork,0);player:setPerkLevelDebug(Perks.Cooking,0)
   ids.actors[#ids.actors+1]={role=role,onlineId=player:getOnlineID(),front=front,tail=tail}
   local original={};for id in pairs(s.initial[role])do original[#original+1]=id end;table.sort(original);ids.originalRootIds[role]=original
@@ -95,7 +96,7 @@ function F.snapshot(s)
  for _,spec in ipairs(s.seed.items)do
   local item,endpoint,count=F.find(s,spec.id)
   assert(item and count==1 and item:getFullType()==spec.ft,'owned item absent/duplicated/replaced')
-  items[#items+1]={id=spec.id,ft=spec.ft,endpoint=endpoint,count=count,pages=item:getAlreadyReadPages()}
+  items[#items+1]={id=spec.id,ft=spec.ft,endpoint=endpoint,count=count,pages=instanceof(item,'Literature')and item:getAlreadyReadPages()or 0}
  end
  for _,role in ipairs(F.roles)do for id,spec in pairs(s.initial[role])do
   local item,endpoint,count=F.find(s,id)
@@ -107,6 +108,27 @@ function F.snapshot(s)
   assert(capacity[key].weight<=capacity[key].capacity+.0001,'authority container overfilled')
  end
  return{case=s.seed.case,token=s.seed.token,index=s.seed.index,items=items,originalsPreserved=true,capacity=capacity}
+end
+function F.partialArm(s)
+ assert(isServer()and s.seed.case=='partial-accepted','partial arm requires exact authority phase')
+ local first,where,count=F.find(s,s.seed.actors[1].front.id)
+ local second,other,n=F.find(s,s.seed.actors[2].front.id)
+ assert(count==1 and n==1 and where=='source1'and other=='source1','partial items not in source')
+ assert(first:getFullType()=='Base.Nails'and second:getFullType()=='Base.Nails'and first:getWeight()<=.1 and second:getWeight()<=.1,'native bulk grouping unsupported')
+ assert(type(queuePeersArmPartial)=='function'and queuePeersArmPartial(s.players.client1,first,second,s.stores.source1,s.players.client1:getInventory(),s.stores.source2,s.seed.token),'partial native probe could not arm')
+end
+function F.replica(s)
+ local items={}
+ for _,spec in ipairs(s.seed.items)do
+  local item,endpoint,count=F.find(s,spec.id)
+  assert(count<=1,'replica duplicated owned identity')
+  items[#items+1]={id=spec.id,ft=item and item:getFullType()or spec.ft,endpoint=endpoint or false,count=count,pages=item and instanceof(item,'Literature')and item:getAlreadyReadPages()or 0}
+ end
+ for _,id in ipairs(s.seed.originalRootIds[s.role])do
+  local item,endpoint,count=F.find(s,id)
+  assert(item and count==1 and(endpoint==s.role..'-root'or endpoint==s.role..'-root-nested'),'original replica item missing')
+ end
+ return{items=items,originalsPreserved=true}
 end
 function F.capacity(s)
  assert(s.seed.case=='shared-capacity','wrong intervention')

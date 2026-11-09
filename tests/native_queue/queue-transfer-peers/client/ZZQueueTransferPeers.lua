@@ -1,11 +1,12 @@
 local config=require 'QueueTestSelection';if config.suite~='queue-transfer-peers'then return end
 require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'TimedActions/ISReadABook'
+require 'TimedActions/ISInventoryTransferUtil'
 local F=require 'QueueTransferPeers';local T=PZSurvivorToolkit
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local R={index=1,phase='hello',records={},tracks={},tokens={},serial=0,tokenSerial=0}
 local entered,done=false,false
-local producer,readProducer,requestState
+local producer,readProducer,requestState,grabProducer,grabOriginal,grabResolver,grabOriginState,scopeOperations,scopeRunner
 local pickupFailure=T.ActionQueuePickupFailure
 local pickupState=pickupFailure and pickupFailure.nativeRequestState
 local function now()return getTimestampMs()end
@@ -27,6 +28,12 @@ local function intact()
  assert(pickupFailure==T.ActionQueuePickupFailure and pickupFailure.nativeRequestState==pickupState
   and Proof.closure(pickupState,'ActionQueuePickupFailure.lua'),'pickup observer changed')
  assert(T.ActionQueueSettlement.nativeRequestState==requestState and Proof.closure(requestState,'ActionQueueSettlement.lua'),'request observer changed')
+ if R.seed and R.seed.case=='partial-accepted'then
+  assert(T.ActionQueueOperations==scopeOperations and scopeOperations.run==scopeRunner and Proof.closure(scopeRunner,'ActionQueueOperations.lua'),'bulk-grab UI operation scope changed')
+  assert(ISInventoryPaneContextMenu.onGrabItems==grabProducer and queuePeersGrabOriginal==grabResolver and queuePeersGrabOriginState==grabOriginState
+   and grabResolver(grabProducer,ISInventoryPaneContextMenu)==grabOriginal
+   and Proof.closure(grabOriginal,'ISInventoryPaneContextMenu.lua'),'native bulk-grab producer chain changed')
+ end
 end
 local function sample(action,row,point)
  local tx=action.transactionId or 0
@@ -147,8 +154,34 @@ end
 local function start()
  assert(empty(),'fresh phase queue not empty');intact()
  R.records,R.tracks,R.tokens,R.serial,R.tokenSerial={}, {}, {},0,0
- R.active=true;R.bodyReady=false;R.unknown=nil;R.lossSent=false;R.quiet=nil;R.sent=false
+ R.active=true;R.bodyReady=false;R.unknown=nil;R.lossSent=false;R.quiet=nil;R.sent=false;R.partial=nil
  local s=R.state
+ if R.seed.case=='partial-accepted'then
+  if R.role=='client1'then
+   local first=assert(F.find(s,R.seed.actors[1].front.id));local second=assert(F.find(s,R.seed.actors[2].front.id))
+   assert(queuePeersArmPartialClient(R.player,first:getID(),second:getID(),R.seed.token),'partial client probe could not arm')
+   -- One real adjacent step keeps both ordinary transfer actions pending until
+   -- native checkQueueList can group the two light items. No fabricated batch,
+   -- shortened action or overridden native start/update is used.
+   local origin=R.seed.origin
+   local square=assert(getCell():getGridSquare(origin.x+1,origin.y,origin.z))
+   ISTimedActionQueue.add(ISWalkToTimedAction:new(R.player,square))
+   -- The real context-menu click scopes its synchronous producer through
+   -- Operations.run. Directly calling only the leaf would invent two intents,
+   -- correctly preventing native merging when the queue is enabled.
+   scopeRunner(grabProducer,{first,second},R.player:getPlayerNum())
+   local firstAction,secondAction
+   for _,action in ipairs(queue().queue)do
+    if action.Type=='ISInventoryTransferAction'and action.item then
+     if action.item:getID()==first:getID()then firstAction=action end
+     if action.item:getID()==second:getID()then secondAction=action end
+    end
+   end
+   assert(firstAction and secondAction and firstAction:canMergeAction(secondAction),'UI command did not prepare a native mergeable pair')
+   if config.mode=='toolkit'then assert(firstAction.toolkitQueueOperation~=nil and firstAction.toolkitQueueOperation==secondAction.toolkitQueueOperation,'one UI command acquired different operation owners')end
+  end
+  R.phase='run';R.since=now();return
+ end
  producer({s.front},R.player:getPlayerNum());producer({s.tail},R.player:getPlayerNum())
  for _,action in ipairs(queue().queue)do register(action)end
  assert(#R.records>=3,'native pickup/read/return admission missing')
@@ -162,6 +195,7 @@ Events.OnServerCommand.Add(function(module,command,args)
    local p=args.origin;R.player:teleportTo(p.x+(R.role=='client1'and .5 or 1.5),p.y+.5,p.z)
   elseif command=='Go'then assert(R.seed.token==args.token and R.phase=='ready');start()
   elseif command=='Capacity'then R.capacity=args
+  elseif command=='Partial'then assert(R.seed.case=='partial-accepted'and args.token==R.seed.token and not R.partial,'foreign partial result');R.partial=args
   elseif command=='AbortUnknown'then
    assert(R.seed.case=='lost-done'and R.role=='client1'and R.lossSent and not R.unknown,'unexpected unknown abort')
    local current=queue().current;local row=assert(R.tracks[current]);local tx=current.transactionId
@@ -178,6 +212,16 @@ Events.OnServerCommand.Add(function(module,command,args)
  end)
  if not ok then fail(problem)end
 end)
+local function partialResult()
+ intact();assert(empty()and R.partial,'partial result before native drain/authority')
+ local blocked=T.ActionQueueExecution.blockedReturns(R.player)
+ assert(#blocked==0,'partial native batch invented singleton cleanup authority')
+ local probe=R.role=='client1'and queuePeersPartialState()or false
+ local row={case=R.seed.case,token=R.seed.token,index=R.index,role=R.role,onlineId=R.player:getOnlineID(),mode=config.mode,
+  queueEnabled=config.mode=='toolkit',sourceBound=true,queueIdle=true,producer='selected-pack-walk-then-native-bulk-grab',operationScoped=true,
+  replica=F.replica(R.state),probe=probe,producerProof=grabOriginState(),serverPartial=R.partial,blocked=blocked,keptIds={},records=R.records}
+ R.sent=true;F.emit('CASE',row);request('Result',{result=row});R.phase='result'
+end
 local function result()
  intact();for action,row in pairs(R.tracks)do sample(action,row,'terminal')end
  local blocked,kept={},{}
@@ -207,7 +251,16 @@ require('QueuePreflight').onTick(Events,function()
    PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(config.mode=='toolkit')
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);R.player:setAutoDrink(false)
    producer=ISInventoryPaneContextMenu.onLiteratureItems;readProducer=ISInventoryPaneContextMenu.readItem
-   requestState=T.ActionQueueSettlement.nativeRequestState;intact()
+   requestState=T.ActionQueueSettlement.nativeRequestState
+   for _,selected in ipairs(config.cases)do if selected=='partial-accepted'then
+    grabProducer=ISInventoryPaneContextMenu.onGrabItems;grabResolver=queuePeersGrabOriginal;grabOriginState=queuePeersGrabOriginState
+    scopeOperations=T.ActionQueueOperations;scopeRunner=scopeOperations and scopeOperations.run
+    assert(Proof.closure(scopeRunner,'ActionQueueOperations.lua'),'native UI operation scope unavailable')
+    assert(type(grabResolver)=='function'and type(grabOriginState)=='function','bulk-grab source resolver unavailable')
+    grabOriginal=grabResolver(grabProducer,ISInventoryPaneContextMenu)
+    assert(Proof.closure(grabOriginal,'ISInventoryPaneContextMenu.lua'),'native bulk-grab callback unavailable')
+   end end
+   intact()
    assert(T.ActionQueueLifecycle.registerObserver('fixture.queue-transfer-peers',{started=pickupEntry,begin=begin,finish=finish}),'native observer unavailable')
    if type(queuePeersReplyLossState)=='function'then
     local probe=queuePeersReplyLossState();F.emit('PROBE',{role=R.role,state=probe})
@@ -223,14 +276,21 @@ require('QueuePreflight').onTick(Events,function()
    local _,source,count=F.find(state,state.ids.front.id);assert(count==1 and(source=='source1'or source=='source2'))
    state.frontSource=state.stores[source]
    for _,spec in ipairs({state.ids.front,state.ids.tail})do
-    R.player:setAlreadyReadPages(spec.ft,spec.initial)
-    local item=spec==state.ids.front and state.front or state.tail;item:setAlreadyReadPages(spec.initial)
+    local item=spec==state.ids.front and state.front or state.tail
+    if instanceof(item,'Literature')then R.player:setAlreadyReadPages(spec.ft,spec.initial);item:setAlreadyReadPages(spec.initial)end
    end
    R.player:setPerkLevelDebug(Perks.Woodwork,0);R.player:setPerkLevelDebug(Perks.Cooking,0)
    assert(not R.player:hasTrait(CharacterTrait.DISORGANIZED)and not R.player:hasTrait(CharacterTrait.ILLITERATE),'unsupported actor trait')
    R.phase='ready';request('Ready')
   elseif R.phase=='run'then
    observe()
+   if R.seed.case=='partial-accepted'then
+    if R.role=='client1'then local probe=queuePeersPartialState();assert(probe.failure==''and probe.closed=='','partial client probe rejected native request: '..tostring(probe.closed))end
+    if not R.partial or not empty()then R.quiet=nil;return end
+    if R.role=='client1'and not queuePeersPartialState().expired then return end
+    R.quiet=R.quiet or now();if now()-R.quiet<1500 then return end
+    partialResult();return
+   end
    local current=queue().current;local row=current and R.tracks[current]
    if not R.bodyReady and row and row.role=='front'and row.started and row.progress and R.player:getAlreadyReadPages(R.state.ids.front.ft)>R.state.ids.front.initial then
     R.bodyReady=true
