@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 from . import warehouse_manifest as common
-from .. import report, receipts
+from .. import report, receipts, worlds
 
 MARKER = '[WAREHOUSE_PERSIST] '
 CASES = ('persist-seed', 'persist-reload')
@@ -53,7 +53,7 @@ def _seed(selection):
             or world.get('kind') != 'mp' or world.get('mp_host') is not True
             or world.get('roles') != ['server', 'client1', 'client2']):
         raise ValueError('Warehouse reload template must come from its native Host persistence seed')
-    seed = Path(world['source_run'])
+    seed = worlds.completed_source_run(world)
     if not seed.is_absolute() or seed.is_symlink():
         raise ValueError('Warehouse persistence seed must be an absolute owned run')
     initial = report.read_json(seed / 'selection.json')

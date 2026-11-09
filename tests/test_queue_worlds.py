@@ -350,6 +350,39 @@ class WorldTemplateTests(unittest.TestCase):
                     self.export(self.root / ('bad-' + filename))
             path.write_bytes(original)
 
+    def test_imported_manifest_keeps_common_guards_and_cannot_claim_a_completed_run(self):
+        value = self.export()
+        imported = dict(value, schema_version=2)
+        imported.pop('source_run')
+        with patch('queue_checks.world_import.validate_origin') as validate_origin:
+            worlds._manifest(imported)
+            validate_origin.assert_called_once_with(imported)
+            validate_origin.reset_mock()
+            for altered in (dict(imported, source_run=value['source_run']),
+                            dict(imported, source_run=None), dict(imported, mods=[]),
+                            dict(imported, roles=['client2']), dict(imported, game_sha256='bad'),
+                            dict(imported, sandbox_sha256='0' * 64), dict(imported, files={}),
+                            dict(imported, schema_version=True), dict(imported, schema_version=3)):
+                with self.subTest(manifest=altered), self.assertRaises(ValueError):
+                    worlds._manifest(altered)
+            validate_origin.assert_not_called()
+            validate_origin.side_effect = ValueError('Invalid import origin')
+            with self.assertRaisesRegex(ValueError, 'import origin'):
+                worlds._manifest(imported)
+
+    def test_completed_source_run_refuses_imported_provenance_and_accepts_legacy_sidecars(self):
+        for value in ({'source_run': str(self.run)}, {'schema_version': 1, 'source_run': str(self.run)}):
+            self.assertEqual(self.run, worlds.completed_source_run(value))
+        for value in ({'schema_version': 2}, {'schema_version': 2, 'source_run': str(self.run)},
+                      {'schema_version': 1, 'source_run': str(self.run), 'origin': {}},
+                      {'schema_version': True, 'source_run': str(self.run)},
+                      {'schema_version': 3, 'source_run': str(self.run)}):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'completed native seed'):
+                worlds.completed_source_run(value)
+        for source in (None, 'relative-run', [], 1):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, 'source run'):
+                worlds.completed_source_run({'source_run': source})
+
     def test_live_pid_unstopped_run_and_external_cache_are_refused(self):
         self.execution['processes']['client1']['pid'] = os.getpid()
         report.write_json(self.run / 'execution.json', self.execution)

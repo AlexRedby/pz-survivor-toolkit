@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import re
 
-from .. import receipts
+from .. import receipts, worlds
 
 CASES = ('legacy-seed', 'legacy-reload')
 MARKER = '[WAREHOUSE_LEGACY] '
@@ -69,7 +69,7 @@ def verify(root, selection, catalog):
             template = json.loads((root / 'world-template.json').read_text())
             if template['source_suite'] != 'warehouse-manifest' or template['source_cases'] != ['legacy-seed'] or template['kind'] != 'sp':
                 raise ValueError('Migration requires the completed legacy seed world')
-            seed = Path(template['source_run'])
+            seed = worlds.completed_source_run(template)
             seed_selection = json.loads((seed / 'selection.json').read_text())
             seed_text = (seed / 'client1-launch.log').read_text(errors='replace')
             if not complete(seed_selection, 'client1', seed_text) or not _exact(_one(seed_text, 'SAVED'), cold):

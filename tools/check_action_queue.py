@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters, worlds, pack, admission, scenarios, campaign, batch_policy, batch_resume, provenance
+from queue_checks import native, report, runner, adapters, worlds, world_import, pack, admission, scenarios, campaign, batch_policy, batch_resume, provenance
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
@@ -515,6 +515,15 @@ def main(argv=None):
     command = commands.add_parser('save-world', help='Export Saves/db from a completed, stopped disposable run as a sealed reusable template')
     command.add_argument('run', type=Path)
     command.add_argument('output', type=Path)
+    command = commands.add_parser('import-world', help='Derive a sealed world with explicit mod removals and an optional external Host world')
+    command.add_argument('template', type=Path, help='Original sealed template from save-world; supplies the stand environment/accounts')
+    command.add_argument('output', type=Path)
+    command.add_argument('--game', type=Path, required=True)
+    command.add_argument('--remove-mod', action='append', default=[], help='Explicitly remove this original Mod ID; repeat for each removal')
+    command.add_argument('--external-world', type=Path, help='Closed external Host world directory, including native players.db')
+    command.add_argument('--server-settings', type=Path, help='Original external Server INI with its exact ordered Mods')
+    command.add_argument('--sandbox', type=Path, help='Original external SandboxVars.lua matching the base environment')
+    command.add_argument('--player', action='append', default=[], help='Map a native networkPlayers row ID to client1/client2: client1=42')
     args = parser.parse_args(argv)
     try:
         if args.command == 'status':
@@ -563,6 +572,18 @@ def main(argv=None):
                 overrides[id] = path
             value = pack.create(ROOT, args.output, args.game, args.workshop, overrides)
             print('Locked ' + str(len(value['mods'])) + ' ordered Mod IDs: ' + str(args.output.resolve()))
+            return 0
+        if args.command == 'import-world':
+            players = {}
+            for argument in args.player:
+                role, separator, identifier = argument.partition('=')
+                if role not in ('client1', 'client2') or not separator or not identifier.isascii() or not identifier.isdigit() or int(identifier) <= 0 or role in players:
+                    raise ValueError('--player requires a distinct client1=ROW_ID or client2=ROW_ID with a positive native row ID')
+                players[role] = int(identifier)
+            value = world_import.create(args.template, args.output, args.game, args.remove_mod,
+                external_world=args.external_world, server_settings=args.server_settings, sandbox=args.sandbox,
+                players=players if args.player else None)
+            print('Imported world template: ' + str(args.output.resolve()) + ' (' + str(len(value['files'])) + ' files)')
             return 0
         if args.command == 'save-world':
             value = worlds.export(args.run, args.output)

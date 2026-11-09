@@ -38,7 +38,7 @@ def _selection(value):
 
 
 def _manifest(value):
-    if not isinstance(value, dict) or type(value.get('schema_version')) is not int or value['schema_version'] != 1:
+    if not isinstance(value, dict) or type(value.get('schema_version')) is not int or value['schema_version'] not in (1, 2):
         raise ValueError('Invalid world template manifest')
     hosted = value.get('mp_host', False)
     if type(hosted) is not bool or hosted and value.get('kind') != 'mp':
@@ -49,8 +49,12 @@ def _manifest(value):
     expected = _selection({'suite': value.get('source_suite'), 'cases': value.get('source_cases'),
                            'kind': value.get('kind'), 'mods': value.get('mods'), 'ports': value.get('ports'),
                            'clients': len(roles) - (1 if roles[0] == 'server' else 0)})
-    if roles != expected or not isinstance(value.get('source_run'), str) or not Path(value['source_run']).is_absolute() or not isinstance(value.get('server_name'), str) or not value['server_name']:
+    if roles != expected or not isinstance(value.get('server_name'), str) or not value['server_name']:
         raise ValueError('Invalid world template metadata')
+    if value['schema_version'] == 1:
+        completed_source_run(value)
+    elif 'source_run' in value:
+        raise ValueError('Imported world template cannot claim a completed source run')
     if not isinstance(value.get('game_sha256'), str) or not re.fullmatch('[0-9a-f]{64}', value['game_sha256']):
         raise ValueError('Invalid world template game hash')
     if 'sandbox_sha256' not in value or (value['kind'] == 'sp' and value['sandbox_sha256'] is not None) or (value['kind'] == 'mp' and
@@ -75,6 +79,22 @@ def _manifest(value):
         if not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
             raise ValueError('Invalid world template file hash: ' + name)
     _require_world(state, value['kind'], value['server_name'], hosted)
+    if value['schema_version'] == 2:
+        from . import world_import
+        world_import.validate_origin(value)
+
+
+def completed_source_run(value):
+    """Return genuine run provenance; imported state cannot prove native seed assertions."""
+    if not isinstance(value, dict):
+        raise ValueError('Invalid world template metadata')
+    schema = value.get('schema_version', 1)
+    if type(schema) is not int or schema != 1 or 'origin' in value:
+        raise ValueError('A completed native seed run is required; imported world provenance is insufficient')
+    source = value.get('source_run')
+    if not isinstance(source, str) or not Path(source).is_absolute():
+        raise ValueError('Invalid world template source run')
+    return Path(source)
 
 
 def _state(run, roles):

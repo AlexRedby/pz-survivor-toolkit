@@ -211,6 +211,32 @@ Export accepts only a completed disposable runner invocation with all owned proc
 
 Menu-Host saved-world copies use the same `save-world` / `--world-template` mechanism on macOS. Keep `{"mp_host":true}` in the config for both runs; Host and independent GameServer templates are not interchangeable. The native child owns `client1/Saves/Multiplayer/<server-name>/` and `client1/db/<server-name>.db`. Export retains these paths and every selected client's `Saves/` and `db/` files, including native world/item identities and authentication rows; restore copies their sealed bytes into a new owned cache. It does not mirror authoritative saves into `server/Saves/`. The current common Host bootstrap keeps the server name `queue-smoke` and the original `client1`/`client2` fixture identities. `seed_run` and `startup_connection` overrides remain unsupported in Host.
 
+### Explicit imports and mod removals
+
+Create a separate template when deliberately removing mods from an exported world's ordered selection:
+
+```sh
+uv run --locked python tools/check_action_queue.py import-world /tmp/original-world /tmp/world-without-mod \
+  --game "$PZ_GAME" --remove-mod ExampleMod
+```
+
+The base must be the original schema1 template from `save-world`. Repeat `--remove-mod` for every removal; additions, reordering, unknown IDs and duplicates are rejected. Repeated imports start from that original base with the complete desired removal list. The new schema2 manifest records the base manifest and its hashes, original selection, declared removals and copied file hashes. Use it through the ordinary `--world-template` option with a new pack lock matching its resulting ordered mods. All existing build, topology, ports, sandbox, settings and state checks still apply. Imported provenance cannot satisfy warehouse checks requiring a completed native persistence/legacy seed.
+
+An exported menu-Host base can also supply the stand environment and authentication for a closed external Host world:
+
+```sh
+uv run --locked python tools/check_action_queue.py import-world /tmp/original-host-world /tmp/imported-host-world \
+  --game "$PZ_GAME" --remove-mod ExampleMod \
+  --external-world "$EXTERNAL_WORLD" --server-settings "$EXTERNAL_SERVER_INI" \
+  --sandbox "$EXTERNAL_SANDBOX" --player client1=42
+```
+
+`EXTERNAL_WORLD` is the authoritative world directory containing `players.db`, taken from a stopped save. Its server INI must declare exactly the base's original ordered mods and matching Map/PVP/DoLuaChecksum/SleepAllowed/SleepNeeded values; the sandbox file must match byte-for-byte. The base supplies test-account authentication, client caches, endpoint and target game build. External account databases are not imported. Every fixture client needs an explicit distinct `networkPlayers.id` via `--player`; for a two-client base also supply `--player client2=...`. Inspect these IDs in a read-only SQLite viewer. The reviewed B42.21 database implementation/schema is required; unknown native implementations, dead/missing actors, destination identity collisions, SQLite journals and symlinks are rejected.
+
+Only the copied authoritative world is replaced. Original player rows remain; selected opaque character blobs and position/version fields are cloned under the stand's `queue-smoke` world and `client1`/`client2` identities, player index zero, with Steam identity cleared. The manifest records source file hashes and exact row/blob mappings. Inputs stay unchanged and `world.json` is published only after copy and mutation checks pass. Raw SP/dedicated-server layouts and archive extraction are outside this command; template-only mod-removal copies support the existing SP/MP layouts.
+
+Import validates the copy and declared transformations. It does not qualify gameplay after removing a mod, prove the original external save's game build, rebind external Wishlist journals or reproduce client preferences. The manifest explicitly marks the external source build as unverified. Actual character loading, inventory and mod compatibility require the corresponding native scenario; keep those conclusions separate from a successful import.
+
 Host cleanup first asks the owned launcher to send native `save` and `quit` to its original `CoopMaster.serverProcess`. The launcher must prove the same child PID and native parent relationship, wait for that child to exit successfully, and emit exactly one `HOST_SAVED_EXIT pid=... exit=0`. The runner records `host_save` and the child's exit code in `execution.json`, then stops the remaining owned process group and audits that no owned Host process survived. An absent acknowledgement, unsuccessful child exit, or surviving child fails cleanup. Export requires this successful save/quit evidence, stopped source PIDs, the original Host cache route and authentication database, and unchanged source/template seals. A forced stop cannot substitute for graceful save evidence.
 
 ## Compare and report

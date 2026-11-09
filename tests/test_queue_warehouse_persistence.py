@@ -43,6 +43,18 @@ class WarehousePersistenceTests(unittest.TestCase):
             result.update(role=role, language='EN' if role == 'client1' else 'RU', windowCount=4)
         return result
 
+    def test_reload_refuses_imported_world_as_native_seed_evidence(self):
+        template = self.root / 'imported-world'
+        template.mkdir()
+        (template / 'world.json').write_text(json.dumps(dict(
+            schema_version=2, source_suite=common.SUITE, source_cases=['persist-seed'],
+            kind='mp', mp_host=True, roles=['server', 'client1', 'client2'])))
+        selection = copy.deepcopy(self.selection)
+        selection['cases'] = ['persist-reload']
+        selection['options']['world_template'] = str(template)
+        with self.assertRaisesRegex(ValueError, 'imported world provenance'):
+            adapter._seed(selection)
+
     def build(self, case='persist-seed'):
         self.selection['cases'] = [case]
         stages = adapter.SEED_STAGES if case == 'persist-seed' else adapter.RELOAD_STAGES

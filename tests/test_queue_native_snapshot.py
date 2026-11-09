@@ -734,6 +734,29 @@ class NativeSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'membership changed'):
             runner.run(output)
 
+    def test_imported_world_keeps_schema2_provenance_in_normal_preparation_seals(self):
+        from queue_checks import world_import
+        seed = self.prepare('import-seed')
+        self.write(seed / 'client1/Saves/Sandbox/QueueHealthSP/map.bin', 'external-copy seed bytes')
+        self.write(seed / 'execution.json', json.dumps({'status': 'completed',
+            'processes': {'client1': {'pid': 999999, 'exit_code': 0}}}))
+        original = self.root / 'original-world'
+        with patch.object(worlds.os, 'kill', side_effect=ProcessLookupError):
+            worlds.export(seed, original)
+        imported = self.root / 'imported-world'
+        value = world_import.create(original, imported, self.game)
+        before = native.hashes(imported)
+        output = self.prepare('from-import', options={'world_template': str(imported)})
+        restored = report.read_json(output / 'world-template.json')
+        self.assertEqual(2, restored['schema_version'])
+        self.assertEqual(value['origin'], restored['origin'])
+        self.assertNotIn('source_run', restored)
+        sources = report.read_json(output / 'source-manifest.json')
+        self.assertIn(str(imported / 'world.json'), sources)
+        self.assertIn(str(imported / 'state/client1/Saves/Sandbox/QueueHealthSP/map.bin'), sources)
+        self.assertEqual(before, native.hashes(imported))
+        self.assertEqual([], report.verify_manifest(output, 'snapshot-hashes.json'))
+
     def locked_pack(self):
         self.write(self.project / 'SurvivorQoL-selected.ini',
                    'Mods=PZSurvivorToolkit\nWorkshopItems=\nMap=Riverside, KY\nPVP=true\n'
