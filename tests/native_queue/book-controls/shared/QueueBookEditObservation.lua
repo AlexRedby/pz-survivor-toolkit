@@ -302,17 +302,26 @@ function O.run(context)
   local started=clock();local baseline=existing();local baselineFirst=clock()-started
   started=clock();local result=observation();local observerFirst=clock()-started
   receipt.existingDecision={entrypoint=deviceOnly and'Policy.evaluateMove'or'Policy.evaluateCancel',allowed=baseline.allowed,reason=baseline.reason or false,whole=not deviceOnly}
-  if deviceOnly then receipt.existingDecision.commonActiveEdit=baseline.commonActiveEdit==true end
+  if deviceOnly then
+   receipt.existingDecision.commonActiveEdit=baseline.commonActiveEdit==true
+   receipt.existingDecision.route=baseline.commonActiveEditRoute or false
+   receipt.existingDecision.spatialValidated=baseline.spatialValidated==true
+   if not context.native and not baseline.commonActiveEdit then
+    receipt.consumerRefusal={stage=baseline.commonActiveEditFallback or false,
+     leafClass=kind(toolkitLeafTransferFacts)=='function'and getClassSimpleName(toolkitLeafTransferFacts)or false}
+   end
+  end
   receipt.observer=observedSummary(result,spatial)
   if deviceOnly then receipt.diagnostics=failureDiagnostics(result,spatial)end
   if deviceOnly then
    receipt.plan=false
    if context.native then
-    assert(result.status=='unhandled'and not result.projection,'queue-off move observer acquired a plan');receipt.control='queue-disabled'
+    assert(result.status=='unhandled'and not result.projection and not baseline.commonActiveEdit,'queue-off move observer acquired a plan or common authority');receipt.control='queue-disabled'
    else
     assert(result.status=='observed'and result.kind=='preempt'and result.projection and result.projection.status=='deferred'
      and result.projection.reason=='edit_native_resolution'and #result.unresolved==0,'native phase must remain deferred without future projection')
-    assert(baseline.allowed and not baseline.commonActiveEdit,'device-only move must use existing legacy authority')
+    assert(baseline.allowed and baseline.commonActiveEdit==true and baseline.commonActiveEditRoute=='native-stateless'
+     and not baseline.spatialValidated,'device-only move must retain the native-stateless common route')
     local gaps=receipt.diagnostics.contractGaps
     assert(#gaps==0
      and receipt.diagnostics.projectionBlockerType=='ISQueueActionsAction'and not receipt.diagnostics.gapsTruncated and not receipt.diagnostics.nodesTruncated,
@@ -333,7 +342,7 @@ function O.run(context)
    receipt.qualifiedReturn=effect~=nil and not receipt.unsupported
   end
   -- Same actual declared intent and unchanged live producer state. Outputs
-  -- differ: legacy authority versus declarative effect observation. These are
+  -- differ: the production common decision versus full declarative observation. These are
   -- paired entrypoint diagnostics, never a complete edit/frame performance gate.
   existing();observation() -- one warm-up pair, no replayed edit or input handler
   local baselineTimes,observerTimes={},{}
@@ -348,7 +357,7 @@ function O.run(context)
    end
    assert(a.allowed==baseline.allowed and a.reason==baseline.reason,'existing cancellation decision changed in paired bank')
    if deviceOnly and not context.native then
-    assert(not a.commonActiveEdit and fixture.same(failureDiagnostics(b,spatial),receipt.diagnostics)and fixture.same(planSummary(b,prototype,state.front,root,state.source,context.ids.front.id,context.ids.front.type,approach,spatial),receipt.plan),'device-only legacy authority or exact deferred native phase changed in paired bank')
+    assert(a.commonActiveEdit==true and a.commonActiveEditRoute=='native-stateless'and not a.spatialValidated and fixture.same(failureDiagnostics(b,spatial),receipt.diagnostics)and fixture.same(planSummary(b,prototype,state.front,root,state.source,context.ids.front.id,context.ids.front.type,approach,spatial),receipt.plan),'device-only common authority or exact deferred native phase changed in paired bank')
    end
    local summary=observedSummary(b,spatial)
    assert(fixture.same(summary,receipt.observer),'active observation result changed in paired bank')
@@ -363,14 +372,14 @@ function O.run(context)
    sameLiveIntent=true,whole=not deviceOnly,firstUseScope='first-call-after-untimed-identity-ledger-and-native-facts-diagnostics',
    baseline=distribution(baselineTimes),observer=distribution(observerTimes),baselineFirstMs=baselineFirst,observerFirstMs=observerFirst,
    comparable=comparable,comparisonReason=comparable and'useful-return-effect-layer-and-existing-cancel-success'
-    or receipt.control or deviceOnly and'deferred-native-phase-not-full-projection'or'existing-cancel-denied-or-observer-unknown',
+    or receipt.control or deviceOnly and'common-decision-versus-deferred-observation'or'existing-cancel-denied-or-observer-unknown',
    observerProjectionStatus=receipt.observer.projection and receipt.observer.projection.status or false,
    observerProjectionReason=receipt.observer.projection and receipt.observer.projection.reason or false,
    timerOverhead='included-not-subtracted',sameOutputContract=false,completeEditMeasured=false,frameLoadMeasured=false,
    positiveTimingClaim=false,assessment='not-assessed'}
   if deviceOnly then
    -- This additional opt-in probe keeps the default deferred observation and
-   -- the actual legacy authority bank above unchanged. It proves only the
+   -- the production common decision bank above unchanged. It proves only the
    -- currently adjacent native phase, not future routing or transfer admission.
    local probeBefore,probeWorld=capture(queue),fixture.snapshot(state)
    local probeIntent={kind='move',action=movingAction,target=movingTarget,after=demote,resolveNoMovement=true}
@@ -423,23 +432,69 @@ function O.run(context)
      started=clock();observed=probe();probeTimes[index]=clock()-started
      started=clock();decision=existing();baseTimes[index]=clock()-started
     end
-    assert(decision.allowed==baseline.allowed and decision.reason==baseline.reason and not decision.commonActiveEdit
-     and fixture.same(observed,noMovement),'no-movement proof or legacy authority changed in paired probe')
+    assert(decision.allowed==baseline.allowed and decision.reason==baseline.reason and(decision.commonActiveEdit==true)==not context.native
+     and(decision.commonActiveEditRoute or false)==(not context.native and'native-stateless'or false)and not decision.spatialValidated
+     and fixture.same(observed,noMovement),'no-movement proof or common decision changed in paired probe')
     assert(unchanged(probeBefore),'no-movement probe changed native queue/action/UI state')
    end
-   assert(probeBaseline.allowed==baseline.allowed and probeBaseline.reason==baseline.reason and not probeBaseline.commonActiveEdit,
-    'no-movement probe changed actual native edit authority')
+   assert(probeBaseline.allowed==baseline.allowed and probeBaseline.reason==baseline.reason and(probeBaseline.commonActiveEdit==true)==not context.native
+    and(probeBaseline.commonActiveEditRoute or false)==(not context.native and'native-stateless'or false)and not probeBaseline.spatialValidated,
+    'no-movement probe changed actual common edit authority')
    noMovement.readOnly=unchanged(probeBefore)and fixture.same(probeWorld,fixture.snapshot(state))
    assert(noMovement.readOnly,'no-movement probe changed world/items/checkpoint state')
    noMovement.performance={scope='paired-live-no-movement-observation-entrypoints',timer='System.nanoTime',units='ms',warmupPairs=1,pairs=3,
     sameLiveIntent=true,whole=false,firstUseScope='first-opt-in-call-after-default-observation-bank',
     baseline=distribution(baseTimes),observer=distribution(probeTimes),baselineFirstMs=probeBaselineFirst,observerFirstMs=probeFirst,
-    comparable=false,comparisonReason=context.native and'queue-disabled'or'complete-observation-not-authority',
+    comparable=false,comparisonReason=context.native and'queue-disabled'or'common-decision-versus-complete-observation',
     observerProjectionStatus=noMovement.observer.projection and noMovement.observer.projection.status or false,
     observerProjectionReason=noMovement.observer.projection and noMovement.observer.projection.reason or false,
     timerOverhead='included-not-subtracted',sameOutputContract=false,completeEditMeasured=false,frameLoadMeasured=false,
     positiveTimingClaim=false,assessment='not-assessed'}
    receipt.noMovementObservation=noMovement
+   receipt.sameWorkComparison=false
+   if not context.native then
+    local framework=T.ActionQueueEditModel
+    assert(kind(framework)=='table','same-work common/native comparison requires the common framework')
+    local function legacy()
+     T.ActionQueueEditModel=nil
+     local completed,value=pcall(evaluate,queue,movingAction,movingTarget,demote)
+     T.ActionQueueEditModel=framework
+     assert(completed,value)
+     return value
+    end
+    local function scalar(value)
+     return{allowed=value.allowed==true,reason=value.reason or false,to=value.to or false,
+      first=value.first or false,last=value.last or false,preempt=value.preempt==true,demote=value.demote==true}
+    end
+    local wanted=scalar(baseline)
+    local function check(common,old)
+     assert(common.commonActiveEdit==true and common.commonActiveEditRoute=='native-stateless'and not common.spatialValidated
+      and not old.commonActiveEdit and not old.commonActiveEditRoute and not old.spatialValidated
+      and fixture.same(scalar(common),wanted)and fixture.same(scalar(old),wanted),
+      'common/current-native decisions differ for the same live intent')
+     assert(equal(T.ActionQueueEditModel,framework)and unchanged(probeBefore),
+      'same-work comparison changed the common framework or queue state')
+    end
+    check(existing(),legacy()) -- one warm-up pair; no edit or input replay
+    local commonTimes,legacyTimes={},{}
+    for index=1,3 do
+     local common,old
+     if index%2==1 then
+      started=clock();common=existing();commonTimes[index]=clock()-started
+      started=clock();old=legacy();legacyTimes[index]=clock()-started
+     else
+      started=clock();old=legacy();legacyTimes[index]=clock()-started
+      started=clock();common=existing();commonTimes[index]=clock()-started
+     end
+     check(common,old)
+    end
+    receipt.sameWorkComparison={scope='paired-live-common-current-native-decisions',entrypoint='Policy.evaluateMove',
+     baseline='current-native-route-framework-withheld',candidate='production-native-stateless-common-route',
+     timer='System.nanoTime',units='ms',warmupPairs=1,pairs=3,alternating=true,sameLiveIntent=true,sameOutputContract=true,
+     frameworkRestored=true,frameworkSwitchIncluded=true,readOnly=true,legacyDecision=wanted,commonDecision=scalar(baseline),
+     legacyCommonActiveEdit=false,commonActiveEdit=true,commonRoute='native-stateless',legacyRoute=false,spatialValidated=false,legacy=distribution(legacyTimes),common=distribution(commonTimes),
+     timerOverhead='included-not-subtracted',positiveTimingClaim=false,completeEditMeasured=false,frameLoadMeasured=false,assessment='not-assessed'}
+   end
   end
   receipt.ledgerAfter=ledgerSummary(ledger(queue,front))
   assert(fixture.same(receipt.ledgerBefore,receipt.ledgerAfter),'observation changed private debt/earned-step disposition')

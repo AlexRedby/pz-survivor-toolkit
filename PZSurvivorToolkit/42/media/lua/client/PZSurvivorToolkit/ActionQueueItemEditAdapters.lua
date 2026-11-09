@@ -430,6 +430,8 @@ end
 -- their own pure dependency lease before they can join this final-read seam.
 -- A second result is only the captured public queued member when different;
 -- its native ID-resolution witness remains separate from admission and outcomes.
+-- The third result is a source/structure-only lease. It proves neither item
+-- effects nor admission/outcomes; the first validator still requires native facts.
 function Adapters.deferredTransferBinding(action,current)
     local function own(owner,key)
         if bindingType(owner)~="table" then return end
@@ -711,7 +713,7 @@ function Adapters.deferredTransferBinding(action,current)
             or facts.aliasResolution~="native-root-id")then return false end
         for _,lease in bindingIpairs(leases) do if not lease(facts) then return false end end
         return unchanged()
-    end,alias and queuedMember or nil
+    end,alias and queuedMember or nil,unchanged
 end
 Adapters.weightInspectionSafe=Weights.factoryFree
 -- Host item transactions preserve queue member IDs while authority replication

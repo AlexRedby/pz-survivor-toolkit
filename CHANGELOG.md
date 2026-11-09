@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.346
+
+- **Internal:** Recognize independent adjacent device promotion and reader demotion through a shared route over the unchanged native dependency checks. Keep original returns, paid progress and edit permissions. The more expensive projected candidate is available only through an explicit read-only diagnostic; ordinary edits do not reconstruct its physical return facts. Initialize its Settlement dependency correctly when compatibility modules load Policy first. No capacity exception or whole-group return reconstruction is enabled.
+
 ### 0.1.345
 
 - **Internal:** Let opt-in active-reading plans reuse the existing source-bound native no-movement proof for exact adjacent device operations. Preserve the original borrowed-item return, reading checkpoint and explicit deferred fallback; ordinary edit authority and native capacity/admission remain unchanged. Reject masked intent metatables before reading their fields.
@@ -1600,6 +1604,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.92
+
+- **Internal:** Refresh the source-trust binding for the shared active-reading resource decision. Native compiler transformations and transfer admission rules remain unchanged.
 
 ### 0.1.91
 

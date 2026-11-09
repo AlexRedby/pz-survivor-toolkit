@@ -29,6 +29,7 @@ local editNativeMeta=toolkitLuaMetatableMatches
 local spatialOwner=Toolkit.ActionQueueApproach
 local spatialPrepare=spatialOwner and spatialOwner.prepareSpatialLease
 local spatialEdits={factory=spatialOwner and spatialOwner.prepareSpatialEditLease,line=1012,maxMembers=32,equal=rawequal}
+spatialEdits.baseStopNative,spatialEdits.baseStop=ISBaseTimedAction.stop,ISBaseTimedAction.stop
 spatialEdits.shape={kind=type,meta=getmetatable,each=pairs,array=ipairs,equal=rawequal,call=pcall}
 spatialEdits.shapeWatch=editBindingCapture and editBindingCapture({
     {owner=_G,keys={'type','getmetatable','pairs','ipairs','rawequal','pcall','toolkitLuaMetatableMatches'}},
@@ -45,9 +46,16 @@ local spatialPrerequisites=type(editBindingCapture)=="function"and editBindingCa
 -- Updated together with the source-owned factory; a same-file callback is not its role.
 local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=929,109732719
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
+spatialEdits.model=EditModel and EditModel.evaluate
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
+-- Compat/Quartermaster can require Policy before the main Queue module.
+require "PZSurvivorToolkit/ActionQueueSettlement"
+spatialEdits.returnBinding=ItemEditAdapters and ItemEditAdapters.deferredTransferBinding
+spatialEdits.retainedOwner=Toolkit.ActionQueueSettlement
+spatialEdits.retainedPrepare=spatialEdits.retainedOwner and spatialEdits.retainedOwner.prepareRetainedTransferBinding
+spatialEdits.leafFacts=toolkitLeafTransferFacts
 local deferredTransferGuards = {}
 local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
 local Firearms = require "PZSurvivorToolkit/ActionQueueFirearms"
@@ -1881,6 +1889,225 @@ local function moveConflict(queue, member, crossed, crossedLast, capacityCheck, 
     if capacity then return "container_capacity", capacity end
 end
 
+-- A complete device effect can commute with an untouched item operation. This
+-- predicate is about domains, not an action-type permission table. Native source
+-- bindings and the model still validate the declaration and its prerequisites.
+function spatialEdits.deviceOnly(contract)
+    local edit=contract and contract.edit
+    if type(contract)~="table"or getmetatable(contract)~=nil
+        or contract.knownInputs==false or contract.unknownOutputs
+        or contract.hands or contract.equipment or contract.cancelOperation==false
+        or not emptyResourceMap(contract.items)or not emptyResourceMap(contract.containerOwners)
+        or not emptyResourceMap(contract.positions)or not emptyResourceMap(contract.dynamicInputs)
+        or not emptyResourceMap(contract.dynamicInputsByType)or not emptyResourceMap(contract.outputTypes)
+        or type(edit)~="table"or getmetatable(edit)~=nil or edit.version~=1 or edit.complete~=true
+        or edit.capacity~="unchanged"or type(edit.resources)~="table"or getmetatable(edit.resources)~=nil
+        or #edit.resources==0 then return false end
+    for _,resource in pairs(edit.resources)do
+        if type(resource)~="table"or getmetatable(resource)~=nil or resource.domain~="device"then return false end
+    end
+    return true
+end
+
+-- Only swap adjacent independent blocks: the interrupted reader's original
+-- operation and the whole promoted range. Their final resource state and every
+-- suffix order stay the same, so no forecast of that suffix/loan ledger is needed.
+-- Returns are retained native actions, never virtual obligations or capacity credit.
+function spatialEdits.prototype(queue,first,last,context)
+    local scope=activeDecision
+    local current=queue.current
+    local activeFirst,activeLast=Operations.bounds(queue,current)
+    if not scope or scope.queue~=queue or scope.context~=context or #queue.queue>spatialEdits.maxMembers
+        or activeFirst~=1 or first~=activeLast+1 or not current or current.Type~="ISReadABook"
+        or queue.toolkitResume or queue.toolkitOutcomeWait or queue.toolkitStopIntent
+        or not targetCheckersUnchanged()then return end
+    -- Existing structural guards already inspected the selected rows. Reject
+    -- ordinary equipment/unknown effects from those private cached facts before
+    -- source leases, queue shape capture or native geometry work.
+    for index=first,last do
+        local cached=context.contracts[queue.queue[index]]
+        if not cached or cached[2]~="toolkit.approach"and not spatialEdits.deviceOnly(cached[1])then return end
+        if cached[2]=="toolkit.approach"and(type(toolkitQueueSpatialNoMovement)~="function"
+            or type(toolkitQueueSpatialApiMatches)~="function")then return end
+    end
+    if not EditModel or EditModel.evaluate~=spatialEdits.model or not spatialEdits.shapeWatch or not spatialEdits.shapeWatch()then return end
+    -- Start freshness before callback-bearing source/getter checks. Ineligible
+    -- capabilities may use legacy policy, but a changed attempted proof cannot.
+    scope.spatialQueueWatch=scope.spatialQueueWatch or editSourceShape(queue.queue,queue)
+    scope.activeEditWatch=scope.activeEditWatch or editBindingCapture({
+        {owner=_G,keys={"PZSurvivorToolkit","toolkitQueueSpatialNoMovement","toolkitQueueSpatialApiMatches","getClassSimpleName","getFirstLineOfClosure","toolkitLeafTransferFacts","math"}},
+        {owner=Toolkit,keys={"ActionQueuePolicy","ActionQueueEditModel","ActionQueueItemEditAdapters","ActionQueueSettlement"}},
+        {owner=ItemEditAdapters,keys={"deferredTransferBinding"}},
+        {owner=EditModel,keys={"evaluate"}}, {owner=math,keys={"abs","min","max","huge"}},
+        {owner=Proof,keys={"closure","captureBindings"}},
+    })
+    if not scope.spatialQueueWatch or not scope.activeEditWatch then return {status="denied",reason="unavailable"}end
+    local binding=snapshots[getmetatable(current)]
+    if spatialEdits.readerSource==nil then
+        spatialEdits.readerSource=Proof.matches("media/lua/shared/TimedActions/ISReadABook.lua",422821682,nil,true)
+            and Proof.matches("media/lua/shared/TimedActions/ISBaseTimedAction.lua",3104185167,nil,true)
+    end
+    if not spatialEdits.readerSource or getFirstLineOfClosure~=spatialLine
+        or not Proof.closure(current.new,"ISReadABook.lua")or not Proof.closure(current.stop,"ISReadABook.lua")
+        or not Proof.closure(ISBaseTimedAction.new,"ISBaseTimedAction.lua")
+        or not Proof.closure(spatialEdits.baseStopNative,"ISBaseTimedAction.lua")
+        or ISBaseTimedAction.stop~=spatialEdits.baseStop then return end
+    -- File identity alone does not distinguish genuine same-file callbacks.
+    local roles={{current.new,483},{current.stop,180},{ISBaseTimedAction.new,174},{spatialEdits.baseStopNative,64}}
+    for _,role in ipairs(roles)do
+        local ok,line=spatialCall(spatialLine,role[1])
+        if not ok or line~=role[2]then return end
+    end
+    if not binding or not nativeMatches(current,binding)or not current.action
+        or not current.action:isStarted()or current.action:finished()or current.action:isForceComplete()
+        or not instanceof(current.item,"InventoryItem")or current.item:getContainer()~=queue.character:getInventory()then return end
+    -- Reject unsupported shapes before opening a proof. A transfer's footprint
+    -- includes its world owners (including microwave side effects), not just ID.
+    scope.activeEditStage="retained-native-api"
+    local leafClass
+    if activeLast>1 and type(getClassSimpleName)=="function"and type(spatialEdits.leafFacts)=="function"then
+        leafClass=getClassSimpleName(spatialEdits.leafFacts)
+    end
+    if activeLast>1 then
+        if type(spatialEdits.retainedPrepare)~="function"then scope.activeEditStage="retained-module-uninitialized";return end
+        if Toolkit.ActionQueueSettlement~=spatialEdits.retainedOwner then scope.activeEditStage="retained-owner-changed";return end
+        if spatialEdits.retainedOwner.prepareRetainedTransferBinding~=spatialEdits.retainedPrepare then
+            scope.activeEditStage="retained-factory-changed";return
+        end
+        if type(spatialEdits.leafFacts)~="function"then scope.activeEditStage="native-facts-unavailable";return end
+        if toolkitLeafTransferFacts~=spatialEdits.leafFacts then scope.activeEditStage="native-facts-binding-changed";return end
+        if leafClass~="LuaJavaInvoker"and leafClass~="MultiLuaJavaInvoker"then scope.activeEditStage="native-facts-class";return end
+    end
+    local retainedContracts={}
+    for index=2,activeLast do
+        local member=queue.queue[index]
+        if member.Type~="ISInventoryTransferAction"or member.character~=queue.character
+            or member.action or member.started or member.item~=current.item or member.allowMissingItems~=true
+            or member.srcContainer~=queue.character:getInventory()or member.destContainer==member.srcContainer
+            or getmetatable(member)~=ISInventoryTransferAction then return end
+        if type(spatialEdits.returnBinding)~="function"or ItemEditAdapters.deferredTransferBinding~=spatialEdits.returnBinding
+            or not Proof.closure(spatialEdits.returnBinding,"ActionQueueItemEditAdapters.lua")then return end
+        local groups=member.queueList
+        if type(groups)~="table"or type(groups[1])~="table"or type(groups[1].items)~="table"
+            or groups[1].items[1]~=current.item then return end
+        if not Proof.closure(spatialEdits.retainedPrepare,"ActionQueueSettlement.lua")then return end
+        scope.activeEditStage="retained-source-chain"
+        local validate,alias,sourceLease=spatialEdits.retainedPrepare(queue,current,member,spatialEdits.returnBinding)
+        if type(validate)~="function"or alias~=nil or type(sourceLease)~="function"then return end
+        scope.activeNativeReturns=scope.activeNativeReturns or{}
+        scope.activeNativeReturns[#scope.activeNativeReturns+1]={validate=validate,action=member,
+            item=current.item,source=member.srcContainer,destination=member.destContainer,
+            id=current.item:getID(),fullType=current.item:getFullType()}
+        -- A reviewed instance wrapper can differ from the native class snapshot.
+        -- Its exact source chain and physical leaf proof, not that mismatch,
+        -- determine whether the native transfer footprint is usable here.
+        local contract=inspect(member,context)
+        if contract and(contract.knownInputs==false or contract.unknownOutputs)then return end
+        retainedContracts[member]=contract or transferResources(member,context)
+        if not retainedContracts[member]or retainedContracts[member].knownInputs==false then return end
+        scope.activeReturnSources=scope.activeReturnSources or{}
+        scope.activeReturnSources[#scope.activeReturnSources+1]=sourceLease
+        -- Moving an equipped/attached item can emit equipment events with
+        -- effects outside the device footprint. Those returns stay protected.
+        local item=current.item
+        scope.activeEditStage="retained-item-state"
+        if queue.character:isEquipped(item)or item:getEquipParent()or item:getAttachedSlot()>=0 then return end
+    end
+    scope.activeEditStage="selected-source"
+    for index=first,last do
+        local member=queue.queue[index]
+        local contract,source=inspect(member,context)
+        if source~="toolkit.approach"then
+            local native=snapshots[getmetatable(member)]
+            if not native or not nativeMatches(member,native)or not spatialEdits.deviceOnly(contract)then return end
+        end
+    end
+    if not scope.activeEditWatch()or not spatialEdits.shapeWatch()or not scope.spatialQueueWatch()then
+        return {status="denied",reason="unavailable"}
+    end
+    local resourceContext={contracts={},items=context.items}
+    for member,contract in pairs(context.contracts)do resourceContext.contracts[member]=contract end
+    for member,contract in pairs(retainedContracts)do resourceContext.contracts[member]={contract,"native.retained-transfer"}end
+    local members,component={},{}
+    for index=1,last do
+        local member=queue.queue[index]
+        members[index]=member
+        if index>=first then
+            component[member]=true
+            local contract,source=inspect(member,context)
+            if source=="toolkit.approach"then
+                scope.activeEditStage="selected-native-geometry"
+                local proof=spatialEdits.pair(queue,queue.queue,index,context,contract,source)
+                if not proof then
+                    if not scope.activeEditWatch()or not scope.spatialQueueWatch()or scope.spatial then
+                        return {status="denied",reason="unavailable"}
+                    end
+                    return -- initially ineligible native no-movement pair
+                end
+                local body=inspect(queue.queue[index+1],context)
+                if index==last or not spatialEdits.deviceOnly(body)then return end
+                scope.spatial=scope.spatial or{}
+                scope.spatial[#scope.spatial+1]=proof
+                -- Only this certified command has no position effect. Keep all
+                -- other footprint fields and its exact geometry/source lease.
+                local projected={}
+                for key,value in pairs(contract)do projected[key]=value end
+                projected.edit,projected.positions=proof.edit,nil
+                resourceContext.contracts[member]={projected,source}
+            end
+        end
+    end
+    scope.activeEditStage="resource-component"
+    local projection=editComponent(queue,members,component,resourceContext)
+    if projection.status~="allowed"then
+        return {status="denied",reason=projection.reason or "move_dependent",blocker=projection.blocker}
+    end
+    for index=1,activeLast do
+        if projection.component[members[index]]then
+            return {status="denied",reason="move_dependent",blocker=members[index]}
+        end
+    end
+    if projection.externalCapacity then return {status="denied",reason="container_capacity"}end
+    local entries={}
+    for index=first,last do
+        local member=members[index]
+        entries[#entries+1]={action=member,edit=projection.contracts[member].edit}
+    end
+    if not Proof.closure(spatialEdits.model,"ActionQueueEditModel.lua")or not scope.activeEditWatch()
+        or not spatialEdits.shapeWatch()or not scope.spatialQueueWatch()then
+        return {status="denied",reason="unavailable"}
+    end
+    local result=evaluateComponent(projection,entries)
+    if result.status=="allowed"then
+        scope.activeEditStage="native-return-facts"
+        scope.commonActiveEdit=true
+        scope.commonActiveEditRoute="projected-candidate"
+        scope.activeReader={action=current,item=current.item,root=queue.character:getInventory(),hasReturn=activeLast>1}
+    end
+    return result
+end
+
+-- Shared active resource entrypoint. The existing native/stateless proof is
+-- sufficient for already-independent blocks; do not reconstruct physical return
+-- effects or binding graphs merely to arrive at the same permission. More
+-- permissive projected decisions remain opt-in diagnostics until qualified.
+function spatialEdits.active(queue,first,last,context,demote)
+    local scope=activeDecision
+    if scope and scope.observeActiveCandidate then return spatialEdits.prototype(queue,first,last,context)end
+    local current=queue.current
+    local activeFirst,activeLast=Operations.bounds(queue,current)
+    if not scope or scope.queue~=queue or scope.context~=context or not current or current.Type~="ISReadABook"
+        or activeFirst~=1 or first~=activeLast+1 or #queue.queue>spatialEdits.maxMembers
+        or not EditModel or Toolkit.ActionQueueEditModel~=EditModel or not targetCheckersUnchanged()then return end
+    for index=first,last do
+        local cached=context.contracts[queue.queue[index]]
+        if not cached or cached[2]~="toolkit.approach"and not spatialEdits.deviceOnly(cached[1])then return end
+    end
+    -- Record the shared route only; the caller keeps its original native
+    -- checks, including guard/pair interleaving and short-circuit diagnostics.
+    scope.commonActiveEdit,scope.commonActiveEditRoute=true,"native-stateless"
+end
+
 -- Lowering a reader promotes the intervening range without changing its internal order.
 -- Keep the native current action in slot 1 until stop/removal; Queue.move reconstructs it
 -- after that range, immediately before its still-owned returns/cleanup.
@@ -1900,6 +2127,7 @@ local function demoteReading(queue, first, last, targetFirst, targetLast, after,
     local rangeFirst, rangeLast = last + 1, after and targetLast or targetFirst - 1
     if rangeLast < rangeFirst then return nil, first, first, last end
     local capacityCheck = {first = rangeFirst, last = rangeLast, to = 1, readDemotion = true}
+    local observeCandidate=activeDecision and activeDecision.observeActiveCandidate
     for i = rangeFirst, rangeLast do
         local member = queue.queue[i]
         local opFirst, opLast = Operations.bounds(queue, member)
@@ -1913,9 +2141,24 @@ local function demoteReading(queue, first, last, targetFirst, targetLast, after,
         if member.Type == "ISReadABook" and member.item:getFullType() == current.item:getFullType() then
             return "move_shared_book", nil, nil, nil, nil, member
         end
-        for j = first, last do
-            local reason, resource = moveConflict(queue, member, queue.queue[j], rangeLast, capacityCheck, context)
-            if reason then return reason, nil, nil, nil, nil, queue.queue[j], resource end
+        if not observeCandidate then
+            for j=first,last do
+                local reason,resource=moveConflict(queue,member,queue.queue[j],rangeLast,capacityCheck,context)
+                if reason then return reason,nil,nil,nil,nil,queue.queue[j],resource end
+            end
+        end
+    end
+    local common=spatialEdits.active(queue,rangeFirst,rangeLast,context,true)
+    if common then
+        if common.status~="allowed"then return common.reason,nil,nil,nil,nil,common.blocker,common.resource end
+        return nil,1,rangeFirst,rangeLast,true,nil,nil,true
+    end
+    if observeCandidate then
+        for i=rangeFirst,rangeLast do
+            for j=first,last do
+                local reason,resource=moveConflict(queue,queue.queue[i],queue.queue[j],rangeLast,capacityCheck,context)
+                if reason then return reason,nil,nil,nil,nil,queue.queue[j],resource end
+            end
         end
     end
     return nil, 1, rangeFirst, rangeLast, true, nil, nil, true
@@ -1970,6 +2213,13 @@ function Policy.moveReason(queue, action, target, after, context)
             if not knownCraftInputs(crossed, context) and not repairInputs(crossed) then
                 return craft(crossed) and "move_craft_inputs" or unknownDenial(context, "move_dependent", crossed), nil, nil, nil, nil, crossed
             end
+        end
+    end
+    if preempt then
+        local common=spatialEdits.active(queue,first,last,context)
+        if common then
+            if common.status~="allowed"then return common.reason,nil,nil,nil,nil,common.blocker,common.resource end
+            return nil,to,first,last,true
         end
     end
     if not preempt then
@@ -2087,6 +2337,9 @@ function Policy.returnFailureIndependent(queue, action)
 end
 
 function Policy.replaceStop(previous, replacement)
+    if previous==spatialEdits.baseStop and Proof.closure(replacement,"ActionQueue.lua")then
+        spatialEdits.baseStop=replacement
+    end
     if type(adoptGroomingBase) == "function" and Toolkit.ActionQueueGrooming == Grooming and Grooming.adoptBase == adoptGroomingBase then adoptGroomingBase("stop", previous, replacement) end
     if Firearms then Firearms.adoptBase("stop", previous, replacement) end
     if EditAdapters then EditAdapters.adoptBase("stop", previous, replacement) end
@@ -2295,6 +2548,41 @@ local function inDecision(queue, context, output, callback, ...)
     local scope={queue = queue, context = context, failures = {}, executions = {}, native = {}}
     activeDecision = scope
     local ok, result = pcall(callback, ...)
+    -- All physical reader getters precede the one-use final spatial proof.
+    -- After that proof only raw binding/source/queue comparisons may run.
+    if ok and scope.activeReader and result.reason==nil and result.allowed~=false then
+        local reader=scope.activeReader
+        local native=reader.action.action
+        local valid=reader.action==queue.current and reader.item==reader.action.item and native
+            and native:isStarted()and not native:finished()and not native:isForceComplete()
+            and queue.character:getInventory()==reader.root and reader.item:getContainer()==reader.root
+        if valid and reader.hasReturn then
+            valid=not queue.character:isEquipped(reader.item)and not reader.item:getEquipParent()and reader.item:getAttachedSlot()<0
+        end
+        if not valid then
+            result.reason="unavailable"
+            if result.allowed~=nil then result.allowed=false end
+            if result.rawResults then result.rawResults[1]="unavailable"end
+        end
+    end
+    if ok and scope.commonActiveEdit and scope.activeNativeReturns and result.reason==nil and result.allowed~=false then
+        for _,entry in spatialEdits.shape.array(scope.activeNativeReturns)do
+            local read,facts=spatialEdits.shape.call(spatialEdits.leafFacts,queue.character,entry.item,
+                entry.source,entry.destination,entry.id,entry.fullType)
+            local valid=read and type(facts)=="table"and getmetatable(facts)==nil and facts.schema==2
+                and rawequal(facts.item,entry.item)and rawequal(facts.source,entry.source)
+                and rawequal(facts.destination,entry.destination)and rawequal(facts.location,entry.source)
+                and facts.id==entry.id and facts.fullType==entry.fullType
+            local checked,accepted=false,false
+            if valid then checked,accepted=spatialEdits.shape.call(entry.validate,facts)end
+            if not valid or not checked or not accepted then
+                result.reason,result.blocker="unavailable",entry.action
+                if result.allowed~=nil then result.allowed=false end
+                if result.rawResults then result.rawResults[1]="unavailable"end
+                break
+            end
+        end
+    end
     if ok and scope.spatialQueueWatch and result.reason==nil and result.allowed~=false then
         local valid=spatialEdits.shapeWatch()and scope.spatialQueueWatch()
         for _,proof in spatialEdits.shape.array(scope.spatial or{})do
@@ -2313,6 +2601,26 @@ local function inDecision(queue, context, output, callback, ...)
             if result.rawResults then result.rawResults[1]='unavailable'end
         end
         if result.reason==nil and scope.spatial then result.spatialValidated=true end
+    end
+    if ok and scope.activeEditWatch and result.reason==nil and result.allowed~=false then
+        local valid=scope.activeEditWatch()
+        for _,validate in spatialEdits.shape.array(scope.activeReturnSources or{})do
+            if not valid then break end
+            valid=validate()
+        end
+        if not valid then
+            result.reason="unavailable"
+            if result.allowed~=nil then result.allowed=false end
+            if result.rawResults then result.rawResults[1]="unavailable"end
+        end
+    end
+    if ok and scope.commonActiveEdit and result.reason==nil and result.allowed~=false then
+        result.commonActiveEdit=true
+        result.commonActiveEditRoute=scope.commonActiveEditRoute
+        if scope.commonActiveEditRoute~="native-stateless"then result.spatialValidated=true end
+    end
+    if ok and scope.activeEditStage and not result.commonActiveEdit then
+        result.commonActiveEditFallback=scope.activeEditStage
     end
     -- A provisional no-movement contract is not a reusable public inspection
     -- fact. The decision alone survives; callers receive the ordinary cache.
@@ -2655,6 +2963,30 @@ function Policy.observeActiveEdit(queue, intent)
         result.contractGaps=missing
     end
     return result
+end
+
+-- Read-only qualification of the rejected eager consumer. Ordinary preview,
+-- commit and priority paths never select this mode. Its scalar decision grants
+-- no authority and cannot be reused by Queue.move/cancel.
+function Policy.observeActiveResourceCandidate(queue,intent)
+    if type(queue)~="table"or getmetatable(queue)~=ISTimedActionQueue
+        or type(queue.queue)~="table"or getmetatable(queue.queue)~=nil or #queue.queue==0
+        or type(intent)~="table"or getmetatable(intent)~=nil or intent.kind~="move"
+        or type(intent.action)~="table"or type(intent.target)~="table"
+        or intent.after~=nil and type(intent.after)~="boolean"then
+        return {status="unhandled",reason="edit_unknown",mutationAuthorized=false,permissionsGranted=false}
+    end
+    local context=freshDecisionContext()
+    local function candidate()
+        activeDecision.observeActiveCandidate=true
+        return evaluateMove(queue,intent.action,intent.target,intent.after,context)
+    end
+    local result=inDecision(queue,context,nil,candidate)
+    return {status="observed",mutationAuthorized=false,permissionsGranted=false,
+        decision={allowed=result.allowed==true,reason=result.reason,to=result.to,first=result.first,last=result.last,
+            preempt=result.preempt==true,demote=result.demote==true,commonActiveEdit=result.commonActiveEdit==true,
+            route=result.commonActiveEditRoute or "native-fallback",spatialValidated=result.spatialValidated==true,
+            fallback=result.commonActiveEditFallback}}
 end
 
 local function priorityDecision(queue, action, preempt, decide)

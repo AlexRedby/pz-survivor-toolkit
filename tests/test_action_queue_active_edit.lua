@@ -92,6 +92,82 @@ local function book(kind,active)
 end
 local a,b,c=book('Base.BookCarpentry1',true),book('Base.BookCooking1'),book('Base.BookFirstAid1')
 local q=f.queue(a,b,c)
+local retainedProviderProbe
+-- The retained-transfer helper establishes only the bounded private source
+-- context. It delegates to the actual source factory and never reads endpoints,
+-- native transfer facts, capacity, constructors or action validity.
+do
+    local owner=PZSurvivorToolkit.ActionQueueItemEditAdapters
+    local factory=assert(owner.deferredTransferBinding)
+    local function scene()
+        local current=book('Base.BookCarpentry1',true)
+        current.toolkitQueueOperation.toolkitStarted=true
+        local destination={class='ItemContainer'}
+        local action=f.action(ISInventoryTransferAction,{item=current.item,srcContainer=root,destContainer=destination,
+            allowMissingItems=true,maxTime=31,queueList={{items={current.item},time=31,type=current.item:getFullType()}}})
+        action.toolkitQueueOperation=current.toolkitQueueOperation
+        local queue=f.queue(current,action)
+        settlement.track(current,'body')
+        return queue,current,action
+    end
+    local queue,current,action=scene()
+    local endpointReads=0
+    local getter=player.getInventory
+    player.getInventory=function()endpointReads=endpointReads+1;error('source context read a live endpoint')end
+    local validate,alias,sourceWatch=settlement.prepareRetainedTransferBinding(queue,current,action,factory)
+    player.getInventory=getter
+    assert(type(validate)=='function'and alias==nil and type(sourceWatch)=='function'and sourceWatch(),
+        'bounded retained source context lost the actual source factory contract')
+    local prepare=settlement.prepareRetainedTransferBinding
+    settlement.prepareRetainedTransferBinding=function()error('changed retained API executed')end
+    assert(not sourceWatch(),'late retained API replacement escaped the final source watch')
+    assert(prepare(queue,current,action,factory)==nil,
+        'captured retained helper accepted a substituted public API before preparation')
+    settlement.prepareRetainedTransferBinding=prepare
+    PZSurvivorToolkit.ActionQueueSettlement={}
+    assert(not sourceWatch(),'late Settlement owner replacement escaped the final source watch')
+    PZSurvivorToolkit.ActionQueueSettlement=settlement
+    assert(endpointReads==0 and validate({schema=2}),'plain native source validator must remain separate from physical effect evidence')
+    assert(not validate({schema=2}),'retained helper must preserve the one-use source validator')
+    local calls=0;local replacement=function()calls=calls+1;error('replacement source factory executed')end
+    owner.deferredTransferBinding=replacement
+    assert(settlement.prepareRetainedTransferBinding(queue,current,action,factory)==nil and calls==0,
+        'retained source context discovered/invoked a replaced factory')
+    owner.deferredTransferBinding=factory
+    for _,change in ipairs({'foreign-token','started','removed','untracked-current'})do
+        queue,current,action=scene()
+        if change=='foreign-token'then action.toolkitQueueOperation={}
+        elseif change=='started'then action.started=true
+        elseif change=='removed'then queue.queue[2]=nil
+        else
+            current=book('Base.BookCooking1',true);queue=f.queue(current,action)
+            action.toolkitQueueOperation=current.toolkitQueueOperation
+        end
+        assert(settlement.prepareRetainedTransferBinding(queue,current,action,factory)==nil,
+            'unsupported retained source context accepted '..change)
+    end
+    -- A throwing real factory must not leave its private context installed;
+    -- the next independent valid preparation must still succeed.
+    queue,current,action=scene()
+    local id=current.item.getID
+    current.item.getID=function()error('expected retained factory getter failure')end
+    assert(settlement.prepareRetainedTransferBinding(queue,current,action,factory)==nil)
+    current.item.getID=id
+    assert(type(settlement.prepareRetainedTransferBinding(queue,current,action,factory))=='function',
+        'failed retained factory leaked its private source context')
+    queue,current,action=scene()
+    local _,_,beforeProvider=settlement.prepareRetainedTransferBinding(queue,current,action,factory)
+    assert(type(beforeProvider)=='function'and beforeProvider())
+    retainedProviderProbe=function()
+        local previous=ISTimedActionQueue.queues[player]
+        ISTimedActionQueue.queues[player]=queue
+        assert(not beforeProvider(),'late cleanup provider registration escaped the retained source watch')
+        assert(settlement.prepareRetainedTransferBinding(queue,current,action,factory)==nil,
+            'unknown cleanup provider acquired a retained source context')
+        ISTimedActionQueue.queues[player]=previous
+    end
+    ISTimedActionQueue.queues[player]=q
+end
 local forbidden={[ISReadABook.new]=true,[ISReadABook.isValid]=true,[ISReadABook.start]=true,
     [ISReadABook.stop]=true,[ISReadABook.perform]=true,[ISReadABook.complete]=true}
 local function observe(intent)
@@ -478,6 +554,7 @@ do
     assert(leafReads==0,'root-only observations did not earn transfer facts or runtime rights')
     toolkitLeafTransferFacts=leaf
 end
+retainedProviderProbe()
 assert(policy.observeActiveEdit(7,{}).status=='unhandled')
 print('Active edit observation: native reader boundaries, shared progress, unchanged rights and no execution passed')
 if TestCoverage then TestCoverage('source-contract','passed')end
