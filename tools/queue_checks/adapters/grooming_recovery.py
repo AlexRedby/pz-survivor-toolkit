@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import shutil
 
-from .. import report
+from .. import report, grooming_placement
 from .recovery_selection import validate as validate_recovery_selection
 from .tv_controls import MODS, _duration, _number
 
@@ -31,7 +31,8 @@ def sources(project, selection):
     # Helpers below are executable verifier inputs, including imported duration
     # and selected-pack parsing; seal them alongside all fixture Lua.
     return [Path(__file__).with_name('tv_controls.py'), Path(__file__).with_name('recovery_selection.py'),
-            Path(__file__).parents[1] / 'mod_selection.py',
+            Path(__file__).parents[1] / 'mod_selection.py', Path(__file__).parents[1] / 'placement.py',
+            Path(__file__).parents[1] / 'grooming_placement.py',
             *sorted((root / 'grooming-recovery').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
 
@@ -318,6 +319,7 @@ def verify(root, selection, catalog):
                 or completed[0].get('failed') != 0 or completed[0].get('skipped') != 0):
             issues.append('Missing exact grooming recovery setup/completion')
         prepared, baselines, final = (_raw(authority, marker) for marker in ('PREPARED', 'BASELINE', 'VERIFIED'))
+        grooming_placement.validate(selection, text, authority, rows, PREFIX, 'BASELINE')
         removed, acks = _raw(authority, 'REMOVED'), _raw(text, 'ACK')
         if ([r.get('id') for r in rows] != list(CASES)
                 or any([r.get('case') for r in values] != list(CASES) for values in (prepared, baselines, final))

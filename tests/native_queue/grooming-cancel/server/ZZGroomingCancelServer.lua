@@ -1,9 +1,12 @@
 if not isServer()then return end
 local F=require 'QueueGroomingCancel';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
+local P=require 'QueueEnergyPlacement'
 local state,previous,index=nil,nil,1
 local baseline,checkpoint,pending
+local arrival
 local function raw(marker,row)print('[GROOMING_TEST] '..marker..' '..JSON.encode(row))end
 local function fail(player,problem)
+ arrival=nil
  print('[QUEUE_TEST] FAIL grooming-cancel server '..tostring(problem))
  sendServerCommand(player,'GroomingCancelTest','Failed',{error=tostring(problem)})
 end
@@ -11,11 +14,14 @@ Events.OnServerStarted.Add(function()raw('SERVER_READY',{})end)
 Events.OnClientCommand.Add(function(module,name,player,args)
  if module~='GroomingCancelTest'then return end
  local ok,problem=pcall(function()
-  assert(player:getUsername()=='client1'and args.case==config.cases[index],'grooming actor/case/order differs')
+  assert(type(args)=='table'and player:getUsername()=='client1'and args.case==config.cases[index]and not arrival,'grooming actor/case/order or pending arrival differs')
   if name=='Prepare'then
    assert(not state and not pending,'previous grooming case not settled')
-   state=F.prepare(player,args.case,previous);previous=nil;raw('PREPARED',state.ids)
-   sendServerCommand(player,module,'Prepared',state.ids)
+   local target=P.target(args.target);local proof=args.clientPlacement
+   assert(type(proof)=='table'and proof.mode=='local'and proof.teleports==1,'grooming owning-client arrival proof missing')
+   local observed=P.target(proof.target)
+   assert(observed.x==target.x and observed.y==target.y and observed.z==target.z,'grooming client arrival target differs')
+   arrival={player=player,case=args.case,target=target,state=P.observe(player,target)}
   elseif name=='Baseline'then
    assert(state and not pending and not baseline,'unexpected grooming baseline request')
    pending={since=getTimestampMs()}
@@ -51,6 +57,17 @@ Events.OnClientCommand.Add(function(module,name,player,args)
  if not ok then fail(player,problem)end
 end)
 Events.OnTick.Add(function()
+ if arrival then
+  local request=arrival
+  local ok,problem=pcall(function()
+   local proof=P.poll(request.state);if not proof then return end
+   assert(P.at(request.player,request.target),'grooming authority left final placement')
+   state=F.prepare(request.player,request.case,previous,request.target,proof);previous=nil;arrival=nil
+   raw('PREPARED',state.ids);sendServerCommand(request.player,'GroomingCancelTest','Prepared',state.ids)
+  end)
+  if not ok then fail(request.player,problem)end
+  return
+ end
  if not pending then return end
  local ok,problem=pcall(function()
   assert(getTimestampMs()-pending.since<30000,'grooming authority baseline timed out')

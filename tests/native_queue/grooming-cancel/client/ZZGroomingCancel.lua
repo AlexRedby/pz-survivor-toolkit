@@ -4,6 +4,7 @@ require 'TimedActions/ISReadABook'
 require 'TimedActions/ISTrimBeard'
 require 'TimedActions/ISDyeHair'
 local F=require 'QueueGroomingCancel';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
+local P=require 'QueueEnergyPlacement'
 local T=PZSurvivorToolkit;local native=config.mode=='native'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local producers={
@@ -23,6 +24,7 @@ end)
 local entered,ready,done=false,false,false
 local phase,index,since='prepare',1,0
 local state,ids,previous,baseline,authorityBaseline,checkpoint,authorityFinal,baselineRequested,setupActual
+local placementTarget,placementState,clientPlacement
 local front,tail,body,pickup,boundary,beforeTail,idle,quiet,records,actions,classes,ackRecords,observedTerminal
 local bodyStarts,bodyCompletes=0,0
 local outcomes,startedReceipt,nativeEpisodes={}
@@ -180,8 +182,13 @@ local function observe()
  intact();return true
 end
 local function request(name)
- if isClient()then sendClientCommand('GroomingCancelTest',name,{case=case()});return end
- if name=='Prepare'then state=F.prepare(getPlayer(),case(),previous);ids=state.ids;previous=nil;raw('PREPARED',ids);authorityBaseline=F.snapshot(state);raw('BASELINED',authorityBaseline)
+ local args={case=case()}
+ if name=='Prepare'then
+  assert(clientPlacement and P.at(getPlayer(),placementTarget),'grooming Prepare requires fresh client arrival')
+  args.target=P.target(placementTarget);args.clientPlacement=clientPlacement
+ end
+ if isClient()then sendClientCommand('GroomingCancelTest',name,args);return end
+ if name=='Prepare'then state=F.prepare(getPlayer(),case(),previous,placementTarget,clientPlacement);ids=state.ids;previous=nil;raw('PREPARED',ids);authorityBaseline=F.snapshot(state);raw('BASELINED',authorityBaseline)
  elseif name=='Checkpoint'then checkpoint=snapshot()
  elseif name=='Verify'then authorityFinal={baseline=authorityBaseline,checkpoint=checkpoint,final=snapshot(),
   bodyCompletes=bodyCompletes,bodyRecords=records,completeCountProof='shared-native-complete'};raw('VERIFIED',authorityFinal)end
@@ -200,6 +207,9 @@ Events.OnServerCommand.Add(function(module,name,args)
  elseif name=='Failed'then error(args.error)end
 end)
 local function enqueue()
+ local target=P.target(ids.placement)
+ assert(placementTarget and target.x==placementTarget.x and target.y==placementTarget.y and target.z==placementTarget.z
+  and P.at(getPlayer(),placementTarget),'grooming client left prepared placement before admission')
  local actual=snapshot()
  if not F.sameSetup(actual,ids.baseline)then
   raw('BASELINE_MISMATCH',{case=case(),at=now(),actual=actual,expected=ids.baseline})
@@ -208,6 +218,7 @@ local function enqueue()
  baseline=actual;records,actions,classes,ackRecords,observedTerminal={},{},{},{},{};serial=0
  bodyStarts,bodyCompletes=0,0;outcomes,startedReceipt,nativeEpisodes={},nil,{}
  assert(not state.player:isTimedActionInstant()and not getDebug(),'native haircut producer requires ordinary non-debug durations/equip')
+ raw('ADMITTED',{case=case(),actor='client1'})
  if moving()or baseCase()=='style-no-tool'then front=ISReadABook:new(state.player,state.front);ISTimedActionQueue.add(front)end
  if moving()then tail=ISReadABook:new(state.player,state.tail);ISTimedActionQueue.add(tail)end
  local producer=assert(producers[ids.actionKind])
@@ -324,7 +335,7 @@ local function finish()
  emit({event='case',id=case(),status='passed',ids=ids,baseline=baseline,command=command,receipt=authorityFinal,clientFinal=actual,nativeMethodsUnchanged=true})
  previous=ids;index=index+1;state,ids,baseline,authorityBaseline,checkpoint,authorityFinal=nil,nil,nil,nil,nil,nil
  front,tail,body,pickup,boundary,beforeTail,idle,quiet,records,actions,classes,ackRecords,observedTerminal=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
- baselineRequested,setupActual=nil,nil;since=now();phase='prepare'
+ baselineRequested,setupActual,placementState,clientPlacement=nil,nil,nil,nil;since=now();phase='prepare'
  if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
 end
 require('QueuePreflight').onGameStart(Events,function()entered=true;since=now()end)
@@ -342,7 +353,14 @@ require('QueuePreflight').onTick(Events,function()
   end
   assert(now()-since<180000,'grooming timeout '..tostring(case())..' phase='..phase)
   if records and not observe()then return end
-  if phase=='prepare'then if not empty()then return end;phase='prepared';request('Prepare')
+  if phase=='prepare'then
+   if not empty()then return end
+   placementTarget=placementTarget or P.choose(player);placementState=P.begin(player,placementTarget);phase='placement'
+  elseif phase=='placement'then
+   clientPlacement=P.poll(placementState);if not clientPlacement then return end
+   assert(P.at(player,placementTarget),'grooming client left final placement')
+   raw('CLIENT_PLACEMENT',{case=case(),actor='client1',target=P.target(placementTarget),proof=clientPlacement})
+   phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
    if not state or F.held(case())then
     local settled,actual=F.resolve(player,ids);setupActual=actual

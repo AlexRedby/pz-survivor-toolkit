@@ -1,6 +1,7 @@
 -- Only the authority seeds/removes equipment and appearance. After admission all
 -- helpers observe; resolve waits for exact replicas without repairing equipment.
 local F={}
+local P=require 'QueueEnergyPlacement';local JSON=require 'QueueHealthEvents'
 local function id(item)return item and item:getID()or false end
 function F.same(a,b)
  if type(a)~=type(b)then return false end
@@ -49,8 +50,13 @@ function F.snapshot(state)
  end
  return result
 end
-function F.prepare(player,case,mode,previous)
+function F.prepare(player,case,mode,previous,target,proof)
  assert(not isClient()and not player:isFemale(),'authority native male actor required')
+ target=P.target(target)
+ assert(type(proof)=='table'and proof.mode==(isServer()and'replica'or'local')
+  and proof.teleports==(isServer()and 0 or 1)and F.same(P.target(proof.target),target),'grooming recovery authority placement proof differs')
+ assert(P.at(player,target),'grooming recovery authority left settled placement')
+ print('[GROOMING_RECOVERY] AUTHORITY_PLACEMENT '..JSON.encode({case=case,actor='client1',target=P.target(target),proof=proof}))
  if previous then for _,name in ipairs({'razor','front','tail'})do
   local item=F.find(player,previous[name].id)
   if item then
@@ -59,13 +65,13 @@ function F.prepare(player,case,mode,previous)
    local container=item:getContainer();container:Remove(item);if isServer()then sendRemoveItemFromContainer(container,item)end
   end
  end end
- require('QueueEnergyPlacement')(player);player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
+ player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
  local root=player:getInventory();local razor=assert(root:AddItem('Base.Razor'));razor:setFavorite(true)
  player:setPrimaryHandItem(razor);player:setSecondaryHandItem(nil)
  local v=player:getHumanVisual();v:setBeardModel('LongScruffy')
  -- Exact fixed points of HumanVisual's native byte transport.
  v:setHairColor(ImmutableColor.new(51/255,102/255,153/255,1));v:setBeardColor(ImmutableColor.new(153/255,102/255,51/255,1));player:resetModel()
- local ids={case=case,mode=mode,actor=player:getOnlineID(),razor={id=razor:getID(),type='Base.Razor'},initialBeard='LongScruffy',targetBeard='Moustache',duration=300}
+ local ids={case=case,mode=mode,actor=player:getOnlineID(),placement=P.target(target),razor={id=razor:getID(),type='Base.Razor'},initialBeard='LongScruffy',targetBeard='Moustache',duration=300}
  local initial=assert(getBeardStylesInstance():FindStyle(ids.initialBeard));local target=assert(getBeardStylesInstance():FindStyle(ids.targetBeard))
  assert(target:getLevel()<initial:getLevel(),'native menu beard transition unavailable')
  for _,name in ipairs({'front','tail'})do

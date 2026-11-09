@@ -14,6 +14,16 @@ from queue_checks.adapters import grooming_recovery as a
 from queue_checks import adapters
 
 
+def placement_record(case, mode='local'):
+    target = dict(x=100, y=200, z=0)
+    actual = dict(x=100.5, y=200.5, z=0, square=target.copy(), currentSquare=target.copy())
+    if mode == 'local':
+        actual.update(queued=0, timed=False, moving=False, hasPath=False, deferredX=0, deferredY=0)
+    return dict(case=case, actor='client1', target=target, proof=dict(mode=mode, target=target.copy(),
+        actual=actual, teleports=1 if mode == 'local' else 0, stableMs=500, quietMs=500 if mode == 'local' else 0,
+        elapsedMs=1000 if mode == 'local' else 500))
+
+
 class GroomingRecoveryTests(unittest.TestCase):
     def selection(self, kind='mp', mode='toolkit'):
         return dict(suite='grooming-recovery', cases=list(a.CASES), kind=kind, mode=mode, clients=1,
@@ -21,7 +31,7 @@ class GroomingRecoveryTests(unittest.TestCase):
 
     def evidence(self, case='pending-restore', kind='mp', mode='toolkit'):
         enabled = mode == 'toolkit'
-        spec = dict(case=case, mode=mode, actor=0, initialBeard='LongScruffy', targetBeard='Moustache', duration=300,
+        spec = dict(case=case, mode=mode, actor=0, placement=placement_record(case)['target'], initialBeard='LongScruffy', targetBeard='Moustache', duration=300,
                     razor=dict(id=101, type='Base.Razor'), front=dict(id=102, type='Base.BookCarpentry1', total=220, initial=217),
                     tail=dict(id=103, type='Base.BookCooking1', total=220, initial=219))
         seed = dict(case=case, male=True,
@@ -167,12 +177,17 @@ class GroomingRecoveryTests(unittest.TestCase):
         client.append('[QUEUE_CHECK] ' + json.dumps(dict(suite='grooming-recovery', event='setup', cases=list(a.CASES), nativeDurations=True, queueEnabled=mode == 'toolkit', blocker='native-reader-three-pages')))
         for case in a.CASES:
             evidence = self.evidence(case, kind, mode); row, spec, seed, removed, final, acks = evidence
-            client.append('[QUEUE_CHECK] ' + json.dumps(row))
-            for marker, value in [('PREPARED', spec), ('BASELINE', seed), ('VERIFIED', final)]: authority.append(a.PREFIX + marker + ' ' + json.dumps(value))
-            if removed: authority.append(a.PREFIX + 'REMOVED ' + json.dumps(removed))
+            client.append(a.PREFIX + 'CLIENT_PLACEMENT ' + json.dumps(placement_record(case)))
+            setup = [a.PREFIX + marker + ' ' + json.dumps(value) for marker, value in [
+                ('AUTHORITY_PLACEMENT', placement_record(case, 'replica' if kind == 'mp' else 'local')), ('PREPARED', spec), ('BASELINE', seed)]]
+            (client if kind == 'sp' else authority).extend(setup)
+            client.append(a.PREFIX + 'ADMITTED ' + json.dumps(dict(case=case, actor='client1')))
             client.extend(a.PREFIX + 'ACK ' + json.dumps(ack) for ack in acks)
+            if removed: (client if kind == 'sp' else authority).append(a.PREFIX + 'REMOVED ' + json.dumps(removed))
+            (client if kind == 'sp' else authority).append(a.PREFIX + 'VERIFIED ' + json.dumps(final))
+            client.append('[QUEUE_CHECK] ' + json.dumps(row))
         client.extend(['[QUEUE_CHECK] ' + json.dumps(dict(suite='grooming-recovery', event='complete', cases=list(a.CASES), performed=3, failed=0, skipped=0)), a.PREFIX + 'COMPLETE ' + json.dumps(dict(cases=list(a.CASES)))])
-        return '\n'.join(client + (authority if kind == 'sp' else [])), '\n'.join(authority)
+        return '\n'.join(client), '\n'.join(authority)
 
     def test_verify_raw_exact_order_and_unique_completion(self):
         selection = self.selection()
@@ -187,11 +202,76 @@ class GroomingRecoveryTests(unittest.TestCase):
             (root/'server-launch.log').write_text(server + '\n' + server.splitlines()[0])
             self.assertTrue(a.verify(root, selection, {})['issues'])
 
+    def test_placement_receipts_are_strict_and_bound_to_each_case(self):
+        def mutate(lines,marker,change,index=1):
+            i=[i for i,line in enumerate(lines) if line.startswith(a.PREFIX+marker+' ')][index]
+            value=json.loads(lines[i].split(marker+' ',1)[1]);change(value)
+            lines[i]=a.PREFIX+marker+' '+json.dumps(value)
+        for kind in ('sp','mp'):
+            for mode in ('native','toolkit'):
+                selection=self.selection(kind,mode);client,server=self.logs(kind,mode)
+                def verify(change=None):
+                    c,s=client.splitlines(),server.splitlines()
+                    if change:change(c,s)
+                    with tempfile.TemporaryDirectory() as temp:
+                        root=Path(temp);(root/'client1-launch.log').write_text('\n'.join(c));(root/'server-launch.log').write_text('\n'.join(s))
+                        return a.verify(root,selection,{})['issues']
+                self.assertEqual(verify(),[])
+                changes={
+                    'foreign actor':lambda v:v.update(actor='client2'),
+                    'stale case':lambda v:v.update(case=a.CASES[0]),
+                    'extra field':lambda v:v.update(extra=True),
+                    'wrong mode':lambda v:v['proof'].update(mode='replica'),
+                    'motion':lambda v:v['proof']['actual'].update(moving=True),
+                    'queue debt':lambda v:v['proof']['actual'].update(queued=1),
+                    'native action':lambda v:v['proof']['actual'].update(timed=True),
+                    'deferred motion':lambda v:v['proof']['actual'].update(deferredX=.1),
+                    'target mismatch':lambda v:v['target'].update(x=101),
+                    'unsettled':lambda v:v['proof'].update(stableMs=499),
+                    'teleport':lambda v:v['proof'].update(teleports=2),
+                }
+                for name,change in changes.items():
+                    with self.subTest(kind=kind,mode=mode,mutation=name):
+                        self.assertTrue(verify(lambda c,s:mutate(c,'CLIENT_PLACEMENT',change)))
+                self.assertTrue(verify(lambda c,s:c.append(a.PREFIX+'ACK []')))
+                for marker in ('CLIENT_PLACEMENT','AUTHORITY_PLACEMENT','ADMITTED'):
+                    for action in ('remove','duplicate','late'):
+                        def corrupt(c,s):
+                            lines=s if kind=='mp' and marker=='AUTHORITY_PLACEMENT' else c
+                            i=next(i for i,line in enumerate(lines) if line.startswith(a.PREFIX+marker+' '));value=lines[i]
+                            if action!='duplicate':lines.pop(i)
+                            if action!='remove':lines.append(value)
+                        with self.subTest(kind=kind,mode=mode,marker=marker,action=action):self.assertTrue(verify(corrupt))
+                for change in (lambda v:v.update(actor='client2'),
+                               lambda v:v['proof'].update(mode='local' if kind=='mp' else 'replica'),
+                               lambda v:v['proof']['actual'].update(x=102.5)):
+                    self.assertTrue(verify(lambda c,s:mutate(s if kind=='mp' else c,'AUTHORITY_PLACEMENT',change)))
+                if kind=='mp':
+                    def late_admission(c,s):
+                        i=[i for i,line in enumerate(c) if line.startswith(a.PREFIX+'ADMITTED ')][-1];value=c.pop(i)
+                        boundary=next(i for i,line in enumerate(c) if line.startswith(a.PREFIX+'ACK '));c.insert(boundary+1,value)
+                    self.assertTrue(verify(late_admission))
+                def changed_target(c,s):
+                    for lines,marker in ((c,'CLIENT_PLACEMENT'),(s if kind=='mp' else c,'AUTHORITY_PLACEMENT')):
+                        def move(v):
+                            v['target']['x']=101;v['proof']['target']['x']=101;v['proof']['actual']['x']=101.5
+                            for key in ('square','currentSquare'):v['proof']['actual'][key]['x']=101
+                        mutate(lines,marker,move)
+                self.assertTrue(verify(changed_target))
+                for marker in ('PREPARED','BASELINE'):
+                    def early(c,s):
+                        lines=s if kind=='mp' else c
+                        i=next(i for i,line in enumerate(lines) if line.startswith(a.PREFIX+marker+' '));lines.insert(0,lines.pop(i))
+                    self.assertTrue(verify(early))
+                self.assertTrue(verify(lambda c,s:mutate(s if kind=='mp' else c,'PREPARED',lambda v:v['placement'].update(x=101))))
+
     def test_registered_sources_and_lua_syntax(self):
         self.assertIs(adapters.get('grooming-recovery'), a)
         sources = a.sources(ROOT, self.selection())
         self.assertIn(ROOT/'tools/queue_checks/adapters/tv_controls.py', sources)
         self.assertIn(ROOT/'tools/queue_checks/mod_selection.py', sources)
+        self.assertIn(ROOT/'tools/queue_checks/placement.py', sources)
+        self.assertIn(ROOT/'tools/queue_checks/grooming_placement.py', sources)
         for path in sources:
             self.assertTrue(path.is_file(), path)
         lua = [p for p in sources if 'grooming-recovery' in str(p) and p.suffix == '.lua']

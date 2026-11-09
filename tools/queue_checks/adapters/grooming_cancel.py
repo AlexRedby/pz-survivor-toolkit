@@ -7,6 +7,7 @@ import re
 import shutil
 import struct
 from .tv_controls import MODS
+from .. import grooming_placement
 
 CASES=['borrowed-scissors','style-no-tool','styled-scissors','beard-trim','dye-hair','dye-beard','sprayed-scissors','greased-scissors']
 # Source-pinned native drainable maxima and ISCutHair.complete selector costs.
@@ -61,7 +62,8 @@ def validate(selection):
 def sources(project, selection):
     root=Path(project)/'tests/native_queue'
     return [*sorted((root/'grooming-cancel').rglob('*.lua')), *sorted((root/'startup').rglob('*.lua')),
-            root/'health/shared/QueueHealthEvents.lua',root/'support/QueueEnergyPlacement.lua',Path(__file__).with_name('tv_controls.py')]
+            root/'health/shared/QueueHealthEvents.lua',root/'support/QueueEnergyPlacement.lua',Path(__file__).with_name('tv_controls.py'),
+            Path(__file__).parents[1]/'placement.py',Path(__file__).parents[1]/'grooming_placement.py']
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
@@ -432,6 +434,8 @@ def verify(root,selection,catalog):
     if not rows or rows[0].get('nativeDurations') is not True or rows[0].get('queueEnabled') is not (selection['mode']=='toolkit'):issues.append('Grooming timing/queue control missing')
     if not rows or any(rows[-1].get(key)!=value for key,value in dict(cases=selection['cases'],performed=len(selection['cases']),failed=0,skipped=0).items()):issues.append('Grooming completion counts differ')
     prepared=raw(authority,'PREPARED');verified=raw(authority,'VERIFIED')
+    try:grooming_placement.validate(selection,text,authority,results,PREFIX,'BASELINED')
+    except (ValueError,KeyError,TypeError,AttributeError) as error:issues.append(str(error))
     stream=[]
     for line in text.splitlines():
         match=re.search(r'\[GROOMING_TEST\] (CANCEL|EDIT|BEFORE_TAIL|IDLE)\s+([^\n]*)',line)

@@ -3,6 +3,7 @@ require 'XpSystem/ISUI/ISCharacterScreen'
 require 'TimedActions/ISReadABook'
 require 'TimedActions/ISTrimBeard'
 local F=require 'QueueGroomingRecovery';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
+local P=require 'QueueEnergyPlacement'
 local Proof=require 'PZSurvivorToolkit/SourceProof';local T=PZSurvivorToolkit;local R=T.ActionQueueRecovery
 local native=config.mode=='native';local producer=ISCharacterScreen.onTrimBeard
 local trimClass=ISTrimBeard;local methods={}
@@ -18,6 +19,7 @@ end)
 local entered,ready,done=false,false,false
 local phase,index,since='prepare',1,0
 local state,authority,previous,ids,authorityBaseline,removed,authorityFinal,input,quiet
+local target,placement,clientPlacement
 local tracks,commands,starts,cancellations,recoveries,admission,draining,generation,body
 local tokenIds,serial={},0
 local function tokenID(token)
@@ -122,8 +124,11 @@ local function queueEvidence()
  return rows
 end
 local function request(command)
- if isClient()then sendClientCommand('GroomingRecoveryTest',command,{case=case()});return end
- if command=='Prepare'then authority=F.prepare(getPlayer(),case(),config.mode,previous);previous=nil;ids=authority.ids;raw('PREPARED',ids)
+ if isClient()then
+  local args={case=case()};if command=='Prepare'then args.target=P.target(target);args.clientPlacement=clientPlacement end
+  sendClientCommand('GroomingRecoveryTest',command,args);return
+ end
+ if command=='Prepare'then authority=F.prepare(getPlayer(),case(),config.mode,previous,target,clientPlacement);previous=nil;ids=authority.ids;raw('PREPARED',ids)
  elseif command=='Baseline'then authorityBaseline=F.snapshot(authority);assert(F.same(authorityBaseline,ids.baseline));raw('BASELINE',authorityBaseline)
  elseif command=='Remove'then removed=F.removeRazor(authority);raw('REMOVED',removed)
  elseif command=='Verify'then authorityFinal=assert(F.verify(authority));raw('VERIFIED',authorityFinal)end
@@ -135,7 +140,9 @@ Events.OnServerCommand.Add(function(module,command,args)
  if command=='Prepared'then ids=args elseif command=='Baselined'then authorityBaseline=args elseif command=='Removed'then removed=args elseif command=='Verified'then authorityFinal=args end
 end)
 local function enqueue()
+ assert(F.same(P.target(ids.placement),P.target(target))and P.at(state.player,target),'grooming recovery client left final placement before admission')
  input=F.snapshot(state);assert(F.same(input,ids.baseline));tracks,commands,starts,cancellations,recoveries={},{},{},{},{};generation=0
+ raw('ADMITTED',{case=case(),actor='client1'})
  if case()~='active-denied'then read('front')end
  local p,root=state.player,state.player:getInventory();local razor=assert(F.find(p,ids.razor.id));assert(p:getPrimaryHandItem()==razor and not p:getSecondaryHandItem()and razor:getContainer()==root and razor:isFavorite())
  local before=#queue().queue;producer(p,'Moustache');assert(#queue().queue==before+1,'native menu producer added equipment/preparation chain')
@@ -194,6 +201,7 @@ local function finish()
  previous=ids;index=index+1
  if not case()then emit({event='complete',cases=config.cases,performed=3,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
  state,authority,ids,authorityBaseline,removed,authorityFinal,input,quiet,tracks,commands,starts,cancellations,recoveries,admission,draining,body=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
+ placement,clientPlacement=nil,nil
  phase='prepare';since=now()
 end
 require('QueuePreflight').onGameStart(Events,function()entered=true;since=now()end)
@@ -210,7 +218,12 @@ require('QueuePreflight').onTick(Events,function()
    ready=true;emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,blocker='native-reader-three-pages'})
   end
   assert(now()-since<150000,'grooming recovery timeout '..phase);observe()
-  if phase=='prepare'then assert(empty());phase='prepared';request('Prepare')
+  if phase=='prepare'then
+   assert(empty());target=target or P.choose(p);placement=placement or P.begin(p,target)
+   clientPlacement=P.poll(placement);if not clientPlacement then return end
+   assert(P.at(p,target),'grooming recovery client left settled placement before prepare')
+   raw('CLIENT_PLACEMENT',{case=case(),actor='client1',target=P.target(target),proof=clientPlacement})
+   phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then state=F.resolve(p,ids);if not state or p:tooDarkToRead()then return end;phase='baseline';request('Baseline')
   elseif phase=='baseline'and authorityBaseline then enqueue()
   elseif phase=='boundary'then

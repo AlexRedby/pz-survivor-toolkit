@@ -1,5 +1,6 @@
 -- Disposable setup ends at baseline. All later helpers only observe native state.
 local F={cases={'borrowed-scissors','style-no-tool','styled-scissors','beard-trim','dye-hair','dye-beard','sprayed-scissors','greased-scissors'}}
+local P=require 'QueueEnergyPlacement';local JSON=require 'QueueHealthEvents'
 local held={
  ['move-held-gel-primary']={base='styled-scissors',primary='gel',secondary='secondary'},
  ['move-held-spray-secondary']={base='sprayed-scissors',primary='torch',secondary='gel'},
@@ -162,10 +163,16 @@ local function equipment(state)
  end
  p:setPerkLevelDebug(Perks.Woodwork,0);p:setPerkLevelDebug(Perks.Doctor,0)
 end
-function F.prepare(player,caseID,previous)
+function F.prepare(player,caseID,previous,target,proof)
  local selectedCase=caseID;caseID=F.baseCase(caseID)
  assert(not isClient(),'grooming prepare requires authority')
  assert(not player:isFemale(),'grooming fixture requires native male character creation')
+ local finalTarget=P.target(target)
+ assert(type(proof)=='table'and proof.mode==(isServer()and'replica'or'local')
+  and proof.teleports==(isServer()and 0 or 1),'grooming authority arrival proof missing')
+ local observed=P.target(proof.target)
+ assert(observed.x==finalTarget.x and observed.y==finalTarget.y and observed.z==finalTarget.z and P.at(player,finalTarget),'grooming authority arrival target differs')
+ print('[GROOMING_TEST] AUTHORITY_PLACEMENT '..JSON.encode({case=selectedCase,actor='client1',target=finalTarget,proof=proof}))
  if previous then
   for _,wanted in pairs(previous.items)do
    local item=F.find(player,wanted)
@@ -177,7 +184,7 @@ function F.prepare(player,caseID,previous)
    end
   end
  end
- player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false);require('QueueEnergyPlacement')(player)
+ player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
  local root=player:getInventory();local initial,target,initialLevel,targetLevel,targetAttached=styles(player,F.haircut(caseID)and caseID or'borrowed-scissors')
  local actionKind,producer,borrowed='ISCutHair','ISCharacterScreen.onCutHair',caseID~='style-no-tool'and'scissors'or false
  local initialBeard,targetBeard,beardInitialLevel,beardTargetLevel=false,false,false,false
@@ -192,7 +199,7 @@ function F.prepare(player,caseID,previous)
    assert(beardTargetLevel<beardInitialLevel,'beard transition is not offered by actual native menu')
   else actionKind,producer,borrowed='ISDyeHair','ISInventoryPaneContextMenu.onDyeHair','dye'end
  end
- local ids={case=selectedCase,actor=player:getOnlineID(),male=true,items={},types={},initialStyle=initial,targetStyle=target,
+ local ids={case=selectedCase,actor=player:getOnlineID(),male=true,items={},types={},placement=P.target(finalTarget),initialStyle=initial,targetStyle=target,
   initialLevel=initialLevel,targetLevel=targetLevel,targetAttached=targetAttached,duration=actionKind=='ISDyeHair'and 120 or(targetAttached and 100 or 300),
   actionKind=actionKind,producer=producer,borrowed=borrowed,initialBeard=initialBeard,targetBeard=targetBeard,
   beardInitialLevel=beardInitialLevel,beardTargetLevel=beardTargetLevel}

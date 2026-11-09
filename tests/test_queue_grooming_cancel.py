@@ -11,6 +11,27 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 from queue_checks.adapters import grooming_cancel as g
 
 
+def placement_record(case, mode='local'):
+    target = dict(x=100, y=200, z=0)
+    actual = dict(x=100.5, y=200.5, z=0, square=target.copy(), currentSquare=target.copy())
+    if mode == 'local':
+        actual.update(queued=0, timed=False, moving=False, hasPath=False, deferredX=0, deferredY=0)
+    return dict(case=case, actor='client1', target=target, proof=dict(mode=mode, target=target.copy(),
+        actual=actual, teleports=1 if mode == 'local' else 0, stableMs=500, quietMs=500 if mode == 'local' else 0,
+        elapsedMs=1000 if mode == 'local' else 500))
+
+
+# Existing effect/equipment tests isolate those consumers. Actual placement guards
+# are exercised separately against the shared placement implementation.
+LUA_FIXTURE_DEPENDENCIES = r"""
+fixtureTarget={x=100,y=200,z=0}
+fixturePlacement={target=function(value)assert(type(value)=='table');return {x=value.x,y=value.y,z=value.z}end,at=function()return true end}
+fixtureJson={encode=function()return '{}'end}
+package.preload.QueueEnergyPlacement=function()return fixturePlacement end
+package.preload.QueueHealthEvents=function()return fixtureJson end
+"""
+
+
 class GroomingCancellationTests(unittest.TestCase):
     def evidence(self,case='borrowed-scissors',mode='toolkit',kind='sp'):
         selected=case;active=case in g.ACTIVE_CASES;moving=case in g.ALL_MOVE_CASES;case=g.base_case(case)
@@ -20,7 +41,7 @@ class GroomingCancellationTests(unittest.TestCase):
         types=dict(bag='Base.Bag_Schoolbag',content='Base.Paperclip',front='Base.BookCarpentry1',tail='Base.BookFirstAid1',torch='Base.Torch',secondary='Base.Screwdriver',scissors='Base.Scissors',hat='Base.Hat_BaseballCap',gel='Base.Hairgel',razor='Base.Razor',dye='Base.HairDyeCommon',mask='Base.Hat_DustMask')
         if case in g.STYLING_COSTS:types['gel']=g.STYLING_COSTS[case]['kind']
         items={name:i+1 for i,name in enumerate(names)}
-        ids=dict(case=case,actor=1,male=True,items=items,types={name:types[name] for name in names},initialStyle='Fabian',
+        ids=dict(case=case,actor=1,placement=placement_record(case)['target'],male=True,items=items,types={name:types[name] for name in names},initialStyle='Fabian',
                  targetStyle='PonyTail' if case=='style-no-tool' else g.STYLING_COSTS[case]['target'] if case in g.STYLING_COSTS else 'CrewCut' if case=='borrowed-scissors' else 'Fabian',
                  duration=g.duration(case),initialLevel=3,targetLevel=3 if case=='style-no-tool' or case not in g.HAIRCUT else 2 if case in ('styled-scissors','sprayed-scissors') else 1,targetAttached=case=='style-no-tool',
                  actionKind=g.BODY[case],producer=g.PRODUCER[g.BODY[case]],borrowed=borrowed,
@@ -187,13 +208,17 @@ class GroomingCancellationTests(unittest.TestCase):
         selection,row=self.evidence('style-no-tool','native','mp');row['receipt'].pop('completeCountLimit')
         with self.assertRaises(KeyError):self.check(selection,row)
 
-    def report(self,selection,row,reverse=False):
+    def report(self,selection,row,reverse=False,mutate=None):
         rows=row if isinstance(row,list) else [row]
         context=dict(suite='grooming-cancel',kind=selection['kind'],mode=selection['mode'],actor='client1')
         lines=['[QUEUE_CHECK] '+json.dumps(dict(event='setup',cases=selection['cases'],nativeDurations=True,queueEnabled=selection['mode']=='toolkit',**context))]
         authority=[]
         for row in rows:
-            authority.extend('[GROOMING_TEST] '+marker+' '+json.dumps(value) for marker,value in [('PREPARED',row['ids']),('BASELINED',row['receipt']['baseline']),('VERIFIED',row['receipt'])])
+            lines.append(g.PREFIX+'CLIENT_PLACEMENT '+json.dumps(placement_record(row['id'])))
+            setup=[g.PREFIX+marker+' '+json.dumps(value) for marker,value in [('AUTHORITY_PLACEMENT',placement_record(row['id'],'replica' if selection['kind']=='mp' else 'local')),('PREPARED',row['ids']),('BASELINED',row['receipt']['baseline'])]]
+            if selection['kind']=='sp':lines.extend(setup)
+            else:authority.extend(setup)
+            lines.append(g.PREFIX+'ADMITTED '+json.dumps(dict(case=row['id'],actor='client1')))
             markers=[(marker,row['command'][key]) for marker,key in [('EDIT' if row['id'] in g.ALL_MOVE_CASES else 'CANCEL','boundary'),('BEFORE_TAIL','beforeTail'),('IDLE','idle')]]
             outcomes=row['command'].get('outcomes',[])
             if outcomes:
@@ -203,12 +228,85 @@ class GroomingCancellationTests(unittest.TestCase):
             if reverse:markers=markers[::-1]
             lines.extend('[GROOMING_TEST] OUTCOME '+json.dumps(dict(case=row['id'],receipt=value)) for value in ([] if row['id'] in g.ALL_MOVE_CASES else outcomes[:1]))
             lines.extend('[GROOMING_TEST] '+marker+' '+json.dumps(value) for marker,value in markers)
+            (lines if selection['kind']=='sp' else authority).append(g.PREFIX+'VERIFIED '+json.dumps(row['receipt']))
             lines.append('[QUEUE_CHECK] '+json.dumps(dict(row,**context)))
         lines.append('[QUEUE_CHECK] '+json.dumps(dict(event='complete',cases=selection['cases'],performed=len(rows),skipped=0,failed=0,**context)))
+        if mutate:mutate(lines,authority)
         with tempfile.TemporaryDirectory() as temp:
-            root=Path(temp);(root/'client1-launch.log').write_text('\n'.join(lines+(authority if selection['kind']=='sp' else [])))
+            root=Path(temp);(root/'client1-launch.log').write_text('\n'.join(lines))
             if selection['kind']=='mp':(root/'server-launch.log').write_text('\n'.join(authority))
             return g.verify(root,selection,{})
+
+    def test_placement_receipts_fail_closed_in_each_control(self):
+        def mutate(lines, marker, change, index=0):
+            indices=[i for i,line in enumerate(lines) if line.startswith(g.PREFIX+marker+' ')]
+            i=indices[index];value=json.loads(lines[i].split(marker+' ',1)[1]);change(value)
+            lines[i]=g.PREFIX+marker+' '+json.dumps(value)
+        for kind in ('sp','mp'):
+            for mode in ('native','toolkit'):
+                selection,first=self.evidence(mode=mode,kind=kind)
+                _,second=self.evidence('styled-scissors',mode,kind)
+                selection['cases']=[first['id'],second['id']]
+                self.assertEqual(self.report(selection,[first,second])['issues'],[])
+                changes={
+                    'foreign actor':lambda v:v.update(actor='client2'),
+                    'foreign case':lambda v:v.update(case='unknown'),
+                    'extra field':lambda v:v.update(extra=True),
+                    'moving':lambda v:v['proof']['actual'].update(moving=True),
+                    'path':lambda v:v['proof']['actual'].update(hasPath=True),
+                    'native queue':lambda v:v['proof']['actual'].update(queued=1),
+                    'bad role':lambda v:v['proof'].update(mode='replica'),
+                    'wrong target':lambda v:v['target'].update(x=101),
+                    'stale square':lambda v:v['proof']['actual']['currentSquare'].update(x=101),
+                    'unsettled':lambda v:v['proof'].update(stableMs=499),
+                    'extra teleport':lambda v:v['proof'].update(teleports=2),
+                    'stale case binding':lambda v:v.update(case=first['id']),
+                }
+                for name,change in changes.items():
+                    with self.subTest(kind=kind,mode=mode,mutation=name):
+                        self.assertTrue(self.report(selection,[first,second],mutate=lambda c,a:mutate(c,'CLIENT_PLACEMENT',change,1))['issues'])
+                self.assertTrue(self.report(selection,[first,second],mutate=lambda c,a:c.append(g.PREFIX+'CANCEL []'))['issues'])
+                for marker in ('CLIENT_PLACEMENT','AUTHORITY_PLACEMENT','ADMITTED'):
+                    for action in ('remove','duplicate','late'):
+                        def corrupt(client,authority):
+                            lines=authority if kind=='mp' and marker=='AUTHORITY_PLACEMENT' else client
+                            i=next(i for i,line in enumerate(lines) if line.startswith(g.PREFIX+marker+' '))
+                            value=lines[i]
+                            if action!='duplicate':lines.pop(i)
+                            if action!='remove':lines.append(value)
+                        with self.subTest(kind=kind,mode=mode,marker=marker,action=action):
+                            self.assertTrue(self.report(selection,[first,second],mutate=corrupt)['issues'])
+                for change in (lambda v:v.update(actor='client2'),
+                               lambda v:v['proof'].update(mode='local' if kind=='mp' else 'replica'),
+                               lambda v:v['proof']['actual'].update(x=102.5)):
+                    self.assertTrue(self.report(selection,[first,second],mutate=lambda c,a:mutate(a if kind=='mp' else c,'AUTHORITY_PLACEMENT',change))['issues'])
+                def late_admission(client,authority):
+                    i=next(i for i,line in enumerate(client) if line.startswith(g.PREFIX+'ADMITTED '));value=client.pop(i)
+                    boundary=next(i for i,line in enumerate(client) if line.startswith(g.PREFIX+'CANCEL '))
+                    client.insert(boundary+1,value)
+                self.assertTrue(self.report(selection,[first,second],mutate=late_admission)['issues'])
+                def changed_target(client,authority):
+                    # A coherent second-case proof still cannot choose a new tile.
+                    for lines,marker in ((client,'CLIENT_PLACEMENT'),(authority if kind=='mp' else client,'AUTHORITY_PLACEMENT')):
+                        def move(value):
+                            value['target']['x']=101;value['proof']['target']['x']=101
+                            value['proof']['actual'].update(x=101.5)
+                            for key in ('square','currentSquare'):value['proof']['actual'][key]['x']=101
+                        mutate(lines,marker,move,1)
+                self.assertTrue(self.report(selection,[first,second],mutate=changed_target)['issues'])
+                for marker in ('PREPARED','BASELINED'):
+                    def before_placement(client,authority):
+                        lines=authority if kind=='mp' else client
+                        i=next(i for i,line in enumerate(lines) if line.startswith(g.PREFIX+marker+' '))
+                        lines.insert(0,lines.pop(i))
+                    self.assertTrue(self.report(selection,[first,second],mutate=before_placement)['issues'])
+                def stale_ids(client,authority):
+                    for lines in (client,authority):
+                        for i,line in enumerate(lines):
+                            if line.startswith(g.PREFIX+'PREPARED '):
+                                value=json.loads(line.split('PREPARED ',1)[1]);value['placement']['x']=101
+                                lines[i]=g.PREFIX+'PREPARED '+json.dumps(value)
+                self.assertTrue(self.report(selection,[first,second],mutate=stale_ids)['issues'])
 
     def test_complete_report_rejects_raw_order_and_retains_per_role_baselines(self):
         for mode in ('native','toolkit'):
@@ -311,7 +409,7 @@ class GroomingCancellationTests(unittest.TestCase):
         luajit=shutil.which('luajit')
         if luajit:
             value="local ffi=require('ffi');local function f32(v)return tonumber(ffi.new('float[1]',v)[0])end\n"+numeric+"\nlocal FixturePath="+json.dumps(str(fixture))+"\n"+script
-            result=subprocess.run([luajit,'-'],input=value,text=True,capture_output=True)
+            result=subprocess.run([luajit,'-'],input=LUA_FIXTURE_DEPENDENCIES+value,text=True,capture_output=True)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         else:
             try:
@@ -321,7 +419,7 @@ class GroomingCancellationTests(unittest.TestCase):
             lua=LuaRuntime(unpack_returned_tuples=True)
             lua.globals().f32=lambda value:g.struct.unpack('f',g.struct.pack('f',value))[0]
             lua.globals().FixturePath=str(fixture)
-            lua.execute(numeric+script)
+            lua.execute(LUA_FIXTURE_DEPENDENCIES+numeric+script)
 
     def test_actual_shared_fixture_preserves_unpaid_effects_and_native_protocol(self):
         # Execute the shipped fixture helpers; mock only native numeric value objects.
@@ -331,7 +429,7 @@ class GroomingCancellationTests(unittest.TestCase):
             return self.check_shared_fixture_luajit()
         lua=LuaRuntime(unpack_returned_tuples=True)
         lua.globals().f32=lambda value:g.struct.unpack('f',g.struct.pack('f',value))[0]
-        lua.execute("""
+        lua.execute(LUA_FIXTURE_DEPENDENCIES+"""
           Color={new=function()return {set=function(self,r)self.r=f32(r)end,getR=function(self)return self.r end}end}
           ImmutableColor={new=function(r,g,b)
             local c={r=f32(r),g=f32(g),b=f32(b)}
@@ -404,7 +502,7 @@ class GroomingCancellationTests(unittest.TestCase):
                     changed=copy.deepcopy(row['clientFinal']);changed['appearance']['beardModel']='unexpected';values[1]=changed
                     script.append('assert(not F.effectsMatch('+','.join(literal(v) for v in values)+'))')
         fixture=Path(__file__).parent/'native_queue/grooming-cancel/shared/QueueGroomingCancel.lua'
-        result=subprocess.run([luajit,'-',str(fixture)],input='\n'.join(script),text=True,capture_output=True)
+        result=subprocess.run([luajit,'-',str(fixture)],input=LUA_FIXTURE_DEPENDENCIES+'\n'.join(script),text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_active_case_family_and_registration_are_distinct_from_waiting(self):
@@ -560,13 +658,13 @@ class GroomingCancellationTests(unittest.TestCase):
               local moved={q.queue[1]};for i=3,#q.queue do moved[#moved+1]=q.queue[i]end;moved[#moved+1]=tail;q.queue=moved;return true
             end}}
             local proof={closure=function()return true end}
-            require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueGroomingCancel'then return F elseif name=='QueueHealthEvents'then return {encode=function()return '{}'end}
+            require=function(name) if name=='QueueEnergyPlacement'then return fixturePlacement elseif name=='QueueHealthEvents'then return fixtureJson end;if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueGroomingCancel'then return F elseif name=='QueueHealthEvents'then return {encode=function()return '{}'end}
               elseif name=='QueueTestSelection'then return config elseif name=='PZSurvivorToolkit/SourceProof'then return proof end end
             local file=assert(io.open(source));local contents=file:read('*a');file:close()
             local client=assert(loadstring(contents..'\nreturn {enqueue=enqueue,move=moveAtBoundary}'))()
             local state={player=player,gel=cost and stylingItem or nil,front={getID=function()return 1 end},tail={getID=function()return 2 end}}
             if borrowed then state[kind=='ISDyeHair'and'dye'or(kind=='ISTrimBeard'and'razor'or'scissors')]=item end
-            set(client.enqueue,'state',state);set(client.enqueue,'ids',{case=case,baseline={},actionKind=kind,targetStyle=cost and cost.target or 'CrewCut',targetBeard='Moustache',duration=kind=='ISDyeHair'and 120 or(base=='style-no-tool'and 100 or 300)})
+            set(client.enqueue,'placementTarget',fixtureTarget);set(client.enqueue,'state',state);set(client.enqueue,'ids',{case=case,placement=fixtureTarget,baseline={},actionKind=kind,targetStyle=cost and cost.target or 'CrewCut',targetBeard='Moustache',duration=kind=='ISDyeHair'and 120 or(base=='style-no-tool'and 100 or 300)})
             set(client.enqueue,'queue',function()return q end);set(client.enqueue,'snapshot',function()return {}end)
             set(client.enqueue,'register',function(action)
               local actions=get(client.enqueue,'actions');if actions[action]then return actions[action]end
@@ -588,7 +686,7 @@ class GroomingCancellationTests(unittest.TestCase):
            end
           end
         """
-        result=subprocess.run([luajit,'-',str(root/'client/ZZGroomingCancel.lua'),str(root/'shared/QueueGroomingCancel.lua')],input=script,text=True,capture_output=True)
+        result=subprocess.run([luajit,'-',str(root/'client/ZZGroomingCancel.lua'),str(root/'shared/QueueGroomingCancel.lua')],input=LUA_FIXTURE_DEPENDENCIES+script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_expanded_styling_fixture_prepares_exact_native_resources_and_costs(self):
@@ -598,7 +696,7 @@ class GroomingCancellationTests(unittest.TestCase):
         script=r"""
           function isClient()return false end
           function isServer()return false end
-          require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;assert(name=='QueueEnergyPlacement');return function()end end
+          require=function(name) if name=='QueueEnergyPlacement'then return fixturePlacement elseif name=='QueueHealthEvents'then return fixtureJson end;if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;assert(name=='QueueEnergyPlacement');return function()end end
           local F=assert(loadfile(arg[1]))()
           -- Execute actual preparation/target selection; equipment color/wire setup
           -- has its own source-backed test, so stub only that separate helper.
@@ -639,7 +737,7 @@ class GroomingCancellationTests(unittest.TestCase):
               for _,name in ipairs({'setGodMod','setGhostMode','setAutoDrink'})do player[name]=function()end end
               F.snapshot=function(state)return {case=state.ids.case,appearance={model=state.ids.initialStyle,nonAttached=false},
                 gel={id=state.gel:getID(),uses=state.gel:getCurrentUses()},dye=false}end
-              local state=F.prepare(player,prefix..base)
+              local state=F.prepare(player,prefix..base,nil,fixtureTarget,{mode='local',teleports=1,target=fixtureTarget})
               assert(state.ids.case==prefix..base and state.ids.actionKind=='ISCutHair'and state.ids.producer=='ISCharacterScreen.onCutHair')
               assert(state.ids.targetStyle==cost[4]and state.ids.duration==300 and state.ids.initialStyle=='Fabian')
               assert(state.ids.borrowed=='scissors'and state.ids.types.gel==cost[1])
@@ -653,7 +751,7 @@ class GroomingCancellationTests(unittest.TestCase):
             end
           end
         """
-        result=subprocess.run([luajit,'-',str(fixture)],input=script,text=True,capture_output=True)
+        result=subprocess.run([luajit,'-',str(fixture)],input=LUA_FIXTURE_DEPENDENCIES+script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_expanded_cost_evidence_rejects_corruption_in_each_role(self):
@@ -851,7 +949,7 @@ for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-
  assert(not F.handsReady(state)and not F.resolve(player,ids),'lost secondary was hidden after resolve')
 end
 """
-        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=script,text=True,capture_output=True)
+        result=subprocess.run([shutil.which('luajit'),'-',str(source)],input=LUA_FIXTURE_DEPENDENCIES+script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
@@ -904,13 +1002,13 @@ for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-
     q.queue={q.queue[1],q.queue[3],q.queue[4],tail};return true
    end}}
   local json={encode=function()return '{}'end};local proof={closure=function()return true end}
-  require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueGroomingCancel'then return F elseif name=='QueueTestSelection'then return config
+  require=function(name) if name=='QueueEnergyPlacement'then return fixturePlacement elseif name=='QueueHealthEvents'then return fixtureJson end;if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueGroomingCancel'then return F elseif name=='QueueTestSelection'then return config
    elseif name=='QueueHealthEvents'then return json elseif name=='PZSurvivorToolkit/SourceProof'then return proof end end
   local file=assert(io.open(arg[1]));local source=file:read('*a');file:close()
   local client=assert(loadstring(source..'\nreturn {enqueue=enqueue,move=moveAtBoundary}'))()
-  local ids={case=case,baseline={},actionKind='ISCutHair',targetStyle=cost.target,duration=300,items={gel=8,torch=20,secondary=21}}
+  local ids={case=case,placement=fixtureTarget,baseline={},actionKind='ISCutHair',targetStyle=cost.target,duration=300,items={gel=8,torch=20,secondary=21}}
   local state={player=player,ids=ids,gel=gel,scissors=scissors,front=item(1,'front'),tail=item(2,'tail')}
-  set(client.enqueue,'state',state);set(client.enqueue,'ids',ids);set(client.enqueue,'queue',function()return q end)
+  set(client.enqueue,'placementTarget',fixtureTarget);set(client.enqueue,'state',state);set(client.enqueue,'ids',ids);set(client.enqueue,'queue',function()return q end)
   set(client.enqueue,'snapshot',function()return {hands=F.hands(state)}end)
   set(client.enqueue,'register',function(action)local actions=get(client.enqueue,'actions');if actions[action]then return actions[action]end
    serial=serial+1;actions[action]={sequence=serial};return actions[action]end)
@@ -931,7 +1029,7 @@ for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-
  end end
 end
 """
-        result=subprocess.run([shutil.which('luajit'),'-',str(root/'client/ZZGroomingCancel.lua'),str(root/'shared/QueueGroomingCancel.lua')],input=script,text=True,capture_output=True)
+        result=subprocess.run([shutil.which('luajit'),'-',str(root/'client/ZZGroomingCancel.lua'),str(root/'shared/QueueGroomingCancel.lua')],input=LUA_FIXTURE_DEPENDENCIES+script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
@@ -1042,7 +1140,7 @@ for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-
  assert(#queued==0,'selected P4 re-equipped already restored hands')
 end
 """
-        result=subprocess.run([shutil.which('luajit'),'-',str(version),str(game),str(project)],input=script,text=True,capture_output=True)
+        result=subprocess.run([shutil.which('luajit'),'-',str(version),str(game),str(project)],input=LUA_FIXTURE_DEPENDENCIES+script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT unavailable')
@@ -1076,7 +1174,7 @@ for _,case in ipairs({'move-held-gel-primary','move-held-spray-secondary','move-
  assert(not F.restored(state,altered),'opposite final Torch state was waived')
 end
 """
-        result=subprocess.run([shutil.which('luajit'),'-',str(fixture)],input=script,text=True,capture_output=True)
+        result=subprocess.run([shutil.which('luajit'),'-',str(fixture)],input=LUA_FIXTURE_DEPENDENCIES+script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_held_torch_activation_is_spec_pinned_and_restored_in_each_role(self):
@@ -1110,16 +1208,17 @@ local F={sameSetup=function(a,b)return a.torchActive==b.torchActive end}
 local actual={torchActive=false,hands={primary={id=1,sameReference=true}},appearance={model='Fabian'}}
 local expected={torchActive=true,hands=actual.hands,appearance=actual.appearance}
 local publications={};local baseline
-local enqueue=assert(loadstring('return function(F,snapshot,ids,case,now,raw)\n'..prefix..'\nend\nreturn enqueue end'))()(F,
- function()return actual end,{baseline=expected},function()return 'move-held-gel-primary'end,function()return 3 end,
- function(marker,row)publications[#publications+1]={marker,row}end)
+function getPlayer()return {}end
+local enqueue=assert(loadstring('return function(F,snapshot,ids,case,now,raw,P,placementTarget)\n'..prefix..'\nend\nreturn enqueue end'))()(F,
+ function()return actual end,{baseline=expected,placement=fixtureTarget},function()return 'move-held-gel-primary'end,function()return 3 end,
+ function(marker,row)publications[#publications+1]={marker,row}end,fixturePlacement,fixtureTarget)
 assert(not pcall(enqueue),'baseline mismatch proceeded to native enqueue')
 assert(#publications==1 and publications[1][1]=='BASELINE_MISMATCH')
 local row=publications[1][2]
 assert(row.actual==actual and row.expected==expected and row.at==3 and row.actual.torchActive==false and row.expected.torchActive==true)
 assert(actual.hands.primary.sameReference and actual.appearance.model=='Fabian','diagnostic changed physical witness')
 """
-        result=subprocess.run([shutil.which('luajit'),'-',str(fixture)],input=script,text=True,capture_output=True)
+        result=subprocess.run([shutil.which('luajit'),'-',str(fixture)],input=LUA_FIXTURE_DEPENDENCIES+script,text=True,capture_output=True)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_requires_exact_full_pack_and_fresh_single_actor_host(self):
