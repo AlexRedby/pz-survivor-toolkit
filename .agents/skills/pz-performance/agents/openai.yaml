@@ -1,4 +1,4 @@
 interface:
   display_name: "PZ Performance"
-  short_description: "Evidence-driven profiling without circular experiments"
-  default_prompt: "Use $pz-performance to investigate the reported slowdown, reuse prior evidence, test useful hypotheses, and stop when further experiments no longer help the decision."
+  short_description: "Proportionate profiling and code-quality decisions"
+  default_prompt: "Use $pz-performance to choose proportionate validation for the reported slowdown or cleanup, separate code quality from speed claims, and reuse prior evidence."

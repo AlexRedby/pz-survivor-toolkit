@@ -1,5 +1,7 @@
 # Case and experiment record
 
+Use this record for actual performance investigations. A local cleanup needing only correctness/code-quality review does not require a performance case or gameplay experiment. For mixed tasks, keep the performance outcome and the independent code-retention decision separate.
+
 Create one canonical `case.md` under `.codex/investigations/performance/<scenario-id>/` in the owner worktree. Reuse an existing case. Older evidence may live elsewhere: reference it without migrating or rerunning it merely to fit this layout. Fill only applicable fields; keep values precise enough for another chat to resume without replaying discovery. This is working evidence, not a new document under `docs/`.
 
 ## Case template
@@ -14,10 +16,16 @@ Create one canonical `case.md` under `.codex/investigations/performance/<scenari
 - Predecessor/handoff and other known evidence locations:
 - Existing memory findings consulted, with applicability/version checks:
 
+## Purpose and proportional validation
+- Deliverable: cleanup | measured performance improvement | both (separate acceptance):
+- Independent code-quality rationale, if any:
+- Cheapest check that can answer the actual risk/question:
+- Why more expensive measurement or native integration is warranted, if used:
+
 ## Player problem and contract
 - Action, symptom and why it matters:
-- Goal and origin of thresholds (user/project/inferred):
-- Primary outcome, unit and practical minimum gain:
+- Goal, practical relevance and origin of any numeric objectives (user/problem-derived/inferred):
+- Primary outcome and unit; uncertainty and limits on the performance claim:
 - Protected behavior/quality and regression tolerances:
 - Scope: game/JVM versions, platform, SP or Host:
 - Baseline source revision and relevant uncommitted changes:
@@ -50,6 +58,7 @@ Create one canonical `case.md` under `.codex/investigations/performance/<scenari
 ## Current decision / handoff
 - Outcome and scope of claim:
 - Retained changes and final-state verification:
+- Separate correctness/code-quality decision and performance claim (including unestablished speedup):
 - Unresolved evidence gaps and practical next action:
 - Stop reason; what would justify reopening:
 - Durable memory findings stored and evidence identities:
@@ -78,7 +87,8 @@ Save one `experiment-<id>.md` before execution and fill its observed result imme
 - Correctness/quality and adjacent-phase checks:
 - Verdict: supported | refuted | no useful effect detected | inconclusive | invalid | aborted
 - Interpretation and limits; useful information gained:
-- Change disposition: retained | reverted | diagnostic only | unverified candidate
+- Change disposition: retained for measured gain | retained as independently justified cleanup | reverted | diagnostic only | unverified candidate
+- Code-retention rationale versus performance conclusion; required correctness checks:
 - Exact condition for retry/reopening:
 - Updated evidence, next decision and why further work is or is not useful:
 ```

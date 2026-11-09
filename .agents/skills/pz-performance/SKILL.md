@@ -1,6 +1,6 @@
 ---
 name: pz-performance
-description: Investigate PZ Survivor Toolkit performance problems with reproducible gameplay scenarios, evidence-driven bottleneck selection, purposeful experiments and cross-chat reuse of negative results. Use for stutter, slow menus, loading delays, profiling and optimization requests; ordinary functional fixes do not require a performance investigation.
+description: Investigate PZ Survivor Toolkit performance problems with reproducible gameplay scenarios, evidence-driven bottleneck selection, purposeful experiments and cross-chat reuse of negative results. Use for stutter, slow menus, loading delays, profiling and optimization requests; ordinary functional fixes and local cleanup without a performance claim use proportionate correctness checks instead.
 ---
 
 # Evidence-driven performance investigation
@@ -8,6 +8,18 @@ description: Investigate PZ Survivor Toolkit performance problems with reproduci
 Deliver a useful decision about a named player-visible problem: a verified improvement, a justified deferral, or a precise evidence gap. A stopped investigation is a valid result; do not manufacture optimizations to keep working.
 
 Follow [project rules](../../../AGENTS.md), the relevant sections of [development guidance](../../../docs/DEVELOPMENT.md), and the [native runner guide](../../../tests/native_queue/README.md) when running the game. This skill does not activate the infrastructure-maintainer role. Audit/research requests stop at findings; implement changes only within the user's authorized task.
+
+## 0. Choose a proportionate validation path
+
+Separate the intended deliverables: clearer code or less unnecessary work, a player-visible performance improvement, or both. Decide what evidence would change implementation or acceptance before building a benchmark. A request to investigate performance does not make every source cleanup require an end-to-end speedup; an explicit request for measured improvement still needs an honest measurement result.
+
+- For local cleanup, such as moving a proven pure read under its existing consumer condition, review semantic equivalence, readability and complexity, then run focused behavior/call-avoidance checks. It may be worth retaining for code quality with no established gameplay speedup. Noisy or inconclusive timing alone does not invalidate that independent rationale, and fewer calls alone do not prove faster gameplay.
+- Judge risk by behavior, not diff size or the word "cleanup". New caches/state, lifetimes/invalidation, algorithms, batching, scheduling, effects or authority need their corresponding evidence. Native integration remains necessary when the changed behavior actually depends on it, including callback ordering or engine-owned effects.
+- Start with existing evidence and the cheapest check that can answer the question. Escalate from source/call-frequency analysis to a focused diagnostic and then representative gameplay comparison when the likely impact, uncertainty or behavioral risk justifies that cost. Unknown contribution is a reason to locate it first, not automatically launch a full comparison series or prepare every SP/Host topology.
+- Retaining performance-specific complexity needs a credible useful benefit. A sound simpler implementation can be retained on correctness/maintainability grounds without such a claim; record the two judgments separately. An invented millisecond/percentage hurdle must not replace that assessment.
+- A synthetic extreme cohort may expose a mechanism or an upper bound. Verify the affected physical branch and state, and explain its relevance to ordinary gameplay; a large item count does not itself justify expensive repetition or prove useful player impact.
+
+Use the remaining investigation workflow and experiment records for actual measurement work. If only cleanup and its correctness checks are needed, use the normal project workflow and briefly state the validation rationale; do not create a performance campaign or require a case template merely to retain that cleanup. If a task contains both, preserve an inconclusive performance result while recording any independently justified cleanup.
 
 ## 1. Recover the case before measuring
 
@@ -24,9 +36,9 @@ Record before running:
 
 - Player action and observable symptom; relevant supported platform and SP or Host mode.
 - Reproduction command/procedure, route or item population, world/save snapshot, game/JVM/mod versions and order, baseline source identity including relevant uncommitted changes, settings and measurement window.
-- Primary outcome, practical minimum gain, protected behavior/quality and regression tolerance. Derive thresholds from the request and baseline; label inferred targets. Do not silently impose a universal percentage, FPS target or percentile.
+- Primary outcome, its practical relevance, protected behavior/quality and regression tolerance. Use numeric objectives when grounded in the user problem and baseline; label assumptions. Do not invent a timing cutoff to decide code quality or silently impose a universal percentage, FPS target or percentile.
 - Cold/first-use versus warmed/repeated behavior, fixed exclusions, repetition plan, and evidence needed to distinguish the leading explanations.
-- Owner, unresolved question, expected value of the next experiment and conditions for continuing, stopping or revisiting a conclusion. Read-only recovery comes first and may avoid all runs.
+- Owner, unresolved question, why this measurement is worth its preparation/run cost, the cheapest sufficient validation and conditions for continuing, stopping or revisiting a conclusion. Read-only recovery comes first and may avoid all runs.
 
 Continue autonomously within the authorized task while the next step can resolve a named uncertainty, test a supported explanation or verify a useful retained change. Before another run or edit, explain what its possible results would change about the next decision. Choose enough comparable observations to answer that question; avoid repeats that merely seek a more favorable result.
 
@@ -69,13 +81,13 @@ Implement the smallest reversible change that tests a supported cause, preservin
 
 Compare end-to-end outcomes and affected correctness. Report absolute values, deltas, variation, sample counts and limitations; neither one lucky run nor statistical significance alone establishes a useful gain. An effect unresolved by the measurement is **inconclusive**, not proven zero. Where feasible, state the effect range still compatible with the data instead of inventing confidence.
 
-Keep only repeatable, practically meaningful gains with no disallowed regression. Revert only this experiment's unsuccessful edits. After a retained gain, recheck the changed limiter and verify the final combined state; independent wins do not automatically add up. If final verification is missing, report the candidate as unverified. Use independent evidence review for a material or ambiguous conclusion when available; review absence narrows confidence and does not create an endless rerun gate.
+Retain changes justified by performance gains only when those gains are repeatable and practically meaningful, with no disallowed regression. Revert unsuccessful performance-specific complexity; retain a separately justified cleanup only after its correctness/code-quality review, stating that its speedup is unestablished. Do not convert a failed speed claim into a successful one by relabeling the change. After a retained gain, recheck the changed limiter and verify the final combined state; independent wins do not automatically add up. If final verification is missing, report the candidate as unverified. Use independent evidence review for a material or ambiguous conclusion when available; review absence narrows confidence and does not create an endless rerun gate.
 
 ## 6. Stop, retain evidence, and define reopening
 
 Stop when the target is met and the final state is verified, no supported next hypothesis has a plausible useful payoff, experiments keep returning the same unresolved result without improving the evidence, or progress needs unavailable evidence/capability or a user-owned tradeoff. A failed implementation or invalid launch alone is not a stopping rule; continue when the next step addresses its cause and can change the decision. Diagnostic narrowing is progress, but preparation and collector repair must remain tied to the player problem rather than becoming a separate open-ended infrastructure task.
 
-Report one outcome: **target met**, **improved but target unmet**, **no retained useful improvement**, **not reproduced**, or **inconclusive**. Include before/after when meaningful, retained/discarded hypotheses, conditions actually tested, evidence paths, why further work is or is not worthwhile, and a concrete condition for revisiting the result. A decision to stop does not prove impossibility.
+Report the performance outcome: **target met**, **improved but target unmet**, **no retained useful improvement**, **not reproduced**, or **inconclusive**. Separately state any retained cleanup and its correctness/maintainability rationale; it does not turn an inconclusive performance outcome into a measured gain. Include before/after when meaningful, retained/discarded hypotheses, conditions actually tested, evidence paths, why further work is or is not worthwhile, and a concrete condition for revisiting the result. A decision to stop does not prove impossibility.
 
 Before ending, save every attempted hypothesis and verdict using the record template. Keep TODO limited to practical unfinished actions; it must not accumulate completed attempts. Persist durable findings, failed approaches with their applicability limits, stop decisions and reopening conditions through cumulative-agent-memory with evidence anchors. Do not dump raw logs or routine run bookkeeping into memory. Keep experiment details in the canonical case; a stopped case's durable summary states the checked scope, evidence gap and reason for stopping. Reuse semantic experiment identity when citing the same evidence; a second chat is not an independent observation. Use available chat/worktree discovery to locate active records, with memory supplying durable conclusions after a worktree is gone.
 
