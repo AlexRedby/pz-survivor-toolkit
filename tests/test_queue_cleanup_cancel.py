@@ -9,6 +9,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from queue_checks.adapters import cleanup_cancel as a
 
 
+def placement_record(case, mode='local'):
+    target = dict(x=100, y=200, z=0)
+    actual = dict(x=100.5, y=200.5, z=0, square=target.copy(), currentSquare=target.copy())
+    if mode == 'local':
+        actual.update(queued=0, timed=False, moving=False, hasPath=False, deferredX=0, deferredY=0)
+    return dict(case=case, actor='client1', target=target, proof=dict(mode=mode, target=target.copy(), actual=actual,
+        teleports=1 if mode == 'local' else 0, stableMs=500, quietMs=500 if mode == 'local' else 0,
+        elapsedMs=1000 if mode == 'local' else 500))
+
+
+# These unit tests isolate cleanup effects from the independently tested native
+# placement protocol and its fresh setup/admission guards.
+LUA_FIXTURE_DEPENDENCIES = r"""
+fixtureTarget={x=100,y=200,z=0}
+fixturePlacement={target=function(value)assert(type(value)=='table');return {x=value.x,y=value.y,z=value.z}end,at=function()return true end}
+fixtureProof={mode='replica',target=fixtureTarget,teleports=0}
+fixtureJson={encode=function()return '{}'end}
+package.preload.QueueEnergyPlacement=function()return fixturePlacement end
+package.preload.QueueHealthEvents=function()return fixtureJson end
+"""
+
+
 def evidence(case, mode='toolkit', kind='mp'):
     enabled = mode == 'toolkit'; semantic = a.base_case(case); mask = semantic == a.BASE_CASES[0]; keep = enabled and semantic == 'p4-keep-return'
     items = dict(book=1, mask=2, food=3) if mask else dict(book=1, bag=2, borrowed=3, torch=4, secondary=5)
@@ -16,7 +38,7 @@ def evidence(case, mode='toolkit', kind='mp'):
     base = dict(case=case, items=inventory, book=219, primary=False if mask else 4, secondary=False if mask else 5,
                 maskWorn=mask, borrowedContainer=False if mask else 'bag', torchActive=not mask,
                 borrowed=False if mask else dict(pages=219, characterPages=219, total=220), food=dict(hunger=-.4, base=-.4, uses=1) if mask else False)
-    ids = dict(case=case, actor=7, items=items, pages=220, initial=219, baseline=copy.deepcopy(base))
+    ids = dict(case=case, actor=7, placement=placement_record(case)['target'], items=items, pages=220, initial=219, baseline=copy.deepcopy(base))
     if not mask: ids.update(borrowedType='Base.BookFirstAid1', borrowedPages=220, borrowedInitial=219)
     final = copy.deepcopy(base); final['book'] = 220
     if mask: final['food']['hunger'] = -.3
@@ -94,6 +116,38 @@ def evidence(case, mode='toolkit', kind='mp'):
     selection = dict(suite='cleanup-cancel', cases=a.CASES, kind=kind, mode=mode, languages=['EN'], clients=1, mods=a.MODS,
                      options={'mp_host': True} if kind == 'mp' else {})
     return row, selection, receipts
+
+
+def raw_line(marker, value):
+    return a.PREFIX + marker + ' ' + json.dumps(value)
+
+
+def logs(rows, selection):
+    event = lambda row: '[QUEUE_CHECK] ' + json.dumps(row)
+    client = [event(dict(event='setup', suite='cleanup-cancel', cases=selection['cases'],
+                         queueEnabled=selection['mode'] == 'toolkit', nativeDurations=True))]
+    server = []
+    authority = server if selection['kind'] == 'mp' else client
+    for row, _, receipts in rows:
+        case = row['id']
+        client.append(raw_line('CLIENT_PLACEMENT', placement_record(case)))
+        authority.extend([raw_line('AUTHORITY_PLACEMENT', placement_record(case, 'replica' if selection['kind'] == 'mp' else 'local')),
+                          raw_line('PREPARED', row['ids']), raw_line('BASELINE_CONFIRMED', row['authorityBaseline'])])
+        client.extend([raw_line('BASELINE', row['baseline']), raw_line('ADMITTED', dict(case=case, actor='client1')),
+                       raw_line('BOUNDARY', row['boundary'])])
+        authority.append(raw_line('CHECKPOINT', row['checkpoint']))
+        client.extend([raw_line('TAIL_STARTED', row['tailSnapshot']),
+                       *[raw_line('NATIVE_STATE', receipt) for receipt in receipts],
+                       *[raw_line('EDITOR_TRANSITION', transition) for transition in row['editorTransitions']]])
+        if row['bodyTerminal']:
+            client.append(raw_line('BODY_SETTLED', row['bodyTerminal']))
+        client.append(raw_line('P4_IDLE', row['idleEvidence']))
+        authority.append(raw_line('VERIFY', row['server']))
+        client.append(event(row))
+    client.extend([event(dict(event='complete', suite='cleanup-cancel', cases=selection['cases'],
+                              performed=len(selection['cases']), skipped=0, failed=0)),
+                   raw_line('COMPLETE', dict(cases=selection['cases']))])
+    return client, server
 
 
 class CleanupCancelChecks(unittest.TestCase):
@@ -254,6 +308,7 @@ class CleanupCancelChecks(unittest.TestCase):
             self.skipTest('Lupa Lua5.1 is required for fixture source regression')
         lua = LuaRuntime(unpack_returned_tuples=True)
         source = Path(__file__).resolve().parent / 'native_queue/cleanup-cancel/shared/QueueCleanupCancel.lua'
+        lua.execute(LUA_FIXTURE_DEPENDENCIES)
         fixture = lua.execute(source.read_text())
         action = lua.eval('''function()
             local item={};local value={Type='ISInventoryTransferAction',item=item,maxTime=120.00208854675293,
@@ -276,12 +331,12 @@ class CleanupCancelChecks(unittest.TestCase):
             self.skipTest('Lupa Lua5.1 is required for fixture source regression')
         lua = LuaRuntime(unpack_returned_tuples=True)
         source = Path(__file__).resolve().parent / 'native_queue/cleanup-cancel/shared/QueueCleanupCancel.lua'
+        lua.execute(LUA_FIXTURE_DEPENDENCIES)
         lua.globals().F = lua.execute(source.read_text())
         lua.execute(r"""
             local client,server=false,true
             isClient=function()return client end;isServer=function()return server end
             Perks={Woodwork='wood',Doctor='doctor'};CharacterStat={HUNGER='hunger'};ItemTag={CAN_EAT='eat'}
-            package.preload.QueueEnergyPlacement=function()return function()end end
             local serial,writes=100,0
             local function list(values)
                 return{values=values,size=function(self)return #self.values end,get=function(self,i)return self.values[i+1]end}
@@ -348,7 +403,7 @@ class CleanupCancelChecks(unittest.TestCase):
                     assert(owner==authority.inventory,'nested child must travel only within its serialized root bag')
                     assert(not sent[value.id],'root seed sent twice');sent[value.id]=true
                 end
-                local prepared=F.prepare(authority,case)
+                local prepared=F.prepare(authority,case,fixtureTarget,fixtureProof)
                 if prepared.borrowed then assert(not sent[prepared.borrowed.id]and sent[prepared.bag.id])end
                 local localPlayer=player()
                 local function copy(from,to)
@@ -405,6 +460,7 @@ class CleanupCancelChecks(unittest.TestCase):
             self.skipTest('Lupa Lua5.1 is required for actual observer source regression')
         lua = LuaRuntime(unpack_returned_tuples=True)
         root = Path(__file__).resolve().parent / 'native_queue/cleanup-cancel'
+        lua.execute(LUA_FIXTURE_DEPENDENCIES)
         lua.globals().F = lua.execute((root / 'shared/QueueCleanupCancel.lua').read_text())
         source = (root / 'client/ZZQueueCleanupCancel.lua').read_text()
         observer = source[source.index('local function classify(action)'):source.index('local function intact()')]
@@ -515,18 +571,8 @@ class CleanupCancelChecks(unittest.TestCase):
 
     def test_raw_authority_gate_does_not_trust_emitted_case_alone(self):
         rows = [evidence(case) for case in a.CASES]; selection = rows[0][1]
-        setup = dict(event='setup', suite='cleanup-cancel', cases=a.CASES, queueEnabled=True, nativeDurations=True)
-        completed = dict(event='complete', suite='cleanup-cancel', cases=a.CASES, performed=len(a.CASES), skipped=0, failed=0)
-        def event(row): return '[QUEUE_CHECK] ' + json.dumps(row)
-        def raw(name, value): return a.PREFIX + name + ' ' + json.dumps(value)
-        client = [event(setup)]; server = []
-        for row, _, receipts in rows:
-            client += [raw('P4_IDLE', row['idleEvidence']), raw('BASELINE', row['baseline']), raw('BOUNDARY', row['boundary']), raw('TAIL_STARTED', row['tailSnapshot']),
-                       *[raw('NATIVE_STATE', r) for r in receipts], event(row)]
-            client += [raw('EDITOR_TRANSITION', transition) for transition in row['editorTransitions']]
-            if row['bodyTerminal']: client.append(raw('BODY_SETTLED', row['bodyTerminal']))
-            server += [raw('PREPARED', row['ids']), raw('BASELINE_CONFIRMED', row['authorityBaseline']), raw('CHECKPOINT', row['checkpoint']), raw('VERIFY', row['server'])]
-        client += [event(completed), raw('COMPLETE', {'cases': a.CASES})]
+        client, server = logs(rows, selection)
+        raw = raw_line
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / 'client1-launch.log').write_text('\n'.join(client)); (root / 'server-launch.log').write_text('\n'.join(server))
             self.assertEqual([], a.verify(root, selection, {})['issues'])
@@ -554,6 +600,140 @@ class CleanupCancelChecks(unittest.TestCase):
             self.assertTrue(a.verify(root, selection, {})['issues'])
             (root / 'server-launch.log').write_text('\n'.join(server[:-1]))
             self.assertTrue(a.verify(root, selection, {})['issues'])
+
+    def test_placement_is_strict_in_all_four_controls(self):
+        def change(lines, marker, mutate, index=1):
+            position = [i for i, line in enumerate(lines) if line.startswith(a.PREFIX + marker + ' ')][index]
+            value = json.loads(lines[position].split(marker + ' ', 1)[1])
+            mutate(value)
+            lines[position] = raw_line(marker, value)
+
+        def move(lines, marker, before, index=1):
+            position = [i for i, line in enumerate(lines) if line.startswith(a.PREFIX + marker + ' ')][index]
+            line = lines.pop(position)
+            destination = [i for i, line in enumerate(lines) if line.startswith(a.PREFIX + before + ' ')][index]
+            lines.insert(destination, line)
+
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                rows = [evidence(case, mode, kind) for case in a.CASES]
+                selection = rows[0][1]
+                original_client, original_server = logs(rows, selection)
+
+                def verify(mutate=None):
+                    client, server = original_client.copy(), original_server.copy()
+                    authority = server if kind == 'mp' else client
+                    if mutate:
+                        mutate(client, authority)
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        (root / 'client1-launch.log').write_text('\n'.join(client))
+                        (root / 'server-launch.log').write_text('\n'.join(server))
+                        return a.verify(root, selection, {})['issues']
+
+                with self.subTest(kind=kind, mode=mode):
+                    self.assertEqual([], verify())
+                mutations = {
+                    'foreign actor': lambda v: v.update(actor='client2'),
+                    'stale case': lambda v: v.update(case=a.CASES[0]),
+                    'extra field': lambda v: v.update(extra=True),
+                    'wrong role': lambda v: v['proof'].update(mode='replica'),
+                    'target mismatch': lambda v: v['target'].update(x=101),
+                    'motion': lambda v: v['proof']['actual'].update(moving=True),
+                    'path': lambda v: v['proof']['actual'].update(hasPath=True),
+                    'native queued': lambda v: v['proof']['actual'].update(queued=1),
+                    'native timed': lambda v: v['proof']['actual'].update(timed=True),
+                    'deferred motion': lambda v: v['proof']['actual'].update(deferredY=.1),
+                    'physical drift': lambda v: v['proof']['actual'].update(x=101.1),
+                    'stale current square': lambda v: v['proof']['actual']['currentSquare'].update(y=199),
+                    'stale square': lambda v: v['proof']['actual']['square'].update(y=199),
+                    'teleport count': lambda v: v['proof'].update(teleports=2),
+                    'stability': lambda v: v['proof'].update(stableMs=499),
+                    'quiet': lambda v: v['proof'].update(quietMs=499),
+                    'short elapsed': lambda v: v['proof'].update(elapsedMs=999),
+                    'deadline': lambda v: v['proof'].update(elapsedMs=30000),
+                    'invalid numeric': lambda v: v['proof'].update(stableMs=float('nan')),
+                    'boolean target': lambda v: v['target'].update(z=False),
+                    'extra proof field': lambda v: v['proof'].update(at=10),
+                }
+                for name, mutate in mutations.items():
+                    with self.subTest(kind=kind, mode=mode, invalid=name):
+                        self.assertTrue(verify(lambda c, s: change(c, 'CLIENT_PLACEMENT', mutate)))
+                for marker in ('CLIENT_PLACEMENT', 'AUTHORITY_PLACEMENT', 'ADMITTED'):
+                    def selected(c, s):
+                        return s if marker == 'AUTHORITY_PLACEMENT' else c
+                    with self.subTest(kind=kind, mode=mode, marker=marker, invalid='missing'):
+                        self.assertTrue(verify(lambda c, s: selected(c, s).__setitem__(slice(None),
+                            [line for line in selected(c, s) if not line.startswith(a.PREFIX + marker + ' ')])))
+                    with self.subTest(kind=kind, mode=mode, marker=marker, invalid='duplicate'):
+                        self.assertTrue(verify(lambda c, s: selected(c, s).append(
+                            next(line for line in selected(c, s) if line.startswith(a.PREFIX + marker + ' ')))))
+                    with self.subTest(kind=kind, mode=mode, marker=marker, invalid='malformed'):
+                        self.assertTrue(verify(lambda c, s: selected(c, s).append(a.PREFIX + marker)))
+                for name, mutate in {
+                    'authority actor': lambda v: v.update(actor='client2'),
+                    'authority mode': lambda v: v['proof'].update(mode='local' if kind == 'mp' else 'replica'),
+                    'authority teleports': lambda v: v['proof'].update(teleports=1 if kind == 'mp' else 0),
+                    'authority stale coordinates': lambda v: v['proof']['actual'].update(z=1),
+                    'authority target': lambda v: v['target'].update(x=99),
+                    'authority unstable': lambda v: v['proof'].update(stableMs=499),
+                    'authority deadline': lambda v: v['proof'].update(elapsedMs=30000),
+                    'authority quiet': lambda v: v['proof'].update(quietMs=500 if kind == 'mp' else 0),
+                }.items():
+                    with self.subTest(kind=kind, mode=mode, invalid=name):
+                        self.assertTrue(verify(lambda c, s: change(s, 'AUTHORITY_PLACEMENT', mutate)))
+                invalid_streams = {
+                    'admission actor': lambda c, s: change(c, 'ADMITTED', lambda v: v.update(actor='client2')),
+                    'admission extra': lambda c, s: change(c, 'ADMITTED', lambda v: v.update(at=20)),
+                    'admission stale case': lambda c, s: change(c, 'ADMITTED', lambda v: v.update(case=a.CASES[0])),
+                    'admission before baseline': lambda c, s: move(c, 'ADMITTED', 'BASELINE'),
+                    'baseline before placement': lambda c, s: move(c, 'BASELINE', 'CLIENT_PLACEMENT'),
+                    'native boundary before admission': lambda c, s: move(c, 'BOUNDARY', 'ADMITTED'),
+                    'tail before admission': lambda c, s: move(c, 'TAIL_STARTED', 'ADMITTED'),
+                    'idle before admission': lambda c, s: move(c, 'P4_IDLE', 'ADMITTED'),
+                    'prepare before authority receipt': lambda c, s: move(s, 'PREPARED', 'AUTHORITY_PLACEMENT'),
+                    'ack before prepare': lambda c, s: move(s, 'BASELINE_CONFIRMED', 'PREPARED'),
+                    'checkpoint before ack': lambda c, s: move(s, 'CHECKPOINT', 'BASELINE_CONFIRMED'),
+                    'verify before checkpoint': lambda c, s: move(s, 'VERIFY', 'CHECKPOINT'),
+                    'stale ids target': lambda c, s: change(s, 'PREPARED', lambda v: v['placement'].update(x=101)),
+                    'missing ids binding': lambda c, s: change(s, 'PREPARED', lambda v: v.pop('placement')),
+                }
+                if kind == 'sp':
+                    invalid_streams['SP proof changed'] = lambda c, s: change(s, 'AUTHORITY_PLACEMENT', lambda v: v['proof'].update(elapsedMs=1001))
+                    invalid_streams['checkpoint before boundary'] = lambda c, s: move(c, 'CHECKPOINT', 'BOUNDARY')
+                    invalid_streams['terminal verify before idle'] = lambda c, s: move(c, 'VERIFY', 'P4_IDLE')
+                else:
+                    invalid_streams['client impersonates authority'] = lambda c, s: c.append(next(line for line in s if ' AUTHORITY_PLACEMENT ' in line))
+                    invalid_streams['authority impersonates client'] = lambda c, s: s.append(next(line for line in c if ' CLIENT_PLACEMENT ' in line))
+                    invalid_streams['ACK before admission'] = lambda c, s: move(c, 'NATIVE_STATE', 'ADMITTED', index=0)
+                for name, mutate in invalid_streams.items():
+                    with self.subTest(kind=kind, mode=mode, invalid=name):
+                        self.assertTrue(verify(mutate))
+
+                def different_cached_target(client, authority):
+                    for lines, marker in ((client, 'CLIENT_PLACEMENT'), (authority, 'AUTHORITY_PLACEMENT')):
+                        def shifted(v):
+                            v['target']['x'] += 1
+                            v['proof']['target']['x'] += 1
+                            v['proof']['actual']['x'] += 1
+                            for key in ('square', 'currentSquare'):
+                                v['proof']['actual'][key]['x'] += 1
+                        change(lines, marker, shifted)
+                    change(authority, 'PREPARED', lambda v: v['placement'].update(x=101))
+                    # Keep emitted IDs consistent so the dedicated cached-target
+                    # invariant, rather than the raw/case equality, rejects this.
+                    for i, line in enumerate(client):
+                        if line.startswith('[QUEUE_CHECK] '):
+                            value = json.loads(line.split('[QUEUE_CHECK] ', 1)[1])
+                            if value.get('event') == 'case' and value.get('id') == a.CASES[1]:
+                                value['ids']['placement']['x'] = 101
+                                client[i] = '[QUEUE_CHECK] ' + json.dumps(value)
+                with self.subTest(kind=kind, mode=mode, invalid='changed cached target'):
+                    self.assertTrue(verify(different_cached_target))
+
+    def test_placement_validator_is_source_pinned(self):
+        project = Path(__file__).resolve().parents[1]
+        self.assertIn(project / 'tools/queue_checks/placement.py', a.sources(project, {}))
 
     def test_actual_panel_helper_uses_reason_only_preview_before_press_release(self):
         from lupa.lua51 import LuaRuntime, LuaError
@@ -700,19 +880,7 @@ class CleanupCancelChecks(unittest.TestCase):
 
     def test_p4_subset_has_exact_raw_evidence_without_a_mask_rerun(self):
         rows = [evidence(case) for case in a.CASES[1:]]; selection = rows[0][1]; selection['cases'] = a.CASES[1:]
-        event = lambda row: '[QUEUE_CHECK] ' + json.dumps(row)
-        raw = lambda name, value: a.PREFIX + name + ' ' + json.dumps(value)
-        client = [event(dict(event='setup', suite='cleanup-cancel', cases=selection['cases'], queueEnabled=True, nativeDurations=True))]
-        server = []
-        for row, _, receipts in rows:
-            client += [raw('BASELINE', row['baseline']), raw('BOUNDARY', row['boundary']), raw('TAIL_STARTED', row['tailSnapshot']),
-                       raw('BODY_SETTLED', row['bodyTerminal']), raw('P4_IDLE', row['idleEvidence']),
-                       *[raw('EDITOR_TRANSITION', transition) for transition in row['editorTransitions']],
-                       *[raw('NATIVE_STATE', receipt) for receipt in receipts], event(row)]
-            server += [raw('PREPARED', row['ids']), raw('BASELINE_CONFIRMED', row['authorityBaseline']),
-                       raw('CHECKPOINT', row['checkpoint']), raw('VERIFY', row['server'])]
-        client += [event(dict(event='complete', suite='cleanup-cancel', cases=selection['cases'], performed=len(selection['cases']), skipped=0, failed=0)),
-                   raw('COMPLETE', {'cases': selection['cases']})]
+        client, server = logs(rows, selection)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); (root / 'client1-launch.log').write_text('\n'.join(client)); (root / 'server-launch.log').write_text('\n'.join(server))
             result = a.verify(root, selection, {})

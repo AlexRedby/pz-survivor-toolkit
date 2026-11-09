@@ -3,7 +3,7 @@ import json
 import re
 import shutil
 from pathlib import Path
-from .. import report
+from .. import placement, report
 from .tv_controls import MODS, _number
 
 BASE_CASES = ['mask-after-removal', 'p4-after-pickup', 'p4-keep-return']
@@ -40,7 +40,8 @@ def validate(selection):
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     code = Path(project) / 'PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit'
-    return [Path(__file__).with_name('tv_controls.py'), code / 'ActionQueuePanel.lua', code / 'ActionQueueTidyIntent.lua',
+    return [Path(__file__).with_name('tv_controls.py'), Path(__file__).parents[1] / 'placement.py',
+            code / 'ActionQueuePanel.lua', code / 'ActionQueueTidyIntent.lua',
             *sorted((root / 'cleanup-cancel').rglob('*.lua')),
             *sorted((root / 'startup').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
 
@@ -59,6 +60,85 @@ def stage(project, output, game, jdk, selection, locations, runtime):
 
 def raw(text, marker):
     return [json.loads(m.group(1)) for m in re.finditer(re.escape(PREFIX + marker + ' ') + r'([^\n]+)', text)]
+
+
+def _placement_records(text, marker):
+    records = []
+    for match in re.finditer(re.escape(PREFIX + marker) + r'(?=\s|$)([^\r\n]*)', text):
+        value = json.loads(match[1])
+        if not isinstance(value, dict):
+            raise ValueError('Malformed cleanup ' + marker + ' record')
+        records.append((match.start(), value))
+    return records
+
+
+def _placement_errors(selection, client, authority, rows):
+    """Bind past placement receipts to setup and fresh process-local admission."""
+    cases = selection['cases']
+    local = _placement_records(client, 'CLIENT_PLACEMENT')
+    remote = _placement_records(authority, 'AUTHORITY_PLACEMENT')
+    admitted = _placement_records(client, 'ADMITTED')
+    prepared = _placement_records(authority, 'PREPARED')
+    confirmed = _placement_records(authority, 'BASELINE_CONFIRMED')
+    baselines = _placement_records(client, 'BASELINE')
+    checkpoints = _placement_records(authority, 'CHECKPOINT')
+    verified = _placement_records(authority, 'VERIFY')
+    publications = []
+    for match in re.finditer(re.escape('[QUEUE_CHECK] ') + r'([^\r\n]*)', client):
+        value = json.loads(match[1])
+        if isinstance(value, dict) and value.get('suite') == 'cleanup-cancel' and value.get('event') == 'case':
+            publications.append((match.start(), value))
+    streams = (local, remote, admitted, prepared, confirmed, baselines, checkpoints, verified)
+    if (any([value.get('case') for _, value in stream] != cases for stream in streams)
+            or [value.get('id') for _, value in publications] != cases
+            or [row.get('id') for row in rows] != cases):
+        raise ValueError('Cleanup placement/setup/admission missing, duplicate, foreign or reordered')
+    if selection['kind'] == 'mp':
+        for text, markers in ((client, ('AUTHORITY_PLACEMENT', 'PREPARED', 'BASELINE_CONFIRMED', 'CHECKPOINT', 'VERIFY')),
+                              (authority, ('CLIENT_PLACEMENT', 'ADMITTED', 'BASELINE', 'BOUNDARY', 'TAIL_STARTED',
+                                           'BODY_SETTLED', 'P4_IDLE', 'EDITOR_TRANSITION', 'NATIVE_STATE'))):
+            if any(_placement_records(text, marker) for marker in markers):
+                raise ValueError('Cleanup placement or native evidence published by wrong process')
+    witnesses = []
+    boundary_positions = []
+    # BOUNDARY has no case field. Bind it through the already required exact row
+    # equality and selected-case order rather than trusting a new claimed ID.
+    for marker in ('BOUNDARY', 'TAIL_STARTED', 'BODY_SETTLED', 'P4_IDLE', 'EDITOR_TRANSITION', 'NATIVE_STATE'):
+        records = _placement_records(client, marker)
+        if marker == 'BOUNDARY':
+            if len(records) != len(cases):
+                raise ValueError('Cleanup native boundary count differs')
+            boundary_positions = [position for position, _ in records]
+            witnesses.extend((position, cases[i]) for i, (position, _) in enumerate(records))
+        else:
+            witnesses.extend((position, value.get('case')) for position, value in records)
+    if any(case not in cases for _, case in witnesses):
+        raise ValueError('Cleanup native witness belongs to a foreign case')
+    for i, case in enumerate(cases):
+        lp, local_row = local[i]; rp, remote_row = remote[i]
+        ap, admission = admitted[i]; pp, ids = prepared[i]
+        bp, _ = baselines[i]; ack, _ = confirmed[i]
+        kp, _ = checkpoints[i]; vp, _ = verified[i]; cp, _ = publications[i]
+        for receipt in (local_row, remote_row):
+            if set(receipt) != {'case', 'actor', 'target', 'proof'} or receipt['actor'] != 'client1':
+                raise ValueError('Malformed cleanup placement identity')
+        target = local_row['target']
+        placement.validate(local_row['proof'], target, 'local')
+        placement.validate(remote_row['proof'], remote_row['target'], 'replica' if selection['kind'] == 'mp' else 'local')
+        if (remote_row['target'] != target or target != local[0][1]['target']
+                or selection['kind'] == 'sp' and remote_row != local_row):
+            raise ValueError('Cleanup placement cached target or SP proof differs')
+        if ids.get('placement') != target or rows[i].get('ids', {}).get('placement') != target:
+            raise ValueError('Cleanup placement differs from prepared identities')
+        if admission != {'case': case, 'actor': 'client1'}:
+            raise ValueError('Malformed cleanup native admission identity')
+        if (not lp < bp < ap < cp or not rp < pp < ack < kp < vp
+                or selection['kind'] == 'sp' and not lp < rp < pp < ack < bp < ap < kp < vp < cp
+                or selection['kind'] == 'sp' and (boundary_positions[i] >= kp
+                    or any(position >= vp for position, witness_case in witnesses if witness_case == case))
+                or any(not ap < position < cp for position, witness_case in witnesses if witness_case == case)
+                or i and (publications[i - 1][0] >= lp or verified[i - 1][0] >= rp)):
+            raise ValueError('Cleanup placement did not precede setup and native admission')
 
 
 def complete(selection, role, text):
@@ -333,6 +413,10 @@ def verify(root, selection, catalog):
         events = [r for r in report.events(text) if r.get('suite') == 'cleanup-cancel']
         setups = [r for r in events if r.get('event') == 'setup']; completed = [r for r in events if r.get('event') == 'complete']
         rows = [r for r in events if r.get('event') == 'case']
+        try:
+            _placement_errors(selection, text, authority, rows)
+        except (KeyError, ValueError, TypeError, AttributeError) as error:
+            issues.append(str(error))
         if (len(setups) != 1 or setups[0].get('queueEnabled') is not (selection['mode'] == 'toolkit')
                 or setups[0].get('nativeDurations') is not True or setups[0].get('cases') != cases
                 or len(completed) != 1 or completed[0].get('performed') != len(cases) or completed[0].get('failed') != 0

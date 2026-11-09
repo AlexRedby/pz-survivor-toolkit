@@ -1,6 +1,7 @@
 require'PZSurvivorToolkit/ActionQueuePanel'
 require'TimedActions/ISReadABook'
 local F=require'QueueCleanupCancel';local JSON=require'QueueHealthEvents';local config=require'QueueTestSelection'
+local P=require'QueueEnergyPlacement'
 local T=PZSurvivorToolkit;local native=config.mode=='native'
 local phase,index,since='prepare',1,0
 local entered,ready,done=false,false,false
@@ -8,6 +9,7 @@ local state,ids,baseline,checkpoint,final,records,byAction,cancelEvidence,tailSn
 local bodyTerminal,idleEvidence,editorTransitions
 local resolveLast,resolveSeen=nil,{}
 local authorityStart,baselineRequested
+local placementTarget,placementState,clientPlacement
 local serial=0;local tokenSerial=0;local tokenIds={};local classes={};local completedStates={}
 local function case()return config.cases[index]end
 local function now()return getTimestampMs()end
@@ -145,8 +147,13 @@ local function observe()
  intact()
 end
 local function request(command)
- if isClient()then sendClientCommand('QueueCleanupCancelTest',command,{case=case()});return end
- if command=='Prepare'then state=F.prepare(getPlayer(),case());ids=state.ids;raw('PREPARED',ids);authorityStart=snapshot();raw('BASELINE_CONFIRMED',authorityStart)
+ local args={case=case()}
+ if command=='Prepare'then
+  assert(clientPlacement and P.at(getPlayer(),placementTarget),'cleanup Prepare requires fresh client arrival')
+  args.target=P.target(placementTarget);args.clientPlacement=clientPlacement
+ end
+ if isClient()then sendClientCommand('QueueCleanupCancelTest',command,args);return end
+ if command=='Prepare'then state=F.prepare(getPlayer(),case(),placementTarget,clientPlacement);ids=state.ids;raw('PREPARED',ids);authorityStart=snapshot();raw('BASELINE_CONFIRMED',authorityStart)
  elseif command=='Checkpoint'then checkpoint=snapshot();raw('CHECKPOINT',checkpoint)
  elseif command=='Verify'then final=snapshot();raw('VERIFY',final)end
 end
@@ -177,11 +184,15 @@ Events.OnServerCommand.Add(function(module,command,args)
  end
 end)
 local function enqueue()
+ local target=P.target(ids.placement)
+ assert(placementTarget and target.x==placementTarget.x and target.y==placementTarget.y and target.z==placementTarget.z
+  and P.at(state.player,placementTarget),'cleanup client left prepared placement before admission')
  records,byAction,cancelEvidence,tailSnapshot,completedStates={}, {},nil,nil,{}
  editorTransitions={}
  state.keepReturn=case()=='p4-keep-return'and not native
  baseline=snapshot();assert(authorityStart and not F.baselineDifference(state,baseline),'exact local/authority baseline required');raw('BASELINE',baseline)
  assert(not state.player:isTimedActionInstant(),'native actions must keep their duration')
+ raw('ADMITTED',{case=case(),actor='client1'})
  local run=T.ActionQueueOperations.run
  if state.mask then
   assert(ISInventoryPaneContextMenu.getEatingMask(state.player,false)==state.mask,'exact native mask selector changed')
@@ -351,6 +362,7 @@ local function finish()
   outcome={cleanupRestored=true,tailCompleted=true,authoritative=true,cancelled=not native,normalNativeControl=native,cleanupBeforeTail=F.ownedCleanupBeforeTail(state,tailSnapshot),originalEquipmentBeforeTail=F.restored(state,tailSnapshot)}})
  PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native)
  index=index+1;state=nil;ids=nil;checkpoint=nil;final=nil;tail=nil;body=nil;prep=nil;quiet=nil;bodyTerminal=nil;idleEvidence=nil;resolveLast=nil;resolveSeen={};authorityStart=nil;baselineRequested=nil;since=now();phase='prepare'
+ placementState,clientPlacement=nil,nil
  if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,skipped=0,failed=0});raw('COMPLETE',{cases=config.cases});done=true end
 end
 require('QueuePreflight').onGameStart(Events,function()entered=true;since=now()end)
@@ -367,7 +379,13 @@ require('QueuePreflight').onTick(Events,function()
   end
   assert(now()-since<180000,'cleanup timeout '..tostring(case())..' phase='..phase)
   if state and records and observe()==false then return end
-  if phase=='prepare'then assert(empty());phase='prepared';request('Prepare')
+  if phase=='prepare'then
+   assert(empty());placementTarget=placementTarget or P.choose(player);placementState=P.begin(player,placementTarget);phase='placement'
+  elseif phase=='placement'then
+   clientPlacement=P.poll(placementState);if not clientPlacement then return end
+   assert(P.at(player,placementTarget),'cleanup client left final placement')
+   raw('CLIENT_PLACEMENT',{case=case(),actor='client1',target=P.target(placementTarget),proof=clientPlacement})
+   phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
    if not state then
     local diagnostic;state,diagnostic=F.resolve(player,ids)

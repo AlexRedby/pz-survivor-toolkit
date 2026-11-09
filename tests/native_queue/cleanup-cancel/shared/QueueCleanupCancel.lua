@@ -1,5 +1,6 @@
 -- All fixture writes occur before baseline; snapshots only read native state.
 local F={cases={'mask-after-removal','p4-after-pickup','p4-keep-return','p4-editor-off','p4-editor-reenabled'}}
+local P=require'QueueEnergyPlacement';local JSON=require'QueueHealthEvents'
 function F.baseCase(id)
  if id=='p4-editor-off'or id=='p4-editor-reenabled'then return'p4-after-pickup'end
  return id
@@ -88,13 +89,18 @@ local function clearHeadwear(player)
   end
  end
 end
-function F.prepare(player,id)
+function F.prepare(player,id,target,proof)
  assert(not isClient(),'cleanup fixture writes require SP/server authority')
+ target=P.target(target)
+ assert(type(proof)=='table'and proof.mode==(isServer()and'replica'or'local')
+  and proof.teleports==(isServer()and 0 or 1),'cleanup authority arrival proof missing')
+ local observed=P.target(proof.target)
+ assert(observed.x==target.x and observed.y==target.y and observed.z==target.z and P.at(player,target),'cleanup authority arrival target differs')
+ print('[QUEUE_CLEANUP] AUTHORITY_PLACEMENT '..JSON.encode({case=id,actor='client1',target=P.target(target),proof=proof}))
  player:setGodMod(true);player:setGhostMode(true);player:setAutoDrink(false)
- require('QueueEnergyPlacement')(player)
  -- Normalize only disposable headwear, retaining every native item in inventory.
  clearHeadwear(player)
- local root=player:getInventory();local ids={case=id,actor=player:getOnlineID(),items={},spawn={x=player:getX(),y=player:getY(),z=player:getZ()}}
+ local root=player:getInventory();local ids={case=id,actor=player:getOnlineID(),items={},placement=P.target(target)}
  local state={player=player,ids=ids}
  local function seed(name,kind,container)
   local item=assert((container or root):AddItem(kind));state[name]=item;ids.items[name]=item:getID();return item
