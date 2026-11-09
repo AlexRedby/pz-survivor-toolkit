@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.347
+
+- **Internal:** Prepare registered transfer-source descriptions once when their registry changes. Each decision still captures fresh source bindings, exact action/queue state and native facts; Host alias callbacks remain query-local. This removes repeated registry regrouping without caching edit permissions or changing transfer behavior.
+
 ### 0.1.346
 
 - **Internal:** Recognize independent adjacent device promotion and reader demotion through a shared route over the unchanged native dependency checks. Keep original returns, paid progress and edit permissions. The more expensive projected candidate is available only through an explicit read-only diagnostic; ordinary edits do not reconstruct its physical return facts. Initialize its Settlement dependency correctly when compatibility modules load Policy first. No capacity exception or whole-group return reconstruction is enabled.

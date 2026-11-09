@@ -129,6 +129,68 @@ do
     PZSurvivorToolkit.ActionQueueSettlement=settlement
     assert(endpointReads==0 and validate({schema=2}),'plain native source validator must remain separate from physical effect evidence')
     assert(not validate({schema=2}),'retained helper must preserve the one-use source validator')
+    -- Inspect only the descriptor identities of the genuine source factory.
+    -- This identity evidence is specific to the offline Lua debug host.
+    -- No source callback, validator or binding check is substituted here.
+    assert(debug and type(debug.getupvalue)=='function','source descriptor identity check requires the offline Lua debug host')
+    local function descriptor(name)
+        for index=1,80 do
+            local key,value=debug.getupvalue(factory,index)
+            if not key then break end
+            if key==name then return value end
+        end
+        error('missing prepared source descriptor: '..name)
+    end
+    local function globals(specifications)
+        for _,specification in ipairs(specifications)do if specification.owner==_G then return specification end end
+        error('source descriptor lost its global dependency schema')
+    end
+    local core=descriptor('sourceFactorySpecs')
+    local aliasSpecs=descriptor('sourceFactoryAliasSpecs')
+    local first,_,firstWatch=prepare(queue,current,action,factory)
+    local second,_,secondWatch=prepare(queue,current,action,factory)
+    assert(descriptor('sourceFactorySpecs')==core and descriptor('sourceFactoryAliasSpecs')==aliasSpecs,
+        'unchanged registry rebuilt its prepared source descriptions')
+    assert(first~=second and firstWatch~=secondWatch and firstWatch()and secondWatch(),
+        'reusable source description reused a decision watch or one-use validator')
+    action.retainedFixtureAnnotation=true
+    assert(not firstWatch()and not secondWatch(),'prepared source description cached action authority')
+    local _,_,freshWatch=prepare(queue,current,action,factory)
+    assert(type(freshWatch)=='function'and freshWatch(),'new preparation did not capture the changed action freshly')
+    local transaction=createItemTransaction
+    local aliasItem=f.item(current.item:getFullType())
+    aliasItem.id=current.item:getID()
+    action.queueList[1].items[1]=aliasItem
+    local _,aliasMember,aliasWatch=prepare(queue,current,action,factory)
+    local _,secondAlias,secondAliasWatch=prepare(queue,current,action,factory)
+    assert(aliasMember==aliasItem and secondAlias==aliasItem and type(aliasWatch)=='function'and aliasWatch()
+        and secondAliasWatch~=aliasWatch and secondAliasWatch(),
+        'source-only Host alias preparation lost its fresh binding contract')
+    assert(descriptor('sourceFactorySpecs')==core and descriptor('sourceFactoryAliasSpecs')==aliasSpecs and core~=aliasSpecs,
+        'Host alias rebuilt or mutated the shared source descriptions')
+    assert(#globals(core).keys==2 and #globals(aliasSpecs).keys==3 and globals(aliasSpecs).keys[3]=='createItemTransaction',
+        'Host transaction dependency escaped its separate immutable source description')
+    for index=1,#core-1 do assert(core[index]==aliasSpecs[index],'Host alias duplicated a shared module dependency description')end
+    createItemTransaction=function()error('changed transaction callback must not execute')end
+    assert(not aliasWatch()and not secondAliasWatch(),'Host alias lost its fresh transaction source watch')
+    action.queueList[1].items[1]=current.item
+    local _,_,ordinaryWatch=prepare(queue,current,action,factory)
+    assert(type(ordinaryWatch)=='function'and ordinaryWatch(),'ordinary source preparation inherited the alias dependency')
+    createItemTransaction=transaction
+    assert(ordinaryWatch(),'ordinary source watch incorrectly retained a transaction dependency')
+    -- A genuine source owner's definition-time registration replaces both
+    -- descriptions and revokes the old watch; no positive fake is installed.
+    local intent=f.project('ActionQueueTidyIntent')
+    assert(type(intent.queueObserverBinding)=='function'and not ordinaryWatch(),
+        'genuine source registration did not revoke the prior decision')
+    local newCore,newAlias=descriptor('sourceFactorySpecs'),descriptor('sourceFactoryAliasSpecs')
+    local _,_,registeredWatch=prepare(queue,current,action,factory)
+    assert(type(registeredWatch)=='function'and registeredWatch()and newCore~=core and newAlias~=aliasSpecs,
+        'genuine source registration did not replace both descriptions')
+    assert(owner.registerSourceFactory(intent,'queueObserverBinding',intent.queueObserverBinding))
+    prepare(queue,current,action,factory)
+    assert(descriptor('sourceFactorySpecs')==newCore and descriptor('sourceFactoryAliasSpecs')==newAlias,
+        'idempotent source registration unnecessarily replaced the descriptions')
     local calls=0;local replacement=function()calls=calls+1;error('replacement source factory executed')end
     owner.deferredTransferBinding=replacement
     assert(settlement.prepareRetainedTransferBinding(queue,current,action,factory)==nil and calls==0,

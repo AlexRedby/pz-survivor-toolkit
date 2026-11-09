@@ -249,6 +249,35 @@ local function bindingOwn(owner,key)
         if bindingEqual(name,key) then return value end
     end
 end
+-- Prepare only the registry description. Each query still captures fresh
+-- values/watches from it, and creates its own action/queue/physical leases.
+-- These owners already belong to the source registry; no item or queue is kept.
+local function sourceFactorySpecifications()
+    local specifications,byOwner,moduleKeys,seenModules={},{},{},{}
+    for _,record in bindingPairs(sourceFactories)do
+        local specification=byOwner[record.owner]
+        if not specification then
+            specification={owner=record.owner,keys={}}
+            byOwner[record.owner]=specification;specifications[#specifications+1]=specification
+        end
+        specification.keys[#specification.keys+1]=record.key
+        if not seenModules[record.module]then
+            seenModules[record.module]=true;moduleKeys[#moduleKeys+1]=record.module
+        end
+    end
+    if #moduleKeys>0 then specifications[#specifications+1]={owner=Toolkit,keys=moduleKeys}end
+    specifications[#specifications+1]={owner=Proof,keys={"captureBindings","closure"}}
+    specifications[#specifications+1]={owner=bindingGlobals,keys={"getFilenameOfClosure","toolkitLuaMetatableMatches"}}
+    -- Two immutable descriptions preserve the original one-capture boundary.
+    -- Only the dependency names are prepared; transaction values remain fresh.
+    local aliasSpecifications={}
+    for index,specification in bindingIpairs(specifications)do aliasSpecifications[index]=specification end
+    aliasSpecifications[#aliasSpecifications]={owner=bindingGlobals,
+        keys={"getFilenameOfClosure","toolkitLuaMetatableMatches","createItemTransaction"}}
+    return specifications,aliasSpecifications
+end
+local sourceFactorySpecs,sourceFactoryAliasSpecs=sourceFactorySpecifications()
+
 function Adapters.registerSourceFactory(owner,key,factory)
     if bindingType(owner)~="table" or bindingMeta(owner)~=nil or bindingType(factory)~="function"
         or bindingType(bindingCapture)~="function" or Proof.captureBindings~=bindingCapture
@@ -266,6 +295,9 @@ function Adapters.registerSourceFactory(owner,key,factory)
             local record={owner=owner,module=module,key=key,factory=factory}
             sourceFactories[slot],sourceFactoryRefs[factory]=record,record
             factoryRevision=factoryRevision+1
+            -- Replace the manifest rather than mutating one a nested query may
+            -- still be capturing. The revision fence revokes older decisions.
+            sourceFactorySpecs,sourceFactoryAliasSpecs=sourceFactorySpecifications()
             return true
         end
     end
@@ -536,22 +568,7 @@ function Adapters.deferredTransferBinding(action,current)
     for _,owner in ipairs({baseHooks,baseDelegates,guards[transfer],guards[lowlevel],sourceFactories,sourceFactoryRefs}) do
         if not capture(owner) then return end
     end
-    local factorySpecs,byOwner,moduleKeys,seenModules={},{},{},{}
-    for _,record in bindingPairs(sourceFactories) do
-        local specification=byOwner[record.owner]
-        if not specification then
-            specification={owner=record.owner,keys={}}
-            byOwner[record.owner]=specification;factorySpecs[#factorySpecs+1]=specification
-        end
-        specification.keys[#specification.keys+1]=record.key
-        if not seenModules[record.module] then seenModules[record.module]=true;moduleKeys[#moduleKeys+1]=record.module end
-    end
-    if #moduleKeys>0 then factorySpecs[#factorySpecs+1]={owner=Toolkit,keys=moduleKeys} end
-    factorySpecs[#factorySpecs+1]={owner=Proof,keys={"captureBindings","closure"}}
-    local globalKeys={"getFilenameOfClosure","toolkitLuaMetatableMatches"}
-    if alias then globalKeys[#globalKeys+1]="createItemTransaction" end
-    factorySpecs[#factorySpecs+1]={owner=bindingGlobals,keys=globalKeys}
-    local factoryWatch=bindingCapture(factorySpecs)
+    local factoryWatch=bindingCapture(alias and sourceFactoryAliasSpecs or sourceFactorySpecs)
     if not factoryWatch then return end
     local generation=own(queue,"toolkitOperationGeneration")
     local function unchanged()
