@@ -13,6 +13,10 @@ GAME_ARGUMENT = re.compile(
 )
 
 
+class ProbeTimeout(RuntimeError):
+    """A host probe timed out without producing a complete resource sample."""
+
+
 def parse_vm_stat(text):
     """Estimate reclaimable bytes without counting overlapping purgeable pages twice."""
     page = re.search(r'page size of (\d+) bytes', text)
@@ -106,4 +110,5 @@ def sample():
         reason = str(error) + (': ' + detail.strip()[:1000] if detail.strip() else '')
         if any(marker in reason.lower() for marker in ('operation not permitted', 'permission denied')):
             reason += '; host probes require the logged-in host session outside the sandbox (prepare/status/resume)'
-        raise RuntimeError('Cannot sample host resources: ' + reason) from error
+        failure = ProbeTimeout if isinstance(error, subprocess.TimeoutExpired) else RuntimeError
+        raise failure('Cannot sample host resources: ' + reason) from error

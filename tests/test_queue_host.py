@@ -114,11 +114,50 @@ class HostSampleTests(unittest.TestCase):
         for outputs in ([OSError('sampling denied')], ['invalid'], ['0 8', VM_STAT],
                         ['10000 0', VM_STAT], ['10000 8', 'broken vm_stat'],
                         ['10000 8', VM_STAT, 'bad ps', COMMANDS],
-                        [subprocess.TimeoutExpired('sysctl', 10)]):
+                        [subprocess.CalledProcessError(1, 'ps', stderr='permission denied')]):
             with self.subTest(outputs=outputs), patch.object(host.sys, 'platform', 'darwin'), \
                  patch.object(host.subprocess, 'check_output', side_effect=outputs), \
-                 self.assertRaisesRegex(RuntimeError, 'Cannot sample host resources'):
+                 self.assertRaisesRegex(RuntimeError, 'Cannot sample host resources') as raised:
                 host.sample()
+            self.assertNotIsInstance(raised.exception, host.ProbeTimeout)
+
+    def test_probe_timeout_preserves_diagnostic_and_cause_at_each_stage(self):
+        commands = [
+            ['/usr/sbin/sysctl', '-n', 'hw.memsize', 'hw.logicalcpu'],
+            ['/usr/bin/vm_stat'],
+            ['/bin/ps', '-axo', 'pid=,rss=,pcpu=,args='],
+            ['/bin/ps', '-axo', 'pid=,comm='],
+        ]
+        for stage, command in enumerate(commands):
+            error = subprocess.TimeoutExpired(command, 10, stderr=b'probe did not finish\n')
+            outputs = ['100000 8\n', VM_STAT, STATS, COMMANDS][:stage] + [error]
+            with self.subTest(command=command), patch.object(host.sys, 'platform', 'darwin'), \
+                 patch.object(host.subprocess, 'check_output', side_effect=outputs) as output, \
+                 self.assertRaises(host.ProbeTimeout) as raised:
+                host.sample()
+            self.assertIs(raised.exception.__cause__, error)
+            self.assertIn('Cannot sample host resources: ' + str(error), str(raised.exception))
+            self.assertIn('probe did not finish', str(raised.exception))
+            self.assertEqual(stage + 1, output.call_count)
+
+    def test_partial_ps_sample_does_not_reuse_previous_capacity_or_inventory(self):
+        for prefix, command in (([], 'pid=,rss=,pcpu=,args='), ([STATS], 'pid=,comm=')):
+            error = subprocess.TimeoutExpired(['/bin/ps', '-axo', command], 10)
+            outputs = ['100000 8', VM_STAT, STATS, COMMANDS,
+                       '200000 16', VM_STAT, *prefix, error]
+            with self.subTest(command=command), patch.object(host.sys, 'platform', 'darwin'), \
+                 patch.object(host.subprocess, 'check_output', side_effect=outputs):
+                self.assertEqual(100000, host.sample()['total_memory'])
+                with self.assertRaises(host.ProbeTimeout):
+                    host.sample()
+
+    def test_keyboard_interrupt_propagates_from_probe(self):
+        error = KeyboardInterrupt()
+        with patch.object(host.sys, 'platform', 'darwin'), \
+             patch.object(host.subprocess, 'check_output', side_effect=['100000 8', VM_STAT, error]), \
+             self.assertRaises(KeyboardInterrupt) as raised:
+            host.sample()
+        self.assertIs(raised.exception, error)
 
     def test_wrapper_exec_between_inventories_still_identifies_the_game(self):
         # Args may describe launchctl just before it execs Java; the later executable name is Java.
@@ -138,8 +177,10 @@ class HostSampleTests(unittest.TestCase):
                 host.sample()
 
     def test_unsupported_host_fails_closed(self):
-        with patch.object(host.sys, 'platform', 'win32'), self.assertRaisesRegex(RuntimeError, 'unsupported platform'):
+        with patch.object(host.sys, 'platform', 'win32'), \
+             self.assertRaisesRegex(RuntimeError, 'unsupported platform') as raised:
             host.sample()
+        self.assertNotIsInstance(raised.exception, host.ProbeTimeout)
 
 
 if __name__ == '__main__':

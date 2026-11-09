@@ -246,8 +246,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Handle slow host-resource probes while native admission is waiting under memory pressure: `tools/queue_checks/host.py` can time out its 10-second `ps` sample and abort an otherwise queued run. Keep capacity unknown and preserve resource guards; add bounded retry/cancellation diagnostics without admitting from stale data.
-
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.
 
 - [ ] Qualify a supported no-Unsafe class-injection path for ZombieBuddy/ByteBuddy on JDK 25. Headless Java checks emit `ClassInjector$UsingUnsafe` / `Unsafe.objectFieldOffset` notices after compiler diagnostics have been separated. ByteBuddy safe mode disables the current modular-JVM injection path, so do not add it merely to hide the notice. Check an upstream loader/library implementation with unchanged cold-load/retransform/auxiliary injection and SP/Host weaving before changing runtime configuration; keep this dependency notice visible meanwhile.

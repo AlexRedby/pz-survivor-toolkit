@@ -576,7 +576,15 @@ def _admit(root, selection, record, wait, legacy_lock):
                 if headless:
                     waiter['bank'] = record['bank']
                 _save(waiter, waiting_path.parent)
+            attempted = False
+            reason = 'Checking admission'
             while True:
+                if attempted and time.monotonic() >= deadline:
+                    updates.finish('expired')
+                    progress_finished = True
+                    raise RuntimeError(reason + ('; resource wait expired (no timing JVM launched)' if headless else
+                                                 '; resource wait expired (no game launched)'))
+                attempted = True
                 reason = None
                 details, peers = None, None
                 skipped = []
@@ -588,69 +596,82 @@ def _admit(root, selection, record, wait, legacy_lock):
                     position = next(index for index, item in enumerate(waiters, 1) if item['root'] == str(root))
                     # Update the current registry row rather than a stale local copy.
                     waiter = waiters[position - 1]
-                    if position > 1:
-                        reason, skipped, scheduling_state = _backfill_before(waiters[:position - 1], legacy)
-                    if reason is None:
-                        try:
-                            # Candidate admission retains every original lifetime/resource guard.
-                            fcntl.flock(legacy, (fcntl.LOCK_EX if request['exclusive'] else fcntl.LOCK_SH) | fcntl.LOCK_NB)
-                        except BlockingIOError:
-                            reason = ('Legacy or exclusive native work owns the resource lease' if headless else
-                                      'Legacy or exclusive native run is using the desktop')
-                    if reason is None:
-                        # One live observation decides both predecessor priority
-                        # and candidate capacity; no stale starvation proof is
-                        # combined with a newer, recovered capacity sample.
-                        if scheduling_state is None:
-                            snapshot = host.sample()
-                            records = _records(snapshot) + _preparations() + _timings()
-                        else:
-                            snapshot, records = scheduling_state
-                        peers = [item for item in records if item['root'] != str(root)]
-                        current = (owned(record, snapshot) if not contained else
-                                   [process for item in records if item['root'] == str(root)
-                                    for process in owned(item, snapshot)])
-                        if current:
-                            raise RuntimeError('Existing game process uses this profile: ' + str([p['pid'] for p in current]))
-                        if not contained and ((root / 'execution.json').exists() or list(root.glob('*-launch.log'))):
-                            raise ValueError('Run directory has already launched; prepare a fresh snapshot')
-                        reserved = {port for item in peers for port in item.get('ports', [])}
-                        permitted, details = capacity(snapshot, peers, request, os.getpid() if contained else None)
-                        disk_permitted = True
-                        if not headless:
-                            disk_permitted, details['disk'] = disk_capacity(root, 0 if preparation else request['instances'], peers)
-                        if any(item['phase'] in ('running', 'preparing', 'timing') and (request['exclusive'] or item['budget']['exclusive']) for item in peers):
-                            reason = ('Exclusive native run still has live game processes' if any(
-                                item['phase'] == 'running' for item in peers) else
-                                'Exclusive preparation or timing work still holds its lease')
-                        elif reserved.intersection(record.get('ports', [])):
-                            reason = 'UDP ports reserved by another native run: ' + str(record['ports'])
-                        elif not permitted:
-                            reason = ('Insufficient resources: need %.2f GiB / %.2f CPU; available after reserves %.2f GiB / %.2f CPU'
-                                      % (request['memory'] / 1024**3, request['cpu'], details['memory_available'] / 1024**3, details['cpu_available']))
-                        elif not disk_permitted:
-                            reason = disk_reason(details['disk'])
-                        else:
-                            endpoints_available = False
+                    try:
+                        if position > 1:
+                            reason, skipped, scheduling_state = _backfill_before(waiters[:position - 1], legacy)
+                        if reason is None:
                             try:
-                                with (nullcontext() if headless else _udp(record.get('ports', []))):
-                                    endpoints_available = True
-                                    record['started_at'] = time.time()
-                                    _directory(record_directory)
-                                    _save(record, record_directory)
-                                    admitted = True
-                                    waiting_path.unlink()
-                            except OSError as error:
-                                if endpoints_available:
-                                    raise
-                                reason = 'UDP endpoint unavailable: ' + str(error)
+                                # Candidate admission retains every original lifetime/resource guard.
+                                fcntl.flock(legacy, (fcntl.LOCK_EX if request['exclusive'] else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+                            except BlockingIOError:
+                                reason = ('Legacy or exclusive native work owns the resource lease' if headless else
+                                          'Legacy or exclusive native run is using the desktop')
+                        if reason is None:
+                            # One live observation decides both predecessor priority
+                            # and candidate capacity; no stale starvation proof is
+                            # combined with a newer, recovered capacity sample.
+                            if scheduling_state is None:
+                                snapshot = host.sample()
+                                records = _records(snapshot) + _preparations() + _timings()
+                            else:
+                                snapshot, records = scheduling_state
+                            peers = [item for item in records if item['root'] != str(root)]
+                            current = (owned(record, snapshot) if not contained else
+                                       [process for item in records if item['root'] == str(root)
+                                        for process in owned(item, snapshot)])
+                            if current:
+                                raise RuntimeError('Existing game process uses this profile: ' + str([p['pid'] for p in current]))
+                            if not contained and ((root / 'execution.json').exists() or list(root.glob('*-launch.log'))):
+                                raise ValueError('Run directory has already launched; prepare a fresh snapshot')
+                            reserved = {port for item in peers for port in item.get('ports', [])}
+                            permitted, details = capacity(snapshot, peers, request, os.getpid() if contained else None)
+                            disk_permitted = True
+                            if not headless:
+                                disk_permitted, details['disk'] = disk_capacity(root, 0 if preparation else request['instances'], peers)
+                            if any(item['phase'] in ('running', 'preparing', 'timing') and (request['exclusive'] or item['budget']['exclusive']) for item in peers):
+                                reason = ('Exclusive native run still has live game processes' if any(
+                                    item['phase'] == 'running' for item in peers) else
+                                    'Exclusive preparation or timing work still holds its lease')
+                            elif reserved.intersection(record.get('ports', [])):
+                                reason = 'UDP ports reserved by another native run: ' + str(record['ports'])
+                            elif not permitted:
+                                reason = ('Insufficient resources: need %.2f GiB / %.2f CPU; available after reserves %.2f GiB / %.2f CPU'
+                                          % (request['memory'] / 1024**3, request['cpu'], details['memory_available'] / 1024**3, details['cpu_available']))
+                            elif not disk_permitted:
+                                reason = disk_reason(details['disk'])
+                            else:
+                                endpoints_available = False
+                                try:
+                                    with (nullcontext() if headless else _udp(record.get('ports', []))):
+                                        endpoints_available = True
+                                        if wait > 0 and time.monotonic() >= deadline:
+                                            reason = 'Resource wait expired during admission checks'
+                                        else:
+                                            record['started_at'] = time.time()
+                                            _directory(record_directory)
+                                            _save(record, record_directory)
+                                            admitted = True
+                                            waiting_path.unlink()
+                                except OSError as error:
+                                    if endpoints_available:
+                                        raise
+                                    reason = 'UDP endpoint unavailable: ' + str(error)
+                    except host.ProbeTimeout as error:
+                        # A partial host observation proves neither capacity nor
+                        # predecessor starvation. Recompute the whole decision.
+                        reason = 'Host resources unknown; probe timed out: ' + str(error)
+                        details, peers = None, None
+                        snapshot = records = scheduling_state = None
+                        skipped = []
                     if not admitted:
                         fcntl.flock(legacy, fcntl.LOCK_UN)
                         if reason != waiter['reason']:
                             waiter['reason'] = reason
                             _save(waiter, waiting_path.parent)
                 if admitted:
-                    updates.update(position=position, backfilled=len(skipped),
+                    updates.update(position=position, backfilled=len(skipped), reason=None,
+                        available_memory_gib=round(details['memory_available'] / 1024**3, 2),
+                        available_cpu=round(details['cpu_available'], 2),
                         remaining_seconds=round(max(0, deadline - time.monotonic()), 1))
                     updates.finish('admitted')
                     progress_finished = True
@@ -675,6 +696,11 @@ def _admit(root, selection, record, wait, legacy_lock):
                     raise RuntimeError(reason + ('; resource wait expired (no timing JVM launched)' if headless else
                                                  '; resource wait expired (no game launched)'))
                 time.sleep(min(2, max(0, deadline - time.monotonic())))
+        except KeyboardInterrupt:
+            if not progress_finished:
+                updates.finish('cancelled')
+                progress_finished = True
+            raise
         finally:
             if not progress_finished:
                 updates.finish('failed')
