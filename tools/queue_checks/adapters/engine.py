@@ -1,10 +1,11 @@
 """Real generator completion/cancellation and independent native reading tails."""
 from pathlib import Path
+import json
 import os
 import re
 import shutil
 import subprocess
-from .. import preparation_process
+from .. import placement, preparation_process
 import zipfile
 
 CASES = ['repair', 'cancel', 'missing-target', 'late-continuation']
@@ -39,7 +40,9 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return sorted(path for path in (root / 'engine').rglob('*') if path.suffix in ('.lua', '.java')) + sorted((root / 'startup').rglob('*.lua'))
+    return (sorted(path for path in (root / 'engine').rglob('*') if path.suffix in ('.lua', '.java'))
+            + sorted((root / 'startup').rglob('*.lua'))
+            + [root / 'support/QueueEnergyPlacement.lua', root / 'health/shared/QueueHealthEvents.lua', Path(placement.__file__)])
 
 
 def _peer_probe(project, output, game, jdk, locations):
@@ -48,9 +51,16 @@ def _peer_probe(project, output, game, jdk, locations):
     classpath = os.pathsep.join(map(str, [Path(game) / 'projectzomboid.jar', Path(game) / 'ZombieBuddy.jar',
                                         Path(locations['PZToolkitJavaPatches']) / '42/media/java/PZToolkitJavaPatches.jar']))
     preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
-                    str(Path(project) / 'tests/native_queue/engine/java/Main.java')],
+                    str(Path(project) / 'tests/native_queue/engine/java/Main.java'),
+                    str(Path(project) / 'tests/native_queue/engine/java/EnginePeerProbeChecks.java')],
                    check=True, capture_output=True, text=True, timeout=60)
-    compiled = sorted(classes.rglob('*.class'))
+    # Exercise the real native stores before launching clients. A broken observer must
+    # fail preparation, rather than leaving a game run without cancellation evidence.
+    preparation_process.run([str(Path(jdk) / 'bin/java'), '-Djava.awt.headless=true',
+                    '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join([str(classes), classpath]),
+                    'zombie.core.EnginePeerProbeChecks'],
+                   cwd=game, check=True, capture_output=True, text=True, timeout=60)
+    compiled = sorted((classes / 'net/alexredby/queueengineprobe').glob('Main*.class'))
     if not compiled:
         raise ValueError('Engine peer probe compilation produced no classes')
     jar = classes.parent / 'EnginePeerProbe.jar'
@@ -82,6 +92,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
             target = lua / side / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(startup / side / name, target)
+        (lua / 'shared').mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(project) / 'tests/native_queue/health/shared/QueueHealthEvents.lua', lua / 'shared/QueueHealthEvents.lua')
     runtime.setdefault('fixture', {}).update(server_ready='[STARTUP_TEST] SERVER_READY',
                                             sandbox={'Zombies': 6, 'MinutesPerPage': 2.0})
 
@@ -91,26 +103,89 @@ def complete(selection, role, text):
         r'\[ENGINE_TEST\] COMPLETE cases=' + str(len(selection['cases'])) + r'(?:\s|$)', text)) == 1
 
 
+def _placement_rows(text, marker):
+    rows = []
+    for match in re.finditer(re.escape('[ENGINE_TEST] ' + marker) + r'(?=\s|$)([^\r\n]*)', text):
+        value = json.loads(match.group(1))
+        if not isinstance(value, dict) or set(value) != {'case', 'actor', 'target', 'proof'}:
+            raise ValueError('Malformed engine ' + marker)
+        rows.append((match.start(), value))
+    return rows
+
+
+def _placements(selection, clients, authority, actors):
+    """Tie each settled actor tile to the exact generator before native work."""
+    cases = selection['cases']
+    expected = {(actor, case) for actor in actors for case in cases}
+    authority_rows = _placement_rows(authority, 'AUTHORITY_PLACEMENT')
+    if (len(authority_rows) != len(expected)
+            or {(row['actor'], row['case']) for _, row in authority_rows} != expected):
+        raise ValueError('Missing, duplicate or foreign engine authority placement')
+    target_rows = []
+    for match in re.finditer(r'\[ENGINE_TEST\] TARGET(?=\s|$)([^\r\n]*)', authority):
+        target = re.fullmatch(r' case=(\S+) x=(-?\d+) y=(-?\d+) z=(-?\d+) index=(\d+) actor=(\S+)', match.group(1))
+        if not target:
+            raise ValueError('Malformed engine generator target')
+        case, x, y, z, index, actor = target.groups()
+        target_rows.append((match.start(), actor, case, dict(x=int(x), y=int(y), z=int(z)), int(index)))
+    if (len(target_rows) != len(expected)
+            or {(row[1], row[2]) for row in target_rows} != expected):
+        raise ValueError('Missing, duplicate or foreign exact engine generator target')
+    evidence, footprints = {}, {}
+    for actor in actors:
+        client = clients[actor]
+        local_rows = _placement_rows(client, 'CLIENT_PLACEMENT')
+        remote_rows = [(position, row) for position, row in authority_rows if row['actor'] == actor]
+        if ([(row['actor'], row['case']) for _, row in local_rows] != [(actor, case) for case in cases]
+                or [row['case'] for _, row in remote_rows] != cases):
+            raise ValueError(actor + ': engine placements missing, duplicated, foreign or out of order')
+        actor_footprint = set()
+        for (local_position, local), (remote_position, remote) in zip(local_rows, remote_rows):
+            case, target = local['case'], local['target']
+            placement.validate(local['proof'], target, 'local')
+            placement.validate(remote['proof'], remote['target'], 'replica' if selection['kind'] == 'mp' else 'local')
+            if remote['target'] != target or selection['kind'] == 'sp' and remote != local:
+                raise ValueError(actor + ': engine local and authority placement differ: ' + case)
+            if target != local_rows[0][1]['target']:
+                raise ValueError(actor + ': engine standing layout changed between cases')
+            generator = next(row for row in target_rows if row[1:3] == (actor, case))
+            if generator[3] != dict(x=target['x'] + 1, y=target['y'], z=target['z']):
+                raise ValueError(actor + ': engine standing tile differs from exact generator: ' + case)
+            prepared = list(re.finditer(re.escape(f'[ENGINE_TEST] PREPARED case={case} ')
+                            + r'[^\r\n]*' + re.escape(' actor=' + actor) + r'\r?$', authority, re.MULTILINE))
+            enqueued = list(re.finditer(re.escape(f'[ENGINE_TEST] ENQUEUED case={case} '), client))
+            if (len(prepared) != 1 or len(enqueued) != 1
+                    or not remote_position < prepared[0].start() < generator[0]
+                    or local_position > enqueued[0].start()
+                    or selection['kind'] == 'sp' and not local_position < remote_position < enqueued[0].start()):
+                raise ValueError(actor + ': engine placement did not precede preparation and native work: ' + case)
+            actor_footprint.update(tuple(point[key] for key in ('x', 'y', 'z')) for point in (target, generator[3]))
+            evidence[(actor, case)] = dict(client=local['proof'], authority=remote['proof'], generator=dict(generator[3], index=generator[4]))
+        if any(actor_footprint & other for other in footprints.values()):
+            raise ValueError('Peer native generator/standing footprints overlap')
+        footprints[actor] = actor_footprint
+    return evidence
+
+
 def verify(root, selection, catalog):
     root = Path(root)
     issues, outcomes = [], []
     peers = selection.get('suite') == 'engine-peers'
     enabled = selection['mode'] == 'toolkit'
     actors = ['client1', 'client2'] if peers else ['client1']
-    first_captures, tokens, targets = {}, [], set()
+    first_captures, tokens, placements = {}, [], {}
     try:
         server = (root / ('server-launch.log' if selection['kind'] == 'mp' else 'client1-launch.log')).read_text(errors='replace')
         if selection['kind'] == 'mp' and server.count('[STARTUP_TEST] SERVER_READY') != 1:
             issues.append('Missing or duplicate real server readiness')
+        clients = {actor: (root / (actor + '-launch.log')).read_text(errors='replace') for actor in actors}
+        try:
+            placements = _placements(selection, clients, server, actors)
+        except (ValueError, TypeError, KeyError) as error:
+            issues.append('Invalid engine placement evidence: ' + str(error))
         for actor in actors:
-            client = (root / (actor + '-launch.log')).read_text(errors='replace')
+            client = clients[actor]
             authority = '\n'.join(line for line in server.splitlines() if line.endswith(' actor=' + actor)) if peers else server
-            if peers:
-                target = re.findall(r'\[ENGINE_TEST\] TARGET case=peer-cancel x=(-?\d+) y=(-?\d+) z=(-?\d+) index=(\d+) actor=' + actor + r'(?:\s|$)', authority)
-                if len(target) != 1:
-                    issues.append(actor + ': missing or duplicate exact target')
-                else:
-                    targets.add(target[0][:3])
             complete_marker = '[ENGINE_TEST] COMPLETE cases=' + str(len(selection['cases']))
             for marker in ['[QUEUE_TEST] PREFLIGHT_COMPLETE mods=' + str(len(selection['mods'])) + ' mode=' + selection['mode'],
                            '[QUEUE_TEST] ' + ('NATIVE_CONNECTED' if selection['kind'] == 'mp' else 'TRUE_SP'), complete_marker]:
@@ -175,14 +250,13 @@ def verify(root, selection, catalog):
                     if len(re.findall(re.escape(proof) + r'(?:\s|$)', client)) != 1:
                         issues.append(actor + ': missing/duplicate retired-parent callback proof')
                 outcomes.append({'actor': actor, 'case': case, 'outcome': {'condition': condition, 'scraps': scraps, 'tailRead': read == 'true',
+                                 'placement': placements.get((actor, case)),
                                  'nativeCompletion': dict(zip(('perform', 'complete', 'flush'), map(int, phases[0]))) if len(phases) == 1 else None}})
             if positions != sorted(positions) or positions and positions[-1] > client.find(complete_marker):
                 issues.append(actor + ': engine cases completed out of order')
             if '[QUEUE_TEST] FAIL ' in client:
                 issues.append(actor + ': native engine fixture failed')
         if peers:
-            if len(targets) != 2:
-                issues.append('Peer native repair targets overlap or are unverified')
             collision = re.findall(r'\[ENGINE_TEST\] COLLISION case=peer-cancel transaction=(-?\d+) firstPlayer=(\d+) secondPlayer=(\d+) firstToken=([0-9a-f-]{36}) secondToken=([0-9a-f-]{36})(?:\s|$)', server)
             if len(collision) != 1 or len(first_captures) != 2 or len(tokens) != 3 or len(set(tokens)) != 3:
                 issues.append('Missing or duplicated peer collision identity')

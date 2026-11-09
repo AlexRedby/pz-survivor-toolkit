@@ -4,6 +4,8 @@ require 'TimedActions/ISReadABook'
 require 'TimedActions/ISQueueActionsAction'
 local config=require 'QueueTestSelection'
 local Authority=require 'QueueEngineAuthority'
+local P=require 'QueueEnergyPlacement'
+local JSON=require 'QueueHealthEvents'
 local Toolkit=PZSurvivorToolkit
 local peers=config.suite=='engine-peers'
 local enabled=config.mode=='toolkit'
@@ -12,6 +14,7 @@ local ids,receipt,current,tail,emptyCommand,done,started,step,since,phase=nil,ni
 local repairs,completes,progress,tailProgress,records,seen,boundaries=0,0,false,false,{},{},{}
 local flushes,completionActions=0,{}
 local blocker,invalidated,removalRequested,lateChecked
+local layout,placementState,clientPlacement
 local lifecycle=Toolkit.ActionQueueLifecycle
 local begin,finish,flush=lifecycle.begin,lifecycle.finish,lifecycle.flush
 lifecycle.begin=function(action, nativePhase)
@@ -65,11 +68,17 @@ local function completionSettled()
     for _,record in pairs(completionActions) do assert(record.flushed,'native repair did not settle before reader') end
 end
 local function queue() return ISTimedActionQueue.getTimedActionQueue(getPlayer()) end
-local function send(command, case)
-    if config.kind=='mp' then sendClientCommand('EngineQueueTest',command,{case=case})
-    elseif command=='Prepare' then ids=Authority.prepare(getPlayer(),case)
-    elseif command=='Invalidate' then invalidated=Authority.invalidate(getPlayer(),case)
-    else receipt=Authority.verify(getPlayer(),case) end
+local function send(command,case)
+    local args={case=case}
+    if command=='Prepare'then
+        assert(layout and clientPlacement and P.at(getPlayer(),layout.target),'engine Prepare requires fresh client arrival')
+        args.target=layout.target;args.clientPlacement=clientPlacement
+    end
+    if config.kind=='mp'then sendClientCommand('EngineQueueTest',command,args)
+    elseif command=='Layout'then layout=Authority.plan(getPlayer(),case)
+    elseif command=='Prepare'then ids=Authority.prepare(getPlayer(),case,layout.target,clientPlacement)
+    elseif command=='Invalidate'then invalidated=Authority.invalidate(getPlayer(),case)
+    else receipt=Authority.verify(getPlayer(),case)end
 end
 local function generator()
     local square=getCell():getGridSquare(ids.x,ids.y,ids.z)
@@ -82,7 +91,7 @@ end
 Events.OnServerCommand.Add(function(module,command,args)
     if module~='EngineQueueTest' then return end
     assert(args.ok~=false,args.error)
-    if command=='Prepared' then ids=args elseif command=='Verified' then receipt=args
+    if command=='Layout'then layout=args elseif command=='Prepared' then ids=args elseif command=='Verified' then receipt=args
     elseif command=='Invalidated' then invalidated=args
     elseif command=='Begin' then go=true elseif command=='Release' then released=true end
 end)
@@ -106,6 +115,17 @@ require('QueuePreflight').onTick(Events,function()
         end
         if phase=='prepare' then
             assert(Toolkit.Settings.actionQueue()==enabled,'wrong engine queue mode')
+            send('Layout',case);phase='placement';return
+        end
+        if phase=='placement'then
+            if not layout then return end
+            assert(layout.case==case,'wrong engine layout case')
+            local target,gen=P.target(layout.target),P.target(layout.generator)
+            assert(gen.x==target.x+1 and gen.y==target.y and gen.z==target.z,'engine final standing/generator layout differs')
+            if not placementState then placementState=P.begin(player,target)end
+            clientPlacement=P.poll(placementState);if not clientPlacement then return end
+            assert(P.at(player,target),'engine client left final standing placement')
+            print('[ENGINE_TEST] CLIENT_PLACEMENT '..JSON.encode({case=case,actor=config.kind=='sp'and'client1'or player:getUsername(),target=target,proof=clientPlacement}))
             send('Prepare',case);phase='ready';return
         end
         if phase=='ready' then
@@ -126,7 +146,9 @@ require('QueuePreflight').onTick(Events,function()
                 if not announced then send('Ready',case);announced=true end
                 return
             end
-            player:teleportTo(ids.spawn.x,ids.spawn.y,ids.spawn.z)
+            assert(P.at(player,layout.target),'engine client left final placement before native work')
+            local target=P.target(ids.placement)
+            assert(target.x==layout.target.x and target.y==layout.target.y and target.z==layout.target.z,'engine prepared standing target changed')
             assert(gen:getCondition()==94 and not gen:isActivated(),'client generator baseline differs')
             book:setAlreadyReadPages(book:getNumberOfPages()-1)
             player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-1)
@@ -229,6 +251,7 @@ require('QueuePreflight').onTick(Events,function()
             step=step+1
             if step>#config.cases then done=true;print('[ENGINE_TEST] COMPLETE cases='..#config.cases);return end
             ids,receipt,current,tail=nil,nil,nil,nil
+            layout,placementState,clientPlacement=nil,nil,nil
             repairs,completes,progress,tailProgress,records,seen,boundaries=0,0,false,false,{},{},{}
             flushes,completionActions=0,{}
             blocker,invalidated,removalRequested,lateChecked,emptyCommand=nil,nil,nil,nil,nil
