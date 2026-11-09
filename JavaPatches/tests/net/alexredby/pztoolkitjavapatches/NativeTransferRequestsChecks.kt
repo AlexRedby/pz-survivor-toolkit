@@ -13,6 +13,7 @@ import se.krka.kahlua.vm.KahluaThread
 import se.krka.kahlua.vm.LuaClosure
 import se.krka.kahlua.vm.Prototype
 import sun.misc.Unsafe
+import zombie.GameTime
 import zombie.Lua.KahluaNumberConverter
 import zombie.Lua.LuaManager
 import zombie.characters.BaseCharacterSoundEmitter
@@ -650,6 +651,71 @@ object NativeTransferRequestsChecks {
             check(!matches(reusedOld, 47) && !matches(reusedNew, 47)) {
                 "late duplicate results revived reused-byte evidence"
             }
+            // Exercise the real client update/removal path, rather than clearing the
+            // queue as a proxy for expiry. A fixed zero native clock and aged fixture
+            // timestamps make the strict duration-plus-buffer boundary deterministic.
+            // Manager absence proves lost pairing, never absence of physical effects.
+            val clockFields = listOf("isUTest", "serverTimeShift", "serverTimeShiftIsSet")
+                .map { field(GameTime::class.java, it) }
+            val clockValues = clockFields.map { it.get(null) }
+            try {
+                clockFields[0].setBoolean(null, false)
+                clockFields[2].setBoolean(null, false)
+                check(GameTime.getServerTimeMills() == 0L) { "expiry fixture clock is not fixed" }
+                connection()
+                val expiring = start(64, "accepted-expiry")
+                val expiredPacket = nativeQueue.single() as Transaction
+                val packetState = field(Transaction::class.java, "state")
+                val packetStart = field(Transaction::class.java, "startTime")
+                val packetEnd = field(Transaction::class.java, "endTime")
+                val packetDuration = field(ItemTransactionPacket::class.java, "duration")
+                val reply = ItemTransactionPacket()
+                packetId.setByte(reply, 64)
+                packetState.set(reply, Transaction.TransactionState.Accept)
+                packetDuration.setLong(reply, 1_100L)
+                TransactionManager.instance.setStateFromPacket(reply)
+                check(packetState.get(expiredPacket) == Transaction.TransactionState.Accept &&
+                    packetEnd.getLong(expiredPacket) - packetStart.getLong(expiredPacket) == 1_100L &&
+                    matches(expiring, 64)) { "actual Accept lost the exact submitted receipt" }
+
+                packetStart.setLong(expiredPacket, -11_100L)
+                packetEnd.setLong(expiredPacket, -10_000L)
+                TransactionManager.update()
+                check(nativeQueue.singleOrNull() === expiredPacket && matches(expiring, 64)) {
+                    "accepted request expired at the inclusive duration-plus-buffer boundary"
+                }
+                packetStart.setLong(expiredPacket, -11_101L)
+                packetEnd.setLong(expiredPacket, -10_001L)
+                TransactionManager.update()
+                check(nativeQueue.isEmpty() && !matches(expiring, 64) &&
+                    packetState.get(expiredPacket) == Transaction.TransactionState.Accept &&
+                    TransactionManager.isDone(64) && TransactionManager.isRejected(64)) {
+                    "actual expiry must remove pairing despite both vacuous native terminal predicates"
+                }
+                for (state in listOf(Transaction.TransactionState.Done, Transaction.TransactionState.Reject)) {
+                    packetState.set(reply, state)
+                    TransactionManager.instance.setStateFromPacket(reply)
+                    check(nativeQueue.isEmpty() && !matches(expiring, 64)) {
+                        "late $state revived an expired native receipt"
+                    }
+                }
+                val afterExpiry = start(64, "accepted-expiry-reuse")
+                val replacementPacket = nativeQueue.single() as Transaction
+                check(!matches(expiring, 64) && !matches(afterExpiry, 64) &&
+                    afterExpiry.second.isWireAmbiguous()) { "expiry erased consumed-byte history" }
+                for (state in listOf(Transaction.TransactionState.Done, Transaction.TransactionState.Reject)) {
+                    packetState.set(reply, state)
+                    TransactionManager.instance.setStateFromPacket(reply)
+                    check(packetState.get(replacementPacket) == state &&
+                        !matches(expiring, 64) && !matches(afterExpiry, 64)) {
+                        "late $state on the reused byte revived native correlation"
+                    }
+                }
+                println("NATIVE_TRANSFER_EXPIRY_CHECKS_PASS accepted=true actual_update=true physical_effects_qualified=false")
+            } finally {
+                clockFields.zip(clockValues).forEach { (clockField, value) -> clockField.set(null, value) }
+            }
+
             connection()
             val disconnected = start(48, "connection-old")
             connection()
