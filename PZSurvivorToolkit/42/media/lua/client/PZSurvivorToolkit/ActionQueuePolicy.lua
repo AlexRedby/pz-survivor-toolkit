@@ -1237,38 +1237,47 @@ end
 -- Only pending, complete source-owned operation pairs can provision the native
 -- no-movement proof. It stays private to this decision until final validation;
 -- ordinary inspection and idle UI rows never read geometry.
+function spatialEdits.pair(queue,members,index,context,contract,source)
+    local member=members[index]
+    if type(member)~='table'or member.Type~='ISQueueActionsAction'or member.action
+        or type(toolkitQueueSpatialNoMovement)~='function'or type(toolkitQueueSpatialApiMatches)~='function'
+        or type(spatialEdits.prepare)~='function'then return end
+    if source==nil then contract,source=inspect(member,context)end
+    if source~='toolkit.approach'or not contract or contract.edit or member.action then return end
+    local first,last=Operations.bounds(queue,member)
+    local body,token=members[index+1],member.toolkitQueueOperation
+    if first~=index or last~=index+1 or type(body)~='table'or type(token)~='table'
+        or not spatialEdits.equal(body.toolkitQueueOperation,token)or token.toolkitStarted or token.toolkitCancelled
+        or not spatialEdits.equal(member.character,queue.character)or not spatialEdits.equal(body.character,queue.character)
+        or body.action then return end
+    local following=inspect(body,context)
+    local target,count=nil,0
+    if following and following.knownInputs~=false and not following.unknownOutputs then
+        for object in pairs(following.targets or{})do target=object;count=count+1 end
+    end
+    if count~=1 then return end
+    local watch=editBindingCapture and editBindingCapture({
+        {owner=body,exact=true},{owner=token,keys={'toolkitStarted','toolkitCancelled'}},
+        {owner=following.targets,exact=true},
+    })
+    local check,edit=spatialEdits.prepare(member,target)
+    if watch and check and edit then
+        return {action=member,check=check,watch=watch,contract=contract,edit=edit}
+    end
+end
 function spatialEdits.provision(queue,members,context)
     local scope=activeDecision
     if not scope or not spatialEdits.equal(scope.queue,queue)or not spatialEdits.equal(scope.context,context)or #members>spatialEdits.maxMembers
         or type(toolkitQueueSpatialNoMovement)~='function'or type(toolkitQueueSpatialApiMatches)~='function'
         or type(spatialEdits.prepare)~='function'then return end
     for index,member in ipairs(members)do
+        -- Preserve the pending policy's original source/getter observation order.
         local contract,source=inspect(member,context)
-        if source=='toolkit.approach'and contract and not contract.edit and not member.action then
-            local first,last=Operations.bounds(queue,member)
-            local body=members[index+1]
-            local token=member.toolkitQueueOperation
-            if first==index and last==index+1 and type(body)=='table'and type(token)=='table'
-                and spatialEdits.equal(body.toolkitQueueOperation,token)and not token.toolkitStarted and not token.toolkitCancelled
-                and spatialEdits.equal(member.character,queue.character)and spatialEdits.equal(body.character,queue.character)and not body.action then
-                local following=inspect(body,context)
-                local target,count=nil,0
-                if following and following.knownInputs~=false and not following.unknownOutputs then
-                    for object in pairs(following.targets or{})do target=object;count=count+1 end
-                end
-                if count==1 then
-                    local watch=editBindingCapture and editBindingCapture({
-                        {owner=body,exact=true},{owner=token,keys={'toolkitStarted','toolkitCancelled'}},
-                        {owner=following.targets,exact=true},
-                    })
-                    local check,edit=spatialEdits.prepare(member,target)
-                    if watch and check and edit then
-                        scope.spatial=scope.spatial or{}
-                        scope.spatial[#scope.spatial+1]={action=member,check=check,watch=watch,contract=contract,edit=edit}
-                        contract.edit=edit
-                    end
-                end
-            end
+        local proof=spatialEdits.pair(queue,members,index,context,contract,source)
+        if proof then
+            scope.spatial=scope.spatial or{}
+            scope.spatial[#scope.spatial+1]=proof
+            proof.contract.edit=proof.edit
         end
     end
 end
@@ -2473,9 +2482,11 @@ end
 -- Opt-in read-only plan. UI/tick/commit paths do not consume it while
 -- deferred routing and other effect contracts remain incomplete. A resource
 -- projection grants no admission, capacity, execution or outcome authority.
+-- resolveNoMovement opts into the certified adjacent-pair observation for
+-- qualification; ordinary observations retain explicit native boundaries.
 function Policy.observeActiveEdit(queue, intent)
     local function unknown(reason)return {status="unhandled",reason=reason or "edit_unknown"}end
-    if type(intent)~="table"or getmetatable(intent)or type(queue)~="table"
+    if type(intent)~="table"or getmetatable(intent)~=nil or type(queue)~="table"
         or type(queue.queue)~="table"or getmetatable(queue.queue)
         or #queue.queue==0 or #queue.queue>MAX_RETURN_EXECUTION_MEMBERS or not live(queue)
         or ISTimedActionQueue.queues[queue.character]~=queue or queue.current~=queue.queue[1]
@@ -2483,6 +2494,7 @@ function Policy.observeActiveEdit(queue, intent)
         or queue.toolkitOutcomeWait or queue.toolkitStopIntent
         or (intent.after~=nil and type(intent.after)~="boolean")
         or (intent.whole~=nil and type(intent.whole)~="boolean")
+        or (intent.resolveNoMovement~=nil and type(intent.resolveNoMovement)~="boolean")
         or not EditTransition or Toolkit.ActionQueueEditTransition~=EditTransition
         or not Proof.closure(EditTransition.project,"ActionQueueEditTransition.lua")then return unknown()end
     for _,member in ipairs(queue.queue)do if type(member)~="table"then return unknown()end end
@@ -2539,7 +2551,7 @@ function Policy.observeActiveEdit(queue, intent)
         else return unknown()end
         if rangeFirst>rangeLast then return unknown("edit_no_change")end
     else return unknown()end
-    local entries,contractGaps,spatialLeases={},{},{}
+    local entries,contractGaps,spatialLeases,nativeNoMovement={},{},{},{}
     for index,member in ipairs(queue.queue)do
         local contract=inspect(member,context)
         local edit
@@ -2553,10 +2565,19 @@ function Policy.observeActiveEdit(queue, intent)
         if not contract or contract.knownInputs==false or contract.unknownOutputs then edit=nil end
         local deferred
         if not edit and observed[index].Type=="ISQueueActionsAction"and member~=current then
-            local validate,descriptor=prepareDeferredSpatial(member)
-            if validate then
-                deferred=descriptor
-                spatialLeases[#spatialLeases+1]=validate
+            local adjacent=intent.resolveNoMovement and spatialEdits.pair(queue,queue.queue,index,context)
+            if adjacent then
+                edit=adjacent.edit
+                nativeNoMovement[#nativeNoMovement+1]=member
+                spatialLeases[#spatialLeases+1]=function()
+                    return adjacent.watch()and adjacent.check()and adjacent.watch()
+                end
+            else
+                local validate,descriptor=prepareDeferredSpatial(member)
+                if validate then
+                    deferred=descriptor
+                    spatialLeases[#spatialLeases+1]=validate
+                end
             end
         end
         entries[index]={action=member,edit=edit,deferred=deferred,active=index==1 or member.action~=nil or member.started==true}
@@ -2623,6 +2644,7 @@ function Policy.observeActiveEdit(queue, intent)
         end
     end
     if result.status=="observed"then
+        result.nativeNoMovement=nativeNoMovement
         result.checkpoint={stage="before-stop",id=bookId,fullType=bookType,pages=pages,total=total,location=bookLocation}
         result.snapshot=snapshot
         local resolved,missing={},{}

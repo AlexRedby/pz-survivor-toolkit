@@ -905,6 +905,77 @@ def _exact_device_observer(value, wanted):
             and _exact_action_record(actual['deferred'][0], expected['deferred'][0], {'action'}))
 
 
+def _device_paired_timing_errors(performance, required):
+    errors = []
+    if (not isinstance(performance, dict) or set(performance) != set(required) | {'baseline', 'observer', 'baselineFirstMs', 'observerFirstMs'}
+            or any(type(performance.get(k)) is not type(v) or performance[k] != v for k, v in required.items())):
+        return ['Device-only timing scope or unsupported timing/permission claim differs']
+    for key in ('baselineFirstMs', 'observerFirstMs'):
+        if not _number(performance[key]) or performance[key] < 0: errors.append('Device-only first-use timing invalid')
+    for key in ('baseline', 'observer'):
+        timing = performance[key]
+        samples = timing.get('samplesMs') if isinstance(timing, dict) else None
+        if (not isinstance(samples, list) or len(samples) != 3 or any(not _number(v) or v < 0 for v in samples)
+                or set(timing) != {'samplesMs', 'samples', 'minMs', 'medianMs', 'maxMs', 'meanMs'} or type(timing.get('samples')) is not int or timing['samples'] != 3):
+            errors.append('Device-only paired timing samples invalid'); continue
+        wanted = dict(minMs=min(samples), medianMs=sorted(samples)[1], maxMs=max(samples), meanMs=sum(samples)/3)
+        if any(not _number(timing.get(k)) or not math.isclose(timing[k], v, rel_tol=1e-9, abs_tol=1e-9) for k, v in wanted.items()):
+            errors.append('Device-only paired timing distribution differs')
+    return errors
+
+
+def _no_movement_observation_errors(probe, value, row, intent, enabled, approach=None, nodes=None):
+    if type(probe) is not dict:
+        return ['Missing device-only opt-in no-movement observation']
+    errors = []
+    root = probe.get('root')
+    book = row.get('ids', {}).get('front', {})
+    prototype = value.get('prototype')
+    borrowed = row.get('ids', {}).get('source') != 'root'
+    if (not isinstance(root, str) or not root or enabled and borrowed
+            and (not isinstance(prototype, dict) or root != prototype.get('source'))):
+        errors.append('No-movement observation lost physical root identity')
+    ownership = approach.get('approach', {}) if enabled else {}
+    if not isinstance(ownership, dict): ownership = {}
+    required = dict(schema=1, optIn=True, observerSource='ActionQueuePolicy.lua',
+        current=value.get('current'), currentNative=value.get('currentNative'), body=intent['target'] if intent['after'] else intent['action'],
+        root=root, actor=ownership.get('actor') if enabled else False, targetSquare=ownership.get('targetSquare') if enabled else False,
+        mutationAuthorized=False, permissionsMeasured=False, readOnly=True)
+    fields = set(required) | {'intent', 'observer', 'nativeNoMovement', 'checkpoint', 'resume', 'plan', 'performance'}
+    if (probe.keys() != fields or not _exact_action_record({k: probe.get(k) for k in required}, required, {'current', 'currentNative', 'body'})
+            or not _exact_action_record(probe.get('intent'), dict(intent, resolveNoMovement=True), {'action', 'target'})):
+        errors.append('No-movement opt-in/source/current/native pair or read-only contract differs')
+    observer = dict(status='observed' if enabled else 'unhandled', reason=False if enabled else 'unavailable',
+        allowedAbsent=True, projection=dict(status='allowed', reason=False, externalCapacity=borrowed, allowedAbsent=True) if enabled else False,
+        returns=0, unresolved=0)
+    if not _exact(probe.get('observer'), observer):
+        errors.append('No-movement observer acquired permission or lost its complete projection')
+    if enabled:
+        proofs = probe.get('nativeNoMovement')
+        if type(proofs) is not list or len(proofs) != 1 or not _same_action(proofs[0], approach.get('actionRef')):
+            errors.append('No-movement proof is not the one genuine pending native preparation')
+        resolved_nodes = [{k: v for k, v in node.items() if k != 'deferred'} for node in nodes]
+        resolved_nodes[1].update(complete=True, capacity='unchanged')
+        if not _exact_device_plan(probe.get('plan'), dict(kind='preempt', nodes=resolved_nodes)):
+            errors.append('No-movement plan changed retained return, resume or native pair order')
+        checkpoint = dict(stage='before-stop', id=book.get('id'), fullType=book.get('type'),
+            pages=row.get('boundary', {}).get('before', {}).get('books', {}).get('front', {}).get('pages'),
+            total=book.get('total'), location=root)
+        if (not _exact(probe.get('checkpoint'), checkpoint)
+                or not _exact_action_record(probe.get('resume'), dict(action=value.get('current'), pages=checkpoint['pages']), {'action'})):
+            errors.append('No-movement reader checkpoint/resume pages changed')
+    elif (not _exact(probe.get('nativeNoMovement'), []) or probe.get('plan') is not False
+            or probe.get('checkpoint') is not False or probe.get('resume') is not False):
+        errors.append('Queue-off no-movement control acquired a proof or resume plan')
+    timing = dict(scope='paired-live-no-movement-observation-entrypoints', timer='System.nanoTime', units='ms', warmupPairs=1, pairs=3,
+        sameLiveIntent=True, whole=False, firstUseScope='first-opt-in-call-after-default-observation-bank',
+        comparable=False, comparisonReason='complete-observation-not-authority' if enabled else 'queue-disabled',
+        observerProjectionStatus='allowed' if enabled else False, observerProjectionReason=False, timerOverhead='included-not-subtracted',
+        sameOutputContract=False, completeEditMeasured=False, frameLoadMeasured=False, positiveTimingClaim=False, assessment='not-assessed')
+    errors.extend(_device_paired_timing_errors(probe.get('performance'), timing))
+    return errors
+
+
 def device_active_edit_errors(value, row, case, selection):
     """Qualify one deferred native phase without granting a complete common edit."""
     if not isinstance(value, dict):
@@ -941,6 +1012,7 @@ def device_active_edit_errors(value, row, case, selection):
     if not _exact(value.get('existingDecision'), decision):
         errors.append('Device-only actual move must retain legacy authority')
     observer = value.get('observer')
+    approach, nodes = None, None
     if not enabled:
         wanted = dict(status='unhandled', reason='unavailable', allowedAbsent=True, projection=False, returns=0, unresolved=0)
         if not _exact_device_observer(observer, wanted): errors.append('Device-only queue-off observer acquired a projection')
@@ -1041,21 +1113,8 @@ def device_active_edit_errors(value, row, case, selection):
         comparable=False, comparisonReason='deferred-native-phase-not-full-projection' if enabled else 'queue-disabled',
         observerProjectionStatus='deferred' if enabled else False, observerProjectionReason='edit_native_resolution' if enabled else False, timerOverhead='included-not-subtracted',
         sameOutputContract=False, completeEditMeasured=False, frameLoadMeasured=False, positiveTimingClaim=False, assessment='not-assessed')
-    if (not isinstance(performance, dict) or set(performance) != set(required_performance) | {'baseline', 'observer', 'baselineFirstMs', 'observerFirstMs'}
-            or any(type(performance.get(k)) is not type(v) or performance[k] != v for k, v in required_performance.items())):
-        errors.append('Device-only timing scope or unsupported timing/permission claim differs')
-    else:
-        for key in ('baselineFirstMs', 'observerFirstMs'):
-            if not _number(performance[key]) or performance[key] < 0: errors.append('Device-only first-use timing invalid')
-        for key in ('baseline', 'observer'):
-            timing = performance[key]
-            samples = timing.get('samplesMs') if isinstance(timing, dict) else None
-            if (not isinstance(samples, list) or len(samples) != 3 or any(not _number(v) or v < 0 for v in samples)
-                    or set(timing) != {'samplesMs', 'samples', 'minMs', 'medianMs', 'maxMs', 'meanMs'} or type(timing.get('samples')) is not int or timing['samples'] != 3):
-                errors.append('Device-only paired timing samples invalid'); continue
-            wanted = dict(minMs=min(samples), medianMs=sorted(samples)[1], maxMs=max(samples), meanMs=sum(samples)/3)
-            if any(not _number(timing.get(k)) or not math.isclose(timing[k], v, rel_tol=1e-9, abs_tol=1e-9) for k, v in wanted.items()):
-                errors.append('Device-only paired timing distribution differs')
+    errors.extend(_device_paired_timing_errors(performance, required_performance))
+    errors.extend(_no_movement_observation_errors(value.get('noMovementObservation'), value, row, intent, enabled, approach, nodes))
     return errors
 
 

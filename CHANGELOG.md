@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.345
+
+- **Internal:** Let opt-in active-reading plans reuse the existing source-bound native no-movement proof for exact adjacent device operations. Preserve the original borrowed-item return, reading checkpoint and explicit deferred fallback; ordinary edit authority and native capacity/admission remain unchanged. Reject masked intent metatables before reading their fields.
+
 ### 0.1.344
 
 - **Fixed:** Reviewed deferred adjacent approaches bind to their exact current operation and recheck the loaded target and native reach before dependent work. Native walking must actually succeed; stalled or vanished walking steps retain earned cleanup and independent queued tasks. With the queue enabled, late completion callbacks cannot advance a replacement queue; disabled mode keeps native completion behavior. This execution correction preserves the current editor permissions.
@@ -1596,6 +1600,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.91
+
+- **Internal:** Refresh the exact queue Policy compiler source pin for the opt-in adjacent-device reading projection.
 
 ### 0.1.90
 

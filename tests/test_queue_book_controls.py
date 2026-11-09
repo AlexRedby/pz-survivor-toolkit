@@ -1603,6 +1603,26 @@ os.exit(0)
             value['performance'].update(scope='paired-live-device-preempt-entrypoints', whole=False, comparable=False,
                 comparisonReason='deferred-native-phase-not-full-projection' if enabled else 'queue-disabled',
                 observerProjectionStatus='deferred' if enabled else False, observerProjectionReason='edit_native_resolution' if enabled else False)
+            probe_observer = copy.deepcopy(observer)
+            probe_plan = copy.deepcopy(value['plan'])
+            if enabled:
+                probe_observer['projection'] = dict(status='allowed', reason=False, externalCapacity=borrowed, allowedAbsent=True)
+                probe_plan['nodes'][1].pop('deferred')
+                probe_plan['nodes'][1].update(complete=True, capacity='unchanged')
+            value['noMovementObservation'] = dict(schema=1, optIn=True, observerSource='ActionQueuePolicy.lua',
+                intent=dict(value['intent'], resolveNoMovement=True), current=value['current'], currentNative=value['currentNative'],
+                body=next(r['actionRef'] for r in row['records'] if r['role']=='volume'), root=root,
+                actor=phase['actor'] if enabled else False, targetSquare=phase['targetSquare'] if enabled else False,
+                mutationAuthorized=False, permissionsMeasured=False, observer=probe_observer,
+                nativeNoMovement=[approach['actionRef']] if enabled else [], plan=probe_plan,
+                checkpoint=dict(stage='before-stop', id=book['id'], fullType=book['type'],
+                    pages=row['boundary']['before']['books']['front']['pages'], total=book['total'], location=root) if enabled else False,
+                resume=dict(action=value['current'], pages=row['boundary']['before']['books']['front']['pages']) if enabled else False,
+                readOnly=True, performance=copy.deepcopy(value['performance']))
+            value['noMovementObservation']['performance'].update(scope='paired-live-no-movement-observation-entrypoints',
+                firstUseScope='first-opt-in-call-after-default-observation-bank',
+                comparisonReason='complete-observation-not-authority' if enabled else 'queue-disabled',
+                observerProjectionStatus='allowed' if enabled else False, observerProjectionReason=False)
         return value
 
     def test_device_only_variants_use_native_device_chain_and_keep_pen_untouched(self):
@@ -1631,6 +1651,54 @@ os.exit(0)
         for bad in ('root.move-equip-device-only', 'world.move-volume-device-only-capacity-lost', 'world.move-volume-favorite-device-only'):
             selection['cases']=[bad]
             with self.assertRaises(ValueError): adapter.validate(selection)
+
+    def test_no_movement_probe_requires_real_pair_retained_return_and_checkpoint_without_authority(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                selection=self.selection(kind,mode)
+                selection['cases']=list(adapter.DEVICE_ONLY_CASES)
+                selection['options'].update(active_edit_observation=True,precise_timing=True)
+                for case in adapter.DEVICE_ONLY_CASES:
+                    row=self.precise_evidence(case,kind,mode)[0]
+                    receipt=self.active_edit_receipt(row)
+                    self.assertEqual(a.active_edit_errors(receipt,row,case,selection),[])
+                    mutations=[lambda r:r.pop('noMovementObservation'),
+                        lambda r:r['noMovementObservation'].update(optIn=False),
+                        lambda r:r['noMovementObservation']['intent'].update(resolveNoMovement=1),
+                        lambda r:r['noMovementObservation'].update(observerSource='Foreign.lua'),
+                        lambda r:r['noMovementObservation'].update(current='foreign-reader'),
+                        lambda r:r['noMovementObservation'].update(currentNative='foreign-native'),
+                        lambda r:r['noMovementObservation'].update(body='foreign-setter'),
+                        lambda r:r['noMovementObservation'].update(actor='foreign-actor'),
+                        lambda r:r['noMovementObservation'].update(targetSquare='foreign-target'),
+                        lambda r:r['noMovementObservation'].update(readOnly=False),
+                        lambda r:r['noMovementObservation'].update(mutationAuthorized=True),
+                        lambda r:r['noMovementObservation']['performance'].update(positiveTimingClaim=True),
+                        lambda r:r['noMovementObservation']['performance'].update(completeEditMeasured=True),
+                        lambda r:r['noMovementObservation']['performance']['observer'].update(meanMs=99)]
+                    if mode=='toolkit':
+                        mutations += [lambda r:r['noMovementObservation'].update(nativeNoMovement=[]),
+                            lambda r:r['noMovementObservation'].update(nativeNoMovement=[r['current']]),
+                            lambda r:r['noMovementObservation']['nativeNoMovement'].append(r['current']),
+                            lambda r:r['noMovementObservation']['observer']['projection'].update(allowed=True),
+                            lambda r:r['noMovementObservation']['observer']['projection'].update(status='deferred'),
+                            lambda r:r['noMovementObservation']['checkpoint'].update(pages=0),
+                            lambda r:r['noMovementObservation']['resume'].update(pages=0),
+                            lambda r:r['noMovementObservation']['plan']['nodes'][1].update(capacity='external'),
+                            lambda r:r['noMovementObservation']['plan']['nodes'][1].update(action=r['current']),
+                            lambda r:r['noMovementObservation']['plan']['nodes'][3].update(action='foreign-resume')]
+                        if not case.startswith('root.'):
+                            mutations += [lambda r:r['noMovementObservation']['plan']['nodes'][4]['returnEffect'].update(item='foreign-item'),
+                                lambda r:r['noMovementObservation']['plan']['nodes'][4]['returnEffect'].update(source='foreign-source'),
+                                lambda r:r['noMovementObservation']['plan']['nodes'][4]['returnEffect'].update(destination='foreign-destination'),
+                                lambda r:r['noMovementObservation']['plan']['nodes'][4]['returnEffect'].update(synthetic=True)]
+                    else:
+                        mutations += [lambda r:r['noMovementObservation'].update(nativeNoMovement=['fake-proof']),
+                            lambda r:r['noMovementObservation'].update(checkpoint={}),
+                            lambda r:r['noMovementObservation'].update(plan={})]
+                    for mutate in mutations:
+                        changed=copy.deepcopy(receipt);mutate(changed)
+                        self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,mode,mutate))
 
     def test_actual_device_only_fixture_omits_equip_producer_and_uses_move_observation(self):
         lua=shutil.which('luajit')
@@ -1669,10 +1737,11 @@ for _,source in ipairs({'root','worn-bag','world'})do
  end
 end
 local run=assert(loadfile(arg[3]))().run
-local item={getID=function()return 1 end,getFullType=function()return'Base.Book'end}
+local item={getID=function()return 1 end,getFullType=function()return'Base.Book'end,
+ getAlreadyReadPages=function()return 37 end,getNumberOfPages=function()return 100 end}
 local native={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
 local front={Type='ISReadABook',item=item,action=native,toolkitQueueOperation={}}
-local actor={getInventory=function()return{}end};local target={}
+local root={};local actor={getInventory=function()return root end};local target={}
 local phase={version=1,kind='deferred-spatial',actor=actor,targetSquare=target,invalidates='all-resources',routing='native',expansion='native',outcome='native'}
 local volume,tail={Type='ISRadioAction',toolkitQueueOperation={}},{Type='ISReadABook'}
 local approach={Type='ISQueueActionsAction',toolkitQueueApproach=true,toolkitQueueOperation=volume.toolkitQueueOperation}
@@ -1682,10 +1751,16 @@ local off,demoting,unexpected=false,false,false;local observations,moves=0,0
 local function observe(queue,intent)
  observations=observations+1;assert(queue==q and intent.kind=='move'and intent.action==(demoting and front or volume)and intent.target==(demoting and volume or front)and intent.after==demoting)
  if off then return{status='unhandled',reason='unavailable'}end
- local edit={complete=true,capacity='unchanged'}
+ local edit={version=1,complete=true,capacity='unchanged',resources={}}
  local result={status='observed',kind='preempt',unresolved={},nodes={{kind='checkpoint',action=front,edit=edit},{kind='pending',action=approach,deferred=phase},
   {kind='pending',action=volume,edit=edit},{kind='resume',action=front,edit=edit},{kind='pending',action=tail,edit=edit}},
   projection={status='deferred',reason='edit_native_resolution',blocker=approach,externalCapacity=true,evaluatedPrefix=1,deferred={{action=approach,index=2,descriptor=phase}}},contractGaps={}}
+ if intent.resolveNoMovement then
+  assert(intent.resolveNoMovement==true)
+  result.nodes[2].edit=edit;result.nodes[2].deferred=nil
+  result.projection={status='allowed',externalCapacity=false};result.nativeNoMovement={approach}
+  result.checkpoint={stage='before-stop',id=1,fullType='Base.Book',pages=37,total=100,location=root}
+ end
  if unexpected then
   result.nodes[3].edit=nil;result.contractGaps[1]={index=3,actionType='ISRadioAction',reason='effects_unproven'}
   if unexpected=='bounded'then for index=2,40 do result.nodes[index]=result.nodes[3];result.contractGaps[index]=result.contractGaps[1]end end
@@ -1705,7 +1780,10 @@ local receipt=run(context)
 assert(receipt.passed and receipt.readOnly and not receipt.existingDecision.commonActiveEdit and receipt.intent.action==tostring(volume))
 assert(receipt.schema==3 and receipt.plan.kind=='preempt'and #receipt.plan.nodes==5 and not receipt.plan.nodes[2].complete and receipt.observer.projection.status=='deferred'and receipt.observer.returns==0)
 assert(#receipt.diagnostics.contractGaps==0 and receipt.diagnostics.nodes[2].deferred.kind=='deferred-spatial'and receipt.diagnostics.projectionBlockerType=='ISQueueActionsAction'and not receipt.performance.comparable)
-assert(moves==5 and observations==5 and q.current==front and front.action==native)
+assert(moves==10 and observations==10 and q.current==front and front.action==native)
+assert(receipt.noMovementObservation.observer.projection.status=='allowed'and receipt.noMovementObservation.nativeNoMovement[1]==tostring(approach)
+ and receipt.noMovementObservation.plan.nodes[2].complete and receipt.noMovementObservation.checkpoint.pages==37
+ and receipt.noMovementObservation.resume.pages==37 and receipt.noMovementObservation.readOnly)
 demoting=true;context.control='demote-reader';context.case='root.demote-reader-device-only'
 receipt=run(context);assert(receipt.passed and receipt.intent.action==tostring(front)and receipt.intent.target==tostring(volume)and receipt.intent.after==true and #receipt.plan.nodes==5)
 for _,change in ipairs({{'invalidates','position'},{'domain','position'},{'actor',{}},{'targetSquare',{}},{'complete',true},{'futureFacts',{}}})do
@@ -1717,6 +1795,7 @@ unexpected=true;receipt=run(context);assert(not receipt.passed and receipt.readO
 unexpected='bounded';receipt=run(context);assert(not receipt.passed and #receipt.diagnostics.nodes==32 and #receipt.diagnostics.contractGaps==32 and receipt.diagnostics.nodesTruncated and receipt.diagnostics.gapsTruncated)
 unexpected=false;off=true;context.native=true;context.mode='native'
 receipt=run(context);assert(receipt.passed and receipt.schema==1 and receipt.plan==false and receipt.observer.projection==false and receipt.existingDecision.commonActiveEdit==false)
+assert(receipt.noMovementObservation.observer.status=='unhandled'and #receipt.noMovementObservation.nativeNoMovement==0 and receipt.noMovementObservation.plan==false)
 os.exit(0)
 """
         subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua'),
