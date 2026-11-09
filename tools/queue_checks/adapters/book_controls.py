@@ -76,8 +76,8 @@ def validate(selection):
     if any(case in DEVICE_ONLY_CASES for case in cases) and not active:
         raise ValueError('device-only variants require active_edit_observation=true')
     if active and (selection.get('options', {}).get('precise_timing') is not True
-                   or any(case not in ACTIVE_EDIT_CASES + DEVICE_ONLY_CASES for case in cases)):
-        raise ValueError('active_edit_observation requires precise_timing=true and exact root/worn-bag/world header-cancel or device-only move/demotion cases')
+                   or not any(case in ACTIVE_EDIT_CASES + DEVICE_ONLY_CASES for case in cases)):
+        raise ValueError('active_edit_observation requires precise_timing=true and at least one exact header-cancel or device-only case')
     if (selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients')) is not int or selection['clients'] != 1

@@ -620,7 +620,7 @@ local function atBoundary()
   assert(target,'native optional return missing before first preview')
   preview={action=target,native=F.captureReturnPreview(target),identity=F.waiverIdentity(state,target),at=now()}
  end
- if activeEditEnabled then
+ if activeEditEnabled and(control()=='header-cancel'and not case():find('-capacity-lost',1,true)and not case():find('-favorite',1,true)or deviceOnly())then
   local earned=false
   for _,row in ipairs(records)do if row.role=='pickup'and row.performedAt then earned=true end end
   activeEditReceipt=editObservation.run({toolkit=T,queue=queue(),front=front,state=state,fixture=F,ids=ids,

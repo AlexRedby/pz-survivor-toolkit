@@ -1,6 +1,6 @@
 # Shared queue resources and container capacity
 
-Status: implementation plan, not a delivered runtime feature. The performance gate below must pass before the proposed mechanism grants additional move/cancel permissions. Open implementation work is tracked in [TODO](../../TODO.md#shared-queue-resources-and-container-capacity).
+Status: a usable first slice is enabled in Toolkit 0.1.348 / Java Patches 0.1.93. Earned singleton returns use sealed execution capabilities, native admission and exact-item settlement. The 26-case book/equipment/device bank passed in SP and menu Host, with the queue both disabled and enabled, on macOS B42.21 with the locked 65-mod selection. Broad resource forecasting and migration of every family remain planned. New permissions still require their own correctness and cost evidence. Open work is tracked in [TODO](../../TODO.md#shared-queue-resources-and-container-capacity).
 
 ## Goal and boundaries
 
@@ -8,7 +8,7 @@ Allow independent actions to be cancelled and reordered regardless of where an i
 
 The executor stays `ISTimedActionQueue`. Existing native action durations, resource costs, selection intent and game balance remain authoritative. This is not a generic undo system: completed consumption, creation, XP and pages are retained, never replayed or restored from an old world snapshot. Do not impose a new universal carry limit, silently change native overload rules or modify a user's saves.
 
-The current bug provides the first acceptance case: borrowed-book reading with an automatic return can block whole-operation cancellation and promotion of an ordinary equip action because of a blanket equipment/transfer capacity conflict. Root-only reading can pass the same edit. The source-backed regression identifies this false denial; live coverage of the new bank is still pending. A root-held pen is not automatically neutral under every mod's equipment callbacks.
+The first acceptance case is borrowed-book reading with its automatic return, whole-operation and child cancellation, and promotion of an ordinary equip or independent device action. An unowned lookalike return must remain protected: a hand-built return without the confirmed pickup and private borrowing record does not reproduce a genuine earned loan. `Execution.inspect` and `capacityDeferred`, consumed by `Policy.transferCapacityConflict`, already distinguish these cases. A root-held pen is not automatically neutral under every mod's equipment callbacks; native source and callback proofs remain required.
 
 ## What exists and what changes
 
@@ -24,6 +24,34 @@ The current bug provides the first acceptance case: borrowed-book reading with a
 | Queue panel and common scenario runner | Hover cache, press/release revalidation, selected-pack controls and log audits | Show forecast uncertainty separately from proven dependencies; add bounded profiling and migration coverage |
 
 Storage tools such as Smart Deposit and Quartermaster retain their routing rules. They can reuse a qualified shared weight/admission primitive where appropriate, but this plan does not authorize rewriting unrelated storage features. Their native transfers remain regression consumers of changes to a shared transfer boundary.
+
+## Current runtime mechanism
+
+The enabled path uses existing responsibilities rather than a second queue executor:
+
+1. `ActionQueueEditModel` and source-bound family definitions describe dependencies and effects. `ActionQueuePolicy` evaluates the candidate order with current facts; ordinary unrelated native actions retain the cheap stateless path.
+2. `ActionQueueExecution.inspect` issues a private, sealed capability only for a genuine earned singleton optional return. `capacityDeferred` verifies that capability, exact native item/endpoints, callback identities and live queue ownership. A caller-supplied descriptor cannot authorize an edit.
+3. `ActionQueueSettlement` verifies exclusive borrowing ownership again at the later callback boundary. These two observations are deliberately separate: callbacks between them can create another claim. Neither an old preview nor an item ID alone replaces the fresh checks.
+4. `ActionQueueLifecycle` and reading support stop and drain the original native episode, retain paid pages and construct only the supported remainder. Cancelling the optional return alone keeps the book carried and reading active.
+5. The native transfer request admits the actual mutation at execution time. A confirmed failed return remains visible with its exact item. Missing, expired or partially executed requests grant neither completion, Keep authority nor automatic replay.
+
+The full `observeActiveEdit` projection remains an opt-in diagnostic. The removed eager resource candidate is not runtime authority; a coverage marker such as `commonActiveEdit` is not evidence of capacity permission. There is no whole-inventory snapshot per rendered row and no cross-decision cache of mutable item facts.
+
+## Qualified first slice
+
+| Operation | Enabled behavior |
+|---|---|
+| Read from main inventory, a worn military bag or a direct world shelf | Cancel the active reader or its genuine whole operation through the panel; retain exact items, native cleanup and independent queued work |
+| Cancel only an optional return from bag/shelf | Keep the book carried and continue reading |
+| Promote an ordinary root Pen equip or independent adjacent TV volume action | Use the existing fresh dependency and native execution contracts; retain the original return and paid reading progress |
+| Move reading below an independent adjacent device action | Drain the old native reader, execute the device action and resume the supported remainder |
+| Destination fills after an edit; relevant favourite restrictions | Preserve the actual item, expose the confirmed failed return and retain independent work; do not invent future space or replay the transfer |
+
+The bank calls real panel hit-tested press/release handlers and native producers with ordinary durations. It verifies native start/completion receipts, saved pages, exact item/endpoints, equipment/device effects and the independent tail. These are callback-driven tests, not physical pointer or visual-layout qualification. The Host audit accepts the engine's nonzero signed-byte transaction IDs and still requires the exact actor, token, action and matching start/completion pair. Reanalysis can correct a verifier defect without replaying the game or changing the captured effects.
+
+Scope stays bounded to one genuinely earned optional singleton return, reviewed native bindings and the supported dependency closure. Shared/multiple loans, custom acceptance or unknown callbacks, arbitrary batches, item-using media/battery chains and unsupported histories do not acquire permissions from this qualification. An unavailable network outcome remains unknown; wider recovery/admission migration stays in TODO.
+
+The implementation keeps the existing one-candidate native/stateless path. It adds no whole-inventory graph or new work on each rendered row. In this bank the warmed actual panel-handler work had medians of about 0.79 ms in SP and 0.84 ms in Host, with maxima below 4.6 ms across the 26 cases in each mode. These instrumented observations describe handler work after diagnostic warmup; they exclude rendering, human input delay and asynchronous settlement, and establish neither cold-input/frame latency nor a universal timing target. Keeping this existing path has a clear work advantage over the rejected eager projection. Full hover/drag/retention and larger-consumer gates below remain necessary before introducing additional forecast authority.
 
 ## Contract and decision flow
 

@@ -297,6 +297,35 @@ at=true;prepare('world.header-cancel');tick();assert(prepares==2)
             with self.subTest(name=name):
                 evidence = self.evidence(); mutate(evidence[0]); self.assertTrue(self.check(evidence), name)
 
+    def test_native_equipment_radio_receipts_require_exact_nonzero_signed_byte(self):
+        for transaction in (-128, -125, -1, 1, 127):
+            with self.subTest(transaction=transaction):
+                evidence = self.evidence()
+                for record in evidence[0]['records']:
+                    if record['role'] in ('equip', 'volume'):
+                        for receipt in record['receipts']:
+                            receipt['transaction'] = transaction
+                self.assertEqual(self.check(evidence), [])
+        for transaction in (0, -129, 128, True, 1.25, '-125'):
+            with self.subTest(invalid=transaction):
+                evidence = self.evidence()
+                for record in evidence[0]['records']:
+                    if record['role'] in ('equip', 'volume'):
+                        for receipt in record['receipts']:
+                            receipt['transaction'] = transaction
+                self.assertIn('Missing sealed native equipment/radio started/completed outcome', self.check(evidence))
+        for mutation in ('missing', 'token', 'transaction', 'actor'):
+            with self.subTest(seal=mutation):
+                evidence = self.evidence()
+                record = next(r for r in evidence[0]['records'] if r['role'] == 'volume')
+                for receipt in record['receipts']:
+                    receipt['transaction'] = -125
+                if mutation == 'missing': record['receipts'].pop()
+                elif mutation == 'token': record['receipts'][1]['token'] = '87654321-4321-4321-4321-123456789012'
+                elif mutation == 'transaction': record['receipts'][1]['transaction'] = -124
+                else: record['receipts'][1]['player'] = 999
+                self.assertIn('Missing sealed native equipment/radio started/completed outcome', self.check(evidence))
+
     def test_missing_raw_source_chain_and_drains_are_rejected(self):
         for member in (4, 5, 6, 7):
             evidence = self.evidence()
@@ -2096,7 +2125,7 @@ os.exit(0)
                 evidence=list(self.precise_evidence(case));evidence[0]=changed
                 self.assertTrue(self.check(evidence),(case,key))
 
-    def test_active_edit_flag_is_strict_and_restricted_to_precise_real_header_cases(self):
+    def test_active_edit_flag_is_strict_and_scopes_mixed_bank_to_supported_cases(self):
         selection = self.selection(); selection['cases'] = list(adapter.ACTIVE_EDIT_CASES)
         for bad in (1, 'true', None, [], {}):
             selection['options']['active_edit_observation'] = bad
@@ -2108,7 +2137,10 @@ os.exit(0)
         for case in ('root.reader-child-cancel', 'worn-bag.header-cancel-capacity-lost', 'world.header-cancel-favorite'):
             selection['cases'] = [case]
             with self.assertRaises(ValueError): adapter.validate(selection)
+        selection['cases'] = list(adapter.DECLARED_CASES)
+        adapter.validate(selection)  # One lifecycle includes ordinary controls and scoped diagnostics.
         selection['options']['active_edit_observation'] = False
+        selection['cases'] = list(adapter.CASES)
         adapter.validate(selection)  # Legacy cases retain their previous options/evidence contract.
 
     def test_active_edit_exact_return_and_controls_keep_overall_unknown_visible(self):
@@ -2377,13 +2409,29 @@ os.exit(0)
                     if field in record: client.append(raw(marker,record[field]))
                 for sample in record.get('requestStates',[]):client.append(raw('NATIVE_REQUEST',sample))
             client.append(raw('PERFORMANCE',row['performance']))
-            if active:
+            if active and case in adapter.ACTIVE_EDIT_CASES + adapter.DEVICE_ONLY_CASES:
                 row['activeEditObservation']=self.active_edit_receipt(row)
                 client.append(raw('ACTIVE_EDIT_OBSERVATION',row['activeEditObservation']))
             client.append(event(row))
         client.append(event(dict(event='complete', suite='book-controls', cases=cases, performed=len(cases), skipped=0, failed=0)))
         client.append(raw('COMPLETE', dict(cases=cases, failed=0)))
         return selection, '\n'.join(client), '\n'.join(server)
+
+    def test_mixed_acceptance_bank_keeps_scoped_observation_strict(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                with tempfile.TemporaryDirectory() as directory:
+                    selection, client, server = self.log_bank(kind, mode, precise=True, active=True, cases=adapter.DECLARED_CASES)
+                    root = Path(directory)
+                    (root / 'client1-launch.log').write_text(client)
+                    (root / 'server-launch.log').write_text(server)
+                    result = a.verify(root, selection, {})
+                    self.assertEqual(result['issues'], [], (kind, mode, result))
+                    self.assertEqual(len(result['evidence']['activeEditObservation']), len(adapter.ACTIVE_EDIT_CASES + adapter.DEVICE_ONLY_CASES))
+                    # A duplicated scoped receipt is never accepted as coverage.
+                    receipt = next(line for line in client.splitlines() if adapter.PREFIX + 'ACTIVE_EDIT_OBSERVATION ' in line)
+                    (root / 'client1-launch.log').write_text(client + '\n' + receipt)
+                    self.assertTrue(a.verify(root, selection, {})['issues'])
 
     def test_whole_bank_raw_evidence_and_completion(self):
         with tempfile.TemporaryDirectory() as directory:

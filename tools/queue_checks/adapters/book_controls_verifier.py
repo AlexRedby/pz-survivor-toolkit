@@ -8,7 +8,7 @@ import re
 from .. import report
 from ..placement import validate as validate_placement
 from .book_controls import (
-    CAPACITY_CASES, DEVICE_ONLY_CASES, FAVORITE_CASES, complete, raw, selected_cases, validate,
+    ACTIVE_EDIT_CASES, CAPACITY_CASES, DEVICE_ONLY_CASES, FAVORITE_CASES, complete, raw, selected_cases, validate,
 )
 from .tv_controls import _number as _base_number
 
@@ -401,7 +401,10 @@ def _record_errors(record, kind, case, actor, acks, capacity_lost=False):
                        or r.get('kind') != record.get('type') or r.get('player') != actor for r in receipts)
                 or receipts[0].get('token') != receipts[1].get('token')
                 or receipts[0].get('transaction') != receipts[1].get('transaction')
-                or type(receipts[0].get('transaction')) is not int or receipts[0]['transaction'] <= 0
+                # The native transaction field is a signed Java byte. Zero is
+                # absent; negative nonzero values retain the same sealed identity.
+                or type(receipts[0].get('transaction')) is not int
+                or not -128 <= receipts[0]['transaction'] <= 127 or receipts[0]['transaction'] == 0
                 or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', str(receipts[0].get('token')))):
             errors.append('Missing sealed native equipment/radio started/completed outcome')
     if kind == 'mp' and record.get('role') in ('pickup', 'return') and record.get('started') and not (capacity_lost and role == 'return'):
@@ -1380,7 +1383,8 @@ def verify(root, selection, catalog):
         if len(setup) != 1 or setup[0].get('activeEditObserved', False) is not active:
             issues.append('Active-edit observation setup differs from selected option')
         active_rows = raw(text, 'ACTIVE_EDIT_OBSERVATION')
-        if [r.get('case') for r in active_rows] != (cases if active else []):
+        observed_cases = [case for case in cases if active and case in ACTIVE_EDIT_CASES + DEVICE_ONLY_CASES]
+        if [r.get('case') for r in active_rows] != observed_cases:
             issues.append('Active-edit raw receipts missing, duplicated, foreign or reordered')
         if selection.get('options', {}).get('precise_timing') is True:
             if len(setup) != 1:
@@ -1424,7 +1428,7 @@ def verify(root, selection, catalog):
                 baselines[i] if i < len(baselines) else None, verified[i] if i < len(verified) else None,
                 [r for r in admissions if r.get('case') == case], [r for r in boundaries if r.get('case') == case], [r for r in drains if r.get('case') == case], [r for r in acks if r.get('case') == case], next((r for r in capacities if r.get('case') == case), None),
                 [r for r in stop_rows if r.get('case') == case])
-            if active:
+            if case in observed_cases:
                 receipt = row.get('activeEditObservation')
                 if [r for r in active_rows if r.get('case') == case] != [receipt]:
                     errors.append('Raw active-edit receipt differs from its exact case')

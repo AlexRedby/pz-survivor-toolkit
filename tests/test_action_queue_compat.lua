@@ -3417,7 +3417,7 @@ end
 do
     local previousRound,previousOnline,previousVehiclePart,previousRootExists=round,player.getOnlineID,inventory.getVehiclePart,inventory.isExistYet
     local previousExists,previousLookup=tidyBag.isExistYet,tidyBag.getItemById
-    local actualPolicy
+    local actualPolicy,actualExecution,nativeControlEntries
     round=function(value)return value end
     player.getOnlineID=function()return 101 end
     inventory.getVehiclePart=function()end
@@ -3494,7 +3494,15 @@ do
             for key,values in pairs(definitions.behaviorTypes)do
                 types[key]={};for i,value in ipairs(values)do types[key][i]=value end
             end
+            local previousExecution=PZSurvivorToolkit.ActionQueueExecution
+            actualExecution=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueExecution.lua'))()
+            assert(loadstring(read(NativeActionRoot..'/shared/RadioCom/ISRadioAction.lua'),
+                '@'..NativeActionRoot..'/shared/RadioCom/ISRadioAction.lua'))()
             actualPolicy=assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
+            nativeControlEntries={ISInventoryTransferAction=definitions.entries['native.ISInventoryTransferAction'],
+                ISReadABook=definitions.entries['native.ISReadABook'],
+                ISEquipWeaponAction=definitions.entries['native.ISEquipWeaponAction'],ISRadioAction=definitions.entries['native.ISRadioAction']}
+            PZSurvivorToolkit.ActionQueueExecution=previousExecution
             -- Keep this fixture's deliberate native input contracts; exercise
             -- the real policy decisions without registering a second owner.
             for key in pairs(definitions.entries)do definitions.entries[key]=entries[key] end
@@ -3689,9 +3697,107 @@ do
         recorded.onCompleteArgs[1]=nil
         assert(intent.status(recorded),'restored guarded source record lost its exact binding')
         settlement.beginPlannedReturn,settlement.finishPlannedReturn,settlement.returnRetention=beforeBegin,beforeFinish,beforeRetention
+        -- Exercise the existing sealed runtime contract with real Policy,
+        -- Execution, Settlement and installed Compat/P4 private ownership.
+        -- Java actors and pickup execution remain explicit fixture doubles;
+        -- this proves source composition, not native physical or UI effects.
+        do
+            local savedExecution=PZSurvivorToolkit.ActionQueueExecution
+            local transfer={new=ISInventoryTransferAction.new,perform=ISInventoryTransferAction.perform,transferItem=ISInventoryTransferAction.transferItem}
+            assert(actualPolicy.adoptTransferHooks(transfer,transfer,transferItemGuard))
+            for _,guard in ipairs(containerGuards)do assert(actualPolicy.adoptTransferHooks(transfer,transfer,guard))end
+            local savedEntries,savedTypes={},{}
+            for kind,entry in pairs(nativeControlEntries)do
+                savedEntries[kind],savedTypes[kind]=definitions.entries['native.'..kind],definitions.behaviorTypes[kind]
+                definitions.entries['native.'..kind],definitions.behaviorTypes[kind]=entry,{'native.'..kind}
+            end
+            local savedRoot={inventory.isExistYet,inventory.getAcceptItemFunction,inventory.getOnlyAcceptCategory}
+            local savedBag={tidyBag.isExistYet,tidyBag.getAcceptItemFunction,tidyBag.getOnlyAcceptCategory,tidyBag.getItemById}
+            local savedOwnerInventory=tidyBagOwner.getInventory
+            inventory.isExistYet=function()return true end
+            inventory.getAcceptItemFunction=function()end;inventory.getOnlyAcceptCategory=function()end
+            tidyBag.isExistYet=function()return true end
+            tidyBag.getAcceptItemFunction=function()end;tidyBag.getOnlyAcceptCategory=function()end
+            tidyBagOwner.getInventory=function()return tidyBag end
+            PZSurvivorToolkit.ActionQueueExecution=actualExecution
+            local first,second,owner=tidyTasks()
+            first.getIsCraftingConsumed=function()return false end
+            tidyBag.getItemById=function(_,id)
+                for _,value in ipairs({first,second})do if value:getID()==id and value.container==tidyBag then return value end end
+            end
+            local scope=assert(compat.fixtureRegistries[2][player])
+            local pickup
+            for action in pairs(scope.tasks[owner].actions)do
+                if action.Type=='ISInventoryTransferAction'and action.item==first and action.srcContainer==tidyBag then pickup=action end
+            end
+            assert(pickup,'sealed edit contract requires the original private pickup owner')
+            first.container=tidyBag;inventory.values={second,tidyBagOwner}
+            pickup.action={};pickup.queueList={{items={first}}};pickup.transactionId=0
+            queue.current,queue.queue=pickup,{pickup}
+            assert(settlement.beginPickup(scope,pickup,function(action)return action==pickup end))
+            first.container=inventory;inventory.values={first,second,tidyBagOwner};pickup.queueList={}
+            assert(settlement.finishPickup(scope,pickup,true));settlement.poll(scope)
+            local returning=bulk.guardTransfer(ISInventoryTransferAction:new(player,first,inventory,tidyBag))
+            returning:setAllowMissingItems(true);returning.toolkitQueueOperation=owner
+            returning.queueList={{items={first}}};returning.transactionId=0;returning.started=false
+            settlement.track(returning,'body')
+            local reader=ISReadABook:new(player,first);reader.toolkitQueueOperation=owner
+            reader.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+            settlement.track(reader,'body')
+            local pen=item(inventory,29401);inventory.values[#inventory.values+1]=pen
+            local equip=ISEquipWeaponAction:new(player,pen,50,true,false)
+            equip.primary,equip.twoHands,equip.toolkitQueueOperation=true,false,{}
+            local device={class='IsoTelevision',getObjectIndex=function()return 0 end,getSquare=function()return square end}
+            local data={getParent=function()return device end,isIsoDevice=function()return true end,
+                isVehicleDevice=function()return false end,getIsTurnedOn=function()return true end,getPower=function()return 1 end,
+                getDeviceVolume=function()return .5 end,getChannel=function()return 100 end,getMicIsMuted=function()return false end}
+            device.getDeviceData=function()return data end
+            local volume=ISRadioAction:new('SetVolume',player,device,.25);volume.toolkitQueueOperation={}
+            queue.current,queue.queue=reader,{reader,returning,equip,volume}
+            assert(actualPolicy.matchesNative(returning)and intent.status(returning))
+            local descriptor=assert(actualExecution.inspect(returning),'earned private singleton return lost its runtime contract')
+            assert(actualExecution.capacityDeferred(returning,descriptor))
+            local promoted=actualPolicy.evaluateMove(queue,equip,reader)
+            local cancelled=actualPolicy.evaluateCancel(queue,reader,true)
+            assert(promoted.allowed and promoted.preempt and cancelled.allowed,
+                'real earned singleton must allow root equipment/header controls: '..tostring(promoted.reason)..'/'..tostring(cancelled.reason))
+            assert(actualPolicy.evaluateMove(queue,volume,reader).allowed
+                and actualPolicy.evaluateCancel(queue,reader,false).allowed,
+                'independent TV promotion and isolated reader stop must retain their runtime permission')
+            assert(not actualExecution.capacityDeferred(returning,{}),'public flags forged a private execution contract')
+            local complete=returning.complete;returning.complete=function()error('foreign completion must not execute')end
+            assert(not actualPolicy.evaluateMove(queue,equip,reader).allowed,'changed native return binding escaped the shared gate')
+            returning.complete=complete
+            assert(actualPolicy.evaluateMove(queue,equip,reader).allowed,'restored exact source contract did not recover')
+            -- Mutate the real private ledger inside an endpoint getter, after
+            -- the first eligibility sweep. Both loan observations are needed.
+            local category,calls=tidyBag.getOnlyAcceptCategory,0
+            tidyBag.getOnlyAcceptCategory=function()
+                calls=calls+1
+                if calls==3 then
+                    local shared=ISReadABook:new(player,first);shared.toolkitQueueOperation={}
+                    assert(settlement.remember(scope,shared,{knownInputs=true,items={[first:getID()]=true}}))
+                end
+                return category()
+            end
+            local changed=actualPolicy.evaluateMove(queue,equip,reader)
+            assert(calls>=3 and not changed.allowed,'same-call private sharing escaped the second earned-loan observation')
+            tidyBag.getOnlyAcceptCategory=category
+            assert(not actualExecution.capacityDeferred(returning,descriptor)
+                and not actualPolicy.evaluateCancel(queue,reader,true).allowed,
+                'new private sharing revived an old descriptor or borrowed-reader header permission')
+            inventory.isExistYet,inventory.getAcceptItemFunction,inventory.getOnlyAcceptCategory=unpack(savedRoot,1,3)
+            tidyBag.isExistYet,tidyBag.getAcceptItemFunction,tidyBag.getOnlyAcceptCategory,tidyBag.getItemById=unpack(savedBag,1,4)
+            tidyBagOwner.getInventory=savedOwnerInventory
+            PZSurvivorToolkit.ActionQueueExecution=savedExecution
+            for kind in pairs(nativeControlEntries)do
+                definitions.entries['native.'..kind],definitions.behaviorTypes[kind]=savedEntries[kind],savedTypes[kind]
+            end
+            reset()
+            print('Earned singleton runtime contract: root equip/header/TV decisions, source replacement and same-call private sharing passed.')
+        end
         -- Actual native pickup outcome plus an admission refusal must fence only
         -- P4's matching idle return until Keep. Other P4 returns still execute.
-        local fixtureIndependent=assert(loadstring([[return function()return true end]],'@fixture/ActionQueuePolicy.lua'))()
         for _,fenceMode in ipairs({'active','stop-only','no-prior-intent','restoring','keep-before-idle','keep-before-first-idle','disabled','foreign-checker'})do
         local savedExecution,savedIndependent=PZSurvivorToolkit.ActionQueueExecution,actualPolicy.returnFailureIndependent
         local savedActions,savedOnline,savedRootExists=player.getCharacterActions,player.getOnlineID,inventory.isExistYet
@@ -3736,7 +3842,6 @@ do
                 or action.item:getID()==reference.id and action.item:getFullType()==reference.fullType)
         end]],'@fixture/ActionQueueExecution.lua'))()
         PZSurvivorToolkit.ActionQueueExecution={matches=executionGuard,enqueued=function()return false end,inspect=function()end,completionState=function()end}
-        actualPolicy.returnFailureIndependent=fixtureIndependent
         queue.current,queue.queue=returning,{returning}
         assert(settlement.prepareReturnExecution(returning,executionGuard),'earned source pickup must bind its exact optional return')
         returning.action={isStarted=function()return false end}
