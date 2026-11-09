@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.345
+
+- **Internal:** Keep solid-fuel and legacy alcohol reads inside the conditions that use them. Preserve live item classification, unknown metadata and script previews; this local cleanup does not claim a measured gameplay speedup.
+
 ### 0.1.343
 
 - **Fixed:** Allow reviewed pending TV cancellation and radio volume reordering across source-owned approaches when fresh native actor/target proofs preserve the command dependencies.

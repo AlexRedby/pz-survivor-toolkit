@@ -100,6 +100,8 @@ expect({bandage = 0.5, tags = {washable = true}, cleaning = "Example.Clean"}, {b
 expect({drainable = true, alcohol = 4}, {disinfectant = true})
 expect({drainable = true, alcohol = 3.99}, {disinfectant = false})
 expect({drainable = false, alcohol = 4}, {disinfectant = false})
+expect({drainable = true, alcohol = 4}, {disinfectant = true}, true)
+expect({drainable = true, alcohol = 3.99}, {disinfectant = false}, true)
 expect({contents = {[water] = 1}}, {disinfectant = false, fuel = false})
 expect({contents = {[beer] = 1}}, {disinfectant = false, fuel = false})
 expect({contents = {[whiskey] = 0.15}}, {disinfectant = false})
@@ -133,6 +135,97 @@ local roles = Usage.read({}, {})
 assert(next(roles) == nil, "missing live data must not become script defaults")
 roles = Usage.read(definition({fluids = {{whiskey, 1}}}), {IsDrainable = function() return false end})
 assert(roles.disinfectant == nil and roles.fuel == nil, "missing live component data stays unknown")
+
+-- Fluid contents and unknown component metadata must not consult unrelated
+-- solid-fuel or legacy alcohol declarations, even when those APIs exist.
+do
+    local alcoholHelper = toolkitScriptAlcoholPower
+    toolkitScriptAlcoholPower = function(script)
+        assert(not script.forbidAlcohol, "unneeded script alcohol getter")
+        return alcoholHelper(script)
+    end
+    local function forbidAlcohol(source, scriptOnly)
+        if scriptOnly then source.forbidAlcohol = true
+        else source.getAlcoholPower = function() error("unneeded live alcohol getter") end end
+    end
+    local function forbidSolidFuel(source)
+        local hasTag = source.hasTag
+        source.hasTag = function(self, tag)
+            assert(tag ~= ItemTag.IS_FIRE_FUEL and tag ~= ItemTag.IS_FIRE_FUEL_SINGLE_USE,
+                "unneeded solid-fuel tag getter")
+            return hasTag(self, tag)
+        end
+        source.getFireFuelRatio = function() error("unneeded solid-fuel ratio getter") end
+    end
+    for _, scriptOnly in ipairs({false, true}) do
+        local source = scriptOnly and definition({fluids = {{whiskey, 1}}, drainable = true})
+            or live({contents = {[petrol] = 1}, drainable = true})
+        forbidSolidFuel(source)
+        forbidAlcohol(source, scriptOnly)
+        local current, possibilities, isFluid = Usage.read(scriptOnly and source or nil,
+            not scriptOnly and source or nil)
+        assert(isFluid == true)
+        if scriptOnly then
+            assert(current.fuel == nil and current.disinfectant == nil)
+            local usableAlcohol = false
+            for _, state in ipairs(possibilities) do
+                if state.disinfectant == true then usableAlcohol = true end
+                assert(state.fuel == false, "fluid preview inherited solid fuel")
+            end
+            assert(usableAlcohol, "fluid preview lost disinfectant contents")
+            source.getComponentScriptFor = nil
+        else
+            assert(current.fuel == true and current.disinfectant == false)
+            source.getFluidContainer = nil
+        end
+        current, possibilities, isFluid = Usage.read(scriptOnly and source or nil,
+            not scriptOnly and source or nil)
+        assert(isFluid == nil and current.fuel == nil and current.disinfectant == nil,
+            "unknown fluid metadata must stay unknown")
+        assert(#possibilities == 0)
+
+        -- A known nonfluid non-drainable is a known non-disinfectant; an
+        -- unavailable drainable predicate cannot establish that negative.
+        source = scriptOnly and definition() or live()
+        forbidAlcohol(source, scriptOnly)
+        current = Usage.read(scriptOnly and source or nil, not scriptOnly and source or nil)
+        assert(current.fuel == false and current.disinfectant == false)
+        if scriptOnly then source.isItemType = nil else source.IsDrainable = nil end
+        current = Usage.read(scriptOnly and source or nil, not scriptOnly and source or nil)
+        assert(current.fuel == false and current.disinfectant == nil)
+
+        -- Preserve Lua truthiness rather than narrowing the native predicate
+        -- contract to the boolean true during the getter cleanup.
+        for _, value in ipairs({true, 0, "drainable"}) do
+            source = scriptOnly and definition({alcohol = 4}) or live({alcohol = 4})
+            source[scriptOnly and "isItemType" or "IsDrainable"] = function() return value end
+            current = Usage.read(scriptOnly and source or nil, not scriptOnly and source or nil)
+            assert(current.disinfectant == true, "truthy drainability must retain the alcohol predicate")
+        end
+    end
+    toolkitScriptAlcoholPower = nil
+    assert(Usage.read(definition({drainable = true, alcohol = 4})).disinfectant == nil,
+        "unavailable script alcohol getter must stay unknown")
+    toolkitScriptAlcoholPower = alcoholHelper
+end
+
+-- Relevant live values remain observations on every read, not cached facts.
+do
+    local options = {drainable = true, tags = {firefuel = true}, uses = 0, alcohol = 4}
+    local item = live(options)
+    local current = Usage.read(nil, item)
+    assert(current.fuel == false and current.disinfectant == true)
+    options.uses, options.alcohol = 1, 3.99
+    current = Usage.read(nil, item)
+    assert(current.fuel == true and current.disinfectant == false)
+    options.uses, options.alcohol = 0, 4
+    current = Usage.read(nil, item)
+    assert(current.fuel == false and current.disinfectant == true)
+    item.hasTag, item.getFireFuelRatio, item.getAlcoholPower = nil, nil, nil
+    current = Usage.read(nil, item)
+    assert(current.fuel == nil and current.disinfectant == nil)
+end
+
 local bandageHelper = toolkitScriptBandagePower
 toolkitScriptBandagePower = nil
 roles = Usage.read(definition({bandage = 2}))

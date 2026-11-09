@@ -146,13 +146,15 @@ function Usage.read(script, item, context)
     end
     local dirty, laundryStates, laundryManaged = laundry.read(script, item)
     if laundryManaged then roles.dirty = dirty end
-    local fuel, fuelMode = solidFuel(script, item, isDrainable)
     if isFluid == false then
+        local fuel, fuelMode = solidFuel(script, item, isDrainable)
         roles.fuel = fuel
         if fuelMode then varying.fuel = fuelMode end
-        local alcohol = power(script, item, "getAlcoholPower", toolkitScriptAlcoholPower)
         if isDrainable == false then roles.disinfectant = false
-        elseif isDrainable and type(alcohol) == "number" then roles.disinfectant = alcohol == 4 end
+        elseif isDrainable then
+            local alcohol = power(script, item, "getAlcoholPower", toolkitScriptAlcoholPower)
+            if type(alcohol) == "number" then roles.disinfectant = alcohol == 4 end
+        end
     end
     local starter = tagged(source, "START_FIRE")
     if fullType == "Base.Lighter" or fullType == "Base.Matches" then starter = true end
