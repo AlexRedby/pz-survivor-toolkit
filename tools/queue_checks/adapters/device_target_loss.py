@@ -53,6 +53,7 @@ def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [*sorted((root / 'device-target-loss').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua',
+            root / 'support/QueueCaseStages.lua',
             Path(__file__).resolve().parents[1] / 'placement.py']
 
 
@@ -64,8 +65,9 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         for side, name in [('client', 'ZZStartup.lua'), ('server', 'ZZStartupServer.lua')]:
             shutil.copy2(root / 'startup' / side / name, lua / side / name)
         shutil.copy2(root / 'health/shared/QueueHealthEvents.lua', lua / 'shared')
+        shutil.copy2(root / 'support/QueueCaseStages.lua', lua / 'shared')
     runtime.setdefault('fixture', {}).update(server_ready='[STARTUP_TEST] SERVER_READY',
-        failure_markers=['[QUEUE_TEST] FAIL device-target-loss'], sandbox={'Zombies': 6})
+        failure_markers=['[QUEUE_TEST] FAIL device-target-loss'], sandbox={'Zombies': 6}, case_stages={'version': 1})
 
 
 def complete(selection, role, text):

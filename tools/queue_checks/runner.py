@@ -12,6 +12,7 @@ from . import adapters, admission, pack, worlds, coop, desktop, glfw, provenance
 from .native import font_preload
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 from .preflight import ClientPreflight, fail as setup_failure
+from .case_stages import CaseStages
 
 
 LOCK = Path("/tmp/pz-queue-native-launch.lock")
@@ -154,6 +155,7 @@ def run(root, resource_wait=300):
                      'resources': resources, 'input_guards': input_guards, 'desktop': window_manager.evidence}
         fixture_monitor = FixtureLoadMonitor(root, runtime, selection)
         preflight = ClientPreflight(root, runtime, selection)
+        case_stages = CaseStages(runtime, selection)
         clients = adapters.roles(selection, False)
         fixture_progress = progress.Fixture(selection)
         game = Path(runtime["game"])
@@ -285,6 +287,7 @@ def run(root, resource_wait=300):
                 current = {role: text(role) for role in adapters.roles(selection)}
                 check_fixture_loading(fixture_monitor, current, execution, 'execution')
                 preflight.check(current, execution, release=False)
+                case_stages.check(current, execution)
                 for role in clients:
                     if processes[role].poll() is None:
                         window_action(role, 'check')
@@ -409,6 +412,10 @@ def run(root, resource_wait=300):
                     execution.update(status='failed', error='; '.join([execution.get('error', ''), *execution['cleanup_errors']]))
                 try:
                     preflight.check({role: text(role) for role in clients}, execution, release=False)
+                except RuntimeError as error:
+                    execution.update(status='failed', error=str(error))
+                try:
+                    case_stages.check({role: text(role) for role in clients}, execution, final=True)
                 except RuntimeError as error:
                     execution.update(status='failed', error=str(error))
                 if execution['status'] == 'completed':

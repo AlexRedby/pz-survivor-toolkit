@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from . import adapters, batch_policy, progress, mod_inputs
+from . import adapters, batch_policy, progress, mod_inputs, case_stages
 
 
 MARKER = "[QUEUE_CHECK] "
@@ -461,7 +461,9 @@ def compare(current, control):
     if current.get("settings_fingerprint") != control.get("settings_fingerprint") or not current.get("settings_fingerprint"):
         reasons.append("Game, source, mods, cases or settings differ")
     for label, report in (("toolkit", current), ("control", control)):
-        if report["functional"]["status"] != "passed" or not report["provenance"]["verified"] or execution_issues(report.get('run'), report['selection'], report.get('execution')):
+        if (report["functional"]["status"] != "passed" or not report["provenance"]["verified"]
+                or report.get('execution_issues') or batch_policy.setup_failure(report)
+                or execution_issues(report.get('run'), report['selection'], report.get('execution'))):
             reasons.append(label + " run lacks verified functional completion")
         expected_roles = set(adapters.roles(report['selection']))
         if set(report["runtime"]["roles"]) != expected_roles or report["runtime"]["microphone"] or any(not audit.get("available") for audit in report["runtime"]["roles"].values()):
@@ -573,6 +575,8 @@ def build_report(root, catalog, control=None, *, reanalysis=False):
     if not isinstance(execution, dict):
         execution = {"status": "invalid"}
     execution_errors = execution_issues(root, selection, execution)
+    stage_failure, stage_issues = case_stages.audit(root, selection, execution)
+    execution_errors += stage_issues
     viewport = window_size_evidence(root, selection)
     execution_errors += viewport['issues']
     microphone = any(row["microphone"] for row in audits.values())
@@ -589,6 +593,8 @@ def build_report(root, catalog, control=None, *, reanalysis=False):
               "runtime": dict(counts, status="unavailable" if any(not row["available"] for row in audits.values()) else runtime_status, roles=audits, microphone=microphone),
               "limits": ["Callback-driven native fixture; physical UI, WAN and long sessions are separate coverage.",
                          "Native tree seal scope: media/lua and media/scripts; other asset/binary trees are outside this seal."]}
+    if stage_failure:
+        report['setup_failure'] = stage_failure
     if analysis_provenance is not None:
         # Recheck after the verifier: neither observations nor verifier bytes may
         # change while this report is being computed.

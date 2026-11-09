@@ -334,6 +334,47 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertNotIn('setup_failure', result)
         self.assertEqual([101], [call.args[0] for call in kills])
 
+    def run_case_stage_failure(self, stage):
+        self.complete = False
+        self.runtime.setdefault('fixture', {})['case_stages'] = {'version': 1}
+        (self.root / 'runtime.json').write_text(json.dumps(self.runtime))
+        written = []
+        def gameplay(seconds):
+            if written or not (self.root / 'client1/Lua/queue-preflight-release.txt').exists():
+                return
+            written.append(True)
+            stages = ['setup'] + (['gameplay'] if stage != 'setup' else []) + (['cleanup'] if stage == 'cleanup' else [])
+            rows = [dict(stage=value, status='started') for value in stages]
+            rows.append(dict(stage=stage, status='failed', reason='stage failure'))
+            for row in rows:
+                row.update(token='0123456789abcdef' * 2, role='client1', suite='health', case='nativeStop')
+                self.client_streams['client1'].write('[QUEUE_CASE_STAGE] ' + json.dumps(row) + '\n')
+            self.client_streams['client1'].write('[QUEUE_TEST] FAIL fixture failed\n')
+            self.client_streams['client1'].flush()
+        return self.invoke(sleep=gameplay)
+
+    def test_per_case_setup_failure_after_release_stops_and_cleans_owned_client(self):
+        result, kills = self.run_case_stage_failure('setup')
+        self.assertTrue(result['preflight']['released'])
+        self.assertEqual('fixture-case-setup', result['setup_failure']['kind'])
+        self.assertEqual('nativeStop', result['setup_failure']['case'])
+        self.assertEqual('stage failure', result['setup_failure']['reason'])
+        self.assertEqual([101], [call.args[0] for call in kills])
+
+    def test_case_cleanup_failure_is_retained_separately_from_gameplay(self):
+        result, kills = self.run_case_stage_failure('cleanup')
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('fixture-case-cleanup', result['setup_failure']['kind'])
+        self.assertEqual(4, len(result['case_stages']['receipts']['client1']))
+        self.assertEqual([101], [call.args[0] for call in kills])
+
+    def test_declared_case_gameplay_failure_is_not_setup_failure(self):
+        result, kills = self.run_case_stage_failure('gameplay')
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('stage failure', result['error'])
+        self.assertNotIn('setup_failure', result)
+        self.assertEqual([101], [call.args[0] for call in kills])
+
     def fixture_source(self, role='client1'):
         source = self.root / role / 'mods/ActionQueueTest/42/media/lua/shared/ZZBrokenFixture.lua'
         source.parent.mkdir(parents=True, exist_ok=True)

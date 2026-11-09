@@ -9,6 +9,7 @@ local F=require 'QueueDeviceTargetLoss'
 local P=require 'QueueEnergyPlacement'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
+local stages=require('QueueCaseStages').new('device-target-loss','client1')
 local T=PZSurvivorToolkit
 local started,ready,done=false,false,false
 local index,phase,since=1,'prepare',0
@@ -16,6 +17,7 @@ local ids,state,authority,placement,placementState,clientPlacement,mutation,obse
 local commands,tracked,hold,setter,tail,initial,before,observedAt,drainedAt,outcome,acks,callbacks
 local functionBindings
 local walkBank
+local pendingCommand
 local function now()return getTimestampMs()end
 local function case()return config.cases[index]end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
@@ -26,6 +28,7 @@ local function emit(row)
 end
 local function fail(error)
  if done then return end
+ stages:fail(error)
  emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(error),commands=commands,
   ids=ids,mutation=mutation,observed=observed,server=receipt})
  print('[QUEUE_TEST] FAIL device-target-loss '..tostring(error));done=true
@@ -36,7 +39,7 @@ local function request(command)
   assert(clientPlacement and P.at(getPlayer(),placement),'device loss Prepare requires fresh placement')
   args.placement=placement;args.clientPlacement=clientPlacement
  end
- if isClient()then sendClientCommand('DeviceTargetLossTest',command,args);return end
+ if isClient()then pendingCommand=command;sendClientCommand('DeviceTargetLossTest',command,args);return end
  if command=='Prepare'then authority=F.prepare(getPlayer(),case(),config.mode,placement,clientPlacement);ids=authority.ids;raw('PREPARED',ids)
  elseif command=='Mutate'then mutation=F.mutate(authority);raw('MUTATED',mutation)
  elseif command=='Verify'then receipt=F.snapshot(authority);raw('VERIFIED',receipt)
@@ -46,8 +49,14 @@ end
 Events.OnServerCommand.Add(function(module,command,args)
  if done or not args then return end
  if module=='DeviceTargetLossTest'then
-  if command=='Failed'then fail(args.error);return end
   if args.case~=case()then return end
+  if command=='Failed'then
+   if args.command==pendingCommand and pendingCommand then fail(args.error)end
+   return
+  end
+  local requests={Prepared='Prepare',Mutated='Mutate',Verified='Verify',Cleaned='Cleanup'}
+  if not pendingCommand or requests[command]~=pendingCommand then return end
+  pendingCommand=nil
   if command=='Prepared'then ids=args elseif command=='Mutated'then mutation=args
   elseif command=='Verified'then receipt=args elseif command=='Cleaned'then cleanup=args end
  elseif module=='PZSurvivorToolkitActions'and command=='State'and tracked then
@@ -162,6 +171,7 @@ local function begin()
  end
  before=F.snapshot(state)
  assert(before.heldDataSame and before.heldDataParentSame and before.oldPresent and not before.destinationPresent)
+ stages:gameplay()
  hold=ISReadABook:new(getPlayer(),state.hold);track(hold,'hold');ISTimedActionQueue.add(hold);captureFunctions(hold)
  phase='hold'
 end
@@ -210,6 +220,7 @@ local function enqueue()
 end
 local function finish()
  assert(idle()and cleanup and F.cleaned(state),'device loss cleanup did not replicate')
+ stages:complete()
  local setterRow=tracked[setter]
  local safe=config.mode=='toolkit'and outcome.queueIdle and outcome.recovery=='none'
   and not setterRow.started and setterRow.starts==0 and not setterRow.allocated and not setterRow.performed
@@ -238,9 +249,10 @@ local function finish()
  ids,state,authority,placement,placementState,clientPlacement,mutation,observed,receipt,cleanup,quiet=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  commands,tracked,hold,setter,tail,initial,before,observedAt,drainedAt,outcome,acks=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  phase='prepare';since=now()
- walkBank=nil
+ walkBank,pendingCommand=nil,nil
+ stages:setup(case())
 end
-require('QueuePreflight').onGameStart(Events,function()started=true;since=now()end)
+require('QueuePreflight').onGameStart(Events,function()stages:setup(case());started=true;since=now()end)
 require('QueuePreflight').onTick(Events,function()
  if not started or done then return end
  local ok,error=pcall(function()
@@ -299,7 +311,8 @@ require('QueuePreflight').onTick(Events,function()
   elseif phase=='recovery'then
    if idle()then quiet=quiet or now();if now()-quiet>=1500 then phase='verify';request('Verify')end else quiet=nil end
   elseif phase=='verify'and receipt then
-   assert(idle(),'device loss cleanup requires drained actions');phase='cleanup';quiet=nil;request('Cleanup')
+   assert(idle(),'device loss cleanup requires drained actions')
+   stages:cleanup();phase='cleanup';quiet=nil;request('Cleanup')
   elseif phase=='cleanup'and cleanup then
    if F.cleaned(state)and idle()then quiet=quiet or now();if now()-quiet>=1500 then finish()end else quiet=nil end
   end

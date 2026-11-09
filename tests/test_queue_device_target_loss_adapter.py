@@ -31,6 +31,21 @@ class DeviceTargetLossTests(unittest.TestCase):
                     languages=['EN'], mods=list(adapter.MODS), options=dict(
                         device_target_loss_expect=expectation, **({'mp_host': True} if kind == 'mp' else {})))
 
+    def test_staging_declares_case_contract_and_seals_the_shared_emitter_source(self):
+        runtime = dict(roles={role: dict(cache=str(self.root / role)) for role in ('client1', 'server')})
+        for role in runtime['roles'].values():
+            lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
+            for side in ('client', 'server', 'shared'):
+                (lua / side).mkdir(parents=True)
+        selected = self.selection(kind='mp')
+        source = ROOT / 'tests/native_queue/support/QueueCaseStages.lua'
+        self.assertIn(source, adapter.sources(ROOT, selected))
+        adapter.stage(ROOT, self.root, self.root / 'game', self.root / 'jdk', selected, {}, runtime)
+        self.assertEqual({'version': 1}, runtime['fixture']['case_stages'])
+        for role in runtime['roles'].values():
+            emitter = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua/shared/QueueCaseStages.lua'
+            self.assertEqual(source.read_bytes(), emitter.read_bytes())
+
     def evidence(self, case='tv-remove', kind='sp', mode='toolkit', expectation='capture', stale=False, tail=True):
         origin = dict(x=10, y=20, z=0)
         walking = case in ('radio-walk-remove', 'tv-walk-move')

@@ -396,7 +396,11 @@ def batch(args, catalog):
             stage = 'report'
             value = save_report(output, catalog, control)
             item['report_sha256'] = provenance.digest(output / 'report.json')
+            # The sealed log audit may find a receipt written during shutdown,
+            # even when execution did not retain the corresponding failure.
+            failure = failure or batch_policy.setup_failure(value)
             if failure:
+                item['setup_failure'] = failure
                 value = dict(value, status='failed')
             for member in unit['jobs']:
                 if not failure:

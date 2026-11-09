@@ -12,7 +12,7 @@ try:
 except ImportError:
     fcntl = None
 
-from . import campaign, provenance, report
+from . import batch_policy, campaign, provenance, report
 
 
 def anchor(root, control=None):
@@ -185,13 +185,16 @@ def record(context, value, catalog):
     if value['status'] == 'passed' and (value.get('provenance', {}).get('verified') is not True
             or value.get('functional', {}).get('status') != 'passed'):
         raise ValueError('Campaign resume requires a verified functional pass')
+    failure = batch_policy.setup_failure(value.get('execution')) or batch_policy.setup_failure(value)
 
     def resumed(original):
         result = {key: deepcopy(item) for key, item in original.items()
                   if key not in ('error', 'setup_failure', 'attempts')}
         result.update(status=value['status'], functional=value['functional']['status'],
                       runtime=value['runtime']['status'], **reference)
-        result['attempts'] = [deepcopy(original), dict(kind='resume', run=str(root), status=value['status'], **reference)]
+        if failure:
+            result.update(status='failed', setup_failure=failure)
+        result['attempts'] = [deepcopy(original), dict(kind='resume', run=str(root), status=result['status'], **reference)]
         return result
 
     with _locked(path):
@@ -207,6 +210,8 @@ def record(context, value, catalog):
         if isinstance(stop_reason, dict) and stop_reason.get('job') in identifiers:
             accounting.setdefault('stop_history', []).append(deepcopy(accounting['stop_reason']))
             accounting['stop_reason'] = None
+        if failure and accounting.get('failure_policy') == 'stop-on-setup-failure':
+            accounting['stop_reason'] = dict(failure, job=rows[0]['id'])
         accounting['campaign'] = campaign.refresh(accounting.get('campaign'), accounting['jobs'])
         accounting['status'] = _status(accounting)
         coverage = _coverage(accounting, catalog)

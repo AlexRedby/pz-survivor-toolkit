@@ -300,6 +300,25 @@ class CampaignResumeTests(unittest.TestCase):
         coverage = cli.report.read_json(self.output / 'coverage.json')
         self.assertTrue(any(row['status'] == 'passed' for row in coverage['rows']))
 
+    def test_resumed_case_setup_failure_replaces_current_reason_and_keeps_blocked_attempt(self):
+        self.assertEqual(1, self.batch())
+        original = self.accounting()
+        finding = dict(kind='fixture-case-setup', phase='fixture-setup', role='client1',
+                       case='bandageApply', reason='corridor unavailable')
+        observations = self.observations[str((self.output / 'first').resolve())]
+        execution = json.loads(observations['execution.json'])
+        execution['setup_failure'] = finding
+        observations['execution.json'] = json.dumps(execution).encode()
+        self.blocked.clear()
+        self.assertEqual((1, 1), self.resume())
+        value = self.accounting()
+        self.assertEqual('failed', value['status'])
+        self.assertEqual(finding, value['jobs'][0]['setup_failure'])
+        self.assertEqual(finding, value['sessions'][0]['setup_failure'])
+        self.assertEqual(dict(finding, job='first'), value['stop_reason'])
+        self.assertEqual(original['jobs'][0], value['jobs'][0]['attempts'][0])
+        self.assertEqual([original['stop_reason']], value['stop_history'])
+
     def test_remaining_jobs_gates_and_unselected_jobs_are_never_promoted(self):
         self.plan['jobs'].append(self.job('later', control_job='first'))
         self.plan['campaign'][0]['jobs'].append('later')

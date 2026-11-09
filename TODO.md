@@ -246,8 +246,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Stop native batch follow-up launches after audited per-case setup failures: a device-target-loss corridor failure after initial fixture readiness currently lets `stop-on-setup-failure` continue to the next job. Add explicit adapter stage receipts and policy regressions; preserve failed evidence and allow only independent qualified jobs to continue.
-
 - [ ] Handle slow host-resource probes while native admission is waiting under memory pressure: `tools/queue_checks/host.py` can time out its 10-second `ps` sample and abort an otherwise queued run. Keep capacity unknown and preserve resource guards; add bounded retry/cancellation diagnostics without admitting from stale data.
 
 - [ ] Provide an explicit, provenance-preserving import path for an external save when the user changes the selected mods. `worlds.validate` correctly rejects a template whose ordered mods differ, but reusing a gameplay save after disabling one mod currently needs a task-local importer to create a fresh template and record the approved removal. Keep exact source hashes, unchanged original files, explicit selection changes and ordinary snapshot validation; do not weaken the existing template guard.

@@ -138,6 +138,42 @@ class BatchTests(unittest.TestCase):
                     self.assertEqual(['control'], [name for name, _ in self.calls])
                     self.assertEqual(['candidate', 'independent'], result['remaining'])
 
+    def test_late_case_stage_audit_blocks_controls_and_preserves_independent_jobs(self):
+        self.write_plan([{'id': 'control', 'suite': 'startup'},
+                         {'id': 'candidate', 'suite': 'startup', 'control_job': 'control'},
+                         {'id': 'independent', 'suite': 'startup'}])
+        original = self.report
+        finding = dict(kind='fixture-case-setup', phase='fixture-setup', role='client1',
+                       case='loaded', reason='No clear loaded native device walking corridor')
+        for policy in cli.batch_policy.POLICIES:
+            with self.subTest(policy=policy):
+                self.args.output = self.root / policy
+                self.args.failure_policy = policy
+                self.calls = []
+                def report(output, catalog, control=None):
+                    value = original(output, catalog, control)
+                    if output.name == 'control':
+                        value.update(status='failed', setup_failure=finding)
+                    return value
+                self.report = report
+                self.assertEqual(1, self.invoke())
+                result = json.loads((self.args.output / 'batch-report.json').read_text())
+                self.assertEqual(finding, result['jobs'][0]['setup_failure'])
+                self.assertEqual('failed', result['jobs'][0]['status'])
+                self.assertEqual(finding, result['sessions'][0]['setup_failure'])
+                saved = json.loads((self.args.output / 'control/report.json').read_text())
+                self.assertEqual(finding, saved['setup_failure'])
+                self.assertEqual(cli.provenance.digest(self.args.output / 'control/report.json'),
+                                 result['jobs'][0]['report_sha256'])
+                if policy == 'continue':
+                    self.assertEqual(['control', 'independent'], [name for name, _ in self.calls])
+                    self.assertEqual('blocked', result['jobs'][1]['status'])
+                    self.assertIsNone(result['stop_reason'])
+                else:
+                    self.assertEqual(['control'], [name for name, _ in self.calls])
+                    self.assertEqual(['candidate', 'independent'], result['remaining'])
+                    self.assertEqual('loaded', result['stop_reason']['case'])
+
     def test_stop_policy_collects_ordinary_gameplay_failures(self):
         self.write_plan([{'id': name, 'suite': 'startup'} for name in ('gameplay', 'next')])
         self.args.failure_policy = 'stop-on-setup-failure'

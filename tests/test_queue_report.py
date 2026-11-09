@@ -135,6 +135,25 @@ class QueueReportTests(unittest.TestCase):
                 self.assertEqual(result['functional']['status'], 'passed')
                 self.assertEqual(result['status'], expected)
 
+    def test_late_case_stage_setup_failure_invalidates_report_and_comparison(self):
+        root = self.fixture()
+        runtime = report.read_json(root / 'runtime.json')
+        runtime['fixture'] = dict(case_stages={'version': 1}, preflight={'token': 'a' * 32})
+        report.write_json(root / 'runtime.json', runtime)
+        log = root / 'client1-launch.log'
+        def receipt(status, **fields):
+            return '[QUEUE_CASE_STAGE] ' + json.dumps(dict(token='a' * 32, suite='health', role='client1',
+                case='bandageApply', stage='setup', status=status, **fields)) + '\n'
+        log.write_text(log.read_text() + receipt('started') + receipt('failed', reason='late fixture failure'))
+        self.freeze(root)
+        value = report.build_report(root, self.catalog)
+        self.assertEqual('failed', value['status'])
+        self.assertEqual('passed', value['functional']['status'])
+        self.assertEqual('fixture-case-setup', value['setup_failure']['kind'])
+        self.assertNotIn('setup_failure', value['execution'], 'sealed execution must not be rewritten by audit')
+        control = report.build_report(self.fixture('control', mode='native'), self.catalog)
+        self.assertFalse(report.compare(value, control)['compatible'])
+
     def digest(self, path):
         return report.hashlib.sha256(path.read_bytes()).hexdigest()
 

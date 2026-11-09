@@ -178,6 +178,20 @@ class WindowsFixtureFailureTests(unittest.TestCase):
         adapter.complete.assert_not_called()
         diagnosed.assert_called_once()
 
+    def test_case_setup_failure_preempts_completion_and_cleans_owned_job(self):
+        self.selection['cases'] = ['loaded']
+        self.runtime['fixture']['case_stages'] = {'version': 1}
+        (self.root / 'selection.json').write_text(json.dumps(self.selection))
+        (self.root / 'runtime.json').write_text(json.dumps(self.runtime))
+        def receipt(status, **fields):
+            return '[QUEUE_CASE_STAGE] ' + json.dumps(dict(token=self.token, suite='startup', role='client1',
+                case='loaded', stage='setup', status=status, **fields)) + '\n'
+        result, adapter = self.run_fake(self.normal + receipt('started') + receipt('failed', reason='corridor unavailable'))
+        self.assertEqual('fixture-case-setup', result['setup_failure']['kind'])
+        self.assertEqual('loaded', result['setup_failure']['case'])
+        self.assertEqual('corridor unavailable', result['setup_failure']['reason'])
+        adapter.complete.assert_not_called()
+
     def test_foreign_require_warning_does_not_preempt_completion(self):
         warning = 'WARN : Lua at Lua((MOD:Foreign)).Foreign.lua> require("Missing") failed\n'
         result, adapter = self.run_fake(self.normal + warning)

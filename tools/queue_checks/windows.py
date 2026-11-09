@@ -14,6 +14,7 @@ from . import adapters, admission, coop, provenance, setup_diagnostics, progress
 from .report import read_json, verify_manifest, write_json
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 from .preflight import ClientPreflight, fail as setup_failure
+from .case_stages import CaseStages
 
 
 def loader_agent(game, cache, selection):
@@ -28,6 +29,7 @@ def run(root, resource_wait=300):
     root = Path(root).resolve()
     selection, runtime = read_json(root / 'selection.json'), read_json(root / 'runtime.json')
     preflight = ClientPreflight(root, runtime, selection)
+    case_stages = CaseStages(runtime, selection)
     fixture_progress = progress.Fixture(selection)
     if selection['suite'] not in ('forge', 'startup') or not coop.enabled(selection) or selection.get('clients') != 1:
         raise ValueError('Windows launch currently supports one-client forge/startup Host only')
@@ -122,6 +124,7 @@ def run(root, resource_wait=300):
                     'server': server_log.read_text(errors='replace') if server_log.is_file() else '',
                 }, execution, 'execution')
                 preflight.check({'client1': text}, execution, release=False)
+                case_stages.check({'client1': text}, execution)
                 if '[QUEUE_TEST] HOST_CHILD ' in text and 'server' not in execution['processes']:
                     execution['processes']['server'] = {'pid': coop.child(text, process.pid), 'parent_role': 'client1',
                                                         'cache': str(root / 'client1')}
@@ -155,6 +158,10 @@ def run(root, resource_wait=300):
         client_log = root / 'client1-launch.log'
         try:
             preflight.check({'client1': client_log.read_text(errors='replace') if client_log.is_file() else ''}, execution, release=False)
+        except RuntimeError as error:
+            execution.update(status='failed', error=str(error))
+        try:
+            case_stages.check({'client1': client_log.read_text(errors='replace') if client_log.is_file() else ''}, execution, final=True)
         except RuntimeError as error:
             execution.update(status='failed', error=str(error))
         if job:
