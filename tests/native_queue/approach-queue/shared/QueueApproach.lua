@@ -1,5 +1,6 @@
 -- Preparation alone mutates the fixture. All subsequent authority reads observe stock effects.
 local F={}
+local P=require 'QueueEnergyPlacement';local JSON=require 'QueueHealthEvents'
 local function objects(square)
  local rows={};for i=0,square:getObjects():size()-1 do local o=square:getObjects():get(i)
   local marker=o:getModData().queueApproachIdentity
@@ -20,28 +21,22 @@ local function stockSprite(name,flag)
 end
 local function square(id)return assert(getCell():getGridSquare(id.x,id.y,id.z))end
 local function identity(sq,marker,sprite)return{x=sq:getX(),y=sq:getY(),z=sq:getZ(),marker=marker,sprite=sprite:getName(),index=sq:getObjects():size()-1}end
--- The disposable test scene owns this bounded strip before baseline. Preserve
--- native ground floors, clear decorative/collision objects and let native square
--- recalculation build the normal pathfinding/collision data for both routes.
--- teleportTo(float,float,int) floors X/Y in this build. Setup therefore uses
--- the same native floating-position setters as the existing cart fixtures.
-local function center(player,origin)
- assert(not player:hasTimedActions(),'Cannot center during native timed actions')
- local x,y,z=origin.x+.5,origin.y+.5,origin.z
- player:setX(x);player:setY(y);player:setZ(z);player:setNextX(x);player:setNextY(y);player:setLastX(x);player:setLastY(y)
- player:ensureOnTile();player:setCurrentSquareFromPosition();player:setMovingSquareNow()
- assert(math.abs(player:getX()-x)<.01 and math.abs(player:getY()-y)<.01 and player:getZ()==z,'Native pre-baseline centering failed')
+local function footprint(origin)
+ local cell=getCell()
+ for a=-2,8 do for b=-1,1 do local sq=cell:getGridSquare(origin.x+a,origin.y+b,origin.z)
+  if not sq or not sq:getFloor()or not sq:TreatAsSolidFloor()or sq:getRoom()or sq:isVehicleIntersecting()then return false end
+ end end
+ return true
 end
-local function corridor(player)
+function F.plan(player,case)
  local config=require 'QueueTestSelection'
  assert(config.disposable==true and not isClient(),'Approach preparation requires disposable authority')
- local start=require('QueueEnergyPlacement')(player);local cell=getCell();local origin
+ assert(case=='bush'or case=='manual-grass','unexpected approach layout case')
+ local start=P.choose(player);local cell=getCell();local origin
  local function candidate(dx,dy)
-  local x,y,z=start:getX()+dx,start:getY()+dy,start:getZ()
-  for a=-2,8 do for b=-1,1 do local sq=cell:getGridSquare(x+a,y+b,z)
-   if not sq or not sq:getFloor()or not sq:TreatAsSolidFloor()or sq:getRoom()or sq:isVehicleIntersecting()then return end
-  end end
-  return{x=x,y=y,z=z}
+  local target=P.target({x=start.x+dx,y=start.y+dy,z=start.z})
+  local standing=cell:getGridSquare(target.x,target.y,target.z)
+  if footprint(target)and standing:isFree(false)then return target end
  end
  origin=candidate(0,0)
  for radius=1,12 do
@@ -50,8 +45,13 @@ local function corridor(player)
   end end end
  end
  assert(origin,'No loaded solid outdoor approach footprint')
- -- Preflight above finishes before the first scene edit. These are preparation
- -- writes only; all gameplay effects and reads after baseline remain stock.
+ return{case=case,target=P.target(origin)}
+end
+-- The owned disposable strip is changed only after the actor's final centered
+-- arrival. Preserve native floors and recalculate stock collision/path data.
+local function corridor(origin)
+ assert(footprint(origin),'Approach footprint changed before preparation')
+ local cell=getCell()
  for a=-2,8 do for b=-1,1 do local sq=assert(cell:getGridSquare(origin.x+a,origin.y+b,origin.z));local floor=sq:getFloor()
   for i=sq:getObjects():size()-1,0,-1 do local object=sq:getObjects():get(i)
    if object~=floor then sq:transmitRemoveItemFromSquare(object)end
@@ -61,17 +61,24 @@ local function corridor(player)
   sq:RecalcAllWithNeighbours(true)
   assert(sq:getFloor()and sq:TreatAsSolidFloor()and sq:isFree(false),'Prepared native approach floor is blocked')
  end end
- center(player,origin)
- return origin
 end
-function F.prepare(player,case,mode)
+function F.prepare(player,case,mode,target,proof)
  assert(case=='bush' or case=='manual-grass')
+ assert(require('QueueTestSelection').disposable==true and not isClient(),'Approach preparation requires disposable authority')
+ local origin=P.target(target)
+ assert(type(proof)=='table'and proof.mode==(isServer()and'replica'or'local')and proof.centered==true
+  and proof.teleports==(isServer()and 0 or 1)and proof.centers==(isServer()and 0 or 1),'approach centered authority proof missing')
+ local observed=P.target(proof.target)
+ assert(observed.x==origin.x and observed.y==origin.y and observed.z==origin.z and P.atCentered(player,origin),'approach authority left final centered placement')
  -- Validate both cases before the first scene mutation. Native flags stay untouched.
  local bush=stockSprite('f_bushes_1_0',IsoFlagType.canBeCut)
  local grass=stockSprite('e_newgrass_1_0',IsoFlagType.canBeRemoved)
  local s=case=='bush'and bush or grass
- local origin=corridor(player)
- local spec={case=case,mode=mode,origin=origin,targets={}}
+ assert(footprint(origin),'Approach footprint changed before preparation')
+ print('[QUEUE_APPROACH] AUTHORITY_PLACEMENT '..JSON.encode({case=case,actor='client1',target=P.target(origin),proof=proof}))
+ corridor(origin)
+ assert(P.atCentered(player,origin),'approach authority moved during corridor preparation')
+ local spec={case=case,mode=mode,origin=origin,placement=P.target(origin),targets={}}
  for i,name in ipairs({'first','second'})do
   local sq=assert(getCell():getGridSquare(origin.x+(i==1 and 7 or -1),origin.y,origin.z))
   local object=IsoObject.new(getCell(),sq,s:getName());object:getModData().queueApproachIdentity=case..'-'..name
@@ -86,16 +93,15 @@ function F.prepare(player,case,mode)
  return{player=player,ids=spec,order={},effects={},book=book,tool=tool}
 end
 function F.resolve(player,spec)
+ local target=P.target(spec.placement)
+ assert(target.x==spec.origin.x and target.y==spec.origin.y and target.z==spec.origin.z,'approach prepared origin differs from placement')
+ if not P.atCentered(player,target)then return nil,{case=spec.case,reason='centered placement differs',
+  actual={x=player:getX(),y=player:getY(),z=player:getZ()},origin=target}end
  local book=player:getInventory():getItemById(spec.book.id);local tool=player:getInventory():getItemById(spec.tool.id)
  if not book or not tool then return nil,{case=spec.case,reason='items not replicated',book=book~=nil,tool=tool~=nil,bookId=spec.book.id,toolId=spec.tool.id}end
  for name,id in pairs(spec.targets)do local found=false;local actual=objects(square(id))
   for _,o in ipairs(actual)do if o.marker==id.marker and o.sprite==id.sprite and o.index==id.index then found=true end end
   if not found then return nil,{case=spec.case,reason='target not replicated',target=name,expected=id,actual=actual}end
- end
- local p=spec.origin
- if math.abs(player:getX()-p.x-.5)>.1 or math.abs(player:getY()-p.y-.5)>.1 or player:getZ()~=p.z then
-  local before={x=player:getX(),y=player:getY(),z=player:getZ()};center(player,p)
-  return nil,{case=spec.case,reason='centered pre-baseline position',before=before,actual={x=player:getX(),y=player:getY(),z=player:getZ()},origin=p}
  end
  player:setPrimaryHandItem(tool);book:setAlreadyReadPages(spec.book.initial);player:setAlreadyReadPages(spec.book.type,spec.book.initial)
  return{player=player,ids=spec,order={},effects={},book=book,tool=tool}
@@ -124,8 +130,7 @@ end
 function F.verify(state)
  local v=F.snapshot(state);local enabled=state.ids.mode=='toolkit'
  if #v.targets.first.objects~=(enabled and 0 or 1)or #v.targets.second.objects~=0 then return nil,v end
- local nativeHost=state.ids.mode=='native'and require('QueueTestSelection').kind=='mp'
- local pages=nativeHost and state.ids.book.initial or state.ids.book.pages
+ local pages=state.ids.book.pages
  if v.book.pages~=pages or v.book.characterPages~=pages then return nil,v end
  return v
 end

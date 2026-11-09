@@ -37,9 +37,16 @@ local function arrived(value,target)
   and value.square and same(value.square,target)
   and value.currentSquare and same(value.currentSquare,target)
 end
+local function centered(value,target)
+ return arrived(value,target)and math.abs(value.x-target.x-.5)<=.1 and math.abs(value.y-target.y-.5)<=.1
+end
 function P.at(player,target)
  local ok,validated=pcall(P.target,target)
  return ok and player~=nil and arrived(P.snapshot(player),validated)and true or false
+end
+function P.atCentered(player,target)
+ local ok,validated=pcall(P.target,target)
+ return ok and player~=nil and centered(P.snapshot(player),validated)and true or false
 end
 function P.choose(player)
  local origin=assert(player:getCurrentSquare(),'placement origin is not loaded')
@@ -72,6 +79,18 @@ function P.begin(player,target)
  return value
 end
 function P.observe(player,target)return state(player,target,'replica')end
+function P.beginCentered(player,target)
+ local value=P.begin(player,target);value.centered=true;value.centers=0;return value
+end
+function P.observeCentered(player,target)
+ local value=P.observe(player,target);value.centered=true;value.centers=0;return value
+end
+local function center(player,target)
+ local x,y,z=target.x+.5,target.y+.5,target.z
+ player:setX(x);player:setY(y);player:setZ(z);player:setNextX(x);player:setNextY(y);player:setLastX(x);player:setLastY(y)
+ player:ensureOnTile();player:setCurrentSquareFromPosition();player:setMovingSquareNow()
+ assert(math.abs(player:getX()-x)<.01 and math.abs(player:getY()-y)<.01 and player:getZ()==z,'Native pre-baseline centering failed')
+end
 local function coordinate(value)return value and(tostring(value.x)..','..tostring(value.y)..','..tostring(value.z))or'absent'end
 function P.describe(value)
  local actual=value.actual
@@ -110,16 +129,18 @@ function P.poll(value)
   local here={x=math.floor(value.actual.x),y=math.floor(value.actual.y),z=math.floor(value.actual.z)}
   if not stable(value,value.actual,idle(value.actual)and arrived(value.actual,here),now)then return end
   value.quietMs=now-value.stableAt
-  -- B42's float teleport floors x/y. Corners and centres are both valid;
-  -- observe real squares instead of repeatedly pinning coordinates.
+  -- B42's float teleport floors x/y. Centered fixtures explicitly perform
+  -- their one setup adjustment here; subsequent polls only observe arrival.
   value.player:teleportTo(value.target.x,value.target.y,value.target.z)
   value.teleports=1;value.phase='arrival';value.last=nil;value.stableAt=nil;value.samples=0
+  if value.centered then value.centers=1;center(value.player,value.target)end
   return
  end
- if not stable(value,value.actual,arrived(value.actual,value.target)
+ if not stable(value,value.actual,(value.centered and centered(value.actual,value.target)or not value.centered and arrived(value.actual,value.target))
   and(value.mode~='local'or idle(value.actual)),now)then return end
  value.result={mode=value.mode,target=P.target(value.target),actual=value.actual,
   teleports=value.teleports,stableMs=now-value.stableAt,quietMs=value.quietMs or 0,elapsedMs=now-value.began}
+ if value.centered then value.result.centered=true;value.result.centers=value.centers end
  value.phase='settled';print('[QUEUE_TEST] PLACEMENT_READY '..P.describe(value))
  return value.result
 end

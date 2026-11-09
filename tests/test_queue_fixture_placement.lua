@@ -1,7 +1,7 @@
 -- The real common placement helper, including Kahlua's absent global next.
 local path=ProjectRoot..'/tests/native_queue/support/QueueEnergyPlacement.lua'
 local function fixture(server)
- local f={now=0,server=server or false,teleports=0,logs={},queue={},x=100.5,y=100.5,z=0,
+ local f={now=0,server=server or false,teleports=0,writes={},logs={},queue={},x=100.5,y=100.5,z=0,
   localPlayer=true,moving=false,timed=false,deferredX=0,deferredY=0}
  local function square(x,y,z)
   return {getX=function()return x end,getY=function()return y end,getZ=function()return z end,
@@ -20,6 +20,21 @@ local function fixture(server)
   out.x,out.y=f.deferredX,f.deferredY;return out
  end
  function f.player:teleportTo(x,y,z)f.teleports=f.teleports+1;f.command={x=x,y=y,z=z}end
+ for _,key in ipairs({'X','Y','Z','NextX','NextY','LastX','LastY'})do
+  f.player['set'..key]=function(_,value)
+   f.writes[#f.writes+1]='set'..key
+   if key=='X'or key=='Y'or key=='Z'then f[key:lower()]=value end
+  end
+ end
+ for _,key in ipairs({'ensureOnTile','setCurrentSquareFromPosition','setMovingSquareNow'})do
+  f.player[key]=function()
+   f.writes[#f.writes+1]=key
+   if not f.staleSquares then
+    f.square=square(math.floor(f.x),math.floor(f.y),math.floor(f.z));f.current=f.square
+   end
+   if f.failedCenter then f.x=f.x+.5 end
+  end
+ end
  function f:arrive(target,offset)
   self.x,self.y,self.z=target.x+(offset or 0),target.y+(offset or 0),target.z
   self.square=square(target.x,target.y,target.z);self.current=self.square
@@ -51,6 +66,7 @@ for _,offset in ipairs({0,.5})do
  f.now=1500;assert(not f.P.poll(state))
  f.now=1501;local proof=assert(f.P.poll(state))
  assert(proof.mode=='local'and proof.teleports==1 and proof.quietMs==500 and proof.stableMs==500)
+ assert(proof.centered==nil and proof.centers==nil and #f.writes==0,'tile mode schema and movement stay unchanged')
  assert(proof.actual.square.x==target.x and proof.actual.currentSquare.x==target.x and f.P.at(f.player,target))
  assert(f.P.poll(state)==proof and f.teleports==1,'completed polling must not repeat movement')
 end
@@ -96,4 +112,71 @@ f=fixture(true);local legacySquare=f.P(f.player)
 assert(f.teleports==1 and legacySquare:getX()==f.command.x-.5 and legacySquare:getY()==f.command.y-.5)
 assert(not f.P.at(f.player,{x=legacySquare:getX(),y=legacySquare:getY(),z=legacySquare:getZ()}),
  'legacy synchronous return still requires migration; it is not an arrival receipt')
+-- Explicit centered setup shares the quiet gate, then writes the native float
+-- position once. Real square witnesses and a new stable interval are mandatory.
+f=fixture();local target={x=98,y=98,z=0};state=f.P.beginCentered(f.player,target)
+assert(not f.P.poll(state));f.now=499;assert(not f.P.poll(state)and #f.writes==0)
+f.now=500;assert(not f.P.poll(state)and f.teleports==1)
+assert(table.concat(f.writes,',')=='setX,setY,setZ,setNextX,setNextY,setLastX,setLastY,ensureOnTile,setCurrentSquareFromPosition,setMovingSquareNow')
+assert(f.command.x==98 and f.command.y==98 and f.P.atCentered(f.player,target))
+local writeCount=#f.writes
+f.now=501;assert(not f.P.poll(state));f.now=1000;assert(not f.P.poll(state))
+f.now=1001;local receipt=assert(f.P.poll(state))
+assert(receipt.centered==true and receipt.centers==1 and receipt.mode=='local'and receipt.quietMs==500 and receipt.stableMs==500)
+f.x=98;assert(not f.P.atCentered(f.player,target)and f.P.at(f.player,target),'current centered reads reject a drift to the same tile corner')
+assert(f.P.poll(state)==receipt and #f.writes==writeCount and f.teleports==1,'historical centered proof never repeats setup')
+-- Arrival tolerance accepts independent replica coordinates, including on a
+-- client with a remote actor, and never writes a server or remote position.
+for _,server in ipairs({false,true})do for _,offset in ipairs({.41,.5,.59})do
+ f=fixture(server);f.localPlayer=false;state=f.P.observeCentered(f.player,target)
+ f:arrive(target,offset);assert(f.P.atCentered(f.player,target));assert(not f.P.poll(state))
+ f.now=500;receipt=assert(f.P.poll(state))
+ assert(receipt.centered==true and receipt.centers==0 and receipt.teleports==0 and receipt.quietMs==0)
+ assert(f.teleports==0 and #f.writes==0)
+end end
+for _,offset in ipairs({0,.39,.61,.99})do
+ f=fixture(true);state=f.P.observeCentered(f.player,target);f:arrive(target,offset)
+ assert(not f.P.atCentered(f.player,target)and not f.P.poll(state))
+ f.now=500;assert(not f.P.poll(state)and #f.writes==0 and f.teleports==0)
+end
+for _,missing in ipairs({'square','current','z'})do
+ f=fixture(true);state=f.P.observeCentered(f.player,target);f:arrive(target,.5)
+ if missing=='square'then f.square=nil elseif missing=='current'then f.current=nil else f.z=.5 end
+ assert(not f.P.atCentered(f.player,target)and not f.P.poll(state))
+ f.now=500;assert(not f.P.poll(state));f:arrive(target,.5)
+ f.now=501;assert(not f.P.poll(state));f.now=1001;assert(f.P.poll(state)and #f.writes==0)
+end
+-- Stale squares after the float setters cannot prove arrival either.
+f=fixture();f.staleSquares=true;state=f.P.beginCentered(f.player,target)
+assert(not f.P.poll(state));f.now=500;assert(not f.P.poll(state));f.now=1000;assert(not f.P.poll(state))
+f:arrive(target,.5);f.now=1001;assert(not f.P.poll(state));f.now=1501;assert(f.P.poll(state))
+assert(f.teleports==1 and #f.writes==writeCount)
+-- Stable sampling rejects even in-tolerance drift and residual local motion.
+f=fixture();state=f.P.beginCentered(f.player,target)
+assert(not f.P.poll(state));f.now=500;assert(not f.P.poll(state))
+f.now=501;assert(not f.P.poll(state));f.now=1000;f.x=98.51;assert(not f.P.poll(state))
+f.now=1499;assert(not f.P.poll(state));f.now=1500;f.moving=true;assert(not f.P.poll(state))
+f.now=1501;f.moving=false;assert(not f.P.poll(state));f.now=2001;assert(f.P.poll(state))
+assert(f.teleports==1 and #f.writes==writeCount,'settling never recenters residual motion')
+for _,busy in ipairs({'deferredX','deferredY','moving','timed','path','queue'})do
+ f=fixture();state=f.P.beginCentered(f.player,target)
+ if busy=='queue'then f.queue[1]={}elseif busy=='path'then f.path={}elseif busy=='moving'or busy=='timed'then f[busy]=true else f[busy]=.01 end
+ assert(not f.P.poll(state));f.now=500;assert(not f.P.poll(state)and f.teleports==0 and #f.writes==0)
+end
+f=fixture(true);fails(function()f.P.beginCentered(f.player,target)end,'owning local client')
+f=fixture();f.localPlayer=false;fails(function()f.P.beginCentered(f.player,target)end,'owning local client')
+f=fixture();state=f.P.beginCentered(f.player,target);f.localPlayer=false
+fails(function()f.P.poll(state)end,'ownership changed');assert(#f.writes==0)
+f=fixture();state=f.P.beginCentered(f.player,target);assert(not f.P.poll(state));f.now=500;assert(not f.P.poll(state));f.localPlayer=false
+fails(function()f.P.poll(state)end,'ownership changed');assert(#f.writes==writeCount)
+for _,mode in ipairs({'local','replica'})do
+ f=fixture(mode=='replica');state=mode=='local'and f.P.beginCentered(f.player,target)or f.P.observeCentered(f.player,target)
+ state.target.x=99;fails(function()f.P.poll(state)end,'target changed');assert(#f.writes==0)
+ f=fixture(mode=='replica');state=mode=='local'and f.P.beginCentered(f.player,target)or f.P.observeCentered(f.player,target)
+ f.now=-1;fails(function()f.P.poll(state)end,'clock moved backwards')
+ f.now=30000;fails(function()f.P.poll(state)end,'placement timed out');assert(#f.writes==0 and f.teleports==0)
+end
+f=fixture();f.failedCenter=true;state=f.P.beginCentered(f.player,target)
+assert(not f.P.poll(state));f.now=500;fails(function()f.P.poll(state)end,'Native pre-baseline centering failed')
+f.now=501;assert(not f.P.poll(state)and f.teleports==1 and #f.writes==writeCount,'failed immediate assertion cannot replay setup writes')
 print('QUEUE_FIXTURE_PLACEMENT_PASS')

@@ -2,6 +2,7 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'BuildingObjects/ISRemovePlantCursor'
 require 'TimedActions/ISReadABook'
 local F=require 'QueueApproach';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
+local P=require 'QueueEnergyPlacement'
 local nativeHost=config.mode=='native'and config.kind=='mp'
 local native=config.mode=='native';local phase,index,since='prepare',1,0
 local started,ready,done=false,false,false
@@ -9,6 +10,7 @@ local state,authority,ids,baseline,receipt,input,tracks,commands,walks,order,sec
 local resolveDiagnosed,lastResolveWait={},nil
 local idleCaptured,lastServerSnapshot,wireBindings=false,nil,{}
 local idleReceipt,manualInputSeen=nil,false
+local layout,placementState,clientPlacement
 local tokenIds,tokenSerial={},0
 local function tokenId(token)
  if type(token)~='table'then return false end
@@ -42,8 +44,14 @@ local function fail(error)
  print('[QUEUE_TEST] FAIL approach-queue '..tostring(error));done=true
 end
 local function request(command)
- if isClient()then sendClientCommand('QueueApproachTest',command,{case=case()});return end
- if command=='Prepare'then authority=F.prepare(getPlayer(),case(),config.mode);ids=authority.ids;raw('PREPARED',ids)
+ local args={case=case()}
+ if command=='Prepare'then
+  assert(layout and clientPlacement and P.atCentered(getPlayer(),layout.target),'approach Prepare requires fresh centered client arrival')
+  args.target=P.target(layout.target);args.clientPlacement=clientPlacement
+ end
+ if isClient()then sendClientCommand('QueueApproachTest',command,args);return end
+ if command=='Layout'then layout=F.plan(getPlayer(),case());raw('LAYOUT',{case=case(),actor='client1',target=layout.target})
+ elseif command=='Prepare'then authority=F.prepare(getPlayer(),case(),config.mode,layout.target,clientPlacement);ids=authority.ids;raw('PREPARED',ids)
  elseif command=='Baseline'then baseline=assert(F.baseline(authority));raw('BASELINE',baseline)
  elseif command=='Snapshot'then lastServerSnapshot=F.snapshot(authority);raw('SNAPSHOT',lastServerSnapshot)
  else receipt=assert(F.verify(authority));raw('VERIFIED',receipt)end
@@ -62,16 +70,17 @@ local function observeNative(module,command,args)
   for action,row in pairs(tracks)do
    if action.character==player and action.toolkitNativeTransaction==args.transaction and action.toolkitNativeKind==args.kind then
     if found then found=false;break end
-    found={action=action,row=row,native=action.action,player=args.player,transaction=args.transaction,kind=args.kind,token=args.token}
+    found={action=action,row=row,native=action.action,actionRef=tostring(action),player=args.player,transaction=args.transaction,kind=args.kind,token=args.token}
    end
   end
   if found then binding=found;wireBindings[args.token]=binding end
  end
  local matched=binding and binding.player==args.player and binding.transaction==args.transaction and binding.kind==args.kind
  local action=matched and binding.action;local row=matched and binding.row
+ local current=queue().current
  local value={case=case(),observedAt=now(),player=args.player,transaction=args.transaction,kind=args.kind,token=args.token,state=args.state,
-  matched=matched==true,name=row and row.name or false,type=row and row.type or false,actionRef=action and tostring(action)or false,
-  nativeRef=matched and binding.native and tostring(binding.native)or false,currentActionRef=queue().current and tostring(queue().current)or false,
+  matched=matched==true,name=row and row.name or false,type=row and row.type or false,actionRef=matched and binding.actionRef or false,
+  nativeRef=matched and binding.native and tostring(binding.native)or false,currentActionRef=current and(matched and current==action and binding.actionRef or tostring(current))or false,
   referenceStable=matched and action.action==binding.native and action.toolkitNativeTransaction==args.transaction and action.toolkitNativeKind==args.kind or false}
  if row then row.nativeStates=row.nativeStates or{};row.nativeStates[#row.nativeStates+1]=value end
  raw('NATIVE_STATE',value)
@@ -80,7 +89,7 @@ Events.OnServerCommand.Add(function(module,command,args)
  observeNative(module,command,args)
  if module~='QueueApproachTest'or done then return end
  if command=='Failed'then fail(args.error)
- elseif args and args.case==case()then if command=='Prepared'then ids=args elseif command=='Baselined'then baseline=args elseif command=='Verified'then receipt=args elseif command=='Snapshot'then lastServerSnapshot=args;raw('SERVER_SNAPSHOT',args)end end
+ elseif args and args.case==case()then if command=='Layout'then layout=args elseif command=='Prepared'then ids=args elseif command=='Baselined'then baseline=args elseif command=='Verified'then receipt=args elseif command=='Snapshot'then lastServerSnapshot=args;raw('SERVER_SNAPSHOT',args)end end
 end)
 local function position()local p=getPlayer();return{x=p:getX(),y=p:getY(),z=p:getZ()}end
 local function near(p,id)return p.z==id.z and math.abs(p.x-id.x-.5)<=1.6 and math.abs(p.y-id.y-.5)<=1.6 end
@@ -148,13 +157,14 @@ end
 local function unchanged()for _,v in ipairs(lifecycle)do assert(v.class[v.name]==v.callback,'native lifecycle callback changed '..v.name)end;return true end
 local function finish()
  observe();local client=assert(F.verify(state));unchanged()
- local enabled=not native;local expected=enabled and{'first','second','tail'}or nativeHost and{'second'}or{'second','tail'}
+ local enabled=not native;local expected=enabled and{'first','second','tail'}or{'second','tail'}
  assert(#order==#expected);for i,name in ipairs(expected)do assert(order[i]==name,'native start order differs')end
  secondIssue.action=nil
  emit({event='case',id=case(),status='passed',ids=ids,input=input,authorityBaseline=baseline,client=client,server=receipt,
   commands=commands,walks=walks,order=order,secondIssue=secondIssue,clientIdle=idleReceipt,serverIdle=lastServerSnapshot,manualInputSeen=manualInputSeen,queueIdle=true,settleMilliseconds=now()-quiet,lifecycleUnchanged=true})
  index=index+1;if not case()then emit({event='complete',cases=config.cases,performed=2,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
  state,authority,ids,baseline,receipt,input,tracks,commands,walks,order,secondIssue,quiet=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
+ layout,placementState,clientPlacement=nil,nil,nil
  resolveDiagnosed,lastResolveWait={},nil;idleCaptured,lastServerSnapshot,wireBindings=false,nil,{};idleReceipt,manualInputSeen=nil,false;phase='prepare';since=now()
 end
 require('QueuePreflight').onGameStart(Events,function()started=true;since=now()end)
@@ -175,8 +185,21 @@ require('QueuePreflight').onTick(Events,function()
   if phase=='running'and #queue().queue==0 and not idleCaptured then
    idleCaptured=true;idleReceipt={case=case(),phase=phase,observedAt=now(),client=snapshotDiagnostic(),queue=queueDiagnostic()};raw('CLIENT_IDLE',idleReceipt);request('Snapshot')
   end
-  if phase=='prepare'then assert(empty());phase='prepared';request('Prepare')
+  if phase=='prepare'then assert(empty());phase='placement';request('Layout')
+  elseif phase=='placement'then
+   if not layout then return end
+   assert(layout.case==case(),'approach layout case differs')
+   local target=P.target(layout.target)
+   placementState=placementState or P.beginCentered(player,target)
+   clientPlacement=P.poll(placementState);if not clientPlacement then return end
+   assert(P.atCentered(player,target),'approach client left final centered placement')
+   raw('CLIENT_PLACEMENT',{case=case(),actor='client1',target=target,proof=clientPlacement})
+   phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
+   local target=P.target(ids.placement)
+   assert(layout and target.x==layout.target.x and target.y==layout.target.y and target.z==layout.target.z
+    and target.x==ids.origin.x and target.y==ids.origin.y and target.z==ids.origin.z,'approach prepared layout differs')
+   assert(P.atCentered(player,target),'approach client left centered placement before replica setup')
    state,lastResolveWait=F.resolve(player,ids)
    if not state then
     local reason=lastResolveWait and lastResolveWait.reason or'unknown resolve wait'
@@ -184,7 +207,12 @@ require('QueuePreflight').onTick(Events,function()
     return
    end
    tracks,commands,walks,order={},{},{},{};input=assert(F.baseline(state));phase='baseline';request('Baseline')
-  elseif phase=='baseline'and baseline then cursor('first');phase='walking'
+  elseif phase=='baseline'and baseline then
+   assert(P.atCentered(player,layout.target),'approach client left centered placement before native admission')
+   local target=P.target(ids.placement)
+   assert(target.x==layout.target.x and target.y==layout.target.y and target.z==layout.target.z
+    and target.x==ids.origin.x and target.y==ids.origin.y and target.z==ids.origin.z,'approach admission target differs')
+   raw('ADMITTED',{case=case(),actor='client1'});cursor('first');phase='walking'
   elseif phase=='walking'then
    local active=queue().current;local row=tracks[active]
    if not row or row.type~='ISWalkToTimedAction'or not row.started then return end
@@ -195,10 +223,13 @@ require('QueuePreflight').onTick(Events,function()
    ISTimedActionQueue.add(ISReadABook:new(player,state.book));phase='running'
   elseif phase=='running'and empty()then
    if nativeHost then
-    local second
-    for _,row in ipairs(commands)do if row.name=='second'then second=row end end
-    local receipts=second and second.nativeStates or{}
-    if #receipts~=2 or receipts[1].state~='started'or receipts[2].state~='completed'or not lastServerSnapshot then quiet=nil;return end
+    local second,reader
+    for _,row in ipairs(commands)do if row.name=='second'then second=row elseif row.name=='tail'then reader=row end end
+    for _,row in ipairs({second or{},reader or{}})do
+     local receipts=row.nativeStates or{}
+     if #receipts~=2 or receipts[1].state~='started'or receipts[2].state~='completed'then quiet=nil;return end
+    end
+    if not lastServerSnapshot then quiet=nil;return end
    end
    if not F.verify(state)then quiet=nil;return end
    quiet=quiet or now();if now()-quiet>=1000 then phase='verified';request('Verify')end

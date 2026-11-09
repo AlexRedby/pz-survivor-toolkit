@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import shutil
 
-from .. import report
+from .. import placement, report
 from .tv_controls import MODS, _duration, _number
 
 CASES = ('bush', 'manual-grass')
@@ -19,7 +19,7 @@ def definitions():
               for name in ('success-queued', 'server-authority')}
     return {'approach-queue': {'status': 'ready', 'clients': 1, 'default_mods': list(MODS),
         'scenario_actions': {'native-cursor-approach': {'mods': list(MODS), 'checks': checks,
-            'scope': 'Two ordered full-current-selected-pack fresh macOS SP/menu-Host cases: stock ISRemovePlantCursor.tryBuild for bush and manual grass. Second initially adjacent target is submitted while a first distant native walk is active. Toolkit preserves first work and resolves both required walks from their future positions; queue-off native cursor clear cancels the first and removes only the second. Exact marked stock object identities, authoritative removal order and stock loot conservation, naturally completed independent root reader in SP and Toolkit Host; native Host additionally requires an exact completed-removal receipt and a never-started reader at its initial pages after native queue drain. Unchanged native durations/lifecycle. Programmatic cursor entrypoint; no physical input or wall-vine/container coverage.'}},
+            'scope': 'Two ordered full-current-selected-pack fresh macOS SP/menu-Host cases: stock ISRemovePlantCursor.tryBuild for bush and manual grass. Second initially adjacent target is submitted while a first distant native walk is active. Toolkit preserves first work and resolves both required walks from their future positions; queue-off native cursor clear cancels the first and removes only the second. Exact marked stock object identities, authoritative removal order and stock loot conservation, naturally completed independent root reader in every mode; native Host additionally requires distinct exact started/completed removal and reader receipts at the immediate final queue-drain boundary. Unchanged native durations/lifecycle. Programmatic cursor entrypoint; no physical input or wall-vine/container coverage.'}},
         'cases': [dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'],
                        modes=['native', 'toolkit'], languages=['EN']) for case in CASES]}}
 
@@ -35,7 +35,7 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [Path(__file__).with_name('tv_controls.py'),
+    return [Path(__file__).with_name('tv_controls.py'), Path(placement.__file__),
             *sorted((root / 'approach-queue').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua']
 
@@ -84,6 +84,66 @@ def _raw(text, marker):
     return values
 
 
+def _records(text, marker):
+    records = []
+    for match in re.finditer(re.escape(PREFIX + marker) + r'(?=\s|$)([^\r\n]*)', text):
+        value = json.loads(match[1])
+        if not isinstance(value, dict):
+            raise ValueError('Malformed approach raw ' + marker)
+        records.append((match.start(), value))
+    return records
+
+
+def _placements(selection, client, authority, rows):
+    """Bind each settled center to its own setup and admission in publication order."""
+    layouts, local, remote, admitted, prepared, baselines, verified = (
+        _records(text, marker) for text, marker in (
+            (authority, 'LAYOUT'), (client, 'CLIENT_PLACEMENT'), (authority, 'AUTHORITY_PLACEMENT'),
+            (client, 'ADMITTED'), (authority, 'PREPARED'),
+            (authority, 'BASELINE'), (authority, 'VERIFIED')))
+    publications = []
+    for match in re.finditer(re.escape('[QUEUE_CHECK] ') + r'([^\r\n]*)', client):
+        value = json.loads(match[1])
+        if isinstance(value, dict) and value.get('suite') == 'approach-queue' and value.get('event') == 'case':
+            publications.append((match.start(), value))
+    if (any([value.get('case') for _, value in stream] != list(CASES)
+            for stream in (layouts, local, remote, admitted, prepared, baselines, verified))
+            or [value.get('id') for _, value in publications] != list(CASES)
+            or [row.get('id') for row in rows] != list(CASES)):
+        raise ValueError('Approach placement/setup/admission missing, duplicate, foreign or reordered')
+    if selection['kind'] == 'mp' and (_records(client, 'LAYOUT') or _records(client, 'AUTHORITY_PLACEMENT')
+            or _records(authority, 'CLIENT_PLACEMENT') or _records(authority, 'ADMITTED')):
+        raise ValueError('Approach placement published by wrong process')
+    witnesses = [record for marker in ('NATIVE_STATE', 'CLIENT_IDLE', 'SERVER_SNAPSHOT')
+                 for record in _records(client, marker)]
+    for i, case in enumerate(CASES):
+        dp, layout = layouts[i]; lp, local_row = local[i]; rp, remote_row = remote[i]
+        ap, admission = admitted[i]; pp, ids = prepared[i]
+        bp, _ = baselines[i]; vp, _ = verified[i]; cp, _ = publications[i]
+        for receipt in (local_row, remote_row):
+            if set(receipt) != {'case', 'actor', 'target', 'proof'} or receipt['actor'] != 'client1':
+                raise ValueError('Malformed approach placement identity')
+        target = local_row['target']
+        if (layout != dict(case=case, actor='client1', target=target)
+                or not all(type(v) is int for v in layout['target'].values())):
+            raise ValueError('Approach layout differs from final placement')
+        placement.validate(local_row['proof'], target, 'local', centered=True)
+        placement.validate(remote_row['proof'], remote_row['target'],
+                           'replica' if selection['kind'] == 'mp' else 'local', centered=True)
+        if remote_row['target'] != target or selection['kind'] == 'sp' and remote_row != local_row:
+            raise ValueError('Approach placement target or SP proof differs')
+        if any(spec.get('origin') != target or spec.get('placement') != target
+               for spec in (ids, rows[i].get('ids', {}))):
+            raise ValueError('Approach placement differs from prepared identities')
+        if admission != dict(case=case, actor='client1'):
+            raise ValueError('Malformed approach native admission identity')
+        if (not lp < ap < cp or not dp < rp < pp < bp < vp
+                or selection['kind'] == 'sp' and not dp < lp < rp < bp < ap < vp < cp
+                or any(position <= ap for position, value in witnesses if value.get('case') == case)
+                or i and (publications[i - 1][0] >= lp or verified[i - 1][0] >= dp)):
+            raise ValueError('Approach placement did not precede setup and native admission')
+
+
 def complete(selection, role, text):
     try:
         values = _raw(text, 'COMPLETE')
@@ -104,7 +164,7 @@ def _items(values):
             and [v['id'] for v in values] == sorted({v['id'] for v in values}))
 
 
-def _snapshot(value, spec, final, native_host=False):
+def _snapshot(value, spec, final):
     if (not isinstance(value, dict) or value.get('case') != spec['case'] or not _items(value.get('root'))
             or set(value.get('targets', {})) != {'first', 'second'}
             or set(value.get('ground', {})) != {'first', 'second'}):
@@ -119,8 +179,8 @@ def _snapshot(value, spec, final, native_host=False):
         if not _items(value['ground'][name]):
             return False
     book = spec['book']
-    expected = dict(id=book['id'], type=book['type'], pages=book['pages'] if final and not native_host else book['initial'],
-                    characterPages=book['pages'] if final and not native_host else book['initial'], root=True)
+    expected = dict(id=book['id'], type=book['type'], pages=book['pages'] if final else book['initial'],
+                    characterPages=book['pages'] if final else book['initial'], root=True)
     if value.get('book') != expected or value.get('order') != (['first', 'second'] if enabled else ['second']) * bool(final):
         return False
     effects = value.get('effects')
@@ -163,19 +223,23 @@ def _conservation(before, after, spec, paid_names=None):
 
 
 def _native_host_control(row, spec, native_states, idle, authority_idle):
-    """A paid second removal and an untouched canceled tail are one exact Host control."""
+    """Exact paid removal and naturally completed independent reader on native Host."""
     errors = []
     commands = {r.get('name'): r for r in row.get('commands', [])}
     second, tail = commands.get('second', {}), commands.get('tail', {})
-    states = second.get('nativeStates', [])
-    kind = 'ISRemoveBush' if spec['case'] == 'bush' else 'ISRemoveGrass'
-    if (not isinstance(states, list) or len(states) != 2 or list(native_states) != states
-            or [r.get('state') for r in states] != ['started', 'completed']):
-        errors.append('Host native control lacks the exact started/completed removal receipts')
-    else:
-        first, completed = states
+    expected_states = []
+    pairs = {}
+    for name, command, kind in (('second', second, 'ISRemoveBush' if spec['case'] == 'bush' else 'ISRemoveGrass'),
+                                ('tail', tail, 'ISReadABook')):
+        states = command.get('nativeStates', [])
+        if (not isinstance(states, list) or len(states) != 2
+                or [r.get('state') for r in states] != ['started', 'completed']):
+            errors.append('Host native control lacks exact started/completed receipts: ' + name)
+            continue
+        expected_states.extend(states)
+        first, completed = states; pairs[name] = (first, completed)
         for receipt in states:
-            if (receipt.get('case') != spec['case'] or receipt.get('name') != 'second' or receipt.get('type') != kind
+            if (receipt.get('case') != spec['case'] or receipt.get('name') != name or receipt.get('type') != kind
                     or receipt.get('kind') != kind or receipt.get('matched') is not True or receipt.get('referenceStable') is not True
                     or type(receipt.get('player')) is not int or type(receipt.get('transaction')) is not int
                     or not -128 <= receipt['transaction'] <= 127 or receipt['transaction'] == 0
@@ -183,23 +247,32 @@ def _native_host_control(row, spec, native_states, idle, authority_idle):
                     or not isinstance(receipt.get('actionRef'), str) or not receipt['actionRef']
                     or not isinstance(receipt.get('nativeRef'), str) or not receipt['nativeRef']
                     or receipt.get('currentActionRef') != receipt.get('actionRef') or not _number(receipt.get('observedAt'))):
-                errors.append('Host native receipt identity/current action differs')
+                errors.append('Host native receipt identity/current action differs: ' + name)
         if any(first.get(k) != completed.get(k) for k in ('player', 'transaction', 'kind', 'token', 'actionRef', 'nativeRef')):
-            errors.append('Host native receipt binding changed across completion')
+            errors.append('Host native receipt binding changed across completion: ' + name)
+        if (not _number(command.get('admittedAt')) or not _number(command.get('endedAt'))
+                or not _number(first.get('observedAt')) or not _number(completed.get('observedAt'))
+                or not command['admittedAt'] <= first['observedAt'] <= completed['observedAt'] <= command['endedAt']):
+            errors.append('Host native receipt/admission/completion order differs: ' + name)
+    if list(native_states) != expected_states:
+        errors.append('Host native raw receipt stream differs from exact removal then reader completion')
+    if set(pairs) == {'second', 'tail'}:
+        removal, reader = pairs['second'], pairs['tail']
+        if (removal[0].get('player') != reader[0].get('player')
+                or any(removal[0].get(k) == reader[0].get(k) for k in ('transaction', 'token', 'actionRef', 'nativeRef'))):
+            errors.append('Host native removal and reader do not have distinct exact identities')
         if (not _number(second.get('admittedAt')) or not _number(tail.get('admittedAt'))
-                or not _number(second.get('endedAt')) or not _number(first.get('observedAt')) or not _number(completed.get('observedAt'))
-                or not second['admittedAt'] <= tail['admittedAt'] <= completed['observedAt']
-                or not second['admittedAt'] <= first['observedAt'] <= completed['observedAt'] <= second['endedAt']):
-            errors.append('Host native receipt/admission/completion order differs')
-    if (commands.get('first', {}).get('nativeStates') or tail.get('nativeStates')
-            or any(k in tail for k in ('allocatedAt', 'effectiveDuration', 'startedAt', 'endedAt'))
+                or not _number(removal[1].get('observedAt')) or not _number(reader[0].get('observedAt'))
+                or not second['admittedAt'] <= tail['admittedAt'] <= removal[1]['observedAt'] <= reader[0]['observedAt']):
+            errors.append('Host native reader did not follow the paid removal')
+    if (commands.get('first', {}).get('nativeStates')
             or type(tail.get('token')) is not int or tail.get('token') in [commands.get(n, {}).get('token') for n in ('first', 'second')]
             or row.get('manualInputSeen') is not False):
-        errors.append('Host native control tail was started, shared, acknowledged or manually interrupted')
+        errors.append('Host native control shared reader, acknowledged first removal or manual interruption')
     if (not isinstance(idle, dict) or row.get('clientIdle') != idle or idle.get('case') != spec['case']
-            or idle.get('phase') != 'running' or not _snapshot(idle.get('client'), spec, True, True)
-            or row.get('serverIdle') != authority_idle or not _snapshot(authority_idle, spec, True, True)):
-        errors.append('Host native idle requires independent exact paid-effect/untouched-reader snapshots')
+            or idle.get('phase') != 'running' or not _snapshot(idle.get('client'), spec, True)
+            or row.get('serverIdle') != authority_idle or not _snapshot(authority_idle, spec, True)):
+        errors.append('Host native idle requires independent exact paid-effect/completed-reader snapshots')
     else:
         q = idle.get('queue', {})
         if (q.get('current') is not False or q.get('currentType') is not False or q.get('pending') != []
@@ -210,11 +283,11 @@ def _native_host_control(row, spec, native_states, idle, authority_idle):
         for key in ('targets', 'book', 'root', 'ground', 'order'):
             if idle['client'][key] != row.get('client', {}).get(key) or authority_idle[key] != row.get('server', {}).get(key):
                 errors.append('Host native effects/pages changed after first idle')
-        completed = states[-1] if len(states) == 2 else {}
-        if (not _number(idle.get('observedAt')) or not _number(second.get('endedAt'))
-                or not second['endedAt'] <= idle['observedAt'] <= second['endedAt'] + 1000
+        completed = pairs.get('tail', ({}, {}))[1]
+        if (not _number(idle.get('observedAt')) or not _number(tail.get('endedAt'))
+                or not tail['endedAt'] <= idle['observedAt'] <= tail['endedAt'] + 1000
                 or not _number(completed.get('observedAt')) or not 0 <= idle['observedAt'] - completed['observedAt'] <= 1000):
-            errors.append('Host native idle was not the immediate completed-removal boundary')
+            errors.append('Host native idle was not the immediate completed-reader boundary')
     return errors
 
 
@@ -223,6 +296,8 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, nat
     try:
         if (not isinstance(spec, dict) or spec != prepared or spec['case'] != case or spec['mode'] != selection['mode']
                 or set(spec['origin']) != {'x', 'y', 'z'} or any(type(v) is not int for v in spec['origin'].values())
+                or spec.get('placement') != spec['origin']
+                or any(type(v) is not int for v in spec['placement'].values())
                 or set(spec['targets']) != {'first', 'second'}):
             raise ValueError()
         for name, dx in (('first', 7), ('second', -1)):
@@ -245,7 +320,7 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, nat
             or not _number(row.get('settleMilliseconds')) or row['settleMilliseconds'] < 1000):
         errors.append('Missing native idle or unchanged lifecycle gate')
     for key, final in (('input', False), ('authorityBaseline', False), ('client', True), ('server', True)):
-        if not _snapshot(row.get(key), spec, final, native_host):
+        if not _snapshot(row.get(key), spec, final):
             errors.append('Wrong exact approach snapshot: ' + key)
     if row.get('authorityBaseline') != authority_baseline or row.get('server') != verified:
         errors.append('Independent raw authority readbacks differ')
@@ -270,9 +345,9 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, nat
             or _near(issue.get('position'), spec['targets']['first'])
             or not _number(issue.get('firstStartedAt')) or not _number(issue.get('issuedAt'))
             or issue['firstStartedAt'] > issue['issuedAt'] or issue.get('firstRetainedAfterIssue') is not enabled
-            or enabled and issue.get('firstJavaRetainedAfterIssue') is not True):
+            or issue.get('firstJavaRetainedAfterIssue') is not enabled):
         errors.append('Second cursor did not preserve/cancel the active first native walk as required')
-    expected = ['first', 'second', 'tail'] if enabled else ['second'] if native_host else ['second', 'tail']
+    expected = ['first', 'second', 'tail'] if enabled else ['second', 'tail']
     if row.get('order') != expected:
         errors.append('Native removals/tail started in the wrong order')
     commands = row.get('commands', [])
@@ -288,7 +363,7 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, nat
                 or not tail and command['duration'] != (100 if case == 'bush' else 50)
                 or command.get('itemId') != (spec['book']['id'] if tail else False)
                 or command.get('target') != (False if tail else spec['targets'].get(name))
-                or command.get('cancelled') is not (not enabled and (name == 'first' or native_host))):
+                or command.get('cancelled') is not (not enabled and name == 'first')):
             errors.append('Native producer/duration/start/cancellation differs: ' + str(name))
         if did_start and (not _duration(command) or not _number(command.get('endedAt')) or command['endedAt'] <= command.get('startedAt', float('inf'))):
             errors.append('Native duration/completion observation differs: ' + str(name))
@@ -349,6 +424,7 @@ def verify(root, selection, catalog):
         if ([r.get('id') for r in rows] != list(CASES)
                 or any([r.get('case') for r in values] != list(CASES) for values in (prepared, baseline, verified))):
             issues.append('Case/authority evidence missing, duplicated or out of order')
+        _placements(selection, text, authority, rows)
         for i, case in enumerate(CASES):
             row = rows[i] if i < len(rows) else {}
             errors = check_case(row, case, selection, prepared[i] if i < len(prepared) else None,
@@ -359,7 +435,7 @@ def verify(root, selection, catalog):
                 errors.append('Approach actor/kind/mode differs')
             issues += [case + ': ' + error for error in errors]
             outcomes.append(dict(actor='client1', case=case, status='failed' if errors else 'passed', reason='; '.join(errors),
-                                 outcome=dict(effectsVerified=not errors, serverAuthorityVerified=not errors, tailCompleted=not errors and not native_host)))
+                                 outcome=dict(effectsVerified=not errors, serverAuthorityVerified=not errors, tailCompleted=not errors)))
         if not complete(selection, 'client1', text): issues.append('Missing unique approach completion marker')
     except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError) as error:
         issues.append('Approach verifier ' + type(error).__name__ + ': ' + str(error))
