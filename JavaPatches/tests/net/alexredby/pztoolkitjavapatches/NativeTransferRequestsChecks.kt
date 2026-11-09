@@ -904,6 +904,179 @@ object NativeTransferRequestsChecks {
         }
     }
 
+    /** Accepted execution fixture with real native effects; no admission or delivery qualification. */
+    private fun nativeServerPhysicalChecks(unsafe: Unsafe) {
+        fun field(type: Class<*>, name: String) =
+            type.getDeclaredField(name).apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val transactions = field(TransactionManager::class.java, "transactions").get(null)
+            as ConcurrentLinkedQueue<Transaction>
+        @Suppress("UNCHECKED_CAST")
+        val lightweight = field(TransactionManager::class.java, "lightweightData").get(null)
+            as MutableMap<IsoPlayer, Any>
+        val savedTransactions = transactions.toList()
+        val savedClient = GameClient.client
+        val savedServer = GameServer.server
+        val savedEngine = GameServer.udpEngine
+        val lastId = field(Transaction::class.java, "lastId")
+        val savedId = lastId.getByte(null)
+        val fixturePlayers = ArrayList<IsoPlayer>()
+        val savedPlayers = listOf(90.toShort(), 91.toShort(), 92.toShort()).associateWith { GameServer.IDToPlayerMap.get(it) }
+        class ServerConnection : UdpConnection(null, 0, 0) {
+            val bytes = ByteBuffer.allocate(4096)
+            val packetTypes = ArrayList<Short>()
+            val terminal = ArrayList<Transaction.TransactionState>()
+            override fun isFullyConnected() = true
+            override fun isLimitExceeded(type: PacketTypes.PacketType) = false
+            override fun startPacket(): ByteBufferWriter {
+                bytes.clear()
+                return ByteBufferWriter(bytes)
+            }
+            override fun endPacket(priority: Int, reliability: Int, channel: Byte) {
+                bytes.flip()
+                val reader = zombie.core.network.ByteBufferReader(bytes)
+                check(reader.getByte() == 134.toByte()) { "unexpected native packet framing" }
+                val type = reader.getShort()
+                packetTypes.add(type)
+                if (type == PacketTypes.PacketType.ItemTransaction.getId()) {
+                    reader.getByte()
+                    terminal.add(reader.getEnum(Transaction.TransactionState::class.java))
+                }
+            }
+            override fun cancelPacket() = error("native physical fixture unexpectedly canceled transport")
+        }
+        val wire = unsafe.allocateInstance(ServerConnection::class.java) as ServerConnection
+        // Unsafe avoids opening RakNet; initialize this socket double's recording state.
+        field(ServerConnection::class.java, "bytes").set(wire, ByteBuffer.allocate(4096))
+        field(ServerConnection::class.java, "packetTypes").set(wire, ArrayList<Short>())
+        field(ServerConnection::class.java, "terminal").set(wire, ArrayList<Transaction.TransactionState>())
+        val removeType = PacketTypes.PacketType.RemoveInventoryItemFromContainer
+        val removeHandler = field(PacketTypes.PacketType::class.java, "handler").get(removeType) as Class<*>
+        field(zombie.network.PacketsCache::class.java, "packets").set(wire,
+            hashMapOf(removeType to removeHandler.getDeclaredConstructor().newInstance()))
+        field(zombie.network.PacketsCache::class.java, "hashes").set(wire, HashMap<Any, Any>())
+        field(zombie.network.PacketsCache::class.java, "limits").set(wire, HashMap<Any, Any>())
+        fun player(id: Short): IsoPlayer {
+            val value = unsafe.allocateInstance(IsoPlayer::class.java) as IsoPlayer
+            value.onlineId = id
+            field(zombie.iso.IsoObject::class.java, "ecsComponentMap").set(value, HashMap<Any, Any>())
+            field(IsoGameCharacter::class.java, "inventory").set(value, ItemContainer("inventory", null, value))
+            field(IsoGameCharacter::class.java, "characterTraits").set(value, zombie.characters.traits.CharacterTraits())
+            field(IsoGameCharacter::class.java, "attachedItems").set(value,
+                zombie.characters.AttachedItems.AttachedItems(zombie.characters.AttachedItems.AttachedLocationGroup("probe")))
+            field(IsoGameCharacter::class.java, "wornItems").set(value,
+                zombie.characters.WornItems.WornItems(zombie.characters.WornItems.BodyLocationGroup("probe")))
+            fixturePlayers.add(value)
+            GameServer.IDToPlayerMap.put(id, value)
+            return value
+        }
+        fun seed(value: InventoryItem, id: Int, container: ItemContainer) {
+            value.setID(id)
+            for ((name, text) in mapOf("module" to "Base", "type" to "RequestProbe", "fullType" to "Base.RequestProbe", "name" to "Request probe"))
+                field(InventoryItem::class.java, name).set(value, text)
+            field(InventoryItem::class.java, "itemHeat").setFloat(value, 1f)
+            field(InventoryItem::class.java, "lastUpdateMs").setLong(value, -1L)
+            value.setContainer(container)
+            container.items.add(value)
+        }
+        try {
+            GameClient.client = false
+            GameServer.server = true
+            transactions.clear()
+            val actor = player(90)
+            val other = player(91)
+            val third = player(92)
+            val engine = unsafe.allocateInstance(zombie.core.raknet.UdpEngine::class.java) as zombie.core.raknet.UdpEngine
+            field(zombie.core.raknet.UdpEngine::class.java, "connectionMap").set(engine, hashMapOf(1L to wire))
+            field(zombie.core.raknet.UdpEngine::class.java, "connections").set(engine, ArrayList<UdpConnection>())
+            GameServer.udpEngine = engine
+            GameServer.PlayerToAddressMap.put(actor, 1L)
+            val source = actor.getInventory()
+            val destination = other.getInventory()
+            val quarantine = third.getInventory()
+            for ((index, scenario) in listOf("complete", "manager-partial", "direct-partial").withIndex()) {
+                val partial = scenario != "complete"
+                val direct = scenario == "direct-partial"
+                source.items.clear()
+                destination.items.clear()
+                quarantine.items.clear()
+                wire.packetTypes.clear()
+                wire.terminal.clear()
+                val paid = unsafe.allocateInstance(InventoryItem::class.java) as InventoryItem
+                val unspent = unsafe.allocateInstance(InventoryItem::class.java) as InventoryItem
+                seed(paid, 801 + index * 10, source)
+                seed(unspent, 802 + index * 10, source)
+                val packet = ItemTransactionPacket()
+                packet.set(actor, listOf(paid, unspent), source, destination, null, zombie.iso.IsoDirections.N, 0f, 0f, 0f)
+                // This starts at an accepted server fixture state, not processServer
+                // admission. Native set produced a canonical common-source/destination
+                // batch; Accept/add happen with both endpoints valid, before competing
+                // physical work. The socket double records serialization, not delivery.
+                field(Transaction::class.java, "state").set(packet, Transaction.TransactionState.Accept)
+                field(Transaction::class.java, "endTime").setLong(packet, -1L)
+                TransactionManager.add(packet)
+                if (partial) {
+                    source.Remove(unspent)
+                    check(quarantine.addItem(unspent) === unspent && unspent.getContainer() === quarantine &&
+                        quarantine.items.single() === unspent && source.items.single() === paid) {
+                        "competing native container move did not retain the exact unspent member"
+                    }
+                }
+                if (direct) {
+                    // A real direct return distinguishes false-after-paid-effects from
+                    // RuntimeException, which the manager would also mark Reject.
+                    check(!packet.update()) { "direct native partial execution did not return false" }
+                } else TransactionManager.update()
+                val expected = when {
+                    direct -> Transaction.TransactionState.Accept
+                    partial -> Transaction.TransactionState.Reject
+                    else -> Transaction.TransactionState.Done
+                }
+                check(field(Transaction::class.java, "state").get(packet) == expected &&
+                    (if (direct) transactions.singleOrNull() === packet else transactions.isEmpty())) {
+                    "native execution bookkeeping differs for $scenario"
+                }
+                check(paid.getContainer() === destination && destination.items.count { it === paid } == 1 &&
+                    source.items.none { it === paid }) { "native paid prefix was lost, duplicated or rolled back" }
+                check(if (partial) unspent.getContainer() === quarantine && quarantine.items.single() === unspent &&
+                    source.items.isEmpty() && destination.items.single() === paid
+                    else unspent.getContainer() === destination && source.items.isEmpty() &&
+                        destination.items.size == 2 && quarantine.items.isEmpty()) {
+                    "native unspent member or completed batch changed physical ownership"
+                }
+                check(wire.terminal == if (partial) emptyList<Transaction.TransactionState>() else listOf(Transaction.TransactionState.Done)) {
+                    "native false-result terminal response behavior changed"
+                }
+                check(wire.packetTypes.count { it == PacketTypes.PacketType.RemoveInventoryItemFromContainer.getId() } ==
+                    if (partial) 1 else 2) { "native paid prefix replication count changed" }
+                // The independent direct control has already executed once. Mark it
+                // terminal explicitly so manager cleanup cannot invoke its body again.
+                if (direct) packet.setState(Transaction.TransactionState.Reject)
+                val sent = wire.packetTypes.size
+                TransactionManager.update()
+                check(transactions.isEmpty() && wire.packetTypes.size == sent && destination.items.count { it === paid } == 1 &&
+                    unspent.getContainer() === if (partial) quarantine else destination) {
+                    "settled native packet repeated physical work or transport"
+                }
+            }
+            println("NATIVE_TRANSFER_SERVER_PHYSICAL_CHECKS_PASS native_update_item=true canonical_batch=true accepted_execution_fixture=true admission_qualified=false delivery_qualified=false complete_done=true partial_reject_silent=true direct_false_after_paid=true socket_free=true")
+        } finally {
+            transactions.clear()
+            transactions.addAll(savedTransactions)
+            for (player in fixturePlayers) {
+                GameServer.PlayerToAddressMap.remove(player)
+                lightweight.remove(player)
+            }
+            for ((id, value) in savedPlayers) {
+                if (value == null) GameServer.IDToPlayerMap.remove(id) else GameServer.IDToPlayerMap.put(id, value)
+            }
+            GameServer.udpEngine = savedEngine
+            lastId.setByte(null, savedId)
+            GameClient.client = savedClient
+            GameServer.server = savedServer
+        }
+    }
+
     private fun filename(prototype: Prototype, path: String) {
         prototype.filename = path
         prototype.prototypes.forEach { filename(it, path) }
@@ -1259,6 +1432,7 @@ object NativeTransferRequestsChecks {
         )
         LuaManager.env.rawset("createItemTransaction", single)
         nativeHandleChecks(unsafe, actor, source, measure)
+        nativeServerPhysicalChecks(unsafe)
 
         // Run the real shared Lua owner and source/effect readers at those same
         // native boundaries. Only the downstream Java sender is stubbed.
