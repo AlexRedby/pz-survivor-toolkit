@@ -758,10 +758,17 @@ check("server bounds mutation bursts with explicit denial", function()
     assert(#sent == 9 and sent[9].args.error == "rate_limited" and sent[9].args.requestId == "9")
 end)
 check("refresh preserves online rate limits and releases departed players without weak keys", function()
-    local former = setmetatable({}, {__mode = "v"})
+    local released
     do
         local departed = player("departed")
-        former[1] = departed
+        if NativeWeakReference then
+            -- Kahlua ignores weak table values. The headless JVM harness uses
+            -- a real Java WeakReference and returns only a release boolean.
+            released = NativeWeakReference(departed)
+        else
+            local former = setmetatable({departed}, {__mode = "v"})
+            released = function() return former[1] == nil end
+        end
         online[#online + 1] = departed
         command(departed, {action = "sync"})
     end
@@ -770,7 +777,7 @@ check("refresh preserves online rate limits and releases departed players withou
     Events.OnTick.fire()
     sent = {}
     collectgarbage("collect")
-    assert(former[1] == nil, "snapshots or request buckets retained a departed player")
+    assert(released(), "snapshots or request buckets retained a departed player")
     command(owner, {action = "sync", requestId = "11"})
     assert(#sent == 0, "refresh must not reset an online player's rate limit")
     now = now + 5000
