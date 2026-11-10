@@ -5,7 +5,7 @@ local modules={QueueFireIgnition={cases={}},QueueTestSelection=selection,QueueHe
 modules.QueuePreflight={onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end}
 local nativeRequire=require
 require=function(name)if modules[name]~=nil then return modules[name] end;return nativeRequire(name)end
-local nextID,removed,packets=10,{},0
+local nextID,removed,packets,objects=10,{},0,0
 local function list(values)
  return {size=function()return #values end,get=function(_,i)return values[i+1] end}
 end
@@ -59,8 +59,10 @@ local function objectIndex(object)
 end
 local cell={getGridSquare=function(_,x,y,z)return square(x,y,z)end}
 getCell=function()return cell end
-modules.QueueEnergyPlacement=function()return square(1,2,0)end
+modules.QueueEnergyPlacement=assert(loadfile(root..'/tests/native_queue/support/QueueEnergyPlacement.lua'))()
+modules.QueueFirePlacement=assert(loadfile(root..'/tests/native_queue/fire/shared/QueueFirePlacement.lua'))()
 IsoThumpable={new=function(_,sq)
+ objects=objects+1
  local object={container=container(),data={},square=sq}
  function object:setCanPassThrough(value)self.passThrough=value end
  function object:setIsContainer()end
@@ -95,11 +97,22 @@ ISCampingMenu={getFuelDurationForItem=function()return 120 end}
 isServer=function()return true end
 sendAddItemToContainer=function()packets=packets+1 end
 instanceof=function(value,class)return value.class==class end
-local player={inventory=container()}
+local player={inventory=container(),x=1.5,y=2.5,z=0,ghostWrites=0}
+isClient=function()return false end
+function player:getX()return self.x end
+function player:getY()return self.y end
+function player:getZ()return self.z end
+function player:getSquare()return square(math.floor(self.x),math.floor(self.y),self.z) end
+function player:getCurrentSquare()return self:getSquare()end
+function player:setGhostMode(value)assert(value);self.ghostWrites=self.ghostWrites+1 end
 function player:getUsername()return 'client1' end
 function player:getInventory()return self.inventory end
 function player:setAlreadyReadPages()end
 local Authority=assert(loadfile(root..'/tests/native_queue/fire/shared/QueueFireAuthority.lua'))()
+local placement={x=1,y=2,z=0}
+local function placementProof()return {mode=isServer() and 'replica' or 'local',target={x=1,y=2,z=0},centered=true,
+ teleports=isServer() and 0 or 1,centers=isServer() and 0 or 1}end
+local function prepare(authority,case,trial)return authority.prepare(player,case,placement,placementProof(),trial or 1)end
 local function item(ids) return player.inventory:getItemById(ids.book) end
 local function take(ids)
  local crate=removed.fixture:getContainer()
@@ -110,7 +123,19 @@ end
 -- Capture only the newly created exact crate; unrelated world objects must never be removed.
 local newObject=IsoThumpable.new
 IsoThumpable.new=function(...)local object=newObject(...);removed.fixture=object;return object end
-local ids=Authority.prepare(player,'fuel')
+local function rejectsBeforeEffects(prepareCall,label)
+ local beforeID,beforePackets,beforeGhost,beforeObjects=nextID,packets,player.ghostWrites,objects
+ assert(not pcall(prepareCall),'fixture accepted '..label)
+ assert(nextID==beforeID and packets==beforePackets and player.ghostWrites==beforeGhost and objects==beforeObjects,
+  'rejected '..label..' seeded fixture inputs or changed ghost state')
+end
+rejectsBeforeEffects(function()Authority.prepare(player,'fuel',placement,nil,1)end,'missing placement proof')
+player.x=1.05
+rejectsBeforeEffects(function()prepare(Authority,'fuel')end,'uncentered actor')
+player.x=1.5
+local ids=prepare(Authority,'fuel')
+assert(ids.trial==1 and ids.placement.x==1 and ids.placement.y==2 and ids.placement.z==0 and ids.spawn==nil,
+ 'Fire fixture receipt did not bind centered placement and trial')
 assert(ids.crateX==ids.x and ids.crateY==ids.y and ids.crateZ==ids.z and removed.fixture.passThrough,
  'borrowed source must share the native campfire square and remain pass-through')
 assert(ids.crateIndex<ids.objectIndex,'source must precede the removable campfire')
@@ -125,7 +150,7 @@ local result=assert(Authority.verify(player,'fuel'))
 assert(result.logId==ids.log and result.consumed==1 and result.fuel==120 and result.tailRead)
 assert(#removed==1 and removed[1]==removed.fixture,'cleanup touched another world object')
 -- Toolkit missing target: borrowed Log must return exactly once to its original crate.
-ids=Authority.prepare(player,'missing-target-after-expansion')
+ids=prepare(Authority,'missing-target-after-expansion')
 crate,log=take(ids)
 assert(Authority.invalidate(player,ids.case).ok)
 assert(removed.fixture:getObjectIndex()==ids.crateIndex,'campfire removal shifted the native pickup source index')
@@ -143,14 +168,14 @@ result=assert(Authority.verify(player,ids.case))
 assert(result.sourceCount==1 and result.rootCount==0 and result.unspent and result.removed and result.tailRead)
 -- Native control remains unspent in root with an unread tail; authority observes, never repairs it.
 selection.mode='native'
-ids=Authority.prepare(player,'missing-target-after-expansion')
+ids=prepare(Authority,'missing-target-after-expansion')
 crate,log=take(ids);Authority.invalidate(player,ids.case)
 result=assert(Authority.verify(player,ids.case))
 assert(result.rootCount==1 and result.sourceCount==0 and not result.tailRead and result.unspent)
 -- Native MP observes a lost tail after exact fuel consumption; SP still requires it.
 for _,kind in ipairs({'sp','mp'}) do
  selection.kind=kind
- ids=Authority.prepare(player,'fuel');crate,log=take(ids)
+ ids=prepare(Authority,'fuel');crate,log=take(ids)
  for i,value in ipairs(player.inventory.items) do if value==log then table.remove(player.inventory.items,i);break end end
  target=targets[square(ids.x,ids.y,ids.z)];target.fuelAmt=120
  if kind=='sp' then
@@ -187,7 +212,11 @@ IsoBarbecue={new=function(_,square)
 end}
 modules['Camping/ISCampingMenu']=true
 local Ignition=assert(loadfile(root..'/tests/native_queue/fire/shared/QueueFireIgnition.lua'))()
-ids=Ignition.prepare(player,'bbq-kindle')
+rejectsBeforeEffects(function()Ignition.prepare(player,'bbq-kindle',placement,nil,1)end,'ignition missing placement proof')
+rejectsBeforeEffects(function()prepare(Ignition,'bbq-kindle',2)end,'ignition skipped trial')
+ids=prepare(Ignition,'bbq-kindle')
+assert(ids.trial==1 and ids.placement.x==1 and ids.placement.y==2 and ids.placement.z==0 and ids.spawn==nil,
+ 'ignition fixture receipt did not bind centered placement and trial')
 tick();barbecue.on=true
 if early then early()end
 barbecue.fuel=359;tick()
@@ -195,6 +224,7 @@ item(ids):setAlreadyReadPages(20)
 local observed,problem=Ignition.verify(player,'bbq-kindle')
 assert(observed,problem)
 assert(observed.effectFuel==360 and observed.fuel==359,'native fuel effect was sampled after burning')
+rejectsBeforeEffects(function()prepare(Ignition,'bbq-kindle',2)end,'ignition repeated single-attempt trial')
 print('Fire ignition observation precedes next-frame native fuel burn.')
 
 -- Report actual failed controls without weakening Toolkit ignition/resource gates.
@@ -210,7 +240,7 @@ function player.inventory:Remove(item)
 end
 sendRemoveItemFromContainer=function()end
 selection.mode='toolkit'
-ids=Ignition.prepare(player,'kindle-retry')
+ids=prepare(Ignition,'kindle-retry')
 item(ids):setAlreadyReadPages(20)
 assert(not Ignition.verify(player,ids.case),'Toolkit unlit retry with unused sticks must fail')
 selection.mode='native'
@@ -277,6 +307,7 @@ do
   assert(state.nativeCompletion.perform==count and state.nativeCompletion.complete==(kind=='sp' and count or 0)
    and state.nativeCompletion.flush==count,'observer phase counters do not describe the real SP/Host mode')
   client.fixtureReset('kindle-retry');state=client.fixtureState()
+  assert(state.trial==2,'a new natural retry reused the preceding client trial')
   assert(state.nativeCompletion.perform==0 and state.nativeCompletion.complete==0 and state.nativeCompletion.flush==0
    and next(state.completionActions)==nil,'a new RNG trial retained the preceding completion counters')
  end end

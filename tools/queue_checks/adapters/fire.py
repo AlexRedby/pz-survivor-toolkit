@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import shutil
 from . import fire_ignition as ignition
+from . import fire_placement
 
 FUEL_CASES = ['fuel', 'missing-target-after-expansion']
 CASES = FUEL_CASES + ignition.CASES
@@ -32,7 +33,8 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [Path(__file__).with_name('fire_ignition.py'), *sorted((root / 'fire').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua',
+    return [Path(__file__).with_name('fire_ignition.py'), Path(__file__).with_name('fire_placement.py'),
+            Path(__file__).parents[1] / 'placement.py', root / 'support/QueueEnergyPlacement.lua', *sorted((root / 'fire').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua',
             *sorted((root / 'startup').rglob('*.lua'))]
 
 
@@ -88,6 +90,10 @@ def verify(root, selection, catalog):
                                                           mode=selection['mode'], actor='client1').items()):
             issues.append('Fire event context differs')
     results = [row for row in rows if row['event'] == 'case']
+    try:
+        fire_placement.validate(selection, client, authority, results)
+    except (ValueError, TypeError, KeyError) as error:
+        issues.append(str(error))
     for event, expected in [('setup', dict(cases=cases, expected=len(cases), queueEnabled=enabled, nativeDurations=True)),
                             ('complete', dict(cases=cases, expected=len(cases), performed=len(cases),
                                               failed=sum(row.get('status') == 'failed' for row in results), skipped=0))]:
@@ -117,7 +123,7 @@ def verify(root, selection, catalog):
         prep = next((row for row in prepared if row.get('case') == case), {})
         receipt = next((row for row in receipts if row.get('case') == case), {})
         observed_native_mp_fuel = not missing and not enabled and selection['kind'] == 'mp'
-        expected = dict(status='failed' if missing and not enabled else 'passed',
+        expected = dict(trial=1, status='failed' if missing and not enabled else 'passed',
                         reason='native-missing-target' if missing and not enabled else None, consumed=0 if missing else 1,
                         sourceCount=1 if missing and enabled else 0, rootCount=1 if missing and not enabled else 0,
                         removed=missing, unspent=missing, tailRead=not missing or enabled, expanded=True,
@@ -138,6 +144,9 @@ def verify(root, selection, catalog):
             case_failures[case] = 'native-missing-target'
         if any(type(result.get(key)) is not type(value) or result.get(key) != value for key, value in expected.items()):
             issues.append('Fire exact native effect/progress differs: ' + case)
+        for row in (prep, receipt):
+            if type(row.get('trial')) is not int or row.get('trial') != 1:
+                issues.append('Fire fuel trial identity differs: ' + case)
         for key in ('logId', 'bookId', 'condition'):
             prep_key = {'logId': 'log', 'bookId': 'book'}.get(key, key)
             if type(result.get(key)) is not int or type(prep.get(prep_key)) is not int or result.get(key) != prep.get(prep_key):
@@ -161,7 +170,8 @@ def verify(root, selection, catalog):
             if type(receipt.get(key)) is not type(result.get(key)) or receipt.get(key) != result.get(key):
                 issues.append('Fire authority differs from client evidence: ' + case)
                 break
-        if missing and (len(removals) != 1 or type(removals[0].get('logId')) is not int
+        if missing and (len(removals) != 1 or type(removals[0].get('trial')) is not int
+                        or removals[0].get('trial') != 1 or type(removals[0].get('logId')) is not int
                         or removals[0].get('logId') != result.get('logId') or type(removals[0].get('fuel')) is not int
                         or removals[0].get('fuel') != 0):
             issues.append('Fire removal identity/effect differs')

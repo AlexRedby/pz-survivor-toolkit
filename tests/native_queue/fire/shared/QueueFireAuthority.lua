@@ -2,6 +2,7 @@ local Authority,sessions={},{}
 local selection=require 'QueueTestSelection'
 local Ignition=require 'QueueFireIgnition'
 local JSON=require 'QueueHealthEvents'
+local Placement=require 'QueueFirePlacement'
 local function exact(container,id)
  local item=container:getItemById(id)
  return item and item:getContainer()==container and item or nil
@@ -15,14 +16,16 @@ local function count(container,id)
  end
  return total
 end
-function Authority.prepare(player,case)
- if Ignition.cases[case] then return Ignition.prepare(player,case) end
+function Authority.prepare(player,case,target,proof,trial)
+ if Ignition.cases[case] then return Ignition.prepare(player,case,target,proof,trial) end
  assert(not sessions[player:getUsername()],'duplicate fire preparation')
  assert(case=='fuel' or case=='missing-target-after-expansion','unknown fire case')
+ assert(trial==1,'unexpected fire fuel trial')
+ local origin=Placement.authority(player,case,trial,target,proof)
+ if isServer()then player:setGhostMode(true)end
  require 'Camping/SCampfireSystem'
  if not ISCampingMenu then require 'Camping/ISCampingMenu' end
- local origin=require('QueueEnergyPlacement')(player)
- local square=assert(getCell():getGridSquare(origin:getX()+1,origin:getY(),origin:getZ()))
+ local square=assert(getCell():getGridSquare(origin.x+1,origin.y,origin.z))
  local crateSquare=square -- Keep the borrowed source reachable after native walkToCampfire.
  local object=IsoThumpable.new(getCell(),crateSquare,'carpentry_01_16',false,{})
  object:setCanPassThrough(true);object:setIsContainer(true)
@@ -39,10 +42,9 @@ function Authority.prepare(player,case)
  book:setAlreadyReadPages(book:getNumberOfPages()-1)
  player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-1)
  if isServer() then sendAddItemToContainer(player:getInventory(),book) end
- local ids={case=case,log=log:getID(),book=book:getID(),condition=log:getCondition(),fuelAmount=ISCampingMenu.getFuelDurationForItem(log),
+ local ids={case=case,trial=trial,placement=origin,log=log:getID(),book=book:getID(),condition=log:getCondition(),fuelAmount=ISCampingMenu.getFuelDurationForItem(log),
   x=square:getX(),y=square:getY(),z=square:getZ(),objectIndex=target:getIsoObject():getObjectIndex(),
-  crateX=crateSquare:getX(),crateY=crateSquare:getY(),crateZ=crateSquare:getZ(),crateIndex=object:getObjectIndex(),
-  spawn={x=origin:getX()+0.5,y=origin:getY()+0.5,z=origin:getZ()}}
+  crateX=crateSquare:getX(),crateY=crateSquare:getY(),crateZ=crateSquare:getZ(),crateIndex=object:getObjectIndex()}
  assert(ids.fuelAmount>0 and count(player:getInventory(),ids.log)==0 and count(crate,ids.log)==1,'invalid borrowed fuel fixture')
  sessions[player:getUsername()]={player=player,ids=ids,target=target,object=object,crate=crate,book=book}
  print('[FIRE_TEST] PREPARED '..JSON.encode(ids))
@@ -56,8 +58,8 @@ function Authority.invalidate(player,case)
  SCampfireSystem.instance:removeCampfire(state.target)
  assert(not SCampfireSystem.instance:getLuaObjectAt(state.ids.x,state.ids.y,state.ids.z),'native campfire survived removal')
  state.removed=true
- print('[FIRE_TEST] REMOVED '..JSON.encode({case=case,logId=state.ids.log,fuel=0}))
- return {case=case,ok=true}
+ print('[FIRE_TEST] REMOVED '..JSON.encode({case=case,trial=state.ids.trial,logId=state.ids.log,fuel=0}))
+ return {case=case,trial=state.ids.trial,ok=true}
 end
 function Authority.verify(player,case,tidyReturnIds)
  if Ignition.cases[case] then return Ignition.verify(player,case,tidyReturnIds) end
@@ -83,7 +85,7 @@ function Authority.verify(player,case,tidyReturnIds)
  local read=book:getAlreadyReadPages()==book:getNumberOfPages()
  local observedNativeMPFuel=not missing and not enabled and selection.kind=='mp'
  if not observedNativeMPFuel and read~=(not missing or enabled) then return nil,'native reading outcome differs' end
- local result={case=case,logId=state.ids.log,bookId=state.ids.book,sourceCount=sourceCount,rootCount=rootCount,
+ local result={case=case,trial=state.ids.trial,logId=state.ids.log,bookId=state.ids.book,sourceCount=sourceCount,rootCount=rootCount,
   consumed=missing and 0 or 1,fuel=missing and 0 or target.fuelAmt,removed=missing,tailRead=read,
   unspent=missing,condition=state.ids.condition,fuelAmount=state.ids.fuelAmount}
  print('[FIRE_TEST] AUTHORITY '..JSON.encode(result))

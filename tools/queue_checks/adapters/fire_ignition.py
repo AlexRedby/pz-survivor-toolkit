@@ -171,7 +171,14 @@ def verify_case(case, selection, result, preparedList, receiptsList):
               or enabled and case == 'kindle-retry' and key == 'retryBeforeReturns') and not result[key]:
             issues.append('Ignition native progress/order missing: ' + key)
     unfinished_native_retry = False
+    seen_ids = set()
     for spec, receipt in zip(prepared, receipts):
+        resources = spec.get('resources')
+        item_ids = ([spec.get('book')] + [row.get('id') for row in resources if isinstance(row, dict)]
+                    if isinstance(resources, list) else [])
+        if (not _ids(item_ids) or seen_ids.intersection(item_ids)):
+            issues.append('Ignition trial item IDs are invalid, duplicate or stale')
+        seen_ids.update(value for value in item_ids if type(value) is int)
         if spec.get('targetKind') != target_kind or receipt.get('targetKind') != target_kind:
             issues.append('Ignition authoritative target kind differs')
         if (spec.get('actionType') != action or type(spec.get('nativeDuration')) is not int or spec['nativeDuration'] != duration

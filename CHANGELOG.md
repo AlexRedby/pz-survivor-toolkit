@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.349
+
+- **Fixed:** Recognize Toolkit's own guarded tool returns when inserting native fire-lighting retries and retiring spent or broken supplies. Preserve retry-before-return order, the original operation, exact item identities and the independent queue tail; unknown callback or binding changes remain unsupported.
+
 ### 0.1.345
 
 - **Internal:** Keep solid-fuel and legacy alcohol reads inside the conditions that use them. Preserve live item classification, unknown metadata and script previews; this local cleanup does not claim a measured gameplay speedup.
@@ -1596,6 +1600,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.94
+
+- **Fixed:** Preserve native ignition completion when server consumption or breakage has already removed the input's container on a Host client. Correct only reviewed campfire/BBQ literature and BBQ/fireplace Kindle compiler inputs; keep native consumption, completion, queue progression and unknown-source behavior.
 
 ### 0.1.89
 

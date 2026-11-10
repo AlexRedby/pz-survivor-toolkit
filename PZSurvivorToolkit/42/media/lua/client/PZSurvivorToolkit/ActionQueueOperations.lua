@@ -30,16 +30,57 @@ for _, name in ipairs({"new", "isValid", "isValidStart", "start", "update", "sto
     returnMethods[name] = returnClass[name]
 end
 
+-- Bind the actual owner before later mod callbacks can replace its public factory.
+-- Bulk has no queue hooks; its receipt authenticates only its own stop/completion layer.
+local Bulk = require "PZSurvivorToolkit/BulkActions"
+local bulkBinding = Bulk and Bulk.transferBinding
+local bulkGuard, bulkGuarded = Bulk and Bulk.guardTransfer, Bulk and Bulk.isGuardedTransfer
+local returnGlobals, returnToolkit = _G, PZSurvivorToolkit
+local returnSettings = returnToolkit.Settings
+local returnEnabled = returnSettings and returnSettings.actionQueue
+local returnType, returnMeta, returnPairs, returnCall = type, getmetatable, pairs, pcall
+local function returnOwn(action, wanted)
+    for key, value in returnPairs(action) do if key == wanted then return value end end
+end
+local function guardedReturn(action)
+    -- Reject foreign owner metatables before reading fields or invoking a factory.
+    if returnMeta(returnGlobals) or returnMeta(returnToolkit) or returnType(Bulk) ~= "table" or returnMeta(Bulk)
+        or returnType(returnSettings) ~= "table" or returnMeta(returnSettings)
+        or returnGlobals.PZSurvivorToolkit ~= returnToolkit or returnToolkit.Settings ~= returnSettings
+        or returnToolkit.BulkActions ~= Bulk or returnSettings.actionQueue ~= returnEnabled
+        or returnType(returnEnabled) ~= "function" or returnType(bulkBinding) ~= "function"
+        or Bulk.transferBinding ~= bulkBinding or Bulk.guardTransfer ~= bulkGuard or Bulk.isGuardedTransfer ~= bulkGuarded
+        or returnEnabled() ~= true then return end
+    local ok, lease, layer = returnCall(bulkBinding, action, returnMethods.stop)
+    if not ok or returnType(lease) ~= "function" or returnType(layer) ~= "table" or returnMeta(layer)
+        or layer.stop ~= returnMethods.stop or layer.wrappedStop ~= returnOwn(action, "stop")
+        or layer.onComplete ~= returnOwn(action, "onCompleteFunc") then return end
+    local args = returnOwn(action, "onCompleteArgs")
+    if returnType(args) ~= "table" or returnMeta(args) then return end
+    for _ in returnPairs(args) do return end
+    return lease
+end
 local function nativeReturn(action)
-    local carts = PZSurvivorToolkit.ActionQueueCarts
+    if returnMeta(returnGlobals) or returnMeta(returnToolkit) or returnGlobals.PZSurvivorToolkit ~= returnToolkit then return false end
+    local carts = returnToolkit.ActionQueueCarts
     if carts and carts.isReturn(action) then return true end
     if getmetatable(action) ~= returnClass or action.Type ~= returnClass.Type or not action.allowMissingItems
         or action.srcContainer ~= action.character:getInventory() or action.destContainer == action.srcContainer
-        or action.onStartFunc or action.onCancelFunc or action.onCompleteFunc then return false end
-    for name, method in pairs(returnMethods) do if action[name] ~= method then return false end end
+        or action.onStartFunc or action.onCancelFunc then return false end
+    -- Execution adds an owned singleton completion and stop guard before enqueue.
+    -- Only its immutable Bulk receipt may relax those exact two method differences.
+    local decorated = action.onCompleteFunc ~= nil or action.stop ~= returnMethods.stop
+    local lease = decorated and guardedReturn(action)
+    if decorated and not lease then return false end
+    for name, method in pairs(returnMethods) do
+        if action[name] ~= method and not (lease and name == "stop") then return false end
+    end
     for _, guard in ipairs(returnHelperGuards) do if not guard() then return false end end
+    if lease then local ok, valid = pcall(lease); return ok and valid == true end
     return true
 end
+
+Operations.isNativeReturn = nativeReturn
 
 function Operations.isTransfer(action)
     local carts = PZSurvivorToolkit.ActionQueueCarts

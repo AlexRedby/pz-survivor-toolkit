@@ -8,6 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from queue_checks.adapters import fire, fire_ignition as ignition
+from tests import test_queue_fire_adapter as fuel_evidence
 
 
 class FireIgnitionVerifierTests(unittest.TestCase):
@@ -176,6 +177,25 @@ class FireIgnitionVerifierTests(unittest.TestCase):
             with self.subTest(change=change): self.assertTrue(self.verify(evidence)[0])
         evidence = self.evidence('petrol', 2)
         self.assertTrue(self.verify(evidence)[0])
+
+    def test_consistently_reused_ids_cannot_rebind_a_fresh_native_trial(self):
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for field in ('book', 'resources'):
+                evidence = self.evidence('kindle-retry', 2)
+                result, prepared, receipts = evidence
+                if field == 'book':
+                    prepared[1]['book'] = prepared[0]['book']
+                    receipts[1]['bookId'] = result['bookId'] = prepared[0]['book']
+                else:
+                    replacements = {after['id']: before['id']
+                                    for before, after in zip(prepared[0]['resources'], prepared[1]['resources'])}
+                    for rows in (prepared[1]['resources'], receipts[1]['resources'], result['resources']):
+                        for row in rows: row['id'] = replacements.get(row['id'], row['id'])
+                    for key in ('pickupIds', 'returnIds'):
+                        result[key] = [replacements[value] for value in result[key]]
+                with self.subTest(kind=kind, field=field):
+                    self.assertIn('Ignition trial item IDs are invalid, duplicate or stale', self.verify(evidence)[0])
 
     def test_consumption_identity_duplicates_and_float_debits_remain_strict(self):
         for key, value in (('id', True), ('id', [100]), ('kind', 'Base.Lighter'), ('sourceCount', 2),
@@ -512,6 +532,215 @@ class FireIgnitionVerifierTests(unittest.TestCase):
         self.assertIn('Ignition final trial is invalid', report['issues'])
         self.assertEqual(report['outcomes'][0]['case'], 'literature')
         self.assertEqual(report['outcomes'][0]['status'], 'failed')
+
+
+class FirePlacementTimelineTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.selection = dict(suite='fire', kind='sp', mode='toolkit', cases=list(fire.CASES),
+                              mods=fire.MODS + ['P4TidyUpMeister'], languages=['EN'], clients=1, options={})
+
+    def evidence(self):
+        client, server = [], []
+        context = dict(suite='fire', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1')
+        cases = self.selection['cases']
+        enabled = self.selection['mode'] == 'toolkit'
+        def emit(marker, row, authority=False):
+            (server if authority and self.selection['kind'] == 'mp' else client).append((marker, row))
+        emit('QUEUE', dict(context, event='setup', cases=cases, expected=len(cases), queueEnabled=enabled, nativeDurations=True))
+        failed = 0
+        for index, case in enumerate(cases):
+            if case in fire.FUEL_CASES:
+                original = self.selection
+                self.selection = dict(original, cases=[case])
+                rows, prepared, receipts, removals, placements = fuel_evidence.FireAdapterTests.evidence(self)
+                self.selection = original
+                result = rows[1]
+                for prep in prepared:
+                    prep['log'] += index * 10000; prep['book'] += index * 10000
+                for row in [result, *receipts, *removals]:
+                    for key in ('logId', 'bookId'):
+                        if key in row: row[key] += index * 10000
+            else:
+                result, prepared, receipts = FireIgnitionVerifierTests.evidence(self, case, 2 if case == 'kindle-retry' else 1)
+                removals = []
+                def fresh(value, key=''):
+                    if isinstance(value, dict): return {name: fresh(item, name) for name, item in value.items()}
+                    if isinstance(value, list): return [fresh(item, key) for item in value]
+                    if type(value) is int and key in ('id', 'book', 'bookId', 'pickupIds', 'returnIds'):
+                        return value + (index+1) * 10000
+                    return value
+                result, prepared, receipts = fresh(result), fresh(prepared), fresh(receipts)
+                placements = []
+                for prep in prepared:
+                    target = dict(x=19 + index*4 + prep['trial'], y=30, z=0)
+                    prep.update(placement=dict(target), x=target['x']+1, crateX=target['x']+1)
+                    placements.append(fuel_evidence.trial_placement(case, prep['trial'], target, self.selection['kind']))
+            for trial_index, ((local, remote, admitted), prep, receipt) in enumerate(zip(placements, prepared, receipts)):
+                emit('CLIENT_PLACEMENT', local)
+                emit('AUTHORITY_PLACEMENT', remote, True)
+                emit('PREPARED', prep, True)
+                emit('ADMITTED', admitted)
+                for removal in removals: emit('REMOVED', removal, True)
+                emit('AUTHORITY', receipt, True)
+                if case not in fire.FUEL_CASES:
+                    emit('IGNITION_DIAG', dict(case=case, trial=receipt['trial'], attempts=result['attempts'],
+                                              retryBeforeReturns=result['retryBeforeReturns'], pickupIds=result['pickupIds'],
+                                              returnIds=result['returnIds'], tailProgress=result['tailProgress'],
+                                              returnedBeforeTail=result['returnedBeforeTail']))
+            failed += result['status'] == 'failed'
+            emit('QUEUE', dict(result, **context, event='case'))
+        emit('QUEUE', dict(context, event='complete', cases=cases, expected=len(cases), performed=len(cases), failed=failed, skipped=0))
+        return client, server
+
+    def verify(self, evidence):
+        def encode(stream):
+            return '\n'.join(('[QUEUE_CHECK] ' if marker == 'QUEUE' else '[FIRE_TEST] ' + marker + ' ') + json.dumps(row)
+                             for marker, row in stream)
+        (self.root / 'client1-launch.log').write_text(encode(evidence[0]))
+        if self.selection['kind'] == 'mp': (self.root / 'server-launch.log').write_text(encode(evidence[1]))
+        return fire.verify(self.root, self.selection, {})
+
+    def trial(self, evidence, marker, trial=1, case='kindle-retry'):
+        return next(row for stream in evidence for name, row in stream
+                    if name == marker and row.get('trial') == trial and row.get('case', row.get('id')) == case)
+
+    def test_all_case_logs_and_fresh_kindle_trial_targets_pass(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                self.selection.update(kind=kind, mode=mode,
+                                      cases=list(fire.CASES) if mode == 'toolkit' else ['fuel'] + ignition.CASES)
+                with self.subTest(kind=kind, mode=mode):
+                    fire.validate(self.selection)
+                    self.assertEqual(self.verify(self.evidence())['issues'], [])
+        self.selection.update(cases=list(fire.FUEL_CASES), mode='native')
+        self.assertEqual(self.verify(self.evidence())['issues'], ['native-missing-target'])
+
+    def test_missing_duplicate_foreign_trial_and_actor_placements_fail(self):
+        self.selection['cases'] = ['kindle-retry']
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for marker in ('CLIENT_PLACEMENT', 'AUTHORITY_PLACEMENT', 'ADMITTED', 'PREPARED', 'AUTHORITY', 'IGNITION_DIAG'):
+                for change in ('missing', 'duplicate', 'foreign', 'wrong-trial', 'bool-trial'):
+                    evidence = self.evidence()
+                    stream = next(stream for stream in evidence if any(name == marker for name, _ in stream))
+                    index = next(i for i, (name, _) in enumerate(stream) if name == marker)
+                    if change == 'missing': stream.pop(index)
+                    elif change == 'duplicate': stream.insert(index, copy.deepcopy(stream[index]))
+                    elif change == 'foreign': stream[index][1]['case'] = 'unknown'
+                    else: stream[index][1]['trial'] = True if change == 'bool-trial' else 2
+                    with self.subTest(kind=kind, marker=marker, change=change): self.assertTrue(self.verify(evidence)['issues'])
+            for marker in ('CLIENT_PLACEMENT', 'AUTHORITY_PLACEMENT', 'ADMITTED'):
+                for change in ('actor', 'extra', 'missing-field'):
+                    evidence = self.evidence()
+                    row = self.trial(evidence, marker)
+                    if change == 'actor': row['actor'] = 'client2'
+                    elif change == 'extra': row['extra'] = True
+                    else: row.pop('actor')
+                    with self.subTest(kind=kind, marker=marker, change=change): self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_corner_mode_center_counts_and_motion_proofs_fail(self):
+        self.selection['cases'] = ['kindle-retry']
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for marker in ('CLIENT_PLACEMENT', 'AUTHORITY_PLACEMENT'):
+                for change in ('corner', 'mode', 'teleports', 'centers', 'centered', 'stable', 'square', 'moving'):
+                    evidence = self.evidence()
+                    proof = self.trial(evidence, marker)['proof']
+                    if change == 'corner': proof['actual']['x'] = proof['target']['x'] + .05
+                    elif change == 'mode': proof['mode'] = 'replica' if proof['mode'] == 'local' else 'local'
+                    elif change in ('teleports', 'centers'): proof[change] += 1
+                    elif change == 'centered': proof['centered'] = False
+                    elif change == 'stable': proof['stableMs'] = 499
+                    elif change == 'square': proof['actual']['currentSquare']['x'] += 1
+                    else: proof['actual']['moving'] = True
+                    with self.subTest(kind=kind, marker=marker, change=change): self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_sp_entire_trial_lifecycle_order_is_required(self):
+        self.selection['cases'] = ['kindle-retry']
+        for marker, before in (('AUTHORITY_PLACEMENT', 'CLIENT_PLACEMENT'), ('PREPARED', 'AUTHORITY_PLACEMENT'),
+                               ('ADMITTED', 'PREPARED'), ('AUTHORITY', 'ADMITTED')):
+            evidence = self.evidence()
+            stream = evidence[0]
+            index = next(i for i, (name, _) in enumerate(stream) if name == marker)
+            entry = stream.pop(index)
+            position = next(i for i, (name, _) in enumerate(stream) if name == before)
+            stream.insert(position, entry)
+            with self.subTest(marker=marker): self.assertTrue(self.verify(evidence)['issues'])
+        for change in ('next-before-receipt', 'case-before-receipt', 'late-proof'):
+            evidence = self.evidence()
+            stream = evidence[0]
+            if change == 'next-before-receipt':
+                index = next(i for i, (marker, row) in enumerate(stream) if marker == 'CLIENT_PLACEMENT' and row['trial'] == 2)
+                entry = stream.pop(index)
+                position = next(i for i, (marker, _) in enumerate(stream) if marker == 'AUTHORITY')
+            elif change == 'case-before-receipt':
+                index = next(i for i, (marker, row) in enumerate(stream) if marker == 'QUEUE' and row['event'] == 'case')
+                entry = stream.pop(index)
+                position = max(i for i, (marker, _) in enumerate(stream) if marker == 'AUTHORITY')
+            else:
+                index = next(i for i, (marker, _) in enumerate(stream) if marker == 'CLIENT_PLACEMENT')
+                entry = stream.pop(index); position = len(stream)
+            stream.insert(position, entry)
+            with self.subTest(change=change): self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_mp_role_order_and_cross_process_placement_ownership_fail(self):
+        self.selection.update(kind='mp', cases=['kindle-retry'])
+        for role, marker, before in ((0, 'ADMITTED', 'CLIENT_PLACEMENT'), (1, 'PREPARED', 'AUTHORITY_PLACEMENT'),
+                                     (1, 'AUTHORITY', 'PREPARED'), (0, 'IGNITION_DIAG', 'ADMITTED')):
+            evidence = self.evidence(); stream = evidence[role]
+            entry = stream.pop(next(i for i, (name, _) in enumerate(stream) if name == marker))
+            stream.insert(next(i for i, (name, _) in enumerate(stream) if name == before), entry)
+            with self.subTest(marker=marker): self.assertTrue(self.verify(evidence)['issues'])
+        for role, marker in ((0, 'CLIENT_PLACEMENT'), (0, 'ADMITTED'), (1, 'AUTHORITY_PLACEMENT'), (1, 'PREPARED'), (1, 'AUTHORITY'), (0, 'IGNITION_DIAG')):
+            evidence = self.evidence()
+            entry = next(entry for entry in evidence[role] if entry[0] == marker)
+            evidence[1-role].append(copy.deepcopy(entry))
+            with self.subTest(marker=marker): self.assertTrue(self.verify(evidence)['issues'])
+        evidence = self.evidence(); stream = evidence[1]
+        entry = stream.pop(next(i for i, (name, row) in enumerate(stream) if name == 'AUTHORITY_PLACEMENT' and row['trial'] == 2))
+        stream.insert(next(i for i, (name, _) in enumerate(stream) if name == 'AUTHORITY'), entry)
+        self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_received_authority_receipt_precedes_each_kindle_replacement(self):
+        self.selection['cases'] = ['kindle-retry']
+        for kind in ('sp', 'mp'):
+            self.selection['kind'] = kind
+            for change in ('next-before-receipt', 'case-before-receipt', 'late-receipt'):
+                evidence = self.evidence(); stream = evidence[0]
+                index = next(i for i, (marker, row) in enumerate(stream) if marker == 'IGNITION_DIAG'
+                             and row['trial'] == (1 if change == 'next-before-receipt' else 2))
+                entry = stream.pop(index)
+                if change == 'next-before-receipt':
+                    position = next(i for i, (marker, row) in enumerate(stream) if marker == 'CLIENT_PLACEMENT' and row['trial'] == 2) + 1
+                elif change == 'case-before-receipt':
+                    position = next(i for i, (marker, row) in enumerate(stream) if marker == 'QUEUE' and row['event'] == 'case') + 1
+                else: position = len(stream)
+                stream.insert(position, entry)
+                with self.subTest(kind=kind, change=change): self.assertTrue(self.verify(evidence)['issues'])
+
+    def test_each_trial_binds_fresh_resource_ids_and_the_east_target(self):
+        self.selection['cases'] = ['kindle-retry']
+        for change in ('stale-book', 'stale-resource', 'standing', 'bool-standing', 'target', 'source', 'index', 'remote-target'):
+            evidence = self.evidence()
+            first, second = self.trial(evidence, 'PREPARED'), self.trial(evidence, 'PREPARED', 2)
+            if change == 'stale-book': second['book'] = first['book']
+            elif change == 'stale-resource': second['resources'][0]['id'] = first['resources'][0]['id']
+            elif change == 'standing': second['placement']['x'] += 1
+            elif change == 'bool-standing': second['placement']['z'] = False
+            elif change == 'target': second['x'] += 1; second['crateX'] += 1
+            elif change == 'source': second['crateX'] += 1
+            elif change == 'index': second['crateIndex'] = second['objectIndex']
+            else: self.trial(evidence, 'AUTHORITY_PLACEMENT', 2)['target']['x'] += 1
+            with self.subTest(change=change): self.assertTrue(self.verify(evidence)['issues'])
+        evidence = self.evidence()
+        for marker in ('CLIENT_PLACEMENT', 'AUTHORITY_PLACEMENT'):
+            second = self.trial(evidence, marker, 2)
+            second['target'] = copy.deepcopy(self.trial(evidence, marker)['target'])
+            second['proof'] = copy.deepcopy(self.trial(evidence, marker)['proof'])
+        self.assertTrue(self.verify(evidence)['issues'])
 
 
 if __name__ == '__main__':

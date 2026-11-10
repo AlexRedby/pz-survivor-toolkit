@@ -44,14 +44,18 @@ local function observe()if not isClient() then Test.observe() end end
 require('QueuePreflight').onTick(Events,observe)
 -- MP completes after OnTick; observe next frame before native objects burn fuel.
 Events.OnTickEvenPaused.Add(observe)
-function Test.prepare(player,case)
+function Test.prepare(player,case,target,proof,trial)
  local name=player:getUsername()
  assert(not sessions[name],'duplicate ignition preparation')
  local spec=assert(Test.cases[case],'unknown ignition case')
+ local key=name..':'..case;local expected=(trials[key] or 0)+1
+ assert(trial==expected,'out-of-order ignition preparation trial')
+ assert(trial<=(spec.retry and 8 or 1),'ignition trial limit exceeded')
+ local origin=require('QueueFirePlacement').authority(player,case,trial,target,proof)
+ if isServer() then player:setGhostMode(true) end
  require 'Camping/SCampfireSystem'
  require 'Camping/ISCampingMenu'
- local origin=require('QueueEnergyPlacement')(player)
- local square=assert(getCell():getGridSquare(origin:getX()+1,origin:getY(),origin:getZ()))
+ local square=assert(getCell():getGridSquare(origin.x+1,origin.y,origin.z))
  local object=IsoThumpable.new(getCell(),square,'carpentry_01_16',false,{})
  object:setCanPassThrough(true);object:setIsContainer(true)
  local crate=assert(object:getContainer());crate:setType('crate');crate:setCapacity(100);crate:setExplored(true)
@@ -99,17 +103,15 @@ function Test.prepare(player,case)
  local book=assert(root:AddItem('Base.BookCarpentry1'))
  book:setAlreadyReadPages(book:getNumberOfPages()-1);player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-1)
  if isServer() then sendAddItemToContainer(root,book) end
- local key=name..':'..case;trials[key]=(trials[key] or 0)+1
- assert(trials[key]<=(spec.retry and 8 or 1),'ignition trial limit exceeded')
- local ids={case=case,trial=trials[key],book=book:getID(),actionType=spec.class,nativeDuration=spec.duration,
+ local ids={case=case,trial=trial,book=book:getID(),actionType=spec.class,nativeDuration=spec.duration,
   x=square:getX(),y=square:getY(),z=square:getZ(),objectIndex=spec.bbq and target:getObjectIndex() or target:getIsoObject():getObjectIndex(),
   crateX=square:getX(),crateY=square:getY(),crateZ=square:getZ(),crateIndex=object:getObjectIndex(),
-  spawn={x=origin:getX()+0.5,y=origin:getY()+0.5,z=origin:getZ()},resources=state.resources,initialFuel=initialFuel,
+  placement=origin,resources=state.resources,initialFuel=initialFuel,
   expectedFuel=initialFuel+(primary and (spec.bbq and math.floor(ISCampingMenu.getFuelDurationForItem(primary)) or ISCampingMenu.getFuelDurationForItem(primary)) or 0)}
  state.target=target;ids.targetKind=targetKind(state)
  assert(ids.targetKind==(spec.fireplace and 'fireplace' or spec.bbq and 'bbq' or 'campfire'),'ignition target class differs')
- state.ids=ids;sessions[name]=state
  assert(not lit(state),'ignition target starts lit')
+ state.ids=ids;sessions[name]=state;trials[key]=trial
  print('[FIRE_TEST] PREPARED '..JSON.encode(ids));return ids
 end
 function Test.verify(player,case,tidyReturnIds)

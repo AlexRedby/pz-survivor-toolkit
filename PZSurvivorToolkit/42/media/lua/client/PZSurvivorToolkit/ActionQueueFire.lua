@@ -16,6 +16,7 @@ local Toolkit = PZSurvivorToolkit
 local Fire = {}
 Toolkit.ActionQueueFire = Fire
 local Operations, Definitions = Toolkit.ActionQueueOperations, Toolkit.ActionQueueDefinitions
+local nativeReturn = Operations.isNativeReturn
 local records = {}
 local equipmentRecords = {}
 local Carts = Toolkit.ActionQueueCarts
@@ -481,7 +482,7 @@ local function unchangedReturn(member, saved, record, inventory)
         or member.srcContainer ~= inventory or saved.inventory ~= inventory or member.destContainer ~= saved.source
         or saved.source == inventory or not member.allowMissingItems or not instanceof(member.item, "InventoryItem")
         or member.item:getID() ~= saved.id or member.item:getFullType() ~= saved.kind
-        or member.onStartFunc or member.onCompleteFunc or member.onCancelFunc then return false end
+        or not nativeReturn(member) then return false end
     local contract, id = Definitions.inspect(member)
     return id == "native.ISInventoryTransferAction" and contract and contract.knownInputs ~= false and contract.cancelWaiting
         and type(member.queueList) == "table" and #member.queueList == 1

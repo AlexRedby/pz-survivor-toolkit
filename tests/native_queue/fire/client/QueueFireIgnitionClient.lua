@@ -2,10 +2,11 @@ local Test=require 'QueueFireIgnition'
 local selection=require 'QueueTestSelection'
 local JSON=require 'QueueHealthEvents'
 local Tidy=require 'QueueFireTidy'
+local P=require 'QueueEnergyPlacement'
 require 'Camping/ISCampingMenu'
 for _,name in ipairs({'ISLightFromLiterature','ISLightFromPetrol','ISLightFromKindle'}) do require('Camping/TimedActions/'..name) end
 for _,name in ipairs({'ISBBQAddFuel','ISBBQLightFromLiterature','ISBBQLightFromPetrol','ISBBQLightFromKindle'}) do require('TimedActions/'..name) end
-local Client,state={},nil
+local Client,state,trials={},nil,{}
 local priorTailFailure=false
 local enabled=selection.mode=='toolkit'
 local hasP4=false
@@ -66,17 +67,23 @@ end
 function Client.response(command,value)
  if not state then return end
  assert(value.ok~=false,value.error)
+ assert(value.case==state.case and value.trial==state.trial,'out-of-order ignition response')
  if command=='Prepared' then state.ids=value elseif command=='Verified' then state.receipt=value end
 end
 local function sorted(set)local result={};for id in pairs(set) do result[#result+1]=id end;table.sort(result);return result end
 local function send(command)
- if selection.kind=='mp' then sendClientCommand('FireQueueTest',command,{case=state.case,tidyReturnIds=sorted(state.tidyReturns)})
- elseif command=='Prepare' then state.ids=Test.prepare(getPlayer(),state.case)
+ if selection.kind=='mp' then
+  local args={case=state.case,trial=state.trial}
+  if command=='Prepare' then args.target=state.placementTarget;args.clientPlacement=state.clientPlacement
+  else args.tidyReturnIds=sorted(state.tidyReturns) end
+  sendClientCommand('FireQueueTest',command,args)
+ elseif command=='Prepare' then state.ids=Test.prepare(getPlayer(),state.case,state.placementTarget,state.clientPlacement,state.trial)
  else state.receipt=Test.verify(getPlayer(),state.case,sorted(state.tidyReturns)) end
 end
 local function change(phase)state.phase=phase;state.since=getTimestampMs()end
 local function reset(case)
- state={case=case,since=getTimestampMs(),phase='prepare',pickup={},returns={},actions={},attempts=0,
+ trials[case]=(trials[case] or 0)+1
+ state={case=case,trial=trials[case],since=getTimestampMs(),phase='prepare',pickup={},returns={},actions={},attempts=0,
   completionActions={},nativeCompletion={perform=0,complete=0,flush=0},
   expanded=false,actionProgress=false,tailProgress=false,returnedBeforeTail=false,retryBeforeReturns=true,tidyReturns={},petrolBeforeTail=false}
 end
@@ -163,19 +170,30 @@ function Client.tick(player,case)
  assert(getTimestampMs()-state.since<300000,'ignition deadline '..state.phase)
  local spec=Test.cases[case]
  local nativeSPKindle=spec.bbq and spec.mode=='kindle' and not isClient()
- if state.phase=='prepare' then Tidy.install(hasP4);Tidy.reset(player);send('Prepare');change('ready');return end
+ if state.phase=='prepare' then
+  Tidy.install(hasP4)
+  state.placementTarget=state.placementTarget or P.choose(player)
+  state.placementState=state.placementState or P.beginCentered(player,state.placementTarget)
+  state.clientPlacement=P.poll(state.placementState);if not state.clientPlacement then return end
+  assert(P.atCentered(player,state.placementTarget),'ignition client left final centered placement')
+  print('[FIRE_TEST] CLIENT_PLACEMENT '..JSON.encode({case=case,trial=state.trial,actor='client1',target=state.placementTarget,proof=state.clientPlacement}))
+  Tidy.reset(player);send('Prepare');change('ready');return
+ end
  if state.phase=='ready' then
   if not state.ids or not locate(player) then return end
-  assert(state.ids.case==case and state.ids.actionType==spec.class and state.ids.nativeDuration==spec.duration
+  assert(state.ids.case==case and state.ids.trial==state.trial and state.ids.actionType==spec.class and state.ids.nativeDuration==spec.duration
    and state.ids.targetKind==(spec.fireplace and 'fireplace' or spec.bbq and 'bbq' or 'campfire'),'ignition preparation differs')
-  player:teleportTo(state.ids.spawn.x,state.ids.spawn.y,state.ids.spawn.z);change('positioned');return
+  change('positioned');return
  end
  if state.phase=='positioned' then
-  local ids=state.ids;local square=player:getCurrentSquare()
-  if not square or square:getX()~=math.floor(ids.spawn.x) or square:getY()~=math.floor(ids.spawn.y) or square:getZ()~=ids.spawn.z then return end
+  local ids=state.ids;local target=P.target(ids.placement);local expected=P.target(state.placementTarget)
+  assert(target.x==expected.x and target.y==expected.y and target.z==expected.z,'ignition prepared placement differs')
+  assert(P.atCentered(player,target),'ignition client left centered placement before native admission')
   getPlayerInventory(player:getPlayerNum()):refreshBackpacks();getPlayerLoot(player:getPlayerNum()):refreshBackpacks()
   if not ISInventoryPaneContextMenu.getContainers(player):contains(state.source) then return end
-  assert(not player:isTimedActionInstant(),'native ignition durations required');enqueue(player);return
+  assert(not player:isTimedActionInstant(),'native ignition durations required')
+  print('[FIRE_TEST] ADMITTED '..JSON.encode({case=case,trial=state.trial,actor='client1'}))
+  enqueue(player);return
  end
  if state.phase=='running' then
   local q=ISTimedActionQueue.getTimedActionQueue(player)
@@ -197,8 +215,22 @@ function Client.tick(player,case)
      for _ in pairs(state.returns) do before=false end
      state.retryBeforeReturns=state.retryBeforeReturns and before==true
      if enabled then
-      assert(before and action.toolkitQueueOperation==state.first.toolkitQueueOperation and action.plank:getID()==state.ids.resources[1].id
-       and action.campfire==state.target,'native Kindle retry escaped its operation/returns')
+      local sameOperation=action.toolkitQueueOperation==state.first.toolkitQueueOperation
+      local samePlank=action.plank:getID()==state.ids.resources[1].id
+      local sameTarget=action.campfire==state.target
+      if not (before and sameOperation and samePlank and sameTarget) then
+       local pending={}
+       for n,member in ipairs(q.queue) do
+        pending[#pending+1]={index=n,type=member.Type,current=member==q.current,first=member==state.first,tail=member==state.tail,
+         sameOperation=member.toolkitQueueOperation==state.first.toolkitQueueOperation,
+         itemId=member.item and member.item:getID() or false,sourceRoot=member.srcContainer==player:getInventory(),
+         destSource=member.destContainer==state.source,allowMissing=member.allowMissingItems==true}
+       end
+       print('[FIRE_TEST] RETRY_REJECTED '..JSON.encode({case=case,trial=state.ids.trial,index=i,tailIndex=tailIndex or false,
+        before=before==true,sameOperation=sameOperation,samePlank=samePlank,sameTarget=sameTarget,
+        returnIds=sorted(state.returns),queue=pending}))
+      end
+      assert(before and sameOperation and samePlank and sameTarget,'native Kindle retry escaped its operation/returns')
      end
     end
     if q.current==action and action:isStarted() and action:getJobDelta()>0 then

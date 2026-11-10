@@ -1,6 +1,10 @@
 if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Fire native-contract checks skipped.')end; return end
 local craftContainers
 require = function(module)
+    if module == "PZSurvivorToolkit/BulkActions" then
+        return PZSurvivorToolkit.BulkActions.transferBinding and PZSurvivorToolkit.BulkActions
+            or assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. module .. ".lua"))()
+    end
     if module == "PZSurvivorToolkit/ActionQueueMembership" then
         return assert(loadfile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. module .. ".lua"))()
     end
@@ -48,6 +52,7 @@ getGameFilesInput = function(path)
     end, close = function() end}
 end
 local fixtureOrigins = {}
+getFirstLineOfClosure = NativeFirstLineOfClosure or function(callback)return debug.getinfo(callback,'S').linedefined end
 getFilenameOfClosure = function(callback) return fixtureOrigins[callback] or (NativeFilenameOfClosure and NativeFilenameOfClosure(callback)) or debug.getinfo(callback, 'S').source end
 native('shared/TimedActions/ISBaseTimedAction.lua')
 native('client/TimedActions/ISTimedActionQueue.lua')
@@ -65,6 +70,8 @@ local containers, id = list(), 0
 local function container()
     local result = {class = 'ItemContainer', items = {}, getParent = function() return nil end, getContainingItem = function() return nil end,isInside=function() return false end,
         isInCharacterInventory=function() return false end,isVehicleSeat=function() return false end,getType=function() return 'crate' end}
+    function result:getAcceptItemFunction()end
+    function result:getOnlyAcceptCategory()end
     function result:getItems() local out=list(); for _, value in pairs(self.items) do out:add(value) end; return out end
     function result:contains(item) return self.items[item:getID()] == item end
     function result:getItemById(key) return self.items[key] end
@@ -639,6 +646,92 @@ end
 reset();a=target();item('Log');ISCampingMenu.onAddFuel(player,a,'Base.Log',ISBBQAddFuel,20);command=q.queue[2];expand(command)
 action=q.queue[#q.queue];q.queue={action};q.current=action;action.action={finished=function() return false end,isForceComplete=function() return false end,isStarted=function() return true end}
 assert(policy.cancelOperationReason(q,action)=='operation_active')
+-- Execution's real singleton guard must not hide native tool returns from a retry.
+do
+ local priorSettlement=PZSurvivorToolkit.ActionQueueSettlement
+ local settlement={track=function()end}
+ for _, name in ipairs({'returnExecutionSupported','prepareReturnExecution','rejectReturnExecution','resetReturnFailures',
+  'authorizeReturnRetention','blockedReturnInfo','blockedReturns','keepReturn'}) do
+  local callback=function()end;settlement[name]=callback;fixtureOrigins[callback]='ActionQueueSettlement.lua'
+ end
+ PZSurvivorToolkit.ActionQueueSettlement=settlement
+ local execution=project('ActionQueueExecution')
+ reset();camp=fire();local bag=container();containers=list({inventory,bag})
+ local plank=item('PercedWood',bag);local stick=item('WoodenStick',bag)
+ ISCampingMenu.onLightFromKindle(player,plank,stick,camp,ISLightFromKindle)
+ local command=q.queue[2];expand(command);pickups()
+ local parent,returned
+ for _, member in ipairs(q.queue)do
+  if member.Type=='ISLightFromKindle'then parent=member
+  elseif member.Type=='ISInventoryTransferAction'and member.srcContainer==inventory then returned=member end
+ end
+ assert(returned and returned.onCompleteFunc and returned.onCompleteFunc==returned.toolkitQueueSafeOnComplete
+  and PZSurvivorToolkit.BulkActions.isGuardedTransfer(returned,ISInventoryTransferAction.stop),
+  'real Execution enqueue did not install the Bulk singleton return guard')
+ assert(operations.isNativeReturn(returned),'owned Execution return is not recognized')
+ local originalStop,originalComplete,originalArgs,originalGuard=returned.stop,returned.onCompleteFunc,returned.onCompleteArgs,returned.toolkitTransferGuard
+ for _,fault in ipairs({'complete','safe-flag','args','stop','copied-guard','factory-alias','owner','guard-helper','factory-meta','guard-meta','toolkit-meta','settings-meta','settings-owner','toolkit-owner','global-meta','args-missing','disabled'})do
+  local toolkit=PZSurvivorToolkit;local settings=toolkit.Settings;local enabledHelper=settings.actionQueue
+  local foreignCalls=0
+  local function foreign()foreignCalls=foreignCalls+1;error('foreign owner callback ran')end
+  local bulk=toolkit.BulkActions
+  local factory,guardHelper=bulk.transferBinding,bulk.guardTransfer
+  if fault=='complete'then returned.onCompleteFunc=function()error('foreign callback ran')end
+  elseif fault=='safe-flag'then returned.toolkitQueueSafeOnComplete=function()end
+  elseif fault=='args'then returned.onCompleteArgs={returned}
+  elseif fault=='stop'then returned.stop=function()error('foreign stop ran')end
+  elseif fault=='copied-guard'then local copy={};for key,value in pairs(originalGuard)do copy[key]=value end;returned.toolkitTransferGuard=copy
+  elseif fault=='factory-alias'then bulk.transferBinding=bulk.guardTransfer
+  elseif fault=='owner'then PZSurvivorToolkit.BulkActions={transferBinding=factory,guardTransfer=guardHelper,isGuardedTransfer=bulk.isGuardedTransfer}
+  elseif fault=='guard-helper'then bulk.guardTransfer=function()error('foreign helper ran')end
+  elseif fault=='factory-meta'then bulk.transferBinding=nil;setmetatable(bulk,{__index=foreign})
+  elseif fault=='guard-meta'then bulk.guardTransfer=nil;setmetatable(bulk,{__index=foreign})
+  elseif fault=='toolkit-meta'then setmetatable(toolkit,{__index=foreign})
+  elseif fault=='settings-meta'then settings.actionQueue=nil;setmetatable(settings,{__index=foreign})
+  elseif fault=='settings-owner'then toolkit.Settings=setmetatable({},{__index=foreign})
+  elseif fault=='toolkit-owner'then PZSurvivorToolkit=setmetatable({},{__index=foreign})
+  elseif fault=='global-meta'then setmetatable(_G,{__index=foreign})
+  elseif fault=='args-missing'then returned.onCompleteArgs=nil
+  elseif fault=='disabled'then enabled=false end
+  assert(not operations.isNativeReturn(returned)and foreignCalls==0,'decorated return accepted or invoked '..fault)
+  setmetatable(_G,nil);setmetatable(toolkit,nil);setmetatable(settings,nil);setmetatable(bulk,nil)
+  enabled=true;PZSurvivorToolkit=toolkit;toolkit.Settings=settings;settings.actionQueue=enabledHelper
+  toolkit.BulkActions=bulk;bulk.transferBinding=factory;bulk.guardTransfer=guardHelper
+  returned.stop,returned.onCompleteFunc,returned.onCompleteArgs,returned.toolkitTransferGuard=originalStop,originalComplete,originalArgs,originalGuard
+  returned.toolkitQueueSafeOnComplete=originalComplete
+ end
+ assert(operations.isNativeReturn(returned),'restored exact owned return did not recover')
+ local tail=synthetic(ISReadABook,player);tail.item=item('Book');ISTimedActionQueue.add(tail)
+ while q.queue[1]~=parent do table.remove(q.queue,1)end;q.current=parent
+ local nativePerform=ISBaseTimedAction.perform
+ ISBaseTimedAction.perform=function(action)api.skipUnavailableReturns(q,action);table.remove(q.queue,1);q.current=q.queue[1]end
+ parent:perform();ISBaseTimedAction.perform=nativePerform
+ assert(q.queue[1].Type=='ISLightFromKindle'and q.queue[1].toolkitQueueOperation==parent.toolkitQueueOperation
+  and q.queue[2].Type=='ISInventoryTransferAction'and q.queue[#q.queue]==tail,
+  'owned Execution return guard moved native Kindle retry behind tool returns')
+ -- A completed retry must retire only the exact missing guarded stick return,
+ -- before it can merge with the surviving plank return or lose the independent tail.
+ local child=q.queue[1];inventory:Remove(stick);camp.isLit=true
+ local missing=q.queue[2]
+ local missingToken,missingItem,missingDestination=missing.toolkitQueueOperation,missing.item,missing.destContainer
+ local missingComplete=missing.onCompleteFunc;local missingBatch=missing.queueList[1].items[1]
+ for _,fault in ipairs({'token','item','destination','batch','callback'})do
+  if fault=='token'then missing.toolkitQueueOperation={}
+  elseif fault=='item'then missing.item=plank
+  elseif fault=='destination'then missing.destContainer=inventory
+  elseif fault=='batch'then missing.queueList[1].items[1]=plank
+  elseif fault=='callback'then missing.onCompleteFunc=function()error('foreign return completion ran')end end
+  api.skipUnavailableReturns(q,child)
+  assert(q.queue[2]==missing,'guarded unavailable return retirement accepted changed '..fault)
+  missing.toolkitQueueOperation,missing.item,missing.destContainer=missingToken,missingItem,missingDestination
+  missing.onCompleteFunc=missingComplete;missing.queueList[1].items[1]=missingBatch
+ end
+ ISBaseTimedAction.perform=function(action)api.skipUnavailableReturns(q,action);table.remove(q.queue,1);q.current=q.queue[1]end
+ child:perform();ISBaseTimedAction.perform=nativePerform
+ assert(q.queue[1]==returned and q.queue[1].item==plank and q.queue[2]==tail,
+  'owned singleton decoration prevented exact unavailable native return retirement')
+ PZSurvivorToolkit.ActionQueueExecution=nil;PZSurvivorToolkit.ActionQueueSettlement=priorSettlement
+end
 -- Native campfire retries stay before returns and unrelated later work, under the original token.
 reset();camp=fire();local bag=container();containers=list({inventory,bag});local plank=item('PercedWood',bag);local stick=item('WoodenStick',bag)
 ISCampingMenu.onLightFromKindle(player,plank,stick,camp,ISLightFromKindle);command=q.queue[2];expand(command);pickups()

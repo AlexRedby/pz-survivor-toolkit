@@ -7,12 +7,14 @@ local Authority=require 'QueueFireAuthority'
 local Ignition=require 'QueueFireIgnition'
 local IgnitionClient=require 'QueueFireIgnitionClient'
 local JSON=require 'QueueHealthEvents'
+local P=require 'QueueEnergyPlacement'
 local enabled=config.mode=='toolkit'
 local nativeMP=config.kind=='mp' and not enabled
 local failedCases=0
 local started,done,step,phase,since=false,false,1,'prepare',0
 local setupSent=false
 local ids,source,log,book,target,fuel,pickup,tail,receipt,invalidated
+local placementTarget,placementState,clientPlacement
 local pickupProgress,fuelProgress,tailProgress,returnProgress,expanded,removalRequested,removedBeforeFuel
 local removalTime,pickupDuration
 local progressDiagnosed,pickupRootObserved=false,false
@@ -33,11 +35,15 @@ local function finish(result)
  pickupProgress,fuelProgress,tailProgress,returnProgress,expanded,removalRequested,removedBeforeFuel=false,false,false,false,false,false,false
  progressDiagnosed,pickupRootObserved=false,false
  returnDiagnosed=false
+ placementTarget,placementState,clientPlacement=nil,nil,nil
 end
 local function send(command)
  local case=config.cases[step]
- if config.kind=='mp' then sendClientCommand('FireQueueTest',command,{case=case})
- elseif command=='Prepare' then ids=Authority.prepare(getPlayer(),case)
+ if config.kind=='mp' then
+  local args={case=case,trial=1}
+  if command=='Prepare' then args.target=placementTarget;args.clientPlacement=clientPlacement end
+  sendClientCommand('FireQueueTest',command,args)
+ elseif command=='Prepare' then ids=Authority.prepare(getPlayer(),case,placementTarget,clientPlacement,1)
  elseif command=='Invalidate' then invalidated=Authority.invalidate(getPlayer(),case)
  else receipt=Authority.verify(getPlayer(),case) end
 end
@@ -53,6 +59,8 @@ Events.OnServerCommand.Add(function(module,command,value)
  if module~='FireQueueTest' then return end
  IgnitionClient.response(command,value)
  assert(value.ok~=false,value.error)
+ if Ignition.cases[config.cases[step]] then return end
+ assert(value.case==config.cases[step] and value.trial==1,'out-of-order fire response')
  if command=='Prepared' then ids=value elseif command=='Invalidated' then invalidated=value elseif command=='Verified' then receipt=value end
 end)
 require('QueuePreflight').onGameStart(Events,function()
@@ -80,11 +88,20 @@ require('QueuePreflight').onTick(Events,function()
   local missing=case=='missing-target-after-expansion'
   if phase=='prepare' then
    assert(PZSurvivorToolkit.Settings.actionQueue()==enabled,'wrong fire queue option')
+   placementTarget=P.choose(player);placementState=P.beginCentered(player,placementTarget);phase='placement';return
+  end
+  if phase=='placement' then
+   clientPlacement=P.poll(placementState);if not clientPlacement then return end
+   assert(P.atCentered(player,placementTarget),'fire client left centered placement')
+   print('[FIRE_TEST] CLIENT_PLACEMENT '..JSON.encode({case=case,trial=1,actor='client1',target=placementTarget,proof=clientPlacement}))
    send('Prepare');phase='ready';return
   end
   if phase=='ready' then
    if not ids then return end
-   assert(ids.case==case,'wrong prepared fire case')
+   assert(ids.case==case and ids.trial==1,'wrong prepared fire case/trial')
+   local prepared=P.target(ids.placement)
+   assert(prepared.x==placementTarget.x and prepared.y==placementTarget.y and prepared.z==placementTarget.z
+    and P.atCentered(player,prepared),'fire prepared placement differs or client drifted')
    source=crate();if not source then return end
    log=source:getItemById(ids.log);book=player:getInventory():getItemById(ids.book)
    target=CCampfireSystem.instance:getLuaObjectAt(ids.x,ids.y,ids.z)
@@ -93,19 +110,17 @@ require('QueuePreflight').onTick(Events,function()
    assert(target:getIsoObject():getObjectIndex()==ids.objectIndex,'replicated campfire index differs')
    assert(log:getContainer()==source and target.fuelAmt==0 and not target.isLit,'wrong client fire fixture')
    assert(ISCampingMenu.getFuelDurationForItem(log)==ids.fuelAmount and log:getCondition()==ids.condition,'replicated Log differs')
-   player:teleportTo(ids.spawn.x,ids.spawn.y,ids.spawn.z)
    phase='positioned';return
   end
   if phase=='positioned' then
-   local square=player:getCurrentSquare()
-   if not square or square:getX()~=math.floor(ids.spawn.x) or square:getY()~=math.floor(ids.spawn.y)
-     or square:getZ()~=ids.spawn.z then return end
+   assert(P.atCentered(player,placementTarget),'fire client left placement before admission')
    getPlayerInventory(player:getPlayerNum()):refreshBackpacks();getPlayerLoot(player:getPlayerNum()):refreshBackpacks()
    local found=false;local containers=ISInventoryPaneContextMenu.getContainers(player)
    for i=0,containers:size()-1 do if containers:get(i)==source then found=true end end
    if not found then return end
    book:setAlreadyReadPages(book:getNumberOfPages()-1);player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-1)
    assert(not player:isTimedActionInstant(),'native durations required')
+   print('[FIRE_TEST] ADMITTED '..JSON.encode({case=case,trial=1,actor='client1'}))
    ISTimedActionQueue.queueActions(player,ISCampingMenu.onAddFuel,target,'Base.Log',ISAddFuelAction,0)
    tail=ISReadABook:new(player,book)
    assert(tail.minutesPerPage==2.0 and tail.maxTime>1,'native reading duration changed')
@@ -196,9 +211,9 @@ require('QueuePreflight').onTick(Events,function()
     if config.kind=='sp' then send('Verify') end
     return
    end
-   assert(receipt.case==case and receipt.logId==ids.log and receipt.bookId==ids.book,'authority identity differs')
+   assert(receipt.case==case and receipt.trial==1 and receipt.logId==ids.log and receipt.bookId==ids.book,'authority identity differs')
    local failed=not enabled and (missing or not receipt.tailRead)
-   finish({event='case',id=case,status=failed and 'failed' or 'passed',
+   finish({event='case',id=case,trial=1,status=failed and 'failed' or 'passed',
     reason=failed and (missing and 'native-missing-target' or 'native-independent-tail-not-preserved') or nil,
     logId=ids.log,bookId=ids.book,condition=receipt.condition,fuelAmount=ids.fuelAmount,
     consumed=receipt.consumed,sourceCount=receipt.sourceCount,rootCount=receipt.rootCount,fuel=receipt.fuel,

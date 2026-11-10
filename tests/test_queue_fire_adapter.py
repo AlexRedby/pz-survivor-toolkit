@@ -11,6 +11,23 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks.adapters import fire
 
 
+def centered_proof(target, mode='local'):
+    actual = dict(x=target['x'] + .5, y=target['y'] + .5, z=target['z'],
+                  square=dict(target), currentSquare=dict(target))
+    if mode == 'local':
+        actual.update(queued=0, timed=False, moving=False, hasPath=False, deferredX=0, deferredY=0)
+    return dict(mode=mode, target=dict(target), actual=actual, teleports=int(mode == 'local'),
+                centered=True, centers=int(mode == 'local'), stableMs=500,
+                quietMs=500 if mode == 'local' else 0, elapsedMs=1200)
+
+
+def trial_placement(case, trial, target, kind):
+    local = dict(case=case, trial=trial, actor='client1', target=dict(target), proof=centered_proof(target))
+    remote = dict(case=case, trial=trial, actor='client1', target=dict(target),
+                  proof=centered_proof(target, 'replica' if kind == 'mp' else 'local'))
+    return local, remote, dict(case=case, trial=trial, actor='client1')
+
+
 class FireAdapterTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -23,12 +40,14 @@ class FireAdapterTests(unittest.TestCase):
         enabled = self.selection['mode'] == 'toolkit'
         cases = self.selection['cases']
         rows = [dict(event='setup', cases=cases, expected=len(cases), queueEnabled=enabled, nativeDurations=True)]
-        prepared, receipts, removals = [], [], []
+        prepared, receipts, removals, placements = [], [], [], []
         for n, case in enumerate(cases):
             missing = case == 'missing-target-after-expansion'
-            prep = dict(case=case, log=101+n*10, book=102+n*10, condition=100, fuelAmount=120,
-                        x=20, y=30, z=0, objectIndex=2, crateX=20, crateY=30, crateZ=0, crateIndex=1)
-            receipt = dict(case=case, logId=prep['log'], bookId=prep['book'], condition=100, fuelAmount=120,
+            target = dict(x=19+n*4, y=30, z=0)
+            placements.append(trial_placement(case, 1, target, self.selection['kind']))
+            prep = dict(case=case, trial=1, placement=dict(target), log=101+n*10, book=102+n*10, condition=100, fuelAmount=120,
+                        x=target['x']+1, y=30, z=0, objectIndex=2, crateX=target['x']+1, crateY=30, crateZ=0, crateIndex=1)
+            receipt = dict(case=case, trial=1, logId=prep['log'], bookId=prep['book'], condition=100, fuelAmount=120,
                            consumed=0 if missing else 1, sourceCount=int(missing and enabled),
                            rootCount=int(missing and not enabled), fuel=0 if missing else 120,
                            removed=missing, unspent=missing, tailRead=not missing or enabled)
@@ -40,25 +59,45 @@ class FireAdapterTests(unittest.TestCase):
             del result['case']
             rows.append(result);prepared.append(prep);receipts.append(receipt)
             if missing:
-                removals.append(dict(case=case, logId=prep['log'], fuel=0))
+                removals.append(dict(case=case, trial=1, logId=prep['log'], fuel=0))
         baseline = not enabled and 'missing-target-after-expansion' in cases
         rows.append(dict(event='complete', cases=cases, expected=len(cases), performed=len(cases),
                          failed=int(baseline), skipped=0))
         rows = [dict(row, suite='fire', kind=self.selection['kind'], mode=self.selection['mode'], actor='client1') for row in rows]
-        return rows, prepared, receipts, removals
+        return rows, prepared, receipts, removals, placements
 
-    def verify(self, evidence=None, extra=''):
-        rows, prepared, receipts, removals = evidence or self.evidence()
-        authority = '\n'.join(marker + json.dumps(row) for marker, values in (
-            ('[FIRE_TEST] PREPARED ', prepared), ('[FIRE_TEST] REMOVED ', removals),
-            ('[FIRE_TEST] AUTHORITY ', receipts)) for row in values)
-        text = '\n'.join('[QUEUE_CHECK] ' + json.dumps(row) for row in rows) + '\n' + extra
+    def logs(self, evidence):
+        rows, prepared, receipts, removals, placements = evidence
+        client, authority = [], []
+        def emit(marker, row, remote=False):
+            (authority if remote and self.selection['kind'] == 'mp' else client).append(marker + json.dumps(row))
+        emit('[QUEUE_CHECK] ', rows[0])
+        removed = iter(removals)
+        for i, (local, remote, admitted) in enumerate(placements):
+            emit('[FIRE_TEST] CLIENT_PLACEMENT ', local)
+            emit('[FIRE_TEST] AUTHORITY_PLACEMENT ', remote, True)
+            if i < len(prepared): emit('[FIRE_TEST] PREPARED ', prepared[i], True)
+            emit('[FIRE_TEST] ADMITTED ', admitted)
+            if local['case'] == 'missing-target-after-expansion':
+                removal = next(removed, None)
+                if removal is not None: emit('[FIRE_TEST] REMOVED ', removal, True)
+            if i < len(receipts): emit('[FIRE_TEST] AUTHORITY ', receipts[i], True)
+            if i + 1 < len(rows) - 1: emit('[QUEUE_CHECK] ', rows[i+1])
+        for row in rows[len(placements)+1:]: emit('[QUEUE_CHECK] ', row)
+        for marker, values in (('PREPARED', prepared[len(placements):]),
+                               ('AUTHORITY', receipts[len(placements):]), ('REMOVED', list(removed))):
+            for row in values: emit('[FIRE_TEST] ' + marker + ' ', row, True)
+        return '\n'.join(client), '\n'.join(authority)
+
+    def verify_logs(self, client, authority=''):
+        (self.root / 'client1-launch.log').write_text(client)
         if self.selection['kind'] == 'mp':
             (self.root / 'server-launch.log').write_text(authority)
-        else:
-            text += '\n' + authority
-        (self.root / 'client1-launch.log').write_text(text)
         return fire.verify(self.root, self.selection, {})
+
+    def verify(self, evidence=None, extra=''):
+        client, authority = self.logs(evidence or self.evidence())
+        return self.verify_logs(client + '\n' + extra, authority)
 
     def test_toolkit_sp_mp_and_native_fuel_success(self):
         for kind in ('sp', 'mp'):
@@ -217,8 +256,13 @@ class FireAdapterTests(unittest.TestCase):
         self.assertEqual(runtime['fixture']['sandbox']['MinutesPerPage'], 2.0)
         paths = fire.sources(ROOT, self.selection)
         self.assertTrue(set((ROOT / 'tests/native_queue/fire').rglob('*.lua')) <= set(paths))
+        self.assertTrue(all(path.is_file() for path in paths))
         self.assertIn(ROOT / 'tests/native_queue/health/shared/QueueHealthEvents.lua', paths)
         self.assertIn(ROOT / 'tools/queue_checks/adapters/fire_ignition.py', paths)
+        self.assertIn(ROOT / 'tools/queue_checks/adapters/fire_placement.py', paths)
+        self.assertIn(ROOT / 'tools/queue_checks/placement.py', paths)
+        self.assertIn(ROOT / 'tests/native_queue/support/QueueEnergyPlacement.lua', paths)
+        self.assertIn(ROOT / 'tests/native_queue/fire/shared/QueueFirePlacement.lua', paths)
         self.assertTrue(fire.complete(self.selection, 'client1', '[FIRE_TEST] COMPLETE\n'))
         for text in ('[FIRE_TEST] COMPLETE_PENDING', '[FIRE_TEST] COMPLETE\n[FIRE_TEST] COMPLETE'):
             self.assertFalse(fire.complete(self.selection, 'client1', text))
