@@ -145,11 +145,4 @@ function P.poll(value)
  return value.result
 end
 
--- Temporary compatibility for synchronous fixtures awaiting protocol migration.
--- New callers use begin/poll locally and observe/poll on authority.
-return setmetatable(P,{__call=function(_,player)
- local target=P.choose(player)
- player:teleportTo(target.x+.5,target.y+.5,target.z)
- print('[QUEUE_TEST] ENERGY_PLACEMENT '..coordinate(target))
- return getCell():getGridSquare(target.x,target.y,target.z)
-end})
+return P

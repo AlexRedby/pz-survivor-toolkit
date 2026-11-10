@@ -249,9 +249,6 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Migrate the remaining synchronous `quartermaster-transfers` fixture placement to `QueueEnergyPlacement.begin/poll/observe`. The callable legacy path remains for this consumer because returning a selected square is not an arrival proof. Remove it after the setup protocol awaits the owning client's final target and replicated authority arrival before fixture mutations, with independent placement receipts and affected SP/Host gates. Preserve final standing targets and native cleanup; keep semantic locomotion interventions separate from initial placement.
-
-
 - [ ] Qualify the bare game-JVM Kahlua model/server harness before using it as a full-suite gate. Reproduce the departed-player weak-reference/GC assertion failure in `tests/test_wishlist_model.lua` under Kahlua and compare the same case under the normal LuaJIT runner. Native Kahlua uses strong `LinkedHashMap` tables and ignores weak-table `__mode`; include that verified platform difference when separating harness lifetime/GC behavior from a product leak. Load the installed `stdlib.lbc` explicitly in bare native harnesses; `J2SEPlatform.newEnvironment` expects a source file in the working directory. Require the complete model/server checks to pass without weakening player-release assertions, and preserve normal LuaJIT and native SP/Host coverage.
 
 

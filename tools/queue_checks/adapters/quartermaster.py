@@ -81,6 +81,14 @@ def _seed(selection):
 def sources(project, selection):
     paths = sorted((Path(project) / 'tests/native_queue' / selection['suite']).rglob('*.lua'))
     paths.append(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua')
+    if selection['suite'] == TRANSFER_SUITE:
+        from . import quartermaster_placement
+        paths += [Path(project) / 'tests/native_queue/health/shared/QueueHealthEvents.lua',
+                  Path(project) / 'tests/native_queue/support/QueueEnergyPlacement.lua',
+                  Path(__file__).parents[1] / 'placement.py', Path(quartermaster_placement.__file__),
+                  Path(project) / 'tests/test_queue_quartermaster.py',
+                  Path(project) / 'tests/test_queue_placement.py',
+                  Path(project) / 'tests/test_queue_quartermaster_placement.lua']
     if selection['cases'] == ['reload']:
         seed, stores = _seed(selection)
         paths += stores + [seed / name for name in ('selection.json', 'runtime.json', 'execution.json', 'manifest.json',
@@ -95,6 +103,10 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     shutil.copy2(Path(project) / 'tests/native_queue/startup/client/ZZStartup.lua', client / 'ZZStartup.lua')
     marker = TRANSFER_MARKER if selection['suite'] == TRANSFER_SUITE else MARKER
     runtime.setdefault('fixture', {})['failure_markers'] = [marker + 'FAIL ']
+    if selection['suite'] == TRANSFER_SUITE:
+        shared = client.parent / 'shared'
+        shared.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(project) / 'tests/native_queue/health/shared/QueueHealthEvents.lua', shared)
     if selection['cases'] == ['reload']:
         seed, stores = _seed(selection)
         if Path(report.read_json(seed / 'runtime.json')['game']) != Path(game):
@@ -151,16 +163,16 @@ def verify(root, selection, catalog):
 
 
 def _verify_transfers(root, selection):
+    from . import quartermaster_placement
     issues = []
     try:
         text = (root / 'client1-launch.log').read_text(errors='replace')
-        expected = ['PHASE success moved=2 remaining=0 tailRead=true queueObserved=true',
-                    'PHASE partial moved=1 remaining=1 tailRead=true queueObserved=true',
-                    'PHASE rejected moved=0 remaining=2 tailRead=false queueObserved=false',
-                    'PHASE withdraw moved=1 remaining=1 tailRead=true queueObserved=true',
-                    'CUSTOM protected=3 queueUnchanged=true', 'COMPLETE case=manifest']
+        expected = list(quartermaster_placement.OUTCOMES)
         if re.findall(re.escape(TRANSFER_MARKER) + r'([^\r\n]+)', text) != expected:
             raise ValueError('Missing, duplicate, reordered or incorrect native transfer outcomes')
+        foreign = [path.read_text(errors='replace') for path in root.glob('*-launch.log')
+                   if path.name != 'client1-launch.log']
+        quartermaster_placement.validate(selection, text, foreign)
     except (OSError, ValueError) as error:
         issues.append(str(error))
     return {'issues': issues, 'outcomes': [{'actor': 'client1', 'case': 'manifest',

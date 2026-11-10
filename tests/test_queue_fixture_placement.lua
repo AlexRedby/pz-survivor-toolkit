@@ -107,11 +107,10 @@ assert(f.teleports==0 and #f.logs==1,'bounded timeout must not pin actor or floo
 for _,target in ipairs({{}, {x=1,y=2,z=.5}, {x=1/0,y=2,z=0}, {x=0/0,y=2,z=0}, {x=1,y=2,z=0,foreign=true}})do
  fails(function()f.P.target(target)end,'placement target');assert(not f.P.at(f.player,target))
 end
--- Keep the explicit migration boundary compatible, without treating it as a proof.
-f=fixture(true);local legacySquare=f.P(f.player)
-assert(f.teleports==1 and legacySquare:getX()==f.command.x-.5 and legacySquare:getY()==f.command.y-.5)
-assert(not f.P.at(f.player,{x=legacySquare:getX(),y=legacySquare:getY(),z=legacySquare:getZ()}),
- 'legacy synchronous return still requires migration; it is not an arrival receipt')
+-- The synchronous migration shim is gone; accidental use cannot move an actor.
+f=fixture(true);assert(getmetatable(f.P)==nil)
+fails(function()f.P(f.player)end,'attempt to call')
+assert(f.teleports==0 and #f.writes==0,'removed synchronous call moved actor')
 -- Explicit centered setup shares the quiet gate, then writes the native float
 -- position once. Real square witnesses and a new stable interval are mandatory.
 f=fixture();local target={x=98,y=98,z=0};state=f.P.beginCentered(f.player,target)

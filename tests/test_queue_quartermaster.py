@@ -1,6 +1,8 @@
 """Quartermaster store provenance and exact native distribution evidence."""
 import json
 import copy
+import builtins
+import importlib
 from pathlib import Path
 import sys
 import tempfile
@@ -13,6 +15,152 @@ from queue_checks.adapters import quartermaster as adapter
 from queue_checks.adapters import quartermaster_distribution as distribution
 from queue_checks.adapters import quartermaster_crafting as crafting
 from queue_checks import mod_inputs
+
+
+def transfer_evidence():
+    target = dict(x=12, y=34, z=0)
+    phases = ('success', 'partial', 'rejected', 'withdraw', 'custom')
+    outcomes = ('PHASE success moved=2 remaining=0 tailRead=true queueObserved=true',
+                'PHASE partial moved=1 remaining=1 tailRead=true queueObserved=true',
+                'PHASE rejected moved=0 remaining=2 tailRead=false queueObserved=false',
+                'PHASE withdraw moved=1 remaining=1 tailRead=true queueObserved=true',
+                'CUSTOM protected=3 queueUnchanged=true')
+    rows = []
+    for index, phase in enumerate(phases, 1):
+        common = dict(case='manifest', phase=phase, index=index, token='round-' + str(index), target=target)
+        actual = dict(x=12.5, y=34.5, z=0, square=dict(target), currentSquare=dict(target),
+                      queued=0, timed=False, moving=False, hasPath=False, deferredX=0, deferredY=0)
+        proof = dict(mode='local', target=dict(target), actual=actual, centered=True, centers=1, teleports=1,
+                     stableMs=500, quietMs=500, elapsedMs=1001)
+        boxes = [dict(target, x=13), dict(target, y=35)]
+        for event, extra in [('LAYOUT', dict(boxes=boxes)), ('LOCAL', dict(proof=proof)),
+                             ('PREPARED', dict(boxes=boxes)), ('ADMITTED', {})]:
+            rows.append('[QM_TRANSFER_PLACEMENT] ' + event + ' ' + json.dumps(dict(common, **extra)))
+        rows.append('[QM_TRANSFER] ' + outcomes[index - 1])
+    rows.append('[QM_TRANSFER] COMPLETE case=manifest')
+    return rows
+
+
+class QuartermasterTransferPlacement(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.selection = dict(suite=adapter.TRANSFER_SUITE, cases=['manifest'], kind='sp', clients=1)
+
+    def verify(self, rows=None, selection=None):
+        rows = transfer_evidence() if rows is None else rows
+        (self.root / 'client1-launch.log').write_text('\n'.join(rows) + '\n')
+        return adapter.verify(self.root, selection or self.selection, {})['issues']
+
+    def mutate(self, index, change):
+        rows = transfer_evidence()
+        prefix, raw = rows[index].split(' ', 2)[1:]
+        value = json.loads(raw)
+        change(value)
+        rows[index] = '[QM_TRANSFER_PLACEMENT] ' + prefix + ' ' + json.dumps(value)
+        return rows
+
+    def test_requires_every_event_once_in_raw_native_round_order(self):
+        rows = transfer_evidence()
+        self.assertEqual(self.verify(rows), [])
+        for index in range(len(rows)):
+            for changed in (rows[:index] + rows[index + 1:], rows[:index] + [rows[index]] + rows[index:]):
+                with self.subTest(index=index, changed=changed):
+                    self.assertTrue(self.verify(changed))
+        for index in range(len(rows) - 1):
+            changed = rows.copy()
+            changed[index:index + 2] = changed[index:index + 2][::-1]
+            with self.subTest(swap=index):
+                self.assertTrue(self.verify(changed))
+        # Correct independent streams cannot hide a setup, admission or outcome
+        # that happened before the corresponding fresh placement.
+        grouped = [row for row in rows if row.startswith('[QM_TRANSFER_PLACEMENT]')]
+        grouped += [row for row in rows if row.startswith('[QM_TRANSFER]')]
+        self.assertTrue(self.verify(grouped))
+        self.assertTrue(self.verify([row for row in rows if row.startswith('[QM_TRANSFER]')]))
+
+    def test_strict_epoch_identity_schema_and_target_stability(self):
+        changes = [lambda row: row.update(case='other'), lambda row: row.update(phase='other'),
+                   lambda row: row.update(index=True), lambda row: row.update(index=1.0),
+                   lambda row: row.update(index=0), lambda row: row.update(token=''),
+                   lambda row: row.update(token='old epoch'), lambda row: row.update(token=True),
+                   lambda row: row.update(extra=True), lambda row: row.pop('token'),
+                   lambda row: row['target'].update(x=True), lambda row: row['target'].update(x=12.0),
+                   lambda row: row['target'].update(z=1000000), lambda row: row['target'].update(extra=0),
+                   lambda row: row.update(target=[])]
+        for index in (0, 1, 2, 3):
+            for change in changes:
+                with self.subTest(index=index, change=change):
+                    self.assertTrue(self.verify(self.mutate(index, change)))
+        self.assertTrue(self.verify(self.mutate(5, lambda row: row.update(token='round-1'))))
+        for index in (1, 2, 3):
+            self.assertTrue(self.verify(self.mutate(index, lambda row: row.update(token='different'))))
+        # Entire later rounds agreeing with each other still cannot drift from
+        # the fixture's original standing tile.
+        rows = transfer_evidence()
+        for index in range(5, 9):
+            prefix, raw = rows[index].split(' ', 2)[1:]
+            row = json.loads(raw)
+            row['target']['x'] += 1
+            rows[index] = '[QM_TRANSFER_PLACEMENT] ' + prefix + ' ' + json.dumps(row)
+        self.assertTrue(self.verify(rows))
+
+    def test_boxes_are_exact_physical_east_south_integer_tiles(self):
+        changes = [lambda row: row.update(boxes=[]), lambda row: row.update(boxes={}),
+                   lambda row: row['boxes'].reverse(), lambda row: row['boxes'].pop(),
+                   lambda row: row['boxes'].append(dict(x=13, y=34, z=0)),
+                   lambda row: row['boxes'][0].update(x=12), lambda row: row['boxes'][1].update(y=34),
+                   lambda row: row['boxes'][0].update(z=1), lambda row: row['boxes'][1].update(z=False),
+                   lambda row: row['boxes'][0].update(x=13.0), lambda row: row['boxes'][1].update(extra=0),
+                   lambda row: row['boxes'].__setitem__(0, 'east')]
+        for index in (0, 2, 20, 22):
+            for change in changes:
+                with self.subTest(index=index, change=change):
+                    self.assertTrue(self.verify(self.mutate(index, change)))
+
+    def test_centered_proof_requires_native_settling_and_local_role(self):
+        changes = [lambda p: p.update(mode='replica'), lambda p: p.update(mode='authority'),
+                   lambda p: p.update(teleports=0), lambda p: p.update(teleports=2),
+                   lambda p: p.update(centers=0), lambda p: p.update(centers=True),
+                   lambda p: p.update(centered=False), lambda p: p.pop('centered'),
+                   lambda p: p.update(stableMs=499), lambda p: p.update(quietMs=499),
+                   lambda p: p.update(elapsedMs=999), lambda p: p.update(elapsedMs=30000),
+                   lambda p: p.update(stableMs=True), lambda p: p.update(stableMs=float('nan')),
+                   lambda p: p.update(extra=True), lambda p: p['target'].update(x=13),
+                   lambda p: p['actual'].update(x=12), lambda p: p['actual'].update(y=34),
+                   lambda p: p['actual'].update(z=.5), lambda p: p['actual'].update(x=float('inf')),
+                   lambda p: p['actual']['square'].update(y=35),
+                   lambda p: p['actual']['currentSquare'].update(x=13),
+                   lambda p: p['actual'].update(queued=1), lambda p: p['actual'].update(timed=True),
+                   lambda p: p['actual'].update(moving=True), lambda p: p['actual'].update(hasPath=True),
+                   lambda p: p['actual'].update(deferredX=.01), lambda p: p['actual'].pop('deferredY')]
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertTrue(self.verify(self.mutate(1, lambda row: change(row['proof']))))
+        # A round's elapsed duration is independent of the preceding round's
+        # clock. The verifier uses raw chronology instead of comparing clocks.
+        self.assertEqual(self.verify(self.mutate(6, lambda row: row['proof'].update(elapsedMs=1000))), [])
+
+    def test_rejects_malformed_unknown_extra_and_foreign_role_evidence(self):
+        rows = transfer_evidence()
+        for value in ('{}', '[]', 'null', '{"case":"manifest","case":"manifest"}', '{broken'):
+            changed = rows.copy()
+            changed[0] = '[QM_TRANSFER_PLACEMENT] LAYOUT ' + value
+            with self.subTest(value=value):
+                self.assertTrue(self.verify(changed))
+        for extra in ('[QM_TRANSFER_PLACEMENT] AUTHORITY {}', '[QM_TRANSFER_PLACEMENT] FAIL {}',
+                      '[QM_TRANSFER_PLACEMENT]LOCAL {}', '[QM_TRANSFER] FAIL old outcome'):
+            self.assertTrue(self.verify(rows + [extra]))
+        for change in ({'kind': 'mp'}, {'cases': ['other']}, {'clients': True}, {'clients': 2}):
+            self.assertTrue(self.verify(selection=dict(self.selection, **change)))
+        for role in ('server', 'client2'):
+            log = self.root / (role + '-launch.log')
+            for foreign in (rows[0], rows[4], '[QM_TRANSFER_PLACEMENT] AUTHORITY {}'):
+                log.write_text(foreign + '\n')
+                with self.subTest(role=role, foreign=foreign):
+                    self.assertTrue(self.verify())
+            log.unlink()
 
 
 def group_evidence(root):
@@ -169,6 +317,7 @@ class QuartermasterPresets(unittest.TestCase):
             self.assertEqual((self.cache / 'Lua' / name).read_bytes(), (self.seed / 'client1/Lua' / name).read_bytes())
         self.assertEqual((self.cache / 'mods/ActionQueueTest/42/media/lua/client/ZZStartup.lua').read_bytes(),
                          (ROOT / 'tests/native_queue/startup/client/ZZStartup.lua').read_bytes())
+        self.assertFalse((self.cache / 'mods/ActionQueueTest/42/media/lua/shared/QueueHealthEvents.lua').exists())
 
     def test_reload_accepts_either_single_snapshot_slot_and_optional_legacy(self):
         for slot in adapter.STORES:
@@ -286,24 +435,41 @@ class QuartermasterPresets(unittest.TestCase):
             adapter.validate(dict(self.selection, mode=mode))
         sources = adapter.sources(ROOT, self.selection)
         self.assertIn(ROOT / 'tests/native_queue/quartermaster-transfers/client/ZZQuartermasterTransfers.lua', sources)
+        for relative in ('tests/native_queue/health/shared/QueueHealthEvents.lua',
+                         'tests/native_queue/support/QueueEnergyPlacement.lua',
+                         'tools/queue_checks/placement.py', 'tools/queue_checks/adapters/quartermaster_placement.py',
+                         'tests/test_queue_quartermaster.py', 'tests/test_queue_placement.py'):
+            self.assertIn(ROOT / relative, sources)
         self.assertFalse(any(path.is_relative_to(self.seed) for path in sources))
         self.stage()
         self.assertEqual(self.runtime['fixture']['failure_markers'], ['[QM_TRANSFER] FAIL '])
+        self.assertEqual((self.cache / 'mods/ActionQueueTest/42/media/lua/shared/QueueHealthEvents.lua').read_bytes(),
+                         (ROOT / 'tests/native_queue/health/shared/QueueHealthEvents.lua').read_bytes())
+
+    def test_preset_inputs_do_not_import_the_transfer_only_verifier(self):
+        native_import = builtins.__import__
+
+        def scoped_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if 'quartermaster_placement' in (fromlist or ()):
+                raise AssertionError('preset path imported an undeclared transfer verifier')
+            return native_import(name, globals, locals, fromlist, level)
+
+        with patch('builtins.__import__', side_effect=scoped_import):
+            importlib.reload(adapter)
+            paths = adapter.sources(ROOT, dict(suite=adapter.SUITE, cases=['seed']))
+        self.assertFalse(any(path.name == 'quartermaster_placement.py' for path in paths))
 
     def test_transfer_verifier_requires_ordered_exact_outcomes_and_custom_denial(self):
         self.selection.update(suite=adapter.TRANSFER_SUITE, cases=['manifest'], options={})
-        records = ['PHASE success moved=2 remaining=0 tailRead=true queueObserved=true',
-                   'PHASE partial moved=1 remaining=1 tailRead=true queueObserved=true',
-                   'PHASE rejected moved=0 remaining=2 tailRead=false queueObserved=false',
-                   'PHASE withdraw moved=1 remaining=1 tailRead=true queueObserved=true',
-                    'CUSTOM protected=3 queueUnchanged=true', 'COMPLETE case=manifest']
+        records = transfer_evidence()
         log = self.output / 'client1-launch.log'
-        def write(rows): log.write_text(''.join('[QM_TRANSFER] ' + row + '\n' for row in rows))
+        def write(rows): log.write_text('\n'.join(rows) + '\n')
         write(records)
         self.assertEqual(adapter.verify(self.output, self.selection, {})['issues'], [])
         for rows in (records[1:], records + records, records[::-1], records[:3] + records[4:],
-                     [records[0], records[1].replace('moved=1', 'moved=2'), *records[2:]],
-                     records + ['FAIL source identity changed']):
+                     records[:9] + [records[9].replace('moved=1', 'moved=2')] + records[10:],
+                     records[:24] + [records[24].replace('protected=3', 'protected=2')] + records[25:],
+                     records + ['[QM_TRANSFER] FAIL source identity changed']):
             with self.subTest(rows=rows):
                 write(rows)
                 self.assertTrue(adapter.verify(self.output, self.selection, {})['issues'])
