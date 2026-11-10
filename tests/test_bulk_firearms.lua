@@ -165,7 +165,14 @@ player.primary = nil
 magazine.container, root.items[3] = root, magazine
 assert(unloads[3]:isValidStart())
 player.secondary = magazine;assert(not unloads[3]:isValidStart());player.secondary = nil
-magazine.ammo = 0;assert(not unloads[3]:isValidStart());magazine.ammo = 3
+magazine.ammo = 0
+assert(unloads[3]:isValidStart(), 'retained empty magazine must run the native no-op')
+assert(#bulk.unloadEntries(player, {magazine}) == 0, 'menu must still offer only loaded magazines')
+for _,invalid in ipairs({-1, 0/0}) do
+    magazine.ammo = invalid
+    assert(not unloads[3]:isValidStart(), 'invalid magazine count must not become an empty no-op')
+end
+magazine.ammo = 3
 for _, hand in ipairs({'primary', 'secondary'}) do
     player[hand] = a;assert(#bulk.unloadEntries(player, {a}) == 0);player[hand] = nil
 end

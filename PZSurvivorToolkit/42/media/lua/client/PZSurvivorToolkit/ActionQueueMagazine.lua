@@ -125,9 +125,8 @@ inspect=function(action)
  if owned and(item:isFavorite()or actor:isEquippedClothing(item)
   or actor:getPrimaryHandItem()==item or actor:getSecondaryHandItem()==item)then return end
  local requires={{field='location',equal=root}}
- -- The native direct action accepts an empty no-op; our bulk producer's
- -- unchanged start guard instead requires a still-loaded magazine.
- if owned then requires[#requires+1]={field='ammoCount',above=0}end
+ -- Both direct and owned starts accept native empty-magazine completion.
+ -- No output quantity/ID or capacity is credited from this forecast.
  result.cancelWaiting,result.cancelOperation=true,true
  result.moveRequiresProjection=true
  result.edit={version=1,complete=true,capacity='external',resources={{domain='item',key=id,
@@ -180,7 +179,7 @@ install=function()
   else enumSlots[#enumSlots+1]={owner=owner,name=spec[2],value=owner[spec[2]]}end
  end
  local bulkTrusted=bulk and type(bulkBinding)=='function'and from(bulkBinding,'BulkFirearms.lua')
-  and Proof.matches('media/lua/client/PZSurvivorToolkit/BulkFirearms.lua',2922803276,'PZSurvivorToolkit',true)
+  and Proof.matches('media/lua/client/PZSurvivorToolkit/BulkFirearms.lua',4083090989,'PZSurvivorToolkit',true)
  snapshot={trusted=trusted,classMethods=classMethods,baseMethods=baseMethods,inherited=inherited,
   reload=helpers,validStart=validStart,enumSlots=enumSlots,bulkTrusted=bulkTrusted}
  if not registered then

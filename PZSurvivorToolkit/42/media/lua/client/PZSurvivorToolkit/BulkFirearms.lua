@@ -71,14 +71,21 @@ magazineUnloadBinding = function(action,callback)
 end
 Bulk.magazineUnloadBinding = magazineUnloadBinding
 
-local function unloadKind(item)
-    if item:getCurrentAmmoCount() <= 0 or not item:getAmmoType() then return end
+local function unloadTargetKind(item)
+    if not item:getAmmoType() then return end
     if instanceof(item, "HandWeapon") then
         -- Native unloading leaves chambered rounds and inserted magazines to their own actions.
         if not item:getMagazineType() then return "gun" end
     elseif item:getMaxAmmo() > 0 then
         return "magazine"
     end
+end
+
+-- Menu selection offers loaded inputs. Start admission is separate: native
+-- magazines explicitly complete an empty retained action without an effect.
+local function unloadKind(item)
+    if not (item:getCurrentAmmoCount() > 0) then return end
+    return unloadTargetKind(item)
 end
 
 local function unloadEntries(player, selected)
@@ -164,7 +171,10 @@ function Bulk.queueUnload(player, entries)
                     -- Check before starting only: MP sends ammo changes before client completion.
                     action.isValidStart = function(self)
                         local current = player:getInventory():getItemById(id)
-                        if not safeStart(player, current, guard.equipping) or unloadKind(current) ~= entry.kind then
+                        if not safeStart(player, current, guard.equipping) then return false end
+                        local kind = unloadTargetKind(current)
+                        local count = current:getCurrentAmmoCount()
+                        if kind ~= entry.kind or not (count > 0 or (kind == "magazine" and count == 0)) then
                             return false
                         end
                         if entry.kind == "gun" then self.gun = current else self.magazine = current end

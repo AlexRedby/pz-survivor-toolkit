@@ -14,6 +14,8 @@ local started,ready,done=false,false,false
 local tracks,commands,calls={}, {}, {}
 local edits={cancelled=false,reordered=false,untouched=true}
 local pendingBefore,pendingAfter
+local function inputName(name)return(name=='repeat-first'or name=='repeat-second')and'front'or name end
+assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('magazine-unload-native-boundaries',F.lifecycleObserver(function()return tracks end,callbacks)))
 local function now()return getTimestampMs()end
 local since,waiting=now(),now();local waits={}
 local function case()return config.cases[index]end
@@ -44,11 +46,11 @@ end)
 local function producer(names)
  local emitted={};local player=getPlayer();local add=ISTimedActionQueue.add
  local byID={};local rows={}
- for _,name in ipairs(names)do local item=state.items[name];byID[item:getID()]=name;rows[#rows+1]=item end
+ for _,name in ipairs(names)do local item=state.items[inputName(name)];byID[item:getID()]=name;rows[#rows+1]=item end
  ISTimedActionQueue.add=function(action)
   assert(action.Type=='ISUnloadBulletsFromMagazine','unexpected root magazine producer action')
   local item=assert(action.magazine);local name=assert(byID[item:getID()],'producer retargeted magazine')
-  assert(item==state.items[name]and item:getContainer()==player:getInventory()and action.maxTime==-1,'native magazine constructor differs')
+  assert(item==state.items[inputName(name)]and item:getContainer()==player:getInventory()and action.maxTime==-1,'native magazine constructor differs')
   for key,callback in pairs(callbacks)do assert(action[key]==callback and ISUnloadBulletsFromMagazine[key]==callback,'native unload callback changed '..key)end
   local guard=F.ownStartGuard(action);local owned=false
   if case()=='bulk'then
@@ -56,8 +58,10 @@ local function producer(names)
    assert(type(guard)=='function'and bound and id==item:getID(),'owned bulk magazine guard differs');owned=true
   else assert(guard==nil and not action.toolkitIndependentBulk,'direct native magazine has an extra start guard')end
   local row={name=name,type=action.Type,item=item:getID(),producer=case()=='bulk'and'BulkFirearms.unloadEntries + queueUnload'or'native ISInventoryPaneContextMenu.onUnloadBulletsFromMagazine',
-   duration=action.maxTime,constructorAmmo=item:getCurrentAmmoCount(),callbacksUntouched=true,ownedBulkGuard=owned,started=false,progress=false,partialCounts={}}
-  assert(row.constructorAmmo==ids.magazines[name].loaded,'producer changed loaded input')
+   duration=action.maxTime,constructorAmmo=item:getCurrentAmmoCount(),callbacksUntouched=true,ownedBulkGuard=owned,started=false,progress=false,partialCounts={},lifecycle={},constructorStartUnset=action.ammoCountStart==nil}
+  assert(row.constructorStartUnset,'native constructor unexpectedly ran start')
+  local expected=inputName(name)=='front'and name~='front'and pendingBefore.magazines.front.loaded or ids.magazines[name].loaded
+  assert(row.constructorAmmo==expected and row.constructorAmmo>0,'producer changed loaded input')
   tracks[action]=row;commands[#commands+1]=row;emitted[#emitted+1]=action
   return add(action)
  end
@@ -120,6 +124,7 @@ require('QueuePreflight').onTick(Events,function()
   elseif phase=='front'and tracks[state.front].progress then
    assert(queue().current==state.front and player:getInventory():getItemById(ids.magazines.front.id):getCurrentAmmoCount()>0,'front unload must still be active')
    pendingBefore=F.snapshot(state)
+   producer({'repeat-first'});producer({'repeat-second'})
    local actions=producer({'target','cancelled','tail'})
    if not native then
     assert(PZSurvivorToolkit.ActionQueue.cancelOperation(queue(),actions[2]),'pending magazine cancellation denied')
@@ -137,7 +142,17 @@ require('QueuePreflight').onTick(Events,function()
   elseif phase=='verified'and receipt then
    local client=assert(F.verify(state))
    for _,row in ipairs(commands)do assert(row.cancelled and not row.started and not row.progress and #row.partialCounts==0
-    or not row.cancelled and row.started and row.progress and #row.partialCounts>0,'native start/partial/cancellation evidence missing')end
+    or not row.cancelled and(inputName(row.name)=='front'and row.name~='front'or row.started and row.progress and #row.partialCounts>0),'native start/partial/cancellation evidence missing')end
+   for _,row in ipairs(commands)do
+    if not row.cancelled then
+     local finished=false
+     for _,event in ipairs(row.lifecycle)do
+      if event.event=='finish'and event.phase=='perform'and event.succeeded and event.nativeEpisode and event.nativeClass=='LuaTimedActionNew'
+       and(row.name~='repeat-first'and row.name~='repeat-second'or event.startAmmo==0 and event.loaded==0)then finished=true end
+     end
+     assert(finished,'native perform/empty-start evidence missing '..row.name)
+    end
+   end
    emit({event='case',id=case(),status='passed',ids=ids,clientPlacement=proof,input=state.input,client=client,server=receipt,
     commands=commands,producerCalls=calls,pendingBefore=pendingBefore,pendingAfter=pendingAfter,edit=edits,queueIdle=true,settleMilliseconds=now()-quiet})
    if not isClient()then previous=authority end

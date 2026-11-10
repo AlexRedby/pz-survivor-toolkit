@@ -115,28 +115,65 @@ def check_case(row, selection, prepared, verified):
                 'native completion/settle')
         require(row['edit'] == dict(cancelled=editing, reordered=editing, untouched=True)
                 and all(type(value) is bool for value in row['edit'].values()), 'real pending edit effects')
-        commands = row['commands']; require(type(commands) is list and [command['name'] for command in commands] == ['front', 'target', 'cancelled', 'tail'], 'complete native producer sequence')
-        executed = []
+        names = ['front', 'repeat-first', 'repeat-second', 'target', 'cancelled', 'tail']
+        commands = row['commands']; require(type(commands) is list and [command['name'] for command in commands] == names, 'complete native producer sequence')
+        executed = []; sequences = []; episodes = set(); repeat_ammo = None
         for command in commands:
-            name = command['name']; cancelled = editing and name == 'cancelled'
-            require(command['type'] == 'ISUnloadBulletsFromMagazine' and integer(command['item']) and command['item'] == ids['magazines'][name]['id']
+            name = command['name']; repeat = name in ('repeat-first', 'repeat-second'); source = 'front' if repeat else name
+            cancelled = editing and name == 'cancelled'
+            constructor_ammo = row['pendingBefore']['magazines']['front']['loaded'] if repeat else LOADS[source]
+            require(command['type'] == 'ISUnloadBulletsFromMagazine' and integer(command['item']) and command['item'] == ids['magazines'][source]['id']
                     and command['producer'] == PRODUCERS[case] and type(command['duration']) is int and command['duration'] == -1
-                    and type(command['constructorAmmo']) is int and command['constructorAmmo'] == LOADS[name]
-                    and command['callbacksUntouched'] is True and command['ownedBulkGuard'] is (case == 'bulk')
+                    and type(command['constructorAmmo']) is int and command['constructorAmmo'] == constructor_ammo
+                    and command['constructorStartUnset'] is True and command['callbacksUntouched'] is True and command['ownedBulkGuard'] is (case == 'bulk')
                     and command.get('cancelled', False) is cancelled, 'native duration/callback/guard/input identity')
-            partial = command['partialCounts']; require(type(partial) is list, 'native partial count samples')
+            partial = command['partialCounts']; events = command['lifecycle']
+            require(type(partial) is list and type(events) is list, 'native partial/lifecycle samples')
             if cancelled:
-                require(command['started'] is False and command['progress'] is False and not partial and 'startedAt' not in command, 'cancelled magazine action started')
+                require(command['started'] is False and command['progress'] is False and not partial and not events and 'startedAt' not in command, 'cancelled magazine action started')
+                continue
+            if repeat:
+                require(type(command['started']) is bool and command['progress'] is False and not partial
+                        and (number(command.get('startedAt')) if command['started'] else 'startedAt' not in command), 'empty repeats cannot claim partial progress')
             else:
                 require(command['started'] is True and command['progress'] is True and number(command['startedAt'])
-                        and partial and all(integer(value, 1) and value < LOADS[name] for value in partial)
+                        and partial and all(integer(value, 1) and value < LOADS[source] for value in partial)
                         and all(a > b for a, b in zip(partial, partial[1:])), 'real native start/partial loaded-count progress')
-                executed.append(command)
-        expected_order = ['front', 'tail', 'target'] if editing else ['front', 'target', 'cancelled', 'tail']
-        require([command['name'] for command in sorted(executed, key=lambda value: value['startedAt'])] == expected_order
-                and len({command['startedAt'] for command in executed}) == len(executed), 'committed native execution order')
-        calls = ([dict(names=[name], entries=1, queued=1) for name in ('front', 'target', 'cancelled', 'tail')] if case == 'direct' else
-                 [dict(names=['front'], entries=1, queued=1), dict(names=['target', 'cancelled', 'tail'], entries=3, queued=3)])
+            require(events and all(type(event) is dict and set(event) == {'sequence', 'event', 'phase', 'succeeded', 'nativeEpisode', 'nativeClass', 'loaded', 'startAmmo', 'ammo'} for event in events), 'typed Lifecycle boundary receipt')
+            require(all(integer(event['sequence'], 1) and type(event['succeeded']) is bool and integer(event['loaded'])
+                        and event['loaded'] <= constructor_ammo for event in events)
+                    and all(a['sequence'] < b['sequence'] for a, b in zip(events, events[1:])), 'monotonic native observer sequence')
+            sequences.extend(event['sequence'] for event in events)
+            admissions = [event for event in events if event['event'] == 'admission']
+            require(len(admissions) == 1 and admissions[0] == events[0] and admissions[0]['phase'] is False
+                    and admissions[0]['succeeded'] is False and admissions[0]['nativeEpisode'] is False and admissions[0]['nativeClass'] is False
+                    and admissions[0]['startAmmo'] is False and admissions[0]['loaded'] == (0 if repeat else LOADS[source]), 'actual admission count before native allocation')
+            boundaries = events[1:]; native_ids = set()
+            for event in boundaries:
+                require(event['event'] in ('begin', 'finish') and event['phase'] in ('perform', 'complete')
+                        and event['succeeded'] is (event['event'] == 'finish')
+                        and integer(event['nativeEpisode'], 1) and event['nativeClass'] == 'LuaTimedActionNew'
+                        and type(event['startAmmo']) is int and event['startAmmo'] == (0 if repeat else LOADS[source])
+                        and event['loaded'] == 0, 'successful native episode/start/finish boundary')
+                native_ids.add(event['nativeEpisode'])
+            require(len(native_ids) == 1 and not native_ids & episodes, 'native allocation episode reused or absent')
+            episodes.update(native_ids)
+            for phase in ('perform', 'complete'):
+                pair = [event['event'] for event in boundaries if event['phase'] == phase]
+                require(pair == ['begin', 'finish'] or phase == 'complete' and selection['kind'] == 'mp' and not pair, 'native perform/SP complete finish missing')
+            for event in events:
+                if repeat:
+                    observed = ammo_rows(event['ammo'], set(magazine_ids)); outputs = preserved_and_outputs(observed, baseline)
+                    require(len(outputs) == LOADS['front'] and all(final_outputs.get(identifier) == value for identifier, value in outputs.items()), 'empty-start output receipt differs from completed front')
+                    if repeat_ammo is not None: require(observed == repeat_ammo, 'repeat native callback changed loose ammo')
+                    repeat_ammo = observed
+                else: require(event['ammo'] is False, 'unexpected ordinary callback ammo witness')
+            executed.append((admissions[0]['sequence'], name))
+        require(len(set(sequences)) == len(sequences) and sorted(sequences) == list(range(min(sequences), max(sequences) + 1)), 'duplicated/missing observer boundary serial')
+        expected_order = ['front', 'repeat-first', 'repeat-second', 'tail', 'target'] if editing else ['front', 'repeat-first', 'repeat-second', 'target', 'cancelled', 'tail']
+        require([name for _, name in sorted(executed)] == expected_order, 'committed native admission execution order')
+        calls = ([dict(names=[name], entries=1, queued=1) for name in names] if case == 'direct' else
+                 [dict(names=[name], entries=1, queued=1) for name in names[:3]] + [dict(names=['target', 'cancelled', 'tail'], entries=3, queued=3)])
         require(type(row['producerCalls']) is list and row['producerCalls'] == calls
                 and all(type(call['entries']) is int and type(call['queued']) is int for call in row['producerCalls']), 'public native/bulk producer call receipts')
         return []

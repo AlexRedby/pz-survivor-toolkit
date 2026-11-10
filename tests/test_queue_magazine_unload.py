@@ -50,18 +50,30 @@ def evidence(kind='mp', mode='toolkit', case='direct'):
         value = dict(case=case, magazines=magazines, ammo=copy.deepcopy(initial) + [ammo_record(30 + index) for index in range(decrement)])
         totals(value); return value
     final = snapshot('final'); pending = snapshot('pending')
-    commands = []
-    order = ['front', 'tail', 'target'] if editing else ['front', 'target', 'cancelled', 'tail']
-    for name in ('front', 'target', 'cancelled', 'tail'):
-        cancelled = editing and name == 'cancelled'
-        command = dict(name=name, type='ISUnloadBulletsFromMagazine', item=specs[name]['id'], producer=a.PRODUCERS[case],
-                       duration=-1, constructorAmmo=a.LOADS[name], callbacksUntouched=True, ownedBulkGuard=case == 'bulk',
-                       started=not cancelled, progress=not cancelled, partialCounts=[] if cancelled else [a.LOADS[name] - 1])
+    commands = []; serial = 0
+    names = ('front', 'repeat-first', 'repeat-second', 'target', 'cancelled', 'tail')
+    order = ['front', 'repeat-first', 'repeat-second', 'tail', 'target'] if editing else list(names)
+    for name in names:
+        repeat = name.startswith('repeat-'); source = 'front' if repeat else name; cancelled = editing and name == 'cancelled'
+        command = dict(name=name, type='ISUnloadBulletsFromMagazine', item=specs[source]['id'], producer=a.PRODUCERS[case],
+                       duration=-1, constructorAmmo=4 if repeat else a.LOADS[source], constructorStartUnset=True,
+                       callbacksUntouched=True, ownedBulkGuard=case == 'bulk', started=not cancelled and not repeat,
+                       progress=not cancelled and not repeat, partialCounts=[] if cancelled or repeat else [a.LOADS[source] - 1], lifecycle=[])
         if cancelled: command['cancelled'] = True
-        else: command['startedAt'] = 100 + order.index(name) * 100
+        elif not repeat: command['startedAt'] = 100 + order.index(name) * 100
         commands.append(command)
-    calls = ([dict(names=[name], entries=1, queued=1) for name in ('front', 'target', 'cancelled', 'tail')] if case == 'direct' else
-             [dict(names=['front'], entries=1, queued=1), dict(names=['target', 'cancelled', 'tail'], entries=3, queued=3)])
+    for name in order:
+        command = next(command for command in commands if command['name'] == name)
+        repeat = name.startswith('repeat-'); source = 'front' if repeat else name
+        observed = copy.deepcopy(initial) + [ammo_record(30 + index) for index in range(5)] if repeat else False
+        for event, phase in [('admission', False), ('begin', 'perform'), ('finish', 'perform')] + ([('begin', 'complete'), ('finish', 'complete')] if kind == 'sp' else []):
+            serial += 1
+            command['lifecycle'].append(dict(sequence=serial, event=event, phase=phase, succeeded=event == 'finish',
+                nativeEpisode=False if event == 'admission' else order.index(name) + 1,
+                nativeClass=False if event == 'admission' else 'LuaTimedActionNew', loaded=0 if repeat or event != 'admission' else a.LOADS[source],
+                startAmmo=False if event == 'admission' else 0 if repeat else a.LOADS[source], ammo=copy.deepcopy(observed)))
+    calls = ([dict(names=[name], entries=1, queued=1) for name in names] if case == 'direct' else
+             [dict(names=[name], entries=1, queued=1) for name in names[:3]] + [dict(names=['target', 'cancelled', 'tail'], entries=3, queued=3)])
     row = dict(ids=copy.deepcopy(ids), input=snapshot('input'), client=copy.deepcopy(final), server=copy.deepcopy(final),
                clientPlacement=placement_proof(origin), commands=commands, producerCalls=calls,
                pendingBefore=copy.deepcopy(pending), pendingAfter=copy.deepcopy(pending),
@@ -120,6 +132,9 @@ class MagazineUnloadTests(unittest.TestCase):
         result[2]['initialAmmo'].append(copy.deepcopy(extra)); result[0]['ids'] = copy.deepcopy(result[2])
         for phase in ('input', 'client', 'server', 'pendingBefore', 'pendingAfter'):
             result[0][phase]['ammo'].append(copy.deepcopy(extra)); totals(result[0][phase])
+        for command in result[0]['commands']:
+            for event in command['lifecycle']:
+                if type(event['ammo']) is list: event['ammo'].append(copy.deepcopy(extra))
         result[3].update(copy.deepcopy(result[0]['server']))
         self.assertEqual([], a.check_case(*result))
 
@@ -136,14 +151,44 @@ class MagazineUnloadTests(unittest.TestCase):
     def test_pending_cancel_reorder_and_tail_must_have_real_effects(self):
         for change in ('cancel-started', 'cancel-empty', 'unchanged-order', 'missing-tail', 'fake-edit', 'physical-edit', 'public-bulk-call'):
             result = evidence(case='bulk'); row = result[0]
-            if change == 'cancel-started': row['commands'][2]['started'] = True
+            if change == 'cancel-started': row['commands'][4]['started'] = True
             if change == 'cancel-empty': row['client']['magazines']['cancelled']['loaded'] = 0
-            if change == 'unchanged-order': row['commands'][1]['startedAt'], row['commands'][3]['startedAt'] = 200, 300
+            if change == 'unchanged-order': row['commands'][3]['lifecycle'], row['commands'][5]['lifecycle'] = row['commands'][5]['lifecycle'], row['commands'][3]['lifecycle']
             if change == 'missing-tail': row['commands'].pop()
             if change == 'fake-edit': row['edit']['reordered'] = False
             if change == 'physical-edit': row['pendingAfter']['magazines']['target']['loaded'] = 0
-            if change == 'public-bulk-call': row['producerCalls'][1]['entries'] = 1
+            if change == 'public-bulk-call': row['producerCalls'][-1]['entries'] = 1
             self.assertTrue(a.check_case(*result), change)
+
+    def test_repeat_empty_starts_require_native_witness_not_final_zero_or_polling(self):
+        for change in ('constructor-zero', 'constructor-drift', 'constructor-started', 'wrong-input', 'admission-positive',
+                       'start-positive', 'no-allocation', 'episode-reused', 'no-perform', 'failed-perform', 'missing-sp-complete',
+                       'duplicate-sequence', 'missing-admission', 'repeat-output', 'forged-output', 'invented-partial', 'wrong-source'):
+            result = evidence(kind='sp', case='bulk'); row = result[0]; command = row['commands'][1]
+            if change == 'constructor-zero': command['constructorAmmo'] = 0
+            if change == 'constructor-drift': command['constructorAmmo'] = 3
+            if change == 'constructor-started': command['constructorStartUnset'] = False
+            if change == 'wrong-input': command['item'] = row['ids']['magazines']['target']['id']
+            if change == 'admission-positive': command['lifecycle'][0]['loaded'] = 1
+            if change == 'start-positive': command['lifecycle'][1]['startAmmo'] = 1
+            if change == 'no-allocation': command['lifecycle'][1]['nativeEpisode'] = False
+            if change == 'episode-reused':
+                for event in command['lifecycle'][1:]: event['nativeEpisode'] = 1
+            if change == 'no-perform': command['lifecycle'] = [event for event in command['lifecycle'] if event['phase'] != 'perform']
+            if change == 'failed-perform': command['lifecycle'][2]['succeeded'] = False
+            if change == 'missing-sp-complete': command['lifecycle'] = command['lifecycle'][:3]
+            if change == 'duplicate-sequence': command['lifecycle'][1]['sequence'] = command['lifecycle'][0]['sequence']
+            if change == 'missing-admission': command['lifecycle'].pop(0)
+            if change == 'repeat-output': command['lifecycle'][2]['ammo'].append(ammo_record(900))
+            if change == 'forged-output': command['lifecycle'][0]['ammo'][-1]['id'] = 900
+            if change == 'invented-partial': command['partialCounts'] = [1]
+            if change == 'wrong-source': command['producer'] = a.PRODUCERS['direct']
+            self.assertTrue(a.check_case(*result), change)
+        result = evidence()
+        for command in result[0]['commands'][1:3]: command.update(started=True, startedAt=100)
+        self.assertEqual([], a.check_case(*result), 'instant repeats may finish between polls and share timestamps')
+        result = evidence(); result[0]['commands'][1]['lifecycle'] += copy.deepcopy(result[0]['commands'][1]['lifecycle'][1:])
+        self.assertTrue(a.check_case(*result), 'repeat callback replay must fail')
 
     def test_grouped_authority_readiness_and_complete_receipts(self):
         for kind in ('sp', 'mp'):
@@ -311,6 +356,50 @@ public final class MagazineOwnGuardChecks {
    +"assert(Fixture.ownStartGuard(action)==guard,'owned start callback was not returned exactly');"
    +"assert(ISBaseTimedAction.isValidStart~=guard and action.maxTime==-1,'guard read mutated native constructor/base');",
    "fixture-own-guard-regression");
+  run("""
+-- Headless regression only: drive real native callbacks through the fixture observer, no live game/events.
+function isClient()return false end
+function getText(key)return key end
+function getClassSimpleName(value)return 'LuaTimedActionNew'end
+function instanceof()return false end
+local root={getItems=function()return{size=function()return 0 end}end}
+local actor={getInventory=function()return root end,setIsFarming=function()end}
+local completed=0
+ISTimedActionQueue={getTimedActionQueue=function()return{onCompleted=function()completed=completed+1 end}end}
+ISLogSystem={logAction=function()end}
+local tracks={};local callbacks={start=ISUnloadBulletsFromMagazine.start,perform=ISUnloadBulletsFromMagazine.perform,complete=ISUnloadBulletsFromMagazine.complete}
+local observer=Fixture.lifecycleObserver(function()return tracks end,callbacks)
+local previous=0
+for _,name in ipairs({'repeat-first','repeat-second'})do
+ local loaded=4
+ local magazine={getCurrentAmmoCount=function()return loaded end,setJobType=function()end,setJobDelta=function()end}
+ local action=ISUnloadBulletsFromMagazine:new(actor,magazine)
+ assert(action.ammoCountStart==nil and action.maxTime==-1)
+ local row={name=name,lifecycle={},callbacksUntouched=true};tracks[action]=row
+ loaded=0
+ assert(observer.started(action)==nil and action.ammoCountStart==nil)
+ local forced=0;action.action={forceComplete=function()forced=forced+1 end}
+ action:start();assert(forced==1 and action.ammoCountStart==0)
+ for _,phase in ipairs({'perform','complete'})do
+  assert(observer.begin(action,phase)==true)
+  local result=action[phase](action);assert(phase~='complete'or result==true)
+  assert(observer.finish(action,phase,true)==nil)
+ end
+ assert(#row.lifecycle==5 and row.callbacksUntouched and completed==(name=='repeat-first'and 1 or 2))
+ local episode
+ for i,event in ipairs(row.lifecycle)do
+  assert(event.sequence>previous);previous=event.sequence
+  assert(event.loaded==0 and #event.ammo==0)
+  if i==1 then assert(event.startAmmo==false and event.nativeEpisode==false)
+  else
+   assert(event.startAmmo==0 and event.nativeEpisode and event.nativeClass=='LuaTimedActionNew')
+   episode=episode or event.nativeEpisode;assert(episode==event.nativeEpisode)
+  end
+ end
+ assert(action.start==callbacks.start and action.perform==callbacks.perform and action.complete==callbacks.complete)
+end
+assert(observer.begin({},'perform')==nil,'untracked observer granted a scope')
+""", "fixture-native-empty-start-observer-regression");
   System.out.println("KAHLUA_NATIVE_OWN_GUARD_OK");
  }
 }

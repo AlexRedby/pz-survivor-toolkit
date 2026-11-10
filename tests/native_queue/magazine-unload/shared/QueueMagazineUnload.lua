@@ -32,6 +32,34 @@ local function inventory(player)
  end
  scan(root,{});table.sort(ammo,function(a,b)return a.id<b.id end);return found,ammo
 end
+-- The common Lifecycle boundary observes native callbacks; it grants no edit or completion authority.
+function F.lifecycleObserver(getTracks,callbacks)
+ local serial,episodeCount=0,0;local episodes={}
+ local function record(action,event,phase,succeeded)
+  local row=getTracks()[action];if not row then return end
+  local native=action.action;local episode=false
+  if native then
+   if not episodes[native]then episodeCount=episodeCount+1;episodes[native]=episodeCount end
+   episode=episodes[native]
+  end
+  for key,callback in pairs(callbacks)do
+   if action[key]~=callback or ISUnloadBulletsFromMagazine[key]~=callback then row.callbacksUntouched=false end
+  end
+  local ammo=false
+  if row.name=='repeat-first'or row.name=='repeat-second'then local found;found,ammo=inventory(action.character)end
+  serial=serial+1
+  row.lifecycle[#row.lifecycle+1]={sequence=serial,event=event,phase=phase or false,succeeded=succeeded==true,
+   nativeEpisode=episode,nativeClass=native and getClassSimpleName(native)or false,
+   loaded=action.magazine:getCurrentAmmoCount(),startAmmo=action.ammoCountStart~=nil and action.ammoCountStart or false,ammo=ammo}
+ end
+ return{
+  started=function(action)record(action,'admission')end,
+  begin=function(action,phase)
+   if not getTracks()[action]then return end
+   record(action,'begin',phase);return true
+  end,
+  finish=function(action,phase,succeeded)record(action,'finish',phase,succeeded)end}
+end
 function F.snapshot(s)
  local found,ammo=inventory(s.player);local value={case=s.ids.case,magazines={},ammo=ammo,looseUnits=0,loadedUnits=0}
  for _,entry in ipairs(ammo)do if entry.type==AMMO then value.looseUnits=value.looseUnits+entry.uses end end

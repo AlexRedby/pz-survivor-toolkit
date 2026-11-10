@@ -321,7 +321,7 @@ do
 end
 
 -- Source/helper mismatches do not steal ownership from the conservative bulk
--- behavior. Native and owned empty semantics remain deliberately different.
+-- behavior. Native and owned starts both preserve native empty completion.
 for _,file in ipairs({'ISUnloadBulletsFromMagazine.lua','ISReloadWeaponAction.lua','BulkFirearms.lua','ActionQueueFirearms.lua'})do
  local s=setup(file);local action=s.action(s.magazine(),true)
  assert(not s.adapter.matches(action),'changed source still owned: '..file)
@@ -335,12 +335,12 @@ do
  local moveContext={}
  local move=s.policy.evaluateMove(q,b,a,false,moveContext)
  assert(moveContext.editFallback==nil,'positive move fell back to legacy')
- assert(not move.allowed and move.reason=='edit_resource_amount','owned start requires remaining magazine rounds')
+ assert(move.allowed,'repeated pending magazine must preserve native empty completion')
  local direct=s.action(s.magazine(0));assert(s.adapter.inspect(direct),'native direct empty no-op was rejected')
  local emptyOwned=s.action(s.magazine(),true);emptyOwned.magazine.count=0
  local descriptor=assert(s.adapter.inspect(emptyOwned))
  local model=PZSurvivorToolkit.ActionQueueEditModel
- assert(model.evaluate({{action=emptyOwned,edit=descriptor.edit}}).status=='denied','owned empty start was granted')
+ assert(model.evaluate({{action=emptyOwned,edit=descriptor.edit}}).status=='allowed','owned native empty no-op was rejected')
  local original=s.action(s.magazine(),true);local guard=original.toolkitMagazineUnloadGuard
  local calls=0
  for key in pairs(guard)do guard[key]=function()calls=calls+1;error('foreign receipt invoked')end end
@@ -360,5 +360,76 @@ for _,mode in ipairs({'sp','client','server'})do
  else assert(item.count==0 and created==2 and sent==2 and synced==2)end
  assert(item:getContainer()==s.root and s.root:getItemWithID(item:getID())==item,'persistent magazine was replaced/depleted')
 end
+
+-- Execute the native empty lifecycle separately from planning. Host client
+-- requests completion; authority's empty events create/debit nothing.
+for _,mode in ipairs({'sp','client','server'})do
+ local s=setup();local item=s.magazine();local action=s.action(item,true)
+ item.count=0;s.mode(mode=='client',mode=='server')
+ assert(action:isValidStart()and action:isValid(),'execution admission rejected canonical empty magazine')
+ local completed=0
+ action.action={forceComplete=function()completed=completed+1 end}
+ action.netAction={forceComplete=function()completed=completed+1 end}
+ if mode=='server'then
+  action:serverStart();assert(#s.scheduled==3,'native Host empty action lost event schedule')
+  action:animEvent('RemoveBullet');action:animEvent('unloadFinished');action:animEvent('RemoveBullet')
+ else action:start()end
+ assert(completed==1 and action:complete(),'native empty lifecycle did not complete')
+ local created,sent,synced=s.counts()
+ assert(item.count==0 and created==0 and sent==0 and synced==0
+  and s.root:getItemWithID(item:getID())==item,'empty native action changed resources')
+end
+
+-- Native progression must accept a retained, now-empty magazine as the same
+-- no-op the vanilla action accepts. Reusing the menu's loaded-only filter at
+-- start otherwise makes native onCompleted reset this independent tail.
+for _,enabled in ipairs({false,true})do
+ local s=setup();local item=s.magazine(2)
+ local first=s.action(item,true);local repeated=s.action(item,true)
+ local tail=s.action(s.magazine(3),true)
+ local q=s.f.queue(first,repeated,tail)
+ PZSurvivorToolkit.Settings.actionQueue=function()return enabled end
+ local starts,warnings={},0
+ DebugType={Action={warn=function()warnings=warnings+1 end}}
+ LuaTimedActionNew={new=function(body,actor)
+  assert(actor==s.actor)
+  local handle={body=body}
+  handle.isStarted=function()return true end
+  handle.finished=function()return handle.forceCompleted==true end
+  handle.isForceComplete=function()return handle.forceCompleted==true end
+  handle.forceComplete=function()handle.forceCompleted=true end
+  handle.hasStalled=function()return false end
+  handle.getTable=function()return body end
+  return handle
+ end}
+ s.actor.setTimedActionToRetrigger=function()end
+ s.actor.StartAction=function(_,handle)starts[#starts+1]=handle.body end
+ first.action={isStarted=function()return true end,finished=function()return true end,
+  isForceComplete=function()return false end,hasStalled=function()return false end,getTable=function()return first end}
+ first.toolkitQueueOperation.toolkitStarted=true
+ first:animEvent('RemoveBullet')
+ first.updateLoadBulletsTime=.95;first:updateLoadingTime()
+ first:animEvent('RemoveBullet');first:animEvent('unloadFinished')
+ assert(first:complete())
+ local created,sent,synced=s.counts()
+ assert(item.count==0 and created==2 and sent==2 and synced==2,'first native unload did not pay exactly once')
+ assert(not repeated.action and not repeated.started and repeated.ammoCountStart==nil,
+  'retained repeat had already entered native execution')
+ q:onCompleted(first)
+ assert(q.current==repeated and q.queue[1]==repeated and q.queue[2]==tail and warnings==0,
+  'empty-magazine start rejection cleared independent tail (queue='..tostring(enabled)..
+  ', remaining='..tostring(#q.queue)..', native-reset-warnings='..tostring(warnings)..')')
+ assert(starts[1]==repeated and #starts==1,'native retained no-op did not start exactly once')
+ repeated:start()
+ assert(repeated.action.forceCompleted==true,'native empty magazine did not request forceComplete')
+ assert(repeated:complete())
+ q:onCompleted(repeated)
+ assert(q.current==tail and q.queue[1]==tail and #q.queue==1 and starts[2]==tail and #starts==2,
+  'empty native no-op failed to preserve/start independent tail')
+ local afterCreated,afterSent,afterSynced=s.counts()
+ assert(item.count==0 and tail.magazine.count==3 and afterCreated==created and afterSent==sent and afterSynced==synced,
+  'empty completion replayed paid effects or fabricated outputs')
+end
+
 if TestCoverage then TestCoverage('source-contract','passed')end
 print('Magazine source-bound pending edits, owned guard binding, active footprints and native incremental conservation passed.')
