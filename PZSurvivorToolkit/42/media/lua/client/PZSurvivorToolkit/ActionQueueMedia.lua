@@ -3,6 +3,7 @@ require 'TimedActions/ISDeviceBatteryAction'
 require 'TimedActions/ISDeviceMediaAction'
 local Target=require 'PZSurvivorToolkit/DeviceActionTarget'
 local Toolkit=PZSurvivorToolkit
+local OutcomeWait=require "PZSurvivorToolkit/ActionQueueOutcomeWait"
 local Media={}
 Toolkit.ActionQueueMedia=Media
 local Proof=require 'PZSurvivorToolkit/SourceProof'
@@ -402,20 +403,13 @@ local function currentRecord(action)
   or record.enabled~=Toolkit.Settings.actionQueue()then return end
  return record
 end
-local function acknowledgement(action,record)
- local acknowledgements=Toolkit.ActionQueueAcknowledgements
- if not record.acknowledgement then
-  record.acknowledgement=acknowledgements and acknowledgements.capture(action)
-  if record.acknowledgement then record.deadline=getTimestampMs()+30000 end
- end
- return record.acknowledgement and acknowledgements.state(action,record.acknowledgement)
-end
 function Media.keepPending(action)
  local record=currentRecord(action)
  if not record or not action.action:isStarted()
   or not replicatedEffect(action,record.receipt)then return false end
- local state=acknowledgement(action,record)
- return (state=='started'or state=='completed')and getTimestampMs()<record.deadline
+ local wait,state=OutcomeWait.observe(record.queue,action,record.wait)
+ record.wait=wait
+ return wait~=nil and(state=='started'or state=='completed')and not OutcomeWait.expired(wait)
 end
 function Media.canCancelWait(action)
  local record=currentRecord(action)
@@ -433,12 +427,13 @@ function Media.continuationState(action)
   or container and container~=inputContainer
   or (action.stopOnRun and (player:isRunning()or player:isSprinting())and player:isPlayerMoving())
   or (action.stopOnWalk and player:isPlayerMoving())or (action.stopOnAim and player:isAiming())then return 'failed' end
- local state=acknowledgement(action,record)
+ local wait,state=OutcomeWait.observe(record.queue,action,record.wait)
+ record.wait=wait
  -- Without the supported started receipt there is no permission to replace
  -- native completion. Never fabricate an outcome or replay the server effect.
- if not record.acknowledgement then active[action]=nil;return end
+ if not wait then active[action]=nil;return end
  if state=='completed'and result=='matched'then active[action]=nil;return end
- if not state or state=='canceled'or state=='rejected'or getTimestampMs()>=record.deadline then return 'failed' end
+ if not state or state=='canceled'or state=='rejected'or OutcomeWait.expired(wait)then return 'failed' end
  return 'waiting'
 end
 -- Install after ActionQueue's inherited native stop/begin hooks are in place. No

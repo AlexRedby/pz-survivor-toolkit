@@ -21,6 +21,9 @@ local function itemInspector()
     return capacityAdapters
 end
 require = function(module)
+    if module == 'PZSurvivorToolkit/ActionQueueOutcomeWait' then
+        return PZSurvivorToolkit.ActionQueueOutcomeWait or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
+    end
     if module == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
         return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
     end

@@ -46,6 +46,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.351
+
+- **Internal:** Share correlated native-receipt waiting between promoted reading/media operations and ordinary device actions. Keep each operation's existing failure, cancellation and disabled-mode policy; do not renew deadlines or rebind replacement episodes.
+- **Changed:** Pending native clothing wringing uses the common exact-item location and wetness dependency model. Preserve the actual vanilla body-location predicate, wetness caps, duration and external capacity checks; active interruption and cancellation-history reconstruction retain their existing limits.
+
 ### 0.1.350
 
 - **Internal:** Keep solid-fuel and legacy alcohol reads inside the conditions that use them. Preserve live item classification, unknown metadata and script previews; this local cleanup does not claim a measured gameplay speedup.

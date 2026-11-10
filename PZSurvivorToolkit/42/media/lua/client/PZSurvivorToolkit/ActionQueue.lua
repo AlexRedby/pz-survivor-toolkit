@@ -581,6 +581,8 @@ require "PZSurvivorToolkit/ActionQueueWorld"
 require "PZSurvivorToolkit/ActionQueueHealth"
 require "PZSurvivorToolkit/ActionQueueFitness"
 require "PZSurvivorToolkit/ActionQueueAnimalStops"
+local wring = require "PZSurvivorToolkit/ActionQueueWring"
+if wring then wring.install() end
 require "PZSurvivorToolkit/ActionQueueReading"
 require "PZSurvivorToolkit/ActionQueueMedia"
 if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.install() end

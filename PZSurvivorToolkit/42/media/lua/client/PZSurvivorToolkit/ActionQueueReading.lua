@@ -1,5 +1,6 @@
 -- Failure cleanup belongs only to an explicitly promoted reading range, not all TV actions.
 local Toolkit = PZSurvivorToolkit
+local OutcomeWait = require "PZSurvivorToolkit/ActionQueueOutcomeWait"
 local Reading, marker = {}, {}
 Toolkit.ActionQueueReading = Reading
 
@@ -82,20 +83,6 @@ function Reading.resumed(previous, resumed)
     if record and record.marker == marker and record.kind == "read" then remember(resumed, "read") end
 end
 
-local function mediaWait(queue, action, record)
-    local acknowledgements = Toolkit.ActionQueueAcknowledgements
-    local wait = record.completion
-    if not wait then
-        local receipt = acknowledgements and acknowledgements.capture(action)
-        if not receipt then return end
-        wait = {receipt = receipt, native = action.action, generation = queue.toolkitOperationGeneration or 0,
-            deadline = getTimestampMs() + 30000}
-        record.completion = wait
-    end
-    if wait.native ~= action.action or wait.generation ~= (queue.toolkitOperationGeneration or 0) then return wait end
-    return wait, acknowledgements.state(action, wait.receipt)
-end
-
 -- Native validity runs before the update that observes Done. Preserve only an
 -- already started, acknowledged insertion whose expected effects arrived early.
 -- Server validation, native stop/cancel and native completion remain unchanged.
@@ -107,8 +94,9 @@ function Reading.keepPendingMedia(action)
     local queue = ISTimedActionQueue.queues[action.character]
     if not queue or queue.current ~= action or queue.queue[1] ~= action or not Toolkit.ActionQueuePolicy.live(queue)
         or queue.toolkitCancel or not Toolkit.ActionQueueMedia.hasReplicatedEffect(action, record.receipt) then return false end
-    local wait, state = mediaWait(queue, action, record)
-    return wait ~= nil and (state == "started" or state == "completed") and getTimestampMs() < wait.deadline
+    local wait, state = OutcomeWait.observe(queue, action, record.completion)
+    record.completion = wait
+    return wait ~= nil and (state == "started" or state == "completed") and not OutcomeWait.expired(wait)
 end
 
 -- MP Done and device media replication use different network channels. Hold the
@@ -124,12 +112,13 @@ function Reading.mediaCompletionState(queue, action)
         or (action.stopOnWalk and player:isPlayerMoving()) or (action.stopOnAim and player:isAiming()) then
         return "failed"
     end
-    local wait, state = mediaWait(queue, action, record)
+    local wait, state = OutcomeWait.observe(queue, action, record.completion)
+    record.completion = wait
     if not wait then return end -- Preserve native fallback without the supported outcome protocol.
-    if wait.native ~= action.action or wait.generation ~= (queue.toolkitOperationGeneration or 0) then return "failed" end
+    if not OutcomeWait.matches(queue, action, wait) then return "failed" end
     if state == "completed" and result == "matched" then record.completion = nil; return end
     if not state or state == "canceled" or state == "rejected" or result == "unavailable"
-        or getTimestampMs() >= wait.deadline then
+        or OutcomeWait.expired(wait) then
         record.skipped, record.completion = true, nil
         return
     end
