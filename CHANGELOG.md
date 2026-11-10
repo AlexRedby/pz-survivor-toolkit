@@ -46,6 +46,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.352
+
+- **Changed:** Pending native and owned bulk magazine unloading uses exact magazine/ammunition contracts for cancellation and reordering. Independent fresh ammunition outputs can commute; ammunition consumers, shared inputs, equipment changes and unknown active phases remain protected. Native incremental unloading, paid outputs, durations and capacity behavior are preserved.
+- **Internal:** Reuse native class-chain validation and clean ammunition factory checks instead of duplicating them for the new queue family. Unsupported bulk inputs retain their existing unknown-output handling.
+
 ### 0.1.351
 
 - **Internal:** Share correlated native-receipt waiting between promoted reading/media operations and ordinary device actions. Keep each operation's existing failure, cancellation and disabled-mode policy; do not renew deadlines or rebind replacement episodes.

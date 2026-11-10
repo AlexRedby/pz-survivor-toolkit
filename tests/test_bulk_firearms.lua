@@ -301,3 +301,12 @@ assert(bulk.unloadEntries(player, sharedRows)[1].item == a
     'public collectors independently normalize the current selection')
 PZSurvivorToolkit.BulkActions.selectedItems = normalize
 print('Bulk firearm checks passed: native queues, exact items/parts, MP pre-start guards, mixed menus and independent toggles.')
+
+-- Missing source/metadata evidence grants no guard-observation authority. The
+-- existing native start checks above still run unchanged in this basic fixture.
+do
+    local calls=0
+    local foreign=function()calls=calls+1;error('foreign isValidStart invoked')end
+    assert(type(bulk.magazineUnloadBinding)=='function')
+    assert(not bulk.magazineUnloadBinding({},foreign)and calls==0)
+end

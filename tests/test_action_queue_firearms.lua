@@ -428,3 +428,15 @@ do
 end
 print('Firearm native resources, source/helper/output fallback and SP/Host event authority passed.')
 if TestCoverage then TestCoverage('source-contract','passed')end
+
+-- The shared output proof adds no lifecycle permission and does not tighten the
+-- already shipped rack input proof when a different consumer needs plain input.
+do
+    local s=setup();local gun=s.gun();local action=s.action(gun)
+    gun:getScriptItem() -- Real factory items already have their registered input script.
+    assert(s.firearms.ammoOutput(gun)=='Base.Bullets9mm'and s.firearms.rack(action))
+    s.scripts['Base.Pistol'].config='Foreign.Configuration'
+    assert(not s.firearms.ammoOutput(gun),'shared plain-input proof accepted configuration')
+    assert(s.firearms.rack(action),'sharing output validation changed existing rack behavior')
+    assert(s.counts()==0,'shared validation executed rack/output effects')
+end

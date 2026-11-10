@@ -11,6 +11,66 @@ local Actions = Toolkit.BulkActions
 local Bulk = {}
 Toolkit.BulkFirearms = Bulk
 
+-- Each owned magazine guard carries its own immutable identity receipt. No
+-- registry retains actions, and inspection never calls the isValidStart guard.
+local Proof = require "PZSurvivorToolkit/SourceProof"
+local bindingType,bindingPairs,bindingEqual = type,pairs,rawequal
+local bindingMeta,bindingRaw,bindingActualMeta = getmetatable,rawget,toolkitLuaMetatableMatches
+local bindingGlobals,bindingFilename,bindingLine = _G,getFilenameOfClosure,getFirstLineOfClosure
+local bindingInstanceof,bindingClosure = instanceof,Proof and Proof.closure
+local receiptKey,receiptChallenge,receiptProof = {},{},{}
+local queueUnloadBinding,magazineUnloadBinding
+local function own(owner,key)
+    if bindingType(owner) ~= "table" then return end
+    local count = 0
+    for name,value in bindingPairs(owner) do
+        count = count + 1
+        if count > 128 then return end
+        if bindingEqual(name,key) then return value end
+    end
+end
+local function receiptFor(action,callback,player,item,id,entry,guard)
+    return function(challenge)
+        if bindingEqual(challenge,receiptChallenge) then
+            return receiptProof,action,callback,player,item,id,entry,guard
+        end
+    end
+end
+local sampleReceipt = receiptFor()
+magazineUnloadBinding = function(action,callback)
+    if bindingType(bindingActualMeta) ~= "function" or not bindingActualMeta(bindingGlobals,nil)
+        or not bindingEqual(bindingRaw(bindingGlobals,"toolkitLuaMetatableMatches"),bindingActualMeta)
+        or not bindingEqual(bindingRaw(bindingGlobals,"PZSurvivorToolkit"),Toolkit)
+        or not bindingActualMeta(Toolkit,nil) or not bindingActualMeta(Bulk,nil)
+        or not bindingEqual(bindingRaw(Toolkit,"BulkFirearms"),Bulk)
+        or not bindingEqual(bindingRaw(Bulk,"magazineUnloadBinding"),magazineUnloadBinding)
+        or not bindingEqual(bindingRaw(Bulk,"queueUnload"),queueUnloadBinding)
+        or not bindingEqual(bindingRaw(bindingGlobals,"instanceof"),bindingInstanceof)
+        or not bindingEqual(bindingRaw(bindingGlobals,"getFilenameOfClosure"),bindingFilename)
+        or not bindingEqual(bindingRaw(bindingGlobals,"getFirstLineOfClosure"),bindingLine)
+        or bindingType(Proof) ~= "table" or not bindingActualMeta(Proof,nil)
+        or not bindingEqual(bindingRaw(Proof,"closure"),bindingClosure)
+        or bindingType(bindingFilename) ~= "function" or bindingType(bindingLine) ~= "function"
+        or bindingType(bindingClosure) ~= "function" or bindingType(callback) ~= "function"
+        or not bindingEqual(own(action,"isValidStart"),callback) then return false end
+    local actionGuard = own(action,"toolkitMagazineUnloadGuard")
+    if bindingType(actionGuard) ~= "table" or not bindingActualMeta(actionGuard,nil) then return false end
+    local receipt = bindingRaw(actionGuard,receiptKey)
+    if bindingType(receipt) ~= "function" or not bindingClosure(receipt,"BulkFirearms.lua")
+        or bindingFilename(receipt) ~= bindingFilename(sampleReceipt)
+        or bindingLine(receipt) ~= bindingLine(sampleReceipt) then return false end
+    local proof,savedAction,savedCallback,player,item,id,entry,guard = receipt(receiptChallenge)
+    if not bindingEqual(proof,receiptProof) or not bindingEqual(savedAction,action)
+        or not bindingEqual(savedCallback,callback) or not bindingEqual(own(action,"character"),player)
+        or not bindingEqual(own(action,"magazine"),item) or own(action,"toolkitIndependentBulk") ~= true
+        or not bindingEqual(actionGuard,guard)
+        or not bindingActualMeta(entry,nil) or not bindingEqual(bindingRaw(entry,"item"),item)
+        or bindingRaw(entry,"kind") ~= "magazine" or not bindingActualMeta(guard,nil)
+        or bindingRaw(guard,"equipping") ~= nil then return false end
+    return true,id
+end
+Bulk.magazineUnloadBinding = magazineUnloadBinding
+
 local function unloadKind(item)
     if item:getCurrentAmmoCount() <= 0 or not item:getAmmoType() then return end
     if instanceof(item, "HandWeapon") then
@@ -110,6 +170,10 @@ function Bulk.queueUnload(player, entries)
                         if entry.kind == "gun" then self.gun = current else self.magazine = current end
                         return self:isValid()
                     end
+                    if entry.kind == "magazine" then
+                        guard[receiptKey] = receiptFor(action,action.isValidStart,player,item,id,entry,guard)
+                        action.toolkitMagazineUnloadGuard = guard
+                    end
                 end
             end, entry.kind == "gun" and ISInventoryPaneContextMenu.onUnloadBulletsFromFirearm
                 or ISInventoryPaneContextMenu.onUnloadBulletsFromMagazine, player, item)
@@ -118,6 +182,8 @@ function Bulk.queueUnload(player, entries)
     end
     return count
 end
+
+queueUnloadBinding = Bulk.queueUnload
 
 function Bulk.queueAttachments(player, entries)
     if not Toolkit.Settings.bulkRemoveAttachments() or not player or player:isDead() then return end

@@ -18,6 +18,7 @@ getGameFilesInput=function(path)
 end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.native('shared/Fluids/ISFluidContainer.lua')
+f.native('shared/Fluids/ISFluidUtil.lua') -- Match the native require graph before adapters capture their owners.
 f.native('shared/Fluids/ISFluidTransferAction.lua')
 f.native('shared/Fluids/ISFluidEmptyAction.lua')
 f.native('shared/TimedActions/ISTransferAction.lua')

@@ -29,6 +29,8 @@ NATIVE_TAG_TESTS = (
 # An explicit request must not silently skip its required source checks. Other
 # source-dependent tests retain their own optional-input SKIP/fallback behavior.
 REQUIRED_INPUTS = {
+    "test_action_queue_magazine.lua": ("native_action_root", "--game or --native-action-root"),
+    "test_action_queue_output_dependencies.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_wring.lua": ("native_action_root", "--game or --native-action-root"),
     "test_device_action_target.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_device_integration.lua": ("native_action_root", "--game or --native-action-root"),
@@ -120,6 +122,8 @@ SOURCE_CHECKS = {'test_device_action_target.lua': ('source-contract',), 'test_ac
  'test_action_queue_makeup_sync.lua': ('source-contract',),
  'test_action_queue_manifest.lua': ('source-contract',),
  'test_action_queue_media.lua': ('source-contract',),
+ 'test_action_queue_magazine.lua': ('source-contract',),
+ 'test_action_queue_output_dependencies.lua': ('source-contract',),
  'test_action_queue_wring.lua': ('source-contract',),
  'test_action_queue_native_continuations.lua': ('source-contract',),
  'test_action_queue_operations.lua': ('source-contract',),

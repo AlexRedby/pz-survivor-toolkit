@@ -54,6 +54,8 @@ local deferredTransferGuards = {}
 local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
 local Firearms = require "PZSurvivorToolkit/ActionQueueFirearms"
 local rackResources = Firearms and Firearms.rack
+local Magazines = require "PZSurvivorToolkit/ActionQueueMagazine"
+local magazineResources = Magazines and Magazines.inspect
 local nativePendingCancelProof
 local function nativePendingCancelHasNoEffects()
     if nativePendingCancelProof == nil then
@@ -227,7 +229,17 @@ local function knownCraftInputs(action, context)
     if action.toolkitWorldOperation == "fuel" or action.toolkitWorldOperation == "wreck" then return false end
     if craft(action) and not Toolkit.ActionQueueCraft.futureResources then return Toolkit.ActionQueueCraft.collectItems(action, {}) end
     local contract = inspect(action, context)
-    return contract ~= nil and contract.knownInputs ~= false
+    return contract ~= nil and contract.knownInputs ~= false, contract
+end
+
+-- Two audited factories creating fresh instances do not share an output
+-- object merely because the item type matches. Inputs/selectors still depend
+-- on that type; this footprint grants no count, identity or capacity credit.
+local function freshOutput(contract, kind)
+    local fresh, outputs = contract.freshOutputTypes, contract.outputTypes
+    return contract.knownInputs ~= false and not contract.unknownOutputs
+        and type(fresh) == "table" and getmetatable(fresh) == nil and fresh[kind] == true
+        and type(outputs) == "table" and getmetatable(outputs) == nil and outputs[kind] == true
 end
 
 local function dynamicConflict(a, b, context)
@@ -254,7 +266,9 @@ local function dynamicConflict(a, b, context)
     local outputs = left.outputTypes
     if outputs then
         for kind in pairs(outputs) do
-            if (right.itemTypes and right.itemTypes[kind]) or (right.outputTypes and right.outputTypes[kind]) then return kind end
+            if right.itemTypes and right.itemTypes[kind] then return kind end
+            if right.outputTypes and right.outputTypes[kind]
+                and not (freshOutput(left, kind) and freshOutput(right, kind)) then return kind end
         end
     end
     return false
@@ -1054,6 +1068,14 @@ end})
 Definitions.registerBehavior("toolkit.bulk", {types = {"ISUnloadBulletsFromFirearm", "ISUnloadBulletsFromMagazine", "ISRemoveWeaponUpgrade"}, matches = function(action)
     return Toolkit.BulkActions and Toolkit.BulkActions.canFinish and Toolkit.BulkActions.canFinish(action)
 end, inspect = function(action)
+    -- Keep one owner for bulk actions. A qualified exact contract replaces the
+    -- unknown-output barrier; unsupported resources retain the original bulk
+    -- footprint and cancellation behavior without a second eligibility scan.
+    if Magazines and Toolkit.ActionQueueMagazine == Magazines and type(magazineResources) == "function"
+        and Magazines.inspect == magazineResources then
+        local exact = magazineResources(action)
+        if exact then return exact end
+    end
     local result = resources(action); result.unknownOutputs, result.bulk = true, true; return result
 end})
 
@@ -1343,7 +1365,7 @@ local function evaluateComponent(projection, entries)
     return result
 end
 
-local function proposedEdit(queue, first, last, to, context)
+local function proposedEdit(queue, first, last, to, context, projectionRequired)
     local needsSpatial=false
     if #queue.queue<=spatialEdits.maxMembers and type(toolkitQueueSpatialNoMovement)=='function'
         and type(toolkitQueueSpatialApiMatches)=='function'then
@@ -1360,17 +1382,24 @@ local function proposedEdit(queue, first, last, to, context)
         spatialEdits.provision(queue,queue.queue,context)
     end
     local selected, component = {}, {}
+    projectionRequired = projectionRequired == true
     for i = first, last do
         local member = queue.queue[i]
         local contract = inspect(member, context)
         if not contract or not contract.edit then
             if needsSpatial then spatialEdits.rollback(scope,mark)end
+            if projectionRequired then return {status = "denied", reason = "edit_unknown", blocker = member} end
             return {status = "unhandled"}
         end
         selected[member], component[member] = true, true
+        projectionRequired = projectionRequired or (to ~= nil and contract.moveRequiresProjection == true)
     end
     local projection = editComponent(queue, queue.queue, component, context)
     if projection.status ~= "allowed" then
+        -- A newly migrated resource authority may replace a legacy barrier
+        -- only with a complete proof. Unknown active phases are not permission
+        -- to retry the same move through weaker native-footprint checks.
+        if projectionRequired and projection.status == "unhandled" then projection.status = "denied" end
         if needsSpatial then spatialEdits.rollback(scope,mark)end
         return projection
     end
@@ -1950,18 +1979,22 @@ function Policy.moveReason(queue, action, target, after, context)
     if first == 1 then
         return demoteReading(queue, first, last, targetFirst, targetLast, after, context)
     end
+    local projectionRequired = false
     for i = first, last do
         local member = queue.queue[i]
         if member.action or member == queue.current or i == 1 then return "move_active" end
         if member._isAddingActions then return deny(context, "move_dependent", "edit_in_flight", member) end
-        if not knownCraftInputs(member, context) and not repairInputs(member) then
+        local known, contract = knownCraftInputs(member, context)
+        if not known and not repairInputs(member) then
             return craft(member) and "move_craft_inputs" or unknownDenial(context, "move_dependent", member)
         end
+        projectionRequired = projectionRequired or (type(contract) == "table" and contract.moveRequiresProjection == true)
     end
     if first == targetFirst then return nil, first, first, last end
     local to = after and targetLast + 1 or targetFirst
     local preempt = to == 1
     if preempt then
+        if projectionRequired then return deny(context, "move_dependent", "edit_in_flight", queue.current) end
         local supported, reason = resumableWorld(queue.current)
         if not queue.current or (queue.current.Type ~= "ISReadABook" and not supported)
             or Policy.cancelReason(queue, queue.current, context) then return reason or "move_active" end
@@ -1989,7 +2022,7 @@ function Policy.moveReason(queue, action, target, after, context)
         end
     end
     if not preempt then
-        local edit = proposedEdit(queue, first, last, to, context)
+        local edit = proposedEdit(queue, first, last, to, context, projectionRequired)
         if edit.status == "denied" then return edit.reason, nil, nil, nil, nil, edit.blocker, edit.resource end
         if edit.status == "allowed" then
             local capacity = editCapacityConflict(queue, edit, first, last, to, context)

@@ -5,23 +5,12 @@ local Toolkit=PZSurvivorToolkit
 local Wring={}
 Toolkit.ActionQueueWring=Wring
 local class,base,object=ISWringClothing,ISBaseTimedAction,ISBaseObject
-local actualMeta,raw,equal,kind,environment=toolkitLuaMetatableMatches,rawget,rawequal,type,_G
--- Kahlua rawget can follow inheritance. Prove the native lookup chain from its
--- plain root before reading each descendant's __index slot, so no foreign
--- __index function is ever needed to establish the provenance of a callback.
+local actualMeta,kind=toolkitLuaMetatableMatches,type
+local classChain=Proof.nativeActionClassChain
 local function lookupShape(constructing)
- if kind(actualMeta)~='function'or not actualMeta(environment,nil)
-  or not equal(raw(environment,'toolkitLuaMetatableMatches'),actualMeta)
-  or not equal(raw(environment,'rawget'),raw)or not equal(raw(environment,'rawequal'),equal)
-  or not equal(raw(environment,'type'),kind)or not equal(raw(environment,'ISBaseObject'),object)
-  or kind(object)~='table'or kind(base)~='table'or kind(class)~='table'
-  or not actualMeta(object,nil)or not equal(raw(object,'__index'),object)
-  or not actualMeta(base,object)or not equal(raw(base,'__index'),base)
-  or not actualMeta(class,base)then return false end
- local index=raw(class,'__index')
- -- ISBaseTimedAction.new initializes the class's own __index on first use.
- -- Kahlua may return inherited base here where Lua 5.1 rawget returns nil.
- return equal(index,class)or constructing and(index==nil or equal(index,base))
+ return type(actualMeta)=='function'and actualMeta(Proof,nil)
+  and type(classChain)=='function'and Proof.nativeActionClassChain==classChain
+  and classChain(object,base,class,constructing)
 end
 local snapshot,registered
 local inspect,matches,callbacksTrusted,install
