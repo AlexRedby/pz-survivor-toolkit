@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.355
+
+- **Changed:** Pending wringing chains can use the shared item-location contract while clothing is still in a carried bag. A source-bound carried-container preparation contract keeps the real deferred approach queued, and the existing transfer must establish the required root-inventory location before wringing. Whole-chain edits retain native capacity checks, exact item ownership and automatic returns; capacity forecasts keep the current native weight bound without spending expected drying space.
+
 ### 0.1.354
 
 - **Fixed:** Repeated bulk unloading of integral-magazine firearms no longer clears later queued work when an earlier unload has emptied the weapon. Menu selection and protected-item checks remain unchanged; empty retained actions use the original native animation, completion and multiplayer authority without producing or consuming ammunition again.

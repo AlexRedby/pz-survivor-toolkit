@@ -28,7 +28,7 @@ local editBindingCapture=Proof and Proof.captureBindings
 local editNativeMeta=toolkitLuaMetatableMatches
 local spatialOwner=Toolkit.ActionQueueApproach
 local spatialPrepare=spatialOwner and spatialOwner.prepareSpatialLease
-local spatialEdits={factory=spatialOwner and spatialOwner.prepareSpatialEditLease,line=1012,maxMembers=32,equal=rawequal}
+local spatialEdits={factory=spatialOwner and spatialOwner.prepareSpatialEditLease,line=1022,carriedFactory=spatialOwner and spatialOwner.prepareCarriedContainerEditLease,carriedLine=1095,maxMembers=32,equal=rawequal}
 spatialEdits.shape={kind=type,meta=getmetatable,each=pairs,array=ipairs,equal=rawequal,call=pcall}
 spatialEdits.shapeWatch=editBindingCapture and editBindingCapture({
     {owner=_G,keys={'type','getmetatable','pairs','ipairs','rawequal','pcall','toolkitLuaMetatableMatches'}},
@@ -43,7 +43,7 @@ local spatialPrerequisites=type(editBindingCapture)=="function"and editBindingCa
     {owner=math,keys={"floor"}},{owner=string,keys={"byte","sub","gsub","match"}},
 })
 -- Updated together with the source-owned factory; a same-file callback is not its role.
-local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=929,109732719
+local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=939,3155442316
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
@@ -56,6 +56,10 @@ local Firearms = require "PZSurvivorToolkit/ActionQueueFirearms"
 local rackResources = Firearms and Firearms.rack
 local Magazines = require "PZSurvivorToolkit/ActionQueueMagazine"
 local magazineResources = Magazines and Magazines.inspect
+local Wring = require "PZSurvivorToolkit/ActionQueueWring"
+local wringInspector = type(Wring)=="table" and editNativeMeta and editNativeMeta(Wring,nil) and Wring.inspect
+local wringMatcher = type(Wring)=="table" and editNativeMeta and editNativeMeta(Wring,nil) and Wring.matches
+local wringCapacitySourceTrusted
 local nativePendingCancelProof
 local function nativePendingCancelHasNoEffects()
     if nativePendingCancelProof == nil then
@@ -1264,19 +1268,46 @@ function spatialEdits.pair(queue,members,index,context,contract,source)
         return {action=member,check=check,watch=watch,contract=contract,edit=edit}
     end
 end
+-- The genuine carried route is paired with its already-cached exact native
+-- fetch. The body remains subject to ordinary whole-operation projection.
+function spatialEdits.carriedPair(queue,members,index,context,contract,source)
+    local member,fetch=members[index],members[index+1]
+    if source~='toolkit.approach'or not contract or contract.edit or member.action
+        or type(spatialEdits.carriedFactory)~='function'or type(fetch)~='table'
+        or fetch.action or fetch.Type~='ISInventoryTransferAction'
+        or not spatialEdits.equal(member.character,queue.character)
+        or not spatialEdits.equal(fetch.character,queue.character)then return end
+    local first,last=Operations.bounds(queue,member)
+    local token=member.toolkitQueueOperation
+    if first~=index or not last or last<index+1 or type(token)~='table'
+        or token.toolkitStarted or token.toolkitCancelled
+        or not spatialEdits.equal(fetch.toolkitQueueOperation,token)
+        or not spatialEdits.equal(fetch.destContainer,queue.character:getInventory())then return end
+    local following,fetchSource=inspect(fetch,context)
+    if fetchSource~='native.ISInventoryTransferAction'or not following or not following.edit
+        or following.edit.complete~=true or following.unknownOutputs then return end
+    local watch=editBindingCapture and editBindingCapture({{owner=fetch,exact=true},
+        {owner=token,keys={'toolkitStarted','toolkitCancelled'}}})
+    local check,edit,owners=spatialEdits.prepare(member,fetch.srcContainer,true)
+    if watch and check and edit and owners then
+        return {action=member,check=check,watch=watch,contract=contract,edit=edit,
+            carried=true,owners=owners,positions=contract.positions,previousOwners=contract.containerOwners}
+    end
+end
 function spatialEdits.provision(queue,members,context)
     local scope=activeDecision
     if not scope or not spatialEdits.equal(scope.queue,queue)or not spatialEdits.equal(scope.context,context)or #members>spatialEdits.maxMembers
-        or type(toolkitQueueSpatialNoMovement)~='function'or type(toolkitQueueSpatialApiMatches)~='function'
         or type(spatialEdits.prepare)~='function'then return end
     for index,member in ipairs(members)do
         -- Preserve the pending policy's original source/getter observation order.
         local contract,source=inspect(member,context)
-        local proof=spatialEdits.pair(queue,members,index,context,contract,source)
+        local proof=spatialEdits.carriedPair(queue,members,index,context,contract,source)
+            or spatialEdits.pair(queue,members,index,context,contract,source)
         if proof then
             scope.spatial=scope.spatial or{}
             scope.spatial[#scope.spatial+1]=proof
             proof.contract.edit=proof.edit
+            if proof.carried then proof.contract.positions=nil;proof.contract.containerOwners=proof.owners end
         end
     end
 end
@@ -1286,6 +1317,10 @@ function spatialEdits.rollback(scope,mark)
     for index=#scope.spatial,mark+1,-1 do
         local proof=scope.spatial[index]
         if spatialEdits.equal(proof.contract.edit,proof.edit)then proof.contract.edit=nil end
+        if proof.carried then
+            proof.contract.positions=proof.positions
+            proof.contract.containerOwners=proof.previousOwners
+        end
         scope.spatial[index]=nil
     end
     -- Source checks may have invoked metadata callbacks before falling back.
@@ -1367,8 +1402,8 @@ end
 
 local function proposedEdit(queue, first, last, to, context, projectionRequired)
     local needsSpatial=false
-    if #queue.queue<=spatialEdits.maxMembers and type(toolkitQueueSpatialNoMovement)=='function'
-        and type(toolkitQueueSpatialApiMatches)=='function'then
+    if #queue.queue<=spatialEdits.maxMembers and (type(spatialEdits.carriedFactory)=='function'
+        or type(toolkitQueueSpatialNoMovement)=='function'and type(toolkitQueueSpatialApiMatches)=='function')then
         for index=first,last do
             if queue.queue[index].toolkitQueueApproach==true then needsSpatial=true;break end
         end
@@ -1487,6 +1522,32 @@ local function returnCapacityCapability(action, contract, context)
     return capability, execution
 end
 
+-- The already-inspected tuple is the capability: neither a public flag nor
+-- a source label grants weight authority. Never inspect a body a second time.
+local function wringCapacityNonIncreasing(action,contract,source,context)
+    if source~="native.ISWringClothing" or type(editNativeMeta)~="function"
+        or type(contract)~="table" or not editNativeMeta(contract,nil)
+        or contract.capacityNonIncreasing~=true then return false end
+    if not editNativeMeta(Toolkit,nil) or Toolkit.ActionQueueDefinitions~=Definitions
+        or not editNativeMeta(Definitions,nil) then return false end
+    local entries=Definitions.entries
+    if type(entries)~="table" or not editNativeMeta(entries,nil) then return false end
+    local entry=entries[source]
+    if type(entry)~="table" or not editNativeMeta(entry,nil) then return false end
+    local cached=context and context.contracts[action]
+    local behavior=cached and cached[3]
+    if not cached or cached[1]~=contract or cached[2]~=source
+        or not editNativeMeta(Wring,nil)
+        or Toolkit.ActionQueueWring~=Wring or Wring.inspect~=wringInspector or Wring.matches~=wringMatcher
+        or type(behavior)~="table" or not editNativeMeta(behavior,nil)
+        or behavior.inspect~=wringInspector or behavior.matches~=wringMatcher
+        or entry.behavior~=behavior then return false end
+    if wringCapacitySourceTrusted==nil then
+        wringCapacitySourceTrusted=type(wringInspector)=="function" and Proof.closure(wringInspector,"ActionQueueWring.lua")
+            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",1510685525,"PZSurvivorToolkit",true)
+    end
+    return wringCapacitySourceTrusted==true
+end
 local function transferCapacityConflict(queue, a, b, last, check, context, comparison)
     local carts = Toolkit.ActionQueueCarts
     local function transfer(action)
@@ -1628,6 +1689,7 @@ local function transferCapacityConflict(queue, a, b, last, check, context, compa
                 for _, item in ipairs(batch.items or {}) do if not add(item) then return check.blocker end end
             end
         elseif not capacityNeutral[action.Type] and source~="toolkit.approach" and not boundedWaterDrink(action, character, source)
+            and not wringCapacityNonIncreasing(action,contract,source,context)
             and not (source=="native.ISFluidEmptyAction" and contract.edit and contract.capacityNonIncreasing==true)
             and not (source == "native.ISEatFoodAction" and contract.edit
                 and (contract.capacityNonIncreasing == true or conditionalCapacity[action]
@@ -2455,31 +2517,33 @@ local function prepareDeferredSpatial(action)
     if not ok or type(validate)~="function"or type(descriptor)~="table"or getmetatable(descriptor)~=nil or not watch()then return end
     return validate,descriptor
 end
-function spatialEdits.prepare(action,target)
-    local factory=spatialEdits.factory
+function spatialEdits.prepare(action,target,carried)
+    local factory=carried and spatialEdits.carriedFactory or spatialEdits.factory
+    local name=carried and 'prepareCarriedContainerEditLease'or 'prepareSpatialEditLease'
+    local expectedLine=carried and spatialEdits.carriedLine or spatialEdits.line
     if not spatialPrerequisites or not spatialPrerequisites()or type(factory)~='function'
-        or Toolkit.ActionQueueApproach~=spatialOwner or spatialOwner.prepareSpatialEditLease~=factory
+        or Toolkit.ActionQueueApproach~=spatialOwner or spatialOwner[name]~=factory
         or type(spatialLine)~='function'or getFirstLineOfClosure~=spatialLine
         or getFilenameOfClosure~=spatialFilename or Proof.captureBindings~=editBindingCapture
         or Proof.closure~=spatialOrigin or Proof.matches~=spatialMatches
         or getModFileReader~=spatialModReader or pcall~=spatialCall then return end
     local watch=editBindingCapture({
         {owner=_G,keys={'getFirstLineOfClosure','getFilenameOfClosure','getModFileReader','pcall','PZSurvivorToolkit'}},
-        {owner=Toolkit,keys={'ActionQueueApproach'}},{owner=spatialOwner,keys={'prepareSpatialEditLease'}},
+        {owner=Toolkit,keys={'ActionQueueApproach'}},{owner=spatialOwner,keys={name}},
         {owner=Proof,keys={'captureBindings','closure','matches'}},
     })
     if not watch or not spatialOrigin(factory,'ActionQueueApproach.lua')then return end
     local ok,line=spatialCall(spatialLine,factory)
-    if not ok or line~=spatialEdits.line or not watch()or not spatialPrerequisites()then return end
+    if not ok or line~=expectedLine or not watch()or not spatialPrerequisites()then return end
     if spatialSourcePinned==nil then
         local matched=spatialMatches('media/lua/client/PZSurvivorToolkit/ActionQueueApproach.lua',SPATIAL_SOURCE_ADLER,'PZSurvivorToolkit',true)
         if not watch()or not spatialPrerequisites()then return end
         spatialSourcePinned=matched
     end
     if not spatialSourcePinned then return end
-    local ok,check,edit=spatialCall(factory,action,target)
+    local ok,check,edit,owners=spatialCall(factory,action,target)
     if not ok or type(check)~='function'or type(edit)~='table'or getmetatable(edit)~=nil or not watch()then return end
-    return function()return watch()and spatialPrerequisites()and check()and watch()end,edit
+    return function()return watch()and spatialPrerequisites()and check()and watch()end,edit,owners
 end
 local activeCleanupBinding
 -- Query-local Lua bindings only, not an inventory/world snapshot. Native getters

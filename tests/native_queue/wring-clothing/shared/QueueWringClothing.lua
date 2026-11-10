@@ -1,5 +1,16 @@
 local P=require 'QueueEnergyPlacement'
 local F={names={'front','target','tail','cancelled'}}
+-- Native transfer can start before later P4 returns merge into its queueList.
+-- Refresh the observed existing-item membership at each real callback boundary.
+function F.returnMembers(action,rows)
+ local seen={};for _,row in ipairs(rows)do seen[row.id]=row.type end
+ for _,group in ipairs(action.queueList or {})do for _,item in ipairs(group.items or {})do
+  local id,kind=item:getID(),item:getFullType()
+  if seen[id]then assert(seen[id]==kind,'native return ID changed type')
+  else rows[#rows+1]={id=id,type=kind};seen[id]=kind end
+ end end
+ table.sort(rows,function(a,b)return a.id<b.id end);return rows
+end
 function F.nativeWetnessContract(item)
  local location=item:getBodyLocation();local nativeShoe=location=='Shoes'
  return{bodyLocation=tostring(location),bodyLocationClass=getClassSimpleName(location),
@@ -54,6 +65,7 @@ function F.snapshot(s)
    and native.nativeShoe==spec.nativeShoe and native.cap==spec.cap,'native wring body-location contract changed')
   out.items[name]={id=item:getID(),type=item:getFullType(),wetness=item:getWetness(),weight=item:getActualWeight(),
    worn=s.player:getWornItems():contains(item),counts=counts,native=native}
+  if s.ids.preparedGroups then out.items[name].wetWeight=item:getWeight();out.items[name].capacityWeight=item:getUnequippedWeight()end
  end
  return out
 end
@@ -77,7 +89,7 @@ function F.prepare(player,case,mode,placement,proof,previous)
  local state={player=player,ids=ids,source=source,bag=bag,shelf=shelf,items={}}
  for _,name in ipairs(F.names)do
   local shoes=name=='tail'or name=='target'and(case=='worn'or case=='world')
-  local owner=name=='target'and source or root
+  local owner=(name=='target'or case=='worn-bag'and name=='cancelled')and source or root
   local item=assert(owner:AddItem(shoes and'Base.Shoes_FlipFlop'or'Base.Socks_Ankle'))
   assert(instanceof(item,'Clothing'));item:setWetness(100)
   -- B42 returns ItemBodyLocation userdata. Preserve the native string comparison,
@@ -85,8 +97,10 @@ function F.prepare(player,case,mode,placement,proof,previous)
   assert(item:getBodyLocation()==(shoes and ItemBodyLocation.SHOES or ItemBodyLocation.SOCKS),'fixture body location differs')
   local spec=F.nativeWetnessContract(item)
   spec.id=item:getID();spec.type=item:getFullType();spec.initial=item:getWetness();spec.weight=item:getActualWeight()
+  if case=='worn-bag'then spec.wetWeight=item:getWeight();spec.capacityWeight=item:getUnequippedWeight()end
   state.items[name]=item;ids.items[name]=spec
  end
+ if case=='worn-bag'then ids.preparedGroups=true end
  if case=='worn'then
   local item=state.items.target;local slot=item:getBodyLocation();state.original=player:getWornItem(slot)
   if not isServer()then player:setWornItem(slot,item)end
@@ -112,7 +126,7 @@ function F.resolve(player,ids,preparingWear)
  local source,bag,shelf=sourceFor(player,ids,preparingWear);if not source or not P.atCentered(player,ids.origin)then return end
  local state={player=player,ids=ids,source=source,bag=bag,shelf=shelf,items={}}
  for _,name in ipairs(F.names)do
-  local spec=ids.items[name];local owner=name=='target'and source or player:getInventory();local item=find(owner,spec.id)
+  local spec=ids.items[name];local owner=(name=='target'or ids.case=='worn-bag'and name=='cancelled')and source or player:getInventory();local item=find(owner,spec.id)
   if not item or item:getContainer()~=owner or item:getFullType()~=spec.type or item:getWetness()<=80 then return end
   state.items[name]=item
  end
@@ -125,9 +139,9 @@ function F.wearBaseline(s)
  if s.ids.case=='worn'and s.player:getWornItem(s.items.target:getBodyLocation())~=s.items.target then return end
  local value=F.snapshot(s)
  for _,name in ipairs(F.names)do
-  local item=value.items[name];local borrowed=name=='target'and(s.ids.case=='worn-bag'or s.ids.case=='world')
+  local item=value.items[name];local borrowed=(name=='target'or s.ids.case=='worn-bag'and name=='cancelled')and(s.ids.case=='worn-bag'or s.ids.case=='world')
   if item.counts.root~=(borrowed and 0 or 1)or item.counts.actor~=(name=='target'and s.ids.case=='world'and 0 or 1)
-   or item.counts.source~=((s.ids.case=='root'or s.ids.case=='worn'or name=='target')and 1 or 0)
+   or item.counts.source~=((s.ids.case=='root'or s.ids.case=='worn'or name=='target'or borrowed)and 1 or 0)
    or item.worn~=(s.ids.case=='worn'and name=='target')or item.wetness<=80 then return end
  end
  s.wearBaseline=value;return value
@@ -141,7 +155,7 @@ function F.preparedDiagnostic(player,ids)
    slotId=slot and slot:getID()or false,slotSame=slot==bag}
  end
  for _,name in ipairs(F.names)do
-  local spec=ids.items[name];local owner=name=='target'and source or root;local item=owner and find(owner,spec.id)
+  local spec=ids.items[name];local owner=(name=='target'or ids.case=='worn-bag'and name=='cancelled')and source or root;local item=owner and find(owner,spec.id)
   local worn=player:getWornItems():getItemById(spec.id)
   local slot=item and player:getWornItem(item:getBodyLocation())
   value.items[name]={id=spec.id,present=item~=nil,type=item and item:getFullType()or false,
@@ -156,12 +170,12 @@ function F.verify(s)
  local value=F.snapshot(s)
  for _,name in ipairs(F.names)do
   local item=value.items[name];local cap=s.ids.items[name].cap
-  local restored=name=='target'and(s.ids.case=='worn-bag'or s.ids.case=='world')
+  local restored=(name=='target'or s.ids.case=='worn-bag'and name=='cancelled')and(s.ids.case=='worn-bag'or s.ids.case=='world')
   local expectedRoot=restored and 0 or 1
   local expectedActor=restored and s.ids.case=='world'and 0 or 1
   local expectedSource=(s.ids.case=='root'or s.ids.case=='worn'or restored)and 1 or 0
   if item.counts.root~=expectedRoot or item.counts.actor~=expectedActor or item.counts.source~=expectedSource or item.worn then return end
-  if name=='cancelled'then if item.wetness<=80 then return end
+  if name=='cancelled'and not(s.ids.case=='worn-bag'and s.ids.mode=='native')then if item.wetness<=80 then return end
   elseif item.wetness<cap-5 or item.wetness>cap+.01 then return end
  end
  return value
@@ -173,7 +187,7 @@ function F.dispose(s)
   if isServer()then sendClothing(s.player,item:getBodyLocation(),s.original)end
  end
  if s.bag then s.player:removeWornItem(s.bag,false);if isServer()then sendClothing(s.player,s.bag:canBeEquipped(),nil)end end
- for _,name in ipairs(F.names)do local item=s.items[name];local owner=name=='target'and s.source or root
+ for _,name in ipairs(F.names)do local item=s.items[name];local owner=(name=='target'or s.ids.case=='worn-bag'and name=='cancelled')and s.source or root
   assert(item:getContainer()==owner);owner:Remove(item);if isServer()then sendRemoveItemFromContainer(owner,item)end
  end
  if s.bag then root:Remove(s.bag);if isServer()then sendRemoveItemFromContainer(root,s.bag)end end

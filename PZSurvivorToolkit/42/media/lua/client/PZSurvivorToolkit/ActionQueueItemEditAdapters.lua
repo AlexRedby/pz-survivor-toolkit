@@ -433,12 +433,55 @@ function Adapters.worldTransferItem(item,returning,player,source,destination)
     return coldCookableState(item,player) and (item:getContainer()==source or item:getContainer()==destination)
         and coldEndpoint(source,player) and coldEndpoint(destination,player)
 end
-local function itemFacts(item)
+local function itemLocation(item)
     local id=item:getID()
     if not finite(id) or id%1~=0 then return end
     local facts={item=item,location=item:getContainer()}
     if not instanceof(facts.location,"ItemContainer") or not facts.location:contains(item)
         or facts.location:getItemById(id)~=item then return end
+    return facts
+end
+-- Pure physical facts for a pending body, not permission to fetch or execute it.
+-- Keep the native direct-member/ID proof shared with transfer facts; additionally
+-- prove every carried bag owner, rather than accepting an orphan's parent link.
+local function pendingCarriedContainer(container,player)
+    if not instanceof(player,"IsoPlayer") then return end
+    local root,seen,owners,ownerFacts=player:getInventory(),{},{},{}
+    for depth=1,32 do
+        if not instanceof(container,"ItemContainer") or seen[container] then return end
+        seen[container]=true
+        for _,name in ipairs({"getType","isExistYet","getAcceptItemFunction","getOnlyAcceptCategory","getContainingItem"}) do
+            if not method(container,name) then return end
+        end
+        local kind=container:getType()
+        if kind=="floor" or kind=="proximityInv" or kind=="twistInv_corpses" or kind=="TradeUI"
+            or not container:isExistYet() or container:getAcceptItemFunction()~=nil
+            or container:getOnlyAcceptCategory()~=nil then return end
+        if container==root then return owners,ownerFacts end
+        local owner=container:getContainingItem()
+        if not instanceof(owner,"InventoryContainer") or owner:getInventory()~=container then return end
+        local parent,id=owner:getContainer(),owner:getID()
+        local fullType=owner:getFullType()
+        if not finite(id) or id%1~=0 or type(fullType)~="string" or fullType==""
+            or not instanceof(parent,"ItemContainer") or not method(parent,"getItemWithID")
+            or parent:getItemWithID(id)~=owner then return end
+        if owners[id]~=nil then return end
+        owners[id]=fullType
+        ownerFacts[id]={item=owner,location=parent}
+        container=parent
+    end
+end
+Adapters.pendingCarriedContainer=pendingCarriedContainer
+function Adapters.pendingCarriedItemLocation(item,player)
+    if not instanceof(item,"InventoryItem") then return end
+    local facts=itemLocation(item)
+    if not facts then return end
+    local owners=pendingCarriedContainer(facts.location,player)
+    if owners then return facts,owners end
+end
+local function itemFacts(item)
+    local facts=itemLocation(item)
+    if not facts then return end
     local fluid=item:getFluidContainer()
     if fluid then
         if not instanceof(fluid,"FluidContainer") or fluid:getOwner()~=item then return end

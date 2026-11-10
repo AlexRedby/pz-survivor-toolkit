@@ -25,18 +25,19 @@ SELECTED_CRC = {'CleanUI': ('ISInventoryPaneContextMenu.lua', 2066944516),
 
 def definitions():
     checks = {case: dict(effectsVerified=True, serverAuthorityVerified=True, tailCompleted=True) for case in CASES}
-    edits = {'root': dict(effectsVerified=True, pendingEditsVerified=True)}
+    edits = {case: dict(effectsVerified=True, pendingEditsVerified=True) for case in ('root','worn-bag')}
     return {'wring-clothing': dict(status='ready', clients=1, default_mods=list(MODS),
         scenario_actions={'native-wring-clothing': dict(mods=list(MODS),
             checks={'success-queued': checks, 'server-authority': checks, 'cancel-waiting': edits,
-                    'move-independent': edits, 'move-dependent': edits},
+                    'move-independent': edits, 'move-dependent': {'root': edits['root']}},
             toolkit_only=['cancel-waiting', 'move-independent', 'move-dependent'],
-            scope='Grouped full selected pack fresh SP/menu Host controls. Native inventory context-menu producer with root, worn, worn-bag and adjacent furniture clothing; real durations, untouched callbacks, exact identities/source counts and authoritative wetness caps with bounded passive drying. Current B42 ItemBodyLocation userdata fails the native legacy string comparison even for shoes, so real socks and shoes both cap at10; prepared and final receipts prove the exact native predicate, class and location. Selected Tidy Up Meister restores borrowed items to their exact original source; worn clothing stays unequipped. Host worn and worn-bag setup uses a real own-client native wear before a strict server canonical-identity baseline; SP setup is unchanged. Independent front and tail wrings on other clothes. Queue-on root pending cancellation and independent moves; same ordinary-clothing dependency denial. Preparatory transfer/unequip execute natively; their pending groups are not edit authority. Dry base mass is observed without capacity authority. No active edits, recovery or physical input coverage.')},
+            scope='Grouped full selected pack fresh SP/menu Host controls. Native inventory context-menu producer with root, worn, worn-bag and adjacent furniture clothing; real durations, untouched callbacks, exact identities/source counts and authoritative wetness caps with bounded passive drying. Current B42 ItemBodyLocation userdata fails the native legacy string comparison even for shoes, so real socks and shoes both cap at10; prepared and final receipts prove the exact native predicate, class and location. Selected Tidy Up Meister restores borrowed items to their exact original source; worn clothing stays unequipped. Host worn and worn-bag setup uses a real own-client native wear before a strict server canonical-identity baseline; SP setup is unchanged. Independent front and tail wrings on other clothes. Queue-on root pending cancellation and independent moves; same ordinary-clothing dependency denial. Carried worn-bag uses genuine Operations.run producer groups: enabled source-owned deferred container prep/fetch/wring (disabled native fetch/wring), source-bound no-position-effect lease, real resolver with no unexpected walking children, pending full-group cancellation and fetch/body-selected whole-group move/restore, exact source->root descriptors and native/P4 return. UI Clothing.getWeight wet interpolation is observed separately from native capacity. Source-bound nonincrease traversal preserves the current native getUnequippedWeight bound and external/native admission, with no drying credit. Other preparatory/world/unequip groups retain their historical execution-only scope. Missing/full storage recovery and magazine moves are outside this bank. No active edits, recovery or physical input coverage.')},
         cases=[dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'], modes=['native', 'toolkit'], languages=['EN']) for case in CASES])}
 
 
 def validate(selection):
-    if (selection.get('cases') != list(CASES) or selection.get('kind') not in ('sp', 'mp')
+    chosen = selection.get('cases')
+    if (type(chosen) is not list or not chosen or chosen != [case for case in CASES if case in chosen] or selection.get('kind') not in ('sp', 'mp')
         or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
         or type(selection.get('clients')) is not int or selection['clients'] != 1 or selection.get('mods') != MODS
         or selection.get('options', {}).get('world_template')
@@ -91,7 +92,7 @@ def _raw(text, marker):
 
 
 def complete(selection, role, text):
-    return role == 'client1' and _raw(text, 'COMPLETE') == [dict(cases=list(CASES))]
+    return role == 'client1' and _raw(text, 'COMPLETE') == [dict(cases=selection['cases'])]
 
 
 def verifier_sources(project, selection):

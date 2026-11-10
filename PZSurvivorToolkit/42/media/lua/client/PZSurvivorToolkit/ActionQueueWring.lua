@@ -1,12 +1,25 @@
 require 'TimedActions/ISWringClothing'
 require 'PZSurvivorToolkit/ActionQueueDefinitions'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
+local ItemAdapters=require 'PZSurvivorToolkit/ActionQueueItemEditAdapters'
 local Toolkit=PZSurvivorToolkit
 local Wring={}
 Toolkit.ActionQueueWring=Wring
 local class,base,object=ISWringClothing,ISBaseTimedAction,ISBaseObject
 local actualMeta,kind=toolkitLuaMetatableMatches,type
 local classChain=Proof.nativeActionClassChain
+local carriedLocation=ItemAdapters and ItemAdapters.pendingCarriedItemLocation
+local carriedSourceTrusted
+local function pendingCarriedLocation(item,actor)
+ if type(ItemAdapters)~='table'or not actualMeta(ItemAdapters,nil)
+  or PZSurvivorToolkit.ActionQueueItemEditAdapters~=ItemAdapters
+  or type(carriedLocation)~='function'or ItemAdapters.pendingCarriedItemLocation~=carriedLocation
+  or not Proof.closure(carriedLocation,'ActionQueueItemEditAdapters.lua')then return end
+ if carriedSourceTrusted==nil then
+  carriedSourceTrusted=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueItemEditAdapters.lua',3026232832,'PZSurvivorToolkit',true)
+ end
+ if carriedSourceTrusted then return carriedLocation(item,actor)end
+end
 local function lookupShape(constructing)
  return type(actualMeta)=='function'and actualMeta(Proof,nil)
   and type(classChain)=='function'and Proof.nativeActionClassChain==classChain
@@ -75,12 +88,29 @@ inspect=function(action)
   or getClassSimpleName(item)~='Clothing'then return end
  local root=actor:getInventory()
  local id,kind=item:getID(),item:getFullType()
- if not instanceof(root,'ItemContainer')or item:getContainer()~=root or root:getItemWithID(id)~=item
-  or not finite(id)or id%1~=0 or type(kind)~='string'or kind==''then return end
+ if not instanceof(root,'ItemContainer')or not finite(id)or id%1~=0 or type(kind)~='string'or kind==''then return end
+ local location,owners=item:getContainer(),nil
+ if location==root then
+  -- Ordinary root items retain their direct cheap check, without bag metadata.
+  if root:getItemWithID(id)~=item then return end
+ elseif action.action then return
+ else
+  local facts
+  facts,owners=pendingCarriedLocation(item,actor)
+  if not facts then return end
+  location=facts.location
+ end
  -- Actor identity validates ownership. Native completion changes only this
  -- garment: animation/hand models and metabolic target are execution state,
  -- not a shared actor result consumed by another pending wring contract.
- local result={items={[id]=true},itemTypes={[kind]=true},targets={},interrupt='finish-step'}
+ local result={items={[id]=true},itemTypes={[kind]=true},targets={},interrupt='finish-step',capacityNonIncreasing=true}
+ if owners then
+  -- Newly admitted carried bodies need the complete fetch/route projection;
+  -- an unknown preparation must not fall back to the old root-only policy.
+  result.moveRequiresProjection=true
+  result.containerOwners={}
+  for ownerID,ownerType in pairs(owners)do result.containerOwners[ownerID]=true;result.itemTypes[ownerType]=true end
+ end
  if action.action then
   -- An in-flight action has a known footprint, not a forecast or edit right.
   -- Do not read current wetness while the native authority may be changing it.
@@ -91,9 +121,11 @@ inspect=function(action)
  if not finite(wetness)or wetness<0 or wetness>100 then return end
  local cap=item:getBodyLocation()=='Shoes'and 60 or 10
  result.cancelWaiting,result.cancelOperation=true,true
- -- Wet clothing weight can change. Never grant capacity from forecast drying.
+ -- Native complete only caps wetness. Its setter and item sync do not change
+ -- actualWeight/contents used by native capacity. Retain the original transfer
+ -- weight bound anyway: this property grants no future drying-space credit.
  result.edit={version=1,complete=true,capacity='external',resources={{domain='item',key=id,
-  facts={item=item,location=root,wetness=wetness},
+  facts={item=item,location=location,wetness=wetness},
   requires={{field='location',equal=root},{field='wetness',above=10}},
   effects={{field='wetness',cap=cap}},bounds={wetness={min=0,max=100}}}}}
  return result
