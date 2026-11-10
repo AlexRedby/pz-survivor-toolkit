@@ -1,7 +1,11 @@
 -- Offline engine boundary for the source-backed composition test. All Toolkit
 -- policy, receipt, observer and begin/stop implementations are loaded unchanged.
 return function(client)
-    local env=setmetatable({}, {__index=_G});env._G=env
+    -- Native Kahlua globals are a plain table. A fallback __index would make
+    -- the real SourceProof binding watcher reject this modeled environment.
+    local env={}
+    for name,value in pairs(_G)do env[name]=value end
+    env._G=env
     local function text(path)
         if NativeReadText then return NativeReadText(path):gsub('\r','') end
         local file=assert(io.open(path),'missing source: '..path)

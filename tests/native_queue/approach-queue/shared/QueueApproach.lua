@@ -31,7 +31,7 @@ end
 function F.plan(player,case)
  local config=require 'QueueTestSelection'
  assert(config.disposable==true and not isClient(),'Approach preparation requires disposable authority')
- assert(case=='bush'or case=='manual-grass','unexpected approach layout case')
+ assert(case=='bush'or case=='manual-grass'or case=='direct-bush','unexpected approach layout case')
  local start=P.choose(player);local cell=getCell();local origin
  local function candidate(dx,dy)
   local target=P.target({x=start.x+dx,y=start.y+dy,z=start.z})
@@ -63,17 +63,17 @@ local function corridor(origin)
  end end
 end
 function F.prepare(player,case,mode,target,proof)
- assert(case=='bush' or case=='manual-grass')
+ assert(case=='bush'or case=='manual-grass'or case=='direct-bush')
  assert(require('QueueTestSelection').disposable==true and not isClient(),'Approach preparation requires disposable authority')
  local origin=P.target(target)
  assert(type(proof)=='table'and proof.mode==(isServer()and'replica'or'local')and proof.centered==true
   and proof.teleports==(isServer()and 0 or 1)and proof.centers==(isServer()and 0 or 1),'approach centered authority proof missing')
  local observed=P.target(proof.target)
  assert(observed.x==origin.x and observed.y==origin.y and observed.z==origin.z and P.atCentered(player,origin),'approach authority left final centered placement')
- -- Validate both cases before the first scene mutation. Native flags stay untouched.
+ -- Validate all cases before the first scene mutation. Native flags stay untouched.
  local bush=stockSprite('f_bushes_1_0',IsoFlagType.canBeCut)
  local grass=stockSprite('e_newgrass_1_0',IsoFlagType.canBeRemoved)
- local s=case=='bush'and bush or grass
+ local s=case~='manual-grass'and bush or grass
  assert(footprint(origin),'Approach footprint changed before preparation')
  print('[QUEUE_APPROACH] AUTHORITY_PLACEMENT '..JSON.encode({case=case,actor='client1',target=P.target(origin),proof=proof}))
  corridor(origin)

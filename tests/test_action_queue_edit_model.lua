@@ -387,3 +387,26 @@ do
     assert(checked==2048)
     print('Depletion oracle passed '..checked..' projected edit sequences.')
 end
+
+-- A native consumer can accept an item in any proven container while still
+-- rejecting a previous consumption. Inequality is scalar identity, never Lua __eq.
+do
+ local bag,root,key={},{},{}
+ local function consume(value,predicate)
+  return entry({}, {resource('item',key,{location=value},{{field='location',notEqual=predicate}},{{field='location',set=false}})})
+ end
+ status({consume(bag,false)},'allowed')
+ status({consume(false,false)},'denied','edit_required_state')
+ status({consume(bag,false),consume(bag,false)},'denied','edit_required_state')
+ local transfer=entry({}, {resource('item',key,{location=bag},{{field='location',equal=bag}},{{field='location',set=root}})})
+ status({transfer,consume(bag,false)},'allowed')
+ status({entry({}, {resource('item',key,{location=opaque},{{field='location',notEqual=another}})})},'allowed')
+ status({entry({}, {resource('item',key,{location=opaque},{{field='location',notEqual=opaque}})})},'denied','edit_required_state')
+ assert(hiddenCalls==0,'inequality must not invoke opaque metamethods')
+ status({entry({}, {resource('item',key,{},{{field='location',notEqual=false}})})},'unhandled','edit_unknown')
+ for _,extra in ipairs({{equal=bag},{oneOf={bag}},{min=0}})do
+  local predicate={field='location',notEqual=false}
+  for field,value in pairs(extra)do predicate[field]=value end
+  status({entry({}, {resource('item',key,{location=bag},{predicate})})},'unhandled','edit_unknown')
+ end
+end

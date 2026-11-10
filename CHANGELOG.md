@@ -46,13 +46,36 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.350
+
+- **Internal:** Keep solid-fuel and legacy alcohol reads inside the conditions that use them. Preserve live item classification, unknown metadata and script previews; this local cleanup does not claim a measured gameplay speedup.
+- **Fixed:** Recognize Toolkit's own guarded tool returns when inserting native fire-lighting retries and retiring spent or broken supplies. Preserve retry-before-return order, the original operation, exact item identities and the independent queue tail; unknown callback or binding changes remain unsupported.
+
 ### 0.1.349
 
-- **Fixed:** Recognize Toolkit's own guarded tool returns when inserting native fire-lighting retries and retiring spent or broken supplies. Preserve retry-before-return order, the original operation, exact item identities and the independent queue tail; unknown callback or binding changes remain unsupported.
+- **Fixed:** World TV/radio media and battery actions retain the selected device through native constructors instead of resolving the first device on its square. Queued target loss before native encoding is rejected, and missing battery inputs cannot create free charge. Native object-index reuse after packet encoding remains unqualified.
+- **Changed:** Pending VHS insertion/ejection, TV playback and world-radio batteries use the common device/item dependency model for queue edits. Native item costs and external output-capacity checks remain authoritative.
+- **Fixed:** Host battery actions wait for their correlated native completion and replicated item/device effects before continuing independent queued work.
+
+### 0.1.348
+
+- **Internal:** Remove the rejected eager active-reading projection and its diagnostic-only physical-validation branches. Preserve the original native edit checks, exact returns, paid reading progress and the qualified full observer. Prepared transfer-source descriptions remain in use; no persistent action graph or new edit permission is introduced.
+
+### 0.1.347
+
+- **Internal:** Prepare registered transfer-source descriptions once when their registry changes. Each decision still captures fresh source bindings, exact action/queue state and native facts; Host alias callbacks remain query-local. This removes repeated registry regrouping without caching edit permissions or changing transfer behavior.
+
+### 0.1.346
+
+- **Internal:** Recognize independent adjacent device promotion and reader demotion through a shared route over the unchanged native dependency checks. Keep original returns, paid progress and edit permissions. The more expensive projected candidate is available only through an explicit read-only diagnostic; ordinary edits do not reconstruct its physical return facts. Initialize its Settlement dependency correctly when compatibility modules load Policy first. No capacity exception or whole-group return reconstruction is enabled.
 
 ### 0.1.345
 
-- **Internal:** Keep solid-fuel and legacy alcohol reads inside the conditions that use them. Preserve live item classification, unknown metadata and script previews; this local cleanup does not claim a measured gameplay speedup.
+- **Internal:** Let opt-in active-reading plans reuse the existing source-bound native no-movement proof for exact adjacent device operations. Preserve the original borrowed-item return, reading checkpoint and explicit deferred fallback; ordinary edit authority and native capacity/admission remain unchanged. Reject masked intent metatables before reading their fields.
+
+### 0.1.344
+
+- **Fixed:** Reviewed deferred adjacent approaches bind to their exact current operation and recheck the loaded target and native reach before dependent work. Native walking must actually succeed; stalled or vanished walking steps retain earned cleanup and independent queued tasks. With the queue enabled, late completion callbacks cannot advance a replacement queue; disabled mode keeps native completion behavior. This execution correction preserves the current editor permissions.
 
 ### 0.1.343
 
@@ -1601,9 +1624,29 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
-### 0.1.94
+### 0.1.95
 
 - **Fixed:** Preserve native ignition completion when server consumption or breakage has already removed the input's container on a Host client. Correct only reviewed campfire/BBQ literature and BBQ/fireplace Kindle compiler inputs; keep native consumption, completion, queue progression and unknown-source behavior.
+
+### 0.1.94
+
+- **Changed:** Updated the verified queue-policy source binding for the common device/item edit contracts; native action execution and wire protocol remain unchanged.
+
+### 0.1.93
+
+- **Internal:** Refresh the exact Policy compiler source binding after removing the rejected eager projection. Native transformations and transfer admission remain unchanged.
+
+### 0.1.92
+
+- **Internal:** Refresh the source-trust binding for the shared active-reading resource decision. Native compiler transformations and transfer admission rules remain unchanged.
+
+### 0.1.91
+
+- **Internal:** Refresh the exact queue Policy compiler source pin for the opt-in adjacent-device reading projection.
+
+### 0.1.90
+
+- **Internal:** Refresh the queue binding compiler's exact Policy source pin for the shared deferred-approach execution correction; retain original bytecode serialization and unknown-source fallback.
 
 ### 0.1.89
 

@@ -2,6 +2,7 @@
 -- Validate ownership on both client and server before the native device action runs.
 if not getActivatedMods():contains("TVRadio_ReInvented") then return end
 require "TimedActions/ISDeviceMediaAction"
+require "PZSurvivorToolkit/DeviceActionTarget"
 
 local class = ISDeviceMediaAction
 local isValid = class.isValid

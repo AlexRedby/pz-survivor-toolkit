@@ -6,6 +6,7 @@ local providers, byId, providerRevision = {}, {}, 0
 local activeEditCleanupBinding
 local transferListenerMethods
 local executionProof = require "PZSurvivorToolkit/SourceProof"
+local retainedBindingSource={capture=executionProof and executionProof.captureBindings,call=pcall}
 -- Keep the new dependency inside the existing source-owned wrapper boundary.
 -- Unknown factories must never receive private callbacks or attempt records.
 local function transferOutcomes(module)
@@ -512,6 +513,58 @@ function Settlement.editLedger(queue, current)
     -- Keep private records out of the public multiple-return boundary.
     return (editLedger(queue, current))
 end
+
+-- Prepare only the source-owned listener context for an existing retained
+-- transfer. This reads bounded private metadata, never endpoints or native
+-- effects; the returned validator still needs fresh native physical facts.
+-- The caller supplies its captured factory rather than discovering a replacement.
+function Settlement.prepareRetainedTransferBinding(queue,current,action,factory)
+    local adapters=Toolkit.ActionQueueItemEditAdapters
+    local capture=retainedBindingSource.capture
+    if Settlement.prepareRetainedTransferBinding~=retainedBindingSource.prepare
+        or Toolkit.ActionQueueSettlement~=Settlement
+        or type(adapters)~="table"or getmetatable(adapters)~=nil
+        or type(factory)~="function"or adapters.deferredTransferBinding~=factory
+        or not executionProof or executionProof.closure~=editLedgerOrigin
+        or type(capture)~="function"or executionProof.captureBindings~=capture
+        or type(action)~="table"or action==current or activeEditCleanupBinding~=nil then return end
+    local watch=capture({
+        {owner=_G,keys={"PZSurvivorToolkit","ISTimedActionQueue","pcall"}},
+        {owner=Toolkit,keys={"ActionQueueSettlement","ActionQueueItemEditAdapters"}},
+        {owner=adapters,keys={"deferredTransferBinding"}},
+        {owner=Settlement,keys={"prepareRetainedTransferBinding","transferListenerBinding"}},
+        {owner=executionProof,keys={"closure","captureBindings"}},
+    })
+    if not watch or not editLedgerOrigin(factory,"ActionQueueItemEditAdapters.lua")or not watch()then return end
+    local revision=providerRevision
+    local ledger,record=editLedger(queue,current,{remaining=128})
+    if ledger.status~="observed"or ledger.providersPresent or providerRevision~=revision
+        or not watch()or not rawget(current,"action")
+        or #queue.queue<2 or #queue.queue>32 or getmetatable(action)~=ISInventoryTransferAction
+        or rawget(action,"character")~=record.character
+        or rawget(action,"toolkitQueueOperation")~=record.token
+        or rawget(action,"action")~=nil or rawget(action,"started")then return end
+    local found=false
+    for index=2,#queue.queue do
+        local member=queue.queue[index]
+        if rawget(member,"toolkitQueueOperation")~=record.token then break end
+        if member==action then if found then return end;found=true end
+    end
+    if not found then return end
+    local previousContext=activeEditCleanupBinding
+    activeEditCleanupBinding={record=record,queue=queue,current=current,action=action}
+    local ok,validate,alias,sourceWatch=retainedBindingSource.call(factory,action,current)
+    activeEditCleanupBinding=previousContext
+    if not ok or not watch()or providerRevision~=revision or #providers>0
+        or type(validate)~="function"or type(sourceWatch)~="function"then return end
+    -- Keep this API/owner and the private provider revision fresh through the
+    -- caller's final raw boundary; the factory's watch covers its own sources.
+    return validate,alias,function()
+        return watch()and providerRevision==revision and #providers==0 and sourceWatch()
+    end
+end
+
+retainedBindingSource.prepare=Settlement.prepareRetainedTransferBinding
 
 -- Families retain their own identity/effect proofs. Registration grants no edit rights.
 function Settlement.register(id, provider)

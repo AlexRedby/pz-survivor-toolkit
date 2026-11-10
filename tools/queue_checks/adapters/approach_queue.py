@@ -1,4 +1,4 @@
-"""Exact stock-cursor routes, authoritative vegetation effects and independent tail."""
+"""Stock cursor/direct routes, authoritative vegetation effects and independent tail."""
 import json
 from pathlib import Path
 import re
@@ -7,10 +7,12 @@ import shutil
 from .. import placement, report
 from .tv_controls import MODS, _duration, _number
 
-CASES = ('bush', 'manual-grass')
+CASES = ('bush', 'manual-grass', 'direct-bush')
 PREFIX = '[QUEUE_APPROACH] '
 NATIVE_SPRITES = {'bush': ('f_bushes_1_0', 'canBeCut'),
-                  'manual-grass': ('e_newgrass_1_0', 'canBeRemoved')}
+                  'manual-grass': ('e_newgrass_1_0', 'canBeRemoved'),
+                  'direct-bush': ('f_bushes_1_0', 'canBeCut')}
+DIRECT_PRODUCER = 'native luautils.walkAdj -> ISWorldObjectContextMenu.doRemovePlant'
 
 
 def definitions():
@@ -19,7 +21,7 @@ def definitions():
               for name in ('success-queued', 'server-authority')}
     return {'approach-queue': {'status': 'ready', 'clients': 1, 'default_mods': list(MODS),
         'scenario_actions': {'native-cursor-approach': {'mods': list(MODS), 'checks': checks,
-            'scope': 'Two ordered full-current-selected-pack fresh macOS SP/menu-Host cases: stock ISRemovePlantCursor.tryBuild for bush and manual grass. Second initially adjacent target is submitted while a first distant native walk is active. Toolkit preserves first work and resolves both required walks from their future positions; queue-off native cursor clear cancels the first and removes only the second. Exact marked stock object identities, authoritative removal order and stock loot conservation, naturally completed independent root reader in every mode; native Host additionally requires distinct exact started/completed removal and reader receipts at the immediate final queue-drain boundary. Unchanged native durations/lifecycle. Programmatic cursor entrypoint; no physical input or wall-vine/container coverage.'}},
+            'scope': 'Three ordered full-current-selected-pack fresh macOS SP/menu-Host cases: stock ISRemovePlantCursor.tryBuild for bush and manual grass, then direct native walkAdj and doRemovePlant for bush. Second initially adjacent target is submitted while a first distant native walk is active. Toolkit preserves first work and resolves both required walks from their future positions; queue-off native clear cancels the first and removes only the second. Exact marked stock object identities, authoritative removal order and stock loot conservation, naturally completed independent root reader in every mode; native Host additionally requires distinct exact started/completed removal and reader receipts, final pages and immediate native idle. Direct Toolkit execution requires its original walking, arrival and accepted-no-movement phase receipts. Unchanged native durations/lifecycle. Programmatic cursor and direct native entrypoints; no physical input or wall-vine/container coverage.'}},
         'cases': [dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'],
                        modes=['native', 'toolkit'], languages=['EN']) for case in CASES]}}
 
@@ -30,7 +32,7 @@ def validate(selection):
             or type(selection.get('clients')) is not int or selection['clients'] != 1
             or selection.get('mods') != MODS or selection.get('options', {}).get('world_template')
             or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
-        raise ValueError('Approach requires both ordered cases, current full selected EN pack, fresh SP/menu Host and one client')
+        raise ValueError('Approach requires all three ordered cases, current full selected EN pack, fresh SP/menu Host and one client')
 
 
 def sources(project, selection):
@@ -114,7 +116,7 @@ def _placements(selection, client, authority, rows):
     if selection['kind'] == 'mp' and (_records(client, 'LAYOUT') or _records(client, 'AUTHORITY_PLACEMENT')
             or _records(authority, 'CLIENT_PLACEMENT') or _records(authority, 'ADMITTED')):
         raise ValueError('Approach placement published by wrong process')
-    witnesses = [record for marker in ('NATIVE_STATE', 'CLIENT_IDLE', 'SERVER_SNAPSHOT')
+    witnesses = [record for marker in ('NATIVE_STATE', 'SPATIAL_OUTCOME', 'CLIENT_IDLE', 'SERVER_SNAPSHOT')
                  for record in _records(client, marker)]
     for i, case in enumerate(CASES):
         dp, layout = layouts[i]; lp, local_row = local[i]; rp, remote_row = remote[i]
@@ -162,6 +164,44 @@ def _items(values):
     return (isinstance(values, list) and all(isinstance(v, dict) and set(v) == {'id', 'type'}
             and type(v['id']) is int and isinstance(v['type'], str) and v['type'] for v in values)
             and [v['id'] for v in values] == sorted({v['id'] for v in values}))
+
+
+def _spatial_outcomes(row, spec, enabled):
+    values = row.get('spatialOutcomes')
+    if not isinstance(values, list):
+        return ['Missing transparent native spatial outcomes']
+    if not enabled:
+        return ['Native control acquired qualified spatial outcomes'] if values else []
+    commands = {v.get('name'): v for v in row.get('commands', [])}
+    tokens = {commands.get(name, {}).get('token'): name for name in ('first', 'second')}
+    errors = []
+    previous = None
+    for value in values:
+        if not isinstance(value, dict):
+            errors.append('Malformed spatial outcome'); continue
+        name = tokens.get(value.get('token'))
+        outcome = value.get('result')
+        target = spec['targets'].get(name)
+        if (set(value) != {'case', 'result', 'type', 'token', 'observedAt', 'position', 'target'}
+                or value.get('case') != spec['case'] or target is None or type(value.get('token')) is not int
+                or outcome not in ('walking', 'native-arrival', 'native-no-movement')
+                or value.get('type') != ('ISWalkToTimedAction' if outcome == 'native-arrival' else 'ISQueueActionsAction')
+                or not _number(value.get('observedAt')) or previous is not None and value['observedAt'] < previous
+                or not _near(value.get('target'), target)
+                or outcome != 'walking' and not _near(value.get('position'), target)
+                or outcome != 'native-arrival' and value.get('target') != {k: target[k] for k in ('x', 'y', 'z')}):
+            errors.append('Unproven or unsuccessful native spatial outcome')
+        previous = value.get('observedAt') if _number(value.get('observedAt')) else previous
+    if spec['case'] == 'direct-bush':
+        expected = [(name, result) for name in ('first', 'second')
+                    for result in ('walking', 'native-arrival', 'native-no-movement')]
+        if [(tokens.get(v.get('token')), v.get('result')) for v in values if isinstance(v, dict)] != expected:
+            errors.append('Direct native spatial execution lacks its exact two movement/arrival/no-movement episodes')
+        elif (not _near(values[0].get('position'), spec['origin'])
+              or not _near(values[3].get('position'), spec['targets']['first'])
+              or values[3].get('observedAt', 0) < row.get('secondIssue', {}).get('issuedAt', float('inf'))):
+            errors.append('Direct spatial execution did not resolve from the actual future position')
+    return errors
 
 
 def _snapshot(value, spec, final):
@@ -214,7 +254,7 @@ def _conservation(before, after, spec, paid_names=None):
         ground_ids.update(new)
         extra = [v for k, v in new.items() if k not in old]
         paid = name in paid_names
-        if spec['case'] == 'bush' and paid:
+        if spec['case'] in ('bush', 'direct-bush') and paid:
             if extra.count('Base.Twigs') != 1 or extra.count('Base.TreeBranch2') not in (0, 1) or len(extra) != 1 + extra.count('Base.TreeBranch2'):
                 return False
         elif extra:
@@ -229,7 +269,7 @@ def _native_host_control(row, spec, native_states, idle, authority_idle):
     second, tail = commands.get('second', {}), commands.get('tail', {})
     expected_states = []
     pairs = {}
-    for name, command, kind in (('second', second, 'ISRemoveBush' if spec['case'] == 'bush' else 'ISRemoveGrass'),
+    for name, command, kind in (('second', second, 'ISRemoveBush' if spec['case'] in ('bush', 'direct-bush') else 'ISRemoveGrass'),
                                 ('tail', tail, 'ISReadABook')):
         states = command.get('nativeStates', [])
         if (not isinstance(states, list) or len(states) != 2
@@ -315,6 +355,7 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, nat
     except (KeyError, TypeError, ValueError):
         return ['Missing exact authoritative approach identities']
     errors = []; enabled = selection['mode'] == 'toolkit'
+    errors.extend(_spatial_outcomes(row, spec, enabled))
     native_host = selection['kind'] == 'mp' and not enabled
     if (row.get('status') != 'passed' or row.get('queueIdle') is not True or row.get('lifecycleUnchanged') is not True
             or not _number(row.get('settleMilliseconds')) or row['settleMilliseconds'] < 1000):
@@ -346,7 +387,7 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, nat
             or not _number(issue.get('firstStartedAt')) or not _number(issue.get('issuedAt'))
             or issue['firstStartedAt'] > issue['issuedAt'] or issue.get('firstRetainedAfterIssue') is not enabled
             or issue.get('firstJavaRetainedAfterIssue') is not enabled):
-        errors.append('Second cursor did not preserve/cancel the active first native walk as required')
+        errors.append('Second entrypoint did not preserve/cancel the active first native walk as required')
     expected = ['first', 'second', 'tail'] if enabled else ['second', 'tail']
     if row.get('order') != expected:
         errors.append('Native removals/tail started in the wrong order')
@@ -356,11 +397,11 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, nat
     tokens = []
     for command in commands:
         name = command.get('name'); tail = name == 'tail'; did_start = name in expected
-        if (command.get('type') != ('ISReadABook' if tail else 'ISRemoveBush' if case == 'bush' else 'ISRemoveGrass')
-                or command.get('producer') != ('native ISReadABook constructor' if tail else 'native ISRemovePlantCursor.tryBuild')
+        if (command.get('type') != ('ISReadABook' if tail else 'ISRemoveBush' if case in ('bush', 'direct-bush') else 'ISRemoveGrass')
+                or command.get('producer') != ('native ISReadABook constructor' if tail else DIRECT_PRODUCER if case == 'direct-bush' else 'native ISRemovePlantCursor.tryBuild')
                 or command.get('started') is not did_start or command.get('progress') is not did_start
                 or not _number(command.get('duration')) or command['duration'] <= 1
-                or not tail and command['duration'] != (100 if case == 'bush' else 50)
+                or not tail and command['duration'] != (100 if case in ('bush', 'direct-bush') else 50)
                 or command.get('itemId') != (spec['book']['id'] if tail else False)
                 or command.get('target') != (False if tail else spec['targets'].get(name))
                 or command.get('cancelled') is not (not enabled and name == 'first')):
@@ -374,7 +415,7 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, nat
                 errors.append('Missing operation token identity')
             tokens.append(command.get('token'))
     if enabled and len(set(tokens)) != 3:
-        errors.append('Distinct cursor operations/independent reader share tokens')
+        errors.append('Distinct native operations/independent reader share tokens')
     walks = row.get('walks', [])
     if any(w.get('type') != 'ISWalkToTimedAction' or w.get('duration') != -1
            or not isinstance(w.get('destination'), dict) or not _number(w.get('admittedAt')) for w in walks):
@@ -395,6 +436,17 @@ def check_case(row, case, selection, prepared, authority_baseline, verified, nat
                 errors.append('Native routes were not resolved at each operation head from the future position')
     elif len(active) != 1 or active[0].get('cancelled') is not True:
         errors.append('Native control did not cancel exactly its first active walk')
+    if case == 'direct-bush':
+        if enabled and len(walks) != 2:
+            errors.append('Deferred direct inner phases added redundant native walks')
+        if not enabled:
+            unstarted = [w for w in walks if w.get('started') is False]
+            if (len(walks) != 2 or len(unstarted) != 1
+                    or unstarted[0].get('cancelled') is not True or unstarted[0].get('progress') is not False
+                    or any(k in unstarted[0] for k in ('startedAt', 'endedAt', 'startPosition', 'endPosition'))
+                    or not _near(unstarted[0].get('destination'), spec['targets']['first'])
+                    or unstarted[0].get('admittedAt', float('inf')) > issue.get('issuedAt', 0)):
+                errors.append('Native direct control lacks its exact cancelled unstarted redundant inner walk')
     if native_host:
         errors.extend(_native_host_control(row, spec, native_states, idle, authority_idle))
     return errors
@@ -410,12 +462,15 @@ def verify(root, selection, catalog):
         completed = [r for r in events if r.get('event') == 'complete']
         if (len(setups) != 1 or setups[0].get('cases') != list(CASES) or setups[0].get('nativeDurations') is not True
                 or setups[0].get('queueEnabled') is not (selection['mode'] == 'toolkit')
-                or len(completed) != 1 or completed[0].get('cases') != list(CASES) or completed[0].get('performed') != 2
+                or len(completed) != 1 or completed[0].get('cases') != list(CASES) or completed[0].get('performed') != len(CASES)
                 or completed[0].get('failed') != 0 or completed[0].get('skipped') != 0):
             issues.append('Missing exact approach setup/completion gate')
         prepared, baseline, verified = (_raw(authority, marker) for marker in ('PREPARED', 'BASELINE', 'VERIFIED'))
         native_states, idle, authority_idle = _raw(text, 'NATIVE_STATE'), _raw(text, 'CLIENT_IDLE'), _raw(authority, 'SNAPSHOT')
         server_idle = _raw(text, 'SERVER_SNAPSHOT')
+        spatial = _raw(text, 'SPATIAL_OUTCOME')
+        if any(value.get('case') not in CASES for value in spatial):
+            issues.append('Unknown-case native spatial outcome')
         native_host = selection['kind'] == 'mp' and selection['mode'] == 'native'
         if native_host and any(r.get('case') not in CASES for r in native_states):
             issues.append('Unknown-case native Host receipt')
@@ -427,6 +482,8 @@ def verify(root, selection, catalog):
         _placements(selection, text, authority, rows)
         for i, case in enumerate(CASES):
             row = rows[i] if i < len(rows) else {}
+            if row.get('spatialOutcomes') != [value for value in spatial if value.get('case') == case]:
+                issues.append(case + ': transparent raw spatial outcomes differ from case evidence')
             errors = check_case(row, case, selection, prepared[i] if i < len(prepared) else None,
                                 baseline[i] if i < len(baseline) else None, verified[i] if i < len(verified) else None,
                                 [r for r in native_states if r.get('case') == case],
@@ -440,5 +497,5 @@ def verify(root, selection, catalog):
     except (OSError, ValueError, KeyError, TypeError, AttributeError, IndexError) as error:
         issues.append('Approach verifier ' + type(error).__name__ + ': ' + str(error))
     return dict(issues=issues, outcomes=outcomes, evidence={'limits': [
-        'Programmatic stock cursor entrypoints; no physical keyboard/mouse or rendering claim.',
-        'Fresh one-client current selected-pack macOS SP/menu Host; bush/manual grass corridor only.']})
+        'Programmatic stock cursor/direct native entrypoints; no physical keyboard/mouse or rendering claim.',
+        'Fresh one-client current selected-pack macOS SP/menu Host; bush/manual grass/direct-bush corridor only.']})

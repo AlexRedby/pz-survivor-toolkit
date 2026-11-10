@@ -2,6 +2,7 @@ assert(NativeActionRoot,'spatial edit policy requires --game or --native-action-
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.native('shared/RadioCom/ISRadioAction.lua')
 f.native('client/TimedActions/WalkToTimedAction.lua')
+f.native('shared/TimedActions/ISEquipWeaponAction.lua')
 local function sourceText(path)
     if NativeReadText then return NativeReadText(path)end
     local file=assert(io.open(path));local text=file:read('*a');file:close();return text
@@ -32,7 +33,8 @@ end
 isClient,isServer=function()return false end,function()return false end
 local previousRequire=require;local modules={}
 require=function(name)
-    if name=='PZSurvivorToolkit/ActionQueueEditModel'or name=='PZSurvivorToolkit/ActionQueueEditAdapters'then
+    if name=='PZSurvivorToolkit/ActionQueueEditModel'or name=='PZSurvivorToolkit/ActionQueueEditAdapters'
+        or name=='PZSurvivorToolkit/ActionQueueEditTransition'then
         if not modules[name]then modules[name]=f.project(name:match('/([^/]+)$'))end
         return modules[name]
     end
@@ -47,6 +49,7 @@ assert(loadstring(assert(utilities:match('(function luautils.walkAdj%(.-\nend)')
 local actor=f.player
 actor.class='IsoPlayer';actor.isLocalPlayer=function()return true end
 actor.isDraggingCorpse=function()return false end
+actor.isEquipped=function()return false end
 actor.x,actor.y=.5,.5
 local geometryCalls=0
 local function geometry(value)geometryCalls=geometryCalls+1;return value end
@@ -93,9 +96,10 @@ local function spatialNoMovement(player,destination,excluded,targetObject)
     elseif destination.collideN and player.y<destination.y then
         corrected=squares[coordinate(destination.x,destination.y+1,destination.z)]
     end
-    return loaded(corrected)and math.abs(corrected.x+.5-player.x)<=1.6
+    local near=loaded(corrected)and math.abs(corrected.x+.5-player.x)<=1.6
         and math.abs(corrected.y+.5-player.y)<=1.6 and player.square.z==corrected.z
         and player.square.reachable and corrected.reachable
+    return near
 end
 local function spatialApiMatches(callback)return rawequal(callback,spatialNoMovement)end
 toolkitQueueSpatialApiMatches,toolkitQueueSpatialNoMovement=spatialApiMatches,spatialNoMovement
@@ -105,7 +109,9 @@ getClassSimpleName=function(value)
 end
 local approach=f.project('ActionQueueApproach');assert(approach.install())
 local policy=f.project('ActionQueuePolicy')
+assert(policy.observeActiveResourceCandidate==nil,'rejected eager active-resource API must remain absent')
 f.project('ActionQueueLabels');local Queue=f.project('ActionQueue')
+local settlement=assert(PZSurvivorToolkit.ActionQueueSettlement)
 local effects,routes=0,0
 AdjacentFreeTileFinder={Find=function()routes=routes+1;error('edit inspection executed native route selection')end}
 local function device(kind,location)
@@ -470,6 +476,261 @@ for _,entrypoint in ipairs({'previewMove','evaluateMove','moveReason'})do
         local ordinary=assert(policy.inspect(preparation),'owned preparation lost its ordinary inspection contract')
         assert(ordinary.edit==nil,'provisional preparation edit escaped into ordinary inspection')
     end
+end
+f.project('ActionQueueReading')
+-- The common active route retains the native/stateless guards. Original
+-- returns stay intact; these source fixtures do not attest transfer outcomes.
+do
+    local inventory=actor.inventory
+    actor.inventory={class='ItemContainer',getType=function()return 'inventory'end,
+        getParent=function()return actor end,getContainingItem=function()end,getAcceptItemFunction=function()end}
+    local function activeScene(borrowed)
+        local q,first,last,firstPreparation,lastPreparation,head,tail=scene(tv)
+        tail.item.getFullType=function()return 'Base.BookCooking1'end
+        for _,action in ipairs({head,tail})do
+            action.item.getNumberOfPages=function()return 100 end
+            action.item.getAlreadyReadPages=function()return 37 end
+            action.item.getEquipParent=function()end;action.item.getAttachedSlot=function()return -1 end
+        end
+        head.toolkitQueueOperation.toolkitStarted=true
+        settlement.track(head,'body')
+        head.action={isStarted=function()return true end,finished=function()return false end,
+            isForceComplete=function()return false end,forceStop=function(self)self.stopped=true end};head.started=true
+        local returning
+        if borrowed then
+            local owner={class='IsoObject'}
+            local shelf={class='ItemContainer',getType=function()return 'crate'end,
+                getContainingItem=function()end,getAcceptItemFunction=function()end,getParent=function()return owner end}
+            returning=f.action(ISInventoryTransferAction,{item=head.item,srcContainer=actor.inventory,
+                destContainer=shelf,allowMissingItems=true,maxTime=31,
+                queueList={{items={head.item},time=31,type=head.item:getFullType()}}})
+            returning.toolkitQueueOperation=head.toolkitQueueOperation;table.insert(q.queue,2,returning)
+        end
+        return q,first,last,firstPreparation,lastPreparation,head,tail,returning
+    end
+    local function retained(q,head,returning,item,source,destination)
+        assert(q.current==head and q.queue[1]==head and head.item:getAlreadyReadPages()==37)
+        assert(q:indexOf(returning)>1 and returning.item==item and returning.srcContainer==source
+            and returning.destContainer==destination and returning.toolkitQueueOperation==head.toolkitQueueOperation,
+            'common active edit changed the original return item/endpoints/owner')
+        assert(not returning.action and not returning.started,'common active edit executed the retained native return')
+        assert(effects==0 and routes==0 and geometryCalls==0,'native-stateless route executed actions or Lua geometry')
+    end
+    for _,demote in ipairs({false,true})do
+        local q,first,last,firstPreparation,lastPreparation,head,tail,returning=activeScene(true)
+        downstreamConsumers(q,tv)
+        local item,source,destination=returning.item,returning.srcContainer,returning.destContainer
+        local action,targetAction,after=first,head,false
+        if demote then action,targetAction,after=head,last,true end
+        local nativeBridgeReads=bridgeCalls
+        local decision=policy.evaluateMove(q,action,targetAction,after)
+        assert(bridgeCalls==nativeBridgeReads,
+            'native-stateless decision inspected unnecessary geometry')
+        assert(decision.allowed and decision.commonActiveEdit==true and decision.commonActiveEditRoute=='native-stateless'
+            and not decision.spatialValidated,
+            'eligible borrowed reader edit missed native-stateless route: '..tostring(decision.reason))
+        assert(decision.preempt and (decision.demote==true)==demote,'native-stateless route lost preempt/demotion semantics')
+        retained(q,head,returning,item,source,destination)
+        assert(Queue.move(q,action,targetAction,after),'eligible common active move failed at commit')
+        assert(q.toolkitResume==(demote and last or first)and q.toolkitCancel==head,'native-stateless route lost native stop/resume anchor')
+        if demote then
+            assert(q.queue[2]==firstPreparation and q.queue[3]==first and q.queue[4]==lastPreparation
+                and q.queue[5]==last and q.queue[6]==returning,'demotion detached original return')
+        else
+            assert(q.queue[2]==firstPreparation and q.queue[3]==first and q.queue[4]==returning
+                and q.queue[5]==lastPreparation and q.queue[6]==last,'promotion detached original return')
+        end
+        retained(q,head,returning,item,source,destination)
+    end
+    do
+        local q,first,_,_,_,head=activeScene(false)
+        local decision=policy.evaluateMove(q,first,head)
+        assert(decision.allowed and decision.commonActiveEdit==true,
+            'eligible root reader did not use native-stateless route')
+        assert(not q.toolkitCancel and not q.toolkitResume and effects==0 and routes==0)
+    end
+    -- Suffix device prerequisites keep the same state/order after the two
+    -- independent adjacent blocks commute. They need no speculative replay.
+    do
+        local q,first,last,_,_,head,tail,returning=activeScene(true)
+        downstreamConsumers(q,tv)
+        local mute,unmute=q.queue[#q.queue-2],q.queue[#q.queue-1]
+        assert(mute.mode=='MuteVolume'and unmute.mode=='UnMuteVolume')
+        local decision=policy.evaluateMove(q,first,head)
+        assert(decision.allowed and decision.commonActiveEdit,'independent adjacent swap rejected unchanged suffix')
+        assert(Queue.move(q,first,head))
+        assert(q.queue[#q.queue]==tail and q:indexOf(last)<q:indexOf(mute))
+        assert(q.queue[#q.queue-2]==mute and q.queue[#q.queue-1]==unmute
+            and mute.mode=='MuteVolume'and unmute.mode=='UnMuteVolume',
+            'adjacent active edit altered same-device suffix order/prerequisites')
+    end
+    for _,change in ipairs({'reader-callback','device-callback','equipment','far'})do
+        local q,first,last,_,_,head=activeScene(true)
+        local calls=0;local foreign=function()calls=calls+1;error('unsupported active callback executed')end
+        if change=='reader-callback'then head.onCancelFunc=foreign
+        elseif change=='device-callback'then first.onCompleteFunc=foreign
+        elseif change=='equipment'then
+            local equipment=f.action(ISEquipWeaponAction,{item=head.item})
+            equipment.toolkitQueueOperation=first.toolkitQueueOperation
+            table.insert(q.queue,q:indexOf(first)+1,equipment)
+        else actor.x=20 end
+        local framework=PZSurvivorToolkit.ActionQueueEditModel;PZSurvivorToolkit.ActionQueueEditModel=nil
+        local legacy=policy.evaluateMove(q,first,head);PZSurvivorToolkit.ActionQueueEditModel=framework
+        local decision=policy.evaluateMove(q,first,head)
+        if change=='far'then
+            assert(decision.allowed==legacy.allowed and decision.reason==legacy.reason,
+                'initially far active edit changed legacy authority')
+        else assert(not decision.allowed and not decision.commonActiveEdit,
+            'unsupported active callbacks/equipment were accepted: '..change)end
+        assert(calls==0 and effects==0 and routes==0)
+    end
+    actor.inventory=inventory
+end
+-- Active observation can describe a genuine adjacent native device preparation
+-- without granting a new edit permission or forecasting a route. The same
+-- private no-movement pair proof must survive the real cleanup observation.
+do
+    local inventory=actor.inventory
+    actor.inventory={class='ItemContainer',getType=function()return 'inventory'end,
+        getParent=function()return actor end,getContainingItem=function()end,getAcceptItemFunction=function()end}
+    local settlement=assert(PZSurvivorToolkit.ActionQueueSettlement)
+    local function activeScene()
+        local q,first,_,preparation,_,head,tail=scene(tv)
+        -- Keep exactly one real native preparation/body pair and a reader of a
+        -- different full type, whose native page progress is independent.
+        table.remove(q.queue,5);table.remove(q.queue,4)
+        tail.item.getFullType=function()return 'Base.BookCooking1'end
+        for _,action in ipairs({head,tail})do
+            action.item.getNumberOfPages=function()return 100 end
+            action.item.getAlreadyReadPages=function()return 37 end
+        end
+        head.action={isStarted=function()return true end,finished=function()return false end,
+            isForceComplete=function()return false end}
+        head.started=true
+        settlement.track(head,'body')
+        return q,first,preparation,head,tail
+    end
+    local function observe(q,first,resolveNoMovement)
+        local before={unpack(q.queue)};local native=q.current.action
+        local forbidden={[ISReadABook.isValid]=true,[ISRadioAction.isValid]=true,
+            [ISReadABook.start]=true,[ISRadioAction.start]=true}
+        debug.sethook(function(event)
+            if event=='call'and forbidden[debug.getinfo(2,'f').func]then error('active observation executed a native action')end
+        end,'c')
+        local ok,result=pcall(policy.observeActiveEdit,q,{kind='move',action=first,target=q.current,resolveNoMovement=resolveNoMovement})
+        debug.sethook()
+        assert(ok,result)
+        assert(#q.queue==#before and q.current==before[1]and q.current.action==native)
+        for index,action in ipairs(before)do assert(q.queue[index]==action,'active observation changed queue membership')end
+        assert(not q.toolkitCancel and not q.toolkitResume and effects==0 and routes==0 and geometryCalls==0)
+        return result
+    end
+    local q,first,preparation,head=activeScene()
+    local before=policy.evaluateMove(q,first,head)
+    local ledger=settlement.observeEditCleanup(q,head)
+    assert(ledger.status=='observed'and #ledger.borrowings==0,'root reader must use the actual empty earned-loan ledger')
+    local result=observe(q,first)
+    assert(result.status=='observed'and result.projection.status=='deferred'
+        and result.projection.reason=='edit_native_resolution'and #result.nativeNoMovement==0,
+        'default active observation must retain its typed native phase')
+    for _,flag in ipairs({false,'true',1,{}})do
+        result=observe(q,first,flag)
+        if flag==false then
+            assert(result.status=='observed'and result.projection.status=='deferred'and #result.nativeNoMovement==0)
+        else assert(result.status=='unhandled'and result.nativeNoMovement==nil,'malformed no-movement opt-in was accepted')end
+    end
+    for _,field in ipairs({'after','resolveNoMovement'})do
+        local calls=0
+        local intent={kind='move',action=first,target=head,whole=false}
+        if field=='resolveNoMovement'then intent.after=false end
+        setmetatable(intent,{__metatable=false,__index=function(_,key)
+            calls=calls+1;error('unsupported intent getter executed: '..key)
+        end})
+        local list,native=q.queue,head.action
+        local before={unpack(list)}
+        local ok,rejected=pcall(policy.observeActiveEdit,q,intent)
+        assert(ok and rejected.status=='unhandled'and rejected.nativeNoMovement==nil and calls==0,
+            'masked intent metatable reached '..field..' before plain-input validation')
+        assert(q.queue==list and #list==#before and q.current==head and head.action==native
+            and head.started and native:isStarted()and not native:finished()and not native:isForceComplete()
+            and not q.toolkitCancel and not q.toolkitResume,'masked intent changed the native reader/queue')
+        for index,action in ipairs(before)do assert(list[index]==action,'masked intent changed queue membership')end
+    end
+    result=observe(q,first,true)
+    assert(result.status=='observed'and result.allowed==nil and result.projection.status=='allowed',
+        'adjacent native preparation must close the active observer effect gap')
+    assert(result.nativeNoMovement and #result.nativeNoMovement==1 and result.nativeNoMovement[1]==preparation,
+        'active observation must report only the exact accepted native preparation')
+    local after=policy.evaluateMove(q,first,head)
+    assert(after.allowed==before.allowed and after.reason==before.reason
+        and after.commonActiveEdit==before.commonActiveEdit,
+        'diagnostic observation changed the independent active edit decision')
+    q,first,preparation=activeScene()
+    local tail=table.remove(q.queue)
+    local second,secondPreparation=queued(radio,'SetVolume',.4)
+    ISTimedActionQueue.add(tail)
+    result=observe(q,first,true)
+    assert(result.projection.status=='allowed'and #result.nativeNoMovement==2
+        and result.nativeNoMovement[1]==preparation and result.nativeNoMovement[2]==secondPreparation,
+        'each adjacent native pair needs its own exact no-movement proof')
+    local getter=actor.getInventory;local initial=bridgeCalls;local changed=false
+    actor.getInventory=function(self)
+        if not changed and bridgeCalls>=initial+2 then changed=true;tv.square=otherTarget end
+        return getter(self)
+    end
+    result=observe(q,first,true)
+    actor.getInventory=getter
+    assert(changed and result.status=='unhandled'and result.reason=='unavailable'and result.nativeNoMovement==nil,
+        'the first pair lease was lost when the later pair captured its proof')
+    for _,change in ipairs({'far','unknown-geometry','args3-false'})do
+        q,first,preparation=activeScene()
+        if change=='far'then actor.x=20
+        elseif change=='unknown-geometry'then squares[coordinate(1,0,0)]=nil
+        else preparation.toolkitQueueCommand.snapshot.args[3]=false end
+        result=observe(q,first,true)
+        assert(result.status=='observed'and result.projection.status=='deferred'
+            and result.projection.reason=='edit_native_resolution'
+            and(not result.nativeNoMovement or #result.nativeNoMovement==0),
+            'unsupported no-movement facts must retain the native phase: '..change)
+        squares[coordinate(1,0,0)]=target
+    end
+    for _,change in ipairs({'helper','target','geometry'})do
+        q,first=activeScene()
+        local getter=actor.getInventory;local initial=bridgeCalls;local changed=false
+        actor.getInventory=function(self)
+            if not changed and bridgeCalls>initial then
+                changed=true
+                if change=='helper'then toolkitQueueSpatialNoMovement=nil
+                elseif change=='target'then tv.square=otherTarget
+                else actor.x=20 end
+            end
+            return getter(self)
+        end
+        result=observe(q,first,true)
+        actor.getInventory=getter;toolkitQueueSpatialNoMovement=spatialNoMovement
+        assert(changed and result.status=='unhandled'and result.reason=='unavailable'
+            and result.nativeNoMovement==nil,'cleanup-time mutation escaped the joint spatial proof: '..change)
+    end
+    actor.inventory=inventory
+end
+-- Production demotion keeps native per-row ordering: deny an earlier
+-- shared-item conflict before inspecting a later unrelated unknown contract.
+do
+    local inspections=0
+    PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.late-demotion-unknown',{
+        types={'FixtureLateDemotionUnknown'},matches=function()return true end,
+        inspect=function()inspections=inspections+1;return{knownInputs=false,items={},itemTypes={},targets={}}end,
+    })
+    local head=book()
+    head.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+    local shared=f.action(ISEquipWeaponAction,{item=head.item})
+    local later=f.action(ISBaseTimedAction,{Type='FixtureLateDemotionUnknown'})
+    local q=f.queue(head,shared,later)
+    local decision=policy.evaluateMove(q,head,later,true)
+    assert(not decision.allowed and decision.reason=='move_shared_item'and decision.blocker==head
+        and decision.resource==head.item:getID(),'demotion changed the first native pair denial')
+    assert(inspections==0,'demotion inspected a later unknown source before its earlier native pair conflict')
+    assert(q.queue[1]==head and q.queue[2]==shared and q.queue[3]==later and not q.toolkitCancel and not q.toolkitResume)
 end
 local sourceReads,candidateReads=reads,modReads
 do

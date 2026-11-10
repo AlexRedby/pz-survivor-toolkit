@@ -8,15 +8,17 @@ from .. import preparation_process
 import zipfile
 
 from .. import receipts
+from ..mod_selection import mod_layers
 from .book_controls import _stop_probe
 from .tv_controls import MODS
 
-CASES = ('disjoint-returns', 'shared-capacity', 'contested-pickup', 'lost-done')
+CASES = ('disjoint-returns', 'shared-capacity', 'contested-pickup', 'partial-accepted', 'lost-done')
 ROLES = ('client1', 'client2')
 PREFIX = '[QUEUE_PEERS] '
 LIMITS = [
     'Two real EN/RU macOS clients in a fresh menu Host with the full selected pack; no dedicated-server, WAN or Windows qualification.',
     'Fresh singleton pickup refusal isolates verified untouched direct dependants and preserves supported independent tails; unknown, batch, prior-effect and unreviewed shapes retain native fallback.',
+    'Accepted canonical two-item requests execute their real native body once; a disposable competing move exposes the paid prefix and silent server Reject, followed by native client expiry without replay or singleton recovery authority.',
     'Lost Done drops one exact native acknowledgement while independent container replication runs; unknown outcome never grants return, Keep or replay authority.',
 ]
 
@@ -24,9 +26,15 @@ LIMITS = [
 def definitions():
     checks = {name: {case: dict(effectsVerified=True, serverAuthorityVerified=True) for case in CASES}
               for name in ('success-queued', 'server-authority')}
-    return {'queue-transfer-peers': dict(status='ready', clients=2, default_mods=list(MODS),
+    return {'queue-transfer-peers': dict(status='ready', clients=2, default_mods=list(MODS), game_inputs=[
+        'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',
+        'media/lua/client/TimedActions/ISInventoryTransferAction.lua',
+        'media/lua/shared/TimedActions/ISInventoryTransferUtil.lua',
+        'media/lua/client/TimedActions/ISTimedActionQueue.lua',
+        'media/lua/shared/TimedActions/ISReadABook.lua',
+        'media/lua/shared/TimedActions/ISBaseTimedAction.lua'],
         scenario_actions={'peer-transfers': dict(checks=checks,
-            scope='Ordered selectable two-client menu-Host bank: disjoint borrowed returns, shared destination admission, contested pickup and exact lost-Done unknown outcome. Native book producers, original durations, physical server ownership, unique item IDs and actor-bound advisory receipts; no replay or permission expansion.')},
+            scope='Ordered selectable two-client menu-Host bank: disjoint borrowed returns, shared destination admission, contested pickup, an accepted native bulk request with a paid prefix and exact lost-Done unknown outcome. Native book and bulk-grab producers, original durations, physical server ownership, unique item IDs and actor-bound advisory receipts; no replay or permission expansion.')},
         cases=[dict(id=case, producer='fixture', capability='effect', kinds=['mp'],
                     modes=['native', 'toolkit'], languages=['EN', 'RU']) for case in CASES])}
 
@@ -73,10 +81,41 @@ def _probe(project, output, game, jdk):
     return jar
 
 
+def _probe_source_checks(probe, game, jdk, selection, runtime):
+    """Reject unsupported producers/entry bindings before any native game launch."""
+    if 'partial-accepted' not in selection['cases']:
+        return
+    mods = Path(runtime['roles']['client1']['cache']) / 'mods'
+
+    def effective(identifier, relative):
+        root = mods / identifier
+        candidates = [layer / 'media/lua' / relative for layer in mod_layers(root)] if root.is_dir() else []
+        selected = [path for path in candidates if path.is_file()]
+        if not selected:
+            raise ValueError('Queue peer preflight needs active ' + identifier + ': ' + relative)
+        return selected[-1]
+
+    inputs = [Path(game) / 'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',
+              effective('PZSurvivorToolkit', 'client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'),
+              effective('PZSurvivorToolkit', 'client/PZSurvivorToolkit/ItemRetentionUI.lua'),
+              effective('PZSurvivorToolkit', 'shared/PZSurvivorToolkit/InventoryTransferProtection.lua'),
+              effective('CleanUI', 'client/ISUI/ISInventoryPaneContextMenu.lua')]
+    if any(not path.is_file() for path in inputs):
+        raise ValueError('Queue peer preflight source is missing')
+    classpath = os.pathsep.join(map(str, [probe, Path(game) / 'projectzomboid.jar', Path(game) / 'ZombieBuddy.jar']))
+    result = preparation_process.run([str(Path(jdk) / 'bin/java'), '-Djava.awt.headless=true', '-cp', classpath,
+        'net.alexredby.queuepeersprobe.QueuePeersProbeSelfCheck', *map(str, inputs)],
+        check=False, capture_output=True, text=True, timeout=60)
+    (Path(probe).parent / 'source-checks.log').write_text(result.stdout + result.stderr)
+    if result.returncode:
+        raise ValueError('Queue peer source/factory/role preflight failed: ' + (result.stderr or result.stdout)[-2000:])
+
+
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     root = Path(project) / 'tests/native_queue'
     probe = _probe(project, output, game, jdk)
+    _probe_source_checks(probe, game, jdk, selection, runtime)
     stop = _stop_probe(project, output, game, jdk)
     runtime.setdefault('fixture', {}).setdefault('mods', []).extend(['QueuePeersProbe', 'BookControlsStopProbe'])
     for role in runtime['roles'].values():
@@ -184,7 +223,7 @@ def _seed_errors(seed, case, index):
             for name in ('front', 'tail'):
                 book = actor[name]
                 item = next(item for item in items if item['id'] == book['id'])
-                endpoint = actor['role'] + '-root' if name == 'tail' else ('source1' if case in ('contested-pickup', 'shared-capacity') else 'source' + actor['role'][-1])
+                endpoint = actor['role'] + '-root' if name == 'tail' else ('source1' if case in ('contested-pickup', 'shared-capacity', 'partial-accepted') else 'source' + actor['role'][-1])
                 if item.get('ft') != book['ft'] or item.get('initialEndpoint') != endpoint:
                     errors.append('Seed item type or initial physical endpoint differs')
     originals = seed.get('originalRootIds')
@@ -410,10 +449,143 @@ def _unknown_errors(value, row, actor, enabled, applied):
     return errors
 
 
-def check_case(seed, result, clients, selection, case, index, release, capacity=None, applied=None):
+def _matches(value, expected):
+    return isinstance(value, dict) and all(type(value.get(key)) is type(want) and value[key] == want
+                                          for key, want in expected.items())
+
+
+def _partial_probe_errors(probe, seed, client):
+    actors = seed['actors']; first, second = (actor['front']['id'] for actor in actors)
+    expected = dict(sourceExact=True, used=True, armed=False, bound=True, token=seed['token'],
+                    actor=actors[0]['onlineId'], first=first, second=second, requestCount=1, accepted=1,
+                    updateCalls=0 if client else 1, movedSecond=not client, nativeReturnedFalse=not client,
+                    updateThrew=False, managerReject=not client, managerRemoved=True, terminalWrites=0,
+                    acceptWrites=0 if client else 1, passedAccept=1 if client else 0, passedDone=0, passedReject=0,
+                    expired=client, nativePresent=False, nativeState='Accept' if client else 'Reject', reused=0,
+                    failure='', closed='', fault='competing-native-second-move-no-replay')
+    if not _matches(probe, expected) or not _transaction(probe.get('transaction') if isinstance(probe, dict) else None):
+        return ['Partial ' + ('client' if client else 'server') + ' lacks exact one-shot admission/execution/expiry evidence']
+    return []
+
+
+def _partial_items_errors(value, seed, role=None):
+    if not isinstance(value, dict) or value.get('originalsPreserved') is not True:
+        return ['Partial physical snapshot lost original inventory']
+    items = value.get('items')
+    if (not isinstance(items, list) or len(items) != len(seed['items']) or any(not isinstance(item, dict) for item in items)
+            or any(not _integer(item.get('id'), 1) for item in items)
+            or sorted(item['id'] for item in items) != sorted(item['id'] for item in seed['items'])):
+        return ['Partial physical snapshot has missing, duplicated or foreign identities']
+    by_id = {item['id']: item for item in items}; errors = []
+    for index, actor in enumerate(seed['actors']):
+        for kind in ('front', 'tail'):
+            spec = actor[kind]
+            endpoint = ('client1-root' if index == 0 else 'source2') if kind == 'front' else actor['role'] + '-root'
+            visible = role is None or endpoint.startswith('source') or endpoint == role + '-root'
+            expected = dict(id=spec['id'], ft=spec['ft'], endpoint=endpoint if visible else False,
+                            count=1 if visible else 0, pages=spec['initial'] if kind == 'tail' and visible else 0)
+            if not _matches(by_id[spec['id']], expected): errors.append('Partial paid-prefix/quarantine/tail physical ownership differs')
+    if role is None:
+        capacities = value.get('capacity')
+        if (not isinstance(capacities, dict) or set(capacities) != {'source1', 'source2'}
+                or any(not isinstance(capacities[key], dict) or not _number(capacities[key].get('weight'))
+                       or not _number(capacities[key].get('capacity'))
+                       or capacities[key]['capacity'] != next(store['capacity'] for store in seed['stores'] if store['key'] == key)
+                       or not 0 <= capacities[key]['weight'] <= capacities[key]['capacity'] for key in capacities)):
+            errors.append('Partial physical capacity changed or overflowed')
+    return errors
+
+
+def _partial_records_errors(records, seed, probe, enabled):
+    if (not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict)):
+        return ['Partial client lacks its one observed native first-item pickup']
+    record = records[0]; item = seed['actors'][0]['front']; errors = []
+    if (record.get('role') != 'pickup' or record.get('item') != item['id'] or record.get('started') is not True
+            or type(record.get('progress')) is not bool or record.get('duration') != -1
+            or not _integer(record.get('sequence'), 1) or record.get('transaction') != probe.get('transaction')
+            or not _transaction(record.get('transaction'))
+            or any(not isinstance(record.get(key), str) or not record[key] for key in ('actionRef', 'nativeRef'))):
+        errors.append('Partial observed action is not the original native bulk pickup')
+    samples, finishes = record.get('samples'), record.get('finishes')
+    if not isinstance(samples, list) or not samples or not isinstance(finishes, list):
+        return errors + ['Partial native boundary observations missing']
+    times = []
+    for sample in samples:
+        if (not isinstance(sample, dict) or sample.get('point') not in ('pending', 'started', 'perform-begin', 'perform-finish', 'terminal')
+                or not _number(sample.get('at')) or sample['at'] < 0
+                or type(sample.get('done')) is not bool or type(sample.get('rejected')) is not bool
+                or not _integer(sample.get('transaction'))):
+            errors.append('Malformed partial native boundary sample'); continue
+        times.append(sample['at'])
+        errors.extend(_observation_errors(sample.get('observation'), record, sample, item, enabled))
+        observation = sample.get('observation')
+        if isinstance(observation, dict) and observation.get('paired') is True:
+            errors.append('Partial expiry fabricated a private successful completion pairing')
+        refusal = sample.get('refusal', False)
+        if refusal is not False and (not isinstance(refusal, dict) or refusal.get('refused') is True):
+            errors.append('Partial batch acquired fresh singleton refusal authority')
+    if times != sorted(times): errors.append('Partial native samples reordered')
+    for finish in finishes:
+        if (not isinstance(finish, dict) or finish.get('phase') not in ('perform', 'complete', 'stop')
+                or not _number(finish.get('at')) or type(finish.get('succeeded')) is not bool):
+            errors.append('Malformed partial native callback')
+    # Native Lua can perform after expiry makes isDone/isRejected both true on
+    # the absent byte. Such a callback is diagnostic, never terminal wire proof.
+    if any(sum(f.get('phase') == phase for f in finishes if isinstance(f, dict)) > 1 for phase in ('perform', 'complete', 'stop')):
+        errors.append('Partial native callback repeated')
+    return errors
+
+
+def _partial_case_errors(seed, result, clients, selection, index, release, partial):
+    errors = []; token = seed['token']; case = 'partial-accepted'; enabled = selection['mode'] == 'toolkit'
+    if any(actor['front']['ft'] != 'Base.Nails' or actor['front']['initial'] != 0 or actor['front']['total'] != 1
+           for actor in seed['actors']): errors.append('Partial seed is not two distinct native light-item members')
+    if not _same_case(release, case, token, index): errors.append('Missing exact partial shared release')
+    if not _same_case(result, case, token, index) or result.get('clients') != clients:
+        errors.append('Partial server result lost exact phase/client copies')
+    if not _same_case(partial, case, token, index):
+        return errors + ['Missing exact independent PARTIAL authority boundary']
+    errors.extend(_partial_items_errors(partial, seed)); errors.extend(_partial_items_errors(result, seed))
+    if isinstance(result, dict) and result.get('items') != partial.get('items'):
+        errors.append('Partial physical ownership changed after native removal')
+    server_probe = partial.get('probe'); errors.extend(_partial_probe_errors(server_probe, seed, False))
+    for actor in seed['actors']:
+        role = actor['role']; row = clients.get(role) if isinstance(clients, dict) else None
+        if (not _same_case(row, case, token, index) or not _matches(row, dict(role=role, onlineId=actor['onlineId'], mode=selection['mode'],
+                queueEnabled=enabled, sourceBound=True, queueIdle=True, producer='selected-pack-walk-then-native-bulk-grab'))):
+            errors.append(role + ': partial native actor/mode/producer differs'); continue
+        if enabled and row.get('operationScoped') is not True:
+            errors.append(role + ': partial producer bypassed the native UI operation scope')
+        origin = row.get('producerProof')
+        if (not isinstance(origin, dict) or origin.get('supported') is not True or origin.get('reason') != ''
+                or origin.get('leaf') != 'cleanui-reviewed' or not isinstance(origin.get('chain'), str) or not origin['chain']
+                or any(type(value) not in (str, bool, int, float) for value in origin.values())):
+            errors.append(role + ': missing exact selected CleanUI/native producer proof')
+        if row.get('blocked') != [] or row.get('keptIds') != []:
+            errors.append(role + ': partial batch acquired singleton cleanup/Keep authority')
+        if row.get('serverPartial') != partial: errors.append(role + ': partial authority copy differs')
+        errors.extend(role + ': ' + error for error in _partial_items_errors(row.get('replica'), seed, role))
+        if role == 'client1':
+            probe = row.get('probe'); errors.extend(_partial_probe_errors(probe, seed, True))
+            if isinstance(probe, dict):
+                if not isinstance(server_probe, dict) or probe.get('transaction') != server_probe.get('transaction'):
+                    errors.append('Partial client native byte differs from real admitted server request')
+                errors.extend(_partial_records_errors(row.get('records'), seed, probe, enabled))
+        elif row.get('probe') is not False or row.get('records') != []:
+            errors.append('Idle partial peer acquired another actor native action/probe')
+    return errors
+
+
+def check_case(seed, result, clients, selection, case, index, release, capacity=None, applied=None, partial=None):
     errors = _seed_errors(seed, case, index)
     if errors:
         return errors
+    if case == 'partial-accepted':
+        if capacity is not None or applied is not None:
+            return ['Foreign intervention in partial native batch']
+        return _partial_case_errors(seed, result, clients, selection, index, release, partial)
+    if partial is not None:
+        return ['Foreign partial intervention in book transfer case']
     token = seed['token']; enabled = selection['mode'] == 'toolkit'
     if not _same_case(release, case, token, index):
         errors.append('Missing exact shared release after both actors resolve')
@@ -537,17 +709,18 @@ def verify(root, selection, catalog):
                 issues.append(role + ': missing complete restored ordered bank')
             if '[QUEUE_TEST] FAIL ' in text:
                 issues.append(role + ': native fixture failed')
-        events = {role: {event: raw(text, event) for event in ('SEED', 'RELEASE', 'CAPACITY', 'APPLIED', 'RESULT', 'CASE')}
+        events = {role: {event: raw(text, event) for event in ('SEED', 'RELEASE', 'CAPACITY', 'APPLIED', 'PARTIAL', 'RESULT', 'CASE')}
                   for role, text in texts.items()}
         server = events['server']
         if server['CASE'] or any(events[role][event] for role in ROLES
-                                 for event in ('SEED', 'RELEASE', 'CAPACITY', 'APPLIED', 'RESULT')):
+                                 for event in ('SEED', 'RELEASE', 'CAPACITY', 'APPLIED', 'PARTIAL', 'RESULT')):
             issues.append('Authority/client receipt published by the wrong native role')
         for event in ('SEED', 'RELEASE', 'RESULT'):
             if [v.get('case') for v in server[event]] != selection['cases']:
                 issues.append('Server ' + event + ' missing, duplicated or reordered')
         for event, expected in [('CAPACITY', [c for c in selection['cases'] if c == 'shared-capacity']),
-                                ('APPLIED', [c for c in selection['cases'] if c == 'lost-done'])]:
+                                ('APPLIED', [c for c in selection['cases'] if c == 'lost-done']),
+                                ('PARTIAL', [c for c in selection['cases'] if c == 'partial-accepted'])]:
             if [v.get('case') for v in server[event]] != expected:
                 issues.append('Server ' + event + ' missing, duplicated or foreign')
         tokens = [r.get('token') for r in server['SEED']]
@@ -555,13 +728,14 @@ def verify(root, selection, catalog):
             issues.append('Server case tokens reused')
         lifecycle = []
         for line in texts['server'].splitlines():
-            for event in ('SEED', 'RELEASE', 'CAPACITY', 'APPLIED', 'RESULT'):
+            for event in ('SEED', 'RELEASE', 'CAPACITY', 'APPLIED', 'PARTIAL', 'RESULT'):
                 marker = PREFIX + event + ' '
                 if marker in line:
                     lifecycle.append((event, receipts.decode_object(line.split(marker, 1)[1]).get('case')))
         expected_lifecycle = [(event, case) for case in selection['cases']
             for event in (['SEED', 'RELEASE'] + (['CAPACITY'] if case == 'shared-capacity' else [])
-                          + (['APPLIED'] if case == 'lost-done' else []) + ['RESULT'])]
+                          + (['APPLIED'] if case == 'lost-done' else [])
+                          + (['PARTIAL'] if case == 'partial-accepted' else []) + ['RESULT'])]
         if lifecycle != expected_lifecycle:
             issues.append('Authority cases overlapped or lifecycle boundaries were reordered')
         for role in ROLES:
@@ -577,7 +751,7 @@ def verify(root, selection, catalog):
                 return values[0] if len(values) == 1 else None
             clients = {role: one(role, 'CASE') for role in ROLES}
             case_errors[case] = check_case(one('server', 'SEED'), one('server', 'RESULT'), clients, selection,
-                case, index, one('server', 'RELEASE'), one('server', 'CAPACITY'), one('server', 'APPLIED'))
+                case, index, one('server', 'RELEASE'), one('server', 'CAPACITY'), one('server', 'APPLIED'), one('server', 'PARTIAL'))
         for role, text in texts.items():
             complete_at = text.find(PREFIX + 'COMPLETE ')
             if any(text.rfind(PREFIX + event + ' ') > complete_at for event in events[role]):

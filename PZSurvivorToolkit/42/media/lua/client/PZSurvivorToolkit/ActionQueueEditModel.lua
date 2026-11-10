@@ -33,7 +33,7 @@ end
 local entryFields = {action = true, edit = true, deferred = true, active = true, snapshotOnly = true}
 local editFields = {version = true, complete = true, capacity = true, resources = true}
 local resourceFields = {domain = true, key = true, facts = true, requires = true, effects = true, bounds = true}
-local predicateFields = {field = true, equal = true, oneOf = true, min = true, max = true, above = true}
+local predicateFields = {field = true, equal = true, notEqual = true, oneOf = true, min = true, max = true, above = true}
 local effectFields = {field = true, set = true, delta = true, toggle = true, cap = true, scale = true, deplete = true}
 local deferredFields = {version=true,kind=true,actor=true,targetSquare=true,invalidates=true,routing=true,expansion=true,outcome=true}
 local function deferredSpatial(value)
@@ -68,7 +68,8 @@ end
 local function validPredicate(predicate)
     if not fields(predicate, predicateFields) or not named(predicate.field) then return false end
     local numeric = predicate.min ~= nil or predicate.max ~= nil or predicate.above ~= nil
-    if predicate.equal ~= nil then return scalar(predicate.equal) and predicate.oneOf == nil and not numeric end
+    if predicate.equal ~= nil then return scalar(predicate.equal) and predicate.notEqual == nil and predicate.oneOf == nil and not numeric end
+    if predicate.notEqual ~= nil then return scalar(predicate.notEqual) and predicate.oneOf == nil and not numeric end
     if predicate.oneOf ~= nil then
         if numeric then return false end
         local count = array(predicate.oneOf)
@@ -210,7 +211,7 @@ function Model.evaluate(entries)
             if step.phase then bounds=step.snapshot.laterBounds and step.snapshot.laterBounds[step.phase]end
             for _, predicate in ipairs(step.requires) do
                 local value = facts[predicate.field]
-                if value == nil or (predicate.equal == nil and predicate.oneOf == nil and not finite(value)) then
+                if value == nil or (predicate.equal == nil and predicate.notEqual == nil and predicate.oneOf == nil and not finite(value)) then
                     return result("unhandled", "edit_unknown", step.entry, key, predicate.field)
                 end
             end
@@ -263,6 +264,8 @@ function Model.evaluate(entries)
                     local value = facts[predicate.field]
                     if predicate.equal ~= nil then
                         if not rawequal(value, predicate.equal) then return result("denied", "edit_required_state", step.entry, key, predicate.field) end
+                    elseif predicate.notEqual ~= nil then
+                        if rawequal(value, predicate.notEqual) then return result("denied", "edit_required_state", step.entry, key, predicate.field) end
                     elseif predicate.oneOf ~= nil then
                         local found = false
                         for _, candidate in ipairs(predicate.oneOf) do

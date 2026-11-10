@@ -1,4 +1,4 @@
-"""Causal negative mutations for deferred native cursor approach receipts."""
+"""Causal negative mutations for deferred native cursor/direct approach receipts."""
 import copy
 import json
 from pathlib import Path
@@ -36,7 +36,7 @@ class ApproachAdapterTests(unittest.TestCase):
                 target = spec['targets'][name]
                 value['targets'][name] = dict(identity=copy.deepcopy(target), objects=[] if removed else [
                     {k: target[k] for k in ('marker', 'index', 'sprite')}])
-                value['ground'][name] = [dict(id=200 + i, type='Base.Twigs')] if removed and case == 'bush' else []
+                value['ground'][name] = [dict(id=200 + i, type='Base.Twigs')] if removed and case in ('bush', 'direct-bush') else []
                 if removed and case == 'manual-grass':
                     value['root'].extend(dict(id=200 + i * 2 + j, type='Base.GrassTuft') for j in range(2))
             if final:
@@ -54,9 +54,9 @@ class ApproachAdapterTests(unittest.TestCase):
         secondpos = dict(x=99.5, y=200.5, z=0)
         commands = []
         for i, name in enumerate(('first', 'second', 'tail')):
-            tail = name == 'tail'; started = enabled or name != 'first'; duration = 79200 if tail else 100 if case == 'bush' else 50
-            command = dict(name=name, type='ISReadABook' if tail else 'ISRemoveBush' if case == 'bush' else 'ISRemoveGrass',
-                           producer='native ISReadABook constructor' if tail else 'native ISRemovePlantCursor.tryBuild',
+            tail = name == 'tail'; started = enabled or name != 'first'; duration = 79200 if tail else 100 if case in ('bush', 'direct-bush') else 50
+            command = dict(name=name, type='ISReadABook' if tail else 'ISRemoveBush' if case in ('bush', 'direct-bush') else 'ISRemoveGrass',
+                           producer='native ISReadABook constructor' if tail else a.DIRECT_PRODUCER if case == 'direct-bush' else 'native ISRemovePlantCursor.tryBuild',
                            admittedAt=i * 10 + 1, duration=duration, started=started, progress=started, cancelled=not enabled and name == 'first',
                            itemId=102 if tail else False, target=False if tail else copy.deepcopy(spec['targets'][name]), token=i + 1)
             if started:
@@ -72,18 +72,28 @@ class ApproachAdapterTests(unittest.TestCase):
             walks.append(dict(type='ISWalkToTimedAction', duration=-1, destination=copy.deepcopy(secondpos),
                               admittedAt=90, started=True, progress=True, cancelled=False, startedAt=100,
                               endedAt=120, startPosition=copy.deepcopy(firstpos), endPosition=copy.deepcopy(secondpos), token=2))
+        elif case == 'direct-bush':
+            walks.append(dict(type='ISWalkToTimedAction', duration=-1, destination=copy.deepcopy(firstpos),
+                              admittedAt=2, started=False, progress=False, cancelled=True, token=4))
         row = dict(suite='approach-queue', event='case', id=case, actor='client1', kind=kind, mode=mode,
                    status='passed', ids=copy.deepcopy(spec), input=copy.deepcopy(baseline), authorityBaseline=copy.deepcopy(baseline),
                    client=copy.deepcopy(final), server=copy.deepcopy(final), commands=commands, walks=walks,
                    order=['first', 'second', 'tail'] if enabled else ['second', 'tail'],
                    secondIssue=dict(firstWalking=True, position=origin, firstStartedAt=25, issuedAt=26,
                                     firstRetainedAfterIssue=enabled, firstJavaRetainedAfterIssue=enabled),
-                   queueIdle=True, settleMilliseconds=1000, lifecycleUnchanged=True)
+                   queueIdle=True, settleMilliseconds=1000, lifecycleUnchanged=True, spatialOutcomes=[])
+        if enabled and case == 'direct-bush':
+            for name, token, at, start, end in (('first', 1, 24, origin, firstpos), ('second', 2, 99, firstpos, secondpos)):
+                target = {k: spec['targets'][name][k] for k in ('x', 'y', 'z')}
+                for result, timestamp in (('walking', at), ('native-arrival', at + 1), ('native-no-movement', at + 2)):
+                    row['spatialOutcomes'].append(dict(case=case, result=result, token=token, observedAt=timestamp,
+                        type='ISWalkToTimedAction' if result == 'native-arrival' else 'ISQueueActionsAction',
+                        position=copy.deepcopy(start if result == 'walking' else end), target=copy.deepcopy(target)))
         if native_host:
             states = [dict(case=case, observedAt=at, player=17, transaction=5,
-                           kind='ISRemoveBush' if case == 'bush' else 'ISRemoveGrass',
+                           kind='ISRemoveBush' if case in ('bush', 'direct-bush') else 'ISRemoveGrass',
                            token='deadbeef-1234-1234-1234-123456789abc', state=status, matched=True,
-                           name='second', type='ISRemoveBush' if case == 'bush' else 'ISRemoveGrass',
+                           name='second', type='ISRemoveBush' if case in ('bush', 'direct-bush') else 'ISRemoveGrass',
                            actionRef='second action', nativeRef='second native', currentActionRef='second action', referenceStable=True)
                       for at, status in ((40, 'started'), (175, 'completed'))]
             row['commands'][1]['nativeStates'] = states
@@ -138,6 +148,7 @@ class ApproachAdapterTests(unittest.TestCase):
             authority.extend(raw(marker, value) for marker, value in (
                 ('AUTHORITY_PLACEMENT', remote), ('PREPARED', spec), ('BASELINE', baseline)))
             client.append(raw('ADMITTED', dict(case=case, actor='client1')))
+            client.extend(raw('SPATIAL_OUTCOME', value) for value in row['spatialOutcomes'])
             if kind == 'mp' and mode == 'native':
                 client.extend(raw('NATIVE_STATE', value) for command in row['commands'] for value in command.get('nativeStates', []))
                 client.extend(raw(marker, value) for marker, value in (
@@ -146,7 +157,7 @@ class ApproachAdapterTests(unittest.TestCase):
             authority.append(raw('VERIFIED', final))
             client.append('[QUEUE_CHECK] ' + json.dumps(row))
         client.extend(['[QUEUE_CHECK] ' + json.dumps(dict(suite='approach-queue', event='complete',
-            cases=list(a.CASES), performed=2, failed=0, skipped=0)), raw('COMPLETE', dict(cases=list(a.CASES)))])
+            cases=list(a.CASES), performed=len(a.CASES), failed=0, skipped=0)), raw('COMPLETE', dict(cases=list(a.CASES)))])
         return client, server
 
     def verify_logs(self, client, server, selection=None):
@@ -156,7 +167,7 @@ class ApproachAdapterTests(unittest.TestCase):
             (root / 'server-launch.log').write_text('\n'.join(server))
             return a.verify(root, selection or self.selection(), {})
 
-    def test_both_cases_four_modes(self):
+    def test_three_cases_four_modes(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 selection = self.selection(kind, mode); a.validate(selection)
@@ -219,6 +230,52 @@ class ApproachAdapterTests(unittest.TestCase):
                        lambda r: r['server']['root'][-1].update(type='Base.Twigs')):
             evidence = self.evidence('manual-grass'); mutate(evidence[0]); self.assertTrue(self.check(evidence))
 
+    def test_direct_provenance_future_walk_and_native_redundant_admission(self):
+        for mode in ('toolkit', 'native'):
+            selection = self.selection(mode=mode)
+            changes = [lambda r: r['commands'][0].update(producer='native ISRemovePlantCursor.tryBuild'),
+                       lambda r: r['commands'][1].update(producer='direct native constructor')]
+            if mode == 'toolkit':
+                changes += [lambda r: r['walks'][-1].update(admittedAt=1),
+                            lambda r: r['walks'].append(copy.deepcopy(r['walks'][-1]))]
+            else:
+                changes += [lambda r: r['walks'].pop(),
+                            lambda r: r['walks'][-1].update(started=True),
+                            lambda r: r['walks'][-1].update(cancelled=False),
+                            lambda r: r['walks'][-1].update(admittedAt=100),
+                            lambda r: r['walks'][-1].update(endedAt=30)]
+            for change in changes:
+                with self.subTest(mode=mode, mutation=change):
+                    evidence = self.evidence('direct-bush', mode=mode)
+                    change(evidence[0]); self.assertTrue(self.check(evidence, selection))
+
+    def test_direct_spatial_outcomes_require_original_positive_executor_path(self):
+        changes = {
+            'executor always unsupported': lambda r: r.update(spatialOutcomes=[]),
+            'lost no-movement': lambda r: r['spatialOutcomes'].pop(),
+            'arrival inferred from acceptance': lambda r: r['spatialOutcomes'][1].update(result='native-no-movement'),
+            'unavailable continuation': lambda r: r['spatialOutcomes'][2].update(result='rejected'),
+            'stale completion': lambda r: r['spatialOutcomes'][1].update(result='stale'),
+            'wrong native child': lambda r: r['spatialOutcomes'][1].update(type='ISQueueActionsAction'),
+            'foreign owner': lambda r: r['spatialOutcomes'][4].update(token=3),
+            'wrong requested square': lambda r: r['spatialOutcomes'][2]['target'].update(x=999),
+            'not within native reach': lambda r: r['spatialOutcomes'][5]['position'].update(x=999),
+            'second starts from old location': lambda r: r['spatialOutcomes'][3].update(position=dict(x=100.5, y=200.5, z=0)),
+            'second phase ran at submission': lambda r: r['spatialOutcomes'][3].update(observedAt=1),
+        }
+        for name, change in changes.items():
+            with self.subTest(name=name):
+                evidence = self.evidence('direct-bush'); change(evidence[0]); self.assertTrue(self.check(evidence), name)
+        evidence = self.evidence('bush')
+        evidence[0]['spatialOutcomes'] = copy.deepcopy(self.evidence('direct-bush')[0]['spatialOutcomes'][:3])
+        for phase in evidence[0]['spatialOutcomes']: phase['case'] = 'bush'
+        self.assertEqual(self.check(evidence), [], 'cursor inner successful direct phases are legitimate')
+        evidence[0]['spatialOutcomes'][0]['result'] = 'rejected'
+        self.assertTrue(self.check(evidence), 'cursor inner failure was ignored')
+        evidence = self.evidence('direct-bush', mode='native')
+        evidence[0]['spatialOutcomes'] = self.evidence('direct-bush')[0]['spatialOutcomes']
+        self.assertTrue(self.check(evidence, self.selection(mode='native')))
+
     def test_native_controls_cannot_claim_queue_fix(self):
         selection = self.selection(mode='native')
         for mutate in (lambda r: r['secondIssue'].update(firstRetainedAfterIssue=True),
@@ -260,12 +317,25 @@ class ApproachAdapterTests(unittest.TestCase):
             'tail ACK before removal completed': lambda r: r['commands'][-1]['nativeStates'][0].update(observedAt=170),
             'idle before tail completion': lambda r: r['clientIdle'].update(observedAt=181),
             'first Java walk retained': lambda r: r['secondIssue'].update(firstJavaRetainedAfterIssue=True),
+            'tail partly progressed at idle': lambda r: r['clientIdle']['client']['book'].update(pages=219),
+            'tail missing native receipt': lambda r: r['commands'][-1].update(nativeStates=[]),
+            'tail stopped instead of completed': lambda r: r['commands'][-1]['nativeStates'][-1].update(state='canceled'),
+            'tail shared native identity': lambda r: [v.update(nativeRef='second native') for v in r['commands'][-1]['nativeStates']],
+            'tail shared UUID': lambda r: [v.update(token=r['commands'][1]['nativeStates'][0]['token']) for v in r['commands'][-1]['nativeStates']],
+            'tail shared action identity': lambda r: [v.update(actionRef='second action', currentActionRef='second action') for v in r['commands'][-1]['nativeStates']],
+            'tail other actor': lambda r: [v.update(player=18) for v in r['commands'][-1]['nativeStates']],
+            'tail wrong completed identity': lambda r: r['commands'][-1]['nativeStates'][-1].update(actionRef='replacement reader'),
+            'tail receipt not current': lambda r: r['commands'][-1]['nativeStates'][-1].update(currentActionRef=False),
+            'tail begins before removal completion': lambda r: r['commands'][-1]['nativeStates'][0].update(observedAt=100),
             'tail shared token': lambda r: r['commands'][-1].update(token=2),
             'unexplained manual input': lambda r: r.update(manualInputSeen=True),
             'manual movement at idle': lambda r: r['clientIdle']['queue'].update(pressedMovement=True),
             'cancel input at idle': lambda r: r['clientIdle']['queue'].update(pressedCancel=True),
             'Java work retained': lambda r: r['clientIdle']['queue'].update(nativeCount=1),
             'late unrelated cancellation': lambda r: r['clientIdle'].update(observedAt=5000),
+            'idle anchored to removal instead of reader': lambda r: r['clientIdle'].update(observedAt=181),
+            'missing reader completion': lambda r: r['commands'][-1]['nativeStates'].pop(),
+            'duplicate reader completion': lambda r: r['commands'][-1]['nativeStates'].append(copy.deepcopy(r['commands'][-1]['nativeStates'][-1])),
             'tail admitted after completion': lambda r: r['commands'][-1].update(admittedAt=200),
             'server idle first removed': lambda r: r['serverIdle']['targets']['first'].update(objects=[]),
         }
@@ -317,6 +387,14 @@ class ApproachAdapterTests(unittest.TestCase):
         client, server = self.logs()
         for bad in (server[::-1], server + [server[-1]], server[:-1]):
             self.assertTrue(self.verify_logs(client, bad)['issues'])
+
+    def test_spatial_raw_receipts_are_independent(self):
+        client, server = self.logs()
+        receipts = [line for line in client if a.PREFIX + 'SPATIAL_OUTCOME ' in line]
+        for bad in ([line for line in client if line != receipts[0]], client + [receipts[0]]):
+            self.assertTrue(self.verify_logs(bad, server)['issues'], 'raw phase receipts were not independent')
+        client.remove(receipts[0]); client.insert(1, receipts[0])
+        self.assertTrue(self.verify_logs(client, server)['issues'], 'spatial phase preceded centered admission')
 
     def test_native_host_raw_receipts_and_idle_authority_are_independent(self):
         selection = self.selection(mode='native')
@@ -463,7 +541,7 @@ class ApproachAdapterTests(unittest.TestCase):
             (lua / 'shared/QueueTestSelection.lua').write_text('QueueTestSelection=' + _lua(generated) + '\nreturn QueueTestSelection\n')
             game = Path(temp) / 'game'; (game / 'media').mkdir(parents=True)
             (game / 'media/tiledefinitions_erosion.tiles.txt').write_text('\n'.join(
-                '// ' + name + '\ntile\n{\nxy = 0,0\n' + flag + ' =\n}\n' for name, flag in a.NATIVE_SPRITES.values()))
+                '// ' + name + '\ntile\n{\nxy = 0,0\n' + flag + ' =\n}\n' for name, flag in dict.fromkeys(a.NATIVE_SPRITES.values())))
             runtime = {'roles': {'client1': {'cache': temp}}}; a.stage(ROOT, None, game, None, self.selection(), None, runtime)
             self.assertTrue((lua / 'client/ZZStartup.lua').is_file())
             from lupa.lua51 import LuaRuntime
@@ -478,9 +556,9 @@ class ApproachAdapterTests(unittest.TestCase):
             game = Path(temp); (game / 'media').mkdir()
             source = game / 'media/tiledefinitions_erosion.tiles.txt'
             good = '\n'.join('// ' + name + '\ntile\n{\nxy = 0,0\n' + flag + ' =\n}\n'
-                             for name, flag in a.NATIVE_SPRITES.values())
+                             for name, flag in dict.fromkeys(a.NATIVE_SPRITES.values()))
             source.write_text(good)
-            self.assertEqual([r['sprite'] for r in a.native_sprite_proof(game)], ['f_bushes_1_0', 'e_newgrass_1_0'])
+            self.assertEqual([r['sprite'] for r in a.native_sprite_proof(game)], ['f_bushes_1_0', 'e_newgrass_1_0', 'f_bushes_1_0'])
             for bad in (good.replace('canBeCut', 'canBeRemoved'), good.replace('canBeRemoved', 'canBeCut'),
                         good.replace('f_bushes_1_0', 'vegetation_foliage_01_0'), good + good):
                 source.write_text(bad)
@@ -672,11 +750,57 @@ class ApproachAdapterTests(unittest.TestCase):
             compile_chunk(path.read_text(), str(path))
         source = (ROOT / 'tests/native_queue/approach-queue/client/ZZQueueApproach.lua').read_text()
         self.assertIn('c:tryBuild(id.x,id.y,id.z)', source)
-        self.assertNotIn('doRemovePlant(', source); self.assertNotIn('doRemoveGrass(', source)
+        self.assertIn('ISWorldObjectContextMenu.doRemovePlant(', source); self.assertNotIn('doRemoveGrass(', source)
         for forbidden in ('setCurrentTime', 'setJobDelta', 'setMultiplier', 'forceComplete(', 'getGameTime():set'):
             self.assertNotIn(forbidden, source)
         self.assertNotRegex(source, r'action\.maxTime\s*=(?!=)')
         self.assertNotRegex(source, r'IS(RemoveBush|RemoveGrass|WalkToTimedAction|ReadABook)\.(new|start|stop|update|perform|complete)\s*=')
+
+    def test_native_baseline_missing_api_and_irreversible_idle_failure(self):
+        from lupa.lua51 import LuaRuntime
+        source = (ROOT / 'tests/native_queue/approach-queue/client/ZZQueueApproach.lua').read_text()
+        observer = 'local approach=' + source.split('local approach=', 1)[1].split('local function finite', 1)[0]
+        check = LuaRuntime().execute('''
+            return function(native, supplied)
+                PZSurvivorToolkit={ActionQueueApproach={beforeComplete=supplied and function()return 'native-arrival'end or nil}}
+                local spatialOutcomes={};local done=false;local actor={};local action={character=actor,Type='ISWalkToTimedAction',location={}}
+                action.location.getX=function()return 1 end;action.location.getY=function()return 2 end;action.location.getZ=function()return 0 end
+                local function getPlayer()return actor end
+                local function case()return 'direct-bush'end
+                local function tokenId()return 1 end
+                local function now()return 10 end
+                local function position()return{x=1.5,y=2.5,z=0}end
+                local function raw()end
+                local ok,error=pcall(function()
+        ''' + observer + '''
+                    if supplied then
+                        assert(approach.beforeComplete({},action)=='native-arrival'and #spatialOutcomes==1)
+                    else assert(approach.beforeComplete==nil)end
+                end)
+                return ok,error
+            end
+        ''')
+        self.assertTrue(check(True, False)[0], 'exact main baseline must work as a native-only control')
+        self.assertFalse(check(False, False)[0], 'Toolkit cannot fabricate execution receipts without the API')
+        self.assertTrue(check(False, True)[0])
+        guard = 'local function nativeHostIdleGuard' + source.split('local function nativeHostIdleGuard', 1)[1].split('local function finish', 1)[0]
+        check = LuaRuntime().execute('''
+            return function(nativeHost, authority, started, clientPages, serverPages)
+                local commands={{name='tail',started=started}}
+                local ids={book={initial=219,pages=220}}
+                local lastServerSnapshot=authority and{book={pages=serverPages,characterPages=serverPages}}or nil
+                local state={};local F={snapshot=function()return{book={pages=clientPages,characterPages=clientPages}}end}
+        ''' + guard + '''
+                local ok,error=pcall(nativeHostIdleGuard);return ok,error
+            end
+        ''')
+        self.assertTrue(check(True, True, True, 220, 220)[0])
+        self.assertTrue(check(True, False, False, 219, 219)[0], 'wait for the independent authority readback')
+        self.assertTrue(check(False, True, True, 220, 220)[0], 'Toolkit permits its naturally completed reader')
+        for args in ((True, True, False, 220, 220), (True, True, True, 219, 220), (True, True, True, 220, 219)):
+            self.assertFalse(check(*args)[0], 'irreversible native Host control failure was left waiting')
+        self.assertIn('nativeHostIdleGuard()', source.split("elseif phase=='running'and empty()then", 1)[1])
+        self.assertIn('lastServerSnapshot=lastServerSnapshot or false', source, 'fail report must retain real authority evidence')
 
 
 if __name__ == '__main__': unittest.main()

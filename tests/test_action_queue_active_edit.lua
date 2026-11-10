@@ -92,6 +92,144 @@ local function book(kind,active)
 end
 local a,b,c=book('Base.BookCarpentry1',true),book('Base.BookCooking1'),book('Base.BookFirstAid1')
 local q=f.queue(a,b,c)
+local retainedProviderProbe
+-- The retained-transfer helper establishes only the bounded private source
+-- context. It delegates to the actual source factory and never reads endpoints,
+-- native transfer facts, capacity, constructors or action validity.
+do
+    local owner=PZSurvivorToolkit.ActionQueueItemEditAdapters
+    local factory=assert(owner.deferredTransferBinding)
+    local function scene()
+        local current=book('Base.BookCarpentry1',true)
+        current.toolkitQueueOperation.toolkitStarted=true
+        local destination={class='ItemContainer'}
+        local action=f.action(ISInventoryTransferAction,{item=current.item,srcContainer=root,destContainer=destination,
+            allowMissingItems=true,maxTime=31,queueList={{items={current.item},time=31,type=current.item:getFullType()}}})
+        action.toolkitQueueOperation=current.toolkitQueueOperation
+        local queue=f.queue(current,action)
+        settlement.track(current,'body')
+        return queue,current,action
+    end
+    local queue,current,action=scene()
+    local endpointReads=0
+    local getter=player.getInventory
+    player.getInventory=function()endpointReads=endpointReads+1;error('source context read a live endpoint')end
+    local validate,alias,sourceWatch=settlement.prepareRetainedTransferBinding(queue,current,action,factory)
+    player.getInventory=getter
+    assert(type(validate)=='function'and alias==nil and type(sourceWatch)=='function'and sourceWatch(),
+        'bounded retained source context lost the actual source factory contract')
+    local prepare=settlement.prepareRetainedTransferBinding
+    settlement.prepareRetainedTransferBinding=function()error('changed retained API executed')end
+    assert(not sourceWatch(),'late retained API replacement escaped the final source watch')
+    assert(prepare(queue,current,action,factory)==nil,
+        'captured retained helper accepted a substituted public API before preparation')
+    settlement.prepareRetainedTransferBinding=prepare
+    PZSurvivorToolkit.ActionQueueSettlement={}
+    assert(not sourceWatch(),'late Settlement owner replacement escaped the final source watch')
+    PZSurvivorToolkit.ActionQueueSettlement=settlement
+    assert(endpointReads==0 and validate({schema=2}),'plain native source validator must remain separate from physical effect evidence')
+    assert(not validate({schema=2}),'retained helper must preserve the one-use source validator')
+    -- Inspect only the descriptor identities of the genuine source factory.
+    -- This identity evidence is specific to the offline Lua debug host.
+    -- No source callback, validator or binding check is substituted here.
+    assert(debug and type(debug.getupvalue)=='function','source descriptor identity check requires the offline Lua debug host')
+    local function descriptor(name)
+        for index=1,80 do
+            local key,value=debug.getupvalue(factory,index)
+            if not key then break end
+            if key==name then return value end
+        end
+        error('missing prepared source descriptor: '..name)
+    end
+    local function globals(specifications)
+        for _,specification in ipairs(specifications)do if specification.owner==_G then return specification end end
+        error('source descriptor lost its global dependency schema')
+    end
+    local core=descriptor('sourceFactorySpecs')
+    local aliasSpecs=descriptor('sourceFactoryAliasSpecs')
+    local first,_,firstWatch=prepare(queue,current,action,factory)
+    local second,_,secondWatch=prepare(queue,current,action,factory)
+    assert(descriptor('sourceFactorySpecs')==core and descriptor('sourceFactoryAliasSpecs')==aliasSpecs,
+        'unchanged registry rebuilt its prepared source descriptions')
+    assert(first~=second and firstWatch~=secondWatch and firstWatch()and secondWatch(),
+        'reusable source description reused a decision watch or one-use validator')
+    action.retainedFixtureAnnotation=true
+    assert(not firstWatch()and not secondWatch(),'prepared source description cached action authority')
+    local _,_,freshWatch=prepare(queue,current,action,factory)
+    assert(type(freshWatch)=='function'and freshWatch(),'new preparation did not capture the changed action freshly')
+    local transaction=createItemTransaction
+    local aliasItem=f.item(current.item:getFullType())
+    aliasItem.id=current.item:getID()
+    action.queueList[1].items[1]=aliasItem
+    local _,aliasMember,aliasWatch=prepare(queue,current,action,factory)
+    local _,secondAlias,secondAliasWatch=prepare(queue,current,action,factory)
+    assert(aliasMember==aliasItem and secondAlias==aliasItem and type(aliasWatch)=='function'and aliasWatch()
+        and secondAliasWatch~=aliasWatch and secondAliasWatch(),
+        'source-only Host alias preparation lost its fresh binding contract')
+    assert(descriptor('sourceFactorySpecs')==core and descriptor('sourceFactoryAliasSpecs')==aliasSpecs and core~=aliasSpecs,
+        'Host alias rebuilt or mutated the shared source descriptions')
+    assert(#globals(core).keys==2 and #globals(aliasSpecs).keys==3 and globals(aliasSpecs).keys[3]=='createItemTransaction',
+        'Host transaction dependency escaped its separate immutable source description')
+    for index=1,#core-1 do assert(core[index]==aliasSpecs[index],'Host alias duplicated a shared module dependency description')end
+    createItemTransaction=function()error('changed transaction callback must not execute')end
+    assert(not aliasWatch()and not secondAliasWatch(),'Host alias lost its fresh transaction source watch')
+    action.queueList[1].items[1]=current.item
+    local _,_,ordinaryWatch=prepare(queue,current,action,factory)
+    assert(type(ordinaryWatch)=='function'and ordinaryWatch(),'ordinary source preparation inherited the alias dependency')
+    createItemTransaction=transaction
+    assert(ordinaryWatch(),'ordinary source watch incorrectly retained a transaction dependency')
+    -- A genuine source owner's definition-time registration replaces both
+    -- descriptions and revokes the old watch; no positive fake is installed.
+    local intent=f.project('ActionQueueTidyIntent')
+    assert(type(intent.queueObserverBinding)=='function'and not ordinaryWatch(),
+        'genuine source registration did not revoke the prior decision')
+    local newCore,newAlias=descriptor('sourceFactorySpecs'),descriptor('sourceFactoryAliasSpecs')
+    local _,_,registeredWatch=prepare(queue,current,action,factory)
+    assert(type(registeredWatch)=='function'and registeredWatch()and newCore~=core and newAlias~=aliasSpecs,
+        'genuine source registration did not replace both descriptions')
+    assert(owner.registerSourceFactory(intent,'queueObserverBinding',intent.queueObserverBinding))
+    prepare(queue,current,action,factory)
+    assert(descriptor('sourceFactorySpecs')==newCore and descriptor('sourceFactoryAliasSpecs')==newAlias,
+        'idempotent source registration unnecessarily replaced the descriptions')
+    local calls=0;local replacement=function()calls=calls+1;error('replacement source factory executed')end
+    owner.deferredTransferBinding=replacement
+    assert(settlement.prepareRetainedTransferBinding(queue,current,action,factory)==nil and calls==0,
+        'retained source context discovered/invoked a replaced factory')
+    owner.deferredTransferBinding=factory
+    for _,change in ipairs({'foreign-token','started','removed','untracked-current'})do
+        queue,current,action=scene()
+        if change=='foreign-token'then action.toolkitQueueOperation={}
+        elseif change=='started'then action.started=true
+        elseif change=='removed'then queue.queue[2]=nil
+        else
+            current=book('Base.BookCooking1',true);queue=f.queue(current,action)
+            action.toolkitQueueOperation=current.toolkitQueueOperation
+        end
+        assert(settlement.prepareRetainedTransferBinding(queue,current,action,factory)==nil,
+            'unsupported retained source context accepted '..change)
+    end
+    -- A throwing real factory must not leave its private context installed;
+    -- the next independent valid preparation must still succeed.
+    queue,current,action=scene()
+    local id=current.item.getID
+    current.item.getID=function()error('expected retained factory getter failure')end
+    assert(settlement.prepareRetainedTransferBinding(queue,current,action,factory)==nil)
+    current.item.getID=id
+    assert(type(settlement.prepareRetainedTransferBinding(queue,current,action,factory))=='function',
+        'failed retained factory leaked its private source context')
+    queue,current,action=scene()
+    local _,_,beforeProvider=settlement.prepareRetainedTransferBinding(queue,current,action,factory)
+    assert(type(beforeProvider)=='function'and beforeProvider())
+    retainedProviderProbe=function()
+        local previous=ISTimedActionQueue.queues[player]
+        ISTimedActionQueue.queues[player]=queue
+        assert(not beforeProvider(),'late cleanup provider registration escaped the retained source watch')
+        assert(settlement.prepareRetainedTransferBinding(queue,current,action,factory)==nil,
+            'unknown cleanup provider acquired a retained source context')
+        ISTimedActionQueue.queues[player]=previous
+    end
+    ISTimedActionQueue.queues[player]=q
+end
 local forbidden={[ISReadABook.new]=true,[ISReadABook.isValid]=true,[ISReadABook.start]=true,
     [ISReadABook.stop]=true,[ISReadABook.perform]=true,[ISReadABook.complete]=true}
 local function observe(intent)
@@ -478,6 +616,7 @@ do
     assert(leafReads==0,'root-only observations did not earn transfer facts or runtime rights')
     toolkitLeafTransferFacts=leaf
 end
+retainedProviderProbe()
 assert(policy.observeActiveEdit(7,{}).status=='unhandled')
 print('Active edit observation: native reader boundaries, shared progress, unchanged rights and no execution passed')
 if TestCoverage then TestCoverage('source-contract','passed')end

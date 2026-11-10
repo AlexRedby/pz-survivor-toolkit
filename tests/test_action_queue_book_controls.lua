@@ -109,16 +109,18 @@ do
     local q=f.queue(reader,equip)
     assert(not policy.moveReason(q,equip,reader),'root reader must allow independent root equipment')
     assert(not policy.cancelOperationReason(q,reader),'root reader cancellation must allow independent root equipment')
+    -- This fixture has no producer or earned private loan. Mere native return
+    -- shape cannot supply Execution/Settlement's isolated-failure capability.
     local returning=f.action(ISInventoryTransferAction,{item=reader.item,
         srcContainer=root,destContainer=sources.bag,allowMissingItems=true})
     returning.toolkitQueueOperation=reader.toolkitQueueOperation
     q=f.queue(reader,returning,equip)
     local decision=policy.evaluateMove(q,equip,reader)
     assert(not decision.allowed and decision.reason=='container_capacity' and decision.resource==root,
-        'record the existing blanket equipment/return capacity restriction')
+        'an unowned return must not acquire the earned singleton equipment capacity contract')
     local cancellation=policy.evaluateCancel(q,reader,true)
     assert(not cancellation.allowed and cancellation.reason=='container_capacity' and cancellation.resource==root,
-        'the same equipment/return gate also disables the borrowed-reader header cancel')
+        'an unowned return must not acquire earned cleanup authority through header cancellation')
     assert(not policy.cancelReason(q,reader),'the isolated reader child stop retains its native permission')
     local beforePen,beforeBook=pen:getContainer(),reader.item:getContainer()
     assert(ISEquipWeaponAction.complete(equip))

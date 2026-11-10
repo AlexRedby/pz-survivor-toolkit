@@ -28,7 +28,7 @@ local editBindingCapture=Proof and Proof.captureBindings
 local editNativeMeta=toolkitLuaMetatableMatches
 local spatialOwner=Toolkit.ActionQueueApproach
 local spatialPrepare=spatialOwner and spatialOwner.prepareSpatialLease
-local spatialEdits={factory=spatialOwner and spatialOwner.prepareSpatialEditLease,line=730,maxMembers=32,equal=rawequal}
+local spatialEdits={factory=spatialOwner and spatialOwner.prepareSpatialEditLease,line=1012,maxMembers=32,equal=rawequal}
 spatialEdits.shape={kind=type,meta=getmetatable,each=pairs,array=ipairs,equal=rawequal,call=pcall}
 spatialEdits.shapeWatch=editBindingCapture and editBindingCapture({
     {owner=_G,keys={'type','getmetatable','pairs','ipairs','rawequal','pcall','toolkitLuaMetatableMatches'}},
@@ -43,11 +43,13 @@ local spatialPrerequisites=type(editBindingCapture)=="function"and editBindingCa
     {owner=math,keys={"floor"}},{owner=string,keys={"byte","sub","gsub","match"}},
 })
 -- Updated together with the source-owned factory; a same-file callback is not its role.
-local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=658,3570298766
+local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=929,109732719
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
+-- Compat/Quartermaster can require Policy before the main Queue module.
+require "PZSurvivorToolkit/ActionQueueSettlement"
 local deferredTransferGuards = {}
 local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
 local Firearms = require "PZSurvivorToolkit/ActionQueueFirearms"
@@ -258,35 +260,10 @@ local function dynamicConflict(a, b, context)
     return false
 end
 
--- Audited property setters are independent of VHS inventory/playback effects.
--- Playback retains its asynchronous native state; this only removes a disjoint
--- target edge, never power/media ordering, item or capacity dependencies.
-local mediaSetterModes = {SetVolume = true, SetChannel = true, MuteMicrophone = true,
+-- The retained-return and no-effect failure consumers still qualify setters
+-- only. Media/playback common pending contracts do not expand those authorities.
+local deviceSetterModes = {SetVolume = true, SetChannel = true, MuteMicrophone = true,
     MuteVolume = true, UnMuteVolume = true}
-local function mediaSetterIndependent(a, b, context)
-    local setter, media = a, b
-    if not mediaSetterModes[setter.mode] then setter, media = b, a end
-    if not mediaSetterModes[setter.mode] or not EditAdapters then return false end
-    local edit = EditAdapters.radio(setter)
-    if not edit or not instanceof(setter.device, "IsoTelevision") then return false end
-    if not inspect then return false end
-    local contract, source = inspect(media, context)
-    local cassette = source == "native.device-media-insert" or source == "native.device-media-eject"
-    local playback = source == "native.ISRadioAction" and media.mode == "TogglePlayMedia"
-        and media.device == setter.device and EditAdapters.radioCallbacksTrusted(media) and media.maxTime == 30
-    if not contract or not (cassette and media.Type == "ISDeviceMediaAction" or playback)
-        or media.character ~= setter.character
-        or media.action or media.started or media._isAddingActions
-        or (type(media.toolkitQueueOperation) == "table" and media.toolkitQueueOperation.toolkitStarted)
-        or media.deviceData ~= setter.deviceData or setter.deviceData:getParent() ~= setter.device then return false end
-    local targetCount = 0
-    for target in pairs(contract.targets or {}) do
-        if target ~= setter.device then return false end
-        targetCount = targetCount + 1
-    end
-    return targetCount == 1
-end
-
 local function sharedWorldTarget(a, b, context)
     local generators = Toolkit.ActionQueueGenerators
     if generators and generators.sharesTarget then
@@ -305,7 +282,7 @@ local function sharedWorldTarget(a, b, context)
         local targets = left.targets
         if targets then
             for target in pairs(targets) do
-                if right.targets and right.targets[target] and not mediaSetterIndependent(a, b, context) then return target end
+                if right.targets and right.targets[target] then return target end
             end
         end
         if left.hands and left.hands == right.hands then return left.hands end
@@ -1237,38 +1214,47 @@ end
 -- Only pending, complete source-owned operation pairs can provision the native
 -- no-movement proof. It stays private to this decision until final validation;
 -- ordinary inspection and idle UI rows never read geometry.
+function spatialEdits.pair(queue,members,index,context,contract,source)
+    local member=members[index]
+    if type(member)~='table'or member.Type~='ISQueueActionsAction'or member.action
+        or type(toolkitQueueSpatialNoMovement)~='function'or type(toolkitQueueSpatialApiMatches)~='function'
+        or type(spatialEdits.prepare)~='function'then return end
+    if source==nil then contract,source=inspect(member,context)end
+    if source~='toolkit.approach'or not contract or contract.edit or member.action then return end
+    local first,last=Operations.bounds(queue,member)
+    local body,token=members[index+1],member.toolkitQueueOperation
+    if first~=index or last~=index+1 or type(body)~='table'or type(token)~='table'
+        or not spatialEdits.equal(body.toolkitQueueOperation,token)or token.toolkitStarted or token.toolkitCancelled
+        or not spatialEdits.equal(member.character,queue.character)or not spatialEdits.equal(body.character,queue.character)
+        or body.action then return end
+    local following=inspect(body,context)
+    local target,count=nil,0
+    if following and following.knownInputs~=false and not following.unknownOutputs then
+        for object in pairs(following.targets or{})do target=object;count=count+1 end
+    end
+    if count~=1 then return end
+    local watch=editBindingCapture and editBindingCapture({
+        {owner=body,exact=true},{owner=token,keys={'toolkitStarted','toolkitCancelled'}},
+        {owner=following.targets,exact=true},
+    })
+    local check,edit=spatialEdits.prepare(member,target)
+    if watch and check and edit then
+        return {action=member,check=check,watch=watch,contract=contract,edit=edit}
+    end
+end
 function spatialEdits.provision(queue,members,context)
     local scope=activeDecision
     if not scope or not spatialEdits.equal(scope.queue,queue)or not spatialEdits.equal(scope.context,context)or #members>spatialEdits.maxMembers
         or type(toolkitQueueSpatialNoMovement)~='function'or type(toolkitQueueSpatialApiMatches)~='function'
         or type(spatialEdits.prepare)~='function'then return end
     for index,member in ipairs(members)do
+        -- Preserve the pending policy's original source/getter observation order.
         local contract,source=inspect(member,context)
-        if source=='toolkit.approach'and contract and not contract.edit and not member.action then
-            local first,last=Operations.bounds(queue,member)
-            local body=members[index+1]
-            local token=member.toolkitQueueOperation
-            if first==index and last==index+1 and type(body)=='table'and type(token)=='table'
-                and spatialEdits.equal(body.toolkitQueueOperation,token)and not token.toolkitStarted and not token.toolkitCancelled
-                and spatialEdits.equal(member.character,queue.character)and spatialEdits.equal(body.character,queue.character)and not body.action then
-                local following=inspect(body,context)
-                local target,count=nil,0
-                if following and following.knownInputs~=false and not following.unknownOutputs then
-                    for object in pairs(following.targets or{})do target=object;count=count+1 end
-                end
-                if count==1 then
-                    local watch=editBindingCapture and editBindingCapture({
-                        {owner=body,exact=true},{owner=token,keys={'toolkitStarted','toolkitCancelled'}},
-                        {owner=following.targets,exact=true},
-                    })
-                    local check,edit=spatialEdits.prepare(member,target)
-                    if watch and check and edit then
-                        scope.spatial=scope.spatial or{}
-                        scope.spatial[#scope.spatial+1]={action=member,check=check,watch=watch,contract=contract,edit=edit}
-                        contract.edit=edit
-                    end
-                end
-            end
+        local proof=spatialEdits.pair(queue,members,index,context,contract,source)
+        if proof then
+            scope.spatial=scope.spatial or{}
+            scope.spatial[#scope.spatial+1]=proof
+            proof.contract.edit=proof.edit
         end
     end
 end
@@ -1700,7 +1686,7 @@ local function cancellationComparisons(queue, first, last, context)
     return {contracts = context.contracts, items = context.items, failureOverrides = {}}
 end
 local function cancellationComparison(other, context)
-    if not context.failureOverrides or other.Type ~= "ISRadioAction" or not mediaSetterModes[other.mode]
+    if not context.failureOverrides or other.Type ~= "ISRadioAction" or not deviceSetterModes[other.mode]
         or other._isAddingActions or other.action
         or (Operations.isContinuationPending and Operations.isContinuationPending(other.toolkitQueueOperation))
         or context.contracts[other] or context.failureOverrides[other] then return context end
@@ -1872,6 +1858,44 @@ local function moveConflict(queue, member, crossed, crossedLast, capacityCheck, 
     if capacity then return "container_capacity", capacity end
 end
 
+-- A complete device effect can commute with an untouched item operation. This
+-- predicate is about domains, not an action-type permission table. Native source
+-- bindings and native checks retain all authority; this only labels coverage.
+function spatialEdits.deviceOnly(contract)
+    local edit=contract and contract.edit
+    if type(contract)~="table"or getmetatable(contract)~=nil
+        or contract.knownInputs==false or contract.unknownOutputs
+        or contract.hands or contract.equipment or contract.cancelOperation==false
+        or not emptyResourceMap(contract.items)or not emptyResourceMap(contract.containerOwners)
+        or not emptyResourceMap(contract.positions)or not emptyResourceMap(contract.dynamicInputs)
+        or not emptyResourceMap(contract.dynamicInputsByType)or not emptyResourceMap(contract.outputTypes)
+        or type(edit)~="table"or getmetatable(edit)~=nil or edit.version~=1 or edit.complete~=true
+        or edit.capacity~="unchanged"or type(edit.resources)~="table"or getmetatable(edit.resources)~=nil
+        or #edit.resources==0 then return false end
+    for _,resource in pairs(edit.resources)do
+        if type(resource)~="table"or getmetatable(resource)~=nil or resource.domain~="device"then return false end
+    end
+    return true
+end
+
+-- Recognize already-independent adjacent device edits for coverage only.
+-- All native checks stay in their original callers and retain full authority.
+function spatialEdits.recognizeActive(queue,first,last,context)
+    local scope=activeDecision
+    local current=queue.current
+    local activeFirst,activeLast=Operations.bounds(queue,current)
+    if not scope or scope.queue~=queue or scope.context~=context or not current or current.Type~="ISReadABook"
+        or activeFirst~=1 or first~=activeLast+1 or #queue.queue>spatialEdits.maxMembers
+        or not EditModel or Toolkit.ActionQueueEditModel~=EditModel or not targetCheckersUnchanged()then return end
+    for index=first,last do
+        local cached=context.contracts[queue.queue[index]]
+        if not cached or cached[2]~="toolkit.approach"and not spatialEdits.deviceOnly(cached[1])then return end
+    end
+    -- Record the shared route only; the caller keeps its original native
+    -- checks, including guard/pair interleaving and short-circuit diagnostics.
+    scope.commonActiveEdit,scope.commonActiveEditRoute=true,"native-stateless"
+end
+
 -- Lowering a reader promotes the intervening range without changing its internal order.
 -- Keep the native current action in slot 1 until stop/removal; Queue.move reconstructs it
 -- after that range, immediately before its still-owned returns/cleanup.
@@ -1904,11 +1928,12 @@ local function demoteReading(queue, first, last, targetFirst, targetLast, after,
         if member.Type == "ISReadABook" and member.item:getFullType() == current.item:getFullType() then
             return "move_shared_book", nil, nil, nil, nil, member
         end
-        for j = first, last do
-            local reason, resource = moveConflict(queue, member, queue.queue[j], rangeLast, capacityCheck, context)
-            if reason then return reason, nil, nil, nil, nil, queue.queue[j], resource end
+        for j=first,last do
+            local reason,resource=moveConflict(queue,member,queue.queue[j],rangeLast,capacityCheck,context)
+            if reason then return reason,nil,nil,nil,nil,queue.queue[j],resource end
         end
     end
+    spatialEdits.recognizeActive(queue,rangeFirst,rangeLast,context)
     return nil, 1, rangeFirst, rangeLast, true, nil, nil, true
 end
 
@@ -1990,6 +2015,7 @@ function Policy.moveReason(queue, action, target, after, context)
             end
         end
     end
+    if preempt then spatialEdits.recognizeActive(queue,first,last,context)end
     if first < to then to = to - (last - first + 1) end
     return nil, to, first, last, preempt
 end
@@ -2036,7 +2062,7 @@ local function returnFailureIndependent(queue, action, scope)
         local other = queue.queue[i]
         local approach = other.Type == "ISQueueActionsAction" and returnFailureApproach(other)
         if not returnFailureSuffix[other.Type] and not approach
-            or other.Type == "ISRadioAction" and not mediaSetterModes[other.mode] then
+            or other.Type == "ISRadioAction" and not deviceSetterModes[other.mode] then
             return false, "unsupported_tail_kind"
         end
         if other._isAddingActions or other.action then return false end
@@ -2176,7 +2202,7 @@ function Policy.rejectedPickupPlan(queue, action)
                 or member.item ~= action.item or member.srcContainer ~= action.destContainer
                 or member.destContainer ~= action.srcContainer) then return false end
         elseif not returnFailureSuffix[member.Type]
-            or member.Type == "ISRadioAction" and not mediaSetterModes[member.mode] then return false end
+            or member.Type == "ISRadioAction" and not deviceSetterModes[member.mode] then return false end
         local binding = snapshots[getmetatable(member)]
         if not binding or not nativeMatches(member, binding) then return false end
         local contract = inspect(member, context)
@@ -2304,6 +2330,10 @@ local function inDecision(queue, context, output, callback, ...)
             if result.rawResults then result.rawResults[1]='unavailable'end
         end
         if result.reason==nil and scope.spatial then result.spatialValidated=true end
+    end
+    if ok and scope.commonActiveEdit and result.reason==nil and result.allowed~=false then
+        result.commonActiveEdit=true
+        result.commonActiveEditRoute=scope.commonActiveEditRoute
     end
     -- A provisional no-movement contract is not a reusable public inspection
     -- fact. The decision alone survives; callers receive the ordinary cache.
@@ -2473,9 +2503,11 @@ end
 -- Opt-in read-only plan. UI/tick/commit paths do not consume it while
 -- deferred routing and other effect contracts remain incomplete. A resource
 -- projection grants no admission, capacity, execution or outcome authority.
+-- resolveNoMovement opts into the certified adjacent-pair observation for
+-- qualification; ordinary observations retain explicit native boundaries.
 function Policy.observeActiveEdit(queue, intent)
     local function unknown(reason)return {status="unhandled",reason=reason or "edit_unknown"}end
-    if type(intent)~="table"or getmetatable(intent)or type(queue)~="table"
+    if type(intent)~="table"or getmetatable(intent)~=nil or type(queue)~="table"
         or type(queue.queue)~="table"or getmetatable(queue.queue)
         or #queue.queue==0 or #queue.queue>MAX_RETURN_EXECUTION_MEMBERS or not live(queue)
         or ISTimedActionQueue.queues[queue.character]~=queue or queue.current~=queue.queue[1]
@@ -2483,6 +2515,7 @@ function Policy.observeActiveEdit(queue, intent)
         or queue.toolkitOutcomeWait or queue.toolkitStopIntent
         or (intent.after~=nil and type(intent.after)~="boolean")
         or (intent.whole~=nil and type(intent.whole)~="boolean")
+        or (intent.resolveNoMovement~=nil and type(intent.resolveNoMovement)~="boolean")
         or not EditTransition or Toolkit.ActionQueueEditTransition~=EditTransition
         or not Proof.closure(EditTransition.project,"ActionQueueEditTransition.lua")then return unknown()end
     for _,member in ipairs(queue.queue)do if type(member)~="table"then return unknown()end end
@@ -2539,7 +2572,7 @@ function Policy.observeActiveEdit(queue, intent)
         else return unknown()end
         if rangeFirst>rangeLast then return unknown("edit_no_change")end
     else return unknown()end
-    local entries,contractGaps,spatialLeases={},{},{}
+    local entries,contractGaps,spatialLeases,nativeNoMovement={},{},{},{}
     for index,member in ipairs(queue.queue)do
         local contract=inspect(member,context)
         local edit
@@ -2553,10 +2586,19 @@ function Policy.observeActiveEdit(queue, intent)
         if not contract or contract.knownInputs==false or contract.unknownOutputs then edit=nil end
         local deferred
         if not edit and observed[index].Type=="ISQueueActionsAction"and member~=current then
-            local validate,descriptor=prepareDeferredSpatial(member)
-            if validate then
-                deferred=descriptor
-                spatialLeases[#spatialLeases+1]=validate
+            local adjacent=intent.resolveNoMovement and spatialEdits.pair(queue,queue.queue,index,context)
+            if adjacent then
+                edit=adjacent.edit
+                nativeNoMovement[#nativeNoMovement+1]=member
+                spatialLeases[#spatialLeases+1]=function()
+                    return adjacent.watch()and adjacent.check()and adjacent.watch()
+                end
+            else
+                local validate,descriptor=prepareDeferredSpatial(member)
+                if validate then
+                    deferred=descriptor
+                    spatialLeases[#spatialLeases+1]=validate
+                end
             end
         end
         entries[index]={action=member,edit=edit,deferred=deferred,active=index==1 or member.action~=nil or member.started==true}
@@ -2623,6 +2665,7 @@ function Policy.observeActiveEdit(queue, intent)
         end
     end
     if result.status=="observed"then
+        result.nativeNoMovement=nativeNoMovement
         result.checkpoint={stage="before-stop",id=bookId,fullType=bookType,pages=pages,total=total,location=bookLocation}
         result.snapshot=snapshot
         local resolved,missing={},{}

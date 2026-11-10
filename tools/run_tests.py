@@ -29,9 +29,11 @@ NATIVE_TAG_TESTS = (
 # An explicit request must not silently skip its required source checks. Other
 # source-dependent tests retain their own optional-input SKIP/fallback behavior.
 REQUIRED_INPUTS = {
+    "test_device_action_target.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_device_integration.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_device_admission.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_device_targets.lua": ("native_action_root", "--game or --native-action-root"),
+    "test_action_queue_spatial_execution.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_spatial_lease.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_spatial_edit_lease.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_spatial_edit_policy.lua": ("native_action_root", "--game or --native-action-root"),
@@ -58,6 +60,7 @@ REQUIRED_INPUTS = {
     "native_tags/check_placement.lua": ("native_action_root", "--game or --native-action-root"),
 }
 DEFAULT_NATIVE_ONLY = {
+    "test_action_queue_spatial_execution.lua",
     "test_torch_refill.lua",
     "test_quartermaster_craft_ui.lua",
     "native_tags/check_transfer_source.lua",
@@ -66,7 +69,8 @@ DEFAULT_NATIVE_ONLY = {
 
 # Completion receipts are separate from input availability. A supplied source
 # cannot prove that its conditional assertions actually ran.
-SOURCE_CHECKS = {'test_action_queue_device_integration.lua': ('source-contract',),
+SOURCE_CHECKS = {'test_device_action_target.lua': ('source-contract',), 'test_action_queue_spatial_execution.lua': ('source-contract',),
+ 'test_action_queue_device_integration.lua': ('source-contract',),
  'test_action_queue_device_admission.lua': ('source-contract',),
  'test_action_queue_device_targets.lua': ('native-stale-device',),
  'test_action_queue_spatial_lease.lua': ('source-contract',),

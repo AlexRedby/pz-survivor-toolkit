@@ -188,9 +188,8 @@ local function capture(action,active)
             if mode=="SetVolume" or mode=="UnMuteVolume" or mode=="SetChannel" or mode=="MuteMicrophone" then record.value=value end
         elseif action.Type=="ISDeviceMediaAction" then
             if not mediaTrusted(action) or not target(record,action.deviceData:getParent(),action.deviceData)
-                or not instanceof(record.device,"IsoTelevision") or action.parameter~=record.square
-                or record.square:getDeviceData()~=record.data then return nil,"unsupported" end
-            record.kind="media"
+                or not instanceof(record.device,"IsoTelevision") then return nil,"unsupported" end
+            record.kind,record.parameter="media",action.parameter
             record.remove=action.isRemove
             if record.remove then
                 record.mediaIndex=record.data:hasMedia() and record.data:getMediaIndex() or false
@@ -218,7 +217,7 @@ function Recovery.capture(action,active)
 end
 
 local fields={version=true,character=true,kind=true,approach=true,itemId=true,itemType=true,container=true,active=true,
-    device=true,data=true,square=true,x=true,y=true,z=true,mode=true,value=true,remove=true,mediaIndex=true,
+    device=true,data=true,square=true,parameter=true,x=true,y=true,z=true,mode=true,value=true,remove=true,mediaIndex=true,
     source=true,destination=true,allowMissing=true,beardStyle=true,singleton=true}
 plainRecord=function(record,character)
     if type(record)~="table" or getmetatable(record) or record.version~=1 or record.character~=character then return false end
@@ -433,7 +432,7 @@ local function project(records,character,construct)
             end
         elseif record.kind=="media" then
             local state=deviceState(record)
-            if not state or not instanceof(record.device,"IsoTelevision") or record.square:getDeviceData()~=record.data
+            if not state or not instanceof(record.device,"IsoTelevision")
                 or record.data:getMediaType()~=1 then return nil,"unavailable" end
             local tape
             if record.remove==true then
@@ -450,11 +449,11 @@ local function project(records,character,construct)
                 locations[record.itemId]=false
                 state.media,state.inserted=record.mediaIndex,true
             else return nil,"unavailable" end
-            local candidate=setmetatable({character=character,isRemove=record.remove,secondaryItem=tape,parameter=record.square,
+            local candidate=setmetatable({character=character,isRemove=record.remove,secondaryItem=tape,parameter=record.parameter,
                 deviceData=record.data,maxTime=30,stopOnWalk=false,stopOnRun=true,ignoreHandsWounds=true},ISDeviceMediaAction)
             if not mediaTrusted(candidate) then return nil,"unsupported" end
             if construct then
-                action=ISDeviceMediaAction:new(character,record.remove,tape,record.square)
+                action=ISDeviceMediaAction:new(character,record.remove,tape,record.parameter)
                 if not mediaTrusted(action) then return nil,"unsupported" end
             end
         elseif record.kind=="transfer" then

@@ -204,7 +204,8 @@ at=true;prepare('world.header-cancel');tick();assert(prepares==2)
                        decision=dict(reason=False, source=source), dragging=True, movingAction=(original if demote else equip if control == 'move-equip' else volume)['actionRef'],
                        movingAnchor=(original if demote else equip if control == 'move-equip' else volume)['actionRef'], movingToken=10 if demote else 20 if control == 'move-equip' else 30) if enabled else False
         if device and enabled:
-            b['ui'].update(commonActiveEdit=False,dropAfter=demote,targetAction=volume['actionRef'] if demote else original['actionRef'],
+            b['ui'].update(commonActiveEdit=True,commonActiveEditRoute='native-stateless',dropDecisionSamples=2,
+                dropDecision=dict(allowed=True,reason=False,commonActiveEdit=True,route='native-stateless',spatialValidated=False,preempt=True,demote=demote),dropAfter=demote,targetAction=volume['actionRef'] if demote else original['actionRef'],
                 target=approach['actionRef'] if demote else original['actionRef'],movingAnchor=original['actionRef'] if demote else approach['actionRef'])
         if keep:
             carried = dict(ref='Literature@carried', id=101, type=spec['front']['type'], container='root')
@@ -295,6 +296,35 @@ at=true;prepare('world.header-cancel');tick();assert(prepares==2)
         for name, mutate in mutations.items():
             with self.subTest(name=name):
                 evidence = self.evidence(); mutate(evidence[0]); self.assertTrue(self.check(evidence), name)
+
+    def test_native_equipment_radio_receipts_require_exact_nonzero_signed_byte(self):
+        for transaction in (-128, -125, -1, 1, 127):
+            with self.subTest(transaction=transaction):
+                evidence = self.evidence()
+                for record in evidence[0]['records']:
+                    if record['role'] in ('equip', 'volume'):
+                        for receipt in record['receipts']:
+                            receipt['transaction'] = transaction
+                self.assertEqual(self.check(evidence), [])
+        for transaction in (0, -129, 128, True, 1.25, '-125'):
+            with self.subTest(invalid=transaction):
+                evidence = self.evidence()
+                for record in evidence[0]['records']:
+                    if record['role'] in ('equip', 'volume'):
+                        for receipt in record['receipts']:
+                            receipt['transaction'] = transaction
+                self.assertIn('Missing sealed native equipment/radio started/completed outcome', self.check(evidence))
+        for mutation in ('missing', 'token', 'transaction', 'actor'):
+            with self.subTest(seal=mutation):
+                evidence = self.evidence()
+                record = next(r for r in evidence[0]['records'] if r['role'] == 'volume')
+                for receipt in record['receipts']:
+                    receipt['transaction'] = -125
+                if mutation == 'missing': record['receipts'].pop()
+                elif mutation == 'token': record['receipts'][1]['token'] = '87654321-4321-4321-4321-123456789012'
+                elif mutation == 'transaction': record['receipts'][1]['transaction'] = -124
+                else: record['receipts'][1]['player'] = 999
+                self.assertIn('Missing sealed native equipment/radio started/completed outcome', self.check(evidence))
 
     def test_missing_raw_source_chain_and_drains_are_rejected(self):
         for member in (4, 5, 6, 7):
@@ -1578,7 +1608,7 @@ os.exit(0)
             if enabled: value.pop('control', None)
             value.update(schema=3 if enabled else 1,scope='active-edit-device-only-deferred-native-phase-observation' if enabled else 'active-edit-device-only-preempt-observation', qualifiedReturn=False, effect=False, nativeFacts=False, aliasFacts=False,
                 intent=dict(kind='move', action=row['boundary']['reader'] if a.base_control(row['ids']['control'])=='demote-reader' else next(r['actionRef'] for r in row['records'] if r['role']=='volume'), target=next(r['actionRef'] for r in row['records'] if r['role']=='volume') if a.base_control(row['ids']['control'])=='demote-reader' else row['boundary']['reader'], after=a.base_control(row['ids']['control'])=='demote-reader'))
-            value['existingDecision'] = dict(entrypoint='Policy.evaluateMove', allowed=enabled, reason=False if enabled else 'unavailable', whole=False, commonActiveEdit=False)
+            value['existingDecision'] = dict(entrypoint='Policy.evaluateMove', allowed=enabled, reason=False if enabled else 'unavailable', whole=False, commonActiveEdit=enabled, route='native-stateless' if enabled else False, spatialValidated=False)
             if enabled:
                 projection.update(status='deferred', reason='edit_native_resolution', externalCapacity=True)
                 approach=next(r for r in row['records'] if r['role']=='preparation'and r['type']=='ISQueueActionsAction'and r['token']==30)
@@ -1601,8 +1631,39 @@ os.exit(0)
             else: value['plan'] = False
             observer['returns'] = 0
             value['performance'].update(scope='paired-live-device-preempt-entrypoints', whole=False, comparable=False,
-                comparisonReason='deferred-native-phase-not-full-projection' if enabled else 'queue-disabled',
+                comparisonReason='common-decision-versus-deferred-observation' if enabled else 'queue-disabled',
                 observerProjectionStatus='deferred' if enabled else False, observerProjectionReason='edit_native_resolution' if enabled else False)
+            probe_observer = copy.deepcopy(observer)
+            probe_plan = copy.deepcopy(value['plan'])
+            if enabled:
+                probe_observer['projection'] = dict(status='allowed', reason=False, externalCapacity=borrowed, allowedAbsent=True)
+                probe_plan['nodes'][1].pop('deferred')
+                probe_plan['nodes'][1].update(complete=True, capacity='unchanged')
+            value['noMovementObservation'] = dict(schema=1, optIn=True, observerSource='ActionQueuePolicy.lua',
+                intent=dict(value['intent'], resolveNoMovement=True), current=value['current'], currentNative=value['currentNative'],
+                body=next(r['actionRef'] for r in row['records'] if r['role']=='volume'), root=root,
+                actor=phase['actor'] if enabled else False, targetSquare=phase['targetSquare'] if enabled else False,
+                mutationAuthorized=False, permissionsMeasured=False, observer=probe_observer,
+                nativeNoMovement=[approach['actionRef']] if enabled else [], plan=probe_plan,
+                checkpoint=dict(stage='before-stop', id=book['id'], fullType=book['type'],
+                    pages=row['boundary']['before']['books']['front']['pages'], total=book['total'], location=root) if enabled else False,
+                resume=dict(action=value['current'], pages=row['boundary']['before']['books']['front']['pages']) if enabled else False,
+                readOnly=True, performance=copy.deepcopy(value['performance']))
+            value['noMovementObservation']['performance'].update(scope='paired-live-no-movement-observation-entrypoints',
+                firstUseScope='first-opt-in-call-after-default-observation-bank',
+                comparisonReason='common-decision-versus-complete-observation' if enabled else 'queue-disabled',
+                observerProjectionStatus='allowed' if enabled else False, observerProjectionReason=False)
+            value['sameWorkComparison'] = False
+            if enabled:
+                first=2 if source=='root' else 3
+                decision=dict(allowed=True,reason=False,to=1,first=first,last=first+1,preempt=True,
+                    demote=a.base_control(row['ids']['control'])=='demote-reader')
+                value['sameWorkComparison']=dict(scope='paired-live-common-current-native-decisions',entrypoint='Policy.evaluateMove',
+                    baseline='current-native-route-framework-withheld',candidate='production-native-stateless-common-route',
+                    timer='System.nanoTime',units='ms',warmupPairs=1,pairs=3,alternating=True,sameLiveIntent=True,sameOutputContract=True,
+                    frameworkRestored=True,frameworkSwitchIncluded=True,readOnly=True,legacyDecision=decision,commonDecision=copy.deepcopy(decision),
+                    legacyCommonActiveEdit=False,commonActiveEdit=True,commonRoute='native-stateless',legacyRoute=False,spatialValidated=False,legacy=distribution([.1,.2,.3]),common=distribution([.2,.3,.4]),
+                    timerOverhead='included-not-subtracted',positiveTimingClaim=False,completeEditMeasured=False,frameLoadMeasured=False,assessment='not-assessed')
         return value
 
     def test_device_only_variants_use_native_device_chain_and_keep_pen_untouched(self):
@@ -1631,6 +1692,70 @@ os.exit(0)
         for bad in ('root.move-equip-device-only', 'world.move-volume-device-only-capacity-lost', 'world.move-volume-favorite-device-only'):
             selection['cases']=[bad]
             with self.assertRaises(ValueError): adapter.validate(selection)
+
+    def test_no_movement_probe_requires_real_pair_retained_return_and_checkpoint_without_authority(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                selection=self.selection(kind,mode)
+                selection['cases']=list(adapter.DEVICE_ONLY_CASES)
+                selection['options'].update(active_edit_observation=True,precise_timing=True)
+                for case in adapter.DEVICE_ONLY_CASES:
+                    row=self.precise_evidence(case,kind,mode)[0]
+                    receipt=self.active_edit_receipt(row)
+                    self.assertEqual(a.active_edit_errors(receipt,row,case,selection),[])
+                    mutations=[lambda r:r.pop('noMovementObservation'),
+                        lambda r:r['noMovementObservation'].update(optIn=False),
+                        lambda r:r['noMovementObservation']['intent'].update(resolveNoMovement=1),
+                        lambda r:r['noMovementObservation'].update(observerSource='Foreign.lua'),
+                        lambda r:r['noMovementObservation'].update(current='foreign-reader'),
+                        lambda r:r['noMovementObservation'].update(currentNative='foreign-native'),
+                        lambda r:r['noMovementObservation'].update(body='foreign-setter'),
+                        lambda r:r['noMovementObservation'].update(actor='foreign-actor'),
+                        lambda r:r['noMovementObservation'].update(targetSquare='foreign-target'),
+                        lambda r:r['noMovementObservation'].update(readOnly=False),
+                        lambda r:r['noMovementObservation'].update(mutationAuthorized=True),
+                        lambda r:r['noMovementObservation']['performance'].update(positiveTimingClaim=True),
+                        lambda r:r['noMovementObservation']['performance'].update(completeEditMeasured=True),
+                        lambda r:r['noMovementObservation']['performance']['observer'].update(meanMs=99)]
+                    if mode=='toolkit':
+                        mutations += [lambda r:r['noMovementObservation'].update(nativeNoMovement=[]),
+                            lambda r:r['noMovementObservation'].update(nativeNoMovement=[r['current']]),
+                            lambda r:r['noMovementObservation']['nativeNoMovement'].append(r['current']),
+                            lambda r:r['noMovementObservation']['observer']['projection'].update(allowed=True),
+                            lambda r:r['noMovementObservation']['observer']['projection'].update(status='deferred'),
+                            lambda r:r['noMovementObservation']['checkpoint'].update(pages=0),
+                            lambda r:r['noMovementObservation']['resume'].update(pages=0),
+                            lambda r:r['noMovementObservation']['plan']['nodes'][1].update(capacity='external'),
+                            lambda r:r['noMovementObservation']['plan']['nodes'][1].update(action=r['current']),
+                            lambda r:r['noMovementObservation']['plan']['nodes'][3].update(action='foreign-resume')]
+                        if not case.startswith('root.'):
+                            mutations += [lambda r:r['noMovementObservation']['plan']['nodes'][4]['returnEffect'].update(item='foreign-item'),
+                                lambda r:r['noMovementObservation']['plan']['nodes'][4]['returnEffect'].update(source='foreign-source'),
+                                lambda r:r['noMovementObservation']['plan']['nodes'][4]['returnEffect'].update(destination='foreign-destination'),
+                                lambda r:r['noMovementObservation']['plan']['nodes'][4]['returnEffect'].update(synthetic=True)]
+                    else:
+                        mutations += [lambda r:r['noMovementObservation'].update(nativeNoMovement=['fake-proof']),
+                            lambda r:r['noMovementObservation'].update(checkpoint={}),
+                            lambda r:r['noMovementObservation'].update(plan={})]
+                    for mutate in mutations:
+                        changed=copy.deepcopy(receipt);mutate(changed)
+                        self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,mode,mutate))
+
+    def test_same_work_common_current_native_receipt_requires_exact_decisions_and_cost_scope(self):
+        for case in adapter.DEVICE_ONLY_CASES:
+            row=self.precise_evidence(case)[0];receipt=self.active_edit_receipt(row)
+            for mutate in (lambda r:r.pop('sameWorkComparison'),
+                    lambda r:r['sameWorkComparison'].update(baseline='historical-legacy-code'),
+                    lambda r:r['sameWorkComparison'].update(frameworkRestored=False),
+                    lambda r:r['sameWorkComparison'].update(legacyCommonActiveEdit=True),
+                    lambda r:r['sameWorkComparison'].update(commonRoute='resource-candidate'),
+                    lambda r:r['sameWorkComparison'].update(spatialValidated=True),
+                    lambda r:r['sameWorkComparison']['legacyDecision'].update(first=999),
+                    lambda r:r['sameWorkComparison']['commonDecision'].update(demote=not r['sameWorkComparison']['commonDecision']['demote']),
+                    lambda r:r['sameWorkComparison']['common'].update(meanMs=999),
+                    lambda r:r['sameWorkComparison'].update(positiveTimingClaim=True)):
+                changed=copy.deepcopy(receipt);mutate(changed)
+                self.assertTrue(a.active_edit_errors(changed,row,case,self.selection()),case)
 
     def test_actual_device_only_fixture_omits_equip_producer_and_uses_move_observation(self):
         lua=shutil.which('luajit')
@@ -1669,10 +1794,11 @@ for _,source in ipairs({'root','worn-bag','world'})do
  end
 end
 local run=assert(loadfile(arg[3]))().run
-local item={getID=function()return 1 end,getFullType=function()return'Base.Book'end}
+local item={getID=function()return 1 end,getFullType=function()return'Base.Book'end,
+ getAlreadyReadPages=function()return 37 end,getNumberOfPages=function()return 100 end}
 local native={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
 local front={Type='ISReadABook',item=item,action=native,toolkitQueueOperation={}}
-local actor={getInventory=function()return{}end};local target={}
+local root={};local actor={getInventory=function()return root end};local target={}
 local phase={version=1,kind='deferred-spatial',actor=actor,targetSquare=target,invalidates='all-resources',routing='native',expansion='native',outcome='native'}
 local volume,tail={Type='ISRadioAction',toolkitQueueOperation={}},{Type='ISReadABook'}
 local approach={Type='ISQueueActionsAction',toolkitQueueApproach=true,toolkitQueueOperation=volume.toolkitQueueOperation}
@@ -1682,30 +1808,49 @@ local off,demoting,unexpected=false,false,false;local observations,moves=0,0
 local function observe(queue,intent)
  observations=observations+1;assert(queue==q and intent.kind=='move'and intent.action==(demoting and front or volume)and intent.target==(demoting and volume or front)and intent.after==demoting)
  if off then return{status='unhandled',reason='unavailable'}end
- local edit={complete=true,capacity='unchanged'}
+ local edit={version=1,complete=true,capacity='unchanged',resources={}}
  local result={status='observed',kind='preempt',unresolved={},nodes={{kind='checkpoint',action=front,edit=edit},{kind='pending',action=approach,deferred=phase},
   {kind='pending',action=volume,edit=edit},{kind='resume',action=front,edit=edit},{kind='pending',action=tail,edit=edit}},
   projection={status='deferred',reason='edit_native_resolution',blocker=approach,externalCapacity=true,evaluatedPrefix=1,deferred={{action=approach,index=2,descriptor=phase}}},contractGaps={}}
+ if intent.resolveNoMovement then
+  assert(intent.resolveNoMovement==true)
+  result.nodes[2].edit=edit;result.nodes[2].deferred=nil
+  result.projection={status='allowed',externalCapacity=false};result.nativeNoMovement={approach}
+  result.checkpoint={stage='before-stop',id=1,fullType='Base.Book',pages=37,total=100,location=root}
+ end
  if unexpected then
   result.nodes[3].edit=nil;result.contractGaps[1]={index=3,actionType='ISRadioAction',reason='effects_unproven'}
   if unexpected=='bounded'then for index=2,40 do result.nodes[index]=result.nodes[3];result.contractGaps[index]=result.contractGaps[1]end end
  end
  return result
 end
-local function move(queue,action,target,after)moves=moves+1;assert(queue==q and action==(demoting and front or volume)and target==(demoting and volume or front)and after==demoting);return{allowed=not off,reason=off and'unavailable'or nil}end
+local framework={};local toolkit
+local legacyFailure=false
+local function move(queue,action,target,after)
+ moves=moves+1;assert(queue==q and action==(demoting and front or volume)and target==(demoting and volume or front)and after==demoting)
+ if not toolkit.ActionQueueEditModel and legacyFailure then error('expected legacy evaluation failure')end
+ return{allowed=not off,reason=off and'unavailable'or nil,commonActiveEdit=not off and toolkit.ActionQueueEditModel~=nil,
+  commonActiveEditRoute=not off and toolkit.ActionQueueEditModel and'native-stateless'or nil,
+  to=not off and 1 or nil,first=not off and 2 or nil,last=not off and 3 or nil,preempt=not off,demote=demoting}
+end
 local function ledger()return{status=off and'unhandled'or'observed',steps={},borrowings={}}end
 local function owned(action)return action==approach end
-local toolkit={ActionQueuePolicy={observeActiveEdit=observe,evaluateMove=move},ActionQueueSettlement={editLedger=ledger},ActionQueueApproach={isAction=owned}}
+toolkit={ActionQueueEditModel=framework,ActionQueuePolicy={observeActiveEdit=observe,evaluateMove=move},ActionQueueSettlement={editLedger=ledger},ActionQueueApproach={isAction=owned}}
 getFilenameOfClosure=function(fn)if fn==observe then return'ActionQueuePolicy.lua'elseif fn==ledger then return'ActionQueueSettlement.lua'elseif fn==owned then return'ActionQueueApproach.lua'end end
 ISInventoryTransferAction={}
 local tick=0;local context={toolkit=toolkit,queue=q,front=front,state={front=item,player=actor},spatialIdentity={actor=actor,targetSquare=target},
  fixture={snapshot=function()return{}end,same=fixture.same},ids={source='root',front={id=1,type='Base.Book'}},case='root.move-volume-device-only',
  kind='sp',mode='toolkit',native=false,control='move-volume',deviceOnly=true,volume=volume,precise=true,clock=function()tick=tick+1;return tick end}
 local receipt=run(context)
-assert(receipt.passed and receipt.readOnly and not receipt.existingDecision.commonActiveEdit and receipt.intent.action==tostring(volume))
+assert(receipt.passed and receipt.readOnly and receipt.existingDecision.commonActiveEdit==true and receipt.intent.action==tostring(volume))
 assert(receipt.schema==3 and receipt.plan.kind=='preempt'and #receipt.plan.nodes==5 and not receipt.plan.nodes[2].complete and receipt.observer.projection.status=='deferred'and receipt.observer.returns==0)
 assert(#receipt.diagnostics.contractGaps==0 and receipt.diagnostics.nodes[2].deferred.kind=='deferred-spatial'and receipt.diagnostics.projectionBlockerType=='ISQueueActionsAction'and not receipt.performance.comparable)
-assert(moves==5 and observations==5 and q.current==front and front.action==native)
+assert(moves==18 and observations==10 and q.current==front and front.action==native)
+assert(receipt.sameWorkComparison.frameworkRestored and receipt.sameWorkComparison.baseline=='current-native-route-framework-withheld'
+ and fixture.same(receipt.sameWorkComparison.commonDecision,receipt.sameWorkComparison.legacyDecision)and toolkit.ActionQueueEditModel==framework)
+assert(receipt.noMovementObservation.observer.projection.status=='allowed'and receipt.noMovementObservation.nativeNoMovement[1]==tostring(approach)
+ and receipt.noMovementObservation.plan.nodes[2].complete and receipt.noMovementObservation.checkpoint.pages==37
+ and receipt.noMovementObservation.resume.pages==37 and receipt.noMovementObservation.readOnly)
 demoting=true;context.control='demote-reader';context.case='root.demote-reader-device-only'
 receipt=run(context);assert(receipt.passed and receipt.intent.action==tostring(front)and receipt.intent.target==tostring(volume)and receipt.intent.after==true and #receipt.plan.nodes==5)
 for _,change in ipairs({{'invalidates','position'},{'domain','position'},{'actor',{}},{'targetSquare',{}},{'complete',true},{'futureFacts',{}}})do
@@ -1715,8 +1860,12 @@ for _,change in ipairs({{'invalidates','position'},{'domain','position'},{'actor
 end
 unexpected=true;receipt=run(context);assert(not receipt.passed and receipt.readOnly and #receipt.diagnostics.contractGaps==1 and not receipt.diagnostics.nodes[3].complete)
 unexpected='bounded';receipt=run(context);assert(not receipt.passed and #receipt.diagnostics.nodes==32 and #receipt.diagnostics.contractGaps==32 and receipt.diagnostics.nodesTruncated and receipt.diagnostics.gapsTruncated)
-unexpected=false;off=true;context.native=true;context.mode='native'
+unexpected=false;legacyFailure=true;receipt=run(context)
+assert(not receipt.passed and tostring(receipt.failure):find('expected legacy evaluation failure',1,true)
+ and toolkit.ActionQueueEditModel==framework,'failed native evaluation leaked the withheld common framework')
+legacyFailure=false;off=true;context.native=true;context.mode='native'
 receipt=run(context);assert(receipt.passed and receipt.schema==1 and receipt.plan==false and receipt.observer.projection==false and receipt.existingDecision.commonActiveEdit==false)
+assert(receipt.noMovementObservation.observer.status=='unhandled'and #receipt.noMovementObservation.nativeNoMovement==0 and receipt.noMovementObservation.plan==false)
 os.exit(0)
 """
         subprocess.run([lua,'-e',source,'--','unused',str(ROOT/'tests/native_queue/book-controls/client/ZZBookControls.lua'),
@@ -1755,16 +1904,26 @@ for _,source in ipairs({'root','worn-bag','world'})do
   admission=admission+1;assert(queue==q and action==front and target==nil);return nil
  end,move=function(queue,action,target,after)
   moved=moved+1;assert(queue==q and action==front and target==approach and after==true)
+  for _=1,2 do T.ActionQueuePolicy.evaluateMove(q,action,target,after)end
   q.toolkitCancel=front;return true
  end}}
  T={ActionQueuePanel={new=function()return panel end},ActionQueuePolicy={evaluateMove=function(queue,action,target,after)
-  assert(queue==q and action==front and target==volume and after==true);return{allowed=true}
+  assert(queue==q and action==front and(target==volume or target==approach)and after==true);return{allowed=true,commonActiveEdit=true,commonActiveEditRoute='native-stateless',preempt=true,demote=true}
  end}}
  diagnostic=function(decision)return{reason=false,source=source}end
  local ui=gesture()
  assert(admission==1 and moved==1 and ui.accepted and ui.pressCaptured and ui.dragging and ui.gestureCleared)
  assert(ui.movingAction==tostring(front)and ui.movingAnchor==tostring(front)and ui.target==tostring(approach)and ui.targetAction==tostring(volume)and ui.operation==30 and ui.movingToken==10)
- assert(ui.dropAfter==true and ui.commonActiveEdit==false and ui.toY>list:topOfItem(2)+20 and list.dragAction==nil)
+ assert(ui.dropAfter==true and ui.commonActiveEdit==true and ui.dropDecisionSamples==2 and ui.dropDecision.commonActiveEdit==true and ui.toY>list:topOfItem(2)+20 and list.dragAction==nil)
+ local evaluator,move=T.ActionQueuePolicy.evaluateMove,Toolkit.ActionQueue.move
+ Toolkit.ActionQueue.move=function(queue,action,target,after)
+  T.ActionQueuePolicy.evaluateMove(queue,action,target,after)
+  error('expected real drop failure')
+ end
+ local completed,problem=pcall(gesture)
+ assert(not completed and tostring(problem):find('expected real drop failure',1,true)
+  and T.ActionQueuePolicy.evaluateMove==evaluator,'failed actual drop leaked its Policy wrapper')
+ Toolkit.ActionQueue.move=move
 end
 text=read(arg[3]);last=assert(text:find('local function descriptor(',1,true))
 local summary=assert(loadstring(text:sub(1,last-1)..'return planSummary'))()
@@ -1852,7 +2011,7 @@ os.exit(0)
                            lambda r:r['diagnostics'].update(nodesTruncated=True),
                            lambda r:r['plan']['nodes'][2].update(complete=False),
                            lambda r:r['plan']['nodes'][1].update(capacity='unchanged'),
-                           lambda r:r['existingDecision'].update(commonActiveEdit=True),
+                           lambda r:r['existingDecision'].update(commonActiveEdit=False),
                            lambda r:r['performance'].update(comparable=True)):
                 changed=copy.deepcopy(receipt);mutate(changed)
                 self.assertTrue(a.active_edit_errors(changed,row,case,selection),(case,changed))
@@ -1906,7 +2065,7 @@ os.exit(0)
                 changed=copy.deepcopy(receipt);mutate(changed)
                 self.assertTrue(a.active_edit_errors(changed,row,case,selection),case)
 
-    def test_device_only_requires_exact_native_phase_and_real_legacy_authority(self):
+    def test_device_only_requires_exact_native_phase_and_common_authority(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):
                 selection, client, server = self.log_bank(kind=kind, mode=mode, precise=True, active=True, cases=adapter.DEVICE_ONLY_CASES)
@@ -1919,7 +2078,7 @@ os.exit(0)
                     self.assertEqual(a.active_edit_errors(receipt,row,case,selection),[])
                     mutations=[lambda r:r['intent'].update(kind='cancel'),lambda r:r['intent'].update(after=not r['intent']['after']),
                         lambda r:r['intent'].update(action='synthetic-equip'),lambda r:r.update(qualifiedReturn=True),
-                        lambda r:r.update(readOnly=False),lambda r:r['existingDecision'].update(commonActiveEdit=True),
+                        lambda r:r.update(readOnly=False),lambda r:r['existingDecision'].update(commonActiveEdit=mode!='toolkit'),
                         lambda r:r['performance'].update(positiveTimingClaim=True),lambda r:r['performance'].update(completeEditMeasured=True)]
                     if mode=='toolkit':
                         mutations += [lambda r:r['observer']['projection'].update(status='allowed',reason=False),
@@ -1942,12 +2101,31 @@ os.exit(0)
         self.assertTrue(a.active_edit_errors(value,mixed,mixed['id'],self.selection()))
         row=self.evidence('world.move-volume-device-only')[0]
         for mutate in (lambda r:r['records'].append(dict(role='equip',type='ISEquipWeaponAction')),
-                       lambda r:r['boundary']['ui'].update(commonActiveEdit=True),lambda r:r.update(equipSnapshot={} ),
+                       lambda r:r['boundary']['ui'].update(commonActiveEdit=False),lambda r:r.update(equipSnapshot={} ),
                        lambda r:r['client']['hands'].update(primary=r['ids']['pen']['id'])):
             changed=copy.deepcopy(row);mutate(changed);evidence=list(self.evidence(row['id']));evidence[0]=changed
             self.assertTrue(self.check(evidence))
 
-    def test_active_edit_flag_is_strict_and_restricted_to_precise_real_header_cases(self):
+    def test_device_only_common_marker_is_strict_at_diagnostic_and_actual_drop_boundaries(self):
+        for case in adapter.DEVICE_ONLY_CASES:
+            row=self.precise_evidence(case)[0]
+            receipt=self.active_edit_receipt(row)
+            for wrong in (None, False, 1, 'true'):
+                changed=copy.deepcopy(receipt);changed['existingDecision']['commonActiveEdit']=wrong
+                self.assertTrue(a.active_edit_errors(changed,row,case,self.selection()),(case,wrong))
+                changed=copy.deepcopy(row);changed['boundary']['ui']['dropDecision']['commonActiveEdit']=wrong
+                evidence=list(self.precise_evidence(case));evidence[0]=changed
+                self.assertTrue(self.check(evidence),(case,wrong))
+            for route in (None, False, 'resource-candidate'):
+                changed=copy.deepcopy(row);changed['boundary']['ui']['dropDecision']['route']=route
+                evidence=list(self.precise_evidence(case));evidence[0]=changed
+                self.assertTrue(self.check(evidence),(case,route))
+            for key in ('commonActiveEdit','commonActiveEditRoute','dropDecision','dropDecisionSamples'):
+                changed=copy.deepcopy(row);changed['boundary']['ui'].pop(key)
+                evidence=list(self.precise_evidence(case));evidence[0]=changed
+                self.assertTrue(self.check(evidence),(case,key))
+
+    def test_active_edit_flag_is_strict_and_scopes_mixed_bank_to_supported_cases(self):
         selection = self.selection(); selection['cases'] = list(adapter.ACTIVE_EDIT_CASES)
         for bad in (1, 'true', None, [], {}):
             selection['options']['active_edit_observation'] = bad
@@ -1959,7 +2137,10 @@ os.exit(0)
         for case in ('root.reader-child-cancel', 'worn-bag.header-cancel-capacity-lost', 'world.header-cancel-favorite'):
             selection['cases'] = [case]
             with self.assertRaises(ValueError): adapter.validate(selection)
+        selection['cases'] = list(adapter.DECLARED_CASES)
+        adapter.validate(selection)  # One lifecycle includes ordinary controls and scoped diagnostics.
         selection['options']['active_edit_observation'] = False
+        selection['cases'] = list(adapter.CASES)
         adapter.validate(selection)  # Legacy cases retain their previous options/evidence contract.
 
     def test_active_edit_exact_return_and_controls_keep_overall_unknown_visible(self):
@@ -2228,13 +2409,29 @@ os.exit(0)
                     if field in record: client.append(raw(marker,record[field]))
                 for sample in record.get('requestStates',[]):client.append(raw('NATIVE_REQUEST',sample))
             client.append(raw('PERFORMANCE',row['performance']))
-            if active:
+            if active and case in adapter.ACTIVE_EDIT_CASES + adapter.DEVICE_ONLY_CASES:
                 row['activeEditObservation']=self.active_edit_receipt(row)
                 client.append(raw('ACTIVE_EDIT_OBSERVATION',row['activeEditObservation']))
             client.append(event(row))
         client.append(event(dict(event='complete', suite='book-controls', cases=cases, performed=len(cases), skipped=0, failed=0)))
         client.append(raw('COMPLETE', dict(cases=cases, failed=0)))
         return selection, '\n'.join(client), '\n'.join(server)
+
+    def test_mixed_acceptance_bank_keeps_scoped_observation_strict(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                with tempfile.TemporaryDirectory() as directory:
+                    selection, client, server = self.log_bank(kind, mode, precise=True, active=True, cases=adapter.DECLARED_CASES)
+                    root = Path(directory)
+                    (root / 'client1-launch.log').write_text(client)
+                    (root / 'server-launch.log').write_text(server)
+                    result = a.verify(root, selection, {})
+                    self.assertEqual(result['issues'], [], (kind, mode, result))
+                    self.assertEqual(len(result['evidence']['activeEditObservation']), len(adapter.ACTIVE_EDIT_CASES + adapter.DEVICE_ONLY_CASES))
+                    # A duplicated scoped receipt is never accepted as coverage.
+                    receipt = next(line for line in client.splitlines() if adapter.PREFIX + 'ACTIVE_EDIT_OBSERVATION ' in line)
+                    (root / 'client1-launch.log').write_text(client + '\n' + receipt)
+                    self.assertTrue(a.verify(root, selection, {})['issues'])
 
     def test_whole_bank_raw_evidence_and_completion(self):
         with tempfile.TemporaryDirectory() as directory:

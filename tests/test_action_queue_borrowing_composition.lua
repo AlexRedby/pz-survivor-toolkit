@@ -10,6 +10,9 @@ end
 local create=assert(loadfile(ProjectRoot..'/tests/support/borrowing_composition.lua'))()
 local function run(mode,client)
     local f=create(client);local e=f.env;local toolkit=e.PZSurvivorToolkit
+    assert(getmetatable(e)==nil and e._G==e,'composition must model the native plain global environment')
+    local watch=e.require('PZSurvivorToolkit/SourceProof').captureBindings({{owner=e,keys={'ISTimedActionQueue','getSpecificPlayer'}}})
+    assert(watch and watch(),'composition must retain actual source-owned binding proofs')
     local book=f.book(101)
     e.ISInventoryPaneContextMenu.onLiteratureItems({book},0)
     local q=f.queue

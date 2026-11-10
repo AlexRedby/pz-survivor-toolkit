@@ -405,7 +405,7 @@ local function realGesture(preview)
  local decision=moving and T.ActionQueuePolicy.evaluateMove(queue(),movingAction,demote and volume or front,demote)or T.ActionQueuePolicy.evaluateCancel(queue(),target.item,whole)
  local ui={source='ActionQueuePanel.List',input=moving and'programmatic-drag'or'programmatic-press-release',header=whole,singleton=not grouped,
   target=ref(target.item),operation=tokenID(target.operation),hitTested=true,decision=diagnostic(decision,moving and movingAction or target.item),at=now()}
- if deviceOnly()then ui.commonActiveEdit=decision.commonActiveEdit==true;ui.dropAfter=demote;ui.targetAction=ref(targetAction) end
+ if deviceOnly()then ui.commonActiveEdit=decision.commonActiveEdit==true;ui.commonActiveEditRoute=decision.commonActiveEditRoute or false;ui.dropAfter=demote;ui.targetAction=ref(targetAction) end
  if keep then
   ui.waiverIdentity={schema=1,case=case(),actor=state.player:getOnlineID(),source=ids.source,
    actionRef=ref(targetAction),token=tokenID(targetAction.toolkitQueueOperation),beforeAt=preview.at,
@@ -425,7 +425,24 @@ local function realGesture(preview)
   -- The actual list onMouseMove reads native pointer coordinates. Use release's
   -- real hit testing with a captured programmatic drag; no pointer getter override.
   list.dragging=ui.pressCaptured and math.abs(fromY-toY)>5;ui.dragging=list.dragging==true
-  releaseMs,releaseStartedMs,releaseFinishedMs=timedHandler(list,'onMouseUp',x,toY);ui.x,ui.fromY,ui.toY=x,fromY,toY
+  if deviceOnly()then
+   -- Delegate every real commit decision and retain only its scalar receipt.
+   -- Restore the source-owned API even when the actual handler raises.
+   local policy=T.ActionQueuePolicy;local evaluate=policy.evaluateMove
+   local samples,lastDecision=0,nil
+   policy.evaluateMove=function(...)
+    local value=evaluate(...);samples=samples+1
+    lastDecision={allowed=value.allowed==true,reason=value.reason or false,
+     commonActiveEdit=value.commonActiveEdit==true,route=value.commonActiveEditRoute or false,spatialValidated=value.spatialValidated==true,preempt=value.preempt==true,demote=value.demote==true}
+    return value
+   end
+   local completed,a,b,c=pcall(timedHandler,list,'onMouseUp',x,toY)
+   policy.evaluateMove=evaluate
+   if not completed then error(a,0)end
+   releaseMs,releaseStartedMs,releaseFinishedMs=a,b,c
+   ui.dropDecisionSamples,ui.dropDecision=samples,lastDecision or false
+  else releaseMs,releaseStartedMs,releaseFinishedMs=timedHandler(list,'onMouseUp',x,toY)end
+  ui.x,ui.fromY,ui.toY=x,fromY,toY
  else
   local x,y=list:cancelX()+12,list:topOfItem(target.index)+target.height/2
   assert(list:rowUnderMouse(x,y)==target,'real cancel hit target differs')
@@ -603,7 +620,7 @@ local function atBoundary()
   assert(target,'native optional return missing before first preview')
   preview={action=target,native=F.captureReturnPreview(target),identity=F.waiverIdentity(state,target),at=now()}
  end
- if activeEditEnabled then
+ if activeEditEnabled and(control()=='header-cancel'and not case():find('-capacity-lost',1,true)and not case():find('-favorite',1,true)or deviceOnly())then
   local earned=false
   for _,row in ipairs(records)do if row.role=='pickup'and row.performedAt then earned=true end end
   activeEditReceipt=editObservation.run({toolkit=T,queue=queue(),front=front,state=state,fixture=F,ids=ids,

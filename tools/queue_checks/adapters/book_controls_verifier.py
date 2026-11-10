@@ -8,7 +8,7 @@ import re
 from .. import report
 from ..placement import validate as validate_placement
 from .book_controls import (
-    CAPACITY_CASES, DEVICE_ONLY_CASES, FAVORITE_CASES, complete, raw, selected_cases, validate,
+    ACTIVE_EDIT_CASES, CAPACITY_CASES, DEVICE_ONLY_CASES, FAVORITE_CASES, complete, raw, selected_cases, validate,
 )
 from .tv_controls import _number as _base_number
 
@@ -401,7 +401,10 @@ def _record_errors(record, kind, case, actor, acks, capacity_lost=False):
                        or r.get('kind') != record.get('type') or r.get('player') != actor for r in receipts)
                 or receipts[0].get('token') != receipts[1].get('token')
                 or receipts[0].get('transaction') != receipts[1].get('transaction')
-                or type(receipts[0].get('transaction')) is not int or receipts[0]['transaction'] <= 0
+                # The native transaction field is a signed Java byte. Zero is
+                # absent; negative nonzero values retain the same sealed identity.
+                or type(receipts[0].get('transaction')) is not int
+                or not -128 <= receipts[0]['transaction'] <= 127 or receipts[0]['transaction'] == 0
                 or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}', str(receipts[0].get('token')))):
             errors.append('Missing sealed native equipment/radio started/completed outcome')
     if kind == 'mp' and record.get('role') in ('pickup', 'return') and record.get('started') and not (capacity_lost and role == 'return'):
@@ -712,11 +715,14 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
             errors.append('Queue-off natural control performed an edit/reset')
         if device and enabled:
             approach=next((r for r in boundary.get('queue',[]) if r.get('role')=='preparation'and r.get('type')=='ISQueueActionsAction'and r.get('token')==volume.get('token')), {})
-            if (ui.get('commonActiveEdit') is not False or ui.get('dropAfter') is not demote
+            if (ui.get('commonActiveEdit') is not True or ui.get('commonActiveEditRoute') != 'native-stateless' or ui.get('dropAfter') is not demote
                     or not _same_action(ui.get('targetAction'),volume.get('actionRef') if demote else original.get('actionRef'))
                     or not _same_action(ui.get('target'),approach.get('actionRef') if demote else original.get('actionRef'))
                     or not _same_action(ui.get('movingAnchor'),original.get('actionRef') if demote else approach.get('actionRef'))):
-                errors.append('Device-only actual gesture lost legacy authority, genuine volume-group anchor or requested direction')
+                errors.append('Device-only actual gesture lost common authority, genuine volume-group anchor or requested direction')
+            if (not _exact(ui.get('dropDecision'), dict(allowed=True, reason=False, commonActiveEdit=True, route='native-stateless', spatialValidated=False, preempt=True, demote=demote))
+                    or type(ui.get('dropDecisionSamples')) is not int or ui['dropDecisionSamples'] < 2):
+                errors.append('Device-only actual Panel drop lacks its final common active decision')
         starts = row.get('starts', [])
         expected_roles = (['front', 'equip', 'front', 'volume', 'tail'] if control == 'move-equip' else
                           ['front', 'volume', 'front', 'equip', 'tail']) if moving else ['front'] if lost and not enabled else ['front', 'equip', 'volume', 'tail']
@@ -905,6 +911,108 @@ def _exact_device_observer(value, wanted):
             and _exact_action_record(actual['deferred'][0], expected['deferred'][0], {'action'}))
 
 
+def _device_paired_timing_errors(performance, required):
+    errors = []
+    if (not isinstance(performance, dict) or set(performance) != set(required) | {'baseline', 'observer', 'baselineFirstMs', 'observerFirstMs'}
+            or any(type(performance.get(k)) is not type(v) or performance[k] != v for k, v in required.items())):
+        return ['Device-only timing scope or unsupported timing/permission claim differs']
+    for key in ('baselineFirstMs', 'observerFirstMs'):
+        if not _number(performance[key]) or performance[key] < 0: errors.append('Device-only first-use timing invalid')
+    for key in ('baseline', 'observer'):
+        timing = performance[key]
+        samples = timing.get('samplesMs') if isinstance(timing, dict) else None
+        if (not isinstance(samples, list) or len(samples) != 3 or any(not _number(v) or v < 0 for v in samples)
+                or set(timing) != {'samplesMs', 'samples', 'minMs', 'medianMs', 'maxMs', 'meanMs'} or type(timing.get('samples')) is not int or timing['samples'] != 3):
+            errors.append('Device-only paired timing samples invalid'); continue
+        wanted = dict(minMs=min(samples), medianMs=sorted(samples)[1], maxMs=max(samples), meanMs=sum(samples)/3)
+        if any(not _number(timing.get(k)) or not math.isclose(timing[k], v, rel_tol=1e-9, abs_tol=1e-9) for k, v in wanted.items()):
+            errors.append('Device-only paired timing distribution differs')
+    return errors
+
+
+def _no_movement_observation_errors(probe, value, row, intent, enabled, approach=None, nodes=None):
+    if type(probe) is not dict:
+        return ['Missing device-only opt-in no-movement observation']
+    errors = []
+    root = probe.get('root')
+    book = row.get('ids', {}).get('front', {})
+    prototype = value.get('prototype')
+    borrowed = row.get('ids', {}).get('source') != 'root'
+    if (not isinstance(root, str) or not root or enabled and borrowed
+            and (not isinstance(prototype, dict) or root != prototype.get('source'))):
+        errors.append('No-movement observation lost physical root identity')
+    ownership = approach.get('approach', {}) if enabled else {}
+    if not isinstance(ownership, dict): ownership = {}
+    required = dict(schema=1, optIn=True, observerSource='ActionQueuePolicy.lua',
+        current=value.get('current'), currentNative=value.get('currentNative'), body=intent['target'] if intent['after'] else intent['action'],
+        root=root, actor=ownership.get('actor') if enabled else False, targetSquare=ownership.get('targetSquare') if enabled else False,
+        mutationAuthorized=False, permissionsMeasured=False, readOnly=True)
+    fields = set(required) | {'intent', 'observer', 'nativeNoMovement', 'checkpoint', 'resume', 'plan', 'performance'}
+    if (probe.keys() != fields or not _exact_action_record({k: probe.get(k) for k in required}, required, {'current', 'currentNative', 'body'})
+            or not _exact_action_record(probe.get('intent'), dict(intent, resolveNoMovement=True), {'action', 'target'})):
+        errors.append('No-movement opt-in/source/current/native pair or read-only contract differs')
+    observer = dict(status='observed' if enabled else 'unhandled', reason=False if enabled else 'unavailable',
+        allowedAbsent=True, projection=dict(status='allowed', reason=False, externalCapacity=borrowed, allowedAbsent=True) if enabled else False,
+        returns=0, unresolved=0)
+    if not _exact(probe.get('observer'), observer):
+        errors.append('No-movement observer acquired permission or lost its complete projection')
+    if enabled:
+        proofs = probe.get('nativeNoMovement')
+        if type(proofs) is not list or len(proofs) != 1 or not _same_action(proofs[0], approach.get('actionRef')):
+            errors.append('No-movement proof is not the one genuine pending native preparation')
+        resolved_nodes = [{k: v for k, v in node.items() if k != 'deferred'} for node in nodes]
+        resolved_nodes[1].update(complete=True, capacity='unchanged')
+        if not _exact_device_plan(probe.get('plan'), dict(kind='preempt', nodes=resolved_nodes)):
+            errors.append('No-movement plan changed retained return, resume or native pair order')
+        checkpoint = dict(stage='before-stop', id=book.get('id'), fullType=book.get('type'),
+            pages=row.get('boundary', {}).get('before', {}).get('books', {}).get('front', {}).get('pages'),
+            total=book.get('total'), location=root)
+        if (not _exact(probe.get('checkpoint'), checkpoint)
+                or not _exact_action_record(probe.get('resume'), dict(action=value.get('current'), pages=checkpoint['pages']), {'action'})):
+            errors.append('No-movement reader checkpoint/resume pages changed')
+    elif (not _exact(probe.get('nativeNoMovement'), []) or probe.get('plan') is not False
+            or probe.get('checkpoint') is not False or probe.get('resume') is not False):
+        errors.append('Queue-off no-movement control acquired a proof or resume plan')
+    timing = dict(scope='paired-live-no-movement-observation-entrypoints', timer='System.nanoTime', units='ms', warmupPairs=1, pairs=3,
+        sameLiveIntent=True, whole=False, firstUseScope='first-opt-in-call-after-default-observation-bank',
+        comparable=False, comparisonReason='common-decision-versus-complete-observation' if enabled else 'queue-disabled',
+        observerProjectionStatus='allowed' if enabled else False, observerProjectionReason=False, timerOverhead='included-not-subtracted',
+        sameOutputContract=False, completeEditMeasured=False, frameLoadMeasured=False, positiveTimingClaim=False, assessment='not-assessed')
+    errors.extend(_device_paired_timing_errors(probe.get('performance'), timing))
+    return errors
+
+
+def _same_work_decision_errors(bank, row, enabled):
+    if not enabled:
+        return [] if bank is False else ['Queue-off control acquired a common/current-native comparison']
+    required = dict(scope='paired-live-common-current-native-decisions', entrypoint='Policy.evaluateMove',
+        baseline='current-native-route-framework-withheld', candidate='production-native-stateless-common-route',
+        timer='System.nanoTime', units='ms', warmupPairs=1, pairs=3, alternating=True, sameLiveIntent=True,
+        sameOutputContract=True, frameworkRestored=True, frameworkSwitchIncluded=True, readOnly=True,
+        legacyCommonActiveEdit=False, commonActiveEdit=True, commonRoute='native-stateless', legacyRoute=False, spatialValidated=False, timerOverhead='included-not-subtracted',
+        positiveTimingClaim=False, completeEditMeasured=False, frameLoadMeasured=False, assessment='not-assessed')
+    if (type(bank) is not dict or set(bank) != set(required) | {'legacyDecision', 'commonDecision', 'legacy', 'common'}
+            or any(not _exact(bank.get(k), v) for k, v in required.items())):
+        return ['Missing/malformed same-work common/current-native decision receipt']
+    first = 2 if row.get('ids', {}).get('source') == 'root' else 3
+    wanted = dict(allowed=True, reason=False, to=1, first=first, last=first+1, preempt=True,
+        demote=base_control(row.get('ids', {}).get('control', '')) == 'demote-reader')
+    errors = []
+    if not _exact(bank['legacyDecision'], wanted) or not _exact(bank['commonDecision'], wanted):
+        errors.append('Same-work common/current-native scalar decisions differ from the exact native intent')
+    for key in ('legacy', 'common'):
+        timing=bank[key]
+        samples=timing.get('samplesMs') if type(timing) is dict else None
+        if (type(samples) is not list or len(samples) != 3 or any(not _number(v) or v < 0 for v in samples)
+                or set(timing) != {'samplesMs', 'samples', 'minMs', 'medianMs', 'maxMs', 'meanMs'}
+                or type(timing.get('samples')) is not int or timing['samples'] != 3):
+            errors.append('Same-work decision timing samples invalid'); continue
+        expected=dict(minMs=min(samples), medianMs=sorted(samples)[1], maxMs=max(samples), meanMs=sum(samples)/3)
+        if any(not _number(timing.get(k)) or not math.isclose(timing[k], v, rel_tol=1e-9, abs_tol=1e-9) for k,v in expected.items()):
+            errors.append('Same-work decision timing distribution differs')
+    return errors
+
+
 def device_active_edit_errors(value, row, case, selection):
     """Qualify one deferred native phase without granting a complete common edit."""
     if not isinstance(value, dict):
@@ -937,10 +1045,11 @@ def device_active_edit_errors(value, row, case, selection):
                   target=volume.get('actionRef') if demote else boundary.get('reader'), after=demote)
     if not _exact_action_record(value.get('intent'), intent, {'action', 'target'}):
         errors.append('Device-only observation did not use the actual volume-to-reader move intent')
-    decision = dict(entrypoint='Policy.evaluateMove', allowed=enabled, reason=False if enabled else 'unavailable', whole=False, commonActiveEdit=False)
+    decision = dict(entrypoint='Policy.evaluateMove', allowed=enabled, reason=False if enabled else 'unavailable', whole=False, commonActiveEdit=enabled, route='native-stateless' if enabled else False, spatialValidated=False)
     if not _exact(value.get('existingDecision'), decision):
-        errors.append('Device-only actual move must retain legacy authority')
+        errors.append('Device-only actual move must use common authority only with Toolkit enabled')
     observer = value.get('observer')
+    approach, nodes = None, None
     if not enabled:
         wanted = dict(status='unhandled', reason='unavailable', allowedAbsent=True, projection=False, returns=0, unresolved=0)
         if not _exact_device_observer(observer, wanted): errors.append('Device-only queue-off observer acquired a projection')
@@ -991,8 +1100,8 @@ def device_active_edit_errors(value, row, case, selection):
         nodes.append(dict(kind='pending', action=tail.get('actionRef'), complete=True, capacity='unchanged'))
         if (not _exact_device_plan(value.get('plan'), dict(kind='preempt', nodes=nodes)) or len(returns) != int(source != 'root')
                 or any(r.get('role') == 'equip' or r.get('type') in ('ISEquipWeaponAction', 'ISUnequipAction', 'ISEquipHeavyItem') for r in records)
-                or boundary.get('ui', {}).get('commonActiveEdit') is not False):
-            errors.append('Device-only plan lost exact native approach/volume order, introduced equipment or changed legacy authority')
+                or boundary.get('ui', {}).get('commonActiveEdit') is not True):
+            errors.append('Device-only plan lost exact native approach/volume order, introduced equipment or lost common authority')
         diagnostics=value.get('diagnostics')
         wanted_gaps=[]
         wanted_nodes=[dict(kind=node['kind'],action=node['action'],complete=node['complete'],
@@ -1038,24 +1147,12 @@ def device_active_edit_errors(value, row, case, selection):
     performance = value.get('performance')
     required_performance = dict(scope='paired-live-device-preempt-entrypoints', timer='System.nanoTime', units='ms', warmupPairs=1, pairs=3,
         sameLiveIntent=True, whole=False, firstUseScope='first-call-after-untimed-identity-ledger-and-native-facts-diagnostics',
-        comparable=False, comparisonReason='deferred-native-phase-not-full-projection' if enabled else 'queue-disabled',
+        comparable=False, comparisonReason='common-decision-versus-deferred-observation' if enabled else 'queue-disabled',
         observerProjectionStatus='deferred' if enabled else False, observerProjectionReason='edit_native_resolution' if enabled else False, timerOverhead='included-not-subtracted',
         sameOutputContract=False, completeEditMeasured=False, frameLoadMeasured=False, positiveTimingClaim=False, assessment='not-assessed')
-    if (not isinstance(performance, dict) or set(performance) != set(required_performance) | {'baseline', 'observer', 'baselineFirstMs', 'observerFirstMs'}
-            or any(type(performance.get(k)) is not type(v) or performance[k] != v for k, v in required_performance.items())):
-        errors.append('Device-only timing scope or unsupported timing/permission claim differs')
-    else:
-        for key in ('baselineFirstMs', 'observerFirstMs'):
-            if not _number(performance[key]) or performance[key] < 0: errors.append('Device-only first-use timing invalid')
-        for key in ('baseline', 'observer'):
-            timing = performance[key]
-            samples = timing.get('samplesMs') if isinstance(timing, dict) else None
-            if (not isinstance(samples, list) or len(samples) != 3 or any(not _number(v) or v < 0 for v in samples)
-                    or set(timing) != {'samplesMs', 'samples', 'minMs', 'medianMs', 'maxMs', 'meanMs'} or type(timing.get('samples')) is not int or timing['samples'] != 3):
-                errors.append('Device-only paired timing samples invalid'); continue
-            wanted = dict(minMs=min(samples), medianMs=sorted(samples)[1], maxMs=max(samples), meanMs=sum(samples)/3)
-            if any(not _number(timing.get(k)) or not math.isclose(timing[k], v, rel_tol=1e-9, abs_tol=1e-9) for k, v in wanted.items()):
-                errors.append('Device-only paired timing distribution differs')
+    errors.extend(_device_paired_timing_errors(performance, required_performance))
+    errors.extend(_no_movement_observation_errors(value.get('noMovementObservation'), value, row, intent, enabled, approach, nodes))
+    errors.extend(_same_work_decision_errors(value.get('sameWorkComparison'), row, enabled))
     return errors
 
 
@@ -1286,7 +1383,8 @@ def verify(root, selection, catalog):
         if len(setup) != 1 or setup[0].get('activeEditObserved', False) is not active:
             issues.append('Active-edit observation setup differs from selected option')
         active_rows = raw(text, 'ACTIVE_EDIT_OBSERVATION')
-        if [r.get('case') for r in active_rows] != (cases if active else []):
+        observed_cases = [case for case in cases if active and case in ACTIVE_EDIT_CASES + DEVICE_ONLY_CASES]
+        if [r.get('case') for r in active_rows] != observed_cases:
             issues.append('Active-edit raw receipts missing, duplicated, foreign or reordered')
         if selection.get('options', {}).get('precise_timing') is True:
             if len(setup) != 1:
@@ -1330,7 +1428,7 @@ def verify(root, selection, catalog):
                 baselines[i] if i < len(baselines) else None, verified[i] if i < len(verified) else None,
                 [r for r in admissions if r.get('case') == case], [r for r in boundaries if r.get('case') == case], [r for r in drains if r.get('case') == case], [r for r in acks if r.get('case') == case], next((r for r in capacities if r.get('case') == case), None),
                 [r for r in stop_rows if r.get('case') == case])
-            if active:
+            if case in observed_cases:
                 receipt = row.get('activeEditObservation')
                 if [r for r in active_rows if r.get('case') == case] != [receipt]:
                     errors.append('Raw active-edit receipt differs from its exact case')

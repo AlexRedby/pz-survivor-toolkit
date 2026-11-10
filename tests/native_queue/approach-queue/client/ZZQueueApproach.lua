@@ -6,7 +6,7 @@ local P=require 'QueueEnergyPlacement'
 local nativeHost=config.mode=='native'and config.kind=='mp'
 local native=config.mode=='native';local phase,index,since='prepare',1,0
 local started,ready,done=false,false,false
-local state,authority,ids,baseline,receipt,input,tracks,commands,walks,order,secondIssue,quiet,lifecycle
+local state,authority,ids,baseline,receipt,input,tracks,commands,walks,order,secondIssue,quiet,lifecycle,spatialOutcomes
 local resolveDiagnosed,lastResolveWait={},nil
 local idleCaptured,lastServerSnapshot,wireBindings=false,nil,{}
 local idleReceipt,manualInputSeen=nil,false
@@ -40,7 +40,7 @@ end
 local function fail(error)
  if done then return end
  emit({event='case',id=case(),status='failed',reason=tostring(error),phase=phase,ids=ids,commands=commands,walks=walks,order=order,
-  resolveWait=lastResolveWait,clientSnapshot=snapshotDiagnostic(),lastServerSnapshot=lastServerSnapshot or false,queueCurrent=queueDiagnostic()})
+  spatialOutcomes=spatialOutcomes,resolveWait=lastResolveWait,clientSnapshot=snapshotDiagnostic(),lastServerSnapshot=lastServerSnapshot or false,queueCurrent=queueDiagnostic()})
  print('[QUEUE_TEST] FAIL approach-queue '..tostring(error));done=true
 end
 local function request(command)
@@ -70,7 +70,8 @@ local function observeNative(module,command,args)
   for action,row in pairs(tracks)do
    if action.character==player and action.toolkitNativeTransaction==args.transaction and action.toolkitNativeKind==args.kind then
     if found then found=false;break end
-    found={action=action,row=row,native=action.action,actionRef=tostring(action),player=args.player,transaction=args.transaction,kind=args.kind,token=args.token}
+    found={action=action,row=row,native=action.action,player=args.player,transaction=args.transaction,kind=args.kind,token=args.token,
+     actionRef=tostring(action),nativeRef=action.action and tostring(action.action)or false}
    end
   end
   if found then binding=found;wireBindings[args.token]=binding end
@@ -80,7 +81,7 @@ local function observeNative(module,command,args)
  local current=queue().current
  local value={case=case(),observedAt=now(),player=args.player,transaction=args.transaction,kind=args.kind,token=args.token,state=args.state,
   matched=matched==true,name=row and row.name or false,type=row and row.type or false,actionRef=matched and binding.actionRef or false,
-  nativeRef=matched and binding.native and tostring(binding.native)or false,currentActionRef=current and(matched and current==action and binding.actionRef or tostring(current))or false,
+  nativeRef=matched and binding.nativeRef or false,currentActionRef=action and current==action and binding.actionRef or current and tostring(current)or false,
   referenceStable=matched and action.action==binding.native and action.toolkitNativeTransaction==args.transaction and action.toolkitNativeKind==args.kind or false}
  if row then row.nativeStates=row.nativeStates or{};row.nativeStates[#row.nativeStates+1]=value end
  raw('NATIVE_STATE',value)
@@ -93,6 +94,22 @@ Events.OnServerCommand.Add(function(module,command,args)
 end)
 local function position()local p=getPlayer();return{x=p:getX(),y=p:getY(),z=p:getZ()}end
 local function near(p,id)return p.z==id.z and math.abs(p.x-id.x-.5)<=1.6 and math.abs(p.y-id.y-.5)<=1.6 end
+-- Observe the original common executor's result transparently. This is not a
+-- native action callback override and never manufactures a phase outcome.
+local approach=PZSurvivorToolkit.ActionQueueApproach
+local spatialBeforeComplete=approach and approach.beforeComplete
+assert(type(spatialBeforeComplete)=='function'or native,'Toolkit spatial execution API missing')
+if spatialBeforeComplete then approach.beforeComplete=function(q,action)
+ local result=spatialBeforeComplete(q,action)
+ if result and result~='waiting'and not done and spatialOutcomes and action.character==getPlayer()then
+  local request=action.toolkitQueueCommand and action.toolkitQueueCommand.snapshot
+  local target=action.Type=='ISWalkToTimedAction'and action.location or request and request.args and request.args[2]
+  local row={case=case(),result=result,type=action.Type,token=tokenId(action.toolkitQueueOperation),observedAt=now(),position=position(),
+   target=target and{x=target:getX(),y=target:getY(),z=target:getZ()}or false}
+  spatialOutcomes[#spatialOutcomes+1]=row;raw('SPATIAL_OUTCOME',row)
+ end
+ return result
+end end
 local function finite(value)return type(value)=='number'and value==value and value>-math.huge and value<math.huge end
 local function duration(action,row)
  if row.allocatedAt then assert(action.maxTime==row.effectiveDuration,'allocated duration changed');return end
@@ -114,7 +131,7 @@ ISTimedActionQueue.add=function(action)
   elseif action.Type=='ISReadABook'and action.item:getID()==ids.book.id then name='tail'end
   if name then
    for _,r in ipairs(commands)do assert(r.name~=name,'duplicate native operation '..name)end
-   row={name=name,admittedAt=now(),type=action.Type,duration=action.maxTime,producer=name=='tail'and'native ISReadABook constructor'or'native ISRemovePlantCursor.tryBuild',started=false,progress=false,
+   row={name=name,admittedAt=now(),type=action.Type,duration=action.maxTime,producer=name=='tail'and'native ISReadABook constructor'or case()=='direct-bush'and'native luautils.walkAdj -> ISWorldObjectContextMenu.doRemovePlant'or'native ISRemovePlantCursor.tryBuild',started=false,progress=false,
     itemId=name=='tail'and action.item:getID()or false,target=name~='tail'and ids.targets[name]or false,nativeDurationBefore=action:adjustMaxTime(action.maxTime),durationSampleBefore=now(),durationSamples=1}
    commands[#commands+1]=row;tracks[action]=row
   elseif action.Type=='ISWalkToTimedAction'then
@@ -149,22 +166,47 @@ local function cursor(name)
  assert(c:isValid(getCell():getGridSquare(id.x,id.y,id.z))and not ISBuildMenu.cheat)
  c:tryBuild(id.x,id.y,id.z)
 end
+-- Match stock tryBuild's outer route followed by the unchanged native create
+-- producer. doRemovePlant contains its own walkAdj(...,true): Toolkit defers
+-- that inner phase until the first route arrives, where it adds no extra walk.
+-- Queue-off retains the stock eager redundant walk, cancelled by the next outer
+-- walkAdj(...,false). Neither mode replaces callbacks or clears the queue here.
+local function submit(name)
+ if case()~='direct-bush'then return cursor(name)end
+ local id=ids.targets[name];local player=getPlayer();local square=assert(getCell():getGridSquare(id.x,id.y,id.z))
+ local function produce()
+  if luautils.walkAdj(player,square,false)then ISWorldObjectContextMenu.doRemovePlant(player,square,false)end
+ end
+ if native then produce()else PZSurvivorToolkit.ActionQueueOperations.run(produce)end
+end
 local function freeze()
  local value={};for _,class in ipairs({ISRemoveBush,ISRemoveGrass,ISWalkToTimedAction,ISReadABook})do
   for _,name in ipairs({'new','start','stop','update','perform','complete','getDuration','isValid','waitToStart','animEvent','serverStart'})do value[#value+1]={class=class,name=name,callback=class[name]}end
  end;return value
 end
 local function unchanged()for _,v in ipairs(lifecycle)do assert(v.class[v.name]==v.callback,'native lifecycle callback changed '..v.name)end;return true end
+-- Exact current-main controls naturally finish the independent reader. Once
+-- both idle readbacks exist, missing admission/pages cannot improve by waiting.
+local function nativeHostIdleGuard()
+ if not nativeHost or not lastServerSnapshot then return end
+ local tail
+ for _,row in ipairs(commands)do if row.name=='tail'then tail=row end end
+ assert(tail and tail.started,'native Host control reader did not start before idle')
+ local client=F.snapshot(state).book;local server=lastServerSnapshot.book;local pages=ids.book.pages
+ assert(client and server and client.pages==pages and client.characterPages==pages
+  and server.pages==pages and server.characterPages==pages,'native Host control reader did not finish before idle')
+end
 local function finish()
  observe();local client=assert(F.verify(state));unchanged()
  local enabled=not native;local expected=enabled and{'first','second','tail'}or{'second','tail'}
  assert(#order==#expected);for i,name in ipairs(expected)do assert(order[i]==name,'native start order differs')end
  secondIssue.action=nil
  emit({event='case',id=case(),status='passed',ids=ids,input=input,authorityBaseline=baseline,client=client,server=receipt,
-  commands=commands,walks=walks,order=order,secondIssue=secondIssue,clientIdle=idleReceipt,serverIdle=lastServerSnapshot,manualInputSeen=manualInputSeen,queueIdle=true,settleMilliseconds=now()-quiet,lifecycleUnchanged=true})
- index=index+1;if not case()then emit({event='complete',cases=config.cases,performed=2,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
+  commands=commands,walks=walks,order=order,spatialOutcomes=spatialOutcomes,secondIssue=secondIssue,clientIdle=idleReceipt,serverIdle=lastServerSnapshot,manualInputSeen=manualInputSeen,queueIdle=true,settleMilliseconds=now()-quiet,lifecycleUnchanged=true})
+ index=index+1;if not case()then emit({event='complete',cases=config.cases,performed=#config.cases,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
  state,authority,ids,baseline,receipt,input,tracks,commands,walks,order,secondIssue,quiet=nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil,nil
  layout,placementState,clientPlacement=nil,nil,nil
+ spatialOutcomes=nil
  resolveDiagnosed,lastResolveWait={},nil;idleCaptured,lastServerSnapshot,wireBindings=false,nil,{};idleReceipt,manualInputSeen=nil,false;phase='prepare';since=now()
 end
 require('QueuePreflight').onGameStart(Events,function()started=true;since=now()end)
@@ -206,30 +248,29 @@ require('QueuePreflight').onTick(Events,function()
     if not resolveDiagnosed[reason]then resolveDiagnosed[reason]=true;raw('RESOLVE_WAIT',lastResolveWait or{case=case(),reason=reason})end
     return
    end
-   tracks,commands,walks,order={},{},{},{};input=assert(F.baseline(state));phase='baseline';request('Baseline')
+   tracks,commands,walks,order,spatialOutcomes={},{},{},{},{};input=assert(F.baseline(state));phase='baseline';request('Baseline')
   elseif phase=='baseline'and baseline then
    assert(P.atCentered(player,layout.target),'approach client left centered placement before native admission')
    local target=P.target(ids.placement)
    assert(target.x==layout.target.x and target.y==layout.target.y and target.z==layout.target.z
     and target.x==ids.origin.x and target.y==ids.origin.y and target.z==ids.origin.z,'approach admission target differs')
-   raw('ADMITTED',{case=case(),actor='client1'});cursor('first');phase='walking'
+   raw('ADMITTED',{case=case(),actor='client1'});submit('first');phase='walking'
   elseif phase=='walking'then
    local active=queue().current;local row=tracks[active]
    if not row or row.type~='ISWalkToTimedAction'or not row.started then return end
    local p=position();assert(near(p,ids.targets.second)and not near(p,ids.targets.first),'second no longer initially near')
    secondIssue={firstWalking=true,position=p,firstStartedAt=row.startedAt,issuedAt=now(),action=active}
-   cursor('second');secondIssue.firstRetainedAfterIssue=queue():indexOf(active)~=-1
+   submit('second');secondIssue.firstRetainedAfterIssue=queue():indexOf(active)~=-1
    secondIssue.firstJavaRetainedAfterIssue=active.action and player:getCharacterActions():contains(active.action)or false
    ISTimedActionQueue.add(ISReadABook:new(player,state.book));phase='running'
   elseif phase=='running'and empty()then
    if nativeHost then
-    local second,reader
-    for _,row in ipairs(commands)do if row.name=='second'then second=row elseif row.name=='tail'then reader=row end end
-    for _,row in ipairs({second or{},reader or{}})do
-     local receipts=row.nativeStates or{}
-     if #receipts~=2 or receipts[1].state~='started'or receipts[2].state~='completed'then quiet=nil;return end
-    end
-    if not lastServerSnapshot then quiet=nil;return end
+    nativeHostIdleGuard()
+    local second,tail
+    for _,row in ipairs(commands)do if row.name=='second'then second=row elseif row.name=='tail'then tail=row end end
+    local receipts=second and second.nativeStates or{};local reader=tail and tail.nativeStates or{}
+    if #receipts~=2 or receipts[1].state~='started'or receipts[2].state~='completed'
+     or #reader~=2 or reader[1].state~='started'or reader[2].state~='completed'or not lastServerSnapshot then quiet=nil;return end
    end
    if not F.verify(state)then quiet=nil;return end
    quiet=quiet or now();if now()-quiet>=1000 then phase='verified';request('Verify')end

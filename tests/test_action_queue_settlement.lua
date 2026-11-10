@@ -998,6 +998,32 @@ for _, client in ipairs({false, true}) do
     end
 end
 
+-- A server batch may have a paid prefix while its terminal reply is absent.
+-- These Lua endpoint doubles verify owner policy, independently of the actual
+-- native server mutation regression: physical presence is not a paired outcome.
+do
+    local s = batchReturnFixture(true)
+    s.transaction.done, s.transaction.rejected = true, true
+    assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))
+    s.current.item, s.current.transactionId = s.members[2], 0
+    s.move(1)
+    local otherInventory = {items = {[82] = s.members[2]}}
+    s.root.items[82], s.members[2].container = nil, otherInventory
+    assert(s.finishReturn(true) and s.settlement.returnState(s.obligation) == 'unavailable',
+        'Lua completion and a paid prefix cannot turn missing native authority into success')
+    assertReturnItems(s, 'unavailable', 'unavailable')
+    assert(s.source.items[81] == s.members[1] and s.root.items[81] == nil
+        and s.root.items[82] == nil and otherInventory.items[82] == s.members[2] and s.source.items[82] == nil,
+        'unknown batch outcome must preserve the paid prefix and externally moved unspent member')
+    s.transaction.rejected = false
+    otherInventory.items[82] = nil
+    s.members[2].container, s.source.items[82] = s.source, s.members[2]
+    assertReturnItems(s, 'unavailable', 'unavailable')
+    local constructed, guarded, discarded, released = s.counts()
+    assert(constructed == 0 and guarded == 0 and discarded == 0 and released == 0,
+        'late outcome/effect must not replay, synthesize cleanup or release an unknown batch')
+end
+
 for _, badEffect in ipairs({'wrong-type', 'consumed', 'source-duplicate'}) do
     local s = batchReturnFixture(true)
     assert(s.settlement.beginReturn(s.current, s.obligation, s.guard))

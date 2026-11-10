@@ -238,6 +238,13 @@ function Device.enqueued(action)
  if not trusted or not guard()or not localActor(own(action,'character'),guard)or not certified(guard)then return end
  local device=radio and own(action,'device')or nil
  local data,route=own(action,'deviceData'),media and own(action,'parameter')or nil
+ if route~=nil then
+  local ok,name=call(api.classify,route)
+  if not ok or not guard()then return end
+  -- Exact world-object constructor parameters use the API's device slot.
+  -- Legacy square routes remain separately checked against the captured square.
+  if name=='IsoTelevision'or name=='IsoRadio'then device,route=route,nil end
+ end
  local observed,anchor=call(api.read,device,data,nil,route)
  if not observed or anchor==nil or kind(anchor)=='boolean'or not guard()then return end
  local state={role='device',device=device,data=data,route=route,anchor=anchor,source=guard,certificate=certificate}

@@ -11,7 +11,7 @@ local function reader(text)
   local line=text:sub(position,boundary-1);position=boundary+1;return line
  end}
 end
-local function setup(wrapped,changedSource,foreignCallback,queueHooks)
+local function setup(wrapped,changedSource,foreignCallback,queueHooks,common)
  isPlayerDoingActionThatCanBeCancelled,stopDoingActionThatCanBeCancelled,CancelAction=nil,nil,nil
  local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
  local receive
@@ -26,7 +26,7 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks)
  native('shared/RadioCom/ISRadioAction.lua')
  -- The engine supplies walk actions; only queue grouping/resources are modeled here.
  ISWalkToTimedAction=ISBaseTimedAction:derive('ISWalkToTimedAction')
- f.native('shared/Fluids/ISFluidContainer.lua');f.native('shared/Fluids/ISFluidTransferAction.lua')
+ f.native('shared/Fluids/ISFluidUtil.lua');f.native('shared/Fluids/ISFluidContainer.lua');f.native('shared/Fluids/ISFluidTransferAction.lua')
  f.native('shared/Fluids/ISFluidEmptyAction.lua');f.native('shared/TimedActions/ISTransferAction.lua')
  f.native('shared/TimedActions/ISDrinkFluidAction.lua')
  isClient,isServer=function()return false end,function()return false end
@@ -45,6 +45,19 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks)
   if changedSource=='toolkit'then text=text..'-- changed wrapper\n'end
   return reader(text)
  end
+ if common then
+  local inheritedRequire=require
+  local modules={}
+  require=function(name)
+   if name=='PZSurvivorToolkit/DeviceActionTarget'or name=='PZSurvivorToolkit/ActionQueueEditAdapters'
+    or name=='PZSurvivorToolkit/ActionQueueEditModel'then
+    if not modules[name]then modules[name]=f.project(name:match('/([^/]+)$'))end
+    return modules[name]
+   end
+   return inheritedRequire(name)
+  end
+  f.target=require('PZSurvivorToolkit/DeviceActionTarget')
+ end
  if foreignCallback=='delegate'then ISDeviceMediaAction.isValid=function()error('foreign delegate must never execute')end end
  if wrapped then assert(loadstring(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/TVMediaAction.lua'),'@PZSurvivorToolkit/TVMediaAction.lua'))()end
  if foreignCallback==true then ISDeviceMediaAction.complete=function()error('foreign preinstalled callback')end end
@@ -52,7 +65,8 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks)
  local originalInstance=instanceof
  instanceof=function(value,kind)
   return originalInstance(value,kind)or type(value)=='table'and
-   (kind=='InventoryItem'and value.class=='InventoryContainer'or kind=='IsoObject'and value.class=='IsoTelevision')
+   (kind=='InventoryItem'and(value.class=='InventoryContainer'or value.class=='DrainableComboItem')
+    or(kind=='IsoObject'or kind=='IsoWaveSignal')and(value.class=='IsoTelevision'or value.class=='IsoRadio'))
  end
  f.player.class='IsoPlayer'
  f.player.isLocalPlayer=function()return true end
@@ -77,6 +91,10 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks)
    local values={};for _,item in ipairs(knownItems)do if item:getContainer()==self then values[#values+1]=item end end
    return {size=function()return #values end,get=function(_,index)return values[index+1]end}
   end
+  value.getItemWithID=function(self,id)
+   local values=self:getItems()
+   for index=0,values:size()-1 do local item=values:get(index);if item:getID()==id then return item end end
+  end
   knownContainers[#knownContainers+1]=value;return value
  end
  local root=container();f.player.inventory=root
@@ -85,9 +103,15 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks)
   local tv={class='IsoTelevision'}
   local data={class='DeviceData',media=false,index=-1,consumed=0,validityCalls=0}
   local square={class='IsoGridSquare',getDeviceData=function()return data end}
+  square.getObjects=function()return {size=function()return 1 end,get=function(_,index)if index==0 then return tv end end}end
   tv.getSquare=function(self)return not self.gone and square or nil end
   tv.getObjectIndex=function(self)return self.gone and -1 or 0 end
   tv.getDeviceData=function()return data end
+  data.getPower=function()return 1 end;data.getDeviceVolume=function()return .5 end
+  data.getChannel=function()return 90000 end;data.getMicIsMuted=function()return false end
+  data.getMinChannelRange=function()return 200 end;data.getMaxChannelRange=function()return 1000000 end
+  data.isIsoDevice=function()return true end;data.isVehicleDevice=function()return false end
+  data.isPlayingMedia=function(self)return self.playing==true end
   data.getParent=function()return tv end;data.getMediaType=function()return 1 end
   data.getIsTurnedOn=function()return true end;data.getMediaIndex=function(self)return self.index end
   data.getIsBatteryPowered=function()return false end;data.canBePoweredHere=function()return true end
@@ -139,7 +163,7 @@ for _,wrapped in ipairs({false,true})do
  local contract,source=s.definitions.inspect(action)
  assert(source=='native.device-media-insert'and contract.items[s.item.id]and contract.targets[s.tv]
   and contract.capacityNonIncreasing==true and contract.cancelWaiting and contract.interrupt=='finish-step')
- assert(s.data.validityCalls==0,'contract inspection cannot execute current-state validity')
+ assert(s.data.consumed==0 and not s.data.media,'contract may read media facts but cannot execute effects')
  local bag=s.container();s.item.container=bag
  assert(s.definitions.inspect(action),'future tape pickup must remain a declared input without requiring it in root yet')
  if wrapped then assert(not action:isValid(),'owned runtime guard still rejects a tape outside exact root inventory')end
@@ -1080,3 +1104,303 @@ for _,enabled in ipairs({true,false})do
 end
 print('Eject input snapshot excludes matching tapes previously held in nested bags.')
 if TestCoverage then TestCoverage('source-contract','passed')end
+
+-- The same declarative evaluator handles the entire media/power component,
+-- rather than granting a special permission for each setter/media pair.
+do
+ local s=setup(true,nil,nil,false,true)
+ assert(s.installed and s.f.target.isInstalled(),'owned exact target guards must be adopted')
+ local f=s.f
+ local head=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
+ local power=ISRadioAction:new('ToggleOnOff',f.player,s.tv);power.toolkitQueueOperation={}
+ local insert=ISDeviceMediaAction:new(f.player,false,s.item,s.tv);insert.toolkitQueueOperation={}
+ local play=ISRadioAction:new('TogglePlayMedia',f.player,s.tv);play.toolkitQueueOperation={}
+ local volume=ISRadioAction:new('SetVolume',f.player,s.tv,.2);volume.toolkitQueueOperation={}
+ local q=f.queue(head,power,insert,play,volume)
+ assert(s.definitions.inspect(insert).edit,'exact media contract must enter common evaluator')
+ -- Native insertion is legal with the TV off. Moving only the insertion before
+ -- power preserves eventual playback, while moving playback before media does not.
+ s.data.getIsTurnedOn=function()return false end
+ assert(s.policy.evaluateMove(q,insert,power).allowed,'media insertion does not need power')
+ assert(s.policy.evaluateMove(q,play,insert).reason=='edit_required_state','play cannot precede its media producer')
+ assert(s.policy.evaluateCancel(q,insert,true).reason=='edit_required_state','dependent playback prevents cancelling its only tape')
+ assert(s.policy.evaluateMove(q,volume,play).allowed,'unrelated settings and playback can cross under the common contract')
+ assert(s.policy.evaluateCancel(q,volume,true).allowed,'independent setter can be cancelled')
+ assert(s.data.consumed==0 and not s.data.media,'queue decisions must not perform device effects')
+ local callback=ISDeviceBatteryAction.getDeviceDataFromParameter
+ ISDeviceBatteryAction.getDeviceDataFromParameter=function()error('foreign resolver cannot execute')end
+ assert(not s.definitions.inspect(insert),'changing the owned resolver revokes media contract')
+ ISDeviceBatteryAction.getDeviceDataFromParameter=callback
+end
+
+-- Battery barriers execute the installed native Lua constructor, begin/create,
+-- complete/invoke and real ACK listener. Java action handles, authoritative
+-- DeviceData effects and network delivery remain explicit models.
+local function batteryOrdinary(enabled,radioOn,removing,charge,quantizedUses,sourceKind)
+ local s=setup(true,nil,nil,true,true);local f=s.f
+ assert(s.installed and f.target.isInstalled(),'battery fixture needs adopted owned target guards')
+ local now,present,begun,forcedStop=1000,{},{},false
+ PZSurvivorToolkit.Settings.actionQueue=function()return enabled end
+ isClient,isServer=function()return true end,function()return false end
+ getTimestampMs=function()return now end
+ f.player.getOnlineID=function()return 55 end
+ f.player.setIsFarming=function()end;f.player.setTimedActionToRetrigger=function()end
+ f.player.getCharacterActions=function()return {contains=function(_,handle)return present[handle]==true end}end
+ f.player.getMoodles=function()return {getMoodleLevel=function()return 0 end}end
+ f.player.getTimedActionTimeModifier=function()return 1 end
+ MoodleType={UNHAPPY='unhappy',DRUNK='drunk'}
+ DebugType={Action={warn=function()end}};ISLogSystem={logAction=function()end}
+ local function battery(container,uses)
+  local item=f.item('Base.Battery');item.class='DrainableComboItem';item.container=container
+  item.uses,item.maximum=uses or quantizedUses,100
+  item.getContainer=function(self)return self.container end
+  item.getCurrentUses=function(self)return self.uses end
+  item.getMaxUses=function(self)return self.maximum end
+  item.getCurrentUsesFloat=function(self)return self.charge or self.uses/self.maximum end
+  item.getType=function()return 'Battery'end
+  item.getUnequippedWeight=function()return .1 end
+  item.getIsCraftingConsumed=function()return false end
+  item.getWorldItem=function()end
+  return item
+ end
+ local function rootLookup(root)
+  root.getItemById=function(self,id)
+   local values=self:getItems()
+   for index=0,values:size()-1 do local item=values:get(index);if item:getID()==id then return item end end
+  end
+  root.getItemWithID=root.getItemById
+ end
+ rootLookup(s.root)
+ local function radio(object,data)
+  object.class='IsoRadio';data.battery=removing;data.power=removing and charge or 0
+  data.inserted,data.ejected=0,0
+  data.getHasBattery=function(self)return self.battery end
+  data.getPower=function(self)return self.power end
+  data.getIsTurnedOn=function()return radioOn end
+  data.getIsBatteryPowered=function()return true end
+  data.addBattery=function(self,item)
+   self.inserted=self.inserted+1;self.power=item:getCurrentUsesFloat();self.battery=true;item.container=nil
+  end
+  data.getBattery=function(self,destination)
+   self.ejected=self.ejected+1;self.output=battery(destination,quantizedUses);self.power=0;self.battery=false
+  end
+ end
+ radio(s.tv,s.data)
+ local inputSource=s.root
+ if sourceKind then inputSource=s.container();rootLookup(inputSource)end
+ local input=not removing and battery(inputSource)or nil
+ if input then input.charge=charge end
+ local constructor=ISDeviceBatteryAction.new
+ local action=ISDeviceBatteryAction:new(f.player,removing,input,s.tv)
+ assert(action.parameter==s.tv and action.deviceData==s.data and action.maxTime==30
+  and getmetatable(action)==ISDeviceBatteryAction and constructor==ISDeviceBatteryAction.new,
+  'battery fixture must use exact-target native constructor and duration')
+ assert(s.media.inspectBattery(action),'battery fixture lacks the audited pending contract')
+ local tail=ISBaseTimedAction:new(f.player)
+ tail.isValid=function()return true end -- Opaque independent continuation, with no device effects.
+ LuaTimedActionNew={new=function(value)
+  return {table=value,started=false,isStarted=function(self)return self.started end,
+   finished=function()return false end,isForceComplete=function()return false end,
+   hasStalled=function()return false end,getJobDelta=function()return 0 end,
+   forceStop=function()forcedStop=true end}
+ end}
+ f.player.StartAction=function(_,handle)
+  assert(handle.table:isValid(),'battery native begin attempted invalid work')
+  begun[#begun+1]=handle.table;present[handle]=true;handle.started=true;handle.table:start()
+  handle.table.toolkitNativeTransaction=23;handle.table.toolkitNativeKind=handle.table.Type
+ end
+ local q=f.queue();ISTimedActionQueue.add(action);ISTimedActionQueue.add(tail)
+ assert(q.current==action and q.queue[2]==tail and #begun==1 and s.media.tracks(action),
+  'actual battery begin/create must capture its own completion barrier')
+ local token='00000000-0000-0000-0000-000000000023'
+ local function ack(state)
+  s.receive('PZSurvivorToolkitActions','State',{protocol=1,player=55,transaction=23,
+   kind='ISDeviceBatteryAction',token=token,state=state})
+ end
+ ack('started')
+ assert(PZSurvivorToolkit.ActionQueueAcknowledgements.capture(action),'real battery started ACK must correlate')
+ q:tick();assert(q.current==action and q.queue[2]==tail and #begun==1)
+ -- Execute authoritative native complete/invoke against a separate DeviceData
+ -- and inventory model, then deliver its independent device/item effects.
+ local serverRoot=s.container();rootLookup(serverRoot)
+ local serverDevice,serverData=s.device();radio(serverDevice,serverData)
+ local serverSource=serverRoot
+ if sourceKind then serverSource=s.container();rootLookup(serverSource)end
+ local serverInput=not removing and battery(serverSource)or nil
+ if serverInput then serverInput.charge=charge end
+ f.player.inventory=serverRoot
+ local serverAction=ISDeviceBatteryAction:new(f.player,removing,serverInput,serverDevice)
+ isClient,isServer=function()return false end,function()return true end
+ assert(serverAction:isValid()and serverAction:complete(),'authoritative native battery delegate failed')
+ assert(removing and serverData.ejected==1 and serverData.output:getContainer()==serverRoot
+  or not removing and serverData.inserted==1 and serverInput:getContainer()==nil,
+  'authoritative native battery effect did not occur exactly once')
+ f.player.inventory=s.root
+ isClient,isServer=function()return true end,function()return false end
+ local output=removing and battery(nil,quantizedUses)or nil
+ local function effects(channel)
+  if channel~='item'then s.data.battery=not removing;s.data.power=removing and 0 or charge end
+  if channel~='device'then if removing then output.container=s.root else input.container=nil end end
+ end
+ local function frame(done)
+  -- Model IsoGameCharacter's validity-before-Done frame ordering.
+  if not action:isValid()or forcedStop then
+   action:stop();present[action.action]=nil;return 'stopped'
+  end
+  action:update()
+  if done then
+   local lifecycle=PZSurvivorToolkit.ActionQueueLifecycle
+   assert(lifecycle.begin(action,'perform'),'battery completion must enter native lifecycle barrier')
+   action:perform();lifecycle.finish(action,'perform',true);present[action.action]=nil
+   return 'performed'
+  end
+  return 'waiting'
+ end
+ local function held()
+  assert(q.current==action and #q.queue==2 and q.queue[2]==tail and #begun==1 and tail.action==nil,
+   'battery barrier lost or prematurely started its independent tail')
+ end
+ local function noReplay()
+  assert(serverData.inserted==(removing and 0 or 1)and serverData.ejected==(removing and 1 or 0)
+   and s.data.inserted==0 and s.data.ejected==0,'battery barrier replayed authoritative native effects')
+ end
+ local function released()
+  assert(q.current==tail and #q.queue==1 and #begun==2 and begun[2]==tail,
+   'confirmed battery completion must retain and begin the independent tail once')
+  q:tick();assert(q.current==tail and #begun==2,'battery completion replayed tail begin')
+  tail:perform();assert(q.current==nil and #q.queue==0)
+  noReplay()
+ end
+ return {s=s,q=q,action=action,tail=tail,begun=begun,input=input,output=output,battery=battery,
+  frame=frame,effects=effects,ack=ack,held=held,noReplay=noReplay,released=released}
+end
+
+-- Both radio power states and queue modes retain an independent tail through
+-- device/item replication before native Done, including split effect channels.
+for _,enabled in ipairs({true,false})do
+ for _,radioOn in ipairs({true,false})do
+  for _,removing in ipairs({true,false})do
+   for _,first in ipairs({'device','item','both'})do
+    local o=batteryOrdinary(enabled,radioOn,removing,.5799999833106995,58)
+    o.effects(first)
+    assert(o.frame(false)=='waiting','supported early battery effects must survive native invalidation')
+    o.held()
+    o.effects('both');o.ack('completed')
+    assert(o.frame(true)=='performed');o.q:tick();o.released()
+   end
+  end
+ end
+end
+
+-- ACK/Done can precede physical effects. Neither partial channel may release
+-- the tail; complete correlated effects release it without a second payment.
+for _,enabled in ipairs({true,false})do
+ for _,radioOn in ipairs({true,false})do
+  for _,removing in ipairs({true,false})do
+   for _,first in ipairs({'device','item'})do
+    local o=batteryOrdinary(enabled,radioOn,removing,.41999998688697815,42)
+    o.ack('completed');assert(o.frame(true)=='performed');o.q:tick();o.held()
+    o.effects(first);o.q:tick();o.held()
+    o.effects('both');o.q:tick();o.released()
+   end
+  end
+ end
+end
+
+-- Native float32 products round these powers to integral output uses. The
+-- fixture supplies those known native results, rather than a binary64 floor.
+for _,boundary in ipairs({{.5799999833106995,58},{.41999998688697815,42}})do
+ local o=batteryOrdinary(true,false,true,boundary[1],boundary[2])
+ o.ack('completed');assert(o.frame(true)=='performed');o.q:tick();o.held()
+ o.effects('both');o.q:tick();o.released()
+end
+for _,failure in ipairs({'extra-insert-charge','extra-output-charge','ambiguous-output'})do
+ local removing=failure~='extra-insert-charge'
+ local o=batteryOrdinary(true,false,removing,.5799999833106995,58)
+ o.ack('completed');assert(o.frame(true)=='performed');o.q:tick();o.held()
+ o.effects('both')
+ if failure=='extra-insert-charge'then o.s.data.power=.75
+ elseif failure=='extra-output-charge'then o.output.uses=59
+ else o.battery(o.s.root,58)end
+ o.q:tick()
+ assert(#o.begun==1 and o.tail.action==nil,'unproven battery outcome released its tail: '..failure)
+ o.noReplay()
+end
+print('Battery barriers: actual native Lua, real ACK listener and modeled Java/network; queue/radio on-off, split completion orders, float32 output boundaries and unproven-outcome rejection passed.')
+
+-- Batteries share the same item/device dependency component as their pending
+-- consumers. No projected future charge is an inventory-capacity credit.
+do
+ local s=setup(true,nil,nil,false,true)
+ local f=s.f
+ s.tv.class='IsoRadio';s.data.battery=false;s.data.power=0
+ s.data.getHasBattery=function(self)return self.battery end
+ s.data.getIsBatteryPowered=function()return true end
+ s.data.getPower=function(self)return self.power end
+ local battery=f.item('Base.Battery');battery.class='DrainableComboItem';battery.container=s.root
+ battery.getContainer=function(self)return self.container end
+ battery.getCurrentUsesFloat=function()return .5 end
+ local head=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
+ local insert=ISDeviceBatteryAction:new(f.player,false,battery,s.tv);insert.toolkitQueueOperation={}
+ local remove=ISDeviceBatteryAction:new(f.player,true,nil,s.tv);remove.toolkitQueueOperation={}
+ local volume=ISRadioAction:new('SetVolume',f.player,s.tv,.25);volume.toolkitQueueOperation={}
+ local q=f.queue(head,insert,volume,remove)
+ assert(s.definitions.inspect(insert).edit and s.definitions.inspect(remove).edit)
+ assert(s.policy.evaluateMove(q,remove,insert).reason=='edit_required_state','cannot remove before battery insertion')
+ assert(s.policy.evaluateMove(q,remove,volume).reason=='edit_required_state','cannot depower a pending setter')
+ assert(s.policy.evaluateCancel(q,insert,true).reason=='edit_required_state','battery producer is required by the unchanged suffix')
+ assert(s.policy.evaluateCancel(q,volume,true).allowed,'unrelated setter removal keeps native battery costs')
+ assert(battery:getContainer()==s.root and not s.data.battery,'decisions cannot consume or create battery charge')
+end
+
+-- Native RWM drop callbacks use bag/furniture inputs without a pocket transfer.
+-- Their Host receipts must wait for the exact captured source debit, not demand
+-- that the still-pending input has moved into the actor's root inventory.
+for _,source in ipairs({'bag','furniture'})do
+ for _,enabled in ipairs({false,true})do
+  for _,order in ipairs({'effects-first','done-first'})do
+   local o=batteryOrdinary(enabled,false,false,.5,50,source)
+   if order=='done-first'then
+    o.ack('completed');assert(o.frame(true)=='performed');o.q:tick();o.held()
+    o.effects('device');o.q:tick();o.held();o.effects('item');o.q:tick()
+   else
+    o.effects('device');assert(o.frame(false)=='waiting');o.held()
+    o.effects('item');o.ack('completed');assert(o.frame(true)=='performed');o.q:tick()
+   end
+   o.released()
+  end
+ end
+end
+print('Battery direct-container receipts retain native bag/furniture debit through either Host completion order.')
+
+-- Real source-bound battery contracts use presence rather than pocket ownership.
+-- Native transfer contracts can change the proven container before consumption.
+do
+ local s=setup(true,nil,nil,false,true);local f=s.f
+ s.tv.class='IsoRadio';s.data.getHasBattery=function()return false end
+ s.data.getIsBatteryPowered=function()return true end;s.data.getPower=function()return 0 end
+ local bag=s.container();local item=f.item('Base.Battery');item.class='DrainableComboItem';item.container=bag
+ item.getContainer=function(self)return self.container end;item.getCurrentUsesFloat=function()return .5 end
+ local consume=ISDeviceBatteryAction:new(f.player,false,item,s.tv);consume.toolkitQueueOperation={}
+ local own=assert(s.definitions.inspect(consume)).edit
+ assert(own and own.resources[2].facts.item==item and own.resources[2].requires[1].notEqual==false)
+ local model=PZSurvivorToolkit.ActionQueueEditModel
+ local function step(location,destination)
+  return {action={},edit={version=1,complete=true,capacity='external',resources={{domain='item',key=item:getID(),
+   facts={item=item,location=bag},requires={{field='location',equal=location}},effects={{field='location',set=destination}}}}}}
+ end
+ assert(model.evaluate({{action=consume,edit=own}}).status=='allowed','bag/furniture insertion needs no fictitious pocket transfer')
+ assert(model.evaluate({step(bag,s.root),{action=consume,edit=own}}).status=='allowed')
+ assert(model.evaluate({step(bag,s.root),step(s.root,bag),{action=consume,edit=own}}).status=='allowed')
+ local other,data=s.device();other.class='IsoRadio'
+ data.getHasBattery=function()return false end;data.getIsBatteryPowered=function()return true end;data.getPower=function()return 0 end
+ local second=ISDeviceBatteryAction:new(f.player,false,item,other);second.toolkitQueueOperation={}
+ local otherEdit=assert(s.definitions.inspect(second)).edit
+ local result=model.evaluate({{action=consume,edit=own},{action=second,edit=otherEdit}})
+ assert(result.status=='denied'and result.field=='location','one battery cannot be spent in two devices')
+ local head=f.action(ISReadABook,{item=f.item('Base.BookCarpentry1')})
+ local book=f.action(ISReadABook,{item=f.item('Base.BookCooking1')})
+ local q=f.queue(head,book,consume)
+ assert(s.policy.evaluateMove(q,consume,book).allowed,'independent pending book cannot impose pocket ownership on a battery')
+ assert(item:getContainer()==bag and not s.data.battery,'the model must not move or consume the native item')
+end

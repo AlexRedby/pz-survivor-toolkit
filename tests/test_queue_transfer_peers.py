@@ -18,6 +18,8 @@ class QueueTransferPeersTests(unittest.TestCase):
                     mode=mode, clients=2, languages=['EN', 'RU'], mods=list(a.MODS), options={'mp_host': True})
 
     def fixture(self, case='disjoint-returns', mode='toolkit', index=1):
+        if case == 'partial-accepted':
+            return self.partial_fixture(mode, index)
         enabled = mode == 'toolkit'; token = 'case-token-' + case
         actors = [dict(role=role, onlineId=i + 10,
                        front=dict(id=100 if case == 'contested-pickup' else 100 + i, ft='Base.BookCarpentry1', total=220, initial=219),
@@ -103,7 +105,52 @@ class QueueTransferPeersTests(unittest.TestCase):
         release = dict(case=case, token=token, index=index)
         capacity = dict(release, capacity=1, roomBefore=True, combinedFits=False, items=[actor['front']['id'] for actor in actors]) if case == 'shared-capacity' else None
         applied = dict(release, items=copy.deepcopy(result['items'])) if case == 'lost-done' else None
-        return dict(seed=seed, result=result, clients=clients, release=release, capacity=capacity, applied=applied,
+        return dict(seed=seed, result=result, clients=clients, release=release, capacity=capacity, applied=applied, partial=None,
+                    selection=self.selection(mode, [case]), case=case, index=index)
+
+    def partial_fixture(self, mode='toolkit', index=1):
+        case = 'partial-accepted'; token = 'queue-peers:123:' + str(index); enabled = mode == 'toolkit'
+        actors = [dict(role=role, onlineId=i + 10, front=dict(id=100 + i, ft='Base.Nails', total=1, initial=0),
+                       tail=dict(id=200 + i, ft='Base.BookCooking1', total=220, initial=219)) for i, role in enumerate(a.ROLES)]
+        seed = dict(case=case, token=token, index=index, actors=actors, items=[], originalRootIds={'client1': [301], 'client2': [302]},
+                    stores=[dict(key='source1', x=1, y=2, z=0, index=0, capacity=100),
+                            dict(key='source2', x=2, y=2, z=0, index=0, capacity=100)])
+        physical = []
+        for i, actor in enumerate(actors):
+            for kind in ('front', 'tail'):
+                spec = actor[kind]
+                seed['items'].append(dict(id=spec['id'], ft=spec['ft'], initialEndpoint='source1' if kind == 'front' else actor['role'] + '-root'))
+                physical.append(dict(id=spec['id'], ft=spec['ft'], count=1,
+                    endpoint=('client1-root' if i == 0 else 'source2') if kind == 'front' else actor['role'] + '-root',
+                    pages=0 if kind == 'front' else spec['initial']))
+        release = dict(case=case, token=token, index=index)
+        server_probe = dict(sourceExact=True, used=True, armed=False, bound=True, token=token, actor=10, first=100, second=101,
+            transaction=21, requestCount=1, accepted=1, updateCalls=1, movedSecond=True, nativeReturnedFalse=True, updateThrew=False,
+            managerReject=True, managerRemoved=True, terminalWrites=0, acceptWrites=1, passedAccept=0, passedDone=0, passedReject=0,
+            expired=False, nativePresent=False, nativeState='Reject', reused=0, failure='', closed='', fault='competing-native-second-move-no-replay')
+        partial = dict(release, items=copy.deepcopy(physical), originalsPreserved=True, probe=server_probe,
+                       capacity={key: dict(weight=.01, capacity=100) for key in ('source1', 'source2')})
+        client_probe = dict(server_probe, updateCalls=0, movedSecond=False, nativeReturnedFalse=False, managerReject=False,
+                            acceptWrites=0, passedAccept=1, expired=True, nativeState='Accept')
+        clients = {}
+        for actor in actors:
+            role = actor['role']; replica = copy.deepcopy(physical)
+            for item in replica:
+                if item['endpoint'].endswith('-root') and item['endpoint'] != role + '-root':
+                    item.update(count=0, endpoint=False, pages=0)
+            record = dict(sequence=1, role='pickup', item=100, actionRef='bulk-action', nativeRef='native-bulk', token=False,
+                          started=True, progress=False, duration=-1, transaction=21,
+                          samples=[dict(point='pending', at=1, transaction=0, done=True, rejected=True, observation=False),
+                                   dict(point='started', at=2, transaction=21, done=False, rejected=False, observation=False),
+                                   dict(point='perform-begin', at=30000, transaction=21, done=True, rejected=True, observation=False)],
+                          finishes=[dict(phase='perform', at=30001, succeeded=True)])
+            clients[role] = dict(release, role=role, onlineId=actor['onlineId'], mode=mode, queueEnabled=enabled,
+                sourceBound=True, queueIdle=True, producer='selected-pack-walk-then-native-bulk-grab',operationScoped=True,
+                producerProof=dict(supported=True,reason='',leaf='cleanui-reviewed',chain='Retention -> TidyIntent -> CleanUI native actions'),
+                replica=dict(items=replica, originalsPreserved=True), probe=copy.deepcopy(client_probe) if role == 'client1' else False,
+                serverPartial=copy.deepcopy(partial), blocked=[], keptIds=[], records=[record] if role == 'client1' else [])
+        result = dict(release, items=copy.deepcopy(physical), originalsPreserved=True, capacity=copy.deepcopy(partial['capacity']), clients=clients)
+        return dict(seed=seed, result=result, clients=clients, release=release, capacity=None, applied=None, partial=partial,
                     selection=self.selection(mode, [case]), case=case, index=index)
 
     def check(self, evidence):
@@ -115,7 +162,7 @@ class QueueTransferPeersTests(unittest.TestCase):
             result[role] = ['[QUEUE_TEST] PREFLIGHT_COMPLETE mods=' + str(len(a.MODS)) + ' mode=' + selection['mode'], '[QUEUE_TEST] NATIVE_CONNECTED']
         for index, case in enumerate(selection['cases'], 1):
             data = self.fixture(case, selection['mode'], index)
-            for event, key in [('SEED', 'seed'), ('RELEASE', 'release'), ('CAPACITY', 'capacity'), ('APPLIED', 'applied'), ('RESULT', 'result')]:
+            for event, key in [('SEED', 'seed'), ('RELEASE', 'release'), ('CAPACITY', 'capacity'), ('APPLIED', 'applied'), ('PARTIAL', 'partial'), ('RESULT', 'result')]:
                 if data[key] is not None:
                     result['server'].append(a.PREFIX + event + ' ' + json.dumps(data[key]))
             for role in a.ROLES:
@@ -329,13 +376,108 @@ class QueueTransferPeersTests(unittest.TestCase):
             self.assertTrue(a.complete(selection, role, logs[role]))
             self.assertFalse(a.complete(selection, role, logs[role] + '\n' + logs[role].splitlines()[-1]))
 
+    def test_partial_native_false_paid_prefix_and_expiry_are_independent(self):
+        for mode in ('native', 'toolkit'):
+            data = self.partial_fixture(mode)
+            self.assertEqual(self.check(data), [])
+            # Native Lua can finish on vacuous done/rejected after real expiry.
+            self.assertTrue(data['clients']['client1']['records'][0]['finishes'][0]['succeeded'])
+            self.assertEqual(data['partial']['probe']['terminalWrites'], 0)
+            self.assertEqual(data['clients']['client1']['probe']['nativeState'], 'Accept')
+        changes = {
+            'UI scope bypassed': lambda e: e['clients']['client1'].update(operationScoped=False),
+            'missing producer proof': lambda e: e['clients']['client1'].pop('producerProof'),
+            'stock UI substituted': lambda e: e['clients']['client1']['producerProof'].update(leaf='stock'),
+            'source unsupported': lambda e: e['clients']['client2']['producerProof'].update(supported=False),
+            'source bool forged': lambda e: e['clients']['client1']['producerProof'].update(supported=1),
+            'producer chain missing': lambda e: e['clients']['client1']['producerProof'].update(chain=''),
+            'no real admission': lambda e: e['partial']['probe'].update(accepted=0),
+            'native success substituted': lambda e: e['partial']['probe'].update(nativeReturnedFalse=False),
+            'exception substituted': lambda e: e['partial']['probe'].update(updateThrew=True),
+            'body skipped': lambda e: e['partial']['probe'].update(updateCalls=0),
+            'body replayed': lambda e: e['partial']['probe'].update(updateCalls=2),
+            'request replayed': lambda e: e['clients']['client1']['probe'].update(requestCount=2),
+            'no exact pair': lambda e: e['partial']['probe'].update(second=999),
+            'actor borrowed': lambda e: e['partial']['probe'].update(actor=11),
+            'epoch failure': lambda e: e['partial']['probe'].update(closed='connection-epoch-changed'),
+            'reused byte': lambda e: e['partial']['probe'].update(reused=1),
+            'accept not written': lambda e: e['partial']['probe'].update(acceptWrites=0),
+            'terminal response sent': lambda e: e['partial']['probe'].update(terminalWrites=1),
+            'terminal response received': lambda e: e['clients']['client1']['probe'].update(passedReject=1),
+            'accept not received': lambda e: e['clients']['client1']['probe'].update(passedAccept=0),
+            'forced client clear': lambda e: e['clients']['client1']['probe'].update(expired=False),
+            'server not removed': lambda e: e['partial']['probe'].update(managerRemoved=False),
+            'client still native': lambda e: e['clients']['client1']['probe'].update(nativePresent=True),
+            'foreign byte': lambda e: e['clients']['client1']['probe'].update(transaction=22),
+            'paid prefix missing': lambda e: e['result']['items'][0].update(endpoint='source1'),
+            'unspent wrong owner': lambda e: e['partial']['items'][2].update(endpoint='client1-root'),
+            'physical duplicate': lambda e: e['result']['items'][0].update(count=2),
+            'tail ran': lambda e: e['result']['items'][1].update(pages=220),
+            'peer claims actor root': lambda e: e['clients']['client2']['replica']['items'][0].update(count=1, endpoint='client1-root'),
+            'missing replicated quarantine': lambda e: e['clients']['client1']['replica']['items'][2].update(count=0, endpoint=False),
+            'private Keep invented': lambda e: e['clients']['client1'].update(keptIds=[100]),
+            'blocked invented': lambda e: e['clients']['client1'].update(blocked=[{}]),
+            'idle actor borrowed probe': lambda e: e['clients']['client2'].update(probe={}),
+            'callback replay': lambda e: e['clients']['client1']['records'][0]['finishes'].append(dict(phase='perform', at=30002, succeeded=True)),
+        }
+        for name, change in changes.items():
+            data = self.partial_fixture(); change(data)
+            with self.subTest(name=name): self.assertTrue(self.check(data), name)
+        data = self.partial_fixture()
+        data['clients']['client1']['records'][0]['samples'][1]['observation'] = dict(phase='submitted', boundary='start',
+            sourceExact=True, paired=True, currentHandle=True, nativeHandle=True, wireAmbiguous=False,
+            transaction=21, id=100, fullType='Base.Nails')
+        self.assertTrue(self.check(data), 'partial batch must not earn singleton completion pairing')
+
+    def test_partial_authority_boundary_is_unique_ordered_and_server_owned(self):
+        selection = self.selection(cases=['partial-accepted']); logs = self.logs(selection)
+        self.assertEqual(self.verify(logs, selection)['issues'], [])
+        partial_line = next(line for line in logs['server'].splitlines() if a.PREFIX + 'PARTIAL ' in line)
+        for mutate in (lambda d: d.update(server=d['server'].replace(partial_line, '')),
+                       lambda d: d.update(server=d['server'] + '\n' + partial_line),
+                       lambda d: d.update(client2=d['client2'] + '\n' + partial_line)):
+            changed = copy.deepcopy(logs); mutate(changed)
+            self.assertTrue(self.verify(changed, selection)['issues'])
+        lines = logs['server'].splitlines(); at = lines.index(partial_line)
+        lines[at], lines[at - 1] = lines[at - 1], lines[at]
+        self.assertTrue(self.verify(dict(logs, server='\n'.join(lines)), selection)['issues'])
+
+    def test_source_preflight_checks_effective_staged_layers_before_game(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory); cache = base / 'client1'; game = base / 'game'
+            native = game / 'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'
+            paths = [native, cache / 'mods/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua',
+                cache / 'mods/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ItemRetentionUI.lua',
+                cache / 'mods/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/InventoryTransferProtection.lua',
+                cache / 'mods/CleanUI/42.21/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua']
+            for path in paths:
+                path.parent.mkdir(parents=True, exist_ok=True); path.write_text('-- staged input')
+            older = cache / 'mods/CleanUI/42.19/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'
+            older.parent.mkdir(parents=True); older.write_text('-- inactive input')
+            runtime = {'roles': {'client1': {'cache': str(cache)}}}; probe = base / 'probe.jar'
+            result = mock.Mock(returncode=0, stdout='PASS actual source factories and client/server roles', stderr='')
+            with mock.patch.object(a.preparation_process, 'run', return_value=result) as run:
+                a._probe_source_checks(probe, game, base / 'jdk', self.selection(), runtime)
+                argv = run.call_args.args[0]
+                self.assertEqual(argv[-5:], list(map(str, paths)))
+                self.assertIn('-Djava.awt.headless=true', argv)
+                self.assertFalse(any('javaagent' in value for value in argv))
+                self.assertIn('PASS', (base / 'source-checks.log').read_text())
+                run.reset_mock()
+                a._probe_source_checks(probe, game, base / 'jdk', self.selection(cases=['lost-done']), runtime)
+                run.assert_not_called()
+            paths[-1].unlink()
+            with self.assertRaisesRegex(ValueError, 'active CleanUI'):
+                a._probe_source_checks(probe, game, base / 'jdk', self.selection(), runtime)
+
     def test_stage_ships_two_disposable_probes_without_book_control_lua(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory); probe = base / 'probe.jar'; probe.write_bytes(b'probe')
             stop = base / 'stop.jar'; stop.write_bytes(b'stop')
             runtime = {'roles': {role: {'cache': str(base / role)} for role in ('server', *a.ROLES)}}
-            with mock.patch.object(a, '_probe', return_value=probe), mock.patch.object(a, '_stop_probe', return_value=stop):
+            with mock.patch.object(a, '_probe', return_value=probe), mock.patch.object(a, '_stop_probe', return_value=stop), mock.patch.object(a, '_probe_source_checks') as preflight:
                 a.stage(ROOT, base / 'output', base / 'game', base / 'jdk', self.selection(), {}, runtime)
+            preflight.assert_called_once_with(probe, base / 'game', base / 'jdk', self.selection(), runtime)
             self.assertEqual(runtime['fixture']['mods'], ['QueuePeersProbe', 'BookControlsStopProbe'])
             self.assertEqual(runtime['fixture']['sandbox']['MinutesPerPage'], 2.0)
             for role in runtime['roles'].values():

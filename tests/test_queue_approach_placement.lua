@@ -82,7 +82,8 @@ local function fixture(kind,selection)
  env.IsoObject={new=function(_,_,name)return object(name)end};env.sendAddItemToContainer=function()end
  env.getCore=function()return {setOptionPauseOnFocusloss=function()end,setOptionAutoDrink=function()end}end
  env.PZAPI={ModOptions={getOptions=function()return {getOption=function()return {setValue=function()end}end}end}}
- env.PZSurvivorToolkit={Settings={actionQueue=function()return true end}}
+ -- Placement checks do not execute spatial completion; retain its transparent observer dependency.
+ env.PZSurvivorToolkit={Settings={actionQueue=function()return true end},ActionQueueApproach={beforeComplete=function()end}}
  env.print=function(value)
   f.logs[#f.logs+1]=value;local name=value:match('^%[QUEUE_APPROACH%] (%S+) ')
   if name then f.events[#f.events+1]={name=name,value=f.rows[#f.rows],mutations=f.mutations}end
@@ -130,7 +131,7 @@ local function failed(f)
 end
 -- Planning is a read-only search. A loaded but invalid far end of the first
 -- strip makes the real planner select another complete outdoor strip.
-for _,case in ipairs({'bush','manual-grass'})do
+for _,case in ipairs({'bush','manual-grass','direct-bush'})do
  local f=fixture('sp');local start=f.P.choose(f.player)
  f.grid(start.x+8,start.y,start.z).missingFloor=true
  local layout=f.F.plan(f.player,case)
@@ -154,7 +155,7 @@ for _,kind in ipairs({'sp','server'})do for _,bad in ipairs({'proof','role','cou
  assert(not pcall(f.F.prepare,f.player,'bush','toolkit',target,value))
  assert(f.mutations==0 and f.gear==0 and f.pages==0 and f.positionWrites==0)
 end end
-for _,kind in ipairs({'sp','server'})do for _,case in ipairs({'bush','manual-grass'})do
+for _,kind in ipairs({'sp','server'})do for _,case in ipairs({'bush','manual-grass','direct-bush'})do
  local f=fixture(kind);local target=f.F.plan(f.player,case).target;f:arrive(target);f.grid(target.x,target.y,target.z):decorate()
  local state=f.F.prepare(f.player,case,'toolkit',target,proof(target,kind=='server'and'replica'or'local'))
  assert(same(state.ids.origin,target)and same(state.ids.placement,target))
@@ -259,7 +260,7 @@ for _,kind in ipairs({'sp','mp'})do for _,stage in ipairs({'resolve','admit'})do
 end end end
 -- Queue-off native completion preserves the independent reader tail. The Host
 -- authority must observe its complete item and character pages, just as SP does.
-for _,case in ipairs({'bush','manual-grass'})do
+for _,case in ipairs({'bush','manual-grass','direct-bush'})do
  local host=fixture('server',{mode='native',kind='mp'})
  local target=host.F.plan(host.player,case).target;host:arrive(target)
  local state=host.F.prepare(host.player,case,'native',target,proof(target,'replica'))

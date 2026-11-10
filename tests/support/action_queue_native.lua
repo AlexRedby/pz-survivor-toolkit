@@ -14,7 +14,8 @@ local function itemInspector()
         -- suite supplies complete native state and loads the whole module.
         local function absent()end
         capacityAdapters={weightInspectionSafe=itemAdapters.weightInspectionSafe,
-            transfer=absent,drink=absent,food=absent,adoptMethods=absent,adoptBase=absent,
+            transfer=absent,drink=absent,food=absent,adoptMethods=itemAdapters.adoptMethods,adoptBase=itemAdapters.adoptBase,
+            deferredTransferBinding=itemAdapters.deferredTransferBinding,
             fullnessNeutralDrink=function()return true end}
     end
     return capacityAdapters
@@ -68,7 +69,10 @@ native=function(path)
     assert(loadstring((source:gsub('(%d+%.%d+)f','%1')), '@'..NativeActionRoot..'/'..path))()
 end
 project=function(name)
-    if name == 'ActionQueue' then project('ActionQueueSettlement'); project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
+    if name == 'ActionQueue' then
+        if not PZSurvivorToolkit.ActionQueueSettlement then project('ActionQueueSettlement')end
+        project('ActionQueueLifecycle');project('ActionQueueAcknowledgements')
+    end
     local savedRequire=require
     if name=='ActionQueuePolicy' then
         require=function(module)
