@@ -130,7 +130,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                                     for key, value in props.items())
             launcher.write_text(text.replace(anchor, anchor + '\n' + assignments))
             _run([jdk / 'bin/javac', '--release', '25', '-cp', game / 'projectzomboid.jar',
-                  classes / 'ToolkitWindowBootstrap.java', launcher])
+                  classes / 'ToolkitWindowBootstrap.java', classes / 'ToolkitHostOutput.java', launcher])
             receipt['client_properties'][role] = props
     runtime.setdefault('fixture', {}).setdefault('mods', []).append(MOD_ID)
     (output / 'warehouse-walking-observer-inputs.json').write_text(json.dumps(receipt, indent=2) + '\n')

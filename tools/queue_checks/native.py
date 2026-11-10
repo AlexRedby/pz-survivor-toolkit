@@ -322,7 +322,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         raise ValueError("Runtime paths cannot contain loader/classpath separators or newlines")
     support = project / "tests/native_queue/support"
     suite = project / "tests/native_queue" / selection["suite"]
-    required = [support / name for name in ("ToolkitSmokeLauncher.java", "ToolkitWindowBootstrap.java", "ZZReleasePreflight.lua", "QueuePreflight.lua", "QueueEnergyPlacement.lua")]
+    required = [support / name for name in ("ToolkitSmokeLauncher.java", "ToolkitWindowBootstrap.java", "ToolkitHostOutput.java", "ZZReleasePreflight.lua", "QueuePreflight.lua", "QueueEnergyPlacement.lua")]
     required += [Path(lua_compatibility.HARNESS), Path(lua_compatibility.__file__).resolve(), game / 'stdlib.lbc']
     required += [project / "tools/check_action_queue.py", project / "tests/native_queue/catalog.json"]
     if borrowing_required:
@@ -443,6 +443,8 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         language = selection["languages"][-1] if role == "client2" else selection["languages"][0]
         # Shared Lua must be byte-identical for native MP checksums; role/language live in cache/Lua.
         config = dict(selection, port=selection["ports"][0], resources=dict(admission.DEFAULTS, **selection.get('resources', {})))
+        if selection["suite"] == "health":
+            config["disposable"] = True
         (lua / "shared/QueueTestSelection.lua").write_text("QueueTestSelection=" + _lua(config) + "\nreturn QueueTestSelection\n", encoding="utf-8")
         for name, value in {"smoke-user": role, "queue-mode": selection["mode"], "queue-scenario": selection["suite"],
                             "queue-health-kind": selection["kind"], "queue-health-language": language,
@@ -456,11 +458,13 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         runtime["roles"][role] = {"cache": str(cache), "language": language}
         if role != "server":
             font_preload(cache, selection, game if os.name == 'nt' else None)
-            for name in ("ToolkitWindowBootstrap.java", "ToolkitSmokeLauncher.java"):
+            for name in ("ToolkitWindowBootstrap.java", "ToolkitHostOutput.java", "ToolkitSmokeLauncher.java"):
                 shutil.copy2(support / name, cache / "classes")
             preparation_process.run([str(jdk_binary(jdk, 'javac')), "--release", "25", "-cp", str(game / "projectzomboid.jar"),
-                            str(cache / "classes/ToolkitWindowBootstrap.java"), str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,
+                            str(cache / "classes/ToolkitWindowBootstrap.java"), str(cache / "classes/ToolkitHostOutput.java"), str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,
                            env={key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")})
+            if not (cache / "classes/ToolkitHostOutput.class").is_file():
+                raise RuntimeError("javac did not create ToolkitHostOutput.class")
             if not (cache / "classes/ToolkitSmokeLauncher.class").is_file():
                 raise RuntimeError("javac did not create ToolkitSmokeLauncher.class")
             if sys.platform == 'darwin':

@@ -24,15 +24,28 @@ public class ToolkitSmokeLauncher {
         if (mode == null) throw new IllegalStateException("The primary display has no video mode; native fixture cannot start.");
         System.out.println("[QUEUE_TEST] DISPLAY_READY " + mode.width() + "x" + mode.height());
         var hostChild = new java.util.concurrent.atomic.AtomicReference<ProcessHandle>();
+        var hostOutput = new java.util.concurrent.atomic.AtomicReference<ToolkitHostOutput>();
         var shuttingDown = new java.util.concurrent.atomic.AtomicBoolean();
         if (System.getProperty("toolkit.test.hostCache") != null) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 shuttingDown.set(true);
                 var child = hostChild.get();
-                if (child == null || !child.isAlive()) return;
-                child.destroy();
-                try { child.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS); }
-                catch (Exception error) { child.destroyForcibly(); }
+                if (child == null) return;
+                try {
+                    if (child.isAlive()) {
+                        child.destroy();
+                        try { child.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS); }
+                        catch (Exception error) {
+                            child.destroyForcibly();
+                            child.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS);
+                        }
+                    }
+                    var output = hostOutput.get();
+                    if (output != null) output.await(5000);
+                } catch (Exception error) {
+                    System.err.println("[QUEUE_TEST] FAIL host stderr shutdown " + error);
+                    error.printStackTrace();
+                }
             }, "toolkit-owned-host-shutdown"));
         }
         if (System.getProperty("toolkit.test.hostCache") != null) {
@@ -58,6 +71,9 @@ public class ToolkitSmokeLauncher {
                         process.getOutputStream().flush();
                         if (!process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Host child did not save/quit before its deadline");
                         int exit = process.exitValue();
+                        var output = hostOutput.get();
+                        if (output == null) throw new IllegalStateException("Host stderr drain is missing");
+                        output.await(5000);
                         System.out.println("[QUEUE_TEST] HOST_SAVED_EXIT pid=" + child.pid() + " exit=" + exit);
                         System.out.flush();
                         if (exit != 0) throw new IllegalStateException("Host child exited unsuccessfully: " + exit);
@@ -85,6 +101,7 @@ public class ToolkitSmokeLauncher {
                                         && arguments.contains("-cachedir=" + hostCache);
                                 }).forEach(child -> {
                                     if (!hostChild.compareAndSet(null, child)) throw new IllegalStateException("Multiple Host children");
+                                    hostOutput.set(ToolkitHostOutput.start(nativeHostProcess(child), child, System.err));
                                     System.out.println("[QUEUE_TEST] HOST_CHILD pid=" + child.pid() + " parent=" + ProcessHandle.current().pid());
                                 });
                             }
@@ -98,11 +115,14 @@ public class ToolkitSmokeLauncher {
                                     var child = process.toHandle();
                                     if (child.parent().map(parent -> parent.pid() == ProcessHandle.current().pid()).orElse(false)
                                             && hostChild.compareAndSet(null, child)) {
+                                        hostOutput.set(ToolkitHostOutput.start(process, child, System.err));
                                         System.out.println("[QUEUE_TEST] HOST_CHILD pid=" + child.pid() + " parent=" + ProcessHandle.current().pid());
                                     }
                                 }
                             }
                         } else if (!shuttingDown.get() && !hostChild.get().isAlive()) {
+                            var output = hostOutput.get();
+                            if (output != null) output.await(5000);
                             throw new IllegalStateException("Host child exited before its owner");
                         }
                     }
@@ -137,4 +157,18 @@ public class ToolkitSmokeLauncher {
         helper.start();
         MainScreenState.main(args);
     }
+    private static Process nativeHostProcess(ProcessHandle child) {
+        try {
+            var field = zombie.network.CoopMaster.class.getDeclaredField("serverProcess");
+            field.setAccessible(true);
+            var process = (Process)field.get(zombie.network.CoopMaster.instance);
+            if (process == null || process.pid() != child.pid()) {
+                throw new IllegalStateException("Native Host process differs from the proved child");
+            }
+            return process;
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("Cannot prove native Host stderr process", error);
+        }
+    }
+
 }

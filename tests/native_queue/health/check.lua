@@ -1,10 +1,19 @@
 local root=assert(arg[1])
 isClient=function()return false end
-local function source(side,name) return assert(loadfile(root..'/'..side..'/'..name..'.lua'))() end
+local adaptAuthority
+local function rawSource(side,name) return assert(loadfile(root..'/'..side..'/'..name..'.lua'))() end
+local function source(side,name)
+ local value=rawSource(side,name)
+ return name=='QueueHealthAuthority' and adaptAuthority and adaptAuthority(value) or value
+end
+local function runtimeDependency(name)
+ if name=='QueueEnergyPlacement' then return Placement end
+ if name=='QueueHealthPlacement' or name=='QueueHealthEvents' then return rawSource('shared',name) end
+end
 AllCases=source('shared','QueueHealthCases')
 assert(#AllCases==45)
 getActivatedMods=function() return {contains=function(_,id)return id=="MiniHealthPlus" end} end
-local TestSelection={kind='sp',mode='toolkit',cases={}}
+local TestSelection={kind='sp',mode='toolkit',disposable=true,cases={}}
 for _,spec in ipairs(AllCases) do TestSelection.cases[#TestSelection.cases+1]=spec.id end
 require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name=='QueueTestSelection' then return TestSelection end
@@ -92,7 +101,19 @@ function body()
  return result
 end
 function player(name)
- local current={name=name,inventory=container(),body=body(),worn={}}
+ local current={name=name,inventory=container(),body=body(),worn={},x=0.5,y=0.5,z=0,queue={queue={}}}
+ function current:getX() return self.x end;function current:getY() return self.y end;function current:getZ() return self.z end
+ function current:getSquare() return self:getCurrentSquare() end
+ function current:getCurrentSquare()
+  return {getX=function() return math.floor(self.x) end,getY=function() return math.floor(self.y) end,getZ=function() return self.z end}
+ end
+ function current:isLocalPlayer() return true end
+ function current:isPlayerMoving() return false end
+ function current:hasTimedActions() return false end
+ function current:getPath2() return nil end
+ function current:getDeferredMovement(probe) return probe end
+ function current:setNextX() end;function current:setNextY() end
+ function current:ensureOnTile() end;function current:setMovingSquareNow() end
  function current:getCharacterGender() return 'Male' end
  function current:getWornItems()
   local items=self.worn;return {size=function() return #items end,getItemByIndex=function(_,index) return items[index+1] end,
@@ -141,11 +162,65 @@ end
 require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
  if name=='QueueHealthSelection' then return Selection end
  if name=='QueueHealthCases' then return AllCases end
- assert(name=='QueueEnergyPlacement')
- return function() return {getX=function() return 10 end,getY=function() return 10 end,getZ=function() return 0 end} end
+ if name=='QueueEnergyPlacement' then return Placement end
+ if name=='QueueTestSelection' then return TestSelection end
+ if name=='QueueHealthEvents' or name=='QueueHealthPlacement' then return rawSource('shared',name) end
+ error('unexpected authority dependency '..name)
 end
 
+
+Placement=assert(loadfile(root..'/../support/QueueEnergyPlacement.lua'))()
+Vector2={new=function() return {getX=function()return 0 end,getY=function()return 0 end} end}
+ISTimedActionQueue={getTimedActionQueue=function(actor)return actor.queue end}
+getCell=function()return {getGridSquare=function(_,x,y,z)return {
+ getX=function()return x end,getY=function()return y end,getZ=function()return z end,
+ isFree=function()return true end,getRoom=function()return nil end,getObjects=function()return {size=function()return 0 end}end}end}end
+-- Clinical checks still commit only after the shipped local placement machine has settled.
+-- Placement protocol regressions below use rawSource and never use this convenience driver.
+local function settle(layout,authority)
+ local priorClock,priorServer=getTimestampMs,isServer
+ local clock=0;getTimestampMs=function()return clock end
+ local proofs={}
+ for name,target in pairs(layout.targets) do
+  local actor=authority.actor(name)
+  isServer=function()return false end
+  local pending=Placement.beginCentered(actor,target)
+  local proof
+  for step=0,6 do clock=clock+500;proof=Placement.poll(pending);if proof then break end end
+  assert(proof,'fixture placement failed to settle')
+  isServer=priorServer
+  if isServer() then
+   local observation=Placement.observeCentered(actor,target);proof=nil
+   for step=0,3 do clock=clock+500;proof=Placement.poll(observation);if proof then break end end
+  end
+  proofs[name]=assert(proof,'fixture authority placement failed to settle')
+ end
+ isServer=priorServer;getTimestampMs=priorClock
+ return proofs
+end
+adaptAuthority=function(authority)
+ local wrapped=setmetatable({},{__index=authority})
+ local identities={}
+ function wrapped.setup(actor)
+  if identities[actor] then return identities[actor] end
+  local actors={actor}
+  if isServer() then actors={};local online=getOnlinePlayers();for i=0,online:size()-1 do actors[#actors+1]=online:get(i)end end
+  local previous=require;require=AuthorityRequire
+  local ok,layout=pcall(authority.setupLayout,actors);require=previous;assert(ok,layout)
+  local proofs=settle(layout,authority)
+  for _,participant in ipairs(actors)do identities[participant]=authority.setup(participant,layout,proofs)end
+  return assert(identities[actor])
+ end
+ function wrapped.prepare(actor,phase)
+  local layout=authority.prepareLayout(actor,phase)
+  return authority.prepare(actor,phase,layout,settle(layout,authority))
+ end
+ return wrapped
+end
 AuthorityRequire=require
+if arg[2]=='placement-fixture' then
+ return {player=player,body=body,source=rawSource,select=select,placement=Placement,values=values,require=require}
+end
 Authority=source('shared','QueueHealthAuthority')
 
 local actor=player('sp');local identity=Authority.setup(actor)
@@ -340,7 +415,7 @@ bag.owner={};assert(not pcall(Authority.setBagHand,actor,bag,nil),'removed schoo
 
 ScenarioSource=assert(io.open(root..'/client/QueueHealthScenarios.lua')):read('*a')
 
-require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; if name=='QueueHealthSelection' then return Selection elseif name=='QueueHealthCases' then return AllCases elseif name=='QueueHealthAuthority' then return Authority end;return {} end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; if name=='QueueHealthSelection' then return Selection elseif name=='QueueHealthCases' then return AllCases elseif name=='QueueHealthAuthority' then return Authority end;return runtimeDependency(name) or {} end
 local actor=player('readiness');local identity=Authority.setup(actor)
 function actor:getX() return self.x end;function actor:getY() return self.y end;function actor:getZ() return self.z end
 local noSquare,moving,dark=false,false,false
@@ -366,13 +441,13 @@ local scenario=assert(loadstring(ScenarioSource))()
 scenario(function(name,fn,ready) stages[#stages+1]={fn=fn,ready=ready} end,function() return {} end,function() return true end,
  {kind='sp',language='EN',ids=function() return identity end,preparations=prepared,baselines=baselines,send=send})
 stages[1].fn();local gate=stages[2].fn
-assert(gate()==false and gate()==false,'request/one-time doctor positioning did not wait')
+assert(gate()==false and gate()==false,'prepare request and categorical sample did not wait')
 assert(gate()==false);now=499;assert(gate()==false and entered==0,'panel opened before 500ms stability')
 actor.body.injured=false;assert(gate()==false and entered==0,'stale injury snapshot opened native panel')
 actor.body.injured=true;now=500;assert(gate()==false)
 noSquare=true;assert(gate()==false and entered==0,'missing patient square opened native panel');noSquare=false
 now=1000;assert(gate()==false);moving=true;assert(gate()==false and entered==0,'moving patient opened native panel');moving=false
-now=1500;assert(gate()==false);actor.x=actor.x+0.3;assert(gate()==false and entered==0,'uncentered patient opened native panel');actor.x=identity.spawn.x
+now=1500;assert(gate()==false);actor.x=actor.x+0.3;assert(gate()==false and entered==0,'uncentered patient opened native panel');actor.x=identity.placement.x+0.5
 now=2000;assert(gate()==false);dark=true;assert(gate()==false and entered==0,'dark reading sample retained readiness');dark=false
 now=2500;assert(gate()==false);now=2999;assert(gate()==false and entered==0)
 now=3000;assert(gate()==false,'native panel opened before delayed inventory baseline receipt');now=3001;local ok,problem=pcall(gate)
@@ -384,7 +459,7 @@ require=AuthorityRequire
 select('sp','toolkit',{'expandedCancel','missingChildSupply'})
 Authority=source('shared','QueueHealthAuthority')
 
-require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; if name=='QueueHealthSelection' then return Selection elseif name=='QueueHealthAuthority' then return Authority elseif name=='QueueEnergyPlacement' then return AuthorityRequire(name) end;return {} end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end; if name=='QueueHealthSelection' then return Selection elseif name=='QueueHealthAuthority' then return Authority elseif name=='QueueEnergyPlacement' then return AuthorityRequire(name) end;return runtimeDependency(name) or {} end
 local actor=player('bag-observer');local identity=Authority.setup(actor)
 function actor:getPlayerNum() return 0 end
 function actor:getX() return self.x end;function actor:getY() return self.y end;function actor:getZ() return self.z end
@@ -574,7 +649,7 @@ do
  Events={OnPlayerUpdate={Add=function(callback)observer=callback end,Remove=function(callback)assert(observer==callback);observer=nil end}}
  require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
   if name=='QueueHealthSelection'then return Selection elseif name=='QueueHealthAuthority'then return Authority
-  elseif name=='QueueEnergyPlacement'then return AuthorityRequire(name)end;return {}end
+  elseif name=='QueueEnergyPlacement'then return AuthorityRequire(name)end;return runtimeDependency(name) or {}end
  local function send(command,args)
   if command=='Prepare'then prepared[args.phase]=Authority.prepare(actor,args.phase)
   elseif command=='Baseline'then fixtureVisuals(actor);baselines[args.phase]=Authority.baseline(actor,args.phase)
@@ -684,7 +759,7 @@ do
  Events={OnPlayerUpdate={Add=function()end,Remove=function()end}}
  require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;
   if name=='QueueHealthSelection'then return Selection elseif name=='QueueHealthAuthority'then return Authority
-  elseif name=='QueueEnergyPlacement'then return AuthorityRequire(name)end;return {}end
+  elseif name=='QueueEnergyPlacement'then return AuthorityRequire(name)end;return runtimeDependency(name) or {}end
  local verifies=0
  local function send(command,args)
   if command=='Prepare'then prepared[args.phase]=Authority.prepare(doctor,args.phase)
@@ -733,7 +808,7 @@ for _,mode in ipairs({'native','toolkit'}) do for _,disconnect in ipairs({false,
  local currentPanel,observer
  local spec={id='subscription',handler='HApplyBandage',remote=disconnect and 'removed' or nil}
  local selection={mode=mode,cases={spec},skipReason=function()end}
- local authority={position=function(actor,x,y,z)actor:teleportTo(x,y,z)end,clinicalReady=function()return true end}
+ local authority={clinicalReady=function()return true end}
  doctor:teleportTo(10.5,10.5,0);patientActor:teleportTo(11.5,10.5,0)
  for _,actor in ipairs({doctor,patientActor}) do
   function actor:getPlayerNum()return 0 end
@@ -749,7 +824,7 @@ for _,mode in ipairs({'native','toolkit'}) do for _,disconnect in ipairs({false,
  getOnlinePlayers=function()return values(online)end;getPlayer=function()return doctor end;getTimestampMs=function()return now end
  local front=doctor.inventory:AddItem('Base.BookCarpentry1');local tail=doctor.inventory:AddItem('Base.BookFirstAid1')
  local prep={ok=true,patient='patient',items={},body=0,readiness={},front=front.id,frontPages=1,tail=tail.id,
-  spawn={x=10.5,y=10.5,z=0},patientSpawn={x=11.5,y=10.5,z=0}}
+  placement={phase=spec.id,doctor=doctor.name,targets={doctor={x=10,y=10,z=0},patient={x=11,y=10,z=0}}}}
  local q={queue={}};function q:indexOf(target)for i,value in ipairs(self.queue)do if value==target then return i end end end
  local context={hideAndChildren=function()end}
  ISHealthPanel={new=function(_,patient)return {character=patient,initialise=function()end,
@@ -765,7 +840,7 @@ for _,mode in ipairs({'native','toolkit'}) do for _,disconnect in ipairs({false,
   ActionQueuePolicy={setDiagnostics=function()end,inspect=function()return {}end},
   ActionQueueDefinitions={describe=function()return {title='treatment',target='patient'}end},
   ActionQueueOperations={run=function(fn,...)return fn(...)end}}
- require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return {}end
+ require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return runtimeDependency(name) or {}end
  local stages,prepared,baselines,receipts={},{},{},{}
  source('client','QueueHealthScenarios')(function(_,fn)stages[#stages+1]=fn end,function()return q end,function()return #q.queue==0 end,
   {kind='mp',language='EN',ids=function()return {}end,preparations=prepared,baselines=baselines,receipts=receipts,
@@ -848,7 +923,7 @@ do
  local authority=source('shared','QueueHealthAuthority');authority.setup(first);authority.setup(second)
  for _,doctor in ipairs({first,second})do
   local prep=authority.prepare(doctor,'inventoryBandage')
-  assert(prep.patient==doctor.name and prep.patientSpawn.x==prep.spawn.x,'MP inventory care targeted the session peer')
+  assert(prep.patient==doctor.name and prep.placement.targets[doctor.name] and not prep.placement.targets[doctor==first and second.name or first.name],'MP inventory care targeted the session peer')
   assert(doctor.body.scratchFlag,'actual doctor wound was not prepared')
   authority.baseline(doctor,'inventoryBandage')
   for _,entry in ipairs(doctor.inventory.items)do if entry.id==prep.items.bandage then doctor.inventory:Remove(entry);break end end
@@ -877,7 +952,7 @@ for _,mode in ipairs({'native','toolkit'})do
   getPlayer=function()return actor end
   local front,tail,bandage=actor.inventory:AddItem('Base.BookCarpentry1'),actor.inventory:AddItem('Base.BookFirstAid1'),actor.inventory:AddItem('Base.Bandage')
   local prep={ok=true,items={bandage=bandage.id},front=front.id,tail=tail.id,frontPages=1,body=0,patient=actor.name,
-   readiness={},spawn={x=10.5,y=10.5,z=0},patientSpawn={x=10.5,y=10.5,z=0}}
+   readiness={},placement={phase=caseID,doctor=actor.name,targets={[actor.name]={x=10,y=10,z=0}}}}
   local q={queue={}};function q:indexOf(target)for i,value in ipairs(self.queue)do if target==value then return i end end end
   local calls,observer,now,cancels=0,nil,0,0;local operation={};getTimestampMs=function()return now end
   ISReadABook={getDuration=function()end}
@@ -898,9 +973,9 @@ for _,mode in ipairs({'native','toolkit'})do
   PZSurvivorToolkit={Settings={actionQueue=function()return mode=='toolkit'end},ActionQueue={cancelOperation=function(_,child)assert(child.Type=='ISApplyBandage' and child.doIt==(caseID=='miniReplaceStopApply'));cancels=cancels+1;return true end},ActionQueuePolicy={setDiagnostics=function()end,inspect=function()return {targets={[actor.body]=true}}end},
    ActionQueueOperations={run=function(fn,...)return fn(...)end},ActionQueueDefinitions={describe=function()return {title='bandage',target='self'}end}}
   local spec;for _,entry in ipairs(AllCases)do if entry.id==caseID then spec=entry end end
-  local authority={position=function()end,clinicalReady=function()return true end}
+  local authority={clinicalReady=function()return true end}
   local selection={mode=mode,cases={spec},skipReason=function()end}
-  require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return {}end
+  require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueHealthSelection'then return selection elseif name=='QueueHealthAuthority'then return authority end;return runtimeDependency(name) or {}end
   local stages,prepared,baselines={},{},{}
   source('client','QueueHealthScenarios')(function(_,fn)stages[#stages+1]=fn end,function()return q end,function()return #q.queue==0 end,
    {kind=kind,language='EN',ids=function()return {username='client1'}end,preparations=prepared,baselines=baselines,
@@ -951,7 +1026,7 @@ do
    if name=='QueueTestSelection' then return {port=16261,options={mp_host=mpHost}} end
    if name=='QueueHealthSelection' then return {kind=kind,mode=mode,cases={{id='bandageApply'}}} end
    if name=='QueueHealthScenarios' then return function(stage)for i=1,3 do stage('stub',function()end)end end end
-   return {}
+   return runtimeDependency(name) or {}
   end
   local file=assert(io.open(root..'/client/ZZHealthQueue.lua'))
   local text=file:read('*a');file:close()

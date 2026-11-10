@@ -4,6 +4,8 @@ local Selection=require 'QueueHealthSelection'
 local Cases=Selection.cases
 local Authority=require 'QueueHealthAuthority'
 local Checks=require 'QueueScenarioChecks'
+local P=require 'QueueEnergyPlacement'
+local Placement=require 'QueueHealthPlacement'
 return function(stage,queue,empty,remote)
  local Toolkit=PZSurvivorToolkit
  local API,Policy,Ops=Toolkit.ActionQueue,Toolkit.ActionQueuePolicy,Toolkit.ActionQueueOperations
@@ -28,11 +30,8 @@ return function(stage,queue,empty,remote)
   if remote.kind=='sp' or name==player:getUsername() then return player end
   local values=getOnlinePlayers();for i=0,values:size()-1 do local value=values:get(i);if value:getUsername()==name then return value end end
  end
- local function readyPosition(character,expected)
-  local square=character:getCurrentSquare()
-  return square and square:getX()==math.floor(expected.x) and square:getY()==math.floor(expected.y) and square:getZ()==expected.z
-   and math.abs(character:getX()-expected.x)<0.25 and math.abs(character:getY()-expected.y)<0.25 and character:getZ()==expected.z
-   and not character:isPlayerMoving()
+ local function readyPosition(character,target)
+  return P.atCentered(character,target)and not character:isPlayerMoving()
  end
  local function read(id,pages)
   local book=assert(item(id),'book not synchronized');book:setAlreadyReadPages(book:getNumberOfPages()-pages)
@@ -57,7 +56,7 @@ return function(stage,queue,empty,remote)
    if option.subOption then local found=menuOption(context:getSubMenu(option.subOption),spec,ids);if found then return found end end
   end
  end
- local function enqueue(panel,body,spec,ids)
+ local function enqueue(panel,body,spec,ids,bag)
   assertMode()
   local before=#queue().queue
   run(function()
@@ -88,10 +87,29 @@ return function(stage,queue,empty,remote)
    end
   end)
   local parent=assert(queue().queue[before+1],'native medical producer did not enqueue')
-  assert(parent.Type==(spec.inventory and (spec.bag and 'ISInventoryTransferAction' or 'ISApplyBandage') or 'HealthPanelAction'),'native medical producer contract missing')
+  local clinical=parent
+  if spec.inventory and spec.bag then
+   local selected=assert(item(ids.bandage));local source=selected:getContainer();local added=queue().queue
+   local offset=native and 0 or 1
+   local transfer=assert(added[before+1+offset]);clinical=assert(added[before+2+offset])
+   assert(#added==before+2+offset and bag and bag:getContainer()==player:getInventory()and source==bag:getItemContainer()
+    and transfer.Type=='ISInventoryTransferAction'and transfer.item==selected and transfer.srcContainer==source
+    and transfer.destContainer==player:getInventory()and transfer.character==player and not transfer.action
+    and clinical.Type=='ISApplyBandage'and clinical.item==selected and clinical.bodyPart==body
+    and clinical.otherPlayer==player and clinical.character==player and clinical.doIt==true and not clinical.action,
+    'native inventory medicine transfer/clinical chain differs')
+   if not native then
+    assert(Toolkit.ActionQueueApproach.isContainer(parent,source,player)and not parent.action
+     and parent.toolkitQueueOperation and parent.toolkitQueueOperation==transfer.toolkitQueueOperation
+     and parent.toolkitQueueOperation==clinical.toolkitQueueOperation and Policy.inspect(clinical),
+     'inventory medicine lost exact owned container approach or native clinical proof')
+   else assert(parent==transfer,'native inventory medicine acquired a Toolkit approach')end
+  else
+   assert(parent.Type==(spec.inventory and'ISApplyBandage'or'HealthPanelAction'),'native medical producer contract missing')
+  end
   if not native then
    assert(Policy.inspect(parent),'medical parent permission missing')
-   local description=Toolkit.ActionQueueDefinitions.describe(parent)
+   local description=Toolkit.ActionQueueDefinitions.describe(clinical)
    assert(description.title and description.target,'native medical presentation lacks operation/patient/body part')
   end
   return parent
@@ -115,7 +133,7 @@ return function(stage,queue,empty,remote)
    local skipSent=false
    local prep,phase,front,tail,parent,repeated,panel,body,activePatient,requested=false,'prepare'
    local controlSent,observed,doneTick,observerProblem=false,false,nil,nil
-   local positioned,subscribed,stableSince,baselineRequested=false,false,nil,false
+   local subscribed,stableSince,baselineRequested=false,nil,false
    local bag,previousSecondary,bagVisible,bagHidden
    local removedAt,nativeObservation
    local proofs={}
@@ -159,19 +177,23 @@ return function(stage,queue,empty,remote)
      prep=remote.preparations[spec.id];if not prep then return notReady() end;assert(prep.ok,prep.error)
      activePatient=patient(prep.patient);if not activePatient then return notReady() end
      for _,id in pairs(prep.items) do if not item(id) then return notReady() end end
-     if not positioned then Authority.position(player,prep.spawn.x,prep.spawn.y,prep.spawn.z);positioned=true;return notReady() end
      if player:pressedMovement(false) or player:tooDarkToRead() then return notReady() end
      if activePatient==player then body=player:getBodyDamage():getBodyPart(BodyPartType.FromIndex(prep.body))
      else
       if not subscribed then player:startReceivingBodyDamageUpdates(activePatient);subscribedPatient=activePatient;subscribed=true;return notReady() end
       body=activePatient:getBodyDamageRemote():getBodyPart(BodyPartType.FromIndex(prep.body))
      end
+     local layout=assert(prep.placement,'health prepared placement missing')
+     assert(layout.phase==spec.id and layout.doctor==player:getUsername(),'health prepared placement round differs')
      if not Authority.clinicalReady(body,assert(prep.readiness,'authority categorical readiness missing'))
-      or not readyPosition(player,prep.spawn) or not readyPosition(activePatient,prep.patientSpawn) then return notReady() end
+      or not readyPosition(player,layout.targets[player:getUsername()])
+      or not readyPosition(activePatient,layout.targets[prep.patient])then return notReady()end
      local now=getTimestampMs();stableSince=stableSince or now
      if now-stableSince<500 then return false end
      if not baselineRequested then remote.send('Baseline',{phase=spec.id});baselineRequested=true;return false end
      local baseline=remote.baselines[spec.id];if not baseline then return false end;assert(baseline.ok,baseline.error)
+     assert(readyPosition(player,layout.targets[player:getUsername()])and readyPosition(activePatient,layout.targets[prep.patient]),'health actor left centered placement before clinical admission')
+     Placement.raw('ADMITTED',{phase=spec.id,doctor=player:getUsername(),actor=player:getUsername(),targets=layout.targets})
      print('[QUEUE_TEST] HEALTH_READY phase='..spec.id..' stableMs='..(now-stableSince)..' actualPatient='..prep.patient..' categoricalState=true adjacentCentered=true')
      panel=ISHealthPanel:new(activePatient,0,0,400,400);panel:initialise()
      if activePatient~=player then panel:setOtherPlayer(player) end
@@ -188,9 +210,9 @@ return function(stage,queue,empty,remote)
      assert(empty(),'medical case did not begin with a drained queue')
      if not spec.emptyStart then front=read(prep.front,prep.frontPages) end
      proofs.emptyStartVerified=spec.emptyStart==true and empty()
-     parent=enqueue(panel,body,spec,prep.items)
+     parent=enqueue(panel,body,spec,prep.items,bag)
      if spec.repeatSame then
-      repeated=enqueue(panel,body,spec,prep.items)
+      repeated=enqueue(panel,body,spec,prep.items,bag)
       assert(parent~=repeated and parent.Type=='ISApplyBandage' and repeated.Type=='ISApplyBandage'
        and parent.item==repeated.item and parent.item:getID()==prep.items.bandage
        and parent.bodyPart==body and repeated.bodyPart==body and parent.otherPlayer==player and repeated.otherPlayer==player
@@ -234,10 +256,13 @@ return function(stage,queue,empty,remote)
       for _,child in ipairs(queue().queue) do
        if (child~=parent or spec.inventory) and child.Type~='HealthPanelAction' and
         (native and ((child.Type=='ISDisinfect' or child.Type=='ISApplyBandage') and child.bodyPart==body or spec.bag and child.Type=='ISInventoryTransferAction') or not native and child.toolkitQueueOperation==parent.toolkitQueueOperation) then
-        local contract=not native and Policy.inspect(child)
+        local contract,source
+        if not native then contract,source=Policy.inspect(child)end
         if spec.guard=='helper' then assert(not contract,'changed helper granted expanded-child permission');return end
         if not native then assert(contract,'expanded native medical child contract missing '..child.Type) end
-        if not native and child.Type~='ISInventoryTransferAction' then assert(contract.targets and contract.targets[body],'expanded child lost body dependency') end
+        local route=not native and spec.inventory and spec.bag and Toolkit.ActionQueueApproach.isContainer(child,bag:getItemContainer(),player)
+        if route then assert(source=='toolkit.approach','inventory medical preparation lost owned approach source')end
+        if not native and child.Type~='ISInventoryTransferAction'and not route then assert(contract.targets and contract.targets[body],'expanded child lost body dependency')end
         if not native and child.Type=='ISStitch' then assert(contract.dynamicInputsByType and contract.dynamicInputsByType.SutureNeedleHolder,'expanded stitch lost late holder dependency') end
         local startedPrep=child.Type=='ISInventoryTransferAction' and child.action and child.action:isStarted() and not child.action:finished()
         if spec.bag and bagVisible and startedPrep then

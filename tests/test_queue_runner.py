@@ -446,6 +446,29 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual(2, len(self.commands))  # guard and the owned server, no clients
         self.assertEqual([101], [call.args[0] for call in kills])
 
+    def test_host_launcher_failure_prevents_guest_and_save_handshake_even_if_server_ready(self):
+        self.prepare_host()
+        self.selection['clients'] = 2
+        guest = self.root / 'client2'
+        guest.mkdir()
+        (guest / 'options.ini').write_text('voiceEnable=false\n')
+        self.runtime['roles']['client2'] = {'cache': str(guest), 'classes': str(self.root / 'classes')}
+        for name, value in [('selection', self.selection), ('runtime', self.runtime)]:
+            (self.root / (name + '.json')).write_text(json.dumps(value))
+        self.content += '[QUEUE_TEST] FAIL native launcher java.lang.IllegalStateException: Host child exited before its owner\n'
+        self.host_save = Mock(side_effect=AssertionError('failed startup cannot save a missing authority'))
+        result, kills = self.invoke(sleep=AssertionError('launcher failure must stop readiness immediately'))
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('host-launch', result['setup_failure']['kind'])
+        self.assertEqual('readiness', result['setup_failure']['phase'])
+        self.assertEqual('client1', result['setup_failure']['role'])
+        self.assertIn('Host child exited before its owner', result['setup_failure']['reason'])
+        self.assertEqual({'client1'}, result['processes'].keys())
+        self.assertEqual(2, len(self.commands))  # display guard + owned Host owner, no guest
+        self.host_save.assert_not_called()
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
+        self.assertEqual([], result['host_cleanup']['remaining_pids'])
+
     def test_host_fixture_failure_during_readiness_stops_owner_group(self):
         self.prepare_host()
         source = self.fixture_source()

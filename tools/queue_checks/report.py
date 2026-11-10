@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from . import adapters, batch_policy, progress, mod_inputs, case_stages
+from . import adapters, batch_policy, progress, mod_inputs, case_stages, health_placement
 
 
 MARKER = "[QUEUE_CHECK] "
@@ -379,13 +379,17 @@ def functional(root, selection, catalog):
         return adapters.functional(root, selection, catalog)
     roles = ["client1"] if selection["kind"] == "sp" else ["client1", "client2"]
     coverage, issues, clients = [], [], {}
+    placement_texts = {}
     authority_path = root / ("server-launch.log" if selection["kind"] == "mp" else "client1-launch.log")
     authority = authority_path.read_text(errors="replace") if authority_path.is_file() else ""
     receipts = RECEIPT.findall(authority)
+    if selection["kind"] == "mp":
+        placement_texts["server"] = authority
     specs = {case["id"]: case for case in catalog["suites"][selection["suite"]]["cases"]}
     for role in roles:
         path = root / (role + "-launch.log")
         text = path.read_text(errors="replace") if path.is_file() else ""
+        placement_texts[role] = text
         try:
             records = events(text)
         except ValueError as error:
@@ -451,6 +455,11 @@ def functional(root, selection, catalog):
         if counts["failed"]:
             issues.append(role + ": failed scenarios")
         clients[role] = dict(counts)
+    if selection["suite"] == "health":
+        try:
+            health_placement.validate(selection, placement_texts, specs)
+        except (ValueError, KeyError, TypeError) as error:
+            issues.append("Health centered placement: " + str(error))
     return {"status": "failed" if issues else "passed", "issues": issues, "clients": clients}, coverage
 
 

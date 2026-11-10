@@ -22,6 +22,17 @@ def main():
     for line in result.stdout.splitlines():
         if line.startswith("PASS"):
             print(line)
+    placement = subprocess.run(
+        [executable, str(ROOT.parents[1] / "test_queue_health_placement.lua"), str(ROOT)],
+        text=True, capture_output=True,
+    )
+    if placement.returncode:
+        print(placement.stdout)
+        print(placement.stderr)
+        raise SystemExit(placement.returncode)
+    for line in placement.stdout.splitlines():
+        if line.startswith("PASS"):
+            print(line)
     events = [json.loads(line.removeprefix("EVENT_JSON ")) for line in result.stdout.splitlines() if line.startswith("EVENT_JSON ")]
     assert len(events) == 1 and events[0]["outcome"]["tailCompleted"] is False
     assert events[0]["reason"] == 'quote" slash\\ newline\n'

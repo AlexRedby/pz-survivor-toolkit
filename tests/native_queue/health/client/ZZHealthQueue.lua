@@ -1,5 +1,6 @@
 require 'PZSurvivorToolkit/ActionQueuePanel'
 local Authority=require 'QueueHealthAuthority'
+local Placement=require 'QueueHealthPlacement'
 local Selection=require 'QueueHealthSelection'
 local config=require 'QueueTestSelection'
 local EventsJSON=require 'QueueHealthEvents'
@@ -21,11 +22,12 @@ local step,since,lastReady=1,0,0
 local function queue() return ISTimedActionQueue.getTimedActionQueue(getPlayer()) end
 local function empty() return #queue().queue==0 and not getPlayer():hasTimedActions() end
 local function stage(name,fn,ready,id) stages[#stages+1]={name=name,fn=fn,ready=ready,id=id} end
+local receive,localPlacement,authorityPlacement
 local function send(command,args)
  args=args or {}
  if kind=='mp' then sendClientCommand('HealthQueueTest',command,args)
+ elseif authorityPlacement:handle(getPlayer(),command,args)then return
  elseif command=='Verify' then receipts[args.phase]=Authority.verify(getPlayer(),args.phase)
- elseif command=='Prepare' then preparations[args.phase]=Authority.prepare(getPlayer(),args.phase)
  elseif command=='Mutate' then mutations[args.phase]=Authority.mutate(getPlayer(),args.phase,args.mode)
  elseif command=='Baseline' then baselines[args.phase]=Authority.baseline(getPlayer(),args.phase)
  elseif command=='Skip' then skips[args.phase]=Authority.skip(getPlayer(),args.phase,args.reason) end
@@ -98,18 +100,26 @@ function completion.settled(case)
 end
 require('QueueHealthScenarios')(stage,queue,empty,{kind=kind,language=language,skips=skips,ids=function() return ids end,receipts=receipts,preparations=preparations,mutations=mutations,baselines=baselines,send=send,completion=completion})
 assert(#stages==#caseIDs+2,'HEALTH selected stage count changed')
-Events.OnServerCommand.Add(function(module,command,args)
- if module~='HealthQueueTest' then return end
- if command=='Setup' then if not ids then ids=args;since=getTimestampMs() end
- elseif command=='Session' then
-  if args.active and (not session or not session.active) then since=getTimestampMs() end
+receive=function(command,args)
+ if command=='Placement'then localPlacement:receive(args)
+ elseif command=='Setup'then if not ids then ids=args;since=getTimestampMs()end
+ elseif command=='Session'then
+  if args.active and(not session or not session.active)then since=getTimestampMs()end
   session=args
- elseif command=='Verified' then receipts[args.phase]=args
- elseif command=='Prepared' then preparations[args.phase]=args
- elseif command=='Mutated' then mutations[args.phase]=args
- elseif command=='Baselined' then baselines[args.phase]=args
- elseif command=='Skipped' then skips[args.phase]=args
- elseif command=='Position' then Authority.position(getPlayer(),args.x,args.y,args.z) end
+ elseif command=='Verified'then receipts[args.phase]=args
+ elseif command=='Prepared'then preparations[args.phase]=args
+ elseif command=='Mutated'then mutations[args.phase]=args
+ elseif command=='Baselined'then baselines[args.phase]=args
+ elseif command=='Skipped'then skips[args.phase]=args
+ elseif command=='Position'then Authority.positionPatient(getPlayer(),args.x,args.y,args.z)
+ elseif command=='Failed'then
+  emit({event='error',reason=args.error});failures=failures+1;complete();done=true
+  localPlacement=nil;authorityPlacement=nil
+ end
+end
+localPlacement=Placement.newClient(send)
+Events.OnServerCommand.Add(function(module,command,args)
+ if module=='HealthQueueTest'then receive(command,args)end
 end)
 Events.OnMainMenuEnter.Add(function()
  entered=true
@@ -143,13 +153,27 @@ require('QueuePreflight').onGameStart(Events,function()
  getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);getPlayer():setAutoDrink(false)
  if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false) end
  if kind=='sp' then
-  getPlayer():setGhostMode(true);ids=Authority.setup(getPlayer());session={active=true,turn=1}
+  getPlayer():setGhostMode(true)
+  authorityPlacement=Placement.newAuthority(Authority,function(_,command,args)
+   receive(command,args);if command=='Setup'then receive('Session',Authority.session(getPlayer()))end
+  end)
+  send('Ready')
   print('[QUEUE_TEST] TRUE_SP world='..getWorld():getWorld()..' nativeDurations=true')
  else print('[QUEUE_TEST] NATIVE_CONNECTED '..user..' actualPeer=true nativeDurations=true') end
  emit({event='setup',cases=caseIDs,expected=#caseIDs,language=language,nativeDurations=true,queueEnabled=PZSurvivorToolkit.Settings.actionQueue()})
 end)
 require('QueuePreflight').onTick(Events,function()
- if not started or done then return end
+ if not started then return end
+ -- A doctor who has finished still owns the patient in the other doctor's turn.
+ local placementOK,placementError=pcall(function()
+  if localPlacement then localPlacement:tick()end
+  if authorityPlacement then authorityPlacement:tick()end
+ end)
+ if not placementOK then
+  print('[QUEUE_TEST] FAIL HEALTH placement '..tostring(placementError))
+  receive('Failed',{error=tostring(placementError)});return
+ end
+ if done then return end
  local now=getTimestampMs()
  if not ids or not session or (not session.active and not done) then
   if now-started>2000 and now-lastReady>1000 then lastReady=now;send('Ready') end

@@ -11,6 +11,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 from queue_checks import report
+from tests.test_queue_health_placement import health_logs
 
 
 class ViewportEvidenceTests(unittest.TestCase):
@@ -179,7 +180,8 @@ class QueueReportTests(unittest.TestCase):
         report.write_json(root / "initial-settings.json", {"voiceEnable": False})
         roles = ["client1"] if kind == "sp" else ["server", "client1", "client2"]
         clients = [role for role in roles if role != "server"]
-        receipts = []
+        records_by_role = {}
+        readiness_by_role = {}
         for role in roles:
             for sub in ("mods", "classes", "Lua"):
                 directory = root / role / sub
@@ -199,16 +201,11 @@ class QueueReportTests(unittest.TestCase):
                 records[1]["reason"] = "unsupported native prerequisite"
             markers = "".join("[QUEUE_TEST] " + marker + "\n" for marker in
                               ("VOICE_DISABLED", "DISPLAY_READY", "PREFLIGHT_COMPLETE mods=1 mode=" + mode, "TRUE_SP" if kind == "sp" else "NATIVE_CONNECTED"))
-            text = markers + "".join(report.MARKER + json.dumps(event) + "\n" for event in records)
-            if status == "passed":
-                patient = "client2" if kind == "mp" and role == "client1" else role if kind == "sp" else "client1"
-                receipt = "[QUEUE_TEST] HEALTH_AUTH_RECEIPT " + role + " phase=bandageApply ok=true patient=" + patient + " error=nil\n"
-                receipts.append(receipt)
-                if kind == "sp":
-                    text += receipt
-            (root / (role + "-launch.log")).write_text(text, encoding="utf-8")
-        if kind == "mp":
-            (root / "server-launch.log").write_text("[QUEUE_TEST] SERVER_READY\n" + "".join(receipts), encoding="utf-8")
+            records_by_role[role] = records
+            readiness_by_role[role] = markers
+        specs = {case['id']: case for case in self.catalog['suites']['health']['cases']}
+        for role, text in health_logs(selection, specs, records_by_role).items():
+            (root / (role + '-launch.log')).write_text(readiness_by_role.get(role, '[QUEUE_TEST] SERVER_READY\n') + text, encoding='utf-8')
         report.write_json(root / "execution.json", {"status": "completed", "processes": {
             role: {'pid': 1000 + index, 'exit_code': -15} for index, role in enumerate(roles)}})
         self.freeze(root)
@@ -234,6 +231,19 @@ class QueueReportTests(unittest.TestCase):
                 self.assertEqual(['media/lua', 'media/scripts'], result['provenance']['game_input_trees'])
                 del result['provenance']['game_input_trees']
                 self.assertIn('Live game trees: unsealed (legacy report)', report.summary(result))
+
+    def test_old_health_claims_without_centered_placement_fail(self):
+        for kind in ('sp', 'mp'):
+            root = self.fixture(kind, kind=kind)
+            for role in ('client1', 'client2', 'server'):
+                path = root / (role + '-launch.log')
+                if path.exists():
+                    path.write_text('\n'.join(line for line in path.read_text().splitlines()
+                                              if '[HEALTH_PLACEMENT]' not in line) + '\n')
+            result = report.build_report(root, self.catalog)
+            with self.subTest(kind=kind):
+                self.assertEqual('failed', result['functional']['status'])
+                self.assertTrue(any('Health centered placement:' in issue for issue in result['functional']['issues']))
 
     def test_health_parent_completion_requires_exact_typed_sp_host_and_control_phases(self):
         index = 0
@@ -303,7 +313,7 @@ class QueueReportTests(unittest.TestCase):
             receipts = ["[QUEUE_TEST] HEALTH_AUTH_RECEIPT " + role
                         + " phase=bandageApply ok=true patient=" + role + " error=nil\n"
                         for role in ("client1", "client2")]
-            valid = "[QUEUE_TEST] SERVER_READY\n" + "".join(receipts)
+            valid = path.read_text()
             path.write_text(valid)
             self.assertEqual(report.build_report(root, self.catalog)["functional"]["status"], "passed")
             for invalid in (valid.replace("patient=client1", "patient=client2"),
@@ -483,7 +493,7 @@ class QueueReportTests(unittest.TestCase):
         root = self.fixture(kind="mp", status="skipped")
         (root / "server-launch.log").unlink()
         result = report.build_report(root, self.catalog)
-        self.assertEqual(result["functional"]["status"], "passed")
+        self.assertEqual(result["functional"]["status"], "failed")
         self.assertEqual(result["runtime"]["status"], "unavailable")
         self.assertEqual(result["status"], "failed")
 

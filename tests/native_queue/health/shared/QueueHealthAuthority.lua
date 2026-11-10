@@ -2,6 +2,10 @@ local Authority,states,turn={}, {}, 1
 local Selection=require 'QueueHealthSelection'
 local Cases=Selection.cases
 local origin
+local P=require 'QueueEnergyPlacement'
+local Placement=require 'QueueHealthPlacement'
+local actors,layouts={},{}
+local function same(a,b)return a.x==b.x and a.y==b.y and a.z==b.z end
 local function key(player) return player:getUsername() end
 local function online(name)
  local values=getOnlinePlayers();for i=0,values:size()-1 do local player=values:get(i);if key(player)==name then return player end end
@@ -11,7 +15,7 @@ local function position(player,x,y,z)
  player:setLastX(x);player:setLastY(y);player:setLastZ(z);player:setCurrentSquareFromPosition()
  if isServer() then sendServerCommand(player,'HealthQueueTest','Position',{x=x,y=y,z=z}) end
 end
-Authority.position=position
+Authority.positionPatient=position
 local function part(player) return player:getBodyDamage():getBodyPart(BodyPartType.ForeArm_L) end
 local function image(body)
  return {bandaged=body:bandaged(),stitched=body:stitched(),glass=body:haveGlass(),bullet=body:haveBullet(),wash=body:isNeedBurnWash(),
@@ -80,14 +84,69 @@ function Authority.setBagHand(player,bag,hand)
  assert(PZSurvivorToolkit.ActionQueuePolicy.isCarriedContainer(bag:getItemContainer(),player),'hidden fixture bag lost carried-container proof')
  print('[QUEUE_TEST] HEALTH_BAG_UI bagId='..bag:getID()..' visible='..tostring(visible)..' carried=true')
 end
-function Authority.setup(player)
- if states[key(player)] then return states[key(player)].ids end
- if not origin then local point=require('QueueEnergyPlacement')(player);origin={x=point:getX()+0.5,y=point:getY()+0.5,z=point:getZ()} end
- position(player,origin.x+(key(player)=='client2' and 1 or 0),origin.y,origin.z)
+-- Layout reservation is read-only: all owners arrive before any fixture mutation.
+local function reserve(phase,doctor,players,targets)
+ local layout={phase=phase,doctor=doctor,targets=targets};local expected={}
+ for name,target in pairs(targets)do expected[name]=P.target(target)end
+ layouts[layout]={phase=phase,doctor=doctor,players=players,targets=expected}
+ return layout
+end
+function Authority.actor(name)
+ local actor=actors[name]
+ if isServer()then assert(not actor or online(name)==actor,'health registered peer disconnected or replaced')end
+ return actor
+end
+function Authority.ids(player)return states[key(player)]and states[key(player)].ids end
+function Authority.setupLayout(players)
+ assert(not isClient()and require('QueueTestSelection').disposable==true,'health setup requires disposable authority')
+ assert(type(players)=='table'and #players==(isServer()and 2 or 1),'health setup participant count differs')
+ local bound,targets={},{}
+ if not origin then
+  local point=P.choose(assert(players[1]));origin={x=point.x+.5,y=point.y+.5,z=point.z}
+ end
+ for _,player in ipairs(players)do
+  local name=key(player);assert(not states[name]and not bound[name]and(not actors[name]or actors[name]==player),'health setup identity already reserved')
+  actors[name]=player;bound[name]=player
+  targets[name]={x=math.floor(origin.x)+(isServer()and name=='client2'and 1 or 0),y=math.floor(origin.y),z=origin.z}
+  local sq=assert(getCell():getGridSquare(targets[name].x,targets[name].y,targets[name].z),'health standing tile not loaded')
+  assert(sq:isFree(false)and not sq:getRoom(),'health standing tile blocked')
+ end
+ return reserve('setup','setup',bound,targets)
+end
+function Authority.prepareLayout(player,phase)
+ assert(not isClient(),'health preparation requires authority')
+ local current=assert(states[key(player)]);local spec=assert(Cases[current.verified+1]);assert(spec.id==phase and not current.pending,'duplicate/out-of-order prepare')
+ assert(not Selection.skipReason(spec,key(player)),'case must be skipped explicitly')
+ local session=assert(Authority.session(player));assert(session.active,'inactive doctor preparation')
+ local patient=not spec.inventory and isServer()and assert(online(session.patient),'actual connected patient required')or player
+ local targets={[key(player)]={x=math.floor(origin.x),y=math.floor(origin.y),z=origin.z}}
+ local players={[key(player)]=player}
+ if patient~=player then players[key(patient)]=patient;targets[key(patient)]={x=math.floor(origin.x)+1,y=math.floor(origin.y),z=origin.z}end
+ for name,actor in pairs(players)do assert(Authority.actor(name)==actor,'health preparation actor changed')end
+ return reserve(phase,key(player),players,targets)
+end
+function Authority.checkPlacement(layout,proofs)
+ local reserved=assert(layouts[layout],'health placement layout not reserved')
+ assert(layout.phase==reserved.phase and layout.doctor==reserved.doctor and type(proofs)=='table','health placement round changed')
+ local count=0
+ for name,target in pairs(layout.targets)do
+  count=count+1;assert(reserved.targets[name]and same(P.target(target),reserved.targets[name]),'health reserved target changed')
+  assert(Authority.actor(name)==reserved.players[name],'health placement actor changed')
+  Placement.proof(proofs[name],target,isServer()and'replica'or'local')
+  assert(P.atCentered(reserved.players[name],target),'health authority left final centered placement')
+ end
+ local expected=0;for _ in pairs(reserved.targets)do expected=expected+1 end;assert(count==expected,'health placement participant removed')
+ for name in pairs(proofs)do assert(reserved.targets[name],'foreign health placement proof')end
+ return true
+end
+function Authority.setup(player,layout,proofs)
+ Authority.checkPlacement(layout,proofs)
+ assert(layout.phase=='setup'and layout.doctor=='setup'and layout.targets[key(player)],'health setup layout differs')
+ if states[key(player)]then return states[key(player)].ids end
  player:getInventory():setCapacity(150)
- local current={ids={items={},spawn=origin,username=key(player)},items={},verified=0}
+ local current={ids={items={},placement=P.target(layout.targets[key(player)]),username=key(player)},items={},verified=0}
  states[key(player)]=current
- for _,spec in ipairs({{'front','Base.BookCarpentry1'},{'tail','Base.BookFirstAid1'},{'bag','Base.Bag_Schoolbag'}}) do seed(current,player,spec[1],spec[2]) end
+ for _,spec in ipairs({{'front','Base.BookCarpentry1'},{'tail','Base.BookFirstAid1'},{'bag','Base.Bag_Schoolbag'}})do seed(current,player,spec[1],spec[2])end
  return current.ids
 end
 function Authority.session(player)
@@ -110,12 +169,14 @@ function Authority.skip(player,phase,reason)
  current.verified=current.verified+1
  return {phase=phase,ok=true,reason=reason}
 end
-function Authority.prepare(player,phase)
+function Authority.prepare(player,phase,layout,proofs)
+ Authority.checkPlacement(layout,proofs)
+ assert(layout.phase==phase and layout.doctor==key(player),'health preparation round differs')
  local current=assert(states[key(player)]);local spec=assert(Cases[current.verified+1]);assert(spec.id==phase and not current.pending,'duplicate/out-of-order prepare')
  assert(not Selection.skipReason(spec,key(player)),'case must be skipped explicitly')
  local session=assert(Authority.session(player));assert(session.active,'inactive doctor preparation')
  local patient=not spec.inventory and isServer() and assert(online(session.patient),'actual connected patient required') or player
- position(player,origin.x,origin.y,origin.z);position(patient,origin.x+(patient~=player and 1 or 0),origin.y,origin.z)
+ assert(layout.targets[key(player)]and layout.targets[key(patient)],'health clinical participant placement missing')
  local old=inventory(player)
  for id,item in pairs(old) do
   if (current.fixtureIDs and current.fixtureIDs[id]) or (item~=current.items.front and item~=current.items.tail and item~=current.items.bag and current.outputIDs and current.outputIDs[id]) then
@@ -153,8 +214,7 @@ function Authority.prepare(player,phase)
   book:setAlreadyReadPages(book:getNumberOfPages()-pages);player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-pages)
  end
  current.pending={phase=phase,spec=spec,patient=patient,body=body,before=image(body),ids=ids,uses=uses,originalContainers=originalContainers,inventory=inventory(player),mutated=false,visualNames=not isServer() and visualNames(body,patient),visualFlags=not isServer() and visualFlags(body)}
- return {ok=true,phase=phase,items=ids,body=body:getIndex(),patient=key(patient),spawn=origin,before=current.pending.before,readiness=Authority.readiness(body),
-  patientSpawn={x=origin.x+(patient~=player and 1 or 0),y=origin.y,z=origin.z},
+ return {ok=true,phase=phase,items=ids,body=body:getIndex(),patient=key(patient),placement=layout,before=current.pending.before,readiness=Authority.readiness(body),
   front=current.items.front:getID(),frontPages=frontPages,tail=current.items.tail:getID(),bag=current.items.bag:getID()}
 end
 local function wornIDs(player)

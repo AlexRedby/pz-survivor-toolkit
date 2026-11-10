@@ -6,20 +6,39 @@ local function session()
   if result then sendServerCommand(player,'HealthQueueTest','Session',result) end
  end
 end
-Events.OnServerStarted.Add(function() print('[QUEUE_TEST] SERVER_READY') end)
+local Placement=require 'QueueHealthPlacement'
+local failed=false
+local coordinator=Placement.newAuthority(Authority,function(player,command,args)
+ sendServerCommand(player,'HealthQueueTest',command,args)
+ if command=='Setup'then session()end
+end)
+local function failure(problem)
+ if failed then return end;failed=true;coordinator.failed=true
+ local reason=tostring(problem);print('[QUEUE_TEST] FAIL HEALTH server '..reason)
+ local players=getOnlinePlayers()
+ for i=0,players:size()-1 do sendServerCommand(players:get(i),'HealthQueueTest','Failed',{error=reason})end
+end
+Events.OnServerStarted.Add(function()print('[QUEUE_TEST] SERVER_READY')end)
 Events.OnClientCommand.Add(function(module,command,player,args)
- if module~='HealthQueueTest' then return end
- local reply=command=='Ready' and 'Setup' or command=='Prepare' and 'Prepared' or command=='Mutate' and 'Mutated' or command=='Baseline' and 'Baselined' or command=='Skip' and 'Skipped' or 'Verified'
- local ok,result=pcall(function()
-  if command=='Ready' then sendServerCommand(player,module,'Setup',Authority.setup(player));session();return
-  elseif command=='Finish' then Authority.finish(player);session();return
-  elseif command=='Skip' then return Authority.skip(player,args.phase,args.reason)
-  elseif command=='Prepare' then return Authority.prepare(player,args.phase)
-  elseif command=='Mutate' then return Authority.mutate(player,args.phase,args.mode)
-  elseif command=='Verify' then return Authority.verify(player,args.phase)
-  elseif command=='Baseline' then return Authority.baseline(player,args.phase)
-  else error('unknown medical fixture command') end
+ if module~='HealthQueueTest'or failed then return end
+ local ok,problem=pcall(function()
+  -- Native network decoding represents an empty Lua argument table as nil.
+  if(command=='Ready'or command=='Finish')and args==nil then args={}end
+  assert(type(args)=='table','health request arguments missing')
+  if coordinator:handle(player,command,args)then return end
+  local result,reply
+  if command=='Finish'then Authority.finish(player);session();return
+  elseif command=='Skip'then result=Authority.skip(player,args.phase,args.reason);reply='Skipped'
+  elseif command=='Mutate'then result=Authority.mutate(player,args.phase,args.mode);reply='Mutated'
+  elseif command=='Verify'then result=Authority.verify(player,args.phase);reply='Verified'
+  elseif command=='Baseline'then result=Authority.baseline(player,args.phase);reply='Baselined'
+  else error('unknown medical fixture command')end
+  if result then sendServerCommand(player,module,reply,result)end
  end)
- if not ok then result={phase=args.phase or 'setup',ok=false,error=tostring(result)};print('[QUEUE_TEST] FAIL HEALTH server '..tostring(result.error)) end
- if result then sendServerCommand(player,module,reply,result) end
+ if not ok then failure(problem)end
+end)
+Events.OnTick.Add(function()
+ if failed then return end
+ local ok,problem=pcall(function()coordinator:tick()end)
+ if not ok then failure(problem)end
 end)
