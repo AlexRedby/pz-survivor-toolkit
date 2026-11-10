@@ -2,6 +2,7 @@
 
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -182,13 +183,40 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual([], self.executions)
 
     def test_default_keeps_all_checks_and_reconnect_variants(self):
-        self.invoke()
+        report = self.root / 'default-report.json'
+        self.invoke('--report', str(report))
         names = [name for name, _ in self.executions]
-        conditional = {"test_torch_refill.lua", "test_quartermaster_craft_ui.lua", "native_tags/check_transfer_source.lua",
+        conditional = {"test_action_queue_spatial_execution.lua", "test_torch_refill.lua",
+                       "test_quartermaster_craft_ui.lua", "native_tags/check_transfer_source.lua",
                        "native_tags/check_placement.lua"}
         self.assertEqual(set(names) - {"assert(loadstring(...))"}, self.names - conditional)
         self.assertEqual(names.count("assert(loadstring(...))"), 1)
         self.assertEqual(names.count("native_tags/check_reconnect.lua"), 4)
+        spatial = [row for row in json.loads(report.read_text())['results']
+                   if row['test'] == 'test_action_queue_spatial_execution.lua']
+        self.assertEqual(len(spatial), 1)
+        self.assertEqual(spatial[0]['status'], 'skipped')
+        self.assertTrue(spatial[0]['skip_reasons'])
+
+    def test_spatial_execution_requires_inputs_and_runs_with_sources_in_both_selections(self):
+        name = 'test_action_queue_spatial_execution.lua'
+        with self.assertRaises(SystemExit) as failure:
+            self.invoke('--test', name)
+        self.assertEqual(failure.exception.code, 2)
+        self.assertEqual(self.executions, [])
+        native = self.root / 'native'
+        native.mkdir()
+        for selected in (False, True):
+            self.executions.clear()
+            arguments = ['--native-action-root', str(native)]
+            if selected:
+                arguments += ['--test', name]
+            with self.subTest(selected=selected), \
+                    patch.object(run_tests, 'discover_tests', return_value=[name]):
+                self.invoke(*arguments)
+                spatial = [variables for source, variables in self.executions if source == name]
+                self.assertEqual(len(spatial), 1)
+                self.assertEqual(Path(spatial[0]['NativeActionRoot']).resolve(), native.resolve())
 
     def test_selection_retains_tv_sources_without_reading_other_test_inputs(self):
         source = self.root / "tv/RadioWindowModules/RWMMergedTV.lua"

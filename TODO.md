@@ -249,6 +249,4 @@ For each migrated family, add an independent positive example and a dangerous ex
 
 # Process friction
 
-- [ ] Update the default-selection regression in `tests/test_lua_runner.py` for the source-required spatial-execution fixture. `test_default_keeps_all_checks_and_reconnect_variants` still expects `test_action_queue_spatial_execution.lua` without native inputs, although `DEFAULT_NATIVE_ONLY` intentionally excludes it. Verify default and explicit selections, preserving required-input rejection and reconnect variants.
-
 - [ ] Add a reusable continuity diagnostic for native cart captures: grip and motion checks can accept abrupt torso rotation when switching pose routes. Use the tracked `GripPoseProbe.java` output and adjacent-frame JVM regression to distinguish correction rotation from native pose changes. Report per-variant applicability explicitly: the shopping injury bank's `injury-torso-poses.jsonl` is empty because `CartGrip` assigns this correction zero weight outside wheelbarrows and the probe filters zero weight; file presence alone is not torso coverage. Complete when the normal diagnostic workflow reports discontinuities with case/phase provenance and explicit IK-applied/fallback receipts for paired MP draws, without relying on a separate local replay helper or inventing a general visual-quality PASS.
