@@ -186,7 +186,7 @@ do
 end
 
 -- Actual native controls/media: property-only crossings do not erase VHS
--- inventory effects or permit playback/power to cross a media operation.
+-- inventory effects. Full component requirements decide playback/power edits.
 do
     f.native('shared/TimedActions/ISDeviceBatteryAction.lua')
     f.native('shared/TimedActions/ISDeviceMediaAction.lua')
@@ -204,6 +204,7 @@ do
     data.getMicIsMuted=function()return data.mic end;data.getMinChannelRange=function()return 100 end
     data.getMaxChannelRange=function()return 1000 end;data.getIsBatteryPowered=function()return false end
     data.canBePoweredHere=function()return true end;data.hasMedia=function()return data.media end
+    data.isPlayingMedia=function()return false end
     local tape=f.item('Base.VHS_Retail')
     tape.isRecordedMedia=function()return true end;tape.getMediaType=function()return 1 end
     local function control(mode,value)return f.action(ISRadioAction,ISRadioAction:new(mode,f.player,tv,value))end
@@ -227,9 +228,15 @@ do
         for _,mode in ipairs({'ToggleOnOff','TogglePlayMedia'})do
             local step,setting=cassette(remove),control(mode)
             local q=f.queue(head,step,setting)
-            assert(not policy.evaluateMove(q,setting,step).allowed,'media retains '..mode..' dependency')
+            local decision=policy.evaluateMove(q,setting,step)
+            if mode=='ToggleOnOff'or remove then
+                assert(decision.allowed,'native power/media independence or playback-before-eject must remain legal')
+            else
+                assert(not decision.allowed and decision.reason=='edit_required_state','playback needs its media producer')
+            end
         end
     end
+    data.media=true
     -- Native Start/Stop only affects media state/counters. Property setters do
     -- not predict that asynchronous toggle, but may cross it in either direction.
     for mode,value in pairs({SetVolume=0.25,SetChannel=300,MuteMicrophone=true,MuteVolume=true,UnMuteVolume=0.4})do

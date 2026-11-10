@@ -46,6 +46,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.349
+
+- **Fixed:** World TV/radio media and battery actions retain the selected device through native constructors instead of resolving the first device on its square. Queued target loss before native encoding is rejected, and missing battery inputs cannot create free charge. Native object-index reuse after packet encoding remains unqualified.
+- **Changed:** Pending VHS insertion/ejection, TV playback and world-radio batteries use the common device/item dependency model for queue edits. Native item costs and external output-capacity checks remain authoritative.
+- **Fixed:** Host battery actions wait for their correlated native completion and replicated item/device effects before continuing independent queued work.
+
 ### 0.1.348
 
 - **Internal:** Remove the rejected eager active-reading projection and its diagnostic-only physical-validation branches. Preserve the original native edit checks, exact returns, paid reading progress and the qualified full observer. Prepared transfer-source descriptions remain in use; no persistent action graph or new edit permission is introduced.
@@ -1612,6 +1618,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.94
+
+- **Changed:** Updated the verified queue-policy source binding for the common device/item edit contracts; native action execution and wire protocol remain unchanged.
 
 ### 0.1.93
 

@@ -37,6 +37,22 @@ The enabled path uses existing responsibilities rather than a second queue execu
 
 The full `observeActiveEdit` projection remains an opt-in diagnostic. The removed eager resource candidate is not runtime authority; a coverage marker such as `commonActiveEdit` is not evidence of capacity permission. There is no whole-inventory snapshot per rendered row and no cross-decision cache of mutable item facts.
 
+## Pending world-device contracts
+
+Toolkit 0.1.349 / Java Patches 0.1.94 add this pending device slice. The selected-pack macOS B42.21 SP/menu-Host banks qualified same-square TV selection, root/worn-bag/furniture battery debit, native output charge/identity and retained borrowed-book progress/return with the queue disabled and enabled. Programmatic native callbacks do not establish physical input, audio/video rendering or the protected protocol boundaries below.
+
+`DeviceActionTarget` preserves the selected world TV/radio as the native media/battery constructor parameter. Both client and Host therefore resolve that object, rather than the first device returned by its square. The owned validity guards reject a missing world object; battery insertion also requires the exact live input to remain a direct member of its native container. Inventory and vehicle device routes keep their native parameter model.
+
+`ActionQueueMedia` describes pending VHS insertion/ejection and radio batteries through the existing `device` and exact-ID `item` domains. A native battery requires a still-present item in a proven container, rather than a pocket transfer; scalar `notEqual=false` rejects reuse after consumption, and the captured item reference prevents ID-only alias merging. `ActionQueueEditAdapters.radio` supplies power, setter and playback prerequisites. The common evaluator checks the connected component, including unchanged downstream consumers. It can allow insertion before power because native insertion does not require the TV to be on; playback still requires a turned-on TV with media. The former setter/media pair exception is removed. Playback remains an asynchronous native request: no consumer depends on a fictitious synchronous projection of its playing flag.
+
+These contracts grant no capacity credit for future consumption or newly created outputs. Ejection keeps external capacity checks, and active borrowed-reader cleanup continues through its existing earned-return and native checkpoint owners. The setter-only failure/cleanup consumers retain their separate boundary; a pending media contract does not extend those authorities.
+
+The existing `Media` continuation owner also handles Host battery effects arriving separately from native completion. It requires the correlated started/terminal receipt and the captured item/device effects, preserves independent work and never replays an uncertain effect. Ejected batteries have a new ID and native quantized charge. A powered radio may drain during the action, so the runtime charge check is an upper bound; authoritative scenario evidence checks the actual output. Ambiguous new outputs remain unsupported.
+
+Fact inspection reads only the candidate's device and input. Recursive carried-ID capture happens once at an actual removal's native begin, to distinguish a new output from a pre-existing item moved out of a bag; it is not a row/hover inventory snapshot. There is no second executor or long-queue reservation.
+
+Native `NetObject` still encodes world objects as coordinates and an object-list index. Replacing/reordering world objects between packet encoding and server parsing remains a separate unqualified protocol boundary. Direct constructor parameters fix square-level selection ambiguity, not stable identity across that in-flight race. Remaining qualification is tracked in [TODO](../../TODO.md#queue-edit-and-performance-qualification).
+
 ## Qualified first slice
 
 | Operation | Enabled behavior |
@@ -168,7 +184,8 @@ Generate a ledger from registered action types/adapters, joined with scenario ev
 
 | Migration batch | Existing consumers | Additional gate |
 |---|---|---|
-| Read, approach, media and ordinary item transfer | Policy, Reading, Approach, Media, ItemEditAdapters, TidyIntent | Root/bag/world book controls, saved pages, nested peak load, exact returns, final explicit equipment intent |
+| Read, approach and ordinary item transfer | Policy, Reading, Approach, ItemEditAdapters, TidyIntent | Root/bag/world book controls, saved pages, nested peak load, exact returns, final explicit equipment intent |
+| World TV/VHS and radio batteries | Media, EditAdapters, DeviceActionTarget, DeviceTargets, RecoveryAdapters | Reviewed same-square devices and direct root/bag/furniture inputs; keep far routing, in-flight object-index reuse, non-VHS/inventory/vehicle identities and battery history reconstruction outside this qualified scope |
 | Equipment and restoration | Native equip/unequip, Compat, Settlement, TidyIntent | Hand/worn/attached weight changes, heavy-drop/back conversion, equipment events, shared cleanup ownership |
 | Food, fluids and container selection | ItemEditAdapters, consumption/bulk adapters, water and fuel producers | Native portions, replacement/depletion, exact nutrition/fluid deductions, resolved cans/bottles, no speculative capacity credit |
 | Crafting and Project Cook | Craft, plans/fetching, ingredient and spice cleanup | Outputs/intermediate peaks, callbacks/late selection, paid inputs, partially applied ingredients and joining-client receipts |

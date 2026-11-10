@@ -11,7 +11,7 @@ for name, callback in pairs(class) do if type(callback) == "function" then metho
 for _, name in ipairs(lifecycle) do methods[name] = class[name] or false end
 local basePerform = base.perform
 local modes = {SetVolume = true, MuteMicrophone = true, SetChannel = true,
-    MuteVolume = true, UnMuteVolume = true, ToggleOnOff = true}
+    MuteVolume = true, UnMuteVolume = true, ToggleOnOff = true, TogglePlayMedia = true}
 local controlModes = {SetVolume = true, MuteMicrophone = true, SetChannel = true,
     MuteVolume = true, UnMuteVolume = true, ToggleOnOff = true, TogglePlayMedia = true}
 local sourceTrusted
@@ -70,7 +70,7 @@ function Adapters.radioCallbacksTrusted(action)
 end
 
 -- This describes pending native controls only, without invoking validity or effects.
--- Playback and inventory/vehicle devices retain the conservative policy.
+-- Inventory/vehicle devices retain their separate identity models.
 function Adapters.radio(action)
     if type(action) ~= "table" or not modes[action.mode] or not trusted(action)
         or action.action or action.started or action._isAddingActions
@@ -85,10 +85,20 @@ function Adapters.radio(action)
     local on, power, volume, channel, mic = data:getIsTurnedOn(), data:getPower(), data:getDeviceVolume(), data:getChannel(), data:getMicIsMuted()
     if type(on) ~= "boolean" or not finite(power) or not finite(volume) or volume < 0 or volume > 1
         or not finite(channel) or channel % 1 ~= 0 or type(mic) ~= "boolean" then return end
-    local field, value, toggle
+    local field, value, toggle, effects
     local facts = {on = on, powered = power > 0, volume = volume, channel = channel, micMuted = mic}
     local requires = {{field = "on", equal = true}, {field = "powered", equal = true}}
-    if action.mode == "ToggleOnOff" then
+    if action.mode == "TogglePlayMedia" then
+        if not instanceof(device, "IsoTelevision") or type(data.hasMedia) ~= "function" then return end
+        local media = data:hasMedia()
+        if type(media) ~= "boolean" then return end
+        facts.media = media
+        requires = {{field = "on", equal = true}, {field = "media", equal = true}}
+        -- Playback is a native asynchronous request. No contract consumes a
+        -- forecast of its playing flag; do not pretend two Host requests are
+        -- synchronous toggles. They preserve tracked power/media/item facts.
+        effects = {}
+    elseif action.mode == "ToggleOnOff" then
         -- Bound power projection to fixed mains-powered TVs. Native powerability
         -- also accounts for the world's electricity; battery charge is not a substitute.
         if not instanceof(device, "IsoTelevision") or data:getIsBatteryPowered() ~= false then return end
@@ -120,7 +130,7 @@ function Adapters.radio(action)
     end
     return {version = 1, complete = true, capacity = "unchanged", resources = {{domain = "device", key = device,
         facts = facts, requires = requires,
-        effects = {{field = field, set = value, toggle = toggle}}, bounds = {volume = {min = 0, max = 1}}}}}
+        effects = effects or {{field = field, set = value, toggle = toggle}}, bounds = {volume = {min = 0, max = 1}}}}}
 end
 
 return Adapters
