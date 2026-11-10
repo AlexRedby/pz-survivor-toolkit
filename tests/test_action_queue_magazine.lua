@@ -9,7 +9,7 @@ local function read(path)
  if NativeReadText then return NativeReadText(path):gsub('\r','')end
  local f=assert(io.open(path));local text=f:read('*a');f:close();return text:gsub('\r','')
 end
-local function setup(changed,observePlainReads)
+local function setup(changed,observePlainReads,withFirearm)
  local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
  for _,path in ipairs({'shared/ISBaseObject.lua','shared/TimedActions/ISBaseTimedAction.lua',
   'client/TimedActions/ISTimedActionQueue.lua','client/TimedActions/ISQueueActionsAction.lua',
@@ -19,6 +19,7 @@ local function setup(changed,observePlainReads)
  Events.OnFillInventoryObjectContextMenu={Add=function()end};Hook={Attack={Add=function()end}}
  f.native('shared/TimedActions/ISReloadWeaponAction.lua');f.native('shared/TimedActions/ISRackFirearm.lua')
  f.native('shared/TimedActions/ISUnloadBulletsFromMagazine.lua')
+ if withFirearm then f.native('shared/TimedActions/ISUnloadBulletsFromFirearm.lua')end
  f.native('shared/RadioCom/ISRadioAction.lua');f.native('shared/TimedActions/ISWringClothing.lua')
  for _,path in ipairs({'Fluids/ISFluidUtil.lua','Fluids/ISFluidContainer.lua','Fluids/ISFluidTransferAction.lua',
   'Fluids/ISFluidEmptyAction.lua','TimedActions/ISTransferAction.lua','TimedActions/ISDrinkFluidAction.lua'})do f.native('shared/'..path)end
@@ -61,8 +62,8 @@ local function setup(changed,observePlainReads)
  nativeGlobals[getClassSimpleName]=true
  local oldInstanceof=instanceof
  instanceof=function(value,kind)return oldInstanceof(value,kind)or type(value)=='table'and
-  (kind=='InventoryItem'and(value.class=='ComboItem'or value.class=='Clothing')or kind=='IsoGameCharacter'and value.class=='IsoPlayer')end
- CharacterActionAnims={RemoveBullets='remove'};Metabolics={LightDomestic='light'}
+  (kind=='InventoryItem'and(value.class=='ComboItem'or value.class=='Clothing'or value.class=='HandWeapon')or kind=='IsoGameCharacter'and value.class=='IsoPlayer')end
+ CharacterActionAnims={RemoveBullets='remove',Reload='reload'};Metabolics={LightDomestic='light'}
  Perks={Reloading='reload'};MoodleType={PANIC='panic'};ItemBodyLocation={AMMO_STRAP='strap'}
  ItemTag={RELOAD_FAST_SHELLS='shells',RELOAD_FAST_BULLETS='bullets',RELOAD_FAST_MAGAZINES='magazines'}
  ItemType={NORMAL='base:normal'}
@@ -99,10 +100,10 @@ local function setup(changed,observePlainReads)
  actor.setVariable=function(_,key,value)actor.vars[key]=value end
  actor.getVariableFloat=function(_,key,default)return actor.vars[key]or default end
  actor.getAnimationTimeDelta=function()return .1 end;actor.setMetabolicTarget=function()end
- local created,sent,synced=0,0,0
+ local created,sent,synced,weaponSyncs=0,0,0,0
  instanceItem=function(key)created=created+1;return f.item(key)end
  sendAddItemToContainer=function()sent=sent+1 end;syncItemFields=function()synced=synced+1 end
- syncHandWeaponFields=function()end;emulateAnimEventOnce=function()end
+ syncHandWeaponFields=function()weaponSyncs=weaponSyncs+1 end;emulateAnimEventOnce=function()end
  local scheduled={}
  emulateAnimEvent=function(net,time,event,parameter)scheduled[#scheduled+1]={net,time,event,parameter}end
  for _,name in ipairs({'instanceItem','sendAddItemToContainer','syncItemFields','syncHandWeaponFields','emulateAnimEventOnce','emulateAnimEvent'})do nativeGlobals[_G[name]]=true end
@@ -122,6 +123,14 @@ local function setup(changed,observePlainReads)
  local a=assert(ui:find('ISInventoryPaneContextMenu.onUnloadBulletsFromMagazine = function',1,true))
  local b=assert(ui:find('ISInventoryPaneContextMenu.getEvoItemCategories',a,true))
  assert(loadstring(ui:sub(a,b-1),'@media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'))()
+ if withFirearm then
+  local ga=assert(ui:find('ISInventoryPaneContextMenu.onUnloadBulletsFromFirearm = function',1,true))
+  local gb=assert(ui:find('ISInventoryPaneContextMenu.doMagazineMenu = function',ga,true))
+  assert(loadstring(ui:sub(ga,gb-1),'@media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'))()
+  -- Admission-only gun scenarios: the separate native bank proves the actual
+  -- A,B,A,B equip chain. This double emits no equip or held-input permission.
+  ISInventoryPaneContextMenu.equipWeapon=function()end
+ end
  ISInventoryPaneContextMenu.transferIfNeeded=function()end
  PZSurvivorToolkit.Settings.bulkUnload=function()return true end
  require('PZSurvivorToolkit/BulkActions')
@@ -149,12 +158,21 @@ local function setup(changed,observePlainReads)
   if not owned then local value=ISUnloadBulletsFromMagazine:new(actor,item);value.toolkitQueueOperation={};return value end
   local values={};local add=ISTimedActionQueue.add
   ISTimedActionQueue.add=function(value)values[#values+1]=value;return value end
-  local entry={item=item,kind='magazine'}
+  local entry={item=item,kind=item.class=='HandWeapon'and 'gun'or 'magazine'}
   PZSurvivorToolkit.BulkFirearms.queueUnload(actor,{entry})
   ISTimedActionQueue.add=add
   assert(#values==1,'root producer unexpectedly expanded');values[1].toolkitQueueOperation={};return values[1],entry
  end
- return {f=f,root=root,actor=actor,magazine=magazine,installed=installed,action=action,adapter=adapter,policy=policy,
+ local function firearm(count)
+  assert(withFirearm)
+  local gun=magazine(count,AmmoType.SHOTGUN_SHELLS);gun.class='HandWeapon';gun.chamber=true;gun.spent=2
+  gun.getFullType=function()return 'Base.Shotgun'end;gun.getMagazineType=function()end
+  gun.getWeaponReloadType=function()return 'shotgun'end;gun.isInsertAllBulletsReload=function()return false end
+  gun.setJobDelta=function(self,value)self.jobDelta=value end
+  for _,name in ipairs({'getEjectAmmoStartSound','getEjectAmmoStopSound','getEjectAmmoSound'})do gun[name]=function()end end
+  return gun
+ end
+ return {f=f,root=root,actor=actor,magazine=magazine,firearm=firearm,weaponSyncs=function()return weaponSyncs end,installed=installed,action=action,adapter=adapter,policy=policy,
   definitions=PZSurvivorToolkit.ActionQueueDefinitions,scripts=scripts,bulk=PZSurvivorToolkit.BulkFirearms,
   bindingScans=bindingScans,watchPlain=function(owner)watchedPlain[owner]=true end,
   watchAction=function(owner)watchedAction=owner end,
@@ -429,6 +447,77 @@ for _,enabled in ipairs({false,true})do
  local afterCreated,afterSent,afterSynced=s.counts()
  assert(item.count==0 and tail.magazine.count==3 and afterCreated==created and afterSent==sent and afterSynced==synced,
   'empty completion replayed paid effects or fabricated outputs')
+end
+
+
+-- Native-only firearm callbacks: selected companion wrapper delegation is a
+-- separate native-bank proof. Reuse the item/actor/queue doubles above; the UI
+-- producer's equip request is not executed in this admission-only source slice.
+local function gunHandle(body)
+ local handle={body=body}
+ handle.isStarted=function()return true end
+ handle.finished=function()return handle.forceCompleted==true end
+ handle.isForceComplete=handle.finished
+ handle.forceComplete=function()handle.forceCompleted=true end
+ handle.hasStalled=function()return false end
+ handle.getTable=function()return body end
+ handle.setActionAnim=function()end;handle.setAnimVariable=function()end
+ handle.setOverrideHandModelsObject=function()end
+ return handle
+end
+local function gunEngine(s,started)
+ LuaTimedActionNew={new=function(body,actor)assert(actor==s.actor);return gunHandle(body)end}
+ s.actor.setTimedActionToRetrigger=function()end;s.actor.setIsFarming=function()end
+ s.actor.clearVariable=function(_,key)assert(key=='isUnloading');s.actor.clearedUnload=true end
+ s.actor.StartAction=function(_,handle)started[#started+1]=handle.body end
+ ISLogSystem={logAction=function()end}
+end
+for _,enabled in ipairs({false,true})do
+ local s=setup(nil,nil,true);local gun=s.firearm(2)
+ local first=s.action(gun,true);local repeated=s.action(gun,true);local tail=s.action(s.magazine(3),true)
+ local q=s.f.queue(first,repeated,tail);local started,warnings={},0
+ PZSurvivorToolkit.Settings.actionQueue=function()return enabled end
+ DebugType={Action={warn=function()warnings=warnings+1 end}};gunEngine(s,started)
+ first.action=gunHandle(first);first.toolkitQueueOperation.toolkitStarted=true
+ first:start();first:animEvent('playReloadSound');first:animEvent('playReloadSound')
+ first:animEvent('unloadFinished');first:update();assert(first:complete())
+ local made,sent,magazineSync=s.counts();local weaponSync=s.weaponSyncs()
+ assert(gun.count==0 and made==2 and sent==2 and magazineSync==0 and weaponSync==2,'first gun unload did not pay exactly once')
+ assert(repeated.action==nil and repeated.ammoCountStart==nil,'retained empty gun was already allocated')
+ q:onCompleted(first)
+ assert(q.current==repeated and q.queue[1]==repeated and q.queue[2]==tail and warnings==0 and started[1]==repeated,
+  'native empty-gun start refusal wiped independent tail: queue='..tostring(enabled))
+ repeated:start();assert(repeated.ammoCountStart==0 and not repeated.action.forceCompleted,'native gun animation was fast-forwarded')
+ repeated:update();assert(gun.jobDelta~=gun.jobDelta and not repeated.action.forceCompleted,'native transient NaN/update behavior changed')
+ repeated:animEvent('playReloadSound');repeated:animEvent('unloadFinished');repeated:update()
+ assert(repeated.action.forceCompleted and gun.jobDelta~=gun.jobDelta and repeated:complete())
+ repeated:perform()
+ assert(gun.jobDelta==0 and s.actor.clearedUnload and q.current==tail and q.queue[1]==tail and #q.queue==1
+  and started[2]==tail and #started==2,'native empty gun cleanup/progression lost tail')
+ local afterMade,afterSent,afterMagazineSync=s.counts()
+ assert(afterMade==made and afterSent==sent and afterMagazineSync==magazineSync and s.weaponSyncs()==weaponSync
+  and gun.count==0 and gun.chamber and gun.spent==2 and tail.magazine.count==3,'empty gun replayed/altered paid resources')
+end
+for _,mode in ipairs({'sp','client','server'})do
+ local s=setup(nil,nil,true);local gun=s.firearm(2);local action=s.action(gun,true)
+ gun.count=0;s.mode(mode=='client',mode=='server')
+ assert(action:isValidStart()and action:isValid(),'native execution admission rejected retained empty gun')
+ local started={};gunEngine(s,started);action.action=gunHandle(action)
+ local serverCompleted=0;action.netAction={forceComplete=function()serverCompleted=serverCompleted+1 end}
+ if mode=='server'then
+  action:serverStart();assert(#s.scheduled==2)
+  action:animEvent('playReloadSound');action:animEvent('unloadFinished')
+  assert(serverCompleted==1 and not action.action.forceCompleted,'server empty completion lost native authority')
+ else
+  action:start();action:update();assert(gun.jobDelta~=gun.jobDelta and not action.action.forceCompleted)
+  action:animEvent('playReloadSound');action:animEvent('unloadFinished');action:update()
+  assert(action.action.forceCompleted and gun.jobDelta~=gun.jobDelta)
+  s.f.queue(action);action:perform();assert(gun.jobDelta==0 and s.actor.clearedUnload)
+ end
+ assert(action:complete())
+ local made,sent,magazineSync=s.counts()
+ assert(gun.count==0 and made==0 and sent==0 and magazineSync==0 and s.weaponSyncs()==0
+  and gun.chamber and gun.spent==2,'empty '..mode..' gun invented output or changed chamber/spent state')
 end
 
 if TestCoverage then TestCoverage('source-contract','passed')end

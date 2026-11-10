@@ -179,7 +179,7 @@ install=function()
   else enumSlots[#enumSlots+1]={owner=owner,name=spec[2],value=owner[spec[2]]}end
  end
  local bulkTrusted=bulk and type(bulkBinding)=='function'and from(bulkBinding,'BulkFirearms.lua')
-  and Proof.matches('media/lua/client/PZSurvivorToolkit/BulkFirearms.lua',4083090989,'PZSurvivorToolkit',true)
+  and Proof.matches('media/lua/client/PZSurvivorToolkit/BulkFirearms.lua',2780495675,'PZSurvivorToolkit',true)
  snapshot={trusted=trusted,classMethods=classMethods,baseMethods=baseMethods,inherited=inherited,
   reload=helpers,validStart=validStart,enumSlots=enumSlots,bulkTrusted=bulkTrusted}
  if not registered then

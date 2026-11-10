@@ -82,7 +82,7 @@ local function unloadTargetKind(item)
 end
 
 -- Menu selection offers loaded inputs. Start admission is separate: native
--- magazines explicitly complete an empty retained action without an effect.
+-- unload actions complete retained empty inputs without another ammo effect.
 local function unloadKind(item)
     if not (item:getCurrentAmmoCount() > 0) then return end
     return unloadTargetKind(item)
@@ -174,7 +174,7 @@ function Bulk.queueUnload(player, entries)
                         if not safeStart(player, current, guard.equipping) then return false end
                         local kind = unloadTargetKind(current)
                         local count = current:getCurrentAmmoCount()
-                        if kind ~= entry.kind or not (count > 0 or (kind == "magazine" and count == 0)) then
+                        if not kind or kind ~= entry.kind or not (count >= 0) then
                             return false
                         end
                         if entry.kind == "gun" then self.gun = current else self.magazine = current end

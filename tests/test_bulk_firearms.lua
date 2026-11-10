@@ -152,12 +152,29 @@ assert(equips[1]:isValidStart());equips[1]:start();player.primary = a
 assert(unloads[1]:isValidStart(), 'our queued native equip must not invalidate firearm unloading')
 a.ammo = 0
 assert(unloads[1]:isValid(), 'MP ammo replication must not continuously invalidate an executing action')
-assert(not unloads[1]:isValidStart(), 'empty firearm at start must be rejected')
+assert(unloads[1]:isValidStart(), 'retained empty firearm must run its native completion')
+assert(#bulk.unloadEntries(player, {a}) == 0, 'menu must still omit empty firearms')
+local nativeGunValid = unloads[1].isValid
+unloads[1].isValid = function() return false end
+assert(not unloads[1]:isValidStart(), 'custom native validity rejection must retain authority')
+unloads[1].isValid = nativeGunValid
+a.noAmmoType = true
+assert(not unloads[1]:isValidStart(), 'changed ammunition classification must remain rejected')
+a.ammo, entries[1].kind = 3, nil
+assert(not unloads[1]:isValidStart(), 'nil target/foreign kind must not match a positive input')
+a.noAmmoType, entries[1].kind, a.magazineType, a.ammo = nil, 'gun', 'Base.9mmClip', 0
+assert(not unloads[1]:isValidStart(), 'detachable-magazine reclassification must remain rejected')
+a.magazineType = nil
+for _,invalid in ipairs({-1, 0/0}) do
+    a.ammo = invalid
+    assert(not unloads[1]:isValidStart(), 'invalid firearm count must not become an empty no-op')
+end
 a.ammo, player.primary = 3, nil
 assert(not equips[2]:isValidStart() and not unloads[2]:isValidStart(), 'missing transferred instance fails closed')
 local bReplacement = item(2, 'gun');root.items[2] = bReplacement
 assert(equips[2]:isValidStart());equips[2]:start();player.primary = bReplacement
-assert(unloads[2]:isValidStart() and unloads[2].gun == bReplacement, 'MP replacement must resolve by ID')
+bReplacement.ammo = 0
+assert(unloads[2]:isValidStart() and unloads[2].gun == bReplacement, 'empty MP replacement must still resolve by ID')
 for _, flag in ipairs({'favorite', 'worn'}) do
     bReplacement[flag] = true;assert(not unloads[2]:isValidStart());bReplacement[flag] = nil
 end
@@ -174,7 +191,9 @@ for _,invalid in ipairs({-1, 0/0}) do
 end
 magazine.ammo = 3
 for _, hand in ipairs({'primary', 'secondary'}) do
-    player[hand] = a;assert(#bulk.unloadEntries(player, {a}) == 0);player[hand] = nil
+    player[hand] = a;assert(#bulk.unloadEntries(player, {a}) == 0)
+    assert(not equips[1]:isValidStart(), 'already-held equip must stay protected')
+    player[hand] = nil
 end
 
 local scope, sling, fixed = part(11, 'Scope'), part(12, 'Sling'), part(13, 'Stock');fixed.blocked = true

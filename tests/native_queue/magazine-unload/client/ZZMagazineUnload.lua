@@ -2,20 +2,27 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'PZSurvivorToolkit/BulkFirearms'
 require 'ISUI/ISInventoryPaneContextMenu'
 require 'TimedActions/ISUnloadBulletsFromMagazine'
+require 'TimedActions/ISUnloadBulletsFromFirearm'
+require 'TimedActions/ISEquipWeaponAction'
+local Proof=require 'PZSurvivorToolkit/SourceProof'
 local F=require 'QueueMagazineUnload'
 local P=require 'QueueEnergyPlacement'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local native=config.mode=='native'
 local callbacks={};for _,name in ipairs({'isValid','start','update','isLocal','updateLoadingTime','initVars','serverStop','serverStart','getDuration','complete','animEvent','stop','perform','new'})do callbacks[name]=ISUnloadBulletsFromMagazine[name]end
+local callbackClasses={ISUnloadBulletsFromMagazine=callbacks}
+for _,class in ipairs({ISUnloadBulletsFromFirearm,ISEquipWeaponAction})do
+ local methods={};for key in pairs(callbacks)do methods[key]=class[key]end;callbackClasses[class.Type]=methods
+end
 local phase,index='prepare',1
 local state,authority,previous,ids,receipt,placement,arrival,proof,quiet
 local started,ready,done=false,false,false
-local tracks,commands,calls={}, {}, {}
+local tracks,commands,calls,preparations,bindings={}, {}, {}, {}, {}
 local edits={cancelled=false,reordered=false,untouched=true}
-local pendingBefore,pendingAfter
+local pendingBefore,pendingAfter,pendingOrder
 local function inputName(name)return(name=='repeat-first'or name=='repeat-second')and'front'or name end
-assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('magazine-unload-native-boundaries',F.lifecycleObserver(function()return tracks end,callbacks)))
+assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('magazine-unload-native-boundaries',F.lifecycleObserver(function()return tracks end,callbackClasses,bindings)))
 local function now()return getTimestampMs()end
 local since,waiting=now(),now();local waits={}
 local function case()return config.cases[index]end
@@ -62,6 +69,8 @@ local function producer(names)
   assert(row.constructorStartUnset,'native constructor unexpectedly ran start')
   local expected=inputName(name)=='front'and name~='front'and pendingBefore.magazines.front.loaded or ids.magazines[name].loaded
   assert(row.constructorAmmo==expected and row.constructorAmmo>0,'producer changed loaded input')
+  bindings[action]={};for key,callback in pairs(callbacks)do bindings[action][key]=action[key]end
+  if guard then bindings[action].isValidStart=guard end
   tracks[action]=row;commands[#commands+1]=row;emitted[#emitted+1]=action
   return add(action)
  end
@@ -84,12 +93,66 @@ local function producer(names)
  for i,action in ipairs(emitted)do assert(tracks[action].name==names[i],'native producer order differs')end
  return emitted
 end
+local function gunProducer(names)
+ local player=getPlayer();local add=ISTimedActionQueue.add;local emitted,rows,byID={}, {}, {}
+ for _,name in ipairs(names)do
+  local source=name=='gun-repeat-a'and'gun-a'or name=='gun-repeat-b'and'gun-b'or name
+  local item=state.items[source];rows[#rows+1]=item;byID[item:getID()]=name
+  assert(item:getCurrentAmmoCount()==1 and not player:isEquipped(item),'gun selection must still be loaded and unheld')
+ end
+ ISTimedActionQueue.add=function(action)
+  local equip=action.Type=='ISEquipWeaponAction'
+  assert(equip or action.Type=='ISUnloadBulletsFromFirearm','unexpected integral producer preparation')
+  local item=equip and action.item or action.gun;local name=assert(byID[item:getID()],'integral producer retargeted input')
+  assert(item:getContainer()==player:getInventory()and item==rows[#emitted+1],'integral producer input/order differs')
+  local guard=F.ownStartGuard(action);local owned=case()=='bulk'
+  if owned then
+   assert(type(guard)=='function'and Proof.closure(guard,'BulkFirearms.lua'),'owned integral guard source differs')
+   if equip then assert(Proof.closure(action.start,'BulkFirearms.lua'),'owned equip start source differs')
+   else assert(action.toolkitIndependentBulk,'owned unload marker missing')end
+  else assert(not guard and not action.toolkitIndependentBulk,'direct integral action has owned guard')end
+  for key,callback in pairs(callbackClasses[action.Type])do
+   assert(equip and owned and key=='start'or action[key]==callback and _G[action.Type][key]==callback,'integral native callback changed '..key)
+  end
+  local row={name=equip and'equip-'..name or name,type=action.Type,item=item:getID(),duration=action.maxTime,
+   callbacksUntouched=true,ownedBulkGuard=owned,lifecycle={}}
+  bindings[action]={};for key in pairs(callbackClasses[action.Type])do bindings[action][key]=action[key]end
+  if guard then bindings[action].isValidStart=guard end
+  if equip then
+   assert(action.maxTime==50 and action.maxTimeInit==50 and action.primary and action.twoHands,'native integral equip duration/hands differ')
+   row.preparation=true;row.target=name;row.primary=action.primary;row.twoHands=action.twoHands;row.constructorHands=F.hands(player)
+   preparations[#preparations+1]=row
+  else
+   assert(action.maxTime==-1 and action.ammoCountStart==nil,'native integral constructor differs')
+   row.producer=case()=='bulk'and'BulkFirearms.unloadEntries + queueUnload'or'native ISInventoryPaneContextMenu.onUnloadBulletsFromFirearm'
+   row.constructorAmmo=item:getCurrentAmmoCount();row.constructorStartUnset=true;row.started=false;row.progress=false;row.partialCounts={}
+   commands[#commands+1]=row;emitted[#emitted+1]=action
+  end
+  tracks[action]=row;return add(action)
+ end
+ local ok,error=pcall(function()
+  if case()=='bulk'then
+   local entries=PZSurvivorToolkit.BulkFirearms.unloadEntries(player,rows)
+   assert(#entries==#names,'public integral bulk selection changed')
+   for i,entry in ipairs(entries)do assert(entry.item==rows[i]and entry.kind=='gun','public integral entry differs')end
+   assert(PZSurvivorToolkit.BulkFirearms.queueUnload(player,entries)==#names,'public integral bulk queue count differs')
+   calls[#calls+1]={names=names,entries=#entries,queued=#emitted}
+  else
+   for i,item in ipairs(rows)do
+    local before=#emitted;ISInventoryPaneContextMenu.onUnloadBulletsFromFirearm(player,item)
+    calls[#calls+1]={names={names[i]},entries=1,queued=#emitted-before}
+   end
+  end
+ end)
+ ISTimedActionQueue.add=add;assert(ok,error);assert(#emitted==#names,'native integral producer shape differs')
+ for i,action in ipairs(emitted)do assert(tracks[action].name==names[i],'native integral unload order differs')end
+end
 local function observe()
  for action,row in pairs(tracks)do
-  if queue().current==action and action:isStarted()then
+  if not row.preparation and queue().current==action and action:isStarted()then
    if not row.started then row.started=true;row.startedAt=now()end
    local magazine=getPlayer():getInventory():getItemById(row.item)
-   assert(magazine and magazine:getFullType()=='Base.9mmClip'and magazine:getContainer()==getPlayer():getInventory(),'active native magazine identity lost')
+   assert(magazine and magazine:getFullType()==(action.gun and'Base.Shotgun'or'Base.9mmClip')and magazine:getContainer()==getPlayer():getInventory(),'active native magazine identity lost')
    local loaded=magazine:getCurrentAmmoCount()
    if loaded>0 and loaded<row.constructorAmmo then
     row.progress=true
@@ -134,6 +197,8 @@ require('QueuePreflight').onTick(Events,function()
     for i,action in ipairs(queue().queue)do if action==actions[3]then first=i elseif action==actions[1]then last=i end end
     assert(first and last and first<last,'magazine edit did not commit');edits.reordered=true
    end
+   gunProducer({'gun-a','gun-b'});gunProducer({'gun-repeat-a','gun-repeat-b'});producer({'gun-tail'})
+   pendingOrder={};for _,action in ipairs(queue().queue)do pendingOrder[#pendingOrder+1]=assert(tracks[action],'untracked pending producer action').name end
    pendingAfter=F.snapshot(state);edits.untouched=F.equal(pendingBefore,pendingAfter)
    assert(edits.untouched,'pending edits changed physical magazine/ammo state');phase='running'
   elseif phase=='running'and empty()then
@@ -142,24 +207,24 @@ require('QueuePreflight').onTick(Events,function()
   elseif phase=='verified'and receipt then
    local client=assert(F.verify(state))
    for _,row in ipairs(commands)do assert(row.cancelled and not row.started and not row.progress and #row.partialCounts==0
-    or not row.cancelled and(inputName(row.name)=='front'and row.name~='front'or row.started and row.progress and #row.partialCounts>0),'native start/partial/cancellation evidence missing')end
+    or not row.cancelled and(row.type=='ISUnloadBulletsFromFirearm'and row.started or inputName(row.name)=='front'and row.name~='front'or row.started and row.progress and #row.partialCounts>0),'native start/partial/cancellation evidence missing')end
    for _,row in ipairs(commands)do
     if not row.cancelled then
      local finished=false
      for _,event in ipairs(row.lifecycle)do
       if event.event=='finish'and event.phase=='perform'and event.succeeded and event.nativeEpisode and event.nativeClass=='LuaTimedActionNew'
-       and(row.name~='repeat-first'and row.name~='repeat-second'or event.startAmmo==0 and event.loaded==0)then finished=true end
+       and(row.name~='repeat-first'and row.name~='repeat-second'and row.name~='gun-repeat-a'and row.name~='gun-repeat-b'or event.startAmmo==0 and event.loaded==0)then finished=true end
      end
      assert(finished,'native perform/empty-start evidence missing '..row.name)
     end
    end
    emit({event='case',id=case(),status='passed',ids=ids,clientPlacement=proof,input=state.input,client=client,server=receipt,
-    commands=commands,producerCalls=calls,pendingBefore=pendingBefore,pendingAfter=pendingAfter,edit=edits,queueIdle=true,settleMilliseconds=now()-quiet})
+    commands=commands,preparations=preparations,producerCalls=calls,pendingBefore=pendingBefore,pendingAfter=pendingAfter,pendingOrder=pendingOrder,edit=edits,queueIdle=true,settleMilliseconds=now()-quiet})
    if not isClient()then previous=authority end
    index=index+1
    if not case()then emit({event='complete',cases=config.cases,performed=index-1,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
    state,authority,ids,receipt,placement,arrival,proof,quiet=nil,nil,nil,nil,nil,nil,nil,nil
-   tracks,commands,calls={}, {}, {};edits={cancelled=false,reordered=false,untouched=true};pendingBefore,pendingAfter=nil,nil
+   tracks,commands,calls,preparations={}, {}, {}, {};for action in pairs(bindings)do bindings[action]=nil end;edits={cancelled=false,reordered=false,untouched=true};pendingBefore,pendingAfter=nil,nil
    phase='prepare';since=now();waiting=now();waits={}
   end
  end)

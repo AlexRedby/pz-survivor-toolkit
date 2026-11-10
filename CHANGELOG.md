@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.354
+
+- **Fixed:** Repeated bulk unloading of integral-magazine firearms no longer clears later queued work when an earlier unload has emptied the weapon. Menu selection and protected-item checks remain unchanged; empty retained actions use the original native animation, completion and multiplayer authority without producing or consuming ammunition again.
+
 ### 0.1.353
 
 - **Fixed:** Repeated bulk magazine unloading no longer rejects a retained magazine solely because an earlier action emptied it, which could clear unrelated queued work. Menu selection remains loaded-only; execution preserves native empty-magazine completion, protected-item checks and exact-ID rebinding. The common queue contract now matches that native no-op.
