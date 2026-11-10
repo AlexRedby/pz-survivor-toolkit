@@ -266,6 +266,8 @@ def run(root, resource_wait=300):
                     current = {role: text(role) for role in processes}
                     if hosted:
                         current['server'] = text('server')
+                        if '[QUEUE_TEST] FAIL native launcher ' in current['client1']:
+                            setup_failure(execution, 'host-child-startup', 'client1', 'readiness', 'Native Host launcher failed before server readiness')
                     check_fixture_loading(fixture_monitor, current, execution, 'readiness')
                     preflight.check(current, execution, release=False)
                     if (runtime.get('fixture', {}).get('server_ready', '[QUEUE_TEST] SERVER_READY') in current['server']

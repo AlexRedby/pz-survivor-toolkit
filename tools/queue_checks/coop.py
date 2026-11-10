@@ -1,7 +1,9 @@
 """The real CoopServer shares its owner's cache; keep its evidence separate."""
 from pathlib import Path
+import json
 import re
 import shutil
+import sys
 import time
 
 
@@ -21,6 +23,10 @@ def stage(root, runtime):
     cache = Path(root) / 'client1'
     shutil.copytree(Path(root) / 'server/Server', cache / 'Server')
     runtime['host_cache'] = str(cache)
+    # The bounded Windows path can lack ProcessHandle argv; retain its existing
+    # qualification scope rather than claiming this new observation there.
+    if sys.platform != 'win32':
+        runtime['host_child_diagnostics_protocol'] = 1
 
 
 def loader_options(agent):
@@ -33,6 +39,11 @@ def loader_options(agent):
 def mirror_logs(root):
     root = Path(root)
     cache = root / 'client1'
+    for name, target in (("host-child-stderr.log", "server-stderr.log"),
+                         ("host-child-diagnostics.json", "server-startup-diagnostics.json")):
+        source = cache / name
+        if source.is_file():
+            shutil.copyfile(source, root / target)
     console = cache / 'coop-console.txt'
     if console.is_file():
         shutil.copyfile(console, root / 'server-launch.log')
@@ -71,3 +82,40 @@ def save_host(process, child_pid, read_text, timeout=35):
         if process.poll() is not None or time.monotonic() >= deadline:
             raise RuntimeError('Host save/quit acknowledgement timed out or owner exited')
         time.sleep(0.1)
+
+
+def startup_diagnostic_issues(root, processes):
+    """Startup observation never substitutes for native readiness or effects."""
+    root = Path(root)
+    metadata, stderr = root / 'server-startup-diagnostics.json', root / 'server-stderr.log'
+    try:
+        if (metadata.is_symlink() or stderr.is_symlink() or not metadata.is_file() or not stderr.is_file()
+                or metadata.stat().st_size > 65536 or stderr.stat().st_size > 262144):
+            raise ValueError('missing, linked or oversized capture')
+        value = json.loads(metadata.read_text(encoding='utf-8'))
+        fields = {'schema','pid','parent','argv','argvComplete','credentialsRedacted','stderrCaptureStarted',
+                  'stderrEof','stderrBytes','stderrCapturedBytes','stderrTruncated','stderrError',
+                  'processExited','exitCode','diagnosticsError','stdoutUntouched','stdinUntouched','readinessEvidence'}
+        if type(value) is not dict or set(value) != fields or type(value['schema']) is not int or value['schema'] != 1:
+            raise ValueError('unsupported metadata')
+        for key, role in (('pid','server'), ('parent','client1')):
+            if type(value[key]) is not int or value[key] <= 0 or value[key] != processes[role]['pid']:
+                raise ValueError('child ownership')
+        argv = value['argv']
+        if (value['argvComplete'] is not True or type(argv) is not list or not argv
+                or any(type(arg) is not str for arg in argv) or type(value['credentialsRedacted']) is not bool
+                or not {'zombie.network.GameServer','-coop','-cachedir=' + str(root / 'client1')} <= set(argv)):
+            raise ValueError('incomplete child arguments')
+        if (any(value[key] is not True for key in ('stderrCaptureStarted','stderrEof','processExited','stdoutUntouched','stdinUntouched'))
+                or value['readinessEvidence'] is not False or value['stderrTruncated'] is not False
+                or value['stderrError'] is not None or value['diagnosticsError'] is not None):
+            raise ValueError('incomplete stderr/exit observation')
+        if (type(value['exitCode']) is not int or value['exitCode'] != 0
+                or value['exitCode'] != processes['server'].get('exit_code')):
+            raise ValueError('child exit status')
+        if (any(type(value[key]) is not int or value[key] < 0 for key in ('stderrBytes','stderrCapturedBytes'))
+                or value['stderrBytes'] != value['stderrCapturedBytes'] or value['stderrCapturedBytes'] != stderr.stat().st_size):
+            raise ValueError('stderr byte accounting')
+    except (OSError, ValueError, UnicodeError, KeyError, TypeError) as error:
+        return ['Host startup diagnostics incomplete: ' + str(error)]
+    return []

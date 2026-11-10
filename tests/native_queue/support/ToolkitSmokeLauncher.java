@@ -24,15 +24,18 @@ public class ToolkitSmokeLauncher {
         if (mode == null) throw new IllegalStateException("The primary display has no video mode; native fixture cannot start.");
         System.out.println("[QUEUE_TEST] DISPLAY_READY " + mode.width() + "x" + mode.height());
         var hostChild = new java.util.concurrent.atomic.AtomicReference<ProcessHandle>();
+        var hostDiagnostics = new java.util.concurrent.atomic.AtomicReference<ToolkitHostChildDiagnostics.Capture>();
         var shuttingDown = new java.util.concurrent.atomic.AtomicBoolean();
         if (System.getProperty("toolkit.test.hostCache") != null) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 shuttingDown.set(true);
                 var child = hostChild.get();
-                if (child == null || !child.isAlive()) return;
+                if (child == null) return;
+                if (!child.isAlive()) { finishHostDiagnostics(hostDiagnostics); return; }
                 child.destroy();
                 try { child.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS); }
                 catch (Exception error) { child.destroyForcibly(); }
+                if (!child.isAlive()) finishHostDiagnostics(hostDiagnostics);
             }, "toolkit-owned-host-shutdown"));
         }
         if (System.getProperty("toolkit.test.hostCache") != null) {
@@ -58,6 +61,7 @@ public class ToolkitSmokeLauncher {
                         process.getOutputStream().flush();
                         if (!process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Host child did not save/quit before its deadline");
                         int exit = process.exitValue();
+                        finishHostDiagnostics(hostDiagnostics);
                         System.out.println("[QUEUE_TEST] HOST_SAVED_EXIT pid=" + child.pid() + " exit=" + exit);
                         System.out.flush();
                         if (exit != 0) throw new IllegalStateException("Host child exited unsuccessfully: " + exit);
@@ -86,6 +90,7 @@ public class ToolkitSmokeLauncher {
                                 }).forEach(child -> {
                                     if (!hostChild.compareAndSet(null, child)) throw new IllegalStateException("Multiple Host children");
                                     System.out.println("[QUEUE_TEST] HOST_CHILD pid=" + child.pid() + " parent=" + ProcessHandle.current().pid());
+                                    captureHostDiagnostics(child, hostCache, hostDiagnostics);
                                 });
                             }
                             if (hostChild.get() == null && System.getProperty("os.name").startsWith("Windows")) {
@@ -99,6 +104,7 @@ public class ToolkitSmokeLauncher {
                                     if (child.parent().map(parent -> parent.pid() == ProcessHandle.current().pid()).orElse(false)
                                             && hostChild.compareAndSet(null, child)) {
                                         System.out.println("[QUEUE_TEST] HOST_CHILD pid=" + child.pid() + " parent=" + ProcessHandle.current().pid());
+                                        captureHostDiagnostics(child, hostCache, hostDiagnostics);
                                     }
                                 }
                             }
@@ -136,5 +142,22 @@ public class ToolkitSmokeLauncher {
         helper.setDaemon(true);
         helper.start();
         MainScreenState.main(args);
+    }
+    private static void captureHostDiagnostics(ProcessHandle child, String hostCache,
+            java.util.concurrent.atomic.AtomicReference<ToolkitHostChildDiagnostics.Capture> captures) {
+        try {
+            var field = zombie.network.CoopMaster.class.getDeclaredField("serverProcess");
+            field.setAccessible(true);
+            var process = (Process)field.get(zombie.network.CoopMaster.instance);
+            if (process == null || process.pid() != child.pid()) throw new IllegalStateException("Native Host process differs from proved child");
+            var capture = ToolkitHostChildDiagnostics.start(process, child.pid(), java.nio.file.Path.of(hostCache));
+            if (capture != null) captures.compareAndSet(null, capture);
+        } catch (Exception error) {
+            System.err.println("[QUEUE_TEST] HOST_CHILD_DIAGNOSTICS unavailable: " + error.getClass().getSimpleName());
+        }
+    }
+    private static void finishHostDiagnostics(java.util.concurrent.atomic.AtomicReference<ToolkitHostChildDiagnostics.Capture> captures) {
+        var capture = captures.get();
+        if (capture != null) capture.finish(java.time.Duration.ofSeconds(1));
     }
 }

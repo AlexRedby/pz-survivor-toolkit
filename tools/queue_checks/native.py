@@ -322,7 +322,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         raise ValueError("Runtime paths cannot contain loader/classpath separators or newlines")
     support = project / "tests/native_queue/support"
     suite = project / "tests/native_queue" / selection["suite"]
-    required = [support / name for name in ("ToolkitSmokeLauncher.java", "ToolkitWindowBootstrap.java", "ZZReleasePreflight.lua", "QueuePreflight.lua", "QueueEnergyPlacement.lua")]
+    required = [support / name for name in ("ToolkitHostChildDiagnostics.java", "ToolkitSmokeLauncher.java", "ToolkitWindowBootstrap.java", "ZZReleasePreflight.lua", "QueuePreflight.lua", "QueueEnergyPlacement.lua")]
     required += [Path(lua_compatibility.HARNESS), Path(lua_compatibility.__file__).resolve(), game / 'stdlib.lbc']
     required += [project / "tools/check_action_queue.py", project / "tests/native_queue/catalog.json"]
     if borrowing_required:
@@ -456,10 +456,11 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         runtime["roles"][role] = {"cache": str(cache), "language": language}
         if role != "server":
             font_preload(cache, selection, game if os.name == 'nt' else None)
-            for name in ("ToolkitWindowBootstrap.java", "ToolkitSmokeLauncher.java"):
+            helper_names = ("ToolkitWindowBootstrap.java", "ToolkitHostChildDiagnostics.java", "ToolkitSmokeLauncher.java")
+            for name in helper_names:
                 shutil.copy2(support / name, cache / "classes")
             preparation_process.run([str(jdk_binary(jdk, 'javac')), "--release", "25", "-cp", str(game / "projectzomboid.jar"),
-                            str(cache / "classes/ToolkitWindowBootstrap.java"), str(cache / "classes/ToolkitSmokeLauncher.java")], check=True, capture_output=True, text=True, timeout=60,
+                            *[str(cache / "classes" / name) for name in helper_names]], check=True, capture_output=True, text=True, timeout=60,
                            env={key: value for key, value in os.environ.items() if key not in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS")})
             if not (cache / "classes/ToolkitSmokeLauncher.class").is_file():
                 raise RuntimeError("javac did not create ToolkitSmokeLauncher.class")

@@ -1,6 +1,7 @@
 """Host selection, child identity and raw log separation are fail-closed."""
 from pathlib import Path
 import sys
+import json
 import io
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -58,6 +59,42 @@ class CoopTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 coop.loader_options(bad)
 
+    def test_startup_diagnostics_need_complete_owned_stderr_and_exit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            processes = {'client1': {'pid':11}, 'server': {'pid':22, 'exit_code':0}}
+            value = dict(schema=1,pid=22,parent=11,argv=['java','zombie.network.GameServer','-coop','-cachedir=' + str(root/'client1')],
+                argvComplete=True,credentialsRedacted=False,stderrCaptureStarted=True,stderrEof=True,
+                stderrBytes=5,stderrCapturedBytes=5,stderrTruncated=False,stderrError=None,
+                processExited=True,exitCode=0,diagnosticsError=None,stdoutUntouched=True,stdinUntouched=True,readinessEvidence=False)
+            stderr = root/'server-stderr.log';stderr.write_bytes(b'note\n')
+            metadata = root/'server-startup-diagnostics.json'
+            metadata.write_text(json.dumps(value))
+            self.assertEqual([], coop.startup_diagnostic_issues(root, processes))
+            for key, wrong in [('pid',33),('parent',33),('argvComplete',False),('stderrEof',False),
+                    ('stderrTruncated',True),('stderrError','capture failed'),('exitCode',143),
+                    ('diagnosticsError','incomplete'),('stdoutUntouched',False),('readinessEvidence',True),('stderrBytes',6)]:
+                with self.subTest(key=key):
+                    metadata.write_text(json.dumps(dict(value,**{key:wrong})))
+                    self.assertTrue(coop.startup_diagnostic_issues(root, processes))
+            metadata.unlink()
+            self.assertTrue(coop.startup_diagnostic_issues(root, processes))
+
+    def test_new_preparations_require_diagnostics_without_rewriting_legacy_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selection = {'suite':'startup','kind':'mp','clients':1,'options':{'mp_host':True}}
+            execution = {'status':'completed','platform':'darwin','host_cleanup':{'remaining_pids':[]},
+                'processes':{'client1':{'pid':11,'exit_code':143},
+                    'server':{'pid':22,'exit_code':0,'parent_role':'client1','cache':str(root/'client1')}}}
+            self.assertEqual([],report.execution_issues(root,selection,execution))
+            runtime = root/'runtime.json'
+            runtime.write_text(json.dumps({'host_child_diagnostics_protocol':1}))
+            self.assertTrue(any('diagnostics incomplete' in issue for issue in report.execution_issues(root,selection,execution)))
+            for unsupported in (True,2,'1'):
+                runtime.write_text(json.dumps({'host_child_diagnostics_protocol':unsupported}))
+                self.assertIn('Host startup diagnostic protocol unsupported',report.execution_issues(root,selection,execution))
+
     def test_host_logs_preserve_full_server_and_archived_client_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -67,7 +104,12 @@ class CoopTests(unittest.TestCase):
             server = logs / 'new_DebugLog-server.txt'
             client.write_text('client error\n'); server.write_text('server error\n')
             (root / 'client1/coop-console.txt').write_text('full server console\n')
+            (root / 'client1/host-child-stderr.log').write_text('owned child stderr\n')
+            (root / 'client1/host-child-diagnostics.json').write_text('{"pid": 22}\n')
             coop.mirror_logs(root)
+            self.assertEqual('owned child stderr\n', (root / 'server-stderr.log').read_text())
+            self.assertIn(root / 'server-stderr.log', report.log_paths(root, 'server'))
+            self.assertEqual('{"pid": 22}\n', (root / 'server-startup-diagnostics.json').read_text())
             self.assertEqual('full server console\n', (root / 'server-launch.log').read_text())
             self.assertIn(client, report.log_paths(root, 'client1'))
             self.assertNotIn(server, report.log_paths(root, 'client1'))

@@ -446,6 +446,15 @@ class NativeRunnerTests(unittest.TestCase):
         self.assertEqual(2, len(self.commands))  # guard and the owned server, no clients
         self.assertEqual([101], [call.args[0] for call in kills])
 
+    def test_host_native_launcher_failure_does_not_wait_for_readiness_deadline(self):
+        self.prepare_host()
+        self.content = '[QUEUE_TEST] HOST_CHILD pid=202 parent=101\n[QUEUE_TEST] FAIL native launcher java.lang.IllegalStateException: Host child exited before its owner\n'
+        result, kills = self.invoke(sleep=AssertionError('must fail before sleeping through readiness'))
+        self.assertEqual('failed', result['status'])
+        self.assertEqual('host-child-startup', result['setup_failure']['kind'])
+        self.assertEqual('readiness', result['setup_failure']['phase'])
+        self.assertEqual([101], [call.args[0] for call in kills if call.args[1] != 0])
+
     def test_host_fixture_failure_during_readiness_stops_owner_group(self):
         self.prepare_host()
         source = self.fixture_source()
@@ -714,6 +723,14 @@ class NativeRunnerTests(unittest.TestCase):
         (server / 'Server/owned_SandboxVars.lua').write_text('SandboxVars={}\n')
         self.runtime['roles']['server'] = {'cache': str(server)}
         coop.stage(self.root, self.runtime)
+        if self.runtime.get('host_child_diagnostics_protocol') == 1:
+            cache = self.root / 'client1'
+            (cache / 'host-child-stderr.log').write_bytes(b'')
+            (cache / 'host-child-diagnostics.json').write_text(json.dumps(dict(
+                schema=1,pid=555,parent=101,argv=['/owned/java','zombie.network.GameServer','-coop','-cachedir=' + str(cache)],
+                argvComplete=True,credentialsRedacted=False,stderrCaptureStarted=True,stderrEof=True,
+                stderrBytes=0,stderrCapturedBytes=0,stderrTruncated=False,stderrError=None,
+                processExited=True,exitCode=0,diagnosticsError=None,stdoutUntouched=True,stdinUntouched=True,readinessEvidence=False)))
         for name, value in [('selection', self.selection), ('runtime', self.runtime)]:
             (self.root / (name + '.json')).write_text(json.dumps(value))
         self.content += proof
