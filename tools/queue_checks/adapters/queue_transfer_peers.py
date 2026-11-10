@@ -11,6 +11,7 @@ from .. import receipts
 from ..mod_selection import mod_layers
 from .book_controls import _stop_probe
 from .tv_controls import MODS
+from . import queue_peers_placement
 
 CASES = ('disjoint-returns', 'shared-capacity', 'contested-pickup', 'partial-accepted', 'lost-done')
 ROLES = ('client1', 'client2')
@@ -54,7 +55,10 @@ def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     code = Path(project) / 'PZSurvivorToolkit/42/media/lua'
     return [Path(__file__).with_name('tv_controls.py'), Path(__file__).with_name('book_controls.py'),
+            Path(__file__).with_name('queue_peers_placement.py'), Path(__file__).parents[1] / 'placement.py',
             Path(project) / 'tests/test_queue_transfer_peers.py',
+            Path(project) / 'tests/test_queue_transfer_peers_placement.lua',
+            Path(project) / 'tests/test_queue_transfer_peers_runtime.py',
             *sorted(path for path in (root / 'queue-transfer-peers').rglob('*') if path.suffix in ('.lua', '.java')),
             *sorted((root / 'startup').rglob('*.lua')), root / 'health/shared/QueueHealthEvents.lua',
             root / 'support/QueueEnergyPlacement.lua', code / 'client/PZSurvivorToolkit/ActionQueueTransferRequests.lua',
@@ -709,6 +713,7 @@ def verify(root, selection, catalog):
                 issues.append(role + ': missing complete restored ordered bank')
             if '[QUEUE_TEST] FAIL ' in text:
                 issues.append(role + ': native fixture failed')
+        queue_peers_placement.validate(selection, texts)
         events = {role: {event: raw(text, event) for event in ('SEED', 'RELEASE', 'CAPACITY', 'APPLIED', 'PARTIAL', 'RESULT', 'CASE')}
                   for role, text in texts.items()}
         server = events['server']

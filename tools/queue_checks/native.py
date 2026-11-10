@@ -443,7 +443,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         language = selection["languages"][-1] if role == "client2" else selection["languages"][0]
         # Shared Lua must be byte-identical for native MP checksums; role/language live in cache/Lua.
         config = dict(selection, port=selection["ports"][0], resources=dict(admission.DEFAULTS, **selection.get('resources', {})))
-        if selection["suite"] == "health":
+        if selection["suite"] in ("health", "queue-transfer-peers"):
             config["disposable"] = True
         (lua / "shared/QueueTestSelection.lua").write_text("QueueTestSelection=" + _lua(config) + "\nreturn QueueTestSelection\n", encoding="utf-8")
         for name, value in {"smoke-user": role, "queue-mode": selection["mode"], "queue-scenario": selection["suite"],

@@ -31,6 +31,7 @@ class QueueTransferPeersTests(unittest.TestCase):
                 endpoint = actor['role'] + '-root' if name == 'tail' else ('source1' if case in ('shared-capacity', 'contested-pickup') else 'source' + actor['role'][-1])
                 items[book['id']] = dict(id=book['id'], ft=book['ft'], initialEndpoint=endpoint)
         seed = dict(case=case, token=token, index=index, actors=actors, items=list(items.values()),
+                    origin=dict(x=1, y=3, z=0), placement=self.targets(),
                     originalRootIds={'client1': [301], 'client2': [302]},
                     stores=[dict(key='source1', x=1, y=2, z=0, index=0, capacity=10),
                             dict(key='source2', x=2, y=2, z=0, index=0, capacity=10)])
@@ -113,6 +114,7 @@ class QueueTransferPeersTests(unittest.TestCase):
         actors = [dict(role=role, onlineId=i + 10, front=dict(id=100 + i, ft='Base.Nails', total=1, initial=0),
                        tail=dict(id=200 + i, ft='Base.BookCooking1', total=220, initial=219)) for i, role in enumerate(a.ROLES)]
         seed = dict(case=case, token=token, index=index, actors=actors, items=[], originalRootIds={'client1': [301], 'client2': [302]},
+                    origin=dict(x=1, y=3, z=0), placement=self.targets(),
                     stores=[dict(key='source1', x=1, y=2, z=0, index=0, capacity=100),
                             dict(key='source2', x=2, y=2, z=0, index=0, capacity=100)])
         physical = []
@@ -156,17 +158,46 @@ class QueueTransferPeersTests(unittest.TestCase):
     def check(self, evidence):
         return a.check_case(**evidence)
 
+    def targets(self):
+        return {'client1': dict(x=1, y=3, z=0), 'client2': dict(x=2, y=3, z=0)}
+
+    def placement_proof(self, target, mode):
+        actual = dict(x=target['x'] + .5, y=target['y'] + .5, z=target['z'],
+                      square=dict(target), currentSquare=dict(target))
+        if mode == 'local':
+            actual.update(queued=0, timed=False, moving=False, hasPath=False, deferredX=0, deferredY=0)
+        return dict(mode=mode, target=dict(target), actual=actual, teleports=1 if mode == 'local' else 0,
+                    centers=1 if mode == 'local' else 0, centered=True, stableMs=500,
+                    quietMs=500 if mode == 'local' else 0, elapsedMs=1000)
+
     def logs(self, selection):
         result = {'server': ['[STARTUP_TEST] SERVER_READY']}
         for role in a.ROLES:
             result[role] = ['[QUEUE_TEST] PREFLIGHT_COMPLETE mods=' + str(len(a.MODS)) + ' mode=' + selection['mode'], '[QUEUE_TEST] NATIVE_CONNECTED']
         for index, case in enumerate(selection['cases'], 1):
             data = self.fixture(case, selection['mode'], index)
+            identity = dict(case=case, index=index, token=data['seed']['token'])
+            result['server'].append(a.PREFIX + 'LAYOUT ' + json.dumps(dict(identity,
+                origin=data['seed']['origin'], targets=data['seed']['placement'])))
+            for role, target in data['seed']['placement'].items():
+                client_proof = self.placement_proof(target, 'local')
+                result['server'].append(a.PREFIX + 'AUTHORITY_PLACEMENT ' + json.dumps(dict(identity,
+                    role=role, target=target, proof=self.placement_proof(target, 'replica'), clientProof=client_proof)))
+                result[role].append(a.PREFIX + 'CLIENT_PLACEMENT ' + json.dumps(dict(identity,
+                    role=role, target=target, proof=client_proof)))
+                for event in ('CLIENT_READY', 'ADMITTED'):
+                    result[role].append(a.PREFIX + event + ' ' + json.dumps(dict(identity, role=role, target=target)))
+                if case == 'partial-accepted' and role == 'client1':
+                    target = dict(data['seed']['origin'], x=data['seed']['origin']['x'] - 1)
+                    result[role].append(a.PREFIX + 'NATIVE_WALK ' + json.dumps(dict(identity, role=role,
+                        target=target, actual=self.placement_proof(target, 'replica')['actual'], sourceBound=True)))
             for event, key in [('SEED', 'seed'), ('RELEASE', 'release'), ('CAPACITY', 'capacity'), ('APPLIED', 'applied'), ('PARTIAL', 'partial'), ('RESULT', 'result')]:
                 if data[key] is not None:
                     result['server'].append(a.PREFIX + event + ' ' + json.dumps(data[key]))
             for role in a.ROLES:
                 result[role].append(a.PREFIX + 'CASE ' + json.dumps(data['clients'][role]))
+                result[role].append(a.PREFIX + 'CLIENT_CLEARED ' + json.dumps(dict(identity, role=role)))
+                result['server'].append(a.PREFIX + 'AUTHORITY_CLEARED ' + json.dumps(dict(identity, role=role)))
         for lines in result.values():
             lines.append(a.PREFIX + 'COMPLETE ' + json.dumps(a._finish(selection)))
         return {role: '\n'.join(lines) for role, lines in result.items()}
@@ -200,6 +231,150 @@ class QueueTransferPeersTests(unittest.TestCase):
         for mutate in mutations:
             selection = self.selection(); mutate(selection)
             with self.assertRaises(ValueError): a.validate(selection)
+
+    def mutate_log_row(self, logs, role, event, mutate, occurrence=0):
+        lines = logs[role].splitlines()
+        at = [i for i, line in enumerate(lines) if a.PREFIX + event + ' ' in line][occurrence]
+        row = json.loads(lines[at].split(a.PREFIX + event + ' ', 1)[1]); mutate(row)
+        lines[at] = a.PREFIX + event + ' ' + json.dumps(row)
+        logs[role] = '\n'.join(lines)
+
+    def test_centered_setup_requires_exact_complete_role_bound_epoch_receipts(self):
+        selection = self.selection(cases=['disjoint-returns'])
+        originals = self.logs(selection)
+        for role, events in [('server', ('LAYOUT', 'AUTHORITY_PLACEMENT', 'AUTHORITY_CLEARED')),
+                             ('client1', ('CLIENT_PLACEMENT', 'CLIENT_READY', 'ADMITTED', 'CLIENT_CLEARED'))]:
+            for event in events:
+                line = next(line for line in originals[role].splitlines() if a.PREFIX + event + ' ' in line)
+                for kind in ('missing', 'duplicate', 'malformed', 'wrong-process'):
+                    logs = copy.deepcopy(originals)
+                    if kind == 'missing': logs[role] = logs[role].replace(line, '')
+                    elif kind == 'duplicate': logs[role] += '\n' + line
+                    elif kind == 'malformed': logs[role] = logs[role].replace(line, a.PREFIX + event + ' []')
+                    else: logs['client2' if role == 'server' else 'server'] += '\n' + line
+                    with self.subTest(role=role, event=event, mutation=kind):
+                        self.assertTrue(self.verify(logs, selection)['issues'])
+                changes = [lambda row: row.update(token='stale'), lambda row: row.update(index=True),
+                           lambda row: row.update(case='foreign'), lambda row: row.update(extra=True)]
+                if event != 'LAYOUT': changes.append(lambda row: row.update(role='client2'))
+                if event in ('CLIENT_PLACEMENT', 'AUTHORITY_PLACEMENT', 'CLIENT_READY', 'ADMITTED'):
+                    changes.extend([lambda row: row['target'].update(x=99), lambda row: row['target'].update(x=True)])
+                for mutate in changes:
+                    logs = copy.deepcopy(originals); self.mutate_log_row(logs, role, event, mutate)
+                    with self.subTest(role=role, event=event, mutate=mutate):
+                        self.assertTrue(self.verify(logs, selection)['issues'])
+
+    def test_centered_setup_proofs_require_local_writes_replica_observation_and_exact_pair(self):
+        selection = self.selection(cases=['partial-accepted']); originals = self.logs(selection)
+        proof_changes = [lambda row: row.update(teleports=0), lambda row: row.update(centers=0),
+            lambda row: row.update(centered=False), lambda row: row.update(stableMs=499),
+            lambda row: row.update(quietMs=0), lambda row: row.update(elapsedMs=30000),
+            lambda row: row.update(extra=True), lambda row: row['actual'].update(x=1.1),
+            lambda row: row['actual'].update(queued=1), lambda row: row['actual'].update(moving=True),
+            lambda row: row['actual'].update(hasPath=True), lambda row: row['actual'].update(deferredY=.1),
+            lambda row: row['actual']['currentSquare'].update(x=2)]
+        for mutate in proof_changes:
+            logs = copy.deepcopy(originals)
+            self.mutate_log_row(logs, 'client1', 'CLIENT_PLACEMENT', lambda row: mutate(row['proof']))
+            self.mutate_log_row(logs, 'server', 'AUTHORITY_PLACEMENT', lambda row: mutate(row['clientProof']))
+            with self.subTest(mutate=mutate): self.assertTrue(self.verify(logs, selection)['issues'])
+        for mutate in [lambda row: row.update(teleports=1), lambda row: row.update(centers=1),
+                       lambda row: row['actual'].update(x=1.1), lambda row: row.update(quietMs=500)]:
+            logs = copy.deepcopy(originals)
+            self.mutate_log_row(logs, 'server', 'AUTHORITY_PLACEMENT', lambda row: mutate(row['proof']))
+            self.assertTrue(self.verify(logs, selection)['issues'])
+        logs = copy.deepcopy(originals)
+        self.mutate_log_row(logs, 'server', 'AUTHORITY_PLACEMENT', lambda row: row['clientProof'].update(elapsedMs=1001))
+        self.assertTrue(self.verify(logs, selection)['issues'])
+        logs = copy.deepcopy(originals)
+        self.mutate_log_row(logs, 'server', 'AUTHORITY_PLACEMENT', lambda row: row['clientProof'].update(teleports=True))
+        self.assertTrue(self.verify(logs, selection)['issues'])
+        # Valid clock-local proof durations are independent across processes.
+        logs = copy.deepcopy(originals)
+        self.mutate_log_row(logs, 'server', 'AUTHORITY_PLACEMENT', lambda row: row['proof'].update(elapsedMs=2000))
+        self.assertEqual(self.verify(logs, selection)['issues'], [])
+
+    def test_centered_bank_origin_seed_binding_and_stale_epochs_are_rejected(self):
+        selection = self.selection(cases=['disjoint-returns', 'partial-accepted']); originals = self.logs(selection)
+        changes = [('LAYOUT', lambda row: row['origin'].update(x=3), 1),
+            ('LAYOUT', lambda row: row['targets']['client2'].update(y=4), 0),
+            ('LAYOUT', lambda row: row.update(token='case-token-disjoint-returns'), 1),
+            ('SEED', lambda row: row.pop('placement'), 0),
+            ('SEED', lambda row: row['placement']['client1'].update(x=True), 0),
+            ('SEED', lambda row: row['origin'].update(x=2), 0),
+            ('SEED', lambda row: row['actors'][0].update(onlineId=12), 1),
+            ('AUTHORITY_CLEARED', lambda row: row.update(token='stale'), 2)]
+        for event, mutate, occurrence in changes:
+            logs = copy.deepcopy(originals); self.mutate_log_row(logs, 'server', event, mutate, occurrence)
+            with self.subTest(event=event, occurrence=occurrence): self.assertTrue(self.verify(logs, selection)['issues'])
+        logs = copy.deepcopy(originals)
+        first_proof = a.raw(logs['client1'], 'CLIENT_PLACEMENT')[0]['proof']
+        self.mutate_log_row(logs, 'client1', 'CLIENT_PLACEMENT', lambda row: row.update(proof=first_proof), 1)
+        # Identical centered proof geometry is legitimate at the fixed origin;
+        # the enclosing token/index binds its new transition to the new case.
+        self.assertEqual(self.verify(logs, selection)['issues'], [])
+
+    def test_centered_setup_admission_and_terminal_clear_chronology(self):
+        selection = self.selection(cases=['disjoint-returns', 'partial-accepted']); originals = self.logs(selection)
+        mutations = [('server', 'LAYOUT', 0, 'AUTHORITY_PLACEMENT', 0),
+            ('server', 'AUTHORITY_PLACEMENT', 1, 'SEED', 0),
+            ('server', 'RESULT', 0, 'AUTHORITY_CLEARED', 0),
+            ('server', 'AUTHORITY_CLEARED', 1, 'LAYOUT', 1),
+            ('server', 'AUTHORITY_CLEARED', 3, 'COMPLETE', 0),
+            ('client1', 'CLIENT_PLACEMENT', 0, 'CLIENT_READY', 0),
+            ('client1', 'CLIENT_READY', 0, 'ADMITTED', 0),
+            ('client1', 'ADMITTED', 0, 'CASE', 0),
+            ('client1', 'ADMITTED', 1, 'NATIVE_WALK', 0),
+            ('client1', 'NATIVE_WALK', 0, 'CASE', 1),
+            ('client1', 'CASE', 0, 'CLIENT_CLEARED', 0),
+            ('client1', 'CLIENT_CLEARED', 0, 'CLIENT_PLACEMENT', 1),
+            ('client1', 'CLIENT_CLEARED', 1, 'COMPLETE', 0)]
+        for role, first, first_n, second, second_n in mutations:
+            logs = copy.deepcopy(originals); lines = logs[role].splitlines()
+            def at(event, occurrence):
+                return [i for i, line in enumerate(lines) if a.PREFIX + event + ' ' in line][occurrence]
+            left, right = at(first, first_n), at(second, second_n)
+            lines[left], lines[right] = lines[right], lines[left]; logs[role] = '\n'.join(lines)
+            with self.subTest(role=role, first=first, second=second): self.assertTrue(self.verify(logs, selection)['issues'])
+        # Readiness and clear polling can finish in either actor order.
+        logs = copy.deepcopy(originals); lines = logs['server'].splitlines()
+        for event in ('AUTHORITY_PLACEMENT', 'AUTHORITY_CLEARED'):
+            positions = [i for i, line in enumerate(lines) if a.PREFIX + event + ' ' in line]
+            for left, right in zip(positions[::2], positions[1::2]): lines[left], lines[right] = lines[right], lines[left]
+        logs['server'] = '\n'.join(lines)
+        self.assertEqual(self.verify(logs, selection)['issues'], [])
+
+    def test_partial_native_walk_requires_exact_source_bound_west_completion(self):
+        selection = self.selection(cases=['partial-accepted']); originals = self.logs(selection)
+        changes = [lambda row: row.update(role='client2'), lambda row: row.update(token='stale'),
+            lambda row: row.update(index=True), lambda row: row.update(case='disjoint-returns'),
+            lambda row: row.update(sourceBound=False), lambda row: row.update(sourceBound=1),
+            lambda row: row.pop('sourceBound'), lambda row: row.update(extra=True),
+            lambda row: row['target'].update(x=2), lambda row: row['target'].update(x=False),
+            lambda row: row['actual'].update(x=-.01), lambda row: row['actual'].update(y=4),
+            lambda row: row['actual'].update(z=.02), lambda row: row['actual'].update(x=True),
+            lambda row: row['actual'].update(queued=0), lambda row: row['actual'].pop('currentSquare'),
+            lambda row: row['actual']['square'].update(x=1),
+            lambda row: row['actual']['currentSquare'].update(x=False)]
+        for mutate in changes:
+            logs = copy.deepcopy(originals); self.mutate_log_row(logs, 'client1', 'NATIVE_WALK', mutate)
+            with self.subTest(mutate=mutate): self.assertTrue(self.verify(logs, selection)['issues'])
+        line = next(line for line in originals['client1'].splitlines() if a.PREFIX + 'NATIVE_WALK ' in line)
+        for kind in ('missing', 'duplicate', 'wrong-process', 'idle-peer', 'foreign-case', 'malformed'):
+            logs = copy.deepcopy(originals)
+            if kind == 'missing': logs['client1'] = logs['client1'].replace(line, '')
+            elif kind == 'duplicate': logs['client1'] += '\n' + line
+            elif kind == 'wrong-process': logs['server'] += '\n' + line
+            elif kind == 'idle-peer': logs['client2'] += '\n' + line
+            elif kind == 'foreign-case':
+                selection = self.selection(cases=['disjoint-returns']); logs = self.logs(selection)
+                logs['client1'] += '\n' + line
+            else: logs['client1'] = logs['client1'].replace(line, a.PREFIX + 'NATIVE_WALK []')
+            with self.subTest(kind=kind): self.assertTrue(self.verify(logs, selection)['issues'])
+            selection = self.selection(cases=['partial-accepted'])
+        logs = copy.deepcopy(originals)
+        self.mutate_log_row(logs, 'client1', 'NATIVE_WALK', lambda row: row['actual'].update(x=.358398, y=3.357422))
+        self.assertEqual(self.verify(logs, selection)['issues'], [])
 
     def test_mp_transfer_pending_duration_is_exact_native_minus_one(self):
         for mode in ('native', 'toolkit'):

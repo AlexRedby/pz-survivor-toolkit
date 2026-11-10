@@ -1,5 +1,7 @@
 -- Disposable shared storage; only authority seeds/removes owned identities.
 local JSON=require 'QueueHealthEvents'
+local P=require 'QueueEnergyPlacement'
+local config=require 'QueueTestSelection'
 local F={module='QueueTransferPeersTest',roles={'client1','client2'}}
 local owner='PZSTQueueTransferPeersOwner'
 function F.emit(event,row)print('[QUEUE_PEERS] '..event..' '..JSON.encode(row))end
@@ -27,14 +29,65 @@ end
 local function point(object,key)
  local square=object:getSquare();return{key=key,x=square:getX(),y=square:getY(),z=square:getZ(),index=object:getObjectIndex(),capacity=object:getContainer():getCapacity()}
 end
-function F.prepare(players)
+local function same(a,b)return a.x==b.x and a.y==b.y and a.z==b.z end
+function F.proof(value,target,mode)
+ target=P.target(target)
+ assert(type(value)=='table'and value.mode==mode and value.centered==true,'peer centered proof role missing')
+ assert(same(P.target(value.target),target),'peer proof target differs')
+ local writes=mode=='local'and 1 or 0
+ assert(value.teleports==writes and value.centers==writes,'peer proof position writes differ')
+ assert(type(value.stableMs)=='number'and value.stableMs>=P.stableMs and type(value.quietMs)=='number'
+  and(mode=='local'and value.quietMs>=P.stableMs or mode=='replica'and value.quietMs==0)
+  and type(value.elapsedMs)=='number'and value.elapsedMs>=value.stableMs+value.quietMs and value.elapsedMs<P.timeoutMs,'peer proof not settled')
+ local a=value.actual
+ assert(type(a)=='table'and type(a.x)=='number'and type(a.y)=='number'and type(a.z)=='number'
+  and math.abs(a.x-target.x-.5)<=.1 and math.abs(a.y-target.y-.5)<=.1 and math.abs(a.z-target.z)<=.01
+  and same(P.target(a.square),target)and same(P.target(a.currentSquare),target),'peer proof centered squares differ')
+ if mode=='local'then assert(a.queued==0 and a.timed==false and a.moving==false and a.hasPath==false
+  and a.deferredX==0 and a.deferredY==0,'peer proof native motion remains')end
+ return true
+end
+local function actors(players)
  assert(isServer()and players.client1 and players.client2 and players.client1:getOnlineID()~=players.client2:getOnlineID(),'two distinct authority actors required')
- local origin=require('QueueEnergyPlacement')(players.client1)
- players.client2:teleportTo(origin:getX()+1.5,origin:getY()+.5,origin:getZ())
+ for _,role in ipairs(F.roles)do
+  local player=players[role];assert(player:getUsername()==role,'peer role identity differs')
+  local found=false;local online=getOnlinePlayers()
+  for i=0,online:size()-1 do if online:get(i)==player then found=true end end
+  assert(found,'peer authority actor departed or replaced')
+ end
+end
+function F.plan(players,case,index,state)
+ actors(players)
+ assert(config.disposable==true and config.cases[index]==case,'peer layout requires selected disposable case')
+ local origin=state and P.target(state.origin)or P.choose(players.client1)
+ local targets={client1=P.target(origin),client2={x=origin.x+1,y=origin.y,z=origin.z}}
+ for _,role in ipairs(F.roles)do
+  local target=targets[role];local square=assert(getCell():getGridSquare(target.x,target.y,target.z),'peer standing target unloaded')
+  assert(square:getFloor()and square:TreatAsSolidFloor()and not square:getRoom()and square:isFree(false),'peer standing target blocked')
+ end
+ return{case=case,index=index,token='queue-peers:'..getTimestampMs()..':'..index,origin=P.target(origin),targets=targets}
+end
+function F.checkPlacement(players,layout,proofs)
+ actors(players)
+ assert(type(layout)=='table'and config.cases[layout.index]==layout.case and type(layout.token)=='string'and #layout.token>0,'peer placement round missing')
+ local origin=P.target(layout.origin)
+ assert(type(layout.targets)=='table'and type(proofs)=='table','peer placement targets/proofs missing')
+ for name in pairs(layout.targets)do assert(name=='client1'or name=='client2','foreign peer placement target')end
+ for name in pairs(proofs)do assert(name=='client1'or name=='client2','foreign peer placement proof')end
+ for i,role in ipairs(F.roles)do
+  local target=P.target(layout.targets[role]);assert(target.x==origin.x+i-1 and target.y==origin.y and target.z==origin.z,'peer standing role offset differs')
+  F.proof(proofs[role],target,'replica')
+  assert(P.atCentered(players[role],target),'peer authority left final centered placement')
+ end
+ return true
+end
+function F.prepare(players,layout,proofs)
+ F.checkPlacement(players,layout,proofs)
+ local origin=P.target(layout.origin)
  local s={players=players,stores={},objects={},initial={},owned={}}
- s.origin={x=origin:getX(),y=origin:getY(),z=origin:getZ()}
+ s.origin=P.target(origin)
  for i,key in ipairs({'source1','source2'})do
-  local square=assert(getCell():getGridSquare(origin:getX()+i-1,origin:getY()-1,origin:getZ()))
+  local square=assert(getCell():getGridSquare(origin.x+i-1,origin.y-1,origin.z))
   local obj=IsoThumpable.new(getCell(),square,'furniture_storage_01_8',false,{})
   obj:setCanPassThrough(true);obj:setIsContainer(true);obj:getModData()[owner]=key
   square:AddSpecialObject(obj);local store=assert(obj:getContainer());store:setType('shelf');store:setCapacity(100);store:setExplored(true)
@@ -46,9 +99,11 @@ function F.prepare(players)
  end
  getGameTime():setTimeOfDay(12);return s
 end
-function F.seed(s,case,index)
+function F.seed(s,case,index,layout,proofs)
+ F.checkPlacement(s.players,layout,proofs)
+ assert(layout.case==case and layout.index==index and same(P.target(layout.origin),s.origin),'peer seed layout differs')
  assert(isServer(),'seed requires authority');assert(not s.seed,'previous phase not released')
- local ids={case=case,index=index,token='queue-peers:'..getTimestampMs()..':'..index,actors={},items={},stores={},originalRootIds={},origin=s.origin}
+ local ids={case=case,index=index,token=layout.token,actors={},items={},stores={},originalRootIds={},origin=s.origin,placement={client1=P.target(layout.targets.client1),client2=P.target(layout.targets.client2)}}
  s.owned={};s.seed=ids
  for _,key in ipairs({'source1','source2'})do s.stores[key]:setCapacity(100);ids.stores[#ids.stores+1]=point(s.objects[key],key)end
  local shared=case=='shared-capacity'or case=='contested-pickup'or case=='partial-accepted'
@@ -150,6 +205,10 @@ function F.release(s)
  end
  for _,store in pairs(s.stores)do store:setCapacity(100)end
  s.seed=nil;s.owned={}
+end
+function F.absent(s,seed)
+ for _,spec in ipairs(seed.items)do local _,_,count=F.find(s,spec.id);if count~=0 then return false end end
+ return true
 end
 function F.cleanup(s)
  assert(not s.seed,'phase still active')

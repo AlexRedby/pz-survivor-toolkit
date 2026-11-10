@@ -15,22 +15,41 @@ class PeerFixtureTests(unittest.TestCase):
 local config={suite='queue-transfer-peers',cases={'disjoint-returns','shared-capacity'}}
 local events,sent={},{}
 local F={module='QueueTransferPeersTest',roles={'client1','client2'}}
+local settled,seeds=false,0
+local P={timeoutMs=30000,target=function(value)return value end,
+ observeCentered=function(player,target)return{player=player,target=target}end,
+ poll=function(value)if settled then return{mode='replica',target=value.target}end end}
 local players={}
 for _,role in ipairs(F.roles)do
  players[role]={getUsername=function()return role end,hasTimedActions=function()return false end,
+  getCurrentSquare=function()return{}end,
   getCharacterActions=function()return{isEmpty=function()return true end}end}
 end
 isServer=function()return true end;getTimestampMs=function()return 10 end
-require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueTestSelection'then return config elseif name=='QueueTransferPeers'then return F end;error(name)end
+require=function(name) if name=='QueuePreflight' then return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end,removeTick=function(events,fn)events.OnTick.Remove(fn)end}end;if name=='QueueTestSelection'then return config elseif name=='QueueTransferPeers'then return F elseif name=='QueueEnergyPlacement'then return P end;error(name)end
 local command,tick
 Events={OnClientCommand={Add=function(f)command=f end},OnTick={Add=function(f)tick=f end}}
 sendServerCommand=function(player,module,name,row)sent[#sent+1]={player=player,name=name,row=row}end
 F.emit=function(name,row)events[#events+1]={name=name,row=row}end
-F.prepare=function(p)return{players=p}end
-F.seed=function(s,case,index)s.seed={case=case,index=index,token='token-'..index};return s.seed end
+F.same=function(a,b)return a.x==b.x and a.y==b.y and a.z==b.z end
+F.plan=function(p,case,index,state)
+ local origin=state and state.origin or{x=10,y=20,z=0}
+ return{case=case,index=index,token='token-'..index,origin=origin,
+  targets={client1=origin,client2={x=origin.x+1,y=origin.y,z=origin.z}}}
+end
+F.proof=function(proof,target,mode)assert(proof.mode==mode and F.same(proof.target,target))end
+F.checkPlacement=function(p,layout,proofs)
+ for _,role in ipairs(F.roles)do F.proof(proofs[role],layout.targets[role],'replica')end
+end
+F.prepare=function(p,layout,proofs)F.checkPlacement(p,layout,proofs);return{players=p,origin=layout.origin}end
+F.seed=function(s,case,index,layout,proofs)
+ F.checkPlacement(s.players,layout,proofs);seeds=seeds+1
+ s.seed={case=case,index=index,token=layout.token};return s.seed
+end
 F.snapshot=function(s)assert(s.seed);return{case=s.seed.case,index=s.seed.index,token=s.seed.token,items={}}end
 F.capacity=function(s)return F.snapshot(s)end
 F.release=function(s)assert(s.seed);s.seed=nil end
+F.absent=function(s,released)assert(released.token);return s.seed==nil end
 F.cleanup=function(s)assert(not s.seed);s.cleaned=true end
 assert(loadfile(arg[1]))()
 local function call(role,name,index,extra)
@@ -38,17 +57,33 @@ local function call(role,name,index,extra)
  command(F.module,name,players[role],args)
 end
 call('client1','Hello',1);call('client2','Hello',1)
-assert(events[1].name=='SEED'and events[1].row.index==1)
+assert(#events==0 and seeds==0,'Hello bypassed the placement reservation')
+tick();assert(events[1].name=='LAYOUT'and events[1].row.index==1)
+local origin=events[1].row.origin
 for index=1,2 do
+ local layout=events[#events].row
+ assert(layout.index==index and F.same(layout.origin,origin),'next round changed the reserved origin')
+ settled=false
+ for _,role in ipairs(F.roles)do
+  call(role,'Placed',index,{role=role,target=layout.targets[role],proof={mode='local',target=layout.targets[role]}})
+ end
+ tick();assert(seeds==index-1,'owner reports bypassed authority placement polling')
+ settled=true;tick()
+ assert(events[#events].name=='SEED'and events[#events].row.index==index)
  call('client1','Ready',index);call('client2','Ready',index)
  call('client1','BodyReady',index);call('client2','BodyReady',index)
  call('client1','Result',index,{result={role='client1'}});call('client2','Result',index,{result={role='client2'}})
  tick()
  local before=#events
  call('client1','Released',index)
- assert(#events==before,'one peer advanced/released a phase alone')
+ assert(#events==before+1 and events[#events].name=='AUTHORITY_CLEARED'
+  and events[#events].row.role=='client1'and events[#events].row.token=='token-'..index,
+  'first peer acknowledgement lost the released phase identity')
+ tick();assert(#events==before+1 and seeds==index,'one peer advanced/released a phase alone')
  call('client2','Released',index)
- assert(events[#events].name==(index==1 and'SEED'or'COMPLETE'),'lost phase identity after authority cleanup')
+ assert(events[#events-1].name=='AUTHORITY_CLEARED'and events[#events-1].row.role=='client2'
+  and events[#events-1].row.token=='token-'..index,'second peer acknowledgement lost the released phase identity')
+ assert(events[#events].name==(index==1 and'LAYOUT'or'COMPLETE'),'lost phase identity after authority cleanup')
 end
 assert(events[#events].row.restored and events[#events].row.performed==2)
 for _,event in ipairs(events)do assert(event.name~='FAIL','real coordinator rejected valid acknowledgements')end

@@ -3,6 +3,7 @@ require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'TimedActions/ISReadABook'
 require 'TimedActions/ISInventoryTransferUtil'
 local F=require 'QueueTransferPeers';local T=PZSurvivorToolkit
+local P=require 'QueueEnergyPlacement'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local R={index=1,phase='hello',records={},tracks={},tokens={},serial=0,tokenSerial=0}
 local entered,done=false,false
@@ -14,7 +15,8 @@ local function ref(value)return value and tostring(value)or false end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(R.player)end
 local function empty()return #queue().queue==0 and not R.player:hasTimedActions()and R.player:getCharacterActions():isEmpty()end
 local function request(command,extra)
- local row=extra or {};row.case=R.seed and R.seed.case or config.cases[R.index];row.index=R.index;row.token=R.seed and R.seed.token
+ local phase=R.seed or R.layout
+ local row=extra or{};row.case=phase and phase.case or config.cases[R.index];row.index=R.index;row.token=phase and phase.token
  sendClientCommand(F.module,command,row)
 end
 local function fail(problem)
@@ -153,19 +155,34 @@ local function observe()
 end
 local function start()
  assert(empty(),'fresh phase queue not empty');intact()
+ assert(R.layout and F.same(R.seed.placement,R.layout.targets)and P.atCentered(R.player,R.layout.targets[R.role])and not R.player:isPlayerMoving(),'peer left centered placement before native admission')
+ F.emit('ADMITTED',{case=R.seed.case,index=R.index,token=R.seed.token,role=R.role,target=R.layout.targets[R.role]})
  R.records,R.tracks,R.tokens,R.serial,R.tokenSerial={}, {}, {},0,0
- R.active=true;R.bodyReady=false;R.unknown=nil;R.lossSent=false;R.quiet=nil;R.sent=false;R.partial=nil
+ R.active=true;R.bodyReady=false;R.unknown=nil;R.lossSent=false;R.quiet=nil;R.sent=false;R.partial=nil;R.partialLogged=nil
  local s=R.state
  if R.seed.case=='partial-accepted'then
   if R.role=='client1'then
    local first=assert(F.find(s,R.seed.actors[1].front.id));local second=assert(F.find(s,R.seed.actors[2].front.id))
    assert(queuePeersArmPartialClient(R.player,first:getID(),second:getID(),R.seed.token),'partial client probe could not arm')
    -- One real adjacent step keeps both ordinary transfer actions pending until
-   -- native checkQueueList can group the two light items. No fabricated batch,
-   -- shortened action or overridden native start/update is used.
+   -- native checkQueueList can group the two light items. Use the vacant west
+   -- tile: the centered second actor occupies the east tile. Both are diagonal
+   -- to source1, preserving ordinary shelf access and native transfer duration.
    local origin=R.seed.origin
-   local square=assert(getCell():getGridSquare(origin.x+1,origin.y,origin.z))
-   ISTimedActionQueue.add(ISWalkToTimedAction:new(R.player,square))
+   local target={x=origin.x-1,y=origin.y,z=origin.z}
+   local square=assert(getCell():getGridSquare(target.x,target.y,target.z))
+   assert(square:getFloor()and square:TreatAsSolidFloor()and square:isFree(true)
+    and not R.player:getCurrentSquare():isBlockedTo(square),'partial native walk target blocked')
+   assert(Proof.closure(ISWalkToTimedAction.start,'WalkToTimedAction.lua')
+    and Proof.closure(ISWalkToTimedAction.update,'WalkToTimedAction.lua')
+    and Proof.closure(ISWalkToTimedAction.perform,'WalkToTimedAction.lua'),'partial native walk source changed')
+   local walk=ISWalkToTimedAction:new(R.player,square)
+   walk:setOnComplete(function()
+    assert(P.at(R.player,target),'partial native walk completed outside reserved tile')
+    F.emit('NATIVE_WALK',{case=R.seed.case,index=R.index,token=R.seed.token,role=R.role,
+     target=target,actual=P.snapshot(R.player),sourceBound=true})
+   end)
+   ISTimedActionQueue.add(walk)
    -- The real context-menu click scopes its synchronous producer through
    -- Operations.run. Directly calling only the leaf would invent two intents,
    -- correctly preventing native merging when the queue is enabled.
@@ -190,9 +207,24 @@ end
 Events.OnServerCommand.Add(function(module,command,args)
  if module~=F.module or done then return end
  local ok,problem=pcall(function()
-  if command=='Seeded'then
+  assert(type(args)=='table','peer server arguments missing')
+  if command~='Layout'and command~='Seeded'and command~='Done'and command~='Failed'then
+   assert(R.seed and args.case==R.seed.case and args.index==R.index and args.token==R.seed.token,'foreign peer server phase')
+  end
+  if command=='Layout'then
+   assert(not R.active and R.phase=='seed'and not R.layout,'new placement before prior phase release')
+   assert(args.case==config.cases[args.index]and args.index==R.index and type(args.token)=='string','peer layout selection differs')
+   local origin=P.target(args.origin)
+   assert(type(args.targets)=='table','peer layout targets missing')
+   for name in pairs(args.targets)do assert(name=='client1'or name=='client2','foreign peer layout role')end
+   for i,role in ipairs(F.roles)do
+    local target=P.target(args.targets[role]);assert(target.x==origin.x+i-1 and target.y==origin.y and target.z==origin.z,'peer layout role offset differs')
+   end
+   R.layout=args;R.seed=nil;R.state=nil;R.placement=P.beginCentered(R.player,P.target(args.targets[R.role]));R.phase='placement';R.since=now()
+  elseif command=='Seeded'then
+   assert(R.phase=='seed'and R.layout and args.case==R.layout.case and args.index==R.layout.index and args.token==R.layout.token
+    and F.same(args.origin,R.layout.origin)and F.same(args.placement,R.layout.targets)and P.atCentered(R.player,R.layout.targets[R.role]),'peer seed lost reserved centered placement')
    assert(not R.active,'new phase before old release');R.seed=args;R.index=args.index;R.state=nil;R.phase='resolve';R.since=now()
-   local p=args.origin;R.player:teleportTo(p.x+(R.role=='client1'and .5 or 1.5),p.y+.5,p.z)
   elseif command=='Go'then assert(R.seed.token==args.token and R.phase=='ready');start()
   elseif command=='Capacity'then R.capacity=args
   elseif command=='Partial'then assert(R.seed.case=='partial-accepted'and args.token==R.seed.token and not R.partial,'foreign partial result');R.partial=args
@@ -269,7 +301,13 @@ require('QueuePreflight').onTick(Events,function()
    R.since=now();request('Hello');R.phase='seed';return
   end
   assert(now()-R.since<180000,'peer client phase timeout '..R.phase)
-  if R.phase=='resolve'then
+  if R.phase=='placement'then
+   local proof=P.poll(R.placement);if not proof then return end
+   assert(P.atCentered(R.player,R.layout.targets[R.role]),'peer left centered local placement')
+   local value={case=R.layout.case,index=R.index,token=R.layout.token,role=R.role,target=R.layout.targets[R.role],proof=proof}
+   F.emit('CLIENT_PLACEMENT',value);R.phase='seed';R.since=now();request('Placed',value)
+  elseif R.phase=='resolve'then
+   assert(P.atCentered(R.player,R.layout.targets[R.role]),'peer left centered placement before replica setup')
    local state=F.resolve(R.player,R.seed,R.role);if not state then return end
    if R.player:isPlayerMoving()or R.player:tooDarkToRead()then return end
    R.state=state
@@ -281,11 +319,21 @@ require('QueuePreflight').onTick(Events,function()
    end
    R.player:setPerkLevelDebug(Perks.Woodwork,0);R.player:setPerkLevelDebug(Perks.Cooking,0)
    assert(not R.player:hasTrait(CharacterTrait.DISORGANIZED)and not R.player:hasTrait(CharacterTrait.ILLITERATE),'unsupported actor trait')
+   assert(P.atCentered(R.player,R.layout.targets[R.role]),'peer left centered placement before ready')
+   F.emit('CLIENT_READY',{case=R.seed.case,index=R.index,token=R.seed.token,role=R.role,target=R.layout.targets[R.role]})
    R.phase='ready';request('Ready')
   elseif R.phase=='run'then
    observe()
    if R.seed.case=='partial-accepted'then
-    if R.role=='client1'then local probe=queuePeersPartialState();assert(probe.failure==''and probe.closed=='','partial client probe rejected native request: '..tostring(probe.closed))end
+    if R.role=='client1'then
+     local probe=queuePeersPartialState();assert(probe.failure==''and probe.closed=='','partial client probe rejected native request: '..tostring(probe.closed))
+     if not R.partialLogged or now()-R.partialLogged>=5000 then
+      R.partialLogged=now();local q=queue();local head=q.queue[1];local peer=false;local online=getOnlinePlayers()
+      for i=0,online:size()-1 do local actor=online:get(i);if actor:getUsername()=='client2'then peer=P.snapshot(actor)end end
+      F.emit('PARTIAL_WAIT',{case=R.seed.case,index=R.index,token=R.seed.token,role=R.role,actual=P.snapshot(R.player,true,Vector2.new()),
+       peer=peer,head=head and head.Type or false,pathResult=head and tostring(head.result)or false,probe=probe})
+     end
+    end
     if not R.partial or not empty()then R.quiet=nil;return end
     if R.role=='client1'and not queuePeersPartialState().expired then return end
     R.quiet=R.quiet or now();if now()-R.quiet<1500 then return end
@@ -309,7 +357,10 @@ require('QueuePreflight').onTick(Events,function()
   elseif R.phase=='release'then
    assert(empty(),'phase release with native work');local missing=true
    for _,spec in ipairs(R.seed.items)do local _,_,count=F.find(R.state,spec.id);if count~=0 then missing=false end end
-   if missing then R.state=nil;R.phase='seed';request('Released')end
+   if missing then
+    F.emit('CLIENT_CLEARED',{case=R.seed.case,index=R.index,token=R.seed.token,role=R.role})
+    request('Released');R.state=nil;R.layout=nil;R.seed=nil;R.index=R.index+1;R.phase='seed'
+   end
   end
  end)
  if not ok then fail(problem)end
