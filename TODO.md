@@ -35,7 +35,7 @@ Implementation and migration are conditional on the performance gate in [the des
 
 # Historical native snapshot storage
 
-- [ ] Add an explicit compaction workflow for stopped native runs: deduplicate generated mod trees into self-contained content archives, verify complete SHA256 recovery and restoration, and preserve source dependencies, active/preparing/waiting reservations, fixtures, saves and reports. Report actual filesystem free-space changes separately from summed snapshot sizes on copy-on-write filesystems. Completed runs currently accumulate hundreds of repeated selected-pack copies.
+- [ ] Qualify storage benefit and cold dependency-scan cost on a representative cohort before enabling default post-report compaction or retiring historical collections in bulk. The explicit snapshot compact/verify/restore workflow and opt-in shared-store lifecycle are available; a full selected-pack disposable roundtrip preserved complete bytes/metadata and private writes. A single APFS clone consumes less extra space than introducing its compressed archive, so assess shared payload reuse across the cohort rather than summed folder sizes. Measure filesystem-wide free-space changes with delayed reclamation and unrelated writes stated separately; do not claim logical bytes as recovered space. Keep existing defaults and unsupported-platform raw retention until their own adoption gates pass, and include external source-consumer collections in dependency scans.
 
 # Shared in-game verification campaign
 

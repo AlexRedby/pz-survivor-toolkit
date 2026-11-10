@@ -26,6 +26,7 @@ class BatchTests(unittest.TestCase):
         self.args = argparse.Namespace(plan=self.plan, output=self.root / 'batch')
         self.calls = []
         self.preparation_waits = []
+        self.storage_stores = []
 
     def write_plan(self, jobs):
         self.plan.write_text(json.dumps({'game': '/game', 'jdk': '/jdk', 'options': {
@@ -51,7 +52,8 @@ class BatchTests(unittest.TestCase):
                 'functional': {'status': 'passed'}, 'runtime': {'status': 'clean'}}
 
     def invoke(self):
-        def saved_report(output, catalog, control=None):
+        def saved_report(output, catalog, control=None, *, snapshot_store=None):
+            self.storage_stores.append(snapshot_store)
             value = self.report(output, catalog, control)
             (output / 'report.json').write_text(json.dumps(value))
             return value
@@ -61,6 +63,28 @@ class BatchTests(unittest.TestCase):
              patch.object(cli.report, 'matrix', return_value={'rows': []}), \
              patch.object(cli.report, 'summary', return_value='checked'):
             return cli.batch(self.args, self.catalog)
+
+    def test_plan_storage_opt_in_and_cli_override_reach_post_report_hook(self):
+        self.write_plan([{'id': 'tags', 'suite': 'item-tags'}])
+        value = json.loads(self.plan.read_text())
+        value['snapshot_store'] = str(self.root / 'shared-store')
+        self.plan.write_text(json.dumps(value))
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual([value['snapshot_store']], self.storage_stores)
+        self.args.output = self.root / 'batch-override'
+        self.args.snapshot_store = self.root / 'override-store'
+        self.assertEqual(self.invoke(), 0)
+        self.assertEqual(self.args.snapshot_store, self.storage_stores[-1])
+
+    def test_relative_plan_storage_is_rejected_before_preparation(self):
+        self.write_plan([{'id': 'tags', 'suite': 'item-tags'}])
+        value = json.loads(self.plan.read_text())
+        value['snapshot_store'] = 'relative-store'
+        self.plan.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, 'absolute'):
+            self.invoke()
+        self.assertFalse(self.calls)
+        self.assertFalse(self.args.output.exists())
 
     def test_one_client_mp_and_ru_suite_defaults(self):
         self.write_plan([{'id': 'animal', 'suite': 'animal-trailer'}, {'id': 'tags', 'suite': 'item-tags'}])

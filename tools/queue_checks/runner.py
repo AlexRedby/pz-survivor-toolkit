@@ -8,7 +8,7 @@ import sys
 import time
 
 from .report import events, execution_issues, read_json, verify_manifest, write_json
-from . import adapters, admission, pack, worlds, coop, desktop, glfw, provenance, setup_diagnostics, progress
+from . import adapters, admission, pack, worlds, coop, desktop, glfw, provenance, setup_diagnostics, progress, snapshot_storage
 from .native import font_preload
 from .fixture_errors import FixtureLoadMonitor, check_fixture_loading
 from .preflight import ClientPreflight, fail as setup_failure
@@ -122,6 +122,7 @@ def _verify_live_inputs(root, selection, runtime):
     return {'pack_lock': bool(locked), 'world_template': bool(template)}
 
 
+@snapshot_storage.with_run_sources
 def run(root, resource_wait=300):
     if sys.platform == 'win32':
         from .windows import run as run_windows

@@ -7,7 +7,7 @@ import re
 import stat
 from types import ModuleType
 
-from . import adapters, progress
+from . import adapters, progress, snapshot_storage
 
 
 SOURCE_ROLES = 'source-roles.json'
@@ -93,6 +93,7 @@ def _roles(root):
 
 
 @progress.operation('verify-runtime-inputs')
+@snapshot_storage.with_run_sources
 def runtime_issues(root):
     """Verify all prepared bytes while allowing only the declared verifier to change."""
     from . import report

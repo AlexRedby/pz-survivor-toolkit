@@ -2,11 +2,16 @@
 from pathlib import Path
 import re
 
-from . import report, progress, mod_inputs
+from . import report, progress, mod_inputs, snapshot_storage
 from .mod_selection import MOD_ID, mod_ids, mod_info
 
 
 def create(project, output, game, workshop=(), overrides=None):
+    with snapshot_storage.source_inputs([*(overrides or {}).values(), *workshop]):
+        return _create(project, output, game, workshop, overrides)
+
+
+def _create(project, output, game, workshop, overrides):
     from .native import _locations, _metadata, sha256
     project, output, game = Path(project), Path(output), Path(game)
     if output.exists():
@@ -65,8 +70,13 @@ def read(path):
 
 @progress.operation('verify-selected-pack')
 def validate(path, project, game, mods):
-    from .native import sha256, _metadata
     value = read(path)
+    with snapshot_storage.source_inputs(row['source'] for row in value['mods']):
+        return _validate(path, project, game, mods, value)
+
+
+def _validate(path, project, game, mods, value):
+    from .native import sha256, _metadata
     rows = value['mods']
     identifiers = [row['id'] for row in rows]
     if identifiers != mods:

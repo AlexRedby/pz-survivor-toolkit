@@ -16,6 +16,25 @@ Commit fixtures, parameters, assertions and reproduced limitations. Do not commi
 
 Read [commands](#commands) for a first run, [batch plans](#batch-plans) and [pack locks](#selected-pack-locks) for comparisons, and [results and isolation](#result-and-isolation) for acceptance. Suite commands and behavior contracts live in the [scenario cookbook](SCENARIOS.md); specialized fixtures are indexed under [contributions](contributions/README.md).
 
+### Retaining native snapshots
+
+Stopped runs can keep mod inputs in a shared content store instead of retaining every private mod tree. Maintenance currently requires the qualified POSIX admission locks; ordinary preparation and reports remain unchanged when archival is not selected. Keep the store with the runs: `snapshot-storage.json` binds each archived tree to its verified descriptor and the original snapshot seal. Payload archives are shared by content; per-capture descriptors preserve file/directory modes, timestamps and empty directories. Generated fixture mods use their final staged bytes. Sealed source/snapshot manifests are never rewritten.
+
+Preview first, using a store outside the run. Add `--dependency-root` for external run and pack-lock collections; these roots augment the default scan of the containing `.codex` directory (or run parent) and existing `.codex` collections in linked Git worktrees. Known source consumers keep their original trees unpacked. Locks can have arbitrary JSON filenames. New native preparation, pack validation and execution also pin historical source owners through their entire read lifetime, restoring archived inputs when needed.
+
+```sh
+uv run --locked python tools/check_action_queue.py snapshot-compact "$PZ_RUN" --store "$PZ_SNAPSHOT_STORE"
+uv run --locked python tools/check_action_queue.py snapshot-compact "$PZ_RUN" --store "$PZ_SNAPSHOT_STORE" --dependency-root "$PZ_OTHER_RUNS" --apply
+uv run --locked python tools/check_action_queue.py snapshot-verify "$PZ_RUN"
+uv run --locked python tools/check_action_queue.py snapshot-restore "$PZ_RUN"
+```
+
+Maintenance refuses live PIDs, leases and prepared/waiting reservations; run these commands in the host session as for `status`. Verification streams the archives without extraction. Report regeneration, separated-verifier reanalysis and world export temporarily restore exact trees and retire those temporary inputs afterward. An explicit restore keeps the trees available. Reusing a restored run as a mod source does not make it eligible to launch again or waive source/game-build checks. A verifier that changes restored inputs leaves them retained and reports the mismatch.
+
+Archives and their metadata are verified and durably published before working trees are atomically moved into the retirement journal. Interrupted retirement is recoverable through verify/restore or a subsequent compaction; unexpected journal entries are preserved and rejected. Restoration stages outside sealed input trees, so unknown hard-kill residue is retained without preventing a later restore. Saves, logs, reports, classes and settings are retained. There is no age-based deletion, shared writable mod directory or automatic object garbage collection.
+
+Archival after each saved report is opt-in: pass `--snapshot-store "$PZ_SNAPSHOT_STORE"` to `run`, `resume` or `batch`, or set an absolute `snapshot_store` in a batch plan. It runs after process cleanup and report publication. Refused maintenance records `storage-maintenance.json` separately and retains recoverable inputs without replacing the test verdict. The default remains off: macOS clones already share blocks, and a new compressed store can initially consume more space than private clones. Assess a representative cohort before adoption. `logical_bytes` and filesystem-wide `observed_free_bytes_change` are separate observations; free-space changes include unrelated writes and delayed filesystem reclamation, not guaranteed recovered bytes.
+
 ### Shared inventory cleanup
 
 [`QueueFixtureItemCleanup`](support/QueueFixtureItemCleanup.lua) is used by warehouse walking (actor and crate items) and the independent peer-edit workload. Freeze exact item/container references and the generation before cleanup, and supply guards for original state, foreign contents, equipment and ownership. The journal reconciles a removal that throws after its physical effect, skips confirmed removals and permits at most three native failures. It retains recovery diagnostics; suite verifiers reject unexpected recoveries after safe cleanup has finished. Completed calls still revalidate their scope.

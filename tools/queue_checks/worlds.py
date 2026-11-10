@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import shutil
 
-from . import adapters, report, coop, progress
+from . import adapters, report, coop, progress, snapshot_storage
 
 
 SERVER_SETTINGS = ('Map', 'PVP', 'DoLuaChecksum', 'SleepAllowed', 'SleepNeeded')
@@ -156,6 +156,7 @@ def verify_settings(value, output, runtime):
         raise ValueError('World template server settings differ from this run')
 
 
+@snapshot_storage.with_inputs
 def export(run, output):
     from .native import sha256
     run, output = Path(run), Path(output)

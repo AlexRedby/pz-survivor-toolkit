@@ -8,7 +8,7 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters, worlds, world_import, pack, admission, scenarios, campaign, batch_policy, batch_resume, provenance
+from queue_checks import native, report, runner, adapters, worlds, world_import, pack, admission, scenarios, campaign, batch_policy, batch_resume, provenance, snapshot_storage
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
@@ -114,11 +114,14 @@ def selection(args, catalog, options=None, desktop_mode=None):
     return result
 
 
-def save_report(output, catalog, control=None):
+def save_report(output, catalog, control=None, *, snapshot_store=None):
     value = report.build_report(output, catalog, report.build_report(control, catalog) if control else None)
     report.write_json(output / 'report.json', value)
     (output / 'report.txt').write_text(report.summary(value), encoding='utf-8')
     report.write_json(output / 'coverage.json', report.matrix(catalog, [value]))
+    if snapshot_store is not None:
+        maintenance = snapshot_storage.after_report(output, snapshot_store)
+        print('STORAGE ' + maintenance['status'] + (': ' + maintenance['reason'] if 'reason' in maintenance else ''), flush=True)
     return value
 
 
@@ -300,6 +303,9 @@ def batch_input_failure(args, plan, jobs, units, unit, catalog, policy, error):
 
 def batch(args, catalog):
     plan = report.read_json(args.plan)
+    snapshot_store = getattr(args, 'snapshot_store', None) or plan.get('snapshot_store')
+    if snapshot_store is not None and not Path(snapshot_store).is_absolute():
+        raise ValueError('Batch snapshot_store must be an absolute shared store path')
     jobs = selected_jobs(plan, getattr(args, 'jobs', None), getattr(args, 'sets', ()), getattr(args, 'skip_jobs', None))
     policy = batch_policy.resolve(plan, getattr(args, 'failure_policy', None))
     campaign.validate(plan)
@@ -394,7 +400,8 @@ def batch(args, catalog):
             if failure:
                 item['setup_failure'] = failure
             stage = 'report'
-            value = save_report(output, catalog, control)
+            value = (save_report(output, catalog, control, snapshot_store=snapshot_store)
+                     if snapshot_store is not None else save_report(output, catalog, control))
             item['report_sha256'] = provenance.digest(output / 'report.json')
             # The sealed log audit may find a receipt written during shutdown,
             # even when execution did not retain the corresponding failure.
@@ -446,6 +453,14 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser('status', help='Show native stand owners, queued requests and blocking reasons without launching the game')
     command.add_argument('--json', action='store_true', help='Print the machine-readable admission snapshot')
+    command = commands.add_parser('snapshot-compact', help='Preview stopped-run mod-tree retirement; --apply verifies archives before removing working trees')
+    command.add_argument('run', type=Path)
+    command.add_argument('--store', type=Path, help='Shared content store outside the run; required on first compaction')
+    command.add_argument('--apply', action='store_true')
+    command.add_argument('--dependency-root', type=Path, action='append', default=[], help='Additional complete source-consumer scan root; repeat for external run/pack-lock collections')
+    for name in ('snapshot-verify', 'snapshot-restore'):
+        command = commands.add_parser(name, help='Verify archives without extraction' if name == 'snapshot-verify' else 'Restore independent mod trees to their original paths')
+        command.add_argument('run', type=Path)
     for name in ("prepare", "run"):
         command = commands.add_parser(name)
         command.add_argument("output", type=Path, help="Fresh isolated output directory")
@@ -477,10 +492,12 @@ def main(argv=None):
                              help='macOS: auto (default) routes to PZ-TEST, with current-desktop fallback only for a sleeping physical display; aerospace requires routing; current is a legacy guarded auto alias. Run GUI tests outside the sandbox')
         if name == "run":
             command.add_argument("--control", type=Path, help="Completed matching native control run directory")
+            command.add_argument('--snapshot-store', type=Path, help='Opt into shared mod archival after saving the report; preserve raw trees if maintenance cannot safely finish')
     command = commands.add_parser("resume", help="Launch a fresh already prepared snapshot using its immutable desktop policy; prepare again to change it")
     command.add_argument("output", type=Path)
     command.add_argument("--control", type=Path)
     command.add_argument("--resource-wait", type=float, default=300)
+    command.add_argument('--snapshot-store', type=Path, help='Opt into shared mod archival after saving the report')
     command = commands.add_parser("report", help="Audit a run without launching anything")
     command.add_argument("output", type=Path)
     command.add_argument("--control", type=Path)
@@ -505,6 +522,7 @@ def main(argv=None):
     command.add_argument('--dry-run', action='store_true', help='Print resolved job selections as JSON without preparing profiles or launching games')
     command.add_argument('--failure-policy', choices=batch_policy.POLICIES,
                          help='Override plan failure_policy; stop-on-setup-failure saves a partial report and skips further launches')
+    command.add_argument('--snapshot-store', type=Path, help='Shared archive store after each stopped launch group; overrides plan snapshot_store')
     command.add_argument('--desktop-mode', choices=('auto', 'aerospace', 'current'),
                          help='Override desktop launch strategy for every selected job; otherwise use each plan option or the safe auto default')
     command = commands.add_parser('lock-pack', help='Resolve and hash the actual SurvivorQoL-selected.ini pack without launching the game')
@@ -526,6 +544,18 @@ def main(argv=None):
     command.add_argument('--player', action='append', default=[], help='Map a native networkPlayers row ID to client1/client2: client1=42')
     args = parser.parse_args(argv)
     try:
+        if args.command == 'snapshot-compact':
+            with redirect_stdout(sys.stderr):
+                value = snapshot_storage.compact(args.run, args.store, apply=args.apply,
+                                                 dependency_roots=args.dependency_root)
+            print(json.dumps(value, indent=2))
+            return 0
+        if args.command in ('snapshot-verify', 'snapshot-restore'):
+            operation = snapshot_storage.verify if args.command == 'snapshot-verify' else snapshot_storage.restore
+            with redirect_stdout(sys.stderr):
+                value = operation(args.run)
+            print(json.dumps(value, indent=2))
+            return 0
         if args.command == 'status':
             value = admission.status(legacy_lock=runner.LOCK)
             if args.json:
@@ -632,7 +662,9 @@ def main(argv=None):
             resume_context, args.control = batch_resume.resolve(args.output, args.control)
         if args.command in ("run", "resume"):
             runner.run(args.output, resource_wait=args.resource_wait)
-        value = save_report(args.output, catalog, args.control)
+        store = getattr(args, 'snapshot_store', None)
+        value = (save_report(args.output, catalog, args.control, snapshot_store=store)
+                 if store is not None else save_report(args.output, catalog, args.control))
         if resume_context is not None:
             updated = batch_resume.record(resume_context, value, catalog)
             print('Updated batch accounting: ' + str(updated), flush=True)

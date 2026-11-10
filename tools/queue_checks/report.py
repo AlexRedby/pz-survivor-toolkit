@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from . import adapters, batch_policy, progress, mod_inputs, case_stages, health_placement
+from . import adapters, batch_policy, progress, mod_inputs, case_stages, health_placement, snapshot_storage
 
 
 MARKER = "[QUEUE_CHECK] "
@@ -86,6 +86,7 @@ def verify_game_inputs(root):
 
 
 @progress.operation('verify-manifest')
+@snapshot_storage.with_manifest_sources
 def verify_manifest(root, filename, absolute=False):
     root = Path(root).resolve()
     errors = []
@@ -563,6 +564,7 @@ def window_size_evidence(root, selection):
     return evidence
 
 
+@snapshot_storage.with_inputs
 def build_report(root, catalog, control=None, *, reanalysis=False):
     root = Path(root).resolve()
     from . import provenance
