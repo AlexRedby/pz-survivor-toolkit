@@ -73,6 +73,7 @@ class WishlistFullSessionTests(unittest.TestCase):
 local m=model()
 local classes={clean={},native={}};local paneClasses={clean={},native={}}
 local current,mode,baseline,registry,ui,cookCloses,restored,bc,bcBaseline
+local pendingRemovals,lingering,unownedWindow,pageRefreshes
 local bcFields={'isForceSelected','forceSelectedType','_ForceSwitchIntent','_BrowseElapsedMs','_LastTransfer','_TransferRunning','_HasNearbyCorpses'}
 package.preload['BetterContainers/Proximity']=function()return bc end
 local function geometry(object,seed)
@@ -98,6 +99,7 @@ local function page(kind,index,seed)
  p.setPinned=function(self)self.pin=true end;p.collapse=function(self)self.pin=false end
  p.backpacks={{inventory=pane.inventory}};p.selectedButton=p.backpacks[1]
  p.refreshBackpacks=function(self)
+  pageRefreshes=pageRefreshes+1
   self.backpacks={{inventory=self.inventoryPane.inventory}};self.selectedButton=self.backpacks[1]
   bc._ForceSwitchIntent[0]='fixture-auto';bc._BrowseElapsedMs[0]=999
   self.inventoryPane:refreshContainer()
@@ -114,7 +116,14 @@ ISTimedActionQueue={getTimedActionQueue=function()return{queue={}}end}
 CleanUI_isCleanInventoryUIEnabled=function()return mode end
 CleanUI_setCleanInventoryUIEnabled=function(value)rebuild(value)end
 ISEntityUI={GetWindowInstance=function(_,key)return registry[key]end}
-UIManager={getUI=function()return{contains=function(_,object)return ui[object]==true end}end}
+-- Native RemoveElement queues removal until the next UIManager update.
+local function removeElement(object)pendingRemovals[object]=true end
+UIManager={getUI=function()return{contains=function(_,object)return ui[object]==true end}end,
+ update=function()
+  for object in pairs(pendingRemovals)do
+   if not lingering[object]then ui[object]=nil;pendingRemovals[object]=nil end
+  end
+ end}
 local option={value=true,getValue=function(self)return self.value end,setValue=function(self,value)self.value=value end}
 PZAPI={ModOptions={getOptions=function()return{getOption=function()return option end}end}}
 PZSurvivorWishlist={Client={state=function()return{queue={},lists={}}end},UI={windows={}},
@@ -124,7 +133,7 @@ local function newCook()
   getBottom=function()return 10 end,prerender=function()end},getHeight=function()return 100 end}
  local window={javaObject={},switchToPanel=function()end,createHandCraftPanel=function()end,
   HandCraftPanel={setVisible=function()end},getChildren=function()return{panel}end,setVisible=function()end}
- window.onCloseClick=function(self)cookCloses=cookCloses+1;registry.CookingWindow=nil;ui[self.javaObject]=nil end
+ window.onCloseClick=function(self)cookCloses=cookCloses+1;registry.CookingWindow=nil;removeElement(self.javaObject)end
  -- Project Cook's actual ISPanel-derived window exposes onCloseClick, not close.
  registry.CookingWindow=window;ui[window.javaObject]=true
 end
@@ -133,22 +142,23 @@ ScriptManager={instance={getAllBuildableRecipes=function()return{get=function()r
 local infoShown=0
 ISEntityUI.OpenHandcraftWindow=function()
  local root={javaObject={},setVisible=function()end}
- root.close=function(self)ui[self.javaObject]=nil;registry.HandcraftWindow=nil end
+ root.close=function(self)removeElement(self.javaObject);registry.HandcraftWindow=nil end
  registry.HandcraftWindow=root;ui[root.javaObject]=true
 end
 ISEntityUI.OpenBuildWindow=function()
  local panel={javaObject={},pzswButton={getX=function()return 1 end,getY=function()return 1 end,
   getBottom=function()return 10 end,getWidth=function()return 70 end},getHeight=function()return 100 end,
   setVisible=function()end}
- panel.close=function(self)ui[self.javaObject]=nil end
+ panel.close=function(self)removeElement(self.javaObject)end
  local root={javaObject={},logic={getRecipe=function()end,setRecipe=function()end},getChildren=function()return{}end,setVisible=function()end}
  root.showBuildingInfoPanel=function(self)infoShown=infoShown+1;self.BuildingInfoPanel=panel;ui[panel.javaObject]=true end
- root.close=function(self)panel:close();ui[self.javaObject]=nil;registry.BuildWindow=nil end
+ root.close=function(self)panel:close();removeElement(self.javaObject);registry.BuildWindow=nil end
  registry.BuildWindow=root;ui[root.javaObject]=true
 end
 local events=setmetatable({},{__index=function(owner,key)local event={Add=function()end};owner[key]=event;return event end})
 local function loadFixture(initialMode,case,preexisting)
  registry={};ui={};cookCloses=0;restored=0;mode=initialMode
+ pendingRemovals={};lingering={};unownedWindow={};ui[unownedWindow]=true;pageRefreshes=0
  registry.HandcraftWindow=preexisting
  bc={};bcBaseline={};package.loaded['BetterContainers/Proximity']=nil
  for index,key in ipairs(bcFields)do
@@ -169,14 +179,28 @@ for _,initialMode in ipairs({false,true})do
   if stage[1]=='Project Cook lazy recipe panel integrates wishlist'then stage[2]()end
  end
  assert(registry.CookingWindow and cookCloses==0,'real Cook stage must own its native window')
+ local cook=registry.CookingWindow
  -- Model CleanUI replacing both active page objects during off/on stages.
  rebuild(false);rebuild(true)
  for _,p in ipairs(current)do p.inventory='fixture-page';p.inventoryPane.inventory='combined-loot';p.pin=true;p.visible=true end
  local world,neighbor=m.object(true),m.object(true);m.item(123,world);m.item(124,neighbor);ctx.ownWorld(world)
  assert(ctx.cleanup()==true and restored==1 and cookCloses==1 and not registry.CookingWindow)
  assert(mode==initialMode,'original optional UI mode must restore before peer verification')
+ assert(ui[cook.javaObject]and pendingRemovals[cook.javaObject],
+  'native close must retain its exact window until UIManager update')
+ current[1].X=1234;bc._BrowseElapsedMs[0]=733
+ local ready,reason=ctx.clean({})
+ assert(ready==false and reason=='owned integration window remains in UIManager',
+  'pending native removal must defer clean completion')
+ assert(current[1].X==1234 and bc._BrowseElapsedMs[0]==733 and pageRefreshes==0,
+  'inventory and proximity restoration must wait for owned window absence')
+ UIManager.update()
+ assert(not ui[cook.javaObject]and ui[unownedWindow],
+  'UIManager update must remove only queued windows')
  ctx.verifyOwned=function()return false,'peer object remains'end
  assert(ctx.clean({})==false,'missing peer absence must block clean completion')
+ assert(current[1].X==1234 and bc._BrowseElapsedMs[0]==733 and pageRefreshes==0,
+  'peer absence must gate inventory and proximity restoration')
  ctx.verifyOwned=function()return true end
  assert(ctx.clean({})==true)
  for i,p in ipairs(current)do local saved=baseline[i]
@@ -204,7 +228,46 @@ for _,stage in ipairs(WishlistTestFixture.stages)do
  if stage[1]=='native handcraft window opens'or stage[1]=='native building window opens'or stage[1]=='native building final rendered layout'then stage[2]()end
 end
 assert(infoShown==1,'full-group visual case must target the separate Neat Building info panel')
-assert(ctx.cleanup()and ctx.clean({}),'separate Neat Building panel must be owned and removed')
+local handcraft,building=registry.HandcraftWindow,registry.BuildWindow
+local infoPanel=building.BuildingInfoPanel
+assert(ctx.cleanup(),'native visual closers must allow deferred UIManager removal')
+assert(ui[handcraft.javaObject]and ui[building.javaObject]and ui[infoPanel.javaObject])
+assert(ctx.clean({})==false and pageRefreshes==0,'separate Neat Building panel must gate restoration')
+UIManager.update()
+assert(ctx.clean({}),'separate Neat Building panel must be owned and removed')
+assert(not ui[handcraft.javaObject]and not ui[building.javaObject]and not ui[infoPanel.javaObject]and ui[unownedWindow])
+ctx=loadFixture(true)
+newCook();local stuckCook=registry.CookingWindow
+ctx.ownWindow(stuckCook,function(window)window:onCloseClick()end);lingering[stuckCook.javaObject]=true
+local now,commands=0,{}
+getTimestampMs=function()return now end
+local create=dofile(arg[3])
+local session=create({user='client1',cases={'full'},actors={'client1'},
+ transport=function(_,command)commands[#commands+1]=command end},
+ {full=function(context)
+  context.readyToClean=ctx.readyToClean;context.cleanup=ctx.cleanup;context.clean=ctx.clean
+ end},false)
+local envelope={fixtureCase='full',fixtureEpoch=1,fixtureActor='client1'}
+session.prepare();session.receive('Start',nil,envelope);session.current().finish(true,false);session.tick()
+assert(session.phase=='finish'and commands[#commands]=='Finish',
+ 'a native closer may succeed while its UIManager removal remains pending')
+session.receive('Clean',nil,envelope)
+current[1].X=1234;bc._BrowseElapsedMs[0]=733
+for update=1,3 do
+ UIManager.update()
+ local ready,reason=ctx.clean({})
+ assert(ready==false and reason=='owned integration window remains in UIManager'and ui[stuckCook.javaObject],
+  'a permanently lingering owned window must never become clean')
+ assert(current[1].X==1234 and bc._BrowseElapsedMs[0]==733 and pageRefreshes==0,
+  'repeated pending checks must not restore inventory or proximity state')
+ session.tick();assert(session.phase=='clean','pending removal must remain in the common cleanup poll')
+end
+now=15001;session.tick()
+assert(session.phase=='quarantined'and session.reason=='replicated cleanup deadline owned integration window remains in UIManager',
+ 'a permanently lingering owned window must hit the common cleanup deadline')
+for _,command in ipairs(commands)do assert(command~='Cleaned','lingering window must never acknowledge clean completion')end
+assert(commands[#commands]=='Quarantine'and current[1].X==1234 and bc._BrowseElapsedMs[0]==733 and pageRefreshes==0,
+ 'deadline quarantine must preserve unrestored state')
 assert(not pcall(loadFixture,true,'full',{}),'preexisting integration window must stay outside fixture ownership')
 local ctx=loadFixture(false);CleanUI_setCleanInventoryUIEnabled=function()end
 assert(not pcall(ctx.cleanup),'failed optional-mode restoration must quarantine')
@@ -217,7 +280,8 @@ assert(not pcall(ctx.cleanup),'unexpected mutable BC selection state must quaran
 print('PASS full integration native Cook close, mode/class/page restoration and peer-absence gates')
 '''
         result = subprocess.run([lua, '-', str(ROOT / 'tests/native_queue/support/QueueCraftSession.lua'),
-                                 str(ROOT / 'tests/native_queue/contributions/shared-wishlist/client/ZZWishlist.lua')],
+                                 str(ROOT / 'tests/native_queue/contributions/shared-wishlist/client/ZZWishlist.lua'),
+                                 str(ROOT / 'tests/native_queue/support/QueueFixtureSession.lua')],
                                 input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 

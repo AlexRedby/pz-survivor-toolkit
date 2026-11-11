@@ -491,9 +491,6 @@ if Session then
   local window=W().UI.windows[0];if window and window~=originalWindow then window:close() end
   for window,close in pairs(windows) do close(window) end
   if integratedSession then
-   for window in pairs(windows) do
-    assert(not UIManager.getUI():contains(window.javaObject),'owned integration window remains in UIManager')
-   end
    assert(not ISEntityUI.GetWindowInstance(0,'HandcraftWindow') and not ISEntityUI.GetWindowInstance(0,'BuildWindow')
     and not PJCK_CookingUI.GetWindowInstance(0),'owned integration window remains registered')
    if CleanUI_isCleanInventoryUIEnabled()~=cleanMode then CleanUI_setCleanInventoryUIEnabled(cleanMode) end
@@ -508,7 +505,16 @@ if Session then
  Session.clean=function(receipt)
   local ready,reason=Session.verifyOwned(receipt);if not ready then return false,reason end
   proximityGuard()
-  if integratedSession then assert(CleanUI_isCleanInventoryUIEnabled()==cleanMode,'CleanUI mode changed after reset') end
+  if integratedSession then
+   -- RemoveElement queues native removal until UIManager.update. Observe exact
+   -- absence here without closing again or restoring pages while removal waits.
+   for window in pairs(windows) do
+    if UIManager.getUI():contains(window.javaObject) then return false,'owned integration window remains in UIManager' end
+   end
+   assert(not ISEntityUI.GetWindowInstance(0,'HandcraftWindow') and not ISEntityUI.GetWindowInstance(0,'BuildWindow')
+    and not PJCK_CookingUI.GetWindowInstance(0),'integration window registered after cleanup')
+   assert(CleanUI_isCleanInventoryUIEnabled()==cleanMode,'CleanUI mode changed after reset')
+  end
   for _,entry in ipairs(worlds) do
    if not World.absent(entry.square,entry.world,entry.item) then return false,'owned loose item remains' end
   end
