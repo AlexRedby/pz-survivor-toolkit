@@ -196,6 +196,7 @@ CHECKS['net.alexredby.pztoolkitjavapatches.CleanUIFoodAgeChecks'] = 'CLEANUI_FOO
 CHECKS['net.alexredby.pztoolkitjavapatches.NativeIgnitionSourceChecks'] = 'NATIVE_IGNITION_SOURCE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueLeafTransferFactsChecks'] = 'QUEUE_LEAF_TRANSFER_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueSpatialFactsChecks'] = 'QUEUE_SPATIAL_FACTS_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.QueueHandEventFactsChecks'] = 'QUEUE_HAND_EVENT_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingCompilerChecks'] = 'QUEUE_BINDING_COMPILER_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingSourceChecks'] = 'QUEUE_BINDING_SOURCE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingParametricChecks'] = 'QUEUE_BINDING_PARAMETRIC_CHECKS_PASS'
@@ -220,7 +221,8 @@ CHECKS['zombie.pathfind.nativeCode.BarricadedDoorPathChecks'] = 'BARRICADED_DOOR
 # Workshop-dependent checks require an explicit --test; --check keeps its game-only inputs.
 EXPLICIT_ONLY_CHECKS = {'net.alexredby.pztoolkitjavapatches.DamnLibraryBatteryRecipeChecks',
                         'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
-                        'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks'}
+                        'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks',
+                        'net.alexredby.pztoolkitjavapatches.QueueHandEventFactsChecks'}
 TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}
 # This umbrella runs all isolated Kahlua ownership variants in one JVM invocation.
 CHECK_TIMEOUTS = {'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks': 240}
@@ -432,7 +434,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.95',
+    'version': '0.1.96',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

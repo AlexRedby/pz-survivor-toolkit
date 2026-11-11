@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.360
+
+- **Added:** A source-owned, read-only observation of Archery Nexus Companion hand-event tracking. It distinguishes absent tracking from occupied or unavailable state and rereads resets without calling equip handlers. This is a building block for queue contracts; it grants no new reordering or cancellation permissions.
+
 ### 0.1.359
 
 - **Fixed:** Wholly unstarted native equip operations at the end of the action queue can be cancelled as complete groups. The shared cancellation gate proves that removal executes only the empty native cancellation handler and preserves earlier work, operation ownership, required cleanup and continuation guards. Active equipment, surviving suffixes, producer-owned restoration and reordering retain their existing protections.
@@ -1661,6 +1665,11 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.96
+
+- **Added:** A native read-only bridge for the verified companion bow-tracking capture, with callback fingerprints, shared-capture identity, native API/thread/environment checks and no mutable-state exposure.
+- **Internal:** Share pure Lua prototype fingerprinting without initializing native item-transaction or network subsystems. Transfer-request fingerprint semantics remain unchanged.
 
 ### 0.1.95
 
