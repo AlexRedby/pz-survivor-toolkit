@@ -55,7 +55,7 @@ f.tracking(nil);assert(observer.archeryTrackingAbsent(actor)==nil,'unavailable c
 f.throws(true);assert(observer.archeryTrackingAbsent(actor)==nil,'native failure became absent');f.throws(false)
 local sourceReads=f.counts();assert(sourceReads==1,'source was reopened after loaded closure qualification')
 assert(observer.archeryTrackingAbsent()==nil and observer.archeryTrackingAbsent(actor,true)==nil)
-for key in pairs(observer)do assert(key=='archeryTrackingAbsent','observation exposed unrelated authority')end
+for key in pairs(observer)do assert(key=='archeryTrackingAbsent'or key=='registeredCallbacks'or key=='registeredCallbacksMatch','observation exposed unrelated authority')end
 local function rejected(mutate)
     local case=setup();local api=case.load();mutate(case)
     assert(api.archeryTrackingAbsent(actor)==nil,'unsupported hand-event binding returned a fact')

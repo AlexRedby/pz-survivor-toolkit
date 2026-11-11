@@ -197,6 +197,7 @@ CHECKS['net.alexredby.pztoolkitjavapatches.NativeIgnitionSourceChecks'] = 'NATIV
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueLeafTransferFactsChecks'] = 'QUEUE_LEAF_TRANSFER_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueSpatialFactsChecks'] = 'QUEUE_SPATIAL_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueHandEventFactsChecks'] = 'QUEUE_HAND_EVENT_FACTS_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.QueueEquipEventRegistryChecks'] = 'QUEUE_EQUIP_EVENT_REGISTRY_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingCompilerChecks'] = 'QUEUE_BINDING_COMPILER_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingSourceChecks'] = 'QUEUE_BINDING_SOURCE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingParametricChecks'] = 'QUEUE_BINDING_PARAMETRIC_CHECKS_PASS'
@@ -434,7 +435,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.96',
+    'version': '0.1.97',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

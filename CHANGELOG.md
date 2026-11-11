@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.361
+
+- **Added:** Read-only snapshots and exact ordered revalidation of the currently registered primary/secondary hand-event callbacks, including private mod handlers. Snapshots copy list storage; this observation does not grant queue-edit permissions or prove callback effects, queued dispatch or multiplayer freshness.
+
 ### 0.1.360
 
 - **Added:** A source-owned, read-only observation of Archery Nexus Companion hand-event tracking. It distinguishes absent tracking from occupied or unavailable state and rereads resets without calling equip handlers. This is a building block for queue contracts; it grants no new reordering or cancellation permissions.
@@ -1665,6 +1669,11 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.97
+
+- **Added:** Native current-registry observations for hand events without invoking handlers or exposing mutable Event/list storage. Missing, malformed and foreign-environment inputs remain unavailable.
+- **Internal:** Share metadata-only native API, call-frame and environment verification between the hand-event registry and archery-state observers.
 
 ### 0.1.96
 
