@@ -8,26 +8,10 @@ from pathlib import Path
 import sys
 import subprocess
 
-from queue_checks import native, report, runner, adapters, worlds, world_import, pack, admission, scenarios, campaign, batch_policy, batch_resume, provenance, snapshot_storage, snapshot_defaults, snapshot_store
+from queue_checks import native, report, runner, adapters, worlds, world_import, pack, admission, scenarios, campaign, batch_policy, batch_resume, provenance
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG = ROOT / "tests/native_queue/catalog.json"
-
-
-def post_run_store(args, plan=None):
-    if getattr(args, 'no_snapshot_compaction', False):
-        return None
-    explicit = getattr(args, 'snapshot_store', None)
-    if explicit is not None:
-        return explicit
-    configured = plan.get('snapshot_store') if plan is not None else None
-    if configured is False:
-        return None
-    if configured is not None:
-        if not isinstance(configured, str) or not Path(configured).is_absolute():
-            raise ValueError('Batch snapshot_store must be an absolute shared store path or false')
-        return configured
-    return None
 
 
 def load_catalog(suites=None):
@@ -130,23 +114,12 @@ def selection(args, catalog, options=None, desktop_mode=None):
     return result
 
 
-def save_report(output, catalog, control=None, *, snapshot_store=None):
+def save_report(output, catalog, control=None):
     value = report.build_report(output, catalog, report.build_report(control, catalog) if control else None)
     report.write_json(output / 'report.json', value)
     (output / 'report.txt').write_text(report.summary(value), encoding='utf-8')
     report.write_json(output / 'coverage.json', report.matrix(catalog, [value]))
-    if snapshot_store is not None:
-        maintenance = snapshot_storage.after_report(output, snapshot_store)
-        print('STORAGE ' + maintenance['status'] + (': ' + maintenance['reason'] if 'reason' in maintenance else ''), flush=True)
     return value
-
-
-def finish_batch_storage(output, runs, store, *, interrupted=False):
-    if store is None or not runs:
-        return
-    value = snapshot_storage.after_group_report(list(dict.fromkeys(runs)), store,
-        output / 'storage-maintenance.json', interrupted=interrupted)
-    print('STORAGE ' + value['status'] + (': ' + value['reason'] if 'reason' in value else ''), flush=True)
 
 
 def selected_jobs(plan, only=None, sets=(), skip=None):
@@ -327,9 +300,6 @@ def batch_input_failure(args, plan, jobs, units, unit, catalog, policy, error):
 
 def batch(args, catalog):
     plan = report.read_json(args.plan)
-    snapshot_store = post_run_store(args, plan)
-    if snapshot_store is not None and not Path(snapshot_store).is_absolute():
-        raise ValueError('Batch snapshot_store must be an absolute shared store path')
     jobs = selected_jobs(plan, getattr(args, 'jobs', None), getattr(args, 'sets', ()), getattr(args, 'skip_jobs', None))
     policy = batch_policy.resolve(plan, getattr(args, 'failure_policy', None))
     campaign.validate(plan)
@@ -394,7 +364,6 @@ def batch(args, catalog):
         return 0
     args.output.mkdir(parents=True)
     results, completed, sessions, accepted = [], {}, [], set()
-    storage_runs = []
     for unit in units:
         job, output = unit['jobs'][0], unit['output']
         item = {'run': str(output.resolve())}
@@ -426,7 +395,6 @@ def batch(args, catalog):
                 item['setup_failure'] = failure
             stage = 'report'
             value = save_report(output, catalog, control)
-            storage_runs.append(output.resolve())
             item['report_sha256'] = provenance.digest(output / 'report.json')
             # The sealed log audit may find a receipt written during shutdown,
             # even when execution did not retain the corresponding failure.
@@ -467,12 +435,9 @@ def batch(args, catalog):
                           'remaining': identifiers[len(results):], 'stop_reason': stop_reason,
                           'campaign': campaign.build(plan, jobs, results)}, catalog)
         if interrupted:
-            finish_batch_storage(args.output, storage_runs, snapshot_store, interrupted=True)
             return 130
         if stop:
-            finish_batch_storage(args.output, storage_runs, snapshot_store)
             return 1
-    finish_batch_storage(args.output, storage_runs, snapshot_store)
     return {'passed': 0, 'failed': 1, 'needs-review': 2}[overall]
 
 
@@ -481,22 +446,6 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     command = commands.add_parser('status', help='Show native stand owners, queued requests and blocking reasons without launching the game')
     command.add_argument('--json', action='store_true', help='Print the machine-readable admission snapshot')
-    command = commands.add_parser('snapshot-compact', help='Preview stopped-run mod-tree retirement; --apply verifies archives before removing working trees')
-    command.add_argument('run', type=Path)
-    command.add_argument('--store', type=Path, help='Shared content store outside the run; defaults to the persistent repository store')
-    command.add_argument('--apply', action='store_true')
-    command.add_argument('--dependency-root', type=Path, action='append', default=[], help='Additional complete source-consumer scan root; repeat for external run/pack-lock collections')
-    command = commands.add_parser('snapshot-compact-group', help='Preview or compact an explicit stopped-run cohort under shared dependency/profile guards')
-    command.add_argument('plan', type=Path, help='JSON object with schema_version=1 and an explicit runs list')
-    command.add_argument('--store', type=Path, help='Defaults to the persistent repository store')
-    command.add_argument('--apply', action='store_true')
-    command.add_argument('--report', type=Path, help='Fresh result ledger outside the selected runs and shared store')
-    command.add_argument('--dependency-root', type=Path, action='append', default=[])
-    for name in ('snapshot-verify', 'snapshot-restore'):
-        command = commands.add_parser(name, help='Verify archives without extraction' if name == 'snapshot-verify' else 'Restore independent mod trees to their original paths')
-        command.add_argument('run', type=Path)
-    command = commands.add_parser('snapshot-compress-store', help='Durably gzip legacy descriptor JSON without changing object IDs; requires idle native maintenance')
-    command.add_argument('store', type=Path, nargs='?', help='Defaults to the persistent repository store')
     for name in ("prepare", "run"):
         command = commands.add_parser(name)
         command.add_argument("output", type=Path, help="Fresh isolated output directory")
@@ -528,16 +477,10 @@ def main(argv=None):
                              help='macOS: auto (default) routes to PZ-TEST, with current-desktop fallback only for a sleeping physical display; aerospace requires routing; current is a legacy guarded auto alias. Run GUI tests outside the sandbox')
         if name == "run":
             command.add_argument("--control", type=Path, help="Completed matching native control run directory")
-            storage_options = command.add_mutually_exclusive_group()
-            storage_options.add_argument('--snapshot-store', type=Path, help='Use this shared mod store after saving the report')
-            storage_options.add_argument('--no-snapshot-compaction', action='store_true', help='Keep raw mod trees after this execution')
     command = commands.add_parser("resume", help="Launch a fresh already prepared snapshot using its immutable desktop policy; prepare again to change it")
     command.add_argument("output", type=Path)
     command.add_argument("--control", type=Path)
     command.add_argument("--resource-wait", type=float, default=300)
-    storage_options = command.add_mutually_exclusive_group()
-    storage_options.add_argument('--snapshot-store', type=Path, help='Use this shared mod store after saving the report')
-    storage_options.add_argument('--no-snapshot-compaction', action='store_true')
     command = commands.add_parser("report", help="Audit a run without launching anything")
     command.add_argument("output", type=Path)
     command.add_argument("--control", type=Path)
@@ -562,9 +505,6 @@ def main(argv=None):
     command.add_argument('--dry-run', action='store_true', help='Print resolved job selections as JSON without preparing profiles or launching games')
     command.add_argument('--failure-policy', choices=batch_policy.POLICIES,
                          help='Override plan failure_policy; stop-on-setup-failure saves a partial report and skips further launches')
-    storage_options = command.add_mutually_exclusive_group()
-    storage_options.add_argument('--snapshot-store', type=Path, help='Shared archive store after each stopped launch group; overrides plan snapshot_store')
-    storage_options.add_argument('--no-snapshot-compaction', action='store_true', help='Keep raw mod trees; overrides plan snapshot_store')
     command.add_argument('--desktop-mode', choices=('auto', 'aerospace', 'current'),
                          help='Override desktop launch strategy for every selected job; otherwise use each plan option or the safe auto default')
     command = commands.add_parser('lock-pack', help='Resolve and hash the actual SurvivorQoL-selected.ini pack without launching the game')
@@ -586,39 +526,6 @@ def main(argv=None):
     command.add_argument('--player', action='append', default=[], help='Map a native networkPlayers row ID to client1/client2: client1=42')
     args = parser.parse_args(argv)
     try:
-        execution_store = post_run_store(args) if args.command in ('run', 'resume') else None
-        if args.command == 'snapshot-compact-group':
-            plan = report.read_json(args.plan)
-            if (not isinstance(plan, dict) or set(plan) != {'schema_version', 'runs'}
-                    or type(plan['schema_version']) is not int or plan['schema_version'] != 1
-                    or not isinstance(plan['runs'], list) or not plan['runs']
-                    or any(not isinstance(path, str) or not Path(path).is_absolute() for path in plan['runs'])):
-                raise ValueError('Snapshot cohort requires schema_version=1 and a nonempty list of absolute runs')
-            with redirect_stdout(sys.stderr):
-                value = snapshot_storage.compact_group(plan['runs'], args.store or snapshot_defaults.default_store(ROOT), apply=args.apply,
-                    dependency_roots=args.dependency_root, report_path=args.report)
-            print(json.dumps(value, indent=2))
-            return 0 if value['status'] in ('preview', 'compacted') else 2
-        if args.command == 'snapshot-compress-store':
-            with redirect_stdout(sys.stderr), snapshot_storage.store_maintenance():
-                value = snapshot_store.compress_descriptors(args.store or snapshot_defaults.default_store(ROOT))
-            print(json.dumps(value, indent=2))
-            return 0
-        if args.command == 'snapshot-compact':
-            store = args.store
-            if store is None and not (args.run / snapshot_storage.MARKER).exists():
-                store = snapshot_defaults.default_store(ROOT)
-            with redirect_stdout(sys.stderr):
-                value = snapshot_storage.compact(args.run, store, apply=args.apply,
-                                                 dependency_roots=args.dependency_root)
-            print(json.dumps(value, indent=2))
-            return 0
-        if args.command in ('snapshot-verify', 'snapshot-restore'):
-            operation = snapshot_storage.verify if args.command == 'snapshot-verify' else snapshot_storage.restore
-            with redirect_stdout(sys.stderr):
-                value = operation(args.run)
-            print(json.dumps(value, indent=2))
-            return 0
         if args.command == 'status':
             value = admission.status(legacy_lock=runner.LOCK)
             if args.json:
@@ -725,9 +632,7 @@ def main(argv=None):
             resume_context, args.control = batch_resume.resolve(args.output, args.control)
         if args.command in ("run", "resume"):
             runner.run(args.output, resource_wait=args.resource_wait)
-        store = execution_store
-        value = (save_report(args.output, catalog, args.control, snapshot_store=store)
-                 if store is not None else save_report(args.output, catalog, args.control))
+        value = save_report(args.output, catalog, args.control)
         if resume_context is not None:
             updated = batch_resume.record(resume_context, value, catalog)
             print('Updated batch accounting: ' + str(updated), flush=True)

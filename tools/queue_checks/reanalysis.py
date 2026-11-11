@@ -1,17 +1,10 @@
 """Write a new analysis of sealed observations without changing the native run."""
 from pathlib import Path
-from contextlib import nullcontext
 
-from . import provenance, report, snapshot_storage
+from . import provenance, report
 
 
-@snapshot_storage.with_inputs
 def write(root, output, catalog, control=None):
-    with snapshot_storage.available(control) if control is not None else nullcontext():
-        return _write(root, output, catalog, control)
-
-
-def _write(root, output, catalog, control=None):
     root, output = Path(root).resolve(), Path(output).resolve()
     control = Path(control).resolve() if control else None
     if output.exists():

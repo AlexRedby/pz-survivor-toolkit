@@ -11,7 +11,7 @@ import sys
 import tempfile
 import zipfile
 import uuid
-from . import adapters, worlds, pack, admission, report, coop, glfw, preparation_process, borrowing_check, provenance, progress, mod_inputs, snapshot_storage
+from . import adapters, worlds, pack, admission, report, coop, glfw, preparation_process, borrowing_check, provenance, progress, mod_inputs
 try:
     from .. import lua_compatibility
 except ImportError:
@@ -202,7 +202,7 @@ def _lua(value):
 def source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=None, validate_adapter=True,
                   resource_wait=300):
     """Check external inputs under the same preparation lease as snapshot creation."""
-    with snapshot_storage.selection_inputs(selection, workshop), tempfile.TemporaryDirectory(prefix='pz-native-preflight-') as directory:
+    with tempfile.TemporaryDirectory(prefix='pz-native-preflight-') as directory:
         with admission.preparing(Path(directory), selection, wait=resource_wait):
             return _source_inputs(project, game, jdk, selection, workshop,
                                   pack_cache=pack_cache, validate_adapter=validate_adapter)
@@ -291,7 +291,7 @@ def prepare(project: Path, output: Path, game: Path, jdk: Path,
     resource_check = getattr(adapter, 'validate_resources', None)
     if resource_check:
         resource_check(selection)
-    with snapshot_storage.selection_inputs(selection, workshop), admission.preparing(output, selection, wait=resource_wait):
+    with admission.preparing(output, selection, wait=resource_wait):
         return _prepare(project, output, game, jdk, selection, workshop)
 
 

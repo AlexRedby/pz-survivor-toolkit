@@ -5,7 +5,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import time
 
 
 GAME_ARGUMENT = re.compile(
@@ -75,37 +74,6 @@ def parse_processes(stats, commands):
 def _output(command):
     return subprocess.check_output(command, text=True, stderr=subprocess.PIPE,
                                    env=dict(os.environ, LC_ALL='C'), timeout=10)
-
-
-def process_started_after(pid, cutoff_ns):
-    """Prove PID reuse from elapsed time, retaining the guard on any uncertainty."""
-    if type(pid) is not int or pid <= 0 or type(cutoff_ns) is not int:
-        return False
-    try:
-        wall_before = time.time_ns()
-        monotonic_before = time.monotonic_ns()
-        elapsed = _output(['/bin/ps', '-p', str(pid), '-o', 'etime=']).strip()
-        monotonic_after = time.monotonic_ns()
-        wall_after = time.time_ns()
-        match = re.fullmatch(r'(?:(?P<days>[0-9]+)-)?(?:(?P<hours>[0-9]{1,2}):)?'
-                             r'(?P<minutes>[0-5][0-9]):(?P<seconds>[0-5][0-9])', elapsed)
-        if match is None or (match['days'] is not None and match['hours'] is None):
-            return False
-        days, hours, minutes, seconds = (int(match[name] or 0)
-                                         for name in ('days', 'hours', 'minutes', 'seconds'))
-        if hours >= 24:
-            return False
-        wall_duration = wall_after - wall_before
-        monotonic_duration = monotonic_after - monotonic_before
-        if (wall_duration < 0 or monotonic_duration < 0
-                or abs(wall_duration - monotonic_duration) > 1_000_000_000):
-            return False
-        elapsed_seconds = days * 86400 + hours * 3600 + minutes * 60 + seconds
-        # One second for ps rounding and another for accepted clock uncertainty.
-        start_lower_bound = wall_before - (elapsed_seconds + 2) * 1_000_000_000
-        return start_lower_bound > cutoff_ns
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return False
 
 
 def sample():
