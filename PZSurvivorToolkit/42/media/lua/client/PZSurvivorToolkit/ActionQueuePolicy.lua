@@ -1,4 +1,7 @@
 require "PZSurvivorToolkit/ActionQueueDefinitions"
+-- Auto-load and early compatibility entrypoints must arm observation before any admission.
+require "PZSurvivorToolkit/ActionQueueLifecycle"
+require "PZSurvivorToolkit/ActionQueueAcknowledgements"
 require "PZSurvivorToolkit/SetStoveStateAction"
 require "Fluids/ISFluidContainer"
 require "Fluids/ISFluidTransferAction"
@@ -48,10 +51,23 @@ local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
+local Clothing = require "PZSurvivorToolkit/ActionQueueClothing"
+local clothingInspect=Clothing and Clothing.inspect
+local clothingWeight=Clothing and Clothing.removalWeight
+local clothingBindings=Clothing and Clothing.bindingsTrusted
+local clothingLookup=Clothing and Clothing.lookupSafe
+local clothingClient=isClient
+local clothingFresh=Clothing and Clothing.capacityFresh
+local clothingHandReserve=Clothing and Clothing.handReserve
+local clothingBindNative=Clothing and Clothing.bindNative
+local clothingAdoptBase=Clothing and Clothing.adoptBase
+local clothingBehavior,clothingMatcher,clothingResources,clothingSourceTrusted
+local clothingOrigin,clothingMatches=Proof and Proof.closure,Proof and Proof.matches
 -- Compat/Quartermaster can require Policy before the main Queue module.
 require "PZSurvivorToolkit/ActionQueueSettlement"
 local deferredTransferGuards = {}
 local Weights = require "PZSurvivorToolkit/ActionQueueWeights"
+local nativeDiscountKnown=Weights and Weights.nativeDiscountKnown
 local Firearms = require "PZSurvivorToolkit/ActionQueueFirearms"
 local rackResources = Firearms and Firearms.rack
 local Magazines = require "PZSurvivorToolkit/ActionQueueMagazine"
@@ -506,6 +522,7 @@ local function callbacksSafe(action)
             and Toolkit.BulkActions and Toolkit.BulkActions.isGuardedTransfer(action, action.toolkitTransferGuard.original)))
 end
 local function nativeMatches(action, snapshot, observingCleanup)
+    if snapshot.preflight and not snapshot.preflight(action) then return false end
     local binding = snapshot.binding
     if binding then
         return binding.guard() and binding.applies(action)
@@ -541,6 +558,7 @@ function Policy.matchesNative(action)
     local snapshot = snapshots[getmetatable(action)]
     return snapshot ~= nil and nativeMatches(action, snapshot)
 end
+if type(clothingBindNative)=="function" then clothingBindNative(Policy,Policy.matchesNative)end
 -- Binding verification only: this does not grant queue edit permission. Shared
 -- settlement must separately prove the exact earned drop/current cleanup owner.
 function Policy.matchesCleanupPickupBinding(action)
@@ -562,10 +580,10 @@ local function resources(action)
     end
     return result
 end
-local function registerNative(name, inspector, helpers, applies)
+local function registerNative(name, inspector, helpers, applies, preflight)
     local class = _G[name]
     if not class or snapshots[class] then return end
-    local snapshot = {class = class, methods = {}, helpers = {}}
+    local snapshot = {class = class, methods = {}, helpers = {}, preflight=preflight}
     for _, method in ipairs(lifecycle) do snapshot.methods[method] = class[method] end
     for method, callback in pairs(class) do
         if type(callback) == "function" and snapshot.methods[method] == nil then snapshot.helpers[method] = callback end
@@ -937,6 +955,25 @@ function Policy.skipUnavailableHygiene(queue)
     end
 end
 
+local function equipmentResources(action)
+    local result=itemResources(action)
+    if result then
+        result.hands=action.character;result.cancelWaiting,result.preparation=false,true
+        local snapshot=snapshots[getmetatable(action)]
+        if snapshot and snapshot.binding then result.preparationFinish=true end
+    end
+    return result
+end
+clothingResources=function(action)
+    if type(editNativeMeta)=="function" and type(Clothing)=="table" and editNativeMeta(Toolkit,nil)
+        and editNativeMeta(Clothing,nil) and Toolkit.ActionQueueClothing==Clothing and Clothing.inspect==clothingInspect
+        and type(clothingInspect)=="function" then
+        local contract=clothingInspect(action)
+        if contract then return contract end
+    end
+    -- The one native owner preserves every unsupported/active legacy boundary.
+    return equipmentResources(action)
+end
 function Policy.installContracts()
     registerNative("ISDrinkFluidAction", function(action)
         local result = itemResources(action)
@@ -1009,17 +1046,12 @@ function Policy.installContracts()
             result.positions={[action.character]=true}; return result
         end)
     end
-    for _, name in ipairs({"ISEquipWeaponAction", "ISEquipHeavyItem", "ISUnequipAction"}) do
-        registerNative(name, function(action)
-            local result = itemResources(action)
-            if result then
-                result.hands = action.character; result.cancelWaiting, result.preparation = false, true
-                local snapshot = snapshots[getmetatable(action)]
-                if snapshot and snapshot.binding then result.preparationFinish = true end
-            end
-            return result
-        end)
+    for _, name in ipairs({"ISEquipWeaponAction", "ISEquipHeavyItem"}) do
+        registerNative(name, equipmentResources)
     end
+    registerNative("ISUnequipAction", clothingResources, nil, nil, clothingLookup)
+    local entry=Definitions.entries["native.ISUnequipAction"]
+    if entry and entry.behavior and not clothingBehavior then clothingBehavior=entry.behavior;clothingMatcher=clothingBehavior.matches end
     for _, name in ipairs({"ISRemoveCarBatteryFromChargerAction",
         "ISTakeCarBatteryChargerAction", "ISConnectCarBatteryToChargerAction", "ISToggleStoveAction",
         "PZSurvivorToolkitSetStoveState", "ISToggleClothingWasher", "ISToggleClothingDryer", "ISToggleComboWasherDryer", "ISSetComboWasherDryerMode", "ISOvenUITimedAction"}) do
@@ -1122,7 +1154,11 @@ inspect = function(action, context)
         result[1] = contract
         result.requiredCleanup = true
     end
-    if context then context.contracts[action] = result end
+    if context then
+        context.contracts[action]=result
+        if result[2]=="native.ISUnequipAction" and type(result[1])=="table" and type(editNativeMeta)=="function"
+            and editNativeMeta(result[1],nil) and result[1].clothingRemoval==true then context.clothingCapacity=true end
+    end
     return unpack(result, 1, 3)
 end
 Policy.inspect = inspect
@@ -1548,41 +1584,43 @@ local function wringCapacityNonIncreasing(action,contract,source,context)
     end
     return wringCapacitySourceTrusted==true
 end
-local function transferCapacityConflict(queue, a, b, last, check, context, comparison)
-    local carts = Toolkit.ActionQueueCarts
-    local function transfer(action)
-        return action.Type == "ISInventoryTransferAction"
-            or (action.Type == "ISCartTransferAction" and carts and type(carts.isTransfer) == "function" and carts.isTransfer(action))
+-- Only the exact native registry inspector can produce this capacity effect.
+-- Public flags/numbers and a copied source label cannot authorize a weight read.
+local function clothingRemovalCapability(action,contract,source,context)
+    if source~="native.ISUnequipAction" or type(editNativeMeta)~="function"
+        or type(contract)~="table" or not editNativeMeta(contract,nil) or contract.clothingRemoval~=true then return false end
+    local cached=context and context.contracts[action]
+    if not cached or cached[1]~=contract or cached[2]~=source or cached[3]~=clothingBehavior
+        or not editNativeMeta(Toolkit,nil) or Toolkit.ActionQueueDefinitions~=Definitions
+        or not editNativeMeta(Definitions,nil) or type(Definitions.entries)~="table" or not editNativeMeta(Definitions.entries,nil)
+        or type(Definitions.entries[source])~="table" or not editNativeMeta(Definitions.entries[source],nil)
+        or Definitions.entries[source].behavior~=clothingBehavior or not editNativeMeta(clothingBehavior,nil)
+        or clothingBehavior.inspect~=clothingResources or clothingBehavior.matches~=clothingMatcher
+        or type(Clothing)~="table" or not editNativeMeta(Clothing,nil) or Toolkit.ActionQueueClothing~=Clothing
+        or Clothing.inspect~=clothingInspect or Clothing.removalWeight~=clothingWeight
+        or Clothing.bindingsTrusted~=clothingBindings or Clothing.lookupSafe~=clothingLookup
+        or Clothing.capacityFresh~=clothingFresh or Clothing.handReserve~=clothingHandReserve or Clothing.bindNative~=clothingBindNative or Clothing.adoptBase~=clothingAdoptBase
+        or type(clothingBindings)~="function" or not clothingBindings()
+        or Proof.closure~=clothingOrigin or Proof.matches~=clothingMatches then return false end
+    if clothingSourceTrusted==nil then
+        clothingSourceTrusted=clothingOrigin(clothingInspect,"ActionQueueClothing.lua")
+            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",950563814,"PZSurvivorToolkit",true)
     end
-    local aTransfer, bTransfer = transfer(a), transfer(b)
-    if (aTransfer and not bTransfer) or (bTransfer and not aTransfer) then
-        local equipment = inspect(aTransfer and b or a, comparison or context)
-        -- Hand/slot changes can alter carried weight or move heavy items out of external containers.
-        if equipment and equipment.hands == queue.character then
-            local transferAction = aTransfer and a or b
-            local contract = inspect(transferAction, context)
-            local capability, execution = returnCapacityCapability(transferAction, contract, context)
-            -- Native live admission and exact outcome handling own this earned
-            -- single return. No equipment-neutrality or future-space claim.
-            if not capability or not execution or not execution.capacityDeferred
-                or not execution.capacityDeferred(transferAction, capability) then return queue.character:getInventory() end
-        end
-    end
-    if not aTransfer or not bTransfer then return end
+    return clothingSourceTrusted==true
+end
+local function proposedCapacityConflict(queue,last,check,context,initialBlocker)
+    if context and context.clothingCapacity and #queue.queue>32 then return queue.character:getInventory() end
     if check.done then return check.blocker end
-    local shared
-    for _, left in pairs({a.srcContainer, a.destContainer}) do
-        for _, right in pairs({b.srcContainer, b.destContainer}) do
-            if left == right then shared = left end
-        end
+    local carts=Toolkit.ActionQueueCarts
+    local function transfer(action)
+        return action.Type=="ISInventoryTransferAction"
+            or action.Type=="ISCartTransferAction" and carts and type(carts.isTransfer)=="function" and carts.isTransfer(action)
     end
-    local character = queue.character
-    local aCarried = carriedContainer(a.srcContainer, character) or carriedContainer(a.destContainer, character)
-    local bCarried = carriedContainer(b.srcContainer, character) or carriedContainer(b.destContainer, character)
-    if not shared and not (aCarried and bCarried) then return end
-    local root = character:getInventory()
-    check.done, check.blocker = true, shared or root
+    local character=queue.character
+    local root=character:getInventory()
+    check.done, check.blocker = true, initialBlocker or root
     local incoming, touched, order, removed, loads = {[root] = 0}, {}, {}, {}, {}
+    local removalFresh,rootHandReserve,firstRemoval,firstRemovalContract,firstRemovalSource
     if not check.to then
         -- Keep incoming bounds for cancelled work, including an in-flight pickup's native return.
         for i = check.first, check.last do removed[queue.queue[i]] = true end
@@ -1596,7 +1634,10 @@ local function transferCapacityConflict(queue, a, b, last, check, context, compa
     local cartCapacity, conditionalCapacity, hasConditionalCapacity = false, {}, false
     for _, action in ipairs(order) do
         if action.Type == "ISCartTransferAction" or (carts and type(carts.involvesCart) == "function" and carts.involvesCart(action)) then cartCapacity = true end
-        local contract = inspect(action, context)
+        local contract,source = inspect(action, context)
+        if contract and contract.clothingRemoval==true and not removed[action] and not firstRemoval then
+            firstRemoval,firstRemovalContract,firstRemovalSource=action,contract,source
+        end
         if contract and contract.capacityRequiresEdit then
             conditionalCapacity[action], hasConditionalCapacity = true, true
         end
@@ -1616,10 +1657,22 @@ local function transferCapacityConflict(queue, a, b, last, check, context, compa
         end
         if evaluateComponent(projection, entries).status ~= "allowed" then return check.blocker end
     end
+    -- Only the newly owned Host removal path may replace the exact native
+    -- aggregate with a sign-qualified bound. Transfer-only/SP keep their path.
+    local firstRemovalOwned
+    if firstRemoval and (type(clothingClient)~="function" or isClient~=clothingClient) then return root end
+    if firstRemoval and clothingClient() then
+        if not clothingRemovalCapability(firstRemoval,firstRemovalContract,firstRemovalSource,context) then return root end
+        firstRemovalOwned=true
+        removalFresh=clothingFresh(queue)
+        if removalFresh~=true then return root end
+        rootHandReserve=clothingHandReserve(queue)
+        if not finiteWeight(rootHandReserve) or rootHandReserve<0 then return root end
+    end
     local function fits(container, weight)
         local load = loads[container]
         if not load then
-            local current=Weights.capacity(container,character)
+            local current=Weights.capacity(container,character,container==root and rootHandReserve or nil)
             if not finiteWeight(current) then return false end
             if cartCapacity and (not carts or not carts.capacitySafe or not carts.capacitySafe(container)) then return false end
             load = {current, container:getEffectiveCapacity(character), container:getAcceptItemFunction() == nil}
@@ -1633,7 +1686,21 @@ local function transferCapacityConflict(queue, a, b, last, check, context, compa
     for _, action in ipairs(order) do
         local contract, source = inspect(action, context)
         if not contract or contract.knownInputs == false then return check.blocker end
-        if transfer(action) then
+        if contract.clothingRemoval==true then
+            if not (action==firstRemoval and firstRemovalOwned) and not clothingRemovalCapability(action,contract,source,context) then return check.blocker end
+            if not removed[action] then
+                if removalFresh==nil then removalFresh=clothingFresh(queue)end
+                if removalFresh~=true then return root end
+                local upper,equipped=clothingWeight(action,contract)
+                if rootHandReserve~=nil and (type(Weights)~="table" or not editNativeMeta(Weights,nil)
+                    or Toolkit.ActionQueueWeights~=Weights or type(nativeDiscountKnown)~="function"
+                    or Weights.nativeDiscountKnown~=nativeDiscountKnown or not nativeDiscountKnown(upper,equipped)) then return root end
+                if not finiteWeight(upper) or upper<0 or not fits(root,incoming[root]+2*upper) then return root end
+                -- Removal can grow carried load by at most its full weight.
+                -- A second full weight bounds native hasRoomFor(oldItem).
+                incoming[root]=incoming[root]+upper
+            end
+        elseif transfer(action) then
             local destination, source, seen = action.destContainer, action.srcContainer, {}
             local destinations = carriedContainers(destination, character)
             local sourceCarried = carriedContainer(source, character)
@@ -1705,6 +1772,40 @@ local function transferCapacityConflict(queue, a, b, last, check, context, compa
     if not fits(root, incoming[root]) then return root end
     check.blocker = nil
 end
+local function transferCapacityConflict(queue, a, b, last, check, context, comparison)
+    local carts = Toolkit.ActionQueueCarts
+    local function transfer(action)
+        return action.Type == "ISInventoryTransferAction"
+            or (action.Type == "ISCartTransferAction" and carts and type(carts.isTransfer) == "function" and carts.isTransfer(action))
+    end
+    local aTransfer, bTransfer = transfer(a), transfer(b)
+    if (aTransfer and not bTransfer) or (bTransfer and not aTransfer) then
+        local equipment = inspect(aTransfer and b or a, comparison or context)
+        -- Hand/slot changes can alter carried weight or move heavy items out of external containers.
+        if equipment and equipment.hands == queue.character then
+            local transferAction = aTransfer and a or b
+            local contract = inspect(transferAction, context)
+            local capability, execution = returnCapacityCapability(transferAction, contract, context)
+            -- Native live admission and exact outcome handling own this earned
+            -- single return. No equipment-neutrality or future-space claim.
+            if not capability or not execution or not execution.capacityDeferred
+                or not execution.capacityDeferred(transferAction, capability) then return queue.character:getInventory() end
+        end
+    end
+    if not aTransfer or not bTransfer then return end
+    if check.done then return check.blocker end
+    local shared
+    for _, left in pairs({a.srcContainer, a.destContainer}) do
+        for _, right in pairs({b.srcContainer, b.destContainer}) do
+            if left == right then shared = left end
+        end
+    end
+    local character = queue.character
+    local aCarried = carriedContainer(a.srcContainer, character) or carriedContainer(a.destContainer, character)
+    local bCarried = carriedContainer(b.srcContainer, character) or carriedContainer(b.destContainer, character)
+    if not shared and not (aCarried and bCarried) then return end
+    return proposedCapacityConflict(queue,last,check,context,shared or character:getInventory())
+end
 
 local function editCapacityConflict(queue, edit, first, last, to, context)
     if not edit.externalCapacity then return end
@@ -1717,6 +1818,15 @@ local function editCapacityConflict(queue, edit, first, last, to, context)
         if (to or index > last) and (member.Type == "ISInventoryTransferAction" or member.Type == "ISCartTransferAction") then
             return transferCapacityConflict(queue, member, member, #queue.queue,
                 {first = first, last = last, to = to}, context)
+        end
+    end
+    for index,member in ipairs(queue.queue) do
+        if to or index>last then
+            local contract,source=inspect(member,context)
+            if contract and contract.clothingRemoval==true then
+                if not clothingRemovalCapability(member,contract,source,context) then return queue.character:getInventory() end
+                return proposedCapacityConflict(queue,#queue.queue,{first=first,last=last,to=to},context,queue.character:getInventory())
+            end
         end
     end
 end
@@ -2199,6 +2309,10 @@ function Policy.returnFailureIndependent(queue, action)
 end
 
 function Policy.replaceStop(previous, replacement)
+    if type(clothingAdoptBase)=="function" and type(Clothing)=="table" and type(editNativeMeta)=="function"
+        and editNativeMeta(Clothing,nil) and Toolkit.ActionQueueClothing==Clothing and Clothing.adoptBase==clothingAdoptBase then
+        clothingAdoptBase("stop",previous,replacement)
+    end
     if type(adoptGroomingBase) == "function" and Toolkit.ActionQueueGrooming == Grooming and Grooming.adoptBase == adoptGroomingBase then adoptGroomingBase("stop", previous, replacement) end
     if Firearms then Firearms.adoptBase("stop", previous, replacement) end
     if EditAdapters then EditAdapters.adoptBase("stop", previous, replacement) end
@@ -2214,6 +2328,10 @@ function Policy.replaceStop(previous, replacement)
 end
 
 function Policy.adoptBegin(previous, replacement)
+    if type(clothingAdoptBase)=="function" and type(Clothing)=="table" and type(editNativeMeta)=="function"
+        and editNativeMeta(Clothing,nil) and Toolkit.ActionQueueClothing==Clothing and Clothing.adoptBase==clothingAdoptBase then
+        clothingAdoptBase("begin",previous,replacement)
+    end
     if type(adoptGroomingBase) == "function" and Toolkit.ActionQueueGrooming == Grooming and Grooming.adoptBase == adoptGroomingBase then adoptGroomingBase("begin", previous, replacement) end
     if Firearms then Firearms.adoptBase("begin", previous, replacement) end
     if EditAdapters then EditAdapters.adoptBase("begin", previous, replacement) end

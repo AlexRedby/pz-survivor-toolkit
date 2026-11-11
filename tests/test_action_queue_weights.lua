@@ -100,6 +100,113 @@ do
     assert(not s.weights.factoryFree(bag)and not s.weights.unequipped(bag),'missing collections fail closed')
     assert(not s.weights.factoryFree(nil))
 end
+-- The qualified Host path reuses free(root)'s existing traversal. It adds
+-- explicit Lua/Java mode/weight reads in that walk instead of the later native
+-- aggregate call. The legacy nil-reserve path keeps its previous getter work.
+for _,size in ipairs({1,16,128})do
+    local s=setup();local visits,weights,aggregates=0,0,0
+    for i=1,size do
+        local item=s.add(s.item(.25),s.root)
+        item.getUnequippedWeight=function()weights=weights+1;return .25 end
+    end
+    local get=s.root.getItems
+    s.root.getItems=function(self)visits=visits+1;return get(self)end
+    s.root.getCapacityWeight=function()aggregates=aggregates+1;return size*.25 end
+    assert(s.weights.capacity(s.root,s.actor)==size*.25)
+    assert(visits==1 and weights==0 and aggregates==1,'legacy exact root work changed')
+    visits,weights,aggregates=0,0,0
+    local upper=s.weights.capacity(s.root,s.actor,.7)
+    assert(upper>=size*.25+.7 and visits==1 and weights==size and aggregates==0,
+        'qualified hand release added a root traversal or called the native aggregate')
+end
+do
+    local s=setup();s.add(s.item(1),s.root);s.add(s.item(-.25),s.root);s.root.nativeLoad=.75
+    assert(s.weights.capacity(s.root,s.actor)==.75,'legacy aggregate semantics changed')
+    s.root.getCapacityWeight=impure
+    assert(not s.weights.capacity(s.root,s.actor,.7),'positive aggregate concealed a negative unrelated term')
+    s.root.items[2].raw=0/0
+    assert(not s.weights.capacity(s.root,s.actor,.7),'NaN unrelated term entered the sign proof')
+    s.root.items[2].raw=1;s.root.items[2].nativeName='ForeignWeight'
+    assert(not s.weights.capacity(s.root,s.actor,.7),'unknown weight subclass invoked its virtual getter')
+end
+do
+    local s=setup();s.add(s.item(1),s.root);s.food(s.root)
+    s.root.getCapacityWeight=impure
+    assert(s.weights.capacity(s.root,s.actor,.7), 'nonfactory qualification did not reuse pure extra-food bounds')
+    s.root.items[#s.root.items+1]=s.item(-.25)
+    assert(not s.weights.capacity(s.root,s.actor,.7),'nonfactory fallback skipped unrelated sign validation')
+    assert(not s.weights.shiftedCapacity(1,.1,-1)and not s.weights.shiftedCapacity(1,.1,.5)
+        and not s.weights.shiftedCapacity(1,.1,0/0)and not s.weights.shiftedCapacity(1,.1,math.huge))
+    assert(not s.weights.shiftedCapacity(3.4028234663852886e38,1,1),'overflow manufactured a finite capacity promise')
+end
+-- The double-sum domain is the native ArrayList.size() int contract, not a
+-- workload budget. Reject a forged larger count before visiting any entry.
+do
+    local s=setup();local reads=0
+    s.root.getItems=function()return{size=function()return 2147483648 end,
+        get=function()reads=reads+1;error('invalid native count entered the walk')end}end
+    s.root.getCapacityWeight=impure
+    assert(not s.weights.capacity(s.root,s.actor,0)and reads==0)
+end
+-- The source-qualified generic Java getter must actually expose a normal
+-- nonincreasing equipped multiplier; a zero/subnormal witness cannot prove it.
+do
+    local s=setup()
+    assert(s.weights.nativeDiscountKnown(1,.3)and s.weights.nativeDiscountKnown(1,.69))
+    assert(not s.weights.nativeDiscountKnown(1,.8)and not s.weights.nativeDiscountKnown(1,1))
+    assert(not s.weights.nativeDiscountKnown(1,2)and not s.weights.nativeDiscountKnown(1,-.3))
+    assert(not s.weights.nativeDiscountKnown(0,0)and not s.weights.nativeDiscountKnown(1.401298464324817e-45,0))
+    assert(not s.weights.nativeDiscountKnown(1,0/0)and not s.weights.nativeDiscountKnown(0/0,0))
+end
+-- Explicit numeric zero still qualifies signs; a nil discount alone owns the
+-- retained legacy fast path. Negative incoming U is legal native part data.
+do
+    local s=setup();s.add(s.item(10),s.root);s.add(s.item(-5),s.root);s.root.nativeLoad=5
+    assert(s.weights.capacity(s.root,s.actor)==5)
+    s.root.getCapacityWeight=impure
+    assert(not s.weights.capacity(s.root,s.actor,0),'zero current hands concealed negative incoming root weight')
+end
+-- A positive root bag term can hide negative contents. Validate nested leaves
+-- even when an earlier extra Food selected the existing nonfactory fallback.
+for _,extra in ipairs({false,true})do
+    local s=setup();s.add(s.item(1),s.root)
+    if extra then s.food(s.root)end
+    local bag=s.bag(s.root);bag.raw=10
+    local child=s.add(s.item(-.9),bag.inventory)
+    local bagCalls,childCalls=0,0
+    bag.getUnequippedWeight=function()bagCalls=bagCalls+1;return 9.1 end
+    child.getUnequippedWeight=function(self)childCalls=childCalls+1;return self.raw end
+    s.root.getCapacityWeight=impure
+    assert(not s.weights.capacity(s.root,s.actor,0)and childCalls>0 and bagCalls==0,
+        'nested negative contents hid behind a positive bag current term or fallback')
+end
+-- Nested exact native owners use raw/fluid structural signs after their
+-- children; do not call each recursive owner U getter on the way up again.
+do
+    local s=setup();local outer=s.bag(s.root);local inner=s.bag(outer.inventory)
+    s.add(s.item(1),inner.inventory);local leaves,owners=0,0
+    inner.getUnequippedWeight=function()owners=owners+1;return 2 end
+    local leaf=inner.inventory.items[1]
+    leaf.getUnequippedWeight=function()leaves=leaves+1;return 1 end
+    outer.getUnequippedWeight=function()owners=owners+1;return 3 end
+    s.root.getCapacityWeight=impure
+    assert(s.weights.capacity(s.root,s.actor,0)and owners==1 and leaves==1,
+        'nested sign proof recalculated recursive owner U or repeated a leaf getter')
+end
+-- A native attached container is a different source mode: no-reduction held
+-- contents can outweigh hotbar 0.7 even with generic m=.3 and positive data.
+-- Reject it before calling its virtual weight, including nonfactory fallback.
+for _,extra in ipairs({false,true})do
+    local s=setup();if extra then s.food(s.root)end
+    local bag=s.bag(s.root);bag.raw=1;bag.reduction=0;bag.slot=2
+    s.add(s.item(10),bag.inventory);s.root.nativeLoad=7.7
+    local calls=0;bag.getHotbarEquippedWeight=function()calls=calls+1;return 7.7 end
+    assert(s.weights.capacity(s.root,s.actor),'legacy native semantics changed for attached containers')
+    calls=0
+    assert(not s.weights.capacity(s.root,s.actor,0)and calls==0,'new authority treated hotbar container contents as generic incoming discount')
+    bag.slot=-1;bag.equipped=true;bag.getEquippedWeight=function()return 10.3 end
+    assert(s.weights.capacity(s.root,s.actor,0),'ordinary worn/held positive container was lost with hotbar rejection')
+end
 -- Independent IEEE-754 binary32 oracle for the native bytecode's operation
 -- order. This uses nearest-even rounding, not the implementation's interval
 -- padding, so tiny/large script values cannot silently understate capacity.
@@ -160,6 +267,44 @@ do
             'loaded Java multiplier witness must bound rounded equipped bag arithmetic')
         equippedCases=equippedCases+1
     end end end
+    -- Independent root fadd oracle, including cascades where changing an early
+    -- term crosses later rounding boundaries. No production arithmetic is copied.
+    for _,count in ipairs({1,2,17,257})do
+    for _,base in ipairs({1.401298464324817e-45,1e-37,.1,1,1e15,1e30})do
+    for _,gain in ipairs({1.401298464324817e-45,1e-7,.7,1e15})do
+        local s=setup();local native=0
+        for index=1,count do
+            local value=f32(base)
+            s.add(s.item(value),s.root)
+            native=f32(native+(index==1 and f32(value+f32(gain))or value))
+        end
+        local upper=s.weights.capacity(s.root,s.actor,f32(gain))
+        if upper then assert(finite(native)and upper>=native,'root release bound missed native binary32 aggregation')end
+    end end end
+    do
+        local s=setup();s.add(s.item(f32(1)),s.root)
+        for index=1,257 do s.add(s.item(f32(2^-24)),s.root)end
+        local old,new=f32(1),f32(1+2^-23)
+        for index=1,257 do old=f32(old+2^-24);new=f32(new+2^-24)end
+        local naive=old+2^-23
+        assert(new>naive,'oracle did not construct its rounding cascade')
+        local upper=s.weights.capacity(s.root,s.actor,2^-23)
+        assert(upper>=new,'source-bound root term probe missed the rounding cascade')
+    end
+    -- Double sum + one real-sum pad does not by itself enclose the current
+    -- native float aggregate: zero discount must retain the fadd bound too.
+    do
+        local s=setup();s.add(s.item(1),s.root)
+        local native,real=1,1
+        for index=1,257 do
+            local term=f32(3*2^-24);s.add(s.item(term),s.root)
+            native=f32(native+term);real=real+term
+        end
+        assert(native>real*(1+1e-6),'oracle lacks its accumulated upward-rounding boundary')
+        local bound=s.weights.capacity(s.root,s.actor,0)
+        assert(bound and bound>=native,'qualified zero-discount path lost the native fadd bound after double accumulation')
+        assert(s.weights.shiftedCapacity(real,0,258)>=native,'numeric helper incorrectly treats zero as an identity on a real sum')
+    end
     print('Pure weight binary32 oracle: '..tested..' food and '..equippedCases..' equipped-bag cases passed.')
 end
 print('Pure action queue weights: native exact safe getters, bounded extra Food, nested bag fluids, worn/hotbar/fake reduction, loaded multiplier witnesses and unknown metadata/ownership guards passed.')

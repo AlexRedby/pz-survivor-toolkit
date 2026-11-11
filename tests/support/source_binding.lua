@@ -1,4 +1,4 @@
--- Test-only actual-metatable seam; native Kahlua uses the production JVM predicate.
+-- Test-only actual-metatable seam; native Kahlua hosts supply a JVM predicate.
 if NativeMetatableMatches then return NativeMetatableMatches end
 if TestOfflineMetatableMatches then return TestOfflineMetatableMatches end
 assert(debug and debug.getmetatable,'offline binding fixture requires actual metatable access')

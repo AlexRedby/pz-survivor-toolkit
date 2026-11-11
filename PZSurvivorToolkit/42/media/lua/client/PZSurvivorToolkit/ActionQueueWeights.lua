@@ -1,14 +1,14 @@
 local Weights = {}
 PZSurvivorToolkit.ActionQueueWeights = Weights
 
-local MAX_FLOAT, MIN_NORMAL, MIN_FLOAT = 3.4028234663852886e38, 1.1754943508222875e-38, 1.401298464324817e-45
+local MAX_FLOAT, MIN_NORMAL, MIN_FLOAT, ROUND_SLACK = 3.4028234663852886e38, 1.1754943508222875e-38, 1.401298464324817e-45, 0.000001
 local function finite(value) return type(value)=="number" and value==value and value>-math.huge and value<math.huge end
-local function weight(value) return finite(value) and value>=0 and value<=MAX_FLOAT end
+local function weight(value) return type(value)=="number" and value==value and value>=0 and value<=MAX_FLOAT end
 local function method(value,name) return value and type(value[name])=="function" end
 -- Outward slack covers each native float operation, including subnormal results.
 local function up(value)
     if not weight(value) then return end
-    value=value+value*0.000001+MIN_FLOAT
+    value=value+value*ROUND_SLACK+MIN_FLOAT
     if weight(value) then return value end
 end
 local function plus(left,right) return left and right and up(left+right) or nil end
@@ -21,16 +21,57 @@ local function entries(container)
     if not finite(count) or count<0 or count%1~=0 then return end
     return items,count
 end
-local function free(value,seen)
+local fluidWeight
+local function free(value,seen,probe,direct)
     if not instanceof(value,"InventoryItem") and not instanceof(value,"ItemContainer") or seen[value] then return false end
     seen[value]=true
+    if probe and instanceof(value,"InventoryItem") and (type(getClassSimpleName)~="function"
+        or not probe.classes[getClassSimpleName(value)]) then probe.invalid=true;return false end
     if instanceof(value,"Food") and (not method(value,"haveExtraItems") or value:haveExtraItems()) then return false end
     if instanceof(value,"InventoryContainer") then
-        return method(value,"getInventory") and free(value:getInventory(),seen) or false
+        local safe=method(value,"getInventory") and free(value:getInventory(),seen,probe) or false
+        if not safe or not probe then return safe end
+        -- Native InventoryContainer U is clamped raw plus child U sum plus
+        -- fluid amount. Children were sign-checked in this same walk: avoid
+        -- recursively recalculating each nested owner's contents again.
+        if not method(value,"getActualWeightUnmodded") or not weight(value:getActualWeightUnmodded())
+            or not fluidWeight(value) then probe.invalid=true;return false end
+        return true
     elseif instanceof(value,"ItemContainer") then
         local items,count=entries(value)
         if not items then return false end
-        for i=0,count-1 do if not free(items:get(i),seen) then return false end end
+        if probe and value==probe.root then
+            -- Native ArrayList.size() is a Java int. For N<=2^31-1, summing
+            -- nonnegative native floats in double has gamma_N<2.4e-7; one
+            -- existing up() covers that error. No per-item float pad is needed.
+            if count>2147483647 then probe.invalid=true;return false end
+            probe.count=count
+        end
+        for i=0,count-1 do
+            local item=items:get(i)
+            local valid=free(item,seen,probe,probe and value==probe.root)
+            if not valid then return false end
+            if probe and value==probe.root then
+                if not method(item,"getAttachedSlot") or not method(item,"isFakeEquipped") then probe.invalid=true;return false end
+                local equipped=probe.actor:isEquipped(item)
+                local mode=item:getAttachedSlot()>-1 and not equipped and "getHotbarEquippedWeight"
+                    or (equipped or item:isFakeEquipped(probe.actor)) and "getEquippedWeight" or "getUnequippedWeight"
+                if mode=="getHotbarEquippedWeight" and instanceof(item,"InventoryContainer") then probe.invalid=true;return false end
+                if not method(item,mode) then probe.invalid=true;return false end
+                local term=item[mode](item)
+                if not weight(term) then probe.invalid=true;return false end
+                -- N*MAX_FLOAT is below double overflow, and every positive
+                -- float term is double-normal. Guard/pad the total once below.
+                probe.total=probe.total+term
+            end
+        end
+    elseif probe and not direct then
+        -- Non-root leaves supply container contents through U, irrespective of
+        -- their actor mode. Direct root leaves use their current-mode read below.
+        if not method(value,"getUnequippedWeight") then probe.invalid=true;return false end
+        local exact=value:getUnequippedWeight()
+        if not weight(exact) then probe.invalid=true;return false end
+        return true,exact
     end
     return true
 end
@@ -87,7 +128,7 @@ function Weights.extraFood(item)
     return upper,0,{raw=raw,shell=shell,extraUpper=extraUpper,count=count}
 end
 
-local function fluidWeight(item)
+fluidWeight=function(item)
     if not method(item,"getFluidContainer") then return end
     local fluid=item:getFluidContainer()
     if not fluid then return 0 end
@@ -117,6 +158,12 @@ end
 -- table may have changed since ZomboidGlobals.Load, so measure a real existing
 -- native witness instead of assuming that table still equals the Java field.
 local witnessClasses={ComboItem=true,Food=true,HandWeapon=true,Key=true,KeyRing=true,Literature=true,MapItem=true}
+local function multiplierUpper(raw,equipped)
+    if weight(raw) and raw>=MIN_NORMAL and weight(equipped) then
+        local rounded=up(equipped)
+        if rounded then return up(rounded/raw) end
+    end
+end
 local function multiplier(actor)
     if type(getClassSimpleName)~="function" or not method(actor,"getInventory") then return end
     local pending,seen={actor:getInventory()},{}
@@ -134,10 +181,8 @@ local function multiplier(actor)
         elseif instanceof(current,"InventoryItem") and witnessClasses[getClassSimpleName(current)]
             and Weights.factoryFree(current) and method(current,"getUnequippedWeight") and method(current,"getEquippedWeight") then
             local raw,equipped=current:getUnequippedWeight(),current:getEquippedWeight()
-            if weight(raw) and raw>=MIN_NORMAL and weight(equipped) then
-                local rounded=up(equipped)
-                if rounded then return up(rounded/raw) end
-            end
+            local upper=multiplierUpper(raw,equipped)
+            if upper then return upper end
         end
     end
 end
@@ -156,11 +201,22 @@ boundContents=function(container,context)
     end
     return total,0
 end
-boundItem=function(item,mode,context)
+boundItem=function(item,mode,context,direct)
     if not instanceof(item,"InventoryItem") or context.seen[item] then return end
     context.seen[item]=true
+    if context.classes and (type(getClassSimpleName)~="function" or not context.classes[getClassSimpleName(item)]) then return end
     local getter=mode=="equipped" and "getEquippedWeight" or mode=="hotbar" and "getHotbarEquippedWeight" or "getUnequippedWeight"
-    if Weights.factoryFree(item) then
+    -- Container held contents use their own reduction, whereas native hotbar
+    -- weight scales all contents by 0.7. A generic multiplier witness is not a
+    -- nonincrease proof for this mode; keep this new authority unavailable.
+    if context.probe and mode=="hotbar" and instanceof(item,"InventoryContainer") then context.probe.invalid=true;return end
+    local safe,unequipped
+    if context.probe then
+        safe,unequipped=free(item,{},context.probe,direct)
+        if context.probe.invalid then return end
+    else safe=Weights.factoryFree(item) end
+    if safe then
+        if getter=="getUnequippedWeight" and unequipped~=nil then return unequipped,unequipped end
         if not method(item,getter) then return end
         local exact=item[getter](item)
         if weight(exact) then return exact,exact end
@@ -207,7 +263,12 @@ end
 function Weights.unequipped(item)
     return boundItem(item,"unequipped",{seen={}})
 end
-function Weights.capacity(container,actor)
+local capacityClasses={InventoryItem=true,ComboItem=true,HandWeapon=true,Clothing=true,DrainableComboItem=true,
+ Food=true,Key=true,KeyRing=true,Literature=true,MapItem=true,InventoryContainer=true,WeaponPart=true,
+ AlarmClock=true,AlarmClockClothing=true,Moveable=true,Radio=true}
+local factoryFreeSource,extraFoodSource=Weights.factoryFree,Weights.extraFood
+local shiftedCapacity
+function Weights.capacity(container,actor,releasedDiscount)
     if not instanceof(container,"ItemContainer") then return end
     -- Native actor-owned capacity redirects to the actor's inventory. A
     -- mismatched container must not certify another, unscanned item tree.
@@ -216,7 +277,23 @@ function Weights.capacity(container,actor)
         if (instanceof(parent,"IsoGameCharacter") or instanceof(parent,"IsoPlayer"))
             and (not method(parent,"getInventory") or parent:getInventory()~=container) then return end
     end
-    if Weights.factoryFree(container) then
+    local probe
+    if releasedDiscount~=nil then
+        if not weight(releasedDiscount) or not instanceof(actor,"IsoPlayer")
+            or container~=actor:getInventory() or not method(actor,"isEquipped")
+            or Weights.factoryFree~=factoryFreeSource or Weights.extraFood~=extraFoodSource then return end
+        probe={root=container,actor=actor,total=0,classes=capacityClasses}
+    end
+    local safe=probe and free(container,{},probe) or not probe and Weights.factoryFree(container)
+    if probe and probe.invalid then return end
+    if safe then
+        if probe then
+            local total=up(probe.total)
+            if not total then return end
+            -- This is a real-sum upper, so native fadd still needs its bound
+            -- even when no current hand discount disappears.
+            return shiftedCapacity(total,releasedDiscount,probe.count),0
+        end
         if not method(container,"getCapacityWeight") then return end
         local exact=container:getCapacityWeight()
         if weight(exact) then return exact,exact end
@@ -229,16 +306,36 @@ function Weights.capacity(container,actor)
     end
     local items,count=entries(container)
     if not items or not method(actor,"isEquipped") then return end
-    local context,total={seen={[container]=true},actor=actor},0
+    local context,total={seen={[container]=true},actor=actor,classes=probe and capacityClasses,probe=probe},0
     for i=0,count-1 do
         local item=items:get(i)
         if not instanceof(item,"InventoryItem") or not method(item,"getAttachedSlot") or not method(item,"isFakeEquipped") then return end
         local equipped=actor:isEquipped(item)
         local mode=item:getAttachedSlot()>-1 and not equipped and "hotbar"
             or (equipped or item:isFakeEquipped(actor)) and "equipped" or "unequipped"
-        total=plus(total,boundItem(item,mode,context))
+        total=plus(total,boundItem(item,mode,context,true))
         if not total then return end
     end
+    if probe and releasedDiscount>0 then return shiftedCapacity(total,releasedDiscount,count),0 end
     return total,0
+end
+-- The caller has observed nonnegative root terms and supplies their outward
+-- real-sum upper. N native binary32 additions can grow that sum by at most the
+-- same per-operation normal/subnormal slack used by up(). No loop, size budget
+-- or future space credit is introduced; overflow is an unavailable bound.
+shiftedCapacity=function(current,delta,count)
+    if not weight(current) or not weight(delta) or not finite(count) or count<0 or count%1~=0 then return end
+    local factor=up((1+ROUND_SLACK)^count)
+    local subnormal=times(count,MIN_FLOAT)
+    return factor and plus(times(plus(current,delta),factor),times(subnormal,factor)) or nil
+end
+Weights.shiftedCapacity=shiftedCapacity
+-- A qualified plain Clothing witness uses native U * float(m). The existing
+-- outward ratio also covers its binary32 rounding, including subnormals. An
+-- unseen incoming hotbar item may still use native 0.7f until Equip sync, so m
+-- must not exceed that discount either. No mutable Lua globals value is trusted.
+function Weights.nativeDiscountKnown(unequipped,equipped)
+    local upper=multiplierUpper(unequipped,equipped)
+    return upper~=nil and upper<=0.699999988079071
 end
 return Weights

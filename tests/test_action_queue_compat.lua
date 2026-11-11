@@ -1,3 +1,4 @@
+toolkitLuaMetatableMatches=assert(loadfile(ProjectRoot..'/tests/support/source_binding.lua'))()
 if not NativeActionRoot or not NativeWishlistWorkshopRoot then
     if TestCoverage then TestCoverage('source-contract','skipped','Selected chain source checks skipped (pass native action and Workshop roots).')end
     return
@@ -24,6 +25,7 @@ require = function(name)
     if name == 'PZSurvivorToolkit/ActionQueueTransferOutcome' then
         return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua'))()
     end
+    if name == 'PZSurvivorToolkit/ActionQueueClothing' then return PZSurvivorToolkit.ActionQueueClothing or dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua')end
     if name == 'PZSurvivorToolkit/SourceProof' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua') end
     if name == 'PZSurvivorToolkit/ActionQueueSettlement' then
         return PZSurvivorToolkit.ActionQueueSettlement or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueSettlement.lua')
@@ -307,7 +309,8 @@ end}
 MPFastForward={isConflictModActive=function() return false end}
 getActivatedMods = function() return {contains = function(_, id) return paths[id] ~= nil end} end
 getModFileReader = function(id, path)
-    local source = read(NativeWishlistWorkshopRoot .. '/' .. paths[id] .. '/' .. path)
+    local source = id=='PZSurvivorToolkit'and read(ProjectRoot..'/PZSurvivorToolkit/42/'..path)
+        or read(NativeWishlistWorkshopRoot .. '/' .. paths[id] .. '/' .. path)
     local cursor = 1
     return {close = function() end, readLine = function()
         if cursor > #source then return end
@@ -342,6 +345,7 @@ require = function(module)
         craftContainers = craftContainers or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
         return craftContainers
     end
+    if module == 'PZSurvivorToolkit/ActionQueueClothing' then return PZSurvivorToolkit.ActionQueueClothing or dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua')end
     if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
     if loaded[module] then return loaded[module] end
     if module == 'NeatEquipment/NEQ_Outfit' then return Outfit end
@@ -5090,6 +5094,7 @@ for _,sharedPreload in ipairs({false,true})do
     SaucedCarts,LootSorter=nil,{}
     Fluid={Water={}};MoodleType={FOOD_EATEN=1};ItemTag={}
     local nativeEatStart,nativeDrinkStart=ISEatFoodAction.start,ISDrinkFluidAction.start
+    Events.OnFillInventoryObjectContextMenu={Add=function()end}
     local policyLoads,consumeLoads=0,0
     local function shared(name)
         return assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/shared/'..name..'.lua'))()

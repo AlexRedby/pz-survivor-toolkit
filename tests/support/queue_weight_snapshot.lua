@@ -19,7 +19,7 @@ end
 local source=read(path):gsub('\r','')
 source=replace(source,'local Weights = {}','local Weights = {}\nlocal captured')
 source=replace(source,'local function entries(container)','local function nativeEntries(container)')
-source=replace(source,'local function free(value,seen)',[[local function entries(container)
+source=replace(source,'local function free(value,seen,probe,direct)',[[local function entries(container)
     if captured then
         local node=captured.nodes[container]
         if node and node.list then return node.list,#node.children end
@@ -27,7 +27,7 @@ source=replace(source,'local function free(value,seen)',[[local function entries
     end
     return nativeEntries(container)
 end
-local function free(value,seen)]])
+local function free(value,seen,probe,direct)]])
 source=replace(source,'function Weights.factoryFree(value) return free(value,{}) end',[[function Weights.factoryFree(value)
     if captured then local node=captured.nodes[value];return node and node.factoryFree or false end
     return free(value,{})

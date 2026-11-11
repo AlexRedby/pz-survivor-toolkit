@@ -333,6 +333,125 @@ for _,count in ipairs({100,1000,10000})do
     end
 end
 end
+-- Compare the qualified hand-release query with the existing native-exact
+-- path on the same flat root. These binary fractions sum exactly in binary32
+-- at the selected sizes: the held item's 5 -> 1.5 discount is exactly 3.5.
+-- The pinned native aggregate has no Java recursion/bridge cost in this CPU
+-- fixture; emit the differing getter work rather than treating it as free.
+for _,count in ipairs({100,1000,10000})do
+    local actor={class='IsoPlayer'}
+    local root=box();root.parent=actor
+    actor.getInventory=function()return root end
+    actor.isEquipped=function(_,item)return item.equipped==true end
+    local nativeCalls,termCalls=0,0
+    local function tracked(value)
+        local item=plain(value)
+        local full,equipped=item.getUnequippedWeight,item.getEquippedWeight
+        item.getUnequippedWeight=function(self)termCalls=termCalls+1;return full(self)end
+        item.getEquippedWeight=function(self)termCalls=termCalls+1;return equipped(self)end
+        return item
+    end
+    local held=put(tracked(5),root);held.equipped=true
+    for _=1,count do put(tracked(.125),root)end
+    local current=1.5+count*.125
+    root.getCapacityWeight=function()nativeCalls=nativeCalls+1;return current end
+    for _,qualified in ipairs({false,true})do
+        local delta=qualified and 3.5 or nil
+        local function capture()return weights.capacity(root,actor,delta)end
+        reads,enumerations,nativeCalls,termCalls=0,0,0,0
+        local upper,lower=capture()
+        if qualified then
+            assert(type(upper)=='number'and upper>=current+3.5 and lower==0,'qualified hand-release bound unsupported')
+            assert(nativeCalls==0 and termCalls==count+1,'qualified query duplicated native aggregate/term reads')
+        else
+            assert(upper==current and lower==current and nativeCalls==1 and termCalls==0,'native-exact baseline changed')
+        end
+        assert(enumerations==1 and reads==count+1,'hand-release query added a root traversal')
+        local label='weight-hand-release/'..(qualified and 'qualified'or 'native-exact')..'/items'..(count+1)
+        BenchmarkEmit(label..'/item_reads',reads)
+        BenchmarkEmit(label..'/container_enumerations',enumerations)
+        BenchmarkEmit(label..'/native_aggregate_calls',nativeCalls)
+        BenchmarkEmit(label..'/mode_weight_reads',termCalls)
+        measure(label,capture,count>1000)
+    end
+end
+-- Getter recursion below is deliberately a Lua double of the native loops,
+-- not a measurement of their JVM implementation. Distinguish calls crossing
+-- the simulated bridge from work inside a getter so repeated owner reads are
+-- visible even though each explicit container walk occurs only once.
+for _,count in ipairs({100,1000,10000})do
+    for _,depth in ipairs({1,4,8})do
+        local actor={class='IsoPlayer'}
+        local root=box();root.parent=actor
+        actor.getInventory=function()return root end
+        actor.isEquipped=function(_,item)return item.equipped==true end
+        local nativeDepth,aggregateCalls,bridgeCalls,internalCalls,visits,rawReads=0,0,0,0,0,0
+        local function weightCall()
+            if nativeDepth==0 then bridgeCalls=bridgeCalls+1 else internalCalls=internalCalls+1 end
+        end
+        local function contents(container)
+            local total=0
+            for _,item in ipairs(container.items)do visits=visits+1;total=total+item:getUnequippedWeight()end
+            return total
+        end
+        local function node(value)
+            local item=plain(value)
+            item.getUnequippedWeight=function(self)weightCall();return self.raw end
+            item.getEquippedWeight=function(self)weightCall();return self.raw*.3 end
+            item.getActualWeightUnmodded=function(self)rawReads=rawReads+1;return self.raw end
+            return item
+        end
+        local held=put(node(5),root);held.equipped=true
+        local container=root
+        for index=1,depth do
+            local bag=node(5);bag.class='InventoryContainer';bag.nativeName='InventoryContainer'
+            bag.inventory=box(bag);bag.equipped=index==1
+            bag.getInventory=function(self)return self.inventory end
+            bag.getWeightReduction=function()return 75 end
+            bag.getUnequippedWeight=function(self)
+                weightCall();nativeDepth=nativeDepth+1
+                local total=self.raw+contents(self.inventory)
+                nativeDepth=nativeDepth-1;return total
+            end
+            bag.getEquippedWeight=function(self)
+                weightCall();nativeDepth=nativeDepth+1
+                local total=self.raw*.3+contents(self.inventory)*.25
+                nativeDepth=nativeDepth-1;return total
+            end
+            put(bag,container);container=bag.inventory
+        end
+        for _=1,count do put(node(.125),container)end
+        root.getCapacityWeight=function()
+            aggregateCalls=aggregateCalls+1;nativeDepth=nativeDepth+1
+            local total=0
+            for _,item in ipairs(root.items)do
+                visits=visits+1
+                total=total+(actor:isEquipped(item)and item:getEquippedWeight()or item:getUnequippedWeight())
+            end
+            nativeDepth=nativeDepth-1;return total
+        end
+        local current=root:getCapacityWeight()
+        for _,qualified in ipairs({false,true})do
+            local delta=qualified and 3.5 or nil
+            local function capture()return weights.capacity(root,actor,delta)end
+            reads,enumerations=0,0
+            aggregateCalls,bridgeCalls,internalCalls,visits,rawReads=0,0,0,0,0
+            local upper,lower=capture()
+            assert(nativeDepth==0,'simulated getter scope escaped')
+            if qualified then
+                assert(type(upper)=='number'and upper>=current+3.5 and lower==0 and aggregateCalls==0,'nested hand-release bound unsupported')
+            else
+                assert(upper==current and lower==current and aggregateCalls==1,'nested native-exact baseline changed')
+            end
+            assert(enumerations==depth+1 and reads==count+depth+1,'nested hand query added an explicit container traversal')
+            local label='weight-hand-release/nested/'..(qualified and 'qualified'or 'native-exact')..'/leaf-items'..count..'/depth'..depth
+            for key,value in pairs({item_reads=reads,container_enumerations=enumerations,native_aggregate_calls=aggregateCalls,
+                mode_weight_reads=bridgeCalls,simulated_internal_weight_reads=internalCalls,
+                simulated_internal_item_visits=visits,base_weight_reads=rawReads})do BenchmarkEmit(label..'/'..key,value)end
+            measure(label,capture,count>1000)
+        end
+    end
+end
 end
 assert(measurements>0,'no benchmark cases selected')
 BenchmarkEmit('measurements',measurements)

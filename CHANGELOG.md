@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.356
+
+- **Changed:** Pending ordinary clothing-removal groups can use shared item and worn-state contracts. Capacity checks accumulate the upper weight growth of removals and pickups in the proposed order and retain the native reserve that prevents clothing from dropping on the ground. These new Host removal permissions also require confirmed physical equipment outcomes, including displaced clothing, rather than relying on native Done alone. They do not spend forecast weight reductions; active, headwear, held, hotbar, heavy, overlapping or unresolved-identity variants keep their protected behavior.
+
 ### 0.1.355
 
 - **Changed:** Pending wringing chains can use the shared item-location contract while clothing is still in a carried bag. A source-bound carried-container preparation contract keeps the real deferred approach queued, and the existing transfer must establish the required root-inventory location before wringing. Whole-chain edits retain native capacity checks, exact item ownership and automatic returns; capacity forecasts keep the current native weight bound without spending expected drying space.
