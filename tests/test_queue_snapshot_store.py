@@ -44,10 +44,23 @@ class SnapshotStoreTests(unittest.TestCase):
         return store.capture(self.tree, self.archive)
 
     def object(self, object_id, suffix):
+        sidecar = self.archive / 'objects' / f'{object_id}.json.gz'
+        if not os.path.lexists(sidecar):
+            sidecar = sidecar.with_suffix('')
         if suffix == '.tar.gz':
-            descriptor = json.loads((self.archive / 'objects' / f'{object_id}.json').read_bytes())
+            encoded = sidecar.read_bytes()
+            descriptor = json.loads(gzip.decompress(encoded) if sidecar.suffix == '.gz' else encoded)
             return self.archive / 'payloads' / f"{descriptor['payload_id']}.tar.gz"
+        if suffix == '.json':
+            return sidecar
         return self.archive / 'objects' / f'{object_id}{suffix}'
+
+    def legacy_descriptor(self, object_id, encoded=None):
+        compressed = self.archive / 'objects' / f'{object_id}.json.gz'
+        legacy = compressed.with_suffix('')
+        legacy.write_bytes(gzip.decompress(compressed.read_bytes()) if encoded is None else encoded)
+        compressed.unlink()
+        return legacy
 
     def rewrite_archive(self, object_id, change):
         path = self.object(object_id, '.tar.gz')
@@ -77,6 +90,175 @@ class SnapshotStoreTests(unittest.TestCase):
                 self.assertNotEqual(source.stat().st_ino, destination.stat().st_ino)
         (target / 'nested/data').write_bytes(b'private change')
         self.assertEqual(store.hashes(manifest)['nested/data'], hashlib.sha256((self.tree / 'nested/data').read_bytes()).hexdigest())
+        store.verify(self.archive, object_id)
+
+    def test_new_descriptor_gzip_retains_logical_schema_and_canonical_identity(self):
+        object_id = self.capture()
+        descriptor = self.object(object_id, '.json')
+        self.assertEqual('.gz', descriptor.suffix)
+        encoded = gzip.decompress(descriptor.read_bytes())
+        value = json.loads(encoded)
+        self.assertEqual(1, value['schema_version'])
+        self.assertEqual(encoded, store._canonical(value))
+        self.assertEqual(object_id, hashlib.sha256(encoded).hexdigest())
+        self.assertEqual(value, store.verify(self.archive, object_id))
+
+    def test_legacy_descriptor_is_read_restored_and_reused_without_migration(self):
+        object_id = self.capture()
+        expected = store.manifest(self.archive, object_id)
+        legacy = self.legacy_descriptor(object_id)
+        identity = legacy.stat()
+        self.assertEqual(expected, store.verify(self.archive, object_id))
+        self.assertEqual(object_id, self.capture())
+        self.assertEqual(identity.st_ino, legacy.stat().st_ino)
+        self.assertFalse(legacy.with_suffix('.json.gz').exists())
+        target = self.root / 'legacy-restored'
+        store.materialize(self.archive, object_id, target)
+        store.verify_tree(target, expected)
+
+    def test_corrupt_preferred_gzip_never_falls_back_to_valid_legacy_descriptor(self):
+        object_id = self.capture()
+        compressed = self.object(object_id, '.json')
+        original = compressed.read_bytes()
+        compressed.with_suffix('').write_bytes(gzip.decompress(original))
+        for damaged in (b'not gzip', original[:-4], original[:-8], original[:15] + b'bad deflate'):
+            with self.subTest(damaged=damaged):
+                compressed.write_bytes(damaged)
+                with self.assertRaises(store.SnapshotStoreError):
+                    store.verify(self.archive, object_id)
+                with self.assertRaises(store.SnapshotStoreError):
+                    self.capture()
+        compressed.write_bytes(original)
+        store.verify(self.archive, object_id)
+
+    def test_descriptor_migration_retains_exact_bytes_ids_payload_and_restoration(self):
+        object_id = self.capture()
+        value = store.manifest(self.archive, object_id)
+        encoded = json.dumps(value, indent=2).encode() + b'\n'
+        legacy = self.legacy_descriptor(object_id, encoded)
+        allocated_before = legacy.stat().st_blocks * 512
+        archive = self.object(object_id, '.tar.gz')
+        archive_identity = store._signature(archive.stat())
+        archive_bytes = archive.read_bytes()
+        unknown = self.archive / 'objects' / 'notes.json'
+        unknown.write_bytes(b'leave unknown files alone')
+        result = store.compress_descriptors(self.archive)
+        compressed = legacy.with_suffix('.json.gz')
+        self.assertEqual([object_id], result['migrated'])
+        self.assertFalse(legacy.exists())
+        self.assertEqual(encoded, gzip.decompress(compressed.read_bytes()))
+        self.assertEqual({'logical_bytes': len(encoded), 'allocated_bytes': allocated_before}, result['before'])
+        self.assertEqual({'logical_bytes': compressed.stat().st_size,
+                          'allocated_bytes': compressed.stat().st_blocks * 512}, result['after'])
+        self.assertEqual(b'leave unknown files alone', unknown.read_bytes())
+        self.assertEqual(archive_identity, store._signature(archive.stat()))
+        self.assertEqual(archive_bytes, archive.read_bytes())
+        self.assertEqual(value, store.verify(self.archive, object_id))
+        target = self.root / 'migrated-restored'
+        store.materialize(self.archive, object_id, target)
+        store.verify_tree(target, value)
+        self.assertEqual([], store.compress_descriptors(self.archive)['migrated'])
+
+    def test_descriptor_migration_reuses_matching_existing_gzip_before_legacy_deletion(self):
+        object_id = self.capture()
+        compressed = self.object(object_id, '.json')
+        original = compressed.read_bytes()
+        identity = compressed.stat()
+        legacy = compressed.with_suffix('')
+        legacy.write_bytes(gzip.decompress(original))
+        sync = store.os.fsync
+        def fail_file_sync(descriptor):
+            if stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise OSError('existing descriptor sync interrupted')
+            return sync(descriptor)
+        with patch.object(store.os, 'fsync', side_effect=fail_file_sync):
+            with self.assertRaisesRegex(OSError, 'existing descriptor sync'):
+                store.compress_descriptors(self.archive)
+        self.assertEqual(gzip.decompress(original), legacy.read_bytes())
+        store.compress_descriptors(self.archive)
+        self.assertFalse(legacy.exists())
+        self.assertEqual(original, compressed.read_bytes())
+        self.assertEqual(identity.st_ino, compressed.stat().st_ino)
+        store.verify(self.archive, object_id)
+
+    def test_descriptor_migration_corruption_and_raw_conflict_preserve_legacy(self):
+        object_id = self.capture()
+        compressed = self.object(object_id, '.json')
+        encoded = gzip.decompress(compressed.read_bytes())
+        legacy = compressed.with_suffix('')
+        legacy.write_bytes(encoded)
+        conflict = gzip.compress(json.dumps(json.loads(encoded), indent=2).encode())
+        for content in (b'corrupt gzip', conflict):
+            with self.subTest(content=content):
+                compressed.write_bytes(content)
+                with self.assertRaises(store.SnapshotStoreError):
+                    store.compress_descriptors(self.archive)
+                self.assertEqual(encoded, legacy.read_bytes())
+                self.assertEqual(content, compressed.read_bytes())
+
+    def test_descriptor_migration_validates_original_identity_and_archive_before_publication(self):
+        object_id = self.capture()
+        archive = self.object(object_id, '.tar.gz')
+        legacy = self.legacy_descriptor(object_id)
+        original = legacy.read_bytes()
+        legacy.write_bytes(original.replace(b'"schema_version":1', b'"schema_version":2'))
+        with self.assertRaises(store.SnapshotStoreError):
+            store.compress_descriptors(self.archive)
+        self.assertTrue(legacy.exists())
+        self.assertFalse(legacy.with_suffix('.json.gz').exists())
+        changed = json.loads(original)
+        changed['root']['mtime_ns'] += 1
+        legacy.write_bytes(store._canonical(changed))
+        with self.assertRaisesRegex(store.SnapshotStoreError, 'object id'):
+            store.compress_descriptors(self.archive)
+        self.assertTrue(legacy.exists())
+        self.assertFalse(legacy.with_suffix('.json.gz').exists())
+        legacy.write_bytes(original)
+        archive.unlink()
+        with self.assertRaises(store.SnapshotStoreError):
+            store.compress_descriptors(self.archive)
+        self.assertEqual(original, legacy.read_bytes())
+        self.assertFalse(legacy.with_suffix('.json.gz').exists())
+
+    def test_descriptor_migration_directory_sync_failures_never_lose_last_descriptor(self):
+        object_id = self.capture()
+        for failed_sync in (1, 2):
+            with self.subTest(failed_sync=failed_sync):
+                legacy = self.legacy_descriptor(object_id)
+                original = legacy.read_bytes()
+                sync = store._fsync_directory
+                calls = 0
+                def fail_objects(path):
+                    nonlocal calls
+                    if Path(path) == legacy.parent:
+                        calls += 1
+                        if calls == failed_sync:
+                            raise OSError('interrupted descriptor directory sync')
+                    return sync(path)
+                with patch.object(store, '_fsync_directory', side_effect=fail_objects):
+                    with self.assertRaisesRegex(OSError, 'interrupted descriptor'):
+                        store.compress_descriptors(self.archive)
+                compressed = legacy.with_suffix('.json.gz')
+                self.assertTrue(compressed.exists())
+                self.assertEqual(original, gzip.decompress(compressed.read_bytes()))
+                self.assertEqual(failed_sync == 1, legacy.exists())
+                target = self.root / f'sync-restored-{failed_sync}'
+                store.materialize(self.archive, object_id, target)
+                store.verify_tree(target, store.manifest(self.archive, object_id))
+
+    def test_descriptor_migration_rename_interruption_preserves_original(self):
+        object_id = self.capture()
+        legacy = self.legacy_descriptor(object_id)
+        original = legacy.read_bytes()
+        rename = store.os.rename
+        def interrupt_after_rename(source, target):
+            rename(source, target)
+            raise KeyboardInterrupt()
+        with patch.object(store.os, 'rename', side_effect=interrupt_after_rename):
+            with self.assertRaises(KeyboardInterrupt):
+                store.compress_descriptors(self.archive)
+        self.assertEqual(original, legacy.read_bytes())
+        self.assertEqual(original, gzip.decompress(legacy.with_suffix('.json.gz').read_bytes()))
         store.verify(self.archive, object_id)
 
     def test_verify_tree_checks_metadata_membership_types_and_bytes(self):
@@ -164,12 +346,127 @@ class SnapshotStoreTests(unittest.TestCase):
             self.assertNotEqual(first_id, second_id)
             store.verify(self.archive, second_id)
 
+    def test_verified_payload_scope_shares_validation_across_timestamp_descriptors(self):
+        first_id = self.capture()
+        with patch.object(store, '_stream', wraps=store._stream) as stream:
+            with store.verified_payloads():
+                first = store.verify(self.archive, first_id)
+                self.assertEqual(first_id, self.capture())
+                os.utime(self.tree, ns=(123_456_789, 123_456_789))
+                second_id = self.capture()
+                second = store.verify(self.archive, second_id)
+                self.assertNotEqual(first_id, second_id)
+                self.assertEqual(first['payload_id'], second['payload_id'])
+                self.assertEqual(1, stream.call_count)
+            with store.verified_payloads():
+                store.verify(self.archive, second_id)
+                self.assertEqual(2, stream.call_count)
+            store.verify(self.archive, first_id)
+            store.verify(self.archive, first_id)
+            self.assertEqual(4, stream.call_count, 'Verification outside a scope is never cached')
+
+    def test_verified_payload_scope_rejects_same_size_corruption_with_restored_mtime(self):
+        object_id = self.capture()
+        archive = self.object(object_id, '.tar.gz')
+        with store.verified_payloads():
+            store.verify(self.archive, object_id)
+            identity = archive.stat()
+            damaged = bytearray(archive.read_bytes())
+            damaged[0] ^= 0xff
+            archive.write_bytes(damaged)
+            os.utime(archive, ns=(identity.st_atime_ns, identity.st_mtime_ns))
+            self.assertEqual(identity.st_size, archive.stat().st_size)
+            self.assertEqual(identity.st_mtime_ns, archive.stat().st_mtime_ns)
+            with self.assertRaises(store.SnapshotStoreError):
+                store.verify(self.archive, object_id)
+
+    def test_verified_payload_scope_rechecks_replaced_inode(self):
+        object_id = self.capture()
+        archive = self.object(object_id, '.tar.gz')
+        with patch.object(store, '_stream', wraps=store._stream) as stream, store.verified_payloads():
+            store.verify(self.archive, object_id)
+            identity = archive.stat()
+            replacement = archive.with_suffix('.replacement')
+            replacement.write_bytes(archive.read_bytes())
+            replacement.chmod(stat.S_IMODE(identity.st_mode))
+            os.utime(replacement, ns=(identity.st_atime_ns, identity.st_mtime_ns))
+            replacement.replace(archive)
+            self.assertNotEqual(identity.st_ino, archive.stat().st_ino)
+            store.verify(self.archive, object_id)
+            self.assertEqual(2, stream.call_count)
+
+    def test_verified_payload_scope_never_skips_extraction(self):
+        object_id = self.capture()
+        with patch.object(store, '_stream', wraps=store._stream) as stream, store.verified_payloads():
+            store.verify(self.archive, object_id)
+            for name in ('restored-first', 'restored-second'):
+                target = self.root / name
+                store.materialize(self.archive, object_id, target)
+                self.assertEqual((self.tree / 'nested/data').read_bytes(), (target / 'nested/data').read_bytes())
+            self.assertEqual(1, sum(len(call.args) == 2 for call in stream.call_args_list))
+            self.assertEqual(2, sum(len(call.args) == 3 for call in stream.call_args_list))
+
+    def test_nested_payload_scopes_join_the_outer_operation_only(self):
+        object_id = store.capture(self.tree, self.archive)
+        with patch.object(store, '_stream', wraps=store._stream) as stream:
+            with store.verified_payloads():
+                store.verify(self.archive, object_id)
+                with store.verified_payloads():
+                    store.verify(self.archive, object_id)
+                self.assertEqual(1, stream.call_count)
+            with store.verified_payloads():
+                store.verify(self.archive, object_id)
+            self.assertEqual(2, stream.call_count)
+
+    def test_verified_payload_scope_exception_cannot_leak_validation(self):
+        object_id = self.capture()
+        with patch.object(store, '_stream', wraps=store._stream) as stream:
+            with self.assertRaisesRegex(RuntimeError, 'interrupted'):
+                with store.verified_payloads():
+                    store.verify(self.archive, object_id)
+                    raise RuntimeError('interrupted')
+            store.verify(self.archive, object_id)
+            self.assertEqual(2, stream.call_count)
+            with store.verified_payloads():
+                store.verify(self.archive, object_id)
+                self.assertEqual(3, stream.call_count)
+
+    def test_verified_payload_scope_rejects_changes_during_validation_without_caching(self):
+        object_id = self.capture()
+        archive = self.object(object_id, '.tar.gz')
+        original = store._stream
+        changed = False
+        def mutate(*args):
+            nonlocal changed
+            original(*args)
+            if not changed:
+                changed = True
+                info = archive.stat()
+                os.utime(archive, ns=(info.st_atime_ns, info.st_mtime_ns + 1_000))
+        with patch.object(store, '_stream', side_effect=mutate) as stream, store.verified_payloads():
+            with self.assertRaisesRegex(store.SnapshotStoreError, 'changed during verification'):
+                store.verify(self.archive, object_id)
+            store.verify(self.archive, object_id)
+            self.assertEqual(2, stream.call_count)
+
+    def test_verified_payload_scope_rejects_link_replacing_cached_archive(self):
+        object_id = self.capture()
+        archive = self.object(object_id, '.tar.gz')
+        with store.verified_payloads():
+            store.verify(self.archive, object_id)
+            replacement = self.root / 'linked-payload'
+            replacement.write_bytes(archive.read_bytes())
+            archive.unlink()
+            archive.symlink_to(replacement)
+            with self.assertRaisesRegex(store.SnapshotStoreError, 'not a regular file'):
+                store.verify(self.archive, object_id)
+
     def test_concurrent_writers_publish_one_complete_object(self):
         with ProcessPoolExecutor(max_workers=2) as pool:
             ids = list(pool.map(concurrent_capture, [(self.tree, self.archive)] * 3))
         self.assertEqual(len(set(ids)), 1)
         store.verify(self.archive, ids[0])
-        self.assertEqual({f'{ids[0]}.json'},
+        self.assertEqual({f'{ids[0]}.json.gz'},
                          {path.name for path in (self.archive / 'objects').iterdir()})
         self.assertEqual(len(list((self.archive / 'payloads').iterdir())), 1)
 
@@ -209,7 +506,7 @@ class SnapshotStoreTests(unittest.TestCase):
         with self.assertRaises(store.SnapshotStoreError):
             self.capture()
         self.assertEqual(archive.read_bytes(), b'damaged shared payload')
-        self.assertEqual({f'{object_id}.json'},
+        self.assertEqual({f'{object_id}.json.gz'},
                          {path.name for path in (self.archive / 'objects').iterdir()})
 
     def test_existing_corrupt_object_is_never_replaced(self):
@@ -280,15 +577,15 @@ class SnapshotStoreTests(unittest.TestCase):
                 store.verify(self.archive, object_id)
         object_id = self.capture()
         sidecar = self.object(object_id, '.json')
-        original = sidecar.read_bytes()
+        original = gzip.decompress(sidecar.read_bytes())
         for content in (b'{', b'{"schema_version":1,"schema_version":1}',
                         original.replace(b'final', b'other'), original.replace(b'"mode":416', b'"mode":420')):
             if content == original:
                 continue
-            sidecar.write_bytes(content)
+            sidecar.write_bytes(gzip.compress(content))
             with self.assertRaises(store.SnapshotStoreError):
                 store.verify(self.archive, object_id)
-        sidecar.write_bytes(original)
+        sidecar.write_bytes(gzip.compress(original))
         for name in ('../escape', '/absolute', 'a//b', 'a/./b', 'a/../b', 'C:/escape', 'a\\b', 'x:stream', '.. /escape', 'NUL.txt', ''):
             value = {'schema_version': 1, 'files': {}, 'directories': {name: {'mode': 0o700, 'mtime_ns': 0}}}
             value['payload_id'] = store._payload_id(value)
@@ -356,7 +653,7 @@ class SnapshotStoreTests(unittest.TestCase):
     def test_publication_failure_cleans_partial_members(self):
         original = os.rename
         def fail_sidecar(source, target):
-            if str(target).endswith('.json'):
+            if str(target).endswith('.json.gz'):
                 raise OSError('interrupted publication')
             return original(source, target)
         with patch.object(store.os, 'rename', side_effect=fail_sidecar):

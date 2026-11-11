@@ -1,5 +1,6 @@
 """Immutable, verified, content-addressed archives of complete native mod trees."""
 from contextlib import contextmanager
+from contextvars import ContextVar
 import gzip
 import hashlib
 import json
@@ -11,6 +12,7 @@ import shutil
 import stat
 import tarfile
 import tempfile
+import zlib
 
 
 class SnapshotStoreError(ValueError):
@@ -19,6 +21,7 @@ class SnapshotStoreError(ValueError):
 
 _ID = re.compile(r'[0-9a-f]{64}\Z')
 _CHUNK = 1024 * 1024
+_verified_payloads = ContextVar('snapshot_verified_payloads', default=None)
 _WINDOWS_RESERVED = {'CON', 'PRN', 'AUX', 'NUL',
                      *(f'COM{i}' for i in range(1, 10)), *(f'LPT{i}' for i in range(1, 10))}
 
@@ -126,8 +129,10 @@ def _scan(tree):
 
 def _regular(path):
     try:
-        if not stat.S_ISREG(path.lstat().st_mode):
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode):
             raise SnapshotStoreError(f'Snapshot store member is not a regular file: {path}')
+        return info
     except FileNotFoundError as exc:
         raise SnapshotStoreError(f'Missing snapshot store member: {path}') from exc
 
@@ -188,7 +193,7 @@ def _lock(store):
 def _paths(objects, object_id):
     if not isinstance(object_id, str) or not _ID.fullmatch(object_id):
         raise SnapshotStoreError('Invalid snapshot object id')
-    return objects / f'{object_id}.json'
+    return objects / f'{object_id}.json.gz'
 
 
 def _archive_path(objects, value):
@@ -204,18 +209,98 @@ def _unique(pairs):
     return result
 
 
-def _read(objects, object_id):
-    sidecar = _paths(objects, object_id)
+def _descriptor(sidecar, object_id, *, compressed):
     _regular(sidecar)
     try:
-        value = _validate(json.loads(sidecar.read_bytes(), object_pairs_hook=_unique))
-    except (UnicodeError, json.JSONDecodeError) as exc:
+        encoded = sidecar.read_bytes()
+        if compressed:
+            encoded = gzip.decompress(encoded)
+        value = _validate(json.loads(encoded, object_pairs_hook=_unique))
+    except (UnicodeError, json.JSONDecodeError, OSError, EOFError, zlib.error) as exc:
         raise SnapshotStoreError('Unreadable snapshot manifest') from exc
     if hashlib.sha256(_canonical(value)).hexdigest() != object_id:
         raise SnapshotStoreError('Snapshot manifest does not match object id')
+    return value, encoded
+
+
+def _read(objects, object_id):
+    compressed = _paths(objects, object_id)
+    sidecar = compressed if os.path.lexists(compressed) else compressed.with_suffix('')
+    value, _ = _descriptor(sidecar, object_id, compressed=sidecar == compressed)
     archive = _archive_path(objects, value)
     _regular(archive)
     return value, archive
+
+
+def _compressed_descriptor(objects, encoded, object_id):
+    fd, name = tempfile.mkstemp(prefix='.manifest-', dir=objects)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, 'wb') as target:
+            with gzip.GzipFile(fileobj=target, mode='wb', filename='', mtime=0) as compressed:
+                compressed.write(encoded)
+            target.flush()
+            os.fsync(target.fileno())
+        _, restored = _descriptor(temporary, object_id, compressed=True)
+        if restored != encoded:
+            raise SnapshotStoreError('Compressed snapshot manifest differs from original bytes')
+        return temporary
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _descriptor_usage(objects):
+    logical, allocated = 0, 0
+    for path in objects.iterdir():
+        object_id = path.name.removesuffix('.gz').removesuffix('.json')
+        if path.name not in (object_id + '.json', object_id + '.json.gz') or not _ID.fullmatch(object_id):
+            continue
+        info = _regular(path)
+        logical += info.st_size
+        blocks = getattr(info, 'st_blocks', None)
+        allocated = allocated + blocks * 512 if allocated is not None and blocks is not None else None
+    return {'logical_bytes': logical, 'allocated_bytes': allocated}
+
+
+def compress_descriptors(store):
+    """Durably migrate legacy descriptors without changing ids or archive bytes."""
+    with _lock(store) as objects:
+        before = _descriptor_usage(objects)
+        migrated = []
+        for legacy in sorted(objects.iterdir()):
+            object_id = legacy.name.removesuffix('.json')
+            if legacy.name != object_id + '.json' or not _ID.fullmatch(object_id):
+                continue
+            original_signature = _signature(_regular(legacy))
+            value, encoded = _descriptor(legacy, object_id, compressed=False)
+            _regular(_archive_path(objects, value))
+            compressed = _paths(objects, object_id)
+            temporary = None
+            try:
+                if os.path.lexists(compressed):
+                    _, existing = _descriptor(compressed, object_id, compressed=True)
+                    if existing != encoded:
+                        raise SnapshotStoreError('Compressed snapshot manifest conflicts with legacy bytes')
+                    with compressed.open('rb') as source:
+                        os.fsync(source.fileno())
+                else:
+                    temporary = _compressed_descriptor(objects, encoded, object_id)
+                    os.rename(temporary, compressed)
+                # The replacement must be durable before deleting its legacy copy.
+                _fsync_directory(objects)
+                if (_signature(_regular(legacy)) != original_signature
+                        or legacy.read_bytes() != encoded):
+                    raise SnapshotStoreError('Legacy snapshot manifest changed during compression')
+                legacy.unlink()
+                _fsync_directory(objects)
+                migrated.append(object_id)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
+        return {'status': 'compressed', 'migrated': migrated,
+                'before': before, 'after': _descriptor_usage(objects),
+                'note': 'Logical file lengths and allocated blocks describe descriptor files; neither measures recovered filesystem free space.'}
 
 
 def _stream(archive, value, destination=None):
@@ -273,6 +358,35 @@ def _stream(archive, value, destination=None):
         raise SnapshotStoreError(f'Missing archive members: {sorted(expected - seen)}')
 
 
+@contextmanager
+def verified_payloads():
+    """Reuse unchanged payload verification only for this operation's lifetime."""
+    if _verified_payloads.get() is not None:
+        yield
+        return
+    token = _verified_payloads.set({})
+    try:
+        yield
+    finally:
+        _verified_payloads.reset(token)
+
+
+def _verify_payload(archive, value):
+    cache = _verified_payloads.get()
+    if cache is None:
+        _stream(archive, value)
+        return
+    before = _signature(_regular(archive))
+    key = (archive.resolve(), value['payload_id'])
+    if cache.get(key) == before:
+        return
+    cache.pop(key, None)
+    _stream(archive, value)
+    if _signature(_regular(archive)) != before:
+        raise SnapshotStoreError('Snapshot payload changed during verification')
+    cache[key] = before
+
+
 def manifest(store, object_id):
     """Read and validate the addressed manifest (without hashing archive bytes)."""
     with _lock(store) as objects:
@@ -284,7 +398,7 @@ def verify(store, object_id):
     """Verify the manifest and every archive byte without extracting files."""
     with _lock(store) as objects:
         value, archive = _read(objects, object_id)
-        _stream(archive, value)
+        _verify_payload(archive, value)
         return value
 
 
@@ -353,7 +467,7 @@ def verify_tree(tree, value):
 def capture(tree, store):
     """Capture exact staged metadata, sharing payload bytes across timestamps.
 
-    The returned id addresses objects/<id>.json, whose payload_id addresses
+    The returned id addresses objects/<id>.json.gz, whose payload_id addresses
     payloads/<payload_id>.tar.gz. Existing payloads are verified and reused
     without compression; new payloads are rehashed while being archived.
     """
@@ -383,9 +497,9 @@ def capture(tree, store):
     with _lock(store) as objects:
         sidecar = _paths(objects, object_id)
         final_archive = _archive_path(objects, value)
-        if os.path.lexists(sidecar):
+        if os.path.lexists(sidecar) or os.path.lexists(sidecar.with_suffix('')):
             existing, existing_archive = _read(objects, object_id)
-            _stream(existing_archive, existing)
+            _verify_payload(existing_archive, existing)
             _unchanged(tree, before)
             # A prior writer may have crashed between rename and directory fsync.
             _fsync_directory(existing_archive.parent)
@@ -399,7 +513,7 @@ def capture(tree, store):
         try:
             if os.path.lexists(final_archive):
                 _regular(final_archive)
-                _stream(final_archive, value)
+                _verify_payload(final_archive, value)
             else:
                 fd, name = tempfile.mkstemp(prefix='.archive-', dir=final_archive.parent)
                 temporary_archive = Path(name)
@@ -429,12 +543,7 @@ def capture(tree, store):
                 os.rename(temporary_archive, final_archive)
                 published.append(final_archive)
             _fsync_directory(final_archive.parent)
-            fd, name = tempfile.mkstemp(prefix='.manifest-', dir=objects)
-            temporary_manifest = Path(name)
-            with os.fdopen(fd, 'wb') as target:
-                target.write(encoded)
-                target.flush()
-                os.fsync(target.fileno())
+            temporary_manifest = _compressed_descriptor(objects, encoded, object_id)
             os.rename(temporary_manifest, sidecar)
             published.append(sidecar)
             _fsync_directory(sidecar.parent)
@@ -476,7 +585,7 @@ def materialize(store, object_id, destination):
     destination = _fresh_parent(destination)
     with _lock(store) as objects:
         value, archive = _read(objects, object_id)
-        _stream(archive, value)
+        _verify_payload(archive, value)
         temporary = Path(tempfile.mkdtemp(prefix=f'.{destination.name}.snapshot-', dir=destination.parent))
         published = False
         try:

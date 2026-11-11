@@ -320,8 +320,26 @@ class SnapshotStorageTests(unittest.TestCase):
         self.assertTrue(self.mod.is_dir())
         self.assertFalse(self.store.exists())
 
+    def test_changed_snapshot_refusal_reports_bounded_first_issue_and_total(self):
+        for first in ('Missing input: first-file', 'Frozen file set differs: ' + 'x' * 4096):
+            issues = [first, 'Second issue must not be repeated', 'Third issue must not be repeated']
+            with self.subTest(first=first[:40]), patch.object(report, 'verify_manifest', return_value=issues) as verify:
+                with self.assertRaises(ValueError) as raised:
+                    self.compact(apply=True)
+            message = str(raised.exception)
+            self.assertIn('3 issues; first: ', message)
+            self.assertIn(first[:100], message)
+            self.assertLess(len(message), 1200)
+            self.assertNotIn(issues[1], message)
+            self.assertNotIn(issues[2], message)
+            verify.assert_called_once_with(self.run, 'snapshot-hashes.json')
+        self.assertTrue(self.mod.is_dir())
+        self.assertFalse(self.store.exists())
+        self.assertFalse((self.run / storage.MARKER).exists())
+        self.assertEqual(self.seal, (self.run / 'snapshot-hashes.json').read_bytes())
+
     def test_live_pid_prepared_waiting_and_owned_processes_are_protected(self):
-        with patch.object(storage.os, 'kill', return_value=None):
+        with patch.object(storage.os, 'kill', return_value=None), patch.object(admission.host, 'process_started_after', return_value=False):
             with self.assertRaisesRegex(ValueError, 'still alive'):
                 self.compact(apply=True)
         for name in ('_records', '_preparations', '_waiters'):
@@ -342,6 +360,126 @@ class SnapshotStorageTests(unittest.TestCase):
         self.compact(apply=True)
         self.assertFalse(path.exists())
         self.assertFalse(self.mod.exists())
+
+    def test_proven_pid_reuse_preserves_the_original_execution_receipt(self):
+        path = self.run / 'execution.json'
+        original = path.read_bytes()
+        info = path.stat()
+        with patch.object(storage.os, 'kill', return_value=None), \
+             patch.object(admission.host, 'process_started_after', return_value=True) as probe:
+            result = self.compact(apply=True)
+        probe.assert_called_once_with(999999, max(info.st_mtime_ns, info.st_ctime_ns))
+        self.assertEqual(original, path.read_bytes())
+        self.assertEqual(999999, result['pid_reuse'][0]['pid'])
+        self.assertFalse(self.mod.exists())
+
+    def test_pid_reuse_proof_cannot_accept_a_changed_execution_receipt_or_owned_process(self):
+        path = self.run / 'execution.json'
+        original = path.read_bytes()
+        def change(*args):
+            path.write_bytes(original)
+            return True
+        with patch.object(storage.os, 'kill', return_value=None), \
+             patch.object(admission.host, 'process_started_after', side_effect=change):
+            with self.assertRaisesRegex(ValueError, 'without proven reuse'):
+                self.compact(apply=True)
+        with patch.object(storage.os, 'kill', return_value=None), \
+             patch.object(admission.host, 'process_started_after', return_value=True), \
+             patch.object(admission, 'owned', return_value=[{'pid': 999999}]):
+            with self.assertRaisesRegex(RuntimeError, 'owned native'):
+                self.compact(apply=True)
+        self.assertTrue(self.mod.is_dir())
+        self.assertFalse(self.store.exists())
+
+    def test_foreign_live_pid_requires_the_same_temporal_reuse_proof(self):
+        with patch.object(storage.os, 'kill', side_effect=PermissionError), \
+             patch.object(admission.host, 'process_started_after', return_value=False):
+            with self.assertRaisesRegex(ValueError, 'without proven reuse'):
+                self.compact(apply=True)
+        self.assertTrue(self.mod.is_dir())
+        with patch.object(storage.os, 'kill', side_effect=PermissionError), \
+             patch.object(admission.host, 'process_started_after', return_value=True):
+            self.compact(apply=True)
+        self.assertFalse(self.mod.exists())
+
+    def test_group_lifecycle_rejects_unsafe_reports_even_when_deferred_or_interrupted(self):
+        self.compact(apply=True)
+        marker = self.run / storage.MARKER
+        original = marker.read_bytes()
+        for interrupted in (False, True):
+            value = storage.after_group_report([self.run], self.store, marker, interrupted=interrupted)
+            self.assertEqual('deferred', value['status'])
+            self.assertEqual(original, marker.read_bytes())
+        storage.restore(self.run)
+
+    def test_interruption_defers_automatic_cleanup_without_entering_resource_guards(self):
+        execution = report.read_json(self.run / 'execution.json')
+        execution['interrupted'] = True
+        self.write('execution.json', execution)
+        with patch.object(storage, 'compact') as compact, patch.object(storage, 'compact_group') as group:
+            self.assertEqual('deferred', storage.after_report(self.run, self.store)['status'])
+            ledger = self.base / 'batch-maintenance.json'
+            self.assertEqual('deferred', storage.after_group_report([self.run], self.store, ledger, interrupted=True)['status'])
+        compact.assert_not_called()
+        group.assert_not_called()
+        self.assertTrue(self.mod.is_dir())
+        self.assertEqual('deferred', report.read_json(ledger)['status'])
+
+    def test_group_lifecycle_never_rewrites_a_concurrently_claimed_ledger(self):
+        ledger = self.base / 'group-race.json'
+        owner_value = {'status': 'running', 'owner': 'other operation', 'runs': [{'retained': 'evidence'}]}
+        owner_bytes = json.dumps(owner_value).encode()
+        def collide(*args, **kwargs):
+            ledger.write_bytes(owner_bytes)
+            raise FileExistsError('Fresh group report claimed concurrently')
+        with patch.object(storage, 'compact_group', side_effect=collide):
+            value = storage.after_group_report([self.run], self.store, ledger)
+        self.assertEqual('deferred', value['status'])
+        self.assertEqual(owner_bytes, ledger.read_bytes())
+        self.assertTrue(self.mod.is_dir())
+
+    def test_group_lifecycle_preserves_the_compactor_partial_ledger_on_failure(self):
+        ledger = self.base / 'group-partial.json'
+        partial = {'status': 'failed', 'runs': [{'run': str(self.run), 'status': 'compacted'}],
+                   'remaining': ['unprocessed-run']}
+        partial_bytes = json.dumps(partial).encode()
+        def fail(*args, **kwargs):
+            ledger.write_bytes(partial_bytes)
+            raise OSError('Partial group maintenance failed')
+        with patch.object(storage, 'compact_group', side_effect=fail):
+            value = storage.after_group_report([self.run], self.store, ledger)
+        self.assertEqual('deferred', value['status'])
+        self.assertEqual(partial_bytes, ledger.read_bytes())
+
+    def test_interrupted_group_lifecycle_io_failures_cannot_replace_the_saved_verdict(self):
+        verdict = (self.run / 'report.json').read_bytes()
+        for stage, target, name in (('mkdir', Path, 'mkdir'), ('open', storage.os, 'open'),
+                                    ('publish', storage, '_publish')):
+            ledger = self.base / f'interrupted-{stage}.json'
+            with self.subTest(stage=stage), patch.object(target, name, side_effect=OSError('storage full')), \
+                 patch.object(storage, 'compact_group') as compact:
+                value = storage.after_group_report([self.run], self.store, ledger, interrupted=True)
+            compact.assert_not_called()
+            self.assertEqual('deferred', value['status'])
+            self.assertIn('storage full', value['reason'])
+        self.assertEqual(verdict, (self.run / 'report.json').read_bytes())
+        self.assertTrue(self.mod.is_dir())
+
+    def test_single_run_lifecycle_publication_failure_preserves_saved_verdict_and_storage_result(self):
+        verdict = (self.run / 'report.json').read_bytes()
+        compacted = {'status': 'compacted', 'run': str(self.run)}
+        with patch.object(storage, 'compact', return_value=compacted), \
+             patch.object(storage, '_publish', side_effect=OSError('storage full')):
+            value = storage.after_report(self.run, self.store)
+        self.assertEqual('compacted', value['status'])
+        self.assertEqual('storage full', value['maintenance_error'])
+        self.assertEqual(verdict, (self.run / 'report.json').read_bytes())
+
+    def test_single_run_lifecycle_invalid_execution_is_deferred(self):
+        self.write('execution.json', [])
+        value = storage.after_report(self.run, self.store)
+        self.assertEqual('deferred', value['status'])
+        self.assertTrue(self.mod.is_dir())
 
     def test_busy_profile_or_global_lease_refuses_storage(self):
         admission._directory()
@@ -390,6 +528,149 @@ class SnapshotStorageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Unexpected retirement'):
             self.compact(apply=True)
         self.assertTrue(fifo.exists())
+
+    def other_run(self):
+        import shutil
+        other = self.base / 'runs/other'
+        shutil.copytree(self.run, other)
+        runtime = report.read_json(other / 'runtime.json')
+        runtime['roles']['client1']['cache'] = str(other / 'client1')
+        report.write_json(other / 'runtime.json', runtime)
+        frozen = report.read_json(other / 'snapshot-hashes.json')
+        frozen['runtime.json'] = native.sha256(other / 'runtime.json')
+        report.write_json(other / 'snapshot-hashes.json', frozen)
+        return other
+
+    def test_group_scans_once_under_all_profile_leases_and_preserves_cross_run_sources(self):
+        other = self.other_run()
+        source = report.read_json(other / 'source-manifest.json')
+        source[str(self.mod / '42/mod.info')] = native.sha256(self.mod / '42/mod.info')
+        report.write_json(other / 'source-manifest.json', source)
+        frozen = report.read_json(other / 'snapshot-hashes.json')
+        frozen['source-manifest.json'] = native.sha256(other / 'source-manifest.json')
+        report.write_json(other / 'snapshot-hashes.json', frozen)
+        original = storage._reference_map
+        def checked(roots, scans):
+            for root in roots:
+                with (admission.STATE / (admission._key(root) + '.lease')).open('a+') as stream:
+                    with self.assertRaises(BlockingIOError):
+                        admission.fcntl.flock(stream, admission.fcntl.LOCK_EX | admission.fcntl.LOCK_NB)
+            return original(roots, scans)
+        ledger = self.base / 'group.json'
+        with patch.object(storage, '_reference_map', side_effect=checked) as scan:
+            result = storage.compact_group([self.run, other], self.store, apply=True, report_path=ledger)
+        self.assertEqual(1, scan.call_count)
+        self.assertEqual('compacted', result['status'])
+        self.assertTrue(self.mod.is_dir(), 'other run still names this exact original source')
+        self.assertFalse((other / 'client1/mods/Example').exists())
+        storage.verify(other)
+        self.assertEqual(result, report.read_json(ledger))
+        self.assertEqual({}, getattr(storage._local, 'group_references', {}))
+
+    def test_group_interrupt_keeps_partial_ledger_and_releases_every_lease(self):
+        other = self.other_run()
+        ledger = self.base / 'group.json'
+        original = storage.compact
+        def interrupt(root, *args, **kwargs):
+            if root == other:
+                raise KeyboardInterrupt()
+            return original(root, *args, **kwargs)
+        with patch.object(storage, 'compact', side_effect=interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                storage.compact_group([self.run, other], self.store, apply=True, report_path=ledger)
+        value = report.read_json(ledger)
+        self.assertEqual('interrupted', value['status'])
+        self.assertEqual([str(other)], value['remaining'])
+        self.assertFalse(self.mod.exists())
+        self.assertTrue((other / 'client1/mods/Example').is_dir())
+        self.assertEqual({}, getattr(storage._local, 'group_references', {}))
+        for root in (self.run, other):
+            with (admission.STATE / (admission._key(root) + '.lease')).open('a+') as stream:
+                admission.fcntl.flock(stream, admission.fcntl.LOCK_EX | admission.fcntl.LOCK_NB)
+
+    def test_group_reuse_rechecks_payload_mutation_before_retiring_next_run(self):
+        other = self.other_run()
+        original = storage.compact
+        def corrupt_after_first(root, *args, **kwargs):
+            result = original(root, *args, **kwargs)
+            if root == self.run:
+                payload = next((self.store / 'payloads').glob('*.tar.gz'))
+                info = payload.stat()
+                data = payload.read_bytes()
+                payload.write_bytes(bytes([data[0] ^ 1]) + data[1:])
+                os.utime(payload, ns=(info.st_atime_ns, info.st_mtime_ns))
+            return result
+        with patch.object(storage, 'compact', side_effect=corrupt_after_first):
+            value = storage.compact_group([self.run, other], self.store, apply=True)
+        self.assertEqual('stopped', value['status'])
+        self.assertTrue((other / 'client1/mods/Example').is_dir())
+        self.assertEqual([str(other)], value['remaining'])
+
+    def test_group_integrity_failure_stops_instead_of_retrying_remaining_sources(self):
+        other = self.other_run()
+        original = snapshot_store.capture
+        def corrupt(tree, store):
+            if str(tree).startswith(str(other)):
+                raise snapshot_store.SnapshotStoreError('corrupt shared payload')
+            return original(tree, store)
+        with patch.object(snapshot_store, 'capture', side_effect=corrupt):
+            result = storage.compact_group([self.run, other], self.store, apply=True)
+        self.assertEqual('stopped', result['status'])
+        self.assertIn('corrupt shared payload', result['reason'])
+        self.assertEqual([str(other)], result['remaining'])
+        self.assertTrue((other / 'client1/mods/Example').is_dir())
+        storage.verify(self.run)
+
+    def test_group_preview_cannot_overwrite_binding_through_alias_or_link(self):
+        self.compact(apply=True)
+        marker = self.run / storage.MARKER
+        original = marker.read_bytes()
+        alias = self.run.parent / '..' / self.run.parent.name / self.run.name / storage.MARKER
+        linked = self.base / 'linked-run'
+        linked.symlink_to(self.run, target_is_directory=True)
+        for path in (alias, linked / storage.MARKER, self.store / 'report.json'):
+            with self.subTest(path=str(path)), self.assertRaisesRegex(ValueError, 'outside'):
+                storage.compact_group([self.run], self.store, report_path=path)
+        self.assertEqual(original, marker.read_bytes())
+        storage.restore(self.run)
+        existing = self.base / 'existing-report.json'
+        existing.write_text('retained report')
+        with self.assertRaises(FileExistsError):
+            storage.compact_group([self.run], self.store, report_path=existing)
+        self.assertEqual('retained report', existing.read_text())
+
+    def test_failed_group_baseline_cannot_leak_stale_dependency_permissions(self):
+        with patch.object(storage.shutil, 'disk_usage', side_effect=OSError('baseline unavailable')):
+            with self.assertRaisesRegex(OSError, 'baseline unavailable'):
+                storage.compact_group([self.run], self.store)
+        self.assertEqual({}, getattr(storage._local, 'group_references', {}))
+        consumer = self.base / 'runs/consumer'
+        consumer.mkdir()
+        report.write_json(consumer / 'source-manifest.json', {str(self.mod / '42/mod.info'): 'x'})
+        self.assertEqual(['client1/mods/Example'], self.compact()['protected_sources'])
+
+    def test_group_cli_uses_explicit_plan_and_keeps_a_fresh_result_ledger(self):
+        from tests.test_queue_reanalysis import cli
+        other = self.other_run()
+        plan = self.base / 'cohort.json'
+        report.write_json(plan, {'schema_version': 1, 'runs': [str(self.run), str(other)]})
+        ledger = self.base / 'cohort-result.json'
+        output = io.StringIO()
+        with patch.object(cli, 'load_catalog') as catalog, redirect_stdout(output):
+            code = cli.main(['snapshot-compact-group', str(plan), '--store', str(self.store), '--report', str(ledger)])
+        self.assertEqual(0, code)
+        catalog.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue()), report.read_json(ledger))
+        self.assertFalse(self.store.exists())
+        self.assertTrue(self.mod.is_dir())
+
+    def test_group_preview_never_creates_archive_or_retires_inputs(self):
+        other = self.other_run()
+        result = storage.compact_group([self.run, other], self.store)
+        self.assertEqual('preview', result['status'])
+        self.assertFalse(self.store.exists())
+        self.assertTrue(self.mod.is_dir())
+        self.assertTrue((other / 'client1/mods/Example').is_dir())
 
     def test_dangling_marker_is_preserved_instead_of_replaced(self):
         marker = self.run / storage.MARKER

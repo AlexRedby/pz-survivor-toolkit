@@ -66,10 +66,16 @@ def _sync_directory(path):
 
 
 def _stopped(root):
-    execution = _json(root / 'execution.json')
+    path = root / 'execution.json'
+    initial = path.lstat()
+    identity = snapshot_store._signature(initial)
+    execution = _json(path)
+    if snapshot_store._signature(path.lstat()) != identity:
+        raise ValueError('Execution receipt changed while checking stopped processes')
     if (not isinstance(execution, dict) or execution.get('status') not in ('completed', 'failed')
             or not isinstance(execution.get('processes'), dict) or not execution['processes']):
         raise ValueError('Storage requires an executed, stopped native run')
+    reused = []
     for process in execution['processes'].values():
         if (not isinstance(process, dict) or type(process.get('pid')) is not int or process['pid'] <= 0
                 or type(process.get('exit_code')) is not int):
@@ -78,7 +84,18 @@ def _stopped(root):
             os.kill(process['pid'], 0)
         except ProcessLookupError:
             continue
-        raise ValueError('Recorded native PID is still alive; storage refused')
+        except PermissionError:
+            pass  # EPERM proves liveness, not identity; require the same reuse proof below.
+        receipt = _digest(path)
+        cutoff = max(initial.st_mtime_ns, initial.st_ctime_ns)
+        if (snapshot_store._signature(path.lstat()) != identity
+                or not admission.host.process_started_after(process['pid'], cutoff)
+                or snapshot_store._signature(path.lstat()) != identity or _digest(path) != receipt):
+            raise ValueError('Recorded native PID is still alive without proven reuse; storage refused')
+        reused.append({'pid': process['pid'], 'execution_sha256': receipt, 'receipt_timestamp_ns': cutoff})
+    if snapshot_store._signature(path.lstat()) != identity:
+        raise ValueError('Execution receipt changed while checking stopped processes')
+    execution['_storage_pid_reuse'] = reused
     return execution
 
 
@@ -121,7 +138,8 @@ def _maintenance(root):
                 raise RuntimeError('An owned native process still uses this snapshot')
         _local.held = held | {root}
         try:
-            yield
+            with snapshot_store.verified_payloads():
+                yield
         finally:
             _local.held = held
 
@@ -131,6 +149,23 @@ def _reconcile():
     admission._preparations()
     admission._timings()
     admission._waiters()
+
+
+@contextmanager
+def store_maintenance():
+    """Quiesce native users before changing descriptor container encoding."""
+    if getattr(_local, 'held', set()):
+        yield
+        return
+    if admission.fcntl is None:
+        raise ValueError('Native store maintenance requires POSIX admission locks')
+    admission._directory()
+    with admission.LEGACY_LOCK.open('a+') as stream:
+        try:
+            admission.fcntl.flock(stream, admission.fcntl.LOCK_EX | admission.fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError('Native work owns a lease; store maintenance refused') from error
+        yield
 
 
 def _binding(root, value=None):
@@ -224,15 +259,19 @@ def verify(run):
 
 
 def _references(root, scan_roots):
+    return _reference_map([root], scan_roots)[root]
+
+
+def _reference_map(roots, scan_roots):
     with progress.Phase('snapshot-dependencies'):
-        return _scan_references(root, scan_roots)
+        return _scan_reference_map(roots, scan_roots)
 
 
-def _scan_references(root, scan_roots):
+def _scan_reference_map(roots, scan_roots):
     """Known historical source consumers stay unpacked during the migration."""
-    references = set()
+    references = {root: set() for root in roots}
     resolved_sources, resolved_parents = {}, {}
-    root_name = str(root)
+    root_names = {root: str(root) for root in roots}
     for scan in scan_roots:
         scan = Path(scan).resolve()
         if not scan.is_dir():
@@ -248,7 +287,7 @@ def _scan_references(root, scan_roots):
                     continue
                 path = Path(directory) / filename
                 progress.file(path)
-                if path.parent == root or path.is_symlink():
+                if path.is_symlink():
                     continue
                 try:
                     if filename in ('source-manifest.json', 'manifest.json'):
@@ -280,9 +319,12 @@ def _scan_references(root, scan_roots):
                         continue
                     if source not in resolved_sources:
                         resolved = _canonical_source(source, resolved_parents)
-                        resolved_sources[source] = resolved if (resolved == root_name or resolved.startswith(root_name + os.sep)) else None
-                    if resolved_sources[source] is not None:
-                        references.add(resolved_sources[source])
+                        matches = tuple(root for root, name in root_names.items() if resolved == name or resolved.startswith(name + os.sep))
+                        resolved_sources[source] = (resolved, matches)
+                    resolved, matches = resolved_sources[source]
+                    for root in matches:
+                        if path.parent != root:
+                            references[root].add(resolved)
     return references
 
 
@@ -367,7 +409,7 @@ def compact(run, store=None, *, apply=False, dependency_roots=()):
     if root in getattr(_local, 'pins', set()):
         raise RuntimeError('A source consumer pins this snapshot')
     with _maintenance(root):
-        _stopped(root)
+        stopped = _stopped(root)
         previous = _binding(root) if os.path.lexists(root / MARKER) else None
         if previous:
             _verify(root, previous)
@@ -383,9 +425,15 @@ def compact(run, store=None, *, apply=False, dependency_roots=()):
         if not previous:
             issues = report.verify_manifest(root, 'snapshot-hashes.json')
             if issues:
-                raise ValueError('Cannot compact changed snapshot: ' + '; '.join(issues))
-        scans = list(dict.fromkeys([*_default_scan(root), *map(Path, dependency_roots)]))
-        refs = _references(root, scans)
+                first = issues[0]
+                summary = first if len(first) <= 1024 else first[:1024] + '...'
+                raise ValueError(f'Cannot compact changed snapshot: {len(issues)} issues; first: {summary}')
+        grouped = getattr(_local, 'group_references', {}).get(root)
+        if grouped is None:
+            scans = list(dict.fromkeys([*_default_scan(root), *map(Path, dependency_roots)]))
+            refs = _references(root, scans)
+        else:
+            refs, scans = grouped
         trees = dict(previous['trees']) if previous else {}
         candidates, protected = [], []
         for role in adapters.roles(_json(root / 'selection.json')):
@@ -406,7 +454,7 @@ def compact(run, store=None, *, apply=False, dependency_roots=()):
                   'eligible': candidates, 'protected_sources': protected,
                   'dependency_roots': [str(Path(p).resolve()) for p in scans],
                   'logical_bytes': sum(p.stat().st_size for name in candidates for p in (root / name).rglob('*') if p.is_file()),
-                  'free_bytes_before': before}
+                  'free_bytes_before': before, 'pid_reuse': stopped['_storage_pid_reuse']}
         if not apply:
             return result
         for name in candidates:
@@ -630,8 +678,140 @@ def after_report(run, store):
     """Optional lifecycle hook; archival failure never destroys a saved test verdict."""
     root = Path(run).resolve()
     try:
-        value = compact(root, store, apply=True)
+        execution = _json(root / 'execution.json')
+        if isinstance(execution, dict) and execution.get('interrupted'):
+            value = {'status': 'deferred', 'reason': 'Execution was interrupted; raw inputs retained'}
+        else:
+            value = compact(root, store, apply=True)
     except (OSError, ValueError, RuntimeError) as error:
         value = {'status': 'deferred', 'reason': str(error)}
-    _publish(root / 'storage-maintenance.json', value)
+    try:
+        _publish(root / 'storage-maintenance.json', value)
+    except (OSError, ValueError, RuntimeError) as error:
+        value = dict(value, maintenance_error=str(error))
     return value
+
+
+def _group_paths(runs, store, report_path):
+    roots = sorted({_root(run) for run in runs})
+    if not roots:
+        raise ValueError('Snapshot compaction group must not be empty')
+    store = Path(os.path.abspath(store))
+    if any(path.is_symlink() for path in (store, *store.parents)) or any(store.is_relative_to(root) for root in roots):
+        raise ValueError('Group store must be outside every selected run without linked parents')
+    device = roots[0].stat().st_dev
+    probe = store
+    while not probe.exists():
+        probe = probe.parent
+    if probe.stat().st_dev != device or any(root.stat().st_dev != device for root in roots):
+        raise ValueError('Group storage observations require runs and store on one filesystem')
+    if report_path is not None:
+        report_path = Path(os.path.abspath(report_path))
+        if (any(path.is_symlink() for path in (report_path, *report_path.parents))
+                or any(report_path.is_relative_to(root) for root in roots)
+                or report_path.is_relative_to(store)):
+            raise ValueError('Group report must be outside selected runs and store without linked parents')
+    return roots, store, report_path
+
+
+def after_group_report(runs, store, report_path, *, interrupted=False):
+    """One retirement after batch accounting; never delay an interrupted command."""
+    try:
+        roots, store, path = _group_paths(runs, store, report_path)
+        if os.path.lexists(path):
+            raise FileExistsError('Fresh group maintenance report required')
+        if interrupted:
+            value = {'status': 'deferred', 'reason': 'Batch was interrupted; raw inputs retained'}
+            path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+            os.close(descriptor)
+            _publish(path, value)
+            return value
+        return compact_group(roots, store, apply=True, report_path=path)
+    except (OSError, ValueError, RuntimeError) as error:
+        # compact_group owns its partial ledger; a failed exclusive claim may
+        # belong to another operation, so this wrapper must never rewrite it.
+        return {'status': 'deferred', 'reason': str(error)}
+
+
+def compact_group(runs, store, *, apply=False, dependency_roots=(), report_path=None):
+    """Hold all profile guards and scan dependencies once for an explicit historical cohort."""
+    roots, store, report_path = _group_paths(runs, store, report_path)
+    if report_path is not None:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(report_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        os.close(descriptor)
+    result = {'schema_version': 1, 'status': 'preview' if not apply else 'running',
+              'store': str(Path(store).absolute()), 'runs': [], 'blocked': [],
+              'remaining': [str(root) for root in roots]}
+    def save():
+        if report_path is not None:
+            _publish(report_path, result)
+    save()
+    candidates = []
+    for root in roots:
+        try:
+            _stopped(root)
+        except (OSError, ValueError) as error:
+            result['blocked'].append({'run': str(root), 'reason': str(error)})
+        else:
+            candidates.append(root)
+    if not candidates:
+        result.update(status='blocked', remaining=[])
+        save()
+        return result
+    with ExitStack() as stack:
+        admitted = []
+        for root in candidates:
+            try:
+                stack.enter_context(_maintenance(root))
+                _stopped(root)
+            except (OSError, ValueError, RuntimeError) as error:
+                # No group owns the legacy lease yet: don't retry global contention per root.
+                if not getattr(_local, 'held', set()):
+                    result.update(status='blocked', reason=str(error))
+                    save()
+                    return result
+                result['blocked'].append({'run': str(root), 'reason': str(error)})
+            else:
+                admitted.append(root)
+        scans, scan_bases = list(map(Path, dependency_roots)), set()
+        for root in admitted:
+            base = next((parent for parent in root.parents if parent.name == '.codex'), root.parent)
+            if base not in scan_bases:
+                scans.extend(_default_scan(root))
+                scan_bases.add(base)
+        scans = sorted({path.resolve() for path in scans})
+        scans = [path for path in scans if not any(path != other and path.is_relative_to(other) for other in scans)]
+        references = _reference_map(admitted, scans)
+        previous = getattr(_local, 'group_references', {})
+        try:
+            _local.group_references = {root: (references[root], scans) for root in admitted}
+            result['free_bytes_before'] = shutil.disk_usage(roots[0]).free
+            save()
+            for index, root in enumerate(admitted):
+                with progress.Phase('compact-historical-snapshot', run=root.name):
+                    try:
+                        item = compact(root, store, apply=apply, dependency_roots=dependency_roots)
+                    except (snapshot_store.SnapshotStoreError, OSError) as error:
+                        result.update(status='stopped', reason=str(error), remaining=[str(p) for p in admitted[index:]])
+                        save()
+                        return result
+                    except (ValueError, RuntimeError) as error:
+                        result['blocked'].append({'run': str(root), 'reason': str(error)})
+                    else:
+                        result['runs'].append(item)
+                    result['remaining'] = [str(p) for p in admitted[index + 1:]]
+                    result['free_bytes_after'] = shutil.disk_usage(roots[0]).free
+                    save()
+        except BaseException as error:
+            result['status'] = 'interrupted' if isinstance(error, (KeyboardInterrupt, SystemExit)) else 'failed'
+            save()
+            raise
+        finally:
+            _local.group_references = previous
+        result.update(status='partial' if result['blocked'] else 'compacted' if apply else 'preview', remaining=[])
+        result['observed_free_bytes_change'] = result['free_bytes_after'] - result['free_bytes_before'] if result['runs'] else 0
+        result['note'] = 'Filesystem-wide free-space observations include delayed reclamation and unrelated writes; logical bytes are not recovered bytes.'
+        save()
+        return result

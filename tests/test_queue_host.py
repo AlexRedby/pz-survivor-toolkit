@@ -75,6 +75,71 @@ class HostParserTests(unittest.TestCase):
         self.assertEqual('', host.parse_processes('12 1 0', COMMANDS)[0]['command'])
 
 
+class HostProcessAgeTests(unittest.TestCase):
+    NOW = 2_000_000_000_000_000_000
+    MONOTONIC = 100_000_000_000
+
+    def probe(self, elapsed, cutoff_ns, *, wall=None, monotonic=None):
+        with patch.object(host, '_output', return_value=elapsed) as output, \
+             patch.object(host.time, 'time_ns', side_effect=wall or [self.NOW, self.NOW + 10_000_000]), \
+             patch.object(host.time, 'monotonic_ns', side_effect=monotonic or [self.MONOTONIC, self.MONOTONIC + 10_000_000]):
+            result = host.process_started_after(123, cutoff_ns)
+        output.assert_called_once_with(['/bin/ps', '-p', '123', '-o', 'etime='])
+        return result
+
+    def test_elapsed_formats_prove_start_after_older_cutoff(self):
+        for elapsed, seconds in (('00:00', 0), ('  03:12\n', 192), ('01:02:03', 3723),
+                                 ('1:02:03', 3723), ('02-08:32:18', 203538),
+                                 ('123-23:59:59', 123 * 86400 + 86399)):
+            with self.subTest(elapsed=elapsed):
+                self.assertTrue(self.probe(elapsed, self.NOW - (seconds + 3) * 1_000_000_000))
+
+    def test_elapsed_must_be_unique_complete_and_in_range(self):
+        for elapsed in ('', ' ', '\n', '00:01\n00:02', '00:01 extra', '1', '1:2',
+                        '-00:01', '00:-1', '00:60', '60:00', '24:00:00',
+                        '01:60:00', '02-08:32', '2-24:00:00', '1-2-03:04:05',
+                        '01:02:03:04', '１２:３４'):
+            with self.subTest(elapsed=elapsed):
+                self.assertFalse(self.probe(elapsed, 0))
+
+    def test_start_lower_bound_must_be_strictly_after_cutoff(self):
+        lower_bound = self.NOW - 62 * 1_000_000_000
+        self.assertTrue(self.probe('01:00', lower_bound - 1))
+        self.assertFalse(self.probe('01:00', lower_bound))
+        self.assertFalse(self.probe('01:00', lower_bound + 1))
+
+    def test_clock_discontinuities_and_backwards_intervals_cannot_prove_reuse(self):
+        self.assertTrue(self.probe('00:01', 0,
+                                  wall=[self.NOW, self.NOW + 1_010_000_000]))
+        for wall, monotonic in (
+            ([self.NOW, self.NOW + 1_010_000_001], [self.MONOTONIC, self.MONOTONIC + 10_000_000]),
+            ([self.NOW, self.NOW - 1], [self.MONOTONIC, self.MONOTONIC + 10_000_000]),
+            ([self.NOW, self.NOW + 10_000_000], [self.MONOTONIC, self.MONOTONIC - 1]),
+            ([self.NOW, self.NOW + 10_000_000], [self.MONOTONIC, self.MONOTONIC + 1_010_000_001]),
+        ):
+            with self.subTest(wall=wall, monotonic=monotonic):
+                self.assertFalse(self.probe('00:01', 0, wall=wall, monotonic=monotonic))
+
+    def test_probe_errors_and_timeouts_cannot_prove_reuse(self):
+        for error in (OSError('denied'), ValueError('invalid output'),
+                      subprocess.CalledProcessError(1, 'ps'), subprocess.TimeoutExpired('ps', 10)):
+            with self.subTest(error=error), patch.object(host, '_output', side_effect=error):
+                self.assertFalse(host.process_started_after(123, 0))
+
+    def test_invalid_arguments_do_not_probe(self):
+        for pid, cutoff in ((0, 0), (-1, 0), (True, 0), ('123', 0), (123, True), (123, 1.5)):
+            with self.subTest(pid=pid, cutoff=cutoff), patch.object(host, '_output') as output:
+                self.assertFalse(host.process_started_after(pid, cutoff))
+                output.assert_not_called()
+
+    def test_elapsed_probe_keeps_existing_timeout_and_locale(self):
+        with patch.object(host.subprocess, 'check_output', return_value='00:01') as output:
+            self.assertTrue(host.process_started_after(123, 0))
+        self.assertEqual(['/bin/ps', '-p', '123', '-o', 'etime='], output.call_args.args[0])
+        self.assertEqual(10, output.call_args.kwargs['timeout'])
+        self.assertEqual('C', output.call_args.kwargs['env']['LC_ALL'])
+
+
 class HostSampleTests(unittest.TestCase):
     def test_mac_sample_caps_available_memory_and_reads_both_ps_inventories(self):
         with patch.object(host.sys, 'platform', 'darwin'), \
