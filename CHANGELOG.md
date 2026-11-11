@@ -1624,6 +1624,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.96
+
+- **Fixed:** The reviewed Vehicle Salvage Overhaul B42 reader now honors its visible full-vehicle salvage toggle and part-salvage recipe times. Declared `VSO_*` settings take precedence, including explicit `false`; legacy `VRO_*` settings remain fallbacks when the declared values are absent. The correction applies to the owned Lua compiler input without changing Workshop files or saved settings. Unknown source versions retain upstream behavior.
+
 ### 0.1.95
 
 - **Fixed:** Preserve native ignition completion when server consumption or breakage has already removed the input's container on a Host client. Correct only reviewed campfire/BBQ literature and BBQ/fireplace Kindle compiler inputs; keep native consumption, completion, queue progression and unknown-source behavior.

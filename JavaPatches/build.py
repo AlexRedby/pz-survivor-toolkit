@@ -194,6 +194,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
 CHECKS['net.alexredby.pztoolkitjavapatches.CartInjuryTest'] = 'CART_INJURY_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.CleanUIFoodAgeChecks'] = 'CLEANUI_FOOD_AGE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.NativeIgnitionSourceChecks'] = 'NATIVE_IGNITION_SOURCE_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.VehicleSalvageSandboxChecks'] = 'VEHICLE_SALVAGE_SANDBOX_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueLeafTransferFactsChecks'] = 'QUEUE_LEAF_TRANSFER_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueSpatialFactsChecks'] = 'QUEUE_SPATIAL_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueBindingCompilerChecks'] = 'QUEUE_BINDING_COMPILER_CHECKS_PASS'
@@ -219,6 +220,7 @@ CHECKS['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
 CHECKS['zombie.pathfind.nativeCode.BarricadedDoorPathChecks'] = 'BARRICADED_DOOR_PATH_CHECKS_PASS'
 # Workshop-dependent checks require an explicit --test; --check keeps its game-only inputs.
 EXPLICIT_ONLY_CHECKS = {'net.alexredby.pztoolkitjavapatches.DamnLibraryBatteryRecipeChecks',
+                        'net.alexredby.pztoolkitjavapatches.VehicleSalvageSandboxChecks',
                         'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
                         'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks'}
 TEST_NAMES = {name.rsplit('.', 1)[-1]: name for name in CHECKS}
@@ -432,7 +434,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.95',
+    'version': '0.1.96',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

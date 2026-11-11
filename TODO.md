@@ -102,7 +102,7 @@ Prepare fixtures before launch where possible; add them to compatible inventory/
 
 ### Vehicle Repair Overhaul verification
 
-- [ ] Use both VRO modules from the current complete source lock to check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify menus with Toolkit/VVA, actual materials/XP and 10-use fuel drain, reload and second-player state. Empty test containers and remove occupants/animals before removal. Recheck the upstream VSO/VRO sandbox-key mismatch before relying on custom controls; source/metadata checks do not establish runtime compatibility.
+- [ ] Use both VRO modules from the current complete source lock to check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify Toolkit/VVA menus, actual materials/XP and 10-use fuel drain, cancellation, reload and second-player state. Empty test containers and remove occupants/animals before removal. Whole-vehicle duration is independent of the part-recipe time settings. Settings initialization checks do not establish these gameplay effects or their multiplayer outcomes.
 
 ### Vehicle aim roof fix verification
 
