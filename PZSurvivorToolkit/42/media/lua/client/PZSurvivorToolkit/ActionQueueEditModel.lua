@@ -32,8 +32,9 @@ local function result(status, reason, entry, key, field)
 end
 local entryFields = {action = true, edit = true, deferred = true, active = true, snapshotOnly = true}
 local editFields = {version = true, complete = true, capacity = true, resources = true}
-local resourceFields = {domain = true, key = true, facts = true, requires = true, effects = true, bounds = true}
-local predicateFields = {field = true, equal = true, notEqual = true, oneOf = true, min = true, max = true, above = true}
+local resourceFields = {domain = true, key = true, facts = true, requires = true, effects = true, cases = true, bounds = true}
+local predicateFields = {field = true, equal = true, notEqual = true, oneOf = true, sameAs = true, min = true, max = true, above = true}
+local caseFields = {when = true, effects = true}
 local effectFields = {field = true, set = true, delta = true, toggle = true, cap = true, scale = true, deplete = true}
 local deferredFields = {version=true,kind=true,actor=true,targetSquare=true,invalidates=true,routing=true,expansion=true,outcome=true}
 local function deferredSpatial(value)
@@ -68,6 +69,10 @@ end
 local function validPredicate(predicate)
     if not fields(predicate, predicateFields) or not named(predicate.field) then return false end
     local numeric = predicate.min ~= nil or predicate.max ~= nil or predicate.above ~= nil
+    if predicate.sameAs ~= nil then
+        return named(predicate.sameAs) and predicate.equal == nil and predicate.notEqual == nil
+            and predicate.oneOf == nil and not numeric
+    end
     if predicate.equal ~= nil then return scalar(predicate.equal) and predicate.notEqual == nil and predicate.oneOf == nil and not numeric end
     if predicate.notEqual ~= nil then return scalar(predicate.notEqual) and predicate.oneOf == nil and not numeric end
     if predicate.oneOf ~= nil then
@@ -78,6 +83,36 @@ local function validPredicate(predicate)
         return true
     end
     return numericPredicate(predicate)
+end
+local function validEffect(effect)
+    if not fields(effect, effectFields) or not named(effect.field) then return false end
+    local operations = (effect.set ~= nil and 1 or 0) + (effect.delta ~= nil and 1 or 0)
+        + (effect.toggle ~= nil and 1 or 0) + (effect.cap ~= nil and 1 or 0) + (effect.scale ~= nil and 1 or 0)
+        + (effect.deplete ~= nil and 1 or 0)
+    local valid = operations == 1 and (effect.set == nil or scalar(effect.set))
+        and (effect.delta == nil or finite(effect.delta)) and (effect.toggle == nil or effect.toggle == true)
+        and (effect.cap == nil or finite(effect.cap))
+        and (effect.scale == nil or finite(effect.scale) and effect.scale >= 0)
+        and (effect.deplete == nil or fields(effect.deplete, {amount=true,minimum=true})
+            and finite(effect.deplete.amount) and effect.deplete.amount >= 0
+            and finite(effect.deplete.minimum) and effect.deplete.minimum >= 0)
+    if not valid then return false, effect.field end
+    return true
+end
+local function validPredicates(predicates)
+    local count = array(predicates)
+    if not count then return false end
+    for i = 1, count do if not validPredicate(predicates[i]) then return false end end
+    return true
+end
+local function validEffects(effects)
+    local count = array(effects)
+    if not count then return false end
+    for i = 1, count do
+        local valid, field = validEffect(effects[i])
+        if not valid then return false, field end
+    end
+    return true
 end
 local function numericEffect(effect, value)
     if not finite(value) then return end
@@ -91,6 +126,39 @@ local function numericEffect(effect, value)
         if projected < effect.deplete.minimum then projected = 0 end
     end
     if finite(projected) then return projected end
+end
+local function predicateOperands(predicates, facts)
+    for _, predicate in ipairs(predicates) do
+        local value = facts[predicate.field]
+        if value == nil or (predicate.equal == nil and predicate.notEqual == nil and predicate.oneOf == nil
+            and predicate.sameAs == nil and not finite(value)) then return false, predicate.field end
+        if predicate.sameAs ~= nil and facts[predicate.sameAs] == nil then return false, predicate.sameAs end
+    end
+    return true
+end
+local function effectOperands(effects, facts, bounds, beforeBoundary)
+    for _, effect in ipairs(effects) do
+        local value = facts[effect.field]
+        local numeric = effect.delta ~= nil or effect.cap ~= nil or effect.scale ~= nil or effect.deplete ~= nil
+        if value == nil or (numeric and (not finite(value) or beforeBoundary and numericEffect(effect, value) == nil))
+            or (effect.toggle and type(value) ~= "boolean")
+            or (effect.set ~= nil and bounds and bounds[effect.field] and not finite(effect.set)) then
+            return false, effect.field
+        end
+    end
+    return true
+end
+local function matches(predicate, facts)
+    local value = facts[predicate.field]
+    if predicate.equal ~= nil then return rawequal(value, predicate.equal), "edit_required_state" end
+    if predicate.notEqual ~= nil then return not rawequal(value, predicate.notEqual), "edit_required_state" end
+    if predicate.sameAs ~= nil then return rawequal(value, facts[predicate.sameAs]), "edit_required_state" end
+    if predicate.oneOf ~= nil then
+        for _, candidate in ipairs(predicate.oneOf) do if rawequal(value, candidate) then return true end end
+        return false, "edit_required_state"
+    end
+    if not finite(value) then return nil, "edit_unknown" end
+    return not outside(value, predicate), "edit_resource_amount"
 end
 
 function Model.evaluate(entries)
@@ -174,31 +242,25 @@ function Model.evaluate(entries)
                 end
                 local requires = resource.requires == nil and {} or resource.requires
                 local effects = resource.effects == nil and {} or resource.effects
-                local requirementCount, effectCount = array(requires), array(effects)
-                if not requirementCount or not effectCount then return result("unhandled", "edit_unknown", entry, key) end
-                for k = 1, requirementCount do
-                    local predicate = requires[k]
-                    if not validPredicate(predicate) then
-                        return result("unhandled", "edit_unknown", entry, key)
+                if not validPredicates(requires) or resource.cases ~= nil and resource.effects ~= nil then
+                    return result("unhandled", "edit_unknown", entry, key)
+                end
+                local valid, field = validEffects(effects)
+                if not valid then return result("unhandled", "edit_unknown", entry, key, field) end
+                if resource.cases ~= nil then
+                    local caseCount = array(resource.cases)
+                    if not caseCount then return result("unhandled", "edit_unknown", entry, key) end
+                    for k = 1, caseCount do
+                        local case = resource.cases[k]
+                        if not fields(case, caseFields) or not validPredicates(case.when) then
+                            return result("unhandled", "edit_unknown", entry, key)
+                        end
+                        valid, field = validEffects(case.effects)
+                        if not valid then return result("unhandled", "edit_unknown", entry, key, field) end
                     end
                 end
-                for k = 1, effectCount do
-                    local effect = effects[k]
-                    if not fields(effect, effectFields) or not named(effect.field) then return result("unhandled", "edit_unknown", entry, key) end
-                    local operations = (effect.set ~= nil and 1 or 0) + (effect.delta ~= nil and 1 or 0)
-                        + (effect.toggle ~= nil and 1 or 0) + (effect.cap ~= nil and 1 or 0) + (effect.scale ~= nil and 1 or 0)
-                        + (effect.deplete ~= nil and 1 or 0)
-                    if operations ~= 1 or (effect.set ~= nil and not scalar(effect.set))
-                        or (effect.delta ~= nil and not finite(effect.delta)) or (effect.toggle ~= nil and effect.toggle ~= true)
-                        or (effect.cap ~= nil and not finite(effect.cap))
-                        or (effect.scale ~= nil and (not finite(effect.scale) or effect.scale < 0))
-                        or (effect.deplete ~= nil and (not fields(effect.deplete, {amount=true,minimum=true})
-                            or not finite(effect.deplete.amount) or effect.deplete.amount < 0
-                            or not finite(effect.deplete.minimum) or effect.deplete.minimum < 0)) then
-                        return result("unhandled", "edit_unknown", entry, key, effect.field)
-                    end
-                end
-                steps[#steps + 1] = {entry = entry, snapshot = snapshot, requires = requires, effects = effects, phase=phase}
+                steps[#steps + 1] = {entry = entry, snapshot = snapshot, requires = requires,
+                    effects = effects, cases = resource.cases, phase=phase}
             end
         end
     end
@@ -209,19 +271,17 @@ function Model.evaluate(entries)
             local facts, key = step.snapshot.facts, step.snapshot.key
             local bounds=step.snapshot.bounds
             if step.phase then bounds=step.snapshot.laterBounds and step.snapshot.laterBounds[step.phase]end
-            for _, predicate in ipairs(step.requires) do
-                local value = facts[predicate.field]
-                if value == nil or (predicate.equal == nil and predicate.notEqual == nil and predicate.oneOf == nil and not finite(value)) then
-                    return result("unhandled", "edit_unknown", step.entry, key, predicate.field)
-                end
-            end
-            for _, effect in ipairs(step.effects) do
-                local value = facts[effect.field]
-                local numeric = effect.delta ~= nil or effect.cap ~= nil or effect.scale ~= nil or effect.deplete ~= nil
-                if value == nil or (numeric and (not finite(value) or beforeBoundary and numericEffect(effect, value) == nil))
-                    or (effect.toggle and type(value) ~= "boolean")
-                    or (effect.set ~= nil and bounds and bounds[effect.field] and not finite(effect.set)) then
-                    return result("unhandled", "edit_unknown", step.entry, key, effect.field)
+            local valid, field = predicateOperands(step.requires, facts)
+            if not valid then return result("unhandled", "edit_unknown", step.entry, key, field) end
+            valid, field = effectOperands(step.effects, facts, bounds, beforeBoundary)
+            if not valid then return result("unhandled", "edit_unknown", step.entry, key, field) end
+            -- Inactive branches and removed actions remain audited contracts.
+            if step.cases then
+                for _, case in ipairs(step.cases) do
+                    valid, field = predicateOperands(case.when, facts)
+                    if not valid then return result("unhandled", "edit_unknown", step.entry, key, field) end
+                    valid, field = effectOperands(case.effects, facts, bounds, beforeBoundary)
+                    if not valid then return result("unhandled", "edit_unknown", step.entry, key, field) end
                 end
             end
         end
@@ -261,21 +321,24 @@ function Model.evaluate(entries)
             for _, step in ipairs(action.steps) do
                 local facts, key = step.snapshot.facts, step.snapshot.key
                 for _, predicate in ipairs(step.requires) do
-                    local value = facts[predicate.field]
-                    if predicate.equal ~= nil then
-                        if not rawequal(value, predicate.equal) then return result("denied", "edit_required_state", step.entry, key, predicate.field) end
-                    elseif predicate.notEqual ~= nil then
-                        if rawequal(value, predicate.notEqual) then return result("denied", "edit_required_state", step.entry, key, predicate.field) end
-                    elseif predicate.oneOf ~= nil then
-                        local found = false
-                        for _, candidate in ipairs(predicate.oneOf) do
-                            if rawequal(value, candidate) then found = true; break end
+                    local matched, reason = matches(predicate, facts)
+                    if not matched then return result(matched == nil and "unhandled" or "denied", reason, step.entry, key, predicate.field) end
+                end
+                if step.cases then
+                    -- Select against the pre-action projection. No resource can
+                    -- observe another resource's effects from this same action.
+                    local selected
+                    for _, case in ipairs(step.cases) do
+                        local matched = true
+                        for _, predicate in ipairs(case.when) do
+                            local match = matches(predicate, facts)
+                            if match == nil then return result("unhandled", "edit_unknown", step.entry, key, predicate.field) end
+                            if not match then matched = false; break end
                         end
-                        if not found then return result("denied", "edit_required_state", step.entry, key, predicate.field) end
-                    else
-                        if not finite(value) then return result("unhandled", "edit_unknown", step.entry, key, predicate.field) end
-                        if outside(value, predicate) then return result("denied", "edit_resource_amount", step.entry, key, predicate.field) end
+                        if matched then selected = case.effects; break end
                     end
+                    if not selected then return result("denied", "edit_required_state", step.entry, key) end
+                    step.effects = selected
                 end
             end
             for _, step in ipairs(action.steps) do

@@ -37,6 +37,8 @@ local cases={
     OwnershipMakeupSync="test_action_queue_makeup_sync.lua",
     OwnershipGroomingActive="test_action_queue_grooming_active.lua",
     OwnershipAnimalStops="test_action_queue_animal_stops.lua",
+    OwnershipHands="test_action_queue_hands.lua",
+    OwnershipProjectionCases="test_action_queue_edit_model.lua",
 }
 for flag,name in pairs(cases)do
     if _G[flag]then

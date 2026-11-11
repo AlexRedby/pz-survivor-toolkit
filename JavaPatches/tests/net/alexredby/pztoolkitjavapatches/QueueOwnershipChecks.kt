@@ -172,8 +172,8 @@ object QueueOwnershipChecks {
                     "Pass -Dpz.test.workshop or PZ_TEST_WORKSHOP with the Workshop content root",
                 )
         val available = listOf(
-            null, "OwnershipEditLookup", "OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
-            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops", "OwnershipBulkTransfer", "OwnershipTransferBindings", "OwnershipCartTransfer", "OwnershipReturnSources",
+            null, "OwnershipEditLookup", "OwnershipProjectionCases", "OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
+            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops", "OwnershipBulkTransfer", "OwnershipTransferBindings", "OwnershipCartTransfer", "OwnershipReturnSources", "OwnershipHands",
         )
         // Re-run affected native table vectors without repeating every family.
         // Empty/unrecognized selections are errors, never successful zero-case runs.

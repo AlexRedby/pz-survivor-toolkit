@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.358
+
+- **Added:** Internal data-only hand-assignment planning with first-match conditional resource effects and same-resource identity predicates. Transitions read the proposed state after preceding actions and preserve native already-equipped no-ops. All alternatives are validated, including inactive branches and removed work. This foundation does not enable new equip or integral-firearm unload edit permissions; native binding, side-effect, capacity and Host outcome proofs remain separate.
+
 ### 0.1.357
 
 - **Fixed:** Queue cancellation, reordering and priority decisions validate lookup ancestry before reading inherited action metadata. Structural snapshots also retain their original ancestry for the commit recheck. Unsupported lookup shapes and failed native metadata queries produce unavailable edits; ordinary native and registered table inheritance remains supported. Existing action, resource and multiplayer authority checks remain separate.
