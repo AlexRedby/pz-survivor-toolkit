@@ -126,11 +126,11 @@
     {
       "id": "wishlist-host-control",
       "suite": "shared-wishlist",
-      "case": "full",
+      "case": "visual,full",
       "kind": "mp",
       "language": "EN",
       "mode": "native",
-      "boundary": "Independent queue-disabled full-pack control; cannot share the candidate process.",
+      "boundary": "Independent queue-disabled full-pack visual/integration group with exact shared cleanup; cannot share the candidate process.",
       "options": {
         "mp_host": true
       }
@@ -138,11 +138,11 @@
     {
       "id": "wishlist-host",
       "suite": "shared-wishlist",
-      "case": "full",
+      "case": "visual,full",
       "kind": "mp",
       "language": "EN",
       "control_job": "wishlist-host-control",
-      "boundary": "Two-client full integration after its independent native control; already contains all preserved stages.",
+      "boundary": "Two-client full-pack visual/integration group after its independent native control; requires exact shared cleanup and optional UI restoration.",
       "options": {
         "mp_host": true
       }

@@ -40,8 +40,9 @@ def validate_selection(selection):
     cases = selection["cases"]
     if not cases or len(cases) != len(set(cases)) or any(case not in COUNTS[suite] for case in cases):
         raise ValueError("Choose a unique nonempty preserved scenario subset")
-    if suite == "shared-wishlist" and len(cases) > 1 and set(cases) != {"visual", "standalone"}:
-        raise ValueError("Wishlist full and reload require separate isolated lifecycles")
+    integrated_session = suite == "shared-wishlist" and set(cases) == {"visual", "full"}
+    if suite == "shared-wishlist" and len(cases) > 1 and set(cases) not in ({"visual", "standalone"}, {"visual", "full"}):
+        raise ValueError("Wishlist grouped cases require visual with standalone or full; reload requires a separate isolated lifecycle")
     if suite == "shared-wishlist" and selection.get("options", {}).get("mp_host"):
         if "reload" in cases:
             raise ValueError("Wishlist reload requires the separate-server seed lifecycle; menu Host is unsupported")
@@ -65,7 +66,7 @@ def validate_selection(selection):
         for required in ("PZSurvivorToolkit", "NeatUI_Framework", "Neat_Crafting"):
             if required not in mods:
                 raise ValueError("Craft plan dependency missing: " + required)
-    elif case in ("standalone", "visual", "reload"):
+    elif not integrated_session and case in ("standalone", "visual", "reload"):
         if startup_fixes:
             if mods != NATIVE_STARTUP_MODS or options.get("preload_toolkit_fonts") is not True:
                 raise ValueError("Native startup qualification requires exact native-fix mods and explicit early fonts")
@@ -115,7 +116,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     source = Path(project) / "tests/native_queue/contributions" / selection["suite"] / "prepare.py"
     namespace = {"__file__": str(source), "__name__": "preserved_" + selection["suite"]}
     exec(compile(source.read_text(), str(source), "exec"), namespace)
-    if selection["suite"] == "shared-wishlist" and selection["cases"] == ["full"]:
+    if selection["suite"] == "shared-wishlist" and "full" in selection["cases"]:
         if not any(list(Path(source).rglob("BetterContainers/Proximity.lua")) for source in locations.values()):
             raise ValueError("Wishlist full requires the selected BetterContainers/Proximity implementation")
     for role in runtime["roles"]:

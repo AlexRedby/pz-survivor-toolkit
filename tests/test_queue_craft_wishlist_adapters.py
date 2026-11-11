@@ -592,12 +592,12 @@ print('PASS real server visual empty-list/owner/storage/faction reset guards wit
                                 input=OFFLINE_FIXTURE_EVENTS + code, text=True, capture_output=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
-    def test_grouped_wishlist_only_visual_then_standalone(self):
+    def test_grouped_wishlist_visual_then_standalone(self):
         value = dict(selection("shared-wishlist", "visual"), cases=["standalone", "visual"])
         adapter.validate(value)
         self.assertEqual(["visual", "standalone"], adapter.ordered_cases(value))
         for cases in (["full", "standalone"], ["reload", "visual"], ["full", "visual", "standalone"]):
-            with self.assertRaisesRegex(ValueError, "separate isolated"):
+            with self.assertRaisesRegex(ValueError, "isolated lifecycle"):
                 adapter.validate(dict(value, cases=cases))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

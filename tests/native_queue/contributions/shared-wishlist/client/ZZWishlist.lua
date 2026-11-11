@@ -4,6 +4,8 @@ local Events=Session and Session.events or Events
 local failures,connecting,advanced=0,false,false
 local reader=assert(getFileReader('wishlist-fixture.txt',false),'Missing wishlist fixture configuration')
 local config={};for _,key in ipairs({'user','mode','host','port','password','mods'})do config[key]=assert(reader:readLine(),'Missing '..key)end;reader:close()
+-- This route retains the full integration assertions and adds joint cleanup.
+local integratedSession=Session and config.mode=='visual,full'
 if Session then config.mode=Session.case end
 local user=config.user;assert(user=='client1'or user=='client2','Expected two fixed fixture actors')
 assert(config.mode=='full'or config.mode=='standalone'or config.mode=='reload'or config.mode=='visual','Invalid fixture mode')
@@ -108,6 +110,13 @@ local function checkCraft(window,label)
  menu:hideAndChildren();window:setVisible(false)
  return panel
 end
+local function integratedBuilding(window)
+ if not window.logic:getRecipe() then window.logic:setRecipe(ScriptManager.instance:getAllBuildableRecipes():get(0)) end
+ window:showBuildingInfoPanel();local panel=assert(window.BuildingInfoPanel);panel:setVisible(true)
+ -- Neat Building's info panel is a separate UIManager window, not a child.
+ if Session then Session.ownWindow(panel) end
+ return panel
+end
 stage('all selected mods and independent wishlist loaded',function()
  local n=0;for id in config.mods:gmatch('[^;]+')do n=n+1;assert(getActivatedMods():contains(id),id)end
  assert(n>0);assert(W().Client and W().Crafting and W().Inventory and W().UI)
@@ -183,10 +192,11 @@ else
  end)
  stage('Neat Building panel integrates wishlist',function()
   ISEntityUI.OpenBuildWindow(getPlayer(),nil,nil,true,ScriptManager.instance:getAllBuildableRecipes():get(0))
-  local window=assert(ISEntityUI.GetWindowInstance(0,'BuildWindow'));if Session then Session.ownWindow(window) end;if standalone then checkCraft(window,'Native building');return end;if not window.logic:getRecipe() then window.logic:setRecipe(ScriptManager.instance:getAllBuildableRecipes():get(0))end;window:showBuildingInfoPanel();window.BuildingInfoPanel:setVisible(true);checkCraft(window.BuildingInfoPanel,'Neat Building');window:setVisible(false)
+  local window=assert(ISEntityUI.GetWindowInstance(0,'BuildWindow'));if Session then Session.ownWindow(window) end;if standalone then checkCraft(window,'Native building');return end;checkCraft(integratedBuilding(window),'Neat Building');window:setVisible(false)
  end)
  stage('Project Cook lazy recipe panel integrates wishlist',function()
   PJCK_CookingUI.OnOpenPanel(getPlayer(),nil);local window=assert(PJCK_CookingUI.GetWindowInstance(0))
+  if Session then Session.ownWindow(window,function(w)w:onCloseClick()end) end
   window:switchToPanel(PJCK_TAB_CRAFT or 'craft');window:createHandCraftPanel();window.HandCraftPanel:setVisible(true)
   data.cook=checkCraft(window,'Project Cook')
  end)
@@ -265,9 +275,10 @@ if config.mode=='visual' then
  stage('native handcraft window opens',function()
   ISEntityUI.OpenHandcraftWindow(getPlayer(),nil,'*',false)
   data.visual=assert(ISEntityUI.GetWindowInstance(0,'HandcraftWindow'));if Session then Session.ownWindow(data.visual) end
+  data.visualTarget=data.visual
  end)
  stage('native handcraft final rendered layout',function()
-  local b,p=findButton(data.visual);assert(b and b:getWidth()>60 and b:getY()>0)
+  local b,p=findButton(data.visualTarget);assert(b and b:getWidth()>60 and b:getY()>0)
   assert(b:getBottom()<=p:getHeight()+2)
   getCore():TakeFullScreenshot('native-handcraft-'..user..'.png')
  end)
@@ -275,9 +286,10 @@ if config.mode=='visual' then
   data.visual:setVisible(false)
   ISEntityUI.OpenBuildWindow(getPlayer(),nil,nil,true,ScriptManager.instance:getAllBuildableRecipes():get(0))
   data.visual=assert(ISEntityUI.GetWindowInstance(0,'BuildWindow'));if Session then Session.ownWindow(data.visual) end
+  data.visualTarget=integratedSession and integratedBuilding(data.visual) or data.visual
  end)
  stage('native building final rendered layout',function()
-  local b,p=findButton(data.visual);assert(b and b:getWidth()>60 and b:getY()>0,'button did not receive final layout')
+  local b,p=findButton(data.visualTarget);assert(b and b:getWidth()>60 and b:getY()>0,'button did not receive final layout')
   assert(b:getBottom()<=p:getHeight()+2)
   getCore():TakeFullScreenshot('native-building-'..user..'.png')
  end)
@@ -308,7 +320,7 @@ if config.mode=='visual' then
  end)
  stage('native UI switches remain toggleable',function()
   local options=PZAPI.ModOptions:getOptions('PZSurvivorWishlist')
-  local b,p=findButton(data.visual);options:getOption('Crafting'):setValue(false)
+  local b,p=findButton(data.visualTarget);options:getOption('Crafting'):setValue(false)
   p:prerender();assert(not b:getIsVisible())
   options:getOption('Crafting'):setValue(true);p:prerender();assert(b:getIsVisible())
   data.window.shareWindow:close();data.window:close()
@@ -365,14 +377,71 @@ if Session then
  local state=W().Client.state(0)
  local option=PZAPI.ModOptions:getOptions('PZSurvivorWishlist'):getOption('Crafting')
  local originalOption,originalWindow=option:getValue(),W().UI.windows[0]
+ local cleanMode,proximity,proximityState
+ local proximityFields={'isForceSelected','forceSelectedType','_ForceSwitchIntent','_BrowseElapsedMs','_LastTransfer','_TransferRunning','_HasNearbyCorpses'}
+ local pageFields={'inventory','title','capacity','isCollapsed','collapseCounter','forceSelectedContainer','forceSelectedContainerTime',
+  'tempForceSelectUnlock','backpackChoice','selectedContainerForSound'}
+ local paneFields={'inventory','lastinventory','mode','firstSelect','joyselection','equippedCollapsed','doController','mouseOverOption'}
+ local function values(target,keys)
+  local saved={};for _,key in ipairs(keys) do saved[key]=target[key] end;return saved
+ end
+ local function apply(target,saved,keys)
+  for _,key in ipairs(keys) do target[key]=saved[key] end
+ end
+ local function sameValues(actual,saved)
+  for key,value in pairs(saved) do
+   if type(value)=='table' then
+    if type(actual[key])~='table' or not sameValues(actual[key],value) then return false end
+   elseif actual[key]~=value then return false end
+  end
+  for key in pairs(actual) do if saved[key]==nil then return false end end
+  return true
+ end
+ local function scalar(value)
+  local kind=type(value);return value==nil or kind=='boolean' or kind=='number' or kind=='string'
+ end
+ local function proximityGuard()
+  if not integratedSession then return end
+  for _,key in ipairs(proximityFields) do
+   local saved=proximityState[key]
+   assert(proximity[key]==saved.owner and scalar(saved.owner[0]),'Better Containers selection owner/state changed')
+  end
+ end
+ local function geometry(target)
+  return {target:getX(),target:getY(),target:getWidth(),target:getHeight(),target:getMaxDrawHeight()}
+ end
+ local function restoreGeometry(target,saved)
+  target:setWidth(saved[3]);target:setHeight(saved[4]);target:setX(saved[1]);target:setY(saved[2]);target:setMaxDrawHeight(saved[5])
+  local actual=geometry(target);for i=1,5 do assert(actual[i]==saved[i],'Wishlist inventory geometry did not restore') end
+ end
+ if integratedSession then
+  assert(not ISEntityUI.GetWindowInstance(0,'HandcraftWindow') and not ISEntityUI.GetWindowInstance(0,'BuildWindow')
+   and not PJCK_CookingUI.GetWindowInstance(0),'preexisting integration window must not be changed')
+  cleanMode=CleanUI_isCleanInventoryUIEnabled();assert(type(cleanMode)=='boolean','invalid CleanUI mode')
+  proximity=require 'BetterContainers/Proximity';proximityState={}
+  for _,key in ipairs(proximityFields) do
+   local state=assert(proximity[key],'missing Better Containers selection state: '..key)
+   assert(type(state)=='table' and scalar(state[0]),'invalid Better Containers selection state')
+   proximityState[key]={owner=state,value=state[0]}
+  end
+ end
  local pages={};for _,page in ipairs({getPlayerInventory(0),getPlayerLoot(0)}) do
-  pages[#pages+1]={page=page,visible=page:getIsVisible(),pin=page.pin,scroll=page.inventoryPane:getYScroll(),inventory=page.inventoryPane.inventory,
+  local saved={page=page,visible=page:getIsVisible(),pin=page.pin,scroll=page.inventoryPane:getYScroll(),inventory=page.inventoryPane.inventory,
    smoothTarget=page.inventoryPane.smoothScrollTargetY,smooth=page.inventoryPane.smoothScrollY}
+  if integratedSession then
+   saved.pageClass=getmetatable(page);saved.paneClass=getmetatable(page.inventoryPane)
+   saved.pageValues=values(page,pageFields);saved.paneValues=values(page.inventoryPane,paneFields)
+   saved.geometry=geometry(page);saved.paneGeometry=geometry(page.inventoryPane)
+   saved.selectedInventory=page.selectedButton and page.selectedButton.inventory
+   saved.collapsed={};for key,value in pairs(page.inventoryPane.collapsed) do saved.collapsed[key]=value end
+   saved.selected={};page.inventoryPane:saveSelection(saved.selected)
+  end
+  pages[#pages+1]=saved
  end
  local worlds,requests,windows={},{},{}
  local worldLease,worldJournal,World
  local cleanupCurrent=Session.cleanupCurrent
- Session.ownWindow=function(window) windows[window]=true end
+ Session.ownWindow=function(window,close) windows[window]=close or function(w)w:close()end end
  Session.ownerKey='WishlistTestOwner'
  Session.trackRequest=function(id) assert(not requests[id],'duplicate raw fixture product request');requests[id]=true end
  Session.observeProduct=function(module,command,args)
@@ -406,6 +475,7 @@ if Session then
   assert(Session.readyToClean(),'product requests still pending')
   assert(not getPlayer():hasTimedActions(),'native actions still active')
   local queue=ISTimedActionQueue.getTimedActionQueue(getPlayer());assert(#queue.queue==0,'native queue still active')
+  proximityGuard()
   if not worldLease then
    worldLease={case=Session.case,epoch=Session.epoch,entries={}}
    for i,entry in ipairs(worlds) do worldLease.entries[i]=entry end
@@ -419,7 +489,16 @@ if Session then
    worldJournal=World.new(entries,{server=false,guard=worldGuard})
   end
   local window=W().UI.windows[0];if window and window~=originalWindow then window:close() end
-  for window in pairs(windows) do window:close() end
+  for window,close in pairs(windows) do close(window) end
+  if integratedSession then
+   for window in pairs(windows) do
+    assert(not UIManager.getUI():contains(window.javaObject),'owned integration window remains in UIManager')
+   end
+   assert(not ISEntityUI.GetWindowInstance(0,'HandcraftWindow') and not ISEntityUI.GetWindowInstance(0,'BuildWindow')
+    and not PJCK_CookingUI.GetWindowInstance(0),'owned integration window remains registered')
+   if CleanUI_isCleanInventoryUIEnabled()~=cleanMode then CleanUI_setCleanInventoryUIEnabled(cleanMode) end
+   assert(CleanUI_isCleanInventoryUIEnabled()==cleanMode,'CleanUI mode did not restore')
+  end
   World.run(worldJournal);Session.visualCleanupReceipt=World.receipt(worldJournal)
   W().UI.windows[0]=originalWindow;option:setValue(originalOption)
   assert(option:getValue()==originalOption and not getCore():isDoingTextEntry(),'Wishlist option/focus did not restore')
@@ -428,17 +507,53 @@ if Session then
  end
  Session.clean=function(receipt)
   local ready,reason=Session.verifyOwned(receipt);if not ready then return false,reason end
+  proximityGuard()
+  if integratedSession then assert(CleanUI_isCleanInventoryUIEnabled()==cleanMode,'CleanUI mode changed after reset') end
   for _,entry in ipairs(worlds) do
    if not World.absent(entry.square,entry.world,entry.item) then return false,'owned loose item remains' end
   end
-  for _,entry in ipairs(pages) do
-   local page=entry.page
+  for index,entry in ipairs(pages) do
+   -- CleanUI replaces both pages on a mode change. Never restore detached pages.
+   local page=integratedSession and (index==1 and getPlayerInventory(0) or getPlayerLoot(0)) or entry.page
+   if integratedSession then
+    assert(getmetatable(page)==entry.pageClass and getmetatable(page.inventoryPane)==entry.paneClass,'inventory UI class did not restore')
+    apply(page,entry.pageValues,pageFields);apply(page.inventoryPane,entry.paneValues,paneFields)
+    page:refreshBackpacks()
+    apply(page,entry.pageValues,pageFields);apply(page.inventoryPane,entry.paneValues,paneFields)
+    page.selectedButton=nil
+    if entry.selectedInventory then
+     for _,button in ipairs(page.backpacks) do if button.inventory==entry.selectedInventory then page.selectedButton=button;break end end
+     assert(page.selectedButton,'original selected container is unavailable')
+    end
+    page.inventoryPane.collapsed={};for key,value in pairs(entry.collapsed) do page.inventoryPane.collapsed[key]=value end
+   end
    if entry.pin then page:setPinned() else page:collapse() end
    page.inventoryPane.inventory=entry.inventory;page.inventoryPane:refreshContainer();page.inventoryPane:setYScroll(entry.scroll)
    page.inventoryPane.smoothScrollTargetY=entry.smoothTarget;page.inventoryPane.smoothScrollY=entry.smooth;page:setVisible(entry.visible)
+   if integratedSession then
+    -- refreshContainer can update selection anchors while rebuilding native rows.
+    apply(page.inventoryPane,entry.paneValues,paneFields)
+    page.inventoryPane.selected={};page.inventoryPane:restoreSelection(entry.selected)
+    local selected={};page.inventoryPane:saveSelection(selected)
+    assert(sameValues(selected,entry.selected),'inventory selection did not restore')
+    restoreGeometry(page,entry.geometry);restoreGeometry(page.inventoryPane,entry.paneGeometry)
+    for _,key in ipairs(pageFields) do assert(page[key]==entry.pageValues[key],'inventory page state did not restore: '..key) end
+    for _,key in ipairs(paneFields) do assert(page.inventoryPane[key]==entry.paneValues[key],'inventory pane state did not restore: '..key) end
+    assert(page.pin==entry.pin and page:getIsVisible()==entry.visible and page.inventoryPane:getYScroll()==entry.scroll,'inventory view did not restore')
+   end
+  end
+  if integratedSession then
+   proximityGuard()
+   for _,key in ipairs(proximityFields) do
+    local saved=proximityState[key]
+    saved.owner[0]=saved.value
+   end
   end
   assert(Session.readyToClean(),'late product request appeared during reset')
   assert(not state.error or state.error=='stale_revision','unresolved product error after reset')
   return true
+ end
+ if integratedSession and Session.case=='full' and not cleanMode then
+  CleanUI_setCleanInventoryUIEnabled(true);assert(CleanUI_isCleanInventoryUIEnabled(),'CleanUI did not enable')
  end
 end

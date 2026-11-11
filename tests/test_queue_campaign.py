@@ -170,6 +170,8 @@ class CampaignTests(unittest.TestCase):
                       'Item catalogue test world','Legacy Host launchers','New Music selection'):
             self.assertTrue(items[title]['gates'],title)
         self.assertEqual(next(job for job in plan['jobs'] if job['id']=='wishlist-host')['control_job'],'wishlist-host-control')
+        for identifier in ('wishlist-host-control', 'wishlist-host'):
+            self.assertEqual(next(job for job in plan['jobs'] if job['id']==identifier)['case'], 'visual,full')
         smart = next(job for job in plan['jobs'] if job['id']=='smart-deposit-host')
         self.assertEqual((smart['kind'], smart['case'], smart['options']), ('mp', 'partial', {'mp_host': True}))
         self.assertIn('smart-deposit-host', plan['sets']['inventory'])

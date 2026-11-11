@@ -50,6 +50,15 @@ def check_host_adapter():
 
 
 def main():
+    sys.path.insert(0, str(HERE.parents[3]))
+    from tests.lua_fixture_events import OFFLINE_FIXTURE_EVENTS
+
+    def offline(script, *args, **options):
+        # Admit events explicitly in no-game units; do not load the native barrier.
+        return subprocess.run([lua, "-", str(script), *map(str, args)],
+                              input=OFFLINE_FIXTURE_EVENTS + "\nlocal script=table.remove(arg,1);assert(loadfile(script))()\n",
+                              text=True, check=True, **options)
+
     manifest = json.loads((HERE / "manifest.json").read_text())
     assert manifest["status"] == "intake-only" and manifest["native_kinds"] == ["mp"]
     assert manifest["historical_checks_per_client"] == {"full": 33, "standalone": 26, "reload": 5, "visual": 11}
@@ -79,7 +88,7 @@ def main():
     lua = shutil.which("luajit") or shutil.which("lua5.1") or shutil.which("lua")
     if not lua:
         raise SystemExit("No Lua interpreter on PATH; native fixture syntax/registration remains unchecked")
-    result = subprocess.run([lua, str(HERE / "check.lua"), str(HERE)], check=True, capture_output=True, text=True)
+    result = offline(HERE / "check.lua", HERE, capture_output=True)
     names = {}
     for line in result.stdout.splitlines():
         if line.startswith("STAGE\t"):
@@ -92,7 +101,7 @@ def main():
     with tempfile.TemporaryDirectory() as directory:
         session = Path(directory) / "WishlistSession.lua"
         session.write_text(module["session_source"](["visual", "standalone"], "client"))
-        subprocess.run([lua, str(HERE / "protocol.lua"), str(HERE), str(HERE.parents[3]), str(session)], check=True)
+        offline(HERE / "protocol.lua", HERE, HERE.parents[3], session)
     check_host_adapter()
     print("PASS helper preparation, collision protection and runtime parameter validation")
     print("NOT RUN: PZ, SP/MP, rendered UI, network or restart persistence")

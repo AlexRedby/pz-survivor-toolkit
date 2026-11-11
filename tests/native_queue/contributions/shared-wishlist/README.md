@@ -21,12 +21,17 @@ It does not launch the game or claim native UI/network coverage.
 ## Native run
 
 The adapter invokes `prepare.py` to stage role-specific sources and private
-parameters. Select `full`, `standalone`, `visual` or `reload`. The compatible
-`--cases visual,standalone` pair shares one lifecycle in that order; `full` and
-`reload` require separate runs.
-Full mode uses CleanUI, combined-container, Neat and Project Cook APIs; the other
-cases use Wishlist included with Toolkit. All cases support the Toolkit queue-off
-control.
+parameters. Select `full`, `standalone`, `visual` or `reload`.
+The compatible `--cases visual,standalone` pair shares one minimal lifecycle in
+that order. `--cases visual,full` is the separate integration route for the full
+selected pack: it keeps the full CleanUI, combined-container, Neat and Project
+Cook assertions, owns its opened windows and restores optional UI state between
+cases. Both groups require the existing joint server/client cleanup and loaded
+peer-absence receipts. The full-pack group has offline and installed-compiler
+checks; its live Host qualification remains required.
+Single `full` preserves its seed lifecycle, and `reload` requires a separate run.
+Standalone/visual minimal and native-fix profiles retain their existing mod
+restrictions. All cases support the Toolkit queue-off control.
 
 For menu Host, use `mp_host=true` with two clients in EN/RU; client1 owns the
 native CoopServer and client2 joins. Host reload is unsupported.

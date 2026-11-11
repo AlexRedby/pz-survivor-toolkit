@@ -12,7 +12,7 @@ def prepare(cache, user, mode, host, port, password, mods, native_startup_fixes=
     selected = [mode] if isinstance(mode, str) else list(mode)
     if (user not in ("client1", "client2", "server") or not selected or len(selected) != len(set(selected))
             or any(case not in ("full", "standalone", "reload", "visual") for case in selected)
-            or (len(selected) > 1 and set(selected) != {"visual", "standalone"})):
+            or (len(selected) > 1 and set(selected) not in ({"visual", "standalone"}, {"visual", "full"}))):
         raise ValueError("Unsupported fixture actor or mode")
     if not 1 <= port <= 65534:
         raise ValueError("Port must leave room for the server's adjacent UDP port")
@@ -25,7 +25,12 @@ def prepare(cache, user, mode, host, port, password, mods, native_startup_fixes=
     if native_startup_fixes and (not set(selected) <= {"visual", "standalone"}
             or mods != ["ZombieBuddy", "PZToolkitJavaPatches", "PZSurvivorToolkit"]):
         raise ValueError("Native startup qualification requires visual/standalone with exact native-fix mods")
-    if not native_startup_fixes and any(case in ("standalone", "visual") for case in selected) and mods != ["PZSurvivorToolkit"]:
+    integrated_session = set(selected) == {"visual", "full"}
+    if integrated_session:
+        for required in ("NeatUI_Framework", "CleanUI", "PZSurvivorToolkit", "EURY_CONTAINERS", "Neat_Crafting", "Project_Cook", "Neat_Building_UIOnly"):
+            if required not in mods:
+                raise ValueError("Full grouped mode integration missing: " + required)
+    if not native_startup_fixes and not integrated_session and any(case in ("standalone", "visual") for case in selected) and mods != ["PZSurvivorToolkit"]:
         raise ValueError("Standalone/visual modes require only PZSurvivorToolkit")
     if "full" in selected and "PZSurvivorToolkit" not in mods:
         raise ValueError("Full mode requires PZSurvivorToolkit plus the declared integrations")
