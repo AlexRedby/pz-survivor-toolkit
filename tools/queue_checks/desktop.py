@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-from . import desktop_diagnostics
+from . import desktop_diagnostics, desktop_stack
 
 
 class IsolationError(RuntimeError):
@@ -218,6 +218,20 @@ class Desktop:
                 incident['native'] = desktop_diagnostics.capture(process.pid)
             except Exception as diagnostic_error:
                 incident['native'] = {'status': 'error', 'reason': excerpt(str(diagnostic_error))}
+        if incident['kind'] in ('window-undiscoverable', 'window-identity-changed', 'cli-timeout', 'cli-failure'):
+            for field, capture in (('accessibility', desktop_diagnostics.capture_accessibility),
+                                   ('window_stack', desktop_stack.capture)):
+                if process.poll() is not None:
+                    incident[field] = {'status': 'skipped', 'reason': 'owned-process-exited'}
+                else:
+                    started = timestamp()
+                    try:
+                        incident[field] = capture(process.pid)
+                    except Exception:
+                        incident[field] = {'status': 'error', 'reason': 'diagnostic-unavailable'}
+                    incident[field].update(started=started, finished=timestamp())
+                    if process.poll() is not None:
+                        incident[field] = {'status': 'discarded', 'reason': 'owned-process-exited-during-probe'}
         if incident['kind'] in ('window-undiscoverable', 'window-identity-changed') and incident['expected_windows']:
             comparisons = incident['aerospace_queries'] = {}
             for label, args in (
@@ -234,6 +248,9 @@ class Desktop:
         if incident['process_before_probe'] is None and incident['process_after_probe'] is not None:
             # A reused numeric PID cannot establish that these windows belong to our Popen.
             incident['native'] = {'status': 'discarded', 'reason': 'owned-process-exited-during-probe'}
+            for field in ('accessibility', 'window_stack'):
+                if field in incident:
+                    incident[field] = {'status': 'discarded', 'reason': 'owned-process-exited-during-probe'}
         incident['finished'] = timestamp()
         return incident
 

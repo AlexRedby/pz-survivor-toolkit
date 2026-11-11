@@ -45,6 +45,11 @@ class DesktopTests(unittest.TestCase):
         sleep = patch.object(desktop.time, 'sleep')
         sleep.start()
         self.addCleanup(sleep.stop)
+        for target, name in ((desktop.desktop_diagnostics, 'capture_accessibility'),
+                             (desktop.desktop_stack, 'capture')):
+            probe = patch.object(target, name, return_value={'status': 'unavailable'})
+            probe.start()
+            self.addCleanup(probe.stop)
 
     def command(self, argv, **kwargs):
         self.assertEqual(argv[0], '/aerospace', 'unexpected system-state command')
@@ -716,6 +721,42 @@ class DesktopTests(unittest.TestCase):
         self.assertIs(manager.last_command, incident['last_command'])
         self.assertIs(incident['last_command'], incident['observation']['command'])
         self.assertEqual(manager.evidence['incidents'], [incident])
+
+    def test_extra_incident_probes_keep_core_evidence_and_discard_after_owned_exit(self):
+        manager = desktop.prepare({})
+        manager.route(self.process, self.root, self.log)
+        error = desktop.IsolationError('cli-timeout', 'original failure')
+        with patch.object(desktop.desktop_diagnostics, 'capture', return_value={'status': 'returned'}) as core, \
+             patch.object(desktop.desktop_diagnostics, 'capture_accessibility', side_effect=OSError('private detail')), \
+             patch.object(desktop.desktop_stack, 'capture', return_value={'status': 'returned'}) as sample:
+            incident = manager.capture_incident(self.process, error, 'check')
+        self.assertEqual(incident['native']['status'], 'returned')
+        self.assertEqual(incident['accessibility']['reason'], 'diagnostic-unavailable')
+        self.assertEqual(incident['window_stack']['status'], 'returned')
+        self.assertEqual(incident['error'], 'original failure')
+        self.assertNotIn('private', json.dumps(incident))
+        sample.assert_called_once_with(123)
+        def dies(pid):
+            self.process.poll = lambda: 143
+            return {'status': 'returned', 'secret': 'reused PID data'}
+        with patch.object(desktop.desktop_diagnostics, 'capture', return_value={'status': 'returned'}), \
+             patch.object(desktop.desktop_diagnostics, 'capture_accessibility', side_effect=dies), \
+             patch.object(desktop.desktop_stack, 'capture') as sample:
+            incident = manager.capture_incident(self.process, error, 'check')
+        self.assertEqual(incident['native']['status'], 'discarded')
+        self.assertEqual(incident['accessibility']['status'], 'discarded')
+        self.assertEqual(incident['window_stack']['status'], 'discarded')
+        sample.assert_not_called()
+        self.assertNotIn('reused PID', json.dumps(incident))
+        self.process.poll = lambda: None
+        with patch.object(desktop.desktop_diagnostics, 'capture', return_value={'status': 'returned'}), \
+             patch.object(desktop.desktop_diagnostics, 'capture_accessibility', return_value={'status': 'returned', 'id': 789}), \
+             patch.object(desktop.desktop_stack, 'capture', side_effect=dies):
+            incident = manager.capture_incident(self.process, error, 'check')
+        for field in ('native', 'accessibility', 'window_stack'):
+            self.assertEqual(incident[field]['status'], 'discarded')
+        self.assertNotIn('reused PID', json.dumps(incident))
+        self.assertNotIn('789', json.dumps(incident['accessibility']))
 
     def test_incident_all_and_workspace_queries_keep_only_owned_rows_and_original_failure(self):
         manager = desktop.prepare({})
