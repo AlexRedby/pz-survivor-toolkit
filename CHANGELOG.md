@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.359
+
+- **Fixed:** Wholly unstarted native equip operations at the end of the action queue can be cancelled as complete groups. The shared cancellation gate proves that removal executes only the empty native cancellation handler and preserves earlier work, operation ownership, required cleanup and continuation guards. Active equipment, surviving suffixes, producer-owned restoration and reordering retain their existing protections.
+
 ### 0.1.358
 
 - **Added:** Internal data-only hand-assignment planning with first-match conditional resource effects and same-resource identity predicates. Transitions read the proposed state after preceding actions and preserve native already-equipped no-ops. All alternatives are validated, including inactive branches and removed work. This foundation does not enable new equip or integral-firearm unload edit permissions; native binding, side-effect, capacity and Host outcome proofs remain separate.

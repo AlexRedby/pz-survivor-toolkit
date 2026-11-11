@@ -173,7 +173,7 @@ object QueueOwnershipChecks {
                 )
         val available = listOf(
             null, "OwnershipEditLookup", "OwnershipProjectionCases", "OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
-            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops", "OwnershipBulkTransfer", "OwnershipTransferBindings", "OwnershipCartTransfer", "OwnershipReturnSources", "OwnershipHands",
+            "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops", "OwnershipBulkTransfer", "OwnershipTransferBindings", "OwnershipCartTransfer", "OwnershipReturnSources", "OwnershipHands", "OwnershipPreparationCancel",
         )
         // Re-run affected native table vectors without repeating every family.
         // Empty/unrecognized selections are errors, never successful zero-case runs.

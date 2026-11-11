@@ -293,7 +293,7 @@ unknown=late('Base.Other','Base.Unrelated')
 unknown.items={size=function()listReads=listReads+1;error('unknown items getter')end,get=function()listReads=listReads+1 end}
 assert(not Craft.futureResources(unknown) and listReads==0,'plain table list callbacks remain uninvoked and protected')
 policy.installContracts()
-blocked(f.action(ISEquipWeaponAction,{item=f.item('Base.Hammer')}),'move_dependent')
+blocked(f.action(ISEquipWeaponAction,{item=f.item('Base.Hammer')}),'move_dependent',true)
 local pending=PZSurvivorToolkit.ActionQueueOperations.attachContinuation(first.toolkitQueueOperation,f.player)
 assert(policy.moveReason(f.queue(head,first,second),first,second,true)=='move_craft_inputs',
     'MP late results keep the entire operation protected until the continuation finishes')

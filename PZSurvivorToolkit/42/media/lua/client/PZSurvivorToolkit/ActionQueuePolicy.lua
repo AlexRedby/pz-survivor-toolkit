@@ -956,12 +956,34 @@ function Policy.skipUnavailableHygiene(queue)
     end
 end
 
+-- Cancellation of a wholly unstarted trailing operation needs no forecast of
+-- its hypothetical completion. Its only executed callback is native forceCancel.
+-- Family owners may opt into this boundary without claiming complete effects.
+local function pendingPreparation(action)
+    local token = action.toolkitQueueOperation
+    local settlement = Toolkit.ActionQueueSettlement
+    return not action.action and not action.started and not action._isAddingActions
+        and action.toolkitNativeTransaction == nil and action.toolkitNativeKind == nil
+        and not action.toolkitQueueLinked and not action.onStartFunc and not action.onCompleteFunc
+        and not action.onCancelFunc and not action.onFailFunc and not action.additionalTest
+        and not action.additionalContext and not action.retriggerLastAction
+        and type(token) == "table" and type(editNativeMeta) == "function" and editNativeMeta(token, nil)
+        and not token.toolkitStarted and not token.toolkitCancelled
+        and not Operations.isContinuationPending(token)
+        and settlement and not settlement.requiredStep(action) and not settlement.isCleanup(action)
+        and nativePendingCancelHasNoEffects() and action.forceCancel == nativeForceCancel
+end
 local function equipmentResources(action)
     local result=itemResources(action)
     if result then
         result.hands=action.character;result.cancelWaiting,result.preparation=false,true
         local snapshot=snapshots[getmetatable(action)]
         if snapshot and snapshot.binding then result.preparationFinish=true end
+        -- Heavy, worn and producer-owned restoration keep their own contracts.
+        -- This does not grant a move, active stop or hand-state projection.
+        if action.Type == "ISEquipWeaponAction" and pendingPreparation(action) then
+            result.cancelWaiting, result.cancelTailOnly = true, true
+        end
     end
     return result
 end
@@ -1948,6 +1970,7 @@ function Policy.cancelOperationReason(queue, action, context)
     if type(token) == "table" and token.toolkitStarted and not active then return "operation_active" end
     local main, output, inputs, scrapOnly = false, false, {}, true
     local pendingRemovalOnly = not active and nativePendingCancelHasNoEffects()
+    local tailCancellation = false
     for i = first, last do
         local member = queue.queue[i]
         if (member.action or member == queue.current or i == 1) and not (active and i == first) then
@@ -1960,6 +1983,7 @@ function Policy.cancelOperationReason(queue, action, context)
         pendingRemovalOnly = pendingRemovalOnly and member.forceCancel == nativeForceCancel
             and not member.onCancelFunc and not auditedCraft
         local contract = inspect(member, context)
+        tailCancellation = tailCancellation or contract and contract.cancelTailOnly == true
         if contract and contract.cancelOperation == false then return protectedDenial(context, "operation_dependent", member), nil, nil, member end
         local auditedCallbacks = contract and contract.callbacksSafe
         if member._isAddingActions or ((member.onStartFunc or member.onCancelFunc) and not auditedCraft and not resumableWorld(member) and not auditedCallbacks) or member.retriggerLastAction
@@ -1986,6 +2010,17 @@ function Policy.cancelOperationReason(queue, action, context)
         output = output or member.toolkitIndependentBulk or auditedCraft or (world and member.toolkitWorldDismantle) or plannedCraft
             or (member.Type == "ISMoveablesAction" and member.mode == "scrap")
         for item in pairs(operationItems(member, context)) do inputs[item] = true end
+    end
+    -- Check the complete operation before the model's allowed shortcut. A
+    -- removed pending prefix cannot invalidate earlier work, but an unknown
+    -- completion effect cannot be discarded in front of a surviving suffix.
+    if tailCancellation then
+        if last ~= #queue.queue or not pendingRemovalOnly then return "operation_dependent" end
+        for i = first, last do
+            local member = queue.queue[i]
+            if member.character ~= queue.character or member.toolkitQueueOperation ~= token
+                or not pendingPreparation(member) then return "operation_dependent" end
+        end
     end
     if not main then return "operation_dependent" end
     if active then
