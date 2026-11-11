@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.357
+
+- **Fixed:** Queue cancellation, reordering and priority decisions validate lookup ancestry before reading inherited action metadata. Structural snapshots also retain their original ancestry for the commit recheck. Unsupported lookup shapes and failed native metadata queries produce unavailable edits; ordinary native and registered table inheritance remains supported. Existing action, resource and multiplayer authority checks remain separate.
+
 ### 0.1.356
 
 - **Changed:** Pending ordinary clothing-removal groups can use shared item and worn-state contracts. Capacity checks accumulate the upper weight growth of removals and pickups in the proposed order and retain the native reserve that prevents clothing from dropping on the ground. These new Host removal permissions also require confirmed physical equipment outcomes, including displaced clothing, rather than relying on native Done alone. They do not spend forecast weight reductions; active, headwear, held, hotbar, heavy, overlapping or unresolved-identity variants keep their protected behavior.

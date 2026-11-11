@@ -14,6 +14,7 @@ if not NativeFilenameOfClosure then
 end
 NativeKahluaTableLookup=true
 local cases={
+    OwnershipEditLookup="test_action_queue_lookup.lua",
     OwnershipReturnSources="test_action_queue_deferred_sources.lua",
     OwnershipBulkTransfer="test_bulk_transfer_binding.lua",
     OwnershipTransferBindings="test_action_queue_transfer_bindings.lua",

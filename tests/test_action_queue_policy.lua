@@ -16,13 +16,21 @@ getGameFilesInput=function(path)
         local line=text:sub(position,boundary-1);position=boundary+1;return line
     end}
 end
+NativeKahluaTableLookup=true
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.native('shared/Fluids/ISFluidContainer.lua')
+-- Wrappers below are built directly; mirror the native constructor's dispatch.
+ISFluidContainer.__index=ISFluidContainer
 f.native('shared/Fluids/ISFluidUtil.lua') -- Match the native require graph before adapters capture their owners.
 f.native('shared/Fluids/ISFluidTransferAction.lua')
 f.native('shared/Fluids/ISFluidEmptyAction.lua')
 f.native('shared/TimedActions/ISTransferAction.lua')
 f.native('shared/TimedActions/ISDrinkFluidAction.lua')
+-- Native owners capture these classes when Policy loads; loading them later
+-- would leave the clothing lookup gate bound to an absent/stale class.
+f.native('shared/TimedActions/ISEquipWeaponAction.lua')
+f.native('shared/TimedActions/ISEquipHeavyItem.lua')
+f.native('shared/TimedActions/ISUnequipAction.lua')
 isClient=function()return false end
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
 local policy=f.project('ActionQueuePolicy')
@@ -284,7 +292,7 @@ local listReads = 0
 unknown=late('Base.Other','Base.Unrelated')
 unknown.items={size=function()listReads=listReads+1;error('unknown items getter')end,get=function()listReads=listReads+1 end}
 assert(not Craft.futureResources(unknown) and listReads==0,'plain table list callbacks remain uninvoked and protected')
-f.native('shared/TimedActions/ISEquipWeaponAction.lua');policy.installContracts()
+policy.installContracts()
 blocked(f.action(ISEquipWeaponAction,{item=f.item('Base.Hammer')}),'move_dependent')
 local pending=PZSurvivorToolkit.ActionQueueOperations.attachContinuation(first.toolkitQueueOperation,f.player)
 assert(policy.moveReason(f.queue(head,first,second),first,second,true)=='move_craft_inputs',
@@ -511,11 +519,12 @@ local function both(a,b,reason)
 end
 both(outgoingA,outgoingB);both(incomingA,incomingB);both(outgoingA,incomingB)
 -- Equipment weight can invalidate a transfer of a different item, even with only one transfer.
-f.native('shared/TimedActions/ISUnequipAction.lua');f.native('shared/TimedActions/ISEquipHeavyItem.lua');policy.installContracts()
+policy.installContracts()
 for _,class in ipairs({ISEquipWeaponAction,ISUnequipAction,ISEquipHeavyItem}) do
     local equipment=f.action(class,{item=f.item('Base.Bag_DuffelBag')})
     local q=f.queue(head,outgoingA,equipment)
-    assert(policy.moveReason(q,outgoingA,equipment,true)=='container_capacity')
+    local equipmentReason=policy.moveReason(q,outgoingA,equipment,true)
+    assert(equipmentReason=='container_capacity','native equipment capacity barrier: '..tostring(class.Type)..'/'..tostring(equipmentReason))
     assert(policy.moveReason(q,equipment,outgoingA)=='container_capacity')
     assert(policy.cancelOperationReason(q,outgoingA)=='container_capacity')
     local result=policy.evaluateMove(q,equipment,outgoingA)

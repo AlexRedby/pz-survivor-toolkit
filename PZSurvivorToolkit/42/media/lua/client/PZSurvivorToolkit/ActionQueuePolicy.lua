@@ -148,8 +148,9 @@ end
 
 Policy.isCraftAction = craft
 
-local function live(queue)
-    local player = queue.character
+local function live(queue,read)
+    local player
+    if read then player=read(queue,"character")else player=queue.character end
     return player and getSpecificPlayer(player:getPlayerNum()) == player
         and not player:isDead() and not player:isAsleep()
 end
@@ -2296,6 +2297,8 @@ end
 
 function Policy.returnFailureIndependent(queue, action)
     local scope = activeDecision
+    local lookup=scope and scope.queue==queue and scope.lookup or spatialEdits.lookup(queue,action)
+    if not lookup or not lookup.watch()then return false,"unsupported_lookup"end
     if scope and scope.queue == queue then
         -- Reuse only inside the current synchronous source-owned decision. A new
         -- decision, admission, rejection or click always starts with fresh facts.
@@ -2338,31 +2341,172 @@ function Policy.adoptBegin(previous, replacement)
     if ItemEditAdapters then ItemEditAdapters.adoptBase("begin", previous, replacement) end
 end
 
-local function editSnapshot(queue)
-    if not queue then return end
-    local snapshot = {owner = queue.character, members = {}, list = queue.queue, current = queue.current,
-        generation = queue.toolkitOperationGeneration, cancel = queue.toolkitCancel, groupCancel = queue.toolkitGroupCancel}
-    for i, member in ipairs(queue.queue) do
-        local token = member.toolkitQueueOperation
-        snapshot.members[i] = {member = member, action = member.action, owner = member.character, token = token,
-            started = type(token) == "table" and token.toolkitStarted,
-            cancelled = type(token) == "table" and token.toolkitCancelled}
+-- Rejection only. Proving a harmless lookup shape does not authenticate an
+-- action's behavior, binding or capacity effects. Shared classes are checked
+-- once per decision; no inventory facts or arbitrary action values are copied.
+function spatialEdits.lookupShapeUnchecked(records)
+    local shape=spatialEdits.shape
+    if not spatialEdits.shapeWatch or not spatialEdits.shapeWatch()
+        or shape.kind(records)~="table"or shape.meta(records)~=nil then return false end
+    local owners,parents,dispatch=records.owners,records.parents,records.dispatch
+    for _,value in shape.array({owners,parents,dispatch})do
+        if shape.kind(value)~="table"or shape.meta(value)~=nil then return false end
+    end
+    if not owners or not parents or not dispatch then return false end
+    for _,owner in shape.array(owners)do
+        local parent=parents[owner]
+        if shape.kind(owner)~="table"or not shape.equal(shape.meta(owner),parent)
+            or editNativeMeta and not editNativeMeta(owner,parent)then return false end
+        if dispatch[owner]~=nil then
+            local index
+            for key,value in shape.each(owner)do if shape.equal(key,"__index")then index=value;break end end
+            if not shape.equal(index,dispatch[owner]or nil)then return false end
+        end
+    end
+    return true
+end
+function spatialEdits.lookupShape(records)
+    local ok,valid=spatialEdits.shape.call(spatialEdits.lookupShapeUnchecked,records)
+    return ok and valid==true
+end
+function spatialEdits.lookupRead(owner,key)return owner[key]end
+function spatialEdits.lookupUnchecked(queue, action, target)
+    local shape=spatialEdits.shape
+    local kind,meta,each,equal=shape.kind,shape.meta,shape.each,shape.equal
+    if not spatialEdits.shapeWatch or not spatialEdits.shapeWatch()
+        or editNativeMeta~=nil and kind(editNativeMeta)~="function"then return end
+    local owners,parents,dispatch,seen,pending,phases,needsDispatch={},{},{},{},{},{},{}
+    local function own(owner,key)
+        for name,value in each(owner)do if equal(name,key)then return value end end
+    end
+    local function append(owner,isDispatch)
+        if kind(owner)~="table"then return false end
+        local status=seen[owner]
+        if status~=nil then
+            if not status then return false end
+            if not isDispatch or dispatch[owner]~=nil then return true end
+        else
+            local parent=meta(owner)
+            if parent~=nil and kind(parent)~="table"
+                or editNativeMeta and not editNativeMeta(owner,parent)then return false end
+            parents[owner]=parent;owners[#owners+1]=owner
+        end
+        seen[owner]=false
+        local position=#pending+1
+        pending[position]=owner;phases[position]=status~=nil and 1 or 0;needsDispatch[position]=isDispatch
+        return true
+    end
+    -- An explicit DFS handles long ordinary ancestry without recursive Lua
+    -- calls or a size/depth allowance that could become edit authority.
+    local function capture(owner,isDispatch)
+        if not append(owner,isDispatch)then return false end
+        while #pending>0 do
+            local position=#pending;local value=pending[position]
+            if phases[position]==0 then
+                phases[position]=1
+                if parents[value]~=nil and not append(parents[value],true)then return false end
+            elseif phases[position]==1 and needsDispatch[position]then
+                phases[position]=2
+                local index=own(value,"__index")
+                if index~=nil and kind(index)~="table"then return false end
+                dispatch[value]=index or false
+                if index~=nil and not equal(index,value)and not append(index)then return false end
+            else
+                seen[value]=true;pending[position]=nil;phases[position]=nil;needsDispatch[position]=nil
+            end
+        end
+        return true
+    end
+    -- Without the optional native primitive, these are reported links only.
+    -- Own-slot traversal keeps early bookkeeping callback-free even for a
+    -- plausible mask. It must never replace a family's actual-binding proof.
+    local read=spatialEdits.lookupRead
+    if not editNativeMeta then
+        local function inherited(value,name)
+            while value~=nil do
+                local field=own(value,name)
+                if field~=nil then return field end
+                if seen[value]==nil then return end
+                value=parents[value]
+            end
+        end
+        read=function(owner,key)
+            while owner~=nil do
+                local value=inherited(owner,key)
+                if value~=nil then return value end
+                if seen[owner]==nil then return end
+                owner=parents[owner]and inherited(parents[owner],"__index")
+            end
+        end
+    end
+    if not capture(queue)then return end
+    local list=read(queue,"queue")
+    if not capture(list)then return end
+    local function memberLookup(member)
+        if not capture(member)then return end
+        local token=read(member,"toolkitQueueOperation")
+        if kind(token)=="table"and not capture(token)then return end
+        return true
+    end
+    if editNativeMeta then
+        for _,member in shape.array(list)do if not memberLookup(member)then return end end
+    else
+        local count,length=0,#list
+        for key,member in each(list)do
+            if kind(key)=="number"and key>=1 and key<=length and key%1==0 then
+                if not memberLookup(member)then return end
+                count=count+1
+            end
+        end
+        if count~=length then return end
+    end
+    if kind(action)=="table"and not capture(action)or kind(target)=="table"and not capture(target)then return end
+    local records={owners=owners,parents=parents,dispatch=dispatch}
+    return {read=read,records=records,watch=function()return spatialEdits.lookupShape(records)end}
+end
+function spatialEdits.lookup(queue,action,target)
+    -- Native getmetatable itself can fail on a corrupt recursive metatable.
+    -- Failed metadata observation is a refusal, never behavior or edit proof.
+    local ok,lookup=spatialEdits.shape.call(spatialEdits.lookupUnchecked,queue,action,target)
+    if ok then return lookup end
+end
+local function editLookup(queue)
+    local lookup=activeDecision and activeDecision.queue==queue and activeDecision.lookup
+    if lookup then return lookup.watch()and lookup or nil end
+    return spatialEdits.lookup(queue)
+end
+local function editSnapshot(queue,lookup)
+    lookup=lookup or editLookup(queue)
+    if not lookup then return end
+    local read=lookup.read
+    local snapshot = {lookupShape=lookup.records,owner = read(queue,"character"), members = {}, list = read(queue,"queue"), current = read(queue,"current"),
+        generation = read(queue,"toolkitOperationGeneration"), cancel = read(queue,"toolkitCancel"), groupCancel = read(queue,"toolkitGroupCancel")}
+    for i, member in ipairs(snapshot.list) do
+        local token = read(member,"toolkitQueueOperation")
+        snapshot.members[i] = {member = member, action = read(member,"action"), owner = read(member,"character"), token = token,
+            started = type(token) == "table" and read(token,"toolkitStarted"),
+            cancelled = type(token) == "table" and read(token,"toolkitCancelled")}
     end
     return snapshot
 end
 
 function Policy.editUnchanged(queue, snapshot)
-    if not snapshot or not queue or not live(queue) or not Toolkit.Settings.actionQueue()
-        or ISTimedActionQueue.queues[queue.character] ~= queue
-        or queue.character ~= snapshot.owner or queue.queue ~= snapshot.list or queue.current ~= snapshot.current
-        or queue.toolkitOperationGeneration ~= snapshot.generation or queue.toolkitCancel ~= snapshot.cancel
-        or queue.toolkitGroupCancel ~= snapshot.groupCancel or #queue.queue ~= #snapshot.members then return false end
+    if type(snapshot)~="table"or getmetatable(snapshot)~=nil or not spatialEdits.lookupShape(snapshot.lookupShape)then return false end
+    local lookup=activeDecision and activeDecision.queue==queue and activeDecision.lookup
+    if not lookup or lookup.records~=snapshot.lookupShape then lookup=editLookup(queue)end
+    if not lookup or not snapshot then return false end
+    local read=lookup.read
+    if not live(queue,read)or not Toolkit.Settings.actionQueue()
+        or ISTimedActionQueue.queues[read(queue,"character")] ~= queue
+        or read(queue,"character") ~= snapshot.owner or read(queue,"queue") ~= snapshot.list or read(queue,"current") ~= snapshot.current
+        or read(queue,"toolkitOperationGeneration") ~= snapshot.generation or read(queue,"toolkitCancel") ~= snapshot.cancel
+        or read(queue,"toolkitGroupCancel") ~= snapshot.groupCancel or #snapshot.list ~= #snapshot.members then return false end
     for i, record in ipairs(snapshot.members) do
-        local member, token = queue.queue[i], record.token
-        if member ~= record.member or member.action ~= record.action or member.character ~= record.owner
-            or member.toolkitQueueOperation ~= token
-            or (type(token) == "table" and (token.toolkitStarted ~= record.started
-                or token.toolkitCancelled ~= record.cancelled)) then return false end
+        local member, token = snapshot.list[i], record.token
+        if member ~= record.member or read(member,"action") ~= record.action or read(member,"character") ~= record.owner
+            or read(member,"toolkitQueueOperation") ~= token
+            or (type(token) == "table" and (read(token,"toolkitStarted") ~= record.started
+                or read(token,"toolkitCancelled") ~= record.cancelled)) then return false end
     end
     return true
 end
@@ -2372,6 +2516,7 @@ end
 -- A token groups a producer; it is never evidence that every child depends on
 -- the failed item. Unsupported owners/tails keep their native failure path.
 function Policy.rejectedPickupPlan(queue, action)
+    if not spatialEdits.lookup(queue,action)then return nil,"unsupported_lookup"end
     if not queue or not queue.queue or #queue.queue > MAX_RETURN_EXECUTION_MEMBERS then
         return nil, "unsupported_queue_size"
     end
@@ -2483,7 +2628,7 @@ end
 
 function Policy.evaluateMove(queue, action, target, after, context)
     context = context or {contracts = {}, items = {}}
-    local snapshot = editSnapshot(queue)
+    local snapshot = editSnapshot(queue,activeDecision and activeDecision.lookup)
     local reason, to, first, last, preempt, blocker, resource, demote = Policy.moveReason(queue, action, target, after, context)
     reason, blocker, resource = editDenial(reason, blocker, resource, context)
     if not reason and not Policy.editUnchanged(queue, snapshot) then reason = "unavailable" end
@@ -2494,7 +2639,7 @@ end
 
 function Policy.evaluateCancel(queue, action, whole, context)
     context = context or {contracts = {}, items = {}}
-    local snapshot = editSnapshot(queue)
+    local snapshot = editSnapshot(queue,activeDecision and activeDecision.lookup)
     local reason, first, last, blocker, resource
     if whole then reason, first, last, blocker, resource = Policy.cancelOperationReason(queue, action, context)
     else reason, first, last, blocker, resource = Policy.cancelReason(queue, action, context) end
@@ -2516,15 +2661,20 @@ local decisionContextMarker = {}
 local decisionContextFields = {"contracts", "items", "denialGate", "denialReason", "denialBlocker",
     "editFallback", "failureOverrides", "failurePositionPrerequisite", "executionProbe"}
 local function freshDecisionContext(output)
-    if type(output) ~= "table" or getmetatable(output) or output[decisionContextMarker] then output = nil end
+    if type(output) ~= "table" or getmetatable(output)~=nil or output[decisionContextMarker] then output = nil end
     if output then for _, name in ipairs(decisionContextFields) do output[name] = nil end end
     return {contracts = {}, items = {}, [decisionContextMarker] = true}, output
+end
+function spatialEdits.lookupDecision(scope,callback,...)
+    scope.lookup=spatialEdits.lookup(scope.queue,select(2,...),select(3,...))
+    if not scope.lookup then return {allowed=false,reason="unavailable",rawResults={n=1,"unavailable"}}end
+    return callback(...)
 end
 local function inDecision(queue, context, output, callback, ...)
     local previous = activeDecision
     local scope={queue = queue, context = context, failures = {}, executions = {}, native = {}}
     activeDecision = scope
-    local ok, result = pcall(callback, ...)
+    local ok,result=pcall(spatialEdits.lookupDecision,scope,callback,...)
     if ok and scope.spatialQueueWatch and result.reason==nil and result.allowed~=false then
         local valid=spatialEdits.shapeWatch()and scope.spatialQueueWatch()
         for _,proof in spatialEdits.shape.array(scope.spatial or{})do
@@ -2547,6 +2697,10 @@ local function inDecision(queue, context, output, callback, ...)
     if ok and scope.commonActiveEdit and result.reason==nil and result.allowed~=false then
         result.commonActiveEdit=true
         result.commonActiveEditRoute=scope.commonActiveEditRoute
+    end
+    if ok and result.reason==nil and result.allowed~=false and not scope.lookup.watch()then
+        result.reason,result.allowed="unavailable",false
+        if result.rawResults then result.rawResults[1]="unavailable"end
     end
     -- A provisional no-movement contract is not a reusable public inspection
     -- fact. The decision alone survives; callers receive the ordinary cache.
@@ -2722,6 +2876,7 @@ end
 -- qualification; ordinary observations retain explicit native boundaries.
 function Policy.observeActiveEdit(queue, intent)
     local function unknown(reason)return {status="unhandled",reason=reason or "edit_unknown"}end
+    if not spatialEdits.lookup(queue)then return unknown()end
     if type(intent)~="table"or getmetatable(intent)~=nil or type(queue)~="table"
         or type(queue.queue)~="table"or getmetatable(queue.queue)
         or #queue.queue==0 or #queue.queue>MAX_RETURN_EXECUTION_MEMBERS or not live(queue)
@@ -2894,6 +3049,7 @@ function Policy.observeActiveEdit(queue, intent)
 end
 
 local function priorityDecision(queue, action, preempt, decide)
+    if not spatialEdits.lookup(queue,action)then return {allowed=false,reason="unavailable"}end
     if not queue or not queue.current or queue.queue[1] ~= queue.current then return {allowed = false, reason = "unavailable"} end
     local _, activeLast = Operations.bounds(queue, queue.current)
     if not activeLast then return {allowed = false, reason = "operation_dependent"} end

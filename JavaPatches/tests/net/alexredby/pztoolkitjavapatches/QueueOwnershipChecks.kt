@@ -172,7 +172,7 @@ object QueueOwnershipChecks {
                     "Pass -Dpz.test.workshop or PZ_TEST_WORKSHOP with the Workshop content root",
                 )
         val available = listOf(
-            null, "OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
+            null, "OwnershipEditLookup", "OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
             "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops", "OwnershipBulkTransfer", "OwnershipTransferBindings", "OwnershipCartTransfer", "OwnershipReturnSources",
         )
         // Re-run affected native table vectors without repeating every family.
