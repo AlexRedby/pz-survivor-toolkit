@@ -989,7 +989,7 @@ local function equipmentResources(action)
                 and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect
                 and type(equipOwner.inspect)=="function" then
                 if equipOwner.trusted==nil then equipOwner.trusted=Proof.closure(equipOwner.inspect,"ActionQueueEquip.lua")
-                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",1357107633,"PZSurvivorToolkit",true)end
+                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",3316331961,"PZSurvivorToolkit",true)end
                 if equipOwner.trusted and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect then
                     local contract=equipOwner.inspect(action)
                     if contract then return contract end

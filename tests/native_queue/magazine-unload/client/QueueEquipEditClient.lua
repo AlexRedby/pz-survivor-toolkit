@@ -12,6 +12,8 @@ local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Quiescence=require 'QueueEquipEditQuiescence'
 local CallbackObservation=require 'QueueEquipCallbackObservation'
 local tidyObserver
+local workloadEnabled=config.options and config.options.equip_workload==true
+local work
 local native=config.mode=='native';local canEdit=not native and config.kind=='sp'
 local started,ready,done=false,false,false
 local phase,index='prepare',1
@@ -140,13 +142,14 @@ local function enqueuePending()
  local p,item,Q=getPlayer(),state.items,PZSurvivorToolkit.ActionQueue
  if segment()=='reorder-two'then
   local a=equip('equip-a',item.a,true);local b=equip('equip-b',item.b,true);book('tail')
-  if not native then attempt('reorder',function()return Q.move(queue(),b,a)end,canEdit)end
+  if not native then attempt('reorder',function()if work then return work:drag(queue(),b,a,canEdit)end;return Q.move(queue(),b,a)end,canEdit)
+  elseif work then work:native(queue())end
  elseif segment()=='reorder-three'then
   local a=equip('equip-a',item.a,false);equip('equip-b',item.b,true);local c=equip('equip-c',item.c,false);book('tail')
   if not native then attempt('reorder',function()return Q.move(queue(),c,a)end,canEdit)end
  elseif segment()=='cancel'then
   equip('equip-a',item.a,true);equip('equip-b',item.b,false);local c=equip('equip-c',item.c,true);book('tail')
-  if not native and attempt('cancel',function()return Q.cancelOperation(queue(),c)end,canEdit)then tracks[c].cancelled=true end
+  if not native and attempt('cancel',function()if work then return work:cancel(queue(),c,canEdit)end;return Q.cancelOperation(queue(),c)end,canEdit)then tracks[c].cancelled=true end
  elseif segment()=='dependent'then
   local move=transfer(item.nested,item.bag:getItemContainer());local held=equip('equip-nested',item.nested,true);book('tail')
   if not native then
@@ -172,7 +175,7 @@ local function request(command)
  local args={case='equip-edit',segment=segment()}
  if command=='Prepare'then args.placement=placement;args.clientPlacement=proof end
  if isClient()then sendClientCommand('EquipEditTest',command,args)
- elseif command=='Prepare'then authority=F.prepare(getPlayer(),segment(),config.mode,config.kind,placement,proof,previous);previous=nil;ids=authority.ids;raw('PREPARED',ids)
+ elseif command=='Prepare'then authority=F.prepare(getPlayer(),segment(),config.mode,config.kind,placement,proof,previous,workloadEnabled);previous=nil;ids=authority.ids;raw('PREPARED',ids)
  else receipt=assert(F.verify(authority));raw('VERIFIED',receipt)end
 end
 Events.OnServerCommand.Add(function(module,command,args)
@@ -193,6 +196,7 @@ require('QueuePreflight').onTick(Events,function()
    captureCallbacks()
    callbackObserver=CallbackObservation.new(PZSurvivorToolkit,config,Proof,{ISEquipWeaponAction,ISReadABook,ISInventoryTransferAction})
    tidyObserver=Quiescence.new(PZSurvivorToolkit,p,empty,Proof,Events)
+   if workloadEnabled then work=require('QueueEquipWork').new(config)end
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);p:setGodMod(true);p:setGhostMode(true);p:setAutoDrink(false)
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
    ready=true;since=now();emit({event='setup',cases=config.cases,segments=F.segments,queueEnabled=not native,nativeDurations=true})
@@ -215,11 +219,17 @@ require('QueuePreflight').onTick(Events,function()
    local ordinary={state.items.b,state.items.c}
    if segment()~='component-guard'then ordinary[#ordinary+1]=state.items.a end
    assert(toolkitEquipNativeQuiet(p,ordinary)==true,'ordinary Equip fixture inputs failed native eligibility')
-   if index==1 then raw('EFFECT_DIAGNOSTICS',require('QueueEquipEffectDiagnostics').observe(p,state.items.a))end
+   if index==1 and not work then raw('EFFECT_DIAGNOSTICS',require('QueueEquipEffectDiagnostics').observe(p,state.items.a))end
    assert(not p:isTimedActionInstant());tidyObserver.reset();state.front=book('front');phase='front';frameLast=now()
   elseif phase=='front'and tracks[state.front].progress then
    assert(queue().current==state.front and state.front:isStarted(),'front book must remain active during pending edit')
-   pendingBefore=F.snapshot(state);enqueuePending();pendingAfter=F.snapshot(state);unchanged(pendingBefore);pendingOrder=queueOrder();phase='running'
+   -- AddUI is staged natively: let the normal UIManager update register the
+   -- actual front-reader panel before sending a programmatic widget gesture.
+   if work and not native and(index==1 or segment()=='cancel')and not work:panelReady(queue())then return end
+   if index==1 and work then work:arm()end
+   pendingBefore=F.snapshot(state);enqueuePending();pendingAfter=F.snapshot(state);unchanged(pendingBefore);pendingOrder=queueOrder();phase=index==1 and work and'work'or'running'
+  elseif phase=='work'then
+   if work:tick(queue(),state.front)then phase='running'end
   elseif phase=='running'and empty()and tidyQuiet()then
    if not F.verify(state)then return end
    quiet=quiet or now();if now()-quiet>=1000 then phase='verified';request('Verify')end
@@ -227,7 +237,7 @@ require('QueuePreflight').onTick(Events,function()
    local client=assert(F.verify(state));assert(F.equal(client,receipt),'client/authority equip effect differs')
    local tidyProof=assert(tidyQuiet(),'P4 idle cleanup observation unavailable');assert(empty(),'native queue became active after observation')
    segments[#segments+1]={segment=segment(),ids=ids,input=state.input,clientPlacement=proof,client=client,server=receipt,
-    commands=commands,edits=edits,componentGuard=componentGuard or false,pendingBefore=pendingBefore,pendingAfter=pendingAfter,pendingOrder=pendingOrder,
+    commands=commands,edits=edits,workload=index==1 and work and work.result or nil,componentGuard=componentGuard or false,pendingBefore=pendingBefore,pendingAfter=pendingAfter,pendingOrder=pendingOrder,
     queueIdle=true,tidyQuiescent=true,tidyObservation=tidyProof,settleMilliseconds=now()-quiet,frameCadence=frameCadence}
    if not isClient()then previous=authority end
    index=index+1

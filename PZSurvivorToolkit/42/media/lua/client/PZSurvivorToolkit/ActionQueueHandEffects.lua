@@ -124,15 +124,53 @@ local function inspect(actor,items)
  end
  local publicWatch=capture(public)
  if kind(input)~='function'or kind(publicWatch)~='function'then return end
+ -- Recipes are private decision inputs. Build their DAGs once after source
+ -- readers and public capture, but observe every live fact again in check().
+ if not recipesUnchanged()or not watch()or not input()or not publicWatch()then return end
+ local recipes={isForceDropHeavyItem=factories.isForceDropHeavyItem()}
+ if carts~=nil then
+  recipes.cartsIsCart=factories.cartsIsCart(type)
+  recipes.cartsSafeIsCart=factories.cartsSafeIsCart(tostring)
+  recipes.forceDropGuard=factories.forceDropGuard(carts.isCart)
+ else recipes.forceDropNative=factories.forceDropNative()end
+ local prepared={}
+ for _,entry in array(selected)do
+  local profile=entry.profile
+  if not prepared[profile]then
+   if profile=='snow'then recipes.snow=factories.snow()
+   elseif profile=='neat'then
+    recipes.neat=factories.neat(neat,hide);recipes.neatRefresh=factories.neatRefresh(neat)
+    recipes.neatLocalPlayerNum=factories.neatLocalPlayerNum()
+   elseif profile=='carts'then recipes.cartsOrdinary=factories.cartsOrdinary()
+   elseif profile=='fishing'then
+    recipes.fishing=factories.fishing();recipes.fishingHandle=factories.fishingHandle();recipes.fishingValid=factories.fishingValid()
+   elseif profile=='radio'then recipes.radio=factories.radio()
+   elseif profile=='bowPresentation'then
+    recipes.bowPresentation=factories.bowPresentation(presentation,durability)
+    recipes.bowDurabilityIsBow=factories.bowDurabilityIsBow(contract)
+   elseif profile=='archery'then
+    recipes.archeryPlayerCharacter=factories.archeryPlayerCharacter()
+    recipes.bowReloadPrimitiveBow=factories.bowReloadPrimitiveBow(contract)
+   end
+   if(profile=='bowPresentation'or profile=='archery')and not recipes.archeryPrimitiveBow then
+    recipes.archeryPrimitiveBow=factories.archeryPrimitiveBow(contract)
+   end
+   prepared[profile]=true
+  end
+  if profile=='archery'then
+   local name=entry.phase=='primary'and'archeryPrimary'or'archerySecondary'
+   if not recipes[name]then recipes[name]=factories[name](contract,bowReload)end
+  end
+ end
  local function check()
   if not recipesUnchanged()or not watch()or not input()or not publicWatch()or globals()~=true or idle()~=true
    or revalidate(snapshot)~=true or isClient()or isServer()or isMultiplayer()or quiet(actor,items)~=true then return false end
-  if not shape(isForceDropHeavyItem,Recipes.isForceDropHeavyItem())then return false end
+  if not shape(isForceDropHeavyItem,recipes.isForceDropHeavyItem)then return false end
   if carts~=nil then
-   if not plain(carts.CartTypes)or not shape(carts.isCart,Recipes.cartsIsCart(type))
-    or not shape(carts.safeIsCart,Recipes.cartsSafeIsCart(tostring))
-    or not shape(forceDropHeavyItems,Recipes.forceDropGuard(carts.isCart))then return false end
-  elseif not shape(forceDropHeavyItems,Recipes.forceDropNative())then return false end
+   if not plain(carts.CartTypes)or not shape(carts.isCart,recipes.cartsIsCart)
+    or not shape(carts.safeIsCart,recipes.cartsSafeIsCart)
+    or not shape(forceDropHeavyItems,recipes.forceDropGuard)then return false end
+  elseif not shape(forceDropHeavyItems,recipes.forceDropNative)then return false end
   for _,item in array(items)do
    if not instanceof(item,'InventoryItem')
     or instanceof(item,'Radio')or item:getFullType()=='Base.Primitive_Bow'
@@ -142,26 +180,26 @@ local function inspect(actor,items)
   for _,entry in array(selected)do
    local cb,profile=entry.callback,entry.profile
    if not checked[cb]then
-    if profile=='snow'then if not shape(cb,Recipes.snow())then return false end
+    if profile=='snow'then if not shape(cb,recipes.snow)then return false end
     elseif profile=='neat'then
-     if not neat or not hide or neat.hideEquipped~=false or not shape(cb,Recipes.neat(neat,hide))
-      or not shape(hide.refreshFor,Recipes.neatRefresh(neat))or not shape(neat.localPlayerNum,Recipes.neatLocalPlayerNum())then return false end
+     if not neat or not hide or neat.hideEquipped~=false or not shape(cb,recipes.neat)
+      or not shape(hide.refreshFor,recipes.neatRefresh)or not shape(neat.localPlayerNum,recipes.neatLocalPlayerNum)then return false end
     elseif profile=='carts'then
-     if not carts or not shape(cb,Recipes.cartsOrdinary())then return false end
+     if not carts or not shape(cb,recipes.cartsOrdinary)then return false end
     elseif profile=='fishing'then
      if not handler or cb~=handler.onEquipPrimary or not empty(fishing.ManagerInstances)
-      or not shape(cb,Recipes.fishing())or not shape(handler.handleFishing,Recipes.fishingHandle())
-      or not shape(handler.isFishingValid,Recipes.fishingValid())then return false end
+      or not shape(cb,recipes.fishing)or not shape(handler.handleFishing,recipes.fishingHandle)
+      or not shape(handler.isFishingValid,recipes.fishingValid)then return false end
     elseif profile=='radio'then
      -- For these exact non-Radio items, native instanceof is false before
      -- any ISRadioWindow lookup. Its normal inherited UI class is not a
      -- state input on this branch; no UI method is invoked or certified.
-     if not shape(cb,Recipes.radio())then return false end
+     if not shape(cb,recipes.radio)then return false end
     elseif profile=='bowPresentation'then
      if not presentation or not durability or not contract or contract.BowFullType~='Base.Primitive_Bow'
-      or cb~=presentation.onEquipPrimary or not shape(cb,Recipes.bowPresentation(presentation,durability))
-      or not shape(durability.isBow,Recipes.bowDurabilityIsBow(contract))
-      or not shape(contract.isPrimitiveBow,Recipes.archeryPrimitiveBow(contract))then return false end
+      or cb~=presentation.onEquipPrimary or not shape(cb,recipes.bowPresentation)
+      or not shape(durability.isBow,recipes.bowDurabilityIsBow)
+      or not shape(contract.isPrimitiveBow,recipes.archeryPrimitiveBow)then return false end
     elseif profile~='archery'then return false end
     checked[cb]=true
    end
@@ -169,10 +207,10 @@ local function inspect(actor,items)
     local state=wp and wp.BowState
     if not plain(state)or cb~=state[entry.phase=='primary'and'onEquipPrimary'or'onEquipSecondary']or archery(actor)~=true
      or not contract or not bowReload or contract.BowFullType~='Base.Primitive_Bow'
-     or not shape(contract.isPlayerCharacter,Recipes.archeryPlayerCharacter())
-     or not shape(bowReload.isPrimitiveBow,Recipes.bowReloadPrimitiveBow(contract))
-     or not shape(contract.isPrimitiveBow,Recipes.archeryPrimitiveBow(contract))
-     or not shape(cb,entry.phase=='primary'and Recipes.archeryPrimary(contract,bowReload)or Recipes.archerySecondary(contract,bowReload))then return false end
+     or not shape(contract.isPlayerCharacter,recipes.archeryPlayerCharacter)
+     or not shape(bowReload.isPrimitiveBow,recipes.bowReloadPrimitiveBow)
+     or not shape(contract.isPrimitiveBow,recipes.archeryPrimitiveBow)
+     or not shape(cb,entry.phase=='primary'and recipes.archeryPrimary or recipes.archerySecondary)then return false end
    end
   end
   return watch()and input()and publicWatch()and revalidate(snapshot)==true and idle()==true

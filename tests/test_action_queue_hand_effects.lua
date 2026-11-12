@@ -8,7 +8,8 @@ local function setup(sourceOverrides)
  env.toolkitLuaMetatableMatches=function(value,expected)return type(value)=='table'and getmetatable(value)==expected end
  local origins={};local factsByCallback={};local predicates=0;local readers=0
  local sourceOK,registryOK,idleOK,globalsOK,quietOK,tracking=true,true,true,true,true,true
- local readerHook,predicateHook,quietHook
+ local readerHook,predicateHook,quietHook,recipeHook
+ local factoryCalls={}
  local function callback(filename)
   local value=function()error('gameplay callback executed by certification')end
   origins[value]=filename;factsByCallback[value]=true;return value
@@ -23,7 +24,16 @@ local function setup(sourceOverrides)
   return sourceOK
  end
  local recipes=assert(setfenv(assert(loadfile(root..'client/PZSurvivorToolkit/ActionQueueHandEventRecipes.lua')),env))()
- for _,value in pairs(recipes)do if type(value)=='function'then origins[value]='ActionQueueHandEventRecipes.lua'end end
+ for name,value in pairs(recipes)do
+  if name~='source'then
+   recipes[name]=function(...)
+    factoryCalls[name]=(factoryCalls[name]or 0)+1
+    if recipeHook then recipeHook(name)end
+    return value(...)
+   end
+  end
+  origins[recipes[name]]='ActionQueueHandEventRecipes.lua'
+ end
  local snow,neat,carts,fishing,radio,presentation,primary,secondary=callback('ISnow_CharSnow.lua'),callback('NEQ_HideEquipped.lua'),callback('HolderRegistry.lua'),
   callback('FishingHandler.lua'),callback('ISRadioWindow.lua'),callback('WPANC_BowPresentation.lua'),callback('R5_AimState.lua'),callback('R5_AimState.lua')
  env.NEQ_State={hideEquipped=false,localPlayerNum=callback('NEQ_State.lua')}
@@ -41,7 +51,7 @@ local function setup(sourceOverrides)
   archeryTrackingAbsent=function()return tracking end}
  local native=function(value,recipe)
   assert(type(recipe)=='table'and #recipe.fingerprint==64)
-  predicates=predicates+1;if predicateHook then predicateHook()end;return factsByCallback[value]
+  predicates=predicates+1;if predicateHook then predicateHook(value,recipe)end;return factsByCallback[value]
  end
  local idle=function()return idleOK end;local globals=function()return globalsOK end
  local quiet=function()if quietHook then quietHook()end;return quietOK end
@@ -64,7 +74,7 @@ local function setup(sourceOverrides)
   callback=callback,source=function(value)sourceOK=value end,registry=function(value)registryOK=value end,
   idle=function(value)idleOK=value end,globals=function(value)globalsOK=value end,quiet=function(value)quietOK=value end,
   tracking=function(value)tracking=value end,readerHook=function(value)readerHook=value end,predicateHook=function(value)predicateHook=value end,
-  quietHook=function(value)quietHook=value end,counts=function()return predicates,readers end}
+  quietHook=function(value)quietHook=value end,recipeHook=function(value)recipeHook=value end,factoryCalls=factoryCalls,counts=function()return predicates,readers end}
 end
 local function certify(case)return case.effects.certify(case.actor,case.items)end
 local function rejected(change,index)
@@ -134,4 +144,33 @@ do
  assert(certify(c),'reviewed selected radio overlay was not qualified')
  c=setup({['native'..path]=false,['TVRadio_ReInvented'..path]=false})
  assert(not certify(c),'unknown native and selected radio sources gained authority')
+end
+
+-- Repeated checks reuse only private recipe descriptions. Native observations
+-- still run, and a subsequent decision must create its own recipe DAG.
+do
+ local c=setup();local seen={}
+ c.predicateHook(function(callback,recipe)
+  if seen[callback]then assert(seen[callback]==recipe,'one certificate rebuilt its recipe DAG')else seen[callback]=recipe end
+ end)
+ local check=assert(certify(c));local calls={}
+ for name,count in pairs(c.factoryCalls)do calls[name]=count end
+ local predicates=c.counts();assert(check())
+ assert(c.counts()>predicates,'reused recipes skipped fresh native observations')
+ for name,count in pairs(c.factoryCalls)do assert(calls[name]==count,'certificate check reran a recipe factory: '..name)end
+ c.facts[c.snow]=false;assert(not check(),'reused recipe retained a previous capture result')
+ c.facts[c.snow]=true;local previous=seen[c.snow];seen={}
+ assert(certify(c));assert(seen[c.snow]~=previous,'recipe DAG escaped into another decision')
+ c.recipes.snow=function()error('changed recipe factory executed')end
+ assert(not check(),'old certificate ignored a changed public recipe factory')
+end
+-- Source readers can reenter before recipe construction. Factory identity must
+-- be guarded again at that boundary, and final checks must reject a mutation
+-- made during construction without invoking the replacement factory.
+for _,during in ipairs({'reader','factory'})do
+ local c=setup();local foreignCalls=0
+ local function replace()c.recipes.radio=function()foreignCalls=foreignCalls+1;return{}end end
+ if during=='reader'then c.readerHook(replace)else c.recipeHook(function(name)if name=='isForceDropHeavyItem'then replace()end end)end
+ assert(not certify(c),'recipe mutation at '..during..' boundary gained authority')
+ assert(foreignCalls==0,'changed recipe factory executed across '..during..' boundary')
 end

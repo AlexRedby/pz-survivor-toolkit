@@ -62,6 +62,143 @@ def check_callback_observation(value, allow_stop=False):
     return bool(differences)
 
 
+WORK_HOOKS = ('modSource', 'gameSource', 'captureMatch', 'fingerprintTree', 'registryMatches',
+              'dispatchEnter', 'dispatchExit', 'eventTrigger')
+WORK_PHASES = ('before-first-equip-command', 'first-drag', 'idle-visible', 'steady-move',
+               'steady-cancel', 'changing-drag')
+WORK_NATIVE_PHASES = ('queue-disabled-before-commands', 'queue-disabled')
+
+
+def finite(value):
+    return type(value) in (int, float) and math.isfinite(value) and value >= 0
+
+
+def count(value):
+    return finite(value) and value == int(value)
+
+
+def summary(value, number, total, maximum, positive=False):
+    require(type(value) is dict and count(value.get(number)) and (not positive or value[number] > 0)
+            and finite(value.get(total)) and finite(value.get(maximum)), 'finite native work summary')
+    bound = value[maximum] * value[number]
+    require(value[maximum] <= value[total] and (value[total] <= bound or math.isclose(value[total], bound)),
+            'consistent native work summary')
+
+
+def check_work_metrics(value, stage):
+    require(type(value) is dict and all(type(item) in (str, bool, int, float) for item in value.values())
+            and all(math.isfinite(item) for item in value.values() if type(item) in (int, float)),
+            'flat finite native work metrics')
+    require(type(value.get('schema')) is int and value['schema'] == 1 and value.get('stage') == stage
+            and value.get('active') is True and finite(value.get('elapsedMs'))
+            and value.get('source') == 'disposable-jvm-probe' and value.get('timer') == 'relative-System.nanoTime',
+            'native work phase/clock scope')
+    require(value.get('threadScope') == 'mark-caller-Java-thread; controls-bind-originating-Kahlua-thread'
+            and value.get('timingScope') == 'completed-advice-intervals; inclusive-is-nonadditive; self-excludes-nested-instrumented-intervals'
+            and value.get('sourceScope') == 'media/lua-relative-source-open-attempts; no-reader-wrapping-or-byte-count'
+            and value.get('overheadCorrected') is False and value.get('perCallScopeAllocation') is False
+            and type(value.get('overhead')) is str and value['overhead']
+            and type(value.get('inactiveHookOverhead')) is str and value['inactiveHookOverhead']
+            and value.get('adviceOrderLimit') == 'Event-trigger-interval-may-exclude-sibling-advice; dispatch-helper-intervals-reported-separately'
+            and value.get('retention') == 'primitive-stats-and-immutable-source-strings; no-Event-closure-action-arguments',
+            'explicit native work overhead/observation limits')
+    require(type(value.get('allocatedBytesAvailable')) is bool
+            and (finite(value.get('allocatedBytes')) if value['allocatedBytesAvailable'] else value.get('allocatedBytes') == -1),
+            'optional current-thread allocation sample')
+    require(value.get('diagnostic') == '' and count(value.get('droppedCalls')) and value['droppedCalls'] == 0
+            and count(value.get('droppedPaths')) and value['droppedPaths'] == 0,
+            'native work instrumentation incomplete')
+    require(count(value.get('depthCapacity')) and value['depthCapacity'] > 0
+            and all(count(value.get(field)) and value[field] <= value['depthCapacity'] for field in ('openDepth', 'discardedOpen')),
+            'bounded native open/omitted intervals')
+    observed = set()
+    for hook in WORK_HOOKS:
+        calls, completed = value.get(hook + 'Calls'), value.get(hook + 'Completed')
+        total, own, maximum = (value.get(hook + suffix) for suffix in ('InclusiveNs', 'SelfNs', 'MaxNs'))
+        require(count(calls) and count(completed) and completed <= calls
+                and all(finite(item) for item in (total, own, maximum)) and own <= total
+                and maximum <= total and (total <= maximum * completed or math.isclose(total, maximum * completed)),
+                'finite consistent native hook counters/timings: ' + hook)
+        require(type(value.get(hook + 'Observed')) is bool and value[hook + 'Observed'] is (calls > 0)
+                and type(value.get(hook + 'SignatureAvailable')) is bool
+                and type(value.get(hook + 'Signature')) is str and value[hook + 'Signature']
+                and (calls == 0 or value[hook + 'SignatureAvailable'] is True),
+                'actual native hook observation differs from signature availability: ' + hook)
+        if calls > 0: observed.add(hook)
+    require(count(value.get('pathCapacity')) and value['pathCapacity'] > 0
+            and count(value.get('sourcePathCount')) and value['sourcePathCount'] <= value['pathCapacity'],
+            'bounded source-open paths')
+    paths = set()
+    for index in range(1, int(value['sourcePathCount']) + 1):
+        prefix = 'source' + str(index)
+        mod, path, attempts = value.get(prefix + 'Mod'), value.get(prefix + 'Path'), value.get(prefix + 'Count')
+        require(type(mod) is str and mod and len(mod) <= 128 and type(path) is str
+                and path.startswith('media/lua/') and len(path) <= 512 and '\\' not in path
+                and all(part not in ('', '.', '..') for part in path.split('/'))
+                and count(attempts) and attempts > 0 and (mod, path) not in paths, 'relative native source-open attempt')
+        paths.add((mod, path))
+    return observed
+
+
+def check_workload(value, selection):
+    require(selection['kind'] == 'sp', 'optional Equip work profile supports SP only; Host functional controls remain separate')
+    toolkit = selection['mode'] == 'toolkit'
+    require(type(value) is dict and set(value) == {'schema', 'input', 'osEventRouting', 'pointerGettersReplaced',
+            'requestsFocus', 'renderer', 'phases', 'observerReleased'} | ({'cold', 'cancel'} if toolkit else set())
+            and type(value.get('schema')) is int and value['schema'] == 1
+            and value.get('observerReleased') is True
+            and value.get('input') == 'programmatic-native-widget-handlers' and value.get('renderer') == 'native-UIManager'
+            and all(value.get(field) is False for field in ('osEventRouting', 'pointerGettersReplaced', 'requestsFocus')),
+            'supported native-widget work scope; no OS routing/focus/pointer replacement')
+    phases = value['phases']; names = WORK_PHASES if toolkit else WORK_NATIVE_PHASES
+    require(type(phases) is list and all(type(phase) is dict for phase in phases)
+            and [phase.get('name') for phase in phases] == list(names), 'ordered complete native work phases')
+    observed = set(); open_spans = omitted = 0
+    for phase in phases:
+        name = phase['name']; metrics = phase.get('metrics')
+        require(set(phase) <= {'name', 'metrics', 'panel', 'ticks'}, 'supported native work phase fields')
+        observed |= check_work_metrics(metrics, name)
+        open_spans += metrics['openDepth']; omitted += metrics['discardedOpen']
+        sustained = name in ('idle-visible', 'steady-move', 'steady-cancel', 'changing-drag', 'queue-disabled')
+        if sustained or 'ticks' in phase:
+            ticks = phase.get('ticks'); summary(ticks, 'count', 'totalMs', 'maxMs', sustained)
+            require(set(ticks) == {'count', 'totalMs', 'maxMs'}, 'native tick cadence fields')
+        if toolkit and (sustained or name == 'first-drag') or 'panel' in phase:
+            panel = phase.get('panel'); summary(panel, 'draws', 'drawMs', 'maxDrawMs', toolkit and sustained)
+            require(set(panel) == {'draws', 'drawMs', 'maxDrawMs', 'previewRebuilds'}
+                    and count(panel.get('previewRebuilds')) and panel['previewRebuilds'] <= panel['draws'], 'actual native UIManager row draw statistics')
+            if not toolkit:
+                require(panel['draws'] == panel['drawMs'] == panel['maxDrawMs'] == panel['previewRebuilds'] == 0,
+                        'queue-disabled control cannot claim a queue panel')
+            elif name == 'idle-visible': require(panel['previewRebuilds'] == 0, 'idle-visible panel rebuilt policy preview')
+            elif name in ('steady-move', 'steady-cancel', 'changing-drag'):
+                require(panel['previewRebuilds'] > 0, 'hover/drag phase lacks rendered preview rebuilds')
+    if toolkit:
+        committed = selection['kind'] == 'sp'
+        cold = value['cold']
+        require(type(cold) is dict and set(cold) == {'pressMs', 'releaseMs', 'committed', 'scope', 'sourceScope', 'nativeHitTesting'}
+                and cold.get('scope') == 'first-timed-widget-gesture-not-OS-routing'
+                and cold.get('sourceScope') == 'first-family-enqueue-and-gesture-not-filesystem-cold', 'bounded first-family widget scope')
+        cancel = value['cancel']
+        require(type(cancel) is dict and set(cancel) == {'pressMs', 'releaseMs', 'committed', 'nativeHitTesting', 'metrics'},
+                'explicit native-widget cancel result')
+        for gesture in (cold, cancel):
+            require(finite(gesture.get('pressMs')) and finite(gesture.get('releaseMs'))
+                    and gesture.get('committed') is committed and gesture.get('nativeHitTesting') is True,
+                    'live native-widget timings/SP commit/Host denial')
+        observed |= check_work_metrics(cancel['metrics'], 'cancel-click')
+        open_spans += cancel['metrics']['openDepth']; omitted += cancel['metrics']['discardedOpen']
+        if committed:
+            require({'captureMatch', 'fingerprintTree', 'registryMatches'} <= observed,
+                    'positive SP Equip work lacks actual capture/fingerprint/registry observations')
+    require({'dispatchEnter', 'dispatchExit', 'eventTrigger'} <= observed,
+            'native work lacks actual event/dispatch observations')
+    return dict(scope='programmatic native widget handlers and actual UIManager row draws; no physical OS routing',
+                observedHooks=sorted(observed), openIntervalsAtSnapshots=open_spans, discardedAtPhaseBoundaries=omitted,
+                timing='completed advice intervals only; omitted/open spans are not complete Event costs',
+                performanceVerdict=False)
+
+
 def check_segment(row, selection, prepared, verified):
     try:
         ids = row['ids']; segment = row['segment']; editing = selection['mode'] == 'toolkit' and selection['kind'] == 'sp'
@@ -69,6 +206,8 @@ def check_segment(row, selection, prepared, verified):
                 and ids['case'] == 'equip-edit' and ids['kind'] == selection['kind'] and ids['mode'] == selection['mode'], 'authority/selection segment identity')
         validate_placement(row['clientPlacement'], ids['origin'], 'local', centered=True)
         validate_placement(ids['placementProof'], ids['origin'], 'replica' if selection['kind'] == 'mp' else 'local', centered=True)
+        workload = selection.get('options', {}).get('equip_workload', False)
+        require(type(workload) is bool and (not workload or selection['kind'] == 'sp'), 'boolean optional Equip work selection; SP only')
         specs = ids['items']; names = {'front', 'tail', 'a', 'b', 'c', 'bag', 'marker'}
         if segment in ('dependent', 'capacity'): names.add('nested')
         if segment == 'capacity': names.add('heldBag')
@@ -76,8 +215,15 @@ def check_segment(row, selection, prepared, verified):
         expected_types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', a='Base.Hammer' if segment == 'component-guard' else 'Base.Nails', b='Base.Screwdriver', c='Base.Screwdriver',
                               bag='Base.Bag_Schoolbag', marker='Base.Nails', nested='Base.Plank' if segment == 'capacity' else 'Base.Pencil', heldBag='Base.Bag_Schoolbag')
         for name, spec in specs.items():
-            require(type(spec['id']) is int and spec['id'] >= 0 and spec['type'] == expected_types[name]
-                    and set(spec) == ({'id', 'type', 'class', 'pages'} if name in ('front', 'tail') else {'id', 'type', 'class'}), 'native seed identities/types')
+            fields = {'id', 'type', 'class'} | ({'pages'} if name in ('front', 'tail') else set())
+            extended = workload and segment == 'reorder-two' and name == 'front'
+            if extended: fields.add('initialPages')
+            require(set(spec) == fields, 'exact optional native reader seed fields')
+            if name in ('front', 'tail'):
+                require(type(spec['pages']) is int and spec['pages'] > 1
+                        and (not extended or type(spec['initialPages']) is int and spec['initialPages'] == spec['pages'] - 2),
+                        'native reader initial pages')
+            require(type(spec['id']) is int and spec['id'] >= 0 and spec['type'] == expected_types[name], 'native seed identities/types')
         baseline = rows(ids['inventory']); require(all(spec['id'] in baseline for spec in specs.values()), 'seeded input lost from inventory baseline')
         for name, spec in specs.items():
             expected_class = 'Literature' if name in ('front', 'tail') else 'InventoryContainer' if name in ('bag', 'heldBag') else 'HandWeapon' if name in ('b', 'c', 'nested') or name == 'a' and segment == 'component-guard' else 'ComboItem'
@@ -86,6 +232,12 @@ def check_segment(row, selection, prepared, verified):
             require(spec['class'] == expected_class and actual['type'] == spec['type'] and actual['class'] == expected_class
                     and actual['path'] == expected_path, 'native canonical root/nested factory source')
         require(row['input']['inventory'] == ids['inventory'] and row['input']['hands'] == dict(primary=False, secondary=False), 'native empty hand/input baseline')
+        for name in ('front', 'tail'):
+            spec = specs[name]; initial = spec.get('initialPages', spec['pages'] - 1)
+            require(row['input']['books'][name] == dict(id=spec['id'], present=True, root=True,
+                    pages=initial, characterPages=initial, total=spec['pages']), 'exact initial native reader progress')
+        if workload and segment == 'reorder-two': check_workload(row.get('workload'), selection)
+        else: require(row.get('workload') is None or row.get('workload') is False, 'unexpected native work receipt outside selected first segment')
         for role in ('client', 'server'):
             value = row[role]
             require(value['case'] == 'equip-edit' and value['segment'] == segment and value['backpack'] is True
@@ -212,7 +364,7 @@ def check_segment(row, selection, prepared, verified):
 
 
 def verify(root, selection, catalog):
-    root = Path(root); issues = []; outcomes = []
+    root = Path(root); issues = []; outcomes = []; work_evidence = None
     try:
         text = (root / 'client1-launch.log').read_text(errors='replace')
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
@@ -232,6 +384,8 @@ def verify(root, selection, catalog):
         for index, segment in enumerate(segments):
             require(placements[index] == dict(case='equip-edit', segment=segment['segment'], proof=segment['clientPlacement']), 'client centered placement evidence')
             issues += check_segment(segment, selection, prepared[index], verified[index])
+        if selection.get('options', {}).get('equip_workload'):
+            work_evidence = check_workload(segments[0].get('workload'), selection)
         from .magazine_unload import complete
         require(complete(selection, 'client1', text), 'equip completion marker')
         for marker in ('VOICE_DISABLED', 'DISPLAY_READY', 'PREFLIGHT_COMPLETE', 'NATIVE_CONNECTED' if selection['kind'] == 'mp' else 'TRUE_SP'):
@@ -242,8 +396,9 @@ def verify(root, selection, catalog):
         outcome=dict(effectsVerified=not issues, serverAuthorityVerified=not issues, tailCompleted=not issues,
                      pendingEditsVerified=not issues and selection['mode'] == 'toolkit' and selection['kind'] == 'sp',
                      pendingProtectionVerified=not issues and selection['mode'] == 'toolkit', tidyQuiescent=not issues)))
-    return dict(issues=issues, outcomes=outcomes, evidence=dict(limits=[
+    return dict(issues=issues, outcomes=outcomes, evidence=dict(workload=work_evidence, limits=[
         'Programmatic native constructors/durations and original delegates; only the exact source-proven local transfer stop guard may differ. No physical-input or active-edit claim.',
         'New positive Equip rights are SP only; menu Host is a denial control with exact authority inventory/hands.',
         'P4 returns borrowed Pencil/Plank to the original nested source. Native transfer removes only the transferred item from hands: dependent clears held Pencil, capacity preserves the held source bag. No explicit menu-intent claim or future capacity grant.',
-        'P4 quiescence uses real idle callbacks and shared retained-loan diagnostics; its private state tables are not observed.']))
+        'P4 quiescence uses real idle callbacks and shared retained-loan diagnostics; its private state tables are not observed.',
+        'Optional work receipts measure programmatic widget handlers and actual UIManager row draws with native pointer getters. No physical OS routing, focus request, filesystem-cold claim, inactive-span cost or whole-project performance verdict. Instrumentation overhead is uncorrected; completed hook intervals omit open/boundary-discarded spans.']))

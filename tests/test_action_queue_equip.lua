@@ -123,6 +123,44 @@ for _,mode in ipairs({'primary','secondary','both'})do
  assert(s.effects()==0 and s.actor.primary==held and s.actor.secondary==held and not action.action,'inspection executed native effects')
  action.action={};assert(not s.owner.inspect(action),'active native action gained pending edit authority')
 end
+-- Initial dependency collection and final revalidation must read native item
+-- facts in the same order, including duplicate hand identities. The final pass
+-- must short-circuit at a newly disallowed fact before querying later branches.
+for _,changed in ipairs({false,true})do
+ local s=setup();local incoming=s.item('HandWeapon');local held=s.item('HandWeapon')
+ s.actor.primary=held;s.actor.secondary=held;local action=s.action(incoming,true,false)
+ local phase='initial';local traces={initial={},stable={}}
+ local function record(item,name)
+  local list=traces[phase][item]or{};traces[phase][item]=list;list[#list+1]=name
+ end
+ for _,item in ipairs({incoming,held})do
+  for _,name in ipairs({'getID','getFullType','getContainer','getAttachedSlot','isForceDropHeavyItem','canBeActivated',
+   'getWorldItem','getIsCraftingConsumed','hasTag','isRequiresEquippedBothHands','getSwingAnim','isTwoHandWeapon'})do
+   local previous=item[name]
+   item[name]=function(self,...)record(self,name);return previous(self,...)end
+  end
+ end
+ local lookup=s.root.getItemWithID
+ s.root.getItemWithID=function(self,id)local item=self.items[id];record(item,'lookup');return lookup(self,id)end
+ local worn=s.actor.isEquippedClothing
+ s.actor.isEquippedClothing=function(self,item)record(item,'isEquippedClothing');return worn(self,item)end
+ s.certificate.before=function()phase='stable';if changed then incoming.activation=true end end
+ local contract=s.owner.inspect(action)
+ local facts='getID,getFullType,getContainer,lookup,getAttachedSlot,isForceDropHeavyItem,canBeActivated,getWorldItem,getIsCraftingConsumed,hasTag,hasTag,isEquippedClothing,isRequiresEquippedBothHands,getSwingAnim'
+ local location='getID,getFullType,getContainer,lookup'
+ assert(table.concat(traces.initial[incoming],',')==facts..',isTwoHandWeapon,getFullType','initial incoming fact order changed')
+ assert(table.concat(traces.initial[held],',')==facts..','..facts..',getFullType','duplicate hand fact order changed')
+ if changed then
+  assert(not contract,'revalidation accepted a newly activatable item')
+  assert(table.concat(traces.stable[incoming],',')==location..',getID,getFullType,getContainer,lookup,getAttachedSlot,isForceDropHeavyItem,canBeActivated',
+   'revalidation did not stop at the first rejected native fact')
+  assert(table.concat(traces.stable[held],',')==location,'revalidation continued into later hand facts after rejection')
+ else
+  assert(contract,'traced ordinary native equip rejected')
+  assert(table.concat(traces.stable[incoming],',')==location..','..facts..',isTwoHandWeapon','incoming revalidation read order changed')
+  assert(table.concat(traces.stable[held],',')==location..','..facts..','..facts,'duplicate hand revalidation read order changed')
+ end
+end
 -- Every declaration starts from the same live snapshot. Later conditional hand
 -- reads must use projected state, including traits and shared hand identities.
 do

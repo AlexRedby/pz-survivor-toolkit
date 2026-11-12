@@ -31,7 +31,7 @@ Events.OnTick.Add(function()
   local player=pending.player;local ok,error=pcall(function()
    local proof=P.poll(pending.arrival);if not proof then return end
    assert(P.atCentered(player,pending.target),'replica left centered placement')
-   state=F.prepare(player,segment(),config.mode,config.kind,pending.target,proof,previous);previous=nil
+   state=F.prepare(player,segment(),config.mode,config.kind,pending.target,proof,previous,config.options and config.options.equip_workload);previous=nil
    raw('PREPARED',state.ids);sendServerCommand(player,'EquipEditTest','Prepared',state.ids);pending=nil
   end)
   if not ok then fail(player,error)end

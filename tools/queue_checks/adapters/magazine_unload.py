@@ -1,5 +1,8 @@
 """Grouped native root-magazine unload controls with exact ammo identity receipts."""
 import json
+import os
+import zipfile
+from .. import preparation_process
 from pathlib import Path
 import re
 import shutil
@@ -54,6 +57,14 @@ def definitions():
 
 
 def validate(selection):
+    workload = selection.get('options', {}).get('equip_workload', False)
+    if type(workload) is not bool or workload and selection.get('cases') != list(EQUIP_CASES):
+        raise ValueError('equip_workload requires boolean true with equip-edit alone')
+    if workload and selection.get('kind') != 'sp':
+        raise ValueError('The Equip UI work profile qualifies the SP permission slice only')
+    baseline = selection.get('options', {}).get('equip_workload_baseline', False)
+    if type(baseline) is not bool or baseline and not workload:
+        raise ValueError('equip_workload_baseline requires the explicit work profile')
     cases = selection.get('cases')
     ordered = type(cases) is list and bool(cases) and (cases == list(EQUIP_CASES) or cases == [case for case in CASES if case in cases])
     if (not ordered or selection.get('kind') not in ('sp', 'mp')
@@ -68,7 +79,7 @@ def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [*sorted((root / 'magazine-unload').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua',
-            *verifier_sources(project, selection)]
+            *sorted((root / 'magazine-unload/java').glob('*.java')), *verifier_sources(project, selection)]
 
 
 def audit_native(game, selection=None):
@@ -91,9 +102,31 @@ def audit_selected(locations):
     return result
 
 
+def _work_probe(project, output, game, jdk, locations, runtime):
+    source = Path(project) / 'tests/native_queue/magazine-unload/java/EquipWorkProbe.java'
+    classes = Path(output) / 'equip-work-probe/classes'; classes.mkdir(parents=True)
+    patches = Path(locations['PZToolkitJavaPatches']) / '42/media/java/PZToolkitJavaPatches.jar'
+    classpath = os.pathsep.join(map(str, [Path(game) / 'projectzomboid.jar', Path(game) / 'ZombieBuddy.jar', patches]))
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes), str(source)],
+                            check=True, capture_output=True, text=True, timeout=60)
+    compiled = sorted(classes.rglob('*.class'))
+    if not compiled: raise ValueError('Equip work probe compilation produced no classes')
+    jar = classes.parent / 'EquipWorkProbe.jar'
+    with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as archive:
+        for path in compiled: archive.write(path, path.relative_to(classes).as_posix())
+    runtime.setdefault('fixture', {}).setdefault('mods', []).append('EquipWorkProbe')
+    for role in runtime['roles'].values():
+        layer = Path(role['cache']) / 'mods/EquipWorkProbe/42'
+        (layer / 'media/java').mkdir(parents=True)
+        (layer / 'mod.info').write_text('name=Disposable queue work probe\nid=EquipWorkProbe\nversionMin=42.21\nrequire=\\ZombieBuddy\njavaPkgName=net.alexredby.equipworkprobe\njavaJarFile=media/java/EquipWorkProbe.jar\n')
+        shutil.copy2(jar, layer / 'media/java/EquipWorkProbe.jar')
+
+
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection); audit = audit_native(game, selection); audit.update(audit_selected(locations))
     root = Path(project) / 'tests/native_queue'
+    if selection.get('options', {}).get('equip_workload'):
+        _work_probe(project, output, game, jdk, locations, runtime)
     for role in runtime['roles'].values():
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
         for side, name in [('client', 'ZZStartup.lua'), ('server', 'ZZStartupServer.lua')]:
@@ -113,7 +146,7 @@ def complete(selection, role, text):
 
 def verifier_sources(project, selection):
     return [Path(__file__).with_name('magazine_unload_verifier.py'), Path(__file__).with_name('magazine_unload_equip_verifier.py'), Path(__file__).parents[1] / 'placement.py',
-            Path(project) / 'tests/test_queue_magazine_unload.py', Path(project) / 'tests/test_queue_magazine_unload_equip.py']
+            Path(project) / 'tests/test_queue_magazine_unload.py', Path(project) / 'tests/test_queue_magazine_unload_equip.py', Path(project) / 'tests/test_queue_equip_work.py']
 
 
 def check_case(row, selection, prepared, verified):

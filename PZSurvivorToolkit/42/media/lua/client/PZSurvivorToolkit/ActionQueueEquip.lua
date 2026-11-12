@@ -76,7 +76,7 @@ local function source(action)
   nativeSources=matches('media/lua/shared/TimedActions/ISEquipWeaponAction.lua',4117952124,nil,true)
    and matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)
    and matches('media/lua/client/PZSurvivorToolkit/ActionQueueHands.lua',430503623,'PZSurvivorToolkit',true)
-   and matches('media/lua/client/PZSurvivorToolkit/ActionQueueHandEffects.lua',3027003558,'PZSurvivorToolkit',true)
+   and matches('media/lua/client/PZSurvivorToolkit/ActionQueueHandEffects.lua',4100917693,'PZSurvivorToolkit',true)
    and closure(handResource,'ActionQueueHands.lua')and closure(certify,'ActionQueueHandEffects.lua')
  end
  if not nativeSources then return false end
@@ -119,7 +119,7 @@ local function pending(action)
   and finite(action.maxTimeInit)and action.maxTimeInit>=1 and finite(action.maxTime)and action.maxTime>=1
   and(action.maxTime==1 or action.maxTime==action.maxTimeInit)
 end
-local function itemRow(actor,root,item,items,types,resources,seen)
+local function itemFacts(actor,root,item)
  if item==nil then return false end
  if not instanceof(item,'InventoryItem')then return end
  local javaClass=getClassSimpleName(item)
@@ -135,13 +135,23 @@ local function itemRow(actor,root,item,items,types,resources,seen)
  if kind(both)~='boolean'or kind(weapon)~='boolean'or weapon~=(javaClass=='HandWeapon')then return end
  local swing=weapon and item:getSwingAnim()or nil
  if swing~=nil and kind(swing)~='string'then return end
- local row={item=item,requiresBoth=both,handWeapon=weapon,handgun=weapon and swing=='Handgun'}
+ return true,both,weapon,weapon and swing=='Handgun',id,fullType
+end
+local function itemRow(actor,root,item,items,types,resources,seen)
+ local valid,both,weapon,handgun,id,fullType=itemFacts(actor,root,item)
+ if not valid then return valid end
+ local row={item=item,requiresBoth=both,handWeapon=weapon,handgun=handgun}
  if seen[id]then if not equal(seen[id],item)then return end
  else
   seen[id]=item;items[#items+1]=item;types[fullType]=true
   resources[#resources+1]={domain='item',key=id,facts={item=item,location=root},requires={{field='location',equal=root}}}
  end
  return row
+end
+local function sameItem(actor,root,row)
+ if row==false then return true end
+ local valid,both,weapon,handgun=itemFacts(actor,root,row.item)
+ return valid and both==row.requiresBoth and weapon==row.handWeapon and handgun==row.handgun
 end
 local function inspectPending(action)
  if not source(action)or not pending(action)or isClient()or isServer()or isMultiplayer()then return end
@@ -190,12 +200,7 @@ local function inspectPending(action)
   for id,item in each(seen)do
    if item:getID()~=id or item:getFullType()~=identityTypes[id]or item:getContainer()~=root or root:getItemWithID(id)~=item then return false end
   end
-  for _,row in array({incoming,primary,secondary})do
-   if row~=false then
-    local current=itemRow(actor,root,row.item,{},{},{},{})
-    if not current or current.requiresBoth~=row.requiresBoth or current.handWeapon~=row.handWeapon or current.handgun~=row.handgun then return false end
-   end
-  end
+  if not sameItem(actor,root,incoming)or not sameItem(actor,root,primary)or not sameItem(actor,root,secondary)then return false end
   return not incoming.handWeapon or savedItem:isTwoHandWeapon()==supportsTwo
  end
  local check=certify(actor,items)

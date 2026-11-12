@@ -48,6 +48,8 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.1.363
 
+- **Changed:** Pending equipment checks avoid rebuilding discarded item dependencies and reuse private recipe data within each decision, while still rechecking current bindings, captures and item facts.
+
 - **Changed:** Source-qualified pending native Equip actions in SP use the common hand/item projection for reordering and cancellation before a surviving queue suffix. Ordinary unchanged backpacks remain supported. Pickup dependencies, container capacity, active actions, items with additional native components, heavy/worn/activated items and unreviewed mod handlers keep their existing guards. Host reordering remains unavailable pending correlated native execution support.
 
 ### 0.1.362

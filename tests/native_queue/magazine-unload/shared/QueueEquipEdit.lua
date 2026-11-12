@@ -59,7 +59,7 @@ function F.verify(state)
  for _ in pairs(baseline)do return end
  return value
 end
-function F.prepare(player,segment,mode,kind,placement,proof,previous)
+function F.prepare(player,segment,mode,kind,placement,proof,previous,workload)
  assert(P.atCentered(player,placement),'equip fixture placement differs')
  if previous then F.dispose(previous)end
  local root=player:getInventory();assert(not player:getPrimaryHandItem()and not player:getSecondaryHandItem(),'equip fixture needs empty native hands')
@@ -75,6 +75,10 @@ function F.prepare(player,segment,mode,kind,placement,proof,previous)
   assert(book:getNumberOfPages()>1);book:setAlreadyReadPages(book:getNumberOfPages()-1);player:setAlreadyReadPages(book:getFullType(),book:getNumberOfPages()-1)
  end
  ids.items.front.pages=front:getNumberOfPages();ids.items.tail.pages=tail:getNumberOfPages()
+ if workload and segment=='reorder-two'then
+  local initial=front:getNumberOfPages()-2;front:setAlreadyReadPages(initial);player:setAlreadyReadPages(front:getFullType(),initial)
+  ids.items.front.initialPages=initial
+ end
  for _,perk in ipairs({Perks.Woodwork,Perks.Doctor})do player:setPerkLevelDebug(perk,0)end
  seed('a',segment=='component-guard'and'Base.Hammer'or'Base.Nails');seed('b','Base.Screwdriver');seed('c','Base.Screwdriver')
  local bag=seed('bag','Base.Bag_Schoolbag');local slot=bag:canBeEquipped();assert(slot and not player:getWornItem(slot),'test backpack slot must be empty')
@@ -107,7 +111,7 @@ function F.resolve(player,ids)
  if player:getPrimaryHandItem()or player:getSecondaryHandItem()then return end
  for _,perk in ipairs({Perks.Woodwork,Perks.Doctor})do player:setPerkLevelDebug(perk,0)end
  -- Read progress belongs to the fresh authority seed and is mirrored for the client reader's native constructor.
- for _,name in ipairs({'front','tail'})do local item=state.items[name];local initial=ids.items[name].pages-1
+ for _,name in ipairs({'front','tail'})do local item=state.items[name];local initial=ids.items[name].initialPages or ids.items[name].pages-1
   if item:getAlreadyReadPages()~=initial then return end
   player:setAlreadyReadPages(item:getFullType(),initial)
  end

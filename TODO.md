@@ -1,6 +1,6 @@
-# Pending native equip qualification
+# Pending equipment first-use cost
 
-- [ ] Finish cold-source and real queue-panel hover/drag/click cost qualification before releasing pending Equip edits. Preserve the complete hand-event proof, compare equivalent workloads and assess repeated source/capture work and retention before tuning. Programmatic scenes warm source leases; they do not establish physical-input cost or passive-dispatch overhead against an unpatched baseline.
+- [ ] Attribute the remaining first-family enqueue cost with the optional SP `equip_workload` profile before choosing another optimization. Separate source opening/reading/hashing, fresh capture/prototype checks and queue construction; source-open counters alone do not establish which work dominates. Compare equivalent source-qualified inputs and preserve fresh facts, exact outcomes and queue-disabled controls. Avoid broad startup warming or cross-decision mutable-result caches.
 
 # Shared queue resources and container capacity
 
