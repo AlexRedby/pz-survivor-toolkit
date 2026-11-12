@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.362
+
+- **Added:** Source-owned data recipes and opt-in planning observations for Snow, NeatUI, Carts and Fishing hand-event state, composed with exact current registry checks. Unknown callbacks remain partial; state predicates explicitly do not certify complete handler effects or grant new queue-edit permissions. Repeated handlers share work only inside one synchronous observation.
+
 ### 0.1.361
 
 - **Added:** Read-only snapshots and exact ordered revalidation of the currently registered primary/secondary hand-event callbacks, including private mod handlers. Snapshots copy list storage; this observation does not grant queue-edit permissions or prove callback effects, queued dispatch or multiplayer freshness.
@@ -1669,6 +1673,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.99
+
+- **Added:** A shared read-only capture-predicate interpreter for verified Lua function shapes, with current nested captures, opaque identity, empty/absent table predicates and own-field traversal. It validates complete recipes, preserves unknown-state precedence and exposes no captured tables. Capture-field and schema reads preserve access-ordered maps without invoking foreign key methods.
 
 ### 0.1.98
 
