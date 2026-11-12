@@ -1,9 +1,5 @@
 package net.alexredby.pztoolkitjavapatches
 
-import java.io.ByteArrayOutputStream
-import java.io.DataOutputStream
-import java.security.MessageDigest
-import java.util.HexFormat
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import me.zed_0xff.zombie_buddy.Accessor
@@ -307,38 +303,7 @@ internal object NativeTransferRequestsLogic {
 
     // Fresh structural hashing avoids granting provenance from filenames or a
     // mutable prototype cache. Only the two bounded stock bodies are eligible.
-    internal fun fingerprint(prototype: Prototype): String {
-        val bytes = ByteArrayOutputStream()
-        DataOutputStream(bytes).use { out ->
-            out.writeInt(prototype.numParams)
-            out.writeBoolean(prototype.isVararg)
-            out.writeInt(prototype.numUpvalues)
-            out.writeInt(prototype.maxStacksize)
-            out.writeInt(prototype.code.size)
-            for (word in prototype.code) out.writeInt(word)
-            out.writeInt(prototype.constants.size)
-            for (constant in prototype.constants) when (constant) {
-                null -> out.writeByte(0)
-                is Boolean -> {
-                    out.writeByte(1)
-                    out.writeBoolean(constant)
-                }
-                is Double -> {
-                    out.writeByte(2)
-                    out.writeLong(java.lang.Double.doubleToRawLongBits(constant))
-                }
-                is String -> {
-                    out.writeByte(3)
-                    out.writeUTF(constant)
-                }
-                else -> return "unsupported"
-            }
-            out.writeInt(prototype.prototypes.size)
-            if (prototype.prototypes.isNotEmpty()) return "unsupported"
-        }
-        return HexFormat.of()
-            .formatHex(MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()))
-    }
+    internal fun fingerprint(prototype: Prototype): String = LuaPrototypeFingerprint.leaf(prototype)
 
     private fun direct(value: Any?): KahluaTableImpl? {
         if (value?.javaClass != KahluaTableImpl::class.java) return null

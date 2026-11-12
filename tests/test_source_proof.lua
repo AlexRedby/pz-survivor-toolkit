@@ -233,3 +233,33 @@ do
     assert(rawequal(getmetatable(owner),parent),'fixture must conceal the actual replacement')
     assert(not watch()and called==0,'visible metatable equality must not attest actual lookup ancestry')
 end
+
+-- Shared native class-chain proof preserves first-constructor absence and
+-- rejects hidden/foreign lookup before Kahlua can invoke __index.
+do
+    local savedObject,savedBase=ISBaseObject,ISBaseTimedAction
+    local function hierarchy()
+        local object={};object.__index=object
+        local base=setmetatable({},object);base.__index=base
+        local class=setmetatable({},base)
+        ISBaseObject,ISBaseTimedAction=object,base
+        return object,base,class
+    end
+    local object,base,class=hierarchy()
+    assert(Proof.nativeActionClassChain(object,base,class,true))
+    assert(not Proof.nativeActionClassChain(object,base,class,false))
+    class.__index=class
+    assert(Proof.nativeActionClassChain(object,base,class,false))
+    for _,slot in ipairs({'object','base','class','hidden-class'})do
+        object,base,class=hierarchy();class.__index=class
+        local calls=0
+        local function foreign()calls=calls+1;error('foreign native-chain lookup invoked')end
+        if slot=='object'then object.__index=foreign
+        elseif slot=='base'then base.__index=foreign
+        elseif slot=='class'then class.__index=foreign
+        else setmetatable(class,{__metatable=base,__index=foreign})end
+        assert(not Proof.nativeActionClassChain(object,base,class,false)and calls==0,
+            'shared native-chain proof invoked '..slot..' __index')
+    end
+    ISBaseObject,ISBaseTimedAction=savedObject,savedBase
+end

@@ -8,7 +8,14 @@ local function resource(domain, key, facts, requires, effects, bounds)
 end
 local function status(entries, expected, reason, blocker, key, field)
     local decision = Model.evaluate(entries)
-    assert(decision.status == expected, 'status: ' .. tostring(decision.status) .. ' expected ' .. expected)
+    assert(decision.status == expected, 'status: ' .. tostring(decision.status) .. ' expected ' .. expected
+        .. '; reason=' .. tostring(decision.reason) .. '; field=' .. tostring(decision.field))
+    if expected == 'allowed' then
+        assert(decision.reason == nil and decision.blocker == nil and decision.resource == nil and decision.field == nil,
+            'allowed decision retained diagnostics: reason=' .. tostring(decision.reason)
+            .. '; blocker=' .. tostring(decision.blocker) .. '; resource=' .. tostring(decision.resource)
+            .. '; field=' .. tostring(decision.field))
+    end
     if reason then assert(decision.reason == reason, 'reason: ' .. tostring(decision.reason) .. ' expected ' .. reason) end
     if blocker then assert(rawequal(decision.blocker, blocker)) end
     if key then assert(rawequal(decision.resource, key)) end
@@ -409,4 +416,187 @@ do
   for field,value in pairs(extra)do predicate[field]=value end
   status({entry({}, {resource('item',key,{location=bag},{predicate})})},'unhandled','edit_unknown')
  end
+end
+
+-- Conditional effects are data-only, ordered alternatives over the proposed
+-- pre-action state. They never read opaque values or execute native callbacks.
+do
+    local key = {}
+    local function conditional(facts, cases)
+        local value = resource('conditional', key, facts, nil, nil, nil)
+        value.cases = cases
+        return entry({}, {value})
+    end
+    local function branch(when, effects) return {when = when, effects = effects} end
+    local function probe(facts, requires)
+        return entry({}, {resource('conditional', key, facts, requires, nil, nil)})
+    end
+    local facts = {left = opaque, right = another, on = false, amount = 1}
+    local alternatives = {
+        branch({{field = 'on', equal = true}}, {{field = 'right', set = opaque}}),
+        branch({}, {{field = 'right', set = false}}),
+    }
+    -- Native Kahlua does not clear omitted fixed parameters; nested constructor
+    -- temporaries can otherwise become a phantom bounds argument.
+    local change = entry({}, {resource('conditional', key, facts, nil, {{field = 'on', set = true}}, nil)})
+    local firstConditional = {change, conditional(facts, alternatives), probe(facts, {{field = 'left', sameAs = 'right'}})}
+    assert(change.edit.resources[1].bounds == nil, 'fixture supplied unexpected bounds')
+    status(firstConditional, 'allowed')
+    status({conditional(facts, alternatives), probe(facts, {{field = 'left', sameAs = 'right'}})}, 'denied', 'edit_required_state')
+    status({probe({left = opaque, right = opaque}, {{field = 'left', sameAs = 'right'}})}, 'allowed')
+    status({probe({left = false, right = false}, {{field = 'left', sameAs = 'right'}})}, 'allowed')
+    status({probe({left = opaque, right = another}, {{field = 'left', sameAs = 'right'}})}, 'denied', 'edit_required_state')
+    assert(hiddenCalls == 0, 'sameAs must not invoke opaque metamethods')
+
+    -- First match wins, including a no-op fallback; a missing match denies.
+    local firstMatch = conditional(facts, {
+        branch({}, {{field = 'on', set = true}}),
+        branch({}, {{field = 'on', set = false}}),
+    })
+    status({firstMatch, probe(facts, {{field = 'on', equal = true}})}, 'allowed')
+    status({conditional(facts, {branch({}, {})})}, 'allowed')
+    status({conditional(facts, {})}, 'denied', 'edit_required_state')
+    local noMatch = conditional(facts, {branch({{field = 'on', equal = true}}, {})})
+    status({noMatch}, 'denied', 'edit_required_state', noMatch.action, key)
+    noMatch.snapshotOnly = true
+    status({noMatch, probe(facts, {{field = 'on', equal = false}})}, 'allowed')
+
+    -- Aliased resources in one action still select and require before any effect.
+    local atomic = entry({}, {
+        resource('conditional', key, facts, nil, {{field = 'on', set = true}}, nil),
+        conditional(facts, alternatives).edit.resources[1],
+    })
+    status({atomic, probe(facts, {{field = 'on', equal = true}, {field = 'right', equal = false}})}, 'allowed')
+    atomic.edit.resources[2].requires = {{field = 'on', equal = true}}
+    status({atomic}, 'denied', 'edit_required_state')
+    local selected = conditional(facts, {branch({}, {{field = 'on', set = true}})})
+    selected.edit.resources[2] = resource('conditional', key, facts, {{field = 'on', equal = true}}, nil, nil)
+    status({selected}, 'denied', 'edit_required_state')
+    -- Effects and bounds use the same existing application path.
+    local bounded = conditional(facts, {branch({}, {{field = 'amount', delta = -2}})})
+    bounded.edit.resources[1].bounds = {amount = {min = 0}}
+    status({bounded}, 'denied', 'edit_resource_amount')
+
+    local function boundary()
+        return {action = {}, deferred = {version = 1, kind = 'deferred-spatial', actor = {}, targetSquare = {},
+            invalidates = 'all-resources', routing = 'native', expansion = 'native', outcome = 'native'}}
+    end
+    local validLater = conditional(facts, {branch({{field = 'on', equal = true}}, {})})
+    status({boundary(), validLater}, 'deferred', 'edit_native_resolution')
+    local malformedCases = {
+        function(r) r.effects = {} end,
+        function(r) r.cases = false end,
+        function(r) r.cases = {[2] = branch({}, {})} end,
+        function(r) r.cases = setmetatable({}, {__index = function() error('never read') end}) end,
+        function(r) r.cases[2] = false end,
+        function(r) r.cases[2] = {when = {}} end,
+        function(r) r.cases[2] = {effects = {}} end,
+        function(r) r.cases[2].callback = function() error('never execute') end end,
+        function(r) r.cases[2].when = {{field = 'on', equal = true, sameAs = 'on'}} end,
+        function(r) r.cases[2].when = {{field = 'on', notEqual = false, sameAs = 'on'}} end,
+        function(r) r.cases[2].when = {{field = 'on', oneOf = {true}, sameAs = 'on'}} end,
+        function(r) r.cases[2].when = {{field = 'amount', min = 0, sameAs = 'amount'}} end,
+        function(r) r.cases[2].when = {{field = 'on', sameAs = ''}} end,
+        function(r) r.cases[2].when = {{field = 'on', sameAs = function() error('never execute') end}} end,
+        function(r) r.cases[2].when = {{field = 'on', sameAs = 'missing'}} end,
+        function(r) r.cases[2].when = {{field = 'missing', sameAs = 'on'}} end,
+        function(r) r.cases[2].when = {{field = 'on', min = 0}} end,
+        function(r) r.cases[2].effects = {{field = 'missing', set = true}} end,
+        function(r) r.cases[2].effects = {{field = 'on', delta = 1}} end,
+        function(r) r.cases[2].effects = {{field = 'amount', delta = math.huge}} end,
+        function(r) r.cases[2].effects = {{field = 'on', set = function() error('never execute') end}} end,
+        function(r) r.cases[2].effects = {{field = 'on', set = true, toggle = true}} end,
+        function(r) r.cases[2].effects = setmetatable({}, {}) end,
+    }
+    for _, mutate in ipairs(malformedCases) do
+        local bad = conditional(facts, {branch({}, {}), branch({}, {})})
+        mutate(bad.edit.resources[1])
+        status({bad}, 'unhandled', 'edit_unknown')
+        status({device({}, nil, {{field = 'on', equal = true}}), bad}, 'unhandled', 'edit_unknown')
+        status({amount(3, nil, {max = 2}), bad}, 'unhandled', 'edit_unknown')
+        bad.snapshotOnly = true
+        status({bad}, 'unhandled', 'edit_unknown')
+        status({boundary(), bad}, 'unhandled', 'edit_unknown')
+    end
+    -- References remain local to a resource identity, including across domains.
+    local missing = probe({left = opaque}, {{field = 'left', sameAs = 'right'}})
+    missing.edit.resources[2] = resource('elsewhere', key, {right = opaque}, nil, nil, nil)
+    status({missing}, 'unhandled', 'edit_unknown', missing.action, key, 'right')
+    missing.edit.resources[2] = resource('conditional', {}, {right = opaque}, nil, nil, nil)
+    status({missing}, 'unhandled', 'edit_unknown')
+    local overflow = conditional({amount = 1e308}, {branch({}, {}), branch({}, {{field = 'amount', scale = 2}})})
+    status({overflow}, 'unhandled', 'edit_unknown')
+    overflow.snapshotOnly = true; status({overflow}, 'unhandled', 'edit_unknown')
+    overflow.snapshotOnly = nil
+    status({boundary(), overflow}, 'deferred', 'edit_native_resolution')
+    local before = fingerprint({firstMatch, change})
+    status({firstMatch, change}, 'allowed')
+    assert(fingerprint({firstMatch, change}) == before, 'conditional selection mutated contracts')
+
+    -- Independent oracle mutates identities directly; it never interprets a
+    -- predicate, effect or case. Probe final states as well as edit admission.
+    local function execute(initial, commands)
+        local left, right = initial.left, initial.right
+        for _, command in ipairs(commands) do
+            if command == 'leftA' then left = opaque
+            elseif command == 'leftB' then left = another
+            elseif command == 'rightA' then right = opaque
+            elseif command == 'rightB' then right = another
+            elseif command == 'match' then
+                if not rawequal(left, right) then return end
+            elseif rawequal(left, right) then right = false
+            elseif rawequal(left, opaque) then left = false
+            else right = opaque end
+        end
+        return {left = left, right = right}
+    end
+    local function declaration(initial, command)
+        if command == 'resolve' then
+            return conditional(initial, {
+                branch({{field = 'left', sameAs = 'right'}}, {{field = 'right', set = false}}),
+                branch({{field = 'left', equal = opaque}}, {{field = 'left', set = false}}),
+                branch({}, {{field = 'right', set = opaque}}),
+            })
+        end
+        if command == 'match' then return probe(initial, {{field = 'left', sameAs = 'right'}}) end
+        return entry({}, {resource('conditional', key, initial, nil, {
+            {field = command:sub(1, 4) == 'left' and 'left' or 'right', set = command:sub(-1) == 'A' and opaque or another},
+        }, nil)})
+    end
+    local function check(initial, commands)
+        local entries = {}
+        for _, command in ipairs(commands) do entries[#entries + 1] = declaration(initial, command) end
+        local expected = execute(initial, commands)
+        status(entries, expected and 'allowed' or 'denied')
+        if expected then
+            entries[#entries + 1] = probe(initial, {
+                {field = 'left', equal = expected.left}, {field = 'right', equal = expected.right},
+            })
+            status(entries, 'allowed')
+        end
+    end
+    local kinds = {'leftA', 'leftB', 'rightA', 'rightB', 'resolve', 'match'}
+    for _, left in ipairs({false, opaque, another}) do
+        for _, right in ipairs({false, opaque, another}) do
+            local initial = {left = left, right = right}
+            for ai, a in ipairs(kinds) do for bi, b in ipairs(kinds) do
+                local commands = {a, b, kinds[(ai + bi) % #kinds + 1]}
+                check(initial, commands)
+                for from = 1, #commands do
+                    local rest = {}
+                    for i, command in ipairs(commands) do if i ~= from then rest[#rest + 1] = command end end
+                    check(initial, rest)
+                    for to = 1, #commands do
+                        local moved = {}
+                        for _, command in ipairs(rest) do moved[#moved + 1] = command end
+                        table.insert(moved, to, commands[from])
+                        check(initial, moved)
+                    end
+                end
+            end end
+            assert(rawequal(initial.left, left) and rawequal(initial.right, right), 'projection mutated oracle initial state')
+        end
+    end
+    assert(hiddenCalls == 0, 'conditional projection invoked opaque methods')
+    print('Conditional projection oracle passed ordered identities, pre-action cases, moves, removals and final-state probes.')
 end

@@ -176,7 +176,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                             for key, value in props.items())
     launcher.write_text(text.replace(anchor, anchor + '\n' + assignments))
     preparation_process.run([str(jdk / 'bin/javac'), '--release', '25', '-cp', str(game / 'projectzomboid.jar'),
-                    str(classes / 'ToolkitWindowBootstrap.java'), str(classes / 'ToolkitHostOutput.java'), str(launcher)],
+                    str(classes / 'ToolkitWindowBootstrap.java'), str(classes / 'ToolkitHostChildDiagnostics.java'),
+                    str(classes / 'ToolkitHostOutput.java'), str(launcher)],
                    check=True, capture_output=True, text=True, timeout=60, env=_clean_env())
     server = output / 'server/Server'
     shutil.copy2(_sandbox(selection), server / 'queue-smoke_SandboxVars.lua')

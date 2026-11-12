@@ -2,6 +2,7 @@
 -- Resolve the complete routing entrypoint at its turn, including native fallbacks.
 require "TimedActions/WalkToTimedAction"
 local Proof = require "PZSurvivorToolkit/SourceProof"
+local ItemAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
 local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
 local commandClass,baseClass=ISQueueActionsAction,ISBaseTimedAction
@@ -536,6 +537,7 @@ local function bind(owner,name,spec)
     owner[name]=wrapper
 end
 local first={actor=function(args)return args[1]end}
+local containerSpec={actor=function(args)return getSpecificPlayer(args[2])end}
 local function listSpec(...)
     return {actor=first.actor,arrays={...}}
 end
@@ -560,7 +562,7 @@ function Approach.install()
     bind(luautils,'walkAdj',listSpec(4))
     bind(luautils,'walkAdjSquares',listSpec(2))
     bind(luautils,'walkAdjSquaresExcluded',listSpec(2,3))
-    bind(luautils,'walkToContainer',{actor=function(args)return getSpecificPlayer(args[2])end})
+    bind(luautils,'walkToContainer',containerSpec)
     bind(ISMoveableSpriteProps,'walkAdj',propsSpec)
     bind(ISMoveableSpriteProps,'walkAdjMultiTile',propsSpec)
     -- Capture the ancestor before its helpers: floor/wall/multi-tile alternative
@@ -817,7 +819,7 @@ local function spatialInheritance(action)
     end
     return p.capture(specifications)
 end
-local function prepareSpatialRequest(action)
+local function prepareSpatialRequest(action,carried)
     local p=spatialPrimitives
     if not spatialPrimitiveWatch or not spatialPrimitiveWatch()
         or p.meta(p.globals)~=nil or not spatialPlain(Toolkit)or not spatialPlain(Approach)
@@ -839,7 +841,7 @@ local function prepareSpatialRequest(action)
     -- Capture before metadata readers: they may reenter and change bindings.
     local rootWatch=p.capture({
         {owner=p.globals,keys={'PZSurvivorToolkit','ISQueueActionsAction','ISBaseTimedAction','luautils',
-            'getFilenameOfClosure','getGameFilesInput','type','getmetatable','rawget','rawequal','pairs','ipairs',
+            'getFilenameOfClosure','getGameFilesInput','getSpecificPlayer','type','getmetatable','rawget','rawequal','pairs','ipairs',
             'pcall','unpack','select','math','table','string','toolkitLuaMetatableMatches'}},
         {owner=Toolkit,keys={'ActionQueueApproach','ActionQueueOperations'}},
         {owner=Approach,keys={'prepareSpatialLease'}},{owner=Proof,keys={'captureBindings','closure','matches','own'}},
@@ -857,10 +859,13 @@ local function prepareSpatialRequest(action)
         or not spatialPlain(request.guards)then return end
     local binding,args,guards=request.binding,request.args,request.guards
     local spec=binding.spec
-    if spatialArray(guards,2)~=2 or not spatialPlain(spec)or not p.equal(binding.owner,luautils) or binding.name~='walkAdj'
-        or not p.equal(spec.actor,first.actor) or spec.receiver~=nil or spec.cursor~=nil
-        or spatialArray(spec.arrays,1)~=1 or spec.arrays[1]~=4
-        or request.cursorKind~=nil or request.selected~=nil
+    local name=carried and 'walkToContainer'or 'walkAdj'
+    if spatialArray(guards,2)~=2 or not spatialPlain(spec)or not p.equal(binding.owner,luautils)or binding.name~=name
+        or spec.receiver~=nil or spec.cursor~=nil or request.cursorKind~=nil or request.selected~=nil then return end
+    if carried then
+        if not p.equal(spec,containerSpec)or spec.arrays~=nil or args.n~=2 or args[1]==nil
+            or p.kind(args[2])~='number'or not p.equal(getSpecificPlayer(args[2]),p.own(action,'character'))then return end
+    elseif not p.equal(spec.actor,first.actor)or spatialArray(spec.arrays,1)~=1 or spec.arrays[1]~=4
         or p.kind(args.n)~='number'or args.n%1~=0 or args.n<2 or args.n>4
         or not p.equal(args[1],p.own(action,'character'))or args[1]==nil or args[2]==nil
         or args[3]~=nil and p.kind(args[3])~='boolean'
@@ -868,9 +873,11 @@ local function prepareSpatialRequest(action)
     local argumentFields=0
     for key in p.pairs(args)do
         argumentFields=argumentFields+1
-        if argumentFields>5 or key~='n'and(key~=1 and key~=2 and key~=3 and key~=4 or key>args.n)then return end
+        local maximum=carried and 2 or 4
+        if argumentFields>maximum+1 or key~='n'and(p.kind(key)~='number'or key%1~=0 or key<1 or key>maximum or key>args.n)then return end
     end
-    if p.kind(args[2])~='table'and p.kind(args[2])~='userdata'then return end
+    local target=carried and args[1]or args[2]
+    if p.kind(target)~='table'and p.kind(target)~='userdata'then return end
     if p.own(action,'action')or p.own(action,'started')or p.own(action,'_isAddingActions')
         or p.own(action,'isAddingActions')or record.ready~=nil
         or p.own(action,'onFailFunc')or p.own(action,'additionalTest')or p.own(action,'retriggerLastAction')
@@ -881,22 +888,23 @@ local function prepareSpatialRequest(action)
     for index=1,2 do
         if not spatialPlain(guards[index])or not p.equal(guards[index].owner,luautils) then return end
     end
-    if guards[1].name~='walkAdj'or not p.equal(guards[1].callback,binding.wrapper)
+    if guards[1].name~=name or not p.equal(guards[1].callback,binding.wrapper)
         or guards[2].name~='getCorrectSquareForWall'or not p.equal(guards[2].callback,luautils.getCorrectSquareForWall)
-        or not spatialPlain(installed[luautils])or not p.equal(installed[luautils].walkAdj,binding)
-        or not p.equal(knownWrappers[binding.wrapper],binding) or not p.equal(luautils.walkAdj,binding.wrapper) then return end
+        or not spatialPlain(installed[luautils])or not p.equal(installed[luautils][name],binding)
+        or not p.equal(knownWrappers[binding.wrapper],binding) or not p.equal(luautils[name],binding.wrapper) then return end
     local token=p.own(action,'toolkitQueueOperation')
     if token~=nil and(not spatialPlain(token)or token.toolkitStarted or token.toolkitCancelled)then return end
     local specifications={
         {owner=record,exact=true},{owner=record.marker,exact=true},{owner=request,exact=true},{owner=binding,exact=true},
         {owner=args,exact=true},{owner=record.args,exact=true},{owner=spec,exact=true},
-        {owner=spec.arrays,exact=true},{owner=guards,exact=true},
+        {owner=guards,exact=true},
         {owner=guards[1],exact=true},{owner=guards[2],exact=true},
-        {owner=luautils,keys={'walkAdj','getCorrectSquareForWall'}},
-        {owner=installed,keys={luautils}},{owner=installed[luautils],keys={'walkAdj'}},
+        {owner=luautils,keys={name,'getCorrectSquareForWall'}},
+        {owner=installed,keys={luautils}},{owner=installed[luautils],keys={name}},
         {owner=knownWrappers,keys={binding.wrapper}},{owner=attestations,keys={binding}},
         {owner=first,exact=true},
     }
+    if spec.arrays then specifications[#specifications+1]={owner=spec.arrays,exact=true}end
     if args[4]then specifications[#specifications+1]={owner=args[4],exact=true}end
     if token then specifications[#specifications+1]={owner=token,keys={'toolkitStarted','toolkitCancelled'}}end
     local requestWatch=p.capture(specifications)
@@ -917,7 +925,9 @@ local function prepareSpatialRequest(action)
     end
     if not spatialSources or not rootWatch()or not requestWatch()or not inheritanceWatch()
         or not p.construction()or not p.isCommand(action)or not rootWatch()or not requestWatch()or not inheritanceWatch()then return end
-    local description={version=1,kind='deferred-spatial',actor=args[1],targetSquare=args[2],
+    local description={version=1,kind=carried and 'deferred-carried-container'or 'deferred-spatial',
+        actor=carried and p.own(action,'character')or args[1],targetSquare=not carried and args[2]or nil,
+        targetContainer=carried and args[1]or nil,
         invalidates='all-resources',routing='native',expansion='native',outcome='native'}
     local descriptorWatch=p.capture({{owner=description,exact=true}})
     if not descriptorWatch then return end
@@ -1013,6 +1023,80 @@ function Approach.prepareSpatialEditLease(action,targetObject)
     if ok then return check,edit end
 end
 spatialEditFactory=Approach.prepareSpatialEditLease
+
+-- Source-proven carried routing has no geometry or native children. Keep its
+-- resolver queued: this lease certifies only pending edit facts, never success.
+local carriedEditFactory
+local carriedContainer=ItemAdapters and ItemAdapters.pendingCarriedContainer
+local carriedHelperTrusted
+local function prepareCarriedContainerEdit(action,container)
+    local p=spatialPrimitives
+    if not spatialPrimitiveWatch or not spatialPrimitiveWatch()or not spatialPlain(Toolkit)
+        or not spatialPlain(Approach)or not spatialPlain(Proof)
+        or not spatialPlain(ItemAdapters)or not p.equal(Toolkit.ActionQueueItemEditAdapters,ItemAdapters)
+        or p.kind(carriedContainer)~='function'or not p.equal(ItemAdapters.pendingCarriedContainer,carriedContainer)
+        or not p.equal(Approach.prepareCarriedContainerEditLease,carriedEditFactory)then return end
+    local bindings=p.capture({{owner=Toolkit,keys={'ActionQueueItemEditAdapters'}},
+        {owner=ItemAdapters,keys={'pendingCarriedContainer'}},
+        {owner=Approach,keys={'prepareCarriedContainerEditLease'}},
+        {owner=p.globals,keys={'instanceof','getSpecificPlayer'}}})
+    local sourceCheck,description=prepareSpatialRequest(action,true)
+    if not bindings or not sourceCheck or not p.equal(description.targetContainer,container)then return end
+    if carriedHelperTrusted==nil then
+        carriedHelperTrusted=p.origin(carriedContainer,'ActionQueueItemEditAdapters.lua')
+            and p.matches('media/lua/client/PZSurvivorToolkit/ActionQueueItemEditAdapters.lua',3026232832,'PZSurvivorToolkit',true)
+    end
+    if not carriedHelperTrusted or not bindings()or not sourceCheck()then return end
+    local actor=description.actor
+    local function observe()
+        if not bindings()or not sourceCheck()then return end
+        local owners,facts=carriedContainer(container,actor)
+        -- parent nil skips native's earlier parent-square branch; the carried
+        -- predicate then returns true before any native pathfinding/allocation.
+        if not owners or p.equal(container,actor:getInventory())or container:getParent()~=nil
+            or container:isInCharacterInventory(actor)~=true or not bindings()or not sourceCheck()then return end
+        return owners,facts
+    end
+    local owners,facts=observe()
+    if not owners then return end
+    local edit={version=1,complete=true,capacity='unchanged',resources={}}
+    local ownerKeys,specifications={},{{owner=edit,exact=true},{owner=edit.resources,exact=true}}
+    for id,kind in p.pairs(owners)do
+        ownerKeys[id]=true
+        local resource={domain='item',key=id,facts=facts[id],
+            requires={{field='location',equal=facts[id].location}},effects={}}
+        edit.resources[#edit.resources+1]=resource
+        specifications[#specifications+1]={owner=resource,exact=true}
+        specifications[#specifications+1]={owner=resource.facts,exact=true}
+        specifications[#specifications+1]={owner=resource.requires,exact=true}
+        specifications[#specifications+1]={owner=resource.requires[1],exact=true}
+        specifications[#specifications+1]={owner=resource.effects,exact=true}
+    end
+    specifications[#specifications+1]={owner=ownerKeys,exact=true}
+    local editWatch=p.capture(specifications)
+    if not editWatch then return end
+    local used=false
+    return function()
+        if used then return false end
+        used=true
+        if not editWatch()then return false end
+        local current,currentFacts=observe()
+        if not current then return false end
+        for id,kind in p.pairs(owners)do
+            local before,after=facts[id],currentFacts[id]
+            if current[id]~=kind or not after or not p.equal(before.item,after.item)
+                or not p.equal(before.location,after.location)then return false end
+        end
+        for id in p.pairs(current)do if owners[id]==nil then return false end end
+        return bindings()and sourceCheck()and editWatch()
+    end,edit,ownerKeys
+end
+function Approach.prepareCarriedContainerEditLease(action,container)
+    local ok,check,edit,owners=spatialEditApis.call(prepareCarriedContainerEdit,action,container)
+    if ok then return check,edit,owners end
+end
+carriedEditFactory=Approach.prepareCarriedContainerEditLease
+
 
 -- Capture while this module still owns the constructor/resolver evidence.
 -- The returned watch names immutable source/arguments, not mutable native

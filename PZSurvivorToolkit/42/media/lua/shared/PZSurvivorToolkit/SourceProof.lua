@@ -115,6 +115,25 @@ local function actualBindingMeta(owner, expected)
         and bindingEqual(bindingRaw(bindingGlobals,"toolkitLuaMetatableMatches"),bindingNativeMeta)
         and bindingNativeMeta(owner, expected) == true
 end
+-- Native timed-action inheritance only. Prove parents before Kahlua rawget,
+-- which follows __index; never use an inherited read to attest its own lookup.
+function Proof.nativeActionClassChain(object, base, class, constructing)
+    if bindingType(bindingNativeMeta) ~= "function" or not bindingNativeMeta(bindingGlobals,nil)
+        or not bindingEqual(bindingRaw(bindingGlobals,"toolkitLuaMetatableMatches"),bindingNativeMeta)
+        or not bindingEqual(bindingRaw(bindingGlobals,"rawget"),bindingRaw)
+        or not bindingEqual(bindingRaw(bindingGlobals,"rawequal"),bindingEqual)
+        or not bindingEqual(bindingRaw(bindingGlobals,"type"),bindingType)
+        or not bindingEqual(bindingRaw(bindingGlobals,"ISBaseObject"),object)
+        or not bindingEqual(bindingRaw(bindingGlobals,"ISBaseTimedAction"),base)
+        or bindingType(object) ~= "table" or bindingType(base) ~= "table" or bindingType(class) ~= "table"
+        or not bindingNativeMeta(object,nil) or not bindingEqual(bindingRaw(object,"__index"),object)
+        or not bindingNativeMeta(base,object) or not bindingEqual(bindingRaw(base,"__index"),base)
+        or not bindingNativeMeta(class,base) then return false end
+    local index = bindingRaw(class,"__index")
+    -- Before the first native constructor this slot is absent (or inherited
+    -- base in Kahlua). Every constructed instance requires the class itself.
+    return bindingEqual(index,class) or constructing == true and (index == nil or bindingEqual(index,base))
+end
 local function bindingArray(value, limit)
     if bindingType(value) ~= "table" or bindingMeta(value) ~= nil then return end
     local count, maximum = 0, 0

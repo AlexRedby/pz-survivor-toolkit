@@ -8,6 +8,7 @@ import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.IdentityHashMap
 import se.krka.kahlua.j2se.J2SEPlatform
+import se.krka.kahlua.j2se.KahluaTableImpl
 import se.krka.kahlua.luaj.compiler.LuaCompiler
 import se.krka.kahlua.vm.JavaFunction
 import se.krka.kahlua.vm.KahluaTable
@@ -177,6 +178,15 @@ object QueueResourceBenchmark {
             val environment = platform.newEnvironment()
             val thread = KahluaThread(platform, environment)
             thread.debugOwnerThread = Thread.currentThread()
+            // CPU fixture seam only: read Java's actual metatable, including
+            // masked tables. Production predicate qualification is tested by
+            // SourceProofChecks; these ordinary table fixtures grant no edits.
+            environment.rawset("NativeMetatableMatches", JavaFunction { frame, count ->
+                val owner = frame.get(0) as? KahluaTableImpl
+                val expected = if (count > 1) frame.get(1) else null
+                frame.push(owner != null && owner.metatable === expected)
+                1
+            })
             environment.rawset("ProjectRoot", root.toString())
             environment.rawset("NativeActionRoot", game.resolve("media/lua").toString())
             environment.rawset("NativeKahluaTableLookup", true)

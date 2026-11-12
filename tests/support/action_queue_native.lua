@@ -1,7 +1,7 @@
 toolkitLuaMetatableMatches=assert(loadfile((ProjectRoot or '.')..'/tests/support/source_binding.lua'))()
 -- Shared setup for new native-source policy fixtures; native execution/Java state remains explicit per test.
 local native,project
-local itemAdapters,capacityAdapters,weights
+local itemAdapters,capacityAdapters,weights,clothing
 local function itemInspector()
     if not itemAdapters then
         if not ISTransferAction then native('shared/TimedActions/ISTransferAction.lua') end
@@ -21,6 +21,12 @@ local function itemInspector()
     return capacityAdapters
 end
 require = function(module)
+    for _,name in ipairs({'ActionQueueLifecycle','ActionQueueAcknowledgements','ActionQueueOperations'}) do
+        if module=='PZSurvivorToolkit/'..name then return PZSurvivorToolkit[name] or project(name) end
+    end
+    if module == 'PZSurvivorToolkit/ActionQueueOutcomeWait' then
+        return PZSurvivorToolkit.ActionQueueOutcomeWait or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
+    end
     if module == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
         return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua'))()
     end
@@ -32,6 +38,10 @@ require = function(module)
     end
     if module == 'PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. module .. '.lua') end
     if module == 'PZSurvivorToolkit/SourceProof' then return assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))() end
+    if module == 'PZSurvivorToolkit/ActionQueueClothing' then
+        if not clothing then clothing=project('ActionQueueClothing') end
+        return clothing
+    end
     if module == 'PZSurvivorToolkit/ActionQueueWeights' then
         if not weights then weights=project('ActionQueueWeights') end
         return weights
@@ -71,7 +81,8 @@ end
 project=function(name)
     if name == 'ActionQueue' then
         if not PZSurvivorToolkit.ActionQueueSettlement then project('ActionQueueSettlement')end
-        project('ActionQueueLifecycle');project('ActionQueueAcknowledgements')
+        if not PZSurvivorToolkit.ActionQueueLifecycle then project('ActionQueueLifecycle')end
+        if not PZSurvivorToolkit.ActionQueueAcknowledgements then project('ActionQueueAcknowledgements')end
     end
     local savedRequire=require
     if name=='ActionQueuePolicy' then

@@ -14,6 +14,7 @@ if not NativeFilenameOfClosure then
 end
 NativeKahluaTableLookup=true
 local cases={
+    OwnershipEditLookup="test_action_queue_lookup.lua",
     OwnershipReturnSources="test_action_queue_deferred_sources.lua",
     OwnershipBulkTransfer="test_bulk_transfer_binding.lua",
     OwnershipTransferBindings="test_action_queue_transfer_bindings.lua",
@@ -36,6 +37,9 @@ local cases={
     OwnershipMakeupSync="test_action_queue_makeup_sync.lua",
     OwnershipGroomingActive="test_action_queue_grooming_active.lua",
     OwnershipAnimalStops="test_action_queue_animal_stops.lua",
+    OwnershipHands="test_action_queue_hands.lua",
+    OwnershipPreparationCancel="test_action_queue_preparation_cancel.lua",
+    OwnershipProjectionCases="test_action_queue_edit_model.lua",
 }
 for flag,name in pairs(cases)do
     if _G[flag]then

@@ -25,6 +25,7 @@ public class ToolkitSmokeLauncher {
         System.out.println("[QUEUE_TEST] DISPLAY_READY " + mode.width() + "x" + mode.height());
         var hostChild = new java.util.concurrent.atomic.AtomicReference<ProcessHandle>();
         var hostOutput = new java.util.concurrent.atomic.AtomicReference<ToolkitHostOutput>();
+        var hostDiagnostics = new java.util.concurrent.atomic.AtomicReference<ToolkitHostChildDiagnostics.Capture>();
         var shuttingDown = new java.util.concurrent.atomic.AtomicBoolean();
         if (System.getProperty("toolkit.test.hostCache") != null) {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -40,8 +41,7 @@ public class ToolkitSmokeLauncher {
                             child.onExit().get(5, java.util.concurrent.TimeUnit.SECONDS);
                         }
                     }
-                    var output = hostOutput.get();
-                    if (output != null) output.await(5000);
+                    finishHostOutput(hostDiagnostics, hostOutput);
                 } catch (Exception error) {
                     System.err.println("[QUEUE_TEST] FAIL host stderr shutdown " + error);
                     error.printStackTrace();
@@ -71,9 +71,7 @@ public class ToolkitSmokeLauncher {
                         process.getOutputStream().flush();
                         if (!process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) throw new IllegalStateException("Host child did not save/quit before its deadline");
                         int exit = process.exitValue();
-                        var output = hostOutput.get();
-                        if (output == null) throw new IllegalStateException("Host stderr drain is missing");
-                        output.await(5000);
+                        finishHostOutput(hostDiagnostics, hostOutput);
                         System.out.println("[QUEUE_TEST] HOST_SAVED_EXIT pid=" + child.pid() + " exit=" + exit);
                         System.out.flush();
                         if (exit != 0) throw new IllegalStateException("Host child exited unsuccessfully: " + exit);
@@ -101,7 +99,7 @@ public class ToolkitSmokeLauncher {
                                         && arguments.contains("-cachedir=" + hostCache);
                                 }).forEach(child -> {
                                     if (!hostChild.compareAndSet(null, child)) throw new IllegalStateException("Multiple Host children");
-                                    hostOutput.set(ToolkitHostOutput.start(nativeHostProcess(child), child, System.err));
+                                    captureHostOutput(nativeHostProcess(child), child, hostCache, hostDiagnostics, hostOutput);
                                     System.out.println("[QUEUE_TEST] HOST_CHILD pid=" + child.pid() + " parent=" + ProcessHandle.current().pid());
                                 });
                             }
@@ -115,14 +113,13 @@ public class ToolkitSmokeLauncher {
                                     var child = process.toHandle();
                                     if (child.parent().map(parent -> parent.pid() == ProcessHandle.current().pid()).orElse(false)
                                             && hostChild.compareAndSet(null, child)) {
-                                        hostOutput.set(ToolkitHostOutput.start(process, child, System.err));
+                                        captureHostOutput(process, child, hostCache, hostDiagnostics, hostOutput);
                                         System.out.println("[QUEUE_TEST] HOST_CHILD pid=" + child.pid() + " parent=" + ProcessHandle.current().pid());
                                     }
                                 }
                             }
                         } else if (!shuttingDown.get() && !hostChild.get().isAlive()) {
-                            var output = hostOutput.get();
-                            if (output != null) output.await(5000);
+                            finishHostOutput(hostDiagnostics, hostOutput);
                             throw new IllegalStateException("Host child exited before its owner");
                         }
                     }
@@ -157,6 +154,29 @@ public class ToolkitSmokeLauncher {
         helper.start();
         MainScreenState.main(args);
     }
+    private static void captureHostOutput(Process process, ProcessHandle child, String hostCache,
+            java.util.concurrent.atomic.AtomicReference<ToolkitHostChildDiagnostics.Capture> diagnostics,
+            java.util.concurrent.atomic.AtomicReference<ToolkitHostOutput> fallback) {
+        var capture = ToolkitHostChildDiagnostics.start(process, child.pid(), java.nio.file.Path.of(hostCache), System.err);
+        // A null result precedes the diagnostic reader. Never attach two readers to this pipe.
+        if (capture != null) diagnostics.set(capture);
+        else fallback.set(ToolkitHostOutput.start(process, child, System.err));
+    }
+
+    private static void finishHostOutput(
+            java.util.concurrent.atomic.AtomicReference<ToolkitHostChildDiagnostics.Capture> diagnostics,
+            java.util.concurrent.atomic.AtomicReference<ToolkitHostOutput> fallback) throws Exception {
+        var capture = diagnostics.get();
+        if (capture != null) {
+            capture.finish(java.time.Duration.ofSeconds(5));
+            if (!capture.await(java.time.Duration.ZERO)) throw new java.io.IOException("Host diagnostics did not finish");
+        } else {
+            var output = fallback.get();
+            if (output == null) throw new IllegalStateException("Host stderr drain is missing");
+            output.await(5000);
+        }
+    }
+
     private static Process nativeHostProcess(ProcessHandle child) {
         try {
             var field = zombie.network.CoopMaster.class.getDeclaredField("serverProcess");

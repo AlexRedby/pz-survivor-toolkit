@@ -16,6 +16,9 @@ require = function(name)
     if name == 'PZSurvivorToolkit/ActionQueueGrooming' then
         return PZSurvivorToolkit.ActionQueueGrooming or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
     end
+    if name == 'PZSurvivorToolkit/ActionQueueOutcomeWait' then
+        return PZSurvivorToolkit.ActionQueueOutcomeWait or dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua')
+    end
     if name == 'PZSurvivorToolkit/SourceProof' then
         return dofile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/shared/' .. name .. '.lua')
     end

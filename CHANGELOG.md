@@ -46,6 +46,52 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.361
+
+- **Added:** Read-only snapshots and exact ordered revalidation of the currently registered primary/secondary hand-event callbacks, including private mod handlers. Snapshots copy list storage; this observation does not grant queue-edit permissions or prove callback effects, queued dispatch or multiplayer freshness.
+
+### 0.1.360
+
+- **Added:** A source-owned, read-only observation of Archery Nexus Companion hand-event tracking. It distinguishes absent tracking from occupied or unavailable state and rereads resets without calling equip handlers. This is a building block for queue contracts; it grants no new reordering or cancellation permissions.
+
+### 0.1.359
+
+- **Fixed:** Wholly unstarted native equip operations at the end of the action queue can be cancelled as complete groups. The shared cancellation gate proves that removal executes only the empty native cancellation handler and preserves earlier work, operation ownership, required cleanup and continuation guards. Active equipment, surviving suffixes, producer-owned restoration and reordering retain their existing protections.
+
+### 0.1.358
+
+- **Added:** Internal data-only hand-assignment planning with first-match conditional resource effects and same-resource identity predicates. Transitions read the proposed state after preceding actions and preserve native already-equipped no-ops. All alternatives are validated, including inactive branches and removed work. This foundation does not enable new equip or integral-firearm unload edit permissions; native binding, side-effect, capacity and Host outcome proofs remain separate.
+
+### 0.1.357
+
+- **Fixed:** Queue cancellation, reordering and priority decisions validate lookup ancestry before reading inherited action metadata. Structural snapshots also retain their original ancestry for the commit recheck. Unsupported lookup shapes and failed native metadata queries produce unavailable edits; ordinary native and registered table inheritance remains supported. Existing action, resource and multiplayer authority checks remain separate.
+
+### 0.1.356
+
+- **Changed:** Pending ordinary clothing-removal groups can use shared item and worn-state contracts. Capacity checks accumulate the upper weight growth of removals and pickups in the proposed order and retain the native reserve that prevents clothing from dropping on the ground. These new Host removal permissions also require confirmed physical equipment outcomes, including displaced clothing, rather than relying on native Done alone. They do not spend forecast weight reductions; active, headwear, held, hotbar, heavy, overlapping or unresolved-identity variants keep their protected behavior.
+
+### 0.1.355
+
+- **Changed:** Pending wringing chains can use the shared item-location contract while clothing is still in a carried bag. A source-bound carried-container preparation contract keeps the real deferred approach queued, and the existing transfer must establish the required root-inventory location before wringing. Whole-chain edits retain native capacity checks, exact item ownership and automatic returns; capacity forecasts keep the current native weight bound without spending expected drying space.
+
+### 0.1.354
+
+- **Fixed:** Repeated bulk unloading of integral-magazine firearms no longer clears later queued work when an earlier unload has emptied the weapon. Menu selection and protected-item checks remain unchanged; empty retained actions use the original native animation, completion and multiplayer authority without producing or consuming ammunition again.
+
+### 0.1.353
+
+- **Fixed:** Repeated bulk magazine unloading no longer rejects a retained magazine solely because an earlier action emptied it, which could clear unrelated queued work. Menu selection remains loaded-only; execution preserves native empty-magazine completion, protected-item checks and exact-ID rebinding. The common queue contract now matches that native no-op.
+
+### 0.1.352
+
+- **Changed:** Pending native and owned bulk magazine unloading uses exact magazine/ammunition contracts for cancellation and reordering. Independent fresh ammunition outputs can commute; ammunition consumers, shared inputs, equipment changes and unknown active phases remain protected. Native incremental unloading, paid outputs, durations and capacity behavior are preserved.
+- **Internal:** Reuse native class-chain validation and clean ammunition factory checks instead of duplicating them for the new queue family. Unsupported bulk inputs retain their existing unknown-output handling.
+
+### 0.1.351
+
+- **Internal:** Share correlated native-receipt waiting between promoted reading/media operations and ordinary device actions. Keep each operation's existing failure, cancellation and disabled-mode policy; do not renew deadlines or rebind replacement episodes.
+- **Changed:** Pending native clothing wringing uses the common exact-item location and wetness dependency model. Preserve the actual vanilla body-location predicate, wetness caps, duration and external capacity checks; active interruption and cancellation-history reconstruction retain their existing limits.
+
 ### 0.1.350
 
 - **Internal:** Keep solid-fuel and legacy alcohol reads inside the conditions that use them. Preserve live item classification, unknown metadata and script previews; this local cleanup does not claim a measured gameplay speedup.
@@ -1624,9 +1670,19 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
-### 0.1.96
+### 0.1.98
 
 - **Fixed:** The reviewed Vehicle Salvage Overhaul B42 reader now honors its visible full-vehicle salvage toggle and part-salvage recipe times. Declared `VSO_*` settings take precedence, including explicit `false`; legacy `VRO_*` settings remain fallbacks when the declared values are absent. The correction applies to the owned Lua compiler input without changing Workshop files or saved settings. Unknown source versions retain upstream behavior.
+
+### 0.1.97
+
+- **Added:** Native current-registry observations for hand events without invoking handlers or exposing mutable Event/list storage. Missing, malformed and foreign-environment inputs remain unavailable.
+- **Internal:** Share metadata-only native API, call-frame and environment verification between the hand-event registry and archery-state observers.
+
+### 0.1.96
+
+- **Added:** A native read-only bridge for the verified companion bow-tracking capture, with callback fingerprints, shared-capture identity, native API/thread/environment checks and no mutable-state exposure.
+- **Internal:** Share pure Lua prototype fingerprinting without initializing native item-transaction or network subsystems. Transfer-request fingerprint semantics remain unchanged.
 
 ### 0.1.95
 

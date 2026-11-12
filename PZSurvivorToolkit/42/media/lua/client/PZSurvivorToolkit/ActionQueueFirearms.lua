@@ -119,12 +119,7 @@ local function trusted(action)
     return true
 end
 local function method(value, name) return value and type(value[name]) == "function" end
-local function outputType(gun)
-    local ammo = gun:getAmmoType()
-    local saved = ammunition[ammo]
-    if not saved or ammoClass[saved.name] ~= ammo or ammo:getItemKey() ~= saved.key then return end
-    local key = saved.key
-    if type(key) ~= "string" or not key:match("^Base%.[%w_]+$") then return end
+local function plainScript(key)
     local script = scripts:getItem(key)
     if not script then return end
     for _, name in ipairs({"getFullName", "getItemType", "getLuaCreate", "getItemConfig", "getItemConfigKey",
@@ -134,9 +129,33 @@ local function outputType(gun)
     if script:getFullName() ~= key or tostring(script:getItemType()) ~= "base:normal"
         or script:getLuaCreate() or script:getItemConfig() or script:getItemConfigKey() or script:hasComponents()
         or script:getObsolete() or script:getReplaceOnUse() or script:getReplaceOnDeplete() or script:getOnBreak() then return end
-    -- Native instanceItem creates one physical item; the script's distribution Count is unrelated.
+    return script
+end
+local function outputType(gun)
+    local ammo = gun:getAmmoType()
+    local saved = ammunition[ammo]
+    if not saved or ammoClass[saved.name] ~= ammo or ammo:getItemKey() ~= saved.key then return end
+    local key = saved.key
+    if type(key) ~= "string" or not key:match("^Base%.[%w_]+$") then return end
+    if not plainScript(key) then return end
+    -- Native instanceItem creates one physical item; distribution Count is unrelated.
     return key
 end
+-- Shared plain ammunition validation; this grants no action/lifecycle authority.
+-- Rack retains its existing private call and full native binding proof.
+local ammoOutput
+ammoOutput = function(item)
+    if Toolkit.ActionQueueFirearms ~= Firearms or Firearms.ammoOutput ~= ammoOutput
+        or AmmoType ~= ammoClass or ScriptManager ~= scriptClass or not scripts or scriptClass.instance ~= scripts
+        or getClassSimpleName ~= globals.getClassSimpleName or not nativeGlobal(globals.getClassSimpleName)
+        or not instanceof(item,"InventoryItem") then return end
+    local key = item:getFullType()
+    if type(key) ~= "string" or not key:match("^Base%.[%w_]+$") then return end
+    local input = plainScript(key)
+    if not input or input ~= item:getScriptItem() then return end
+    return outputType(item)
+end
+Firearms.ammoOutput = ammoOutput
 function Firearms.rack(action)
     local valid, reason = trusted(action)
     if not valid then return nil, reason end

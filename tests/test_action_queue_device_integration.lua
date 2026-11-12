@@ -103,7 +103,7 @@ end
 -- every owner of this admission path through its actual require dependency.
 local priorRequire=require
 local names={ActionQueueOperations=true,ActionQueueDefinitions=true,ActionQueuePolicy=true,ActionQueueApproach=true,
- ActionQueueMedia=true,ActionQueueLifecycle=true,ActionQueueAcknowledgements=true,ActionQueueLabels=true,
+ ActionQueueOutcomeWait=true,ActionQueueMedia=true,ActionQueueLifecycle=true,ActionQueueAcknowledgements=true,ActionQueueLabels=true,
  ActionQueueDeviceTargets=true,ActionQueueSettlement=true}
 require=function(name)
  local short=name:match('^PZSurvivorToolkit/(.*)$')

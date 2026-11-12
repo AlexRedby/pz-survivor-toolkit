@@ -177,7 +177,7 @@ def events(text):
 
 
 def log_paths(root, role):
-    paths = [root / (role + "-launch.log"), root / (role + "-probes.log"), root / role / "console.txt"]
+    paths = [root / (role + "-launch.log"), root / (role + "-stderr.log"), root / (role + "-probes.log"), root / role / "console.txt"]
     # Host's server startup archives the owner's earlier client log in the shared cache.
     paths += [path for path in sorted((root / role / "Logs").rglob("*DebugLog*.txt"))
               if role != 'client1' or not path.name.endswith('DebugLog-server.txt')]
@@ -524,6 +524,22 @@ def execution_issues(root, selection, execution):
         cleanup = execution.get('host_cleanup')
         if not isinstance(cleanup, dict) or cleanup.get('remaining_pids') != []:
             issues.append('Host execution requires a completed cleanup audit with no remaining PIDs')
+        # Legacy snapshots predate this observer; new preparations seal the
+        # protocol requirement in runtime.json. Missing/truncated diagnostics
+        # cannot turn an unobserved startup stream into a qualified control.
+        runtime_path = root / 'runtime.json'
+        if runtime_path.is_file():
+            try:
+                runtime = read_json(runtime_path)
+                if 'host_child_diagnostics_protocol' in runtime:
+                    protocol = runtime['host_child_diagnostics_protocol']
+                    if type(protocol) is not int or protocol != 1:
+                        issues.append('Host startup diagnostic protocol unsupported')
+                    else:
+                        from . import coop
+                        issues.extend(coop.startup_diagnostic_issues(root, processes))
+            except (OSError, ValueError, TypeError, AttributeError) as error:
+                issues.append('Host startup diagnostic declaration invalid: ' + str(error))
     return issues
 
 
