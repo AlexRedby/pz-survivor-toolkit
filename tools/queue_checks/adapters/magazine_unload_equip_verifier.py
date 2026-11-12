@@ -19,6 +19,46 @@ def raw(text, marker):
     return [json.loads(match.group(1)) for match in re.finditer(re.escape(PREFIX + marker + ' ') + r'([^\n]+)', text)]
 
 
+
+def check_hand_point(segments, selection, authority):
+    """Correlate the optional native server read, never credit it as edit authority."""
+    enabled = selection.get('options', {}).get('equip_host_observation', False)
+    require(type(enabled) is bool, 'Host hand observation selection')
+    receipts = raw(authority, 'HAND_POINT')
+    if not enabled:
+        require(not receipts and not any(row.get('handPoint') for row in segments), 'unselected Host hand observation')
+        return None
+    require(selection['kind'] == 'mp' and len(receipts) == 1, 'one selected Host hand observation')
+    require(not any(row.get('handPoint') for row in segments[1:]), 'unexpected later Host hand observation')
+    evidence = segments[0]['handPoint']
+    require(type(evidence) is dict and set(evidence) == {'query', 'server', 'clientHands', 'active', 'authority'}, 'Host hand observation fields')
+    query, point = evidence['query'], evidence['server']
+    require(type(query) is dict and set(query) == {'segment', 'player', 'transaction', 'token', 'kind'}
+            and query['segment'] == segments[0]['segment'] == 'reorder-two' and query['kind'] == 'ISReadABook', 'Host point query identity')
+    require(type(query['player']) is int and query['player'] >= 0
+            and type(query['transaction']) is int and -128 <= query['transaction'] <= 127 and query['transaction'] != 0
+            and type(query['token']) is str and re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', query['token']), 'native action token identity')
+    fields = {'schema', 'scope', 'player', 'transaction', 'token', 'kind', 'state', 'primaryPresent', 'secondaryPresent',
+              'primaryId', 'secondaryId', 'primaryType', 'secondaryType', 'primaryContainerIsRoot', 'secondaryContainerIsRoot',
+              'sameItem', 'rootMembershipVerified', 'packetCorrelated', 'effectsVerified', 'editAuthority'}
+    require(type(point) is dict and set(point) == fields and type(point['schema']) is int and point['schema'] == 1
+            and point['scope'] == 'server-native-active-action-point' and point['state'] == 'accepted', 'server point schema')
+    require(all(type(point[key]) is type(query[key]) and point[key] == query[key] for key in ('player', 'transaction', 'token', 'kind')), 'server/client action point identity')
+    require(all(point[key] is False for key in ('rootMembershipVerified', 'packetCorrelated', 'effectsVerified', 'editAuthority'))
+            and evidence['active'] is True and evidence['authority'] is False, 'observation acquired edit authority')
+    require(type(evidence['clientHands']) is dict and set(evidence['clientHands']) == {'primary', 'secondary'}, 'client hand point fields')
+    for hand in ('primary', 'secondary'):
+        present, item, item_type = (point[hand + key] for key in ('Present', 'Id', 'Type'))
+        require(type(present) is bool and type(point[hand + 'ContainerIsRoot']) is bool, 'hand presence metadata')
+        require((present and type(item) is int and item >= 0 and type(item_type) is str and bool(item_type))
+                or (present is False and item is False and item_type is False and point[hand + 'ContainerIsRoot'] is False), 'canonical hand point metadata')
+        require(type(evidence['clientHands'][hand]) is type(item) and evidence['clientHands'][hand] == item, 'server/client point hands differ')
+    require(type(point['sameItem']) is bool and (point['sameItem'] is False or point['primaryPresent'] and point['secondaryPresent']
+            and point['primaryId'] == point['secondaryId'] and point['primaryType'] == point['secondaryType']), 'hand alias metadata')
+    require(receipts == [dict(segment='reorder-two', query=query, point=point)], 'raw server point differs from client receipt')
+    return evidence
+
+
 def rows(values):
     require(type(values) is list, 'inventory list')
     result = {}
@@ -364,7 +404,7 @@ def check_segment(row, selection, prepared, verified):
 
 
 def verify(root, selection, catalog):
-    root = Path(root); issues = []; outcomes = []; work_evidence = None
+    root = Path(root); issues = []; outcomes = []; work_evidence = None; hand_point = None
     try:
         text = (root / 'client1-launch.log').read_text(errors='replace')
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
@@ -384,6 +424,7 @@ def verify(root, selection, catalog):
         for index, segment in enumerate(segments):
             require(placements[index] == dict(case='equip-edit', segment=segment['segment'], proof=segment['clientPlacement']), 'client centered placement evidence')
             issues += check_segment(segment, selection, prepared[index], verified[index])
+        hand_point = check_hand_point(segments, selection, authority)
         if selection.get('options', {}).get('equip_workload'):
             work_evidence = check_workload(segments[0].get('workload'), selection)
         from .magazine_unload import complete
@@ -396,7 +437,7 @@ def verify(root, selection, catalog):
         outcome=dict(effectsVerified=not issues, serverAuthorityVerified=not issues, tailCompleted=not issues,
                      pendingEditsVerified=not issues and selection['mode'] == 'toolkit' and selection['kind'] == 'sp',
                      pendingProtectionVerified=not issues and selection['mode'] == 'toolkit', tidyQuiescent=not issues)))
-    return dict(issues=issues, outcomes=outcomes, evidence=dict(workload=work_evidence, limits=[
+    return dict(issues=issues, outcomes=outcomes, evidence=dict(workload=work_evidence, handPoint=hand_point, limits=[
         'Programmatic native constructors/durations and original delegates; only the exact source-proven local transfer stop guard may differ. No physical-input or active-edit claim.',
         'New positive Equip rights are SP only; menu Host is a denial control with exact authority inventory/hands.',
         'P4 returns borrowed Pencil/Plank to the original nested source. Native transfer removes only the transferred item from hands: dependent clears held Pencil, capacity preserves the held source bag. No explicit menu-intent claim or future capacity grant.',

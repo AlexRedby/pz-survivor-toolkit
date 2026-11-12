@@ -1686,6 +1686,10 @@ The older README associates medicine indicators with this label, but no separate
 
 ## Toolkit Java Patches
 
+### 0.1.101
+
+- **Added:** A read-only server hand-state diagnostic bound to an existing active native action token. It invokes no item getters and grants no equipment-edit permission or packet-order guarantee. An opt-in menu Host fixture correlates its result with the current client action and the raw server log.
+
 ### 0.1.100
 
 - **Changed:** Added read-only SP Equip dispatch/quiet-item facts and source capture relationships, including shared live cells and nested closure bodies. Event observation preserves native callbacks and reuses warmed per-thread slots without retaining completed events.

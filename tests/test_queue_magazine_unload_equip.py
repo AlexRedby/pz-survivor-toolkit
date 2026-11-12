@@ -584,4 +584,72 @@ assert(observer.read(tracks));observer.reset();assert(observer.read(tracks)==nil
         self.assertIn(Path(__file__), declared)
 
 
+class HostHandPointTests(unittest.TestCase):
+    def evidence(self):
+        query = dict(segment='reorder-two', player=7, transaction=-126, token='12345678-1234-1234-1234-123456789abc', kind='ISReadABook')
+        point = dict(schema=1, scope='server-native-active-action-point', state='accepted', **{k: query[k] for k in ('player', 'transaction', 'token', 'kind')},
+                     primaryPresent=False, secondaryPresent=False, primaryId=False, secondaryId=False, primaryType=False, secondaryType=False,
+                     primaryContainerIsRoot=False, secondaryContainerIsRoot=False, sameItem=False,
+                     rootMembershipVerified=False, packetCorrelated=False, effectsVerified=False, editAuthority=False)
+        value = dict(query=query, server=point, clientHands=dict(primary=False, secondary=False), active=True, authority=False)
+        return [dict(segment='reorder-two', handPoint=value)], dict(kind='mp', options=dict(equip_host_observation=True)), value
+
+    def check(self, segments, selection, value):
+        authority = verifier.PREFIX + 'HAND_POINT ' + json.dumps(dict(segment='reorder-two', query=value['query'], point=value['server']))
+        return verifier.check_hand_point(segments, selection, authority)
+
+    def test_matches_raw_server_action_and_does_not_credit_edit_authority(self):
+        segments, selection, value = self.evidence()
+        self.assertEqual(value, self.check(segments, selection, value))
+        for flag in ('rootMembershipVerified', 'packetCorrelated', 'effectsVerified', 'editAuthority'):
+            with self.subTest(flag=flag):
+                bad = copy.deepcopy(segments); bad[0]['handPoint']['server'][flag] = True
+                with self.assertRaises(ValueError): self.check(bad, selection, bad[0]['handPoint'])
+        for key in ('token', 'transaction', 'kind', 'player'):
+            with self.subTest(identity=key):
+                bad = copy.deepcopy(segments); bad[0]['handPoint']['server'][key] = 'wrong'
+                with self.assertRaises(ValueError): self.check(bad, selection, bad[0]['handPoint'])
+        stale = copy.deepcopy(value); stale['server']['token'] = '87654321-1234-1234-1234-123456789abc'
+        with self.assertRaises(ValueError): self.check(segments, selection, stale)
+        with self.assertRaises(ValueError): verifier.check_hand_point(segments, selection, '')
+        with self.assertRaises(ValueError): self.check(segments, dict(kind='sp', options=selection['options']), value)
+        with self.assertRaises(ValueError): self.check(segments, dict(kind='mp'), value)
+        self.assertIsNone(verifier.check_hand_point([dict(segment='reorder-two')], dict(kind='mp'), ''))
+
+    def test_observation_selection_is_host_only_and_strictly_opt_in(self):
+        selection = dict(kind='mp', mode='toolkit', clients=1, languages=['EN'], cases=['equip-edit'], mods=adapter.MODS,
+                         options=dict(mp_host=True, equip_host_observation=True))
+        adapter.validate(selection)
+        for change in (dict(kind='sp'), dict(cases=[adapter.CASES[0]]), dict(options=dict(mp_host=True, equip_host_observation=1))):
+            with self.subTest(change=change), self.assertRaises(ValueError): adapter.validate(dict(selection, **change))
+
+    def test_optional_fixture_waits_for_real_receipt_and_rejects_late_reply(self):
+        from lupa.lua51 import LuaRuntime
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.globals().path = str(PROJECT / 'tests/native_queue/magazine-unload/shared/QueueEquipHostPoint.lua')
+        lua.execute(r"""
+local function event() return {Add=function(fn) receive=fn end} end
+Events={OnServerCommand=event()}
+package.preload.QueueTestSelection=function()return{kind='mp',cases={'equip-edit'},options={equip_host_observation=true}}end
+package.preload.QueueHealthEvents=function()return{}end
+function isServer()return false end
+function isClient()return true end
+function sendClientCommand(module,command,args) sent={module=module,command=command,args=args};calls=(calls or 0)+1 end
+local current={character={getOnlineID=function()return 7 end}}
+local receipt={transaction=-126,token='12345678-1234-1234-1234-123456789abc',kind='ISReadABook'}
+local available=false;local active=true
+PZSurvivorToolkit={ActionQueueAcknowledgements={capture=function(a)assert(a==current);if available then return receipt end end,
+ state=function(a,r)assert(a==current and r==receipt);if active then return 'started' end end}}
+local H=dofile(path);local function hands()return{primary=false,secondary=false}end
+assert(not H.poll(current,'reorder-two',hands)and not sent)
+available=true;assert(not H.poll(current,'reorder-two',hands)and calls==1)
+assert(not H.poll(current,'reorder-two',hands)and calls==1)
+local point={schema=1,scope='server-native-active-action-point',player=7,transaction=-126,token=receipt.token,kind=receipt.kind,state='accepted',
+ packetCorrelated=false,rootMembershipVerified=false,effectsVerified=false,editAuthority=false,primaryId=false,secondaryId=false}
+receive('EquipEditPointTest','Observed',{segment='reorder-two',query=sent.args,point=point})
+active=false;assert(not pcall(H.poll,current,'reorder-two',hands),'late receipt accepted after native episode changed')
+active=true;assert(H.poll(current,'reorder-two',hands)and H.result().authority==false)
+""")
+
+
 if __name__ == '__main__': unittest.main()

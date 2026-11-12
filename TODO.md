@@ -1,3 +1,10 @@
+# Pending equipment in Host
+
+- [ ] Add explicit conservative unknown-effect semantics to the common EditModel and qualify a narrow pending Host Equip slice by domain independence. Unknown is not an empty hand or a concrete sentinel. Allow only edits whose crossed and surviving work is proven independent of every affected native/selected-mod domain; preserve exact actor/item/operation identity and native execution. Keep SP's exact projection cheap and unchanged.
+- [ ] Complete source-backed effect coverage in both execution contexts before enabling that slice. Include hands, worn/heavy-item transitions, root capacity and selected callback effects; current SP same-VM capture certificates cannot authorize Host. Retain guards for active/in-flight equipment, transfers/capacity credit, unsupported components and hooks. Do not present a partial effect footprint as a complete contract.
+- [ ] Use server admission only where a desired edit actually needs authoritative facts; a new asynchronous protocol is not a prerequisite for unsubmitted rows. Native Equip and action acknowledgements use different ordered channels, and a delayed owner echo can restore old hands. A point read, matching pair, extra validation pass or time-to-live does not establish a deterministic outcome or durable edit authority.
+- [ ] Verify each earned slice in grouped full-pack SP/menu-Host queue-off/on cases with late/reused identities, unknown effects, exact item conservation, independent tails, P4 cleanup and log audits. Inspect necessary decision/idle work, update component versions and delivery notes, and keep installations separate from test snapshots.
+
 # Shared queue resources and container capacity
 
 Implementation and migration are conditional on the performance gate in [the design plan](docs/design/QUEUE_RESOURCE_CAPACITY.md). Keep the native executor and existing protections until each replacement is qualified.
@@ -43,6 +50,8 @@ Implementation and migration are conditional on the performance gate in [the des
 Collect the outstanding native checks below into one coordinated campaign. Reuse compatible game sessions instead of launching once per TODO item; retain separate case evidence and unfinished gates. The executable selections and remaining gates are mapped in `tests/native_queue/plans/in-game-campaign.example.json`; a block is not a claim of runtime coverage. Implementation/audit tasks below the campaign keep their acceptance requirements and join when ready.
 
 ## Preparation and fewer-launch execution
+
+- [ ] Extend sealed-observation `reanalyze` to `magazine-unload/equip-edit`; the CLI currently opts in only `book-controls`. Verifier-only changes currently need direct functional reevaluation without the common provenance envelope. Preserve the original execution/control seals and produce a separate current-verifier result without relaunching or converting diagnostic/denial evidence into edit coverage.
 
 - [ ] Preserve individually completed case evidence when a later case in the same native session fails setup. The wringing verifier currently rejects the bank's missing completion marker before emitting outcomes for its earlier completed case. Keep the session failed, but retain independently sealed case results and explicit dependency/cleanup boundaries so a targeted retry does not require replaying unrelated work.
 

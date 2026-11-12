@@ -48,6 +48,10 @@ internal object ActionAcknowledgementLogic {
         send(action, token, "started")
     }
 
+    /** Read an existing episode; never create one from a query or retain its owner. */
+    @JvmStatic
+    fun token(action: Any?): String? = if (supported && GameServer.server) tokens[action] else null
+
     @JvmStatic
     fun pending(): ArrayList<Any>? =
         if (supported && GameServer.server) ArrayList(tokens.keys) else null

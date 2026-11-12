@@ -3,6 +3,7 @@ if config.suite~='magazine-unload'or config.cases[1]~='equip-edit'or not isServe
 if PZ_QUEUE_EQUIP_EDIT_SERVER_RUNNING then return end;PZ_QUEUE_EQUIP_EDIT_SERVER_RUNNING=true
 local P=require 'QueueEnergyPlacement'
 local F=require 'QueueEquipEdit'
+require 'QueueEquipHostPoint'
 local JSON=require 'QueueHealthEvents'
 local state,pending,previous;local index=1
 local function segment()return F.segments[index]end

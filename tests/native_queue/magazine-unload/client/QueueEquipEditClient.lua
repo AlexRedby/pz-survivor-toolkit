@@ -6,6 +6,7 @@ require 'TimedActions/ISEquipWeaponAction'
 require 'TimedActions/ISReadABook'
 require 'TimedActions/ISInventoryTransferAction'
 local F=require 'QueueEquipEdit'
+local HostPoint=require 'QueueEquipHostPoint'
 local P=require 'QueueEnergyPlacement'
 local JSON=require 'QueueHealthEvents'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
@@ -19,7 +20,7 @@ local started,ready,done=false,false,false
 local phase,index='prepare',1
 local state,authority,previous,ids,receipt,placement,arrival,proof,quiet
 local tracks,commands,edits={}, {}, {}
-local pendingBefore,pendingAfter,pendingOrder,componentGuard
+local pendingBefore,pendingAfter,pendingOrder,componentGuard,handPoint
 local frameLast,frameCadence=nil,{count=0,totalMilliseconds=0,maxMilliseconds=0}
 local since=getTimestampMs();local serial,episodeSerial=0,0;local episodes={}
 local callbacks={}
@@ -226,6 +227,8 @@ require('QueuePreflight').onTick(Events,function()
    -- AddUI is staged natively: let the normal UIManager update register the
    -- actual front-reader panel before sending a programmatic widget gesture.
    if work and not native and(index==1 or segment()=='cancel')and not work:panelReady(queue())then return end
+   if index==1 and not HostPoint.poll(state.front,segment(),F.hands)then return end
+   if index==1 then handPoint=HostPoint.result()end
    if index==1 and work then work:arm()end
    pendingBefore=F.snapshot(state);enqueuePending();pendingAfter=F.snapshot(state);unchanged(pendingBefore);pendingOrder=queueOrder();phase=index==1 and work and'work'or'running'
   elseif phase=='work'then
@@ -237,7 +240,7 @@ require('QueuePreflight').onTick(Events,function()
    local client=assert(F.verify(state));assert(F.equal(client,receipt),'client/authority equip effect differs')
    local tidyProof=assert(tidyQuiet(),'P4 idle cleanup observation unavailable');assert(empty(),'native queue became active after observation')
    segments[#segments+1]={segment=segment(),ids=ids,input=state.input,clientPlacement=proof,client=client,server=receipt,
-    commands=commands,edits=edits,workload=index==1 and work and work.result or nil,componentGuard=componentGuard or false,pendingBefore=pendingBefore,pendingAfter=pendingAfter,pendingOrder=pendingOrder,
+    commands=commands,edits=edits,handPoint=handPoint,workload=index==1 and work and work.result or nil,componentGuard=componentGuard or false,pendingBefore=pendingBefore,pendingAfter=pendingAfter,pendingOrder=pendingOrder,
     queueIdle=true,tidyQuiescent=true,tidyObservation=tidyProof,settleMilliseconds=now()-quiet,frameCadence=frameCadence}
    if not isClient()then previous=authority end
    index=index+1
@@ -246,7 +249,7 @@ require('QueuePreflight').onTick(Events,function()
     emit({event='complete',cases=config.cases,performed=1,failed=0,skipped=0});print('[MAGAZINE_UNLOAD] COMPLETE '..JSON.encode({cases=config.cases}));done=true;return
    end
    state,authority,ids,receipt,placement,arrival,proof,quiet=nil,nil,nil,nil,nil,nil,nil,nil
-   tracks,commands,edits={}, {}, {};callbackReaders={};pendingBefore,pendingAfter,pendingOrder,componentGuard=nil,nil,nil,nil;frameLast=nil;frameCadence={count=0,totalMilliseconds=0,maxMilliseconds=0};phase='prepare';since=now()
+   handPoint=nil;tracks,commands,edits={}, {}, {};callbackReaders={};pendingBefore,pendingAfter,pendingOrder,componentGuard=nil,nil,nil,nil;frameLast=nil;frameCadence={count=0,totalMilliseconds=0,maxMilliseconds=0};phase='prepare';since=now()
   end
  end)
  if not ok then fail(reason)end

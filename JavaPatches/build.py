@@ -127,6 +127,7 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.javapatchfixture.KotlinRuntimeChecks': 'KOTLIN_RUNTIME_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUARTERMASTER_PRESET_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
+          'zombie.network.packets.HostEquipTransportChecks': 'HOST_EQUIP_TRANSPORT_OBSERVATION_PASS',
           'zombie.core.FitnessConstructorChecks': 'FITNESS_CONSTRUCTOR_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.UITextFitChecks': 'UI_TEXT_FIT_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ManifestModelChecks': 'MANIFEST_MODEL_CHECKS_PASS',
@@ -196,6 +197,7 @@ CHECKS['net.alexredby.pztoolkitjavapatches.CleanUIFoodAgeChecks'] = 'CLEANUI_FOO
 CHECKS['net.alexredby.pztoolkitjavapatches.NativeIgnitionSourceChecks'] = 'NATIVE_IGNITION_SOURCE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VehicleSalvageSandboxChecks'] = 'VEHICLE_SALVAGE_SANDBOX_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueLeafTransferFactsChecks'] = 'QUEUE_LEAF_TRANSFER_FACTS_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.QueueNativeHandStateChecks'] = 'QUEUE_NATIVE_HAND_STATE_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueSpatialFactsChecks'] = 'QUEUE_SPATIAL_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueHandEventFactsChecks'] = 'QUEUE_HAND_EVENT_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.EquipEventDispatchChecks'] = 'EQUIP_EVENT_DISPATCH_CHECKS_PASS'
@@ -441,7 +443,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.100',
+    'version': '0.1.101',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

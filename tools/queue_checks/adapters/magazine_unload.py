@@ -57,6 +57,9 @@ def definitions():
 
 
 def validate(selection):
+    observation = selection.get('options', {}).get('equip_host_observation', False)
+    if type(observation) is not bool or observation and (selection.get('kind') != 'mp' or selection.get('cases') != list(EQUIP_CASES)):
+        raise ValueError('equip_host_observation requires menu Host equip-edit alone')
     workload = selection.get('options', {}).get('equip_workload', False)
     if type(workload) is not bool or workload and selection.get('cases') != list(EQUIP_CASES):
         raise ValueError('equip_workload requires boolean true with equip-edit alone')
