@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.363
+
+- **Changed:** Source-qualified pending native Equip actions in SP use the common hand/item projection for reordering and cancellation before a surviving queue suffix. Ordinary unchanged backpacks remain supported. Pickup dependencies, container capacity, active actions, items with additional native components, heavy/worn/activated items and unreviewed mod handlers keep their existing guards. Host reordering remains unavailable pending correlated native execution support.
+
 ### 0.1.362
 
 - **Added:** Source-owned data recipes and opt-in planning observations for Snow, NeatUI, Carts and Fishing hand-event state, composed with exact current registry checks. Unknown callbacks remain partial; state predicates explicitly do not certify complete handler effects or grant new queue-edit permissions. Repeated handlers share work only inside one synchronous observation.
@@ -1673,6 +1677,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.100
+
+- **Changed:** Added read-only SP Equip dispatch/quiet-item facts and source capture relationships, including shared live cells and nested closure bodies. Event observation preserves native callbacks and reuses warmed per-thread slots without retaining completed events.
 
 ### 0.1.99
 

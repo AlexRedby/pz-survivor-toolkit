@@ -80,6 +80,19 @@ object HandEventRecipeSourceChecks {
         val cartsSource = source("PZ_TEST_CART_HOLDER_SOURCE", "d46ea39f3d4aee569bb87d3241d464eb77552faae505e3adfb742f4991117fe7")
         val fishingSource = sourcePath(Path.of("media/lua/client/Fishing/FishingHandler.lua"),
             "6975228698ab3219b4dec4838b6171ecad7645e6c49265b894f8c76d6b4b02cf", "FishingHandler.lua")
+        val cartsCoreSource = source("PZ_TEST_CART_CORE_SOURCE", "0c87b03db334209e8ce6564c2d9bfc3919178a52f78dece4434dd8bffd8a0394")
+        val cartsForceDropSource = source("PZ_TEST_CART_FORCE_DROP_SOURCE", "f5debbd982bcbf64aeaad3482be8e20e2d3889cf6fca73688f4bb924f8394cce")
+        val neatStateSource = source("PZ_TEST_NEAT_STATE_SOURCE", "e2a7bc2962bebfd7903d18a23800f160f6029190c8779409b78f0d2ad1b08dc3")
+        val radioSource = sourcePath(Path.of("media/lua/client/RadioCom/ISRadioWindow.lua"),
+            "704976f04b887feeb22e1c05dfc8a4350f6ed1ad27156a0d905e68978cd7ecfa", "ISRadioWindow.lua")
+        val radioSelectedSource = source("PZ_TEST_RADIO_SELECTED_SOURCE", "e3dd48b56f456542bc8b5b8fc6b91b363f4f03520d5dba676165c79207c6f052")
+        val bowPresentationSource = source("PZ_TEST_BOW_PRESENTATION_SOURCE", "f574636154adbbc94126ac79758a8730ed6df1e6c66aa9c3dcf9f0d02e935ede")
+        val archeryStateSource = source("PZ_TEST_ARCHERY_STATE_SOURCE", "b6a921504e7e5145f5c04e84ce88d3a8411cc4b23450ca2fbb2b76665c6ad1e1")
+        val bowReloadSource = source("PZ_TEST_BOW_RELOAD_SOURCE", "6516ba379c1d1341576100a79f78cc16bad93be842d52086183b0c03113ea859")
+        val bowDurabilitySource = source("PZ_TEST_BOW_DURABILITY_SOURCE", "86958969a17e3fb394f3627c03f9223c2c3cacd9693c2dd00acba3164add8e46")
+        val archeryContractSource = source("PZ_TEST_ARCHERY_CONTRACT_SOURCE", "83d98910332b6a75f4c6794f4bc641afc241e714a6fa310f89ae9c603c601fce")
+        val equipWeaponSource = sourcePath(Path.of("media/lua/shared/TimedActions/ISEquipWeaponAction.lua"),
+            "5aaf0e6942d83caed3df3acae63aa10c3b77bf9618208067b81d579a6e2bf66f", "ISEquipWeaponAction.lua")
         check(LuaCaptureFacts.SUPPORTED) { "Native capture facts unsupported" }
         LuaManager.platform = J2SEPlatform()
         LuaManager.env = LuaManager.platform.newEnvironment()
@@ -97,6 +110,17 @@ object HandEventRecipeSourceChecks {
         val neat = compile(neatSource, "NEQ_HideEquipped.lua")
         val carts = compile(cartsSource, "HolderRegistry.lua")
         val fishing = compile(fishingSource, "FishingHandler.lua")
+        val cartsCore = compile(cartsCoreSource, "Core.lua")
+        val cartsForceDrop = compile(cartsForceDropSource, "ForceDropGuard.lua")
+        val neatState = compile(neatStateSource, "NEQ_State.lua")
+        val radio = compile(radioSource, "ISRadioWindow.lua")
+        val selectedRadio = compile(radioSelectedSource, "ISRadioWindow.lua")
+        val bowPresentation = compile(bowPresentationSource, "WPANC_BowPresentation.lua")
+        val archeryState = compile(archeryStateSource, "R5_AimState.lua")
+        val bowReload = compile(bowReloadSource, "WPANC_BowReload.lua")
+        val bowDurability = compile(bowDurabilitySource, "WPANC_BowDurability.lua")
+        val archeryContract = compile(archeryContractSource, "WPANC_ArcheryContract.lua")
+        val equipWeapon = compile(equipWeaponSource, "ISEquipWeaponAction.lua")
         // Native compiler creation instructions prove the slot interpretation.
         // Snow: root r54=swapped, r98=releaseItems, r149=onEquipChange.
         closureSite(snow, 477, 52, 98, intArrayOf(54, 56, 70))
@@ -107,8 +131,30 @@ object HandEventRecipeSourceChecks {
         closureSite(neat, 53, 10, 14, intArrayOf(0, 2))
         // Carts: root r0=HolderRegistry, r1=holders. Child 12 is specifically
         // the anonymous closure at the OnEquipPrimary.Add creation site.
+        closureSite(carts, 17, 0, 5, intArrayOf())
+        closureSite(carts, 22, 2, 6, intArrayOf(1, 2))
+        closureSite(carts, 42, 7, 6, intArrayOf(0, 5))
+        closureSite(carts, 50, 9, 6, intArrayOf(0))
         closureSite(carts, 26, 3, 6, intArrayOf(1))
         closureSite(carts, 74, 12, 7, intArrayOf(0))
+        // Core captures native type/tostring rather than private cart registries.
+        closureSite(cartsCore, 144, 7, 6, intArrayOf(0))
+        closureSite(cartsCore, 151, 9, 6, intArrayOf(1))
+        closureSite(cartsForceDrop, 4, 0, 1, intArrayOf())
+        closureSite(cartsForceDrop.prototypes[0], 0, 0, 2, intArrayOf(0, 1))
+        closureSite(neatState, 122, 25, 8, intArrayOf())
+        closureSite(radio, 127, 33, 4, intArrayOf())
+        closureSite(bowPresentation, 114, 10, 19, intArrayOf())
+        closureSite(bowPresentation, 115, 11, 20, intArrayOf(8))
+        closureSite(bowPresentation, 124, 14, 22, intArrayOf(19, 20, 0, 21, 1, 4, 3))
+        closureSite(bowPresentation, 133, 15, 22, intArrayOf(19, 20, 3))
+        closureSite(bowDurability, 33, 4, 9, intArrayOf(0))
+        closureSite(archeryContract, 19, 1, 1, intArrayOf(0))
+        closureSite(archeryState, 82, 0, 11, intArrayOf())
+        closureSite(archeryState, 109, 10, 21, intArrayOf(20))
+        closureSite(archeryState, 111, 11, 22, intArrayOf(3, 11, 4, 9, 21, 12, 1, 19))
+        closureSite(archeryState, 120, 12, 23, intArrayOf(3, 11, 4, 9, 19, 12))
+        closureSite(archeryContract, 17, 0, 1, intArrayOf())
         // Fishing calls public global helpers, with no private captures.
         closureSite(fishing, 24, 1, 1, intArrayOf())
         closureSite(fishing, 35, 2, 1, intArrayOf())
@@ -129,7 +175,12 @@ object HandEventRecipeSourceChecks {
                 for (index in values.indices) upvalues[index] = cell(values[index])
             }
         }
-        for ((kind, text) in listOf("snow" to snowSource, "neat" to neatSource, "carts" to cartsSource, "fishing" to fishingSource)) {
+        for ((kind, text) in listOf("snow" to snowSource, "neat" to neatSource, "carts" to cartsSource, "fishing" to fishingSource,
+            "cartsCore" to cartsCoreSource, "cartsForceDrop" to cartsForceDropSource,
+            "neatState" to neatStateSource, "radio" to radioSource, "radioSelected" to radioSelectedSource,
+            "bowPresentation" to bowPresentationSource, "equipWeapon" to equipWeaponSource,
+            "bowDurability" to bowDurabilitySource, "archeryContract" to archeryContractSource,
+            "archeryState" to archeryStateSource, "bowReload" to bowReloadSource)) {
             val metadata = factory("source", kind) as KahluaTableImpl
             check((metadata.delegate["adler"] as Double).toLong() == adler(text))
             metadata.delegate["adler"] = 0.0
@@ -204,6 +255,107 @@ object HandEventRecipeSourceChecks {
         check(match(onCarts, emptyHolderRecipe) == true)
         holder.delegate["isHolderKey"] = onCarts
         check(match(onCarts, emptyHolderRecipe) != true) { "Wrong holder predicate retained authority" }
+        // The complete ordinary cart transition graph observes one live module
+        // and one holder cell, rather than unrelated independently empty tables.
+        val getPlayerKey = captured(carts.prototypes[0])
+        val unregisterKey = captured(carts.prototypes[2], table(), 0.0)
+        val sharedHolders = unregisterKey.upvalues[0]
+        val ordinaryHolderKey = captured(carts.prototypes[3], table()).apply { upvalues[0] = sharedHolders }
+        val unregisterPlayer = captured(carts.prototypes[7], holder, getPlayerKey)
+        val handlePrimary = captured(carts.prototypes[9], holder)
+        holder.delegate["unregisterKey"] = unregisterKey
+        holder.delegate["unregisterPlayer"] = unregisterPlayer
+        holder.delegate["handleEquipPrimary"] = handlePrimary
+        holder.delegate["isHolderKey"] = ordinaryHolderKey
+        val ordinaryCarts = factory("cartsOrdinary")
+        check(match(onCarts, ordinaryCarts) == true)
+        ordinaryHolderKey.upvalues[0] = cell(table())
+        check(match(onCarts, ordinaryCarts) == false) { "Independent empty holders passed shared-cell proof" }
+        ordinaryHolderKey.upvalues[0] = sharedHolders
+        (sharedHolders.getValue() as KahluaTableImpl).delegate[17.0] = false
+        check(match(onCarts, ordinaryCarts) == false) { "Nonempty transition state was ignored" }
+        sharedHolders.setValue(table())
+        check(match(onCarts, ordinaryCarts) == true) { "Shared live holder rebinding was cached" }
+        val foreignHolder = table().apply { delegate.putAll(holder.delegate) }
+        unregisterPlayer.upvalues[0].setValue(foreignHolder)
+        check(match(onCarts, ordinaryCarts) == false) { "Lookalike transition module passed alias proof" }
+        unregisterPlayer.upvalues[0].setValue(holder)
+        val transitionWord = unregisterKey.prototype.code[0]
+        unregisterKey.prototype.code[0] = transitionWord xor 64
+        check(match(onCarts, ordinaryCarts) != true) { "Transition body mutation was ignored" }
+        unregisterKey.prototype.code[0] = transitionWord
+        check(match(captured(neatState.prototypes[25]), factory("neatLocalPlayerNum")) == true)
+        check(match(captured(radio.prototypes[33]), factory("radio")) == true)
+        val selectedEquip = selectedRadio.prototypes.single { it.name == "onEquip" }
+        check(match(captured(selectedEquip), factory("radio")) == true) { "Selected radio callback differs from the native ordinary-item branch" }
+        check(match(captured(equipWeapon.prototypes[5]), factory("isForceDropHeavyItem")) == true)
+        check(match(captured(equipWeapon.prototypes[6]), factory("forceDropNative")) == true)
+        val nativeType = LuaManager.env.rawget("type")
+        val isCart = captured(cartsCore.prototypes[7], nativeType)
+        check(match(isCart, factory("cartsIsCart", nativeType)) == true)
+        isCart.upvalues[0].setValue(onCarts)
+        check(match(isCart, factory("cartsIsCart", nativeType)) == false)
+        isCart.upvalues[0].setValue(nativeType)
+        val contract = table()
+        val durabilityIsBow = captured(bowDurability.prototypes[4], contract)
+        val primitiveBow = captured(archeryContract.prototypes[1], contract)
+        check(match(durabilityIsBow, factory("bowDurabilityIsBow", contract)) == true)
+        check(match(primitiveBow, factory("archeryPrimitiveBow", contract)) == true)
+        durabilityIsBow.upvalues[0].setValue(table())
+        check(match(durabilityIsBow, factory("bowDurabilityIsBow", contract)) == false)
+        durabilityIsBow.upvalues[0].setValue(contract)
+        val reloadModule = table()
+        val canMutatePlayer = captured(archeryState.prototypes[0])
+        val markedRefresh = captured(archeryState.prototypes[10], table())
+        val onArcheryPrimary = captured(archeryState.prototypes[11], contract, canMutatePlayer, reloadModule,
+            table(), markedRefresh, table(), table(), table())
+        val onArcherySecondary = captured(archeryState.prototypes[12], contract, canMutatePlayer, reloadModule,
+            table(), table(), table())
+        check(match(onArcheryPrimary, factory("archeryPrimary", contract, reloadModule)) == true)
+        check(match(onArcherySecondary, factory("archerySecondary", contract, reloadModule)) == true)
+        onArcheryPrimary.upvalues[2].setValue(table())
+        check(match(onArcheryPrimary, factory("archeryPrimary", contract, reloadModule)) == false)
+        onArcheryPrimary.upvalues[2].setValue(reloadModule)
+        onArcheryPrimary.upvalues[4].setValue(onArcherySecondary)
+        check(match(onArcheryPrimary, factory("archeryPrimary", contract, reloadModule)) != true)
+        onArcheryPrimary.upvalues[4].setValue(markedRefresh)
+        check(match(captured(archeryContract.prototypes[0]), factory("archeryPlayerCharacter")) == true)
+        check(match(captured(bowReload.prototypes[0], contract), factory("bowReloadPrimitiveBow", contract)) == true)
+        val nativeTostring = LuaManager.env.rawget("tostring")
+        val safeIsCart = captured(cartsCore.prototypes[9], nativeTostring)
+        check(match(safeIsCart, factory("cartsSafeIsCart", nativeTostring)) == true)
+        val safeChild = safeIsCart.prototype.prototypes[0]
+        val safeChildWord = safeChild.code[0]
+        safeChild.code[0] = safeChildWord xor 64
+        check(match(safeIsCart, factory("cartsSafeIsCart", nativeTostring)) != true) { "Nested classifier body was ignored" }
+        safeChild.code[0] = safeChildWord
+        val nativeDrop = captured(equipWeapon.prototypes[6])
+        val guardedDrop = captured(cartsForceDrop.prototypes[0].prototypes[0], nativeDrop, isCart)
+        check(match(guardedDrop, factory("forceDropGuard", isCart)) == true)
+        check(match(captured(cartsForceDrop.prototypes[0]), factory("forceDropFactory")) == true)
+        guardedDrop.upvalues[0].setValue(onCarts)
+        check(match(guardedDrop, factory("forceDropGuard", isCart)) != true) { "Foreign predecessor passed delegation proof" }
+        guardedDrop.upvalues[0].setValue(nativeDrop)
+        guardedDrop.upvalues[1].setValue(onCarts)
+        check(match(guardedDrop, factory("forceDropGuard", isCart)) == false) { "Foreign captured classifier passed identity" }
+        guardedDrop.upvalues[1].setValue(isCart)
+        val presentation = table()
+        val durability = table()
+        val localPlayer = captured(bowPresentation.prototypes[10])
+        val stateForPlayer = captured(bowPresentation.prototypes[11], table())
+        val presentationUpdate = captured(bowPresentation.prototypes[14], localPlayer, stateForPlayer,
+            durability, table(), table(), table(), presentation)
+        presentation.delegate["onPlayerUpdate"] = presentationUpdate
+        val onPresentation = captured(bowPresentation.prototypes[15], localPlayer, stateForPlayer, presentation)
+        val presentationRecipe = factory("bowPresentation", presentation, durability)
+        check(match(onPresentation, presentationRecipe) == true)
+        presentationUpdate.upvalues[1].setValue(captured(bowPresentation.prototypes[11], table()))
+        check(match(onPresentation, presentationRecipe) == false) { "Independent private player state accessor passed alias proof" }
+        presentationUpdate.upvalues[1].setValue(stateForPlayer)
+        presentationUpdate.upvalues[2].setValue(table())
+        check(match(onPresentation, presentationRecipe) == false) { "Foreign bow classifier module passed identity" }
+        presentationUpdate.upvalues[2].setValue(durability)
+        holder.delegate["isHolderKey"] = holderKey
         // Execute only the tiny native Fishing declaration/registration chunk.
         // Registration doubles retain callbacks; no handler or actor getter runs.
         val registered = LinkedHashMap<String, Any?>()

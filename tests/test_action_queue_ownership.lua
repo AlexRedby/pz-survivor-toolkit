@@ -38,6 +38,8 @@ local cases={
     OwnershipGroomingActive="test_action_queue_grooming_active.lua",
     OwnershipAnimalStops="test_action_queue_animal_stops.lua",
     OwnershipHands="test_action_queue_hands.lua",
+    OwnershipEquip="test_action_queue_equip.lua",
+    OwnershipHandEffects="test_action_queue_hand_effects.lua",
     OwnershipPreparationCancel="test_action_queue_preparation_cancel.lua",
     OwnershipProjectionCases="test_action_queue_edit_model.lua",
 }

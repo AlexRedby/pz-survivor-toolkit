@@ -52,6 +52,9 @@ local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
 local Clothing = require "PZSurvivorToolkit/ActionQueueClothing"
+local equipOwner={module=require 'PZSurvivorToolkit/ActionQueueEquip'}
+equipOwner.inspect=equipOwner.module and equipOwner.module.inspect
+equipOwner.adopt=equipOwner.module and equipOwner.module.adoptBase
 local clothingInspect=Clothing and Clothing.inspect
 local clothingWeight=Clothing and Clothing.removalWeight
 local clothingBindings=Clothing and Clothing.bindingsTrusted
@@ -979,9 +982,19 @@ local function equipmentResources(action)
         result.hands=action.character;result.cancelWaiting,result.preparation=false,true
         local snapshot=snapshots[getmetatable(action)]
         if snapshot and snapshot.binding then result.preparationFinish=true end
-        -- Heavy, worn and producer-owned restoration keep their own contracts.
-        -- This does not grant a move, active stop or hand-state projection.
+        -- Heavy, worn and producer-owned restoration retain their own contracts.
+        -- Only a complete owner below can extend the pending cancellation fallback.
         if action.Type == "ISEquipWeaponAction" and pendingPreparation(action) then
+            if type(equipOwner.module)=="table" and editNativeMeta(equipOwner.module,nil)
+                and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect
+                and type(equipOwner.inspect)=="function" then
+                if equipOwner.trusted==nil then equipOwner.trusted=Proof.closure(equipOwner.inspect,"ActionQueueEquip.lua")
+                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",1357107633,"PZSurvivorToolkit",true)end
+                if equipOwner.trusted and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect then
+                    local contract=equipOwner.inspect(action)
+                    if contract then return contract end
+                end
+            end
             result.cancelWaiting, result.cancelTailOnly = true, true
         end
     end
@@ -2347,6 +2360,10 @@ function Policy.returnFailureIndependent(queue, action)
 end
 
 function Policy.replaceStop(previous, replacement)
+    if type(equipOwner.adopt)=="function" and type(equipOwner.module)=="table" and type(editNativeMeta)=="function"
+        and editNativeMeta(equipOwner.module,nil) and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.adoptBase==equipOwner.adopt then
+        equipOwner.adopt("stop",previous,replacement)
+    end
     if type(clothingAdoptBase)=="function" and type(Clothing)=="table" and type(editNativeMeta)=="function"
         and editNativeMeta(Clothing,nil) and Toolkit.ActionQueueClothing==Clothing and Clothing.adoptBase==clothingAdoptBase then
         clothingAdoptBase("stop",previous,replacement)
@@ -2366,6 +2383,10 @@ function Policy.replaceStop(previous, replacement)
 end
 
 function Policy.adoptBegin(previous, replacement)
+    if type(equipOwner.adopt)=="function" and type(equipOwner.module)=="table" and type(editNativeMeta)=="function"
+        and editNativeMeta(equipOwner.module,nil) and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.adoptBase==equipOwner.adopt then
+        equipOwner.adopt("begin",previous,replacement)
+    end
     if type(clothingAdoptBase)=="function" and type(Clothing)=="table" and type(editNativeMeta)=="function"
         and editNativeMeta(Clothing,nil) and Toolkit.ActionQueueClothing==Clothing and Clothing.adoptBase==clothingAdoptBase then
         clothingAdoptBase("begin",previous,replacement)

@@ -198,6 +198,7 @@ CHECKS['net.alexredby.pztoolkitjavapatches.VehicleSalvageSandboxChecks'] = 'VEHI
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueLeafTransferFactsChecks'] = 'QUEUE_LEAF_TRANSFER_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueSpatialFactsChecks'] = 'QUEUE_SPATIAL_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueHandEventFactsChecks'] = 'QUEUE_HAND_EVENT_FACTS_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.EquipEventDispatchChecks'] = 'EQUIP_EVENT_DISPATCH_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.QueueEquipEventRegistryChecks'] = 'QUEUE_EQUIP_EVENT_REGISTRY_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.LuaCaptureFactsChecks'] = 'LUA_CAPTURE_FACTS_CHECKS_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.HandEventRecipeSourceChecks'] = 'HAND_EVENT_RECIPE_SOURCE_CHECKS_PASS'
@@ -440,7 +441,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.99',
+    'version': '0.1.100',
     'author': 'AlexRedby',
     'versionMin': '42.21',
     'versionMax': '42.21',

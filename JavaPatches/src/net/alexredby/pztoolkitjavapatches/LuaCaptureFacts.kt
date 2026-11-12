@@ -2,6 +2,7 @@ package net.alexredby.pztoolkitjavapatches
 
 import java.util.IdentityHashMap
 import se.krka.kahlua.integration.annotations.LuaMethod
+import se.krka.kahlua.vm.UpValue
 import se.krka.kahlua.vm.LuaClosure
 import se.krka.kahlua.j2se.KahluaTableImpl
 import zombie.Lua.LuaManager
@@ -44,12 +45,32 @@ object LuaCaptureFacts {
             // Parse every nested schema before observing any capture. A false predicate
             // must never hide a malformed/unsupported sibling or nested recipe.
             val parsed = Parser().recipe(recipe, 0)
-            if (parsed == null) null else observe(callback, parsed, IdentityHashMap(), 0)
+            if (parsed == null) null else observe(callback, parsed, Observation(), 0)
         }
     } catch (_: Exception) { null } catch (_: AssertionError) { null }
 
     private class Recipe(val hash: String, val parameters: Int, val upvalues: Int, val rules: List<Rule>)
-    private class Rule(val slot: Int, val predicate: Predicate)
+    private class Rule(val slot: Int, val predicate: Predicate, val binding: String?, val cell: String?)
+    private class Observation {
+        val active = IdentityHashMap<LuaClosure, Boolean>()
+        val values = HashMap<String, Any>()
+        val cells = HashMap<String, UpValue>()
+        fun bind(name: String?, value: Any?): Boolean? {
+            if (name == null) return true
+            if (value == null || value is String || value is Number || value is Boolean || value is Char) return null
+            val previous = values[name]
+            if (previous != null) return previous === value
+            values[name] = value
+            return true
+        }
+        fun cell(name: String?, value: UpValue): Boolean {
+            if (name == null) return true
+            val previous = cells[name]
+            if (previous != null) return previous === value
+            cells[name] = value
+            return true
+        }
+    }
     private sealed class Predicate {
         object Empty : Predicate()
         class Absent(val key: Any) : Predicate()
@@ -101,10 +122,16 @@ object LuaCaptureFacts {
                     for (entry in captures.delegate.entries) {
                         val rule = enter(entry.value, depth + 2) ?: return null
                         try {
-                            if (rule.delegate.size !in 2..4) return null
+                            if (rule.delegate.size !in 2..6) return null
                             val slot = integer(ownStringValue(rule, "slot"), MAX_CAPTURES - 1) ?: return null
                             if (slot >= upvalues) return null
-                            rules.add(Rule(slot, predicate(rule, depth + 2, true) ?: return null))
+                            fun label(key: String): String? {
+                                val value = ownStringValue(rule, key) as? String ?: return null
+                                return value.takeIf { it.length in 1..64 && it.all { c -> c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' || c == '_' || c == '-' } }
+                            }
+                            val binding = if (rule.delegate.containsKey("bind")) label("bind") ?: return null else null
+                            val cell = if (rule.delegate.containsKey("cell")) label("cell") ?: return null else null
+                            rules.add(Rule(slot, predicate(rule, depth + 2, true) ?: return null, binding, cell))
                         } finally { active.remove(rule) }
                     }
                     return Recipe(hash, parameters, upvalues, rules)
@@ -112,9 +139,11 @@ object LuaCaptureFacts {
             } finally { active.remove(table) }
         }
         private fun predicate(table: KahluaTableImpl, depth: Int, slot: Boolean): Predicate? {
-            if (table.delegate.size !in (if (slot) 2..4 else 1..3)) return null
+            if (table.delegate.size !in (if (slot) 2..6 else 1..3)) return null
             val test = ownStringValue(table, "test") as? String ?: return null
-            val base = if (slot) setOf("slot", "test") else setOf("test")
+            val base = (if (slot) setOf("slot", "test") else setOf("test")) +
+                (if (slot && table.delegate.containsKey("bind")) setOf("bind") else emptySet()) +
+                (if (slot && table.delegate.containsKey("cell")) setOf("cell") else emptySet())
             return when (test) {
                 "empty-table" -> if (keys(table, base)) Predicate.Empty else null
                 "absent-entry" -> {
@@ -155,16 +184,16 @@ object LuaCaptureFacts {
         }
     }
 
-    private fun observe(value: Any?, recipe: Recipe, active: IdentityHashMap<LuaClosure, Boolean>, depth: Int): Boolean? {
+    private fun observe(value: Any?, recipe: Recipe, context: Observation, depth: Int): Boolean? {
         if (depth > MAX_DEPTH || value?.javaClass != LuaClosure::class.java) return null
         val closure = value as LuaClosure
-        if (closure.env !== LuaManager.env || active.put(closure, true) != null) return null
+        if (closure.env !== LuaManager.env || context.active.put(closure, true) != null) return null
         try {
             val p = closure.prototype
             if (p.numParams != recipe.parameters || p.isVararg || p.numUpvalues != recipe.upvalues ||
                 closure.upvalues.size != recipe.upvalues || closure.upvalues.any { it == null } ||
                 p.maxStacksize !in 1..255 || p.code.size !in 1..65536 || p.constants.size > 4096 ||
-                p.prototypes.isNotEmpty()) return null
+                p.prototypes.size > 256) return null
             var textSize = 0
             for (constant in p.constants) when (constant) {
                 null, is Boolean, is Double -> Unit
@@ -175,28 +204,33 @@ object LuaCaptureFacts {
                 }
                 else -> return null
             }
-            if (LuaPrototypeFingerprint.leaf(p) != recipe.hash) return null
+            if (LuaPrototypeFingerprint.tree(p) != recipe.hash) return null
             var result = true
             var unknown = false
             for (rule in recipe.rules) {
-                val fact = predicate(closure.upvalues[rule.slot].getValue(), rule.predicate, active, depth)
-                if (fact == null) unknown = true else if (!fact) result = false
+                val cell = closure.upvalues[rule.slot]
+                val value = cell.getValue()
+                val bound = context.bind(rule.binding, value)
+                val sameCell = context.cell(rule.cell, cell)
+                val fact = predicate(value, rule.predicate, context, depth)
+                if (bound == null || fact == null) unknown = true
+                if (bound == false || !sameCell || fact == false) result = false
             }
             return if (unknown) null else result
-        } finally { active.remove(closure) }
+        } finally { context.active.remove(closure) }
     }
 
-    private fun predicate(value: Any?, predicate: Predicate, active: IdentityHashMap<LuaClosure, Boolean>, depth: Int): Boolean? = when (predicate) {
+    private fun predicate(value: Any?, predicate: Predicate, context: Observation, depth: Int): Boolean? = when (predicate) {
         Predicate.Empty -> LuaFactApi.plain(value)?.delegate?.isEmpty()
         is Predicate.Absent -> LuaFactApi.plain(value)?.let { !it.delegate.containsKey(predicate.key) }
         is Predicate.Identity -> value === predicate.value
-        is Predicate.Closure -> observe(value, predicate.recipe, active, depth + 1)
+        is Predicate.Closure -> observe(value, predicate.recipe, context, depth + 1)
         is Predicate.Field -> {
             val table = LuaFactApi.plain(value)
             if (table == null || depth >= MAX_DEPTH) null
             else {
                 val field = ownStringValue(table, predicate.key)
-                if (field == null) null else predicate(field, predicate.predicate, active, depth + 1)
+                if (field == null) null else predicate(field, predicate.predicate, context, depth + 1)
             }
         }
     }

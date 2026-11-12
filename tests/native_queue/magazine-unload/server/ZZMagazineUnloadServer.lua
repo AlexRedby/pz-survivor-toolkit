@@ -1,3 +1,5 @@
+local selectedEquipEdit=require 'QueueTestSelection'
+if selectedEquipEdit.cases[1]=='equip-edit'then require 'QueueEquipEditServer';return end
 if not isServer()then return end
 local P=require 'QueueEnergyPlacement'
 local F=require 'QueueMagazineUnload'

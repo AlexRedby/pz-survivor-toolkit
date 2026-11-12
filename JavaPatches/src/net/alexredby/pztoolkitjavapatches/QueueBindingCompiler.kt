@@ -31,9 +31,9 @@ internal object QueueBindingCompiler {
     }
 
     private const val COMPAT_SHA =
-        "b23ff69dab06a89aa2b9039692789f1ee1d73341f74a000252d05ac6aa760d21"
+        "d0f762a76da727c84e904d7591766142ee0fbb42541167bc4cb35bc70690c87b"
     private const val POLICY_SHA =
-        "33050e7e258fd2ab4d42d9380fa9370ce7d514fa406e364088716559f502fcb6"
+        "aa52922b583f219f306a60959859fb8624fc53124c2d6226ac1d9c40f5720059"
     private const val CARTS_SHA = "9d913340f5906372f610f10ce73c3bfb24fee1aa999fcf5392c559da5dc4f3ff"
     private const val PREFIX = "__PZ_PRIVATE_OWN_REFS_54d62c15_"
     private val platform = J2SEPlatform()

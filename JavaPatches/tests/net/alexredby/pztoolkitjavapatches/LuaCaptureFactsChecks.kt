@@ -21,7 +21,7 @@ object LuaCaptureFactsChecks {
     private fun rule(slot: Int, test: String, vararg fields: Pair<Any, Any?>) =
         table("slot" to slot.toDouble(), "test" to test, *fields)
     private fun recipe(closure: LuaClosure, vararg rules: KahluaTableImpl) = table(
-        "fingerprint" to LuaPrototypeFingerprint.leaf(closure.prototype),
+        "fingerprint" to LuaPrototypeFingerprint.tree(closure.prototype),
         "parameters" to closure.prototype.numParams.toDouble(), "upvalues" to closure.prototype.numUpvalues.toDouble(),
         "captures" to array(*rules))
     @JvmStatic fun forwarding(a: Any?, b: Any?): Boolean? = LuaCaptureFacts.match(a, b)
@@ -192,6 +192,45 @@ object LuaCaptureFactsChecks {
         var deep: KahluaTableImpl = table("test" to "empty-table")
         repeat(20) { deep = table("test" to "field", "key" to "x", "predicate" to deep) }
         check(read(outer, recipe(outer, rule(registrySlot, "field", "key" to "fn", "predicate" to deep))) == null)
+
+        // One query must relate opaque values AND the actual live UpValue cells.
+        // Distinct cells containing the same empty table are not a shared state owner.
+        val aliases = run("""
+            local a={};local b=a
+            local first=function() return a end
+            local second=function() return b end
+            return {first=first,second=second,root=function() return first(),second() end}
+        """.trimIndent()) as KahluaTableImpl
+        val first = aliases.delegate["first"] as LuaClosure
+        val second = aliases.delegate["second"] as LuaClosure
+        val aliasRoot = aliases.delegate["root"] as LuaClosure
+        val firstSlot = slot(aliasRoot, first); val secondSlot = slot(aliasRoot, second)
+        fun aliasRecipe(label: String) = recipe(aliasRoot,
+            rule(firstSlot,"closure","recipe" to recipe(first,rule(0,"empty-table",label to "state"))),
+            rule(secondSlot,"closure","recipe" to recipe(second,rule(0,"empty-table",label to "state"))))
+        check(read(aliasRoot,aliasRecipe("bind")) == true)
+        check(read(aliasRoot,aliasRecipe("cell")) == false)
+        val separate = second.upvalues[0]
+        second.upvalues[0] = first.upvalues[0]
+        check(read(aliasRoot,aliasRecipe("cell")) == true)
+        second.upvalues[0] = separate
+        separate.setValue(table())
+        check(read(aliasRoot,aliasRecipe("bind")) == false)
+        for (label in listOf("", "bad name", "x".repeat(65))) {
+            check(read(first, recipe(first,rule(0,"empty-table","cell" to label))) == null)
+        }
+        val treeClosure = run("return function(x) return function() return x end end") as LuaClosure
+        val treeSpec = recipe(treeClosure)
+        check(LuaPrototypeFingerprint.leaf(treeClosure.prototype) == "unsupported")
+        check(read(treeClosure,treeSpec) == true)
+        val child = treeClosure.prototype.prototypes[0]
+        val childCode = child.code[0]; child.code[0] = childCode xor 64
+        check(read(treeClosure,treeSpec) == null); child.code[0] = childCode
+        val children = child.prototypes
+        child.prototypes = arrayOf(treeClosure.prototype)
+        check(read(treeClosure,treeSpec) == null); child.prototypes = children
+        check(read(treeClosure,treeSpec) == true)
+        check(LuaPrototypeFingerprint.tree(inner.prototype) == LuaPrototypeFingerprint.leaf(inner.prototype))
 
         // Public prototype arrays and loaded closure environments are never cached.
         val code = inner.prototype.code[0]
