@@ -40,7 +40,26 @@ def expected_hands(ids, editing):
     if segment == 'reorder-three': return dict(primary=item['b']['id'], secondary=item['a' if editing else 'c']['id'])
     if segment == 'cancel': return dict(primary=item['a' if editing else 'c']['id'], secondary=item['b']['id'])
     if segment == 'component-guard': return dict(primary=item['b']['id'], secondary=False)
+    if segment == 'capacity': return dict(primary=item['heldBag']['id'], secondary=False)
     return dict(primary=False, secondary=False)
+
+
+def check_callback_observation(value, allow_stop=False):
+    require(type(value) is dict and set(value) == {'schema', 'sourceVerified', 'bindingsCurrent', 'classUnchanged',
+            'customCallbacksAbsent', 'differences', 'verified'} and type(value['schema']) is int and value['schema'] == 1
+            and all(value[name] is True for name in ('sourceVerified', 'bindingsCurrent', 'classUnchanged', 'customCallbacksAbsent', 'verified')),
+            'fresh source callback observation')
+    differences = value['differences']
+    require(type(differences) is list and len(differences) <= 1, 'bounded callback differences')
+    if differences:
+        change = differences[0]
+        require(allow_stop and type(change) is dict and set(change) == {'scope', 'method', 'source', 'line',
+                'originalBaseline', 'guardedTransfer', 'exactStopCapture', 'nativeBindingAtAdmission'}
+                and change['scope'] == 'action' and change['method'] == 'stop' and change['source'] == 'BulkActions.lua'
+                and type(change['line']) is int and change['line'] > 0
+                and all(change[name] is True for name in ('originalBaseline', 'guardedTransfer', 'exactStopCapture', 'nativeBindingAtAdmission')),
+                'exact source-owned Host transfer stop guard')
+    return bool(differences)
 
 
 def check_segment(row, selection, prepared, verified):
@@ -54,7 +73,7 @@ def check_segment(row, selection, prepared, verified):
         if segment in ('dependent', 'capacity'): names.add('nested')
         if segment == 'capacity': names.add('heldBag')
         require(set(specs) == names and len({spec['id'] for spec in specs.values()}) == len(specs), 'exact fixture item identities')
-        expected_types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', a='Base.Hammer' if segment == 'component-guard' else 'Base.Nails', b='Base.Screwdriver', c='Base.Scissors',
+        expected_types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', a='Base.Hammer' if segment == 'component-guard' else 'Base.Nails', b='Base.Screwdriver', c='Base.Screwdriver',
                               bag='Base.Bag_Schoolbag', marker='Base.Nails', nested='Base.Plank' if segment == 'capacity' else 'Base.Pencil', heldBag='Base.Bag_Schoolbag')
         for name, spec in specs.items():
             require(type(spec['id']) is int and spec['id'] >= 0 and spec['type'] == expected_types[name]
@@ -135,7 +154,10 @@ def check_segment(row, selection, prepared, verified):
         sequences = []; performed = []
         for command in commands:
             name = command['name']; cancelled = editing and segment == 'cancel' and name == 'equip-c'
-            require(command['callbacksUntouched'] is True and type(command['duration']) in (int, float) and command['duration'] > 0, 'native callbacks/duration')
+            duration = command['duration']
+            client_transfer = selection['kind'] == 'mp' and name == 'transfer'
+            require(type(command['callbacksUntouched']) is bool and type(duration) in (int, float) and math.isfinite(duration)
+                    and (duration == -1 if client_transfer else duration > 0), 'native callbacks/duration')
             wanted_item = name.removeprefix('equip-')
             if name == 'equip-bag': wanted_item = 'heldBag'
             if name == 'transfer': wanted_item = 'nested'
@@ -144,14 +166,26 @@ def check_segment(row, selection, prepared, verified):
                 require(command['type'] == 'ISEquipWeaponAction' and command['duration'] == 50 and command['maxTimeInit'] == 50
                         and command['twoHands'] is False and type(command['primary']) is bool and command['primary'] is not (segment == 'reorder-three' and name in ('equip-a', 'equip-c') or segment == 'cancel' and name == 'equip-b'), 'explicit unchanged native equip controls')
             else: require(command['type'] == ('ISInventoryTransferAction' if name == 'transfer' else 'ISReadABook'), 'native action class')
+            untouched = command['callbacksUntouched']
+            guarded_stop = not untouched and selection['kind'] == 'mp' and selection['mode'] == 'toolkit' and name == 'transfer'
+            constructor = command.get('callbackConstructor')
+            if constructor is not None or not untouched:
+                require(not check_callback_observation(constructor), 'native constructor callbacks changed')
             events = command['lifecycle']; require(type(events) is list, 'native lifecycle list')
+            changes = []
             for event in events:
+                if 'callbackObservation' in event or not untouched:
+                    changed = check_callback_observation(event.get('callbackObservation'), guarded_stop)
+                    if changed: changes.append(event)
                 require(type(event['sequence']) is int and event['sequence'] > 0, 'native lifecycle sequence'); sequences.append(event['sequence'])
                 location = event['itemLocation']
                 require(type(location) is dict and set(location) == {'root', 'containerPresent', 'owner'}
                         and type(location['root']) is bool and type(location['containerPresent']) is bool
                         and (location['owner'] is False or type(location['owner']) is int and location['owner'] in {spec['id'] for spec in specs.values()})
                         and (not location['root'] or location['containerPresent'] and location['owner'] is False), 'observed native item location')
+            if not untouched:
+                require(guarded_stop and changes and changes[0]['event'] == 'admission'
+                        and len(changes) == len(events), 'unproven native callback change')
             if cancelled:
                 require(command.get('cancelled') is True and command['started'] is False and command['progress'] is False
                         and not any(value['event'] == 'begin' for value in events), 'cancelled Equip ran or lost evidence')
@@ -209,7 +243,7 @@ def verify(root, selection, catalog):
                      pendingEditsVerified=not issues and selection['mode'] == 'toolkit' and selection['kind'] == 'sp',
                      pendingProtectionVerified=not issues and selection['mode'] == 'toolkit', tidyQuiescent=not issues)))
     return dict(issues=issues, outcomes=outcomes, evidence=dict(limits=[
-        'Programmatic native constructors with unchanged callbacks/durations; no physical-input or active-edit claim.',
+        'Programmatic native constructors/durations and original delegates; only the exact source-proven local transfer stop guard may differ. No physical-input or active-edit claim.',
         'New positive Equip rights are SP only; menu Host is a denial control with exact authority inventory/hands.',
-        'Low-level dependent/capacity constructors preserve P4 native restoration to the original empty hands and nested source; they make no explicit menu-intent claim or future capacity grant.',
+        'P4 returns borrowed Pencil/Plank to the original nested source. Native transfer removes only the transferred item from hands: dependent clears held Pencil, capacity preserves the held source bag. No explicit menu-intent claim or future capacity grant.',
         'P4 quiescence uses real idle callbacks and shared retained-loan diagnostics; its private state tables are not observed.']))

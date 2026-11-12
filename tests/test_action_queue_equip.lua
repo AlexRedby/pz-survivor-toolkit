@@ -173,6 +173,19 @@ do
  assert(api.cancel(q,a)and #q.queue==2 and q.queue[1]==front and q.queue[2]==b and s.effects()==0,
   'real Queue did not erase only the qualified pending operation')
 end
+-- Distinct instances of the same native type must stay separate resources
+-- when a third pending assignment crosses them through the public Queue API.
+do
+ local s=setup();s.f.project('ActionQueueOperations');s.f.project('ActionQueueDefinitions')
+ s.f.project('ActionQueuePolicy');s.f.project('ActionQueueLabels');local api=s.f.project('ActionQueue')
+ local front=s.f.action(ISReadABook,{item=s.item()});local tail=s.f.action(ISReadABook,{item=s.item()})
+ local a=s.action(s.item(),false,false);local b=s.action(s.item('HandWeapon'),true,false)
+ local c=s.action(s.item('HandWeapon'),false,false);local q=s.f.queue(front,a,b,c,tail)
+ assert(b.item:getFullType()==c.item:getFullType()and b.item:getID()~=c.item:getID())
+ assert(api.move(q,c,a)and #q.queue==5 and q.queue[1]==front and q.queue[2]==c
+  and q.queue[3]==a and q.queue[4]==b and q.queue[5]==tail,'same-type instance crossing lost identity or projected order')
+ assert(s.actor.primary==nil and s.actor.secondary==nil and s.effects()==0,'pending move executed an effect')
+end
 -- A refused certificate or Host mode must preserve the old native boundary;
 -- it cannot recover the new shared-hands permission through legacy fallback.
 for _,client in ipairs({false,true})do

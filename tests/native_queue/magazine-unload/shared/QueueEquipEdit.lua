@@ -35,9 +35,11 @@ local function expectedHands(ids)
  if ids.segment=='reorder-two'then p=edited and item.a.id or item.b.id
  elseif ids.segment=='reorder-three'then p=item.b.id;s=edited and item.a.id or item.c.id
  elseif ids.segment=='cancel'then p=edited and item.a.id or item.c.id;s=item.b.id
- -- Native low-level transfer/equip constructors arm P4's session captured by
- -- the front reader; final restoration returns the original empty hands.
- elseif ids.segment=='dependent'or ids.segment=='capacity'then p=false;s=false
+ -- P4 returns only the fetched item to its recorded source. The native
+ -- return transfer clears that item from hands; it does not clear another
+ -- held object. No restore-hands policy is armed by these low-level actions.
+ elseif ids.segment=='dependent'then p=false;s=false
+ elseif ids.segment=='capacity'then p=item.heldBag.id;s=false
  elseif ids.segment=='component-guard'then p=item.b.id end
  return{primary=p,secondary=s}
 end
@@ -74,10 +76,9 @@ function F.prepare(player,segment,mode,kind,placement,proof,previous)
  end
  ids.items.front.pages=front:getNumberOfPages();ids.items.tail.pages=tail:getNumberOfPages()
  for _,perk in ipairs({Perks.Woodwork,Perks.Doctor})do player:setPerkLevelDebug(perk,0)end
- seed('a',segment=='component-guard'and'Base.Hammer'or'Base.Nails');seed('b','Base.Screwdriver');seed('c','Base.Scissors')
+ seed('a',segment=='component-guard'and'Base.Hammer'or'Base.Nails');seed('b','Base.Screwdriver');seed('c','Base.Screwdriver')
  local bag=seed('bag','Base.Bag_Schoolbag');local slot=bag:canBeEquipped();assert(slot and not player:getWornItem(slot),'test backpack slot must be empty')
  player:setWornItem(slot,bag);bag:getItemContainer():setExplored(true)
- if isServer()then sendClothing(player,slot,bag)end
  seed('marker','Base.Nails',bag:getItemContainer())
  if segment=='dependent'then seed('nested','Base.Pencil',bag:getItemContainer())
  elseif segment=='capacity'then
@@ -85,7 +86,12 @@ function F.prepare(player,segment,mode,kind,placement,proof,previous)
   seed('nested','Base.Plank',held:getItemContainer())
  end
  ids.inventory=inventory(player);state.input=F.snapshot(state)
- if isServer()then for _,item in ipairs(owned)do sendAddItemToContainer(item:getContainer(),item)end end
+ if isServer()then
+  -- A root bag packet already contains its children. Publish complete roots
+  -- before worn IDs so the client binds the canonical inventory object.
+  for _,item in ipairs(owned)do if item:getContainer()==root then sendAddItemToContainer(root,item)end end
+  sendClothing(player,slot,bag)
+ end
  return state
 end
 function F.resolve(player,ids)

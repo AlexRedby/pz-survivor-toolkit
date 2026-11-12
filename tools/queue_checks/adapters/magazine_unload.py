@@ -49,7 +49,7 @@ def definitions():
                         'move-independent': {'equip-edit': dict(pendingEditsVerified=True)},
                         'move-dependent': {'equip-edit': dict(pendingProtectionVerified=True)}},
                 toolkit_only=['cancel-waiting', 'move-independent', 'move-dependent'],
-                scope='Grouped full selected pack native explicit pending Equip actions: SP reorder-two/reorder-three/cancel, inert worn backpack, unavailable nested input, container-transfer coupling and Hammer Script+Attributes component eligibility protected; menu Host new rights remain unavailable. Unchanged native source-order queue-off controls, paid native front/tail readers, canonical final hands and full inventory multiset/count, original callbacks/durations, native lifecycle receipts and P4 quiescence. Programmatic constructors; no active edit, physical input or future capacity credit.')},
+                scope='Grouped full selected pack native explicit pending Equip actions: SP reorder-two/reorder-three/cancel, inert worn backpack, unavailable nested input, container-transfer coupling and Hammer Script+Attributes component eligibility protected; menu Host new rights remain unavailable. Unchanged native source-order queue-off controls, paid native front/tail readers, canonical final hands and full inventory multiset/count, original native delegates/durations, attested source-owned transfer stop guard, native lifecycle receipts and P4 quiescence. Programmatic constructors; no active edit, physical input or future capacity credit.')},
         cases=[dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'], modes=['native', 'toolkit'], languages=['EN']) for case in (*CASES, *EQUIP_CASES)])}
 
 

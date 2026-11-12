@@ -10,6 +10,7 @@ local P=require 'QueueEnergyPlacement'
 local JSON=require 'QueueHealthEvents'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Quiescence=require 'QueueEquipEditQuiescence'
+local CallbackObservation=require 'QueueEquipCallbackObservation'
 local tidyObserver
 local native=config.mode=='native';local canEdit=not native and config.kind=='sp'
 local started,ready,done=false,false,false
@@ -20,6 +21,7 @@ local pendingBefore,pendingAfter,pendingOrder,componentGuard
 local frameLast,frameCadence=nil,{count=0,totalMilliseconds=0,maxMilliseconds=0}
 local since=getTimestampMs();local serial,episodeSerial=0,0;local episodes={}
 local callbacks={}
+local callbackObserver,callbackReaders=nil,{}
 -- Take the immutable baseline after selected-pack OnGameStart integrations,
 -- including the source-owned MPFastForward reading animation fix.
 local function captureCallbacks()
@@ -72,13 +74,14 @@ local function fail(reason)
 end
 local function record(action,event,phase,succeeded)
  local row=tracks[action];if not row then return end
- for key,callback in pairs(callbacks[action.Type])do if action[key]~=callback or _G[action.Type][key]~=callback then row.callbacksUntouched=false end end
+ local callbackProof=callbackReaders[action](event)
+ if #callbackProof.differences>0 or not callbackProof.classUnchanged or not callbackProof.customCallbacksAbsent then row.callbacksUntouched=false end
  local actual=action.action;local episode=false
  if actual then if not episodes[actual]then episodeSerial=episodeSerial+1;episodes[actual]=episodeSerial end;episode=episodes[actual]end
  local item=action.item;local container=item:getContainer();local owner=container and container:getContainingItem()
  local itemLocation={root=container==getPlayer():getInventory(),containerPresent=container~=nil,owner=owner and owner:getID()or false}
  serial=serial+1;row.lifecycle[#row.lifecycle+1]={sequence=serial,event=event,phase=phase or false,succeeded=succeeded==true,
-  nativeEpisode=episode,nativeClass=actual and getClassSimpleName(actual)or false,hands=F.hands(getPlayer()),itemLocation=itemLocation}
+  callbackObservation=callbackProof,nativeEpisode=episode,nativeClass=actual and getClassSimpleName(actual)or false,hands=F.hands(getPlayer()),itemLocation=itemLocation}
 end
 assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('equip-edit-native-boundaries',{
  started=function(action)record(action,'admission')end,
@@ -90,9 +93,16 @@ local function track(name,action)
   assert(action.maxTime==50 and action.maxTimeInit==50 and not action.twoHands and not action.fromHotbar,'explicit native equip constructor changed')
   row.primary=action.primary;row.twoHands=action.twoHands;row.maxTimeInit=action.maxTimeInit
  end
- assert(type(row.duration)=='number'and row.duration>0,'native action duration changed')
+ if action.Type=='ISInventoryTransferAction'and isClient()then
+  -- Native clients wait for the server transaction to supply the timer.
+  local group=action.queueList and action.queueList[1]
+  assert(config.kind=='mp'and row.duration==-1 and #action.queueList==1 and group.time==-1
+   and #group.items==1 and group.items[1]==action.item and action.transactionId==0,'native client transfer constructor changed')
+ else assert(type(row.duration)=='number'and row.duration>0 and row.duration<math.huge,'native action duration changed')end
  for key,callback in pairs(callbacks[action.Type])do assert(action[key]==callback,'native action callback changed '..key)end
- tracks[action]=row;commands[#commands+1]=row;ISTimedActionQueue.add(action);return action
+ local read=callbackObserver.track(action);row.callbackConstructor=read('constructor')
+ assert(row.callbackConstructor.verified and #row.callbackConstructor.differences==0,'native constructor callbacks differ')
+ callbackReaders[action]=read;tracks[action]=row;commands[#commands+1]=row;ISTimedActionQueue.add(action);return action
 end
 local function book(name)return track(name,ISReadABook:new(getPlayer(),state.items[name]))end
 local function equip(name,item,primary)return track(name,ISEquipWeaponAction:new(getPlayer(),item,50,primary,false))end
@@ -181,6 +191,7 @@ require('QueuePreflight').onTick(Events,function()
    PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native)
    assert(PZSurvivorToolkit.Settings.actionQueue()==not native and not p:isTimedActionInstant())
    captureCallbacks()
+   callbackObserver=CallbackObservation.new(PZSurvivorToolkit,config,Proof,{ISEquipWeaponAction,ISReadABook,ISInventoryTransferAction})
    tidyObserver=Quiescence.new(PZSurvivorToolkit,p,empty,Proof,Events)
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);p:setGodMod(true);p:setGhostMode(true);p:setAutoDrink(false)
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
@@ -199,6 +210,11 @@ require('QueuePreflight').onTick(Events,function()
    raw('CLIENT_PLACEMENT',{case='equip-edit',segment=segment(),proof=proof});phase='prepared';request('Prepare')
   elseif phase=='prepared'and ids then
    state=F.resolve(p,ids);if not state or p:tooDarkToRead()then return end
+   -- Positive scenes use only currently eligible native instances. Keep
+   -- extra-component inputs in the separate protected-boundary scene.
+   local ordinary={state.items.b,state.items.c}
+   if segment()~='component-guard'then ordinary[#ordinary+1]=state.items.a end
+   assert(toolkitEquipNativeQuiet(p,ordinary)==true,'ordinary Equip fixture inputs failed native eligibility')
    if index==1 then raw('EFFECT_DIAGNOSTICS',require('QueueEquipEffectDiagnostics').observe(p,state.items.a))end
    assert(not p:isTimedActionInstant());tidyObserver.reset();state.front=book('front');phase='front';frameLast=now()
   elseif phase=='front'and tracks[state.front].progress then
@@ -220,7 +236,7 @@ require('QueuePreflight').onTick(Events,function()
     emit({event='complete',cases=config.cases,performed=1,failed=0,skipped=0});print('[MAGAZINE_UNLOAD] COMPLETE '..JSON.encode({cases=config.cases}));done=true;return
    end
    state,authority,ids,receipt,placement,arrival,proof,quiet=nil,nil,nil,nil,nil,nil,nil,nil
-   tracks,commands,edits={}, {}, {};pendingBefore,pendingAfter,pendingOrder,componentGuard=nil,nil,nil,nil;frameLast=nil;frameCadence={count=0,totalMilliseconds=0,maxMilliseconds=0};phase='prepare';since=now()
+   tracks,commands,edits={}, {}, {};callbackReaders={};pendingBefore,pendingAfter,pendingOrder,componentGuard=nil,nil,nil,nil;frameLast=nil;frameCadence={count=0,totalMilliseconds=0,maxMilliseconds=0};phase='prepare';since=now()
   end
  end)
  if not ok then fail(reason)end
