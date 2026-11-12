@@ -1,9 +1,12 @@
 """Opt-in native Equip work evidence and its deliberately limited UI/timing scope."""
 import copy
 import json
+import re
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
+import zlib
 
 from tests.test_queue_magazine_unload_equip import evidence
 from queue_checks.adapters import magazine_unload_equip_verifier as verifier
@@ -209,6 +212,113 @@ class EquipWorkTests(unittest.TestCase):
             changed = copy.deepcopy(value); changed['phases'][0]['metrics'][field] = invalid
             with self.subTest(field=field, invalid=invalid), self.assertRaises(ValueError):
                 verifier.check_workload(changed, dict(kind='sp', mode='toolkit'))
+
+
+class EquipReviewedSourcePreflightTests(unittest.TestCase):
+    fixture_relative = Path('tests/native_queue/magazine-unload/client/QueueEquipCallbackObservation.lua')
+    project = Path(__file__).resolve().parents[1]
+
+    def candidate(self, directory):
+        project = Path(directory) / 'project'; toolkit = Path(directory) / 'candidate'
+        fixture = project / self.fixture_relative; fixture.parent.mkdir(parents=True)
+        fixture.write_bytes((self.project / self.fixture_relative).read_bytes())
+        pins = adapter._reviewed_equip_pins(fixture.read_text())
+        for relative in pins:
+            target = toolkit / '42/media/lua' / relative; target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((self.project / 'PZSurvivorToolkit/42/media/lua' / relative).read_bytes())
+        return project, toolkit, pins
+
+    def selection(self, baseline=False):
+        return dict(kind='sp', mode='toolkit', clients=1, languages=['EN'], mods=adapter.MODS, cases=['equip-edit'],
+                    options=dict(equip_workload=True, equip_workload_baseline=baseline))
+
+    def test_current_reviewed_sources_use_effective_candidate_layers(self):
+        real = dict(PZSurvivorToolkit=self.project / 'PZSurvivorToolkit')
+        pins = adapter._reviewed_equip_pins((self.project / self.fixture_relative).read_text())
+        self.assertEqual(pins, adapter.audit_equip_sources(self.project, self.selection(), real))
+        with tempfile.TemporaryDirectory() as temporary:
+            project, toolkit, pins = self.candidate(temporary)
+            for relative in pins:
+                common = toolkit / 'common/media/lua' / relative; common.parent.mkdir(parents=True, exist_ok=True)
+                common.write_bytes(b'unselected common source\n')
+            # The selected version overrides common; an unrelated legacy root is inactive.
+            legacy = toolkit / 'media/lua/shared/PZSurvivorToolkit/SourceProof.lua'; legacy.parent.mkdir(parents=True)
+            legacy.write_bytes(b'inactive legacy source\n')
+            self.assertEqual(pins, adapter.audit_equip_sources(project, self.selection(), dict(PZSurvivorToolkit=toolkit)))
+            self.assertEqual({}, adapter.audit_equip_sources(project / 'absent', dict(cases=['direct']), {}))
+
+    def test_source_or_fixture_pin_drift_fails_before_probe_or_staging_writes(self):
+        for change in ('source', 'pin', 'missing'):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as temporary:
+                project, toolkit, pins = self.candidate(temporary)
+                relative = next(name for name in pins if name.endswith('/SourceProof.lua'))
+                source = toolkit / '42/media/lua' / relative
+                if change == 'source': source.write_bytes(source.read_bytes() + b'-- unreviewed candidate\n')
+                elif change == 'missing': source.unlink()
+                else:
+                    fixture = project / self.fixture_relative
+                    fixture.write_text(re.sub(r"('shared','SourceProof\.lua',)[0-9]+",
+                        lambda match: match[1] + str(pins[relative] + 1), fixture.read_text(), count=1))
+                output = Path(temporary) / 'not-staged'
+                with mock.patch.object(adapter, 'audit_native', return_value={}), mock.patch.object(adapter, 'audit_selected', return_value={}), \
+                        mock.patch.object(adapter, '_work_probe') as probe, mock.patch.object(adapter.shutil, 'copy2') as copy_file:
+                    with self.assertRaisesRegex(ValueError, 'SourceProof.lua'):
+                        adapter.stage(project, output, Path(temporary) / 'game', Path(temporary) / 'jdk', self.selection(),
+                                      dict(PZSurvivorToolkit=toolkit), dict(roles={}))
+                    probe.assert_not_called(); copy_file.assert_not_called()
+                self.assertFalse(output.exists(), 'source mismatch created staging/probe artifacts')
+
+    def test_explicit_archived_profile_uses_only_fixture_baseline_overrides(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            project, toolkit, pins = self.candidate(temporary); fixture = project / self.fixture_relative
+            text = fixture.read_text(); current, archived = {}, {}
+            # Portable synthetic archived sources: no dependence on local Git history.
+            # ASCII zlib Adler is an independent oracle for these LF-terminated records.
+            for relative in pins:
+                side, _, name = relative.split('/')
+                current[relative] = ('current ' + name + '\n').encode()
+                archived[relative] = ('archived ' + name + '\n').encode() if name != 'BulkActions.lua' else current[relative]
+                text = re.sub(r"(\{'" + re.escape(side) + "','" + re.escape(name) + "',)[0-9]+",
+                              lambda match: match[1] + str(zlib.adler32(current[relative])), text, count=1)
+                if name != 'BulkActions.lua':
+                    text = re.sub(r"(source\[2\]=='" + re.escape(name) + "'then adler=)[0-9]+",
+                                  lambda match: match[1] + str(zlib.adler32(archived[relative])), text, count=1)
+                (toolkit / '42/media/lua' / relative).write_bytes(archived[relative])
+            fixture.write_text(text)
+            locations = dict(PZSurvivorToolkit=toolkit)
+            expected = {relative: zlib.adler32(data) for relative, data in archived.items()}
+            self.assertEqual(expected, adapter.audit_equip_sources(project, self.selection(True), locations))
+            with self.assertRaises(ValueError): adapter.audit_equip_sources(project, self.selection(False), locations)
+            with self.assertRaises(ValueError): adapter.audit_equip_sources(project, dict(cases=['equip-edit'], options=dict(equip_workload_baseline=True)), locations)
+            for relative, data in current.items(): (toolkit / '42/media/lua' / relative).write_bytes(data)
+            self.assertEqual({relative: zlib.adler32(data) for relative, data in current.items()},
+                             adapter.audit_equip_sources(project, self.selection(False), locations))
+            with self.assertRaises(ValueError): adapter.audit_equip_sources(project, self.selection(True), locations)
+
+    def test_closed_fixture_parser_rejects_dynamic_or_unrecognized_source_checks(self):
+        text = (self.project / self.fixture_relative).read_text()
+        changes = [re.sub(r"('shared','SourceProof\.lua',)[0-9]+", r"\1calculatePin()", text, count=1),
+                   text.replace("'SourceProof.lua'", "'Source Proof.lua'", 1),
+                   re.sub(r'then adler=[0-9]+', 'then adler=calculatePin()', text, count=1),
+                   text + '\nlocal alias=sources\n',
+                   text.replace("adler,'PZSurvivorToolkit',true", "adler,'DifferentMod',true", 1),
+                   text.replace('config.options.equip_workload_baseline==true', 'config.options.equip_workload_baseline~=false', 1)]
+        for changed in changes:
+            with self.subTest(changed=changed[-80:]), self.assertRaises(ValueError): adapter._reviewed_equip_pins(changed)
+
+    def test_reader_normalization_preserves_bom_and_unicode_separators_as_utf16_data(self):
+        for raw in (b'A\nB', b'A\nB\n', b'A\r\nB\r\n', b'A\rB\r'):
+            self.assertEqual(zlib.adler32(b'A\nB\n'), adapter._source_adler(raw))
+        self.assertEqual(1, adapter._source_adler(b''))
+        self.assertEqual(zlib.adler32(b'\n'), adapter._source_adler(b'\r\n'))
+        raw = '\ufeffA\r\n\u0085\u2028\u2029😀\rZ\n\n'.encode('utf-8')
+        units = [0xfeff, 65, 10, 0x85, 0x2028, 0x2029, 0xd83d, 0xde00, 10, 90, 10, 10]
+        # Weighted-sum Adler oracle, independent of the rolling implementation.
+        expected = ((len(units) + sum((len(units) - index) * value for index, value in enumerate(units))) % 65521) * 65536 + (1 + sum(units)) % 65521
+        self.assertEqual(expected, adapter._source_adler(raw))
+        self.assertNotEqual(zlib.adler32(raw), expected, 'fixture accidentally tests raw UTF8 byte Adler')
+        self.assertNotEqual(adapter._source_adler(raw[3:]), expected, 'BOM was silently stripped')
+        with self.assertRaisesRegex(ValueError, 'UTF8'): adapter._source_adler(b'\xed\xa0\x80')
 
 
 if __name__ == '__main__': unittest.main()

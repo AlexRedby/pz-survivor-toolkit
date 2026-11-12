@@ -8,7 +8,7 @@ local custom={'onStartFunc','onCancelFunc','onCompleteFunc','onCompleteArgs','on
 local sources={
  {'client','BulkActions.lua',3109997898},
  {'client','ActionQueuePolicy.lua',3807190942},
- {'shared','SourceProof.lua',4031039642},
+ {'shared','SourceProof.lua',3444982222},
 }
 -- Full native compilation of BulkActions: root child6/child1; creation pc32
 -- captures parent register4 (the original transfer.stop) into slot0.
@@ -50,10 +50,12 @@ function M.new(toolkit,config,proof,classes)
  end
  for _,source in ipairs(sources)do
   -- Only the archived pre-simplification work profile uses this reviewed
-  -- Policy body; every ordinary run retains the current exact source pin.
+  -- Policy/SourceProof bodies; ordinary runs retain the current exact pins.
   local adler=source[3]
-  if source[2]=='ActionQueuePolicy.lua'and config.options and config.options.equip_workload_baseline==true then
-   assert(config.options.equip_workload==true,'baseline callback proof requires work profile');adler=3807387550
+  if config.options and config.options.equip_workload_baseline==true then
+   assert(config.options.equip_workload==true,'baseline callback proof requires work profile')
+   if source[2]=='ActionQueuePolicy.lua'then adler=3807387550
+   elseif source[2]=='SourceProof.lua'then adler=4031039642 end
   end
   assert(matches('media/lua/'..source[1]..'/PZSurvivorToolkit/'..source[2],adler,'PZSurvivorToolkit',true)==true,
    'callback observation source bytes changed '..source[2])

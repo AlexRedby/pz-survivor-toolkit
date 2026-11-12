@@ -1,7 +1,3 @@
-# Pending equipment first-use cost
-
-- [ ] Attribute the remaining first-family enqueue cost with the optional SP `equip_workload` profile before choosing another optimization. Separate source opening/reading/hashing, fresh capture/prototype checks and queue construction; source-open counters alone do not establish which work dominates. Compare equivalent source-qualified inputs and preserve fresh facts, exact outcomes and queue-disabled controls. Avoid broad startup warming or cross-decision mutable-result caches.
-
 # Shared queue resources and container capacity
 
 Implementation and migration are conditional on the performance gate in [the design plan](docs/design/QUEUE_RESOURCE_CAPACITY.md). Keep the native executor and existing protections until each replacement is qualified.

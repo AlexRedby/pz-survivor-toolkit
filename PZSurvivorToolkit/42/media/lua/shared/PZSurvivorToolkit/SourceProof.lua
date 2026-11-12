@@ -3,50 +3,57 @@ local utf8Strings = string.byte("洗") == 230
 
 local function hash(reader, adler, limit)
     local value, sum, units = adler and 1 or 5381, 0, 0
-    local function add(code)
-        units = units + 1
-        if units > limit then return false end
-        if adler then
-            value = (value + code) % 65521
-            sum = (sum + value) % 65521
-        else
-            value = (value * 33 + code) % 4294967296
-        end
-        return true
-    end
     while true do
         local line = reader:readLine()
         if line == nil then break end
         if type(line) ~= "string" then return end
-        local i = 1
-        while i <= #line do
-            local code = string.byte(line, i)
-            if utf8Strings and code >= 128 then
-                local count
-                if code >= 194 and code < 224 then count = 2
-                elseif code >= 224 and code < 240 then count = 3
-                elseif code >= 240 and code <= 244 then count = 4
-                else return end
-                code = code % (2 ^ (7 - count))
-                for offset = 1, count - 1 do
-                    local nextByte = string.byte(line, i + offset)
-                    if not nextByte or nextByte < 128 or nextByte > 191 then return end
-                    code = code * 64 + nextByte % 64
-                end
-                if (count == 3 and code < 2048) or (count == 4 and code < 65536)
-                    or code > 1114111 or (code >= 55296 and code <= 57343) then return end
-                i = i + count - 1
-                if code > 65535 then
-                    code = code - 65536
-                    if not add(55296 + math.floor(code / 1024)) then return end
-                    code = 56320 + code % 1024
+        local i, length = 1, #line
+        -- Hash the synthetic LF in the same loop: no nested Lua call per unit.
+        while true do
+            local newline = i > length
+            local code
+            if newline then code = 10
+            else
+                code = string.byte(line, i)
+                if utf8Strings and code >= 128 then
+                    local count
+                    if code >= 194 and code < 224 then count = 2
+                    elseif code >= 224 and code < 240 then count = 3
+                    elseif code >= 240 and code <= 244 then count = 4
+                    else return end
+                    code = code % (2 ^ (7 - count))
+                    for offset = 1, count - 1 do
+                        local nextByte = string.byte(line, i + offset)
+                        if not nextByte or nextByte < 128 or nextByte > 191 then return end
+                        code = code * 64 + nextByte % 64
+                    end
+                    if (count == 3 and code < 2048) or (count == 4 and code < 65536)
+                        or code > 1114111 or (code >= 55296 and code <= 57343) then return end
+                    i = i + count - 1
+                    if code > 65535 then
+                        code = code - 65536
+                        -- Evaluate the high unit before the limit check, as for
+                        -- the original add(argument), including live math.floor.
+                        local high = 55296 + math.floor(code / 1024)
+                        units = units + 1
+                        if units > limit then return end
+                        if adler then
+                            value = (value + high) % 65521
+                            sum = (sum + value) % 65521
+                        else value = (value * 33 + high) % 4294967296 end
+                        code = 56320 + code % 1024
+                    end
                 end
             end
-            if not add(code) then return end
+            units = units + 1
+            if units > limit then return end
+            if adler then
+                value = (value + code) % 65521
+                sum = (sum + value) % 65521
+            else value = (value * 33 + code) % 4294967296 end
+            if newline then break end
             i = i + 1
         end
-        -- Java readLine strips line endings; pins include one LF per returned line.
-        if not add(10) then return end
     end
     return adler and sum * 65536 + value or value
 end

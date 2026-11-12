@@ -46,6 +46,12 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.364
+
+- **Development:** Equip fixtures validate their reviewed source pins against the selected candidate during preparation, so stale pins fail before launching a game. Explicit archived comparison profiles retain their own reviewed pins.
+
+- **Changed:** Shared source verification hashes normalized text in one Lua loop, avoiding a nested Lua call for every code unit. Existing Adler/DJB checksums, reader dispatch, Unicode limits and read/close failures are preserved; no file-result cache or startup scan is added.
+
 ### 0.1.363
 
 - **Changed:** Pending equipment checks avoid rebuilding discarded item dependencies and reuse private recipe data within each decision, while still rechecking current bindings, captures and item facts.

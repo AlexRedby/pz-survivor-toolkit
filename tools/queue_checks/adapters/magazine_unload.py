@@ -102,6 +102,89 @@ def audit_selected(locations):
     return result
 
 
+def _reviewed_equip_pins(text, baseline=False):
+    """Read only the fixture's closed literal table and explicit baseline branch."""
+    code = re.sub(r'(?m)^\s*--[^\n]*', '', text)
+    tables = re.findall(r'(?ms)^local sources=\{(.*?)^\}', code)
+    loops = re.findall(r'(?ms)^ for _,source in ipairs\(sources\)do\n(.*?)^ end\n(?= assert\(publicCurrent\(\))', code)
+    if len(tables) != 1 or len(loops) != 1 or len(re.findall(r'\bsources\b', code)) != 2:
+        raise ValueError('Equip reviewed-source fixture layout requires review: literal sources/table loop')
+    def compact(value):
+        # Whitespace inside a literal belongs to its filename/message.
+        return ''.join(part if index % 2 else re.sub(r'\s+', '', part)
+                       for index, part in enumerate(re.split(r"('[^'\\\r\n]*')", value)))
+    name = r'[A-Za-z][A-Za-z0-9_]*\.lua'
+    entry = r"\{'(client|shared|server)','(" + name + r")',([0-9]+)\},"
+    table = compact(tables[0])
+    rows = re.findall(entry, table)
+    if not rows or re.sub(entry, '', table) or len({row[1] for row in rows}) != len(rows):
+        raise ValueError('Equip reviewed-source fixture requires unique literal source pins')
+    prefix = ("localadler=source[3]ifconfig.optionsandconfig.options.equip_workload_baseline==truethen"
+              "assert(config.options.equip_workload==true,'baseline callback proof requires work profile')")
+    suffix = ("endassert(matches('media/lua/'..source[1]..'/PZSurvivorToolkit/'..source[2],adler,"
+              "'PZSurvivorToolkit',true)==true,'callback observation source bytes changed '..source[2])")
+    loop = compact(loops[0])
+    if not loop.startswith(prefix) or not loop.endswith(suffix):
+        raise ValueError('Equip reviewed-source fixture layout requires review: exact baseline/source check')
+    choices = loop[len(prefix):-len(suffix)]
+    choice = r"source\[2\]=='(" + name + r")'thenadler=([0-9]+)"
+    if not re.fullmatch('if' + choice + '(?:elseif' + choice + ')*end', choices):
+        raise ValueError('Equip reviewed-source baseline requires explicit literal overrides')
+    overrides = re.findall(choice, choices)
+    names = {row[1] for row in rows}
+    if (len({row[0] for row in overrides}) != len(overrides) or any(row[0] not in names for row in overrides)
+            or len(re.findall(r'\badler\s*=', code)) != 1 + len(overrides)
+            or any(not 0 <= int(value) <= 0xffffffff for value in [row[2] for row in rows] + [row[1] for row in overrides])):
+        raise ValueError('Equip reviewed-source pins/overrides require review')
+    selected = dict(overrides) if baseline else {}
+    return {side + '/PZSurvivorToolkit/' + filename: int(selected.get(filename, pin)) for side, filename, pin in rows}
+
+
+def _source_adler(data):
+    """BufferedReader UTF8 text -> UTF16 units, one LF per CR/LF/CRLF record.
+
+    Preserve BOM and Unicode separators as data. Reject malformed UTF8 before
+    launch rather than guessing the JVM decoder's replacement grouping.
+    """
+    try: text = data.decode('utf-8')
+    except UnicodeDecodeError as error: raise ValueError('Equip reviewed source is not valid UTF8') from error
+    records = re.split(r'\r\n|\r|\n', text) if text else []
+    if text.endswith(('\r', '\n')): records.pop()
+    a, b = 1, 0
+    for record in records:
+        units = (record + '\n').encode('utf-16-le')
+        for index in range(0, len(units), 2):
+            a = (a + units[index] + 256 * units[index + 1]) % 65521
+            b = (b + a) % 65521
+    return b * 65536 + a
+
+
+def audit_equip_sources(project, selection, locations):
+    """Reject stale fixture pins against effective candidate Lua before staging."""
+    if selection.get('cases') != list(EQUIP_CASES): return {}
+    options = selection.get('options', {})
+    baseline = options.get('equip_workload_baseline', False)
+    if type(baseline) is not bool or baseline and options.get('equip_workload') is not True:
+        raise ValueError('Equip reviewed-source baseline requires the explicit work profile')
+    fixture = Path(project) / 'tests/native_queue/magazine-unload/client/QueueEquipCallbackObservation.lua'
+    try:
+        pins = _reviewed_equip_pins(fixture.read_text(encoding='utf-8'), baseline)
+        if 'PZSurvivorToolkit' not in locations: raise ValueError('Equip reviewed-source preflight needs the candidate Toolkit location')
+        candidates = lua_sources(Path(locations['PZSurvivorToolkit']))
+        result = {}
+        for relative, expected in pins.items():
+            files = [path for path in candidates if path.as_posix().endswith('/media/lua/' + relative)]
+            if len(files) != 1: raise ValueError('Equip reviewed-source preflight needs one effective Toolkit source: ' + relative)
+            actual = _source_adler(files[0].read_bytes())
+            if actual != expected:
+                raise ValueError('Equip reviewed-source preflight requires review: ' + relative
+                                 + ' expected ' + str(expected) + ', candidate ' + str(actual))
+            result[relative] = actual
+        return result
+    except OSError as error:
+        raise ValueError('Equip reviewed-source preflight cannot read candidate inputs: ' + str(error)) from error
+
+
 def _work_probe(project, output, game, jdk, locations, runtime):
     source = Path(project) / 'tests/native_queue/magazine-unload/java/EquipWorkProbe.java'
     classes = Path(output) / 'equip-work-probe/classes'; classes.mkdir(parents=True)
@@ -123,7 +206,9 @@ def _work_probe(project, output, game, jdk, locations, runtime):
 
 
 def stage(project, output, game, jdk, selection, locations, runtime):
-    validate(selection); audit = audit_native(game, selection); audit.update(audit_selected(locations))
+    validate(selection)
+    reviewed = audit_equip_sources(project, selection, locations)
+    audit = audit_native(game, selection); audit.update(audit_selected(locations))
     root = Path(project) / 'tests/native_queue'
     if selection.get('options', {}).get('equip_workload'):
         _work_probe(project, output, game, jdk, locations, runtime)
@@ -134,6 +219,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         shutil.copy2(root / 'health/shared/QueueHealthEvents.lua', lua / 'shared')
     runtime.setdefault('fixture', {}).update(server_ready='[STARTUP_TEST] SERVER_READY',
         failure_markers=['[QUEUE_TEST] FAIL magazine-unload'], native_magazine_audit=audit, sandbox={'Zombies': 6})
+    if reviewed: runtime['fixture']['equip_reviewed_source_audit'] = reviewed
 
 
 def _raw(text, marker):
