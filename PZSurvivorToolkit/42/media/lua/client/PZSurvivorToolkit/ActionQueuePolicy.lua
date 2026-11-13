@@ -240,10 +240,26 @@ local function itemKey(item)
     return instanceof(item, "InventoryItem") and item:getID() or item
 end
 local operationItems
+local function validLocationReads(contract)
+    local reads = contract and contract.locationReads
+    if reads == nil then return true end
+    if type(reads) ~= "table" or getmetatable(reads) ~= nil then return false end
+    for id, value in pairs(reads) do
+        if type(id) ~= "number" or id ~= id or id <= -math.huge or id >= math.huge
+            or id % 1 ~= 0 or value ~= true then return false end
+    end
+    return true
+end
 local function sharedItem(a, b, context)
     local left, right = operationItems(a, context), operationItems(b, context)
     for item in pairs(left) do if right[item] then return item end end
     local leftContract, rightContract = inspect(a, context), inspect(b, context)
+    -- Reading an owner's root location commutes with moving a distinct child
+    -- into its container. Moving the owner itself still invalidates that read.
+    local reads = leftContract and leftContract.locationReads
+    if reads then for item in pairs(reads) do if right[item] then return item end end end
+    reads = rightContract and rightContract.locationReads
+    if reads then for item in pairs(reads) do if left[item] then return item end end end
     local owners = leftContract and leftContract.containerOwners
     if owners then for item in pairs(owners) do if right[item] then return item end end end
     owners = rightContract and rightContract.containerOwners
@@ -1247,7 +1263,7 @@ local function equipmentResources(action)
                 and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect
                 and type(equipOwner.inspect)=="function" then
                 if equipOwner.trusted==nil then equipOwner.trusted=Proof.closure(equipOwner.inspect,"ActionQueueEquip.lua")
-                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",2629028365,"PZSurvivorToolkit",true)end
+                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",3195531510,"PZSurvivorToolkit",true)end
                 if equipOwner.trusted and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect then
                     local contract
                     if nativeMode and activeDecision.nativePrepared then
@@ -1441,14 +1457,15 @@ end})
 
 inspect = function(action, context)
     local override = context and context.failureOverrides and context.failureOverrides[action]
-    if override then return unpack(override, 1, 3) end
+    if override then if validLocationReads(override[1]) then return unpack(override, 1, 3) end; return end
     local cached = context and context.contracts[action]
-    if cached then return unpack(cached, 1, 3) end
+    if cached then if validLocationReads(cached[1]) then return unpack(cached, 1, 3) end; return end
     if action._isAddingActions or (Operations.isContinuationPending and Operations.isContinuationPending(action.toolkitQueueOperation)) then
         if context then context.contracts[action] = {inFlight = true} end
         return
     end
     local result = {Definitions.inspect(action, context)}
+    if not validLocationReads(result[1]) then result[1] = nil end
     local role=activeDecision and activeDecision.nativeMode and activeDecision.nativeRoles and activeDecision.nativeRoles[action]
     if role and result[1]and(role.role=="approach"and result[2]=="toolkit.approach"
         or role.role=="fetch"and result[2]=="native.ISInventoryTransferAction"
@@ -1518,6 +1535,9 @@ local function plainItemFootprint(action, context, connectivity)
     if connectivity then
         if contract.containerOwners ~= nil and (type(contract.containerOwners) ~= "table" or getmetatable(contract.containerOwners)) then return end
     elseif not emptyResourceMap(contract.containerOwners) then return end
+    -- Typed readers retain the ordered pair fallback; an item-only aggregate
+    -- cannot preserve the direction of their dependency on actual item use.
+    if not emptyResourceMap(contract.locationReads) then return end
     for _, name in ipairs(pairResourceMaps) do if not emptyResourceMap(contract[name]) then return end end
     for _, name in ipairs(spatialFields) do if action[name] ~= nil then return end end
     return operationItems(action, context)
@@ -2268,7 +2288,7 @@ function Policy.cancelOperationReason(queue, action, context)
     end
     local active = first == 1 and queue.current == queue.queue[1]
     if type(token) == "table" and token.toolkitStarted and not active then return "operation_active" end
-    local main, output, inputs, scrapOnly = false, false, {}, true
+    local main, output, inputs, locationReads, scrapOnly = false, false, {}, {}, true
     local pendingRemovalOnly = not active and nativePendingCancelHasNoEffects()
     local tailCancellation = false
     for i = first, last do
@@ -2310,6 +2330,7 @@ function Policy.cancelOperationReason(queue, action, context)
         output = output or member.toolkitIndependentBulk or auditedCraft or (world and member.toolkitWorldDismantle) or plannedCraft
             or (member.Type == "ISMoveablesAction" and member.mode == "scrap")
         for item in pairs(operationItems(member, context)) do inputs[item] = true end
+        for item in pairs(contract and contract.locationReads or {}) do locationReads[item] = true end
     end
     -- Check the complete operation before the model's allowed shortcut. A
     -- removed pending prefix cannot invalidate earlier work, but an unknown
@@ -2353,6 +2374,10 @@ function Policy.cancelOperationReason(queue, action, context)
                 return unknownDenial(context, "operation_dependent", other), nil, nil, other
             end
             for item in pairs(operationItems(other, comparison)) do
+                if inputs[item] or locationReads[item] then return "operation_shared_item", nil, nil, other, item end
+            end
+            local otherContract = inspect(other, comparison)
+            for item in pairs(otherContract and otherContract.locationReads or {}) do
                 if inputs[item] then return "operation_shared_item", nil, nil, other, item end
             end
             if mayShareGroupResource(groupItems, other, comparison) then
@@ -2404,6 +2429,7 @@ function spatialEdits.deviceOnly(contract)
         or contract.knownInputs==false or contract.unknownOutputs
         or contract.hands or contract.equipment or contract.cancelOperation==false
         or not emptyResourceMap(contract.items)or not emptyResourceMap(contract.containerOwners)
+        or not emptyResourceMap(contract.locationReads)
         or not emptyResourceMap(contract.positions)or not emptyResourceMap(contract.dynamicInputs)
         or not emptyResourceMap(contract.dynamicInputsByType)or not emptyResourceMap(contract.outputTypes)
         or type(edit)~="table"or getmetatable(edit)~=nil or edit.version~=1 or edit.complete~=true
@@ -3452,6 +3478,7 @@ function Policy.record(command, action, decision)
     local keys = {}
     for key in pairs(contract and contract.items or {}) do keys[#keys + 1] = tostring(key) end
     for key in pairs(contract and contract.containerOwners or {}) do keys[#keys + 1] = "container:" .. tostring(key) end
+    for key in pairs(contract and contract.locationReads or {}) do keys[#keys + 1] = "location-read:" .. tostring(key) end
     for key in pairs(contract and contract.dynamicInputs or {}) do keys[#keys + 1] = "type:" .. tostring(key) end
     for key in pairs(contract and contract.dynamicInputsByType or {}) do keys[#keys + 1] = "short-type:" .. tostring(key) end
     if #diagnostics == 64 then table.remove(diagnostics, 1) end

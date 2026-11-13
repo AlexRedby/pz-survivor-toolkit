@@ -1099,6 +1099,118 @@ os.exit(0)
         selection = self.selection(); selection['options']['world_template'] = 'fixture'
         with self.assertRaises(ValueError): adapter.validate(selection)
 
+    def add_restoration(self, evidence, mode='toolkit'):
+        row, ids, _, _, admissions = evidence[:5]
+        enabled = mode == 'toolkit'
+        points = [('admission', 'prepare'), ('boundary', 'active')]
+        lost = row['id'] in adapter.CAPACITY_CASES
+        if enabled and lost: points.append(('blocked', 'active'))
+        kept = lost or a.base_control(ids['control']) == 'return-child-cancel'
+        points.append(('final', 'waived' if kept else 'completed'))
+        row['restoration'] = dict(provider='native-returns', samples=[
+            dict(case=row['id'], point=point, loaded=False, selected=False, itemId=ids['front']['id'],
+                 itemType=ids['front']['type'], state=state if enabled else False,
+                 candidates=1 if enabled else 0, observedPreparation=enabled) for point, state in points])
+        for record in admissions[0]['queue']:
+            if record['role'] in ('pickup', 'return'):
+                original = next(value for value in row['records'] if value['role'] == record['role'])
+                record['actionRef'] = original['actionRef']
+        return evidence
+
+    def restoration_selection(self, kind='mp', mode='toolkit'):
+        selection = self.selection(kind, mode)
+        selection['cases'] = list(adapter.RESTORATION_CASES)
+        selection['mods'] = [mod for mod in adapter.MODS if mod != 'P4TidyUpMeister']
+        selection['options']['book_restoration_provider'] = 'native-returns'
+        return selection
+
+    def test_restoration_selection_removes_only_p4_and_keeps_case_and_provider_gates(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                selection = self.restoration_selection(kind, mode)
+                adapter.validate(selection)
+                for case in adapter.RESTORATION_CASES:
+                    selected = copy.deepcopy(selection); selected['cases'] = [case]
+                    adapter.validate(selected)
+        for value in (None, False, 1, {}, [], 'other', 'native-returns '):
+            selection = self.restoration_selection(); selection['options']['book_restoration_provider'] = value
+            with self.subTest(provider=value), self.assertRaises(ValueError): adapter.validate(selection)
+        for field, value in (
+                ('mods', list(adapter.MODS)),
+                ('mods', self.restoration_selection()['mods'][:-1]),
+                ('mods', list(reversed(self.restoration_selection()['mods']))),
+                ('cases', list(reversed(adapter.RESTORATION_CASES))),
+                ('cases', ['world.move-volume']), ('cases', ['worn-bag.header-cancel']), ('cases', [])):
+            selection = self.restoration_selection(); selection[field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError): adapter.validate(selection)
+        selection = self.selection(); selection['options']['book_restoration_provider'] = 'selected'
+        adapter.validate(selection)
+        selection['mods'] = self.restoration_selection()['mods']
+        with self.assertRaises(ValueError): adapter.validate(selection)
+
+    def test_restoration_scalar_state_schema_and_exact_native_action_ownership(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for case in adapter.RESTORATION_CASES:
+                    with self.subTest(kind=kind, mode=mode, case=case):
+                        evidence = self.add_restoration(self.evidence(case, kind, mode), mode)
+                        row, ids, baseline, final, admissions, boundaries, drains, acks = evidence
+                        selection = self.restoration_selection(kind, mode)
+                        args = (row, case, selection, ids, baseline, final, admissions, boundaries, drains, acks,
+                                row['capacity'] if row['capacity'] is not False else None,
+                                [r['stopReturned'] for r in row['records'] if 'stopReturned' in r])
+                        self.assertEqual(a.check_case(*args), [])
+                        for point in range(len(row['restoration']['samples'])):
+                            for field, value in (
+                                    ('case', 'foreign.case'), ('point', 'unknown'), ('loaded', True), ('loaded', 0),
+                                    ('selected', True), ('selected', 0), ('itemId', ids['tail']['id']), ('itemId', True),
+                                    ('itemType', ids['tail']['type']), ('state', False if mode == 'toolkit' else 'prepare'),
+                                    ('candidates', True), ('candidates', 1.0), ('observedPreparation', 1)):
+                                changed = copy.deepcopy(row)
+                                changed['restoration']['samples'][point][field] = value
+                                self.assertTrue(a.restoration_errors(changed, case, selection, admissions), (point, field, value))
+                            changed = copy.deepcopy(row); changed['restoration']['samples'][point]['capability'] = {}
+                            self.assertTrue(a.restoration_errors(changed, case, selection, admissions))
+                        for role in ('pickup', 'return'):
+                            changed = copy.deepcopy(row)
+                            record = next(record for record in changed['records'] if record['role'] == role)
+                            record['actionRef'] = 'replacement:999'
+                            self.assertTrue(a.restoration_errors(changed, case, selection, admissions))
+                            changed = copy.deepcopy(row)
+                            extra = copy.deepcopy(next(record for record in changed['records'] if record['role'] == role))
+                            extra.update(sequence=999, actionRef='duplicate:999')
+                            changed['records'].append(extra)
+                            self.assertTrue(a.restoration_errors(changed, case, selection, admissions))
+                        for receipt in (False, None, {}, [], dict(provider='selected', samples=[])):
+                            changed = dict(row, restoration=receipt)
+                            self.assertTrue(a.restoration_errors(changed, case, selection, admissions))
+
+    def test_restoration_raw_stream_is_complete_ordered_and_type_exact(self):
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                with self.subTest(kind=kind, mode=mode), tempfile.TemporaryDirectory() as directory:
+                    selection, client, server = self.log_bank(kind, mode, cases=adapter.RESTORATION_CASES, restoration=True)
+                    root = Path(directory); (root / 'server-launch.log').write_text(server)
+                    (root / 'client1-launch.log').write_text(client)
+                    self.assertEqual(a.verify(root, selection, {})['issues'], [])
+                    lines = [line for line in client.splitlines() if adapter.PREFIX + 'RESTORATION ' in line]
+                    first = lines[0]; payload = json.loads(first.split('RESTORATION ', 1)[1])
+                    def line(value): return adapter.PREFIX + 'RESTORATION ' + json.dumps(value)
+                    all_lines = client.splitlines(); left, right = all_lines.index(first), all_lines.index(lines[1])
+                    all_lines[left], all_lines[right] = all_lines[right], all_lines[left]
+                    for name, changed in (
+                            ('missing', client.replace(first, '', 1)), ('duplicate', client + '\n' + first),
+                            ('foreign', client + '\n' + line(dict(payload, case='foreign.case'))),
+                            ('boolean alias', client.replace(first, line(dict(payload, loaded=0)), 1)),
+                            ('reordered', '\n'.join(all_lines)),
+                            ('malformed', client.replace(first, adapter.PREFIX + 'RESTORATION {broken', 1))):
+                        (root / 'client1-launch.log').write_text(changed)
+                        self.assertTrue(a.verify(root, selection, {})['issues'], name)
+                    selected, old_client, old_server = self.log_bank(kind, mode, cases=adapter.RESTORATION_CASES)
+                    (root / 'server-launch.log').write_text(old_server)
+                    (root / 'client1-launch.log').write_text(old_client + '\n' + first)
+                    self.assertTrue(a.verify(root, selected, {})['issues'])
+
     def test_passive_waiver_scan_uses_real_locations_without_rebinding(self):
         lua = shutil.which('luajit')
         if not lua: self.skipTest('LuaJIT not installed')
@@ -1787,6 +1899,7 @@ for _,source in ipairs({'root','worn-bag','world'})do
     volumes=volumes+1;q.queue[#q.queue+1]={role='volume',secondaryItem=value/4,deviceData=state.data,maxTime=30}
    end}}end}
   role=function(action)return action.role end;register=function()end;queueEvidence=function()return{}end;case=function()return source..'.move-volume'end
+  restorationSample=function()assert(not restorationProfile)end
   raw=function(marker,value)if marker=='ADMISSION'then if device then assert(value.equipProducer==false)else assert(value.equipProducer=='ISInventoryPaneContextMenu.equipWeapon')end end end
   enqueue()
   assert(reads==2 and volumes==1 and equips==(device and 0 or 1))
@@ -2376,12 +2489,15 @@ os.exit(0)
                     (root/'client1-launch.log').write_text(old_client); (root/'server-launch.log').write_text(old_server)
                     self.assertEqual(a.verify(root, old_selection, {})['issues'], [])
 
-    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False, current=False, sample_ms=None, cases=None, active=False):
+    def log_bank(self, kind='mp', mode='toolkit', requests=False, precise=False, current=False, sample_ms=None, cases=None, active=False, restoration=False):
         selection = self.selection(kind, mode); client, server = [], []
         cases = list(adapter.CASES) if cases is None else list(cases); selection['cases'] = cases
         if requests: selection['options']['require_native_requests']=True
         if precise: selection['options']['precise_timing']=True
         if active: selection['options']['active_edit_observation']=True
+        if restoration:
+            selection['options']['book_restoration_provider'] = 'native-returns'
+            selection['mods'] = [mod for mod in adapter.MODS if mod != 'P4TidyUpMeister']
         def raw(marker, value): return adapter.PREFIX + marker + ' ' + json.dumps(value)
         def event(value): return '[QUEUE_CHECK] ' + json.dumps(value)
         client.append(event(dict(event='setup', suite='book-controls', cases=cases, queueEnabled=mode == 'toolkit', nativeDurations=True, sourceBound=True, authorityEquipment=True,nativeRequestsObserved=requests,timingClock=copy.deepcopy(a.CLOCK_INFO)if precise else False)))
@@ -2394,6 +2510,9 @@ os.exit(0)
                 for bank in (evidence[0]['performance'],evidence[0]['performance']['probe32']):
                     for metric in bank['metrics']:metric.update(rawMs=[sample_ms]*20,p95Ms=sample_ms,p99Ms=sample_ms)
             row, spec, baseline, final, admissions, boundaries, drains, acks = evidence
+            if restoration:
+                self.add_restoration(evidence, mode)
+                client.extend(raw('RESTORATION', sample) for sample in row['restoration']['samples'])
             authority = server if kind == 'mp' else client
             client.append(raw('CLIENT_PLACEMENT',dict(case=case,proof=row['clientPlacement'])))
             authority.extend([raw('PREPARED', spec), raw('BASELINE', baseline), raw('VERIFIED', final)])

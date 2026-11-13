@@ -3,6 +3,8 @@ require 'RadioCom/RadioWindowModules/RWMMergedTV'
 require 'TimedActions/ISReadABook'
 local F=require 'QueueBookControls';local JSON=require 'QueueHealthEvents';local config=require 'QueueTestSelection'
 local T=PZSurvivorToolkit;local Proof=require 'PZSurvivorToolkit/SourceProof';local native=config.mode=='native'
+local restorationProfile=config.options and config.options.book_restoration_provider=='native-returns'
+local restorationEvidence,loanModule,loanReader
 local phase,index,since='prepare',1,0;local entered,ready,done=false,false,false
 local state,previous,ids,authorityBaseline,authorityFinal,baseline,tracks,records,starts,boundary,front,tail,volume,equip,window
 local oldNative,resume,quiet,failure,draining,tailSnapshot,volumeSnapshot,equipSnapshot
@@ -115,7 +117,32 @@ requestSample=function(action,row,point)
  assert(#row.requestStates<16,'native request diagnostic exceeded bounded transitions')
  sample.at=now();row.requestStates[#row.requestStates+1]=sample;raw('NATIVE_REQUEST',sample)
 end
+local function restorationProvider()
+ assert(type(getActivatedMods)=='function','native restoration profile requires activated-mod evidence')
+ local loaded,selected=P4TidyUpMeister~=nil,getActivatedMods():contains('P4TidyUpMeister')
+ assert(loaded==false and selected==false,'P4 is loaded or selected in the native restoration profile')
+ return loaded,selected
+end
+local function restorationSample(point)
+ if not restorationProfile then return end
+ assert(T.ActionQueueSettlement==loanModule and loanModule.operationState==loanReader,
+  'native restoration ledger diagnostic binding changed')
+ local loaded,selected=restorationProvider()
+ local view=loanReader(front);local candidates=view and view.borrowings or{}
+ local found,observed=nil,false
+ for _,value in ipairs(candidates)do
+  if value.id==ids.front.id and value.fullType==ids.front.type then assert(not found,'duplicate front borrowing');found=value end
+ end
+ for _,step in ipairs(view and view.steps or{})do
+  if step.phase=='prepare'and step.itemId==ids.front.id and step.itemType==ids.front.type
+   and step.observedPreparation then observed=true end
+ end
+ local sample={case=case(),point=point,loaded=loaded,selected=selected,itemId=ids.front.id,itemType=ids.front.type,
+  state=found and found.state or false,candidates=#candidates,observedPreparation=observed}
+ restorationEvidence.samples[#restorationEvidence.samples+1]=sample;raw('RESTORATION',sample)
+end
 local function intact()
+ if restorationProfile then restorationProvider()end
  assert(ISInventoryPaneContextMenu.onLiteratureItems==producer and ISInventoryPaneContextMenu.readItem==readProducer and RWMVolume.onVolumeChange==volumeProducer and(deviceOnly()or ISInventoryPaneContextMenu.equipWeapon==equipProducer),'native producer callback changed after setup')
  assert(Proof.closure(producer,'ISInventoryPaneContextMenu.lua')and Proof.closure(readProducer,'ActionQueueOperations.lua')and(deviceOnly()or Proof.closure(equipProducer,'ISInventoryPaneContextMenu.lua')),'native literature/equip producer source changed')
  assert(Proof.closure(ISReadABook.new,'ISReadABook.lua')and Proof.closure(ISReadABook.getDuration,'ISReadABook.lua')and Proof.closure(ISRadioAction.new,'ISRadioAction.lua'),'native constructors/timers replaced')
@@ -337,6 +364,12 @@ local function enqueue()
  capacityReceipt,capacityRequestedAt,blockedEvidence,failureUI,nativeDebtAbsent=nil,nil,nil,nil,nil
  performance,tickSpacing,lastTick,transferEpisode,replicaGaps=nil,{},now(),nil,{}
  activeEditReceipt=nil
+ restorationEvidence=restorationProfile and{provider='native-returns',samples={}}or false
+ if restorationProfile then
+  loanModule=T.ActionQueueSettlement;loanReader=assert(loanModule.operationState)
+  assert(Proof.closure(loanReader,'ActionQueueSettlement.lua'),'native restoration ledger source unavailable')
+  restorationProvider()
+ end
  baseline=F.snapshot(state);assert(F.same(baseline,ids.baseline)and F.same(authorityBaseline,baseline),'exact native baseline differs')
  assert(not state.player:hasTrait(CharacterTrait.DISORGANIZED),'native producer requires its normal return contract')
  assert(not state.player:isTimedActionInstant()and not state.player:hasTrait(CharacterTrait.ILLITERATE),'native reading actor unavailable')
@@ -356,6 +389,7 @@ local function enqueue()
  for _,action in ipairs(queue().queue)do register(action);if role(action)=='tail'then assert(not tail,'duplicate tail reader');tail=action end end
  assert(tail and queue().queue[#queue().queue]==tail,'native independent tail missing')
  raw('ADMISSION',{case=case(),producer='ISInventoryPaneContextMenu.onLiteratureItems/readItem',volumeProducer='RWMVolume.onVolumeChange',equipProducer=not deviceOnly()and'ISInventoryPaneContextMenu.equipWeapon'or false,sourceBound=true,queue=queueEvidence()})
+ restorationSample('admission')
  phase='boundary'
 end
 local function diagnostic(decision,action)
@@ -632,6 +666,7 @@ local function atBoundary()
  end
  performanceAtBoundary()
  if preview then assert(F.returnPreviewUnchanged(preview.action,preview.native),'read-only performance/preview changed native return item/group')end
+ restorationSample('boundary')
  -- A paid native page leaves one unread page: a precise stop/resume checkpoint.
  oldNative=front.action
  boundary={case=case(),at=now(),before=actual,reader=ref(front),native=ref(oldNative),token=tokenID(front.toolkitQueueOperation),
@@ -656,6 +691,7 @@ local function keepBlocked()
  for _,value in ipairs(entries)do if value.itemId==ids.front.id and value.itemType==ids.front.type then assert(not entry,'duplicate exact failed return');entry=value end end
  if not entry then return false end
  blockedEvidence=entry
+ if restorationProfile then restorationSample('blocked')end
  if favoriteUnmoved()then assert(entry.reason=='unmoved','favorite refusal must be actual native no-effect, not an unrelated admission failure')end
  assert(entry.state=='blocked'and(entry.reason=='admission'or entry.reason=='server'or entry.reason=='unmoved'),'failed return has no live blocked state')
  T.ActionQueuePanel.refresh()
@@ -689,6 +725,7 @@ local function keepBlocked()
  raw('BLOCKED_RETURN',{case=case(),entry=blockedEvidence});raw('FAILURE_UI',failureUI);return true
 end
 local function finish()
+ restorationSample('final')
  local actual=F.snapshot(state)
  if requestsEnabled then for action,record in pairs(tracks)do requestSample(action,record,'terminal')end end
  assert(not state.replicaGap,'unresolved exact transfer replica gap at final verification')
@@ -705,7 +742,7 @@ local function finish()
  local passed=not failure
  local row={event='case',id=case(),status=passed and'passed'or'failed',reason=failure or false,ids=ids,clientPlacement=placementSetup.proof,baseline=baseline,authorityBaseline=authorityBaseline,
   boundary=boundary,records=records,starts=starts,resume=resume or false,tailSnapshot=tailSnapshot or false,volumeSnapshot=volumeSnapshot or false,equipSnapshot=equipSnapshot or false,
-  client=actual,server=authorityFinal,performance=performance or false,activeEditObservation=activeEditReceipt or false,replicaGaps=replicaGaps or{},finishedAt=now(),tickSpacingMs=tickSpacing or {},capacity=capacityReceipt or false,nativeDebtAbsent=nativeDebtAbsent,blockedReturn=blockedEvidence or false,failureUI=failureUI or false,nativeMethodsUnchanged=true,reset=draining and{entrypoint='ISTimedActionQueue.clear',drained=true,at=draining.at}or false}
+  client=actual,server=authorityFinal,restoration=restorationEvidence or false,performance=performance or false,activeEditObservation=activeEditReceipt or false,replicaGaps=replicaGaps or{},finishedAt=now(),tickSpacingMs=tickSpacing or {},capacity=capacityReceipt or false,nativeDebtAbsent=nativeDebtAbsent,blockedReturn=blockedEvidence or false,failureUI=failureUI or false,nativeMethodsUnchanged=true,reset=draining and{entrypoint='ISTimedActionQueue.clear',drained=true,at=draining.at}or false}
  if failedReturnExpected()then row.returnSucceeded=false end
  emit(row);if not passed then failures=failures+1 end
  if not isClient()then previous=state end

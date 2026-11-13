@@ -771,6 +771,19 @@ function Settlement.remember(scope, action, contract)
     end
     if contract and contract.equipment == scope.character then task.readsEquipment = true end
     for id in pairs(contract and contract.containerOwners or {}) do task.items[id] = true end
+    -- A reader of an actual borrowed owner must retain its claim. Child
+    -- transfers only name containerOwners, so Policy can distinguish read/read.
+    local reads = contract and contract.locationReads
+    if reads ~= nil then
+        if type(reads) ~= "table" or getmetatable(reads) ~= nil then task.unknownInputs = true
+        else
+            for id, value in pairs(reads) do
+                if type(id) ~= "number" or id ~= id or id <= -math.huge or id >= math.huge
+                    or id % 1 ~= 0 or value ~= true then task.unknownInputs = true
+                else task.items[id] = true end
+            end
+        end
+    end
     for item, container in pairs(token.toolkitPickups or {}) do
         local id, fullType = item:getID(), item:getFullType()
         local previous = task.pickups[id]

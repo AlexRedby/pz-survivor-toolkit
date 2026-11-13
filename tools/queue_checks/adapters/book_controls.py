@@ -20,6 +20,8 @@ DEMOTE_DEVICE_ONLY_CASES = tuple(source + '.demote-reader-device-only' for sourc
 DEVICE_ONLY_CASES = PROMOTE_DEVICE_ONLY_CASES + DEMOTE_DEVICE_ONLY_CASES
 CASES += CAPACITY_CASES + FAVORITE_CASES
 DECLARED_CASES = CASES + DEVICE_ONLY_CASES
+RESTORATION_CASES = ('worn-bag.move-volume', 'worn-bag.return-child-cancel',
+                     'worn-bag.move-volume-capacity-lost')
 PREFIX = '[BOOK_CONTROLS] '
 ACTIVE_EDIT_CASES = tuple(source + '.header-cancel' for source in SOURCES)
 
@@ -58,6 +60,9 @@ def selected_cases(selection):
 
 
 def validate(selection):
+    provider = selection.get('options', {}).get('book_restoration_provider', 'selected')
+    if not isinstance(provider, str) or provider not in ('selected', 'native-returns'):
+        raise ValueError('book_restoration_provider must be selected or native-returns')
     if type(selection.get('options', {}).get('precise_timing', False)) is not bool:
         raise ValueError('precise_timing must be boolean')
     requests = selection.get('options', {}).get('require_native_requests', False)
@@ -73,6 +78,9 @@ def validate(selection):
     if type(active) is not bool:
         raise ValueError('active_edit_observation must be boolean')
     cases = selected_cases(selection)
+    if provider == 'native-returns' and any(case not in RESTORATION_CASES for case in cases):
+        raise ValueError('native-returns requires the ordered carried-book restoration cases')
+    mods = MODS if provider == 'selected' else [mod for mod in MODS if mod != 'P4TidyUpMeister']
     if any(case in DEVICE_ONLY_CASES for case in cases) and not active:
         raise ValueError('device-only variants require active_edit_observation=true')
     if active and (selection.get('options', {}).get('precise_timing') is not True
@@ -81,7 +89,7 @@ def validate(selection):
     if (selection.get('kind') not in ('sp', 'mp')
             or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
             or type(selection.get('clients')) is not int or selection['clients'] != 1
-            or selection.get('mods') != MODS or selection.get('options', {}).get('book_controls') is not True
+            or selection.get('mods') != mods or selection.get('options', {}).get('book_controls') is not True
             or selection.get('options', {}).get('world_template')
             or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
         raise ValueError('Book controls require book_controls=true, an ordered nonempty case selection, full selected EN pack, fresh SP/menu Host and one client')

@@ -207,7 +207,7 @@ local function inspectPending(action)
   or getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead()or actor:isAsleep()then return end
  local root=actor:getInventory()
  if not instanceof(root,'ItemContainer')or root:getParent()~=actor or root:getContainingItem()~=nil then return end
- local items,types,resources,seen={},{},{},{}
+ local items,types,resources,seen,locationReads={},{},{},{},{}
  -- The native replacement branch short-circuits on this exact false tag.
  -- Retain the canonical back item as an equipment/location dependency; do
  -- not inspect extras, create its replacement or claim a worn-state write.
@@ -218,7 +218,7 @@ local function inspectPending(action)
   local id,fullType=back:getID(),back:getFullType()
   if not finite(id)or id%1~=0 or id==-1 or kind(fullType)~='string'or fullType==''
    or back:getContainer()~=root or root:getItemWithID(id)~=back then return end
-  seen[id]=back;types[fullType]=true
+  seen[id]=back;types[fullType]=true;locationReads[id]=true
   resources[#resources+1]={domain='item',key=id,facts={item=back,location=root},requires={{field='location',equal=root}}}
  end
  local incoming=itemRow(actor,root,action.item,items,types,resources,seen)
@@ -258,8 +258,8 @@ local function inspectPending(action)
  -- check covers all native/source observations below without a third walk.
  if not hand or not bindingsTrusted()or not stable()or check()~=true then return end
  resources[#resources+1]=hand
- local ids={};for id in each(seen)do ids[id]=true end
- return {items=ids,itemTypes=types,targets={},hands=actor,equipment=actor,preparation=true,preparationFinish=true,
+ local ids={};for id in each(seen)do if not locationReads[id]then ids[id]=true end end
+ return {items=ids,locationReads=locationReads,itemTypes=types,targets={},hands=actor,equipment=actor,preparation=true,preparationFinish=true,
   cancelWaiting=true,cancelOperation=true,interrupt='finish-step',moveRequiresProjection=true,
   edit={version=1,complete=true,capacity='external',resources=resources}}
 end

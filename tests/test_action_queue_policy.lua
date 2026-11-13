@@ -1235,4 +1235,41 @@ do
         'unsupported complex suffix must not invoke its input/effect contract')
 end
 print('Return isolation: 32-member queue bound, closed complex suffix and unchanged target-checker identity passed.')
+-- Root-location readers commute, but actual owner use remains directional in
+-- pair checks, whole cancellation and the item-only pruning fallback.
+do
+    local n=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
+    n.project('ActionQueueOperations');n.project('ActionQueueDefinitions')
+    local p=n.project('ActionQueuePolicy')
+    local class=ISBaseTimedAction:derive('LocationDependency')
+    PZSurvivorToolkit.ActionQueueDefinitions.registerBehavior('fixture.location-dependency',{
+        types={'LocationDependency'},matches=function()return true end,inspect=function(action)return action.contract end})
+    local item=n.item('Base.Bag_Military');local id=item:getID()
+    local function action(reads,uses)
+        return n.action(class,{item=uses and item or nil,contract={items=uses and {[id]=true}or{},
+            locationReads=reads,knownInputs=true,cancelWaiting=true,cancelOperation=true}})
+    end
+    local function queue(left,right)
+        return n.queue(n.action(ISReadABook,{item=n.item('Base.BookCooking1')}),left,right)
+    end
+    local left,right=action({[id]=true}),action({[id]=true})
+    local q=queue(left,right)
+    assert(p.evaluateMove(q,right,left).allowed and p.evaluateCancel(q,left,true).allowed,
+        'read/read acquired a mutation dependency')
+    for _,reverse in ipairs({false,true})do
+        local reader,writer=action({[id]=true}),action(nil,true)
+        local first,last=reverse and writer or reader,reverse and reader or writer
+        q=queue(first,last)
+        assert(not p.evaluateMove(q,last,first).allowed,'typed read was pruned across actual owner use')
+        local decision=p.evaluateCancel(q,first,true)
+        assert(not decision.allowed and decision.resource==id,'whole cancellation lost the typed owner dependency')
+    end
+    for _,reads in ipairs({false,1,'unknown',setmetatable({[id]=true},{}),{[id]=false},{[id]=1},{[math.huge]=true},{['bag']=true}})do
+        left,right=action(reads),action(nil)
+        q=queue(left,right)
+        assert(not p.inspect(left),'invalid typed location read acquired an input contract')
+        assert(not p.evaluateMove(q,right,left).allowed and not p.evaluateCancel(q,left,true).allowed,
+            'invalid typed location read bypassed the protected fallback')
+    end
+end
 if TestCoverage then TestCoverage('source-contract','passed')end

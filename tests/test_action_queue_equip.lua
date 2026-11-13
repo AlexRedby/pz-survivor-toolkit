@@ -117,13 +117,81 @@ do
  local s=setup();local back=s.item('InventoryContainer');s.actor.back=back
  back.getClothingItemExtra=function()error('back extra getter executed')end
  local action=s.action(s.item(),true,false);local contract=assert(s.owner.inspect(action),'ordinary inert back item rejected')
- assert(contract.items[back:getID()]and contract.equipment==s.actor and #contract.edit.resources==3)
+ assert(not contract.items[back:getID()]and contract.locationReads[back:getID()]
+  and contract.itemTypes[back:getFullType()]and contract.equipment==s.actor and #contract.edit.resources==3)
  assert(#s.certificate.items==1,'worn backpack was passed as a hand-transition input')
  back.tags={[ItemTag.REPLACE_PRIMARY]=true}
  assert(not s.owner.inspect(action),'replace-primary back branch gained contract')
 end
 -- Actual shared Policy routing uses the new source owner, while the effect
 -- provider remains the explicit double above. No native effect is executed.
+-- A carried child's return and the ordinary Pen's Back location read commute.
+-- The loan itself is earned through the real Settlement native-effect model;
+-- moving the owner or using the same child still retains the dependency fence.
+for _,conflict in ipairs({'none','owner','child'})do
+ local s=setup();local back=s.item('InventoryContainer');s.actor.back=back
+ s.f.native('client/TimedActions/ISInventoryTransferAction.lua')
+ getTimestampMs=function()return 100 end
+ local bag={class='ItemContainer',items={},getParent=function()end,getContainingItem=function()return back end,
+  getAcceptItemFunction=function()end,isExistYet=function()return true end}
+ bag.getItemById=function(self,id)return self.items[id]end
+ back.getInventory=function()return bag end;back.getItemContainer=back.getInventory
+ s.root.getItemById=s.root.getItemWithID;s.root.isExistYet=function()return true end
+ s.root.getAcceptItemFunction=function()end
+ for _,container in ipairs({s.root,bag})do
+  container.getType=function()return'none'end;container.getOnlyAcceptCategory=function()end
+ end
+ s.actor.getOnlineID=function()return 10 end
+ s.actor.isLocalPlayer=function()return true end
+ s.f.project('ActionQueueOperations');s.f.project('ActionQueueDefinitions')
+ local policy=s.f.project('ActionQueuePolicy');local settlement=s.f.project('ActionQueueSettlement')
+ local bulk=s.f.project('BulkActions');s.f.project('ActionQueueExecution')
+ local book=s.item();book.getType=function()return'BookCarpentry1'end
+ book.getFullType=function()return'Base.BookCarpentry1'end
+ s.root.items[book:getID()]=nil;book.container=bag;bag.items[book:getID()]=book
+ local pickup=s.f.action(ISInventoryTransferAction,{item=book,srcContainer=bag,destContainer=s.root,
+  queueList={{items={book}}},transactionId=0,action={}})
+ local reader=s.f.action(ISReadABook,{item=book,action={isStarted=function()return true end,
+  finished=function()return false end,isForceComplete=function()return false end}})
+ reader.toolkitQueueOperation=pickup.toolkitQueueOperation
+ pickup.toolkitQueueOperation.toolkitPickups={[book]=bag}
+ local returned=s.f.action(ISInventoryTransferAction,{item=book,srcContainer=s.root,destContainer=bag,allowMissingItems=true,
+  queueList={{items={book}}},transactionId=0})
+ returned.toolkitQueueOperation=pickup.toolkitQueueOperation
+ bulk.guardTransfer(returned)
+ local equip=s.action(conflict=='child'and book or s.item(),true,false)
+ local q=s.f.queue(pickup,reader,returned,equip)
+ local scope=settlement.deferred(s.actor,pickup.toolkitQueueOperation)
+ assert(settlement.remember(scope,pickup,{items={[book:getID()]=true}}))
+ assert(settlement.preparePickup(scope,pickup))
+ assert(settlement.beginPickup(scope,pickup,function()return true end))
+ book.container=s.root;bag.items[book:getID()]=nil;s.root.items[book:getID()]=book;pickup.queueList={}
+ assert(settlement.finishPickup(scope,pickup,true),'fixture failed to earn its exact native pickup')
+ settlement.poll(scope)
+ table.remove(q.queue,1);q.current=reader
+ settlement.track(reader,'body');settlement.track(returned,'body');settlement.track(equip,'body')
+ if conflict=='owner'then
+  local destination={class='ItemContainer',getParent=function()end,getContainingItem=function()end,getAcceptItemFunction=function()end}
+  q.queue[4]=s.f.action(ISInventoryTransferAction,{item=back,srcContainer=s.root,destContainer=destination})
+ end
+ local eligible=policy.returnFailureIndependent(q,returned)
+ assert(eligible==(conflict=='none'),'return failure isolation lost its typed owner dependency: '..conflict)
+ local whole=policy.evaluateCancel(q,reader,true)
+ assert(whole.allowed==(conflict=='none'),'whole book cancellation lost its typed owner dependency: '..tostring(whole.reason))
+ if conflict~='owner'then
+  local available,detail=settlement.canWaivePendingReturn(returned,function()return true end)
+  local view=settlement.operationState(reader)
+  assert(available,'fixture pending loan unavailable: '..tostring(detail)..'/'..tostring(view.borrowings[1].state)..'/'..tostring(view.steps[1].state))
+  local decision=policy.evaluateCancel(q,returned,false)
+  assert(decision.allowed==(conflict=='none'),'pending Keep lost its exact child/owner footprint: '..tostring(decision.reason))
+  if decision.allowed then
+   assert(policy.commitReturnCancellation(returned,decision.returnWaiver),'earned Keep did not commit its private capability')
+   assert(settlement.operationState(reader).borrowings[1].state=='waived'and q.current==reader
+    and not reader.toolkitQueueOperation.toolkitCancelled,'Keep changed its reading body or retained unpaid debt')
+  end
+ end
+ assert(s.actor.back==back and back:getContainer()==s.root and book:getContainer()==s.root and s.effects()==0)
+end
 do
  local s=setup()
  s.f.project('ActionQueueOperations');s.f.project('ActionQueueDefinitions')

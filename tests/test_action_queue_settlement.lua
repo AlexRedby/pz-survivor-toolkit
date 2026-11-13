@@ -115,6 +115,15 @@ local function ownReturns(s, handles, onEnqueued)
     return s.restoration.borrowedReturns(handles, onEnqueued)
 end
 
+-- Invalid typed maps cannot silently erase a later owner's read dependency.
+for _,reads in ipairs({false,1,'unknown',setmetatable({[181]=true},{}),{[181]=false},{[181]='yes'},{[math.huge]=true}})do
+    local s=setup()
+    local scope=s.settlement.deferred(s.player,s.token)
+    local action=s.action()
+    s.settlement.remember(scope,action,{knownInputs=true,items={},locationReads=reads})
+    assert(scope.tasks[s.token].unknownInputs,'invalid location-read map acquired independent ownership')
+end
+
 -- Deferred native producers retain historical ownership even after their source
 -- actions have left the queue. They do not inherit permission to replay effects.
 do
@@ -127,14 +136,14 @@ do
     assert(scope.character == s.player and scope.token == s.token and scope.queue == s.queue
         and scope.generation == 0 and scope.phase == 'prepare' and not scope.mixed)
     local original = s.action()
-    local contract = {knownInputs = true, items = {[21] = true}, containerOwners = {[91] = true}}
+    local contract = {knownInputs = true, items = {[21] = true}, containerOwners = {[91] = true}, locationReads = {[71] = true}}
     s.settlement.remember(scope, original, contract)
     -- A repeated accepted action cannot gain new claims from later mutation.
-    contract.items[22], contract.containerOwners[92] = true, true
+    contract.items[22], contract.containerOwners[92], contract.locationReads[72] = true, true, true
     s.token.toolkitPickups[first] = {}
     s.settlement.remember(scope, original, contract)
-    assert(scope.tasks[s.token].items[21] and scope.tasks[s.token].items[91]
-        and not scope.tasks[s.token].items[22] and not scope.tasks[s.token].items[92],
+    assert(scope.tasks[s.token].items[21] and scope.tasks[s.token].items[91] and scope.tasks[s.token].items[71]
+        and not scope.tasks[s.token].items[22] and not scope.tasks[s.token].items[92] and not scope.tasks[s.token].items[72],
         'remember must snapshot claims once per accepted source action')
     local following = {character = s.player, toolkitQueueOperation = other}
     s.settlement.remember(scope, following, {knownInputs = true, items = {[22] = true}})
@@ -1925,12 +1934,13 @@ end
 -- Equipment readers retain exact current items and the proven queued writers;
 -- unrelated borrowed items stay exclusive. Actor read scopes cannot create effects.
 for _, client in ipairs({false, true}) do
-    for _, mode in ipairs({'unrelated', 'future-gear', 'reader-first', 'other-actor', 'same-owner-reader'}) do
+    for _, mode in ipairs({'unrelated', 'future-gear', 'reader-first', 'other-actor', 'same-owner-reader', 'location-reader'}) do
         local s = pickupFixture(client)
         local readerOwner = mode=='same-owner-reader' and s.token or {}
         local reader = {character=s.player,toolkitQueueOperation=readerOwner}
         local writer = {character=s.player,toolkitQueueOperation=s.token}
         local readerContract = {items={[999]=true}, equipment=mode=='other-actor' and {} or s.player}
+        if mode=='location-reader' then readerContract.locationReads={[181]=true} end
         local writerContract = {items={[mode=='unrelated' and 998 or 181]=true},hands=s.player}
         if mode=='reader-first' then
             s.settlement.remember(s.scope,reader,readerContract)
@@ -1942,7 +1952,7 @@ for _, client in ipairs({false, true}) do
         -- Mutating an accepted read/write descriptor cannot widen later claims.
         readerContract.equipment=nil;writerContract.items[777]=true
         assert(not s.scope.equipmentItems[777])
-        local shared=mode=='future-gear' or mode=='reader-first'
+        local shared=mode=='future-gear' or mode=='reader-first' or mode=='location-reader'
         assert((s.settlement.owner(s.scope,181,'Base.Test',s.source)==nil)==shared,
             'legacy cleanup ownership lost equipment read/write scope: '..mode)
         assert(s.settlement.beginPickup(s.scope,s.pickup,s.guard))

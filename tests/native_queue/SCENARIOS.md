@@ -9,6 +9,7 @@ Choose a suite with `python3 tools/check_action_queue.py matrix`, then read its 
 - [Registered contribution suites](#registered-contribution-suites)
 - [Medical disconnect](#medical-disconnect)
 - [Radio settings](#radio-settings)
+- [P4-free carried book returns](#p4-free-carried-book-returns)
 - [Crafting and borrowed tools](#crafting-and-borrowed-tools)
 - [Craft UI callbacks](#craft-ui-callbacks)
 - [Fire and fuel](#fire-and-fuel)
@@ -80,6 +81,14 @@ The minimal MP disconnect smoke can report a late native `BodyDamageUpdatePacket
 ## Radio settings
 
 Radio settings use `--suite radio-settings --cases reorder,cancel,barrier --mods selected`, or an ordered subset, in one fresh SP/Host session. Native RWM callbacks enqueue unchanged-duration actions on two adjacent powered world radios. `reorder` moves repeated volume and independent microphone/channel setters; `cancel` removes pending volume/microphone commands; `barrier` rejects moving a channel setter after native power-off, then restores power and mutes in the original sequence. Queue-disabled controls execute the original order. Receipts require exact world identities, observed starts/progress, no effects from pending edits and completion of an unrelated tail. Host verifies volume/channel on the server; the native world-radio microphone setter changes only client-local state. The scenario matrix maps this bounded scope as `world-radio-settings`. These callback checks do not establish physical input, rendering, portable/vehicle radio behavior, active interruption or multi-client contention.
+
+## P4-free carried book returns
+
+`book-controls` supports the opt-in config `{"book_controls":true,"book_restoration_provider":"native-returns","require_native_requests":true}`. Select the ordered subset `worn-bag.move-volume,worn-bag.return-child-cancel,worn-bag.move-volume-capacity-lost`; all selected cases run in one game lifecycle. Use fresh SP and menu-Host native/toolkit pairs, adding `"mp_host":true` for Host.
+
+Pass the current selected Mod IDs in their original order through `--mods` (or a batch plan's `mods` list), omitting only `P4TidyUpMeister`. Keep the repository INI unchanged. The profile rejects other removals, additions and case families; `--mods selected` and a full-selection pack lock describe a different set. Normal preparation still resolves, seals and checks every effective selected source; use identical explicit source overrides for each control/candidate pair.
+
+The fixture verifies both loaded and selected P4 absence, exact original pickup/return identities, private loan preparation/earning/payment, pending-return Keep and blocked debt followed by the actual footer Keep. Queue-off controls require no owned loan. Existing independent server snapshots, native durations, progressed reading, real Panel handlers, native drain and full runtime auditing remain required. The capacity case lowers the owned container's native capacity after pickup; it does not claim physical filler-item coverage. These are edited carried-reading checks with an independent Pen/TV/book tail, not a complete restoration-provider replacement or physical-input qualification.
 
 ## Crafting and borrowed tools
 

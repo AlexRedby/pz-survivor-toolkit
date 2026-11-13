@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.371
+
+- **Fixed:** Distinguished read-only item-location dependencies from actual item use in queue editing. Equipping an unrelated item no longer blocks keeping a borrowed book, completing its native return or handling a full source container in single-player. Actual bag moves and shared-item conflicts remain protected. Native carried-book return, Keep and rejection of returns to full containers were verified in macOS SP/menu-Host with the selected pack excluding P4; the general restoration migration remains incomplete.
+
 ### 0.1.370
 
 - **Changed:** With P4 absent from both loaded and selected mods, queue-enabled native reading from carried containers now records exact pickup loans before native allocation and keeps the game's existing optional return. Keep and failed-return handling use the shared ledger without adding a second return or marking it required. Direct inventory moves and other same-file callbacks do not acquire reading-loan authority; P4-selected and queue-disabled behavior stays with the existing producers. This is a limited migration path, not a complete P4 replacement.
@@ -1712,6 +1716,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.106
+
+- **Changed:** Updated the reviewed queue-policy compiler input for typed item-location reads. Unsupported inputs retain their original Lua implementation.
 
 ### 0.1.105
 
