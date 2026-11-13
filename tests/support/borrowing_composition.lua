@@ -1,6 +1,10 @@
 -- Offline engine boundary for the source-backed composition test. All Toolkit
 -- policy, receipt, observer and begin/stop implementations are loaded unchanged.
-return function(client)
+return function(client,options)
+    options=options or {}
+    local p4Enabled=options.p4~=false
+    local p4Selected=options.p4Selected
+    if p4Selected==nil then p4Selected=p4Enabled end
     -- Native Kahlua globals are a plain table. A fallback __index would make
     -- the real SourceProof binding watcher reject this modeled environment.
     local env={}
@@ -63,6 +67,7 @@ return function(client)
         if unrelated[module:match('^PZSurvivorToolkit/(.*)$')]then return end
         local path=module:match('^PZSurvivorToolkit/')and toolkitPath(module)
         local selected=p4[module]
+        if selected and not p4Enabled then error('fixture module unavailable: '..module,0)end
         if not path and not selected and (module:match('^TimedActions/')or module:match('^Fluids/')or module=='RadioCom/ISRadioAction')then
             for _,branch in ipairs({'shared','client'})do
                 local candidate=NativeActionRoot..'/'..branch..'/'..module..'.lua'
@@ -90,7 +95,8 @@ return function(client)
         local source=text(actual)
         local first=assert(source:find(signature,1,true),'missing native producer '..signature)
         local last=assert(source:find('\nend',first,true),'unterminated native producer '..signature)
-        execute(source:sub(first,last+3),actual)
+        local _,lines=source:sub(1,first-1):gsub('\n','\n')
+        execute(string.rep('\n',lines)..source:sub(first,last+3),actual)
     end
     local function list(values)
         return {class='ArrayList',values=values,size=function()return #values end,
@@ -102,11 +108,23 @@ return function(client)
         return setmetatable(class,{__index=self})
     end
     env.ISBaseObject={derive=derive}
-    env.PZSurvivorToolkit={Settings={actionQueue=function()return true end}}
+    env.PZSurvivorToolkit={Settings={actionQueue=function()return options.queue~=false end}}
     loaded['PZSurvivorToolkit/Settings']=env.PZSurvivorToolkit.Settings
     env.toolkitLuaMetatableMatches=assert(loadfile(ProjectRoot..'/tests/support/source_binding.lua'))()
-    env.getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
-    env.getFirstLineOfClosure=NativeFirstLineOfClosure or function(callback)return debug.getinfo(callback,'S').linedefined end
+    local nativeFilename=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
+    env.getFilenameOfClosure=function(callback)
+        if options.metadataHook then options.metadataHook(env,callback)end
+        return nativeFilename(callback)
+    end
+    env.getFirstLineOfClosure=NativeFirstLineOfClosure or function(callback)
+        -- Native Kahlua reports the first instruction, rather than the function
+        -- declaration. Lua debug active lines provide that same source role.
+        local first
+        for line in pairs(debug.getinfo(callback,'L').activelines or {})do
+            if not first or line<first then first=line end
+        end
+        return first or debug.getinfo(callback,'S').linedefined
+    end
     env.instanceof=function(value,kind)
         return type(value)=='table'and (value.class==kind or kind=='InventoryItem'and value.item==true
             or kind=='IsoGameCharacter'and value.class=='IsoPlayer')
@@ -127,7 +145,7 @@ return function(client)
     env.LootSorter={}
     env.getText=function(value)return value end;env.getTextOrNull=env.getText
     env.isClient=function()return client==true end;env.isServer=function()return false end;env.isMultiplayer=env.isClient
-    env.getActivatedMods=function()return {contains=function(_,id)return id=='P4TidyUpMeister'end}end
+    env.getActivatedMods=function()return {contains=function(_,id)return p4Selected and id=='P4TidyUpMeister'end}end
     env.getGameVersion=function()return '42.21'end
     local timestamp=100
     env.getTimestampMs=function()return timestamp end;env.getTimestamp=function()return timestamp end
@@ -225,7 +243,7 @@ return function(client)
         value.containsID=function(self,id)for _,item in ipairs(allItems)do if item.id==id and item.container==self then return true end end;return false end
         value.getItemById=function(self,id)for _,item in ipairs(allItems)do if item.id==id and item.container==self then return item end end end
         value.getItems=function(self)local items={};for _,item in ipairs(allItems)do if item.container==self then items[#items+1]=item end end;return list(items)end
-        value.getOutermostContainer=function(self)return self end
+        value.getOutermostContainer=function(self)return self.owner and self.owner.container:getOutermostContainer()or self end
         for _,name in ipairs({'getAcceptItemFunction','getOnlyAcceptCategory','getVehiclePart','getOpenSound','getTakeSound','getPutSound','getContainerPosition','getFreezerPosition'})do value[name]=function()end end
         for _,name in ipairs({'isRemoveItemAllowed','isItemAllowed'})do value[name]=function()return true end end
         value.hasRoomFor=function(self)return self.room end
@@ -242,7 +260,20 @@ return function(client)
     end
     local inventory=container('none',player);player.inventory=inventory
     local world={class='IsoObject',getSquare=function()return target end,getObjectIndex=function()return 0 end,getOverlaySprite=function()end}
-    local source=container('shelves',world)
+    local source=container(options.carried and 'bag'or 'shelves',world)
+    if options.carried then source.parent=nil end
+    local bag
+    if options.carried then
+        bag={class='InventoryContainer',item=true,id=9001,container=inventory}
+        bag.getID=function(self)return self.id end;bag.getFullType=function()return 'Base.Bag_Schoolbag'end
+        bag.getContainer=function(self)return self.container end;bag.getInventory=function()return source end
+        bag.getItemContainer=bag.getInventory;bag.getWeight=function()return 1 end
+        bag.getActualWeight=bag.getWeight;bag.getUnequippedWeight=bag.getWeight
+        bag.getWeightReduction=function()return 0 end;bag.isEquipped=function()return false end
+        bag.getName=function()return 'Carried test bag'end;bag.getDisplayName=bag.getName
+        bag.getIsCraftingConsumed=function()return false end;bag.getWorldItem=function()end
+        source.owner=bag;allItems[#allItems+1]=bag
+    end
     env.getCell=function()return {getGridSquare=function(_,x)if x==0 then return origin elseif x==4 then return target elseif x==3 then return adjacent end end}end
     env.AdjacentFreeTileFinder={Find=function()return adjacent end}
     env.getPlayerLoot=function()return {selectButtonForContainer=function()end,setForceSelectedContainer=function()end}end
@@ -288,12 +319,17 @@ return function(client)
         value.canBeEquipped=function()end
         allItems[#allItems+1]=value;return value
     end
+    if options.readProducer=='transferIfNeeded' then
+        -- Preserve the real same-file native closure while changing its role
+        -- before Operations captures the existing producer wrapper.
+        env.ISInventoryPaneContextMenu.readItem=env.ISInventoryPaneContextMenu.transferIfNeeded
+    end
     env.require('PZSurvivorToolkit/ActionQueueOperations')
     env.require('PZSurvivorToolkit/ActionQueueDefinitions')
     env.require('PZSurvivorToolkit/ActionQueuePolicy')
     env.require('PZSurvivorToolkit/ActionQueue')
     local compat=env.require('PZSurvivorToolkit/ActionQueueCompat')
-    assert(compat.isInstalled('P4TidyUpMeister'),'selected actual P4 source was not accepted by Compat: '..tostring(env.sourceFailure))
+    assert(compat.isInstalled('P4TidyUpMeister')==p4Enabled,'selected P4 provider differs from fixture: '..tostring(env.sourceFailure))
     local queue=env.ISTimedActionQueue.getTimedActionQueue(player)
     local function dispatch(action,phase)
         -- Model the Java LuaTimedActionNew lifecycle bridge, not its individual
@@ -327,5 +363,5 @@ return function(client)
     end
     return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,list=list,
         dispatch=dispatch,start=start,deliver=deliver,transactions=transactions,events=events,adjacent=adjacent,
-        effects=effects,engineTrace=engineTrace}
+        effects=effects,engineTrace=engineTrace,bag=bag}
 end

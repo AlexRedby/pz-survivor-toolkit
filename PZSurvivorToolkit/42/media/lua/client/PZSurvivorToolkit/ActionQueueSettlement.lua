@@ -1939,6 +1939,19 @@ function Settlement.observePreparation(action, specification)
     return step.handle
 end
 
+-- Source-reviewed native producers can keep body claims in the same private
+-- preparation scope. Inspect only enrolled operations, not arbitrary enqueues.
+function Settlement.rememberPreparation(action, inspector)
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local scope = record and record.preparationScope
+    if not scope or not borrowingLive(scope) or type(inspector) ~= "function"
+        or not executionProof or not executionProof.closure(inspector, "ActionQueueDefinitions.lua") then return false end
+    local contract = inspector(action)
+    if record.preparationScope ~= scope or action.character ~= record.character
+        or action.toolkitQueueOperation ~= record.token or not operationLive(record) then return false end
+    return Settlement.remember(scope, action, contract)
+end
+
 -- Do not release an independent tail while a preparation result can still
 -- arrive. Pending unstarted work has no receipt; a rejected attempt is isolated.
 -- A lost/expired authority is a failure, never an invitation to guess or retry.

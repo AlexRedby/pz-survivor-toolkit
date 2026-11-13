@@ -842,7 +842,7 @@ assert(observer.read(tracks));observer.reset();assert(observer.read(tracks)==nil
             changed = fixture
             if change == 'flag': changed = changed.replace('local prepared=config.options and config.options.equip_prepared==true', 'local prepared=true')
             elif change == 'guard': changed = changed.replace('if prepared then\n  for _,entry in ipairs(preparedSources)do', 'if true then\n  for _,entry in ipairs(preparedSources)do')
-            elif change == 'computed-pin': changed = changed.replace("'ActionQueueOperations.lua',2049664196", "'ActionQueueOperations.lua',actualChecksum()")
+            elif change == 'computed-pin': changed = changed.replace("'ActionQueueOperations.lua'," + str(prepared['client/PZSurvivorToolkit/ActionQueueOperations.lua']), "'ActionQueueOperations.lua',actualChecksum()")
             else: changed = changed.replace("'ActionQueueApproach.lua'," + str(prepared['client/PZSurvivorToolkit/ActionQueueApproach.lua']), "'ActionQueueOperations.lua',3155442316")
             with self.assertRaises(ValueError, msg=change): adapter._reviewed_equip_pins(changed, prepared=True)
 

@@ -37,13 +37,19 @@ INTEGRATIONS = {
     'P4TidyUpMeister': {
         'owners': ['client/PZSurvivorToolkit/ActionQueueCompat.lua',
                    'client/PZSurvivorToolkit/ActionQueueTidyIntent.lua',
-                   'client/PZSurvivorToolkit/ActionQueueSettlement.lua'],
+                   'client/PZSurvivorToolkit/ActionQueueSettlement.lua',
+                   'client/PZSurvivorToolkit/ActionQueueRestoration.lua'],
         'option': 'p4_source', 'root': '.',
         'tests': {'test_action_queue_borrowing_composition.lua': (
             Source('P4TidySource', 'media/lua/client/P4TidyUpMeister.lua'),
             Source('P4RestoreSource', 'media/lua/shared/TimedActions/P4RestoreAction.lua'),
+            Source('P4RestoreFloorSource', 'media/lua/shared/TimedActions/P4RestoreFloorAction.lua')),
+            'test_action_queue_restoration_composition.lua': (
+            Source('P4TidySource', 'media/lua/client/P4TidyUpMeister.lua'),
+            Source('P4RestoreSource', 'media/lua/shared/TimedActions/P4RestoreAction.lua'),
             Source('P4RestoreFloorSource', 'media/lua/shared/TimedActions/P4RestoreFloorAction.lua'))},
-        'game_inputs': {'test_action_queue_borrowing_composition.lua': ('native_action_root',)},
+        'game_inputs': {'test_action_queue_borrowing_composition.lua': ('native_action_root',),
+                        'test_action_queue_restoration_composition.lua': ('native_action_root',)},
     },
     'VehicleRepairOverhaul': {
         'owners': ['shared/PZSurvivorToolkit/VehicleGlass.lua',
@@ -243,7 +249,7 @@ def configure(args, project, requested):
         raise ValueError('Select --integration or a mapped --test with --pack-lock; see --list-integrations')
     identifiers = native._metadata(project / 'SurvivorQoL-selected.ini')['Mods'].split(';')
     locations = pack.validate(args.pack_lock.resolve(), project, args.game.resolve(), identifiers)
-    if 'test_action_queue_borrowing_composition.lua' in checks:
+    if checks.intersection({'test_action_queue_borrowing_composition.lua', 'test_action_queue_restoration_composition.lua'}):
         if 'PZSurvivorToolkit' not in locations:
             raise ValueError('Borrowing composition requires PZSurvivorToolkit in the locked pack')
         toolkit = Path(locations['PZSurvivorToolkit']).resolve()

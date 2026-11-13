@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.370
+
+- **Changed:** With P4 absent from both loaded and selected mods, queue-enabled native reading from carried containers now records exact pickup loans before native allocation and keeps the game's existing optional return. Keep and failed-return handling use the shared ledger without adding a second return or marking it required. Direct inventory moves and other same-file callbacks do not acquire reading-loan authority; P4-selected and queue-disabled behavior stays with the existing producers. This is a limited migration path, not a complete P4 replacement.
+
 ### 0.1.369
 
 - **Changed:** Fitness borrowed-item returns now use the shared Toolkit restoration producer while retaining their existing earned-loan checks, native transfers and recovery/equipment/return order. Batches retain their original handles through caller mutations, suppress duplicate scheduling and stop on changed producer bindings. Already-admitted cleanup remains available after disabling queue editing. P4 remains the general restoration provider during migration.

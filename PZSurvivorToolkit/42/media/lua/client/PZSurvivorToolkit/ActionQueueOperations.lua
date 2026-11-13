@@ -14,6 +14,7 @@ local Operations = {}
 PZSurvivorToolkit.ActionQueueOperations = Operations
 local scope
 local titleScope
+local producerScope
 local completionScope
 local continuationScope
 local continuationMarker = {}
@@ -118,23 +119,23 @@ local function pack(...)
     return {n = select("#", ...), ...}
 end
 
-local function run(token, callback, ...)
-    local previous, previousTitle = scope, titleScope
-    scope = token
+local function run(token, producer, callback, ...)
+    local previous, previousTitle, previousProducer = scope, titleScope, producerScope
+    scope, producerScope = token, producer
     titleScope = titleScope or {}
     local results = pack(pcall(callback, ...))
-    scope, titleScope = previous, previousTitle
+    scope, titleScope, producerScope = previous, previousTitle, previousProducer
     if not results[1] then error(results[2], 0) end
     return unpack(results, 2, results.n)
 end
 
 function Operations.run(callback, ...)
-    return run(scope or {}, callback, ...)
+    return run(scope or {}, nil, callback, ...)
 end
 
 function Operations.runWith(token, callback, ...)
     -- Native completion and cleanup must still execute after cancellation; async adapters use runContinuation.
-    return run(token or scope or {}, callback, ...)
+    return run(token or scope or {}, nil, callback, ...)
 end
 
 function Operations.invalidate(token)
@@ -185,7 +186,7 @@ function Operations.runContinuation(continuation, callback, ...)
     if not continuationValid(continuation) then Operations.finishContinuation(continuation); return end
     local previous = continuationScope
     continuationScope, continuation.running = continuation, true
-    local results = pack(pcall(run, continuation.token, callback, ...))
+    local results = pack(pcall(run, continuation.token, nil, callback, ...))
     continuationScope, continuation.running = previous, nil
     Operations.finishContinuation(continuation)
     if not results[1] then error(results[2], 0) end
@@ -377,6 +378,18 @@ function Operations.preparationScope(character)
     return scope
 end
 
+-- A query-local receipt for the existing synchronous UI producer. No copied
+-- action flag or callback from a nested continuation can acquire its identity.
+function Operations.producer(action)
+    local producer = producerScope
+    if not producer or not scope or completionScope or continuationScope
+        or not action or action.toolkitQueueOperation ~= scope
+        or producer.owner[producer.method] ~= producer.wrapper then return end
+    local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+    if lifecycle and lifecycle.current(action.character) then return end
+    return producer.callback, producer.owner, producer.method
+end
+
 local function stamp(action, token)
     if not action.toolkitQueueOperation then
         local queue = ISTimedActionQueue.queues[action.character]
@@ -395,6 +408,8 @@ local function stamp(action, token)
     end
     local settlement = PZSurvivorToolkit.ActionQueueSettlement
     if settlement then settlement.track(action, "body") end
+    local restoration = PZSurvivorToolkit.ActionQueueRestoration
+    if restoration and restoration.observeNative then restoration.observeNative(action) end
     local execution = PZSurvivorToolkit.ActionQueueExecution
     if execution then execution.enqueued(action) end
     local targets = PZSurvivorToolkit.ActionQueueDeviceTargets
@@ -551,10 +566,11 @@ end
 local function wrap(class, method, fresh)
     local callback = class and class[method]
     if not callback then return end
-    class[method] = function(...)
-        if fresh then return run({}, callback, ...) end
-        return Operations.run(callback, ...)
+    local producer = {owner = class, method = method, callback = callback}
+    local wrapper = function(...)
+        return run(fresh and {} or scope or {}, producer, callback, ...)
     end
+    producer.wrapper, class[method] = wrapper, wrapper
 end
 
 -- UI callbacks enqueue preparation, the operation and native returns synchronously.
@@ -634,5 +650,8 @@ if approach then
     approach.install()
     Events.OnGameStart.Add(approach.install)
 end
+
+-- Shared observation belongs to queue intake, independently of family modules.
+require "PZSurvivorToolkit/ActionQueueRestoration"
 
 return Operations
