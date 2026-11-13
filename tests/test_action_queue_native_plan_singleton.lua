@@ -10,7 +10,7 @@ local function fixture(track,proofObserver)
     actor.root={}
     PZSurvivorToolkit={Settings={actionQueue=function()callbacks=callbacks+1;return true end},
         ActionQueueOperations={isTransfer=function()return false end,adoptCommandLifecycle=function()end},
-        ActionQueueTidyIntent={observeTransfers=function()end}}
+        ActionQueueTransfers={observeTransfers=function()end},ActionQueueTidyIntent={}}
     local front={character=actor,toolkitQueueOperation={},action={}}
     local action={character=actor,toolkitQueueOperation={}}
     local queue={character=actor,current=front,queue={front,action}}
@@ -1053,10 +1053,10 @@ end
 -- pickup/effect receipts and private records are produced by real Settlement
 -- APIs; this does not claim native actor, transport or getter provenance.
 local function retainedFixture(waiting)
-    local role={source=true,line=147,calls=0}
+    local role={source=true,line=145,calls=0}
     local s=preparedFixture(true,function(proof)
         proof.matches=function(path,adler,mod,fresh)
-            check(path=='media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'and adler==1408351481
+            check(path=='media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'and adler==1153211821
                 and mod=='PZSurvivorToolkit'and fresh==true,'explicit getter source role loosened')
             return role.source
         end
@@ -1154,7 +1154,7 @@ for _,mode in ipairs({'foreign-getter','wrong-line','wrong-source','foreign-rece
     local s=retainedFixture();local item=s.group.item;local body=s.group.body
     local receipt=s.receipt
     if mode=='foreign-getter'then PZSurvivorToolkit.ActionQueueTidyIntent.confirmedEquipmentIntent=function()error('foreign intent getter executed')end
-    elseif mode=='wrong-line'then s.role.line=148
+    elseif mode=='wrong-line'then s.role.line=146
     elseif mode=='wrong-source'then s.role.source=false
     elseif mode=='foreign-receipt'then
         local foreign={character=s.actor,toolkitQueueOperation={},action={}}

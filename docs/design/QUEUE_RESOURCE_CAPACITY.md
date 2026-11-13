@@ -20,6 +20,7 @@ The first acceptance case is borrowed-book reading with its automatic return, wh
 | `ActionQueueWeights` | Native rounding, safe weight bounds, factory-free reads | Capture each relevant item/container once per decision; share nested aggregates without impure factory/getter calls |
 | `ActionQueueLifecycle`, `Operations`, `Reading`, `TidyIntent` | Native stop/resume, operation identity and explicit equipment intent | Consume the common contract while preserving their timing and ownership responsibilities |
 | `ActionQueueSettlement`, `Acknowledgements` | Exact item/endpoint receipts, queue generations and earned cleanup | Generalize item outcome observation; ordinary item transactions need their own evidence, not just timed-action ACKs |
+| `ActionQueueTransfers` | Provider-independent native merge/lifecycle observation, source-bound listeners and isolated observation failures | Build the owned restoration producer on the existing earned-loan ledger; observation alone grants no transfer, capacity or edit authority |
 | Java `ItemBatchAdmissionLogic` | Native-request batch admission and scoped accounting | Fill only demonstrated admission gaps at the actual native transaction boundaries; do not reserve the whole future queue |
 | Queue panel and common scenario runner | Hover cache, press/release revalidation, selected-pack controls and log audits | Show forecast uncertainty separately from proven dependencies; add bounded profiling and migration coverage |
 

@@ -1044,7 +1044,7 @@ local function prepareCarriedContainerEdit(action,container)
     if not bindings or not sourceCheck or not p.equal(description.targetContainer,container)then return end
     if carriedHelperTrusted==nil then
         carriedHelperTrusted=p.origin(carriedContainer,'ActionQueueItemEditAdapters.lua')
-            and p.matches('media/lua/client/PZSurvivorToolkit/ActionQueueItemEditAdapters.lua',3026232832,'PZSurvivorToolkit',true)
+            and p.matches('media/lua/client/PZSurvivorToolkit/ActionQueueItemEditAdapters.lua',809026424,'PZSurvivorToolkit',true)
     end
     if not carriedHelperTrusted or not bindings()or not sourceCheck()then return end
     local actor=description.actor

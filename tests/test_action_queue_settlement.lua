@@ -2284,7 +2284,7 @@ for _, client in ipairs({false, true}) do
         local s = setup(client)
         local observer, transfers
         PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(_, _, value) transfers = value end}
+        PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function(_, _, value) transfers = value end}
         PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
         local action = s.action(); action.Type, action.action = 'ISUnequipAction', {}
         s.queue.current, s.queue.queue = action, {action, s.tail}
@@ -2335,7 +2335,7 @@ do
     local s = setup(true)
     local observer
     PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-    PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+    PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function() end}
     local action = s.action(); action.Type, action.action = 'ISUnequipAction', {}
     s.queue.current, s.queue.queue = action, {action, s.tail}
     local observed = false
@@ -2359,7 +2359,7 @@ for _, client in ipairs({false, true}) do
         s.root.isExistYet = function() return true end
         local observer, events
         PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(_, _, value) events = value end}
+        PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function(_, _, value) events = value end}
         PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
         ISTimedActionQueue.add = function(action) table.insert(s.queue.queue, 2, action) end
         local value = s.item(191, s.source); s.source.items[191] = value
@@ -2422,7 +2422,7 @@ for _, client in ipairs({false, true}) do
         ISInventoryTransferAction = {}
         setmetatable(s.pickup, ISInventoryTransferAction)
         PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(callback, canObserve, events)
+        PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function(callback, canObserve, events)
             listeners[#listeners + 1] = {callback = callback, events = events}
         end}
         PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
@@ -2494,7 +2494,7 @@ end
 for _, changed in ipairs({'source', 'generation', 'retired'}) do
     local s = pickupFixture(false)
     PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function() return true end}
-    PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+    PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function() end}
     if changed == 'source' then s.pickup.srcContainer = {}
     elseif changed == 'generation' then s.scope.generation = s.scope.generation + 1
     else s.settlement.close(s.scope) end
@@ -2514,7 +2514,7 @@ for _, client in ipairs({false, true}) do
         s.source.getType = function() return 'floor' end
         local observer
         PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+        PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function() end}
         local value = s.item(211, s.root);s.root.items[211] = value
         local world, square = {}, {}
         world.getItem = function() return value end

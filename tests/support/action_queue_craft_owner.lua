@@ -28,7 +28,7 @@ return function(source)
     local dependencies = {}
     require = function(module)
         local name = module:match('^PZSurvivorToolkit/(.+)$')
-        if name == 'ActionQueueSettlement' or name == 'ActionQueueTidyIntent' or name == 'ActionQueueMembership' then
+        if name == 'ActionQueueSettlement' or name == 'ActionQueueTidyIntent' or name == 'ActionQueueTransfers' or name == 'ActionQueueMembership' then
             -- The surrounding checks stub require; Compat still needs its real
             -- declared collaborators even when this fixture selects only Neat.
             if not dependencies[module] then

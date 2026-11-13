@@ -46,6 +46,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.368
+
+- **Changed:** Native transfer merging and receipt observation now have one shared owner independent of the automatic-restoration provider. Preparation, fitness and explicit grabs retain their native execution and source-bound observation; the current restoration provider remains active during migration.
+- **Fixed:** Generic transfer lifecycle notifications also run when the legacy explicit-intent controller is absent. Listener failures remain isolated, and later source mutations invalidate prepared observation leases.
+
 ### 0.1.367
 
 - **Fixed:** Pending ordinary equipment requested from a carried bag can move or cancel as a complete fetch/equip operation behind an active reader in SP and Host. Original native capacity, input checks and execution remain authoritative; shared inputs, started work and return-bearing groups retain their protections.
@@ -1699,6 +1704,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.105
+
+- **Changed:** Updated the reviewed queue compiler inputs for shared transfer-observer ownership. Unknown inputs retain their original Lua implementation.
 
 ### 0.1.104
 

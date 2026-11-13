@@ -6,7 +6,7 @@ local function test(name, callback)
     if not ok then failures[#failures + 1] = name .. ": " .. tostring(err) end
 end
 
-local function fixture(client)
+local function fixture(client,skipInstall,installSourceFactory,sourceAdapters)
     local h = {valid = true, nextID = 0, callbacks = {}, emitted = {}, now = 100}
     require = function() end
     isClient = function() return client == true end
@@ -16,7 +16,7 @@ local function fixture(client)
     isItemTransactionRejected = function() return h.txRejected == true end
     Events = {OnMainMenuEnter = {Add = function(callback) h.callbacks[#h.callbacks + 1] = callback end},
         OnServerCommand = {Add = function(callback) h.receive = callback end}}
-    PZSurvivorToolkit = {Settings = {actionQueue = function() return h.queueEnabled == true end}}
+    PZSurvivorToolkit = {Settings = {actionQueue = function() return h.queueEnabled == true end}, ActionQueueItemEditAdapters=sourceAdapters}
     local function class(name)
         local value = {Type = name}
         value.__index = value
@@ -126,7 +126,7 @@ local function fixture(client)
             return loaded[name]
         end
         if name == 'PZSurvivorToolkit/ActionQueueAcknowledgements' or name == 'PZSurvivorToolkit/ActionQueueSettlement'
-            or name == 'PZSurvivorToolkit/ActionQueueTransferRequests' or name == 'PZSurvivorToolkit/ActionQueueTidyIntent' or name == 'PZSurvivorToolkit/ActionQueueLifecycle' then
+            or name == 'PZSurvivorToolkit/ActionQueueTransferRequests' or name == 'PZSurvivorToolkit/ActionQueueTidyIntent' or name == 'PZSurvivorToolkit/ActionQueueLifecycle' or name == 'PZSurvivorToolkit/ActionQueueTransfers' then
             if not loaded[name] then
                 loaded[name] = assert(loadfile(root .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
             end
@@ -135,6 +135,7 @@ local function fixture(client)
     end
     h.acks = require('PZSurvivorToolkit/ActionQueueAcknowledgements')
     h.settlement = require('PZSurvivorToolkit/ActionQueueSettlement')
+    h.transfers = require('PZSurvivorToolkit/ActionQueueTransfers')
     h.intent = require('PZSurvivorToolkit/ActionQueueTidyIntent')
     h.lifecycle = require('PZSurvivorToolkit/ActionQueueLifecycle')
     function h.receipt(action, state, token)
@@ -149,14 +150,15 @@ local function fixture(client)
         action.receiptToken = token or '11111111-1111-4111-8111-111111111111'
         h.receipt(action, 'started')
     end
-    h.intent.install(function(action)
+    if not skipInstall then h.intent.install(function(action)
         if h.onGuard then h.onGuard(action) end
         return h.valid and (not action or (not h.originalOnlyID or action.item:getID()==h.originalOnlyID) and acceptedClasses[getmetatable(action)] and not action.changed
             and not action.onStartFunc and not action.onCompleteFunc and not action.onCancelFunc
             and not action.retriggerLastAction and not action.onFailFunc and not action.additionalTest)
     end, function(menu,name)
         return h.approvedWrapper and menu==ISInventoryPaneContextMenu and menu['_ocStick_'..name]==menu[name]
-    end)
+    end,installSourceFactory)
+    end
     function h.item(container, id, kind)
         h.nextID = h.nextID + 1
         local value = {inventoryItem = true, id = id or h.nextID, kind = kind or "Base.Hammer", container = container or h.inventory}
@@ -228,7 +230,7 @@ local function fixture(client)
         ISInventoryPaneContextMenu.onGrabItems({item}, 0)
         h.drain()
     end
-    function h.nativeMerge(onMerged,canObserve)
+    function h.nativeMerge(onMerged,canObserve,events,sourceFactory)
         assert(NativeActionRoot, 'native source root required')
         local path=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua'
         local source
@@ -261,7 +263,9 @@ local function fixture(client)
         ISInventoryTransferAction.isAlreadyTransferred=function(action,item) return item:getContainer()==action.destContainer end
         ISInventoryTransferAction.isValid=function(action) return not action.blocked or not action.blocked[action.item:getID()] end
         ISInventoryTransferAction.transferItem=function(action,item) h.move(item,action.destContainer) end
-        h.intent.observeTransfers(onMerged,canObserve)
+        if h.beforeNativeObserve then h.beforeNativeObserve()end
+        h.nativePrevious=ISInventoryTransferAction.checkQueueList
+        h.transfers.observeTransfers(onMerged,canObserve,events,sourceFactory)
         function h.prepareNative(action)
             action.action={reset=noop,setTime=noop,stopTimedActionAnim=noop,setLoopedAction=noop,setWaitForFinished=noop}
         end
@@ -279,6 +283,32 @@ local function fixture(client)
     end
     return h
 end
+
+test('source owners register immutable factories during initialization and late observer or Intent install',function()
+    local registrations={}
+    local adapters={registerSourceFactory=function(owner,key,factory)
+        local entries=registrations[owner]or {};registrations[owner]=entries
+        assert(entries[key]==nil or entries[key]==factory,'source factory identity changed during registration')
+        entries[key]=factory
+        return true
+    end}
+    local h=fixture(false,true,nil,adapters)
+    assert(registrations[h.transfers].queueObserverBinding==h.transfers.queueObserverBinding,
+        'the generic transfer observer was not registered at module initialization')
+    assert(registrations[h.intent].transferListenerBinding==h.intent.transferListenerBinding,
+        'the private Intent participant registered an obsolete observer role')
+    h=fixture(false,true)
+    PZSurvivorToolkit.ActionQueueItemEditAdapters=adapters
+    assert(registrations[h.intent]==nil and registrations[h.transfers]==nil,'the late-load case already had an adapter')
+    h.transfers.observeTransfers(function()end)
+    assert(registrations[h.transfers].queueObserverBinding==h.transfers.queueObserverBinding,
+        'the observer subscribed before its late-loaded source adapter registered the canonical factory')
+    h.transfers.observeTransfers(function()end)
+    h.intent.install(function()return true end)
+    assert(registrations[h.intent].transferListenerBinding==h.intent.transferListenerBinding,
+        'Intent subscribed before its late-loaded source adapter registered the private participant')
+    h.intent.install(function()error('the installed guard must remain unchanged')end)
+end)
 
 -- Settlement publishes a one-use copy only during a committed waiver. These
 -- isolated Intent checks model that private boundary; Settlement tests own seals.
@@ -1045,6 +1075,134 @@ test("new queue and main menu invalidate old intent", function()
 end)
 
 if NativeActionRoot then
+    test('generic native transfer observer works without Intent installation or module in SP and Host',function()
+        for _,client in ipairs({false,true})do for _,withoutIntent in ipairs({false,true})do
+            local h=fixture(client,true)
+            local began,finished,merging,merged=0,0,0,0
+            local private={}
+            h.nativeMerge(function(action,context)
+                merged=merged+1
+                assert(context==private,'transient merge context escaped its paired listener')
+            end,function()return true end,{
+                merging=function()merging=merging+1;return private end,
+                begin=function()began=began+1;return true end,
+                finish=function()finished=finished+1 end,
+            })
+            assert(P4TidyUpMeister==nil and h.intent.status()==false)
+            if withoutIntent then PZSurvivorToolkit.ActionQueueTidyIntent=nil end
+            local one,two=h.item(),h.item()
+            local action=h.transfer(one,h.source)
+            ISTimedActionQueue.add(action);ISTimedActionQueue.add(h.transfer(two,h.source))
+            if client then action:checkQueueList()end
+            h.performNative(action)
+            assert(one:getContainer()==h.source and two:getContainer()==h.source and #h.queue.queue==0)
+            assert(began==1 and finished==1 and merging==merged and merged==(client and 2 or 1),
+                'generic transfer boundaries changed without the P4/Intent installer or live module')
+        end end
+    end)
+    test('accepted native observation skips unnecessary guards while preserving every merge listener',function()
+        local h=fixture(false,true)
+        local accepted,unneeded,merging,merged=0,0,0,0
+        local private={}
+        h.nativeMerge(function()end,function()accepted=accepted+1;return true end)
+        h.transfers.observeTransfers(function(action,context)
+            assert(context==private,'skipping an unnecessary guard skipped its paired merge context')
+            merged=merged+1
+        end,function()unneeded=unneeded+1;error('unnecessary guard must not run')end,{
+            merging=function()merging=merging+1;return private end,
+        })
+        for _=1,2 do
+            local one,two=h.item(),h.item();local action=h.transfer(one,h.source)
+            ISTimedActionQueue.add(action);ISTimedActionQueue.add(h.transfer(two,h.source))
+            h.performNative(action)
+            assert(one:getContainer()==h.source and two:getContainer()==h.source and #h.queue.queue==0)
+        end
+        assert(accepted==2 and unneeded==0 and merging==2 and merged==2,
+            'any-accepted observation evaluated an unnecessary guard or suppressed an independent merge listener')
+    end)
+    test('generic observer preserves exact native helper invocation and nil return slots',function()
+        local h=fixture(false,true)
+        local calls=0
+        h.beforeNativeObserve=function()
+            local native=ISInventoryTransferAction.checkQueueList
+            ISInventoryTransferAction.checkQueueList=function(action,...)
+                assert(select('#',...)==3 and select(2,...)=='sentinel')
+                calls=calls+1;native(action)
+                return nil,'native result',nil,37
+            end
+        end
+        h.nativeMerge(function()end,function()return true end)
+        local item=h.item();local action=h.transfer(item,h.source)
+        ISTimedActionQueue.add(action)
+        local function capture(...)return {n=select('#',...),...}end
+        local result=capture(action:checkQueueList(nil,'sentinel',nil))
+        assert(calls==1 and result.n==4 and result[1]==nil and result[2]=='native result' and result[3]==nil and result[4]==37)
+    end)
+    for _,phase in ipairs({'canObserve','merging','merged','begin','finish'})do
+        test('generic '..phase..' listener failure is quarantined before Intent installation',function()
+            local h=fixture(false,true)
+            local broken,healthy=0,0
+            local fail=function()broken=broken+1;error('injected generic listener failure')end
+            local events={}
+            if phase~='canObserve'and phase~='merged'then events[phase]=fail end
+            h.nativeMerge(phase=='merged'and fail or function()end,
+                phase=='canObserve'and fail or function()return true end,events)
+            h.transfers.observeTransfers(function()healthy=healthy+1 end,function()return true end)
+            for _=1,2 do
+                local one,two=h.item(),h.item();local action=h.transfer(one,h.source)
+                ISTimedActionQueue.add(action);ISTimedActionQueue.add(h.transfer(two,h.source))
+                h.performNative(action)
+                assert(one:getContainer()==h.source and two:getContainer()==h.source and #h.queue.queue==0)
+            end
+            assert(broken==1 and healthy==2,'generic observer failure aborted or replayed native effects')
+        end)
+    end
+    test('observer binding authenticates every factory before invoking any owner',function()
+        local h=fixture(false,true);h.nativeMerge()
+        local calls=0
+        local trusted=function()calls=calls+1;return function()return true end end
+        local forged=function()error('forged owner invoked')end
+        h.transfers.observeTransfers(function()end,nil,nil,trusted)
+        h.transfers.observeTransfers(function()end,nil,nil,forged)
+        local action=h.transfer(h.item(),h.source)
+        local binding=h.transfers.queueObserverBinding(h.nativePrevious,ISInventoryTransferAction.checkQueueList,action,
+            function(factory)return factory==trusted end)
+        assert(binding==nil and calls==0,'an owner ran before a later factory was authenticated')
+    end)
+    test('observer binding rejects late events mutation and source factory reentry',function()
+        for _,mutation in ipairs({'late','events','registration','lease'})do
+            local h=fixture(false,true);h.nativeMerge()
+            local events={finish=function()end}
+            local factory=function()
+                if mutation=='events'then events.finish=function()end
+                elseif mutation=='registration'then h.transfers.observeTransfers(function()end)end
+                return function()
+                    if mutation=='lease'then events.finish=function()end end
+                    return true
+                end
+            end
+            h.transfers.observeTransfers(function()end,nil,events,factory)
+            local action=h.transfer(h.item(),h.source)
+            local binding=h.transfers.queueObserverBinding(h.nativePrevious,ISInventoryTransferAction.checkQueueList,action,
+                function(candidate)return candidate==factory end)
+            if mutation=='late'then
+                assert(type(binding)=='function'and binding({}))
+                events.finish=function()end
+                assert(not binding({}),'a late event replacement retained its source proof')
+            elseif mutation=='lease'then
+                assert(type(binding)=='function'and not binding({}),'prepared lease reentry retained stale observer bindings')
+            else assert(binding==nil,'source reentry changed an already-captured observer registry')end
+        end
+    end)
+    test('Intent listener authenticates its nested guard source before invocation',function()
+        local calls=0
+        local forged=function()calls=calls+1;return function()return true end end
+        local h=fixture(false,false,forged);h.nativeMerge()
+        local action=h.transfer(h.item(),h.source)
+        local binding=h.transfers.queueObserverBinding(h.nativePrevious,ISInventoryTransferAction.checkQueueList,action,
+            function(candidate)return candidate==h.intent.transferListenerBinding end)
+        assert(binding==nil and calls==0,'the private Intent listener invoked an untrusted nested guard source')
+    end)
     test('native return sequence preserves per-attempt effects across reset, stop and byte reuse',function()
         for _,client in ipairs({false,true}) do
             for _,stopNext in ipairs({false,true}) do
@@ -1154,7 +1312,7 @@ if NativeActionRoot then
             calls=calls+1
             assert(#action.queueList==1 and #action.queueList[1].items==2)
         end
-        h.intent.observeTransfers(observer);h.intent.observeTransfers(observer)
+        h.transfers.observeTransfers(observer);h.transfers.observeTransfers(observer)
         assert(ISInventoryTransferAction.checkQueueList==helper,'late observation must not replace pinned native helper')
         local one,two=h.item(),h.item()
         local executor=h.transfer(one,h.source)
@@ -1165,8 +1323,8 @@ if NativeActionRoot then
     test('failed read-only merge observer cannot abort or replay native effects',function()
         local h=fixture();h.nativeMerge()
         local failed,healthy=0,0
-        h.intent.observeTransfers(function()failed=failed+1;error('observer failure')end)
-        h.intent.observeTransfers(function()healthy=healthy+1 end)
+        h.transfers.observeTransfers(function()failed=failed+1;error('observer failure')end)
+        h.transfers.observeTransfers(function()healthy=healthy+1 end)
         for _=1,2 do
             local one,two=h.item(),h.item()
             local executor=h.transfer(one,h.source)
@@ -1491,7 +1649,7 @@ end)
 test('transfer lifecycle observers run for automatic pickups without explicit UI intent',function()
     local h=fixture()
     local begins,finishes=0,0
-    h.intent.observeTransfers(function() end,nil,{
+    h.transfers.observeTransfers(function() end,nil,{
         begin=function(action) begins=begins+1;assert(action.item:getContainer()==h.source);return true end,
         finish=function(action,succeeded) finishes=finishes+1;assert(succeeded and action.item:getContainer()==h.inventory) end,
     })
@@ -1504,8 +1662,8 @@ for _,phase in ipairs({'begin','finish'}) do
     test('failed '..phase..' transfer observer cannot stop native effects or later observers',function()
         local h=fixture()
         local broken,healthy=0,0
-        h.intent.observeTransfers(function() end,nil,{[phase]=function() broken=broken+1;error('injected read-only failure') end})
-        h.intent.observeTransfers(function() end,nil,{finish=function() healthy=healthy+1 end})
+        h.transfers.observeTransfers(function() end,nil,{[phase]=function() broken=broken+1;error('injected read-only failure') end})
+        h.transfers.observeTransfers(function() end,nil,{finish=function() healthy=healthy+1 end})
         for _=1,2 do
             local item=h.item(h.source)
             ISTimedActionQueue.add(h.transfer(item,h.inventory));h.drain()

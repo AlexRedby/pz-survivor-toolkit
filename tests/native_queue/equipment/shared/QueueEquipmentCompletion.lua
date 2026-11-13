@@ -153,8 +153,8 @@ function Completion.observe(toolkit,selection)
   table.sort(ownershipAtBegin,function(a,b)return a.id<b.id end)
  end
  local returnItems=settlement.returnItems
- local tidyIntent=toolkit.ActionQueueTidyIntent
- local groupObserver=tidyIntent and tidyIntent.observeTransfers
+ local transfers=toolkit.ActionQueueTransfers
+ local groupObserver=transfers and transfers.observeTransfers
  local groupObserverBound=false
  if groupObserver then
   -- Subscribe after compatibility preload; protected native helper identity stays intact.

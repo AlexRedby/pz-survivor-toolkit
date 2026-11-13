@@ -6,6 +6,7 @@ local providers, byId, providerRevision = {}, {}, 0
 local activeEditCleanupBinding
 local transferListenerMethods
 local executionProof = require "PZSurvivorToolkit/SourceProof"
+require "PZSurvivorToolkit/ActionQueueTransfers"
 local retainedBindingSource={capture=executionProof and executionProof.captureBindings,call=pcall,origin=executionProof and executionProof.closure,kind=type,meta=getmetatable,raw=rawget,equal=rawequal,match=string.match}
 -- Keep the new dependency inside the existing source-owned wrapper boundary.
 -- Unknown factories must never receive private callbacks or attempt records.
@@ -1783,7 +1784,7 @@ end
 
 local plannedReturnObserver
 function Settlement.observePlannedReturns()
-    local transfers = Toolkit.ActionQueueTidyIntent
+    local transfers = Toolkit.ActionQueueTransfers
     if plannedReturnObserver then
         return transfers == plannedReturnObserver.transfers and transfers.observeTransfers == plannedReturnObserver.observe
             and plannedReturnObserver.valid
@@ -1813,7 +1814,7 @@ function Settlement.observePlannedReturns()
 end
 
 function Settlement.preparationAvailable()
-    local lifecycle, transfers = Toolkit.ActionQueueLifecycle, Toolkit.ActionQueueTidyIntent
+    local lifecycle, transfers = Toolkit.ActionQueueLifecycle, Toolkit.ActionQueueTransfers
     if preparationObserver then
         return preparationObserver.valid and lifecycle == preparationObserver.lifecycle and lifecycle.registerObserver == preparationObserver.register
             and transfers == preparationObserver.transfers and transfers.observeTransfers == preparationObserver.observe
@@ -2941,7 +2942,7 @@ function Settlement.transferListenerBinding(action,onMerged,canObserve,events)
         {owner=record.actions,keys={action}}, {owner=observer,exact=true}, {owner=events,exact=true},
         {owner=record,keys={"actions","token","queue","character","generation","settlement"}},
         {owner=action,keys={"toolkitQueueOperation","character"}},
-        {owner=Toolkit,keys={"ActionQueueSettlement","ActionQueueTidyIntent"}},
+        {owner=Toolkit,keys={"ActionQueueSettlement","ActionQueueTransfers"}},
         {owner=Settlement,keys=keys},
     }
     if step then specifications[#specifications+1]={owner=step,keys={"returning","preparation"}} end
@@ -3937,7 +3938,7 @@ function Settlement.discardUnstartedPickups(queue,token,members)
     return true
 end
 
-local explicitEquipmentRole={adler=1408351481,line=147}
+local explicitEquipmentRole={adler=1153211821,line=145}
 local explicitEquipmentMatches=executionProof and executionProof.matches
 local retainingExplicitEquipment=false
 local function explicitPickupCapture(candidate,capture)

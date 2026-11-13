@@ -3,6 +3,20 @@ if not NativeActionRoot or not NativeWishlistWorkshopRoot then
     if TestCoverage then TestCoverage('source-contract','skipped','Selected chain source checks skipped (pass native action and Workshop roots).')end
     return
 end
+-- The native Lua method models do not weave LuaTimedActionNew. Emit its generic
+-- transfer and explicit-intent notifications separately, preserving their order.
+local function beginNativeObservation(intent,action,phase)
+    local transfers=PZSurvivorToolkit.ActionQueueTransfers
+    local shared=phase=='perform'and transfers and transfers.dispatch('begin',action)
+    local explicit=intent and intent.begin(action,phase)
+    return shared or explicit
+end
+local function finishNativeObservation(intent,action,phase,succeeded)
+    local transfers=PZSurvivorToolkit.ActionQueueTransfers
+    if phase=='perform'and transfers then transfers.dispatch('finish',action,succeeded)end
+    if intent then intent.finish(action,phase,succeeded)end
+end
+
 local function read(path)
     if NativeReadText then local source = NativeReadText(path):gsub('\r', ''); return source end
     local file = assert(io.open(path)); local source = file:read('*a'); file:close()
@@ -361,6 +375,8 @@ require = function(module)
     elseif module == 'Project_Cook/PJCK_FrozenCooking' or module == 'Project_Cook/PJCK_EvolvedSpiceGuard' then id, branch = 'Project_Cook', 'shared/'
     elseif module:match('^ISUI/WMI_') and module ~= 'ISUI/WMI_Compat_TABAS' then id, branch = 'WashFix', 'client/'
     elseif module == 'TimedActions/WMI_PatchWashClothing' then id, branch = 'WashFix', 'shared/'
+    elseif module == 'PZSurvivorToolkit/ActionQueueTransfers' then
+        return PZSurvivorToolkit.ActionQueueTransfers or assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua'))()
     elseif module == 'PZSurvivorToolkit/ActionQueueTidyIntent' then
         local path=ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'
         local source=read(path):gsub('\nreturn Intent','\nIntent.fixtureState=state\nIntent.fixtureStates=states\nIntent.fixtureClear=clear\nreturn Intent')
@@ -3400,12 +3416,12 @@ local function tidyTasks(shared, insertion, queueEnabled, sameOwner, stopOnlyPic
         if stopOnlyPickups then
             action.queueList={{items={action.item}}}
             inventory.values={first,second,tidyBagOwner}
-            assert(PZSurvivorToolkit.ActionQueueTidyIntent.begin(action,'perform'),'stop-only pickup observer begin failed')
+            assert(beginNativeObservation(PZSurvivorToolkit.ActionQueueTidyIntent,action,'perform'),'stop-only pickup observer begin failed')
         end
         action:perform()
         if stopOnlyPickups then
             action.queueList={}
-            PZSurvivorToolkit.ActionQueueTidyIntent.finish(action,'perform',true)
+            finishNativeObservation(PZSurvivorToolkit.ActionQueueTidyIntent,action,'perform',true)
         end
     end
     performPickup(firstPickup); firstRead:perform()
@@ -3603,7 +3619,7 @@ do
             executor:checkQueueList()
             assert(queue:indexOf(child)==-1 and next(child)==nil and #executor.queueList[1].items==2,
                 'stop-only P4 observer must retain native grouped pickup merge and child wipe')
-            assert(intent.begin(executor,'perform'));executor:perform();intent.finish(executor,'perform',true)
+            assert(beginNativeObservation(intent,executor,'perform'));executor:perform();finishNativeObservation(intent,executor,'perform',true)
             settlement.poll(scope)
             local earned=assert(settlement.operationState(executor)).borrowings
             assert(#earned==2 and earned[1].state=='active'and earned[2].state=='active'
@@ -3636,12 +3652,12 @@ do
             'P4 must recognize the exact owned native stop/no-op callback binding')
         assert(not intent.keepReturn(owned,{}),'a copied or foreign ledger handle cannot publish Keep intent')
         assert(intent.keepReturn(owned,handle),'earned native guarded return must publish Keep intent with P4 active')
-        assert(intent.begin(owned,'perform'),'actual Compat listener must capture an owned guarded planned return')
-        intent.finish(owned,'perform',true)
+        assert(beginNativeObservation(intent,owned,'perform'),'actual Compat listener must capture an owned guarded planned return')
+        finishNativeObservation(intent,owned,'perform',true)
         assert(captures==1 and finishes==1,'owned guarded return did not pair its real observer begin/finish')
         local outside=returning(19402)
         local priorCaptures=captures
-        intent.begin(outside,'perform');intent.finish(outside,'perform',true)
+        beginNativeObservation(intent,outside,'perform');finishNativeObservation(intent,outside,'perform',true)
         assert(captures==priorCaptures,'ordinary P4 observation cannot mint a private planned return')
         assert(not intent.keepReturn(outside,handle),'an unowned guarded action cannot borrow another return handle')
         for _,change in ipairs({'guard','callback','args','stop','helper'})do
@@ -3667,7 +3683,7 @@ do
                 restore=function()ISInventoryTransferAction.getNotFullFloorSquare=original end
             end
             if change~='args'then
-                assert(not actualPolicy.matchesNative(owned)and not intent.begin(owned,'perform'),
+                assert(not actualPolicy.matchesNative(owned)and not beginNativeObservation(intent,owned,'perform'),
                     'forged '..change..' obtained planned native return observation')
             end
             assert(not intent.canKeepReturn(owned)and not intent.keepReturn(owned,handle),
@@ -3676,8 +3692,8 @@ do
             restore()
             assert(intent.canKeepReturn(owned)and intent.keepReturn(owned,handle),
                 'restored exact '..change..' did not regain Keep intent')
-            assert(intent.begin(owned,'perform'),'restored exact '..change..' did not regain its native observation')
-            intent.finish(owned,'perform',true)
+            assert(beginNativeObservation(intent,owned,'perform'),'restored exact '..change..' did not regain its native observation')
+            finishNativeObservation(intent,owned,'perform',true)
             assert(captures==beforeCaptures+1 and finishes==beforeFinishes+1,'restored '..change..' did not pair its native observer finish')
         end
         local ordinary=ISInventoryTransferAction:new(player,item(inventory,19404),inventory,tidyBag)
@@ -4614,7 +4630,7 @@ do
     captured.floorItems[old:getFullType()]={square=square,offX=0,offY=0,offZ=0,rotationX=0,rotationY=0,rotationZ=0}
     inventory.values={live}
     local intent=PZSurvivorToolkit.ActionQueueTidyIntent
-    intent.begin(pickup,'perform');pickup:perform();intent.finish(pickup,'perform',true)
+    beginNativeObservation(intent,pickup,'perform');pickup:perform();finishNativeObservation(intent,pickup,'perform',true)
     queue.queue[1]:perform();old.container=floor
     isClient=function()return true end;isMultiplayer=function()return true end
     tickTidy();tickTidy()
@@ -4738,9 +4754,9 @@ for _,queueEnabled in ipairs({false,true}) do
     inventory.values={kept,borrowed}
     while queue.queue[1] do
         local action=queue.queue[1]
-        if action==manualPickup then intent.begin(action,'perform') end
+        if action==manualPickup then beginNativeObservation(intent,action,'perform') end
         action:perform()
-        if action==manualPickup then intent.finish(action,'perform',true) end
+        if action==manualPickup then finishNativeObservation(intent,action,'perform',true) end
     end
     tickTidy();tickTidy()
     assert(not findReturn(kept) and findReturn(borrowed),
@@ -4757,9 +4773,9 @@ for _,queueEnabled in ipairs({false,true}) do
     ISTimedActionQueue.add(ISReadABook:new(player,tool))
     while queue.queue[1] do
         local action=queue.queue[1]
-        if action==manualEquip then intent.begin(action,'complete') end
+        if action==manualEquip then beginNativeObservation(intent,action,'complete') end
         if action.complete then action:complete() end
-        if action==manualEquip then intent.finish(action,'complete',true) end
+        if action==manualEquip then finishNativeObservation(intent,action,'complete',true) end
         action:perform()
     end
     assert(player.primary==tool and TidyFixture.sessions[player].primaryItem==original,
@@ -4781,7 +4797,7 @@ for index,field in ipairs({'onStartFunc','onCompleteFunc','onCancelFunc','retrig
     action[field]=field=='retriggerLastAction' and true or function() end
     action.onCompleteArgs={}
     ISTimedActionQueue.add(ISReadABook:new(player,kept));inventory.values={kept}
-    intent.begin(action,'perform');action:perform();intent.finish(action,'perform',true)
+    beginNativeObservation(intent,action,'perform');action:perform();finishNativeObservation(intent,action,'perform',true)
     while queue.queue[1] do queue.queue[1]:perform() end
     tickTidy();tickTidy()
     assert(findReturn(kept),'unknown late '..field..' must leave real P4 return unchanged')
@@ -4894,7 +4910,8 @@ do
         ISAddItemInRecipe,ISHandcraftAction=clone(previousRecipe),clone(previousHandcraft)
         PJCK_FrozenCooking,PJCK_CraftActionPanel=nil,nil
         local loadedHooks,guard={}
-        local isolatedIntent={observeTransfers=function()end,install=function(valid)guard=valid end}
+        local isolatedIntent={install=function(valid)guard=valid end}
+        local isolatedTransfers={observeTransfers=function()end}
         getActivatedMods=function()return {contains=function(_,id)return id=='Project_Cook'or id=='P4TidyUpMeister'end}end
         getModFileReader=function(id,path,...)
             local reader=previousReader(id,path,...)
@@ -4910,6 +4927,7 @@ do
         end
         require=function(module)
             if module=='PZSurvivorToolkit/ActionQueueTidyIntent'then return isolatedIntent end
+            if module=='PZSurvivorToolkit/ActionQueueTransfers'then return isolatedTransfers end
             local path=modulePaths[module]
             if not path then return previousRequire(module)end
             if loadedHooks[module]then return loadedHooks[module]end

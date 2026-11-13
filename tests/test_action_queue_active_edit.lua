@@ -180,14 +180,15 @@ do
     assert(ordinaryWatch(),'ordinary source watch incorrectly retained a transaction dependency')
     -- A genuine source owner's definition-time registration replaces both
     -- descriptions and revokes the old watch; no positive fake is installed.
+    assert(PZSurvivorToolkit.ActionQueueTidyIntent==nil,'registration probe must use a previously unloaded source owner')
     local intent=f.project('ActionQueueTidyIntent')
-    assert(type(intent.queueObserverBinding)=='function'and not ordinaryWatch(),
+    assert(type(intent.transferListenerBinding)=='function'and not ordinaryWatch(),
         'genuine source registration did not revoke the prior decision')
     local newCore,newAlias=descriptor('sourceFactorySpecs'),descriptor('sourceFactoryAliasSpecs')
     local _,_,registeredWatch=prepare(queue,current,action,factory)
     assert(type(registeredWatch)=='function'and registeredWatch()and newCore~=core and newAlias~=aliasSpecs,
         'genuine source registration did not replace both descriptions')
-    assert(owner.registerSourceFactory(intent,'queueObserverBinding',intent.queueObserverBinding))
+    assert(owner.registerSourceFactory(intent,'transferListenerBinding',intent.transferListenerBinding))
     prepare(queue,current,action,factory)
     assert(descriptor('sourceFactorySpecs')==newCore and descriptor('sourceFactoryAliasSpecs')==newAlias,
         'idempotent source registration unnecessarily replaced the descriptions')

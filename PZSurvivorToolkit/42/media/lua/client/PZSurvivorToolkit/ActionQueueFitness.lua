@@ -69,7 +69,7 @@ local function approvedChange(kind,name)
   return approvedDrop(name,classes[kind].methods[name]) and approvedDrop(name,ISDropWorldItemAction[name])
  end
  if kind=='ISInventoryTransferAction' and name=='checkQueueList' then
-  local intent=Toolkit.ActionQueueTidyIntent
+  local intent=Toolkit.ActionQueueTransfers
   return intent and intent.isQueueObserver(classes[kind].methods[name],ISInventoryTransferAction[name])
  end
  if kind=='ISInventoryTransferAction' and (name=='new' or name=='perform' or name=='transferItem') then

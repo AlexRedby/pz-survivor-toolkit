@@ -615,12 +615,12 @@ installObserver=function()
  for _,name in ipairs({'started','begin','finish','flush','reset'})do notifications[name]=lifecycle[name]end
  if kind(registerObserver)~='function'or kind(captureAck)~='function'or kind(observeAck)~='function'then bootstrapFailure=bootstrapFailure or 'bootstrap:api';return false end
  if kind(firstLine)~='function'or getFirstLineOfClosure~=firstLine then bootstrapFailure=bootstrapFailure or 'bootstrap:metadata';return false end
- local roles={{lifecycle.registerObserver,37,'ActionQueueLifecycle.lua','registerObserver'},
-  {lifecycle.started,58,'ActionQueueLifecycle.lua','started'},
-  {lifecycle.begin,336,'ActionQueueLifecycle.lua','begin'},
-  {lifecycle.finish,360,'ActionQueueLifecycle.lua','finish'},
-  {lifecycle.flush,420,'ActionQueueLifecycle.lua','flush'},
-  {lifecycle.reset,397,'ActionQueueLifecycle.lua','reset'},
+ local roles={{lifecycle.registerObserver,39,'ActionQueueLifecycle.lua','registerObserver'},
+  {lifecycle.started,60,'ActionQueueLifecycle.lua','started'},
+  {lifecycle.begin,338,'ActionQueueLifecycle.lua','begin'},
+  {lifecycle.finish,363,'ActionQueueLifecycle.lua','finish'},
+  {lifecycle.flush,424,'ActionQueueLifecycle.lua','flush'},
+  {lifecycle.reset,401,'ActionQueueLifecycle.lua','reset'},
   {acks.capture,120,'ActionQueueAcknowledgements.lua','ack-capture'},
   {acks.observe,159,'ActionQueueAcknowledgements.lua','ack-observe'},
   {acks.reset,108,'ActionQueueAcknowledgements.lua','ack-reset'}}
@@ -632,7 +632,7 @@ installObserver=function()
  if witnessSourceTrusted==nil then
   witnessSourceTrusted=Proof.closure(registerObserver,'ActionQueueLifecycle.lua')
    and Proof.closure(captureAck,'ActionQueueAcknowledgements.lua')and Proof.closure(observeAck,'ActionQueueAcknowledgements.lua')
-   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',3632280204,'PZSurvivorToolkit',true)
+   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',573091080,'PZSurvivorToolkit',true)
    and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua',4157001195,'PZSurvivorToolkit',true)
  end
  if not witnessSourceTrusted then bootstrapFailure=bootstrapFailure or 'bootstrap:source';return false end

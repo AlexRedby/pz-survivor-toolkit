@@ -46,7 +46,7 @@ local spatialPrerequisites=type(editBindingCapture)=="function"and editBindingCa
     {owner=math,keys={"floor"}},{owner=string,keys={"byte","sub","gsub","match"}},
 })
 -- Updated together with the source-owned factory; a same-file callback is not its role.
-local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=939,3155442316
+local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=939,2566011488
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
@@ -705,15 +705,15 @@ end
 
 function Policy.adoptTransferQueueObserver(previous,replacement)
     local snapshot=snapshots[ISInventoryTransferAction]
-    local intent=Toolkit.ActionQueueTidyIntent
+    local observer=Toolkit.ActionQueueTransfers
     if not snapshot or snapshot.helpers.checkQueueList~=previous or ISInventoryTransferAction.checkQueueList~=replacement
-        or not intent or not intent.isQueueObserver(previous,replacement) then return false end
+        or not observer or not observer.isQueueObserver(previous,replacement) then return false end
     snapshot.helpers.checkQueueList=replacement
     if ItemEditAdapters then
-        local guard=function()return intent.isQueueObserver(previous,replacement)end
-        deferredTransferGuards[guard]={kind="observer",previous=previous,replacement=replacement,intent=intent}
+        local guard=function()return observer.isQueueObserver(previous,replacement)end
+        deferredTransferGuards[guard]={kind="observer",previous=previous,replacement=replacement,observer=observer}
         if ItemEditAdapters.registerSourceFactory then
-            ItemEditAdapters.registerSourceFactory(intent,"queueObserverBinding",intent.queueObserverBinding)
+            ItemEditAdapters.registerSourceFactory(observer,"queueObserverBinding",observer.queueObserverBinding)
         end
         ItemEditAdapters.adoptMethods(ISInventoryTransferAction,{checkQueueList=previous},{checkQueueList=replacement},guard)
     end
@@ -767,7 +767,7 @@ function Policy.transferBinding(guard,action,trustedFactory)
     if nativeClass[key]~=record.replacement then return end
     local watch=Proof.captureBindings({
         {owner=deferredTransferGuards,keys={guard}}, {owner=record,exact=true},
-        {owner=nativeClass,keys={key}}, {owner=Toolkit,keys={"ActionQueuePolicy","ActionQueueTidyIntent"}},
+        {owner=nativeClass,keys={key}}, {owner=Toolkit,keys={"ActionQueuePolicy","ActionQueueTransfers"}},
         {owner=_G,keys={"ISInventoryTransferAction"}},
         {owner=Policy,keys={"transferBinding"}}, {owner=Proof,keys={"captureBindings"}},
     })
@@ -776,9 +776,9 @@ function Policy.transferBinding(guard,action,trustedFactory)
         if not Proof.closure(record.previous,"ISInventoryTransferAction.lua") then return end
         return function(facts)return watch() and valueType(facts)=="table" and valueMeta(facts)==nil and facts.schema==2 end
     end
-    local intent=record.intent
-    local factory=intent and intent.queueObserverBinding
-    if Toolkit.ActionQueueTidyIntent~=intent or type(trustedFactory)~="function" or not trustedFactory(factory) then return end
+    local observer=record.observer
+    local factory=observer and observer.queueObserverBinding
+    if Toolkit.ActionQueueTransfers~=observer or type(trustedFactory)~="function" or not trustedFactory(factory) then return end
     local lease=factory(record.previous,record.replacement,action,trustedFactory)
     if type(lease)~="function" or not watch() then return end
     return function(facts)return watch() and lease(facts) end
@@ -1897,7 +1897,7 @@ local function wringCapacityNonIncreasing(action,contract,source,context)
         or entry.behavior~=behavior then return false end
     if wringCapacitySourceTrusted==nil then
         wringCapacitySourceTrusted=type(wringInspector)=="function" and Proof.closure(wringInspector,"ActionQueueWring.lua")
-            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",1510685525,"PZSurvivorToolkit",true)
+            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",3330358057,"PZSurvivorToolkit",true)
     end
     return wringCapacitySourceTrusted==true
 end
@@ -1921,7 +1921,7 @@ local function clothingRemovalCapability(action,contract,source,context)
         or Proof.closure~=clothingOrigin or Proof.matches~=clothingMatches then return false end
     if clothingSourceTrusted==nil then
         clothingSourceTrusted=clothingOrigin(clothingInspect,"ActionQueueClothing.lua")
-            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",1540781066,"PZSurvivorToolkit",true)
+            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",2600563667,"PZSurvivorToolkit",true)
     end
     return clothingSourceTrusted==true
 end

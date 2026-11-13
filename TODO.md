@@ -1,3 +1,9 @@
+# Automatic restoration migration
+
+- [ ] Implement a Toolkit-owned return producer on the existing operation/loan ledger, beginning with an earned ordinary carried-container loan and its native return. Track dependencies and newer explicit intent; cancellation releases only proven unearned claims. Revalidate identity, source accessibility/capacity and authoritative outcomes at execution. Gate activation on useful-work/correctness evidence and a real supported vertical slice; keep one restoration owner active in a run.
+- [ ] Complete the behavior/options migration for the selected pack: hands/two hands/empty hands, worn/attached/activation state, original containers and floor placement, exact consumed/replacement/recipe outputs and applicable special equipment. Preserve independent auto-restoration when queue editing is disabled, user settings and unknown/failed-debt visibility. Qualify batched macOS SP/menu-Host native/current-provider/new-provider controls, edits/cancellation/shared use, unavailable/full sources and explicit keep; do not infer outputs from whole-inventory differences.
+- [ ] After required functionality and checks are complete, remove P4 Tidy Up Meister from the selected pack and retire its replaced compatibility hooks/source guards/restore filtering and obsolete tests. Preserve generic Settlement/native transfer/outcome logic and unrelated mod fixes. Verify removal from a fully stopped game with no in-flight work and migrate relevant settings; update shipped versions, changelog and installation instructions at cutover.
+
 # Next queue deliveries
 
 - [ ] Qualify live-scope retirement for cancelled members with no borrowing link, such as an ordinary root equipment write sharing a P4 scope with a later prepared group. The cancelled task can still conservatively block that later edit until the scope retires. Prove its exact never-started owner and complete scope membership using a cheap lifecycle contract; do not infer retirement from a public cancelled flag or add a persistent actor/scope cache.
@@ -21,6 +27,8 @@ Implementation and migration are conditional on the performance gate in [the des
 - [ ] Retire the legacy queue-capacity algorithm only after all applicable consumers have verified contracts, matching queue-off/on SP/Host controls and performance qualification. Recheck shipped component versions against main and record delivered behavior before release; do not install into the user's game automatically.
 
 # Queue edit and performance qualification
+
+- [ ] Reconcile the Fitness source fixture with native class-chain and cancellation contracts. The current full fixture rejects ordinary native unequip because its extra metatable differs from native ISBaseObject inheritance; a native-shaped fixture correction then reaches an existing get-up cancellation operation_dependent failure. Both reproduce on the original source baseline. Preserve the native ownership assertions and reconcile the models before using this fixture as complete positive coverage for equipment preparation/returns.
 
 - [ ] Repair the positive whole-group cancellation fixture in `test_action_queue_return_decision_scope`: it currently fails with `edit_unknown` before checking comparison-elision counters, including on a clean original-main source export. Keep the assertion; reconcile its explicit Settlement/Execution doubles with the current callback/admission contract before using this test as positive performance evidence.
 

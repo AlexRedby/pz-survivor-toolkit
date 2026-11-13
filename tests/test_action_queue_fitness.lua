@@ -1144,12 +1144,12 @@ assert(window.currentExercice=='squats','disabled native UI restoration state wa
 enabled=true
 print('PASS disabled fitness uses the unchanged native UI producer')
 reset()
-local transferObservation=PZSurvivorToolkit.ActionQueueTidyIntent.observeTransfers
-PZSurvivorToolkit.ActionQueueTidyIntent.observeTransfers=function()end
+local transferObservation=PZSurvivorToolkit.ActionQueueTransfers.observeTransfers
+PZSurvivorToolkit.ActionQueueTransfers.observeTransfers=function()end
 q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK'})
 assert(q.queue[2].Type=='ISWaitWhileGettingUp' and not fitnessQueue.isManaged(q.queue[2]),
     'changed shared observer acquired managed preparation permissions')
-PZSurvivorToolkit.ActionQueueTidyIntent.observeTransfers=transferObservation
+PZSurvivorToolkit.ActionQueueTransfers.observeTransfers=transferObservation
 print('PASS changed shared observation falls back to the original native UI producer')
 
 

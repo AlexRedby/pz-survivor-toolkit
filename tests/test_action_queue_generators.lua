@@ -13,6 +13,9 @@ require = function(name)
         craftContainers = craftContainers or f.project('QuartermasterCraftContainers')
         return craftContainers
     end
+    if name == 'PZSurvivorToolkit/ActionQueueTransfers' then
+        return PZSurvivorToolkit.ActionQueueTransfers or f.project('ActionQueueTransfers')
+    end
     if name == 'PZSurvivorToolkit/ActionQueueTidyIntent' then
         return PZSurvivorToolkit.ActionQueueTidyIntent or f.project('ActionQueueTidyIntent')
     end

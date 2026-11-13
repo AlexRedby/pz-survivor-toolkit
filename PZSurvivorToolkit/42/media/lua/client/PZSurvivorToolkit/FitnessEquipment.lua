@@ -1,5 +1,6 @@
 require 'TimedActions/ISDropWorldItemAction'
 require 'TimedActions/ISInventoryTransferUtil'
+require 'PZSurvivorToolkit/ActionQueueTransfers'
 
 local Toolkit = PZSurvivorToolkit
 local Equipment = {}
@@ -139,12 +140,12 @@ local function liveLoan(loan, action)
         and ISTimedActionQueue.queues[player] == loan.queue and action.character == player
         and (loan.queue.toolkitOperationGeneration or 0) == loan.generation
         and action.srcContainer == loan.source and action.destContainer == player:getInventory()
-        and Toolkit.ActionQueueTidyIntent == loan.intent and loan.intent.observeTransfers == loan.observe
+        and Toolkit.ActionQueueTransfers == loan.transfers and loan.transfers.observeTransfers == loan.observe
         and policy == loan.policy and policy.matchesNative == loan.matchesNative and loan.matchesNative(action)
         and not action.onStartFunc and not action.onCompleteFunc and not action.onCancelFunc
 end
 
-local function observeLoans(intent)
+local function observeLoans(transfers)
     local previous = ISInventoryTransferAction.checkQueueList
     local onMerged=function() end
     local canObserve=function(action) return borrowed[action]~=nil end
@@ -179,8 +180,8 @@ local function observeLoans(intent)
                 and Toolkit.ActionQueueSettlement.confirmEffect(loan.proof, true) then loan.earned = true end
         end,
     }
-    intent.observeTransfers(onMerged,canObserve,events,Equipment.transferListenerBinding)
-    loanObserver={intent=intent,callback=onMerged,canObserve=canObserve,events=events}
+    transfers.observeTransfers(onMerged,canObserve,events,Equipment.transferListenerBinding)
+    loanObserver={transfers=transfers,callback=onMerged,canObserve=canObserve,events=events}
     local replacement = ISInventoryTransferAction.checkQueueList
     local policy = Toolkit.ActionQueuePolicy
     return previous == replacement or policy and policy.adoptTransferQueueObserver
@@ -217,7 +218,7 @@ local function returnLoan(player, handle)
     if not item or not bag or not bag:getInventory():hasRoomFor(player, item)
         or player:getPrimaryHandItem() == item or player:getSecondaryHandItem() == item then return end
     local action = ISInventoryTransferUtil.newInventoryTransferAction(player, item, player:getInventory(), bag:getInventory())
-    if Toolkit.ActionQueueTidyIntent == loan.intent and loan.intent.observeTransfers == loan.observe
+    if Toolkit.ActionQueueTransfers == loan.transfers and loan.transfers.observeTransfers == loan.observe
         and Toolkit.ActionQueuePolicy == loan.policy and loan.policy.matchesNative == loan.matchesNative
         and loan.matchesNative(action) then ISTimedActionQueue.add(action) end
 end
@@ -261,7 +262,7 @@ function Equipment.install(ui)
     local equip, update = ui.equipItems, ui.update
     if not Proof.matches('media/lua/client/ISUI/ISFitnessUI.lua', 219506148)
         or not Proof.closure(equip, 'ISFitnessUI.lua') or not Proof.closure(update, 'ISFitnessUI.lua') then return false end
-    local intent, observe = Toolkit.ActionQueueTidyIntent, Toolkit.ActionQueueTidyIntent and Toolkit.ActionQueueTidyIntent.observeTransfers
+    local transfers, observe = Toolkit.ActionQueueTransfers, Toolkit.ActionQueueTransfers and Toolkit.ActionQueueTransfers.observeTransfers
     local observing
     local equipHook = function(panel)
         -- Repeated OK presses during native preparation must not enqueue a second
@@ -282,8 +283,8 @@ function Equipment.install(ui)
         do
             local handle, episode = {}, {player = player, queue = queue, refs = refs}
             episodes[handle], panels[panel] = episode, handle
-            if intent and intent == Toolkit.ActionQueueTidyIntent and intent.observeTransfers == observe then
-                if observing == nil then observing = observeLoans(intent) == true end
+            if transfers and transfers == Toolkit.ActionQueueTransfers and transfers.observeTransfers == observe then
+                if observing == nil then observing = observeLoans(transfers) == true end
                 local selected
                 for _, action in ipairs(observing and queue.queue or {}) do
                     if not before[action] and getmetatable(action) == ISInventoryTransferAction
@@ -297,7 +298,7 @@ function Equipment.install(ui)
                                 selected = {action = action, player = player, queue = queue, source = action.srcContainer,
                                     item = {id = action.item:getID(), kind = action.item:getFullType()}, member = action.item,
                                     bag = {id = ref.id, kind = ref.kind},
-                                    emptyPrimary = primary == nil, emptySecondary = secondary == nil, intent = intent, observe = observe, policy = policy, matchesNative = policy.matchesNative, generation = queue.toolkitOperationGeneration or 0}
+                                    emptyPrimary = primary == nil, emptySecondary = secondary == nil, transfers = transfers, observe = observe, policy = policy, matchesNative = policy.matchesNative, generation = queue.toolkitOperationGeneration or 0}
                             end
                         end
                         if selected == false then break end
@@ -404,7 +405,7 @@ function Equipment.transferListenerBinding(action,onMerged,canObserve,events)
     local watch=Proof.captureBindings({
         {owner=borrowedMap,keys={action}}, {owner=observer,exact=true}, {owner=events,exact=true},
         {owner=Equipment,keys={"transferListenerBinding"}},
-        {owner=Toolkit,keys={"FitnessEquipment","ActionQueueTidyIntent"}},
+        {owner=Toolkit,keys={"FitnessEquipment","ActionQueueTransfers"}},
     })
     if not watch then return end
     return function()return equal(borrowed,borrowedMap) and equal(loanObserver,observer) and watch()end

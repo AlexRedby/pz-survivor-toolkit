@@ -18,7 +18,7 @@ local beginLast=assert(queueSource:find('function Queue.cancel(',beginFirst,true
 local stopFirst=assert(queueSource:find('local stop = ISBaseTimedAction.stop',1,true))
 local stopLast=assert(queueSource:find('-- Native reset/clear delegate',stopFirst,true))
 local beginSource,stopSource=queueSource:sub(beginFirst,beginLast-1),queueSource:sub(stopFirst,stopLast-1)
-local function fixture(bulkGuard,tidyObserver)
+local function fixture(bulkGuard,transferObserver)
     local s=setup()
     getFirstLineOfClosure=NativeFirstLineOfClosure or function(callback)return debug.getinfo(callback,'S').linedefined end
     local lifecycle=s.f.project('ActionQueueLifecycle')
@@ -33,12 +33,12 @@ local function fixture(bulkGuard,tidyObserver)
         ]]..beginSource..stopSource,'@'..queuePath))(PZSurvivorToolkit,s.policy,PZSurvivorToolkit.ActionQueueOperations,queueModule)
     local bulk=s.f.project('BulkActions')
     assert(s.adapters.registerSourceFactory(bulk,'transferBinding',bulk.transferBinding),'actual Bulk source factory registration failed')
-    local intent,settlement
-    if tidyObserver then
-        intent=s.f.project('ActionQueueTidyIntent')
-        -- Intent requires this module first. Reuse its real module instance;
-        -- factory registration deliberately rejects a second same-slot loader.
-        settlement=assert(PZSurvivorToolkit.ActionQueueSettlement)
+    local transfers,settlement
+    if transferObserver then
+        transfers=PZSurvivorToolkit.ActionQueueTransfers or s.f.project('ActionQueueTransfers')
+        -- Reuse the operation owner's existing collaborator; source factories
+        -- reject a second definition for the same installed module slot.
+        settlement=PZSurvivorToolkit.ActionQueueSettlement or s.f.project('ActionQueueSettlement')
         assert(settlement.observePlannedReturns(),'actual planned-return listener installation failed')
     end
     s.water.container=s.root
@@ -53,12 +53,12 @@ local function fixture(bulkGuard,tidyObserver)
     local facts={schema=2,item=s.water,source=s.root,destination=s.bagInventory,location=s.root,
         id=s.water:getID(),fullType=s.water:getFullType(),destinationOwner=s.bag,destinationOwnerFullType=s.bag:getFullType(),
         sourceParentTypes=false,destinationParentTypes=false,primaryItemContainerKnown=true}
-    return s,current,action,queue,facts,bulk,intent,settlement,lifecycle
+    return s,current,action,queue,facts,bulk,transfers,settlement,lifecycle
 end
 for _,bulkGuard in ipairs({false,true})do
-    local s,current,action,queue,facts,bulk,intent=fixture(bulkGuard,false)
+    local s,current,action,queue,facts,bulk,transfers=fixture(bulkGuard,false)
     local lease=assert(s.adapters.deferredTransferBinding(action,current),
-        'combined native + Queue base + Bulk/Tidy source binding must prepare')
+        'combined native + Queue base + Bulk/Transfers source binding must prepare')
     local before={current=queue.current,first=queue.queue[1],second=queue.queue[2],item=action.item,
         source=action.srcContainer,destination=action.destContainer,started=action.started,transaction=action.transactionId}
     s.forbidProofReads()
@@ -105,7 +105,7 @@ for _,change in ipairs({'missing','valid','wrong-member','wrong-resolution','mem
     if change~='member-mutated'then assert(action.queueList[1].items[1]==detached)end
 end
 local function earnedObservation(bulkGuard,change)
-    local s,current,action,queue,facts,bulk,intent,settlement=fixture(bulkGuard,true)
+    local s,current,action,queue,facts,bulk,transfers,settlement=fixture(bulkGuard,true)
     toolkitLeafTransferAliasFacts=nil
     local alias
     if change and change:sub(1,5)=='alias'then
@@ -128,7 +128,7 @@ local function earnedObservation(bulkGuard,change)
     -- pickup receipts/physical DTO production retain their independent checks.
     candidate.phase,candidate.step.state='active','earned'
     s.water.container=s.root;token.toolkitPickups={[s.water]=s.bagInventory}
-    if change=='unknown-listener'then intent.observeTransfers(function()error('unknown listener invoked')end,function()return false end,{})end
+    if change=='unknown-listener'then transfers.observeTransfers(function()error('unknown listener invoked')end,function()return false end,{})end
     local nativeReads=0
     toolkitLeafTransferFacts=function(actor,item,source,destination,id,fullType)
         nativeReads=nativeReads+1
@@ -138,7 +138,7 @@ local function earnedObservation(bulkGuard,change)
         elseif change=='private'then candidate.phase='waived'
         elseif change=='facts'then facts.id=facts.id+1
         elseif change=='location'then facts.location=facts.destination
-        elseif change=='late-listener'then intent.observeTransfers(function()error('late listener invoked')end,function()return false end,{})end
+        elseif change=='late-listener'then transfers.observeTransfers(function()error('late listener invoked')end,function()return false end,{})end
         s.forbidProofReads()
         local function forbidden()error('source composition called a getter after final DTO')end
         s.water.getID,s.water.getFullType,s.water.getContainer=forbidden,forbidden,forbidden
@@ -167,7 +167,7 @@ for _,bulkGuard in ipairs({false,true})do
     local result,reads,returnAction=earnedObservation(bulkGuard)
     assert(result.borrowings[1].returnAction==returnAction,'native return witness lost its exact pending action')
     assert(reads==1 and result.status=='observed'and result.borrowings[1].effect=='native-leaf-location',
-        'actual central/Tidy/Settlement composition failed to qualify the final return effect: reads='..tostring(reads)..' status='..tostring(result.status)..' reason='..tostring(result.reason)..' effect='..tostring(result.borrowings and result.borrowings[1]and result.borrowings[1].effect))
+        'actual central/Transfers/Settlement composition failed to qualify the final return effect: reads='..tostring(reads)..' status='..tostring(result.status)..' reason='..tostring(result.reason)..' effect='..tostring(result.borrowings and result.borrowings[1]and result.borrowings[1].effect))
 end
 for _,change in ipairs({'alias','alias-missing-helper','alias-unavailable','alias-wrong-member','alias-wrong-resolution','alias-mutation'})do
     local result,reads=earnedObservation(true,change)
@@ -192,5 +192,5 @@ do
     assert(s.adapters.deferredTransferBinding(action,current)==nil and calls==before,
         'an unknown successful adoption guard cannot become a central observation contract')
 end
-print('Central deferred sources: actual native classes, Queue base ancestry, Bulk receipt and Settlement/Tidy listener composition; pure final validation and unknown-source fallback passed.')
+print('Central deferred sources: actual native classes, Queue base ancestry, Bulk receipt and Settlement/Transfers listener composition; pure final validation and unknown-source fallback passed.')
 if TestCoverage then TestCoverage('source-contract','passed')end
