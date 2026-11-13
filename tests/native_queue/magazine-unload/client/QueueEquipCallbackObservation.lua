@@ -7,8 +7,13 @@ local custom={'onStartFunc','onCancelFunc','onCompleteFunc','onCompleteArgs','on
  'additionalTest','toolkitQueueSafeOnComplete'}
 local sources={
  {'client','BulkActions.lua',3109997898},
- {'client','ActionQueuePolicy.lua',159775881},
+ {'client','ActionQueuePolicy.lua',3406034433},
  {'shared','SourceProof.lua',3444982222},
+}
+local preparedSources={
+ {'client','ActionQueueOperations.lua',2049664196},
+ {'client','ActionQueueApproach.lua',3155442316},
+ {'client','ActionQueueTidyIntent.lua',1408351481},
 }
 -- Full native compilation of BulkActions: root child6/child1; creation pc32
 -- captures parent register4 (the original transfer.stop) into slot0.
@@ -24,6 +29,9 @@ function M.new(toolkit,config,proof,classes)
  local executionStop,pickupStop=execution and execution.beforeStop,pickup and pickup.beforeStop
  local client,done,rejected,remove=isClient,isItemTransactionDone,isItemTransactionRejected,removeItemTransaction
  local facts,api=toolkitLuaCaptureFactsMatch,toolkitLuaCaptureFactsApiMatches
+ local prepared=config.options and config.options.equip_prepared==true
+ local operations,approach=toolkit.ActionQueueOperations,toolkit.ActionQueueApproach
+ local command,construction,isApproach=operations and operations.isCommand,operations and operations.commandConstructionTrusted,approach and approach.isAction
  assert(type(matcher)=='function'and type(guarded)=='function'and type(facts)=='function'and type(api)=='function'
   and api(facts)==true,'native callback observation API unavailable')
  assert(closure(matcher,'ActionQueuePolicy.lua')and closure(guarded,'BulkActions.lua')
@@ -39,6 +47,8 @@ function M.new(toolkit,config,proof,classes)
    and toolkit.ActionQueueExecution==execution and toolkit.ActionQueuePickupFailure==pickup
    and(not execution or execution.beforeStop==executionStop)and(not pickup or pickup.beforeStop==pickupStop)
    and isClient==client and isItemTransactionDone==done and isItemTransactionRejected==rejected and removeItemTransaction==remove
+   and(not prepared or toolkit.ActionQueueOperations==operations and toolkit.ActionQueueApproach==approach
+    and operations.isCommand==command and operations.commandConstructionTrusted==construction and approach.isAction==isApproach)
  end
  local globals={'type','getmetatable','pairs','ipairs','isClient','isItemTransactionDone','isItemTransactionRejected','removeItemTransaction','PZSurvivorToolkit','getFilenameOfClosure','getFirstLineOfClosure','toolkitLuaCaptureFactsMatch','toolkitLuaCaptureFactsApiMatches'}
  local baselines={}
@@ -61,16 +71,56 @@ function M.new(toolkit,config,proof,classes)
    'callback observation source bytes changed '..source[2])
  end
  assert(publicCurrent(),'callback observation source-read rebound a captured API')
- local dependencies={{owner=_G,keys=globals},{owner=toolkit,keys={'ActionQueuePolicy','BulkActions','ActionQueueExecution','ActionQueuePickupFailure'}},
+ if prepared then
+  for _,entry in ipairs(preparedSources)do
+   assert(matches('media/lua/'..entry[1]..'/PZSurvivorToolkit/'..entry[2],entry[3],'PZSurvivorToolkit',true)==true,
+    'prepared callback observation source bytes changed '..entry[2])
+  end
+  assert(closure(command,'ActionQueueOperations.lua')and closure(construction,'ActionQueueOperations.lua')
+   and closure(isApproach,'ActionQueueApproach.lua'),'owned approach APIs changed')
+ end
+ assert(publicCurrent(),'prepared callback source-read rebound a captured API')
+ local toolkitKeys={'ActionQueuePolicy','BulkActions','ActionQueueExecution','ActionQueuePickupFailure'}
+ if prepared then toolkitKeys[#toolkitKeys+1]='ActionQueueOperations';toolkitKeys[#toolkitKeys+1]='ActionQueueApproach'end
+ local dependencies={{owner=_G,keys=globals},{owner=toolkit,keys=toolkitKeys},
   {owner=policy,keys={'matchesNative'}},{owner=bulk,keys={'isGuardedTransfer','guardTransfer'}},
   {owner=proof,keys={'own','closure','captureBindings','matches'}},{owner=config,keys={'mode','kind'}}}
  if execution then dependencies[#dependencies+1]={owner=execution,keys={'beforeStop'}}end
  if pickup then dependencies[#dependencies+1]={owner=pickup,keys={'beforeStop'}}end
+ if prepared then
+  dependencies[#dependencies+1]={owner=operations,keys={'isCommand','commandConstructionTrusted'}}
+  dependencies[#dependencies+1]={owner=approach,keys={'isAction'}}
+ end
  local watch=assert(capture(dependencies),'callback observation binding capture unavailable')
  assert(publicCurrent()and watch(),'callback observation capture rebound a captured API')
  local observer={}
  function observer.track(action)
   local baseline=assert(baselines[action.Type],'unrecognized native callback class')
+  if action.Type=='ISQueueActionsAction'then
+   assert(prepared and config.mode=='toolkit'and construction()==true and command(action)==true and isApproach(action)==true,
+    'unowned deferred approach constructor')
+   local start,wait,request=action.start,action.waitToStart,action.addActionsFunction
+   assert(closure(baseline.methods.new,'ISQueueActionsAction.lua')and closure(start,'ActionQueueOperations.lua')
+    and closure(wait,'ActionQueueOperations.lua')and closure(request,'ActionQueueApproach.lua'),'owned approach constructor source changed')
+   return function()
+    local unchanged=publicCurrent()and watch()==true and getmetatable(action)==baseline.class
+     and ISQueueActionsAction==baseline.class and construction()==true and command(action)==true
+     and action.start==start and action.waitToStart==wait and action.addActionsFunction==request
+    for _,name in ipairs(methods)do
+     if(baseline.class[name]or false)~=baseline.methods[name]then unchanged=false end
+     local expected=name=='start'and start or name=='waitToStart'and wait or baseline.methods[name]
+     if(action[name]or false)~=expected then unchanged=false end
+    end
+    for name,value in pairs(action)do
+     if type(value)=='function'and not(name=='start'and value==start or name=='waitToStart'and value==wait
+      or name=='addActionsFunction'and value==request)then unchanged=false end
+    end
+    for _,name in ipairs(custom)do if action[name]~=nil then unchanged=false end end
+    return{schema=1,kind='owned-deferred-carried-container',sourceVerified=unchanged,bindingsCurrent=unchanged,
+     constructorUnchanged=unchanged,verified=unchanged,nativeActionCallbacks=false,paidProgress=false,
+     constructorSource='ISQueueActionsAction.lua',startSource='ActionQueueOperations.lua',requestSource='ActionQueueApproach.lua'}
+   end
+  end
   local admittedStop,admittedGuard
   return function(stage)
    local value={schema=1,sourceVerified=true,bindingsCurrent=publicCurrent()and watch()==true,classUnchanged=true,

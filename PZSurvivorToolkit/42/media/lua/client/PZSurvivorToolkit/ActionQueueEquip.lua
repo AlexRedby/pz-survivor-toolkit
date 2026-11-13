@@ -14,12 +14,13 @@ local chain,closure,matches,own=Proof.nativeActionClassChain,Proof.closure,Proof
 local handResource=Hands and Hands.equipResource
 local certify=Effects and Effects.certify
 local nativeQuiet,nativeAPI=toolkitEquipNativeQuiet,toolkitEquipEventDispatchApiMatches
-local inspect,bindingsTrusted,adoptBase
+local preparedQuiet=toolkitEquipNativePreparedQuiet
+local inspect,inspectSchedule,bindingsTrusted,adoptBase
 local function plain(value)return kind(value)=='table'and kind(meta)=='function'and meta(value,nil)end
 local watch=Proof.captureBindings({{owner=_G,keys={'PZSurvivorToolkit','toolkitLuaMetatableMatches','type','rawequal','pairs','ipairs','pcall','select','math',
  'instanceof','getSpecificPlayer','getClassSimpleName','getFirstLineOfClosure','isClient','isServer','isMultiplayer','getPlayerHotbar',
  'getPlayerInventory','sendEquip','triggerEvent','syncItemActivated','ItemTag','ItemType',
- 'toolkitEquipNativeQuiet','toolkitEquipEventDispatchApiMatches'}},
+ 'toolkitEquipNativeQuiet','toolkitEquipNativePreparedQuiet','toolkitEquipEventDispatchApiMatches'}},
  {owner=Proof,keys={'nativeActionClassChain','closure','matches','own','captureBindings'}},
  {owner=Toolkit,keys={'ActionQueueHands','ActionQueueHandEffects','ActionQueueEquip'}}})
 local line=getFirstLineOfClosure
@@ -51,7 +52,7 @@ end
 bindingsTrusted=function()
  return plain(_G)and plain(Toolkit)and plain(Equip)and plain(Proof)and plain(Hands)and plain(Effects)
   and equal(PZSurvivorToolkit,Toolkit)and equal(Toolkit.ActionQueueEquip,Equip)
-  and equal(Equip.inspect,inspect)and equal(Equip.bindingsTrusted,bindingsTrusted)and equal(Equip.adoptBase,adoptBase)
+  and equal(Equip.inspect,inspect)and equal(Equip.inspectSchedule,inspectSchedule)and equal(Equip.bindingsTrusted,bindingsTrusted)and equal(Equip.adoptBase,adoptBase)
   and equal(Toolkit.ActionQueueHands,Hands)and equal(Hands.equipResource,handResource)
   and equal(Toolkit.ActionQueueHandEffects,Effects)and equal(Effects.certify,certify)
   and kind(watch)=='function'and watch()
@@ -62,7 +63,7 @@ adoptBase=function(name,previous,replacement)
   or base[name]~=replacement or baseMethods[name]~=nil and baseMethods[name]~=previous
   or inherited[name]~=nil and inherited[name]~=previous
   or not closure(previous,'ISBaseTimedAction.lua')or not closure(replacement,'ActionQueue.lua')then return false end
- if queueSource==nil then queueSource=matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',961891934,'PZSurvivorToolkit',true)end
+ if queueSource==nil then queueSource=matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',1272255806,'PZSurvivorToolkit',true)end
  if not queueSource then return false end
  if baseMethods[name]~=nil then baseMethods[name]=replacement end
  if inherited[name]~=nil then inherited[name]=replacement end
@@ -90,7 +91,7 @@ local function source(action)
  for name,value in each(class)do if kind(value)=='function'and methods[name]~=value then return false end end
  for name,value in each(baseMethods)do
   if base[name]~=value or not(closure(value,'ISBaseTimedAction.lua')and line(value)==baseRoles[name]
-   or name=='stop'and closure(value,'ActionQueue.lua')and line(value)==327)then return false end
+   or name=='stop'and closure(value,'ActionQueue.lua')and line(value)==326)then return false end
  end
  for name,value in each(inherited)do
   if (action[name]or false)~=value then return false end
@@ -158,32 +159,41 @@ end
 -- Host permission is only for editing an unsubmitted native command. The
 -- server and selected callbacks keep their normal effects/validity checks;
 -- unlike the SP certificate this makes no hand, inventory or output forecast.
-local function inspectNativeSchedule(action)
- if not isClient()or isServer()then return end
+local function inspectNativeSchedule(action,container,allowSP)
+ if isServer()or not isClient()and(not allowSP or isMultiplayer())then return end
  local actor=action.character
  if not instanceof(actor,'IsoPlayer')or getClassSimpleName(actor)~='IsoPlayer'
   or getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead()or actor:isAsleep()then return end
  local root=actor:getInventory()
  if not instanceof(root,'ItemContainer')or root:getParent()~=actor or root:getContainingItem()~=nil then return end
+ local location=container or root
+ if location~=root and(not instanceof(location,'ItemContainer')or location:getParent()~=nil
+  or location:isInCharacterInventory(actor)~=true or not instanceof(location:getContainingItem(),'InventoryContainer')
+  or location:getContainingItem():getInventory()~=location)then return end
  local item,savedPrimary,savedTwo=action.item,action.primary,action.twoHands
- local valid,both,weapon,handgun,id,fullType=itemFacts(actor,root,item)
+ local valid,both,weapon,handgun,id,fullType=itemFacts(actor,location,item)
  if not valid then return end
  local two=savedTwo==true
  local supportsTwo=false
  if weapon then supportsTwo=item:isTwoHandWeapon()end
  if weapon and kind(supportsTwo)~='boolean'or both and not two
   or weapon and not supportsTwo and two and not both then return end
- if toolkitEquipNativeQuiet~=nativeQuiet or toolkitEquipEventDispatchApiMatches~=nativeAPI
-  or kind(nativeQuiet)~='function'or kind(nativeAPI)~='function'or not nativeAPI(nativeQuiet)
-  or nativeQuiet(actor,{item})~=true then return end
+ local quiet=location==root and nativeQuiet or preparedQuiet
+ if toolkitEquipNativeQuiet~=nativeQuiet or toolkitEquipNativePreparedQuiet~=preparedQuiet
+  or toolkitEquipEventDispatchApiMatches~=nativeAPI or kind(quiet)~='function'
+  or kind(nativeAPI)~='function'or not nativeAPI(quiet)then return end
+ if location==root then if quiet(actor,{item})~=true then return end
+ elseif quiet(actor,{item},location)~=true then return end
  -- Native metadata calls may reenter. The outer Policy additionally rechecks
  -- the live operation ledger and queue before any actual schedule mutation.
- local again,aBoth,aWeapon,aHandgun,aId,aType=itemFacts(actor,root,item)
+ local again,aBoth,aWeapon,aHandgun,aId,aType=itemFacts(actor,location,item)
  if not again or aBoth~=both or aWeapon~=weapon or aHandgun~=handgun or aId~=id or aType~=fullType
   or action.item~=item or action.primary~=savedPrimary or action.twoHands~=savedTwo
   or weapon and item:isTwoHandWeapon()~=supportsTwo
   or actor:getInventory()~=root or not source(action)or not pending(action)
-  or not isClient()or isServer()or getSpecificPlayer(actor:getPlayerNum())~=actor then return end
+  or isServer()or not isClient()and(not allowSP or isMultiplayer())
+  or location~=root and(location:getParent()~=nil or location:isInCharacterInventory(actor)~=true)
+  or getSpecificPlayer(actor:getPlayerNum())~=actor then return end
  return {items={[id]=true},itemTypes={[fullType]=true},targets={},hands=actor,equipment=actor,
   preparation=true,preparationFinish=true,cancelWaiting=true,cancelOperation=true,interrupt='finish-step',
   moveRequiresProjection=true,nativeSchedule='unsubmitted',unknownOutputs=true}
@@ -258,5 +268,17 @@ inspect=function(...)
  local ok,value=call(inspectPending,...)
  if ok then return value end
 end
-Equip.inspect,Equip.bindingsTrusted,Equip.adoptBase=inspect,bindingsTrusted,adoptBase
+-- An immediate source observation for an already-owned preparation group.
+-- Policy separately proves the complete carried route and private group; this
+-- declares no future hand, inventory-space or transfer outcome.
+inspectSchedule=function(...)
+ if select('#',...)~=2 then return end
+ local action,container=...
+ local ok,value=call(function()
+  if not source(action)or not pending(action)then return end
+  return inspectNativeSchedule(action,container,true)
+ end)
+ if ok then return value end
+end
+Equip.inspect,Equip.inspectSchedule,Equip.bindingsTrusted,Equip.adoptBase=inspect,inspectSchedule,bindingsTrusted,adoptBase
 return Equip

@@ -18,6 +18,12 @@ EQUIP_NATIVE_CRC = {
     'media/lua/shared/TimedActions/ISReadABook.lua': 916973327,
     'media/lua/client/TimedActions/ISInventoryTransferAction.lua': 3908838083,
 }
+EQUIP_PREPARED_NATIVE_CRC = {
+    'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua': 2574700613,
+    'media/lua/client/TimedActions/ISQueueActionsAction.lua': 733678136,
+    'media/lua/shared/luautils.lua': 3574606238,
+    'media/lua/shared/TimedActions/ISInventoryTransferUtil.lua': 1929797533,
+}
 NAMES = ('front', 'target', 'cancelled', 'tail', 'unrelated', 'gun-tail')
 LOADS = dict(front=5, target=3, cancelled=4, tail=2, unrelated=6, **{'gun-tail': 2})
 AMMO = 'Base.Bullets9mm'
@@ -57,6 +63,9 @@ def definitions():
 
 
 def validate(selection):
+    prepared = selection.get('options', {}).get('equip_prepared', False)
+    if type(prepared) is not bool or prepared and selection.get('cases') != list(EQUIP_CASES):
+        raise ValueError('equip_prepared requires boolean true with equip-edit alone')
     observation = selection.get('options', {}).get('equip_host_observation', False)
     if type(observation) is not bool or observation and (selection.get('kind') != 'mp' or selection.get('cases') != list(EQUIP_CASES)):
         raise ValueError('equip_host_observation requires menu Host equip-edit alone')
@@ -68,6 +77,8 @@ def validate(selection):
     baseline = selection.get('options', {}).get('equip_workload_baseline', False)
     if type(baseline) is not bool or baseline and not workload:
         raise ValueError('equip_workload_baseline requires the explicit work profile')
+    if prepared and workload:
+        raise ValueError('Prepared Equip functional qualification and the archived UI work profile are separate selections')
     cases = selection.get('cases')
     ordered = type(cases) is list and bool(cases) and (cases == list(EQUIP_CASES) or cases == [case for case in CASES if case in cases])
     if (not ordered or selection.get('kind') not in ('sp', 'mp')
@@ -88,6 +99,8 @@ def sources(project, selection):
 def audit_native(game, selection=None):
     result = {}
     selected = EQUIP_NATIVE_CRC if selection and selection.get('cases') == list(EQUIP_CASES) else NATIVE_CRC
+    if selection and selection.get('options', {}).get('equip_prepared'):
+        selected = {**selected, **EQUIP_PREPARED_NATIVE_CRC}
     for relative, expected in selected.items():
         actual = zlib.crc32((Path(game) / relative).read_bytes())
         if actual != expected: raise ValueError('Magazine native source audit requires review: ' + relative)
@@ -105,7 +118,7 @@ def audit_selected(locations):
     return result
 
 
-def _reviewed_equip_pins(text, baseline=False):
+def _reviewed_equip_pins(text, baseline=False, prepared=False):
     """Read only the fixture's closed literal table and explicit baseline branch."""
     code = re.sub(r'(?m)^\s*--[^\n]*', '', text)
     tables = re.findall(r'(?ms)^local sources=\{(.*?)^\}', code)
@@ -139,6 +152,22 @@ def _reviewed_equip_pins(text, baseline=False):
             or len(re.findall(r'\badler\s*=', code)) != 1 + len(overrides)
             or any(not 0 <= int(value) <= 0xffffffff for value in [row[2] for row in rows] + [row[1] for row in overrides])):
         raise ValueError('Equip reviewed-source pins/overrides require review')
+    if prepared:
+        prepared_tables = re.findall(r'(?ms)^local preparedSources=\{(.*?)^\}', code)
+        prepared_loops = re.findall(r'(?ms)^  for _,entry in ipairs\(preparedSources\)do\n(.*?)^  end', code)
+        expected = ("assert(matches('media/lua/'..entry[1]..'/PZSurvivorToolkit/'..entry[2],entry[3],"
+                    "'PZSurvivorToolkit',true)==true,'prepared callback observation source bytes changed '..entry[2])")
+        if (len(prepared_tables) != 1 or len(prepared_loops) != 1 or compact(prepared_loops[0]) != expected
+                or len(re.findall(r'\bpreparedSources\b', code)) != 2
+                or len(re.findall(r'\bprepared\s*=', code)) != 1
+                or "localprepared=config.optionsandconfig.options.equip_prepared==true" not in compact(code)
+                or not re.search(r'(?m)^ if prepared then\n  for _,entry in ipairs\(preparedSources\)do$', code)):
+            raise ValueError('Equip prepared reviewed-source fixture layout requires review')
+        table = compact(prepared_tables[0]); extra = re.findall(entry, table)
+        if (not extra or re.sub(entry, '', table) or len({row[1] for row in rows + extra}) != len(rows + extra)
+                or any(not 0 <= int(row[2]) <= 0xffffffff for row in extra)):
+            raise ValueError('Equip prepared sources require unique literal pins')
+        rows += extra
     selected = dict(overrides) if baseline else {}
     return {side + '/PZSurvivorToolkit/' + filename: int(selected.get(filename, pin)) for side, filename, pin in rows}
 
@@ -170,8 +199,11 @@ def audit_equip_sources(project, selection, locations):
     if type(baseline) is not bool or baseline and options.get('equip_workload') is not True:
         raise ValueError('Equip reviewed-source baseline requires the explicit work profile')
     fixture = Path(project) / 'tests/native_queue/magazine-unload/client/QueueEquipCallbackObservation.lua'
+    prepared = options.get('equip_prepared', False)
+    if type(prepared) is not bool or prepared and baseline:
+        raise ValueError('Equip prepared reviewed-source selection requires current functional profile')
     try:
-        pins = _reviewed_equip_pins(fixture.read_text(encoding='utf-8'), baseline)
+        pins = _reviewed_equip_pins(fixture.read_text(encoding='utf-8'), baseline, prepared)
         if 'PZSurvivorToolkit' not in locations: raise ValueError('Equip reviewed-source preflight needs the candidate Toolkit location')
         candidates = lua_sources(Path(locations['PZSurvivorToolkit']))
         result = {}

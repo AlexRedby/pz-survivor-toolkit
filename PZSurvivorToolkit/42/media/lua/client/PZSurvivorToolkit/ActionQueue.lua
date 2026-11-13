@@ -101,13 +101,9 @@ function Queue.cancel(queue, action)
         queue:removeFromQueue(action)
         return true
     end
-    if craft(action) then return Queue.cancelOperation(queue, action) end
-    -- Policy validates deferred commands as complete operations. Execute that
-    -- same edit, so required preparation cannot be detached from its body.
-    if action.Type == "ISQueueActionsAction" then return Queue.cancelOperation(queue, action) end
-    if appliance(action) then return Queue.cancelOperation(queue, action) end
-    local contract = Policy.inspect(action)
-    if contract and contract.cancelWaiting and not stoppable(action) then return Queue.cancelOperation(queue, action) end
+    -- Execute the span that Policy actually validated. Re-inspecting a
+    -- prepared member outside that decision can otherwise erase only its fetch.
+    if decision.first and decision.last then return Queue.cancelOperation(queue, action) end
     local first, last = Operations.bounds(queue, action)
     if not Policy.editUnchanged(queue, decision.snapshot) then return false, "unavailable" end
     decision = Policy.evaluateCancel(queue, action)
@@ -161,6 +157,9 @@ function Queue.cancelOperation(queue, action, expected)
     local removed = {}
     for i = last, first, -1 do
         removed[#removed + 1] = table.remove(queue.queue, i)
+    end
+    if type(Settlement.discardUnstartedPickups)=='function' then
+        Settlement.discardUnstartedPickups(queue,action.toolkitQueueOperation,removed)
     end
     for _, member in ipairs(removed) do
         member:forceCancel()

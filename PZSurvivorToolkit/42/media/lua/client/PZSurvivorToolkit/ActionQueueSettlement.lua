@@ -174,10 +174,10 @@ end
 
 -- Operation seals capture actors/queues. Check their live native filename
 -- without putting the seal into SourceProof's strong filename-metadata cache.
-local function operationSealTrusted(token,seal)
+local function settlementSealTrusted(token,marker,seal)
     local api=retainedBindingSource
     if api.checkingSeal or api.kind(token)~="table" or api.meta(token)~=nil
-        or api.kind(seal)~="function" or not api.equal(api.raw(token,operationMarker),seal)
+        or api.kind(seal)~="function" or not api.equal(api.raw(token,marker),seal)
         or api.kind(executionProof)~="table" or api.meta(executionProof)~=nil or api.kind(api.origin)~="function"
         or not api.equal(api.raw(executionProof,"closure"),api.origin) then return false end
     local accessor=getFilenameOfClosure
@@ -188,11 +188,14 @@ local function operationSealTrusted(token,seal)
     local ok,path=api.call(accessor,seal)
     api.checkingSeal=nil
     if not ok or api.kind(path)~="string" or not api.equal(getFilenameOfClosure,accessor)
-        or api.meta(token)~=nil or not api.equal(api.raw(token,operationMarker),seal)
+        or api.meta(token)~=nil or not api.equal(api.raw(token,marker),seal)
         or api.meta(executionProof)~=nil or not api.equal(api.raw(executionProof,"closure"),api.origin) then return false end
     -- Excluding both separators is the same suffix rule as normalize-then-
     -- match, without allocating a normalized copy of every native filename.
     return api.match(path,"([^/\\]+)$")=="ActionQueueSettlement.lua"
+end
+local function operationSealTrusted(token,seal)
+    return settlementSealTrusted(token,operationMarker,seal)
 end
 
 local function operation(character, token, create)
@@ -3275,16 +3278,46 @@ end
 -- Decision-local own-data mirrors. Checking a mirror never opens a seal or
 -- invokes source metadata, actor/settings getters, providers or native actions.
 local function nativePlanMirror()
-    local api,records=nativePlanReads,{}
+    local api,records,byOwner=nativePlanReads,{},{}
     local function capture(owner,keys)
         if api.kind(owner)~='table'then return false end
+        local previous=byOwner[owner]
+        if previous then
+            if not api.equal(api.meta(owner),previous.meta)then return false end
+            if not previous.keys then return true end
+            -- Never renew an earlier selected observation when another role
+            -- needs more fields of the same table.
+            for _,key in api.pairs(previous.keys)do
+                if not api.equal(nativePlanOwn(owner,key),api.raw(previous.values,key))then return false end
+            end
+            if keys then
+                for _,key in api.pairs(keys)do
+                    if not previous.selected[key]then
+                        previous.selected[key]=true;previous.keys[#previous.keys+1]=key
+                        previous.values[key]=nativePlanOwn(owner,key)
+                    end
+                end
+            else
+                for key,value in api.pairs(owner)do
+                    if not previous.selected[key]then previous.values[key]=value end
+                    previous.count=previous.count+1
+                end
+                previous.keys=nil
+            end
+            return true
+        end
         local values,count={},0
+        local selected,fields
         if keys then
-            for _,key in api.pairs(keys)do values[key]=nativePlanOwn(owner,key)end
+            selected,fields={},{}
+            for _,key in api.pairs(keys)do
+                selected[key]=true;fields[#fields+1]=key;values[key]=nativePlanOwn(owner,key)
+            end
         else
             for key,value in api.pairs(owner)do values[key]=value;count=count+1 end
         end
-        records[#records+1]={owner=owner,meta=api.meta(owner),values=values,count=count,keys=keys}
+        local record={owner=owner,meta=api.meta(owner),values=values,count=count,keys=fields,selected=selected}
+        records[#records+1]=record;byOwner[owner]=record
         return true
     end
     local function unchanged()
@@ -3322,43 +3355,87 @@ local function nativePlanContext(queue,action)
     end
     return state
 end
--- One shared dense-list/alias parser. A single-row query only rejects aliases
--- of its selected token; a cohort must prove every action/token distinct.
-local function nativePlanRows(state,cohort)
+-- A descriptor only selects a private-ledger shape. Native item/container and
+-- source-owned approach/equip contracts remain the caller's responsibility.
+local function nativePlanGroups(groups)
+    if groups==nil then return {}end
+    local api=nativePlanReads
+    if not nativePlanPlain(groups)then return end
+    local selected,members,count={},{},0
+    for token,group in api.pairs(groups)do
+        count=count+1
+        if count>32 or not nativePlanPlain(token)or not nativePlanPlain(group)then return end
+        local allowed={approach=true,fetch=true,body=true,source=true,destination=true,item=true}
+        local fields=0
+        for key in api.pairs(group)do if not allowed[key]then return end;fields=fields+1 end
+        if fields~=6 or group.source==nil or group.destination==nil or group.item==nil
+            or api.equal(group.source,group.destination)then return end
+        for _,name in api.pairs({'approach','fetch','body'})do
+            local action=api.raw(group,name)
+            if api.kind(action)~='table'or members[action]then return end
+            members[action]=true
+        end
+        selected[token]=group
+    end
+    return selected
+end
+-- One shared dense-list/alias parser. Opted-in tokens must be exact contiguous
+-- triplets; all other cohort tokens retain the singleton rule.
+local function nativePlanRows(state,cohort,groups)
     local api,list=nativePlanReads,state.list
     local count,found,length=0,0,#list
     if cohort and(length<1 or length>32)then return end
-    local rows,actions,tokens
+    local rows,actions,tokens,selected
     if cohort then rows,actions,tokens={},{},{}end
+    if cohort then selected=nativePlanGroups(groups);if not selected then return end end
     for index,member in api.pairs(list)do
         count=count+1
         if api.kind(index)~='number'or index%1~=0 or index<1 or index>length
             or api.kind(member)~='table'then return end
         if cohort then
             local token=nativePlanOwn(member,'toolkitQueueOperation')
-            if actions[member]or not nativePlanPlain(token)or tokens[token]
+            if actions[member]or not nativePlanPlain(token)
                 or not api.equal(nativePlanOwn(member,'character'),state.actor)then return end
-            actions[member],tokens[token]=true,true
+            actions[member]=true
+            tokens[token]=tokens[token]or{}
+            tokens[token][#tokens[token]+1]=index
             rows[index]={action=member,token=token,allowActive=index==1}
         elseif api.equal(member,state.action)then found=found+1
         elseif api.equal(nativePlanOwn(member,'toolkitQueueOperation'),state.token)then return end
     end
     if count~=length or not cohort and found~=1 then return end
+    if cohort then
+        for token,positions in api.pairs(tokens)do
+            local group=selected[token]
+            if group then
+                if #positions~=3 then return end
+                -- pairs(list) has no order guarantee.
+                local first
+                for _,index in api.pairs(positions)do if not first or index<first then first=index end end
+                if not rows[first+2]or not api.equal(rows[first].action,group.approach)
+                    or not api.equal(rows[first+1].action,group.fetch)or not api.equal(rows[first+2].action,group.body)
+                    or not api.equal(rows[first+1].token,token)or not api.equal(rows[first+2].token,token)then return end
+                rows[first].group=group;rows[first+1].groupChild=true;rows[first+2].groupChild=true
+            elseif #positions~=1 then return end
+        end
+        for token in api.pairs(selected)do if not tokens[token]then return end end
+        state.groups=selected
+    end
     return rows or true
 end
-local function nativePlanCommon(state)
+local function nativePlanCommon(state,removed)
     local api,queue=nativePlanReads,state.queue
     local registry=api.raw(api.globals,'ISTimedActionQueue')
     local queues=nativePlanOwn(registry,'queues')
     if not nativePlanPublic()or not nativePlanPlain(queues)or not api.equal(api.raw(queues,state.actor),queue)
         or not api.equal(nativePlanOwn(queue,'character'),state.actor)
         or not api.equal(nativePlanOwn(queue,'queue'),state.list)or not api.equal(nativePlanOwn(queue,'current'),state.front)
-        or not api.equal(api.raw(state.list,1),state.front)
+        or not api.equal(api.raw(state.list,1),state.front)and not(removed and(state.front==nil or removed[state.front]))
         or(nativePlanOwn(queue,'toolkitOperationGeneration')or 0)~=state.generation or cancellations[queue]then return false end
     for _,name in api.pairs(api.queueFields)do if nativePlanOwn(queue,name)then return false end end
     return true
 end
-local function nativePlanCapture(state,rows)
+local function nativePlanCapture(state,rows,groups)
     local api=nativePlanReads
     local capture,unchanged=nativePlanMirror()
     -- All external observations precede the first source metadata callback.
@@ -3372,6 +3449,8 @@ local function nativePlanCapture(state,rows)
     if not nativePlanPlain(queues)then return end
     capture(registry,{'queues'});capture(queues,{state.actor})
     if rows then
+        if groups~=nil and not capture(groups)then return end
+        for _,group in api.pairs(state.groups)do if not capture(group)then return end end
         for index=1,#rows do capture(rows[index].action);capture(rows[index].token)end
     else
         capture(state.action);capture(state.token)
@@ -3382,9 +3461,165 @@ local function nativePlanCapture(state,rows)
     end
     return capture,unchanged
 end
+local function nativePlanData(value,capture,maximum)
+    if not nativePlanPlain(value)then return false end
+    local count=0
+    for _ in nativePlanReads.pairs(value)do count=count+1;if count>(maximum or 128)then return false end end
+    return not capture or capture(value)
+end
+local function nativePlanOnly(value,allowed)
+    for key in nativePlanReads.pairs(value)do if not allowed[key]then return false end end
+    return true
+end
+local function nativePlanRecordCapture(record,capture)
+    if not capture then return true end
+    if not nativePlanData(record,capture)then return false end
+    local api=nativePlanReads
+    for _,name in api.pairs({'steps','actions','borrowings'})do
+        if not nativePlanData(api.raw(record,name),capture,32)then return false end
+    end
+    for _,step in api.pairs(api.raw(record,'steps'))do
+        if not nativePlanData(step,capture)or not nativePlanData(api.raw(step,'handle'),capture)then return false end
+    end
+    return true
+end
+local function nativePlanPending(state,record,token,action,allowActive,step)
+    local api=nativePlanReads
+    if api.raw(step,'started')then
+        return allowActive==true and api.raw(step,'started')==true
+            and api.raw(record,'phase')=='body'and api.raw(token,'toolkitStarted')==true
+            and api.equal(state.front,action)and api.equal(api.raw(state.list,1),action)and nativePlanOwn(action,'action')~=nil
+    end
+    local transaction=nativePlanOwn(action,'transactionId')
+    return api.raw(record,'phase')=='prepare'and not api.raw(token,'toolkitStarted')
+        and not nativePlanOwn(action,'action')and not nativePlanOwn(action,'started')
+        and nativePlanOwn(action,'toolkitNativeTransaction')==nil and nativePlanOwn(action,'toolkitNativeKind')==nil
+        and(transaction==nil or transaction==0)
+end
+-- Inspect only sealed private data. In particular no item/container lookup is
+-- used here: the caller separately proves the native descriptor after capture.
+local function nativePlanCandidate(record,token,group,candidate,capture,observed)
+    local api=nativePlanReads
+    if not nativePlanData(candidate,capture)
+        or not nativePlanOnly(candidate,{id=true,fullType=true,source=true,destination=true,owner=true,
+            phase=true,sourceOwner=true,step=true,ambiguous=true})
+        or api.raw(candidate,'phase')~='prepare'or api.raw(candidate,'ambiguous')
+        or not api.equal(api.raw(candidate,'owner'),token)or not api.equal(api.raw(candidate,'source'),group.source)
+        or not api.equal(api.raw(candidate,'destination'),group.destination)
+        or not api.equal(api.raw(candidate,'step'),api.raw(record.actions,group.fetch))then return end
+    local id,fullType=api.raw(candidate,'id'),api.raw(candidate,'fullType')
+    local owner=api.raw(candidate,'sourceOwner')
+    if api.kind(id)~='number'or id%1~=0 or api.kind(fullType)~='string'or fullType==''
+        or not nativePlanData(owner,capture)or not nativePlanOnly(owner,{id=true,fullType=true})
+        or api.kind(api.raw(owner,'id'))~='number'or api.raw(owner,'id')%1~=0
+        or api.kind(api.raw(owner,'fullType'))~='string'or api.raw(owner,'fullType')==''then return end
+    if observed then
+        if observed.id==id and observed.fullType==fullType and observed.sourceOwner.id==api.raw(owner,'id')
+            and observed.sourceOwner.fullType==api.raw(owner,'fullType')then return observed end
+        return
+    end
+    return {hasBorrowing=true,id=id,fullType=fullType,
+        sourceOwner={id=api.raw(owner,'id'),fullType=api.raw(owner,'fullType')}}
+end
+local function nativePlanClaim(tasks,equipment,seen,token,group,facts)
+    local api=nativePlanReads
+    local equipmentReaders={}
+    for taskToken,task in api.pairs(tasks)do
+        local pickup=api.raw(task.pickups,facts.id)
+        if pickup and(api.raw(pickup,'ambiguous')or api.raw(pickup,'fullType')~=facts.fullType
+            or not api.equal(api.raw(pickup,'container'),group.source)or not api.equal(taskToken,token))then return false end
+        if not api.equal(taskToken,token)then
+            if api.raw(task,'unknownInputs')or api.raw(task.items,facts.id)then return false end
+            if api.raw(task,'readsEquipment')and api.raw(equipment,facts.id)then equipmentReaders[taskToken]=true end
+        end
+    end
+    local task=api.raw(tasks,token)
+    -- Pending implicit hand use is reported, not exclusive cleanup ownership.
+    -- The caller must qualify every reported token as an untouched Equip write
+    -- in this same cohort. Direct item/unknown claims above remain a denial.
+    facts.equipmentReaders=equipmentReaders
+    return task~=nil and api.raw(task.pickups,facts.id)~=nil and api.raw(seen,group.fetch)
+        and api.raw(task.actions,group.approach)and api.raw(task.actions,group.fetch)and api.raw(task.actions,group.body)
+end
+local function nativePlanBorrowing(state,record,token,group,binding,capture)
+    local api=nativePlanReads
+    if not nativePlanData(binding,capture)or not nativePlanOnly(binding,{scope=true,candidate=true})then return end
+    local scope,candidate=api.raw(binding,'scope'),api.raw(binding,'candidate')
+    local parsed=state.scopes[scope]
+    if parsed and not parsed[candidate]then return end
+    local facts=nativePlanCandidate(record,token,group,candidate,capture,parsed and parsed[candidate])
+    if not facts then return end
+    -- Each real operation still opens its own seal. A shared producer scope
+    -- only needs one source/ledger parse in this decision; reuse the original
+    -- copied facts, never a fresh observation of already captured owners.
+    if parsed then return parsed[candidate]end
+    if not nativePlanData(scope,capture)
+        or not nativePlanOnly(scope,{marker=true,character=true,token=true,queue=true,generation=true,tasks=true,
+            equipmentItems=true,seen=true,mixed=true,phase=true,idleTicks=true,restoreToken=true,restored=true,[borrowingMarker]=true})
+        or not api.equal(api.raw(scope,'marker'),deferredMarker)
+        or(api.raw(scope,'phase')~='prepare'and api.raw(scope,'phase')~='cleanup')
+        or not api.equal(api.raw(scope,'character'),state.actor)or not api.equal(api.raw(scope,'queue'),state.queue)
+        or api.raw(scope,'generation')~=state.generation or not nativePlanPlain(api.raw(scope,'token'))
+        or(api.raw(scope,'restored')~=nil and api.raw(scope,'restored')~=false)then return end
+    local idle,restore=api.raw(scope,'idleTicks'),api.raw(scope,'restoreToken')
+    if idle~=nil and(api.kind(idle)~='number'or idle<0 or idle%1~=0)
+        or restore~=nil and not nativePlanData(restore,capture,0)then return end
+    local tasks,seen,equipment=api.raw(scope,'tasks'),api.raw(scope,'seen'),api.raw(scope,'equipmentItems')
+    if not nativePlanData(tasks,capture,32)or not nativePlanData(seen,capture)or not nativePlanData(equipment,capture)then return end
+    for taskToken,task in api.pairs(tasks)do
+        if not nativePlanPlain(taskToken)or not nativePlanData(task,capture)
+            or not nativePlanOnly(task,{items=true,pickups=true,actions=true,unknownInputs=true,readsEquipment=true})then return end
+        local items,pickups,actions=api.raw(task,'items'),api.raw(task,'pickups'),api.raw(task,'actions')
+        if not nativePlanData(items,capture)or not nativePlanData(pickups,capture)or not nativePlanData(actions,capture)then return end
+        for _,pickup in api.pairs(pickups)do
+            if not nativePlanData(pickup,capture)or not nativePlanOnly(pickup,{container=true,fullType=true,ambiguous=true})then return end
+        end
+    end
+    -- The mutable scope/task snapshot precedes its native filename callback.
+    local seal=api.raw(scope,borrowingMarker)
+    if not settlementSealTrusted(scope,borrowingMarker,seal)or not nativePlanPublic()or not state.unchanged()then return end
+    local opened,ledger=api.call(seal,scope)
+    if not opened or not nativePlanData(ledger,capture)
+        or not nativePlanOnly(ledger,{candidates=true,actions=true,handles=true,executors=true,merging=true})then return end
+    for _,name in api.pairs({'candidates','actions','handles','executors','merging'})do
+        if not nativePlanData(api.raw(ledger,name),capture,32)then return end
+    end
+    for _ in api.pairs(ledger.handles)do return end
+    for _ in api.pairs(ledger.merging)do return end
+    local count,found,mapped,candidateFacts=0,false,{},{}
+    for index,entry in api.pairs(ledger.candidates)do
+        count=count+1
+        if api.kind(index)~='number'or index%1~=0 or index<1 or index>#ledger.candidates
+            or not nativePlanData(entry,capture)or api.raw(entry,'phase')~='prepare'or api.raw(entry,'ambiguous')then return end
+        local step=api.raw(entry,'step')
+        if not nativePlanData(step,capture)or not nativePlanRecordCapture(api.raw(step,'operation'),capture)then return end
+        local action=api.raw(step,'action')
+        local selected=state.groups[api.raw(entry,'owner')]
+        local entryBinding=api.raw(step,'borrowing')
+        if not selected or not api.equal(selected.fetch,action)or mapped[action]
+            or not nativePlanData(entryBinding,capture)or not api.equal(api.raw(entryBinding,'scope'),scope)
+            or not api.equal(api.raw(entryBinding,'candidate'),entry)
+            or not api.equal(api.raw(ledger.actions,action),entry)then return end
+        local entryFacts=nativePlanCandidate(api.raw(step,'operation'),api.raw(entry,'owner'),selected,entry,capture,
+            api.equal(entry,candidate)and facts or nil)
+        if not entryFacts or not nativePlanClaim(tasks,equipment,seen,api.raw(entry,'owner'),selected,entryFacts)then return end
+        local executors=api.raw(ledger.executors,action)
+        if not nativePlanData(executors,capture,1)or not api.equal(api.raw(executors,api.raw(entry,'id')),entry)then return end
+        mapped[action]=true
+        candidateFacts[entry]=api.equal(entry,candidate)and facts or entryFacts
+        if api.equal(entry,candidate)then found=true end
+    end
+    if count~=#ledger.candidates or not found then return end
+    local actions,executors=0,0
+    for action in api.pairs(ledger.actions)do if not mapped[action]then return end;actions=actions+1 end
+    for action in api.pairs(ledger.executors)do if not mapped[action]then return end;executors=executors+1 end
+    if actions~=count or executors~=count then return end
+    state.scopes[scope]=candidateFacts
+    return candidateFacts[candidate]
+end
 -- The same private-record parser serves standalone and cohort observations.
 -- Capture each real record before metadata for another token can mutate it.
-local function nativePlanRecord(state,action,token,allowActive,capture)
+local function nativePlanRecord(state,action,token,allowActive,capture,group)
     local api=nativePlanReads
     if not nativePlanPlain(token)or api.kind(action)~='table'then return false end
     local seal=api.raw(token,operationMarker)
@@ -3396,11 +3631,51 @@ local function nativePlanRecord(state,action,token,allowActive,capture)
         or not api.equal(api.raw(record,'character'),state.actor)or not api.equal(api.raw(record,'queue'),state.queue)
         or not api.equal(api.raw(record,'token'),token)or api.raw(record,'generation')~=state.generation
         or api.raw(record,'preparationScope')~=nil or api.raw(record,'settlement')~=nil then return false end
-    if api.raw(token,'toolkitCancelled')or api.raw(token,'toolkitPickups')~=nil
+    if api.raw(token,'toolkitCancelled')or not group and api.raw(token,'toolkitPickups')~=nil
         or api.raw(token,'toolkitContinuations')~=nil and api.raw(token,'toolkitContinuations')~=0 then return false end
     for _,name in api.pairs(api.actionFields)do if nativePlanOwn(action,name)then return false end end
     local steps,actions,borrowings=api.raw(record,'steps'),api.raw(record,'actions'),api.raw(record,'borrowings')
     if not nativePlanPlain(steps)or not nativePlanPlain(actions)or not nativePlanPlain(borrowings)then return false end
+    if group then
+        if api.raw(record,'phase')~='prepare'or api.raw(token,'toolkitStarted')then return false end
+        local hints=api.raw(token,'toolkitPickups')
+        if not nativePlanData(hints,capture,1)or not api.equal(api.raw(hints,group.item),group.source)
+            or not api.equal(nativePlanOwn(group.fetch,'item'),group.item)
+            or not api.equal(nativePlanOwn(group.body,'item'),group.item)
+            or not api.equal(nativePlanOwn(group.fetch,'srcContainer'),group.source)
+            or not api.equal(nativePlanOwn(group.fetch,'destContainer'),group.destination)then return false end
+        local members={group.approach,group.fetch,group.body}
+        local count=0
+        for key in api.pairs(steps)do count=count+1;if key~=1 and key~=2 and key~=3 then return false end end
+        if count~=3 then return false end
+        count=0
+        for member in api.pairs(actions)do
+            count=count+1
+            if not api.equal(member,group.approach)and not api.equal(member,group.fetch)and not api.equal(member,group.body)then return false end
+        end
+        if count~=3 or not nativePlanRecordCapture(record,capture)then return false end
+        local binding=api.raw(borrowings,1)
+        for key in api.pairs(borrowings)do if key~=1 then return false end end
+        for index,member in api.pairs(members)do
+            local step=api.raw(steps,index)
+            if not nativePlanPlain(step)or not api.equal(api.raw(actions,member),step)
+                or not api.equal(api.raw(step,'operation'),record)or not api.equal(api.raw(step,'action'),member)
+                or api.raw(step,'state')~='pending'or api.raw(step,'started')
+                or not nativePlanPending(state,record,token,member,false,step)then return false end
+            for _,name in api.pairs(api.actionFields)do if nativePlanOwn(member,name)then return false end end
+            for _,name in api.pairs(api.stepFields)do
+                if name~='borrowing'and api.raw(step,name)~=nil then return false end
+            end
+            if index==2 then
+                if api.raw(step,'phase')~=(binding and 'prepare'or 'body')
+                    or not api.equal(api.raw(step,'borrowing'),binding)then return false end
+            elseif api.raw(step,'phase')~='body'or api.raw(step,'borrowing')~=nil then return false end
+        end
+        local facts
+        if binding then facts=nativePlanBorrowing(state,record,token,group,binding,capture)
+        else facts={hasBorrowing=false}end
+        return facts~=nil and facts~=false,facts
+    end
     for _ in api.pairs(borrowings)do return false end
     local step=api.raw(steps,1)
     if not nativePlanPlain(step)or not api.equal(api.raw(actions,action),step)then return false end
@@ -3409,25 +3684,7 @@ local function nativePlanRecord(state,action,token,allowActive,capture)
     if not api.equal(api.raw(step,'operation'),record)or not api.equal(api.raw(step,'action'),action)
         or api.raw(step,'phase')~='body'or api.raw(step,'state')~='pending'then return false end
     for _,name in api.pairs(api.stepFields)do if api.raw(step,name)~=nil then return false end end
-    local eligible
-    if api.raw(step,'started')then
-        eligible=allowActive==true and api.raw(step,'started')==true
-            and api.raw(record,'phase')=='body'and api.raw(token,'toolkitStarted')==true
-            and api.equal(state.front,action)and api.equal(api.raw(state.list,1),action)and nativePlanOwn(action,'action')~=nil
-    else
-        local transaction=nativePlanOwn(action,'transactionId')
-        eligible=api.raw(record,'phase')=='prepare'and not api.raw(token,'toolkitStarted')
-            and not nativePlanOwn(action,'action')and not nativePlanOwn(action,'started')
-            and nativePlanOwn(action,'toolkitNativeTransaction')==nil and nativePlanOwn(action,'toolkitNativeKind')==nil
-            and(transaction==nil or transaction==0)
-    end
-    if not eligible then return false end
-    if capture then
-        local handle=api.raw(step,'handle')
-        if not nativePlanPlain(handle)then return false end
-        capture(record);capture(steps);capture(step);capture(actions);capture(borrowings);capture(handle)
-    end
-    return true
+    return nativePlanPending(state,record,token,action,allowActive,step)and nativePlanRecordCapture(record,capture)
 end
 local function nativePlanValidate(lease,...)
     local api=nativePlanReads
@@ -3456,18 +3713,402 @@ function Settlement.nativePlanLease(...)
     if nativePlanReads.kind(check)=='function'then return check end
 end
 function Settlement.nativePlanCohort(...)
-    if nativePlanReads.count('#',...)~=1 then return end
-    local state=nativePlanContext(...)
+    local arity=nativePlanReads.count('#',...)
+    if arity~=1 and arity~=2 then return end
+    local queue,groups=...
+    local state=nativePlanContext(queue)
     if not state then return end
-    local rows=nativePlanRows(state,true)
+    local rows=nativePlanRows(state,true,groups)
     if not rows then return end
-    local capture,unchanged=nativePlanCapture(state,rows)
+    local capture,unchanged=nativePlanCapture(state,rows,groups)
     if not capture then return end
+    state.scopes,state.unchanged={},unchanged
+    local inputFacts={}
     for index=1,#rows do
         local row=rows[index]
-        if not nativePlanRecord(state,row.action,row.token,row.allowActive,capture)then return end
+        if not row.groupChild then
+            local valid,facts=nativePlanRecord(state,row.action,row.token,row.allowActive,capture,row.group)
+            if not valid then return end
+            if row.group then
+                inputFacts[row.token]=facts
+                capture(facts)
+                if facts.sourceOwner then capture(facts.sourceOwner)end
+                if facts.equipmentReaders then capture(facts.equipmentReaders)end
+            end
+        end
     end
-    if nativePlanCommon(state)and unchanged()then return unchanged end
+    capture(inputFacts)
+    if nativePlanCommon(state)and unchanged()then return unchanged,inputFacts end
+end
+
+-- Queue calls this only after removing its validated whole operation and
+-- invalidating the token. No native effect was admitted, so there is nothing
+-- to complete or return; retain the historical claim as an explicit waiver.
+function Settlement.discardUnstartedPickups(queue,token,members)
+    local api=nativePlanReads
+    local state=nativePlanContext(queue)
+    if not state or not nativePlanPlain(token)or api.raw(token,'toolkitCancelled')~=true
+        or api.raw(token,'toolkitStarted')or api.raw(token,'toolkitContinuations')~=nil
+            and api.raw(token,'toolkitContinuations')~=0
+        or not nativePlanPlain(members)or #members<1 or #members>32 then return false end
+    local selected,count={},0
+    for index,action in api.pairs(members)do
+        count=count+1
+        if api.kind(index)~='number'or index%1~=0 or index<1 or index>#members
+            or api.kind(action)~='table'or selected[action]
+            or not api.equal(nativePlanOwn(action,'character'),state.actor)
+            or not api.equal(nativePlanOwn(action,'toolkitQueueOperation'),token)then return false end
+        selected[action]=true
+    end
+    if count~=#members then return false end
+    for _,action in api.pairs(state.list)do
+        if selected[action]or api.equal(nativePlanOwn(action,'toolkitQueueOperation'),token)then return false end
+    end
+    state.action,state.token=api.raw(members,1),token
+    local capture,unchanged=nativePlanCapture(state)
+    if not capture or not capture(members)or not capture(Settlement,{'discardUnstartedPickups'})then return false end
+    for action in api.pairs(selected)do capture(action)end
+    local seal=api.raw(token,operationMarker)
+    if not operationSealTrusted(token,seal)or not nativePlanPublic()then return false end
+    local opened,record=api.call(seal,token)
+    if not opened or not nativePlanPlain(record)or not api.equal(api.raw(record,'character'),state.actor)
+        or not api.equal(api.raw(record,'queue'),queue)or not api.equal(api.raw(record,'token'),token)
+        or api.raw(record,'generation')~=state.generation or api.raw(record,'phase')~='prepare'
+        or api.raw(record,'preparationScope')~=nil or api.raw(record,'settlement')~=nil
+        or not nativePlanRecordCapture(record,capture)then return false end
+    local steps,actions,borrowings=record.steps,record.actions,record.borrowings
+    local seen,bindings={},{}
+    count=0
+    for index,step in api.pairs(steps)do
+        count=count+1
+        if api.kind(index)~='number'or index%1~=0 or index<1 or index>#members
+            or not nativePlanPlain(step)then return false end
+        local action=api.raw(step,'action')
+        if not selected[action]or seen[action]or not api.equal(api.raw(actions,action),step)
+            or not api.equal(api.raw(step,'operation'),record)or api.raw(step,'state')~='pending'
+            or(api.raw(step,'phase')~='body'and api.raw(step,'phase')~='prepare')or api.raw(step,'started')then return false end
+        seen[action]=true
+        local transaction=nativePlanOwn(action,'transactionId')
+        if nativePlanOwn(action,'action')or nativePlanOwn(action,'started')
+            or nativePlanOwn(action,'toolkitNativeTransaction')~=nil or nativePlanOwn(action,'toolkitNativeKind')~=nil
+            or transaction~=nil and transaction~=0 then return false end
+        for _,name in api.pairs(api.actionFields)do if nativePlanOwn(action,name)then return false end end
+        for _,name in api.pairs(api.stepFields)do if name~='borrowing'and api.raw(step,name)~=nil then return false end end
+        local binding=api.raw(step,'borrowing')
+        if binding~=nil then if bindings[binding]then return false end;bindings[binding]=step end
+    end
+    if count~=#members then return false end
+    count=0
+    for action in api.pairs(actions)do if not seen[action]then return false end;count=count+1 end
+    if count~=#members then return false end
+    local candidates,covered,releases={},{},{}
+    count=0
+    for index,binding in api.pairs(borrowings)do
+        count=count+1
+        if api.kind(index)~='number'or index%1~=0 or index<1 or index>#borrowings
+            or not nativePlanData(binding,capture)or not nativePlanOnly(binding,{scope=true,candidate=true})then return false end
+        local step=bindings[binding]
+        local scope,candidate=api.raw(binding,'scope'),api.raw(binding,'candidate')
+        if not step or step.phase~='prepare'or not nativePlanData(scope,capture)
+            or not nativePlanData(candidate,capture)or candidates[candidate]
+            or not nativePlanOnly(candidate,{id=true,fullType=true,source=true,destination=true,owner=true,
+                phase=true,sourceOwner=true,step=true,ambiguous=true})
+            or candidate.phase~='prepare'or candidate.ambiguous or not api.equal(candidate.owner,token)
+            or not api.equal(candidate.step,step)or candidate.source==nil or candidate.destination==nil
+            or api.equal(candidate.source,candidate.destination)or api.kind(candidate.id)~='number'or candidate.id%1~=0
+            or api.kind(candidate.fullType)~='string'or candidate.fullType==''
+            or not api.equal(api.raw(scope,'marker'),deferredMarker)or not api.equal(scope.character,state.actor)
+            or not api.equal(scope.queue,queue)or scope.generation~=state.generation
+            or(scope.phase~='prepare'and scope.phase~='cleanup')then return false end
+        if candidate.sourceOwner~=nil and(not nativePlanData(candidate.sourceOwner,capture)
+            or not nativePlanOnly(candidate.sourceOwner,{id=true,fullType=true})
+            or api.kind(candidate.sourceOwner.id)~='number'or candidate.sourceOwner.id%1~=0
+            or api.kind(candidate.sourceOwner.fullType)~='string'or candidate.sourceOwner.fullType=='')then return false end
+        local fetch=step.action
+        if not api.equal(nativePlanOwn(fetch,'srcContainer'),candidate.source)
+            or not api.equal(nativePlanOwn(fetch,'destContainer'),candidate.destination)then return false end
+        local hint=nativePlanOwn(fetch,'item')
+        if hint==nil or covered[hint]then return false end
+        covered[hint]=candidate.source
+        local release=releases[scope]
+        if not release then
+            local tasks,scopeSeen=api.raw(scope,'tasks'),api.raw(scope,'seen')
+            if not nativePlanData(tasks,capture,32)or not nativePlanData(scopeSeen,capture)then return false end
+            local task=api.raw(tasks,token)
+            if not nativePlanData(task,capture)or task.unknownInputs
+                or not nativePlanOnly(task,{items=true,pickups=true,actions=true,unknownInputs=true,readsEquipment=true})
+                or not nativePlanData(task.items,capture)or not nativePlanData(task.pickups,capture)
+                or not nativePlanData(task.actions,capture,32)then return false end
+            local owned=0
+            for member,value in api.pairs(task.actions)do
+                if value~=true or not selected[member]or api.raw(scopeSeen,member)~=true then return false end
+                owned=owned+1
+            end
+            if owned~=#members then return false end
+            -- Another task cannot own an action being removed. Ancestor bag
+            -- IDs in task.items are legitimate input facts, not extra actions.
+            for otherToken,other in api.pairs(tasks)do
+                if not api.equal(otherToken,token)then
+                    if api.equal(other,task)or not nativePlanData(other,capture)
+                        or not nativePlanData(other.actions,capture)then return false end
+                    for member in api.pairs(other.actions)do if selected[member]then return false end end
+                end
+            end
+            local sourceSeal=api.raw(scope,borrowingMarker)
+            if not settlementSealTrusted(scope,borrowingMarker,sourceSeal)then return false end
+            local valid,ledger=api.call(sourceSeal,scope)
+            if not valid or not nativePlanData(ledger,capture)then return false end
+            for _,name in api.pairs({'candidates','actions','handles','executors','merging'})do
+                if not nativePlanData(api.raw(ledger,name),capture,32)then return false end
+            end
+            release={scope=scope,tasks=tasks,seen=scopeSeen,task=task,ledger=ledger,ids={}}
+            releases[scope]=release
+        end
+        local ledger=release.ledger
+        if not api.equal(api.raw(ledger.actions,fetch),candidate)or api.raw(ledger.handles,fetch)~=nil
+            or api.raw(ledger.merging,fetch)~=nil then return false end
+        local executors=api.raw(ledger.executors,fetch)
+        if not nativePlanData(executors,capture,1)or not api.equal(api.raw(executors,candidate.id),candidate)then return false end
+        local occurrences,size=0,0
+        for key,entry in api.pairs(ledger.candidates)do
+            size=size+1
+            if api.kind(key)~='number'or key%1~=0 or key<1 or key>#ledger.candidates or not nativePlanPlain(entry)then return false end
+            if api.equal(entry,candidate)then occurrences=occurrences+1 end
+        end
+        if size~=#ledger.candidates or occurrences~=1 then return false end
+        if release.ids[candidate.id]then return false end
+        release.ids[candidate.id]=candidate
+        candidates[candidate]={scope=scope,fetch=fetch};bindings[binding]=nil
+    end
+    if count~=#borrowings then return false end
+    for _ in api.pairs(bindings)do return false end
+    local hints=api.raw(token,'toolkitPickups')
+    if hints~=nil then
+        if not nativePlanData(hints,capture,32)then return false end
+        for item,source in api.pairs(hints)do
+            if not api.equal(covered[item],source)and #borrowings>0 then return false end
+        end
+        for item,source in api.pairs(covered)do if not api.equal(api.raw(hints,item),source)then return false end end
+    elseif #borrowings>0 then return false end
+    for scope,release in api.pairs(releases)do
+        for id,pickup in api.pairs(release.task.pickups)do
+            local candidate=release.ids[id]
+            if not candidate or not nativePlanData(pickup,capture)
+                or not nativePlanOnly(pickup,{container=true,fullType=true,ambiguous=true})or pickup.ambiguous
+                or pickup.fullType~=candidate.fullType or not api.equal(pickup.container,candidate.source)then return false end
+        end
+        for id in api.pairs(release.ids)do if api.raw(release.task.pickups,id)==nil then return false end end
+        local ledger=release.ledger
+        for _,candidate in api.pairs(ledger.candidates)do
+            local owner=candidates[candidate]
+            if owner and not api.equal(owner.scope,scope)then return false end
+        end
+        for fetch,candidate in api.pairs(ledger.actions)do
+            local owner=candidates[candidate]
+            if owner and(not api.equal(owner.scope,scope)or not api.equal(owner.fetch,fetch))then return false end
+        end
+        for fetch,executors in api.pairs(ledger.executors)do
+            if not nativePlanData(executors,capture,32)then return false end
+            for id,candidate in api.pairs(executors)do
+                local owner=candidates[candidate]
+                if owner and(id~=candidate.id or not api.equal(owner.scope,scope)or not api.equal(owner.fetch,fetch))then return false end
+            end
+        end
+    end
+    if not nativePlanCommon(state,selected)or not unchanged()then return false end
+    for candidate in api.pairs(candidates)do candidate.phase='waived';candidate.waiverReason='cancelled-before-start'end
+    -- Retain the waived candidate in record.borrowings as history, but release
+    -- only this never-admitted operation's live producer claims. All writes
+    -- below are to the exact plain tables checked above, with no callbacks.
+    for scope,release in api.pairs(releases)do
+        release.tasks[token]=nil
+        for member in api.pairs(selected)do release.seen[member]=nil end
+        local ledger=release.ledger
+        for candidate,owner in api.pairs(candidates)do
+            if api.equal(owner.scope,scope)then ledger.actions[owner.fetch]=nil;ledger.executors[owner.fetch]=nil end
+        end
+        local write,size=1,#ledger.candidates
+        for read=1,size do
+            local candidate=api.raw(ledger.candidates,read)
+            if not candidates[candidate]then ledger.candidates[write]=candidate;write=write+1 end
+        end
+        for index=write,size do ledger.candidates[index]=nil end
+    end
+    return true
+end
+
+local explicitEquipmentRole={adler=1408351481,line=147}
+local explicitEquipmentMatches=executionProof and executionProof.matches
+local retainingExplicitEquipment=false
+local function explicitPickupCapture(candidate,capture)
+    local api=nativePlanReads
+    if not nativePlanData(candidate,capture)then return false end
+    for _,name in api.pairs({'sourceOwner','step','proof','member'})do
+        local value=api.raw(candidate,name)
+        if value~=nil and not nativePlanData(value,capture)then return false end
+    end
+    local proof=api.raw(candidate,'proof')
+    if proof then
+        for _,name in api.pairs({'members','byId','attempts','obligation'})do
+            if not nativePlanData(api.raw(proof,name),capture,32)then return false end
+        end
+        for _,member in api.pairs(proof.members)do if not nativePlanData(member,capture)then return false end end
+        for _,attempt in api.pairs(proof.attempts)do
+            if not nativePlanData(attempt,capture)or not nativePlanData(attempt.members,capture,32)then return false end
+        end
+    end
+    return true
+end
+local function retainExplicitEquipment(action,receipt)
+    local api=nativePlanReads
+    if not nativePlanPublic()or api.kind(action)~='table'then return false end
+    local actor,token=nativePlanOwn(action,'character'),nativePlanOwn(action,'toolkitQueueOperation')
+    if actor==nil or not nativePlanPlain(token)or api.raw(token,'toolkitCancelled')then return false end
+    local capture,unchanged=nativePlanMirror()
+    capture(action);capture(token)
+    capture(api.globals,{'PZSurvivorToolkit','ISTimedActionQueue','getFilenameOfClosure','getFirstLineOfClosure',
+        'getModFileReader','getGameFilesInput','getSpecificPlayer','getTimestampMs','isClient'})
+    capture(Toolkit,{'ActionQueueSettlement','ActionQueueTidyIntent'})
+    capture(Settlement,{'retainExplicitEquipment'})
+    capture(executionProof,{'closure','matches'})
+    local seal=api.raw(token,operationMarker)
+    if not operationSealTrusted(token,seal)or not unchanged()then return false end
+    local opened,record=api.call(seal,token)
+    if not opened or not nativePlanPlain(record)or not api.equal(record.token,token)or not api.equal(record.character,actor)
+        or not nativePlanPlain(record.actions)or not nativePlanPlain(record.borrowings)then return false end
+    local step=api.raw(record.actions,action)
+    if not nativePlanPlain(step)or not api.equal(step.operation,record)or not api.equal(step.action,action)then return false end
+    -- Root equipment pays only its real private membership lookup. This true
+    -- means no own loan needs bookkeeping; it grants no effect/edit authority.
+    local borrowed=false
+    for _ in api.pairs(record.borrowings)do borrowed=true;break end
+    if not borrowed then return unchanged()end
+    local state=nativePlanContext(record.queue,action)
+    if not state or not api.equal(record.queue,state.queue)or record.generation~=state.generation
+        or record.settlement~=nil or record.preparationScope~=nil or not nativePlanCommon(state)
+        or step.phase~='body'or step.required or step.returning or step.preparation or step.prerequisites~=nil
+        or not nativePlanRecordCapture(record,capture)or not capture(state.queue)or not capture(state.list)then return false end
+    local registry=api.raw(api.globals,'ISTimedActionQueue');local queues=nativePlanOwn(registry,'queues')
+    capture(registry,{'queues'});capture(queues,{actor})
+    for _,binding in api.pairs(record.borrowings)do
+        if not nativePlanData(binding,capture)or not nativePlanData(binding.scope,capture)
+            or not explicitPickupCapture(binding.candidate,capture)then return false end
+    end
+    if not nativePlanData(receipt,capture)then return false end
+    local effectSeal=api.raw(receipt,effectMarker)
+    if not settlementSealTrusted(receipt,effectMarker,effectSeal)or not unchanged()then return false end
+    local accepted,effect=api.call(effectSeal,receipt)
+    if not accepted or not nativePlanData(effect,capture)or effect.confirmed~=true
+        or not api.equal(effect.action,action)or not api.equal(effect.native,nativePlanOwn(action,'action'))or effect.native==nil
+        or not api.equal(effect.character,actor)or not api.equal(effect.queue,state.queue)or effect.generation~=state.generation
+        or effect.transaction~=nativePlanOwn(action,'toolkitNativeTransaction')or effect.kind~=nativePlanOwn(action,'toolkitNativeKind')
+        or effect.terminal~=nil and effect.terminal~='completed'then return false end
+    local intent=api.raw(Toolkit,'ActionQueueTidyIntent')
+    local getter=nativePlanPlain(intent)and api.raw(intent,'confirmedEquipmentIntent')
+    local firstLine=api.raw(api.globals,'getFirstLineOfClosure')
+    if api.kind(getter)~='function'or api.kind(firstLine)~='function'or api.kind(explicitEquipmentMatches)~='function'
+        or not api.equal(api.raw(executionProof,'matches'),explicitEquipmentMatches)then return false end
+    capture(intent,{'confirmedEquipmentIntent'})
+    if not editLedgerOrigin(getter,'ActionQueueTidyIntent.lua')or not unchanged()then return false end
+    local lineOK,line=api.call(firstLine,getter)
+    if not lineOK or line~=explicitEquipmentRole.line or not unchanged()then return false end
+    local sourceOK,source=api.call(explicitEquipmentMatches,'media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua',
+        explicitEquipmentRole.adler,'PZSurvivorToolkit',true)
+    if not sourceOK or source~=true or not unchanged()then return false end
+    local intentOK,facts=api.call(getter,action,receipt)
+    if not intentOK or not nativePlanData(facts,capture,2)or not nativePlanOnly(facts,{id=true,fullType=true})
+        or api.kind(facts.id)~='number'or facts.id%1~=0 or api.kind(facts.fullType)~='string'or facts.fullType==''
+        or not unchanged()then return false end
+    local requested=nativePlanOwn(action,'item')
+    if requested==nil or requested:getID()~=facts.id or requested:getFullType()~=facts.fullType
+        or not unchanged()then return false end
+    local found,binding
+    for _,entry in api.pairs(record.borrowings)do
+        local candidate=entry.candidate
+        if candidate.id==facts.id and candidate.fullType==facts.fullType then
+            if found then return false end
+            found,binding=candidate,entry
+        end
+    end
+    if not found then return true end
+    if found.phase=='waived'or found.phase=='completed'then return true end
+    if found.phase~='prepare'and found.phase~='active'or found.ambiguous or found.returning or found.plannedReturn
+        or not api.equal(found.owner,token)or found.proof==nil or found.member==nil then return false end
+    local scope,fetch=binding.scope,found.step and found.step.action
+    if not nativePlanPlain(found.step)or not api.equal(found.step.operation,record)
+        or not api.equal(api.raw(record.actions,fetch),found.step)or not api.equal(found.step.borrowing,binding)
+        or not api.equal(scope.marker,deferredMarker)or scope.phase=='retired'or not api.equal(scope.character,actor)
+        or not api.equal(scope.queue,state.queue)or scope.generation~=state.generation then return false end
+    local scopeSeal=api.raw(scope,borrowingMarker)
+    if not settlementSealTrusted(scope,borrowingMarker,scopeSeal)or not unchanged()then return false end
+    local scopeOK,ledger=api.call(scopeSeal,scope)
+    if not scopeOK or not nativePlanData(ledger,capture)then return false end
+    for _,name in api.pairs({'actions','handles','executors','merging','candidates'})do
+        if not nativePlanData(api.raw(ledger,name),capture,32)then return false end
+    end
+    local occurrences=0
+    for _,entry in api.pairs(ledger.candidates)do
+        if not nativePlanData(entry,capture)then return false end
+        if api.equal(entry,found)then occurrences=occurrences+1
+        elseif entry.id==facts.id and entry.fullType==facts.fullType and entry.phase~='waived'and entry.phase~='completed'then return false end
+    end
+    if occurrences~=1 then return false end
+    local handle=api.raw(ledger.handles,fetch)
+    if not api.equal(api.raw(ledger.actions,fetch),found)or api.raw(ledger.merging,fetch)~=nil
+        or not nativePlanData(handle,capture)then return false end
+    local pickupSeal=api.raw(handle,returnMarker)
+    if not settlementSealTrusted(handle,returnMarker,pickupSeal)or not unchanged()then return false end
+    local pickupOK,pickup=api.call(pickupSeal,handle)
+    local member,attempt=found.member,found.proof.attempts[1]
+    local executors=api.raw(ledger.executors,fetch)
+    if not pickupOK or not api.equal(pickup,found.proof)or not nativePlanData(executors,capture,1)
+        or not api.equal(api.raw(executors,facts.id),found)or not api.equal(pickup.scope,scope)
+        or not api.equal(pickup.token,token)or pickup.direction~='pickup'or not api.equal(pickup.obligation,handle)
+        or not api.equal(handle.token,token)or pickup.native==nil
+        or not api.equal(pickup.action,fetch)or not api.equal(pickup.native,nativePlanOwn(fetch,'action'))
+        or not api.equal(pickup.character,actor)or not api.equal(pickup.queue,state.queue)or pickup.generation~=state.generation
+        or not api.equal(pickup.source,found.source)or not api.equal(pickup.destination,found.destination)
+        or pickup.invalid or pickup.stopped or pickup.sequenceError or pickup.continuing or pickup.next
+        or #pickup.members~=1 or #pickup.attempts~=1 or not nativePlanPlain(attempt)
+        or not api.equal(pickup.members[1],member)or not api.equal(pickup.byId[facts.id],member)
+        or member.id~=facts.id or member.fullType~=facts.fullType or not api.equal(member.borrowed,found)
+        or member.attempt~=1 or #attempt.members~=1 or not api.equal(attempt.members[1],member)
+        or not api.equal(pickup.active,attempt)or attempt.ordinal~=1 or attempt.phase~='perform'
+        or attempt.invalid
+        or attempt.terminal~=nil and attempt.terminal~='waiting'and attempt.terminal~='completed'then return false end
+    local authority=pickup.client and'completed'or'native'
+    if found.phase=='prepare'or member.completed~=true or attempt.terminal~='completed'or attempt.authority~=authority then
+        if attempt.finished and not attempt.succeeded or attempt.authority~=nil and attempt.authority~='unavailable'
+            and attempt.authority~=authority or not attempt.deadline or api.kind(getTimestampMs)~='function'
+            or getTimestampMs()>=attempt.deadline or not unchanged()then return false end
+        return nil -- Existing Compat.poll before Intent.update owns observation/retry.
+    end
+    if found.step.state~='earned'or not attempt.finished or not attempt.succeeded or not pickup.ended
+        or found.attempt~=1 or found.authority~=attempt.authority
+        or found.transaction~=(pickup.client and attempt.transaction or 0)then return false end
+    local item=nativePlanOwn(action,'item')
+    local primary,twoHands=nativePlanOwn(action,'primary'),nativePlanOwn(action,'twoHands')
+    if item==nil or(primary~=true and primary~=false)or(twoHands~=true and twoHands~=false)then return false end
+    local root=actor:getInventory()
+    local held
+    if primary then held=actor:getPrimaryHandItem()else held=actor:getSecondaryHandItem()end
+    if actor:isDead()or getSpecificPlayer(actor:getPlayerNum())~=actor or isClient()~=pickup.client
+        or not api.equal(root,found.destination)or not api.equal(root:getItemById(facts.id),item)
+        or item:getID()~=facts.id or item:getFullType()~=facts.fullType or not api.equal(item:getContainer(),root)
+        or item:getIsCraftingConsumed()or found.source:getItemById(facts.id)~=nil
+        or not api.equal(held,item)
+        or twoHands and(not api.equal(actor:getPrimaryHandItem(),item)or not api.equal(actor:getSecondaryHandItem(),item))
+        or not api.equal(root:getItemById(facts.id),item)or not unchanged()then return false end
+    found.phase='waived';found.waiverReason='explicit-equipment-intent'
+    return true
+end
+function Settlement.retainExplicitEquipment(action,receipt)
+    if retainingExplicitEquipment then return false end
+    retainingExplicitEquipment=true
+    local ok,result=nativePlanReads.call(retainExplicitEquipment,action,receipt)
+    retainingExplicitEquipment=false
+    if ok then return result end
+    return false
 end
 
 return Settlement

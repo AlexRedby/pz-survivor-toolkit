@@ -1,6 +1,14 @@
 local P=require 'QueueEnergyPlacement'
 local Common=require 'QueueMagazineUnload'
 local F={segments={'reorder-two','reorder-three','cancel','dependent','capacity','component-guard'}}
+F.preparedSegments={'prepared-move','prepared-cancel-fetch','prepared-cancel-body','prepared-dependent'}
+function F.selectedSegments(prepared)
+ local values={};for _,name in ipairs(F.segments)do values[#values+1]=name end
+ if prepared then for _,name in ipairs(F.preparedSegments)do values[#values+1]=name end end
+ return values
+end
+function F.isPrepared(segment)return type(segment)=='string'and segment:sub(1,9)=='prepared-'end
+local function cancelled(ids)return ids.mode=='toolkit'and(ids.segment=='prepared-cancel-fetch'or ids.segment=='prepared-cancel-body')end
 F.equal=Common.equal
 F.hands=Common.hands
 local function inventory(player)
@@ -41,6 +49,10 @@ local function expectedHands(ids)
  elseif ids.segment=='dependent'then p=false;s=false
  elseif ids.segment=='capacity'then p=item.heldBag.id;s=false
  elseif ids.segment=='component-guard'then p=item.b.id end
+ if F.isPrepared(ids.segment)then
+  p=cancelled(ids)and item.b.id or item.nested.id
+  if ids.segment=='prepared-move'then s=item.b.id end
+ end
  return{primary=p,secondary=s}
 end
 function F.verify(state)
@@ -52,6 +64,7 @@ function F.verify(state)
  local baseline={};for _,row in ipairs(state.ids.inventory)do baseline[row.id]=row end
  for _,row in ipairs(value.inventory)do local prior=baseline[row.id];if not prior then return end
   for key,v in pairs(prior)do
+   if key=='path'and F.isPrepared(state.ids.segment)and not cancelled(state.ids)and row.id==state.ids.items.nested.id then v={}end
    if not F.equal(row[key],v)then return end
   end
   baseline[row.id]=nil
@@ -84,7 +97,7 @@ function F.prepare(player,segment,mode,kind,placement,proof,previous,workload)
  local bag=seed('bag','Base.Bag_Schoolbag');local slot=bag:canBeEquipped();assert(slot and not player:getWornItem(slot),'test backpack slot must be empty')
  player:setWornItem(slot,bag);bag:getItemContainer():setExplored(true)
  seed('marker','Base.Nails',bag:getItemContainer())
- if segment=='dependent'then seed('nested','Base.Pencil',bag:getItemContainer())
+ if segment=='dependent'or F.isPrepared(segment)then seed('nested','Base.Pencil',bag:getItemContainer())
  elseif segment=='capacity'then
   local held=seed('heldBag','Base.Bag_Schoolbag');held:getItemContainer():setExplored(true)
   seed('nested','Base.Plank',held:getItemContainer())

@@ -6,7 +6,8 @@ local F=require 'QueueEquipEdit'
 require 'QueueEquipHostPoint'
 local JSON=require 'QueueHealthEvents'
 local state,pending,previous;local index=1
-local function segment()return F.segments[index]end
+local selectedSegments=F.selectedSegments(config.options and config.options.equip_prepared==true)
+local function segment()return selectedSegments[index]end
 local function raw(event,value)print('[EQUIP_EDIT] '..event..' '..JSON.encode(value))end
 local function fail(player,error)
  pending=nil;print('[QUEUE_TEST] FAIL magazine-unload equip-edit server '..tostring(error))

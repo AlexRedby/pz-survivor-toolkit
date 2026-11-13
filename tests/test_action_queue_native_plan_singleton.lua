@@ -437,8 +437,8 @@ end
 
 
 -- Cohort queries share structural observations but still open each real token.
-local function cohortFixture(size)
-    local s=fixture()
+local function cohortFixture(size,proofObserver)
+    local s=fixture(nil,proofObserver)
     s.queue.queue={s.front}
     s.front.action=nil
     assert(s.settlement.track(s.front,'body'))
@@ -636,5 +636,556 @@ for _,size in ipairs({2,4,8,32})do
     check(shared.privateCheck==size and bank.privateCheck==size,'final comparison skipped a private step')
 end
 
+getFilenameOfClosure=metadata
+-- Build the same private links as Operations stamping plus Compat's
+-- rememberTidy/preparePickup. Endpoint objects below are explicit Lua doubles;
+-- this fixture makes no native item, UI or transport claim.
+local function preparedFixture(borrowed,proofObserver)
+    local s=cohortFixture(2,proofObserver)
+    local approach=s.action
+    local token=approach.toolkitQueueOperation
+    local source={}
+    local item={container=source,getID=function()return 41 end,getFullType=function()return 'Base.Test'end,
+        getContainer=function(self)return self.container end,getIsCraftingConsumed=function()return false end}
+    local bag={getID=function()return 42 end,getFullType=function()return 'Base.Bag'end,
+        getInventory=function()return source end}
+    source.getContainingItem=function()return bag end
+    local fetch={character=s.actor,toolkitQueueOperation=token,item=item,srcContainer=source,
+        destContainer=s.actor.root,transactionId=0,started=false}
+    local body={character=s.actor,toolkitQueueOperation=token,item=item}
+    approach.toolkitQueueApproach=true
+    assert(s.settlement.track(fetch,'body'));assert(s.settlement.track(body,'body'))
+    s.queue.queue={s.front,approach,fetch,body}
+    token.toolkitPickups={[item]=source}
+    local scope
+    if borrowed~=false then
+        scope=s.settlement.deferred(s.actor,s.front.toolkitQueueOperation)
+        assert(s.settlement.remember(scope,s.front,{knownInputs=true,items={[90]=true}}))
+        for _,action in ipairs({approach,fetch,body})do
+            assert(s.settlement.remember(scope,action,{knownInputs=true,items={[41]=true}}))
+        end
+        assert(s.settlement.preparePickup(scope,fetch))
+    end
+    s.group={approach=approach,fetch=fetch,body=body,source=source,destination=s.actor.root,item=item}
+    s.groups={[token]=s.group};s.scope=scope
+    s.groupRecord=actualRecord(approach)
+    s.candidate=s.groupRecord.borrowings[1]and s.groupRecord.borrowings[1].candidate
+    return s
+end
+for _,borrowed in ipairs({false,true})do
+    local s=preparedFixture(borrowed)
+    check(s.settlement.nativePlanCohort(s.queue)==nil,'unselected prepared group gained singleton authority')
+    check(s.settlement.nativePlanLease(s.queue,s.group.body)==nil,'standalone lease gained prepared authority')
+    local fresh,facts=s.settlement.nativePlanCohort(s.queue,s.groups)
+    check(type(fresh)=='function'and fresh(),'real untouched prepared group rejected')
+    local input=facts[s.action.toolkitQueueOperation]
+    check(input.hasBorrowing==borrowed,'prepared borrowing observation differs')
+    if borrowed then
+        check(input.id==41 and input.fullType=='Base.Test'and input.sourceOwner.id==42
+            and input.sourceOwner.fullType=='Base.Bag','private candidate identity copy differs')
+    end
+    local before=s.callbacks()
+    getFilenameOfClosure=function()error('prepared final check reopened seal metadata')end
+    s.actor.getInventory=function()error('prepared final check read inventory')end
+    s.group.item.getID=function()error('prepared final check read item ID')end
+    check(fresh()and s.callbacks()==before,'prepared final check invoked a getter')
+    input.hasBorrowing=not borrowed
+    check(not fresh(),'mutable candidate DTO gained authority')
+    getFilenameOfClosure=metadata
+end
+local function scopeLedger(scope)
+    for key,seal in pairs(scope)do
+        if type(key)=='table'and type(seal)=='function'then return assert(seal(scope)),key,seal end
+    end
+    error('real deferred borrowing seal missing')
+end
+local function addPreparedGroup(s,id,existing)
+    local source=s.group.source
+    local item=existing or{getID=function()return id end,getFullType=function()return 'Base.Test'end,
+        getContainer=function()return source end}
+    local token={toolkitPickups={[item]=source}}
+    local approach={character=s.actor,toolkitQueueOperation=token,toolkitQueueApproach=true}
+    local fetch={character=s.actor,toolkitQueueOperation=token,item=item,srcContainer=source,
+        destContainer=s.actor.root,transactionId=0,started=false}
+    local body={character=s.actor,toolkitQueueOperation=token,item=item}
+    for _,action in ipairs({approach,fetch,body})do
+        assert(s.settlement.track(action,'body'));s.queue.queue[#s.queue.queue+1]=action
+        assert(s.settlement.remember(s.scope,action,{knownInputs=true,items={[id]=true}}))
+    end
+    assert(s.settlement.preparePickup(s.scope,fetch))
+    local group={approach=approach,fetch=fetch,body=body,source=source,destination=s.actor.root,item=item}
+    s.groups[token]=group
+    return group
+end
+do
+    local s=preparedFixture();local second=addPreparedGroup(s,43)
+    local fresh,facts=s.settlement.nativePlanCohort(s.queue,s.groups)
+    check(type(fresh)=='function'and fresh(),'shared prepared scope rejected distinct genuine groups')
+    check(facts[second.body.toolkitQueueOperation].id==43,'shared scope renewed another candidate identity')
+    s.groupRecord.steps[2].handle={}
+    check(not fresh(),'shared scope omitted earlier private handle')
+end
+for _,mode in ipairs({'no-hint','extra-hint','wrong-hint','hint-meta','descriptor-meta','descriptor-extra','missing-row',
+    'split','row-alias','token-alias','wrong-item','wrong-source','history','cleanup','paid','started','submitted','expanded',
+    'candidate-phase','candidate-owner','candidate-source','candidate-item-proof','candidate-owner-meta','candidate-ambiguous',
+    'shared-input','shared-pickup','shared-unknown','scope-retired','scope-generation','scope-continued','ledger-handle','ledger-merging',
+    'ledger-executor','ledger-actions','ledger-alias','foreign-scope-seal','copied-scope-seal'})do
+    local s=preparedFixture()
+    local token=s.action.toolkitQueueOperation
+    local ledger,marker,seal=scopeLedger(s.scope)
+    local invoked=0
+    if mode=='no-hint'then token.toolkitPickups=nil
+    elseif mode=='extra-hint'then token.toolkitPickups[{}]=s.group.source
+    elseif mode=='wrong-hint'then token.toolkitPickups[s.group.item]={}
+    elseif mode=='hint-meta'then setmetatable(token.toolkitPickups,{})
+    elseif mode=='descriptor-meta'then setmetatable(s.group,{})
+    elseif mode=='descriptor-extra'then s.group.permission=true
+    elseif mode=='missing-row'then s.queue.queue[4]=nil
+    elseif mode=='split'then s.queue.queue[3],s.queue.queue[4]=s.group.body,s.group.fetch
+    elseif mode=='row-alias'then s.queue.queue[4]=s.group.fetch
+    elseif mode=='token-alias'then s.front.toolkitQueueOperation=token
+    elseif mode=='wrong-item'then s.group.body.item={}
+    elseif mode=='wrong-source'then s.group.fetch.srcContainer={}
+    elseif mode=='history'then assert(s.settlement.track({character=s.actor,toolkitQueueOperation=token},'body'))
+    elseif mode=='cleanup'then assert(s.settlement.cleanupAfter(s.group.body,{}))
+    elseif mode=='paid'then
+        local handle=s.settlement.track(s.group.body,'body')
+        assert(s.settlement.bindEffect(handle,s.settlement.captureEffect(s.group.body)))
+    elseif mode=='started'then s.lifecycle.started(s.group.fetch)
+    elseif mode=='submitted'then s.group.fetch.transactionId=12
+    elseif mode=='expanded'then s.action._isAddingActions=true
+    elseif mode=='candidate-phase'then s.candidate.phase='active'
+    elseif mode=='candidate-owner'then s.candidate.owner=s.front.toolkitQueueOperation
+    elseif mode=='candidate-source'then s.candidate.source={}
+    elseif mode=='candidate-item-proof'then s.candidate.proof={}
+    elseif mode=='candidate-owner-meta'then setmetatable(s.candidate.sourceOwner,{})
+    elseif mode=='candidate-ambiguous'then s.candidate.ambiguous=true
+    elseif mode=='shared-input'then s.scope.tasks[s.front.toolkitQueueOperation].items[41]=true
+    elseif mode=='shared-pickup'then s.scope.tasks[s.front.toolkitQueueOperation].pickups[41]={container=s.group.source,fullType='Base.Test'}
+    elseif mode=='shared-unknown'then s.scope.tasks[s.front.toolkitQueueOperation].unknownInputs=true
+    elseif mode=='scope-retired'then s.scope.phase='retired'
+    elseif mode=='scope-generation'then s.scope.generation=1
+    elseif mode=='scope-continued'then s.scope.restoreToken={continued=true}
+    elseif mode=='ledger-handle'then ledger.handles[s.group.fetch]={}
+    elseif mode=='ledger-merging'then ledger.merging[s.group.fetch]={}
+    elseif mode=='ledger-executor'then ledger.executors[s.group.fetch][41]={}
+    elseif mode=='ledger-actions'then ledger.actions[s.group.fetch]=nil
+    elseif mode=='ledger-alias'then ledger.candidates[2]=s.candidate
+    elseif mode=='foreign-scope-seal'then s.scope[marker]=function()invoked=invoked+1;error('foreign deferred seal executed')end
+    else
+        local other=s.settlement.deferred(s.actor,token)
+        local _,otherMarker,otherSeal=scopeLedger(other)
+        s.scope[marker]=otherSeal
+    end
+    check(s.settlement.nativePlanCohort(s.queue,s.groups)==nil,mode..': invalid prepared private group admitted')
+    check(invoked==0,mode..': foreign deferred seal ran before provenance')
+end
+do
+    local s=preparedFixture()
+    local context=assert(s.settlement.context(s.scope))
+    check(s.scope.phase=='cleanup'and context.sharedCleanup==true and context.token==s.scope.restoreToken,
+        'real P4 presentation context shape differs')
+    s.scope.idleTicks=0;s.scope.restored=false
+    local fresh=assert(s.settlement.nativePlanCohort(s.queue,s.groups));check(fresh())
+    s.scope.restoreToken.claim=true
+    check(not fresh()and s.settlement.nativePlanCohort(s.queue,s.groups)==nil,
+        'presentation restore token acquired an admission')
+end
+for _,idle in ipairs({-1,0.5,math.huge,'0'})do
+    local s=preparedFixture();s.settlement.context(s.scope);s.scope.idleTicks=idle
+    check(s.settlement.nativePlanCohort(s.queue,s.groups)==nil,'invalid P4 idle counter admitted')
+end
+do
+    local s=preparedFixture()
+    local reader=s.front.toolkitQueueOperation
+    s.scope.tasks[reader].readsEquipment=true;s.scope.equipmentItems[41]=true
+    local fresh,facts=s.settlement.nativePlanCohort(s.queue,s.groups)
+    check(type(fresh)=='function'and fresh(),'unearned implicit hand use was mistaken for exclusive item debt')
+    local readers=facts[s.action.toolkitQueueOperation].equipmentReaders
+    check(type(readers)=='table'and readers[reader]==true,'implicit equipment reader token not reported')
+    readers[reader]=nil
+    check(not fresh(),'equipment reader DTO mutation escaped final freshness')
+    -- This does not authorize the active reader: Policy must reject its token
+    -- unless it separately qualifies an untouched native Equip in this cohort.
+end
+local function addPreparedTail(s)
+    local tail={character=s.actor,toolkitQueueOperation={}}
+    assert(s.settlement.track(tail,'body'));s.queue.queue[#s.queue.queue+1]=tail
+    if s.scope then assert(s.settlement.remember(s.scope,tail,{knownInputs=true,items={[91]=true}}))end
+    return tail
+end
+for _,mode in ipairs({'step','callback','item','token','hint','candidate','candidate-owner','task','scope','ledger','dto','dto-owner','groups'})do
+    local s=preparedFixture();addPreparedTail(s)
+    local ledger=scopeLedger(s.scope)
+    local fresh,facts=s.settlement.nativePlanCohort(s.queue,s.groups)
+    check(type(fresh)=='function'and fresh(),'shared reader scope lost genuine prepared group')
+    if mode=='step'then s.groupRecord.steps[2].receipt={}
+    elseif mode=='callback'then s.group.body.onCompleteFunc=function()error('late callback executed')end
+    elseif mode=='item'then s.group.fetch.item={}
+    elseif mode=='token'then s.group.body.toolkitQueueOperation={}
+    elseif mode=='hint'then s.action.toolkitQueueOperation.toolkitPickups={}
+    elseif mode=='candidate'then s.candidate.phase='active'
+    elseif mode=='candidate-owner'then s.candidate.sourceOwner.id=43
+    elseif mode=='task'then s.scope.tasks[s.front.toolkitQueueOperation].items[41]=true
+    elseif mode=='scope'then s.scope.tasks={}
+    elseif mode=='ledger'then ledger.executors[s.group.fetch][41]=nil
+    elseif mode=='dto'then facts[s.action.toolkitQueueOperation].id=55
+    elseif mode=='dto-owner'then facts[s.action.toolkitQueueOperation].sourceOwner.fullType='Base.Other'
+    else s.groups[s.action.toolkitQueueOperation]={}end
+    local before=s.callbacks()
+    getFilenameOfClosure=function()error('prepared stale checker invoked metadata')end
+    check(not fresh()and s.callbacks()==before,mode..': prepared late mutation renewed an earlier capture')
+    getFilenameOfClosure=metadata
+end
+for _,mode in ipairs({'earlier-private','candidate','scope-task','scope-marker','scope-seal-replaced','throw','nested'})do
+    local s=preparedFixture()
+    local tail=addPreparedTail(s)
+    local _,tokenMarker=actualRecord(tail)
+    local tailSeal=tail.toolkitQueueOperation[tokenMarker]
+    local ledger,marker,seal=scopeLedger(s.scope)
+    local invoked=0
+    getFilenameOfClosure=function(callback)
+        if callback==(mode=='earlier-private'and tailSeal or seal)then
+            if mode=='earlier-private'then s.groupRecord.steps[2].required=true
+            elseif mode=='candidate'then s.candidate.sourceOwner.id=50
+            elseif mode=='scope-task'then s.scope.tasks[s.action.toolkitQueueOperation].pickups[41].container={}
+            elseif mode=='scope-marker'then s.scope.marker={}
+            elseif mode=='scope-seal-replaced'then s.scope[marker]=function()invoked=invoked+1;error('replacement deferred seal executed')end
+            elseif mode=='throw'then error('native metadata unavailable')
+            else check(s.settlement.nativePlanCohort(s.queue,s.groups)==nil,'deferred metadata reentered private cohort')end
+        end
+        return metadata(callback)
+    end
+    local fresh=s.settlement.nativePlanCohort(s.queue,s.groups)
+    check((type(fresh)=='function')==(mode=='nested'),mode..': deferred source boundary renewed stale captures')
+    check(invoked==0,mode..': replaced deferred seal executed')
+    getFilenameOfClosure=metadata
+end
+do
+    local seals={}
+    local s=preparedFixture(true,function(proof)
+        local original=proof.closure
+        proof.closure=function(callback,...)
+            check(not seals[callback],'prepared private seal reached retained SourceProof cache')
+            return original(callback,...)
+        end
+    end)
+    for _,action in ipairs({s.front,s.action})do
+        local _,marker=actualRecord(action);seals[action.toolkitQueueOperation[marker]]=true
+    end
+    local _,_,seal=scopeLedger(s.scope);seals[seal]=true
+    local fresh=assert(s.settlement.nativePlanCohort(s.queue,s.groups));check(fresh())
+end
+for _,mode in ipairs({'later-record','earlier-candidate','ledger-mutation','scope-mutation'})do
+    local s=preparedFixture();local second=addPreparedGroup(s,43)
+    local record,marker=actualRecord(second.body)
+    local seal=second.body.toolkitQueueOperation[marker]
+    local ledger=scopeLedger(s.scope)
+    getFilenameOfClosure=function(callback)
+        if callback==seal then
+            if mode=='later-record'then record.steps[2].receipt={}
+            elseif mode=='earlier-candidate'then s.candidate.sourceOwner.id=99
+            elseif mode=='ledger-mutation'then ledger.executors[s.group.fetch]={}
+            else s.scope.tasks[s.front.toolkitQueueOperation].items[41]=true end
+        end
+        return metadata(callback)
+    end
+    check(s.settlement.nativePlanCohort(s.queue,s.groups)==nil,mode..': shared scope recaptured a later seal mutation')
+    getFilenameOfClosure=metadata
+end
+-- Common scope/ledger snapshots and native filename reads are independent of
+-- the number of groups. Each real operation still needs its own seal read.
+local preparedBase
+for _,size in ipairs({1,2,4})do
+    local originalPairs,watched,counts=pairs,{},{}
+    pairs=function(owner)
+        local name=watched[owner]
+        if name then counts[name]=(counts[name]or 0)+1 end
+        return originalPairs(owner)
+    end
+    local ok,result=pcall(function()
+        local s=preparedFixture()
+        for index=2,size do addPreparedGroup(s,41+index)end
+        local ledger,_,scopeSeal=scopeLedger(s.scope)
+        watched[s.scope],watched[ledger.candidates]='scope','candidates'
+        local seals,scopeReads,operationReads={},0,0
+        for _,action in ipairs(s.queue.queue)do
+            local _,marker=actualRecord(action);seals[action.toolkitQueueOperation[marker]]=true
+        end
+        getFilenameOfClosure=function(callback)
+            if callback==scopeSeal then scopeReads=scopeReads+1
+            elseif seals[callback]then operationReads=operationReads+1 end
+            return metadata(callback)
+        end
+        local fresh=assert(s.settlement.nativePlanCohort(s.queue,s.groups));check(fresh())
+        check(scopeReads==1 and operationReads==size+1,'shared scope repeated source lookup or skipped real operation proof')
+        return {scope=counts.scope,candidates=counts.candidates}
+    end)
+    pairs=originalPairs;getFilenameOfClosure=metadata
+    check(ok,result)
+    if preparedBase then
+        check(result.scope==preparedBase.scope and result.candidates==preparedBase.candidates,
+            'common producer scope/ledger work repeated per group')
+    else preparedBase=result end
+end
+local function removedPrepared(s)
+    local group=s.group;local token=group.body.toolkitQueueOperation
+    local members={group.body,group.fetch,group.approach}
+    s.queue.queue={s.front};token.toolkitCancelled=true
+    return token,members
+end
+do
+    local s=preparedFixture();local ledger=scopeLedger(s.scope)
+    local old=s.group;local candidate=s.candidate;local record=s.groupRecord
+    local token,members=removedPrepared(s)
+    check(s.settlement.discardUnstartedPickups(s.queue,token,members))
+    check(s.scope.tasks[token]==nil and ledger.actions[old.fetch]==nil and ledger.executors[old.fetch]==nil
+        and #ledger.candidates==0,'cancelled group kept live producer claims')
+    for _,member in ipairs(members)do check(s.scope.seen[member]==nil,'cancelled action remained seen')end
+    check(record.borrowings[1].candidate==candidate and candidate.phase=='waived'
+        and candidate.waiverReason=='cancelled-before-start','cancellation erased private waived history')
+    check(s.settlement.context(s.scope),'real post-discard presentation context unavailable')
+    local replacement=addPreparedGroup(s,41,old.item)
+    s.groups={[replacement.body.toolkitQueueOperation]=replacement}
+    local replacementRecord=actualRecord(replacement.body)
+    check(not replacementRecord.borrowings[1].candidate.ambiguous,'old waived episode poisoned same-item retry')
+    local fresh=assert(s.settlement.nativePlanCohort(s.queue,s.groups));check(fresh(),
+        'same exact item could not acquire a fresh private prepared group after cancellation')
+end
+do
+    local s=preparedFixture();local other=addPreparedGroup(s,43)
+    local ledger=scopeLedger(s.scope);local otherRecord=actualRecord(other.body)
+    local otherCandidate=otherRecord.borrowings[1].candidate
+    local executors=ledger.executors[other.fetch]
+    local token=s.group.body.toolkitQueueOperation;token.toolkitCancelled=true
+    s.queue.queue={s.front,other.approach,other.fetch,other.body}
+    check(s.settlement.discardUnstartedPickups(s.queue,token,{s.group.body,s.group.fetch,s.group.approach}))
+    check(#ledger.candidates==1 and ledger.candidates[1]==otherCandidate and otherCandidate.phase=='prepare'
+        and ledger.actions[other.fetch]==otherCandidate and ledger.executors[other.fetch]==executors,
+        'cancellation removed or changed a neighboring live candidate')
+    s.groups={[other.body.toolkitQueueOperation]=other};s.settlement.context(s.scope)
+    local fresh=assert(s.settlement.nativePlanCohort(s.queue,s.groups));check(fresh(),
+        'cancellation blocked the untouched neighboring prepared group')
+end
+for _,mode in ipairs({'task-unknown','task-foreign-action','task-missing-action','task-seen','task-pickup',
+    'task-alias','other-task-action','ledger-action-alias','ledger-executor-alias','late-task','late-seen','late-executor'})do
+    local s=preparedFixture();local token,members=removedPrepared(s)
+    local ledger,_,seal=scopeLedger(s.scope)
+    local task=s.scope.tasks[token];local foreign={character=s.actor,toolkitQueueOperation={}}
+    if mode=='task-unknown'then task.unknownInputs=true
+    elseif mode=='task-foreign-action'then task.actions[foreign]=true
+    elseif mode=='task-missing-action'then task.actions[s.group.body]=nil
+    elseif mode=='task-seen'then s.scope.seen[s.group.body]=nil
+    elseif mode=='task-pickup'then task.pickups[90]={container=s.group.source,fullType='Base.Other'}
+    elseif mode=='task-alias'then s.scope.tasks[{}]=task
+    elseif mode=='other-task-action'then s.scope.tasks[s.front.toolkitQueueOperation].actions[s.group.body]=true
+    elseif mode=='ledger-action-alias'then ledger.actions[foreign]=s.candidate
+    elseif mode=='ledger-executor-alias'then ledger.executors[foreign]={[41]=s.candidate}
+    else getFilenameOfClosure=function(callback)
+        if callback==seal then
+            if mode=='late-task'then task.actions[s.group.body]=nil
+            elseif mode=='late-seen'then s.scope.seen[foreign]=true
+            else ledger.executors[foreign]={[41]=s.candidate}end
+        end
+        return metadata(callback)
+    end end
+    check(not s.settlement.discardUnstartedPickups(s.queue,token,members),mode..': foreign/unknown live claims released')
+    check(s.candidate.phase=='prepare'and s.scope.tasks[token]==task and ledger.actions[s.group.fetch]==s.candidate,
+        mode..': rejected release partially changed live ownership')
+    getFilenameOfClosure=metadata
+end
+for _,stale in ipairs({false,true})do
+    local s=preparedFixture();local token,members=removedPrepared(s)
+    s.queue.queue={};s.queue.current=stale and s.group.approach or nil
+    check(s.settlement.discardUnstartedPickups(s.queue,token,members),
+        'last never-admitted group required a remaining active reader')
+end
+do
+    local s=preparedFixture();s.settlement.context(s.scope)
+    local token,members=removedPrepared(s)
+    local before=s.callbacks()
+    s.actor.getInventory=function()error('unstarted discard read physical inventory')end
+    s.group.item.getID=function()error('unstarted discard read item ID')end
+    check(s.settlement.discardUnstartedPickups(s.queue,token,members),'real removed unstarted pickup was not retired')
+    check(s.candidate.phase=='waived'and s.candidate.waiverReason=='cancelled-before-start'and s.callbacks()==before,
+        'unstarted discard invented a completion or invoked gameplay getters')
+    check(s.groupRecord.steps[2].state=='pending'and s.groupRecord.steps[2].receipt==nil,
+        'unstarted waiver fabricated a paid step')
+    check(not s.settlement.discardUnstartedPickups(s.queue,token,members),'historical waiver was accepted again')
+end
+for _,mode in ipairs({'queued','not-cancelled','partial','duplicate','history','started','native','transaction','receipt','required',
+    'callback','proof','attempt','active','planned-return','executor','handle','generation','foreign-seal','late-private','late-hint'})do
+    local s=preparedFixture()
+    local token,members=removedPrepared(s)
+    local ledger,marker,seal=scopeLedger(s.scope)
+    local invoked=0
+    if mode=='queued'then s.queue.queue[2]=s.group.fetch
+    elseif mode=='not-cancelled'then token.toolkitCancelled=nil
+    elseif mode=='partial'then members[3]=nil
+    elseif mode=='duplicate'then members[3]=members[2]
+    elseif mode=='history'then s.groupRecord.steps[4]=s.groupRecord.steps[1]
+    elseif mode=='started'then s.groupRecord.steps[2].started=true
+    elseif mode=='native'then s.group.fetch.action={}
+    elseif mode=='transaction'then s.group.fetch.transactionId=12
+    elseif mode=='receipt'then s.groupRecord.steps[3].receipt={}
+    elseif mode=='required'then s.groupRecord.steps[3].required=true
+    elseif mode=='callback'then s.group.fetch.onCompleteFunc=function()error('discard callback executed')end
+    elseif mode=='proof'then s.candidate.proof={}
+    elseif mode=='attempt'then s.candidate.attempt=1
+    elseif mode=='active'then s.candidate.phase='active'
+    elseif mode=='planned-return'then s.candidate.plannedReturn={}
+    elseif mode=='executor'then ledger.executors[s.group.fetch][41]={}
+    elseif mode=='handle'then ledger.handles[s.group.fetch]={}
+    elseif mode=='generation'then s.queue.toolkitOperationGeneration=1
+    elseif mode=='foreign-seal'then s.scope[marker]=function()invoked=invoked+1;error('discard invoked foreign scope')end
+    else getFilenameOfClosure=function(callback)
+        if callback==seal then
+            if mode=='late-private'then s.groupRecord.steps[3].receipt={}
+            else token.toolkitPickups[s.group.item]={}end
+        end
+        return metadata(callback)
+    end end
+    check(not s.settlement.discardUnstartedPickups(s.queue,token,members),mode..': unknown/paid/partial pickup was discarded')
+    check(s.candidate.phase~='waived'and invoked==0,mode..': invalid discard mutated bookkeeping or invoked foreign seal')
+    getFilenameOfClosure=metadata
+end
+-- The role metadata/source matcher below is an explicit test double. Native
+-- pickup/effect receipts and private records are produced by real Settlement
+-- APIs; this does not claim native actor, transport or getter provenance.
+local function retainedFixture(waiting)
+    local role={source=true,line=147,calls=0}
+    local s=preparedFixture(true,function(proof)
+        proof.matches=function(path,adler,mod,fresh)
+            check(path=='media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'and adler==1408351481
+                and mod=='PZSurvivorToolkit'and fresh==true,'explicit getter source role loosened')
+            return role.source
+        end
+    end)
+    s.role=role
+    local root,source,item,body,fetch=s.actor.root,s.group.source,s.group.item,s.group.body,s.group.fetch
+    root.items={};source.items={[41]=item}
+    root.getItemById=function(self,id)return self.items[id]end
+    source.getItemById=function(self,id)return self.items[id]end
+    root.isExistYet=function()return true end;source.isExistYet=function()return true end
+    s.actor.getOnlineID=function()return 101 end
+    s.actor.getPrimaryHandItem=function(self)return self.primary end
+    s.actor.getSecondaryHandItem=function(self)return self.secondary end
+    getTimestampMs=function()return 100 end
+    fetch.action={};fetch.queueList={{items={item}}}
+    s.queue.current=fetch;s.queue.queue={fetch,body}
+    s.lifecycle.started(fetch);fetch.toolkitQueueOperation.toolkitStarted=true
+    check(s.settlement.beginPickup(s.scope,fetch,function(action)return action==fetch end),'real pickup receipt did not bind')
+    s.pickup=s.candidate.proof;s.member=s.candidate.member
+    local function finish()
+        source.items[41]=nil;root.items[41]=item;item.container=root;fetch.queueList={}
+        check(s.settlement.finishPickup(s.scope,fetch,true),'real pickup did not finish')
+    end
+    if not waiting then finish()end
+    -- Explicit effect may be observed while the pickup observer still waits;
+    -- the retry case below finishes the same genuine receipt, never replaces it.
+    root.items[41]=item;source.items[41]=nil;item.container=root
+    body.action={};body.primary=true;body.twoHands=false
+    s.queue.current=body;s.queue.queue={body}
+    s.lifecycle.started(body);s.actor.primary=item
+    s.receipt=s.settlement.captureEffect(body)
+    check(s.settlement.confirmEffect(s.receipt,true),'real explicit effect receipt not confirmed')
+    local getter=function(action,receipt)
+        role.calls=role.calls+1
+        if s.mutate then s.mutate()end
+        if action==body and receipt==s.receipt and role.accepted~=false then return{id=role.id or 41,fullType=role.fullType or'Base.Test'}end
+    end
+    PZSurvivorToolkit.ActionQueueTidyIntent.confirmedEquipmentIntent=getter
+    getFilenameOfClosure=function(callback)
+        if callback==getter then return 'fixture/ActionQueueTidyIntent.lua'end
+        return metadata(callback)
+    end
+    getFirstLineOfClosure=function(callback)if callback==getter then return role.line end;return 1 end
+    s.getter=getter
+    s.finishPickup=finish
+    s.retain=function(receipt)return s.settlement.retainExplicitEquipment(body,receipt or s.receipt)end
+    return s
+end
+do
+    local s=retainedFixture();local ledger=scopeLedger(s.scope)
+    local paid,proof,member=s.candidate,s.pickup,s.member
+    local handle=ledger.handles[s.group.fetch]
+    local pending=addPreparedGroup(s,43)
+    local token=pending.body.toolkitQueueOperation;token.toolkitCancelled=true
+    s.queue.queue={s.group.body}
+    check(s.settlement.discardUnstartedPickups(s.queue,token,{pending.body,pending.fetch,pending.approach}))
+    check(#ledger.candidates==1 and ledger.candidates[1]==paid and paid.phase=='active'
+        and paid.proof==proof and paid.member==member and member.completed==true
+        and ledger.handles[s.group.fetch]==handle,'unstarted cancellation altered a neighboring earned receipt')
+end
+do
+    local s=cohortFixture(2)
+    getFirstLineOfClosure=function()error('root no-borrow Equip paid getter metadata work')end
+    s.actor.getInventory=function()error('root no-borrow Equip scanned inventory')end
+    s.proof.matches=function()error('root no-borrow Equip hashed prepared source')end
+    check(s.settlement.retainExplicitEquipment(s.action,{})==true,'root no-own-borrow fast path rejected')
+end
+for _,both in ipairs({false,true})do
+    local s=retainedFixture()
+    s.group.body.twoHands=both;if both then s.actor.secondary=s.group.item end
+    check(s.retain()==true,'confirmed explicit equipment loan was not retained')
+    check(s.candidate.phase=='waived'and s.candidate.waiverReason=='explicit-equipment-intent'
+        and s.member.completed==true and s.groupRecord.steps[2].state=='earned',
+        'explicit retention fabricated/removed native payment')
+    check(s.retain()==true,'settled explicit loan did not remain settled')
+end
+do
+    local s=retainedFixture()
+    local consumer={character=s.actor,toolkitQueueOperation={},item=s.group.item}
+    check(s.settlement.remember(s.scope,consumer,{knownInputs=true,items={[41]=true},equipment=s.actor}))
+    s.queue.queue[2]=consumer
+    check(s.retain()==true,'future native consumer blocked already-confirmed explicit retention')
+end
+do
+    local s=retainedFixture(true)
+    s.pickup.active.authority=nil -- Real beginPickup before its terminal observation.
+    check(s.retain()==nil and s.candidate.phase=='prepare','genuine pending native pickup lost retry')
+    s.pickup.active.authority='native';s.finishPickup()
+    check(s.candidate.phase=='active'and s.member.completed,'existing poll did not promote real pickup')
+    check(s.retain()==true and s.candidate.phase=='waived','same confirmed explicit proof could not retry')
+end
+for _,mode in ipairs({'foreign-getter','wrong-line','wrong-source','foreign-receipt','copied-receipt','unconfirmed','wrong-id','wrong-type',
+    'returning','planned','ambiguous','rejected','unknown','root-missing','wrong-hand','opposite-only','duplicate-source','foreign-member','late-private','late-receipt',
+    'late-module','late-root','nested','throw'})do
+    local s=retainedFixture();local item=s.group.item;local body=s.group.body
+    local receipt=s.receipt
+    if mode=='foreign-getter'then PZSurvivorToolkit.ActionQueueTidyIntent.confirmedEquipmentIntent=function()error('foreign intent getter executed')end
+    elseif mode=='wrong-line'then s.role.line=148
+    elseif mode=='wrong-source'then s.role.source=false
+    elseif mode=='foreign-receipt'then
+        local foreign={character=s.actor,toolkitQueueOperation={},action={}}
+        receipt=s.settlement.captureEffect(foreign);check(s.settlement.confirmEffect(receipt,true))
+    elseif mode=='copied-receipt'then
+        receipt={};for key,value in pairs(s.receipt)do receipt[key]=value end
+    elseif mode=='unconfirmed'then receipt=s.settlement.captureEffect(body)
+    elseif mode=='wrong-id'then s.role.id=43
+    elseif mode=='wrong-type'then s.role.fullType='Base.Other'
+    elseif mode=='returning'then s.candidate.returning={}
+    elseif mode=='planned'then s.candidate.plannedReturn={}
+    elseif mode=='ambiguous'then s.candidate.ambiguous=true
+    elseif mode=='rejected'then s.pickup.active.terminal='rejected'
+    elseif mode=='unknown'then s.pickup.active.terminal='unavailable'
+    elseif mode=='root-missing'then s.actor.root.items[41]=nil
+    elseif mode=='wrong-hand'then s.actor.primary={}
+    elseif mode=='opposite-only'then s.actor.primary=nil;s.actor.secondary=item
+    elseif mode=='duplicate-source'then s.group.source.items[41]=item
+    elseif mode=='foreign-member'then s.candidate.member={}
+    elseif mode=='late-private'then s.mutate=function()s.candidate.returning={}end
+    elseif mode=='late-receipt'then s.mutate=function()
+        for _,seal in pairs(s.receipt)do local effect=seal(s.receipt);effect.confirmed=false end
+    end
+    elseif mode=='late-module'then s.mutate=function()PZSurvivorToolkit.ActionQueueTidyIntent={}end
+    elseif mode=='late-root'then
+        item.getFullType=function()s.candidate.plannedReturn={};return 'Base.Test'end
+    elseif mode=='nested'then s.mutate=function()check(s.retain()==false,'intent getter reentered private settlement')end
+    else s.mutate=function()error('confirmed intent getter unavailable')end end
+    local retained=s.retain(receipt)
+    check(retained==(mode=='nested')and s.candidate.phase==(mode=='nested'and'waived'or'active'),
+        mode..': unsupported/stale intent waived a native loan')
+end
 getFilenameOfClosure=metadata
 print('Native-plan singleton and lease: real private ledger, source-boundary and later-getter invalidation, callback-free freshness passed.')

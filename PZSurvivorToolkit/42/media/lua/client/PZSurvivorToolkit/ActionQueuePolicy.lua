@@ -54,6 +54,7 @@ local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
 local Clothing = require "PZSurvivorToolkit/ActionQueueClothing"
 local equipOwner={module=require 'PZSurvivorToolkit/ActionQueueEquip'}
 equipOwner.inspect=equipOwner.module and equipOwner.module.inspect
+equipOwner.schedule=equipOwner.module and equipOwner.module.inspectSchedule
 equipOwner.adopt=equipOwner.module and equipOwner.module.adoptBase
 local clothingInspect=Clothing and Clothing.inspect
 local clothingWeight=Clothing and Clothing.removalWeight
@@ -980,7 +981,7 @@ end
 -- effects. This first cohort contains only singleton native root inputs and
 -- root equipment commands. Every retained step still admits itself natively;
 -- nothing here promises an outcome or credits space/items from future effects.
-local nativePlan={settlement=Toolkit.ActionQueueSettlement,marker={},raw=rawget,equal=rawequal}
+local nativePlan={settlement=Toolkit.ActionQueueSettlement,marker={},raw=rawget,equal=rawequal,call=pcall}
 nativePlan.cohort=nativePlan.settlement and nativePlan.settlement.nativePlanCohort
 function nativePlan.member(queue,member,active,context,seen)
     local contract=inspect(member,context)
@@ -1005,35 +1006,58 @@ function nativePlan.member(queue,member,active,context,seen)
     seen[id]=true
     return true
 end
-function nativePlan.capture(scope,action,target,after)
-    if type(isClient)~="function"or not isClient()or type(isServer)~="function"or isServer()then return end
-    local list=scope.lookup.read(scope.queue,"queue")
-    if type(list)~="table"or getmetatable(list)~=nil or #list>32 then return end
-    if type(action)~="table"then return end
-    local current=scope.lookup.read(scope.queue,"current")
-    -- Select the additive capability before inspecting effects. Active/mixed
-    -- contexts retain their already-qualified policy, not a failed-proof retry.
-    if rawequal(action,current)or rawequal(target,current)and after~=true then return end
-    for index,member in ipairs(list)do
-        local kind=scope.lookup.read(member,"Type")
-        if kind~="ISReadABook"and kind~="ISEquipWeaponAction"or index==1 and kind~="ISReadABook"then return end
+-- Classify only the public shape before any source/item metadata. Complete
+-- private ownership is captured below; these declarations grant no permission.
+function nativePlan.groups(scope,list)
+    local read=scope.lookup.read
+    local groups,roles,found={},{},false
+    local index=1
+    while index<=#list do
+        local member=list[index];local kind=read(member,"Type")
+        if index==1 and kind~="ISReadABook"then return end
+        if kind=="ISReadABook"or kind=="ISEquipWeaponAction"then index=index+1
+        elseif index>1 and kind=="ISQueueActionsAction"and read(member,"toolkitQueueApproach")==true then
+            local fetch,body=list[index+1],list[index+2]
+            local token=read(member,"toolkitQueueOperation")
+            if type(fetch)~="table"or type(body)~="table"or type(token)~="table"
+                or read(fetch,"Type")~="ISInventoryTransferAction"or read(body,"Type")~="ISEquipWeaponAction"
+                or not rawequal(read(fetch,"toolkitQueueOperation"),token)
+                or not rawequal(read(body,"toolkitQueueOperation"),token)or groups[token]then return end
+            local group={approach=member,fetch=fetch,body=body,source=read(fetch,"srcContainer"),
+                destination=read(fetch,"destContainer"),item=read(fetch,"item")}
+            if not rawequal(read(body,"item"),group.item)then return end
+            groups[token]=group;roles[member]={group=group,role="approach"}
+            roles[fetch]={group=group,role="fetch"};roles[body]={group=group,role="body"}
+            found=true;index=index+3
+        else return end
     end
-    if scope.lookup.read(action,"Type")~="ISEquipWeaponAction"then return end
+    return groups,roles,found
+end
+function nativePlan.capture(scope,action,target,after)
+    if type(isClient)~="function"or type(isServer)~="function"or isServer()then return end
+    local list=scope.lookup.read(scope.queue,"queue")
+    if type(list)~="table"or getmetatable(list)~=nil or #list>32 or type(action)~="table"then return end
+    local current=scope.lookup.read(scope.queue,"current")
+    -- Existing active/preempting and mixed contexts retain their earlier path.
+    if rawequal(action,current)or rawequal(target,current)and after~=true then return end
+    local groups,roles,prepared=nativePlan.groups(scope,list)
+    if not groups or not isClient()and not prepared then return end
+    if scope.lookup.read(action,"Type")~="ISEquipWeaponAction"and not roles[action]then return end
     local first,last
     for index,member in ipairs(list)do
         if rawequal(member,action)then first=index end
         if rawequal(member,target)then last=index end
     end
     if not first then return end
-    if last then
-        -- A single equipment write crossing only root readers already has a
-        -- native legacy proof. Add this capability only for write-order edits.
-        local writes=0
-        for index=math.min(first,last),math.max(first,last)do
-            if scope.lookup.read(list[index],"Type")=="ISEquipWeaponAction"then writes=writes+1 end
-        end
-        if writes<2 then return end
-    elseif first==#list then return end -- Existing native tail cancellation.
+    if not prepared then
+        if last then
+            local writes=0
+            for index=math.min(first,last),math.max(first,last)do
+                if scope.lookup.read(list[index],"Type")=="ISEquipWeaponAction"then writes=writes+1 end
+            end
+            if writes<2 then return end
+        elseif first==#list then return end
+    end
     local watches={}
     for _,owner in ipairs(scope.lookup.records.owners)do
         local watch=Proof.captureBindings({{owner=owner,exact=true}})
@@ -1058,18 +1082,131 @@ function nativePlan.capture(scope,action,target,after)
         for _,watch in ipairs(watches)do if not watch()then return false end end
         return true
     end
-    local check=nativePlan.cohort(scope.queue)
-    if type(check)~="function"or not scope.nativeWatch()or not check()then return end
-    local members={}
-    for _,member in ipairs(list)do members[member]=true end
+    local check,inputs
+    if prepared then check,inputs=nativePlan.cohort(scope.queue,groups)
+    else check=nativePlan.cohort(scope.queue)end
+    if type(check)~="function"or prepared and type(inputs)~="table"
+        or not scope.nativeWatch()or not check()then return end
+    local members,equipmentTokens={},{}
+    for _,member in ipairs(list)do
+        members[member]=true
+        if scope.lookup.read(member,"Type")=="ISEquipWeaponAction"then
+            equipmentTokens[scope.lookup.read(member,"toolkitQueueOperation")]=true
+        end
+    end
+    scope.nativeEquipmentTokens=equipmentTokens
     scope.nativeCheck,scope.nativeMembers,scope.nativeMode=check,members,true
+    scope.nativeGroups,scope.nativeRoles,scope.nativeInputs,scope.nativePrepared=groups,roles,inputs,prepared
 end
 function nativePlan.check(snapshot)
     local check=nativePlan.raw(snapshot,nativePlan.marker)
     return check==nil or check(snapshot)==true
 end
+-- Recheck the original physical scope after Settings/source callbacks, without
+-- repeating contracts or renewing the private ledger baseline. Each carried
+-- route lease is one-use, including the initial lease captured during inspect.
+function nativePlan.physical(scope)
+    local rows=scope.nativePhysical
+    if not rows then return true end
+    local checks={}
+    for _,row in ipairs(rows)do
+        local group=row.group
+        local check,edit=row.check,row.edit
+        row.check,row.edit=nil,nil
+        if not check then check,edit=spatialEdits.prepare(group.approach,group.source,true)end
+        if type(check)~="function"or not edit or edit.complete~=true or edit.capacity~="unchanged"
+            or group.body.item~=group.item or group.fetch.item~=group.item
+            or group.fetch.srcContainer~=group.source or group.fetch.destContainer~=row.root
+            or scope.queue.character~=row.actor or row.actor:getInventory()~=row.root
+            or group.item:getContainer()~=group.source or group.item:getID()~=row.id
+            or group.item:getFullType()~=row.fullType or group.source:getItemWithID(row.id)~=group.item
+            or row.root:getItemWithID(row.id)~=nil then return false end
+        local seen,count={},0
+        for _,resource in ipairs(edit.resources or {})do
+            local original=row.owners[resource.key]
+            if resource.domain~="item"or not original or seen[resource.key]
+                or not resource.facts or resource.facts.item~=original.item
+                or resource.facts.location~=original.location
+                or resource.facts.item:getFullType()~=original.fullType then return false end
+            seen[resource.key]=true;count=count+1
+        end
+        if count~=row.ownerCount then return false end
+        checks[#checks+1]=check
+    end
+    -- All callback-bearing factories and input reads precede route consumption.
+    for _,check in ipairs(checks)do if not check()then return false end end
+    return true
+end
+function nativePlan.group(queue,group,context,seen,checks)
+    local scope=activeDecision
+    local actor,item=queue.character,group.item
+    local root=actor:getInventory()
+    if group.destination~=root or group.source==root or group.body.item~=item or group.fetch.item~=item
+        or not instanceof(item,"InventoryItem")or not instanceof(group.source,"ItemContainer")
+        or item:getContainer()~=group.source or not ordinaryTransfer(group.fetch)
+        or group.fetch.srcContainer~=group.source or group.fetch.destContainer~=root then return false end
+    local id,fullType=item:getID(),item:getFullType()
+    if type(id)~="number"or id~=id or id%1~=0 or id==-1 or seen[id]
+        or type(fullType)~="string"or group.source:getItemWithID(id)~=item
+        or root:getItemWithID(id)~=nil then return false end
+    local token=group.body.toolkitQueueOperation
+    local input=scope.nativeInputs[token]
+    if type(input)~="table"or type(input.hasBorrowing)~="boolean"then return false end
+    if input.hasBorrowing then
+        local readers=input.equipmentReaders
+        if readers~=nil then
+            if type(readers)~="table"or getmetatable(readers)~=nil then return false end
+            for reader,value in pairs(readers)do
+                if value~=true or not scope.nativeEquipmentTokens[reader]then return false end
+            end
+        end
+        local owner=group.source:getContainingItem()
+        if input.id~=id or input.fullType~=fullType or type(input.sourceOwner)~="table"
+            or not instanceof(owner,"InventoryContainer")or owner:getInventory()~=group.source
+            or owner:getID()~=input.sourceOwner.id or owner:getFullType()~=input.sourceOwner.fullType then return false end
+    end
+    for _,member in ipairs({group.approach,group.fetch,group.body})do
+        local contract,source=inspect(member,context)
+        if not scope.nativeMembers[member]or not contract or contract.edit~=nil
+            or member.character~=actor or member.toolkitQueueOperation~=token or member.action
+            or member.onStartFunc or member.onCompleteFunc or member.onCancelFunc or member.onFailFunc
+            or member.additionalTest or member.additionalContext or member.retriggerLastAction
+            or member.forceCancel~=nativeForceCancel or not nativePendingCancelHasNoEffects()then return false end
+        if member==group.approach then
+            if source~="toolkit.approach"or contract.nativeSchedule~="native-prepare"then return false end
+        elseif member==group.fetch then
+            local snapshot=snapshots[getmetatable(member)]
+            if source~="native.ISInventoryTransferAction"or contract.nativeSchedule~="native-prepare"
+                or not snapshot or not nativeMatches(member,snapshot)then return false end
+        elseif contract.nativeSchedule~="unsubmitted"then return false end
+    end
+    local check,edit=spatialEdits.prepare(group.approach,group.source,true)
+    if type(check)~="function"or not edit or edit.complete~=true or edit.capacity~="unchanged"then return false end
+    local owners,count={},0
+    for _,resource in ipairs(edit.resources or {})do
+        if resource.domain~="item"or owners[resource.key]or not resource.facts then return false end
+        owners[resource.key]={item=resource.facts.item,location=resource.facts.location,
+            fullType=resource.facts.item:getFullType()};count=count+1
+    end
+    if count<1 then return false end
+    checks[#checks+1]={group=group,actor=actor,root=root,id=id,fullType=fullType,
+        owners=owners,ownerCount=count,check=check,edit=edit};seen[id]=true
+    return item:getContainer()==group.source and group.source:getItemWithID(id)==item
+        and group.body.item==item and group.fetch.item==item and actor:getInventory()==root
+end
 function nativePlan.edit(queue,first,last,to,context)
-    if not activeDecision or not activeDecision.nativeMode then return end
+    local scope=activeDecision
+    if not scope or not scope.nativeMode then return end
+    local denied={status="denied",reason="edit_unknown",blocker=queue.queue[first]}
+    if first<=1 or to==1 or #queue.queue>32 then return denied end
+    if first~=last then
+        local role=scope.nativeRoles[queue.queue[first]]
+        if not role or role.role~="approach"or role.group.body~=queue.queue[last]or last~=first+2 then return denied end
+    end
+    if to and to<=#queue.queue then
+        local role=scope.nativeRoles[queue.queue[to]]
+        if role and role.role~="approach"then return denied end
+    end
     local low=math.min(first,to or first)
     local high=math.min(#queue.queue,math.max(last,(to or first)-1))
     local selected=false
@@ -1077,26 +1214,24 @@ function nativePlan.edit(queue,first,last,to,context)
         local contract=inspect(queue.queue[index],context)
         selected=selected or contract and contract.nativeSchedule=="unsubmitted"
     end
-    local denied={status="denied",reason="edit_unknown",blocker=queue.queue[first]}
-    if not selected then return denied end
-    if first~=last or first<=1 or to==1 or #queue.queue>32 then return denied end
-    local seen={}
-    if not activeDecision or not activeDecision.nativeWatch or not activeDecision.nativeWatch()then return denied end
-    -- A sole removed tail cannot affect preceding work. Other edits require
-    -- the entire small cohort, including the unchanged current reader, so no
-    -- hidden earlier prepare/return group is treated as an independent input.
-    local start=not to and last==#queue.queue and first or 1
-    for index=start,#queue.queue do
-        local member=queue.queue[index]
-        if not nativePlan.member(queue,member,index==1,context,seen) then
-            denied.blocker=member;return denied
-        end
+    if not selected or not scope.nativeWatch or not scope.nativeWatch()then return denied end
+    local seen,groups,checks={},{},{}
+    for index=1,#queue.queue do
+        local member=queue.queue[index];local role=scope.nativeRoles[member]
+        local valid
+        if role then
+            if groups[role.group]then valid=true
+            else valid=nativePlan.group(queue,role.group,context,seen,checks);groups[role.group]=valid end
+        else valid=nativePlan.member(queue,member,index==1,context,seen)end
+        if not valid then denied.blocker=member;return denied end
     end
-    -- All member getters have finished. One shared own-data check covers the
-    -- cohort, including mutations of earlier rows by a later getter.
-    if not activeDecision.nativeCheck()then return denied end
-    activeDecision.nativeSchedule=true
-    return {status="allowed",nativeSchedule=true,externalCapacity=true}
+    -- Defer one-use route consumption until the final decision freshness pass,
+    -- after Settings and any remaining source/item callbacks.
+    scope.nativePhysical=checks
+    if not scope.nativeCheck()then return denied end
+    scope.nativeSchedule=true
+    return {status="allowed",nativeSchedule=true,externalCapacity=true,
+        nativeAdmission=scope.nativePrepared and "unsubmitted-carried-fetch"or nil}
 end
 local function equipmentResources(action)
     local result=itemResources(action)
@@ -1112,9 +1247,15 @@ local function equipmentResources(action)
                 and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect
                 and type(equipOwner.inspect)=="function" then
                 if equipOwner.trusted==nil then equipOwner.trusted=Proof.closure(equipOwner.inspect,"ActionQueueEquip.lua")
-                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",1433847724,"PZSurvivorToolkit",true)end
+                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",2629028365,"PZSurvivorToolkit",true)end
                 if equipOwner.trusted and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect then
-                    local contract=equipOwner.inspect(action)
+                    local contract
+                    if nativeMode and activeDecision.nativePrepared then
+                        local role=activeDecision.nativeRoles[action]
+                        if equipOwner.module.inspectSchedule==equipOwner.schedule and type(equipOwner.schedule)=="function"then
+                            contract=equipOwner.schedule(action,role and role.group.source or nil)
+                        end
+                    else contract=equipOwner.inspect(action)end
                     if contract then return contract end
                 end
             end
@@ -1308,6 +1449,15 @@ inspect = function(action, context)
         return
     end
     local result = {Definitions.inspect(action, context)}
+    local role=activeDecision and activeDecision.nativeMode and activeDecision.nativeRoles and activeDecision.nativeRoles[action]
+    if role and result[1]and(role.role=="approach"and result[2]=="toolkit.approach"
+        or role.role=="fetch"and result[2]=="native.ISInventoryTransferAction"
+            and result[1].edit and result[1].edit.complete==true)then
+        local contract={};for key,value in pairs(result[1])do contract[key]=value end
+        contract.edit=nil;contract.nativeSchedule="native-prepare";contract.unknownOutputs=true
+        contract.cancelWaiting,contract.cancelOperation,contract.preparation,contract.callbacksSafe=true,true,true,true
+        result[1]=contract
+    end
     local settlement = Toolkit.ActionQueueSettlement
     -- The selected native cohort already owns an earlier private no-debt
     -- lease; metadata changes are rejected by its final data-only validator.
@@ -1771,7 +1921,7 @@ local function clothingRemovalCapability(action,contract,source,context)
         or Proof.closure~=clothingOrigin or Proof.matches~=clothingMatches then return false end
     if clothingSourceTrusted==nil then
         clothingSourceTrusted=clothingOrigin(clothingInspect,"ActionQueueClothing.lua")
-            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",950563814,"PZSurvivorToolkit",true)
+            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",1540781066,"PZSurvivorToolkit",true)
     end
     return clothingSourceTrusted==true
 end
@@ -1975,6 +2125,12 @@ local function transferCapacityConflict(queue, a, b, last, check, context, compa
 end
 
 local function editCapacityConflict(queue, edit, first, last, to, context)
+    if edit.nativeSchedule and edit.nativeAdmission=="unsubmitted-carried-fetch"
+        and activeDecision and activeDecision.nativeMode and activeDecision.nativePrepared then
+        -- All retained transfers are untouched owned native commands. No
+        -- forecast is spent: original live admission may reject them at start.
+        return
+    end
     if not edit.externalCapacity then return end
     -- The item projection proves locations/amounts, not available weight. Even a
     -- successful projection must scan every later transfer at full current
@@ -2897,7 +3053,11 @@ local function inDecision(queue, context, output, callback, ...)
     if ok and scope.nativeMode and result.reason==nil and result.allowed~=false then
         local watch,check=scope.nativeWatch,scope.nativeCheck
         local function fresh()
-            return watch~=nil and check~=nil and watch()and check()
+            if scope.nativeChecking or watch==nil or check==nil or not watch()or not check()then return false end
+            scope.nativeChecking=true
+            local ok,current=nativePlan.call(nativePlan.physical,scope)
+            scope.nativeChecking=nil
+            return ok and current==true and watch()and check()
         end
         if not fresh()then
             result.reason,result.allowed="unavailable",false

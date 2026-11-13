@@ -8,6 +8,7 @@ import zombie.inventory.ItemContainer
 import zombie.inventory.InventoryItem
 import zombie.inventory.types.ComboItem
 import zombie.inventory.types.HandWeapon
+import zombie.inventory.types.InventoryContainer
 import zombie.entity.GameEntity
 import zombie.entity.ComponentContainer
 import zombie.entity.Component
@@ -72,7 +73,7 @@ object EquipEventDispatchChecks {
         // Match the final registration step of native Exposer.exposeAll.
         // Manual alias registration previously hid isType versus instof.
         LuaManager.exposer.exposeGlobalFunctions(LuaManager.GlobalObject())
-        checkLua("return toolkitEquipEventDispatchApiMatches(toolkitEquipEventDispatchIdle) and toolkitEquipEventDispatchApiMatches(toolkitEquipGlobalsTrusted) and toolkitEquipEventDispatchApiMatches(toolkitEquipNativeQuiet)")
+        checkLua("return toolkitEquipEventDispatchApiMatches(toolkitEquipEventDispatchIdle) and toolkitEquipEventDispatchApiMatches(toolkitEquipGlobalsTrusted) and toolkitEquipEventDispatchApiMatches(toolkitEquipNativeQuiet) and toolkitEquipEventDispatchApiMatches(toolkitEquipNativePreparedQuiet)")
         checkLua("return toolkitEquipGlobalsTrusted() and toolkitEquipEventDispatchIdle(1)==nil and toolkitEquipGlobalsTrusted(1)==false")
         checkLua("return toolkitEquipEventDispatchIdle()==nil")
         // A native call before patching must not arm the observer.
@@ -298,6 +299,25 @@ object EquipEventDispatchChecks {
         check(value(actorValue=rows)==null)
         rows.metatable=KahluaTableImpl(LinkedHashMap<Any,Any?>());check(value()==null);rows.metatable=null
         check(value(values=KahluaTableImpl(LinkedHashMap<Any,Any?>()))==null)
+        check(value()==true)
+        val source=unsafe.allocateInstance(ItemContainer::class.java) as ItemContainer
+        val bag=unsafe.allocateInstance(InventoryContainer::class.java) as InventoryContainer
+        source.containingItem=bag
+        val prepared=env.delegate["toolkitEquipNativePreparedQuiet"]
+        fun pending(location: Any?=source): Any? = thread.call(prepared,arrayOf(actor,rows,location))
+        for(item in arrayOf(one,two))set(InventoryItem::class.java,"container",item,source)
+        check(pending()==true && value()==null) { "prepared proof changed root ownership semantics" }
+        check(EquipEventDispatchLogic.nativePreparedQuiet(actor,rows,source)==null)
+        check(pending(root)==null && pending(rows)==null && pending(null)==null)
+        source.parent=actor;check(pending()==null);source.parent=null
+        source.containingItem=null;check(pending()==null);source.containingItem=bag
+        tags.add(ItemTag.FISHING_ROD);check(pending()==false);tags.clear()
+        set(Component::class.java,"componentType",component,ComponentType.Attributes);check(pending()==false)
+        set(Component::class.java,"componentType",component,ComponentType.Script)
+        set(InventoryItem::class.java,"container",two,root);check(pending()==null)
+        set(InventoryItem::class.java,"container",two,source)
+        check(pending()==true)
+        for(item in arrayOf(one,two))set(InventoryItem::class.java,"container",item,root)
         check(value()==true)
     }
 

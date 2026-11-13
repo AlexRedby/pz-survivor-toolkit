@@ -14,10 +14,11 @@ from tests.test_queue_wring_clothing import placement_proof
 
 
 def evidence(segment='reorder-two', kind='sp', mode='toolkit'):
-    selection = dict(kind=kind, mode=mode)
+    prepared = segment in verifier.PREPARED_SEGMENTS
+    selection = dict(kind=kind, mode=mode, **({'options': dict(equip_prepared=True)} if prepared else {}))
     editing = mode == 'toolkit'
     types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', a='Base.Hammer' if segment == 'component-guard' else 'Base.Nails', b='Base.Screwdriver', c='Base.Screwdriver', bag='Base.Bag_Schoolbag', marker='Base.Nails')
-    if segment in ('dependent', 'capacity'): types['nested'] = 'Base.Plank' if segment == 'capacity' else 'Base.Pencil'
+    if segment in ('dependent', 'capacity') or prepared: types['nested'] = 'Base.Plank' if segment == 'capacity' else 'Base.Pencil'
     if segment == 'capacity': types['heldBag'] = 'Base.Bag_Schoolbag'
     items = {}
     for index, (name, full_type) in enumerate(types.items(), 10):
@@ -26,64 +27,99 @@ def evidence(segment='reorder-two', kind='sp', mode='toolkit'):
         if name in ('front', 'tail'): items[name]['pages'] = 100
     inventory = []
     for name, spec in items.items():
-        path = [items['bag']['id']] if name == 'marker' or name == 'nested' and segment == 'dependent' else [items['heldBag']['id']] if name == 'nested' else []
+        path = [items['bag']['id']] if name == 'marker' or name == 'nested' and (segment == 'dependent' or prepared) else [items['heldBag']['id']] if name == 'nested' else []
         inventory.append(dict(id=spec['id'], type=spec['type'], path=path, condition=10, count=5 if spec['type'] == 'Base.Nails' else 1, uses=1, **{'class': spec['class']}))
     origin = dict(x=11, y=20, z=0)
     ids = dict(case='equip-edit', segment=segment, mode=mode, kind=kind, origin=origin, items=items,
                placementProof=placement_proof(origin, 'replica' if kind == 'mp' else 'local'), inventory=inventory)
     def snapshot(final=False):
         rows = copy.deepcopy(inventory)
+        if final and prepared and not(editing and segment in ('prepared-cancel-fetch', 'prepared-cancel-body')):
+            next(row for row in rows if row['id'] == items['nested']['id'])['path'] = []
         books = {name: dict(id=items[name]['id'], present=True, root=True, total=100, pages=100 if final else 99, characterPages=100 if final else 99) for name in ('front', 'tail')}
         return dict(case='equip-edit', segment=segment, inventory=rows, books=books, backpack=True,
                     hands=verifier.expected_hands(ids, editing) if final else dict(primary=False, secondary=False))
     source = ['front', 'equip-a', 'equip-b'] + (['equip-c'] if segment in ('reorder-three', 'cancel') else []) + ['tail']
     if segment == 'dependent': source = ['front', 'transfer', 'equip-nested', 'tail']
     if segment == 'capacity': source = ['front', 'equip-bag', 'transfer', 'tail']
+    if prepared:
+        group = (['prepared-approach'] if editing else []) + ['prepared-fetch', 'prepared-equip']
+        source = ['front'] + (group + ['equip-dependent'] if segment == 'prepared-dependent' else ['equip-b'] + group) + ['tail']
     order = list(source)
     if editing and segment == 'reorder-two': order = ['front', 'equip-b', 'equip-a', 'tail']
     elif editing and segment == 'reorder-three': order = ['front', 'equip-c', 'equip-a', 'equip-b', 'tail']
     elif editing and segment == 'cancel': order.remove('equip-c')
+    elif editing and segment == 'prepared-move': order = ['front'] + group + ['equip-b', 'tail']
+    elif editing and segment in ('prepared-cancel-fetch', 'prepared-cancel-body'): order = [name for name in source if name not in group]
     commands = []
     for name in source:
+        owned = name == 'prepared-approach'
+        equip = name.startswith('equip-') or name == 'prepared-equip'
+        transfer = name in ('transfer', 'prepared-fetch')
         item_name = name.removeprefix('equip-')
         if name == 'transfer': item_name = 'nested'
         if name == 'equip-bag': item_name = 'heldBag'
-        row = dict(name=name, type='ISEquipWeaponAction' if name.startswith('equip-') else 'ISInventoryTransferAction' if name == 'transfer' else 'ISReadABook',
-                   item=items[item_name]['id'], duration=50 if name.startswith('equip-') else -1 if name == 'transfer' and kind == 'mp' else 100, callbacksUntouched=True,
-                   lifecycle=[], started=name in order, progress=name in order)
-        if name.startswith('equip-'):
-            row.update(primary=not (segment == 'reorder-three' and name in ('equip-a', 'equip-c') or segment == 'cancel' and name == 'equip-b'), twoHands=False, maxTimeInit=50)
+        if name in ('prepared-fetch', 'prepared-equip', 'equip-dependent'): item_name = 'nested'
+        row = dict(name=name, type='ISQueueActionsAction' if owned else 'ISEquipWeaponAction' if equip else 'ISInventoryTransferAction' if transfer else 'ISReadABook',
+                   item=False if owned else items[item_name]['id'], duration=-1 if owned else 50 if equip else -1 if transfer and kind == 'mp' else 100, callbacksUntouched=True,
+                   lifecycle=[], started=name in order, progress=name in order and not owned)
+        if owned: row.update(ownedApproach=True, paidProgress=False)
+        if prepared and name in group: row['operation'] = 1
+        if prepared: row['callbackConstructor'] = owned_observation() if owned else callback_observation()
+        if equip:
+            primary = name == 'prepared-equip' or name == 'equip-b' and segment != 'prepared-move' if prepared else not (segment == 'reorder-three' and name in ('equip-a', 'equip-c') or segment == 'cancel' and name == 'equip-b')
+            row.update(primary=primary, twoHands=False, maxTimeInit=50)
         if name not in order: row.update(cancelled=True, started=False, progress=False)
         commands.append(row)
     serial = 0; hands = dict(primary=False, secondary=False); transferred = False
     for episode, name in enumerate(order, 1):
         command = next(value for value in commands if value['name'] == name)
         events = [('admission', False), ('begin', 'perform'), ('finish', 'perform')]
-        if kind == 'sp': events += [('begin', 'complete'), ('finish', 'complete')]
+        if kind == 'sp' and name != 'prepared-approach': events += [('begin', 'complete'), ('finish', 'complete')]
         for event, phase in events:
             serial += 1
-            if command['type'] == 'ISInventoryTransferAction' and event == 'finish' and phase == 'complete': transferred = True
-            if command['type'] == 'ISEquipWeaponAction' and event == 'finish' and phase == 'complete': hands['primary' if command['primary'] else 'secondary'] = command['item']
+            if command['type'] == 'ISInventoryTransferAction' and event == 'finish' and phase == ('perform' if kind == 'mp' else 'complete'): transferred = True
+            if command['type'] == 'ISEquipWeaponAction' and event == 'finish' and phase == ('perform' if kind == 'mp' else 'complete'): hands['primary' if command['primary'] else 'secondary'] = command['item']
             item_name = name.removeprefix('equip-')
             if name == 'transfer': item_name = 'nested'
             if name == 'equip-bag': item_name = 'heldBag'
+            if name in ('prepared-fetch', 'prepared-equip', 'equip-dependent'): item_name = 'nested'
             nested = item_name == 'nested' and not transferred
-            location = dict(root=not nested, containerPresent=True, owner=items['bag' if segment == 'dependent' else 'heldBag']['id'] if nested else False)
-            command['lifecycle'].append(dict(sequence=serial, event=event, phase=phase, succeeded=event == 'finish',
-                nativeEpisode=episode, nativeClass='LuaTimedActionNew', hands=copy.deepcopy(hands), itemLocation=location))
+            location = False if name == 'prepared-approach' else dict(root=not nested, containerPresent=True, owner=items['bag' if segment == 'dependent' or prepared else 'heldBag']['id'] if nested else False)
+            receipt = dict(sequence=serial, event=event, phase=phase, succeeded=event == 'finish',
+                nativeEpisode=episode, nativeClass='LuaTimedActionNew', hands=copy.deepcopy(hands), itemLocation=location)
+            if prepared:
+                receipt['callbackObservation'] = owned_observation() if name == 'prepared-approach' else callback_observation()
+                if name != 'prepared-approach': receipt['itemIdentity'] = dict(id=command['item'], type=items[item_name]['type'], **{'class': items[item_name]['class']}, canonicalRoot=not nested)
+            command['lifecycle'].append(receipt)
     edits = []
     if mode == 'toolkit':
         names = ['reorder'] if segment.startswith('reorder-') else ['cancel'] if segment == 'cancel' else ['unavailable-input', 'dependent-transfer'] if segment == 'dependent' else ['component-reorder', 'component-cancel'] if segment == 'component-guard' else ['capacity-transfer', 'capacity-cancel']
+        if prepared: names = ['prepared-reorder'] if segment == 'prepared-move' else ['dependent-prepared-cancel', 'dependent-prepared-move'] if segment == 'prepared-dependent' else ['prepared-cancel']
         for name in names:
-            allowed = editing and segment in ('reorder-two', 'reorder-three', 'cancel')
-            edits.append(dict(name=name, nativeSchedule=allowed and kind == 'mp', allowed=allowed, reason=False if allowed else 'unavailable', queueBefore=source, queueAfter=order if allowed else source))
+            allowed = editing and segment in ('reorder-two', 'reorder-three', 'cancel', 'prepared-move', 'prepared-cancel-fetch', 'prepared-cancel-body')
+            edits.append(dict(name=name, nativeSchedule=allowed and (kind == 'mp' or prepared), allowed=allowed, reason=False if allowed else 'unavailable', queueBefore=source, queueAfter=order if allowed else source))
     final = snapshot(True)
     row = dict(segment=segment, ids=copy.deepcopy(ids), input=snapshot(), clientPlacement=placement_proof(origin),
                client=copy.deepcopy(final), server=copy.deepcopy(final), commands=commands, edits=edits,
                componentGuard=dict(item=items['a']['id'], size=2, quiet=False, components=[dict(index=0, type='Attributes', **{'class': 'Attributes'}), dict(index=1, type='Script', **{'class': 'EntityScriptInfo'})]) if segment == 'component-guard' else False,
                pendingBefore=snapshot(), pendingAfter=snapshot(), pendingOrder=order, queueIdle=True, tidyQuiescent=True,
                tidyObservation=dict(sourceVerified=True, integrationInstalled=True, idlePlayerUpdates=6, observer='ActionQueueSettlement.operationState', retainedOperations=0, observedBorrowings=0, outstandingBorrowings=0, activeBlockedReturn=False, privateTablesObserved=False), settleMilliseconds=1000, frameCadence=dict(count=2, totalMilliseconds=33, maxMilliseconds=17))
+    if prepared:
+        row['preparedGroup'] = dict(schema=1, producer='ISInventoryPaneContextMenu.OnPrimaryWeapon', scope='source-bound-menu-route-and-final-retained-effect',
+            operationGrouping='ActionQueueOperations.run', sourceVerified=True, intentRouteVerified=True, tokenShared=True,
+            item=items['nested']['id'], sourceOwner=items['bag']['id'], destination='actor-root', rows=group)
     return row, selection, ids, final
+
+
+def callback_observation():
+    return dict(schema=1, sourceVerified=True, bindingsCurrent=True, classUnchanged=True, customCallbacksAbsent=True, differences=[], verified=True)
+
+
+def owned_observation():
+    return dict(schema=1, kind='owned-deferred-carried-container', sourceVerified=True, bindingsCurrent=True,
+        constructorUnchanged=True, verified=True, nativeActionCallbacks=False, paidProgress=False,
+        constructorSource='ISQueueActionsAction.lua', startSource='ActionQueueOperations.lua', requestSource='ActionQueueApproach.lua')
 
 
 class EquipEditTests(unittest.TestCase):
@@ -102,7 +138,10 @@ local function equal(a,b)
  for k in pairs(b)do if a[k]==nil then return false end end;return true
 end
 package.preload.QueueEnergyPlacement=function()return{atCentered=function()return true end}end
-package.preload.QueueMagazineUnload=function()return{equal=equal,hands=function()return{primary=false,secondary=false}end}end
+package.preload.QueueMagazineUnload=function()return{equal=equal,hands=function(player)
+ local primary,secondary=player:getPrimaryHandItem(),player:getSecondaryHandItem()
+ return{primary=primary and primary:getID()or false,secondary=secondary and secondary:getID()or false}
+end}end
 Perks={Woodwork={},Doctor={}}
 local server,nextID=true,0
 function isServer()return server end
@@ -139,8 +178,8 @@ end
 local function player()
  local p={root=makeContainer(),worn={},read={}}
  function p:getInventory()return self.root end
- function p:getPrimaryHandItem()end
- function p:getSecondaryHandItem()end
+ function p:getPrimaryHandItem()return self.primary end
+ function p:getSecondaryHandItem()return self.secondary end
  function p:getWornItem(slot)return self.worn[slot]end
  function p:setWornItem(slot,item)self.worn[slot]=item end
  function p:setAlreadyReadPages(kind,pages)self.read[kind]=pages end
@@ -148,7 +187,7 @@ local function player()
  function p:setPerkLevelDebug()end;return p
 end
 local fixture=assert(loadfile(fixture_path))()
-for _,segment in ipairs(fixture.segments)do
+for _,segment in ipairs(fixture.selectedSegments(true))do
  local authority,replica=player(),player();local serialized={};local sends=0
  local function copy(item,destination)
   assert(not serialized[item.id],'duplicate serialized nested item ID');serialized[item.id]=true
@@ -171,6 +210,18 @@ for _,segment in ipairs(fixture.segments)do
  assert(resolved.items.bag==replica:getWornItem('Back'),'worn bag is not the canonical inventory object')
  assert(resolved.items.marker:getContainer()==resolved.items.bag:getItemContainer(),'nested marker parent changed')
  if segment=='capacity'then assert(resolved.items.nested:getContainer()==resolved.items.heldBag:getItemContainer(),'held-source child parent changed')end
+ if fixture.isPrepared(segment)then
+  -- Model the observed final data only: this is not a native transfer/equip.
+  local nested=state.items.nested;local child=nested:getContainer()
+  for index,item in ipairs(child.items)do if item==nested then table.remove(child.items,index);break end end
+  nested.container=authority.root;authority.root.items[#authority.root.items+1]=nested
+  authority.primary=nested;authority.secondary=segment=='prepared-move'and state.items.b or nil
+  for _,name in ipairs({'front','tail'})do local book=state.items[name];book.pages=100;authority.read[book.fullType]=100 end
+  assert(fixture.verify(state),'prepared retained-root final snapshot rejected')
+  local found=false
+  for _,row in ipairs(ids.inventory)do if row.id==nested.id then found=true;assert(#row.path==1 and row.path[1]==state.items.bag.id,'verification mutated authority seed history')end end
+  assert(found)
+ end
  local previous=sends;server=false
  local localState=fixture.prepare(player(),segment,'native','sp',{},{});assert(localState.input.backpack and sends==previous,'SP preparation emitted authority packets')
 end
@@ -189,6 +240,199 @@ end
             for mode in ('native', 'toolkit'):
                 for segment in verifier.SEGMENTS:
                     self.assertEqual([], verifier.check_segment(*evidence(segment, kind, mode)), (segment, kind, mode))
+
+    def test_prepared_profile_keeps_original_bank_and_requires_explicit_selection(self):
+        selection = dict(kind='sp', mode='toolkit', clients=1, languages=['EN'], mods=adapter.MODS, cases=['equip-edit'], options=dict(equip_prepared=True))
+        adapter.validate(selection)
+        self.assertEqual(verifier.SEGMENTS + verifier.PREPARED_SEGMENTS, verifier.selected_segments(selection))
+        for options, cases in ((dict(equip_prepared='true'), ['equip-edit']), (dict(equip_prepared=True), ['direct']),
+                               (dict(equip_prepared=True, equip_workload=True), ['equip-edit'])):
+            with self.assertRaises(ValueError): adapter.validate(dict(selection, options=options, cases=cases))
+        for kind in ('sp', 'mp'):
+            for mode in ('native', 'toolkit'):
+                for segment in verifier.PREPARED_SEGMENTS:
+                    values = evidence(segment, kind, mode)
+                    self.assertEqual([], verifier.check_segment(*values), (kind, mode, segment))
+                    values[1]['options'] = {}
+                    self.assertTrue(verifier.check_segment(*values), 'unselected prepared evidence accepted')
+
+    def test_prepared_move_changes_actual_whole_group_order_and_preserves_explicit_item(self):
+        for kind in ('sp', 'mp'):
+            values = evidence('prepared-move', kind); row, _, ids, _ = values
+            self.assertEqual(['front', 'prepared-approach', 'prepared-fetch', 'prepared-equip', 'equip-b', 'tail'], row['pendingOrder'])
+            self.assertEqual(dict(primary=ids['items']['nested']['id'], secondary=ids['items']['b']['id']), row['client']['hands'])
+            nested = next(item for item in row['client']['inventory'] if item['id'] == ids['items']['nested']['id'])
+            self.assertEqual([], nested['path'])
+            for change in ('marker', 'producer', 'group-rows', 'token', 'partial-move', 'paid-approach', 'native-approach-claim', 'source-approach', 'canonical-host'):
+                changed = copy.deepcopy(values); bad = changed[0]
+                if change == 'marker': bad['edits'][0]['nativeSchedule'] = False
+                elif change == 'producer': bad['preparedGroup']['producer'] = 'fixture.direct-constructor'
+                elif change == 'group-rows': bad['preparedGroup']['rows'].remove('prepared-fetch')
+                elif change == 'token': next(command for command in bad['commands'] if command['name'] == 'prepared-fetch')['operation'] = 2
+                elif change == 'partial-move': bad['pendingOrder'] = ['front', 'prepared-equip', 'equip-b', 'prepared-approach', 'prepared-fetch', 'tail']
+                elif change == 'canonical-host':
+                    command = next(command for command in bad['commands'] if command['name'] == 'prepared-equip')
+                    for event in command['lifecycle']: event['itemIdentity']['canonicalRoot'] = False
+                else:
+                    command = next(command for command in bad['commands'] if command['name'] == 'prepared-approach')
+                    if change == 'paid-approach': command['progress'] = True
+                    elif change == 'native-approach-claim': command['callbackConstructor']['nativeActionCallbacks'] = True
+                    else: command['callbackConstructor']['requestSource'] = 'foreign.lua'
+                self.assertTrue(verifier.check_segment(*changed), (kind, change))
+
+    def test_prepared_fetch_or_body_cancel_removes_every_unsubmitted_member(self):
+        for kind in ('sp', 'mp'):
+            for segment in ('prepared-cancel-fetch', 'prepared-cancel-body'):
+                values = evidence(segment, kind); row = values[0]
+                self.assertEqual(['front', 'equip-b', 'tail'], row['pendingOrder'])
+                cancelled = [command for command in row['commands'] if command.get('cancelled')]
+                self.assertEqual(['prepared-approach', 'prepared-fetch', 'prepared-equip'], [command['name'] for command in cancelled])
+                for change in ('partial', 'started-fetch', 'submitted-body', 'lost-nested'):
+                    changed = copy.deepcopy(values); bad = changed[0]
+                    commands = {command['name']: command for command in bad['commands']}
+                    if change == 'partial': bad['pendingOrder'].insert(2, 'prepared-equip')
+                    elif change == 'started-fetch': commands['prepared-fetch']['started'] = True
+                    elif change == 'submitted-body':
+                        commands['prepared-equip']['lifecycle'] = [dict(sequence=99, event='admission', phase=False, succeeded=False,
+                            nativeEpisode=99, nativeClass='LuaTimedActionNew', hands=dict(primary=False, secondary=False),
+                            itemLocation=dict(root=False, containerPresent=True, owner=bad['ids']['items']['bag']['id']),
+                            itemIdentity=dict(id=bad['ids']['items']['nested']['id'], type='Base.Pencil', **{'class': 'HandWeapon'}, canonicalRoot=False),
+                            callbackObservation=callback_observation())]
+                    else: next(item for item in bad['client']['inventory'] if item['id'] == bad['ids']['items']['nested']['id'])['path'] = []
+                    self.assertTrue(verifier.check_segment(*changed), (kind, segment, change))
+
+    def test_prepared_same_item_survivor_denials_keep_native_commands_and_tail(self):
+        for kind in ('sp', 'mp'):
+            values = evidence('prepared-dependent', kind)
+            self.assertEqual([], verifier.check_segment(*values))
+            self.assertEqual([False, False], [edit['allowed'] for edit in values[0]['edits']])
+            for edit in values[0]['edits']:
+                self.assertEqual(edit['queueBefore'], edit['queueAfter'])
+            changed = copy.deepcopy(values); changed[0]['edits'][0]['allowed'] = True
+            self.assertTrue(verifier.check_segment(*changed))
+
+    def test_actual_menu_fixture_registers_enqueued_rows_without_resubmitting(self):
+        from lupa.lua51 import LuaRuntime
+        source = (PROJECT / 'tests/native_queue/magazine-unload/client/QueueEquipEditClient.lua').read_text()
+        helper = source[source.index('local function menuEquip(item)'):source.index('local function guardedComponentFacts(item)')]
+        lua = LuaRuntime(unpack_returned_tuples=True); lua.globals().helper_source = helper
+        # Explicit producer/source/queue doubles exercise this fixture's
+        # grouping and registration only, not native producer qualification.
+        lua.execute(r'''
+for _,native in ipairs({false,true})do
+ for _,change in ipairs({'none','split','extra','rebind','intent'})do
+  local origins,scope,registered={},{},{}
+  local root,source,bag={},{},{getID=function()return 42 end}
+  local item={getID=function()return 41 end,getContainer=function()return source end}
+  local player={getInventory=function()return root end,getPlayerNum=function()return 0 end}
+  getPlayer=function()return player end
+  local front={};local q={queue={front}}
+  local function queue()return q end
+  local intent={status=function()return change~='intent'end}
+  local operations={run=function(callback,...)
+   scope={};callback(...)
+  end}
+  ISInventoryPane={getActualItems=function(items)return items end}
+  ISInventoryTransferUtil={newInventoryTransferAction=function()end}
+  ISInventoryPaneContextMenu={equipWeapon=function()end,transferIfNeeded=function()end}
+  local owner=ISInventoryPaneContextMenu
+  owner.OnPrimaryWeapon=function(items,number)
+   assert(items[1]==item and number==0,'menu producer arguments changed')
+   if not native then q.queue[#q.queue+1]={Type='ISQueueActionsAction',toolkitQueueOperation=scope,target=source}end
+   q.queue[#q.queue+1]={Type='ISInventoryTransferAction',toolkitQueueOperation=scope,item=item,srcContainer=source,destContainer=root}
+   q.queue[#q.queue+1]={Type='ISEquipWeaponAction',toolkitQueueOperation=change=='split'and{}or scope,item=item,primary=true,twoHands=false}
+   if change=='extra'then q.queue[#q.queue+1]={}end
+   if change=='rebind'then owner.equipWeapon=function()end end
+  end
+  origins[owner.OnPrimaryWeapon]='ActionQueueTidyIntent.lua';origins[owner.equipWeapon]='ISInventoryPaneContextMenu.lua'
+  origins[operations.run]='ActionQueueOperations.lua';origins[intent.status]='ActionQueueTidyIntent.lua'
+  PZSurvivorToolkit={ActionQueueOperations=operations,ActionQueueTidyIntent=intent,
+   ActionQueueApproach={isContainer=function(action,container,actor)return action.target==container and actor==player end}}
+  local Proof={closure=function(callback,file)return origins[callback]==file end,captureBindings=function(entries)
+   local snapshot={}
+   for _,entry in ipairs(entries)do for _,key in ipairs(entry.keys)do snapshot[#snapshot+1]={entry.owner,key,entry.owner[key]}end end
+   return function()for _,entry in ipairs(snapshot)do if entry[1][entry[2]]~=entry[3]then return false end end;return true end
+  end}
+  local tracks={}
+  local function track(name,action,enqueued)
+   assert(enqueued==true,'already-enqueued native row was resubmitted')
+   registered[#registered+1]=name;tracks[action]={name=name}
+  end
+  local prefix='local native,Proof,queue,track,tracks,state=...;local preparedGroup\n'
+  local produce,receipt=assert(loadstring(prefix..helper_source..'\nreturn menuEquip,function()return preparedGroup end'))(
+   native,Proof,queue,track,tracks,{items={bag=bag}})
+  local ok=pcall(produce,item)
+  assert(ok==(change=='none'),'fixture admitted changed producer group '..change)
+  if ok then
+   assert(q.queue[1]==front and #q.queue==(native and 3 or 4),'registration changed native queue membership')
+   assert(#registered==(native and 2 or 3)and receipt().tokenShared and receipt().intentRouteVerified)
+  end
+ end
+end
+''')
+
+    def test_owned_approach_observation_is_distinct_and_revoked_by_callback_changes(self):
+        from lupa.lua51 import LuaRuntime
+        lua = LuaRuntime(unpack_returned_tuples=True); lua.globals().project_root = str(PROJECT)
+        # Source/capture API doubles are explicit here. The actual fixture's
+        # class/function identity rules are exercised; no native proof is claimed.
+        lua.execute(r'''
+local helper=assert(loadfile(project_root..'/tests/native_queue/magazine-unload/client/QueueEquipCallbackObservation.lua'))()
+local function setup(rebind)
+ local origins={}
+ getFilenameOfClosure=function(callback)return origins[callback]end
+ getFirstLineOfClosure=function()return 1 end
+ local function source(callback,file)origins[callback]=file;return callback end
+ local function native()error('observation executed native callback')end
+ local class={Type='ISQueueActionsAction',new=source(function()end,'ISQueueActionsAction.lua'),start=native,waitToStart=native,perform=native,stop=native}
+ class.__index=class;ISQueueActionsAction=class
+ local start=source(function()error('owned start executed')end,'ActionQueueOperations.lua')
+ local wait=source(function()error('owned wait executed')end,'ActionQueueOperations.lua')
+ local request=source(function()error('owned request executed')end,'ActionQueueApproach.lua')
+ local action=setmetatable({start=start,waitToStart=wait,addActionsFunction=request},class)
+ local operations={}
+ operations.isCommand=source(function(value)return value==action and value.start==start and value.waitToStart==wait and value.addActionsFunction==request end,'ActionQueueOperations.lua')
+ operations.commandConstructionTrusted=source(function()return true end,'ActionQueueOperations.lua')
+ local approach={isAction=source(function(value)return value==action end,'ActionQueueApproach.lua')}
+ local toolkit={ActionQueueOperations=operations,ActionQueueApproach=approach,
+  ActionQueuePolicy={matchesNative=source(function()error('native matcher executed for owned command')end,'ActionQueuePolicy.lua')},
+  BulkActions={isGuardedTransfer=source(function()error('guard matcher executed for owned command')end,'BulkActions.lua')}}
+ PZSurvivorToolkit=toolkit
+ local proof={}
+ proof.own=source(rawget,'SourceProof.lua')
+ proof.closure=function(callback,file)return origins[callback]==file end
+ proof.captureBindings=source(function(entries)
+  local snapshot,owners={},{}
+  for _,entry in ipairs(entries)do
+   assert(not owners[entry.owner],'duplicate binding owner rejected by real SourceProof')
+   owners[entry.owner]=true
+   for _,key in ipairs(entry.keys)do snapshot[#snapshot+1]={entry.owner,key,entry.owner[key]}end
+  end
+  return function()for _,entry in ipairs(snapshot)do if entry[1][entry[2]]~=entry[3]then return false end end;return true end
+ end,'SourceProof.lua')
+ proof.matches=source(function(path)
+  if rebind and path:find('ActionQueueApproach.lua',1,true)then operations.isCommand=function()return true end end
+  return true
+ end,'SourceProof.lua')
+ toolkitLuaCaptureFactsMatch=function()error('owned command invoked native stop capture matching')end
+ toolkitLuaCaptureFactsApiMatches=function(callback)return callback==toolkitLuaCaptureFactsMatch end
+ local observer=helper.new(toolkit,{mode='toolkit',kind='sp',options={equip_prepared=true}},proof,{class})
+ return {action=action,class=class,toolkit=toolkit,read=observer.track(action)}
+end
+for _,change in ipairs({'none','start','request','class','custom','api','global'})do
+ local s=setup();local value=s.read('constructor')
+ assert(value.verified and value.nativeActionCallbacks==false and value.paidProgress==false)
+ if change=='start'then s.action.start=function()end
+ elseif change=='request'then s.action.addActionsFunction=function()end
+ elseif change=='class'then s.class.perform=function()end
+ elseif change=='custom'then s.action.onCompleteFunc=function()end
+ elseif change=='api'then s.toolkit.ActionQueueOperations.isCommand=function()return true end
+ elseif change=='global'then ISQueueActionsAction={}
+ end
+ assert(s.read('admission').verified==(change=='none'),'owned callback mutation admitted '..change)
+end
+assert(not pcall(setup,true),'prepared source-reader rebound API accepted')
+''')
 
     def test_same_type_screwdrivers_keep_distinct_native_item_and_hand_identities(self):
         for kind in ('sp', 'mp'):
@@ -388,7 +632,7 @@ end
     def test_client_tracker_preserves_native_transfer_sentinel_and_queue_member(self):
         from lupa.lua51 import LuaRuntime
         source = (PROJECT / 'tests/native_queue/magazine-unload/client/QueueEquipEditClient.lua').read_text()
-        track = source[source.index('local function track(name,action)'):source.index('local function book(name)')]
+        track = source[source.index('local function track(name,action,enqueued)'):source.index('local function book(name)')]
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.globals().track_source = track
         # Exercise the actual fixture guard with constructor-field doubles, not
@@ -536,17 +780,18 @@ assert(observer.read(tracks));observer.reset();assert(observer.read(tracks)==nil
             self.assertTrue(verifier.check_segment(*values), change)
 
     def test_grouped_verifier_requires_all_ordered_authority_checkpoints(self):
-        for kind in ('sp', 'mp'):
-            selection = dict(kind=kind, mode='toolkit', cases=['equip-edit'])
+        for kind, prepared_profile in ((kind, profile) for kind in ('sp', 'mp') for profile in (False, True)):
+            selection = dict(kind=kind, mode='toolkit', cases=['equip-edit'], options=dict(equip_prepared=prepared_profile))
+            selected = verifier.selected_segments(selection)
             client = ['[QUEUE_TEST] ' + marker for marker in ('VOICE_DISABLED', 'DISPLAY_READY', 'PREFLIGHT_COMPLETE', 'NATIVE_CONNECTED' if kind == 'mp' else 'TRUE_SP')]
             authority = ['[STARTUP_TEST] SERVER_READY']
             group = []
-            for segment in verifier.SEGMENTS:
+            for segment in selected:
                 row, _, ids, final = evidence(segment, kind)
                 group.append(row)
                 client.append(verifier.PREFIX + 'CLIENT_PLACEMENT ' + json.dumps(dict(case='equip-edit', segment=segment, proof=row['clientPlacement'])))
                 authority.extend([verifier.PREFIX + 'PREPARED ' + json.dumps(ids), verifier.PREFIX + 'VERIFIED ' + json.dumps(final)])
-            client.extend(['[QUEUE_CHECK] ' + json.dumps(dict(suite='magazine-unload', event='setup', cases=['equip-edit'], segments=verifier.SEGMENTS, queueEnabled=True, nativeDurations=True)),
+            client.extend(['[QUEUE_CHECK] ' + json.dumps(dict(suite='magazine-unload', event='setup', cases=['equip-edit'], segments=selected, queueEnabled=True, nativeDurations=True)),
                            '[QUEUE_CHECK] ' + json.dumps(dict(suite='magazine-unload', event='case', id='equip-edit', status='passed', actor='client1', kind=kind, mode='toolkit', segments=group, queueIdle=True, tidyQuiescent=True)),
                            '[QUEUE_CHECK] ' + json.dumps(dict(suite='magazine-unload', event='complete', cases=['equip-edit'], performed=1, failed=0, skipped=0)),
                            adapter.PREFIX + 'COMPLETE ' + json.dumps(dict(cases=['equip-edit']))])
@@ -555,6 +800,8 @@ assert(observer.read(tracks));observer.reset();assert(observer.read(tracks)==nil
                 root = Path(temporary); (root / 'client1-launch.log').write_text('\n'.join(client)); (root / 'server-launch.log').write_text('\n'.join(authority))
                 result = adapter.verify(root, selection, {})
                 self.assertEqual([], result['issues'])
+                self.assertIs(result['evidence']['preparedSelected'], prepared_profile)
+                self.assertIs(result['evidence']['failedPickupQualified'], False)
                 outcome = result['outcomes'][0]['outcome']
                 self.assertIs(outcome['pendingEditsVerified'], True)
                 self.assertIs(outcome['pendingProtectionVerified'], True)
@@ -583,6 +830,21 @@ assert(observer.read(tracks));observer.reset();assert(observer.read(tracks)==nil
         declared = adapter.verifier_sources(PROJECT, dict(cases=['equip-edit']))
         self.assertIn(Path(verifier.__file__), declared)
         self.assertIn(Path(__file__), declared)
+
+    def test_prepared_source_preflight_uses_closed_opt_in_literals(self):
+        fixture = (PROJECT / 'tests/native_queue/magazine-unload/client/QueueEquipCallbackObservation.lua').read_text()
+        normal = adapter._reviewed_equip_pins(fixture)
+        prepared = adapter._reviewed_equip_pins(fixture, prepared=True)
+        self.assertEqual(normal, {key: value for key, value in prepared.items() if key in normal})
+        self.assertEqual({'client/PZSurvivorToolkit/ActionQueueOperations.lua', 'client/PZSurvivorToolkit/ActionQueueApproach.lua',
+                          'client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'}, set(prepared) - set(normal))
+        for change in ('flag', 'guard', 'computed-pin', 'duplicate'):
+            changed = fixture
+            if change == 'flag': changed = changed.replace('local prepared=config.options and config.options.equip_prepared==true', 'local prepared=true')
+            elif change == 'guard': changed = changed.replace('if prepared then\n  for _,entry in ipairs(preparedSources)do', 'if true then\n  for _,entry in ipairs(preparedSources)do')
+            elif change == 'computed-pin': changed = changed.replace("'ActionQueueOperations.lua',2049664196", "'ActionQueueOperations.lua',actualChecksum()")
+            else: changed = changed.replace("'ActionQueueApproach.lua',3155442316", "'ActionQueueOperations.lua',3155442316")
+            with self.assertRaises(ValueError, msg=change): adapter._reviewed_equip_pins(changed, prepared=True)
 
 
 class HostHandPointTests(unittest.TestCase):

@@ -46,6 +46,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.367
+
+- **Fixed:** Pending ordinary equipment requested from a carried bag can move or cancel as a complete fetch/equip operation behind an active reader in SP and Host. Original native capacity, input checks and execution remain authoritative; shared inputs, started work and return-bearing groups retain their protections.
+- **Fixed:** Whole-operation cancellation uses the validated operation span. Unstarted cancelled pickups and confirmed explicit equipment that keeps its item no longer leave stale P4 borrowing obligations; delayed pickup evidence does not consume an equipment confirmation twice.
+
 ### 0.1.366
 
 - **Changed:** Pending Host equipment edits capture the shared queue structure and operation-token ownership once per decision. Private per-operation history and the final freshness checks remain enforced; supported edits and native execution are unchanged. The standalone ledger queries reuse the same validation helpers.
@@ -1694,6 +1699,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.104
+
+- **Changed:** Added a read-only native eligibility check for ordinary equipment still inside a carried container, without running gameplay callbacks or granting admission. Updated the reviewed queue compiler source bindings.
 
 ### 0.1.103
 

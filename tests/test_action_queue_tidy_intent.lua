@@ -150,6 +150,7 @@ local function fixture(client)
         h.receipt(action, 'started')
     end
     h.intent.install(function(action)
+        if h.onGuard then h.onGuard(action) end
         return h.valid and (not action or (not h.originalOnlyID or action.item:getID()==h.originalOnlyID) and acceptedClasses[getmetatable(action)] and not action.changed
             and not action.onStartFunc and not action.onCompleteFunc and not action.onCancelFunc
             and not action.retriggerLastAction and not action.onFailFunc and not action.additionalTest)
@@ -509,6 +510,53 @@ test("instant explicit equip confirms through lifecycle before UI callback retur
     h.restore(function() ISTimedActionQueue.add(h.transfer(kept, h.source)) end)
     h.drain()
     assert(kept:getContainer() == h.inventory and h.player.primary == kept)
+end)
+
+test("confirmed equipment waits for pickup bookkeeping without consuming its effect twice", function()
+    local h=fixture()
+    local item=h.item()
+    local original=h.settlement.confirmEffect
+    local confirmations,retentions=0,0
+    h.settlement.confirmEffect=function(...)
+        confirmations=confirmations+1
+        return original(...)
+    end
+    local pending=true
+    h.settlement.retainExplicitEquipment=function(action,receipt)
+        retentions=retentions+1
+        local info=h.intent.confirmedEquipmentIntent(action,receipt)
+        assert(info and info.id==item:getID() and info.fullType==item:getFullType())
+        info.id=-1
+        assert(h.intent.confirmedEquipmentIntent(action,receipt).id==item:getID(),"identity DTO leaked private state")
+        assert(not h.intent.confirmedEquipmentIntent(action,{}),"copied receipt acquired intent")
+        if pending then return nil end
+        return true
+    end
+    ISInventoryPaneContextMenu.OnPrimaryWeapon({item},0)
+    local action=h.queue.queue[1]
+    assert(not h.intent.confirmedEquipmentIntent(action,{}),"unconfirmed action acquired intent")
+    h.complete(action)
+    h.tick()
+    assert(confirmations==1 and retentions>=1,"native effect was consumed again while pickup was pending")
+    pending=false
+    h.tick()
+    assert(confirmations==1,"confirmed native effect was consumed again on pickup receipt")
+    assert(not h.intent.confirmedEquipmentIntent(action,{}),"retired watcher kept authority")
+end)
+
+test("confirmed equipment identity rejects a watcher cleared by its guard", function()
+    local h=fixture()
+    local item=h.item()
+    h.settlement.retainExplicitEquipment=function(action,receipt)
+        h.onGuard=function()
+            h.onGuard=nil
+            for _,callback in ipairs(h.callbacks) do callback() end
+        end
+        assert(not h.intent.confirmedEquipmentIntent(action,receipt),"cleared watcher survived reentrant guard")
+        return true
+    end
+    ISInventoryPaneContextMenu.OnPrimaryWeapon({item},0)
+    h.complete(h.queue.queue[1])
 end)
 
 test("manual primary overlay preserves native restore of borrowed secondary", function()

@@ -141,11 +141,25 @@ local function consumeKeptReturns(value,consumed)
     end
     return count
 end
+-- Only the live private observer can publish a confirmed explicit equipment
+-- intent. This DTO describes identity; Settlement independently proves pickup.
+function Intent.confirmedEquipmentIntent(action,receipt)
+    local record=watching[action]
+    if not record or not guard or not guard(record.executor or action) then return end
+    if watching[action]~=record or record.action~=action or record.kind~='equip'
+        or not record.accepted or not record.finished or not record.effect
+        or not record.nativeConfirmed or record.confirmedProof~=receipt or record.proof~=receipt then return end
+    return {id=record.item.id,fullType=record.item.kind}
+end
 local function confirm(record)
     local action,player=record.executor or record.action,record.player
     if not record.accepted or not record.finished or not record.effect or not guard(action) then return end
     local item=resolve(player,record.item)
-    if not item or not Settlement.confirmEffect(record.proof, true) then return end
+    if not item then return end
+    if not record.nativeConfirmed then
+        if not Settlement.confirmEffect(record.proof,true) then return end
+        record.nativeConfirmed,record.confirmedProof=true,record.proof
+    elseif record.confirmedProof~=record.proof then return end
     local value=state(player)
     local function remember(group,slot,ref)
         local key=group..':'..tostring(slot)
@@ -172,7 +186,14 @@ local function confirm(record)
         remember('attached',action.slot,record.item)
     end
     if record.kind=='equip' and item:canBeActivated() then value.activation[record.item.id]={item=record.item,activated=record.activated} end
+    if record.kind=='equip' and type(Settlement.retainExplicitEquipment)=='function' then
+        local ok,retained=pcall(Settlement.retainExplicitEquipment,record.action,record.proof)
+        -- Native equipment may be visible before its pickup receipt. Keep the
+        -- original private observation; never consume its effect proof twice.
+        if ok and retained==nil then return false end
+    end
     value.pending[record.action],watching[record.action]=nil,nil
+    return true
 end
 local function captureBefore(action,record)
     local primary,secondary=action.character:getPrimaryHandItem(),action.character:getSecondaryHandItem()
@@ -548,7 +569,7 @@ function Intent.update(player,callback,...)
                 observeEffect(record)
                 status=Settlement.effectState(record.proof, record.effect==true)
             end
-            if status=="completed" then confirm(record)
+            if status=="completed" then if confirm(record)==false then waiting=true end
             elseif status=="waiting" then waiting=true
             else value.pending[action],watching[action]=nil,nil end
         elseif record.finished or value.queue:indexOf(executor)==-1 then

@@ -60,6 +60,7 @@ object EquipEventDispatchLogic {
     private val idleMethod = EquipEventDispatchLogic::class.java.getMethod("idle")
     private val globalsMethod = EquipEventDispatchLogic::class.java.getMethod("globalsTrusted")
     private val quietMethod = EquipEventDispatchLogic::class.java.getMethod("nativeQuiet", Any::class.java, Any::class.java)
+    private val preparedQuietMethod = EquipEventDispatchLogic::class.java.getMethod("nativePreparedQuiet", Any::class.java, Any::class.java, Any::class.java)
     private val checkMethod = EquipEventDispatchLogic::class.java.getMethod("apiMatches", Any::class.java)
     private class State(var thread: KahluaThread? = null, var env: KahluaTableImpl? = null,
                         var depth: Int = 0, var broken: Boolean = false, var level: Int = 0) {
@@ -231,14 +232,12 @@ object EquipEventDispatchLogic {
         val id = typeId?.getShort(ComponentType.Script)?.toInt() ?: return false
         return id in values.indices && values[id] === script
     }
-    /** Exact root ownership and quiet native branches only. The Lua Equip owner
-     * separately proves canonical root lookup; this helper never scans inventory,
-     * component collections or actors and never calls a gameplay getter. */
-    @JvmStatic @LuaMethod(name="toolkitEquipNativeQuiet",global=true)
-    fun nativeQuiet(actor: Any?, items: Any?): Boolean? = try {
-        if (!SUPPORTED || !LuaFactApi.entry("toolkitEquipNativeQuiet",quietMethod,arrayOf(actor,items))
-            || actor?.javaClass != IsoPlayer::class.java) null
-        else {
+    /** Immediate ownership and quiet native branches only. The Lua owner
+     * separately proves canonical lookup and carried-container ancestry.
+     * This observes raw fields without invoking gameplay getters. */
+    private fun quietItems(actor: Any?, items: Any?, source: ItemContainer?): Boolean? {
+        if (actor?.javaClass != IsoPlayer::class.java) return null
+        return run {
             val rows = LuaFactApi.plain(items)
             val animals = animalList?.get(actor)
             val root = inventory?.get(actor)
@@ -247,7 +246,10 @@ object EquipEventDispatchLogic {
             else if (!(animals as ArrayList<*>).isEmpty()) false
             else {
                 root as ItemContainer
-                if (root.parent !== actor || root.containingItem != null) null
+                val location = source ?: root
+                if (root.parent !== actor || root.containingItem != null
+                    || location.javaClass != ItemContainer::class.java
+                    || (source != null && (source.parent != null || source.containingItem == null))) null
                 else {
                     val identities = IdentityHashMap<Any,Boolean>()
                     val ids = HashSet<Int>()
@@ -258,7 +260,7 @@ object EquipEventDispatchLogic {
                         if (!index.isFinite() || index < 1 || index > rows.delegate.size || index != index.toInt().toDouble()) { safe=null;break }
                         if (item?.javaClass != ComboItem::class.java && item?.javaClass != HandWeapon::class.java) { safe=null;break }
                         item as InventoryItem
-                        if (identities.put(item,true) != null || !ids.add(item.id) || item.id == -1 || container?.get(item) !== root) { safe=null;break }
+                        if (identities.put(item,true) != null || !ids.add(item.id) || item.id == -1 || container?.get(item) !== location) { safe=null;break }
                         val script=scriptItem?.get(item)
                         val tags=if (script?.javaClass == Item::class.java) itemTags?.get(script) else null
                         if (tags?.javaClass != HashSet::class.java) { safe=null;break }
@@ -268,6 +270,19 @@ object EquipEventDispatchLogic {
                 }
             }
         }
+
+    }
+    @JvmStatic @LuaMethod(name="toolkitEquipNativeQuiet",global=true)
+    fun nativeQuiet(actor: Any?, items: Any?): Boolean? = try {
+        if (!SUPPORTED || !LuaFactApi.entry("toolkitEquipNativeQuiet",quietMethod,arrayOf(actor,items))) null
+        else quietItems(actor,items,null)
+    } catch (_: Exception) { null } catch (_: AssertionError) { null }
+
+    @JvmStatic @LuaMethod(name="toolkitEquipNativePreparedQuiet",global=true)
+    fun nativePreparedQuiet(actor: Any?, items: Any?, source: Any?): Boolean? = try {
+        if (!SUPPORTED || !LuaFactApi.entry("toolkitEquipNativePreparedQuiet",preparedQuietMethod,arrayOf(actor,items,source))
+            || source?.javaClass != ItemContainer::class.java) null
+        else quietItems(actor,items,source as ItemContainer)
     } catch (_: Exception) { null } catch (_: AssertionError) { null }
 
     @JvmStatic @LuaMethod(name="toolkitEquipEventDispatchApiMatches", global=true)
@@ -275,6 +290,7 @@ object EquipEventDispatchLogic {
         SUPPORTED && LuaFactApi.entry("toolkitEquipEventDispatchApiMatches",checkMethod,arrayOf(function))
             && ((LuaFactApi.canonical(function,idleMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipEventDispatchIdle") === function)
             || (LuaFactApi.canonical(function,globalsMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipGlobalsTrusted") === function)
-            || (LuaFactApi.canonical(function,quietMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipNativeQuiet") === function))
+            || (LuaFactApi.canonical(function,quietMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipNativeQuiet") === function)
+            || (LuaFactApi.canonical(function,preparedQuietMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipNativePreparedQuiet") === function))
     } catch (_: Exception) { false } catch (_: AssertionError) { false }
 }
