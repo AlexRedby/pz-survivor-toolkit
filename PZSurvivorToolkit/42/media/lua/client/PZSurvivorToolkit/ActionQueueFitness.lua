@@ -9,6 +9,7 @@ local Fitness={}
 Toolkit.ActionQueueFitness=Fitness
 local Ops,Definitions=Toolkit.ActionQueueOperations,Toolkit.ActionQueueDefinitions
 local Settlement=require 'PZSurvivorToolkit/ActionQueueSettlement'
+local borrowedReturns=(require 'PZSurvivorToolkit/ActionQueueRestoration').borrowedReturns
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Equipment=require 'PZSurvivorToolkit/FitnessEquipment'
 Equipment.install(ISFitnessUI)
@@ -362,12 +363,13 @@ local function restore(player,saved)
  end
  -- Native re-equipping may autoactivate an originally off item.
  if primary or secondary then add(command(player,activation,saved,'cleanup'),saved,'cleanup') end
+ local borrowed={}
  for _,entry in ipairs(saved.preparations) do
-  if entry.kind=='pickup' and Settlement.earned(entry.handle) then
-   local action=Settlement.enqueueBorrowedReturn(entry.handle)
-   if action then tag(action,saved,'cleanup');Settlement.track(action,'cleanup') end
-  end
+  if entry.kind=='pickup' and Settlement.earned(entry.handle) then borrowed[#borrowed+1]=entry.handle end
  end
+ borrowedReturns(borrowed,function(action)
+  tag(action,saved,'cleanup');Settlement.track(action,'cleanup')
+ end)
 end
 local function cleanup(player,saved)
  if not saved.before or saved.cleanupQueued or not unchanged() or player:isDead() then return end

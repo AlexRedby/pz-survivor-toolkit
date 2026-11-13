@@ -54,6 +54,7 @@ local function setup(client, outcomeOverride, delayedMetadata)
     getFilenameOfClosure = metadataAccessor
     if delayedMetadata then getFilenameOfClosure = nil end
     require = function(name)
+        if name == 'PZSurvivorToolkit/ActionQueueSettlement' then return PZSurvivorToolkit.ActionQueueSettlement end
         if name == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
             return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
         end
@@ -104,6 +105,14 @@ local function setup(client, outcomeOverride, delayedMetadata)
         sourceProof = loaded['PZSurvivorToolkit/SourceProof'], requests = PZSurvivorToolkit.ActionQueueTransferRequests,
         advance = function(ms) clock = clock + ms end,
         counts = function() return constructions, guards, #discards, releases end}
+end
+
+-- Load the real coordinator against this fixture's real private loan ledger.
+local function ownReturns(s, handles, onEnqueued)
+    if not s.restoration then
+        s.restoration = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueRestoration.lua'))()
+    end
+    return s.restoration.borrowedReturns(handles, onEnqueued)
 end
 
 -- Deferred native producers retain historical ownership even after their source
@@ -2385,7 +2394,7 @@ for _, client in ipairs({false, true}) do
             assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
             assert(s.queue.queue[2] == restoration and s.queue.queue[3].Type == 'ISInventoryTransferAction')
             s.queue.current = restoration; table.remove(s.queue.queue, 1)
-            assert(not s.settlement.enqueueBorrowedReturn(handle), 'retained command must not duplicate a planned return')
+            assert(ownReturns(s, {handle}) == 0, 'retained command must not duplicate a planned return')
         else
             s.queue.current, s.queue.queue = restoration, {restoration, s.tail}
             local foreign = {character = s.player, toolkitQueueOperation = {}, Type = 'ISQueueActionsAction'}
@@ -2401,17 +2410,158 @@ for _, client in ipairs({false, true}) do
             assert(s.settlement.earn(foreignHandle, receipt, true))
             assert(s.settlement.cleanup(foreign, foreignHandle))
             s.queue.current, s.queue.queue = foreign, {foreign, s.tail}
-            assert(not s.settlement.enqueueBorrowedReturn(handle), 'an unrelated required command cannot consume another operation borrowing')
+            assert(ownReturns(s, {handle}) == 0, 'an unrelated required command cannot consume another operation borrowing')
             s.queue.current, s.queue.queue = restoration, {restoration, s.tail}
-            local action = s.settlement.enqueueBorrowedReturn(handle)
+            local action
+            assert(ownReturns(s, {handle, handle}, function(value) action = value end) == 1)
             assert(action and s.settlement.requiredStep(action) and action.toolkitQueueOperation == s.token)
-            assert(not s.settlement.enqueueBorrowedReturn(handle))
+            assert(ownReturns(s, {handle}) == 0)
         end
         assert(s.counts() == 1 and value.container == s.root,
             'return scheduling must not synthesize item transfer or spend a confirmed borrowing')
         assert(s.settlement.operationState(pickup).borrowings[1].state == 'active')
     end
 end
+
+-- A producer consumes opaque earned handles, not item hints or inventory diffs.
+local function ownedBatchFixture(client)
+    local s = setup(client)
+    s.root.isExistYet = function() return true end
+    s.source.carried = true
+    local bag = s.item(201, s.root)
+    bag.fullType = 'Base.Bag_Schoolbag'
+    bag.getInventory = function() return s.source end
+    s.root.items[201] = bag
+    s.source.getContainingItem = function() return bag end
+    local scope = s.settlement.deferred(s.player, s.token)
+    local handles, items = {}, {}
+    for index = 1, 2 do
+        local value = s.item(201 + index, s.source)
+        s.source.items[value.id], items[index] = value, value
+        local pickup = s.action()
+        pickup.Type, pickup.action, pickup.item = 'ISInventoryTransferAction', {}, value
+        pickup.srcContainer, pickup.destContainer = s.source, s.root
+        pickup.queueList, pickup.transactionId = {{items = {value}}}, 21 + index
+        s.queue.current, s.queue.queue = pickup, {pickup, s.current, s.tail}
+        assert(s.settlement.remember(scope, pickup, {knownInputs = true, items = {[value.id] = true}}))
+        assert(s.settlement.preparePickup(scope, pickup))
+        handles[index] = s.settlement.track(pickup, 'prepare')
+        assert(s.settlement.beginPickup(scope, pickup, function() return true end))
+        s.source.items[value.id], s.root.items[value.id], value.container = nil, value, s.root
+        pickup.queueList, pickup.transactionId = {}, 0
+        assert(s.settlement.finishPickup(scope, pickup, true) and s.settlement.earned(handles[index]))
+    end
+    local parent = s.action(); parent.Type = 'ISQueueActionsAction'
+    PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+    assert(s.settlement.cleanupAfter(parent, handles))
+    s.queue.current, s.queue.queue = parent, {parent, s.tail}
+    local enqueued = {}
+    ISTimedActionQueue.add = function(action)
+        enqueued[#enqueued + 1] = action
+        table.insert(s.queue.queue, #enqueued + 1, action)
+    end
+    s.handles, s.items, s.bag, s.scope, s.parent, s.enqueued = handles, items, bag, scope, parent, enqueued
+    return s
+end
+
+for _, client in ipairs({false, true}) do
+    for _, mode in ipairs({'normal', 'caller-mutation', 'reentry', 'source-lost', 'destination-lost', 'callback-error', 'cancel-editor-off'}) do
+        local s = ownedBatchFixture(client)
+        local handles = {s.handles[1], s.handles[1], s.handles[2]}
+        if mode == 'cancel-editor-off' then
+            -- Cancellation cannot preplan a return while its carried owner is
+            -- temporarily missing. The admitted cleanup later recovers it.
+            s.root.items[201] = nil
+            s.queue.current, s.queue.queue = s.current, {s.current, s.parent, s.tail}
+            PZSurvivorToolkit.ActionQueuePolicy.editUnchanged = function(q, snapshot) return q == s.queue and snapshot == q end
+            PZSurvivorToolkit.ActionQueueOperations.invalidateQueue = function(q)
+                q.toolkitOperationGeneration = (q.toolkitOperationGeneration or 0) + 1
+                for _, action in ipairs(q.queue) do action.toolkitQueueOperation.toolkitCancelled = true end
+            end
+            local request = {action = s.current, token = s.token}
+            assert(s.settlement.admitCancellation(s.queue, request, {allowed = true, first = 1, snapshot = s.queue}))
+            s.queue.toolkitGroupCancel, s.token.toolkitCancelled = request, true
+            assert(s.settlement.finish(s.queue, request, s.discard))
+            assert(s.counts() == 0 and s.queue.queue[2] == s.parent)
+            s.root.items[201] = s.bag
+            s.settlement.completeCancellation(s.queue, s.current)
+            s.queue.current = s.parent; table.remove(s.queue.queue, 1)
+            s.queue.toolkitGroupCancel = nil
+            s.settlement.bindCancellation(s.parent)
+            s.player.queueEnabled = false
+            s.settlement.invalidateEditor(s.queue)
+        end
+        local sourceMethod = s.settlement.enqueueBorrowedReturn
+        local callbacks = 0
+        local function annotate(action)
+            callbacks = callbacks + 1
+            assert(s.enqueued[callbacks] == action and s.settlement.requiredStep(action),
+                'family annotation lost its existing after-enqueue, already-bound boundary')
+            assert(action.item == s.items[callbacks], 'borrowed returns changed preparation order')
+            if callbacks ~= 1 then return end
+            if mode == 'caller-mutation' then handles[2], handles[3], handles[4] = {}, nil, {}
+            elseif mode == 'reentry' then assert(ownReturns(s, {s.handles[1]}) == 0)
+            elseif mode == 'source-lost' then s.settlement.enqueueBorrowedReturn = function() error('foreign producer executed') end
+            elseif mode == 'destination-lost' then s.root.items[201] = nil
+            elseif mode == 'callback-error' then error('annotation failed') end
+        end
+        if mode == 'callback-error' then
+            local ok, message = pcall(ownReturns, s, handles, annotate)
+            assert(not ok and tostring(message):find('annotation failed', 1, true))
+            assert(s.counts() == 1 and ownReturns(s, {s.handles[1]}) == 0,
+                'an annotation error must not replay the already-enqueued native return')
+        else
+            local count, reason = ownReturns(s, handles, annotate)
+            local partial = mode == 'source-lost' or mode == 'destination-lost'
+            assert(count == (partial and 1 or 2) and callbacks == count, mode .. ': producer batch changed')
+            assert(reason == (mode == 'source-lost' and 'source_changed' or nil))
+            assert(s.counts() == count, 'a duplicate handle constructed another native action')
+        end
+        s.settlement.enqueueBorrowedReturn = sourceMethod
+        for _, item in ipairs(s.items) do
+            assert(item.container == s.root and s.root.items[item.id] == item and s.source.items[item.id] == nil,
+                'scheduling a return paid or replayed its native transfer')
+        end
+    end
+end
+
+for _, mode in ipairs({'sparse', 'named', 'batch-meta', 'handle-meta', 'bad-element', 'bad-callback',
+    'global-owner', 'settlement-owner', 'export', 'proof-export', 'producer-owner', 'producer-export', 'forged'}) do
+    local s = ownedBatchFixture(false)
+    ownReturns(s, {}) -- load real coordinator before changing dependencies
+    local handles, callback = {s.handles[1]}, nil
+    local toolkit, original, restore = PZSurvivorToolkit
+    if mode == 'sparse' then handles = {[2] = s.handles[1]}
+    elseif mode == 'named' then handles.extra = true
+    elseif mode == 'batch-meta' then setmetatable(handles, {})
+    elseif mode == 'handle-meta' then handles = {setmetatable({}, {})}
+    elseif mode == 'bad-element' then handles = {false}
+    elseif mode == 'bad-callback' then callback = {}
+    elseif mode == 'global-owner' then PZSurvivorToolkit = {}; restore = function() PZSurvivorToolkit = toolkit end
+    elseif mode == 'settlement-owner' then toolkit.ActionQueueSettlement = {}; restore = function() toolkit.ActionQueueSettlement = s.settlement end
+    elseif mode == 'export' then
+        original = s.settlement.enqueueBorrowedReturn
+        s.settlement.enqueueBorrowedReturn = function() error('foreign return producer executed') end
+        restore = function() s.settlement.enqueueBorrowedReturn = original end
+    elseif mode == 'proof-export' then
+        original = s.sourceProof.closure
+        s.sourceProof.closure = function() error('foreign source checker executed') end
+        restore = function() s.sourceProof.closure = original end
+    elseif mode == 'producer-owner' then toolkit.ActionQueueRestoration = {}; restore = function() toolkit.ActionQueueRestoration = s.restoration end
+    elseif mode == 'producer-export' then
+        original = s.restoration.borrowedReturns
+        s.restoration.borrowedReturns = function() error('foreign coordinator executed') end
+        restore = function() s.restoration.borrowedReturns = original end
+    else handles = {{}} end
+    -- Keep the originally captured entrypoint even when its public export changes.
+    local entry = mode == 'producer-export' and original or s.restoration.borrowedReturns
+    local count, reason = entry(handles, callback)
+    if restore then restore() end
+    assert(mode == 'forged' and count == 0 or mode ~= 'forged' and count == nil and reason,
+        mode .. ': invalid source/batch gained producer authority')
+    assert(s.counts() == 0 and #s.enqueued == 0, mode .. ': rejected batch performed partial work')
+end
+print('Owned restoration batches: private earned loans, native order, mutation/reentry, source loss and admitted editor-off cleanup passed.')
 
 -- P4 sees synchronous enqueue first. Family preparation must reuse its exact
 -- borrowing episode, including P4's foreign-task claims and transaction history.
@@ -2629,8 +2779,9 @@ for _, client in ipairs({false,true}) do
             assert(not s.settlement.enqueueBorrowedReturn(handle),'an unproved new-token claim remains shared')
             assert(s.settlement.inheritCleanup(child,parent))
         end
-        local action=s.settlement.enqueueBorrowedReturn(handle)
-        assert((action~=nil)==(ownerState=='replaced'),ownerState..': source owner proof must remain exact and carried')
+        local action
+        local scheduled=ownReturns(s,{handle},function(value)action=value end)
+        assert(scheduled==(ownerState=='replaced' and 1 or 0),ownerState..': source owner proof must remain exact and carried')
         if action then
             assert(action.destContainer==fresh and action.destContainer~=s.source)
             s.queue.current,s.queue.queue=action,{action,s.tail}

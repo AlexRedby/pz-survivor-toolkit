@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.369
+
+- **Changed:** Fitness borrowed-item returns now use the shared Toolkit restoration producer while retaining their existing earned-loan checks, native transfers and recovery/equipment/return order. Batches retain their original handles through caller mutations, suppress duplicate scheduling and stop on changed producer bindings. Already-admitted cleanup remains available after disabling queue editing. P4 remains the general restoration provider during migration.
+
 ### 0.1.368
 
 - **Changed:** Native transfer merging and receipt observation now have one shared owner independent of the automatic-restoration provider. Preparation, fitness and explicit grabs retain their native execution and source-bound observation; the current restoration provider remains active during migration.

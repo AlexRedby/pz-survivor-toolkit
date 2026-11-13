@@ -21,7 +21,7 @@ local function itemInspector()
     return capacityAdapters
 end
 require = function(module)
-    for _,name in ipairs({'ActionQueueLifecycle','ActionQueueAcknowledgements','ActionQueueOperations','ActionQueueTransfers'}) do
+    for _,name in ipairs({'ActionQueueLifecycle','ActionQueueAcknowledgements','ActionQueueOperations','ActionQueueTransfers','ActionQueueRestoration'}) do
         if module=='PZSurvivorToolkit/'..name then return PZSurvivorToolkit[name] or project(name) end
     end
     if module == 'PZSurvivorToolkit/ActionQueueOutcomeWait' then
