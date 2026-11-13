@@ -30,7 +30,7 @@ function F.snapshot(state)
   backpack=bag and p:getWornItem(bag:canBeEquipped())==bag or false}
 end
 local function expectedHands(ids)
- local edited=ids.mode=='toolkit'and ids.kind=='sp'
+ local edited=ids.mode=='toolkit'
  local item=ids.items;local p,s=false,false
  if ids.segment=='reorder-two'then p=edited and item.a.id or item.b.id
  elseif ids.segment=='reorder-three'then p=item.b.id;s=edited and item.a.id or item.c.id

@@ -15,7 +15,7 @@ from tests.test_queue_wring_clothing import placement_proof
 
 def evidence(segment='reorder-two', kind='sp', mode='toolkit'):
     selection = dict(kind=kind, mode=mode)
-    editing = kind == 'sp' and mode == 'toolkit'
+    editing = mode == 'toolkit'
     types = dict(front='Base.BookCarpentry1', tail='Base.BookFirstAid1', a='Base.Hammer' if segment == 'component-guard' else 'Base.Nails', b='Base.Screwdriver', c='Base.Screwdriver', bag='Base.Bag_Schoolbag', marker='Base.Nails')
     if segment in ('dependent', 'capacity'): types['nested'] = 'Base.Plank' if segment == 'capacity' else 'Base.Pencil'
     if segment == 'capacity': types['heldBag'] = 'Base.Bag_Schoolbag'
@@ -76,7 +76,7 @@ def evidence(segment='reorder-two', kind='sp', mode='toolkit'):
         names = ['reorder'] if segment.startswith('reorder-') else ['cancel'] if segment == 'cancel' else ['unavailable-input', 'dependent-transfer'] if segment == 'dependent' else ['component-reorder', 'component-cancel'] if segment == 'component-guard' else ['capacity-transfer', 'capacity-cancel']
         for name in names:
             allowed = editing and segment in ('reorder-two', 'reorder-three', 'cancel')
-            edits.append(dict(name=name, allowed=allowed, reason=False if allowed else 'unavailable', queueBefore=source, queueAfter=order if allowed else source))
+            edits.append(dict(name=name, nativeSchedule=allowed and kind == 'mp', allowed=allowed, reason=False if allowed else 'unavailable', queueBefore=source, queueAfter=order if allowed else source))
     final = snapshot(True)
     row = dict(segment=segment, ids=copy.deepcopy(ids), input=snapshot(), clientPlacement=placement_proof(origin),
                client=copy.deepcopy(final), server=copy.deepcopy(final), commands=commands, edits=edits,
@@ -218,14 +218,15 @@ end
             else: row['pendingAfter']['inventory'].pop()
             self.assertTrue(verifier.check_segment(*values), change)
 
-    def test_host_cannot_inherit_sp_rights_and_denials_cannot_reorder(self):
-        values = evidence(kind='mp'); values[0]['edits'][0]['allowed'] = True
+    def test_host_requires_native_schedule_and_actual_edits_and_denials_cannot_reorder(self):
+        values = evidence(kind='mp'); values[0]['edits'][0]['nativeSchedule'] = False
         self.assertTrue(verifier.check_segment(*values))
         values = evidence(kind='mp'); values[0]['edits'][0]['reason'] = 'bogus-denial'
         self.assertTrue(verifier.check_segment(*values))
         for segment, reason in (('reorder-two', 'move_dependent'), ('cancel', 'operation_dependent')):
-            values = evidence(segment, kind='mp'); values[0]['edits'][0]['reason'] = reason
-            self.assertEqual([], verifier.check_segment(*values))
+            values = evidence(segment, kind='mp'); values[0]['edits'][0]['allowed'] = False
+            values[0]['edits'][0]['reason'] = reason
+            self.assertTrue(verifier.check_segment(*values), 'Host denial was promoted to positive edit evidence')
         values = evidence('capacity'); values[0]['edits'][0]['queueAfter'] = list(reversed(values[0]['edits'][0]['queueBefore']))
         self.assertTrue(verifier.check_segment(*values))
 
@@ -555,11 +556,11 @@ assert(observer.read(tracks));observer.reset();assert(observer.read(tracks)==nil
                 result = adapter.verify(root, selection, {})
                 self.assertEqual([], result['issues'])
                 outcome = result['outcomes'][0]['outcome']
-                self.assertIs(outcome['pendingEditsVerified'], kind == 'sp')
+                self.assertIs(outcome['pendingEditsVerified'], True)
                 self.assertIs(outcome['pendingProtectionVerified'], True)
                 # Drive the real scenario matrix using the verifier's current
-                # outcome fields. A clean Host denial cannot become positive
-                # cancellation/reorder coverage.
+                # outcome fields. Host coverage requires actual changed native order/cancellation,
+                # not only a clean denial or a capability flag.
                 from queue_checks import scenarios
                 suite = adapter.definitions()['magazine-unload']
                 coverage = dict(result['outcomes'][0], suite='magazine-unload', kind=kind, mode='toolkit')
@@ -569,7 +570,7 @@ assert(observer.read(tracks));observer.reset();assert(observer.read(tracks)==nil
                 matrix = scenarios.matrix(dict(suites={'magazine-unload': suite}), reports, case_matrix)
                 mapped = {value['scenario']: value for value in matrix if value['action'] == 'native-equip-edit' and value['kind'] == kind and value['mode'] == 'toolkit'}
                 for positive in ('cancel-waiting', 'move-independent'):
-                    self.assertEqual('passed' if kind == 'sp' else 'missing-evidence', mapped[positive]['status'])
+                    self.assertEqual('passed', mapped[positive]['status'])
                 self.assertEqual('passed', mapped['move-dependent']['status'])
 
                 if kind == 'sp': (root / 'client1-launch.log').write_text('\n'.join(client[:-1]))

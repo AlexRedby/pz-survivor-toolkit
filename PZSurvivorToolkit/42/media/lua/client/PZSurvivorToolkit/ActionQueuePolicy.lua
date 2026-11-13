@@ -976,6 +976,130 @@ local function pendingPreparation(action)
         and settlement and not settlement.requiredStep(action) and not settlement.isCleanup(action)
         and nativePendingCancelHasNoEffects() and action.forceCancel == nativeForceCancel
 end
+-- Scheduling an unsubmitted native command is separate from forecasting its
+-- effects. This first cohort contains only singleton native root inputs and
+-- root equipment commands. Every retained step still admits itself natively;
+-- nothing here promises an outcome or credits space/items from future effects.
+local nativePlan={settlement=Toolkit.ActionQueueSettlement,marker={},raw=rawget,equal=rawequal}
+nativePlan.lease=nativePlan.settlement and nativePlan.settlement.nativePlanLease
+function nativePlan.member(queue,member,active,context,seen)
+    local contract=inspect(member,context)
+    if not contract or (contract.nativeSchedule~="unsubmitted" and contract.nativeSchedule~="native-input")
+        or contract.edit~=nil or member.character~=queue.character
+        or (active and contract.nativeSchedule~="native-input") then return false end
+    local snapshot=snapshots[getmetatable(member)]
+    if not snapshot or not nativeMatches(member,snapshot) then return false end
+    if member.onStartFunc or member.onCompleteFunc or member.onCancelFunc or member.onFailFunc
+        or member.additionalTest or member.additionalContext or member.retriggerLastAction
+        or member.toolkitQueueLinked or member.toolkitQueueReturn~=nil then return false end
+    if not active and (not nativePendingCancelHasNoEffects() or member.forceCancel~=nativeForceCancel) then return false end
+    local actor,item=queue.character,member.item
+    local root=actor:getInventory()
+    if not instanceof(item,"InventoryItem") or not instanceof(root,"ItemContainer")
+        or root:getParent()~=actor or root:getContainingItem()~=nil or item:getContainer()~=root then return false end
+    local id=item:getID()
+    if type(id)~="number" or id~=id or id%1~=0 or id==-1 or seen[id]
+        or root:getItemWithID(id)~=item or member.item~=item or member.character~=actor
+        or item:getContainer()~=root or item:getID()~=id or actor:getInventory()~=root then return false end
+    local lease=activeDecision.nativeProofs[member]
+    if not lease or not lease()then return false end
+    seen[id]=true
+    return true
+end
+function nativePlan.capture(scope,action,target,after)
+    if type(isClient)~="function"or not isClient()or type(isServer)~="function"or isServer()then return end
+    local list=scope.lookup.read(scope.queue,"queue")
+    if type(list)~="table"or getmetatable(list)~=nil or #list>32 then return end
+    if type(action)~="table"then return end
+    local current=scope.lookup.read(scope.queue,"current")
+    -- Select the additive capability before inspecting effects. Active/mixed
+    -- contexts retain their already-qualified policy, not a failed-proof retry.
+    if rawequal(action,current)or rawequal(target,current)and after~=true then return end
+    for index,member in ipairs(list)do
+        local kind=scope.lookup.read(member,"Type")
+        if kind~="ISReadABook"and kind~="ISEquipWeaponAction"or index==1 and kind~="ISReadABook"then return end
+    end
+    if scope.lookup.read(action,"Type")~="ISEquipWeaponAction"then return end
+    local first,last
+    for index,member in ipairs(list)do
+        if rawequal(member,action)then first=index end
+        if rawequal(member,target)then last=index end
+    end
+    if not first then return end
+    if last then
+        -- A single equipment write crossing only root readers already has a
+        -- native legacy proof. Add this capability only for write-order edits.
+        local writes=0
+        for index=math.min(first,last),math.max(first,last)do
+            if scope.lookup.read(list[index],"Type")=="ISEquipWeaponAction"then writes=writes+1 end
+        end
+        if writes<2 then return end
+    elseif first==#list then return end -- Existing native tail cancellation.
+    local watches={}
+    for _,owner in ipairs(scope.lookup.records.owners)do
+        local watch=Proof.captureBindings({{owner=owner,exact=true}})
+        if not watch then return end
+        watches[#watches+1]=watch
+    end
+    local globals=Proof.captureBindings({
+        {owner=_G,keys={"PZSurvivorToolkit","ISTimedActionQueue","type","getmetatable","pairs","ipairs","pcall","rawget","getSpecificPlayer",
+            "isClient","isServer","getClassSimpleName","instanceof","getFilenameOfClosure","toolkitLuaMetatableMatches","table"}},
+        {owner=Toolkit,keys={"Settings","ActionQueueOperations","ActionQueueSettlement","ActionQueueEquip","ActionQueuePolicy","ActionQueueDefinitions"}},
+        {owner=Proof,keys={"captureBindings","closure","matches","own"}},
+        {owner=Toolkit.Settings,keys={"actionQueue"}},
+        {owner=Operations,keys={"bounds","invalidate","isContinuationPending"}},
+        {owner=Policy,keys={"evaluateMove","evaluateCancel","editUnchanged","record"}},
+        {owner=table,keys={"insert","remove"}},
+    })
+    if not globals or Toolkit.ActionQueueSettlement~=nativePlan.settlement
+        or nativePlan.settlement.nativePlanLease~=nativePlan.lease or type(nativePlan.lease)~="function"
+        or not Proof.closure(nativePlan.lease,"ActionQueueSettlement.lua")then return end
+    scope.nativeWatch=function()
+        if not globals()then return false end
+        for _,watch in ipairs(watches)do if not watch()then return false end end
+        return true
+    end
+    local leases,proofs={},{}
+    for index,member in ipairs(list)do
+        local lease=nativePlan.lease(scope.queue,member,index==1)
+        if type(lease)~="function"then return end
+        leases[#leases+1],proofs[member]=lease,lease
+    end
+    if not scope.nativeWatch()then return end
+    for _,lease in ipairs(leases)do if not lease()then return end end
+    scope.nativeLeases,scope.nativeProofs,scope.nativeMode=leases,proofs,true
+end
+function nativePlan.check(snapshot)
+    local check=nativePlan.raw(snapshot,nativePlan.marker)
+    return check==nil or check(snapshot)==true
+end
+function nativePlan.edit(queue,first,last,to,context)
+    if not activeDecision or not activeDecision.nativeMode then return end
+    local low=math.min(first,to or first)
+    local high=math.min(#queue.queue,math.max(last,(to or first)-1))
+    local selected=false
+    for index=low,high do
+        local contract=inspect(queue.queue[index],context)
+        selected=selected or contract and contract.nativeSchedule=="unsubmitted"
+    end
+    local denied={status="denied",reason="edit_unknown",blocker=queue.queue[first]}
+    if not selected then return denied end
+    if first~=last or first<=1 or to==1 or #queue.queue>32 then return denied end
+    local seen={}
+    if not activeDecision or not activeDecision.nativeWatch or not activeDecision.nativeWatch()then return denied end
+    -- A sole removed tail cannot affect preceding work. Other edits require
+    -- the entire small cohort, including the unchanged current reader, so no
+    -- hidden earlier prepare/return group is treated as an independent input.
+    local start=not to and last==#queue.queue and first or 1
+    for index=start,#queue.queue do
+        local member=queue.queue[index]
+        if not nativePlan.member(queue,member,index==1,context,seen) then
+            denied.blocker=member;return denied
+        end
+    end
+    if activeDecision then activeDecision.nativeSchedule=true end
+    return {status="allowed",nativeSchedule=true,externalCapacity=true}
+end
 local function equipmentResources(action)
     local result=itemResources(action)
     if result then
@@ -984,12 +1108,13 @@ local function equipmentResources(action)
         if snapshot and snapshot.binding then result.preparationFinish=true end
         -- Heavy, worn and producer-owned restoration retain their own contracts.
         -- Only a complete owner below can extend the pending cancellation fallback.
-        if action.Type == "ISEquipWeaponAction" and pendingPreparation(action) then
-            if type(equipOwner.module)=="table" and editNativeMeta(equipOwner.module,nil)
+        local nativeMode=activeDecision and activeDecision.nativeMode
+        if action.Type == "ISEquipWeaponAction" and (nativeMode or pendingPreparation(action)) then
+            if (not isClient()or nativeMode)and type(equipOwner.module)=="table" and editNativeMeta(equipOwner.module,nil)
                 and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect
                 and type(equipOwner.inspect)=="function" then
                 if equipOwner.trusted==nil then equipOwner.trusted=Proof.closure(equipOwner.inspect,"ActionQueueEquip.lua")
-                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",3316331961,"PZSurvivorToolkit",true)end
+                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",1433847724,"PZSurvivorToolkit",true)end
                 if equipOwner.trusted and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect then
                     local contract=equipOwner.inspect(action)
                     if contract then return contract end
@@ -1061,7 +1186,10 @@ function Policy.installContracts()
     end, {"setOverrideHandModels"})
     registerNative("ISReadABook", function(action)
         local result = itemResources(action)
-        if result then result.interrupt = "audited-resume" end
+        if result then
+            result.interrupt = "audited-resume"
+            if activeDecision and activeDecision.nativeMode then result.nativeSchedule = "native-input" end
+        end
         return result
     end)
     registerNative("ISMoveablesAction", function(action)
@@ -1183,7 +1311,10 @@ inspect = function(action, context)
     end
     local result = {Definitions.inspect(action, context)}
     local settlement = Toolkit.ActionQueueSettlement
-    if result[1] and settlement and settlement.requiredStep(action) then
+    -- The selected native cohort already owns an earlier private no-debt
+    -- lease; metadata changes are rejected by its final data-only validator.
+    local nativeMode=activeDecision and activeDecision.nativeMode and activeDecision.nativeProofs[action]
+    if result[1] and not nativeMode and settlement and settlement.requiredStep(action) then
         local contract = {}
         for key, value in pairs(result[1]) do contract[key] = value end
         contract.cancelOperation, contract.cancelWaiting = false, false
@@ -1473,6 +1604,8 @@ local function evaluateComponent(projection, entries)
 end
 
 local function proposedEdit(queue, first, last, to, context, projectionRequired)
+    local native=nativePlan.edit(queue,first,last,to,context)
+    if native then return native end
     local needsSpatial=false
     if #queue.queue<=spatialEdits.maxMembers and (type(spatialEdits.carriedFactory)=='function'
         or type(toolkitQueueSpatialNoMovement)=='function'and type(toolkitQueueSpatialApiMatches)=='function')then
@@ -2564,7 +2697,7 @@ function Policy.editUnchanged(queue, snapshot)
             or (type(token) == "table" and (read(token,"toolkitStarted") ~= record.started
                 or read(token,"toolkitCancelled") ~= record.cancelled)) then return false end
     end
-    return true
+    return nativePlan.check(snapshot)
 end
 
 -- A structural plan only: the caller must prove an exact rejected native
@@ -2724,6 +2857,7 @@ end
 function spatialEdits.lookupDecision(scope,callback,...)
     scope.lookup=spatialEdits.lookup(scope.queue,select(2,...),select(3,...))
     if not scope.lookup then return {allowed=false,reason="unavailable",rawResults={n=1,"unavailable"}}end
+    nativePlan.capture(scope,select(2,...),select(3,...),select(4,...))
     return callback(...)
 end
 local function inDecision(queue, context, output, callback, ...)
@@ -2750,6 +2884,7 @@ local function inDecision(queue, context, output, callback, ...)
         end
         if result.reason==nil and scope.spatial then result.spatialValidated=true end
     end
+    if ok and scope.nativeSchedule and result.reason==nil and result.allowed~=false then result.nativeSchedule=true end
     if ok and scope.commonActiveEdit and result.reason==nil and result.allowed~=false then
         result.commonActiveEdit=true
         result.commonActiveEditRoute=scope.commonActiveEditRoute
@@ -2761,6 +2896,21 @@ local function inDecision(queue, context, output, callback, ...)
     -- A provisional no-movement contract is not a reusable public inspection
     -- fact. The decision alone survives; callers receive the ordinary cache.
     if scope.spatial then spatialEdits.rollback(scope,0)end
+    if ok and scope.nativeMode and result.reason==nil and result.allowed~=false then
+        local watch,leases=scope.nativeWatch,scope.nativeLeases
+        local function fresh()
+            if not watch or not watch()then return false end
+            for _,lease in ipairs(leases or{})do if not lease()then return false end end
+            return true
+        end
+        if not fresh()then
+            result.reason,result.allowed="unavailable",false
+            if result.rawResults then result.rawResults[1]="unavailable"end
+        elseif result.snapshot then
+            local snapshot=result.snapshot
+            snapshot[nativePlan.marker]=function(candidate)return nativePlan.equal(candidate,snapshot)and fresh()end
+        end
+    end
     activeDecision = previous
     if output then for _, name in spatialEdits.shape.array(decisionContextFields) do output[name] = context[name] end end
     if not ok then error(result, 0) end
@@ -2801,7 +2951,7 @@ function spatialEdits.reasonDecision(queue,context,callback,...)
     end
     local result=inDecision(queue,fresh,output,function()
         return collect(callback(unpack(arguments,1,arguments.n)))
-    end)
+    end,unpack(arguments,1,arguments.n))
     return unpack(result.rawResults,1,result.rawResults.n)
 end
 function Policy.moveReason(queue,action,target,after,context)

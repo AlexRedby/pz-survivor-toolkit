@@ -241,7 +241,7 @@ def check_workload(value, selection):
 
 def check_segment(row, selection, prepared, verified):
     try:
-        ids = row['ids']; segment = row['segment']; editing = selection['mode'] == 'toolkit' and selection['kind'] == 'sp'
+        ids = row['ids']; segment = row['segment']; editing = selection['mode'] == 'toolkit'
         require(segment in SEGMENTS and ids == prepared and row['server'] == verified and ids['segment'] == segment
                 and ids['case'] == 'equip-edit' and ids['kind'] == selection['kind'] and ids['mode'] == selection['mode'], 'authority/selection segment identity')
         validate_placement(row['clientPlacement'], ids['origin'], 'local', centered=True)
@@ -316,12 +316,11 @@ def check_segment(row, selection, prepared, verified):
         require([value['name'] for value in edits] == expected_edits, 'complete pending edit/negative control sequence')
         for edit in edits:
             allowed = editing and segment in ('reorder-two', 'reorder-three', 'cancel')
-            require(edit['allowed'] is allowed, 'SP/Host edit permission boundary')
+            require(edit['allowed'] is allowed, 'native scheduling edit permission boundary')
+            if allowed: require(edit['reason'] is False, 'successful edit carries denial reason')
             if not allowed:
                 require(type(edit['reason']) is str and edit['reason'] and edit['queueBefore'] == edit['queueAfter'], 'denied edit must preserve queue')
-                if selection['kind'] == 'mp' and segment in ('reorder-two', 'reorder-three', 'cancel'):
-                    recognized = {'unavailable', 'move_dependent', 'container_capacity', 'move_shared_item'} if edit['name'] == 'reorder' else {'unavailable', 'operation_dependent', 'operation_shared_item', 'container_capacity'}
-                    require(edit['reason'] in recognized, 'Host new Equip rights remain protected by source-backed denials')
+            require(edit.get('nativeSchedule', False) is (allowed and selection['kind'] == 'mp'), 'Host native scheduling route evidence')
         if segment == 'component-guard':
             guard = row['componentGuard']
             require(type(guard) is dict and set(guard) == {'item', 'size', 'components', 'quiet'} and guard['item'] == specs['a']['id']
@@ -435,11 +434,11 @@ def verify(root, selection, catalog):
     except (OSError, ValueError, KeyError, TypeError) as error: issues.append(str(error))
     outcomes.append(dict(actor='client1', case='equip-edit', status='failed' if issues else 'passed', reason='; '.join(issues),
         outcome=dict(effectsVerified=not issues, serverAuthorityVerified=not issues, tailCompleted=not issues,
-                     pendingEditsVerified=not issues and selection['mode'] == 'toolkit' and selection['kind'] == 'sp',
+                     pendingEditsVerified=not issues and selection['mode'] == 'toolkit',
                      pendingProtectionVerified=not issues and selection['mode'] == 'toolkit', tidyQuiescent=not issues)))
     return dict(issues=issues, outcomes=outcomes, evidence=dict(workload=work_evidence, handPoint=hand_point, limits=[
         'Programmatic native constructors/durations and original delegates; only the exact source-proven local transfer stop guard may differ. No physical-input or active-edit claim.',
-        'New positive Equip rights are SP only; menu Host is a denial control with exact authority inventory/hands.',
+        'Host positives qualify only editing unsubmitted native order in a singleton root-input cohort. Native effects/validity remain authoritative; no deterministic hand forecast, active/grouped/transfer permission or future capacity credit.',
         'P4 returns borrowed Pencil/Plank to the original nested source. Native transfer removes only the transferred item from hands: dependent clears held Pencil, capacity preserves the held source bag. No explicit menu-intent claim or future capacity grant.',
         'P4 quiescence uses real idle callbacks and shared retained-loan diagnostics; its private state tables are not observed.',
         'Optional work receipts measure programmatic widget handlers and actual UIManager row draws with native pointer getters. No physical OS routing, focus request, filesystem-cold claim, inactive-span cost or whole-project performance verdict. Instrumentation overhead is uncorrected; completed hook intervals omit open/boundary-discarded spans.']))

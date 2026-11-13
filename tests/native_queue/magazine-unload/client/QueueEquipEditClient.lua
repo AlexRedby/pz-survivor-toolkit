@@ -15,7 +15,7 @@ local CallbackObservation=require 'QueueEquipCallbackObservation'
 local tidyObserver
 local workloadEnabled=config.options and config.options.equip_workload==true
 local work
-local native=config.mode=='native';local canEdit=not native and config.kind=='sp'
+local native=config.mode=='native';local canEdit=not native
 local started,ready,done=false,false,false
 local phase,index='prepare',1
 local state,authority,previous,ids,receipt,placement,arrival,proof,quiet
@@ -116,16 +116,19 @@ end
 local function unchanged(before)
  assert(F.equal(before,F.snapshot(state)),'pending equip edit changed physical inventory/hands/pages')
 end
-local function attempt(name,fn,wanted)
- local before=F.snapshot(state);local order=queueOrder();local began=now();local ok,reason=fn();local elapsed=now()-began
+local function attempt(name,fn,wanted,selected,target)
+ local before=F.snapshot(state);local order=queueOrder();local schedule=false
+ if not native and config.kind=='mp'and wanted then
+  local policy=PZSurvivorToolkit.ActionQueuePolicy
+  local decision=name=='cancel'and policy.evaluateCancel(queue(),selected,true)or policy.evaluateMove(queue(),selected,target)
+  assert(decision.allowed and decision.nativeSchedule==true,'Host edit bypassed the native-unsubmitted decision')
+  schedule=true
+ end
+ local began=now();local ok,reason=fn();local elapsed=now()-began
  assert(ok==wanted,'equip edit decision differs '..name..' '..tostring(reason))
  if not ok then assert(type(reason)=='string'and reason~='','denial lacks reason');assert(F.equal(order,queueOrder()),'denied equip edit changed queue')end
- if not native and config.kind=='mp'and(name=='reorder'or name=='cancel')then
-  local recognized=name=='reorder'and{unavailable=true,move_dependent=true,container_capacity=true,move_shared_item=true}
-   or{unavailable=true,operation_dependent=true,operation_shared_item=true,container_capacity=true}
-  assert(not ok and recognized[reason],'Host Equip edit must remain protected by a source-backed denial')
- end
- unchanged(before);edits[#edits+1]={name=name,allowed=ok,reason=reason or false,decisionMilliseconds=elapsed,queueBefore=order,queueAfter=queueOrder()};return ok
+
+ unchanged(before);edits[#edits+1]={name=name,allowed=ok,reason=reason or false,decisionMilliseconds=elapsed,nativeSchedule=schedule,queueBefore=order,queueAfter=queueOrder()};return ok
 end
 local function guardedComponentFacts(item)
  local size=item:componentSize();assert(type(size)=='number'and size%1==0 and size>=0 and size<=8,'bounded component metadata unavailable')
@@ -143,14 +146,14 @@ local function enqueuePending()
  local p,item,Q=getPlayer(),state.items,PZSurvivorToolkit.ActionQueue
  if segment()=='reorder-two'then
   local a=equip('equip-a',item.a,true);local b=equip('equip-b',item.b,true);book('tail')
-  if not native then attempt('reorder',function()if work then return work:drag(queue(),b,a,canEdit)end;return Q.move(queue(),b,a)end,canEdit)
+  if not native then attempt('reorder',function()if work then return work:drag(queue(),b,a,canEdit)end;return Q.move(queue(),b,a)end,canEdit,b,a)
   elseif work then work:native(queue())end
  elseif segment()=='reorder-three'then
   local a=equip('equip-a',item.a,false);equip('equip-b',item.b,true);local c=equip('equip-c',item.c,false);book('tail')
-  if not native then attempt('reorder',function()return Q.move(queue(),c,a)end,canEdit)end
+  if not native then attempt('reorder',function()return Q.move(queue(),c,a)end,canEdit,c,a)end
  elseif segment()=='cancel'then
   equip('equip-a',item.a,true);equip('equip-b',item.b,false);local c=equip('equip-c',item.c,true);book('tail')
-  if not native and attempt('cancel',function()if work then return work:cancel(queue(),c,canEdit)end;return Q.cancelOperation(queue(),c)end,canEdit)then tracks[c].cancelled=true end
+  if not native and attempt('cancel',function()if work then return work:cancel(queue(),c,canEdit)end;return Q.cancelOperation(queue(),c)end,canEdit,c)then tracks[c].cancelled=true end
  elseif segment()=='dependent'then
   local move=transfer(item.nested,item.bag:getItemContainer());local held=equip('equip-nested',item.nested,true);book('tail')
   if not native then

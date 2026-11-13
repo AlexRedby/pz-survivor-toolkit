@@ -6,7 +6,7 @@ local providers, byId, providerRevision = {}, {}, 0
 local activeEditCleanupBinding
 local transferListenerMethods
 local executionProof = require "PZSurvivorToolkit/SourceProof"
-local retainedBindingSource={capture=executionProof and executionProof.captureBindings,call=pcall}
+local retainedBindingSource={capture=executionProof and executionProof.captureBindings,call=pcall,origin=executionProof and executionProof.closure,kind=type,meta=getmetatable,raw=rawget,equal=rawequal,match=string.match}
 -- Keep the new dependency inside the existing source-owned wrapper boundary.
 -- Unknown factories must never receive private callbacks or attempt records.
 local function transferOutcomes(module)
@@ -172,14 +172,44 @@ local function operationLive(record)
             and Toolkit.Settings and Toolkit.Settings.actionQueue() or cancellationRecord(record))
 end
 
+-- Operation seals capture actors/queues. Check their live native filename
+-- without putting the seal into SourceProof's strong filename-metadata cache.
+local function operationSealTrusted(token,seal)
+    local api=retainedBindingSource
+    if api.checkingSeal or api.kind(token)~="table" or api.meta(token)~=nil
+        or api.kind(seal)~="function" or not api.equal(api.raw(token,operationMarker),seal)
+        or api.kind(executionProof)~="table" or api.meta(executionProof)~=nil or api.kind(api.origin)~="function"
+        or not api.equal(api.raw(executionProof,"closure"),api.origin) then return false end
+    local accessor=getFilenameOfClosure
+    if api.kind(accessor)~="function" then return false end
+    -- Refuse nested operation lookups while metadata runs. No seal/actor is
+    -- stored in this transient fence, and captured pcall always releases it.
+    api.checkingSeal=true
+    local ok,path=api.call(accessor,seal)
+    api.checkingSeal=nil
+    if not ok or api.kind(path)~="string" or not api.equal(getFilenameOfClosure,accessor)
+        or api.meta(token)~=nil or not api.equal(api.raw(token,operationMarker),seal)
+        or api.meta(executionProof)~=nil or not api.equal(api.raw(executionProof,"closure"),api.origin) then return false end
+    -- Excluding both separators is the same suffix rule as normalize-then-
+    -- match, without allocating a normalized copy of every native filename.
+    return api.match(path,"([^/\\]+)$")=="ActionQueueSettlement.lua"
+end
+
 local function operation(character, token, create)
-    if type(token) ~= "table" or not character then return end
-    local seal = rawget(token, operationMarker)
-    local record = type(seal) == "function" and seal(token)
-    if record then return operationLive(record) and record.character == character and record or nil end
+    local api=retainedBindingSource
+    if api.checkingSeal or api.kind(token)~="table" or api.meta(token)~=nil or not character then return end
+    local seal=api.raw(token,operationMarker)
+    if seal~=nil then
+        if not operationSealTrusted(token,seal) then return end
+        local opened,record=api.call(seal,token)
+        if not opened or api.kind(record)~="table" or api.meta(record)~=nil
+            or not api.equal(api.raw(record,"token"),token)
+            or not api.equal(api.raw(record,"character"),character) then return end
+        return operationLive(record) and record or nil
+    end
     local queue = ISTimedActionQueue.queues[character]
     if not create or not queue then return end
-    record = {character = character, token = token, queue = queue,
+    local record = {character = character, token = token, queue = queue,
         generation = queue.toolkitOperationGeneration or 0, phase = "prepare", steps = {}, actions = {}, borrowings = {}}
     if not operationLive(record) then return end
     token[operationMarker] = function(value) if value == token then return record end end
@@ -435,7 +465,7 @@ local function editLedger(queue, current, budget)
         or not executionProof or executionProof.closure ~= editLedgerOrigin
         or type(editLedgerOrigin) ~= "function" then return unknown() end
     local seal = rawget(token, operationMarker)
-    if type(seal) ~= "function" or not editLedgerOrigin(seal, "ActionQueueSettlement.lua") then return unknown() end
+    if not operationSealTrusted(token,seal) then return unknown() end
     local ok, record = pcall(seal, token)
     if not ok or type(record) ~= "table" or getmetatable(record) ~= nil
         or record.token ~= token or record.queue ~= queue or list ~= queue.queue
@@ -3214,6 +3244,178 @@ function Settlement.prepareDeviceRefusal(queue, current, members)
         if removedCurrent then set(queue, "current", raw(list, 1)) end
         return true, removedCurrent
     end
+end
+
+-- Structural private-ledger fact only. Native admission, effects, capacity and
+-- edit permission belong to the caller; missing history never means no debt.
+local nativePlanReads = {kind=type, meta=getmetatable, raw=rawget, pairs=pairs, call=pcall,
+    equal=rawequal, count=select, globals=_G,
+    queueFields={'toolkitCancel','toolkitGroupCancel','toolkitResume','toolkitOutcomeWait','toolkitStopIntent','toolkitOperationsInvalid'},
+    actionFields={'toolkitQueueReturn','toolkitQueueLinked','toolkitQueueContinuation','_isAddingActions',
+        'onStartFunc','onCompleteFunc','onCancelFunc','onFailFunc','retriggerLastAction'},
+    stepFields={'required','receipt','returning','preparation','prerequisites','borrowing','item','kind','device'}}
+-- Decision-local own-data mirrors. Checking a mirror never opens a seal or
+-- invokes source metadata, actor/settings getters, providers or native actions.
+local function nativePlanMirror()
+    local api,records=nativePlanReads,{}
+    local function own(owner,key)
+        if api.meta(owner)==nil then return api.raw(owner,key) end
+        for name,value in api.pairs(owner)do if api.equal(name,key)then return value end end
+    end
+    local function capture(owner,keys)
+        if api.kind(owner)~='table'then return false end
+        local values,count={},0
+        if keys then
+            for _,key in api.pairs(keys)do values[key]=own(owner,key)end
+        else
+            for key,value in api.pairs(owner)do values[key]=value;count=count+1 end
+        end
+        records[#records+1]={owner=owner,meta=api.meta(owner),values=values,count=count,keys=keys}
+        return true
+    end
+    local function unchanged()
+        for _,record in api.pairs(records)do
+            local owner=record.owner
+            if not api.equal(api.meta(owner),record.meta)then return false end
+            if record.keys then
+                for _,key in api.pairs(record.keys)do
+                    if not api.equal(own(owner,key),api.raw(record.values,key))then return false end
+                end
+            else
+                local count=0
+                for key,value in api.pairs(owner)do
+                    count=count+1
+                    if not api.equal(value,api.raw(record.values,key))then return false end
+                end
+                if count~=record.count then return false end
+            end
+        end
+        return true
+    end
+    return capture,unchanged
+end
+local function nativePlanValidate(lease,...)
+
+    local api=nativePlanReads
+    local arity=api.count('#',...)
+    if arity<2 or arity>3 then return false end
+    local queue,action,allowActive=...
+    if allowActive~=nil and allowActive~=false and allowActive~=true then return false end
+    local function plain(value)return api.kind(value)=='table'and api.meta(value)==nil end
+    -- Native Kahlua rawget inherits. Only plain private tables use raw; action
+    -- and queue own fields are read from their delegates without __index.
+    local function own(value,key)
+        if api.kind(value)~='table'then return end
+        for name,entry in api.pairs(value)do if api.equal(name,key)then return entry end end
+    end
+    local function public()
+        return plain(api.globals)and plain(Toolkit)and plain(Settlement)and plain(executionProof)
+            and api.equal(api.raw(api.globals,'PZSurvivorToolkit'),Toolkit)
+            and api.equal(api.raw(Toolkit,'ActionQueueSettlement'),Settlement)
+            and api.equal(api.raw(executionProof,'closure'),editLedgerOrigin) and api.kind(editLedgerOrigin)=='function'
+    end
+    if not public()or api.kind(queue)~='table'or api.kind(action)~='table'then return false end
+    local actor,list,front=own(queue,'character'),own(queue,'queue'),own(queue,'current')
+    local token,generation=own(action,'toolkitQueueOperation'),own(queue,'toolkitOperationGeneration')or 0
+    if actor==nil or not api.equal(own(action,'character'),actor) or not plain(list)or not plain(token)
+        or api.kind(generation)~='number'or generation~=generation or generation%1~=0 then return false end
+    local capture,unchanged
+    if lease then
+        capture,unchanged=nativePlanMirror()
+        -- Preserve this incoming observation across the source-check boundary;
+        -- capturing changed action fields afterwards would hide invalidation.
+        capture(queue);capture(action);capture(list);capture(token)
+        capture(api.globals,{'PZSurvivorToolkit','ISTimedActionQueue'})
+        capture(Toolkit,{'ActionQueueSettlement'})
+        capture(Settlement,{'nativePlanSingleton','nativePlanLease'})
+        capture(executionProof,{'closure'})
+        capture(cancellations,{queue})
+        local registry=api.raw(api.globals,'ISTimedActionQueue')
+        local queues=api.kind(registry)=='table'and own(registry,'queues')
+        if not plain(queues)then return false end
+        capture(registry,{'queues'});capture(queues,{actor})
+        for _,member in api.pairs(list)do
+            if api.kind(member)~='table'then return false end
+            if not api.equal(member,action)then capture(member,{'toolkitQueueOperation','character'})end
+        end
+    end
+    local seal=api.raw(token,operationMarker)
+    if api.kind(seal)~='function'then return false end
+    -- Check provenance before calling a public token's function. The checker
+    -- may reenter through closure metadata; all ledger/queue facts follow it.
+    if not operationSealTrusted(token,seal)or not public()or not plain(token)
+        or not api.equal(api.raw(token,operationMarker),seal) then return false end
+    local opened,record=api.call(seal,token)
+    if not opened or not plain(record)or not public()then return false end
+    local registry=api.raw(api.globals,'ISTimedActionQueue')
+    local queues=api.kind(registry)=='table'and own(registry,'queues')
+    if not plain(queues)or not api.equal(api.raw(queues,actor),queue)
+        or not api.equal(own(queue,'character'),actor) or not api.equal(own(queue,'queue'),list) or not api.equal(own(queue,'current'),front)
+        or not api.equal(api.raw(list,1),front) or not api.equal(own(action,'character'),actor)
+        or not api.equal(own(action,'toolkitQueueOperation'),token) or not api.equal(api.raw(token,operationMarker),seal)
+        or (own(queue,'toolkitOperationGeneration')or 0)~=generation
+        or not api.equal(api.raw(record,'character'),actor) or not api.equal(api.raw(record,'queue'),queue)
+        or not api.equal(api.raw(record,'token'),token) or api.raw(record,'generation')~=generation
+        or api.raw(record,'preparationScope')~=nil or api.raw(record,'settlement')~=nil
+        or cancellations[queue]then return false end
+    for _,name in api.pairs(api.queueFields)do if own(queue,name)then return false end end
+    if api.raw(token,'toolkitCancelled')or api.raw(token,'toolkitPickups')~=nil
+        or api.raw(token,'toolkitContinuations')~=nil and api.raw(token,'toolkitContinuations')~=0 then return false end
+    for _,name in api.pairs(api.actionFields)do
+        if own(action,name)then return false end
+    end
+    local steps,actions,borrowings=api.raw(record,'steps'),api.raw(record,'actions'),api.raw(record,'borrowings')
+    if not plain(steps)or not plain(actions)or not plain(borrowings)then return false end
+    for _ in api.pairs(borrowings)do return false end
+    local step=api.raw(steps,1)
+    if not plain(step)or not api.equal(api.raw(actions,action),step) then return false end
+    for key in api.pairs(steps)do if key~=1 then return false end end
+    for key in api.pairs(actions)do if not api.equal(key,action)then return false end end
+    if not api.equal(api.raw(step,'operation'),record) or not api.equal(api.raw(step,'action'),action)
+        or api.raw(step,'phase')~='body'or api.raw(step,'state')~='pending'then return false end
+    for _,name in api.pairs(api.stepFields)do
+        if api.raw(step,name)~=nil then return false end
+    end
+    local found,count=0,0
+    for index,member in api.pairs(list)do
+        count=count+1
+        if api.kind(index)~='number'or index%1~=0 or index<1 or index>#list
+            or api.kind(member)~='table'then return false end
+        if api.equal(member,action)then found=found+1
+        elseif api.equal(own(member,'toolkitQueueOperation'),token) then return false end
+    end
+    if found~=1 or count~=#list then return false end
+    local eligible
+    if api.raw(step,'started')then
+        -- Lifecycle.started leaves an active body in state pending; it does not
+        -- earn an effect. This exception never covers a different/tail episode.
+        eligible=allowActive==true and api.raw(step,'started')==true
+            and api.raw(record,'phase')=='body'and api.raw(token,'toolkitStarted')==true
+            and api.equal(front,action)and api.equal(api.raw(list,1),action) and own(action,'action')~=nil
+    else
+        local transaction=own(action,'transactionId')
+        eligible=api.raw(record,'phase')=='prepare'and not api.raw(token,'toolkitStarted')
+            and not own(action,'action')and not own(action,'started')
+            and own(action,'toolkitNativeTransaction')==nil and own(action,'toolkitNativeKind')==nil
+            and(transaction==nil or transaction==0)
+    end
+    if not eligible then return false end
+    if not lease then return true end
+    if not unchanged()then return false end
+    -- No callback-bearing work follows validation. Save the actual private
+    -- objects now; subsequent getters cannot renew this decision's observation.
+    capture(record);capture(steps);capture(step);capture(actions);capture(borrowings)
+    local handle=api.raw(step,'handle')
+    if not plain(handle)then return false end
+    capture(handle)
+    return unchanged
+end
+function Settlement.nativePlanSingleton(...)
+    return nativePlanValidate(false,...)==true
+end
+function Settlement.nativePlanLease(...)
+    local check=nativePlanValidate(true,...)
+    if nativePlanReads.kind(check)=='function'then return check end
 end
 
 return Settlement

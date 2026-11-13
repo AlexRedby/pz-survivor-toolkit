@@ -575,9 +575,10 @@ do
     assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
         and s.settlement.returnState(s.obligation) == nil,
         'missing closure metadata must neither bind nor capture a return')
-    local metadataCalls = 0
+    local metadataCalls, outcomeCallbacks = 0, {}
+    for _, name in ipairs(outcomeExports) do outcomeCallbacks[s.outcome[name]] = true end
     getFilenameOfClosure = function(callback)
-        metadataCalls = metadataCalls + 1
+        if outcomeCallbacks[callback] then metadataCalls = metadataCalls + 1 end
         return s.metadataAccessor(callback)
     end
     assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 5,
@@ -602,14 +603,17 @@ do
         actual.observer = delegate(actual.observer, factoryCalls, 'observer')
         return actual
     end, true)
-    local metadataCalls = 0
+    local metadataCalls, outcomeCallbacks = 0, {}
+    for _, name in ipairs(outcomeExports) do outcomeCallbacks[s.outcome[name]] = true end
     getFilenameOfClosure = function(callback)
-        metadataCalls = metadataCalls + 1
-        assert(factoryCalls.authority == 0 and factoryCalls.observer == 0,
-            'all source checks must finish before factories receive private arguments')
-        assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
-            and s.settlement.returnState(s.obligation) == nil,
-            'metadata reentry must not expose a partially bound private attempt')
+        if outcomeCallbacks[callback] then
+            metadataCalls = metadataCalls + 1
+            assert(factoryCalls.authority == 0 and factoryCalls.observer == 0,
+                'all source checks must finish before factories receive private arguments')
+            assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+                and s.settlement.returnState(s.obligation) == nil,
+                'metadata reentry must not expose a partially bound private attempt')
+        end
         return s.metadataAccessor(callback)
     end
     assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 5)
@@ -632,12 +636,15 @@ do
         return actual
     end, true)
     local realClosure = s.sourceProof.closure
-    local metadataCalls = 0
+    local metadataCalls, outcomeCallbacks = 0, {}
+    for _, name in ipairs(outcomeExports) do outcomeCallbacks[s.outcome[name]] = true end
     getFilenameOfClosure = function(callback)
         local filename = s.metadataAccessor(callback)
-        metadataCalls = metadataCalls + 1
-        if metadataCalls == 1 then
-            s.sourceProof.closure = function() fakeChecks = fakeChecks + 1; return true end
+        if outcomeCallbacks[callback] then
+            metadataCalls = metadataCalls + 1
+            if metadataCalls == 1 then
+                s.sourceProof.closure = function() fakeChecks = fakeChecks + 1; return true end
+            end
         end
         return filename
     end

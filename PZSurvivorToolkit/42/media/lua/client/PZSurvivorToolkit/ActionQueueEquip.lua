@@ -1,5 +1,5 @@
--- Pending ordinary native Equip only. The pure hand projection has no
--- authority until every non-hand transition has a source-owned certificate.
+-- Pending ordinary native Equip: SP uses a source-owned effect projection;
+-- Host edits only future native order, with unknown effects and no forecast.
 require 'TimedActions/ISEquipWeaponAction'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Hands=require 'PZSurvivorToolkit/ActionQueueHands'
@@ -13,11 +13,13 @@ local class,base,object=ISEquipWeaponAction,ISBaseTimedAction,ISBaseObject
 local chain,closure,matches,own=Proof.nativeActionClassChain,Proof.closure,Proof.matches,Proof.own
 local handResource=Hands and Hands.equipResource
 local certify=Effects and Effects.certify
+local nativeQuiet,nativeAPI=toolkitEquipNativeQuiet,toolkitEquipEventDispatchApiMatches
 local inspect,bindingsTrusted,adoptBase
 local function plain(value)return kind(value)=='table'and kind(meta)=='function'and meta(value,nil)end
 local watch=Proof.captureBindings({{owner=_G,keys={'PZSurvivorToolkit','toolkitLuaMetatableMatches','type','rawequal','pairs','ipairs','pcall','select','math',
  'instanceof','getSpecificPlayer','getClassSimpleName','getFirstLineOfClosure','isClient','isServer','isMultiplayer','getPlayerHotbar',
- 'getPlayerInventory','sendEquip','triggerEvent','syncItemActivated','ItemTag','ItemType'}},
+ 'getPlayerInventory','sendEquip','triggerEvent','syncItemActivated','ItemTag','ItemType',
+ 'toolkitEquipNativeQuiet','toolkitEquipEventDispatchApiMatches'}},
  {owner=Proof,keys={'nativeActionClassChain','closure','matches','own','captureBindings'}},
  {owner=Toolkit,keys={'ActionQueueHands','ActionQueueHandEffects','ActionQueueEquip'}}})
 local line=getFirstLineOfClosure
@@ -153,8 +155,43 @@ local function sameItem(actor,root,row)
  local valid,both,weapon,handgun=itemFacts(actor,root,row.item)
  return valid and both==row.requiresBoth and weapon==row.handWeapon and handgun==row.handgun
 end
+-- Host permission is only for editing an unsubmitted native command. The
+-- server and selected callbacks keep their normal effects/validity checks;
+-- unlike the SP certificate this makes no hand, inventory or output forecast.
+local function inspectNativeSchedule(action)
+ if not isClient()or isServer()then return end
+ local actor=action.character
+ if not instanceof(actor,'IsoPlayer')or getClassSimpleName(actor)~='IsoPlayer'
+  or getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead()or actor:isAsleep()then return end
+ local root=actor:getInventory()
+ if not instanceof(root,'ItemContainer')or root:getParent()~=actor or root:getContainingItem()~=nil then return end
+ local item,savedPrimary,savedTwo=action.item,action.primary,action.twoHands
+ local valid,both,weapon,handgun,id,fullType=itemFacts(actor,root,item)
+ if not valid then return end
+ local two=savedTwo==true
+ local supportsTwo=false
+ if weapon then supportsTwo=item:isTwoHandWeapon()end
+ if weapon and kind(supportsTwo)~='boolean'or both and not two
+  or weapon and not supportsTwo and two and not both then return end
+ if toolkitEquipNativeQuiet~=nativeQuiet or toolkitEquipEventDispatchApiMatches~=nativeAPI
+  or kind(nativeQuiet)~='function'or kind(nativeAPI)~='function'or not nativeAPI(nativeQuiet)
+  or nativeQuiet(actor,{item})~=true then return end
+ -- Native metadata calls may reenter. The outer Policy additionally rechecks
+ -- the live operation ledger and queue before any actual schedule mutation.
+ local again,aBoth,aWeapon,aHandgun,aId,aType=itemFacts(actor,root,item)
+ if not again or aBoth~=both or aWeapon~=weapon or aHandgun~=handgun or aId~=id or aType~=fullType
+  or action.item~=item or action.primary~=savedPrimary or action.twoHands~=savedTwo
+  or weapon and item:isTwoHandWeapon()~=supportsTwo
+  or actor:getInventory()~=root or not source(action)or not pending(action)
+  or not isClient()or isServer()or getSpecificPlayer(actor:getPlayerNum())~=actor then return end
+ return {items={[id]=true},itemTypes={[fullType]=true},targets={},hands=actor,equipment=actor,
+  preparation=true,preparationFinish=true,cancelWaiting=true,cancelOperation=true,interrupt='finish-step',
+  moveRequiresProjection=true,nativeSchedule='unsubmitted',unknownOutputs=true}
+end
 local function inspectPending(action)
- if not source(action)or not pending(action)or isClient()or isServer()or isMultiplayer()then return end
+ if not source(action)or not pending(action)then return end
+ if isClient()then return inspectNativeSchedule(action)end
+ if isServer()or isMultiplayer()then return end
  local actor=action.character
  if not instanceof(actor,'IsoPlayer')or getClassSimpleName(actor)~='IsoPlayer'
   or getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead()or actor:isAsleep()then return end

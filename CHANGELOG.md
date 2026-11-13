@@ -46,6 +46,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.365
+
+- **Fixed:** Behind an active reader, ordinary unstarted equipment actions from the main inventory can be reordered and cancelled in Host within a singleton root-item queue. The reader stays active; retained commands run through their original native checks and callbacks without predicting hand effects or spending future capacity. Borrowed/prepared groups, shared items, started commands and unsupported components remain protected.
+- **Fixed:** Pending native schedule edits recheck callback fields and private operation/cleanup facts after metadata work and immediately before mutation. Operation lookup rejects replaced or copied seals before invocation, without retaining operation seals in the source-metadata cache. Plain-table field checks avoid enumerating global/module namespaces; inherited tables keep their own-field checks.
+
 ### 0.1.364
 
 - **Development:** Equip fixtures validate their reviewed source pins against the selected candidate during preparation, so stale pins fail before launching a game. Explicit archived comparison profiles retain their own reviewed pins.
@@ -1685,6 +1690,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.102
+
+- **Changed:** Updated the reviewed queue-policy compiler input for the native-unsubmitted Host scheduling path. Unsupported inputs retain the original Lua implementation.
 
 ### 0.1.101
 

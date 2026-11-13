@@ -9,9 +9,11 @@ local function read(path)
  if NativeReadText then return NativeReadText(path):gsub('\r','')end
  local f=assert(io.open(path));local value=f:read('*a');f:close();return value:gsub('\r','')
 end
-local function setup(changed)
+local function setup(changed,host)
  local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
  f.native('shared/ISBaseObject.lua');f.native('shared/TimedActions/ISBaseTimedAction.lua')
+ -- Recreate the reader after the base reload, as in one coherent native VM.
+ f.native('shared/TimedActions/ISReadABook.lua')
  getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
  getFirstLineOfClosure=NativeFirstLineOfClosure or function(callback)
   -- Mirror native first-instruction metadata for these source-backed methods.
@@ -81,6 +83,16 @@ local function setup(changed)
   if name=='PZSurvivorToolkit/ActionQueueHandEffects'then return provider end
   return saved(name)
  end
+ toolkitEquipNativeQuiet=nil;toolkitEquipEventDispatchApiMatches=nil
+ if host then
+  toolkitEquipNativeQuiet=function(actor,items)
+   assert(actor==f.player and #items==1);certificate.quietItems=items
+   if certificate.quietCallback then certificate.quietCallback()end
+   return certificate.quiet~=false
+  end
+  local quiet=toolkitEquipNativeQuiet
+  toolkitEquipEventDispatchApiMatches=function(callback)return callback==quiet end
+ end
  local owner=f.project('ActionQueueEquip')
  local function item(class,requiresBoth,handgun)
   local item=f.item(class=='HandWeapon'and'Base.Screwdriver'or'Base.Nails');item.class=class or'ComboItem'
@@ -102,6 +114,34 @@ local function setup(changed)
  return {owner=owner,f=f,actor=actor,root=root,item=item,action=action,model=model,proof=proof,hands=hands,
   provider=provider,certificate=certificate,effects=function()return effects end,
   mode=function(c,s)client,server=c,s end}
+end
+-- Native-schedule permission is not a renamed SP effect certificate. It
+-- reads only the incoming canonical root item and leaves native hooks alone.
+do
+ local s=setup(nil,true);s.mode(true,false)
+ local incoming=s.item();local action=s.action(incoming,true,false)
+ s.actor.primary={};s.actor.secondary={};s.actor.back={}
+ local contract=assert(s.owner.inspect(action),'ordinary unsubmitted Host Equip rejected')
+ assert(contract.nativeSchedule=='unsubmitted'and contract.unknownOutputs==true and contract.edit==nil)
+ assert(contract.moveRequiresProjection and contract.cancelWaiting and contract.cancelOperation)
+ assert(s.certificate.requests==0 and s.certificate.checks==0 and s.certificate.quietItems[1]==incoming and s.effects()==0)
+ assert(contract.items[incoming:getID()]and not action.action,'native schedule performed an action')
+ s.certificate.quiet=false;assert(not s.owner.inspect(action),'extra native components accepted')
+ s.certificate.quiet=true
+ s.certificate.quietCallback=function()action.item=s.item()end
+ assert(not s.owner.inspect(action),'reentrant native metadata replaced the scheduled item')
+end
+for _,change in ipairs({
+ function(s,a)a.action={}end,function(s,a)a.started=true end,function(s,a)a.toolkitNativeTransaction=1 end,
+ function(s,a)a.toolkitQueueReturn=true end,function(s,a)a.toolkitQueueLinked=true end,
+ function(s,a)a.onCancelFunc=function()error('must not execute')end end,
+ function(s,a)a.item.container={}end,function(s,a)s.root.items[a.item:getID()]={}end,
+ function(s,a)a.item.heavy=true end,function(s,a)a.item.activation=true end,
+ function(s,a)s.mode(true,true)end,
+})do
+ local s=setup(nil,true);s.mode(true,false);local action=s.action(s.item(),true,false);change(s,action)
+ assert(not s.owner.inspect(action),'unsupported Host native-schedule source admitted')
+ assert(s.certificate.requests==0 and s.effects()==0)
 end
 local function handResource(contract)
  for _,resource in ipairs(contract.edit.resources)do if resource.domain=='hands'then return resource end end
@@ -210,6 +250,93 @@ do
  assert(cancel.allowed,'pending Equip cancellation before surviving suffix denied: '..tostring(cancel.reason))
  assert(api.cancel(q,a)and #q.queue==2 and q.queue[1]==front and q.queue[2]==b and s.effects()==0,
   'real Queue did not erase only the qualified pending operation')
+end
+-- The full Host policy uses actual private enqueue/started history, then the
+-- real Queue API changes only the unsubmitted order. No effect certificate,
+-- server result or synthetic native action is supplied for the pending rows.
+local function hostQueue()
+ local s=setup(nil,true);s.mode(true,false)
+ s.f.project('ActionQueueOperations');s.f.project('ActionQueueDefinitions')
+ local policy=s.f.project('ActionQueuePolicy');s.f.project('ActionQueueLabels');local api=s.f.project('ActionQueue')
+ local front=s.f.action(ISReadABook,{item=s.item()});local tail=s.f.action(ISReadABook,{item=s.item()})
+ local a=s.action(s.item(),true,false);local b=s.action(s.item(),false,false)
+ local q=s.f.queue(front,a,b,tail);local ledger=PZSurvivorToolkit.ActionQueueSettlement
+ for _,member in ipairs(q.queue)do assert(ledger.track(member,'body'))end
+ ledger.started(front);front.toolkitQueueOperation.toolkitStarted=true;front.action={}
+ return s,policy,api,q,front,a,b,tail,ledger
+end
+do
+ local s,policy,api,q,front,a,b,tail=hostQueue()
+ local move=policy.evaluateMove(q,b,a,false)
+
+ assert(move.allowed and move.nativeSchedule,'native-unsubmitted Host route was not used: '..tostring(move.reason))
+ assert(not policy.moveReason(q,b,a,false)and not policy.cancelOperationReason(q,a)and not policy.cancelReason(q,a),
+  'reason-only APIs disagreed with authoritative native scheduling')
+ assert(api.move(q,b,a)and q.queue[1]==front and q.queue[2]==b and q.queue[3]==a and q.queue[4]==tail)
+ local cancel=policy.evaluateCancel(q,a,true)
+ assert(cancel.allowed and cancel.nativeSchedule,'Host native cancellation before a root reader denied')
+ assert(api.cancelOperation(q,a)and #q.queue==3 and q.queue[2]==b and q.queue[3]==tail)
+ assert(s.certificate.requests==0 and s.effects()==0 and not a.action and not b.action and front.action,
+  'Host schedule edit ran/replayed native work')
+end
+do
+ local s,p,api,q,front,a,b,tail=hostQueue()
+ front.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
+ local ordinary=p.evaluateMove(q,a,front,false)
+ s.certificate.quiet=false -- Explicit control: refuse the new owner and retain native legacy inspection.
+ local legacy=p.evaluateMove(q,a,front,false)
+ assert(ordinary.allowed and legacy.allowed and ordinary.reason==legacy.reason and not ordinary.nativeSchedule,
+  'pending Host owner replaced an already-qualified active-reading route')
+end
+do
+ local s,p,api,q,front,a,b,tail,ledger=hostQueue()
+ s.f.native('client/TimedActions/WalkToTimedAction.lua');p.installContracts()
+ local walk=s.f.action(ISWalkToTimedAction,{})
+ table.insert(q.queue,3,walk);assert(ledger.track(walk,'body'))
+ local ordinary=p.evaluateMove(q,a,walk,true)
+ s.certificate.quiet=false
+ local legacy=p.evaluateMove(q,a,walk,true)
+ assert(ordinary.allowed and legacy.allowed and not ordinary.nativeSchedule,
+  'native scheduling tightened an already-supported mixed walking/equipment edit')
+end
+for index,mutate in ipairs({
+ function(s,p,a,q,front,x,y,tail,l)q.queue[3],q.queue[4]=tail,y;y.toolkitQueueOperation=x.toolkitQueueOperation end,
+ function(s,p,a,q,front,x,y,tail,l)l.cleanupAfter(tail,{})end,
+ function(s,p,a,q,front,x,y,tail,l)tail.item.container={}end,
+ function(s,p,a,q,front,x,y,tail,l)y.item=x.item end,
+ function(s,p,a,q,front,x,y,tail,l)y.action={}end,
+})do
+ local s,p,a,q,front,x,y,tail,l=hostQueue();mutate(s,p,a,q,front,x,y,tail,l)
+ local move,cancel=p.evaluateMove(q,y,x,false),p.evaluateCancel(q,x,true)
+ assert(not move.allowed and not cancel.allowed,'unsupported Host cohort gained permission '..index..' move='..tostring(move.allowed)..' cancel='..tostring(cancel.allowed))
+end
+-- Late metadata and final Settings calls can mutate an already inspected row.
+-- Both the decision and the actual public commit must reject that stale proof.
+for _,late in ipairs({'metadata','commit'})do
+ local s,p,a,q,front,x,y,tail,l=hostQueue()
+ local function mutate()x.onCancelFunc=function()error('foreign cancellation executed')end end
+ if late=='metadata'then
+  tail.item.getID=function(self)mutate();return self.id end
+  assert(not p.evaluateMove(q,y,x,false).allowed,'later item metadata invalidated an earlier row without rejection')
+ else
+  local original=PZSurvivorToolkit.Settings.actionQueue
+  local armed=false
+  PZSurvivorToolkit.Settings.actionQueue=function()if armed then mutate()end;return original()end
+  local decision=assert(p.evaluateMove(q,y,x,false));assert(decision.allowed)
+  armed=true
+  assert(not p.editUnchanged(q,decision.snapshot),'final settings callback bypassed callback-free commit lease')
+ end
+ assert(q.queue[2]==x and q.queue[3]==y and s.effects()==0)
+end
+do
+ local s,p,a,q,front,x,y=hostQueue();local calls=0
+ for key,value in pairs(x.toolkitQueueOperation)do
+  if type(key)=='table'and type(value)=='function'then
+   x.toolkitQueueOperation[key]=function()calls=calls+1;error('foreign operation seal executed')end
+  end
+ end
+ assert(not p.evaluateMove(q,y,x,false).allowed and not p.evaluateCancel(q,x,true).allowed)
+ assert(calls==0 and q.queue[2]==x and q.queue[3]==y,'full Policy invoked an untrusted private-operation seal')
 end
 -- Distinct instances of the same native type must stay separate resources
 -- when a third pending assignment crosses them through the public Queue API.
