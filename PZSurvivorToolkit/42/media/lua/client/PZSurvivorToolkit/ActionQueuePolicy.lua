@@ -981,7 +981,7 @@ end
 -- root equipment commands. Every retained step still admits itself natively;
 -- nothing here promises an outcome or credits space/items from future effects.
 local nativePlan={settlement=Toolkit.ActionQueueSettlement,marker={},raw=rawget,equal=rawequal}
-nativePlan.lease=nativePlan.settlement and nativePlan.settlement.nativePlanLease
+nativePlan.cohort=nativePlan.settlement and nativePlan.settlement.nativePlanCohort
 function nativePlan.member(queue,member,active,context,seen)
     local contract=inspect(member,context)
     if not contract or (contract.nativeSchedule~="unsubmitted" and contract.nativeSchedule~="native-input")
@@ -1001,8 +1001,7 @@ function nativePlan.member(queue,member,active,context,seen)
     if type(id)~="number" or id~=id or id%1~=0 or id==-1 or seen[id]
         or root:getItemWithID(id)~=item or member.item~=item or member.character~=actor
         or item:getContainer()~=root or item:getID()~=id or actor:getInventory()~=root then return false end
-    local lease=activeDecision.nativeProofs[member]
-    if not lease or not lease()then return false end
+    if not activeDecision.nativeMembers[member]then return false end
     seen[id]=true
     return true
 end
@@ -1052,22 +1051,18 @@ function nativePlan.capture(scope,action,target,after)
         {owner=table,keys={"insert","remove"}},
     })
     if not globals or Toolkit.ActionQueueSettlement~=nativePlan.settlement
-        or nativePlan.settlement.nativePlanLease~=nativePlan.lease or type(nativePlan.lease)~="function"
-        or not Proof.closure(nativePlan.lease,"ActionQueueSettlement.lua")then return end
+        or nativePlan.settlement.nativePlanCohort~=nativePlan.cohort or type(nativePlan.cohort)~="function"
+        or not Proof.closure(nativePlan.cohort,"ActionQueueSettlement.lua")then return end
     scope.nativeWatch=function()
         if not globals()then return false end
         for _,watch in ipairs(watches)do if not watch()then return false end end
         return true
     end
-    local leases,proofs={},{}
-    for index,member in ipairs(list)do
-        local lease=nativePlan.lease(scope.queue,member,index==1)
-        if type(lease)~="function"then return end
-        leases[#leases+1],proofs[member]=lease,lease
-    end
-    if not scope.nativeWatch()then return end
-    for _,lease in ipairs(leases)do if not lease()then return end end
-    scope.nativeLeases,scope.nativeProofs,scope.nativeMode=leases,proofs,true
+    local check=nativePlan.cohort(scope.queue)
+    if type(check)~="function"or not scope.nativeWatch()or not check()then return end
+    local members={}
+    for _,member in ipairs(list)do members[member]=true end
+    scope.nativeCheck,scope.nativeMembers,scope.nativeMode=check,members,true
 end
 function nativePlan.check(snapshot)
     local check=nativePlan.raw(snapshot,nativePlan.marker)
@@ -1097,7 +1092,10 @@ function nativePlan.edit(queue,first,last,to,context)
             denied.blocker=member;return denied
         end
     end
-    if activeDecision then activeDecision.nativeSchedule=true end
+    -- All member getters have finished. One shared own-data check covers the
+    -- cohort, including mutations of earlier rows by a later getter.
+    if not activeDecision.nativeCheck()then return denied end
+    activeDecision.nativeSchedule=true
     return {status="allowed",nativeSchedule=true,externalCapacity=true}
 end
 local function equipmentResources(action)
@@ -1313,7 +1311,7 @@ inspect = function(action, context)
     local settlement = Toolkit.ActionQueueSettlement
     -- The selected native cohort already owns an earlier private no-debt
     -- lease; metadata changes are rejected by its final data-only validator.
-    local nativeMode=activeDecision and activeDecision.nativeMode and activeDecision.nativeProofs[action]
+    local nativeMode=activeDecision and activeDecision.nativeMode and activeDecision.nativeMembers[action]
     if result[1] and not nativeMode and settlement and settlement.requiredStep(action) then
         local contract = {}
         for key, value in pairs(result[1]) do contract[key] = value end
@@ -2897,11 +2895,9 @@ local function inDecision(queue, context, output, callback, ...)
     -- fact. The decision alone survives; callers receive the ordinary cache.
     if scope.spatial then spatialEdits.rollback(scope,0)end
     if ok and scope.nativeMode and result.reason==nil and result.allowed~=false then
-        local watch,leases=scope.nativeWatch,scope.nativeLeases
+        local watch,check=scope.nativeWatch,scope.nativeCheck
         local function fresh()
-            if not watch or not watch()then return false end
-            for _,lease in ipairs(leases or{})do if not lease()then return false end end
-            return true
+            return watch~=nil and check~=nil and watch()and check()
         end
         if not fresh()then
             result.reason,result.allowed="unavailable",false

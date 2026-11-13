@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.366
+
+- **Changed:** Pending Host equipment edits capture the shared queue structure and operation-token ownership once per decision. Private per-operation history and the final freshness checks remain enforced; supported edits and native execution are unchanged. The standalone ledger queries reuse the same validation helpers.
+
 ### 0.1.365
 
 - **Fixed:** Behind an active reader, ordinary unstarted equipment actions from the main inventory can be reordered and cancelled in Host within a singleton root-item queue. The reader stays active; retained commands run through their original native checks and callbacks without predicting hand effects or spending future capacity. Borrowed/prepared groups, shared items, started commands and unsupported components remain protected.
@@ -1690,6 +1694,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.103
+
+- **Changed:** Updated the reviewed queue-policy compiler input for shared native cohort validation. Unsupported inputs retain the original Lua implementation.
 
 ### 0.1.102
 

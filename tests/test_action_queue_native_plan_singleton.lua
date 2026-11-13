@@ -435,5 +435,206 @@ do
     check(ok,problem)
 end
 
+
+-- Cohort queries share structural observations but still open each real token.
+local function cohortFixture(size)
+    local s=fixture()
+    s.queue.queue={s.front}
+    s.front.action=nil
+    assert(s.settlement.track(s.front,'body'))
+    s.lifecycle.started(s.front)
+    s.front.toolkitQueueOperation.toolkitStarted=true;s.front.action={}
+    for index=2,size do
+        local action=index==2 and s.action or {character=s.actor,toolkitQueueOperation={}}
+        assert(s.settlement.track(action,'body'))
+        s.queue.queue[index]=action
+    end
+    return s
+end
+local function actualRecord(action)
+    for key,seal in pairs(action.toolkitQueueOperation)do
+        if type(key)=='table'and type(seal)=='function'then return assert(seal(action.toolkitQueueOperation)),key end
+    end
+    error('actual private operation missing')
+end
+local function allStandalone(s)
+    for index,action in ipairs(s.queue.queue)do
+        local lease=s.settlement.nativePlanLease(s.queue,action,index==1)
+        if type(lease)~='function'or not lease()then return false end
+    end
+    return true
+end
+for _,mode in ipairs({'fresh','missing','cleanup','receipt','earned','history','alias','duplicate','started-tail',
+    'hint','continuation','foreign-seal','copied-seal','generation','registry','wrong-owner','pending-false','active-false'})do
+    local s=cohortFixture(4)
+    local action=s.queue.queue[2]
+    if mode=='missing'then
+        action={character=s.actor,toolkitQueueOperation={}};s.queue.queue[2]=action
+    elseif mode=='cleanup'then assert(s.settlement.cleanupAfter(action,{}))
+    elseif mode=='receipt'or mode=='earned'then
+        local handle=s.settlement.track(action,'body');local receipt=s.settlement.captureEffect(action)
+        if mode=='receipt'then assert(s.settlement.bindEffect(handle,receipt))
+        else assert(s.settlement.earn(handle,receipt,true))end
+    elseif mode=='history'then
+        assert(s.settlement.track({character=s.actor,toolkitQueueOperation=action.toolkitQueueOperation},'body'))
+    elseif mode=='alias'then s.queue.queue[3].toolkitQueueOperation=action.toolkitQueueOperation
+    elseif mode=='duplicate'then s.queue.queue[3]=action
+    elseif mode=='started-tail'then
+        s.lifecycle.started(action);action.toolkitQueueOperation.toolkitStarted=true;action.action={}
+    elseif mode=='hint'then action.toolkitQueueOperation.toolkitPickups={}
+    elseif mode=='continuation'then action.toolkitQueueOperation.toolkitContinuations=1
+    elseif mode=='foreign-seal'then
+        local record,key=actualRecord(action)
+        action.toolkitQueueOperation[key]=function()error('foreign cohort seal executed')end
+    elseif mode=='copied-seal'then
+        local record,key=actualRecord(action)
+        local other=s.queue.queue[3]
+        local otherRecord,otherKey=actualRecord(other)
+        action.toolkitQueueOperation[key]=other.toolkitQueueOperation[otherKey]
+    elseif mode=='generation'then s.queue.toolkitOperationGeneration=1
+    elseif mode=='registry'then ISTimedActionQueue.queues[s.actor]={}
+    elseif mode=='wrong-owner'then action.character={}
+    elseif mode=='pending-false'then action.action=false;action.transactionId=0
+    elseif mode=='active-false'then s.front.action=false end
+    local old=allStandalone(s)
+    local cohort=s.settlement.nativePlanCohort(s.queue)
+    check((type(cohort)=='function')==old,mode..': standalone/cohort acceptance diverged')
+    if cohort then check(cohort(),mode..': new cohort lease was born stale')end
+end
+for _,size in ipairs({1,2,4,32})do
+    local s=cohortFixture(size)
+    local checkCohort=assert(s.settlement.nativePlanCohort(s.queue))
+    local before=s.callbacks()
+    getFilenameOfClosure=function()error('cohort final check reopened metadata')end
+    s.actor.isDead=function()error('cohort final check invoked actor getter')end
+    PZSurvivorToolkit.Settings.actionQueue=function()error('cohort final check invoked settings')end
+    check(checkCohort()and s.callbacks()==before,'cohort final check was not callback-free')
+end
+for _,mode in ipairs({'empty','oversize','sparse','extra-key','current','inherited-queues'})do
+    local s=cohortFixture(mode=='oversize'and 33 or 4)
+    if mode=='empty'then s.queue.queue={}
+    elseif mode=='sparse'then s.queue.queue[2]=nil
+    elseif mode=='extra-key'then s.queue.queue.extra=s.action
+    elseif mode=='current'then s.queue.current=s.queue.queue[2]
+    elseif mode=='inherited-queues'then
+        local queues=ISTimedActionQueue.queues;ISTimedActionQueue.queues=nil
+        setmetatable(ISTimedActionQueue,{__index={queues=queues}})
+    end
+    check(s.settlement.nativePlanCohort(s.queue)==nil,mode..': unsupported cohort acquired a lease')
+end
+-- Standalone queries retain their narrower history question and handle rules.
+do
+    local s=fixture();s.queue.queue[3]=s.front
+    check(s.query()and type(s.settlement.nativePlanLease(s.queue,s.action))=='function',
+        'standalone query began rejecting unrelated duplicate rows')
+    check(s.settlement.nativePlanCohort(s.queue)==nil)
+    local record=actualRecord(s.action);record.steps[1].handle=nil
+    check(s.query()and s.settlement.nativePlanLease(s.queue,s.action)==nil,
+        'singleton acquired the lease-only handle prerequisite')
+end
+for _,mode in ipairs({'callback','item','token','hints','cleanup','receipt','private-step','private-map','alias','queue','api'})do
+    local s=cohortFixture(4)
+    local action=s.queue.queue[2];local record=actualRecord(action)
+    local cohort=assert(s.settlement.nativePlanCohort(s.queue))
+    -- Explicit later-getter double; no claim about physical input/native work.
+    local later={getID=function()
+        if mode=='callback'then action.onCancelFunc=function()error('late callback executed')end
+        elseif mode=='item'then action.item={}
+        elseif mode=='token'then action.toolkitQueueOperation={}
+        elseif mode=='hints'then action.toolkitQueueOperation.toolkitPickups={}
+        elseif mode=='cleanup'then assert(s.settlement.cleanupAfter(action,{}))
+        elseif mode=='receipt'then
+            assert(s.settlement.bindEffect(s.settlement.track(action,'body'),s.settlement.captureEffect(action)))
+        elseif mode=='private-step'then record.steps[1].required=true
+        elseif mode=='private-map'then record.borrowings={}
+        elseif mode=='alias'then s.queue.queue[3].toolkitQueueOperation=action.toolkitQueueOperation
+        elseif mode=='queue'then s.queue.queue={s.front,action}
+        else s.settlement.nativePlanCohort=function()error('replacement cohort API executed')end end
+        return 42
+    end}
+    later:getID()
+    local before=s.callbacks()
+    getFilenameOfClosure=function()error('stale cohort check reopened source')end
+    check(not cohort()and s.callbacks()==before,mode..': later mutation renewed an earlier cohort observation')
+end
+for _,mode in ipairs({'earlier-private','earlier-handle','later-public','later-token-meta','nested','accessor'})do
+    local s=cohortFixture(4)
+    local firstRecord=actualRecord(s.front)
+    local later=s.queue.queue[3];local record,key=actualRecord(later)
+    local seal=later.toolkitQueueOperation[key]
+    getFilenameOfClosure=function(callback)
+        if callback==seal then
+            if mode=='earlier-private'then firstRecord.steps[1].receipt={}
+            elseif mode=='earlier-handle'then
+                for marker in pairs(firstRecord.steps[1].handle)do
+                    firstRecord.steps[1].handle[marker]=function()error('changed private handle executed')end
+                end
+            elseif mode=='later-public'then s.queue.queue[4].item={}
+            elseif mode=='later-token-meta'then
+                setmetatable(s.queue.queue[4].toolkitQueueOperation,{__index=function()error('late token getter executed')end})
+            elseif mode=='nested'then check(s.settlement.nativePlanCohort(s.queue)==nil,'nested source query reopened cohort')
+            else getFilenameOfClosure=function()error('replacement accessor executed')end end
+        end
+        return metadata(callback)
+    end
+    local cohort=s.settlement.nativePlanCohort(s.queue)
+    check((type(cohort)=='function')==(mode=='nested'),mode..': cohort recaptured source-boundary mutations')
+end
+-- A shared snapshot performs the same common queue/list/registry passes for
+-- different cohort sizes. Each distinct private record still requires source
+-- provenance and a final private-data comparison; no timing budget is imposed.
+local function cohortWork(size,shared)
+    local originalPairs,watched,counts=pairs,{},{}
+    pairs=function(owner)
+        local name=watched[owner]
+        if name then counts[name]=(counts[name]or 0)+1 end
+        return originalPairs(owner)
+    end
+    local ok,result=pcall(function()
+        local s=cohortFixture(size)
+        watched[s.queue.queue],watched[ISTimedActionQueue]='list','registry'
+        local seals={}
+        for _,action in ipairs(s.queue.queue)do
+            local record,key=actualRecord(action)
+            watched[record.steps]='private'
+            seals[action.toolkitQueueOperation[key]]=true
+        end
+        local sources=0
+        getFilenameOfClosure=function(callback)
+            if seals[callback]then sources=sources+1 end
+            return metadata(callback)
+        end
+        local checks={}
+        if shared then checks[1]=assert(s.settlement.nativePlanCohort(s.queue))
+        else for index,action in ipairs(s.queue.queue)do checks[index]=assert(s.settlement.nativePlanLease(s.queue,action,index==1))end end
+        local observed={listBuild=counts.list,registryBuild=counts.registry,sources=sources}
+        for key in originalPairs(counts)do counts[key]=nil end
+        local before=s.callbacks()
+        for _,fresh in ipairs(checks)do check(fresh())end
+        observed.listCheck,observed.registryCheck,observed.privateCheck=counts.list,counts.registry,counts.private
+        check(sources==size and s.callbacks()==before,'cohort omitted source proof or final check invoked a getter')
+        return observed
+    end)
+    pairs=originalPairs;getFilenameOfClosure=metadata
+    for owner in originalPairs(watched)do watched[owner]=nil end
+    check(ok,result)
+    return result
+end
+local sharedBase
+for _,size in ipairs({2,4,8,32})do
+    local shared,bank=cohortWork(size,true),cohortWork(size,false)
+    if sharedBase then
+        check(shared.listBuild==sharedBase.listBuild and shared.registryBuild==sharedBase.registryBuild,
+            'common capture/alias work grew once per row')
+        check(shared.listCheck==sharedBase.listCheck and shared.registryCheck==sharedBase.registryCheck,
+            'common final freshness grew once per row')
+    else sharedBase=shared end
+    check(shared.listBuild<bank.listBuild and shared.registryBuild<bank.registryBuild,
+        'cohort rebuilt common captures per private record')
+    check(shared.listCheck<bank.listCheck and shared.registryCheck<bank.registryCheck,
+        'cohort repeated common final checks per row')
+    check(shared.privateCheck==size and bank.privateCheck==size,'final comparison skipped a private step')
+end
+
 getFilenameOfClosure=metadata
 print('Native-plan singleton and lease: real private ledger, source-boundary and later-getter invalidation, callback-free freshness passed.')

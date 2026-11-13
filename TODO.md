@@ -1,6 +1,5 @@
 # Next queue deliveries
 
-- [ ] Share the decision-local structural cohort capture before extending native scheduling to prepared groups: capture common queue/list/registry facts and alias ownership once, while retaining fresh per-token private records and callback-free final checks. Current small-cohort click evidence and the plain-table read optimization do not qualify larger-cohort hover/drag or a general UI speedup.
 - [ ] Extend the qualified equipment contract to prepared fetch/use/return groups through shared identity, dependency and cleanup ownership; remove the checks it supersedes. Qualify Host proxy replacement, active interruption, hotbar/worn/heavy/activation branches and native entity registration separately. Hammer's Script+Attributes components remain protected until their effects are proved. Native admission/outcomes remain authoritative; no replay or future inventory-space credit.
 - [ ] Continue effect-based migration using the common coverage ledger and retire each replaced family-local rule with its consumer. Keep the remaining shared-resource and verification gates below; diagnostics alone do not complete a migration.
 

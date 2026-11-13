@@ -279,6 +279,19 @@ do
  assert(s.certificate.requests==0 and s.effects()==0 and not a.action and not b.action and front.action,
   'Host schedule edit ran/replayed native work')
 end
+-- The common decision must not rebuild one standalone private proof per row.
+-- Replacing the unused APIs before capture is harmless; using either is a bug.
+do
+ local s,p,api,q,front,a,b,tail,ledger=hostQueue()
+ local function obsolete()error('standalone native lease rebuilt inside cohort decision')end
+ ledger.nativePlanLease,ledger.nativePlanSingleton=obsolete,obsolete
+ local move=p.evaluateMove(q,b,a,false)
+ local cancel=p.evaluateCancel(q,a,true)
+ assert(move.allowed and move.nativeSchedule and cancel.allowed and cancel.nativeSchedule,
+  'shared cohort decision still depends on standalone per-row proofs')
+ assert(api.move(q,b,a)and api.cancelOperation(q,a)and q.queue[1]==front and q.queue[2]==b and q.queue[3]==tail)
+ assert(s.effects()==0)
+end
 do
  local s,p,api,q,front,a,b,tail=hostQueue()
  front.action={isStarted=function()return true end,finished=function()return false end,isForceComplete=function()return false end}
@@ -312,10 +325,13 @@ for index,mutate in ipairs({
 end
 -- Late metadata and final Settings calls can mutate an already inspected row.
 -- Both the decision and the actual public commit must reject that stale proof.
-for _,late in ipairs({'metadata','commit'})do
+for _,late in ipairs({'metadata','private','commit'})do
  local s,p,a,q,front,x,y,tail,l=hostQueue()
- local function mutate()x.onCancelFunc=function()error('foreign cancellation executed')end end
- if late=='metadata'then
+ local function mutate()
+  if late=='private'then assert(l.track(x,'cleanup'))
+  else x.onCancelFunc=function()error('foreign cancellation executed')end end
+ end
+ if late~='commit'then
   tail.item.getID=function(self)mutate();return self.id end
   assert(not p.evaluateMove(q,y,x,false).allowed,'later item metadata invalidated an earlier row without rejection')
  else
