@@ -1,6 +1,7 @@
 -- Actual native reading/transfer producers and Toolkit hooks, with offline
 -- Java/server delivery models. These checks do not establish live Host transport.
-local checks={'native-return','pending-keep','return-failure','provider-controls'}
+local checks={'native-return','pending-keep','return-failure','provider-controls',
+    'wring-return','wring-keep','wring-refusal','wring-provider-controls'}
 if not NativeActionRoot or not ((P4TidySource and P4RestoreSource and P4RestoreFloorSource)or NativeP4TidySource)then
     for _,id in ipairs(checks)do
         if TestCoverage then TestCoverage(id,'skipped','Native Lua and selected P4 source inputs are required.')end
@@ -211,9 +212,145 @@ local function controls(client)
         end
     end
 end
+-- The native wring producer has no return. This exercises the shared own
+-- producer and pre-native admission through real queue/lifecycle/ledger modules.
+local function wringLoan(client)
+    local f=create(client,{p4=false,carried=true,canonicalBodyReplacement=client})
+    local e,t,q=f.env,f.env.PZSurvivorToolkit,f.queue
+    local item=f.garment(701)
+    e.ISInventoryPaneContextMenu.onWringClothing({item},0)
+    assert(#q.queue==3,'native wring must enqueue only approach/fetch/body before earning')
+    local approach,pickup,body=unpack(q.queue)
+    assert(body.Type=='ISWringClothing'and body.item==item)
+    local before=assert(t.ActionQueueSettlement.operationState(body))
+    assert(#before.borrowings==1 and before.borrowings[1].state=='prepare',
+        'native producer did not enroll an unearned exact wring loan')
+    for _,step in ipairs(before.steps)do assert(not step.plannedTransfer,'optional return was prebound before earning')end
+    e.ISInventoryPaneContextMenu.onWringClothing({f.garment(702,f.inventory)},0)
+    local tail=q.queue[#q.queue]
+    f.start(approach);f.dispatch(approach,'perform')
+    f.start(pickup);f.deliver(pickup);f.dispatch(pickup,'perform')
+    item=assert(f.inventory:getItemById(item:getID()))
+    local returned=q.queue[2]
+    assert(q.current==body and returned and returned.Type=='ISInventoryTransferAction'
+        and returned.item==item and returned.srcContainer==f.inventory and returned.destContainer==f.source
+        and returned.allowMissingItems==true and q.queue[3]==tail and #q.queue==3,
+        'earned pickup must insert one exact optional return after its body and before the independent tail: '..tostring(t.ActionQueueSettlement.operationState(body).optionalReturnState))
+    assert(not body.toolkitQueueLinked and not returned.toolkitQueueLinked
+        and not t.ActionQueueSettlement.requiredStep(returned)and not t.ActionQueueSettlement.isCleanup(returned),
+        'optional restoration acquired linked or required-cleanup authority')
+    local active=assert(t.ActionQueueSettlement.operationState(body))
+    assert(active.borrowings[1].state=='active')
+    for _,step in ipairs(active.steps)do assert(not step.plannedTransfer,'created optional return bypassed pending Keep')end
+    f.borrowed,f.wringBody,f.returned,f.tail=item,body,returned,tail
+    return f
+end
+local function wringComplete(f,client)
+    -- Server delivery is modeled explicitly; the actual native complete body
+    -- caps the same garment. No client queue callback supplies that authority.
+    if client then assert(f.wringBody:complete())end
+    f.dispatch(f.wringBody,'perform')
+    assert(f.borrowed:getWetness()==10,'native wring lost its exact wetness effect')
+end
+local function wringReturn(client)
+    local f=wringLoan(client);local t=f.env.PZSurvivorToolkit
+    wringComplete(f,client)
+    assert(f.queue.current==f.returned,'native advancement lost the qualified generated return')
+    f.start(f.returned);f.deliver(f.returned);f.dispatch(f.returned,'perform')
+    assert(f.queue.current==f.tail and f.borrowed.container==f.source and #f.effects==2
+        and t.ActionQueueSettlement.operationState(f.wringBody).borrowings[1].state=='completed',
+        'generated return did not pay its exact loan once')
+    f.dispatch(f.tail,'perform');assert(#f.queue.queue==0)
+end
+local function wringKeep(client)
+    local f=wringLoan(client);local t=f.env.PZSurvivorToolkit
+    local kept,reason=t.ActionQueue.cancel(f.queue,f.returned)
+    assert(kept,'generated pending Keep unavailable: '..tostring(reason))
+    assert(f.queue.current==f.wringBody and f.queue:indexOf(f.returned)==-1
+        and t.ActionQueueSettlement.operationState(f.wringBody).borrowings[1].state=='waived')
+    wringComplete(f,client);assert(f.queue.current==f.tail)
+    f.dispatch(f.tail,'perform')
+    assert(#f.queue.queue==0 and f.borrowed.container==f.inventory and #f.effects==1,
+        'pending Keep replayed/returned the item or cancelled its wring body')
+end
+local function wringRefusal(client)
+    if client then
+        local f=create(true,{p4=false,carried=true,canonicalBodyReplacement=true,guardLostAtReplacement=true})
+        local e,t=f.env,f.env.PZSurvivorToolkit;local item=f.garment(707)
+        e.ISInventoryPaneContextMenu.onWringClothing({item},0)
+        local approach,pickup,body=unpack(f.queue.queue)
+        f.start(approach);f.dispatch(approach,'perform')
+        f.start(pickup);f.deliver(pickup);f.dispatch(pickup,'perform')
+        local current=assert(f.inventory:getItemById(item:getID()));assert(current~=item and body.item==current)
+        local debts=t.ActionQueueExecution.blockedReturns(f.player)
+        assert(#debts==1 and debts[1].state=='blocked','lost producer after Host replacement did not retain debt')
+        assert(t.ActionQueueExecution.keepReturn(f.player,debts[1].id),'canonical Host debt could not be explicitly kept')
+        assert(t.ActionQueueSettlement.operationState(body).borrowings[1].state=='waived')
+        assert(body:complete());f.dispatch(body,'perform')
+        assert(#f.queue.queue==0 and current.container==f.inventory and #f.effects==1)
+    end
+    do
+        local f=wringLoan(client);local t=f.env.PZSurvivorToolkit
+        f.source.room=false;wringComplete(f,client)
+        assert(f.queue.current==f.returned and f.returned.action and not f.returned:isValid(),
+            'capacity must still be checked by native admission')
+        f.returned.action.removed=true;f.queue:tick()
+        assert(f.queue.current==f.tail and f.borrowed.container==f.inventory
+            and t.ActionQueueSettlement.operationState(f.wringBody).borrowings[1].state=='active')
+        local blocked=t.ActionQueueExecution.blockedReturns(f.player)
+        assert(#blocked==1 and blocked[1].state=='blocked'and blocked[1].itemId==f.borrowed:getID(),
+            'native capacity rejection lost its unpaid generated-return debt')
+        f.dispatch(f.tail,'perform');assert(#f.queue.queue==0)
+    end
+    do
+        local f=wringLoan(client);local t=f.env.PZSurvivorToolkit
+        local allocations=#f.engineTrace
+        t.ActionQueueRestoration.observeNative=function()return false end
+        wringComplete(f,client)
+        assert(f.queue.current==f.tail and not f.returned.action and f.borrowed.container==f.inventory
+            and #f.effects==1,'lost source qualification fell back to executing a generated native transfer')
+        local blocked=t.ActionQueueExecution.blockedReturns(f.player)
+        assert(#blocked==1 and blocked[1].state=='blocked'and blocked[1].itemId==f.borrowed:getID(),
+            'source loss must retain visible unallocated debt without a synthetic native receipt')
+        f.dispatch(f.tail,'perform');assert(#f.queue.queue==0)
+    end
+end
+local function wringControls(client)
+    do
+        local f=create(client,{p4=false,carried=true});local item=f.garment(706)
+        f.env.ISInventoryPaneContextMenu.onWringClothing({{items={item,item}}},0)
+        local body=f.queue.queue[#f.queue.queue]
+        local state=assert(f.env.PZSurvivorToolkit.ActionQueueSettlement.operationState(body))
+        assert(#state.borrowings==1 and state.optionalReturnState=='planned',
+            'ordinary single-item UI group lost native producer enrollment')
+    end
+    do
+        local f=create(client,{p4=false,carried=true})
+        f.env.ISInventoryPaneContextMenu.onWringClothing({f.garment(704),f.garment(705)},0)
+        local body=f.queue.queue[#f.queue.queue]
+        local state=assert(f.env.PZSurvivorToolkit.ActionQueueSettlement.operationState(body))
+        assert(#state.borrowings==0,'unsupported bulk producer partially enrolled optional loans')
+    end
+    for _,options in ipairs({{p4=true,carried=true},{p4=false,p4Selected=true,carried=true},
+        {p4=false,carried=true,queue=false}})do
+        local f=create(client,options);local e,t=f.env,f.env.PZSurvivorToolkit
+        e.ISInventoryPaneContextMenu.onWringClothing({f.garment(703)},0)
+        local pickup,body
+        for _,action in ipairs(f.queue.queue)do
+            if action.Type=='ISInventoryTransferAction'and action.destContainer==f.inventory then pickup=action end
+            if action.Type=='ISWringClothing'then body=action end
+        end
+        assert(pickup and body,'wring provider control did not invoke the real native chain')
+        local state=t.ActionQueueSettlement.operationState(body)or {steps={},borrowings={}}
+        for _,step in ipairs(state.steps)do assert(not step.observedPreparation,'provider control enrolled own optional preparation')end
+        if options.p4==false then assert(#state.borrowings==0)end
+    end
+end
 for _,entry in ipairs({{'native-return',nativeReturn},{'pending-keep',pendingKeep},
-    {'return-failure',returnFailure},{'provider-controls',controls}})do
+    {'return-failure',returnFailure},{'provider-controls',controls},
+    {'wring-return',wringReturn},{'wring-keep',wringKeep},{'wring-refusal',wringRefusal},
+    {'wring-provider-controls',wringControls}})do
     for _,client in ipairs({false,true})do entry[2](client)end
     if TestCoverage then TestCoverage(entry[1],'passed')end
 end
-print('PASS restoration composition: native carried reading, earned loans, Keep, blocked debt and provider controls in offline SP/Host models')
+print('PASS restoration composition: native reading/wringing, earned optional returns, Keep, blocked debt and provider controls in offline SP/Host models')

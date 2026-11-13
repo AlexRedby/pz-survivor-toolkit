@@ -11,6 +11,7 @@ local Witness=require 'QueueWringWitnessDiagnostics'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
 local native=config.mode=='native'
+profile.restoration=config.options and config.options.wring_restoration_provider=='native-returns'
 local callbacks={};for _,name in ipairs({'isValid','update','start','stopSound','stop','perform','complete','getDuration','new'})do callbacks[name]=ISWringClothing[name]end
 local phase,index='prepare',1
 local started,ready,done=false,false,false
@@ -36,6 +37,34 @@ local function raw(event,value)print('[WRING_CLOTHING] '..event..' '..JSON.encod
 local function emit(v)v.suite='wring-clothing';v.actor='client1';v.kind=config.kind;v.mode=config.mode;JSON.emit(v)end
 Witness.configure(function(value)raw('HOST_WITNESS',value)end,function()return case(),phase end)
 assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('wring-host-witness-diagnostics',{started=function(action)Witness.started(action,tracks[action]~=nil)end,begin=Witness.begin,finish=Witness.finish}))
+function profile.sample(point)
+ if not profile.restoration then return end
+ assert(P4TidyUpMeister==nil and not getActivatedMods():contains('P4TidyUpMeister'),'P4 loaded or selected')
+ assert(PZSurvivorToolkit.ActionQueueSettlement==profile.loanModule and profile.loanModule.operationState==profile.loanReader,'settlement observer changed')
+ local body=groups.target and groups.target[#groups.target];local view=body and profile.loanReader(body);local loans=view and view.borrowings or{}
+ local found=nil;for _,value in ipairs(loans)do if value.id==ids.items.target.id and value.fullType==ids.items.target.type then assert(not found,'duplicate garment loan');found=value end end
+ local observed,planned=false,0
+ for _,step in ipairs(view and view.steps or{})do
+  if step.itemId==ids.items.target.id and step.itemType==ids.items.target.type and step.phase=='prepare' and step.observedPreparation then observed=true end
+  if step.plannedTransfer then planned=planned+1 end
+ end
+ local sample={case=case(),point=point,loaded=false,selected=false,itemId=ids.items.target.id,itemType=ids.items.target.type,state=found and found.state or false,candidates=#loans,observedPreparation=observed}
+ sample.plannedTransfers=planned
+ if point=='body'then
+  sample.returnRef=false;sample.bodyIndex=false;sample.returnIndex=false;sample.tailIndex=false
+  for index,action in ipairs(queue().queue)do
+   if action==body then sample.bodyIndex=index end
+   if action==state.tailAction then sample.tailIndex=index end
+   if action.Type=='ISInventoryTransferAction'and action.srcContainer==getPlayer():getInventory()and action.destContainer==state.source then
+    local members=F.returnMembers(action,{})
+    if #members==1 and members[1].id==ids.items.target.id and members[1].type==ids.items.target.type then
+     assert(not sample.returnRef,'duplicate generated garment return');sample.returnRef=tostring(action);sample.returnIndex=index
+    end
+   end
+  end
+ end
+ profile.restorationEvidence.samples[#profile.restorationEvidence.samples+1]=sample;raw('RESTORATION',sample)
+end
 local function diagnostic(reason,force)
  if not ids or not getPlayer()or not force and(waits[phase]or now()-waitingSince<2000)then return end
  waits[phase]=true;local ok,value=pcall(F.preparedDiagnostic,getPlayer(),ids)
@@ -45,7 +74,7 @@ local function fail(e)if done then return end;done=true;diagnostic(tostring(e),t
 local function request(command)
  local args={case=case()};if command=='Prepare'then args.placement=placement;args.clientPlacement=proof end
  if isClient()then sendClientCommand('WringClothingTest',command,args);return end
- if command=='Prepare'then authority=F.prepare(getPlayer(),args.case,config.mode,placement,proof,previous,config.options and config.options.profile_capacity);previous=nil;ids=authority.ids;raw('PREPARED',ids)
+ if command=='Prepare'then authority=F.prepare(getPlayer(),args.case,config.mode,placement,proof,previous,config.options and config.options.profile_capacity,config.options and config.options.wring_restoration_provider=='native-returns');previous=nil;ids=authority.ids;raw('PREPARED',ids)
  elseif command=='ProfileCleanup'then
   assert(authority and authority.ids.capacityProfile,'unexpected profile cleanup');F.dispose(authority);profile.cleanupReceipt=profile.module.cleanupProof(authority);raw('PROFILE_CLEANED',profile.cleanupReceipt);authority=nil;previous=nil
  elseif command=='WearBaseline'then wearReceipt=assert(F.wearBaseline(authority));raw('WEAR_BASELINE',wearReceipt)
@@ -166,11 +195,13 @@ end
 assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('prepared-carried-wring-return',{
  started=function(action)
   local tracked=tracks[action]
+  if profile.restoration and tracked and tracked.name=='target' and action.Type=='ISWringClothing' then profile.sample('body') end
   if tracked and tracked.preparation then tracked.admitted=true end
   if tracked and tracked.name and ids and F.observesClothing(ids)and(tracked.type=='ISUnequipAction'or tracked.type=='ISWringClothing')then tracked.admission=F.unequipSnapshot(state,tracked.name)end
   if not ids or not state or not ids.preparedGroups or action.Type~='ISInventoryTransferAction'or action.srcContainer~=getPlayer():getInventory()or action.destContainer~=state.source then return end
   local members=F.returnMembers(action,{})
   local row={actionRef=tostring(action),type=action.Type,from='root',toBag=ids.source.bag,duration=action.maxTime,allowMissing=action.allowMissingItems==true,items=members,events={}}
+  if profile.restoration then row.bodySettled=profile.bodySettled==true end
   returns[#returns+1]=row;returnTracks[action]=row
  end,
  begin=function(action,phase)
@@ -180,6 +211,9 @@ assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('prepared-carried
   local row=returnTracks[action];if not row then return end
   F.returnMembers(action,row.items)
   row.events[#row.events+1]={boundary='begin',phase=phase,nativeRef=action.action and tostring(action.action)or false};return true
+ end,
+ settled=function(action)
+  if profile.restoration and groups.target and action==groups.target[#groups.target]then profile.bodySettled=true end
  end,
  finish=function(action,phase,succeeded)
   local tracked=tracks[action]
@@ -312,6 +346,11 @@ require('QueuePreflight').onTick(Events,function()
    for _,key in ipairs({'new','isValid','start','update','perform','complete','getDuration'})do wearCallbacks[key]=ISWearClothing[key]end
    getCore():setOptionPauseOnFocusloss(false);getCore():setOptionAutoDrink(false);p:setGodMod(true);p:setGhostMode(true);p:setAutoDrink(false)
    if SurvivalGuide and SurvivalGuide.instance then SurvivalGuide.instance:setVisible(false)end
+   if profile.restoration then
+    assert(P4TidyUpMeister==nil and not getActivatedMods():contains('P4TidyUpMeister'),'P4 loaded or selected')
+    profile.loanModule=assert(PZSurvivorToolkit.ActionQueueSettlement);profile.loanReader=assert(profile.loanModule.operationState)
+    profile.restorationEvidence={provider='native-returns',samples={}}
+   end
    ready=true;since=now();Witness.setup();emit({event='setup',cases=config.cases,queueEnabled=not native,nativeDurations=true,adapterInstalled=installed})
   end
   assert(now()-since<120000,'wring fixture timeout '..phase);observe();Witness.poll()
@@ -396,7 +435,7 @@ require('QueuePreflight').onTick(Events,function()
     assert(PZSurvivorToolkit.ActionQueue.cancelOperation(queue(),repeatAction),'pending duplicate cleanup denied')
     tracks[repeatAction].cancelled=true;edits.repeatDenied=true
    end
-   local tail=produce('tail',state.items.tail)
+   local tail=produce('tail',state.items.tail);state.tailAction=tail
    if not native and case()=='root'then
     assert(PZSurvivorToolkit.ActionQueue.move(queue(),target,tail,true),'distinct garment reorder denied')
     assert(queue().queue[#queue().queue]==target,'distinct garment move did not commit')
@@ -419,6 +458,7 @@ require('QueuePreflight').onTick(Events,function()
      edits.reordered=true
     end
     preparedEvidence.finalOrder=order();preparedEvidence.after=F.snapshot(state)
+    profile.sample('queued')
     assert(queue().current==state.frontAction and tostring(state.frontAction.action)==preparedEvidence.frontNative,'pending edits changed active native front')
    end
    if case()=='worn-prepared'then
@@ -440,7 +480,18 @@ require('QueuePreflight').onTick(Events,function()
    end
    edits.untouched=before==JSON.encode(F.snapshot(state));assert(edits.untouched,'pending edits changed physical clothing state');phase='running'
   elseif phase=='running'and empty()then
-   if not F.verify(state)then quiet=nil;return end
+   if not F.verify(state)then
+    if profile.restoration and not profile.drainedDiagnostic then
+     profile.drainedDiagnostic=true
+     local body=groups.target and groups.target[#groups.target]
+     local settlement=PZSurvivorToolkit.ActionQueueSettlement
+     raw('RESTORATION_DIAGNOSTIC',{ledger=body and settlement.operationState(body)or false,
+      debts=PZSurvivorToolkit.ActionQueueExecution.blockedReturns(getPlayer())})
+     local ledger=body and settlement.operationState(body)
+     assert(not ledger or ledger.optionalReturnState~='blocked','optional restoration blocked: '..tostring(ledger and ledger.optionalReturnDetail))
+    end
+    quiet=nil;return
+   end
    quiet=quiet or now();if now()-quiet>=1000 then phase='verified';request('Verify')end
   elseif phase=='verified'and receipt then
    local client=profile.final or assert(F.verify(state))
@@ -465,8 +516,10 @@ require('QueuePreflight').onTick(Events,function()
     local ok,value=pcall(profile.module.cleanupProof,state);if not ok then diagnostic('profile local cleanup sync pending');return end
     cleanupClient=value
    end
+   profile.sample('final')
    local row={event='case',id=case(),status='passed',ids=ids,clientPlacement=proof,input=state.input,client=client,server=receipt,
     commands=commands,edit=edits,queueIdle=true,settleMilliseconds=now()-quiet}
+   if profile.restoration then row.restoration=profile.restorationEvidence end
    if ids.capacityProfile then row.capacityProfile={measurement=profile.evidence,cleanupClient=cleanupClient,cleanupServer=profile.cleanupReceipt}end
    if ids.nativeWearSetup then row.wearSetup=wearSetup;row.authorityBaseline=wearReceipt end
    if ids.preparedGroups then row.prepared=preparedEvidence end

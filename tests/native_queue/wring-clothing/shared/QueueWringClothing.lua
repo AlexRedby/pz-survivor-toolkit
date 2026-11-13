@@ -154,7 +154,7 @@ function F.assertPreparedSlots(player,items,catalog)
   end
  end
 end
-function F.prepare(player,case,mode,placement,proof,previous,profile)
+function F.prepare(player,case,mode,placement,proof,previous,profile,restoration)
  assert(profile==nil or type(profile)=='boolean','invalid capacity profile selection')
  profile=profile==true and case=='worn-bag'
  assert((case=='root'or case=='worn'or case=='worn-bag'or case=='worn-prepared'or case=='wear-swap'or case=='world')and P.atCentered(player,placement))
@@ -172,7 +172,7 @@ function F.prepare(player,case,mode,placement,proof,previous,profile)
   shelf:setCanPassThrough(true);shelf:setIsContainer(true);shelf:setName('Wring fixture');square:AddSpecialObject(shelf)
   source=assert(shelf:getContainer());source:setType('shelf');source:setCapacity(100);source:setExplored(true)
  end
- local ids={case=case,mode=mode,origin=placement,placementProof=proof,items={},source={kind=case,bag=bag and bag:getID()or false,world=shelf and identity(shelf)or false}}
+ local ids={case=case,mode=mode,restoration=restoration==true,origin=placement,placementProof=proof,items={},source={kind=case,bag=bag and bag:getID()or false,world=shelf and identity(shelf)or false}}
  if case=='wear-swap'then ids.wearSwap=true;ids.nativeWearSetup=true;ids.initialEquipment=F.equipment(player)end
  local state={player=player,ids=ids,source=source,bag=bag,shelf=shelf,items={}}
  for _,name in ipairs(F.namesFor(ids))do
@@ -283,6 +283,7 @@ function F.verify(s)
  for _,name in ipairs(F.namesFor(s.ids))do
   local item=value.items[name];local cap=s.ids.items[name].cap
   local restored=(name=='target'or s.ids.case=='worn-bag'and name=='cancelled')and(s.ids.case=='worn-bag'or s.ids.case=='world')
+  if s.ids.restoration and s.ids.mode=='native' then restored=false end
   local expectedRoot=restored and 0 or 1
   local expectedActor=restored and s.ids.case=='world'and 0 or 1
   local expectedSource=(s.ids.case=='root'or s.ids.case=='worn'or s.ids.case=='worn-prepared'or restored)and 1 or 0

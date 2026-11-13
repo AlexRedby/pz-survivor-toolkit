@@ -39,7 +39,7 @@ Events.OnTick.Add(function()
   local ok,error=pcall(function()
    local proof=P.poll(pending.arrival);if not proof then return end
    assert(P.atCentered(player,pending.target),'wring replica left settled placement')
-   state=F.prepare(player,pending.case,config.mode,pending.target,proof,previous,config.options and config.options.profile_capacity);previous=nil
+   state=F.prepare(player,pending.case,config.mode,pending.target,proof,previous,config.options and config.options.profile_capacity,config.options and config.options.wring_restoration_provider=='native-returns');previous=nil
    raw('PREPARED',state.ids);sendServerCommand(player,'WringClothingTest','Prepared',state.ids);pending=nil
   end)
   if not ok then fail(player,error)end

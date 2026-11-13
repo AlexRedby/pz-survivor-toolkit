@@ -41,12 +41,18 @@ def definitions():
 
 def validate(selection):
     chosen = selection.get('cases')
+    provider = selection.get('options', {}).get('wring_restoration_provider', 'selected')
+    if not isinstance(provider, str) or provider not in ('selected', 'native-returns'):
+        raise ValueError('wring_restoration_provider must be selected or native-returns')
+    if provider == 'native-returns' and chosen != ['worn-bag']:
+        raise ValueError('native-returns requires the worn-bag case')
+    mods = MODS if provider == 'selected' else [mod for mod in MODS if mod != 'P4TidyUpMeister']
     profile = selection.get('options', {}).get('profile_capacity', False)
     if type(profile) is not bool or profile and (type(chosen) is not list or 'worn-bag' not in chosen):
         raise ValueError('Capacity profiling requires profile_capacity boolean and selected worn-bag')
     if (type(chosen) is not list or not chosen or chosen != [case for case in CASES if case in chosen] or selection.get('kind') not in ('sp', 'mp')
         or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
-        or type(selection.get('clients')) is not int or selection['clients'] != 1 or selection.get('mods') != MODS
+        or type(selection.get('clients')) is not int or selection['clients'] != 1 or selection.get('mods') != mods
         or selection.get('options', {}).get('world_template')
         or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
         raise ValueError('Wring clothing requires ordered grouped cases, fresh full-selected-pack SP/menu Host and one EN client')
@@ -70,9 +76,11 @@ def audit_native(game, profile=False):
     return result
 
 
-def audit_selected(locations):
+def audit_selected(locations, provider='selected'):
     result = {}
     for identifier, (name, expected) in SELECTED_CRC.items():
+        if provider == 'native-returns' and identifier == 'P4TidyUpMeister':
+            continue
         selected = [path for path in lua_sources(Path(locations[identifier])) if path.name == name]
         if len(selected) != 1 or zlib.crc32(selected[0].read_bytes()) != expected:
             raise ValueError('Wring selected producer/restore audit requires review: ' + identifier)
@@ -83,7 +91,7 @@ def audit_selected(locations):
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     audit = audit_native(game, selection.get('options', {}).get('profile_capacity', False))
-    audit.update(audit_selected(locations))
+    audit.update(audit_selected(locations, selection.get('options', {}).get('wring_restoration_provider', 'selected')))
     root = Path(project) / 'tests/native_queue'
     for role in runtime['roles'].values():
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'

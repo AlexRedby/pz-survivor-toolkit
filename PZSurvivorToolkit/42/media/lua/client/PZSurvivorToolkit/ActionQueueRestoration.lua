@@ -66,11 +66,12 @@ borrowedReturns = function(handles, onEnqueued)
     return count
 end
 
--- Native readItem already creates its optional return. Enroll that exact
--- producer without P4; do not create an additional action or prebind cleanup.
-local observeNative, nativeSources, nativeReadRole
+-- Native readItem retains its existing optional return. Source-proven wringing
+-- may plan a missing optional return through the shared private loan owner.
+local observeNative, nativeSources, nativeReadRole, nativeWringRole
 local prepare = Settlement.observePreparation
 local remember = Settlement.rememberPreparation
+local planOptional = Settlement.planOptionalReturn
 local activatedMods = getActivatedMods
 local firstLine = getFirstLineOfClosure
 local filename = getFilenameOfClosure
@@ -101,6 +102,7 @@ local function nativeLease()
     if P4TidyUpMeister ~= nil or PZSurvivorToolkit ~= Toolkit or Toolkit.ActionQueueRestoration ~= Restoration
         or Restoration.observeNative ~= observeNative or Toolkit.ActionQueueSettlement ~= Settlement
         or Settlement.observePreparation ~= prepare or Settlement.rememberPreparation ~= remember
+        or Settlement.planOptionalReturn ~= planOptional
         or Proof.captureBindings ~= capture or Proof.closure ~= origin or Proof.matches ~= sourceMatches
         or getActivatedMods ~= activatedMods or type(activatedMods) ~= "function"
         or getFirstLineOfClosure ~= firstLine or type(firstLine) ~= "function"
@@ -111,7 +113,7 @@ local function nativeLease()
         {owner = _G, keys = {"PZSurvivorToolkit", "P4TidyUpMeister", "getActivatedMods", "getFirstLineOfClosure", "getFilenameOfClosure", "ISInventoryPaneContextMenu"}},
         {owner = Toolkit, keys = {"ActionQueueRestoration", "ActionQueueSettlement", "ActionQueuePolicy", "ActionQueueDefinitions", "ActionQueueOperations", "Settings"}},
         {owner = Restoration, keys = {"observeNative"}},
-        {owner = Settlement, keys = {"observePreparation", "rememberPreparation"}},
+        {owner = Settlement, keys = {"observePreparation", "rememberPreparation", "planOptionalReturn"}},
         {owner = Proof, keys = {"captureBindings", "closure", "matches"}},
         {owner = saved.policy, keys = {"matchesNative", "isOrdinaryTransfer", "isCarriedContainer"}},
         {owner = saved.definitions, keys = {"inspect"}},
@@ -126,7 +128,8 @@ local function nativeLease()
             or not origin(saved.inspect, "ActionQueueDefinitions.lua")
             or not origin(saved.producer, "ActionQueueOperations.lua")
             or not origin(prepare, "ActionQueueSettlement.lua")
-            or not origin(remember, "ActionQueueSettlement.lua") or not watch() then return end
+            or not origin(remember, "ActionQueueSettlement.lua")
+            or not origin(planOptional, "ActionQueueSettlement.lua") or not watch() then return end
         nativeSources = saved
     end
     return watch, saved
@@ -149,12 +152,13 @@ observeNative = function(action)
     end
     local callback, owner, method = nativeProducer(action)
     -- Unrelated enqueues do no source-file, mod-list or contract inspection.
-    if owner ~= ISInventoryPaneContextMenu or method ~= "readItem" then return false end
+    if owner ~= ISInventoryPaneContextMenu or (method ~= "readItem" and method ~= "onWringClothing") then return false end
     local watch, saved = nativeLease()
     if not watch or saved.producer ~= nativeProducer
         or not origin(callback, "ISInventoryPaneContextMenu.lua") or not watch() then return false end
     local lineOk, line = pcall(firstLine, callback)
-    if not lineOk or (line ~= 2826 and line ~= 3255) or not watch() then return false end
+    if not lineOk or (method == "readItem" and line ~= 2826 and line ~= 3255)
+        or (method == "onWringClothing" and line ~= 2560 and line ~= 2959) or not watch() then return false end
     local ok, mods = pcall(activatedMods)
     if not ok or not mods or type(mods.contains) ~= "function" then return false end
     local selected, present = pcall(mods.contains, mods, "P4TidyUpMeister")
@@ -164,17 +168,61 @@ observeNative = function(action)
     if nativeReadRole == nil then
         local path = "media/lua/client/ISUI/ISInventoryPaneContextMenu.lua"
         local role = false
-        if sourceMatches(path, 4293448388) then role = 2826
-        elseif sourceMatches(path, 1953753890) then role = 3255 end
+        if sourceMatches(path, 4293448388) then role, nativeWringRole = 2826, 2560
+        elseif sourceMatches(path, 1953753890) then role, nativeWringRole = 3255, 2959 end
         if not watch() then return false end
         nativeReadRole = role
     end
-    if line ~= nativeReadRole or not watch() then return false end
-    remember(action, saved.inspect)
+    if line ~= (method == "readItem" and nativeReadRole or nativeWringRole) or not watch() then return false end
+    if method ~= "onWringClothing" or action.Type ~= "ISWringClothing" then remember(action, saved.inspect) end
+    if method == "onWringClothing" and action.Type == "ISWringClothing" then
+        local wring, item, actor = Toolkit.ActionQueueWring, action.item, action.character
+        if type(wring) ~= "table" or getmetatable(wring) ~= nil or not item
+            or not instanceof(item, "Clothing") or actor:isEquipped(item)
+            or type(wring.callbacksTrusted) ~= "function" or type(wring.inspectPrepared) ~= "function"
+            or type(wring.matchesPrepared) ~= "function" then return false end
+        local matches, inspector, binding = wring.callbacksTrusted, wring.inspectPrepared, wring.matchesPrepared
+        local bodyWatch = capture({{owner = Toolkit, keys = {"ActionQueueWring"}},
+            {owner = wring, keys = {"callbacksTrusted", "inspectPrepared", "matchesPrepared"}}, {owner = owner, keys = {method}}})
+        if not bodyWatch or not origin(matches, "ActionQueueWring.lua")
+            or not origin(inspector, "ActionQueueWring.lua") or not origin(binding, "ActionQueueWring.lua")
+            or not sourceMatches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",2285349509,"PZSurvivorToolkit",true)
+            or not bodyWatch() or not watch() then return false end
+        local contract = inspector(action)
+        if not contract or not contract.edit or contract.edit.complete ~= true
+            or not matches(action) or not watch() or not bodyWatch() then return false end
+        -- This lease survives the synchronous producer. No later completion can
+        -- reconstruct producer authority from public action fields.
+        local function lease(pickup, body)
+            if not watch() or not bodyWatch() or P4TidyUpMeister ~= nil then return false,"source" end
+            local listed, currentMods = pcall(activatedMods)
+            if not listed or not currentMods or type(currentMods.contains) ~= "function" then return false,"mod-list" end
+            local checked, selected = pcall(currentMods.contains, currentMods, "P4TidyUpMeister")
+            if not checked or selected ~= false or not watch() or not bodyWatch() then return false,"provider" end
+            if not body or binding(body) ~= true then return false,"body-binding" end
+            if body ~= action or saved.enabled() ~= true then return false,"body-owner" end
+            if item ~= body.item then
+                local canonical = body.item
+                if not isClient() or not canonical or canonical:getID() ~= item:getID()
+                    or canonical:getFullType() ~= item:getFullType() then return false,"body-item" end
+                local root = actor:getInventory()
+                if canonical:getContainer() ~= root or root:getItemById(item:getID()) ~= canonical then return false,"body-canonical" end
+            end
+            if body.character ~= actor or not instanceof(item,"Clothing") then return false,"actor-item" end
+            if actor:isEquipped(body.item) then return false,"equipped" end
+            if not (pickup.item == item or isClient() and pickup.item and pickup.item:getID() == item:getID()
+                and pickup.item:getFullType() == item:getFullType()) then return false,"pickup-item" end
+            if pickup.character ~= actor or not matches(body) then return false,"callback" end
+            return watch() and bodyWatch()
+        end
+        return planOptional(action, lease, contract) == true
+    end
     if not watch() or action.Type ~= "ISInventoryTransferAction" or not saved.matches(action)
         or not saved.ordinary(action) or not action.item
         or action.destContainer ~= action.character:getInventory()
         or not saved.carried(action.srcContainer, action.character) or not watch() then return false end
+    if method == "onWringClothing" and (not instanceof(action.item, "Clothing")
+        or action.character:isEquipped(action.item)) then return false end
     local function guard(value)
         return value == action and watch() and saved.matches(value) and saved.ordinary(value) and watch()
     end

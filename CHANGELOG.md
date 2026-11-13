@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.372
+
+- **Added:** Source-proven optional return planning for a single unworn garment borrowed from a carried bag for native wringing when P4 is absent. Returns use earned pickup receipts, shared native admission and exact outcomes; pending Keep preserves the body, while failed qualification retains visible debt without falling back to a native transfer. Existing native returns and the selected P4 provider retain their paths. Normal returns and queue-off controls passed paired macOS SP/menu-Host full-pack-minus-P4 checks with clean runtime audits; live Keep and unavailable-source extensions remain separate coverage.
+
 ### 0.1.371
 
 - **Fixed:** Distinguished read-only item-location dependencies from actual item use in queue editing. Equipping an unrelated item no longer blocks keeping a borrowed book, completing its native return or handling a full source container in single-player. Actual bag moves and shared-item conflicts remain protected. Native carried-book return, Keep and rejection of returns to full containers were verified in macOS SP/menu-Host with the selected pack excluding P4; the general restoration migration remains incomplete.
@@ -1716,6 +1720,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.1.107
+
+- **Changed:** Updated reviewed queue-policy bindings for the prepared wring contract and refreshed Queue wrapper provenance.
 
 ### 0.1.106
 

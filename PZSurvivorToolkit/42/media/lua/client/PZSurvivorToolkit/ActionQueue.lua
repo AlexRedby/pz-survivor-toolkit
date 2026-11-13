@@ -30,6 +30,10 @@ local Batch = Toolkit.ActionQueueBatch
 local Settlement = Toolkit.ActionQueueSettlement
 local Execution = Toolkit.ActionQueueExecution
 local PickupFailure = Toolkit.ActionQueuePickupFailure
+local advanceOptionalReturns = Settlement and Settlement.advanceOptionalReturns
+local beginOptionalReturn = Settlement and Settlement.beginOptionalReturn
+local holdsOptionalReturn = Settlement and Settlement.holdsOptionalReturn
+local releaseHeldOptionalReturn = Settlement and Settlement.releaseHeldOptionalReturn
 local processPriority
 require "PZSurvivorToolkit/ActionQueuePolicy"
 local Policy = Toolkit.ActionQueuePolicy
@@ -69,7 +73,12 @@ ISBaseTimedAction.begin = function(action)
     if media then media.start(action) end
     local intent=Toolkit.ActionQueueTidyIntent
     if intent and isClient() then intent.start(action) end
-    if Execution then Execution.begin(action) end
+    -- A generated return must not fall through to native execution when its
+    -- private plan loses qualification. Existing native returns keep their path.
+    local handled, allowed
+    if beginOptionalReturn then handled, allowed = beginOptionalReturn(action) end
+    if handled and allowed ~= true then return end
+    if not handled and Execution then Execution.begin(action) end
     if PickupFailure then PickupFailure.begin(action) end
     Toolkit.ActionQueueLifecycle.started(action)
     local token = action.toolkitQueueOperation
@@ -246,6 +255,9 @@ ISTimedActionQueue.onCompleted = function(queue, action)
     if targets then targets.skipUnavailable(queue,action) end
     if protectCompletion and (ISTimedActionQueue.queues[queue.character]~=queue or queue.queue~=completionList
         or queue.current~=action or queue.queue[1]~=action)then return end
+    -- Native completion validates the next action before begin(). Suppress only
+    -- a privately owned generated return before that callback can run.
+    if advanceOptionalReturns and advanceOptionalReturns(queue, action) ~= true then return end
     completed(queue, action)
     if Execution then Execution.completed(action) end
     if PickupFailure then PickupFailure.completed(action) end
@@ -540,6 +552,15 @@ ISTimedActionQueue.tick = function(queue)
     -- Native idle clear is housekeeping; explicit clear still revokes late continuations.
     if not queue.queue[1] then return end
     local current, health = queue.queue[1], Toolkit.ActionQueueHealth
+    if releaseHeldOptionalReturn and releaseHeldOptionalReturn(queue, current) then
+        if advanceOptionalReturns(queue, current) == true and releaseHeldOptionalReturn(queue, current) then
+            -- Use native removal/advancement only: this unallocated request has
+            -- no completed body/effect for our completion observers to publish.
+            completed(queue, current)
+        end
+        return
+    end
+    if holdsOptionalReturn and holdsOptionalReturn(queue, current) then return end
     local approach=Toolkit.ActionQueueApproach
     if approach and approach.skipUnavailable and approach.skipUnavailable(queue,current)then return end
     -- An admitted single earned return can fail before its native start. Its

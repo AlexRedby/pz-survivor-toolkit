@@ -427,6 +427,8 @@ function Settlement.operationState(action)
     local record = action and operation(action.character, action.toolkitQueueOperation)
     if not record then return end
     local result = {phase = record.phase, generation = record.generation, steps = {}}
+    local optional = record.preparationScope and record.preparationScope.optionalReturnPlan
+    if optional then result.optionalReturnState, result.optionalReturnDetail = optional.state, optional.detail end
     for _, step in ipairs(record.steps) do
         result.steps[#result.steps + 1] = {phase = step.phase, state = step.state, started = step.started == true,
             observedPreparation = step.preparation ~= nil, kind = step.action.Type,
@@ -1756,7 +1758,7 @@ end
 
 -- Preparation observation shares the native boundary and transfer merge observer;
 -- it does not replace a native callback or grant permission to interrupt it.
-local preparationObserver
+local preparationObserver, optionalReturnSettled
 local function preparationStep(action)
     local record = action and operation(action.character, action.toolkitQueueOperation)
     local step = record and record.actions[action]
@@ -1836,6 +1838,9 @@ function Settlement.preparationAvailable()
         or not transfers or type(transfers.observeTransfers) ~= "function" then return false end
     if not Settlement.observePlannedReturns() then return false end
     local observer = {
+        settled = function(action)
+            if optionalReturnSettled then optionalReturnSettled(action) end
+        end,
         started = function(action)
             local step = preparationStep(action)
             if not step or not preparationGuard(action) then return end
@@ -2104,6 +2109,311 @@ local function makeReturn(queue, id, expected, containers)
     if action.Type == "ISInventoryTransferAction" then Toolkit.BulkActions.guardTransfer(action) end
     action:setAllowMissingItems(true)
     return action
+end
+
+-- Plans belong to exact live native episodes. The generated action also keeps
+-- an opaque tombstone so retiring a map entry cannot make its replay unmanaged.
+local optionalPlans, optionalBodies, optionalGenerated = {}, {}, {}
+local optionalMarker, optionalIssued = {}, false
+local function optionalPlan(action)
+    local plan = optionalGenerated[action]
+    if plan then return plan end
+    if not optionalIssued or type(action) ~= "table" then return end
+    local seal = executionProof.own(action, optionalMarker)
+    if seal == nil then return end
+    if not executionProof.closure(seal, "ActionQueueSettlement.lua") then return false end
+    local ok, value = pcall(seal, optionalMarker)
+    if not ok or type(value) ~= "table" or value.action ~= action then return false end
+    return value
+end
+local function optionalQueue(plan)
+    local queue, record = plan.queue, plan.record
+    return ISTimedActionQueue.queues[plan.actor] == queue and queue.character == plan.actor
+        and queue.queue == plan.list and getmetatable(plan.list) == nil
+        and record.queue == queue and record.character == plan.actor and record.token == plan.token
+        and plan.scope == record.preparationScope and plan.scope.queue == queue
+        and plan.scope.character == plan.actor and plan.scope.generation == plan.generation
+        and (queue.toolkitOperationGeneration or 0) == plan.generation
+        and not plan.token.toolkitCancelled and not queue.toolkitCancel and not queue.toolkitGroupCancel
+        and record.actions[plan.pickup] == plan.step and plan.step.borrowing == plan.binding
+        and plan.binding.scope == plan.scope and plan.binding.candidate == plan.candidate
+        and plan.candidate.step == plan.step and plan.candidate.owner == plan.token
+end
+local function optionalGuard(plan, phase)
+    if not optionalQueue(plan) or not operationLive(plan.record) or not borrowingLive(plan.scope)
+        or getSpecificPlayer(plan.actor:getPlayerNum()) ~= plan.actor then return false end
+    local ok, valid, reason = pcall(plan.guard, plan.pickup, plan.body, phase)
+    if not ok or valid ~= true then plan.guardDetail = type(reason)=="string" and reason or "unknown" end
+    return ok and valid == true and optionalQueue(plan) and operationLive(plan.record)
+end
+local function optionalEarned(plan)
+    local candidate, proof = plan.candidate, plan.candidate.proof
+    return candidate.phase == "active" and not candidate.ambiguous and candidate.step.state == "earned"
+        and not candidate.returning and not candidate.plannedReturn
+        and proof and proof.direction == "pickup" and proof.action == plan.pickup and proof.ended
+        and proof.native == plan.pickup.action and not proof.invalid and not proof.sequenceError
+        and candidate.member and candidate.member.completed == true
+        and not sharedBorrowing(plan.scope, candidate, {remaining = MAX_EXECUTION_BORROWING_WORK})
+end
+local function optionalItem(plan)
+    local root, item = plan.actor:getInventory(), plan.actor:getInventory():getItemById(plan.id)
+    return root == plan.root and sameMember(item, {id = plan.id, fullType = plan.fullType})
+        and item:getContainer() == root and not item:getIsCraftingConsumed() and item or nil
+end
+local function optionalDebt(plan, reason, revoked)
+    if plan.failure then return true end
+    if plan.candidate.phase == "waived" or plan.candidate.phase == "completed" then return true end
+    -- An unearned pickup is never an unpaid restoration obligation.
+    if plan.step.state ~= "earned" or plan.candidate.phase ~= "active" then return true end
+    local bucket = returnFailures[plan.actor]
+    if not bucket then bucket = {count = 0, revision = 0, entries = {}, queue = plan.queue}; returnFailures[plan.actor] = bucket end
+    if bucket.count >= MAX_RETURN_FAILURES then return false end
+    failureSerial = failureSerial + 1
+    local failure = {id = failureSerial, kind = "optional-unallocated", plan = plan,
+        action = plan.action, candidate = plan.candidate, scope = plan.scope, record = plan.record,
+        queue = plan.queue, generation = plan.generation, item = optionalItem(plan) or plan.item, source = plan.root,
+        destination = plan.destination, itemId = plan.id, itemType = plan.fullType,
+        title = plan.title, reason = reason, state = revoked and "revoked" or "blocked"}
+    plan.failure, plan.state = failure, "blocked"
+    bucket.entries[#bucket.entries + 1] = failure
+    if bucket.activeQueue ~= plan.queue or bucket.activeGeneration ~= plan.generation then
+        bucket.activeQueue, bucket.activeGeneration, bucket.activeCount = plan.queue, plan.generation, 0
+    end
+    if not revoked then bucket.activeCount = bucket.activeCount + 1 end
+    bucket.count, bucket.revision = bucket.count + 1, bucket.revision + 1
+    return true
+end
+local function optionalExecution(plan)
+    local owner = Toolkit.ActionQueueExecution
+    if not plan.execution then
+        if type(owner) ~= "table" or not executionProof.closure(owner.inspect, "ActionQueueExecution.lua")
+            or not executionProof.closure(owner.begin, "ActionQueueExecution.lua") then return end
+        plan.execution, plan.inspect, plan.begin = owner, owner.inspect, owner.begin
+    end
+    if owner ~= plan.execution or owner.inspect ~= plan.inspect or owner.begin ~= plan.begin then return end
+    return owner
+end
+local function optionalReady(plan, phase)
+    if plan.state ~= "queued" then plan.detail=phase..":state"; return false end
+    if not plan.bodySettled then plan.detail=phase..":body"; return false end
+    if not optionalGuard(plan, phase) then plan.detail=phase..":lease"; return false end
+    if not optionalEarned(plan) then plan.detail=phase..":loan"; return false end
+    if not optionalItem(plan) then plan.detail=phase..":item"; return false end
+    local action = plan.action
+    if not action or action.character ~= plan.actor or action.toolkitQueueOperation ~= plan.token
+        or action.item ~= plan.item or action.srcContainer ~= plan.root or action.destContainer ~= plan.destination
+        or action.action or action.started or getmetatable(action) ~= ISInventoryTransferAction then plan.detail=phase..":shape"; return false end
+    if not optionalExecution(plan) then plan.detail=phase..":execution-source"; return false end
+    local ok, descriptor = pcall(plan.inspect, action)
+    if not ok or type(descriptor) ~= "table" then plan.detail=phase..":execution-inspect" end
+    return ok and type(descriptor) == "table" and optionalGuard(plan, phase) and optionalEarned(plan)
+        and plan.state == "queued" and action.character == plan.actor and action.toolkitQueueOperation == plan.token
+        and action.action == nil and not action.started and action.item == plan.item
+        and action.srcContainer == plan.root and action.destContainer == plan.destination
+end
+
+local optionalRegistrationBusy
+local function planOptionalReturn(body, guard, contract)
+    if type(body) ~= "table" or type(guard) ~= "function"
+        or not executionProof.closure(guard, "ActionQueueRestoration.lua") then return false end
+    local record = operation(body.character, body.toolkitQueueOperation)
+    local scope = record and record.preparationScope
+    local bodyStep = record and record.actions[body]
+    if not scope or not borrowingLive(scope) or not bodyStep or bodyStep.started or bodyStep.required
+        or bodyStep.preparation or bodyStep.returning or body.action or body.started
+        or scope.optionalReturnPlan or #record.borrowings ~= 1 or not Settlement.preparationAvailable() then return false end
+    local binding = record.borrowings[1]
+    local candidate, step = binding.candidate, binding.candidate and binding.candidate.step
+    if binding.scope ~= scope or not candidate or not step or step.operation ~= record
+        or not step.preparation or step.preparation.scope ~= scope or step.preparation.failed
+        or candidate.owner ~= record.token or candidate.phase ~= "prepare" or candidate.ambiguous
+        or candidate.returning or candidate.plannedReturn or not step.action
+        or body == step.action or body.item == nil or not sameMember(body.item, candidate)
+        or candidate.destination ~= record.character:getInventory() then return false end
+    local plan = {record = record, scope = scope, binding = binding, candidate = candidate, step = step,
+        actor = record.character, queue = record.queue, list = record.queue.queue, generation = record.generation,
+        token = record.token, pickup = step.action, body = body, bodyStep = bodyStep, guard = guard,
+        id = candidate.id, fullType = candidate.fullType, destination = candidate.source,
+        root = candidate.destination, item = body.item, title = candidate.fullType, state = "planned"}
+    if not optionalGuard(plan, "plan") or scope.optionalReturnPlan then return false end
+    if contract == nil then contract = {knownInputs = true, items = {[candidate.id] = true}} end
+    if type(contract) ~= "table" or getmetatable(contract) ~= nil or contract.knownInputs == false
+        or contract.unknownOutputs or contract.dynamicInputs or contract.dynamicInputsByType
+        or not Settlement.remember(scope, body, contract) or not optionalGuard(plan, "plan")
+        or scope.optionalReturnPlan then return false end
+    scope.optionalReturnPlan = plan
+    optionalPlans[plan.pickup], optionalBodies[body] = plan, plan
+    return true
+end
+function Settlement.planOptionalReturn(body, guard, contract)
+    if optionalRegistrationBusy then return false end
+    optionalRegistrationBusy = true
+    local ok, result = pcall(planOptionalReturn, body, guard, contract)
+    optionalRegistrationBusy = nil
+    return ok and result == true
+end
+
+optionalReturnSettled = function(action)
+    local finished = optionalGenerated[action]
+    if finished then
+        local step = finished.record.actions[action]
+        local failure = step and step.returning and step.returning.failure
+        if failure then finished.state, finished.failure = "blocked", failure
+        else finished.state = "finished"; optionalGenerated[action] = nil end
+        return
+    end
+    local bodyPlan = optionalBodies[action]
+    if bodyPlan then
+        bodyPlan.bodySettled = true; optionalBodies[action] = nil
+        if bodyPlan.action and bodyPlan.queue:indexOf(bodyPlan.action) == -1 then
+            if bodyPlan.candidate.phase == "waived" or bodyPlan.candidate.phase == "completed" then
+                optionalGenerated[bodyPlan.action] = nil; bodyPlan.state = "retired"
+            else optionalDebt(bodyPlan, "producer") end
+        end
+        return
+    end
+    local plan = optionalPlans[action]
+    if not plan or plan.consumed then return end
+    plan.consumed = true; optionalPlans[action] = nil
+    plan.detail = "settled-lease"
+    local queue = plan.queue
+    local function lease()
+        if not optionalGuard(plan, "settled") then plan.detail="settled:guard:"..tostring(plan.guardDetail);return false end
+        if not optionalEarned(plan) then
+            local proof=plan.candidate.proof
+            plan.detail="settled:loan:"..(not proof and "missing"or proof.invalid and "invalid"or proof.sequenceError and "sequence"
+                or not proof.ended and "open"or proof.native~=plan.pickup.action and "native"or "other")
+            return false
+        end
+        if queue.current ~= plan.pickup or queue.queue[1] ~= plan.pickup then plan.detail="settled:head";return false end
+        if plan.pickup.action == nil then plan.detail="settled:no-native";return false end
+        if plan.actor:getCharacterActions():contains(plan.pickup.action) then plan.detail="settled:native-live";return false end
+        if queue.queue[2] ~= plan.body or plan.body.action or plan.body.started
+            or plan.body.toolkitQueueOperation ~= plan.token or plan.body.character ~= plan.actor
+            or plan.record.actions[plan.body] ~= plan.bodyStep or plan.bodyStep.started
+            or plan.bodyStep.required or plan.bodyStep.returning then plan.detail="settled:body";return false end
+        for index = 3, #queue.queue do
+            if queue.queue[index].toolkitQueueOperation == plan.token and queue.queue[index] ~= plan.action then plan.detail="settled:extra";return false end
+        end
+        if not optionalItem(plan) then plan.detail="settled:item";return false end
+        return optionalQueue(plan)
+    end
+    if not lease() then optionalDebt(plan, "producer"); return end
+    plan.item = optionalItem(plan)
+    local operations = Toolkit.ActionQueueOperations
+    local insert = operations and operations.insertOptionalReturn
+    if type(insert) ~= "function" or not executionProof.closure(insert, "ActionQueueOperations.lua") then
+        optionalDebt(plan, "producer"); return
+    end
+    -- Consume before constructors/metadata/queue callbacks can reenter settled.
+    plan.state = "constructing"
+    plan.detail = "constructor"
+    local ok, returned = pcall(function()
+        return makeReturn(queue, plan.id, {fullType = plan.fullType, destination = plan.destination, borrowed = plan.candidate},
+            ISInventoryPaneContextMenu.getContainers(plan.actor))
+    end)
+    if not ok or not returned then optionalDebt(plan, "producer"); return end
+    plan.action = returned
+    optionalGenerated[returned], optionalIssued = plan, true
+    returned[optionalMarker] = function(challenge) if challenge == optionalMarker then return plan end end
+    returned.toolkitQueueOperation = plan.token
+    plan.detail = "constructed-lease"
+    if not lease() or returned.item ~= plan.item or returned.Type ~= "ISInventoryTransferAction"
+        or returned.srcContainer ~= plan.root or returned.destContainer ~= plan.destination then optionalDebt(plan, "producer"); return end
+    plan.detail = "insertion"
+    local inserted, value = pcall(insert, plan.body, returned, lease)
+    if not inserted or value ~= returned or queue.queue[3] ~= returned or queue.queue[2] ~= plan.body
+        or returned.action or returned.started or not optionalQueue(plan) then optionalDebt(plan, "producer"); return end
+    plan.state, plan.detail = "queued", "inserted"
+end
+
+function Settlement.advanceOptionalReturns(queue, current)
+    -- Unmanaged native completions, including disabled-mode retriggers, must
+    -- not acquire our stricter private episode requirements.
+    if not optionalIssued then return true end
+    if queue and queue.queue and optionalPlan(queue.queue[2]) == nil then return true end
+    if not queue or queue.current ~= current or queue.queue[1] ~= current then return false end
+    for _ = 1, MAX_EXECUTION_MEMBERS do
+        local action = queue.queue[2]
+        local plan = action and optionalPlan(action)
+        if plan == nil then return true end
+        if not plan or plan.queue ~= queue or plan.list ~= queue.queue or action.action or action.started then return false end
+        if optionalReady(plan, "advance") then
+            return queue.current == current and queue.queue[1] == current and queue.queue == plan.list and queue.queue[2] == action
+        end
+        if queue.current ~= current or queue.queue ~= plan.list or queue.queue[1] ~= current
+            or queue.queue[2] ~= action or action.action or action.started then return false end
+        local terminal = plan.candidate.phase == "waived" or plan.candidate.phase == "completed"
+        if not terminal and not optionalDebt(plan, "producer") then return false end
+        -- No native forceCancel or user callback is needed for our unallocated row.
+        table.remove(queue.queue, 2)
+        plan.state = terminal and "retired" or "blocked"
+        if terminal then optionalGenerated[action] = nil end
+    end
+    return false
+end
+function Settlement.beginOptionalReturn(action)
+    local plan = optionalPlan(action)
+    if plan == nil then return false end
+    if not plan then return true, false end
+    local queue = plan.queue
+    if queue.current ~= action or queue.queue[1] ~= action or not optionalReady(plan, "begin") then
+        optionalDebt(plan, "producer"); plan.held = true; return true, false
+    end
+    local ok, accepted = pcall(plan.begin, action)
+    if not ok or accepted ~= true or queue.current ~= action or queue.queue[1] ~= action
+        or queue.queue ~= plan.list or action.action or not optionalGuard(plan, "begin") then
+        optionalDebt(plan, "producer"); plan.held = true; return true, false
+    end
+    plan.state = "executing"
+    return true, true
+end
+-- A held request never allocated a native action. Explicit Keep can retire
+-- that exact request, but cannot revive its old execution authority.
+function Settlement.releaseHeldOptionalReturn(queue, current)
+    local plan = current and optionalPlan(current)
+    if not plan or not plan.held or current.action ~= nil or not optionalQueue(plan)
+        or queue ~= plan.queue or queue.current ~= current or queue.queue[1] ~= current then return false end
+    return plan.candidate.phase == "waived" or plan.candidate.phase == "completed"
+end
+function Settlement.holdsOptionalReturn(queue, current)
+    local plan = current and optionalPlan(current)
+    return plan ~= nil and queue and queue.current == current and queue.queue[1] == current
+        and current.action == nil and (plan == false or plan.queue == queue and plan.held == true) or false
+end
+local function resetOptionalReturns(queue)
+    -- A consumed staging attempt can fail before it has a generated action.
+    -- Its pending body must not root an obsolete queue after reset/removal.
+    for body, plan in pairs(optionalBodies) do
+        if plan.queue == queue then
+            optionalBodies[body], optionalPlans[plan.pickup] = nil, nil
+            plan.consumed, plan.state = true, "revoked"
+            optionalDebt(plan, "producer", true)
+        end
+    end
+    for pickup, plan in pairs(optionalPlans) do
+        if plan.queue == queue then
+            plan.consumed, plan.state = true, "revoked"; optionalPlans[pickup] = nil
+            optionalBodies[plan.body] = nil
+            optionalDebt(plan, "producer", true)
+        end
+    end
+    for action, plan in pairs(optionalGenerated) do
+        if plan.queue == queue then
+            optionalDebt(plan, "producer", true); plan.state = "revoked"
+            if not plan.failure then optionalGenerated[action] = nil end
+            optionalBodies[plan.body] = nil
+        end
+    end
+end
+local function keepOptionalFailure(failure, character)
+    local plan = failure.plan
+    if not plan or plan.failure ~= failure or plan.actor ~= character or not optionalQueue(plan)
+        or not operationLive(plan.record) or optionalItem(plan) ~= failure.item
+        or sharedBorrowing(plan.scope, plan.candidate, {remaining = MAX_EXECUTION_BORROWING_WORK}) then return false end
+    if not optionalQueue(plan) or plan.candidate.phase ~= "active" then return false end
+    plan.candidate.phase, plan.state = "waived", "retired"
+    return true
 end
 
 -- Fresh bounded facts for an opt-in edit projection. The metadata ledger above
@@ -2663,6 +2973,14 @@ function Settlement.returnRestorationBlocked(action)
     local root = character:getInventory()
     if action.srcContainer ~= root or action.destContainer == root or not instanceof(action.item, "InventoryItem") then return false end
     for _, failure in ipairs(bucket.entries) do
+        if failure.kind == "optional-unallocated" then
+            local plan = failure.plan
+            if plan and plan.failure == failure and failure.state == "blocked" and optionalQueue(plan)
+                and optionalItem(plan) == action.item and action.destContainer == plan.destination
+                and plan.candidate.phase == "active" and plan.step.state == "earned"
+                and not sharedBorrowing(plan.scope, plan.candidate, {remaining = MAX_EXECUTION_BORROWING_WORK})
+                and optionalQueue(plan) then return true end
+        else
         local planned, candidate, previous = failure.planned, failure.candidate, failure.action
         local step = failure.record.actions[previous]
         if action.item == failure.item and action.destContainer == failure.destination
@@ -2684,6 +3002,7 @@ function Settlement.returnRestorationBlocked(action)
             and action.item:getContainer() == root and root:getItemById(failure.itemId) == action.item
             and not action.item:getIsCraftingConsumed() and exactReturnOwner(failure, root)
             and not sharedBorrowing(failure.scope, candidate, {remaining = MAX_EXECUTION_BORROWING_WORK}) then return true end
+        end
     end
     return false
 end
@@ -2712,6 +3031,7 @@ function Settlement.blockedReturns(character)
     return result
 end
 function Settlement.resetReturnFailures(queue)
+    if queue then resetOptionalReturns(queue) end
     if requestMethods and queue then requestMethods.reset(queue.character) end
     local bucket = queue and returnFailures[queue.character]
     if not bucket then return end
@@ -2730,11 +3050,16 @@ function Settlement.keepReturn(character, id)
                 -- Explicitly forget historical UI information. No old receipt,
                 -- item lookup, retention intent or execution right is revived.
                 table.remove(bucket.entries, index)
+                local optional = failure.action and optionalGenerated[failure.action]
+                if optional then optional.state = "retired"; optionalGenerated[failure.action] = nil end
                 bucket.count, bucket.revision = bucket.count - 1, bucket.revision + 1
                 return true
             end
             local candidate = failure.candidate
             if not candidate or candidate.phase ~= "active" then return false, "unavailable" end
+            if failure.kind == "optional-unallocated" then
+                if not keepOptionalFailure(failure, character) then return false, "unavailable" end
+            else
             local root = character:getInventory()
             local item = root:getItemById(failure.itemId)
             if item ~= failure.item or not sameMember(item, {id=failure.itemId, fullType=failure.itemType})
@@ -2755,7 +3080,10 @@ function Settlement.keepReturn(character, id)
                     if not ok or kept ~= true then candidate.phase = "active"; return false, "unavailable" end
                 end
             end
+            end
             table.remove(bucket.entries, index)
+            local optional = failure.action and optionalGenerated[failure.action]
+            if optional then optional.state = "retired"; optionalGenerated[failure.action] = nil end
             if bucket.activeQueue == failure.queue and bucket.activeGeneration == failure.generation then
                 bucket.activeCount = math.max(0, bucket.activeCount - 1)
             end
@@ -2765,8 +3093,15 @@ function Settlement.keepReturn(character, id)
     end
     return false, "unavailable"
 end
-if Events and Events.OnGameStart then Events.OnGameStart.Add(function() returnFailures = {} end) end
-if Events and Events.OnPlayerDeath then Events.OnPlayerDeath.Add(function(character) returnFailures[character] = nil end) end
+if Events and Events.OnGameStart then Events.OnGameStart.Add(function()
+    returnFailures = {}; optionalPlans, optionalBodies, optionalGenerated = {}, {}, {}
+end) end
+if Events and Events.OnPlayerDeath then Events.OnPlayerDeath.Add(function(character)
+    for pickup, plan in pairs(optionalPlans) do if plan.actor == character then plan.state = "revoked"; optionalPlans[pickup] = nil end end
+    for body, plan in pairs(optionalBodies) do if plan.actor == character then plan.state = "revoked"; optionalBodies[body] = nil end end
+    for action, plan in pairs(optionalGenerated) do if plan.actor == character then plan.state = "revoked"; optionalGenerated[action] = nil end end
+    returnFailures[character] = nil
+end) end
 
 -- An earned ground placement may require a native floor pickup before equipment
 -- restoration. Observe that cleanup transaction without creating a new borrowing
@@ -3772,6 +4107,21 @@ end
 -- invalidating the token. No native effect was admitted, so there is nothing
 -- to complete or return; retain the historical claim as an explicit waiver.
 function Settlement.discardUnstartedPickups(queue,token,members)
+    -- Removed source-enrolled groups do not reach settled or queue reset.
+    -- Retire only exact absent, never-started private preparation/body pairs.
+    if type(members)=="table" and getmetatable(members)==nil then
+        for _, member in ipairs(members) do
+            local plan=optionalPlans[member] or optionalBodies[member]
+            if plan and plan.queue==queue and plan.token==token and queue.queue==plan.list
+                and ISTimedActionQueue.queues[plan.actor]==queue and queue.character==plan.actor
+                and queue:indexOf(plan.pickup)==-1 and queue:indexOf(plan.body)==-1
+                and not plan.pickup.action and not plan.pickup.started and not plan.body.action and not plan.body.started
+                and not plan.step.started and plan.candidate.phase=="prepare" and not plan.action then
+                optionalPlans[plan.pickup],optionalBodies[plan.body]=nil,nil
+                plan.consumed,plan.state=true,"revoked"
+            end
+        end
+    end
     local api=nativePlanReads
     local state=nativePlanContext(queue)
     if not state or not nativePlanPlain(token)or api.raw(token,'toolkitCancelled')~=true

@@ -108,10 +108,17 @@ def _prepared(row, selection):
                 raise ValueError('real body start lacked exact root item after native fetch')
     wanted = {ids['items'][name]['id']: ids['items'][name]['type'] for name in (('target',) if editing else ('target', 'cancelled'))}
     returned = set(); returns = value['returns']
-    if type(returns) is not list or not returns: raise ValueError('native P4 return observation missing')
+    native_returns = selection.get('options', {}).get('wring_restoration_provider') == 'native-returns'
+    if native_returns and not editing:
+        if returns != []: raise ValueError('queue-off P4-free control unexpectedly returned clothing')
+        return
+    if type(returns) is not list or not returns: raise ValueError('native return observation missing')
+    if native_returns and len(returns) != 1: raise ValueError('native restoration requires exactly one generated return')
     for receipt in returns:
+        if native_returns and receipt.get('bodySettled') is not True:
+            raise ValueError('generated return started before exact wring body settled')
         if (type(receipt['actionRef']) is not str or not receipt['actionRef'] or receipt['type'] != 'ISInventoryTransferAction'
-            or receipt['from'] != 'root' or receipt['toBag'] != value['sourceBag'] or receipt['allowMissing'] is not False
+            or receipt['from'] != 'root' or receipt['toBag'] != value['sourceBag'] or receipt['allowMissing'] is not native_returns
             or not _number(receipt['duration']) or (receipt['duration'] != -1 if selection['kind'] == 'mp' else receipt['duration'] <= 0)):
             raise ValueError('native P4 return endpoint/duration/source flags')
         members = receipt['items']
@@ -134,6 +141,36 @@ def _prepared(row, selection):
             else: raise ValueError('unsuccessful/unpaired native P4 return callback')
         if opened or not finished: raise ValueError('native P4 return perform did not finish')
     if returned != set(wanted): raise ValueError('native P4 return omitted exact borrowed identity')
+
+
+def _restoration(row, selection):
+    enabled = selection.get('options', {}).get('wring_restoration_provider') == 'native-returns'
+    if not enabled:
+        if 'restoration' in row: raise ValueError('unrequested restoration receipt')
+        return
+    spec = row['ids']['items']['target']; toolkit = selection['mode'] == 'toolkit'
+    samples = row.get('restoration', {}).get('samples', [])
+    if len(samples) != 3: raise ValueError('missing P4-free loan transitions')
+    returned = row['prepared']['returns']
+    for sample, (point, state, planned) in zip(samples, (('queued', 'prepare', 0), ('body', 'active', 0), ('final', 'completed', 1))):
+        wanted = dict(case='worn-bag', point=point, loaded=False, selected=False, itemId=spec['id'], itemType=spec['type'],
+                      state=state if toolkit else False, candidates=1 if toolkit else 0,
+                      observedPreparation=toolkit, plannedTransfers=planned if toolkit else 0)
+        if point == 'body':
+            if toolkit:
+                body_index, return_index, tail_index = (sample.get(k) for k in ('bodyIndex', 'returnIndex', 'tailIndex'))
+                if (not all(_positive(v) for v in (body_index, return_index, tail_index))
+                        or not body_index < return_index < tail_index or len(returned) != 1):
+                    raise ValueError('generated return missing between exact body and tail')
+                wanted.update(bodyIndex=body_index, returnIndex=return_index, tailIndex=tail_index,
+                              returnRef=returned[0]['actionRef'])
+            else:
+                wanted.update(bodyIndex=sample.get('bodyIndex'), tailIndex=sample.get('tailIndex'), returnIndex=False, returnRef=False)
+                if not _positive(wanted['bodyIndex']) or not _positive(wanted['tailIndex']) or wanted['bodyIndex'] >= wanted['tailIndex']:
+                    raise ValueError('queue-off native body/tail order differs')
+        if sample != wanted: raise ValueError('P4-free provider or exact loan transitions differ')
+    if row.get('restoration', {}).get('provider') != 'native-returns':
+        raise ValueError('P4-free restoration provider differs')
 
 
 def _equipment(value):
@@ -600,7 +637,11 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
             for name, item in snapshot['items'].items():
                 spec = specs[name]
                 expected_native = {key: spec[key] for key in ('bodyLocation', 'bodyLocationClass', 'nativeShoe', 'cap')}
-                if (item['id'] != spec['id'] or item['type'] != spec['type'] or item['counts'] != _counts(case, name, final)
+                expected_counts = _counts(case, name, final)
+                if (final and case == 'worn-bag' and name in ('target', 'cancelled') and selection['mode'] == 'native'
+                        and selection.get('options', {}).get('wring_restoration_provider') == 'native-returns'):
+                    expected_counts = dict(actor=1, root=1, source=0)
+                if (item['id'] != spec['id'] or item['type'] != spec['type'] or item['counts'] != expected_counts
                     or item['native'] != expected_native
                     or item['worn'] is not ((not final and case == 'worn' and name == 'target') or (worn_prepared and name in ('target','cancelled') and (not final or name == 'cancelled' and group_editing)))
                     or not _number(item['weight']) or not 0 < item['weight'] <= spec['weight'] + .01
@@ -662,6 +703,7 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
                     raise ValueError('native wring callbacks/duration')
         if carried: _prepared(row, selection)
         elif row.get('prepared', False) is not False: raise ValueError('unexpected carried group evidence')
+        _restoration(row, selection)
         if starts != sorted(starts):
             raise ValueError('native completion order')
         if worn_prepared: _worn_prepared(row, selection, wear_baseline)
@@ -713,6 +755,10 @@ def verify(root, selection, catalog):
             or selection['mode'] == 'toolkit' and setups[0].get('adapterInstalled') is not True
             or ends[0].get('performed') != len(cases) or ends[0].get('failed') != 0 or ends[0].get('skipped') != 0):
             raise ValueError('setup or completion evidence')
+        restoration_raw = _raw(text, 'RESTORATION')
+        restoration_rows = [sample for row in rows for sample in row.get('restoration', {}).get('samples', [])]
+        if restoration_raw != restoration_rows:
+            raise ValueError('restoration event and raw loan receipts differ')
         for index, case in enumerate(cases):
             row = rows[index]
             if (row.get('actor') != 'client1' or row.get('kind') != selection['kind'] or row.get('mode') != selection['mode']

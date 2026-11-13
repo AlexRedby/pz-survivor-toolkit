@@ -953,6 +953,7 @@
   "UI_PZSurvivorToolkit_queue_return_admission": "Не удалось вернуть предмет: хранилище недоступно или в нём нет места. Оставьте предмет у себя, чтобы отменить этот возврат.",
   "UI_PZSurvivorToolkit_queue_return_server": "Сервер не завершил возврат. Предмет остался у вас. Оставьте его у себя, чтобы отменить этот возврат.",
   "UI_PZSurvivorToolkit_queue_return_unmoved": "Предмет не перемещён в исходное хранилище. Оставьте его у себя, чтобы отменить этот возврат.",
+  "UI_PZSurvivorToolkit_queue_return_producer": "Автовозврат не подтверждён. Предмет остаётся у вас. Нажмите «Оставить», чтобы отменить возврат.",
   "UI_PZSurvivorToolkit_queue_return_unavailable": "Возврат изменился или его больше нельзя отменить. Его текущее состояние обновлено.",
   "UI_PZSurvivorToolkit_queue_recovery_restore": "Восстановить (%1)",
   "UI_PZSurvivorToolkit_queue_recovery_forget": "Забыть эту отменённую очередь",

@@ -140,7 +140,7 @@ return function(client,options)
     env.Hook=setmetatable({}, {__index=function()return {Add=function()end}end})
     for _,name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
         'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'})do env[name]={instance=function()return {}end}end
-    env.ISInventoryPage={};env.ISInventoryPaneContextMenu={};env.ISInventoryPane={getActualUniqueItems=function(items)return items end}
+    env.ISInventoryPage={};env.ISInventoryPaneContextMenu={};env.ISInventoryPane={getActualUniqueItems=function(items)return items end,getActualItems=function(items)return items end}
     env.ISContextMenu={};env.ISButton={};env.ISCraftingUI={};env.ISWorldObjectContextMenu={}
     env.LootSorter={}
     env.getText=function(value)return value end;env.getTextOrNull=env.getText
@@ -242,6 +242,7 @@ return function(client,options)
         value.contains=function(self,item)return item.container==self end
         value.containsID=function(self,id)for _,item in ipairs(allItems)do if item.id==id and item.container==self then return true end end;return false end
         value.getItemById=function(self,id)for _,item in ipairs(allItems)do if item.id==id and item.container==self then return item end end end
+        value.getItemWithID=value.getItemById
         value.getItems=function(self)local items={};for _,item in ipairs(allItems)do if item.container==self then items[#items+1]=item end end;return list(items)end
         value.getOutermostContainer=function(self)return self.owner and self.owner.container:getOutermostContainer()or self end
         for _,name in ipairs({'getAcceptItemFunction','getOnlyAcceptCategory','getVehiclePart','getOpenSound','getTakeSound','getPutSound','getContainerPosition','getFreezerPosition'})do value[name]=function()end end
@@ -282,10 +283,12 @@ return function(client,options)
     env.sendServerCommand=function()end;env.sendSyncPlayerFields=function()end;env.syncItemFields=function()end
     env.round=function(value)return value end
     env.luautils={}
+    native('shared/ISBaseObject.lua')
     native('shared/TimedActions/ISBaseTimedAction.lua')
     native('client/TimedActions/ISTimedActionQueue.lua')
     native('client/TimedActions/ISQueueActionsAction.lua')
     native('shared/TimedActions/ISReadABook.lua')
+    native('shared/TimedActions/ISWringClothing.lua')
     native('client/TimedActions/ISInventoryTransferAction.lua')
     native('shared/TimedActions/ISInventoryTransferUtil.lua')
     native('shared/TimedActions/ISTransferAction.lua')
@@ -294,10 +297,12 @@ return function(client,options)
     end
     native('client/TimedActions/ISDetachItemHotbar.lua')
     native('client/TimedActions/WalkToTimedAction.lua')
+    nativeFunction('client/ISUI/ISInventoryPane.lua','function ISInventoryPane.getActualItems(')
     nativeFunction('shared/luautils.lua','function luautils.walkToContainer(')
     nativeFunction('shared/luautils.lua','function luautils.haveToBeTransfered(')
     for _,signature in ipairs({'function ISInventoryPaneContextMenu.transferIfNeeded(',
-        'ISInventoryPaneContextMenu.onLiteratureItems = function(', 'ISInventoryPaneContextMenu.readItem = function('})do
+        'ISInventoryPaneContextMenu.onLiteratureItems = function(', 'ISInventoryPaneContextMenu.readItem = function(',
+        'ISInventoryPaneContextMenu.onWringClothing = function('})do
         nativeFunction('client/ISUI/ISInventoryPaneContextMenu.lua',signature)
     end
     for _,signature in ipairs({'function ISCraftingUI.ReturnItemToOriginalContainer(', 'function ISCraftingUI.ReturnItemToContainer('})do
@@ -318,6 +323,19 @@ return function(client,options)
         value.getWorldItem=function()end;value.getEquipParent=function()end;value.getAttachedSlot=function()return -1 end
         value.canBeEquipped=function()end
         allItems[#allItems+1]=value;return value
+    end
+    local function garment(id, location)
+        local value=book(id, location)
+        value.class,value.wetness='Clothing',80
+        value.getFullType=function()return 'Base.Shirt_Denim'end
+        value.getType=function()return 'Shirt_Denim'end
+        value.getCategory=function()return 'Clothing'end
+        value.IsClothing=function()return true end
+        value.getWetness=function(self)return self.wetness end
+        value.setWetness=function(self,wetness)self.wetness=wetness end
+        value.getBodyLocation=function()return 'Torso'end
+        value.getClothingItem=function()return {}end
+        return value
     end
     if options.readProducer=='transferIfNeeded' then
         -- Preserve the real same-file native closure while changing its role
@@ -346,7 +364,24 @@ return function(client,options)
                 lifecycle.finish(action,'complete',complete[1]and complete[2]~=false)
                 if not complete[1]then error(complete[2],0)end
             end
-            action.action.removed=true;queue:tick()
+            action.action.removed=true
+            if client and options.canonicalBodyReplacement and not options.replacedBody
+                and action.Type=='ISInventoryTransferAction'and action.destContainer==inventory then
+                options.replacedBody=true
+                local old=action.item;local canonical={}
+                for key,value in pairs(old)do canonical[key]=value end
+                assert(old.container==inventory,'server replacement requires an earned physical root item')
+                old.container=nil;canonical.container=inventory;allItems[#allItems+1]=canonical
+                action.item=canonical
+                for _,body in ipairs(queue.queue)do
+                    if body.Type=='ISWringClothing'and body.item==old then body.item=canonical end
+                end
+                engineTrace[#engineTrace+1]={event='server-canonical-replacement',id=canonical.id}
+                if options.guardLostAtReplacement then
+                    env.PZSurvivorToolkit.ActionQueueRestoration.observeNative=function()return false end
+                end
+            end
+            queue:tick()
         end
         return observed
     end
@@ -361,7 +396,7 @@ return function(client,options)
         assert(request.status=='pending');request.status='done'
         for _,item in ipairs(request.items)do request.source:DoRemoveItem(item);request.destination:AddItem(item)end
     end
-    return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,list=list,
+    return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,garment=garment,list=list,
         dispatch=dispatch,start=start,deliver=deliver,transactions=transactions,events=events,adjacent=adjacent,
         effects=effects,engineTrace=engineTrace,bag=bag}
 end

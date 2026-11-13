@@ -26,7 +26,7 @@ local function lookupShape(constructing)
   and classChain(object,base,class,constructing)
 end
 local snapshot,registered
-local inspect,matches,callbacksTrusted,install
+local inspect,matches,callbacksTrusted,install,inspectPrepared,matchesPrepared
 local source='native.ISWringClothing'
 local ownNames={'isValid','update','start','stopSound','stop','perform','complete','getDuration','new'}
 -- Native Wring calls these base owners directly even though its own overrides
@@ -46,7 +46,8 @@ local function unchanged(constructing)
  if not lookupShape(constructing)then return false end
  if not snapshot or not snapshot.trusted or PZSurvivorToolkit~=Toolkit or Toolkit.ActionQueueWring~=Wring
   or ISWringClothing~=class or ISBaseTimedAction~=base or class.Type~='ISWringClothing'
-  or Wring.inspect~=inspect or Wring.matches~=matches or Wring.callbacksTrusted~=callbacksTrusted or Wring.install~=install then return false end
+  or Wring.inspect~=inspect or Wring.matches~=matches or Wring.callbacksTrusted~=callbacksTrusted
+  or Wring.install~=install or Wring.inspectPrepared~=inspectPrepared or Wring.matchesPrepared~=matchesPrepared then return false end
  for name,callback in pairs(globals)do if _G[name]~=callback then return false end end
  if math.min~=minimum or math.ceil~=ceiling then return false end
  for name,callback in pairs(snapshot.classMethods)do if Proof.own(class,name)~=callback then return false end end
@@ -75,14 +76,16 @@ local function shape(action)
   and action.forceProgressBar==true and action.caloriesModifier==1
   and instanceof(action.character,'IsoPlayer')and instanceof(action.item,'Clothing')
 end
-local function pending(action)
+local function pendingShape(action)
  return not action.action and not action.started
   and action.toolkitNativeTransaction==nil and action.toolkitNativeKind==nil
-  and not(type(action.toolkitQueueOperation)=='table'and action.toolkitQueueOperation.toolkitStarted)
   and finite(action.maxTime)and action.maxTime>=1 and action.maxTime<=500 and action.maxTime%1==0
 end
-inspect=function(action)
- if not shape(action)or not action.action and not pending(action)then return end
+local function pending(action)
+ return pendingShape(action)and not(type(action.toolkitQueueOperation)=='table'and action.toolkitQueueOperation.toolkitStarted)
+end
+local function inspectBody(action,preparing)
+ if not shape(action)or not action.action and not(preparing and pendingShape(action)or pending(action))then return end
  local actor,item=action.character,action.item
  if getSpecificPlayer(actor:getPlayerNum())~=actor or actor:isDead()or actor:isAsleep()
   or getClassSimpleName(item)~='Clothing'then return end
@@ -130,6 +133,17 @@ inspect=function(action)
   effects={{field='wetness',cap=cap}},bounds={wetness={min=0,max=100}}}}}
  return result
 end
+inspect=function(action)return inspectBody(action,false)end
+-- Source-proven producers can inspect an unstarted body while its preparation
+-- already runs. Settlement still has to prove the exact private pickup owner;
+-- this entry does not register broader move/cancel permissions.
+-- Binding only, not a location/edit certificate. The native transfer ledger
+-- separately proves physical ownership after a Host proxy replacement.
+matchesPrepared=function(action)return shape(action)and(action.action~=nil or pendingShape(action))end
+inspectPrepared=function(action)
+ if action.action or not pendingShape(action)then return end
+ return inspectBody(action,true)
+end
 matches=function(action)return shape(action)and(action.action~=nil or pending(action))end
 install=function()
  if snapshot then return unchanged(true)end
@@ -170,6 +184,6 @@ install=function()
  end
  return unchanged(true)
 end
-Wring.inspect,Wring.matches,Wring.callbacksTrusted,Wring.install=inspect,matches,callbacksTrusted,install
+Wring.inspect,Wring.matches,Wring.callbacksTrusted,Wring.install,Wring.inspectPrepared,Wring.matchesPrepared=inspect,matches,callbacksTrusted,install,inspectPrepared,matchesPrepared
 if Events and Events.OnGameStart then Events.OnGameStart.Add(install)end
 return Wring

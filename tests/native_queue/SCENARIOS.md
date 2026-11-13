@@ -10,6 +10,7 @@ Choose a suite with `python3 tools/check_action_queue.py matrix`, then read its 
 - [Medical disconnect](#medical-disconnect)
 - [Radio settings](#radio-settings)
 - [P4-free carried book returns](#p4-free-carried-book-returns)
+- [P4-free wringing returns](#p4-free-wringing-returns)
 - [Crafting and borrowed tools](#crafting-and-borrowed-tools)
 - [Craft UI callbacks](#craft-ui-callbacks)
 - [Fire and fuel](#fire-and-fuel)
@@ -89,6 +90,14 @@ Radio settings use `--suite radio-settings --cases reorder,cancel,barrier --mods
 Pass the current selected Mod IDs in their original order through `--mods` (or a batch plan's `mods` list), omitting only `P4TidyUpMeister`. Keep the repository INI unchanged. The profile rejects other removals, additions and case families; `--mods selected` and a full-selection pack lock describe a different set. Normal preparation still resolves, seals and checks every effective selected source; use identical explicit source overrides for each control/candidate pair.
 
 The fixture verifies both loaded and selected P4 absence, exact original pickup/return identities, private loan preparation/earning/payment, pending-return Keep and blocked debt followed by the actual footer Keep. Queue-off controls require no owned loan. Existing independent server snapshots, native durations, progressed reading, real Panel handlers, native drain and full runtime auditing remain required. The capacity case lowers the owned container's native capacity after pickup; it does not claim physical filler-item coverage. These are edited carried-reading checks with an independent Pen/TV/book tail, not a complete restoration-provider replacement or physical-input qualification.
+
+## P4-free wringing returns
+
+Select suite `wring-clothing`, case `worn-bag`, with `options.wring_restoration_provider="native-returns"` and the exact ordered selected Mod IDs excluding only `P4TidyUpMeister`. The normal selected INI and default suite remain unchanged. Use fresh SP/menu-Host queue-off/on pairs with identical candidate sources and settings; a different selection cannot use the full-selection pack lock.
+
+The native producer supplies approach/fetch/wring. Toolkit inserts one optional return only after its exact pickup is earned. Receipts prove provider absence, prepare/active/completed loan states, a single generated return identity, untouched native durations, exact source/root counts, server wetness and completion before the independent wring tail. P4-free queue-off controls deliberately retain the native no-return result. Single actual-item and ordinary singleton UI-row inputs qualify; bulk input is not partially enrolled.
+
+This bank qualifies normal borrowed-item return and pending group edits. Live pending Keep, unavailable/full sources, newer explicit intent, worn/activation restoration, physical UI/WAN and independent queue-off restoration need their separate gates. Source-backed composition checks cover the private admission/Keep/refusal machinery and explicit Host canonical replacement; they are not live transport evidence.
 
 ## Crafting and borrowed tools
 

@@ -309,6 +309,56 @@ def capacity_profile_evidence(kind='mp',mode='toolkit'):
     return row,selection,ids,final
 
 
+class WringClothingRestorationProfileTests(unittest.TestCase):
+    def selection(self, mode='toolkit'):
+        return dict(kind='sp', mode=mode, mods=[mod for mod in a.MODS if mod != 'P4TidyUpMeister'],
+                    languages=['EN'], clients=1, cases=['worn-bag'],
+                    options=dict(wring_restoration_provider='native-returns'))
+
+    def sample(self, mode):
+        result = list(evidence('sp', mode, 'worn-bag')); row, selection, ids, final = result
+        selection.update(self.selection(mode)); spec = ids['items']['target']; enabled = mode == 'toolkit'
+        samples = [dict(case='worn-bag', point=point, loaded=False, selected=False, itemId=spec['id'], itemType=spec['type'],
+                        state=state if enabled else False, candidates=1 if enabled else 0,
+                        observedPreparation=enabled, plannedTransfers=planned if enabled else 0)
+                   for point, state, planned in (('queued', 'prepare', 0), ('body', 'active', 0), ('final', 'completed', 1))]
+        samples[1].update(bodyIndex=1, returnIndex=2 if enabled else False, tailIndex=3 if enabled else 2,
+                          returnRef='native-return' if enabled else False)
+        row['restoration'] = dict(provider='native-returns', samples=samples)
+        if enabled:
+            row['prepared']['returns'][0]['bodySettled'] = True
+            row['prepared']['returns'][0]['allowMissing'] = True
+        else:
+            row['prepared']['returns'] = []
+            for snapshot in (row['client'], row['server'], final):
+                for name in ('target', 'cancelled'): snapshot['items'][name]['counts'] = dict(actor=1, root=1, source=0)
+        return result
+
+    def test_profile_requires_exact_mods_and_case(self):
+        selection = self.selection(); a.validate(selection)
+        for changed in (dict(mods=a.MODS), dict(mods=list(reversed(selection['mods']))), dict(cases=['root']),
+                        dict(options=dict(wring_restoration_provider='other')),
+                        dict(options=dict(wring_restoration_provider=False))):
+            with self.assertRaises(ValueError): a.validate(dict(selection, **changed))
+
+    def test_real_loan_receipts_and_queue_off_root(self):
+        for mode in ('toolkit', 'native'):
+            result = self.sample(mode); self.assertEqual([], a.check_case(*result))
+            for field, value in (('loaded', True), ('selected', True), ('itemId', -1), ('candidates', 9), ('plannedTransfers', 1)):
+                changed = copy.deepcopy(result); changed[0]['restoration']['samples'][0][field] = value
+                self.assertTrue(a.check_case(*changed), field)
+            changed = copy.deepcopy(result); changed[0]['restoration']['samples'][1]['state'] = 'waived'
+            self.assertTrue(a.check_case(*changed))
+        result = self.sample('native'); result[0]['prepared']['returns'] = [dict()]
+        self.assertTrue(a.check_case(*result))
+        result = self.sample('native'); result[0]['client']['items']['target']['counts'] = dict(actor=1, root=0, source=1)
+        self.assertTrue(a.check_case(*result))
+        result = self.sample('toolkit'); result[0]['prepared']['returns'][0]['bodySettled'] = False
+        self.assertTrue(a.check_case(*result))
+        result = self.sample('toolkit'); result[0]['prepared']['returns'] = []
+        self.assertTrue(a.check_case(*result))
+
+
 class WringClothingEvidenceTests(unittest.TestCase):
     def test_wear_swap_rejects_unfresh_edits_wrong_identity_and_unpaid_effects(self):
         for kind in ('sp','mp'):

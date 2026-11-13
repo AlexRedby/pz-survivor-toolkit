@@ -1263,7 +1263,7 @@ local function equipmentResources(action)
                 and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect
                 and type(equipOwner.inspect)=="function" then
                 if equipOwner.trusted==nil then equipOwner.trusted=Proof.closure(equipOwner.inspect,"ActionQueueEquip.lua")
-                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",3195531510,"PZSurvivorToolkit",true)end
+                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",127529213,"PZSurvivorToolkit",true)end
                 if equipOwner.trusted and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect then
                     local contract
                     if nativeMode and activeDecision.nativePrepared then
@@ -1917,7 +1917,7 @@ local function wringCapacityNonIncreasing(action,contract,source,context)
         or entry.behavior~=behavior then return false end
     if wringCapacitySourceTrusted==nil then
         wringCapacitySourceTrusted=type(wringInspector)=="function" and Proof.closure(wringInspector,"ActionQueueWring.lua")
-            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",3330358057,"PZSurvivorToolkit",true)
+            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",2285349509,"PZSurvivorToolkit",true)
     end
     return wringCapacitySourceTrusted==true
 end
@@ -1941,7 +1941,7 @@ local function clothingRemovalCapability(action,contract,source,context)
         or Proof.closure~=clothingOrigin or Proof.matches~=clothingMatches then return false end
     if clothingSourceTrusted==nil then
         clothingSourceTrusted=clothingOrigin(clothingInspect,"ActionQueueClothing.lua")
-            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",2600563667,"PZSurvivorToolkit",true)
+            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",2602791891,"PZSurvivorToolkit",true)
     end
     return clothingSourceTrusted==true
 end
@@ -2628,14 +2628,17 @@ local function returnFailureIndependent(queue, action, scope)
     for i = index + 1, #queue.queue do
         local other = queue.queue[i]
         local approach = other.Type == "ISQueueActionsAction" and returnFailureApproach(other)
-        if not returnFailureSuffix[other.Type] and not approach
+        if not returnFailureSuffix[other.Type] and not approach and other.Type ~= "ISWringClothing"
             or other.Type == "ISRadioAction" and not deviceSetterModes[other.mode] then
             return false, "unsupported_tail_kind"
         end
         if other._isAddingActions or other.action then return false end
         local snapshot = snapshots[getmetatable(other)]
-        if not approach and (not snapshot or not nativeMatches(other, snapshot)) then return false, "unsupported_tail_binding" end
-        if scope and not approach then scope.native[other] = snapshot end
+        local wringing = other.Type == "ISWringClothing"
+        -- Wring owns its exact native class/callback proof in its registered
+        -- effect contract; it is not a legacy snapshot registration.
+        if not approach and not wringing and (not snapshot or not nativeMatches(other, snapshot)) then return false, "unsupported_tail_binding" end
+        if scope and not approach and not wringing then scope.native[other] = snapshot end
         if other.Type == "ISRadioAction" and radioProjectionIndependent and not context.contracts[other] then
             local behavior, source = Definitions.behavior(other)
             if behavior and source == "native.ISRadioAction" and behavior.inspect == radioResources then
@@ -2645,6 +2648,11 @@ local function returnFailureIndependent(queue, action, scope)
             end
         end
         local contract, source = inspect(other, context)
+        -- Reuse the source-owned effect certificate. Merely naming a wring
+        -- action or copying a nonincrease flag grants no failure-isolation right.
+        if other.Type == "ISWringClothing" and (not wringCapacityNonIncreasing(other,contract,source,context)
+            or contract.moveRequiresProjection or not contract.edit or contract.edit.version ~= 1
+            or contract.edit.complete ~= true) then return false, "unsupported_tail_effects" end
         if approach and (source ~= "toolkit.approach" or not contract or not contract.deferred
             or not contract.preparation or contract.capacityNonIncreasing ~= true) then
             return false, "unsupported_tail_binding"
