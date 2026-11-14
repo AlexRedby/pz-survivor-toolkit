@@ -1,4 +1,5 @@
 """Read-only report checks over sealed native wring observation receipts."""
+from collections import deque
 import json
 import math
 from pathlib import Path
@@ -145,6 +146,8 @@ def _prepared(row, selection):
 
 def _restoration(row, selection):
     enabled = selection.get('options', {}).get('wring_restoration_provider') == 'native-returns'
+    if row['ids'].get('restoration', False) is not enabled:
+        raise ValueError('restoration authority fixture option differs')
     if not enabled:
         if 'restoration' in row: raise ValueError('unrequested restoration receipt')
         return
@@ -576,14 +579,32 @@ def _capacity_profile(row, selection):
 
 def check_case(row, selection, prepared, verified, wear_baseline=None):
     issues = []
+
+    def collect(domain, check):
+        try:
+            check()
+        except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+            issues.append('Wring clothing evidence differs [' + domain + ']: ' + str(error))
+
+    # Identity and fixture declarations are prerequisites for interpreting every
+    # domain. A malformed envelope must not produce misleading derived failures.
     try:
-        _capacity_profile(row,selection)
-        if row['ids']['case']=='wear-swap':
-            _wear_swap(row,selection,prepared,verified,wear_baseline);return issues
-        ids = row['ids']; case = ids['case']; editing = selection['mode'] == 'toolkit' and case == 'root'; carried = case == 'worn-bag'; worn_prepared = case == 'worn-prepared'; group_editing = (carried or worn_prepared) and selection['mode'] == 'toolkit'
-        native_wear = worn_prepared or case=='worn-bag'and selection.get('options',{}).get('profile_capacity',False)is True or selection['kind'] == 'mp' and case in ('worn', 'worn-bag')
+        if type(row) is not dict or type(selection) is not dict:
+            raise ValueError('case/selection object')
+        ids = row['ids']
+        if (type(ids) is not dict or type(ids['items']) is not dict or type(ids['source']) is not dict
+            or any(type(spec) is not dict for spec in ids['items'].values())
+            or type(selection.get('options', {})) is not dict):
+            raise ValueError('fixture/selection schema')
+        case = ids['case']
         if ids != prepared or case not in CASES or ids['mode'] != selection['mode'] or row['server'] != verified:
             raise ValueError('authority or selected identity')
+        if case=='wear-swap':
+            collect('capacity profile', lambda: _capacity_profile(row, selection))
+            collect('wear swap', lambda: _wear_swap(row, selection, prepared, verified, wear_baseline))
+            return issues
+        ids = row['ids']; case = ids['case']; editing = selection['mode'] == 'toolkit' and case == 'root'; carried = case == 'worn-bag'; worn_prepared = case == 'worn-prepared'; group_editing = (carried or worn_prepared) and selection['mode'] == 'toolkit'
+        native_wear = worn_prepared or case=='worn-bag'and selection.get('options',{}).get('profile_capacity',False)is True or selection['kind'] == 'mp' and case in ('worn', 'worn-bag')
         if ids.get('wornPrepared', False) is not worn_prepared: raise ValueError('worn group fixture declaration')
         if ids.get('preparedGroups', False) is not carried:
             raise ValueError('carried group fixture declaration')
@@ -627,6 +648,11 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
                 raise ValueError('native clothing type/cap/initial state')
             if worn_prepared and name in ('target','cancelled') and abs(spec['weight']-(.2 if scarf else .1)) > .000001:
                 raise ValueError('source-audited natural clothing weight')
+    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as error:
+        issues.append('Wring clothing evidence differs [fixture]: ' + str(error))
+        return issues
+
+    def physical():
         phases = [(phase, row[phase]) for phase in (('input', 'authorityBaseline', 'client', 'server') if native_wear else ('input', 'client', 'server'))]
         if worn_prepared: phases += [('pending', row['wornPrepared']['before']), ('pending', row['wornPrepared']['after'])]
         if carried: phases += [('pending', row['prepared']['before']), ('pending', row['prepared']['after'])]
@@ -661,9 +687,13 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
                     low, high = (80, 100) if not final or untouched else (spec['cap'] - 5, spec['cap'] + .01)
                     if not low < item['wetness'] <= high:
                         raise ValueError('wetness effect or untouched cancelled garment')
+
+    def pending_edits():
         if (row['status'] != 'passed' or row['queueIdle'] is not True or not _number(row['settleMilliseconds'])
             or row['settleMilliseconds'] < 1000 or row['edit'] != dict(cancelled=editing or group_editing, reordered=editing or group_editing, repeatDenied=editing, untouched=True)):
             raise ValueError('pending edit/idle evidence')
+
+    def execution():
         commands = row['commands']
         prelude = [('target', 'ISUnequipAction')] if case == 'worn' else [('target', 'ISInventoryTransferAction')] if case in ('worn-bag', 'world') else []
         expected = [('front', 'ISWringClothing')]
@@ -701,25 +731,58 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
                 if (command['callbacksUntouched'] is not True or not _number(wetness) or not 80 < wetness <= 100
                     or command['duration'] != math.ceil(wetness * 5)):
                     raise ValueError('native wring callbacks/duration')
-        if carried: _prepared(row, selection)
-        elif row.get('prepared', False) is not False: raise ValueError('unexpected carried group evidence')
-        _restoration(row, selection)
         if starts != sorted(starts):
             raise ValueError('native completion order')
-        if worn_prepared: _worn_prepared(row, selection, wear_baseline)
-        elif row.get('wornPrepared', False) is not False: raise ValueError('unexpected worn group evidence')
         if native_wear and not worn_prepared and starts[0] <= row['wearSetup']['startedAt']:
             raise ValueError('wring started before native wear setup')
-    except (KeyError, TypeError, ValueError, IndexError) as error:
-        issues.append('Wring clothing evidence differs: ' + str(error))
+
+    def carried_preparation():
+        if carried: _prepared(row, selection)
+        elif row.get('prepared', False) is not False: raise ValueError('unexpected carried group evidence')
+
+    def worn_preparation():
+        if worn_prepared: _worn_prepared(row, selection, wear_baseline)
+        elif row.get('wornPrepared', False) is not False: raise ValueError('unexpected worn group evidence')
+
+    # These checks read the same sealed evidence independently. Keep all pass
+    # predicates, but report each domain's rejection before another live run.
+    for domain, check in (
+        ('physical state', physical),
+        ('pending edits', pending_edits),
+        ('native execution', execution),
+        ('carried preparation', carried_preparation),
+        ('restoration', lambda: _restoration(row, selection)),
+        ('worn preparation', worn_preparation),
+        ('capacity profile', lambda: _capacity_profile(row, selection)),
+    ):
+        collect(domain, check)
     return issues
 
 
+def _failure_diagnostics(text):
+    # Diagnostics explain a failed capture; they are never pass/authority evidence.
+    marker = re.escape(PREFIX) + r'(FAILED_STATE|PREPARED_WAIT|AUTHORITY_WAIT|RESTORATION_DIAGNOSTIC) ([^\n]+)'
+    matches = deque(maxlen=16); total = 0
+    for match in re.finditer(marker, text):
+        total += 1; matches.append(match)
+    rows = []
+    for match in matches:
+        row = dict(marker=match.group(1))
+        try:
+            row['payload'] = json.loads(match.group(2))
+        except ValueError as error:
+            row.update(error=str(error), raw=match.group(2)[:200])
+        rows.append(row)
+    return dict(observations=rows, omitted=max(0, total - len(rows)))
+
+
 def verify(root, selection, catalog):
-    issues = []; outcomes = []; setups = []; root = Path(root)
+    issues = []; outcomes = []; setups = []; diagnostics = {}; root = Path(root)
     try:
         text = (root / 'client1-launch.log').read_text(errors='replace')
+        diagnostics['client1'] = _failure_diagnostics(text)
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
+        if selection['kind'] == 'mp': diagnostics['server'] = _failure_diagnostics(authority)
         events = [e for e in report.events(text) if e.get('suite') == 'wring-clothing']
         rows = [e for e in events if e.get('event') == 'case']
         setups = [e for e in events if e.get('event') == 'setup']; ends = [e for e in events if e.get('event') == 'complete']
@@ -772,7 +835,7 @@ def verify(root, selection, catalog):
         if not complete(selection, 'client1', text): issues.append('Missing completion marker')
     except (OSError, ValueError, KeyError, TypeError) as error:
         issues.append(str(error))
-    return dict(issues=issues, outcomes=outcomes, evidence={'adapterInstalled': setups[0].get('adapterInstalled') if len(setups) == 1 else None, 'limits': [
+    return dict(issues=issues, outcomes=outcomes, evidence={'diagnostics': diagnostics, 'adapterInstalled': setups[0].get('adapterInstalled') if len(setups) == 1 else None, 'limits': [
         'Programmatic native inventory UI callbacks and genuine carried producer groups; no physical input, active edits, missing/full storage recovery or future drying/capacity credit.',
         'Optional capacity samples are coarse synchronous idle wall-clock measurements including Lua loop/validation overhead; no timing threshold, FPS qualification or inventory-size extrapolation.',
         'Wetness caps allow bounded natural drying after native completion; rain disabled only in the disposable fixture world.']})

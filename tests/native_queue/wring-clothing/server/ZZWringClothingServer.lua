@@ -1,6 +1,7 @@
 if not isServer()then return end
 local P=require 'QueueEnergyPlacement'
 local F=require 'QueueWringClothing'
+local Diagnostics=require 'QueueWringDiagnostics'
 local Capacity=require 'QueueWringCapacityProfile'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
@@ -57,9 +58,9 @@ Events.OnTick.Add(function()
    pending=nil
    if not baseline then if state.ids.capacityProfile then state.profileVerified=true else previous=state;state=nil;index=index+1 end end
   elseif not ok or getTimestampMs()-pending.since>20000 then
-   fail(state.player,ok and JSON.encode(F.preparedDiagnostic(state.player,state.ids))or receipt)
+   fail(state.player,ok and JSON.encode(Diagnostics.capture(state.player,state.ids,state))or receipt)
   elseif not pending.diagnosed and getTimestampMs()-pending.since>2000 then
-   pending.diagnosed=true;raw('AUTHORITY_WAIT',{command=pending.command,state=F.preparedDiagnostic(state.player,state.ids)})
+   pending.diagnosed=true;raw('AUTHORITY_WAIT',{command=pending.command,state=Diagnostics.capture(state.player,state.ids,state)})
   end
  end
 end)

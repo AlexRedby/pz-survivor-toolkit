@@ -4,7 +4,7 @@ require 'TimedActions/ISWringClothing'
 require 'TimedActions/ISWearClothing'
 local P=require 'QueueEnergyPlacement'
 local F=require 'QueueWringClothing'
-local profile={module=require 'QueueWringCapacityProfile'}
+local profile={module=require 'QueueWringCapacityProfile',scenario=require 'QueueWringScenario',diagnostics=require 'QueueWringDiagnostics'}
 local Ops=require 'PZSurvivorToolkit/ActionQueueOperations'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local Witness=require 'QueueWringWitnessDiagnostics'
@@ -42,6 +42,7 @@ function profile.sample(point)
  assert(P4TidyUpMeister==nil and not getActivatedMods():contains('P4TidyUpMeister'),'P4 loaded or selected')
  assert(PZSurvivorToolkit.ActionQueueSettlement==profile.loanModule and profile.loanModule.operationState==profile.loanReader,'settlement observer changed')
  local body=groups.target and groups.target[#groups.target];local view=body and profile.loanReader(body);local loans=view and view.borrowings or{}
+ profile.observation={case=case(),point=point,observedAt=now(),ledger=view or false,debts=false}
  local found=nil;for _,value in ipairs(loans)do if value.id==ids.items.target.id and value.fullType==ids.items.target.type then assert(not found,'duplicate garment loan');found=value end end
  local observed,planned=false,0
  for _,step in ipairs(view and view.steps or{})do
@@ -67,8 +68,10 @@ function profile.sample(point)
 end
 local function diagnostic(reason,force)
  if not ids or not getPlayer()or not force and(waits[phase]or now()-waitingSince<2000)then return end
- waits[phase]=true;local ok,value=pcall(F.preparedDiagnostic,getPlayer(),ids)
- raw(force and'FAILED_STATE'or'PREPARED_WAIT',{phase=phase,reason=reason,state=ok and value or tostring(value)})
+ waits[phase]=true
+ local body=groups.target and groups.target[#groups.target]
+ raw(force and'FAILED_STATE'or'PREPARED_WAIT',{phase=phase,reason=reason,
+  state=profile.diagnostics.capture(getPlayer(),ids,state,queue(),body,state and state.tailAction,profile.observation)})
 end
 local function fail(e)if done then return end;done=true;diagnostic(tostring(e),true);print('[QUEUE_TEST] FAIL wring-clothing '..tostring(e));emit({event='case',id=case(),status='failed',phase=phase,reason=tostring(e)})end
 local function request(command)
@@ -253,9 +256,11 @@ local function produce(name,item)
  end)
  ISTimedActionQueue.add=add;assert(ok,error)
  local action=emitted[#emitted];assert(action and action.Type=='ISWringClothing','missing native wring action')
- local expected=1+((name=='target'and case()=='worn'or (case()=='worn-prepared'and(name=='target'or name=='cancelled')or ids.wearSwap and name=='target'))and 1 or 0)+(((name=='target'or name=='cancelled')and case()=='worn-bag'or name=='target'and case()=='world')and 1 or 0)
- if not native and case()=='worn-bag'and(name=='target'or name=='cancelled')then expected=expected+1 end
- assert(#emitted==expected,'native transfer/unequip producer shape differs')
+ if case()=='worn-bag'then profile.scenario.checkProducer(emitted,config.mode,name)
+ else
+  local expected=1+((name=='target'and case()=='worn'or(case()=='worn-prepared'and(name=='target'or name=='cancelled')or ids.wearSwap and name=='target'))and 1 or 0)+(name=='target'and case()=='world'and 1 or 0)
+  assert(#emitted==expected,'native transfer/unequip producer shape differs')
+ end
  if case()=='worn-bag'or F.observesClothing(ids)then
   groups[name]=emitted
   for _,member in ipairs(emitted)do local row=tracks[member];row.actionRef=tostring(member);row.operation=token(member)end
@@ -436,6 +441,7 @@ require('QueuePreflight').onTick(Events,function()
     tracks[repeatAction].cancelled=true;edits.repeatDenied=true
    end
    local tail=produce('tail',state.items.tail);state.tailAction=tail
+   if case()=='worn-bag'then profile.scenario.check(commands,config.mode)end
    if not native and case()=='root'then
     assert(PZSurvivorToolkit.ActionQueue.move(queue(),target,tail,true),'distinct garment reorder denied')
     assert(queue().queue[#queue().queue]==target,'distinct garment move did not commit')
@@ -485,9 +491,9 @@ require('QueuePreflight').onTick(Events,function()
      profile.drainedDiagnostic=true
      local body=groups.target and groups.target[#groups.target]
      local settlement=PZSurvivorToolkit.ActionQueueSettlement
-     raw('RESTORATION_DIAGNOSTIC',{ledger=body and settlement.operationState(body)or false,
-      debts=PZSurvivorToolkit.ActionQueueExecution.blockedReturns(getPlayer())})
      local ledger=body and settlement.operationState(body)
+     profile.observation={case=case(),point='drained',observedAt=now(),ledger=ledger or false,debts=PZSurvivorToolkit.ActionQueueExecution.blockedReturns(getPlayer())}
+     raw('RESTORATION_DIAGNOSTIC',profile.diagnostics.capture(getPlayer(),ids,state,queue(),body,state.tailAction,profile.observation))
      assert(not ledger or ledger.optionalReturnState~='blocked','optional restoration blocked: '..tostring(ledger and ledger.optionalReturnDetail))
     end
     quiet=nil;return
@@ -530,6 +536,7 @@ require('QueuePreflight').onTick(Events,function()
    index=index+1
    if not case()then emit({event='complete',cases=config.cases,performed=index-1,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
    state,authority,ids,receipt,placement,placementState,proof,quiet=nil,nil,nil,nil,nil,nil,nil,nil
+   profile.observation=nil
    profile.evidence,profile.final,profile.cleanupReceipt,profile.cleanupRequested=nil,nil,nil,nil;wearSetup,wearReceipt,wearIndex,profile.setupActions=nil,nil,nil,nil;wornEvidence,swapEvidence,swapAction,swapTail=nil,nil,nil,nil;waits={};waitingSince=now()
    tracks,commands,groups,tokens,returns,returnTracks={}, {}, {}, {}, {}, {};preparedEvidence=nil;prepCallbacks={};edits={cancelled=false,reordered=false,repeatDenied=false,untouched=true};phase='prepare';since=now()
   end

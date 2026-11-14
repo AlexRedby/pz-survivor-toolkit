@@ -278,31 +278,46 @@ function F.preparedDiagnostic(player,ids)
  return value
 end
 function F.verify(s)
- if s.ids.nativeWearSetup and not s.wearBaseline then return end
+ -- Return every independent mismatch for diagnostics. Only an empty issue
+ -- list produces a verification receipt; these observations never repair state.
+ local issues={}
+ local function mismatch(name,field,actual,expected)
+  issues[#issues+1]={name=name,field=field,actual=actual,expected=expected}
+ end
+ if s.ids.nativeWearSetup and not s.wearBaseline then mismatch('setup','wearBaseline',false,true)end
  local value=F.snapshot(s)
  for _,name in ipairs(F.namesFor(s.ids))do
   local item=value.items[name];local cap=s.ids.items[name].cap
   local restored=(name=='target'or s.ids.case=='worn-bag'and name=='cancelled')and(s.ids.case=='worn-bag'or s.ids.case=='world')
-  if s.ids.restoration and s.ids.mode=='native' then restored=false end
+  if s.ids.restoration and s.ids.mode=='native'then restored=false end
   local expectedRoot=restored and 0 or 1
   local expectedActor=restored and s.ids.case=='world'and 0 or 1
   local expectedSource=(s.ids.case=='root'or s.ids.case=='worn'or s.ids.case=='worn-prepared'or restored)and 1 or 0
+  local expectedWorn=s.ids.wornPrepared and name=='cancelled'and s.ids.mode=='toolkit'or false
+  if s.ids.wearSwap then expectedRoot=1;expectedActor=1;expectedSource=1;expectedWorn=name=='incoming'end
+  local counts={root=expectedRoot,actor=expectedActor,source=expectedSource}
+  for _,field in ipairs({'root','actor','source'})do local expected=counts[field]
+   if item.counts[field]~=expected then mismatch(name,'counts.'..field,item.counts[field],expected)end
+  end
+  if item.worn~=expectedWorn then mismatch(name,'worn',item.worn,expectedWorn)end
+  local minimum,maximum,above
   if s.ids.wearSwap then
-   if item.counts.root~=1 or item.counts.actor~=1 or item.counts.source~=1 or item.worn~=(name=='incoming')then return end
-   if name=='incoming'or name=='displaced'then if not(item.wetness>=0 and item.wetness<=s.ids.items[name].initial)then return end
-   elseif not(item.wetness>=0 and item.wetness<=cap+.01)then return end
-  elseif item.counts.root~=expectedRoot or item.counts.actor~=expectedActor or item.counts.source~=expectedSource or item.worn~=(s.ids.wornPrepared and name=='cancelled'and s.ids.mode=='toolkit'or false)then return end
-  if s.ids.wearSwap then -- Above branch owns this case's exact final outcomes.
+   minimum=0;maximum=(name=='incoming'or name=='displaced')and s.ids.items[name].initial or cap+.01
   elseif name=='cancelled'and s.ids.wornPrepared and s.ids.mode=='toolkit'then
-   -- Still-worn ClothingWetness keeps drying naturally after pending cancellation.
-   -- Zero paid effect is proved by the cancelled native members, not wetness.
-   if not(item.wetness>=0 and item.wetness<=s.ids.items[name].initial)then return end
-  elseif name=='cancelled'and not((s.ids.case=='worn-bag'or s.ids.wornPrepared)and s.ids.mode=='native')then if item.wetness<=80 then return end
-  elseif item.wetness<cap-5 or item.wetness>cap+.01 then return end
+   -- Passive drying does not prove a paid effect; cancellation receipts do.
+   minimum=0;maximum=s.ids.items[name].initial
+  elseif name=='cancelled'and not((s.ids.case=='worn-bag'or s.ids.wornPrepared)and s.ids.mode=='native')then above=80
+  else minimum=cap-5;maximum=cap+.01 end
+  if above and item.wetness<=above or minimum and not(item.wetness>=minimum and item.wetness<=maximum)then
+   mismatch(name,'wetness',item.wetness,above and{moreThan=above}or{minimum=minimum,maximum=maximum})
+  end
  end
- if F.observesClothing(s.ids)then value.unequipTransitions=s.unequipTransitions or{} end
- if s.ids.wearSwap then if not s.swapTransition then return end;value.swapTransition=s.swapTransition end
- return value
+ if F.observesClothing(s.ids)then value.unequipTransitions=s.unequipTransitions or{}end
+ if s.ids.wearSwap then
+  if not s.swapTransition then mismatch('setup','swapTransition',false,true)else value.swapTransition=s.swapTransition end
+ end
+ if #issues==0 then return value,issues,value end
+ return nil,issues,value
 end
 function F.dispose(s)
  assert(F.verify(s),'wring fixture must verify before cleanup');local root=s.player:getInventory()

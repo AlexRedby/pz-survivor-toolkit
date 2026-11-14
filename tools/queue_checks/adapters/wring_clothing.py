@@ -112,7 +112,8 @@ def complete(selection, role, text):
 
 def verifier_sources(project, selection):
     return [Path(__file__).with_name('wring_clothing_verifier.py'), Path(__file__).parents[1] / 'placement.py',
-            Path(project) / 'tests/test_queue_wring_clothing.py']
+            *[Path(project) / 'tests' / name for name in ('test_queue_wring_clothing.py',
+                'test_queue_wring_fixture_diagnostics.py', 'test_queue_wring_verifier_diagnostics.py')]]
 
 
 def _counts(case, name, final):

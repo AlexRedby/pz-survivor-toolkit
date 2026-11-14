@@ -214,12 +214,13 @@ local function controls(client)
 end
 -- The native wring producer has no return. This exercises the shared own
 -- producer and pre-native admission through real queue/lifecycle/ledger modules.
+local WringScenario=dofile(ProjectRoot..'/tests/native_queue/wring-clothing/shared/QueueWringScenario.lua')
 local function wringLoan(client)
     local f=create(client,{p4=false,carried=true,canonicalBodyReplacement=client})
     local e,t,q=f.env,f.env.PZSurvivorToolkit,f.queue
     local item=f.garment(701)
     e.ISInventoryPaneContextMenu.onWringClothing({item},0)
-    assert(#q.queue==3,'native wring must enqueue only approach/fetch/body before earning')
+    WringScenario.checkProducer(q.queue,'toolkit','target')
     local approach,pickup,body=unpack(q.queue)
     assert(body.Type=='ISWringClothing'and body.item==item)
     local before=assert(t.ActionQueueSettlement.operationState(body))
@@ -228,6 +229,7 @@ local function wringLoan(client)
     for _,step in ipairs(before.steps)do assert(not step.plannedTransfer,'optional return was prebound before earning')end
     e.ISInventoryPaneContextMenu.onWringClothing({f.garment(702,f.inventory)},0)
     local tail=q.queue[#q.queue]
+    WringScenario.checkProducer({tail},'toolkit','tail')
     f.start(approach);f.dispatch(approach,'perform')
     f.start(pickup);f.deliver(pickup);f.dispatch(pickup,'perform')
     item=assert(f.inventory:getItemById(item:getID()))
