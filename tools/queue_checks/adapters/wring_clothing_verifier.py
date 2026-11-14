@@ -7,7 +7,7 @@ import re
 
 from .. import report
 from ..placement import validate as validate_placement
-from .wring_clothing import CASES, NAMES, PREFIX, PRODUCER, _raw, complete
+from .wring_clothing import CASES, CONTROL_CASES, NAMES, PREFIX, PRODUCER, _raw, base_case, complete
 
 
 def _number(value):
@@ -110,6 +110,15 @@ def _prepared(row, selection):
     wanted = {ids['items'][name]['id']: ids['items'][name]['type'] for name in (('target',) if editing else ('target', 'cancelled'))}
     returned = set(); returns = value['returns']
     native_returns = selection.get('options', {}).get('wring_restoration_provider') == 'native-returns'
+    control = row['ids'].get('returnControl')
+    if control == 'keep' and editing:
+        if returns != []: raise ValueError('kept pending return unexpectedly executed')
+        return
+    if control == 'full' and editing:
+        if type(returns) is not list or len(returns) > 1: raise ValueError('full-source duplicate generated returns')
+        for receipt in returns:
+            _refused_return(receipt, row, selection)
+        return
     if native_returns and not editing:
         if returns != []: raise ValueError('queue-off P4-free control unexpectedly returned clothing')
         return
@@ -154,19 +163,24 @@ def _restoration(row, selection):
     spec = row['ids']['items']['target']; toolkit = selection['mode'] == 'toolkit'
     samples = row.get('restoration', {}).get('samples', [])
     if len(samples) != 3: raise ValueError('missing P4-free loan transitions')
-    returned = row['prepared']['returns']
+    returned = row['prepared']['returns']; control = row['ids'].get('returnControl')
     for sample, (point, state, planned) in zip(samples, (('queued', 'prepare', 0), ('body', 'active', 0), ('final', 'completed', 1))):
-        wanted = dict(case='worn-bag', point=point, loaded=False, selected=False, itemId=spec['id'], itemType=spec['type'],
+        if point == 'final' and control:
+            state = 'waived'
+            planned = sample.get('plannedTransfers') if control == 'full' else 0
+            if toolkit and (type(planned) is not int or planned not in (0, 1)):
+                raise ValueError('controlled final planned transfer count')
+        wanted = dict(case=row['ids']['case'], point=point, loaded=False, selected=False, itemId=spec['id'], itemType=spec['type'],
                       state=state if toolkit else False, candidates=1 if toolkit else 0,
                       observedPreparation=toolkit, plannedTransfers=planned if toolkit else 0)
         if point == 'body':
             if toolkit:
                 body_index, return_index, tail_index = (sample.get(k) for k in ('bodyIndex', 'returnIndex', 'tailIndex'))
                 if (not all(_positive(v) for v in (body_index, return_index, tail_index))
-                        or not body_index < return_index < tail_index or len(returned) != 1):
+                        or not body_index < return_index < tail_index or not control and len(returned) != 1):
                     raise ValueError('generated return missing between exact body and tail')
                 wanted.update(bodyIndex=body_index, returnIndex=return_index, tailIndex=tail_index,
-                              returnRef=returned[0]['actionRef'])
+                              returnRef=row['returnControl']['generatedRef'] if control else returned[0]['actionRef'])
             else:
                 wanted.update(bodyIndex=sample.get('bodyIndex'), tailIndex=sample.get('tailIndex'), returnIndex=False, returnRef=False)
                 if not _positive(wanted['bodyIndex']) or not _positive(wanted['tailIndex']) or wanted['bodyIndex'] >= wanted['tailIndex']:
@@ -174,6 +188,90 @@ def _restoration(row, selection):
         if sample != wanted: raise ValueError('P4-free provider or exact loan transitions differ')
     if row.get('restoration', {}).get('provider') != 'native-returns':
         raise ValueError('P4-free restoration provider differs')
+
+
+def _refused_return(receipt, row, selection):
+    """Refusal never excuses callbacks that actually ran from exact native proof."""
+    spec = row['ids']['items']['target']; value = row['prepared']
+    if (receipt.get('bodySettled') is not True or receipt.get('actionRef') != row['returnControl']['generatedRef']
+        or receipt.get('type') != 'ISInventoryTransferAction' or receipt.get('from') != 'root'
+        or receipt.get('toBag') != value['sourceBag'] or receipt.get('allowMissing') is not True
+        or not _number(receipt.get('duration'))
+        or (receipt['duration'] != -1 if selection['kind'] == 'mp' else receipt['duration'] <= 0)
+        or receipt.get('items') != [dict(id=spec['id'], type=spec['type'])]):
+        raise ValueError('full-source native return identity/endpoints')
+    opened = set(); seen = set(); episode = None
+    if type(receipt.get('events')) is not list: raise ValueError('full-source native callbacks')
+    for event in receipt['events']:
+        native = event.get('nativeRef'); phase = event.get('phase'); boundary = event.get('boundary')
+        if (phase not in ('perform', 'complete') or type(native) is not str or not native
+            or episode is not None and native != episode):
+            raise ValueError('full-source native return episode')
+        episode = native; key = (phase, native)
+        if boundary == 'begin' and key not in seen: opened.add(key); seen.add(key)
+        elif boundary == 'finish' and key in opened and type(event.get('succeeded')) is bool: opened.remove(key)
+        else: raise ValueError('full-source unpaired native callback')
+    if opened: raise ValueError('full-source unfinished native callback')
+    phases = [(event['phase'], event['boundary']) for event in receipt['events']]
+    expected = [('perform', 'begin'), ('perform', 'finish')]
+    if ('complete', 'begin') in phases: expected += [('complete', 'begin'), ('complete', 'finish')]
+    if phases and phases != expected: raise ValueError('full-source native callback order')
+
+
+def _return_control(row, selection):
+    ids = row['ids']; case = ids['case']; declared = ids.get('returnControl', False)
+    if case not in CONTROL_CASES:
+        if declared is not False or row.get('returnControl', False) is not False:
+            raise ValueError('unrequested return control')
+        return
+    kind = case.removeprefix('worn-bag-'); enabled = selection['mode'] == 'toolkit'
+    if (kind not in ('keep', 'full') or declared != kind or ids.get('restoration') is not True
+        or selection.get('options', {}).get('wring_restoration_provider') != 'native-returns'):
+        raise ValueError('return control alias/provider/authority declaration')
+    value = row['returnControl']; spec = ids['items']['target']
+    body = row['prepared']['target']['body']; generated = value['generatedRef']
+    if (value['kind'] != kind or value['enabled'] is not enabled or value['bodyRef'] != body
+        or type(value['bodyNative']) is not str or not value['bodyNative']
+        or value['bodyUnchanged'] is not True or value['before'] != value['after']
+        or value['accepted'] is not (enabled or kind == 'full')
+        or value['policyMode'] != ('pending-return' if enabled and kind == 'keep' else False)
+        or type(value['policyMode']) is not (str if enabled and kind == 'keep' else bool)
+        or (type(generated) is not str or not generated if enabled else generated is not False)
+        or enabled and generated in {command['actionRef'] for command in row['commands']}):
+        raise ValueError('exact pending return/body/Keep intervention')
+    snapshot = value['before']
+    if snapshot['case'] != case or snapshot['source'] != ids['source'] or set(snapshot['items']) != set(NAMES):
+        raise ValueError('return control snapshot identity')
+    for name, item in snapshot['items'].items():
+        item_spec = ids['items'][name]
+        counts = dict(actor=1, root=0, source=1) if enabled and name == 'cancelled' else dict(actor=1, root=1, source=0)
+        if (item['id'] != item_spec['id'] or item['type'] != item_spec['type'] or item['counts'] != counts
+            or item['native'] != {key: item_spec[key] for key in ('bodyLocation', 'bodyLocationClass', 'nativeShoe', 'cap')}
+            or item['worn'] is not False or not _number(item['weight']) or not 0 < item['weight'] <= item_spec['weight'] + .01
+            or item['capacityWeight'] != item_spec['capacityWeight'] or not _number(item['wetWeight'])
+            or not item_spec['weight'] <= item['wetWeight'] <= item_spec['wetWeight'] + .01
+            or not _number(item['wetness']) or not 0 <= item['wetness'] <= 100):
+            raise ValueError('return control exact native root/source garment')
+        low, high = (0, 10.01) if name == 'front' or name == 'cancelled' and not enabled else (10, 100) if name == 'target' else (80, 100)
+        if not low <= item['wetness'] <= high: raise ValueError('return control body-phase wetness')
+    if kind == 'keep':
+        if any(value.get(key, False) is not False for key in ('authority', 'blocked', 'kept')):
+            raise ValueError('Keep fabricated full-source authority')
+        return
+    authority = value['authority']
+    if (authority['case'] != case or authority['itemId'] != spec['id'] or authority['itemType'] != spec['type']
+        or not _positive(authority['beforeCapacity']) or type(authority['afterCapacity']) is not int or authority['afterCapacity'] != 0
+        or any(authority[key] is not True for key in ('roomBefore', 'root', 'authority'))
+        or authority['roomAfter'] is not False or not _number(authority['at']) or authority['at'] < 0):
+        raise ValueError('real full-source authority/room refusal')
+    if enabled:
+        blocked = value['blocked']
+        if (not _positive(blocked['id']) or blocked['itemId'] != spec['id'] or blocked['itemType'] != spec['type']
+            or blocked['state'] != 'blocked' or type(blocked['reason']) is not str or not blocked['reason']
+            or value['kept'] is not True):
+            raise ValueError('exact blocked optional return and explicit footer Keep')
+    elif value['blocked'] is not False or value['kept'] is not False:
+        raise ValueError('queue-off full-source control fabricated debt or Keep')
 
 
 def _equipment(value):
@@ -597,13 +695,14 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
             or type(selection.get('options', {})) is not dict):
             raise ValueError('fixture/selection schema')
         case = ids['case']
-        if ids != prepared or case not in CASES or ids['mode'] != selection['mode'] or row['server'] != verified:
+        if ids != prepared or case not in (*CASES, *CONTROL_CASES) or ids['mode'] != selection['mode'] or row['server'] != verified:
             raise ValueError('authority or selected identity')
         if case=='wear-swap':
             collect('capacity profile', lambda: _capacity_profile(row, selection))
             collect('wear swap', lambda: _wear_swap(row, selection, prepared, verified, wear_baseline))
             return issues
-        ids = row['ids']; case = ids['case']; editing = selection['mode'] == 'toolkit' and case == 'root'; carried = case == 'worn-bag'; worn_prepared = case == 'worn-prepared'; group_editing = (carried or worn_prepared) and selection['mode'] == 'toolkit'
+        actual_case = case; case = base_case(case)
+        ids = row['ids']; editing = selection['mode'] == 'toolkit' and case == 'root'; carried = case == 'worn-bag'; worn_prepared = case == 'worn-prepared'; group_editing = (carried or worn_prepared) and selection['mode'] == 'toolkit'
         native_wear = worn_prepared or case=='worn-bag'and selection.get('options',{}).get('profile_capacity',False)is True or selection['kind'] == 'mp' and case in ('worn', 'worn-bag')
         if ids.get('wornPrepared', False) is not worn_prepared: raise ValueError('worn group fixture declaration')
         if ids.get('preparedGroups', False) is not carried:
@@ -658,12 +757,14 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
         if carried: phases += [('pending', row['prepared']['before']), ('pending', row['prepared']['after'])]
         for phase, snapshot in phases:
             final = phase in ('client', 'server')
-            if snapshot['case'] != case or snapshot['source'] != source or set(snapshot['items']) != set(NAMES):
+            if snapshot['case'] != actual_case or snapshot['source'] != source or set(snapshot['items']) != set(NAMES):
                 raise ValueError('snapshot identity')
             for name, item in snapshot['items'].items():
                 spec = specs[name]
                 expected_native = {key: spec[key] for key in ('bodyLocation', 'bodyLocationClass', 'nativeShoe', 'cap')}
                 expected_counts = _counts(case, name, final)
+                if final and ids.get('returnControl') and name == 'target':
+                    expected_counts = dict(actor=1, root=1, source=0)
                 if (final and case == 'worn-bag' and name in ('target', 'cancelled') and selection['mode'] == 'native'
                         and selection.get('options', {}).get('wring_restoration_provider') == 'native-returns'):
                     expected_counts = dict(actor=1, root=1, source=0)
@@ -752,6 +853,7 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
         ('native execution', execution),
         ('carried preparation', carried_preparation),
         ('restoration', lambda: _restoration(row, selection)),
+        ('return control', lambda: _return_control(row, selection)),
         ('worn preparation', worn_preparation),
         ('capacity profile', lambda: _capacity_profile(row, selection)),
     ):
@@ -792,7 +894,7 @@ def verify(root, selection, catalog):
         if (len(setups) != 1 or len(ends) != 1 or [r.get('id') for r in rows] != cases
             or any([r.get('case') for r in values] != cases for values in (prepared, verified, placements))):
             raise ValueError('missing, duplicate or out-of-order authority/case evidence')
-        wear_cases = [case for case in cases if case in ('worn-prepared','wear-swap') or case=='worn-bag'and selection.get('options',{}).get('profile_capacity',False)is True or selection['kind'] == 'mp' and case in ('worn', 'worn-bag')]
+        wear_cases = [case for case in cases if case in ('worn-prepared','wear-swap') or base_case(case)=='worn-bag'and selection.get('options',{}).get('profile_capacity',False)is True or selection['kind'] == 'mp' and base_case(case) in ('worn', 'worn-bag')]
         if [baseline.get('case') for baseline in wear_baselines] != wear_cases:
             raise ValueError('missing, duplicate or out-of-order native wear baseline')
         profile_cases=['worn-bag']if selection.get('options',{}).get('profile_capacity',False)is True else[]
@@ -806,10 +908,19 @@ def verify(root, selection, catalog):
                 raise ValueError('capacity profile/cleanup differs from independent raw receipts')
             relevant=[(match.group(1),json.loads(match.group(2)).get('case'))for match in re.finditer(re.escape(PREFIX)+r'(VERIFIED|PROFILE_CLEANED) ([^\n]+)',authority)if json.loads(match.group(2)).get('case')==case]
             if relevant!=[('VERIFIED',case),('PROFILE_CLEANED',case)]:raise ValueError('capacity cleanup preceded exact native Verify')
+        full_cases = [case for case in cases if case == 'worn-bag-full']
+        lost_authority, lost_client = _raw(authority, 'CAPACITY_LOST'), _raw(text, 'CAPACITY_LOST')
+        if ([value.get('case') for value in lost_authority] != full_cases
+            or [value.get('case') for value in lost_client] != full_cases or lost_client != lost_authority):
+            raise ValueError('missing, duplicate or out-of-order full-source authority receipts')
+        for case, receipt in zip(full_cases, lost_authority):
+            if next(value for value in rows if value['id'] == case)['returnControl']['authority'] != receipt:
+                raise ValueError('full-source control differs from independent authority receipt')
         ordered_authority = [(match.group(1), json.loads(match.group(2)).get('case')) for match in re.finditer(
-            re.escape(PREFIX) + r'(PREPARED|WEAR_BASELINE|VERIFIED) ([^\n]+)', authority)]
+            re.escape(PREFIX) + r'(PREPARED|WEAR_BASELINE|CAPACITY_LOST|VERIFIED) ([^\n]+)', authority)]
         expected_authority = [(marker, case) for case in cases for marker in
-                              (('PREPARED', 'WEAR_BASELINE', 'VERIFIED') if case in wear_cases else ('PREPARED', 'VERIFIED'))]
+                              (['PREPARED'] + (['WEAR_BASELINE'] if case in wear_cases else [])
+                               + (['CAPACITY_LOST'] if case in full_cases else []) + ['VERIFIED'])]
         if ordered_authority != expected_authority:
             raise ValueError('native preparation/baseline/effect authority order')
         if (setups[0].get('cases') != cases or setups[0].get('queueEnabled') is not (selection['mode'] == 'toolkit')
@@ -831,11 +942,11 @@ def verify(root, selection, catalog):
             errors = check_case(row, selection, prepared[index], verified[index], baseline); issues += errors
             outcomes.append(dict(actor='client1', case=case, status='failed' if errors else 'passed', reason='; '.join(errors),
                 outcome=dict(effectsVerified=not errors, serverAuthorityVerified=not errors, tailCompleted=not errors,
-                             pendingEditsVerified=not errors and selection['mode'] == 'toolkit' and case in ('root', 'worn-bag', 'worn-prepared', 'wear-swap'))))
+                             pendingEditsVerified=not errors and selection['mode'] == 'toolkit' and base_case(case) in ('root', 'worn-bag', 'worn-prepared', 'wear-swap'))))
         if not complete(selection, 'client1', text): issues.append('Missing completion marker')
     except (OSError, ValueError, KeyError, TypeError) as error:
         issues.append(str(error))
     return dict(issues=issues, outcomes=outcomes, evidence={'diagnostics': diagnostics, 'adapterInstalled': setups[0].get('adapterInstalled') if len(setups) == 1 else None, 'limits': [
-        'Programmatic native inventory UI callbacks and genuine carried producer groups; no physical input, active edits, missing/full storage recovery or future drying/capacity credit.',
+        'Programmatic native inventory UI callbacks and genuine carried producer groups; no physical input, active edits, missing storage recovery or future drying/capacity credit; optional-return Keep and real full-source refusal apply only to selected controls.',
         'Optional capacity samples are coarse synchronous idle wall-clock measurements including Lua loop/validation overhead; no timing threshold, FPS qualification or inventory-size extrapolation.',
         'Wetness caps allow bounded natural drying after native completion; rain disabled only in the disposable fixture world.']})

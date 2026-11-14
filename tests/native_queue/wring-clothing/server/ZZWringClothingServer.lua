@@ -24,6 +24,9 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    local target=P.target(args.placement)
    assert(type(args.clientPlacement)=='table'and args.clientPlacement.mode=='local'and args.clientPlacement.centered==true and args.clientPlacement.centers==1,'wring local placement proof missing')
    pending={command=command,player=player,target=target,case=args.case,arrival=P.observeCentered(player,target),since=getTimestampMs()}
+  elseif command=='CapacityLost'then
+   assert(state and state.player==player and not pending and state.ids.returnControl=='full','unexpected capacity intervention')
+   local receipt=F.capacityLost(state);raw('CAPACITY_LOST',receipt);sendServerCommand(player,'WringClothingTest','CapacityLost',receipt)
   else
    assert((command=='ProfileCleanup'and state and state.profileVerified or command=='Verify'or command=='WearBaseline'and state and state.ids.nativeWearSetup)
     and state and state.player==player and not pending,'unexpected wring authority request')

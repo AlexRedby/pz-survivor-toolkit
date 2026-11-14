@@ -1,6 +1,12 @@
 -- Test-only recipe shared by live observations and source-backed models.
 -- It describes expected producers; it never creates or executes game actions.
 local S={}
+function S.control(case)
+ if case=='worn-bag-keep'then return 'keep'end
+ if case=='worn-bag-full'then return 'full'end
+ return false
+end
+function S.baseCase(case)return S.control(case)and'worn-bag'or case end
 function S.producer(mode,role)
  assert(mode=='native'or mode=='toolkit','unknown wring scenario mode')
  assert(role=='front'or role=='cancelled'or role=='target'or role=='tail','unknown wring scenario role')

@@ -93,11 +93,13 @@ The fixture verifies both loaded and selected P4 absence, exact original pickup/
 
 ## P4-free wringing returns
 
-Select suite `wring-clothing`, case `worn-bag`, with `options.wring_restoration_provider="native-returns"` and the exact ordered selected Mod IDs excluding only `P4TidyUpMeister`. The normal selected INI and default suite remain unchanged. Use fresh SP/menu-Host queue-off/on pairs with identical candidate sources and settings; a different selection cannot use the full-selection pack lock.
+Select suite `wring-clothing`, an ordered subset of `worn-bag,worn-bag-keep,worn-bag-full`, with `options.wring_restoration_provider="native-returns"` and the exact ordered selected Mod IDs excluding only `P4TidyUpMeister`. The normal selected INI and default suite remain unchanged. Use fresh SP/menu-Host queue-off/on pairs with identical candidate sources and settings; a different selection cannot use the full-selection pack lock.
 
 The native producer supplies approach/fetch/wring. Toolkit inserts one optional return only after its exact pickup is earned. Receipts prove provider absence, prepare/active/completed loan states, a single generated return identity, untouched native durations, exact source/root counts, server wetness and completion before the independent wring tail. P4-free queue-off controls deliberately retain the native no-return result. Single actual-item and ordinary singleton UI-row inputs qualify; bulk input is not partially enrolled.
 
-This bank qualifies normal borrowed-item return and pending group edits. Live pending Keep, unavailable/full sources, newer explicit intent, worn/activation restoration, physical UI/WAN and independent queue-off restoration need their separate gates. Source-backed composition checks cover the private admission/Keep/refusal machinery and explicit Host canonical replacement; they are not live transport evidence.
+`worn-bag-keep` cancels only the generated pending return through the public queue command after the native wring body has started and progressed. `worn-bag-full` lowers the owned source container's real native capacity on the authority after pickup, requires the completed wring and independent tail with the exact garment retained, then uses the public footer Keep on the blocked debt. The authority receipt is independently bound to the client observation. Capacity is lowered to zero without adding filler items; this does not establish physical filler-item or shared-contention coverage. Both cases retain native durations and callbacks and use fresh items in the same game lifecycle. Action labels reuse captured references bound to the exact objects, since native Kahlua table strings change after action allocation.
+
+Live active-body cancellation, detached/unavailable sources, newer explicit intent, editor toggles, P4-present cutover, worn/activation restoration, physical UI/WAN and independent queue-off restoration need their separate gates. Source-backed composition checks cover the private admission/Keep/refusal machinery and explicit Host canonical replacement; they are not live transport evidence.
 
 ## Crafting and borrowed tools
 

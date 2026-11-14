@@ -155,6 +155,7 @@ function F.assertPreparedSlots(player,items,catalog)
  end
 end
 function F.prepare(player,case,mode,placement,proof,previous,profile,restoration)
+ local scenario=require 'QueueWringScenario';local selectedCase=case;case=scenario.baseCase(case)
  assert(profile==nil or type(profile)=='boolean','invalid capacity profile selection')
  profile=profile==true and case=='worn-bag'
  assert((case=='root'or case=='worn'or case=='worn-bag'or case=='worn-prepared'or case=='wear-swap'or case=='world')and P.atCentered(player,placement))
@@ -172,7 +173,8 @@ function F.prepare(player,case,mode,placement,proof,previous,profile,restoration
   shelf:setCanPassThrough(true);shelf:setIsContainer(true);shelf:setName('Wring fixture');square:AddSpecialObject(shelf)
   source=assert(shelf:getContainer());source:setType('shelf');source:setCapacity(100);source:setExplored(true)
  end
- local ids={case=case,mode=mode,restoration=restoration==true,origin=placement,placementProof=proof,items={},source={kind=case,bag=bag and bag:getID()or false,world=shelf and identity(shelf)or false}}
+ local ids={case=selectedCase,mode=mode,restoration=restoration==true,origin=placement,placementProof=proof,items={},source={kind=case,bag=bag and bag:getID()or false,world=shelf and identity(shelf)or false}}
+ ids.returnControl=scenario.control(selectedCase)
  if case=='wear-swap'then ids.wearSwap=true;ids.nativeWearSetup=true;ids.initialEquipment=F.equipment(player)end
  local state={player=player,ids=ids,source=source,bag=bag,shelf=shelf,items={}}
  for _,name in ipairs(F.namesFor(ids))do
@@ -227,15 +229,15 @@ function F.resolve(player,ids,preparingWear)
  local source,bag,shelf=sourceFor(player,ids,preparingWear);if not source or not P.atCentered(player,ids.origin)then return end
  local state={player=player,ids=ids,source=source,bag=bag,shelf=shelf,items={}}
  for _,name in ipairs(F.namesFor(ids))do
-  local spec=ids.items[name];local owner=(name=='target'or ids.case=='worn-bag'and name=='cancelled')and source or player:getInventory();local item=find(owner,spec.id)
+  local spec=ids.items[name];local owner=(name=='target'or ids.source.kind=='worn-bag'and name=='cancelled')and source or player:getInventory();local item=find(owner,spec.id)
   if not item or item:getContainer()~=owner or item:getFullType()~=spec.type or not F.readyWetness(ids,name,item:getWetness())then return end
   state.items[name]=item
  end
- if (ids.case=='worn-prepared'or ids.wearSwap)and not preparingWear then
+ if (ids.source.kind=='worn-prepared'or ids.wearSwap)and not preparingWear then
   for _,name in ipairs(ids.wearSwap and{'target','displaced'}or{'target','cancelled'})do if player:getWornItem(state.items[name]:getBodyLocation())~=state.items[name]then return end end
  end
  if ids.capacityProfile and not pcall(capacityModule().snapshot,state)then return end
- if ids.case=='worn'and not preparingWear and not player:getWornItems():contains(state.items.target)then return end
+ if ids.source.kind=='worn'and not preparingWear and not player:getWornItems():contains(state.items.target)then return end
  return state
 end
 function F.wearBaseline(s)
@@ -244,13 +246,13 @@ function F.wearBaseline(s)
  if F.observesClothing(s.ids)then
   for _,name in ipairs(s.ids.wearSwap and{'target','displaced'}or{'target','cancelled'})do if s.player:getWornItem(s.items[name]:getBodyLocation())~=s.items[name]then return end end
  end
- if s.ids.case=='worn'and s.player:getWornItem(s.items.target:getBodyLocation())~=s.items.target then return end
+ if s.ids.source.kind=='worn'and s.player:getWornItem(s.items.target:getBodyLocation())~=s.items.target then return end
  local value=F.snapshot(s)
  for _,name in ipairs(F.namesFor(s.ids))do
-  local item=value.items[name];local borrowed=(name=='target'or s.ids.case=='worn-bag'and name=='cancelled')and(s.ids.case=='worn-bag'or s.ids.case=='world')
-  if item.counts.root~=(borrowed and 0 or 1)or item.counts.actor~=(name=='target'and s.ids.case=='world'and 0 or 1)
-   or item.counts.source~=((s.ids.case=='root'or s.ids.case=='worn'or s.ids.case=='worn-prepared'or s.ids.wearSwap or name=='target'or borrowed)and 1 or 0)
-   or item.worn~=((s.ids.case=='worn'and name=='target')or(s.ids.case=='worn-prepared'and(name=='target'or name=='cancelled'))or(s.ids.wearSwap==true and(name=='target'or name=='displaced')))or not F.readyWetness(s.ids,name,item.wetness)then return end
+  local item=value.items[name];local borrowed=(name=='target'or s.ids.source.kind=='worn-bag'and name=='cancelled')and(s.ids.source.kind=='worn-bag'or s.ids.source.kind=='world')
+  if item.counts.root~=(borrowed and 0 or 1)or item.counts.actor~=(name=='target'and s.ids.source.kind=='world'and 0 or 1)
+   or item.counts.source~=((s.ids.source.kind=='root'or s.ids.source.kind=='worn'or s.ids.source.kind=='worn-prepared'or s.ids.wearSwap or name=='target'or borrowed)and 1 or 0)
+   or item.worn~=((s.ids.source.kind=='worn'and name=='target')or(s.ids.source.kind=='worn-prepared'and(name=='target'or name=='cancelled'))or(s.ids.wearSwap==true and(name=='target'or name=='displaced')))or not F.readyWetness(s.ids,name,item.wetness)then return end
  end
  s.wearBaseline=value;return value
 end
@@ -263,7 +265,7 @@ function F.preparedDiagnostic(player,ids)
    slotId=slot and slot:getID()or false,slotSame=slot==bag}
  end
  for _,name in ipairs(F.namesFor(ids))do
-  local spec=ids.items[name];local owner=(name=='target'or ids.case=='worn-bag'and name=='cancelled')and source or root;local item=owner and find(owner,spec.id)
+  local spec=ids.items[name];local owner=(name=='target'or ids.source.kind=='worn-bag'and name=='cancelled')and source or root;local item=owner and find(owner,spec.id)
   local worn=player:getWornItems():getItemById(spec.id)
   local slot=item and player:getWornItem(item:getBodyLocation())
   value.items[name]={id=spec.id,present=item~=nil,type=item and item:getFullType()or false,
@@ -288,11 +290,12 @@ function F.verify(s)
  local value=F.snapshot(s)
  for _,name in ipairs(F.namesFor(s.ids))do
   local item=value.items[name];local cap=s.ids.items[name].cap
-  local restored=(name=='target'or s.ids.case=='worn-bag'and name=='cancelled')and(s.ids.case=='worn-bag'or s.ids.case=='world')
+  local restored=(name=='target'or s.ids.source.kind=='worn-bag'and name=='cancelled')and(s.ids.source.kind=='worn-bag'or s.ids.source.kind=='world')
   if s.ids.restoration and s.ids.mode=='native'then restored=false end
+  if s.ids.returnControl and name=='target'then restored=false end
   local expectedRoot=restored and 0 or 1
-  local expectedActor=restored and s.ids.case=='world'and 0 or 1
-  local expectedSource=(s.ids.case=='root'or s.ids.case=='worn'or s.ids.case=='worn-prepared'or restored)and 1 or 0
+  local expectedActor=restored and s.ids.source.kind=='world'and 0 or 1
+  local expectedSource=(s.ids.source.kind=='root'or s.ids.source.kind=='worn'or s.ids.source.kind=='worn-prepared'or restored)and 1 or 0
   local expectedWorn=s.ids.wornPrepared and name=='cancelled'and s.ids.mode=='toolkit'or false
   if s.ids.wearSwap then expectedRoot=1;expectedActor=1;expectedSource=1;expectedWorn=name=='incoming'end
   local counts={root=expectedRoot,actor=expectedActor,source=expectedSource}
@@ -306,7 +309,7 @@ function F.verify(s)
   elseif name=='cancelled'and s.ids.wornPrepared and s.ids.mode=='toolkit'then
    -- Passive drying does not prove a paid effect; cancellation receipts do.
    minimum=0;maximum=s.ids.items[name].initial
-  elseif name=='cancelled'and not((s.ids.case=='worn-bag'or s.ids.wornPrepared)and s.ids.mode=='native')then above=80
+  elseif name=='cancelled'and not((s.ids.source.kind=='worn-bag'or s.ids.wornPrepared)and s.ids.mode=='native')then above=80
   else minimum=cap-5;maximum=cap+.01 end
   if above and item.wetness<=above or minimum and not(item.wetness>=minimum and item.wetness<=maximum)then
    mismatch(name,'wetness',item.wetness,above and{moreThan=above}or{minimum=minimum,maximum=maximum})
@@ -319,8 +322,21 @@ function F.verify(s)
  if #issues==0 then return value,issues,value end
  return nil,issues,value
 end
+function F.capacityLost(s)
+ assert(not isClient()and s.ids.returnControl=='full','capacity intervention requires selected authority')
+ local observed=F.snapshot(s);local item=s.items.target
+ assert(observed.items.target.counts.root==1 and item:getWetness()>10,'capacity intervention missed the live earned item')
+ assert(not s.controlCapacityBefore and s.source:hasRoomFor(s.player,item),'source was already unavailable')
+ s.controlCapacityBefore=s.source:getCapacity();assert(s.controlCapacityBefore>0)
+ s.source:setCapacity(0)
+ local receipt={case=s.ids.case,itemId=item:getID(),itemType=item:getFullType(),beforeCapacity=s.controlCapacityBefore,
+  afterCapacity=s.source:getCapacity(),roomBefore=true,roomAfter=s.source:hasRoomFor(s.player,item),root=item:getContainer()==s.player:getInventory(),authority=true,at=getTimestampMs()}
+ assert(receipt.afterCapacity==0 and not receipt.roomAfter and receipt.root,'capacity intervention did not deny the native return')
+ return receipt
+end
 function F.dispose(s)
  assert(F.verify(s),'wring fixture must verify before cleanup');local root=s.player:getInventory()
+ if s.controlCapacityBefore then s.source:setCapacity(s.controlCapacityBefore);s.controlCapacityBefore=nil end
  if s.original then
   local item=s.items.target;assert(not s.player:getWornItems():contains(item));s.player:setWornItem(item:getBodyLocation(),s.original)
   if isServer()then sendClothing(s.player,item:getBodyLocation(),s.original)end
@@ -329,7 +345,8 @@ function F.dispose(s)
   if s.player:getWornItems():contains(item)then s.player:removeWornItem(item);if isServer()then sendClothing(s.player,item:getBodyLocation(),nil)end end
  end end
  if s.bag then s.player:removeWornItem(s.bag,false);if isServer()then sendClothing(s.player,s.bag:canBeEquipped(),nil)end end
- for _,name in ipairs(F.namesFor(s.ids))do local item=s.items[name];local owner=(name=='target'or s.ids.case=='worn-bag'and name=='cancelled')and s.source or root
+ for _,name in ipairs(F.namesFor(s.ids))do local item=s.items[name];local owner=item:getContainer()
+  assert(owner==root or owner==s.source,'verified fixture cleanup escaped its owned containers')
   assert(item:getContainer()==owner);owner:Remove(item);if isServer()then sendRemoveItemFromContainer(owner,item)end
  end
  if s.bag then root:Remove(s.bag);if isServer()then sendRemoveItemFromContainer(root,s.bag)end end
