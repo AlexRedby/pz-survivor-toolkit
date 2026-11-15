@@ -153,14 +153,15 @@ def complete(selection, role, text):
 
 
 def verifier_sources(project, selection):
-    return [Path(__file__).with_name('wring_clothing_verifier.py'), Path(__file__).parents[1] / 'placement.py',
+    return [Path(__file__).with_name('wring_clothing_verifier.py'),
+            Path(__file__).with_name('wring_clothing_session.py'), Path(__file__).parents[1] / 'placement.py',
             *[Path(project) / 'tests' / name for name in ('test_queue_wring_clothing.py',
                 'test_queue_wring_fixture_diagnostics.py', 'test_queue_wring_verifier_diagnostics.py',
                 'test_queue_wring_control_fixture.py', 'test_queue_wring_return_controls.py',
                 'test_queue_wring_source_fixture.py', 'test_queue_wring_unavailable.py',
                 'test_queue_wring_intent_fixture.py', 'test_queue_wring_intent.py',
                 'test_action_queue_own_selector.py', 'test_queue_wring_cancel.py',
-                'test_queue_wring_active_fixture.py')]]
+                'test_queue_wring_active_fixture.py', 'test_queue_wring_partial.py')]]
 
 
 def _counts(case, name, final):

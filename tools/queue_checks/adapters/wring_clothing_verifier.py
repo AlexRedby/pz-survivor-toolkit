@@ -6,9 +6,8 @@ import math
 from pathlib import Path
 import re
 
-from .. import report
 from ..placement import validate as validate_placement
-from .wring_clothing import CASES, CONTROL_CASES, NAMES, PREFIX, PRODUCER, _raw, base_case, complete
+from .wring_clothing import CASES, CONTROL_CASES, NAMES, PREFIX, PRODUCER, base_case
 
 ACTIVE_CONTROLS = ('cancel', 'cancel-toggle', 'toggle-off', 'toggle')
 
@@ -1172,86 +1171,24 @@ def _failure_diagnostics(text):
 
 
 def verify(root, selection, catalog):
-    issues = []; outcomes = []; setups = []; diagnostics = {}; root = Path(root)
+    from ..provenance import run_verifier
+    issues = []; outcomes = []; setup = None; diagnostics = {}; root = Path(root)
+    selected = selection.get('cases', []) if type(selection) is dict else []
+    prefix = dict(cases=[], uncompletedCases=list(selected) if type(selected) is list else [], boundaries=[],
+                  qualification='Case evidence only; common provenance, execution and whole-session acceptance still apply.')
     try:
         text = (root / 'client1-launch.log').read_text(errors='replace')
         diagnostics['client1'] = _failure_diagnostics(text)
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
         if selection['kind'] == 'mp': diagnostics['server'] = _failure_diagnostics(authority)
-        events = [e for e in report.events(text) if e.get('suite') == 'wring-clothing']
-        rows = [e for e in events if e.get('event') == 'case']
-        setups = [e for e in events if e.get('event') == 'setup']; ends = [e for e in events if e.get('event') == 'complete']
-        prepared, verified = (_raw(authority, marker) for marker in ('PREPARED', 'VERIFIED'))
-        wear_baselines = _raw(authority, 'WEAR_BASELINE')
-        placements = _raw(text, 'CLIENT_PLACEMENT'); cases = selection['cases']
-        if (len(setups) != 1 or len(ends) != 1 or [r.get('id') for r in rows] != cases
-            or any([r.get('case') for r in values] != cases for values in (prepared, verified, placements))):
-            raise ValueError('missing, duplicate or out-of-order authority/case evidence')
-        wear_cases = [case for case in cases if case in ('worn-prepared','wear-swap') or base_case(case)=='worn-bag'and selection.get('options',{}).get('profile_capacity',False)is True or selection['kind'] == 'mp' and base_case(case) in ('worn', 'worn-bag')]
-        if [baseline.get('case') for baseline in wear_baselines] != wear_cases:
-            raise ValueError('missing, duplicate or out-of-order native wear baseline')
-        profile_cases=['worn-bag']if selection.get('options',{}).get('profile_capacity',False)is True else[]
-        if any(case not in cases for case in profile_cases):raise ValueError('capacity profiling requires selected worn-bag')
-        measurements=_raw(text,'CAPACITY_PROFILE');cleanups=_raw(authority,'PROFILE_CLEANED')
-        if [value.get('case')for value in measurements]!=profile_cases or [value.get('case')for value in cleanups]!=profile_cases:
-            raise ValueError('missing/duplicate/unselected capacity profile or cleanup authority')
-        for case in profile_cases:
-            row=next(value for value in rows if value['id']==case)
-            if row['capacityProfile']['measurement']!=measurements[0]or row['capacityProfile']['cleanupServer']!=cleanups[0]:
-                raise ValueError('capacity profile/cleanup differs from independent raw receipts')
-            relevant=[(match.group(1),json.loads(match.group(2)).get('case'))for match in re.finditer(re.escape(PREFIX)+r'(VERIFIED|PROFILE_CLEANED) ([^\n]+)',authority)if json.loads(match.group(2)).get('case')==case]
-            if relevant!=[('VERIFIED',case),('PROFILE_CLEANED',case)]:raise ValueError('capacity cleanup preceded exact native Verify')
-        full_cases = [case for case in cases if case == 'worn-bag-full']
-        lost_authority, lost_client = _raw(authority, 'CAPACITY_LOST'), _raw(text, 'CAPACITY_LOST')
-        if ([value.get('case') for value in lost_authority] != full_cases
-            or [value.get('case') for value in lost_client] != full_cases or lost_client != lost_authority):
-            raise ValueError('missing, duplicate or out-of-order full-source authority receipts')
-        for case, receipt in zip(full_cases, lost_authority):
-            if next(value for value in rows if value['id'] == case)['returnControl']['authority'] != receipt:
-                raise ValueError('full-source control differs from independent authority receipt')
-        unavailable_cases = [case for case in cases if case == 'worn-bag-unavailable']
-        source_authority, source_client = _raw(authority, 'SOURCE_LOST'), _raw(text, 'SOURCE_LOST')
-        if (any(type(value) is not dict for value in source_authority + source_client)
-            or [value.get('case') for value in source_authority] != unavailable_cases
-            or [value.get('case') for value in source_client] != unavailable_cases or source_client != source_authority):
-            raise ValueError('missing, duplicate or out-of-order detached-source authority receipts')
-        for case, receipt in zip(unavailable_cases, source_authority):
-            if next(value for value in rows if value['id'] == case)['returnControl']['authority'] != receipt:
-                raise ValueError('detached-source control differs from independent authority receipt')
-        ordered_authority = [(match.group(1), json.loads(match.group(2)).get('case')) for match in re.finditer(
-            re.escape(PREFIX) + r'(PREPARED|WEAR_BASELINE|CAPACITY_LOST|SOURCE_LOST|VERIFIED) ([^\n]+)', authority)]
-        expected_authority = [(marker, case) for case in cases for marker in
-                              (['PREPARED'] + (['WEAR_BASELINE'] if case in wear_cases else [])
-                               + (['CAPACITY_LOST'] if case in full_cases else [])
-                               + (['SOURCE_LOST'] if case in unavailable_cases else []) + ['VERIFIED'])]
-        if ordered_authority != expected_authority:
-            raise ValueError('native preparation/baseline/effect authority order')
-        if (setups[0].get('cases') != cases or setups[0].get('queueEnabled') is not (selection['mode'] == 'toolkit')
-            or setups[0].get('nativeDurations') is not True or ends[0].get('cases') != cases
-            or type(setups[0].get('adapterInstalled')) is not bool
-            or selection['mode'] == 'toolkit' and setups[0].get('adapterInstalled') is not True
-            or ends[0].get('performed') != len(cases) or ends[0].get('failed') != 0 or ends[0].get('skipped') != 0):
-            raise ValueError('setup or completion evidence')
-        restoration_raw = _raw(text, 'RESTORATION')
-        restoration_rows = [sample for row in rows for sample in row.get('restoration', {}).get('samples', [])]
-        if restoration_raw != restoration_rows:
-            raise ValueError('restoration event and raw loan receipts differ')
-        for index, case in enumerate(cases):
-            row = rows[index]
-            if (row.get('actor') != 'client1' or row.get('kind') != selection['kind'] or row.get('mode') != selection['mode']
-                or placements[index] != dict(case=case, proof=row.get('clientPlacement'))):
-                raise ValueError('actor or placement receipt')
-            baseline = next((value for value in wear_baselines if value['case'] == case), None)
-            errors = check_case(row, selection, prepared[index], verified[index], baseline); issues += errors
-            outcomes.append(dict(actor='client1', case=case, status='failed' if errors else 'passed', reason='; '.join(errors),
-                outcome=dict(effectsVerified=not errors, serverAuthorityVerified=not errors,
-                             tailCompleted=not errors and not (_stopping(row) and selection['mode'] == 'native'),
-                             tailSemanticsVerified=not errors,
-                             pendingEditsVerified=not errors and selection['mode'] == 'toolkit' and base_case(case) in ('root', 'worn-bag', 'worn-prepared', 'wear-swap'))))
-        if not complete(selection, 'client1', text): issues.append('Missing completion marker')
-    except (OSError, ValueError, KeyError, TypeError) as error:
+        value = run_verifier(Path(__file__).with_name('wring_clothing_session.py'), __package__, root, selection,
+                             dict(text=text, authority=authority, check_case=check_case))
+        issues, outcomes, setup, prefix = value['issues'], value['outcomes'], value['setup'], value['completedPrefix']
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError) as error:
         issues.append(str(error))
-    return dict(issues=issues, outcomes=outcomes, evidence={'diagnostics': diagnostics, 'adapterInstalled': setups[0].get('adapterInstalled') if len(setups) == 1 else None, 'limits': [
+    return dict(issues=issues, outcomes=outcomes, evidence={'diagnostics': diagnostics,
+        'adapterInstalled': setup.get('adapterInstalled') if setup else None, 'completedPrefix': prefix, 'limits': [
         'Programmatic native inventory UI callbacks and genuine carried producer groups; selected active carried wring cancellation and editor toggles require exact stop/setting/required-cleanup receipts. Native stop clears its unstarted tail; scoped editor cancellation preserves independent work. No physical input, missing storage recovery or future drying/capacity credit.',
+        'Completed prefix evidence is diagnostic when a session fails. The common matrix still requires successful session, execution and provenance checks; this does not independently qualify retries or other source versions.',
         'Optional capacity samples are coarse synchronous idle wall-clock measurements including Lua loop/validation overhead; no timing threshold, FPS qualification or inventory-size extrapolation.',
         'Wetness caps allow bounded natural drying after native completion; rain disabled only in the disposable fixture world.']})
