@@ -26,35 +26,49 @@ object VehicleInventoryOrdering {
     val SUPPORTED =
         arrayOf(
                 "network/packets/INetworkPacket" to
-                    "616a8d2e86a03952e16c45e756dae12910f637716568a74571defdc1884ce7e9",
+                    "379d43baf329ab04ee27c390b72f19906007a0f296c6932028966e9f8cd00a71",
                 "network/packets/vehicle/VehicleFullUpdatePacket" to
-                    "ba52aaae8413854173b305956145dcb15bd0e7c7b7a1a4971da6dfb8e65c9f14",
+                    "273cd0debd5c5b8373643631a653a723246ae0a2e9a0415c2c63013923ba0d0a",
                 "network/packets/AddInventoryItemToContainerPacket" to
-                    "ebbd2e60b7430b6478498257cae19f21eb9d3e656bb1f03ac1dfa4422d2947f1",
+                    "be172c878be965b2541b0617ffdd5ed0b16a428404912dd739c7a436de68d9f6",
                 "network/packets/RemoveInventoryItemFromContainerPacket" to
-                    "9eaceabf11a0fc4b2e0dc843fecfeada2417f76155de03aa059e7dae766fa983",
+                    "8be205de3b421010aca57e460d4908be57ae2872b4b6714d1094e01b64fe6b08",
                 "core/raknet/UdpConnection" to
-                    "9c9bb471ff0c3dccdd0e52a3bb3c770327d02f0ad262187f950e660b2730e763",
+                    "9efbe65d4d728cb3b1e7827e4f639bab3aae049f910343c9b9a1c7b4fe228622",
                 "core/raknet/RakNetPeerInterface" to
                     "4911885c02c5216e5f7831d3834e3074ef56816dafa1310dca55b15e2a745ed4",
                 "core/raknet/UdpEngine" to
-                    "385c8fa80a6b24c8a7fe1770cae1e5c9ddb0d23e614297c6c0c05283e51adf36",
+                    "0d77da28ee1dda94f9961b09c7d33acb4ad3b19187e37288d5eee0bb2700d0a7",
                 "vehicles/VehicleManager" to
-                    "2eabab623bee04ea33cec3d20b0871b6c8202fbfa1d7b1173737dd13666cb9a6",
+                    "7416822e234e27d6bfea815bc84d5abdb386c6671ee26b42c00f1642c481f7e3",
                 "vehicles/BaseVehicle" to
-                    "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661",
+                    "354b166db919f8de692a5327b7afd01fefdbfb8021f0c99e2b2b44a3fe606de3",
                 "network/fields/ContainerID" to
-                    "d7ef29f65c423135d70f829a1381b9e32ce06d68f87ae49de1980bfcf7c0244b",
+                    "3123bde915f47f58fa81fb0f49fc1768efcb4db45749fe0d97c4c52dbc731bc0",
                 "network/fields/vehicle/VehicleAuthorization" to
                     "000ce5a3112736ec1479a1b65a15ec8598acd997ae6974da1b1aecc57ac4bdd7",
                 "network/fields/vehicle/VehiclePassengers" to
                     "d94511f6446f018aa3166d51eb721309b88cc54e2b21a640bc319bc042674abb",
                 "network/PacketTypes\$PacketType" to
-                    "aa6718ed4e2e33b199734c8cfa4b85a64c193ccc307b2cc4deafe18e0a43d5f5",
+                    "fe3411ff586ab5cb1c051be844e99fd58b8411712115d44411b46625d70a4116",
                 "inventory/ItemContainer" to
-                    "a2ac7dd6235f91255dc57b91419a2c8609bdb105214cddf7fb445b70507b6f96",
+                    "19ffefbabfc16ce3b40feb557189c4fbecdb752aa2c96e3daa8b8ec0542185d3",
                 "inventory/types/InventoryContainer" to
                     "891cb2f37a7d13de869edf05909de493a55ef90aa8665368b36bff7fa6b2555e",
+                "inventory/InventoryItem" to
+                    "b45d4438636509d992aaa7b7505ef8323cd898947efc27bf1f7e762951d6643d",
+                "vehicles/VehiclePart" to
+                    "27febf9f1cbc8c057bf34e400c743f1e19e70638f6553b45f0140d086e329311",
+                "vehicles/VehicleIDMap" to
+                    "1c803a637228321fb84251664cdd170fa42cd9a9ed53be65392144b5f6824170",
+                "vehicles/BaseVehicle\$ServerVehicleState" to
+                    "da643712adc463060d93aeb92ed10dc249a597e02ae3cd7629e48be6bd43d91c",
+                "core/network/ByteBufferReader" to
+                    "1c2731f2a49b57d2ad895069d499705f8492e3cb6ac275a8f1163b4940e370ff",
+                "core/network/ByteBufferWriter" to
+                    "b8f4a1aeace9d91b7b252965a52afe6dfaa32bd2569fbd875eaf5aeb89470b6a",
+                "network/fields/ContainerID\$ContainerType" to
+                    "beb8f224ef49c5912ec86f8ea710991148df43a60d81bf4191ccf5ab4bb325e4",
             )
             .all { (name, hash) -> BytecodeSupport.supports("zombie/$name.class", hash) }
 

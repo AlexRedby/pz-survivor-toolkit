@@ -22,7 +22,7 @@ CharacterTrait, Metabolics = {DEXTROUS = 1, ALL_THUMBS = 2}, {LightWork = 1}
 Events = {OnTick = {Add = function() end}}
 ISInventoryPage = {}
 ISLogSystem = {logAction = function() end}
-for _, name in ipairs({'ClimbThroughWindowState', 'ClimbOverFenceState', 'ClimbOverWallState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState', 'ClimbOverFenceState', 'ClimbOverWallState',
     'ClimbSheetRopeState', 'ClimbDownSheetRopeState', 'CloseWindowState', 'OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end

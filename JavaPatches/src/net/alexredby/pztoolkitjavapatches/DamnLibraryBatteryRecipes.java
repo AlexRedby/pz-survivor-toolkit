@@ -22,7 +22,7 @@ import zombie.scripting.objects.ScriptModule;
 /** Retire two reviewed duplicates before registration; Workshop input stays unchanged. */
 public final class DamnLibraryBatteryRecipes {
     public static final String TARGET = "media/scripts/damnCraft/recipes_damnCraft.txt";
-    public static final String SOURCE_SHA256 = "0f26406851c62525a913a2e41ead186b43591993c5ad3547f3249274a61b6c93";
+    public static final String SOURCE_SHA256 = "9042faa962cb69a5f23b58bef243f520207cda8273e690a0027dc70b1bd54446";
     public static final String INSERT = "damnCraftInsertBatteryIntoPlasticWeldingGun";
     public static final String REMOVE = "damnCraftRemoveBatteryFromPlasticWeldingGun";
     public static final boolean SUPPORTED =
@@ -35,9 +35,9 @@ public final class DamnLibraryBatteryRecipes {
         && BytecodeSupport.supports("zombie/scripting/ScriptType.class", "ed05efd72d87dbfa5e8bfc5831121290a0b377acdbb1cb694eb2d8f8e4b2bfdd")
         && BytecodeSupport.supports("zombie/scripting/objects/BaseScriptObject.class", "65d5f2bae0552d7a4ceaf24fb1124a57b93ae33b98d5afa8e0f5766d9bcbf666")
         && BytecodeSupport.supports("zombie/scripting/entity/components/crafting/CraftRecipe.class", "a5c076d53e68f5cdfcc5bc17239aee1fb2072766471c29070ca84b30bd63c5de")
-        && BytecodeSupport.supports("zombie/ZomboidFileSystem.class", "c4e5a5123bc43d03f2585c40f37544c50c1e702eebceb78bec94069e410b6750")
-        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo.class", "8c4b47ba966f071120feeec090202967e414246e28b5b6fd6a622a6a266af651")
-        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo$Mod.class", "c91e48400b77015c450a696f2d7c5665fa872f1a76fc05d2c38e72ba2928dc69");
+        && BytecodeSupport.supports("zombie/ZomboidFileSystem.class", "9f902cc912c7802a08f80614f5f8d3b74f249fc5f2c0204eb759f2e74dda175e")
+        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo.class", "5b124fe4e6f8525ed431e8c1ef62238597a7981276c13c3ddaa39c1ca1cee4b0")
+        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo$Mod.class", "9f304e567f306ff43db87e85927b794be2727f5d5cb6bafbe9c6c3802de08224");
 
     private DamnLibraryBatteryRecipes() { }
 

@@ -23,7 +23,7 @@ class NativeEquipmentBoundaryTests(unittest.TestCase):
         if not javap:
             raise RuntimeError('javap unavailable')
         cls.code = {}
-        for name in ('zombie.characters.IsoGameCharacter', 'zombie.characters.WornItems.WornItems',
+        for name in ('zombie.characters.IsoGameCharacter', 'zombie.characters.IsoPlayer', 'zombie.characters.WornItems.WornItems',
                      'zombie.Lua.LuaManager$Exposer', 'zombie.network.packets.SyncClothingPacket',
                      'zombie.scripting.objects.ItemBodyLocation', 'zombie.iso.IsoCell',
                      'zombie.Lua.LuaManager$GlobalObject', 'zombie.inventory.InventoryItemFactory',
@@ -44,9 +44,13 @@ class NativeEquipmentBoundaryTests(unittest.TestCase):
     def test_standard_setter_sends_and_packets_can_recreate_orphan_clothes(self):
         setter = self.method('zombie.characters.IsoGameCharacter',
                              'public void setWornItem(zombie.scripting.objects.ItemBodyLocation, zombie.inventory.InventoryItem, boolean)')
-        self.assertIn('PacketTypes$PacketType.SyncClothing', setter)
-        self.assertIn('INetworkPacket.send:', setter)
-        self.assertIn('INetworkPacket.sendToAll:', setter)
+        self.assertIn('Method syncClothing:()V', setter)
+        sync = self.method('zombie.characters.IsoPlayer', 'public void syncClothing()')
+        self.assertIn('PacketTypes$PacketType.SyncClothing', sync)
+        self.assertIn('INetworkPacket.send:', sync)
+        self.assertIn('INetworkPacket.sendToAll:', sync)
+        self.assertIn('Method isLocalPlayer:()Z', sync)
+        self.assertIn('UdpConnection.isReady:()Z', sync)
         packet = self.method('zombie.network.packets.SyncClothingPacket', 'private void process()')
         self.assertIn('WornItems.remove:', packet)
         self.assertIn('InventoryItemFactory.CreateItem:', packet)
@@ -146,10 +150,10 @@ class NativeEquipmentBoundaryTests(unittest.TestCase):
     def test_world_remove_notice_addresses_mutable_index_and_excludes_inventory_retry(self):
         owner = 'zombie.network.packets.RemoveItemFromSquarePacket'
         packet = self.method(owner, 'public void processClient(zombie.core.raknet.UdpConnection)')
-        self.assertRegex(packet, r'Field index:S\s+\d+: invokevirtual\s+#[0-9]+\s+'
-                         r'// Method zombie/util/list/PZArrayList.get:\(I\)Ljava/lang/Object;')
+        self.assertRegex(packet, r'Field index:S\s+\d+: invokeinterface\s+#[0-9]+,\s+2\s+'
+                         r'// InterfaceMethod java/util/List.get:\(I\)Ljava/lang/Object;')
         self.assertIn('IsoGridSquare.RemoveTileObject:', packet)
-        self.assertLess(packet.index('PZArrayList.get:'), packet.index('IsoGridSquare.RemoveTileObject:'))
+        self.assertLess(packet.index('java/util/List.get:'), packet.index('IsoGridSquare.RemoveTileObject:'))
         self.assertNotIn('getModData:', packet)
         self.assertNotIn('removeItemWithID:', packet)
         write = self.method(owner, 'public void write(zombie.core.network.ByteBufferWriter)')

@@ -18,7 +18,7 @@ internal object VehicleSyncTraceLogic {
         Main.VEHICLE_OWNERSHIP_SUPPORTED &&
             BytecodeSupport.supports(
                 "zombie/network/packets/vehicle/VehiclePhysicsPacket.class",
-                "c3103be5b9bacad57747f49b94bff441ff6b530315885ed30c93dc05c13da2c4",
+                "d9cc2121eafe2da8df2e70674d12e823b47be9b14f9f62f7d86c90ed19e725ef",
             )
     private val last = LinkedHashMap<String, Long>()
     private var requested = enabled

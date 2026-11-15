@@ -39,7 +39,7 @@ object PianoIconLogic {
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/textures/Texture.class",
-                "2f4fba9ad6c33a9ba0763a68d16164833a682f7645e61a061f70bfdca33c1f8f",
+                "aaefaf09c5e572bf88b4d58d3a982884d206b89014f24f371558e906ad27a642",
             )
 
     const val TILE = "recreational_01_28"

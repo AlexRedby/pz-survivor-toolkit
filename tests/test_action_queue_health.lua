@@ -859,7 +859,7 @@ do
     adapter=freshHealth(nil,true,true);policy=PZSurvivorToolkit.ActionQueuePolicy
     local actor=f.player
     Perks={Doctor=1};CharacterTrait={DEXTROUS=1,ALL_THUMBS=2}
-    getTimestampMs=function()return 0 end;getCore=function()return {getGameMode=function()return 'Sandbox' end}end
+    getTimestampMs=function()return 0 end;getCore=function()return {isTutorial=function()return false end,getGameMode=function()return 'Sandbox' end}end
     actor.getPerkLevel=function()return 2 end;actor.hasTrait=function()return false end
     actor.isWearingAwkwardGloves=function()return false end;actor.setIsFarming=function()end
     local inventory=actor.inventory
@@ -1036,8 +1036,8 @@ do
     print('Inventory delayed Carts: unchanged native constructor, approved predecessor/current chain and foreign constructor/table/API rejection passed.')
 end
 
-if NativeWishlistWorkshopRoot then
-    inventoryContextOverride=NativeWishlistWorkshopRoot..'/3437629766/mods/CleanUI/42.19/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'
+if NativeCleanUIInventoryContextSource then
+    inventoryContextOverride=assert(NativeCleanUIInventoryContextSourcePath)
     local function cleanReader(path)
         if path=='media/lua/client/ISUI/ISInventoryPaneContextMenu.lua' then
             return textReader(inventoryContextOverride)

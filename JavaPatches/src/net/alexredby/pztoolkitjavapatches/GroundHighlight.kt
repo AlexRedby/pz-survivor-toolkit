@@ -10,27 +10,27 @@ object GroundHighlight {
     internal val SUPPORTED =
         BytecodeSupport.supports(
             "zombie/iso/IsoObject.class",
-            "22387ecf47c1cf9aac192466de6298067f27584160c76a72baee38c6ad36dff2",
+            "7a99d06875c19ff132940d7192b414496537076e83474db0abc0cb38de6be70a",
         ) &&
             BytecodeSupport.supports(
                 "zombie/iso/objects/IsoWorldInventoryObject.class",
-                "7be6f2d54525fa587908ce8efa7da5d26cfd3d19bd1cc02911ee12f7649857b3",
+                "1019fd27cfce76d84a8db499a71568429e87e95de504e041a202e0ba9c01ee0b",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/IsoGridSquare.class",
-                "e8192f87d88da607abe0293228c84efbd822ed4ac0a331102c030bc3eeaba467",
+                "b8cef32a10bb76433bad174397b51f1a046be1eef47997dc1e79dd8547d726c5",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/IsoCell.class",
-                "5e9a88e1cd9a3f370e31ae0152c9de381d649caea7cab750ebc82a91b4e1f767",
+                "6c261778f1fac0c660ba8b6167b9bf5d318e8bd126378e3c1b3667c9469910ab",
             ) &&
             BytecodeSupport.supports(
                 "zombie/inventory/InventoryItem.class",
-                "48f01be16d1ef1b76e37638fac6e25ca4eb285ad38ab2f462caa5597318c7f9d",
+                "b45d4438636509d992aaa7b7505ef8323cd898947efc27bf1f7e762951d6643d",
             ) &&
             BytecodeSupport.supports(
                 "zombie/scripting/objects/Item.class",
-                "9e6a2f7fe48cc66843fea06b4821063d7cc6a73eaba0de8ee51d0a15c373202e",
+                "92f0b1dc3c96c97e6ce709542edbd9f5969b663934fb0c124014de53c37c3ab5",
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/textures/ColorInfo.class",

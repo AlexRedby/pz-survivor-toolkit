@@ -13,7 +13,7 @@ import zombie.core.ActionManager
 import zombie.core.NetTimedAction
 import zombie.core.Transaction.TransactionState
 import zombie.network.GameClient
-import zombie.network.fields.character.PlayerID
+import zombie.network.fields.character.ConnectionPlayer
 
 object ActionCompletion {
     private val current = ThreadLocal<Scope>()
@@ -45,22 +45,23 @@ object ActionCompletion {
             return null
         val actions = player.getCharacterActions() ?: return null
         if (actions.isEmpty() || actions[0] !== native) return null
-        val owner = Accessor.tryGet<PlayerID>(native, "playerId", null) ?: return null
         val id = Accessor.tryGet<Byte>(native, "transactionId", null) ?: return null
-        if (id.toInt() == 0 || owner.getPlayer() !== player || owner.getID() != player.onlineId)
-            return null
+        if (id.toInt() == 0) return null
         val transactions =
             Accessor.tryGet<ConcurrentLinkedQueue<*>>(ActionManager::class.java, "actions", null)
                 ?: return null
         var found: NativeState? = null
         for (candidate in transactions) {
             val candidateId = Accessor.tryGet<Byte>(candidate, "id", null)
-            val candidateOwner = Accessor.tryGet<PlayerID>(candidate, "playerId", null) ?: continue
-            if (candidateId != id || candidateOwner.getID() != owner.getID()) continue
+            val candidateOwner = Accessor.tryGet<ConnectionPlayer>(candidate, "player", null) ?: continue
+            val candidatePlayer = candidateOwner.getPlayer() ?: continue
+            // Native matching uses the actor's online ID. ConnectionPlayer's wire ID can
+            // instead be a local split-screen index on the submitting client.
+            if (candidateId != id || candidatePlayer.onlineId != player.onlineId) continue
             if (
                 found != null ||
                     candidate !is NetTimedAction ||
-                    candidateOwner.getPlayer() !== player
+                    candidatePlayer !== player
             )
                 return null
             val state = Accessor.tryGet<TransactionState>(candidate, "state", null)
@@ -114,7 +115,7 @@ object ActionCompletion {
         if (
             !supported ||
                 !GameClient.client ||
-                !QueueManagers.ACTION_SUPPORTED ||
+                !QueueManagerSupport.ACTION_SUPPORTED ||
                 !ActionAcknowledgements.SUPPORTED
         ) {
             if (wait != null) wait.revoked = true
@@ -165,7 +166,7 @@ object ActionCompletion {
         if (
             !supported ||
                 !GameClient.client ||
-                !QueueManagers.ACTION_SUPPORTED ||
+                !QueueManagerSupport.ACTION_SUPPORTED ||
                 !ActionAcknowledgements.SUPPORTED ||
                 native == null ||
                 waits[native] == null
@@ -182,7 +183,7 @@ object ActionCompletion {
         if (
             !supported ||
                 !GameClient.client ||
-                !QueueManagers.ACTION_SUPPORTED ||
+                !QueueManagerSupport.ACTION_SUPPORTED ||
                 !ActionAcknowledgements.SUPPORTED ||
                 native == null
         )

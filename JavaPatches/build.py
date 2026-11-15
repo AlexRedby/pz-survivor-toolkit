@@ -120,14 +120,14 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.pztoolkitjavapatches.RadioDeviceLookupChecks': 'RADIO_DEVICE_LOOKUP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.WormCompostChecks': 'WORM_COMPOST_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.AlarmClockChecks': 'ALARM_CLOCK_CHECKS_PASS',
-          'zombie.vehicles.VehicleInventoryOrderingChecks': 'VEHICLE_INVENTORY_ORDERING_CHECKS_PASS',
-          'zombie.radio.devices.RadioInventoryStateChecks': 'RADIO_INVENTORY_STATE_CHECKS_PASS',
-          'zombie.network.packets.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
-          'zombie.network.packets.DrainableChargeChecks': 'DRAINABLE_CHARGE_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.VehicleInventoryOrderingChecks': 'VEHICLE_INVENTORY_ORDERING_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.RadioInventoryStateChecks': 'RADIO_INVENTORY_STATE_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.ItemStatsChecks': 'ITEM_STATS_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.DrainableChargeChecks': 'DRAINABLE_CHARGE_CHECKS_PASS',
           'net.alexredby.javapatchfixture.KotlinRuntimeChecks': 'KOTLIN_RUNTIME_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.QuartermasterPresetChecks': 'QUARTERMASTER_PRESET_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.SourceProofChecks': 'SOURCE_PROOF_CHECKS_PASS',
-          'zombie.core.FitnessConstructorChecks': 'FITNESS_CONSTRUCTOR_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.FitnessConstructorChecks': 'FITNESS_CONSTRUCTOR_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.UITextFitChecks': 'UI_TEXT_FIT_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ManifestModelChecks': 'MANIFEST_MODEL_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.DrinkFluidCompletionChecks': 'DRINK_FLUID_COMPLETION_CHECKS_PASS',
@@ -138,40 +138,40 @@ CHECKS = {'net.alexredby.pztoolkitjavapatches.ScriptItemPropertiesChecks': 'SCRI
           'net.alexredby.pztoolkitjavapatches.QueueViewChecks': 'QUEUE_VIEW_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.InventoryMembershipChecks': 'INVENTORY_MEMBERSHIP_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.ContextMenuDuplicateChecks': 'CONTEXT_MENU_DUPLICATE_CHECKS_PASS',
-          'zombie.vehicles.NativeChecks': 'NATIVE_CHECKS_PASS',
-          'zombie.entity.CraftBenchChecks': 'CRAFT_BENCH_CHECKS_PASS',
-          'zombie.vehicles.VehicleOwnershipChecks': 'VEHICLE_OWNERSHIP_CHECKS_PASS',
-          'zombie.vehicles.VehicleTraceChecks': 'VEHICLE_TRACE_CHECKS_PASS',
-          'zombie.radio.devices.MediaChecks': 'MEDIA_CHECKS_PASS',
-          'zombie.core.BuildChecks': 'BUILD_CHECKS_PASS',
-          'zombie.core.QueueManagerChecks': 'QUEUE_MANAGER_CHECKS_PASS',
-          'zombie.core.ItemTransactionClockChecks': 'ITEM_TRANSACTION_CLOCK_CHECKS_PASS',
-          'zombie.core.ItemBatchAdmissionChecks': 'ITEM_BATCH_ADMISSION_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.NativeChecks': 'NATIVE_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.CraftBenchChecks': 'CRAFT_BENCH_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.VehicleOwnershipChecks': 'VEHICLE_OWNERSHIP_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.VehicleTraceChecks': 'VEHICLE_TRACE_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.MediaChecks': 'MEDIA_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.BuildChecks': 'BUILD_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.QueueManagerChecks': 'QUEUE_MANAGER_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.ItemTransactionClockChecks': 'ITEM_TRANSACTION_CLOCK_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.ItemBatchAdmissionChecks': 'ITEM_BATCH_ADMISSION_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.NativeTransferRequestsChecks': 'NATIVE_TRANSFER_REQUESTS_CHECKS_PASS',
-          'zombie.core.ActionAcknowledgementChecks': 'ACTION_ACKNOWLEDGEMENT_CHECKS_PASS',
-          'zombie.characters.CharacterTimedActions.ActionCompletionChecks': 'ACTION_COMPLETION_CHECKS_PASS',
-          'zombie.characters.CharacterTimedActions.ActionValidityChecks': 'ACTION_VALIDITY_CHECKS_PASS',
-          'zombie.characters.AnimalChecks': 'ANIMAL_CHECKS_PASS',
-          'zombie.network.packets.EquipmentChecks': 'EQUIPMENT_CHECKS_PASS',
-          'zombie.network.packets.MedicalBodyDamageChecks': 'MEDICAL_BODY_DAMAGE_CHECKS_PASS',
-          'zombie.characters.MedicalVisualChecks': 'MEDICAL_VISUAL_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.ActionAcknowledgementChecks': 'ACTION_ACKNOWLEDGEMENT_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.ActionCompletionChecks': 'ACTION_COMPLETION_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.ActionValidityChecks': 'ACTION_VALIDITY_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.AnimalChecks': 'ANIMAL_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.EquipmentChecks': 'EQUIPMENT_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.MedicalBodyDamageChecks': 'MEDICAL_BODY_DAMAGE_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.MedicalVisualChecks': 'MEDICAL_VISUAL_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.MedicineCooldownChecks': 'MEDICINE_COOLDOWN_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.TVVideoPathChecks': 'TV_VIDEO_PATH_CHECKS_PASS',
-          'zombie.core.MedicalTimedActionChecks': 'MEDICAL_TIMED_ACTION_CHECKS_PASS',
-          'zombie.iso.objects.HutchChecks': 'HUTCH_CHECKS_PASS',
-          'zombie.core.PropertyChecks': 'PROPERTY_CHECKS_PASS',
-          'zombie.core.PropertyColdChecks': 'PROPERTY_COLD_CHECKS_PASS',
-          'zombie.scripting.entity.components.fluids.FluidChecks': 'FLUID_CHECKS_PASS',
-          'zombie.scripting.entity.components.fluids.FoodReplacementOutputChecks': 'FOOD_REPLACEMENT_OUTPUT_CHECKS_PASS',
-          'zombie.scripting.entity.components.fluids.FluidColdChecks': 'FLUID_COLD_CHECKS_PASS',
-          'zombie.scripting.entity.components.crafting.PianoChecks': 'PIANO_CHECKS_PASS',
-          'zombie.iso.FencePropertyChecks': 'FENCE_PROPERTY_CHECKS_PASS',
-          'zombie.basements.BasementRoomLookupChecks': 'BASEMENT_ROOM_LOOKUP_CHECKS_PASS',
-          'zombie.basements.BasementHallKeyChecks': 'BASEMENT_HALL_KEY_CHECKS_PASS',
-          'zombie.iso.MannequinZoneChecks': 'MANNEQUIN_ZONE_CHECKS_PASS',
-          'zombie.iso.FenceChecks': 'FENCE_CHECKS_PASS',
-          'zombie.core.fonts.FontChecks': 'FONT_CHECKS_PASS',
-          'zombie.core.fonts.FontColdChecks': 'FONT_COLD_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.MedicalTimedActionChecks': 'MEDICAL_TIMED_ACTION_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.HutchChecks': 'HUTCH_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.PropertyChecks': 'PROPERTY_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.PropertyColdChecks': 'PROPERTY_COLD_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.FluidChecks': 'FLUID_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.FoodReplacementOutputChecks': 'FOOD_REPLACEMENT_OUTPUT_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.FluidColdChecks': 'FLUID_COLD_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.PianoChecks': 'PIANO_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.FencePropertyChecks': 'FENCE_PROPERTY_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.BasementRoomLookupChecks': 'BASEMENT_ROOM_LOOKUP_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.BasementHallKeyChecks': 'BASEMENT_HALL_KEY_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.MannequinZoneChecks': 'MANNEQUIN_ZONE_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.FenceChecks': 'FENCE_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.FontChecks': 'FONT_CHECKS_PASS',
+          'net.alexredby.pztoolkitjavapatches.FontColdChecks': 'FONT_COLD_CHECKS_PASS',
           'net.alexredby.pztoolkitjavapatches.CartSteeringMathTest': 'CART_STEERING_MATH_PASS',
           'net.alexredby.pztoolkitjavapatches.CartSteeringHooksTest': 'CART_STEERING_HOOKS_PASS',
           'net.alexredby.pztoolkitjavapatches.CartMotionSyncTest': 'CART_MOTION_SYNC_PASS',
@@ -219,7 +219,7 @@ CHECKS['net.alexredby.pztoolkitjavapatches.HostLoaderChecks'] = 'HOST_LOADER_CHE
 CHECKS['net.alexredby.pztoolkitjavapatches.VehicleStepPoseTest'] = 'VEHICLE_STEP_POSE_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VehicleTransitionRenderTest'] = 'VEHICLE_TRANSITION_RENDER_PASS'
 CHECKS['net.alexredby.pztoolkitjavapatches.VideoChecks'] = 'VIDEO_CHECKS_PASS'
-CHECKS['zombie.pathfind.nativeCode.BarricadedDoorPathChecks'] = 'BARRICADED_DOOR_PATH_CHECKS_PASS'
+CHECKS['net.alexredby.pztoolkitjavapatches.BarricadedDoorPathChecks'] = 'BARRICADED_DOOR_PATH_CHECKS_PASS'
 # Workshop-dependent checks require an explicit --test; --check keeps its game-only inputs.
 EXPLICIT_ONLY_CHECKS = {'net.alexredby.pztoolkitjavapatches.DamnLibraryBatteryRecipeChecks',
                         'net.alexredby.pztoolkitjavapatches.VehicleSalvageSandboxChecks',
@@ -437,15 +437,15 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.1.98',
+    'version': '0.2.0',
     'author': 'AlexRedby',
-    'versionMin': '42.21',
-    'versionMax': '42.21',
+    'versionMin': '42.22',
+    'versionMax': '42.22',
     'require': '\\ZombieBuddy',
     'javaJarFile': 'media/java/PZToolkitJavaPatches.jar',
     'javaPkgName': 'net.alexredby.pztoolkitjavapatches',
     'ZBVersionMin': '2.3.4',
-    'description': 'B42.21 fixes for barricaded-door pathfinding, skipped alarm-clock triggers and duplicate alarm-setting packets, stale optional item-stat fields in reused network packets, item-transaction cancellation ownership and aggregate ordinary container-batch admission, missing-action completion detection, common action completion boundaries and native action outcome acknowledgements, client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, stale workstation component references after square object-index changes, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, late medical updates and requests after patient disconnect, medical visual removal synchronization, null-animal hutch unloading crashes, five native string-property startup exceptions, two malformed native fluid-container names, premature breakable-fence validation, missing level-three wooden-fence material metadata, the native Piano recipe icon, cross-cell basement room lookup loss, the duplicate stock basement-access hall persistent key, the malformed stock mannequin zone, early native font-page loading and occupied-vehicle authority loss after collision handoff. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for alarm catch-up, cassette playback, safe queue build interruption, workstation reference recovery and vehicle authority recovery. The hutch unloading, native string-property and fluid-name guards apply in clients, single-player and servers. The font startup fix requires explicit early patches_jar activation of the separate local font JAR; enabling the mod alone is insufficient. Includes client cart steering and floor contact for the selected shopping cart and wheelbarrows. Unsupported target bytecode disables the patches.',
+    'description': 'B42.22.2 fixes for barricaded-door pathfinding, skipped alarm-clock triggers and duplicate alarm-setting packets, stale optional item-stat fields in reused network packets, aggregate ordinary container-batch admission, common action completion boundaries and native action outcome acknowledgements, client zombie speed decoding, vehicle interpolation recovery, authoritative cassette restart after stopping, multiplayer build cancellation acknowledgements, stale workstation component references after square object-index changes, live-animal trailer location reconciliation, incomplete equipment acknowledgement handling, late medical updates and requests after patient disconnect, the native WindowShape string-property startup exception, two malformed native fluid-container names, premature breakable-fence validation, missing level-three wooden-fence material metadata, the native Piano recipe icon, cross-cell basement room lookup loss, the duplicate stock basement-access hall persistent key, the malformed stock mannequin zone, early native font-page loading and occupied-vehicle authority loss after collision handoff. Requires the ZombieBuddy Java agent on clients for zombie, vehicle, animal and equipment patches and on the server for alarm catch-up, cassette playback, safe queue build interruption, workstation reference recovery and vehicle authority recovery. The native string-property and fluid-name guards apply in clients, single-player and servers. The font startup fix requires explicit early patches_jar activation of the separate local font JAR; enabling the mod alone is insufficient. Includes client cart steering and floor contact for the selected shopping cart and wheelbarrows. Unsupported target bytecode disables the patches.',
 }
 
 
@@ -494,7 +494,7 @@ def main(argv=None):
         parser.error(f'Cannot run javac at "{javac}": {error}. Select JDK 25 or newer with --jdk or JAVA_HOME.')
     version = re.search(r'^javac (\d+)', compiler.stdout, re.MULTILINE)
     if version is None or int(version.group(1)) < 25:
-        parser.error(f'B42.21 requires JDK 25 or newer to read game classes. Found "{compiler.stdout.strip()}" at "{javac}". Select JDK 25+ with --jdk or JAVA_HOME.')
+        parser.error(f'The supported Build 42 game requires JDK 25 or newer to read its classes. Found "{compiler.stdout.strip()}" at "{javac}". Select JDK 25+ with --jdk or JAVA_HOME.')
     classpath = os.pathsep.join(str(args.game / name) for name in ['projectzomboid.jar', 'ZombieBuddy.jar'])
     build = (args.output if args.output is not None else ROOT / 'build').absolute()
     destination = build / 'PZToolkitJavaPatches'
@@ -608,7 +608,7 @@ def main(argv=None):
                             relative = Path(name.replace('.', '/') + '.class')
                             (runtime_classes / relative).parent.mkdir(parents=True)
                             shutil.copy2(testclasses / relative, runtime_classes / relative)
-                        cold_fonts = name == 'zombie.core.fonts.FontColdChecks'
+                        cold_fonts = name == 'net.alexredby.pztoolkitjavapatches.FontColdChecks'
                         cold_kotlin = name == 'net.alexredby.javapatchfixture.KotlinRuntimeChecks'
                         testpath = [str(testclasses), classpath] if cold_fonts or cold_kotlin else [str(runtime_classes), str(jar), str(fontjar), classpath]
                         log = log_path(name, trace)

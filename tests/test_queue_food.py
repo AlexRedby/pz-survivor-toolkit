@@ -518,7 +518,7 @@ end
             self.assertEqual(0, compiled.returncode, compiled.stdout + compiled.stderr)
             result = subprocess.run(
                 [str(Path(jdk) / 'bin/java'), '-Djava.awt.headless=true',
-                 '-cp', directory + os.pathsep + str(jar), 'zombie.characters.FoodAutoDrinkChecks'],
+                 '-cp', directory + os.pathsep + str(jar), 'net.alexredby.nativechecks.FoodAutoDrinkChecks'],
                 text=True, capture_output=True, timeout=60)
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             self.assertIn('FOOD_AUTO_DRINK_CHECKS_PASS', result.stdout)

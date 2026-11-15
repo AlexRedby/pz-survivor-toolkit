@@ -11,7 +11,7 @@ import re
 import sys
 
 from . import coop
-from .mod_selection import lua_sources
+from .mod_selection import lua_sources, runtime_version
 from .native import runtime_lua_sources
 from .report import RECORD, STAMP, read_json
 
@@ -42,6 +42,7 @@ class FixtureLoadMonitor:
     def __init__(self, root, runtime, selection):
         self.root = Path(root).resolve()
         self.catalogs = {}
+        version = runtime_version(runtime)
         game_names = set()
         game_seal = self.root / 'game-inputs.json'
         if game_seal.is_file():
@@ -51,7 +52,7 @@ class FixtureLoadMonitor:
             if role == 'server' and coop.enabled(selection):
                 config = runtime['roles']['client1']
             cache = Path(config['cache'])
-            fixture_runtime = {'roles': {role: config}, 'fixture': runtime.get('fixture', {})}
+            fixture_runtime = {'roles': {role: config}, 'fixture': runtime.get('fixture', {}), 'game_version': list(version)}
             selected = runtime_lua_sources(fixture_runtime, selection, fixtures_only=True)
             allowed = {}
             for path in selected:
@@ -62,7 +63,7 @@ class FixtureLoadMonitor:
             mods = cache / 'mods'
             for mod in mods.iterdir() if mods.is_dir() else ():
                 if mod.is_dir():
-                    for path in lua_sources(mod):
+                    for path in lua_sources(mod, version):
                         names[path.name.casefold()].add(_path(path.resolve()))
             aliases = {}
             for path in selected:

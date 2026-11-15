@@ -11,9 +11,9 @@ import zombie.inventory.types.InventoryContainer;
 /** Read native laundry stains without getVisual's lazy allocation and randomization. */
 public final class ItemLaundryProperties {
     static final boolean SUPPORTED = BytecodeSupport.supports("zombie/inventory/InventoryItem.class",
-        "48f01be16d1ef1b76e37638fac6e25ca4eb285ad38ab2f462caa5597318c7f9d")
+        "b45d4438636509d992aaa7b7505ef8323cd898947efc27bf1f7e762951d6643d")
         && BytecodeSupport.supports("zombie/core/skinnedmodel/visual/ItemVisual.class",
-        "78af8897986c28c5948d7ad80dbf8cf372c52bd5a32dfb720586f3716e472de6")
+        "eeea202e9991aa5f67bd8c1ee53115a3ade92631faed7160c1b445ca8cf2dca9")
         && BytecodeSupport.supports("zombie/characterTextures/BloodClothingType.class",
         "9a4961974009416de6229ff5befbe2853b8359f808baf0ca2605e71eed4ff283");
     private static final Field VISUAL = visualField();

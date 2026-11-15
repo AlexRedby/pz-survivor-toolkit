@@ -11,6 +11,7 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/CartKeySettings.lua"
+STORAGE = HELPER.with_name("ModOptionsStorage.lua")
 GAME = Path(os.environ.get("PZ_GAME", str(Path.home() / "Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java")))
 NATIVE = GAME / "media/lua/client/PZAPI/ModOptions.lua"
 MARKER = "PZSurvivorToolkitCartControls.ini"
@@ -68,6 +69,8 @@ class CartKeySettingsTests(unittest.TestCase):
             options:addTickBox('OtherCartOption', 'Other', false)
             PZAPI.ModOptions:create('AnotherMod'):addTextEntry('Name', 'Name', 'default')
         ''')
+        lua.globals().storage = lua.execute(STORAGE.read_text())
+        lua.execute("package.preload['PZSurvivorToolkit/ModOptionsStorage'] = function() return storage end")
         lua.globals().settings = lua.execute(HELPER.read_text())
         lua.execute('settings.configureDefault(binding); PZAPI.ModOptions:load()')
         return lua
@@ -124,6 +127,28 @@ class CartKeySettingsTests(unittest.TestCase):
         self.assertEqual(restarted.eval("PZAPI.ModOptions:getOptions('AnotherMod'):getOption('Name'):getValue()"), 'Chosen name')
         self.assertEqual(list(restarted.eval('PZAPI.ModOptions.OtherOptions').values()),
                          ['keybind|AbsentOne|Bind|29', 'tickbox|AbsentTwo|Enabled|false'])
+
+    def test_storage_saves_multiple_targets_and_preserves_other_lines(self):
+        lua = self.boot({"ModOptions.ini": (
+            "keybind|SaucedCarts|PushCart|47\r\n"
+            "tickbox|SaucedCarts|OtherCartOption|true\r\n"
+            "keybind|AbsentOne|Bind|29\r\n"
+            "tickbox|AbsentTwo|Enabled|false\r\n")})
+        lua.execute("binding:setValue(18); PZAPI.ModOptions:getOptions('SaucedCarts'):getOption('OtherCartOption'):setValue(false)")
+        expected = lua.table_from({'keybind|SaucedCarts|PushCart|': '18',
+                                   'tickbox|SaucedCarts|OtherCartOption|': 'false'})
+        self.assertTrue(lua.globals().storage.save(expected))
+        restarted = self.boot(dict(lua.globals().files.items()))
+        self.assertEqual(list(restarted.eval('PZAPI.ModOptions.OtherOptions').values()),
+                         ['keybind|AbsentOne|Bind|29', 'tickbox|AbsentTwo|Enabled|false'])
+        expected['tickbox|SaucedCarts|OtherCartOption|'] = 'true'
+        self.assertFalse(lua.globals().storage.save(expected))
+
+    def test_storage_restores_other_options_after_save_failure(self):
+        lua = self.boot({"ModOptions.ini": "keybind|AbsentOne|Bind|29\r\n"})
+        lua.execute("originalOtherOptions=PZAPI.ModOptions.OtherOptions; fail['ModOptions.ini']='write'")
+        self.assertFalse(lua.globals().storage.save(lua.table_from({})))
+        self.assertTrue(lua.eval('originalOtherOptions == PZAPI.ModOptions.OtherOptions'))
 
     def test_options_open_write_close_and_silent_failures_do_not_mark_success(self):
         for failure in ('open', 'write', 'close', 'silent'):

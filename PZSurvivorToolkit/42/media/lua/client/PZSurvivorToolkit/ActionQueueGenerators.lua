@@ -302,9 +302,9 @@ function Generators.install()
         "ISInventoryTransferAction", "ISEquipWeaponAction", "ISUnequipAction", "ISWalkToTimedAction"}) do
         helperOwners[name] = _G[name]
     end
-    local nativeInventory = sourceMatches("client/ISUI/ISInventoryPaneContextMenu.lua", 4293448388)
-    local cleanUIInventory = not nativeInventory and sourceMatches("client/ISUI/ISInventoryPaneContextMenu.lua", 1953753890)
-    local trusted = type(ISInventoryTransferUtil) == "table" and sourceMatches("client/ISUI/ISWorldObjectContextMenu.lua", 1920579052)
+    local nativeInventory = sourceMatches("client/ISUI/ISInventoryPaneContextMenu.lua", 3980587789)
+    local cleanUIInventory = not nativeInventory and sourceMatches("client/ISUI/ISInventoryPaneContextMenu.lua", 1708080922)
+    local trusted = type(ISInventoryTransferUtil) == "table" and sourceMatches("client/ISUI/ISWorldObjectContextMenu.lua", 3358730169)
         and (nativeInventory or cleanUIInventory)
         and sourceMatches("shared/luautils.lua", 1091751327)
         and sourceMatches("shared/TimedActions/ISInventoryTransferUtil.lua", 1281392797)

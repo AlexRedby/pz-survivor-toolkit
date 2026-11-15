@@ -40,7 +40,7 @@ ISBaseObject = {derive = derive}
 table.wipe = function(t) for k in pairs(t) do t[k] = nil end end
 Events = {OnTick = {Add = function() end}}
 Events.OnServerCommand = {Add = function() end}
-for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end

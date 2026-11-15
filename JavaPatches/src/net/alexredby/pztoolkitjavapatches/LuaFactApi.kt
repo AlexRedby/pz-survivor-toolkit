@@ -16,7 +16,7 @@ internal object LuaFactApi {
         "se/krka/kahlua/vm/LuaClosure.class" to "92acfa5288c7bc6ab568a180140c20c5186b723ec2b38adafb2ef807b955b0cd",
         "se/krka/kahlua/vm/Coroutine.class" to "b0ecb5f6f004ed43e356d5177403fee4b190e58f659709cc34b9bc89beb6dfa4",
         "se/krka/kahlua/vm/KahluaThread.class" to "25f4c0dea91800dcb3fadd3d482ed5f7d5cf17908bf167afd308b85c99856bb6",
-        "se/krka/kahlua/j2se/KahluaTableImpl.class" to "101df1481366f976f76c037094e29f5ad21c71f5026dc3d0693f25d68b1c79f7",
+        "se/krka/kahlua/j2se/KahluaTableImpl.class" to "1e79dbff83e85c8863df63f7847d3a506fddbaefa423cb676734751599db1aea",
         "se/krka/kahlua/integration/expose/LuaJavaInvoker.class" to "2c431080d2ce2b94966012e982e64b6d66cd1ae67af2eccd23e163fdfea24457",
         "se/krka/kahlua/integration/expose/MultiLuaJavaInvoker.class" to "ff446aca11076e954a84bc9a0d320d8a1939686c979d5b8ef7988842ed844155",
         "se/krka/kahlua/integration/expose/caller/MethodCaller.class" to "511ba515b1d0e6acd1671aea0195d37e3302eb7e992c73543a5844d6a5a6d098",

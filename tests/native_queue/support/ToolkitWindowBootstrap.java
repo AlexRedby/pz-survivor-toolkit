@@ -19,8 +19,9 @@ import org.lwjgl.glfw.GLFW;
 /** Fixture-only agent. The installed game and its class resources stay unchanged. */
 public final class ToolkitWindowBootstrap {
     private static final String DISPLAY = "org/lwjglx/opengl/Display";
-    // B42.21 installed Display. Reject engine updates before starting any native UI.
-    private static final String DISPLAY_SHA256 = "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578";
+    // Audited 42.22 Display; executable instructions match the previous reviewed target.
+    // Reject unknown engine updates before starting any native UI.
+    private static final String DISPLAY_SHA256 = "3b49c8639b52dcfe11daa70c3d397ea8b55c22fb09b9ede2f7b523fee3b7b525";
     private static final Map<String, Integer> EXPECTED = Map.of(
         "glfwDefaultWindowHints", 1, "glfwShowWindow", 2, "glfwFocusWindow", 1,
         "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2,

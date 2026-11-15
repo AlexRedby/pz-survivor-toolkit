@@ -2,6 +2,7 @@
 from pathlib import Path
 import argparse
 import copy
+import hashlib
 import json
 import os
 import re
@@ -744,6 +745,17 @@ def check_java(game, jdk, patch, kotlin_home=None):
     assert int(re.search(r'javac (\d+)', version)[1]) >= 25
     jars = [(game / 'projectzomboid.jar').resolve(), (game / 'ZombieBuddy.jar').resolve(), patch.resolve()]
     assert all(p.is_file() for p in jars), 'Missing explicit compile JAR'
+    # Keep the native ownership proof tied to the same legacy implementations as the
+    # opt-in runtime. A changed parser/manager must not receive a successful Java verdict.
+    native_targets = {
+        'zombie/core/Action.class': '4a2fe6aaf0cf73235279946e930b40489ec44859aff64cc19d97976bcc75610d',
+        'zombie/core/ActionManager.class': '3e85655f0d287837b17164d2ee4cecb7067ab419ffbe8ce1adb36bd7d54b202f',
+    }
+    with zipfile.ZipFile(jars[0]) as archive:
+        if any(hashlib.sha256(archive.read(name)).hexdigest() != expected
+               for name, expected in native_targets.items()):
+            return ('UNSUPPORTED (cart ActionAdmission prototype: native owner/connection-slot proof '
+                    'requires requalification; Java fixture checks were not run)')
     sp = HERE.parent / 'wooden_cart_motion'
     with tempfile.TemporaryDirectory(prefix='cart-mp-compile-') as directory:
         root = Path(directory)
@@ -787,7 +799,7 @@ def check_java(game, jdk, patch, kotlin_home=None):
         (root/'Lua').mkdir()
         for name, marker, flags in [
                 ('ActionAdmissionCheck', 'ACTION_ADMISSION_CHECK_PASS', {}),
-                ('zombie.core.ActionAdmissionIncarnationCheck', 'ACTION_ADMISSION_INCARNATION_CHECK_PASS',
+                ('net.alexredby.cartlabchecks.ActionAdmissionIncarnationCheck', 'ACTION_ADMISSION_INCARNATION_CHECK_PASS',
                  {'PZ_CART_ACTION_INVALIDATION':'true'}),
                 ('NullableDiagnosticCheck', 'NULLABLE_DIAGNOSTIC_CHECK_PASS',
                  {'PZ_CART_TIMELINE': 'true', 'PZ_CART_OBSERVER_ASSOCIATION': 'true'})]:

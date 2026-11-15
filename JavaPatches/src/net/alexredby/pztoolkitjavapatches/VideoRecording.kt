@@ -55,7 +55,7 @@ object VideoRecording {
         if (current?.active() == true) return false
         try {
             if (!Main.VIDEO_SUPPORTED)
-                throw IllegalStateException("Unsupported B42.21 display bytecode")
+                throw IllegalStateException("Unsupported display bytecode")
             val root = Path.of(ZomboidFileSystem.instance.getCacheDir()).toRealPath()
             var output = Path.of(directory)
             if (

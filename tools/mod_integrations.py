@@ -5,10 +5,10 @@ from typing import NamedTuple
 
 try:
     from .queue_checks import native, pack
-    from .queue_checks.mod_selection import mod_layers
+    from .queue_checks.mod_selection import mod_layers, game_version
 except ImportError:
     from queue_checks import native, pack
-    from queue_checks.mod_selection import mod_layers
+    from queue_checks.mod_selection import mod_layers, game_version
 
 
 class Source(NamedTuple):
@@ -29,11 +29,37 @@ GAME_SOURCES = {
 }
 
 CLEAN_PANE = Source('CleanUIInventoryPaneSource', 'ISUI/ISInventoryPane.lua')
+CLEAN_CONTEXT = Source('NativeCleanUIInventoryContextSource', 'ISUI/ISInventoryPaneContextMenu.lua')
 CLEAN_PAGES = (
     Source('CleanUIInventoryPageSource', 'ISUI/ISInventoryPage.lua'),
     Source('CleanUIVanillaInventoryPageSource', 'CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPage.lua'),
 )
+COOK_BALANCE_SOURCES = (
+    Source('NativeCookCraftPanelSource', 'client/Project_Cook/HandCraftPanel/PJCK_CraftActionPanel.lua'),
+    Source('NativeCookUIScaleSource', 'client/Project_Cook/PJCK_UIScale.lua'),
+    Source('NativeCookConfigSource', 'client/Project_Cook/PJCK_Config.lua'),
+    Source('NativeCookViewportSource', 'client/Project_Cook/PJCK_Viewport.lua'),
+    Source('NativeCookFrozenSource', 'shared/Project_Cook/PJCK_FrozenCooking.lua'),
+    Source('NativeCookActionOverridesSource', 'client/Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction.lua'),
+)
+NEAT_CRAFT_PANEL = Source('NativeNeatCraftPanelSource', 'client/Neat_Crafting/NC_CraftActionPanel.lua')
 INTEGRATIONS = {
+    'Project_Cook': {
+        'owners': ['client/PZSurvivorToolkit/ActionQueueCompat.lua'],
+        'option': 'project_cook_source', 'root': 'media/lua',
+        'path_inputs': tuple(source.variable for source in COOK_BALANCE_SOURCES),
+        'tests': {test: COOK_BALANCE_SOURCES for test in (
+            'test_project_cook_balance.lua', 'test_action_queue_current_craft_providers.lua')},
+        'game_inputs': {test: ('native_action_root',) for test in (
+            'test_project_cook_balance.lua', 'test_action_queue_current_craft_providers.lua')},
+    },
+    'Neat_Crafting': {
+        'owners': ['client/PZSurvivorToolkit/ActionQueueCompat.lua'],
+        'option': 'neat_crafting_source', 'root': 'media/lua',
+        'path_inputs': (NEAT_CRAFT_PANEL.variable,),
+        'tests': {'test_action_queue_current_craft_providers.lua': (NEAT_CRAFT_PANEL,)},
+        'game_inputs': {'test_action_queue_current_craft_providers.lua': ('native_action_root',)},
+    },
     'P4TidyUpMeister': {
         'owners': ['client/PZSurvivorToolkit/ActionQueueCompat.lua',
                    'client/PZSurvivorToolkit/ActionQueueTidyIntent.lua',
@@ -66,7 +92,14 @@ INTEGRATIONS = {
                    'client/PZSurvivorToolkit/ContainerConfigurationMenus.lua',
                    'client/PZSurvivorToolkit/SmartDeposit.lua'],
         'option': 'cleanui_inventory_pane', 'root': 'media/lua/client', 'argument': 'ISUI/ISInventoryPane.lua',
+        'path_inputs': (CLEAN_CONTEXT.variable,),
+        # Native action-family contracts bind the selected CleanUI provider when
+        # requested, without pulling their unrelated Workshop families into the inventory profile.
+        'explicit_tests': ('test_action_queue_fire.lua', 'test_action_queue_generators.lua', 'test_action_queue_health.lua'),
         'tests': {
+            'test_action_queue_fire.lua': (CLEAN_CONTEXT,),
+            'test_action_queue_generators.lua': (CLEAN_CONTEXT,),
+            'test_action_queue_health.lua': (CLEAN_CONTEXT,),
             'test_inventory_tags.lua': (CLEAN_PANE,),
             'test_inventory_filter.lua': (CLEAN_PANE, Source('CleanUIInventoryTransferHandlerSource',
                                                           'ISUI/ISInventoryPageTransferHandler.lua', optional=True)),
@@ -140,6 +173,10 @@ INTEGRATIONS = {
                       Source('NativeBCCategoryStoreSource', 'Categorize/CategoryStore.lua'),
                       Source('NativeBCIniWriterSource', '_IO/IniWriter.lua'),
                       Source('NativeBCIOSource', '_IO/_IO.lua')),
+                  'test_inventory_search.lua': (Source('NativeBCInventoryCategorySource', 'Categorize/InventoryCategory.lua'),
+                                                Source('NativeBCCategoryStoreSource', 'Categorize/CategoryStore.lua')),
+                  'test_inventory_tags.lua': (Source('NativeBCInventoryCategorySource', 'Categorize/InventoryCategory.lua'),
+                                              Source('NativeBCCategoryStoreSource', 'Categorize/CategoryStore.lua')),
                   'test_inventory_freshness.lua': (Source('NativeBCFreshnessSource', 'Upgrades/FoodFreshness.lua'),),
                   'test_smart_deposit.lua': (Source('NativeBCSmartDepositSource', 'Proximity/Proximity_SmartDeposit.lua'),),
                   'test_inventory_refresh.lua': (Source('NativeBCProximitySource', 'Proximity.lua'),
@@ -174,9 +211,9 @@ def describe():
             for id, spec in INTEGRATIONS.items()}
 
 
-def source_path(root, relative, optional=False):
+def source_path(root, relative, optional=False, *, version):
     """Resolve one effective file; a version file overrides common independently."""
-    path = next((layer / relative for layer in reversed(mod_layers(root)) if (layer / relative).is_file()), None)
+    path = next((layer / relative for layer in reversed(mod_layers(root, version)) if (layer / relative).is_file()), None)
     if path is None and not optional:
         raise ValueError('Missing upstream source: ' + str(root / relative))
     return path
@@ -224,6 +261,8 @@ def bind_sources(lua, name, args):
                 path = None
             if path is not None:
                 lua.globals()[source.variable] = path.read_text(encoding='utf-8')
+                if source.variable in spec.get('path_inputs', ()):
+                    lua.globals()[source.variable + 'Path'] = str(path)
             inputs.append({'integration': identifier, 'variable': source.variable,
                            'required': not source.optional,
                            'status': 'bound' if path is not None else 'not-applicable' if source.optional else 'missing'})
@@ -233,7 +272,8 @@ def bind_sources(lua, name, args):
 def configure(args, project, requested):
     checks = set(requested)
     for id in args.integration:
-        checks.update(INTEGRATIONS[id]['tests'])
+        checks.update(test for test in INTEGRATIONS[id]['tests']
+                      if test not in INTEGRATIONS[id].get('explicit_tests', ()))
     selected = set(args.integration)
     if args.pack_lock:
         selected.update(id for id, spec in INTEGRATIONS.items() if checks.intersection(spec['tests']))
@@ -243,6 +283,7 @@ def configure(args, project, requested):
         raise ValueError('Select --integration or a mapped --test with --pack-lock; see --list-integrations')
     identifiers = native._metadata(project / 'SurvivorQoL-selected.ini')['Mods'].split(';')
     locations = pack.validate(args.pack_lock.resolve(), project, args.game.resolve(), identifiers)
+    version = game_version(args.game)
     if 'test_action_queue_borrowing_composition.lua' in checks:
         if 'PZSurvivorToolkit' not in locations:
             raise ValueError('Borrowing composition requires PZSurvivorToolkit in the locked pack')
@@ -259,7 +300,7 @@ def configure(args, project, requested):
         for test in sorted(checks.intersection(spec['tests'])):
             resolved = args.integration_sources.setdefault(test, {})
             for source in spec['tests'][test]:
-                path = source_path(Path(locations[id]), str(Path(spec['root']) / source.path), source.optional)
+                path = source_path(Path(locations[id]), str(Path(spec['root']) / source.path), source.optional, version=version)
                 previous = getattr(args, spec['option'], None)
                 if previous is not None:
                     manual = manual_source(spec, previous, source)

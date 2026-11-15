@@ -72,7 +72,7 @@ for _,bulkGuard in ipairs({false,true})do
         and action.started==before.started and action.transactionId==before.transaction and not queue.toolkitCancel,
         'source composition changed native queue/action state')
 end
-for _,mutation in ipairs({'class','base','factory','owner','descriptor','safe-completion','member','queue'})do
+for _,mutation in ipairs({'class','base','factory','owner','descriptor','safe-completion','member','queue','containment-helper','containment-owner','containment-metadata'})do
     local s,current,action,queue,facts,bulk=fixture(true,false)
     local lease=assert(s.adapters.deferredTransferBinding(action,current))
     if mutation=='class'then ISInventoryTransferAction.transferItem=function()error('changed class helper invoked')end
@@ -82,6 +82,9 @@ for _,mutation in ipairs({'class','base','factory','owner','descriptor','safe-co
     elseif mutation=='descriptor'then action.toolkitTransferGuard.original=function()error('changed delegate invoked')end
     elseif mutation=='safe-completion'then action.toolkitQueueSafeOnComplete=function()error('changed metadata alias invoked')end
     elseif mutation=='member'then action.queueList[1].items[1]=s.item()
+    elseif mutation=='containment-helper'then ItemContainer.chainContainsContainingItem=function()error('changed containment helper invoked')end
+    elseif mutation=='containment-owner'then ItemContainer={chainContainsContainingItem=ItemContainer.chainContainsContainingItem}
+    elseif mutation=='containment-metadata'then getClassSimpleName=function()error('changed containment metadata invoked')end
     else queue.toolkitOperationGeneration=1 end
     assert(not lease(facts),'combined source lease accepted changed '..mutation)
 end

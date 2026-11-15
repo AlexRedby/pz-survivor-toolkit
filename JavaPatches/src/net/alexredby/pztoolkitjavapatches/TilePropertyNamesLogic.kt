@@ -8,7 +8,7 @@ internal object TilePropertyNamesLogic {
     val SUPPORTED =
         BytecodeSupport.supports(
             "zombie/core/properties/IsoPropertyType.class",
-            "7e7deb55cc8a949a4cab6cf93e0cabef01090229154203730f758526c948ebd3",
+            "c713a1a7b47b8f0cd920742967e7a94f738fa935b57952a5ce9bcdc8f1e23217",
         ) &&
             BytecodeSupport.supports(
                 "zombie/core/TilePropertyAliasMap.class",
@@ -18,14 +18,7 @@ internal object TilePropertyNamesLogic {
     @JvmStatic
     fun accepts(name: String?, supported: Boolean): Boolean {
         if (!supported || name == null) return false
-        when (name) {
-            "ladderW",
-            "ladderN",
-            "ladderE",
-            "ladderS",
-            "WindowShape" -> Unit
-            else -> return false
-        }
+        if (name != "WindowShape") return false
         val types =
             Accessor.tryGet<Map<*, *>>(IsoPropertyType::class.java, "BY_NAME", null) ?: return false
         // Preserve typed aliases installed by another mod, and fail closed if access fails.

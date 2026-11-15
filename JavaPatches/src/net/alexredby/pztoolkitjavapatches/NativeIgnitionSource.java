@@ -36,9 +36,9 @@ public final class NativeIgnitionSource {
     );
     private static final int MAX_SOURCE_CHARS = 128 * 1024;
     public static final boolean SUPPORTED =
-        BytecodeSupport.supports("zombie/Lua/LuaManager.class", "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d")
+        BytecodeSupport.supports("zombie/Lua/LuaManager.class", "8613349b0e0fdb663fc16ef4397ca60ef7135925fa6116f92d958ea97d09eb32")
         && BytecodeSupport.supports("se/krka/kahlua/luaj/compiler/LuaCompiler.class", "dd2b68ac4ce7a8e65cd7c3b11a3c1672a2471b824a675d4085e7b07041d4cbad")
-        && BytecodeSupport.supports("zombie/ZomboidFileSystem.class", "c4e5a5123bc43d03f2585c40f37544c50c1e702eebceb78bec94069e410b6750");
+        && BytecodeSupport.supports("zombie/ZomboidFileSystem.class", "9f902cc912c7802a08f80614f5f8d3b74f249fc5f2c0204eb759f2e74dda175e");
     private static final ThreadLocal<Scope> LOADING = new ThreadLocal<>();
 
     private NativeIgnitionSource() { }

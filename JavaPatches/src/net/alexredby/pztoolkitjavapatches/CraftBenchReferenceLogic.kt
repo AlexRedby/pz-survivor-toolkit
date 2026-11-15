@@ -3,7 +3,9 @@ package net.alexredby.pztoolkitjavapatches
 import me.zed_0xff.zombie_buddy.Accessor
 import zombie.core.network.ByteBufferReader
 import zombie.entity.ComponentType
+import zombie.entity.GameEntity
 import zombie.entity.GameEntityManager
+import zombie.entity.util.LongMap
 import zombie.iso.IsoObject
 import zombie.network.GameServer
 import zombie.network.PZNetKahluaTableImpl
@@ -14,23 +16,27 @@ internal object CraftBenchReferenceLogic {
     val supported =
         BytecodeSupport.supports(
             "zombie/network/PZNetKahluaTableImpl.class",
-            "201f0e59502fc5a106f8c9021e0b0d13a30dcb8d0beb9e8934cec390231ddba6",
+            "d57f0a86e74b58afca38a594950010d3f1209cddfca8664683c6f404c72ade6e",
         ) &&
             BytecodeSupport.supports(
                 "zombie/iso/IsoObject.class",
-                "22387ecf47c1cf9aac192466de6298067f27584160c76a72baee38c6ad36dff2",
+                "7a99d06875c19ff132940d7192b414496537076e83474db0abc0cb38de6be70a",
             ) &&
             BytecodeSupport.supports(
                 "zombie/entity/GameEntityManager.class",
-                "679953e42c73179cf083a40af5c1d67de67452519dace5efa517369c974a9775",
+                "15ac8173e8a81f72d3d93792f6fb77d7e6a0c8f997b0b44ec7830f9052f25f62",
             ) &&
             BytecodeSupport.supports(
                 "zombie/entity/GameEntity.class",
-                "fb46c896c05e72b5f951943b1adfac580a57ae709a6f496b77aa954b6a1886ee",
+                "48ae3968d3bbfaabae9611f83c261ecf05e8fe6eccfcde2e998ef765b71c68fd",
             ) &&
             BytecodeSupport.supports(
                 "zombie/entity/ComponentType.class",
                 "28f3d346c47a0b1804c7258659587c0f415eef3d510d6cd67c50d2ff291ebcda",
+            ) &&
+            BytecodeSupport.supports(
+                "zombie/entity/util/LongMap.class",
+                "655eb56f40c5b405a5827030a9011b8453045b5c9a1988866f3c259b45249b7e",
             )
 
     @JvmStatic
@@ -65,14 +71,17 @@ internal object CraftBenchReferenceLogic {
                 square.getX()
         if (spatial != requested) return
         val previous = Accessor.tryGet<Long>(obj, "isoEntityNetId", null) ?: return
-        if (
-            previous == -1L ||
-                previous == requested ||
-                GameEntityManager.GetEntity(previous) !== obj
-        )
-            return
-        // The native getter updates both registry keys; the decoder still reads its original
-        // buffer.
-        obj.entityNetID
+        if (previous == -1L || previous == requested) return
+        val registry = Accessor.tryGet<LongMap<GameEntity>>(
+            GameEntityManager::class.java, "idToEntityMap", null) ?: return
+        if (registry.javaClass != LongMap::class.java) return
+        synchronized(registry) {
+            // GetEntity now refreshes the found entity before returning it. Inspect the
+            // backing registry first so a collision cannot invoke another entity's getter.
+            if (registry.get(previous) !== obj) return
+            // The native getter updates both registry keys; the decoder still reads its
+            // original buffer. checkEntityIDChange uses this same reentrant monitor.
+            obj.entityNetID
+        }
     }
 }

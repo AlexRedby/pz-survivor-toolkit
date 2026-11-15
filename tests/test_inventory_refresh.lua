@@ -109,8 +109,40 @@ local function run(source,label,bcSource)
     function Page:prerender() self.renderedCount=self.totalItems;return 'draw',nil,43,nil end
     function Page:clearMaxDrawHeight()self.clipCleared=true end
     function Page:getMouseY()return 0 end
+    function Page:getHeight()return self.height end
+    function Page:getWidth()return self.width end
+    function Page:getY()return self.y end
+    function Page:setY(value)self.y=value end
+    function Page:setHeight(value)self.height=value end
+    function Page:setMaxDrawHeight(value)self.maxDrawHeight=value end
+    local function widget(value)
+        value=value or {}
+        for _,axis in ipairs({'X','Y','Width','Height'})do
+            local key=axis:lower()
+            value['get'..axis]=function(self)return self[key] or 0 end
+            value['set'..axis]=function(self,nextValue)self[key]=nextValue end
+        end
+        function value:setVisible(visible)self.visible=visible end
+        function value:getIsVisible()return self.visible~=false end
+        function value:setScrollHeight(height)self.scrollHeight=height end
+        return value
+    end
+    widget(Pane)
     if source then
         ISInventoryPage=Page
+        if method(source,'cleanUIReconcileCollapseGeometry') then
+            CleanUIConfig={getConfig=function()return{}end}
+            for _,name in ipairs({'cleanUIGetTitleBarPosition','isTitleBarBottom','cleanUIGetTitleBarY',
+                'cleanUIGetContentY','cleanUIGetContentHeight','cleanUIGetContainerPanelHeight',
+                'cleanUISyncContainerRailToPane','cleanUIUpdateMinimumHeight','cleanUIGetTitleButtonY',
+                'cleanUIClearBottomCollapseGeometry','cleanUICaptureBottomCollapseGeometry',
+                'cleanUIEnsureBottomCollapsedGeometry','cleanUIRestoreBottomExpandedGeometry',
+                'cleanUIReconcileCollapseGeometry','cleanUILayoutTitleBarControls','cleanUIApplyContentGeometry',
+                'cleanUISetBottomCollapsedContentHidden','cleanUIUpdateResizeWidgetBounds',
+                'cleanUIGetLockConfigKey','isPagelocked','expandNow'})do
+                assert(loadstring(assert(method(source,name),'missing upstream '..name)))()
+            end
+        end
         assert(loadstring(assert(method(source,'update'),'missing upstream update')))()
         assert(loadstring(assert(method(source,'onMouseMove'),'missing upstream hover expansion')))()
     else
@@ -127,9 +159,9 @@ local function run(source,label,bcSource)
     Page.update=function(self,...)originalUpdate(self,...);return 'update',nil,41,nil end
     local function makePage()
         local page=setmetatable({player=0,visible=false,lastDir=player.dir,lastSquare=player.square,
-            inventory=aggregate,capacity=100,inventoryPane=setmetatable({mode='details',selected={},items={}},Pane),
-            backpacks={{getBottom=function()return 100 end}},height=200,resizeWidget={height=10},
-            containerButtonPanel={setHeight=function()end,setY=function()end,setScrollHeight=function()end}},Page)
+            inventory=aggregate,capacity=100,width=300,y=0,titleButtonSize=12,inventoryPane=setmetatable(widget({mode='details',selected={},items={}}),Pane),
+            backpacks={{getBottom=function()return 100 end}},height=200,resizeWidget=widget({height=10}),
+            containerButtonPanel=widget()},Page)
         page.inventoryPane.parent=page;page.inventoryPane.height=100;page.inventoryPane.y=20
         return page
     end
@@ -195,7 +227,11 @@ local function run(source,label,bcSource)
     page:update();assert(stats.rows==1,'opening must not cause a duplicate discovery on unchanged pose')
     -- Collapse clips only details. Header counts and raw discovery remain live;
     -- idle update/prerender must not immediately cancel the deferred row work.
+    local titlePositions=Page.cleanUIReconcileCollapseGeometry and {'top','bottom'} or {'top'}
+    for _,titlePosition in ipairs(titlePositions)do
+    page._cleanUITitleBarPosition=titlePosition
     for _,expansion in ipairs({'hover','pin','drag'})do
+        local expandedY,expandedHeight=page.y,page.height
         page.visible=true;page.isCollapsed=true;page.pin=false;page.clipCleared=false
         ISMouseDrag={};sources[1].contents.n=402;player.square={}
         local beforeRows,beforeCount,beforeDiscovery=stats.rows,stats.count,stats.discovery
@@ -217,6 +253,10 @@ local function run(source,label,bcSource)
         elseif expansion=='pin'then page.pin=true;page:update()
         else ISMouseDrag.dragging={{}};page:update();ISMouseDrag={} end
         assert(not page.isCollapsed and page.clipCleared,'upstream '..expansion..' did not expand details')
+        if titlePosition=='bottom'then
+            assert(page.y==expandedY and page.height==expandedHeight and not page._cleanUICollapsedFromBottom,
+                'actual bottom collapse failed to restore expanded geometry')
+        end
         if expansion~='hover'then
             assert(not pending.rowsPending and page.inventoryPane.builtCount==4803,
                 'native update expansion did not flush before returning to child input consumers')
@@ -231,6 +271,8 @@ local function run(source,label,bcSource)
         assert(stats.rows==beforeRows+1 and stats.discovery==beforeDiscovery+2,
             'settled expansion repeated the fresh discovery')
     end
+    end
+    page._cleanUITitleBarPosition=nil
     page.pin=false;sources[1].contents.n=401;page:refreshBackpacks()
     page.visible=false;page.isCollapsed=false
     -- Rebind a retained pane while the previous pane still has deferred work.
@@ -675,6 +717,21 @@ if sourceCheck('cleanui-bc-discovery','CleanUIInventoryPageSource','NativeBCProx
         elseif phase=='buttonsAdded'then proximity.OnButtonsAdded(page)end
     end
     local bc=assert(loadstring(NativeBCProximitySource));setfenv(bc,env);proximity=bc()
+    -- The current discovery body delegates rail geometry to actual page methods.
+    for _,name in ipairs({'cleanUIGetTitleBarPosition','isTitleBarBottom','cleanUIGetTitleBarY',
+        'cleanUIGetContentY','cleanUIGetContentHeight','cleanUIGetContainerPanelHeight','cleanUISyncContainerRailToPane'})do
+        local body=method(CleanUIInventoryPageSource,name)
+        if body then local loader=assert(loadstring(body));setfenv(loader,env);loader()end
+    end
+    local function geometry(value)
+        for _,axis in ipairs({'X','Y','Width','Height'})do
+            local key=axis:lower()
+            value['get'..axis]=function(self)return self[key]or 0 end
+            value['set'..axis]=function(self,nextValue)self[key]=nextValue end
+        end
+        return value
+    end
+    geometry(Pane);geometry(Page)
     local body=assert(method(CleanUIInventoryPageSource,'refreshBackpacks'),'missing full CleanUI refreshBackpacks')
     -- Keep upstream lexical helpers (including B42.21 container-title lookup)
     -- in the same chunk as the extracted discovery body.
@@ -687,8 +744,8 @@ if sourceCheck('cleanui-bc-discovery','CleanUIInventoryPageSource','NativeBCProx
     local pane=setmetatable({inventory=aggregate,mode='details',selected={},items={}},Pane)
     local page=setmetatable({player=0,visible=true,lookDir=player:getDir(),inventory=aggregate,inventoryPane=pane,
         backpacks={},buttonPool={},height=200,padding=2,containerButtonPanelWidth=40,
-        resizeWidget={bringToTop=function()end},containerButtonPanel={removeChild=function()end,
-            setHeight=function()end,setWidth=function()end,setScrollHeight=function()end}},Page)
+        resizeWidget={bringToTop=function()end},containerButtonPanel=geometry({removeChild=function()end,
+            setScrollHeight=function()end})},Page)
     pane.parent=page
     page:refreshBackpacks()
     assert(stats.rows==1 and stats.counts==1 and pane.inventory==aggregate and aggregate:getItems():size()==3,

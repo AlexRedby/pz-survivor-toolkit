@@ -4,7 +4,7 @@ Events = {OnGameStart={Add=function(fn) start[#start+1] = fn end}}
 require = function() end
 local fontSize = 3.5
 getCore = function() return {getOptionFontSizeReal=function() return fontSize end,
-    getGameMode=function() return 'Sandbox' end} end
+    isTutorial=function() return false end, getGameMode=function() return 'Sandbox' end} end
 
 -- This is the shared vanilla/CleanUI tree-arrow block; an optional real source
 -- exercises the game's exact draw calls instead of this fixture.

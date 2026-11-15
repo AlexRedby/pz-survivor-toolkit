@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 
 from . import craft
-from ..mod_selection import selected_mod_version
+from ..mod_selection import selected_mod_version, runtime_version
 
 CLOTHING_CASES = ['borrowed-batch', 'borrowed-single-soap', 'cancel-after-pickup']
 BODY_CASES = ['body-full', 'body-water-limited', 'body-cancel']
@@ -20,10 +20,10 @@ REPLAY_PATH = 'media/lua/client/PZSurvivorToolkit/ActionQueueCompat.lua'
 REPLAY_BODY_SHA256 = '23bf70f5078a5f6f9fbe0aca3a4348255caf14582a080e3a7f91fca733bba30a'
 
 
-def replay_source(cache):
+def replay_source(cache, version):
     """Derive only the reviewed final replay loop from the sealed selected Toolkit."""
     mod = Path(cache) / 'mods/PZSurvivorToolkit'
-    source = selected_mod_version(mod) / REPLAY_PATH
+    source = selected_mod_version(mod, version) / REPLAY_PATH
     text = source.read_text(encoding='utf-8')
     begin = 'local function repairTidyFloor(character, callback, ...)\n'
     end = '\nlocal function installTidyFloorValidation()'
@@ -81,7 +81,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     if selection['kind'] == 'mp' and any(case in CLOTHING_CASES + MIXED_CASES + BANDAGE_CASES for case in selection['cases']):
         proofs = []
         for role in runtime['roles'].values():
-            proof = replay_source(role['cache']);proofs.append(proof)
+            proof = replay_source(role['cache'], runtime_version(runtime));proofs.append(proof)
             target = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua/shared/QueueWashingReplayProof.lua'
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text('return {' + ','.join(k + '=' + (json.dumps(v) if isinstance(v, str) else str(v))
@@ -604,8 +604,9 @@ def verify(root, selection, catalog):
     replay_proof = None
     if selection['kind'] == 'mp' and any(case in CLOTHING_CASES + MIXED_CASES + BANDAGE_CASES for case in selection['cases']):
         try:
-            replay_proof = replay_source(root / 'client1')
-            if replay_source(root / 'server') != replay_proof:
+            version = runtime_version(json.loads((root / 'runtime.json').read_text()))
+            replay_proof = replay_source(root / 'client1', version)
+            if replay_source(root / 'server', version) != replay_proof:
                 issues.append('Washing MP replay source differs between sealed actor/server')
         except (OSError, ValueError) as error:
             issues.append('Washing sealed MP replay source invalid: ' + str(error))

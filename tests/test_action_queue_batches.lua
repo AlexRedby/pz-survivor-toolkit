@@ -48,7 +48,7 @@ local function list(...)
         isEmpty = function() return #values == 0 end}
 end
 local inventory, cupboard = {}, {}
-local player = {getInventory = function() return inventory end, hasTrait = function() return false end,
+local player = {getInventory = function() return inventory end, hasAwkwardHands = function() return false end, hasTrait = function() return false end,
     isTimedActionInstant = function() return false end, isWearingAwkwardGloves = function() return false end}
 local selected = {class = 'InventoryItem', getContainer = function() return cupboard end,
     getFullType = function() return 'Base.Material' end}
@@ -126,7 +126,7 @@ local generator = {Type = 'ISQueueActionsAction', toolkitCraftPlanCancellation =
     addActionsFunction = callback, toolkitQueueOperation = token}
 Batch.attach(generator); Batch.completed(generator)
 local generated = ISHandcraftAction:new(player,
-    {class = 'CraftRecipe', getTimedActionScript = function() end, isCanWalk = function() return true end,
+    {class = 'CraftRecipe', getTags = function() end, getTimedActionScript = function() end, isCanWalk = function() return true end,
         getTime = function() return 10 end}, {})
 generated.toolkitQueueOperation, generated.toolkitBatchIteration = token, generator.toolkitBatchIteration
 Batch.attach(generated); Batch.completed(generated)

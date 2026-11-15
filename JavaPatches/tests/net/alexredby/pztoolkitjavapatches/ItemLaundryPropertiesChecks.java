@@ -62,6 +62,10 @@ public final class ItemLaundryPropertiesChecks {
 
         var unsafe = (Unsafe) field(Unsafe.class, "theUnsafe").get(null);
         var visualField = field(InventoryItem.class, "visual");
+        // Native network singletons initialize ServerOptions with legitimate random defaults.
+        // Complete fixture startup before watching the bridge itself for random draws.
+        GameClient.client = false;
+        GameServer.server = false;
         var randomField = field(RandAbstract.class, "rand");
         var standardRandom = randomField.get(RandStandard.INSTANCE);
         var luaRandom = randomField.get(RandLua.INSTANCE);

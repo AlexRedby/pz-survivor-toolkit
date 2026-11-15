@@ -14,7 +14,7 @@ import zombie.Lua.LuaManager
 /** Current named native registry equality only; this grants no future dispatch/edit authority. */
 object QueueEquipEventRegistry {
     @JvmField internal val SUPPORTED = LuaFactApi.SUPPORTED && arrayOf(
-        "zombie/Lua/LuaEventManager.class" to "9706f17e9b5e095a0e24230dc944de5d552fa62c997214636c4deb4957cf354b",
+        "zombie/Lua/LuaEventManager.class" to "55db330c497599c50c44f2cbb068b65a7df9806b16629ca12ee33347e0518405",
         "zombie/Lua/Event.class" to "cf4b0ba953b8f965fbcacb73ebb5d1a173dc3ed140656e15b90ad932eff0e952",
         "zombie/Lua/LuaEventManager\$QueuedEvent.class" to "6ada9cc02c9adbfc6862b2d64d04f39743e401c1fe9d02aca96c694ef0329096",
     ).all { (path, hash) -> BytecodeSupport.supports(path, hash) }

@@ -10,10 +10,10 @@ import zombie.characters.IsoPlayer
 /** A fresh negative fact about the selected WPANC capture, never an event/edit certificate. */
 object QueueHandEventFacts {
     @JvmField internal val SUPPORTED = LuaFactApi.SUPPORTED && arrayOf(
-        "zombie/characters/IsoPlayer.class" to "3f1c4634d3a8e7e36baf4b33f76cf7ef79d88c3351bd0eb2a6a6bb34c2d9858f",
-        "zombie/characters/IsoGameCharacter.class" to "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b",
-        "zombie/iso/IsoMovingObject.class" to "7e6e84fe9d3cb264e8d8e682d91e0abe919d481b7349d17b997e8a78f2293a5f",
-        "zombie/iso/IsoObject.class" to "22387ecf47c1cf9aac192466de6298067f27584160c76a72baee38c6ad36dff2",
+        "zombie/characters/IsoPlayer.class" to "643585044a88ad1b29e8d5173774f66085c685c363ed10a89c0b79018de2874e",
+        "zombie/characters/IsoGameCharacter.class" to "1ccabc492ba130f51486bf38a8400334545852253bbac9c46fff71242ab672f6",
+        "zombie/iso/IsoMovingObject.class" to "70c0249c3bdb7b4c4fc335e644c74bc98c37aa0e4bfdc0665a75521460ea0900",
+        "zombie/iso/IsoObject.class" to "7a99d06875c19ff132940d7192b414496537076e83474db0abc0cb38de6be70a",
         "se/krka/kahlua/vm/UpValue.class" to "505d77406e1d50884bec438e37afd1ec0a37f4431b649744a96add479a897745",
         "se/krka/kahlua/vm/Prototype.class" to "5e31f0809512e9cfbc9a8fff5a932e35cdc7f1ebb4a0ea146a2f9a207a23fcf4",
     ).all { (path, hash) -> BytecodeSupport.supports(path, hash) }

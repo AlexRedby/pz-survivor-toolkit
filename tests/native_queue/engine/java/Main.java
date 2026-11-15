@@ -9,16 +9,32 @@ import net.alexredby.pztoolkitjavapatches.ActionAcknowledgements;
 import zombie.core.ActionManager;
 import zombie.core.NetTimedAction;
 import zombie.core.Transaction.TransactionState;
+import zombie.characters.IsoPlayer;
 import zombie.network.GameServer;
-import zombie.network.fields.character.PlayerID;
+import zombie.network.fields.character.ConnectionPlayer;
+import zombie.network.server.EventManager;
 
 /** Read-only evidence at the actual cancellation boundary; never schedules or changes an action. */
 public final class Main {
+    private static boolean packetObserverInstalled;
+
     public static void main(String[] args) {
         if (!ActionAcknowledgements.SUPPORTED) throw unavailable("native acknowledgements unsupported");
         actions();
         tokens();
+        observePacketRejections();
         System.out.println("[ENGINE_TEST] PROBE active=true");
+    }
+
+    private static synchronized void observePacketRejections() {
+        if (packetObserverInstalled) return;
+        // Native dispatch reports the packet name and description after rejecting it.
+        // Keep validation and default native logging authoritative; only retain evidence.
+        EventManager.instance().registerCallback(message -> {
+            if (message != null && message.startsWith("The packet ") && message.contains(" is not consistent: "))
+                System.out.println("[ENGINE_TEST] NATIVE_PACKET_REJECTION " + message);
+        });
+        packetObserverInstalled = true;
     }
 
     private static IllegalStateException unavailable(String detail) {
@@ -40,9 +56,8 @@ public final class Main {
 
     public record Overlap(Object other, byte id, short first, short second, String firstToken, String secondToken) { }
 
-    public static Overlap before(PlayerID owner, byte id) {
-        if (!GameServer.server || owner == null || owner.getPlayer() == null
-                || !"client1".equals(owner.getPlayer().getUsername())) return null;
+    public static Overlap before(IsoPlayer owner, byte id) {
+        if (!GameServer.server || owner == null || !"client1".equals(owner.getUsername())) return null;
         ConcurrentLinkedQueue<?> actions;
         Map<?, ?> tokens;
         try { actions = actions(); tokens = tokens(); }
@@ -52,9 +67,10 @@ public final class Main {
             if (!(action instanceof NetTimedAction timed) || !"ISFixGenerator".equals(timed.type)) continue;
             Byte transaction = Accessor.tryGet(action, "id", (Byte)null);
             if (transaction == null || transaction != id) continue;
-            PlayerID player = Accessor.tryGet(action, "playerId", (PlayerID)null);
-            if (player != null && player.getID() == owner.getID()) target = action;
-            else if (player != null) other = action;
+            ConnectionPlayer player = Accessor.tryGet(action, "player", (ConnectionPlayer)null);
+            IsoPlayer actor = player == null ? null : player.getPlayer();
+            if (actor != null && actor.getOnlineID() == owner.getOnlineID()) target = action;
+            else if (actor != null) other = action;
         }
         if (target == null) return null;
         if (other == null || Accessor.tryGet(target, "state", (TransactionState)null) != TransactionState.Accept
@@ -63,8 +79,8 @@ public final class Main {
             System.out.println("[QUEUE_TEST] FAIL engine cancel lacked simultaneous pending same-ID peer");
             return null;
         }
-        PlayerID second = Accessor.tryGet(other, "playerId", (PlayerID)null);
-        return new Overlap(other, id, owner.getID(), second.getID(), firstToken, secondToken);
+        ConnectionPlayer second = Accessor.tryGet(other, "player", (ConnectionPlayer)null);
+        return new Overlap(other, id, owner.getOnlineID(), second.getPlayer().getOnlineID(), firstToken, secondToken);
     }
 
     public static void after(Overlap overlap) {
@@ -83,7 +99,7 @@ public final class Main {
     @Patch(className="zombie.core.ActionManager", methodName="remove", warmUp=true, strictMatch=true)
     public static class Cancellation {
         @Patch.OnEnter
-        public static void enter(@Patch.Argument(0) PlayerID owner, @Patch.Argument(1) byte id,
+        public static void enter(@Patch.Argument(0) IsoPlayer owner, @Patch.Argument(1) byte id,
                 @Patch.Local("engineOverlap") Overlap overlap) { overlap = before(owner, id); }
         @Patch.OnExit(suppress=Throwable.class)
         public static void exit(@Patch.Local("engineOverlap") Overlap overlap) { after(overlap); }

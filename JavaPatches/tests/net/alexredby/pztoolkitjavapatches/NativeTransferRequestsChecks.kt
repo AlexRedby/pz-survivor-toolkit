@@ -358,6 +358,10 @@ object NativeTransferRequestsChecks {
             .set(secondActor, java.util.HashMap<Any, Any>())
         secondActor.probeEmitter = DummyCharacterSoundEmitter(secondActor)
         secondActor.onlineId = 32
+        secondActor.cheats = zombie.characters.PlayerCheats()
+        field(IsoPlayer::class.java, "playerIndex").setInt(secondActor, 1)
+        IsoPlayer.players[1] = secondActor
+        IsoPlayer.numPlayers = 2
         val secondSource = ItemContainer("inventory", null, secondActor)
         field(IsoGameCharacter::class.java, "inventory").set(secondActor, secondSource)
         val destination = ItemContainer("crate", null, secondActor)
@@ -470,10 +474,14 @@ object NativeTransferRequestsChecks {
                     entryDestination.getContainer() === destination,
             )
             val playerId =
-                field(Transaction::class.java, "playerId").get(firstPacket)
-                    as zombie.network.fields.character.PlayerID
+                field(Transaction::class.java, "player").get(firstPacket)
+                    as zombie.network.fields.character.ConnectionPlayer
             check(playerId.getPlayer() === actor) {
                 "captured packet owner differs from native input"
+            }
+            check(playerId.getId().toInt() == actor.getIndex() &&
+                playerId.getId() != actor.onlineId) {
+                "client packet must retain its local connection index independently of online ID"
             }
             val collision = ItemTransactionPacket()
             packetId.setByte(collision, 41)
@@ -959,6 +967,7 @@ object NativeTransferRequestsChecks {
         fun player(id: Short): IsoPlayer {
             val value = unsafe.allocateInstance(IsoPlayer::class.java) as IsoPlayer
             value.onlineId = id
+            value.cheats = zombie.characters.PlayerCheats()
             field(zombie.iso.IsoObject::class.java, "ecsComponentMap").set(value, HashMap<Any, Any>())
             field(IsoGameCharacter::class.java, "inventory").set(value, ItemContainer("inventory", null, value))
             field(IsoGameCharacter::class.java, "characterTraits").set(value, zombie.characters.traits.CharacterTraits())
@@ -1197,6 +1206,11 @@ object NativeTransferRequestsChecks {
                 as Unsafe
         val actor = unsafe.allocateInstance(Player::class.java) as Player
         actor.probeEmitter = DummyCharacterSoundEmitter(actor)
+        actor.onlineId = 31
+        actor.cheats = zombie.characters.PlayerCheats()
+        NativeFixtureAccess.set(actor, "playerIndex", 0)
+        IsoPlayer.players[0] = actor
+        IsoPlayer.numPlayers = 1
         val source = ItemContainer("inventory", null, actor)
         val destination = ItemContainer("crate", null, null)
         IsoGameCharacter::class

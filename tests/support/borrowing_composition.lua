@@ -120,7 +120,7 @@ return function(client)
         rawset(owner,name,event);return event
     end})
     env.Hook=setmetatable({}, {__index=function()return {Add=function()end}end})
-    for _,name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
+    for _,name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
         'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'})do env[name]={instance=function()return {}end}end
     env.ISInventoryPage={};env.ISInventoryPaneContextMenu={};env.ISInventoryPane={getActualUniqueItems=function(items)return items end}
     env.ISContextMenu={};env.ISButton={};env.ISCraftingUI={};env.ISWorldObjectContextMenu={}
@@ -136,7 +136,20 @@ return function(client)
     env.getSandboxOptions=function()return {getOptionByName=function()return {getValue=function()return 0.1 end}end}end
     env.getDebug=function()return false end;env.isDebugEnabled=env.getDebug
     env.ISLogSystem={logAction=function()end};env.DebugType={Action={warn=function(_,message)error(message)end}}
-    env.ItemContainer={floatingPointCorrection=function(value)return value end}
+    env.ItemContainer={floatingPointCorrection=function(value)return value end,
+        chainContainsContainingItem=function(container,id)
+            if id==-1 then return false end
+            local seen={}
+            while container and not seen[container]do
+                seen[container]=true
+                if container.id==id then return true end
+                local owner=container:getContainingItem()
+                if not owner then return false end
+                if owner:getID()==id then return true end
+                container=owner:getContainer()
+            end
+            return false
+        end}
     env.CharacterTrait=setmetatable({}, {__index=function(_,key)return key end})
     env.ItemTag=setmetatable({}, {__index=function(_,key)return key end})
     env.ItemBodyLocation=setmetatable({}, {__index=function(_,key)return key end})

@@ -2,6 +2,9 @@ if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract'
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 local fixtureRequire=require
 require=function(name)
+    if name=='PZSurvivorToolkit/ActionQueueClothing' then
+        return PZSurvivorToolkit.ActionQueueClothing or f.project('ActionQueueClothing')
+    end
     if name=='PZSurvivorToolkit/FitnessEquipment' then
         return PZSurvivorToolkit.FitnessEquipment
             or assert(loadfile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..name..'.lua'))()
@@ -23,9 +26,17 @@ local function extract(path,pattern,prefix)
     return assert(loadstring((prefix or '')..assert(read(NativeActionRoot..'/'..path):match(pattern),pattern),
         '@media/lua/'..path))()
 end
-getFilenameOfClosure=function(callback) return debug.getinfo(callback,'S').source:gsub('^@','') end
+getFilenameOfClosure=NativeFilenameOfClosure or function(callback) return debug.getinfo(callback,'S').source:gsub('^@','') end
+-- Native Kahlua exposes the first emitted instruction, one line after this
+-- multiline callback's declaration. Installed-Kahlua execution checks this seam.
+getFirstLineOfClosure=NativeFirstLineOfClosure or getFirstLineOfClosure or function(callback)return debug.getinfo(callback,'S').linedefined+1 end
+-- Exact native class ancestry is part of the shared clothing contract.
+-- Replace the support fixture's lightweight legacy base before loading these native classes.
+native('shared/ISBaseObject.lua')
 for _,path in ipairs({'shared/TimedActions/ISBaseTimedAction.lua','client/TimedActions/ISTimedActionQueue.lua',
     'client/TimedActions/ISQueueActionsAction.lua','shared/TimedActions/ISReadABook.lua','client/TimedActions/ISInventoryTransferAction.lua'})do native(path)end
+-- f.queue constructs directly, so retain the native queue constructor's class index.
+ISTimedActionQueue.__index=ISTimedActionQueue
 local sourceOverride
 getGameFilesInput=function(path)
     local text=sourceOverride and sourceOverride(path) or read(NativeActionRoot..'/'..path:gsub('^media/lua/',''))
@@ -33,6 +44,21 @@ getGameFilesInput=function(path)
     return {readLine=function()
         if offset>#text then return end
         local stop=text:find('\n',offset) or #text+1
+        local line=text:sub(offset,stop-1);offset=stop+1;return line
+    end,close=function()end}
+end
+-- Source-owned producer delegation reads the actual owned module through its native-style API.
+local priorModReader=getModFileReader
+getModFileReader=function(id,path,...)
+    if id~='PZSurvivorToolkit'then return priorModReader and priorModReader(id,path,...)end
+    local text=read(ProjectRoot..'/PZSurvivorToolkit/42/'..path)
+    if FitnessTestEquipmentSourceChanged and path=='media/lua/client/PZSurvivorToolkit/ActionQueueFitness.lua' then
+        text=text..'\n-- unreviewed producer source\n'
+    end
+    local offset=1
+    return {readLine=function()
+        if offset>#text then return end
+        local stop=text:find('\n',offset)or #text+1
         local line=text:sub(offset,stop-1);offset=stop+1;return line
     end,close=function()end}
 end
@@ -45,7 +71,7 @@ removeItemTransaction=function()end
 isClient=function()return client end;isServer=function()return false end
 PZSurvivorToolkit.Settings.actionQueue=function()return enabled end
 getTimestampMs=function()return now end
-getCore=function()return {getGameMode=function()return 'Sandbox' end}end
+getCore=function()return {isTutorial=function()return false end,getGameMode=function()return 'Sandbox' end}end
 local quantizedCalendar=false
 local calendarOffset=0
 local frameClock={id=0,ms=0,now=now,manual=false,offset=0}
@@ -86,7 +112,9 @@ native('shared/TimedActions/ISEquipWeaponAction.lua')
 native('shared/TimedActions/ISFitnessAction.lua')
 native('shared/TimedActions/ISWaitWhileGettingUp.lua')
 native('shared/TimedActions/ISDropWorldItemAction.lua')
-native('client/ISUI/ISFitnessUI.lua')
+native('client/ISUI/ISFitnessUI.lua');ISFitnessUI.__index=ISFitnessUI
+-- The panel double is constructed directly; native new sets this index too.
+ISFitnessUI.__index=ISFitnessUI
 native('shared/TimedActions/ISInventoryTransferUtil.lua')
 luautils={}
 extract('shared/luautils.lua','(function luautils.haveToBeTransfered%(.-\nend)')
@@ -263,6 +291,14 @@ local lifecycle=f.project('ActionQueueLifecycle')
 local lifecycleSweep=assert(tickCallbacks[#tickCallbacks],'guarded stop sweep not registered')
 f.project('ActionQueueTidyIntent')
 local fitnessQueue=f.project('ActionQueueFitness')
+local initialEquipmentContract=fitnessQueue.nativeEquipmentContract
+if FitnessTestEquipmentRoleChanged then
+    fitnessQueue.nativeEquipmentContract=fitnessQueue.isManaged
+elseif FitnessTestEquipmentOwnerChanged then
+    local replacement={};for key,value in pairs(fitnessQueue)do replacement[key]=value end
+    PZSurvivorToolkit.ActionQueueFitness=replacement
+end
+
 -- BulkFood installs this native binding after ActionQueue/Fitness loads. Execute
 -- its real registration so broad native matches cannot hide a second owner.
 local foodContractSource=assert(read(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/BulkFood.lua')
@@ -411,7 +447,8 @@ local pending,q,window=request('squats',10)
 assert(fitnessQueue.isManaged(pending),'native fitness UI producer was not source verified')
 assert(pending.Type=='ISQueueActionsAction' and not pending.action,'waiting fitness must remain a deferred request')
 assert(currentExercise==nil and fitnessSpeed==beforeSpeed,'waiting request invoked native constructor side effects')
-assert(window.currentExercice==nil and next(window.itemsToReequip)==nil,'window acquired ownership of managed cleanup')
+assert(window.currentExercice==nil and not (function()for _ in pairs(window.itemsToReequip)do return true end end)(),
+    'window acquired ownership of managed cleanup')
 local duration=fitnessQueue.describe(pending)
 assert(duration and duration.signature=='fitness:squats' and not fitnessQueue.progress(pending),'pending duration contract missing')
 now=now+900000
@@ -492,6 +529,97 @@ pending,q,window=request('bicepscurl',10)
 assert(currentExercise==nil and dumbbell:getContainer()==backpack.inner and player.primary==axe,
     'waiting weighted exercise changed inventory or hands')
 expand(pending,q)
+local nativeEquip
+for _,action in ipairs(q.queue)do if action.Type=='ISEquipWeaponAction'then nativeEquip=action end end
+assert(nativeEquip,'native weighted producer omitted Equip')
+if FitnessTestEquipmentSourceChanged or FitnessTestEquipmentRoleChanged or FitnessTestEquipmentOwnerChanged then
+    assert(fitnessQueue.isManaged(nativeEquip),'negative control lost its real private Fitness record')
+    local facts,adapter=policy.inspect(nativeEquip)
+    assert(facts and adapter=='native.ISEquipWeaponAction' and facts.cancelTailOnly,
+        'unreviewed source/role/owner gained the complete Fitness equipment contract')
+    FitnessTestEquipmentSourceChanged=false
+    fitnessQueue.nativeEquipmentContract=initialEquipmentContract
+    PZSurvivorToolkit.ActionQueueFitness=fitnessQueue
+    local restored=policy.inspect(nativeEquip)
+    assert(restored and restored.cancelTailOnly,'rejected initial proof was recaptured after a source/API change')
+    print('PASS unknown Fitness equipment source/role/owner retains ordinary native tail-only permission')
+    if TestCoverage then TestCoverage('source-contract','passed')end
+    return
+end
+do
+    local function full()
+        local facts,adapter=policy.inspect(nativeEquip)
+        assert(facts and adapter=='native.ISEquipWeaponAction' and facts.knownInputs and facts.preparationFinish
+            and not facts.cancelTailOnly,'verified Fitness equipment lost its complete native operation contract')
+    end
+    local function ordinary(action)
+        local facts,adapter=policy.inspect(action or nativeEquip)
+        assert(facts and adapter=='native.ISEquipWeaponAction' and facts.cancelTailOnly,
+            'unproved equipment acquired complete-operation cancellation')
+    end
+    full()
+    -- A closure's environment is mutable in stock Kahlua. Permission facts must
+    -- come from captured real owners, even when a foreign environment retains
+    -- an old queue snapshot and supplies plausible actor/type callbacks.
+    local callback=fitnessQueue.nativeEquipmentContract
+    local environmentOf,changeEnvironment=getfenv,setfenv
+    local environment=environmentOf(callback)
+    local foreign={};for key,value in pairs(environment)do foreign[key]=value end
+    local actualQueue=ISTimedActionQueue.queues[player]
+    local foreignCalls=0
+    foreign.ISTimedActionQueue={queues={[player]=actualQueue}}
+    foreign.getSpecificPlayer=function()foreignCalls=foreignCalls+1;return player end
+    foreign.type=function()foreignCalls=foreignCalls+1;return 'table' end
+    changeEnvironment(callback,foreign)
+    full()
+    ISTimedActionQueue.queues[player]=f.queue();ordinary()
+    ISTimedActionQueue.queues[player]=actualQueue;full()
+    local actualActor=getSpecificPlayer
+    getSpecificPlayer=function()return player end;ordinary()
+    getSpecificPlayer=actualActor;full()
+    local environmentCalls=0
+    getfenv=function()environmentCalls=environmentCalls+1;return foreign end
+    full()
+    ISTimedActionQueue.queues[player]=f.queue();ordinary()
+    ISTimedActionQueue.queues[player]=actualQueue;full()
+    getfenv=environmentOf
+    changeEnvironment(callback,environment);full()
+    assert(foreignCalls==0 and environmentCalls==0,'equipment permission consulted mutable environment callbacks')
+    local unrelated=ISEquipWeaponAction:new(player,nativeEquip.item,50,nativeEquip.primary,nativeEquip.twoHands)
+    unrelated.toolkitQueueOperation=nativeEquip.toolkitQueueOperation
+    unrelated.toolkitFitnessExercise,unrelated.toolkitFitnessMinutes,unrelated.toolkitFitnessStage=
+        nativeEquip.toolkitFitnessExercise,nativeEquip.toolkitFitnessMinutes,nativeEquip.toolkitFitnessStage
+    ordinary(unrelated)
+    for _,field in ipairs({'primary','twoHands'})do
+        local saved=nativeEquip[field];nativeEquip[field]=not saved;ordinary();nativeEquip[field]=saved;full()
+    end
+    local savedToken=nativeEquip.toolkitQueueOperation
+    nativeEquip.toolkitQueueOperation={};ordinary();nativeEquip.toolkitQueueOperation=savedToken;full()
+    local liveQueue=ISTimedActionQueue.queues[player]
+    ISTimedActionQueue.queues[player]=f.queue();ordinary();ISTimedActionQueue.queues[player]=liveQueue;full()
+    local saved=fitnessQueue.nativeEquipmentContract
+    local calls=0
+    fitnessQueue.nativeEquipmentContract=function()calls=calls+1;return{cancelWaiting=true}end
+    ordinary();assert(calls==0,'replaced public callback was executed');fitnessQueue.nativeEquipmentContract=saved;full()
+    saved=fitnessQueue.isManaged;fitnessQueue.isManaged=function()return true end
+    ordinary();ordinary(unrelated);fitnessQueue.isManaged=saved;full()
+    saved=getSpecificPlayer;getSpecificPlayer=function()return player end
+    ordinary();getSpecificPlayer=saved;full()
+    saved=policy.matchesNative;calls=0
+    policy.matchesNative=function()calls=calls+1;return true end
+    ordinary();assert(calls==0,'replaced native predicate was executed');policy.matchesNative=saved;full()
+    local operations=PZSurvivorToolkit.ActionQueueOperations
+    saved=operations.bounds;calls=0
+    operations.bounds=function()calls=calls+1;return 1,1 end
+    ordinary();assert(calls==0,'replaced operation helper was executed');operations.bounds=saved;full()
+    local owner=PZSurvivorToolkit.ActionQueueFitness
+    PZSurvivorToolkit.ActionQueueFitness={nativeEquipmentContract=fitnessQueue.nativeEquipmentContract}
+    ordinary();PZSurvivorToolkit.ActionQueueFitness=owner;full()
+end
+if FitnessTestNativeEquipmentOnly then
+    print('PASS installed-Kahlua verified native Fitness equipment contract and binding guards')
+    return
+end
 local axeUnequips,bagUnequips=0,0
 for _,action in ipairs(q.queue)do
     if action.Type=='ISUnequipAction'then
@@ -521,7 +649,8 @@ assert(player.worn.BACK==backpack,'removed worn bag was not restored')
 assert(dumbbell:getContainer()==backpack.inner,'borrowed dumbbell was not returned to its original carried container')
 assert(not backpack:getWorldItem() and #worlds==0 and backpack:isFavorite() and packed:getContainer()==backpack.inner,
     'pickup/restoration duplicated storage or lost its contents/favourite flag')
-assert(window.currentExercice==nil and next(window.itemsToReequip)==nil,'closed-window-independent cleanup leaked back into native UI')
+assert(window.currentExercice==nil and not (function()for _ in pairs(window.itemsToReequip)do return true end end)(),
+    'closed-window-independent cleanup leaked back into native UI')
 print('PASS native two-handed and worn-bag restoration with exact carried-container return')
 
 reset()
@@ -1326,18 +1455,14 @@ if SaucedCartsSource then
  local originalCarts,originalSaucedCarts=PZSurvivorToolkit.ActionQueueCarts,SaucedCarts
  for _,mode in ipairs({'normal','pickup-cancel','active-cancel','changed-source','preinstalled'})do
   reset()
-  native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
+  native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua');ISFitnessUI.__index=ISFitnessUI
   native('shared/TimedActions/ISDropWorldItemAction.lua');native('shared/TimedActions/ISUnequipAction.lua')
   f.project('FitnessEquipment') -- Each source scenario owns its native UI preparation registry.
-  f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
-  local cartCore=assert(loadstring('local Queue,Toolkit,Policy,Operations,Settlement = ...\n'..
-   'local craft,live,stoppable=Policy.isCraftAction,Policy.live,Policy.stoppable\n'..
-   'local Batch,processPriority,returnMarker=nil,nil,{}\n'..coreChunk..'\nreturn Queue',
-   '@PZSurvivorToolkit/ActionQueue.lua'))({},PZSurvivorToolkit,policy,PZSurvivorToolkit.ActionQueueOperations,settlement)
   local callbacks={}
   Events.OnGameStart.Add=function(callback)callbacks[#callbacks+1]=callback end
   SaucedCarts=source('return {CartTypes={},safeIsCart=function(item)return item and item.cart end,debug=function()end}',SaucedCartsSource..'/Core.lua')
   getModFileReader=function(id,path)
+   if id=='PZSurvivorToolkit'then return originalModReader(id,path)end
    assert(id=='SaucedCarts')
    local text=path:match('/Core.lua$') and coreText or restrictions
    if mode=='changed-source'then text=text..'\n-- changed selected source\n'end
@@ -1347,6 +1472,11 @@ if SaucedCartsSource then
     local stop=text:find('\n',offset)or #text+1;local line=text:sub(offset,stop-1);offset=stop+1;return line
    end,close=function()end}
   end
+  f.project('ActionQueueDefinitions');f.project('ActionQueueClothing');policy=f.project('ActionQueuePolicy')
+  local cartCore=assert(loadstring('local Queue,Toolkit,Policy,Operations,Settlement = ...\n'..
+   'local craft,live,stoppable=Policy.isCraftAction,Policy.live,Policy.stoppable\n'..
+   'local Batch,processPriority,returnMarker=nil,nil,{}\n'..coreChunk..'\nreturn Queue',
+   '@PZSurvivorToolkit/ActionQueue.lua'))({},PZSurvivorToolkit,policy,PZSurvivorToolkit.ActionQueueOperations,settlement)
   PZSurvivorToolkit.ActionQueueCompat=source(pinCode,clientRoot..'ActionQueueCompat.lua')
   local hook=source(hookCode,restrictionsPath)
   if mode=='preinstalled'then hook()else Events.OnGameStart.Add(hook)end
@@ -1474,9 +1604,9 @@ if SaucedCartsSource then
  PZSurvivorToolkit.ActionQueueCarts,SaucedCarts=originalCarts,originalSaucedCarts
  -- Later timer scenarios need fresh native owners and proofs, without the
  -- intentionally unapproved/preinstalled cart wrappers from the final case.
- native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
+ native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua');ISFitnessUI.__index=ISFitnessUI
  native('shared/TimedActions/ISDropWorldItemAction.lua');native('shared/TimedActions/ISUnequipAction.lua')
- f.project('FitnessEquipment');f.project('ActionQueueDefinitions');policy=f.project('ActionQueuePolicy')
+ f.project('FitnessEquipment');f.project('ActionQueueDefinitions');f.project('ActionQueueClothing');policy=f.project('ActionQueuePolicy')
  fitnessQueue=f.project('ActionQueueFitness');installFoodWearContract()
  equipmentTick=assert(tickCallbacks[#tickCallbacks-1],'fresh native fitness cleanup callback missing')
  fitnessPrune=assert(tickCallbacks[#tickCallbacks],'fresh fitness record pruning callback missing')
@@ -1726,7 +1856,7 @@ do
 end
 
 -- A changed source present before capture must not acquire a new permission.
-native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
+native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua');ISFitnessUI.__index=ISFitnessUI
 f.project('ActionQueueDefinitions')
 sourceOverride=function(path)
     if path=='media/lua/shared/TimedActions/ISFitnessAction.lua'then
@@ -1738,7 +1868,7 @@ reset();q=f.queue(head());window=panel('squats',10);window:onClick({internal='OK
 nativeWait=assert(q.queue[2])
 assert(nativeWait.Type=='ISWaitWhileGettingUp' and not untrusted.isManaged(nativeWait),'unverified native source acquired managed producer permission')
 sourceOverride=nil
-native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua')
+native('shared/TimedActions/ISFitnessAction.lua');native('client/ISUI/ISFitnessUI.lua');ISFitnessUI.__index=ISFitnessUI
 f.project('ActionQueueDefinitions')
 local foreignConstructor=function(self,character,foreignMinutes,foreignData,extraWireField) return {} end
 ISFitnessAction.new=foreignConstructor

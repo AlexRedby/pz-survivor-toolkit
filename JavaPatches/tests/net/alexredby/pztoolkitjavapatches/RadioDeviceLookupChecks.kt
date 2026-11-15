@@ -17,7 +17,6 @@ import zombie.iso.objects.IsoRadio
 import zombie.iso.objects.IsoTelevision
 import zombie.iso.objects.IsoWorldInventoryObject
 import zombie.radio.devices.DeviceData
-import zombie.util.list.PZArrayList
 import zombie.vehicles.VehiclePart
 
 /** Headless real-game Kahlua/native identity regression; does not launch or install the game. */
@@ -41,7 +40,7 @@ object RadioDeviceLookupChecks {
                 "worldObjects",
                 ArrayList<IsoWorldInventoryObject>(),
             )
-            set(this, IsoGridSquare::class.java, "objects", PZArrayList(IsoObject::class.java, 16))
+            set(this, IsoGridSquare::class.java, "objects", ArrayList<IsoObject>(16))
         }
 
     private fun item(id: Int, fullType: String): InventoryItem =
@@ -91,7 +90,6 @@ object RadioDeviceLookupChecks {
                 DeviceData::class.java,
                 VehiclePart::class.java,
                 ArrayList::class.java,
-                PZArrayList::class.java,
             )
         for (type in types) LuaManager.exposer.setExposed(type)
         for (type in types) {
@@ -254,7 +252,7 @@ object RadioDeviceLookupChecks {
         radio.modData.rawset("RadioItemID", 44.0)
         check("Regression.Renamed")
         // Replace the actual native list object while retaining its member and position.
-        val newObjects = PZArrayList(IsoObject::class.java, 16)
+        val newObjects = ArrayList<IsoObject>(16)
         newObjects.add(replacement)
         set(square, IsoGridSquare::class.java, "objects", newObjects)
         check("Regression.Renamed", invalidated = true)

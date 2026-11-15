@@ -530,8 +530,7 @@ if bgiSource then
     ISUnequipAction.new=beforeUnequip
     BGI_PowerRange=nil;f.project('ActionQueueGeneratorOverlay')
 end
-local cleanSource=NativeCleanUIInventoryContextSource or (NativeWishlistWorkshopRoot and readText(NativeWishlistWorkshopRoot
-    .. '/3437629766/mods/CleanUI/42.19/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'))
+local cleanSource=NativeCleanUIInventoryContextSource
 if cleanSource then
     native('client/ISUI/ISWorldObjectContextMenu.lua')
     for _,name in ipairs({'ISPlugGenerator','ISActivateGenerator','ISFixGenerator','ISAddFuel','ISTakeGenerator'}) do
@@ -548,8 +547,7 @@ if cleanSource then
     local readerBefore=getGameFilesInput
     getGameFilesInput=function(path)
         if path~='media/lua/client/ISUI/ISInventoryPaneContextMenu.lua' then return readerBefore(path) end
-        local rawSource=NativeReadRawText and NativeWishlistWorkshopRoot and readText(NativeWishlistWorkshopRoot
-            .. '/3437629766/mods/CleanUI/42.19/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',true) or cleanSource
+        local rawSource=NativeReadRawText and readText(assert(NativeCleanUIInventoryContextSourcePath),true) or cleanSource
         local text,index=rawSource:gsub('\r',''),1
         return {readLine=function()
             if index>#text then return end
@@ -569,7 +567,7 @@ if cleanSource then
     scrap.getActualWeight=function() return 0.1 end;scrap.isHumanCorpse=function() return false end
     scrap.isFavorite=function() return false end
     inv.isInCharacterInventory=function() return true end;inv.isVehicleSeat=function() return false end
-    getTimestampMs=function() return 1 end;getCore=function() return {getGameMode=function() return 'Sandbox' end} end
+    getTimestampMs=function() return 1 end;getCore=function() return {isTutorial=function()return false end,getGameMode=function() return 'Sandbox' end} end
     CharacterTrait={DEXTROUS='DEXTROUS',ALL_THUMBS='ALL_THUMBS'}
     p.hasTrait=function() return false end;p.isWearingAwkwardGloves=function() return false end
     q=f.queue(head())

@@ -61,6 +61,8 @@ local function run(compatible, initialVanilla, failureMode, initialDerived)
     local function execute(source)local fn=assert(loadstring(source));setfenv(fn,env);return fn()end
     local function paneClass(tag)
         local class={updateTooltip=function()end};class.__index=class;env.ISInventoryPane=class
+        local constant=assert(vanillaSource:match('CleanUI_Vanilla_ISInventoryPane%.MAX_ITEMS_IN_STACK_TO_RENDER%s*=%s*%d+'))
+        execute((constant:gsub('CleanUI_Vanilla_ISInventoryPane','ISInventoryPane')))
         execute(method('update'));execute(method('doWorldObjectHighlight'));execute(method('clearWorldObjectHighlights'))
         execute(method('saveSelection'));execute(method('restoreSelection'))
         local native=class.update

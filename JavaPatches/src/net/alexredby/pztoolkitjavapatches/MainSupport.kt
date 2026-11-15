@@ -19,7 +19,7 @@ import zombie.iso.objects.IsoWorldInventoryObject
 import zombie.network.GameClient
 import zombie.network.GameServer
 import zombie.network.IConnection
-import zombie.network.fields.character.PlayerID
+import zombie.network.fields.character.ConnectionPlayer
 import zombie.network.packets.EquipPacket
 import zombie.network.packets.character.AnimalPacket
 import zombie.network.packets.character.ZombiePacket
@@ -34,102 +34,76 @@ internal object MainPolicy {
     fun videoSupported(): Boolean =
         BytecodeSupport.supports(
             "org/lwjglx/opengl/Display.class",
-            "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578",
+            "3b49c8639b52dcfe11daa70c3d397ea8b55c22fb09b9ede2f7b523fee3b7b525",
         )
 
     @JvmStatic
     fun zombieSupported(): Boolean =
         BytecodeSupport.supports(
             "zombie/characters/NetworkZombieAI.class",
-            "87e4f6e43d16dec23f685b4ebad68eb12eaea15ed87dce3fc3c3394f96cd1e3d",
+            "904bb3decce8e4b066d72901efe5605d61db114d7fa22b711b4d15fcb3c91aac",
         )
 
     @JvmStatic
     fun vehicleOwnershipSupported(): Boolean =
         BytecodeSupport.supports(
             "zombie/vehicles/BaseVehicle.class",
-            "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661",
+            "354b166db919f8de692a5327b7afd01fefdbfb8021f0c99e2b2b44a3fe606de3",
         )
 
     @JvmStatic
     fun vehicleSupported(): Boolean =
         BytecodeSupport.supports(
             "zombie/vehicles/VehicleInterpolation.class",
-            "e5096d41b4b94c3eb040c119c1ca35b014bbfe3c742401002b88103a650add56",
+            "4cca6a3955e65539c91a3f9a5c2a6e13cf552b11358f704f71b9c1124c360a9e",
         )
 
     @JvmStatic
     fun animalSupported(): Boolean =
         BytecodeSupport.supports(
             "zombie/characters/NetworkPlayerAI.class",
-            "46df5ede124384e10a848fe9eb6f6ba06cccbb3cc74f51e5e9b0306cd80a628a",
+            "366bfdcd71006ba898845c504a3482d7aa3665c9ead3c293a349e0bf13be553c",
         ) &&
             BytecodeSupport.supports(
                 "zombie/vehicles/BaseVehicle.class",
-                "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661",
+                "354b166db919f8de692a5327b7afd01fefdbfb8021f0c99e2b2b44a3fe606de3",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/packets/character/AnimalPacket.class",
-                "db6954555bb7b270589d406050eecb4dd79f789e8d5627df7fc43c1e8150f169",
+                "c8f60d21aa1b6418d1868dc09e19c2a0e5df3ce4fab2185b22555d8d51f2dff7",
             )
 
     @JvmStatic
     fun equipmentSupported(): Boolean =
         BytecodeSupport.supports(
             "zombie/network/packets/EquipPacket.class",
-            "35e25895c725c3154d0f1e4b3217c7e19795ed1296441dbcea9283026ec5da89",
+            "4b47f5fe7f60eb5c659291f6f4117a332790d970414e9050109002d851493e17",
         ) &&
             BytecodeSupport.supports(
                 "zombie/network/ZomboidNetData.class",
-                "9b81b4f1e3ce8e338f2b8bb838c797353d0b2841396d01325c968051e168419e",
+                "abb936adab371b793d764f0114edc05fbff0cc35069ccc3cffca0ff98e4d95ea",
             )
-
-    @JvmStatic
-    fun hutchSupported(): Boolean =
-        BytecodeSupport.supports(
-            "zombie/iso/objects/IsoHutch.class",
-            "d9c1944025f6902416c83993199a89b2509bb2af3d09a44ced9c61b28c8589ae",
-        )
 
     @JvmStatic
     fun medicalBodyDamageSupported(): Boolean =
-        BytecodeSupport.supports(
+        QueueManagerSupport.ACTION_SUPPORTED && BytecodeSupport.supports(
             "zombie/network/packets/BodyDamageUpdatePacket.class",
-            "2e37ca1add6b8696464285bd498e7c97cd9712c9094c51d1d57daac688145c8c",
+            "9d6160bc79dc1ec2271bfbe0e18d1d87f04d5562e3434bafc2c216739d7b5f0d",
         ) &&
             BytecodeSupport.supports(
-                "zombie/network/fields/character/PlayerID.class",
-                "d40d1b745a70ad3bf562c15765b9f46a117ecb48aeeabf05597ce646a73e0b56",
+                "zombie/network/fields/character/OnlinePlayer.class",
+                "e9f370600998964634e186ee02ecf05612e993a4f0b1537d43c64e4b7ca1f208",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/packets/BodyDamageUpdatePacket\$Type.class",
-                "e7694d5cfa682aa1fb60cdc85fdbb231bd87f758ce82ef0dc3dd0ccdead52c6c",
-            )
-
-    @JvmStatic
-    fun medicalVisualsSupported(): Boolean =
-        BytecodeSupport.supports(
-            "zombie/characters/IsoGameCharacter\$Bandages.class",
-            "bb87836b717355811e6f699377896918b9d4f4d050a5ad7bc1f1a35a70ebdedd",
-        ) &&
-            BytecodeSupport.supports(
-                "zombie/characters/IsoGameCharacter.class",
-                "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b",
-            ) &&
-            BytecodeSupport.supports(
-                "zombie/characters/WornItems/WornItems.class",
-                "3a01a9b5b7e13d0902fcac9342ac0b42e5c2e87284d88ce9a6a01f45294409c1",
-            ) &&
-            BytecodeSupport.supports(
-                "zombie/network/packets/SyncClothingPacket.class",
-                "09e83606c9de4555802b2171e26df4739a78c787afeb8b2907d46c19be311dff",
+                "bd3a7f11b23ff5c8d578ae9faaa85dd6f399db05dfb096cf01e5c01239dfeede",
             )
 
     @JvmStatic
     fun medicalTimedActionSupported(): Boolean =
-        BytecodeSupport.supports(
+        QueueManagerSupport.ACTION_SUPPORTED && BytecodeSupport.supports(
             "zombie/network/PZNetKahluaTableImpl.class",
-            "201f0e59502fc5a106f8c9021e0b0d13a30dcb8d0beb9e8934cec390231ddba6",
+            "d57f0a86e74b58afca38a594950010d3f1209cddfca8664683c6f404c72ade6e",
         ) &&
             BytecodeSupport.supports(
                 "zombie/core/NetTimedAction.class",
@@ -137,19 +111,19 @@ internal object MainPolicy {
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/packets/NetTimedActionPacket.class",
-                "ce367190ce6158eb88809f3215ebc471e6161896d9d526eb9ef0e73d58de847b",
+                "9cb604c83db6c649df060cf3228b475163aebb1232a8926deaf13a5b3d2394bc",
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/Action.class",
-                "4a2fe6aaf0cf73235279946e930b40489ec44859aff64cc19d97976bcc75610d",
+                "19eac0c47039721228c35bc23204a34899a7bee4ea97a0564e0d1f8254a3ac31",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/fields/character/PlayerID.class",
-                "d40d1b745a70ad3bf562c15765b9f46a117ecb48aeeabf05597ce646a73e0b56",
+                "18b3204bb706364655dfa832390d2473b0c02dbf9bb4936b5e128749932616b7",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/ZomboidNetData.class",
-                "9b81b4f1e3ce8e338f2b8bb838c797353d0b2841396d01325c968051e168419e",
+                "abb936adab371b793d764f0114edc05fbff0cc35069ccc3cffca0ff98e4d95ea",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/fields/IDShort.class",
@@ -164,53 +138,53 @@ internal object MainPolicy {
     fun mediaSupported(): Boolean =
         BytecodeSupport.supports(
             "zombie/radio/devices/DeviceData.class",
-            "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102",
+            "6c8825dbc39b2a7508a903dd3ef381bbb3dbd9b96f89398d9deeaddde0162bed",
         )
 
     @JvmStatic
     fun buildSupported(): Boolean =
-        BytecodeSupport.supports(
+        QueueManagerSupport.ACTION_SUPPORTED && BytecodeSupport.supports(
             "zombie/core/BuildAction.class",
-            "320afae90b4723456f349787a09c179f53de2533a19393434d34fc569eb4f368",
+            "61fc2957833f87611b1095cdfc61a03b18abbce06e633634de841deefc658270",
         ) &&
             BytecodeSupport.supports(
                 "zombie/core/ActionManager.class",
-                "3e85655f0d287837b17164d2ee4cecb7067ab419ffbe8ce1adb36bd7d54b202f",
+                "499b2d6179fc96a49e150f5dcb92ee813973491e4abd50335249430080d7cf25",
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/Action.class",
-                "4a2fe6aaf0cf73235279946e930b40489ec44859aff64cc19d97976bcc75610d",
+                "19eac0c47039721228c35bc23204a34899a7bee4ea97a0564e0d1f8254a3ac31",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/packets/BuildActionPacket.class",
-                "c09201418a8aa248ea349314fba21de85fb2d768e0df4afb4bc8d32bfbf524db",
+                "e634b3486cb5216cc826e73db24d9cd9e2718b7182af3a617633119095d40acf",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/packets/GeneralActionPacket.class",
-                "398a8729da87a4c222f17473cc46c9b5cb7fd9b3f74492d283765619c1d57c8a",
+                "e2d14e57520245a85578d6159d0b21815f94729e9a651afcaee92fdd4f69ec41",
             )
 
     @JvmStatic
     fun cartSupported(): Boolean =
         BytecodeSupport.supports(
             "zombie/characters/component/CharacterInputComponent.class",
-            "e3ff79ae666e7809f753cbe7aac4a3e4729f520d4f795009643efc222b22088d",
+            "9aa76ce89f40089e57eac9d1429a8d0f3998008262836ca68524cb7ceb93058e",
         ) &&
             BytecodeSupport.supports(
                 "zombie/characters/IsoPlayer.class",
-                "3f1c4634d3a8e7e36baf4b33f76cf7ef79d88c3351bd0eb2a6a6bb34c2d9858f",
+                "643585044a88ad1b29e8d5173774f66085c685c363ed10a89c0b79018de2874e",
             ) &&
             BytecodeSupport.supports(
                 "zombie/characters/IsoGameCharacter.class",
-                "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b",
+                "1ccabc492ba130f51486bf38a8400334545852253bbac9c46fff71242ab672f6",
             ) &&
             BytecodeSupport.supports(
                 "zombie/pathfind/PathFindBehavior2.class",
-                "06b4af799cd9e335aee738bcad498215c5068038d8dfc524bb7b6337e923a127",
+                "e3315dfff6b37eeb7a76d39601e365485d100d0ef37ca27a470ee60329e632f5",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/IsoMovingObject.class",
-                "7e6e84fe9d3cb264e8d8e682d91e0abe919d481b7349d17b997e8a78f2293a5f",
+                "70c0249c3bdb7b4c4fc335e644c74bc98c37aa0e4bfdc0665a75521460ea0900",
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/skinnedmodel/animation/AnimationPlayer.class",
@@ -242,7 +216,7 @@ internal object MainPolicy {
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/skinnedmodel/advancedanimation/AnimatedModel\$AnimatedModelInstanceRenderData.class",
-                "c96e48b6d138db930abe557459b2ff81e025a47cba6c3b199700473362e2f04d",
+                "3a40b3c8b3f39d2475cfe51fbe1ce32f13b990c8404a79649173e75d986ed155",
             )
 
     @JvmStatic
@@ -258,15 +232,15 @@ internal object MainPolicy {
         Main.CART_SUPPORTED &&
             BytecodeSupport.supports(
                 "zombie/network/packets/character/PlayerPacket.class",
-                "5284e8225bf513241787276471f20b526b8373a5f22c714f1370b6f013cfe5de",
+                "060b6081359a9c794478858796ed1029976f3551bb1df77ec1de3b6d83793dfa",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/packets/VariableSyncPacket.class",
-                "4fc2d32a491eb3f9e96aa0069dcd0f322e5d29e04e75c837cd4ec59cda42ef09",
+                "98610e44c6e0256fd6c3393126d56c3314306dcd3a9912bfad4054d030364444",
             ) &&
             BytecodeSupport.supports(
                 "zombie/characters/NetworkPlayerAI.class",
-                "46df5ede124384e10a848fe9eb6f6ba06cccbb3cc74f51e5e9b0306cd80a628a",
+                "366bfdcd71006ba898845c504a3482d7aa3665c9ead3c293a349e0bf13be553c",
             ) &&
             BytecodeSupport.supports(
                 "zombie/characters/NetworkCharacterAI.class",
@@ -290,7 +264,7 @@ internal object MainPolicy {
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/sprite/IsoSprite.class",
-                "68c01e6b1c914f662621743e09c8dd8a62c0258392ce1a75654a713e1034067f",
+                "498f94e38b171ed0eb528b3ab3b90cbf0d152cc81bfe9a3e1345825a627a04ce",
             )
 
     @JvmStatic
@@ -322,15 +296,15 @@ internal object MainPolicy {
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/IsoGridSquare.class",
-                "e8192f87d88da607abe0293228c84efbd822ed4ac0a331102c030bc3eeaba467",
+                "b8cef32a10bb76433bad174397b51f1a046be1eef47997dc1e79dd8547d726c5",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/objects/IsoWorldInventoryObject.class",
-                "7be6f2d54525fa587908ce8efa7da5d26cfd3d19bd1cc02911ee12f7649857b3",
+                "1019fd27cfce76d84a8db499a71568429e87e95de504e041a202e0ba9c01ee0b",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/fboRenderChunk/FBORenderObjectOutline.class",
-                "175e9ae7b5307a2ddaa02adb006c18e30823dbae626348c8e73d6613173d8471",
+                "7ad0f0cb324a9ead97a2aea9d6a96fbb7057f9617d3cf2d2da071351757be284",
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/skinnedmodel/model/ItemModelRenderer.class",
@@ -342,14 +316,14 @@ internal object MainPolicy {
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/skinnedmodel/model/WorldItemModelDrawer.class",
-                "f9a83f5dbb3a5f897a502e945fb53150aa4cc4fb98c7996f5eb4bd0475d965d2",
+                "960f5757af7756e7a0e0090581ba0d70f20d6f8ef895d12e028ebe2a47f0038b",
             )
 
     @JvmStatic
     fun completionSupported(): Boolean =
         BytecodeSupport.supports(
             "zombie/characters/CharacterTimedActions/LuaTimedActionNew.class",
-            "f10236f1e8be9d0822dc144ebe61c42fa1d0e8ded3279c7aa6dd0ffb7291feb0",
+            "020a9e5c22b25bdffca7f396612d420e9cea6f78f7432015ac146f19728ac1a6",
         ) &&
             BytecodeSupport.supports(
                 "zombie/characters/CharacterTimedActions/BaseAction.class",
@@ -357,7 +331,7 @@ internal object MainPolicy {
             ) &&
             BytecodeSupport.supports(
                 "zombie/characters/IsoGameCharacter.class",
-                "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b",
+                "1ccabc492ba130f51486bf38a8400334545852253bbac9c46fff71242ab672f6",
             ) &&
             BytecodeSupport.supports(
                 "se/krka/kahlua/integration/LuaCaller.class",
@@ -392,7 +366,7 @@ internal object MainSupport {
                 Main::class.java.classLoader,
             )
         System.out.println(
-            "[PZToolkitJavaPatches] Experimental B42.21 patch: zombie=" +
+            "[PZToolkitJavaPatches] Experimental B42.22.2 patch: zombie=" +
                 Main.ZOMBIE_SUPPORTED +
                 ", vehicle=" +
                 Main.VEHICLE_SUPPORTED +
@@ -420,10 +394,6 @@ internal object MainSupport {
                 Main.MEDICAL_TIMED_ACTION_SUPPORTED +
                 ", medicalBodyDamage=" +
                 Main.MEDICAL_BODY_DAMAGE_SUPPORTED +
-                ", medicalVisuals=" +
-                Main.MEDICAL_VISUALS_SUPPORTED +
-                ", hutch=" +
-                Main.HUTCH_SUPPORTED +
                 ", properties=" +
                 TilePropertyNames.SUPPORTED +
                 ", fluids=" +
@@ -439,13 +409,13 @@ internal object MainSupport {
                 ", mannequin=" +
                 MannequinZoneData.SUPPORTED +
                 ", itemTransactions=" +
-                QueueManagers.ITEM_SUPPORTED +
+                QueueManagerSupport.ITEM_SUPPORTED +
                 ", itemBatchAdmission=" +
                 itemBatches +
                 ", itemTransactionClock=" +
                 itemClock +
                 ", actionManager=" +
-                QueueManagers.ACTION_SUPPORTED +
+                QueueManagerSupport.ACTION_SUPPORTED +
                 ", actionCompletion=" +
                 Main.COMPLETION_SUPPORTED +
                 ", actionAcknowledgements=" +
@@ -483,7 +453,7 @@ internal object MainSupport {
     fun equipmentParsed(packet: EquipPacket?, reader: ByteBufferReader?, connection: IConnection?) {
         Main.EquipmentEcho.incomplete = null
         if (!GameClient.client || !Main.EQUIPMENT_SUPPORTED) return
-        val player = Accessor.tryGet<PlayerID>(packet, "player", null)
+        val player = Accessor.tryGet<ConnectionPlayer>(packet, "player", null)
         if (!reader!!.bb.hasRemaining()) {
             if (Main.CART_TRANSITION_SUPPORTED && player != null)
                 CartTransition.pickupEquipped(player.getPlayer(), connection)

@@ -19,7 +19,7 @@ CharacterTrait = {ALL_THUMBS = 'AllThumbs', DISORGANIZED = 'disorganized'}
 table.wipe = function(t) for key in pairs(t) do t[key] = nil end end
 Events = {OnTick = {Add = function() end}, OnGameStart = {Add = function() end}}
 Events.OnServerCommand = {Add = function() end}
-for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end
@@ -65,6 +65,7 @@ local Operations = project('ActionQueueOperations')
 local Craft, Batch = project('ActionQueueCraft'), project('ActionQueueBatch')
 project('ActionQueueDefinitions'); project('ActionQueueLabels')
 PZSurvivorToolkit.ActionQueueWorld = {isApplianceAction = function() return false end}
+assert(loadfile(ProjectRoot..'/tests/support/action_queue_source.lua'))()
 project('ActionQueuePolicy')
 local Controller = project('ActionQueue')
 local function list(...)
@@ -77,6 +78,7 @@ local cupboard = {}
 local player = {isPlayerMoving = function() return false end, pressedMovement = function() return false end, getInventory = function() return inventory end, hasTrait = function() return false end,
     getPlayerNum = function() return 0 end, isDead = function() return false end, isAsleep = function() return false end,
     isTimedActionInstant = function() return false end, isWearingAwkwardGloves = function() return false end,
+    hasAwkwardHands=function()return false end,
     setIsFarming = function() end, isDriving = function() return false end}
 getSpecificPlayer = function() return player end
 local material = {class = 'InventoryItem', getContainer = function() return cupboard end,
@@ -160,6 +162,7 @@ end
 reset()
 local audited = ISHandcraftAction:new(player,
     {class = 'CraftRecipe', getTimedActionScript = function() end, isCanWalk = function() return true end,
+        getTags=function()return {contains=function()return false end}end,
         getTime = function() return 10 end}, {})
 Operations.run(function() ISTimedActionQueue.add(audited) end)
 unrelated = book(); ISTimedActionQueue.add(unrelated)

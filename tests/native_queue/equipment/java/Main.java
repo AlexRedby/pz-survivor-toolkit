@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import me.zed_0xff.zombie_buddy.Accessor;
 import me.zed_0xff.zombie_buddy.Patch;
-import net.alexredby.pztoolkitjavapatches.QueueManagers;
+import net.alexredby.pztoolkitjavapatches.QueueManagerSupport;
 import se.krka.kahlua.vm.JavaFunction;
 import se.krka.kahlua.integration.annotations.LuaMethod;
 import zombie.core.Core;
@@ -53,7 +53,7 @@ public final class Main {
     }
 
     private static final JavaFunction pending = (frame, arguments) -> {
-        int value = GameServer.server && QueueManagers.ITEM_SUPPORTED
+        int value = GameServer.server && QueueManagerSupport.ITEM_SUPPORTED
             ? count(Accessor.tryGet(TransactionManager.class, "transactions", (ConcurrentLinkedQueue<?>)null)) : -1;
         frame.push((double)value);
         return 1;
@@ -78,7 +78,7 @@ public final class Main {
             if (count(List.of(new Sample(state))) != expected)
                 throw new IllegalStateException("Invalid equipment transfer state " + state);
         }
-        System.out.println("[EQUIPMENT_TEST] TRANSFER_PROBE active=" + QueueManagers.ITEM_SUPPORTED);
+        System.out.println("[EQUIPMENT_TEST] TRANSFER_PROBE active=" + QueueManagerSupport.ITEM_SUPPORTED);
     }
 
     public static void observe() {

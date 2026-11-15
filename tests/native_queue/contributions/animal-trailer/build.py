@@ -86,7 +86,7 @@ def build(game, jdk, patch_jar, output, scenario, cases=None, *, processes=None)
                 with tempfile.TemporaryDirectory(prefix='animal-ghost-decoder-') as config:
                     result = processes.run([java, '-javaagent:' + str(game / 'ZombieBuddy.jar') + '=config_dir=' + config + ',policy=deny-new,verbosity=0',
                         '-Djava.awt.headless=true', '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp',
-                        str(check_classes) + os.pathsep + classpath, 'zombie.characters.GhostDecoderChecks', mode],
+                        str(check_classes) + os.pathsep + classpath, 'net.alexredby.nativechecks.GhostDecoderChecks', mode],
                         cwd=game, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 (output / ('ghost-decoder-' + mode + '.log')).write_text(result.stdout)
                 result.check_returncode()

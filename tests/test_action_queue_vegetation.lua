@@ -36,7 +36,7 @@ local event = {Add = noop}
 Events = {OnTick = event, OnServerCommand = event, OnDoTileBuilding2 = event,
     OnDoTileBuilding3 = event, OnKeyPressed = event, OnDestroyIsoThumpable = event,
     RenderOpaqueObjectsInWorld = event, OnGameStart = {Add = function(callback) install = callback end}}
-for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState',
     'ClimbSheetRopeState','ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end

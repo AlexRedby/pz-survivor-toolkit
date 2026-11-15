@@ -7,7 +7,7 @@ import zombie.scripting.objects.Item;
 /** Read native item-script properties without creating an inventory item. */
 public final class ScriptItemProperties {
     static final boolean SUPPORTED = BytecodeSupport.supports("zombie/scripting/objects/Item.class",
-        "9e6a2f7fe48cc66843fea06b4821063d7cc6a73eaba0de8ee51d0a15c373202e");
+        "92f0b1dc3c96c97e6ce709542edbd9f5969b663934fb0c124014de53c37c3ab5");
     private static final Field BANDAGE_POWER = floatField("bandagePower");
     private static final Field ALCOHOL_POWER = floatField("alcoholPower");
 

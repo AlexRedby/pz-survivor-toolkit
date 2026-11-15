@@ -33,9 +33,12 @@ class BasementHallTests(unittest.TestCase):
     def evidence(self, native_control=False):
         cache = self.root / 'client1'
         cache.mkdir(exist_ok=True)
+        version = [42, 21] if native_control else [42, 22]
+        base_index = 107 if native_control else 106
+        (self.root / 'runtime.json').write_text(json.dumps({'game_version': version}))
         probes = []
         for phase, z in (('surface', 0), ('basement', -1), ('returned', 0)):
-            probes.append(hall.MARKER + 'PROBE ' + json.dumps(dict(phase=phase, baseIndex=107, accessIndex=306,
+            probes.append(hall.MARKER + 'PROBE ' + json.dumps(dict(phase=phase, baseIndex=base_index, accessIndex=306,
                 baseKey='c00d3' if native_control else '505a0000000c00d3', accessKey='c00d3',
                 ownerIndex=16, stable=True, z=z, canSee=True, nativeControl=native_control)))
             (cache / ('basement-hall-' + phase + '.png')).write_bytes(b'\x89PNG\r\n\x1a\nfixture')
@@ -44,8 +47,8 @@ class BasementHallTests(unittest.TestCase):
         save.write_bytes(b'METAfixture')
         activation = (['[PZToolkitJavaPatches] Experimental B42.21 patch: basementRooms=true, mannequin=true',
                        'ERROR: General > duplicate RoomDef.metaID for room at 10707,9484,0'] if native_control else
-                      ['[PZToolkitJavaPatches] Experimental B42.21 patch: basementHall=true, mannequin=true',
-                 '[PZToolkitJavaPatches] Basement hall key separated: original=107, key='
+                      ['[PZToolkitJavaPatches] Experimental B42.22.2 patch: basementHall=true, mannequin=true',
+                 '[PZToolkitJavaPatches] Basement hall key separated: original=106, key='
                  + str(0x505A0000000C00D3) + ', accessKey=786643'])
         lines = [*activation,
                  hall.MARKER + 'READY',
@@ -98,7 +101,18 @@ class BasementHallTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError if version == '0.1.18' else RuntimeError,
                                             '0.1.17' if version == '0.1.18' else 'javac reached'):
                     hall.stage(ROOT, self.root, Path('/game'), Path('/jdk'), selection,
-                               {'PZToolkitJavaPatches': patch_root}, {'roles': {'client1': {'cache': '/cache'}}})
+                               {'PZToolkitJavaPatches': patch_root}, {'game_version': [42, 21], 'roles': {'client1': {'cache': '/cache'}}})
+
+    def test_historical_native_control_cannot_claim_current_engine_qualification(self):
+        selection = dict(self.selection, cases=['native-control'])
+        with patch.object(hall.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'preserved B42.21'):
+                hall.stage(ROOT, self.root, Path('/game'), Path('/jdk'), selection, {},
+                           {'game_version': [42, 22], 'roles': {}})
+        run.assert_not_called()
+        self.evidence(native_control=True)
+        (self.root / 'runtime.json').write_text(json.dumps({'game_version': [42, 22]}))
+        self.assertTrue(hall.verify(self.root, selection, {})['issues'])
 
     def test_verifier_requires_native_lookup_traversal_save_and_all_screens(self):
         text = self.evidence()
@@ -110,7 +124,7 @@ class BasementHallTests(unittest.TestCase):
             (self.root / 'client1-launch.log').write_text(text.replace(line, ''))
             self.assertTrue(hall.verify(self.root, self.selection, {})['issues'], line)
         for old, new in (('505a0000000c00d3', 'c00d3'), ('"stable": true', '"stable": false'),
-                         ('"ownerIndex": 16', '"ownerIndex": 17'), ('"baseIndex": 107', '"baseIndex": 108'),
+                         ('"ownerIndex": 16', '"ownerIndex": 17'), ('"baseIndex": 106', '"baseIndex": 108'),
                          ('basementHall=true', 'basementHall=false'), ('"canSee": true', '"canSee": false'),
                          ('charge=1 ', 'charge=1.01 '), ('distance=15', 'distance=1'), ('cone=false', 'cone=true')):
             (self.root / 'client1-launch.log').write_text(text.replace(old, new))

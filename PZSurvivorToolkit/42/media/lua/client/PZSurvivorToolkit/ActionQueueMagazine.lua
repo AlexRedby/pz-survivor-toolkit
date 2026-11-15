@@ -139,10 +139,10 @@ install=function()
  if not chain(true)then snapshot={trusted=false};return false end
  local trusted=class.Type=='ISUnloadBulletsFromMagazine'
   and Proof.matches('media/lua/shared/TimedActions/ISUnloadBulletsFromMagazine.lua',590379046,nil,true)
-  and Proof.matches('media/lua/shared/TimedActions/ISReloadWeaponAction.lua',1833975495,nil,true)
+  and Proof.matches('media/lua/shared/TimedActions/ISReloadWeaponAction.lua',2545572102,nil,true)
   and Proof.matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)
   and from(ammoOutput,'ActionQueueFirearms.lua')
-  and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueFirearms.lua',823161797,'PZSurvivorToolkit',true)
+  and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueFirearms.lua',1062892464,'PZSurvivorToolkit',true)
  for _,name in ipairs({'getClassSimpleName','instanceItem','sendAddItemToContainer','syncItemFields','emulateAnimEvent'})do
   if not invoker(globals[name])then trusted=false end
  end

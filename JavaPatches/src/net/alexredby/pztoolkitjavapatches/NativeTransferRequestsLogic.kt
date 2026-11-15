@@ -18,7 +18,7 @@ import zombie.core.raknet.UdpConnection
 import zombie.inventory.InventoryItem
 import zombie.inventory.ItemContainer
 import zombie.network.GameClient
-import zombie.network.fields.character.PlayerID
+import zombie.network.fields.character.ConnectionPlayer
 import zombie.network.packets.ItemTransactionPacket
 
 /** Passive direct-call evidence. Never skips, retries or modifies a native request. */
@@ -26,10 +26,10 @@ internal object NativeTransferRequestsLogic {
     @JvmField
     val SUPPORTED =
         QueueBindingHooks.SUPPORTED &&
-            QueueManagers.ITEM_SUPPORTED &&
+            QueueManagerSupport.ITEM_SUPPORTED &&
             BytecodeSupport.supports(
                 "zombie/Lua/LuaManager\$GlobalObject.class",
-                "80ecbd3bd702db2f992db6cba7cb09c32d775fa6f2a3297e0460874ff5ba20c7",
+                "675c3dad3479ec4e6bf8d0f6aa41aeb2ffcf5570df17d3ac07eab99508221059",
             ) &&
             BytecodeSupport.supports(
                 "se/krka/kahlua/integration/expose/LuaJavaInvoker.class",
@@ -120,7 +120,7 @@ internal object NativeTransferRequestsLogic {
     fun allocated(transaction: Transaction?) {
         if (!SUPPORTED || !GameClient.client || transaction == null) return
         val scope = manager.get()
-        val actor = Accessor.tryGet<PlayerID>(transaction, "playerId", null)?.getPlayer()
+        val actor = Accessor.tryGet<ConnectionPlayer>(transaction, "player", null)?.getPlayer()
         if (scope != null) {
             scope.allocations++
             if (scope.allocations == 1) scope.allocated = transaction
@@ -221,7 +221,7 @@ internal object NativeTransferRequestsLogic {
                     receipt.nested ||
                     !selected(receipt) ||
                     Accessor.tryGet<Byte>(transaction, "id", null) != result ||
-                    Accessor.tryGet<PlayerID>(transaction, "playerId", null)?.getPlayer() !==
+                    Accessor.tryGet<ConnectionPlayer>(transaction, "player", null)?.getPlayer() !==
                         receipt.actor
             )
                 return

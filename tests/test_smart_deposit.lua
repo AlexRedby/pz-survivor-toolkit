@@ -622,7 +622,7 @@ local function checkNativeButtonDrop(source, name, vanilla)
         end
         local page = setmetatable({player = 0, inventoryPane = view, mouseOverButton = {inventory = world.target},
             refreshWeight = function() end, updateItemCount = function() end}, {__index = class})
-        getCore = function() return {getGameMode = function() return 'Sandbox' end} end
+        getCore = function() return {isTutorial = function() return false end, getGameMode = function() return 'Sandbox' end} end
         luautils = {walkToContainer = function(target, player) assert(target == world.target and player == 0); return true end}
         getPlayerLoot = function() return {backpacks = world.backpacks, inventoryPane = {selected = {}}} end
         getPlayerInventory = function() return {inventoryPane = {selected = {}}} end

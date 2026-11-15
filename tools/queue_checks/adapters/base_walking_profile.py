@@ -23,7 +23,7 @@ NATIVE_HASHES = {
     'se/krka/kahlua/vm/KahluaThread.class': '25f4c0dea91800dcb3fadd3d482ed5f7d5cf17908bf167afd308b85c99856bb6',
     'zombie/iso/fboRenderChunk/FBORenderCell.class': 'd5c46201d60cff36397ee46c56b53dbaee6e26e8733836f27bf56ad871eedf94',
     'zombie/ui/UIManager.class': 'fa9a2ec9388573f74082a22f3f357c08f3b0e662325ba4ea587b03a5de005704',
-    'org/lwjglx/opengl/Display.class': '15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578',
+    'org/lwjglx/opengl/Display.class': '3b49c8639b52dcfe11daa70c3d397ea8b55c22fb09b9ede2f7b523fee3b7b525',
 }
 DISCOVERY_NATIVE_HASHES = {
     'zombie/inventory/ItemContainer.class': 'a2ac7dd6235f91255dc57b91419a2c8609bdb105214cddf7fb445b70507b6f96',

@@ -28,6 +28,17 @@ local snapshots, approved, guards, baseHooks, pins = {}, {}, {}, {}, {}
 local bindingAccessor, bindingOrigin, bindingMatches = getFilenameOfClosure, Proof and Proof.closure, Proof and Proof.matches
 local bindingPairs, bindingType, bindingMeta, bindingEqual = pairs, type, getmetatable, rawequal
 local bindingGlobals, bindingRaw, bindingIpairs, bindingParent = _G, rawget, ipairs, ISBaseObject
+local containmentOwner,containmentName=ItemContainer,getClassSimpleName
+local containmentHelper=type(containmentOwner)=="table" and Proof and type(Proof.own)=="function"
+    and Proof.own(containmentOwner,"chainContainsContainingItem")
+local function containmentBinding()
+    if not Proof or type(Proof.own)~="function" or ItemContainer~=containmentOwner
+        or type(containmentOwner)~="table" or getmetatable(containmentOwner)~=nil
+        or Proof.own(containmentOwner,"chainContainsContainingItem")~=containmentHelper
+        or type(containmentHelper)~="function" or getClassSimpleName~=containmentName or type(containmentName)~="function" then return false end
+    local ok,name=pcall(containmentName,containmentHelper)
+    return ok and (name=="LuaJavaInvoker" or name=="MultiLuaJavaInvoker")
+end
 local baseMethods={}
 local ownMethods,ownerSafe,baselineSafe={},{},true
 local baseDelegates, sourceFactories, sourceFactoryRefs, factoryRevision = {}, {}, {}, 0
@@ -217,8 +228,8 @@ local function pending(action,owner)
         or not instanceof(action.character,"IsoPlayer") then return false end
     if not pinned("media/lua/shared/TimedActions/ISBaseTimedAction.lua",3104185167) then return false end
     if owner==transfer then
-        if not pinned("media/lua/client/TimedActions/ISInventoryTransferAction.lua",3739549534)
-            or not pinned("media/lua/shared/TimedActions/ISTransferAction.lua",798240932) then return false end
+        if not containmentBinding() or not pinned("media/lua/client/TimedActions/ISInventoryTransferAction.lua",460776186)
+            or not pinned("media/lua/shared/TimedActions/ISTransferAction.lua",3644675416) then return false end
     elseif owner==empty then
         if not pinned("media/lua/shared/Fluids/ISFluidEmptyAction.lua",4049618573)
             or not pinned("media/lua/shared/Fluids/ISFluidContainer.lua",2954809783)
@@ -267,13 +278,14 @@ local function sourceFactorySpecifications()
     end
     if #moduleKeys>0 then specifications[#specifications+1]={owner=Toolkit,keys=moduleKeys}end
     specifications[#specifications+1]={owner=Proof,keys={"captureBindings","closure"}}
-    specifications[#specifications+1]={owner=bindingGlobals,keys={"getFilenameOfClosure","toolkitLuaMetatableMatches"}}
+    if containmentOwner then specifications[#specifications+1]={owner=containmentOwner,keys={"chainContainsContainingItem"}}end
+    specifications[#specifications+1]={owner=bindingGlobals,keys={"getFilenameOfClosure","toolkitLuaMetatableMatches","ItemContainer","getClassSimpleName"}}
     -- Two immutable descriptions preserve the original one-capture boundary.
     -- Only the dependency names are prepared; transaction values remain fresh.
     local aliasSpecifications={}
     for index,specification in bindingIpairs(specifications)do aliasSpecifications[index]=specification end
     aliasSpecifications[#aliasSpecifications]={owner=bindingGlobals,
-        keys={"getFilenameOfClosure","toolkitLuaMetatableMatches","createItemTransaction"}}
+        keys={"getFilenameOfClosure","toolkitLuaMetatableMatches","ItemContainer","getClassSimpleName","createItemTransaction"}}
     return specifications,aliasSpecifications
 end
 local sourceFactorySpecs,sourceFactoryAliasSpecs=sourceFactorySpecifications()
@@ -719,9 +731,9 @@ function Adapters.deferredTransferBinding(action,current)
         methodOverrides.toolkitQueueSafeOnComplete=bulk.onComplete
     elseif bulk then return end
     if not unchanged() or getFilenameOfClosure~=bindingAccessor then return end
-    if not pinned("media/lua/shared/TimedActions/ISBaseTimedAction.lua",3104185167)
-        or not pinned("media/lua/client/TimedActions/ISInventoryTransferAction.lua",3739549534)
-        or not pinned("media/lua/shared/TimedActions/ISTransferAction.lua",798240932) then return end
+    if not containmentBinding() or not pinned("media/lua/shared/TimedActions/ISBaseTimedAction.lua",3104185167)
+        or not pinned("media/lua/client/TimedActions/ISInventoryTransferAction.lua",460776186)
+        or not pinned("media/lua/shared/TimedActions/ISTransferAction.lua",3644675416) then return end
     for name,callback in bindingPairs(baseMethods) do
         if own(base,name)~=callback then return end
         if name~="derive" and not bindingOrigin(callback,"ISBaseTimedAction.lua") then
@@ -798,6 +810,21 @@ function Adapters.transfer(action)
     if not sourceCarried and not destinationCarried then return end
     if not sourceCarried and not Adapters.worldContainer(action.srcContainer,action.character)
         or not destinationCarried and not Adapters.worldContainer(action.destContainer,action.character) then return end
+    -- Native SP transfer now refuses IDs present in the destination's container
+    -- ancestry, including ItemContainer.id itself. Prove exact native owners
+    -- before entering that read-only helper; unknown/cyclic chains stay opaque.
+    local destination,seen=action.destContainer,{}
+    for depth=1,32 do
+        if not destination or seen[destination] or containmentName(destination)~="ItemContainer" then return end
+        seen[destination]=true
+        local owner=destination:getContainingItem()
+        if not owner then destination=nil;break end
+        if containmentName(owner)~="InventoryContainer" then return end
+        destination=owner:getContainer()
+    end
+    if destination~=nil then return end
+    local checked,contains=pcall(containmentHelper,action.destContainer,action.item:getID())
+    if not checked or contains~=false then return end
     if (not sourceCarried or not destinationCarried) and not Adapters.worldTransferItem(action.item,not destinationCarried,action.character,action.srcContainer,action.destContainer) then return end
     local provenWeight
     if not Weights.factoryFree(action.item) then

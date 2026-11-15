@@ -49,13 +49,13 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                    check=True, capture_output=True, text=True, timeout=60)
     jar = Path(output) / 'radial-capture.jar'
     with zipfile.ZipFile(jar, 'w') as archive:
-        archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nAgent-Class: zombie.ui.VehicleDoorRadialCapture\n\n')
+        archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nAgent-Class: net.alexredby.nativechecks.VehicleDoorRadialCapture\n\n')
         for path in classes.rglob('*.class'):
             archive.write(path, path.relative_to(classes).as_posix())
     runtime.setdefault('fixture', {})['attach'] = {'client1': [{
         'jar': str(jar), 'output': str(Path(output) / 'client1'),
         'classpath': str(classes) + os.pathsep + str(game / 'projectzomboid.jar'),
-        'class': 'zombie.ui.VehicleDoorRadialCapture', 'ready': '[VEHICLE_DOORS] RADIAL_CAPTURE_READY'}]}
+        'class': 'net.alexredby.nativechecks.VehicleDoorRadialCapture', 'ready': '[VEHICLE_DOORS] RADIAL_CAPTURE_READY'}]}
     runtime.setdefault('fixture', {}).update(server_ready='[STARTUP_TEST] SERVER_READY',
                                             failure_markers=[MARKER + 'FAIL '])
 

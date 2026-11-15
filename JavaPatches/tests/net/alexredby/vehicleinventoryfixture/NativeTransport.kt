@@ -6,7 +6,7 @@ import net.bytebuddy.agent.builder.AgentBuilder
 import net.bytebuddy.asm.MemberSubstitution
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.matcher.ElementMatchers
-import zombie.vehicles.VehicleInventoryOrderingChecks
+import net.alexredby.pztoolkitjavapatches.VehicleInventoryOrderingChecks
 
 /**
  * Substitute only the JNI invocation in Java Send; preserve native method flags and class shape.

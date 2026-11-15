@@ -14,7 +14,7 @@ local function derive(self, name)
 end
 ISBaseObject = {derive = derive}
 Events = {OnTick = {Add = function() end}, OnGameStart = {Add = function(fn) fn() end}}
-for _, name in ipairs({'ClimbThroughWindowState', 'ClimbOverFenceState', 'ClimbOverWallState', 'ClimbSheetRopeState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState', 'ClimbOverFenceState', 'ClimbOverWallState', 'ClimbSheetRopeState',
     'ClimbDownSheetRopeState', 'CloseWindowState', 'OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end
@@ -43,6 +43,7 @@ end
 local operations = toolkit('ActionQueueOperations')
 local craft = toolkit('ActionQueueCraft')
 if not PZSurvivorToolkit.ActionQueueDefinitions then assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueDefinitions.lua'))() end
+assert(loadfile(ProjectRoot..'/tests/support/action_queue_source.lua'))()
 assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueuePolicy.lua'))()
 Events.OnServerCommand = {Add = function() end}
 toolkit('ActionQueueLifecycle'); toolkit('ActionQueueAcknowledgements')

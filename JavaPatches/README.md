@@ -1,6 +1,6 @@
 # Toolkit Java Patches (Experimental)
 
-Engine fixes for **Project Zomboid B42.21**, requiring **ZombieBuddy 2.3.4+** in every client and the server. Unsupported game bytecode disables affected patches. Install the same prepared JAR everywhere and save approvals after updates. The current version comes from [build.py](build.py); changes are in the [changelog](../CHANGELOG.md#toolkit-java-patches).
+Engine fixes for **Project Zomboid B42.22.2**, requiring **ZombieBuddy 2.3.4+** in every client and the server. Unsupported game bytecode disables affected patches. Install the same prepared JAR everywhere and save approvals after updates. The current version comes from [build.py](build.py); changes are in the [changelog](../CHANGELOG.md#toolkit-java-patches).
 
 Use the [combined installation guide](../MOD_INSTALL.md) for the complete mod set. This guide covers the separate Host/server loader, activation and collecting vehicle logs. Building requires JDK 25+ and Kotlin 2.4.21; playing uses the game's runtime and needs neither compiler. See [Java development](../docs/development/JAVA.md) for builds and tests.
 
@@ -13,7 +13,7 @@ Use the [combined installation guide](../MOD_INSTALL.md) for the complete mod se
 | Plastic Welding Gun | Exclude the reviewed DAMN Library duplicate battery recipes during script registration. Native insert/remove recipes and charge transfer remain available; Workshop files and unknown source versions stay unchanged. |
 | Food freshness | Correct the reviewed CleanUI helper so visible collapsed stacks refresh every member instead of only the first 50. Native ageing and events remain in control; Workshop files are unchanged. Unknown CleanUI versions retain their original code. |
 | Vehicle salvage settings | Correct the reviewed VRO B42 reader to honor the declared full-salvage toggle and part-recipe times, retaining legacy settings only as absent-value fallbacks. Workshop files, saved settings and whole-vehicle duration are unchanged; unknown sources keep upstream behavior. |
-| Animals | Trailer reconciliation, early equipment delivery and hutch unloading guards. These do not restore previously lost animals. [Scope](../docs/reference/JAVA_PATCHES.md#animal-trailer-reconciliation). |
+| Animals | Trailer reconciliation and early equipment-delivery guards. These do not restore previously lost animals. [Scope](../docs/reference/JAVA_PATCHES.md#animal-trailer-reconciliation). |
 | Vehicles and carts | Recover the confirmed driver-authority handoff race; support Toolkit cart control and rendering. This does not fix every desync. [Cart limits](../docs/features/VEHICLES.md#saucedcarts). |
 | Media | Server VHS handling and macOS mod-video paths. [Playback setup](../MOD_INSTALL.md#tv--radio-reinvented). |
 | Engine data and assets | Guarded corrections for properties, fluids, fences, fonts, a recipe icon and the stock basement hall. [Full patch reference](../docs/reference/JAVA_PATCHES.md). |
@@ -57,14 +57,13 @@ The supplied `start-host.ps1` and `start-host.command` are **legacy fallbacks**,
 
 ### Verify activation
 
-Find the startup line beginning **`[PZToolkitJavaPatches] Experimental B42.21 patch:`** in both client and server logs. It reports separate availability flags, including `vehicleOwnership`, `media`, `radioInventoryOff`, `build`, `video`, `animal`, `equipment`, `hutch`, `cart`, `properties`, `fluids` and `fences`. The relevant flags must be `true`; the [patch reference](../docs/reference/JAVA_PATCHES.md) lists additional per-fix checks. Also verify ZombieBuddy's actual transformation messages:
+Find the startup line beginning **`[PZToolkitJavaPatches] Experimental B42.22.2 patch:`** in both client and server logs. It reports separate availability flags, including `vehicleOwnership`, `media`, `radioInventoryOff`, `build`, `video`, `animal`, `equipment`, `cart`, `properties`, `fluids` and `fences`. The relevant flags must be `true`; the [patch reference](../docs/reference/JAVA_PATCHES.md) lists additional per-fix checks. Also verify ZombieBuddy's actual transformation messages:
 
 - Server: `[ZB] Transformed: zombie.vehicles.BaseVehicle`, `[ZB] Transformed: zombie.radio.devices.DeviceData` and `[ZB] Transformed: zombie.core.BuildAction`.
 - Client and server item-stat decoder: `[ZB] Transformed: zombie.network.packets.ItemStatsPacket`. Omitted food values reset to the native wire defaults when a packet handler is reused.
 - Each client: `[ZB] Transformed: zombie.characters.NetworkZombieAI`, `[ZB] Transformed: zombie.vehicles.VehicleInterpolation` `[ZB] Transformed: zombie.characters.NetworkPlayerAI` and `[ZB] Transformed: zombie.network.packets.EquipPacket`.
 - Client and server fluid parser: `[ZB] Transformed: zombie.scripting.entity.components.fluids.FluidContainerScript`.
 - Client and server property fallback: `[ZB] Transformed: zombie.core.properties.IsoPropertyType`.
-- Client and server hutch guard: `[ZB] Transformed: zombie.iso.objects.IsoHutch`.
 - Local cart control and pose rendering: transformations of `zombie.characters.IsoPlayer`, `zombie.characters.IsoGameCharacter` and `zombie.core.skinnedmodel.model.ModelSlotRenderData`. See [cart behavior and limits](../docs/features/VEHICLES.md#saucedcarts).
 
 The selected Workshop `AnimalTrailerSyncMPFix` supplies a separate trailer timer fix; check `[AnimalTrailerSyncMPFix] ACTIVE` in the server log too (verified v1.3). See its [scope and installation](../docs/MODPACK.md#39-toolkit-java-patches).
@@ -77,7 +76,7 @@ Version 0.1.10 repairs an occupied vehicle whose physics owner disagrees with it
 
 Install the same updated Java mod on the server and clients, save the changed JAR approval and restart them. The repair needs ZombieBuddy **in the Host child/server process**; check `vehicleOwnership=true` and the server's actual `zombie.vehicles.BaseVehicle` transformation.
 
-**The ownership repair is active without a diagnostic flag** on supported B42.21 bytecode. The two recording controls require Toolkit 0.1.254 or newer and Java Patches 0.1.53 or newer, with matching prepared mods on every side. After the normal update/restart and saved JAR approvals:
+**The ownership repair is active without a diagnostic flag** on supported B42.22 bytecode. The two recording controls require Toolkit 0.1.254 or newer and Java Patches 0.1.53 or newer, with matching prepared mods on every side. After the normal update/restart and saved JAR approvals:
 
 1. The Host owner completes the [Host setup](#host-save-approvals-first), launches normally through Steam with Java Patches 0.1.58+ enabled in the client, and starts the usual Host profile. Toolkit supplies the child server's loader automatically.
 2. Before driving, the Host owner opens **Options > Mods > PZ Survivor Toolkit > Vehicle diagnostics**, then enables **Record traces on this client** and **Record traces on the Host server**. Wait for **Recording is active** for both sides. The server checkbox waits for a reply; a timeout means its state is unknown, not that recording is off or confirmed active.

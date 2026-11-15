@@ -18,11 +18,11 @@ getTextOrNull = function() end
 getText = function(key) return key end
 ISMouseDrag = {}
 local shift, ctrl = false, false
-local playerInventory = {}
+local playerInventory = {getType=function()return 'inventory'end}
 getSpecificPlayer = function() return {nullifyAiming=function() end} end
 getPlayerInventory = function() return {inventory=playerInventory} end
 getPlayerLoot = getPlayerInventory
-getCore = function() return {getGameMode=function() return 'Sandbox' end} end
+getCore = function() return {isTutorial=function() return false end, getGameMode=function() return 'Sandbox' end} end
 CleanUI_getColumnDividerAtPoint = function() end
 instanceof = function(value) return value and value.isItem == true end
 isShiftKeyDown = function() return shift end
@@ -149,12 +149,33 @@ local function buildClass(source, enhanced)
     source = source:gsub('CleanUI_Vanilla_ISInventoryPane', 'ISInventoryPane'):gsub('CleanUI_Vanilla_', 'CleanUI_')
     local class = {MAX_ITEMS_IN_STACK_TO_RENDER = 50}
     local env = setmetatable({ISInventoryPane = class}, {__index = _G})
+    local constant=source:match('ISInventoryPane%.MAX_ITEMS_IN_STACK_TO_RENDER%s*=%s*%d+')
+    if constant then local loader=assert(loadstring(constant));setfenv(loader,env);loader()end
     env.CleanUI_getStackDisplayItem = function(group)
         return group and (group.cleanUIDisplayItem or group.firstItem or group.items[1])
     end
     env.CleanUI_getValidDblClickContainer = function(value) return value:getContainer() end
     env.CleanUI_getStackActualStartIndex = function(group)
         return group.cleanUILargeStackOptimized and 1 or 2
+    end
+    if source:find('local function CleanUI_reconcileRowPriorityAfterRefresh',1,true) then
+        local categoryStart=assert(source:find('local function CleanUI_getCachedCategoryText',1,true))
+        local categoryEnd=assert(source:find('local function CleanUI_getCachedTruncatedText',categoryStart,true))
+        local searchStart=assert(source:find('local function CleanUI_normalizeSearchText',1,true))
+        local searchEnd=assert(source:find('function ISInventoryPane:searchContainer',searchStart,true))
+        local helpers='local CLEANUI_CATEGORY_TEXT_CACHE={}\n'..source:sub(categoryStart,categoryEnd-1)
+            ..source:sub(searchStart,searchEnd-1)..'\nreturn CleanUI_reconcileRowPriorityAfterRefresh'
+        local loader=assert(loadstring(helpers));setfenv(loader,env)
+        env.CleanUI_reconcileRowPriorityAfterRefresh=loader()
+    end
+    for _,name in ipairs({'CleanUI_getStackDisplayItem','CleanUI_getStackActualStartIndex','CleanUI_getValidDblClickContainer'})do
+        local first=source:find('local function '..name..'(',1,true)
+        if first then
+            local last=math.min(source:find('\nlocal function ',first+1,true)or #source+1,
+                source:find('\nfunction ISInventoryPane:',first+1,true)or #source+1)
+            local loader=assert(loadstring(source:sub(first,last-1)..'\nreturn '..name));setfenv(loader,env)
+            env[name]=loader()
+        end
     end
     for _, name in ipairs({'selectIndex', 'onMouseDown', 'onMouseUp', 'onMouseDoubleClick', 'onMouseMove', 'saveSelection', 'restoreSelection'}) do
         local chunk = assert(loadstring(method(source, name))); setfenv(chunk, env); chunk()
@@ -203,12 +224,17 @@ local function buildClass(source, enhanced)
     local renderRefresh = chunk()
     -- Execute the upstream drag-offset branch and draw call, recording its
     -- coordinates without mocking the formula that caused the drift.
-    local dragBranch = assert(render:match('(local isDragging = false.-)local topOfItem'))
-    local dragRect = assert(render:match('(self:drawRect%(1%+xoff,[^\n]+)'))
-    local dragChunk = assert(loadstring('return function(self) local doDragged=true; '
+    local dragBranch = render:match('(local isDragging = false.-)local topOfItem')
+    local dragOffsets = ''
+    if not dragBranch then
+        dragBranch = assert(render:match('(if not hasActiveDrag or selectedRows%[y %+ 1%] == nil then.-\n%s*end)'))
+        dragOffsets = assert(render:match('(local xoff = 0%s+local yoff = 0%s+if doDragged then.-\n%s*end)'))
+    end
+    local dragRect = assert(render:match('[\r\n]%s*(self:drawRect%(1%+xoff,[^\n]+)'))
+    local dragChunk = assert(loadstring('return function(self) local doDragged=true; local hasActiveDrag=self.dragging~=nil and self.dragStarted; local selectedRows=self.selected; '
         .. 'local MOUSEX,MOUSEY=self:getMouseX(),self:getMouseY(); '
         .. 'for index in ipairs(self.items) do local y,xoff,yoff,doIt=index-1,0,0,true; '
-        .. dragBranch .. ' if doIt then ' .. dragRect .. ' end end end'))
+        .. dragBranch .. '\n' .. dragOffsets .. '\n if doIt then ' .. dragRect .. ' end end end'))
     setfenv(dragChunk, env)
     local renderDrag = dragChunk()
     function class:renderdetails(doDragged)
@@ -221,7 +247,7 @@ local function buildClass(source, enhanced)
                     self.items[#self.items + 1] = group
                     if not self.collapsed[group.name] then
                         local first = env.CleanUI_getStackActualStartIndex(group)
-                        for i=first,math.min(#group.items, first + 49) do
+                        for i=first,math.min(#group.items, first + class.MAX_ITEMS_IN_STACK_TO_RENDER - 1) do
                             self.items[#self.items + 1] = group.items[i]
                         end
                     end

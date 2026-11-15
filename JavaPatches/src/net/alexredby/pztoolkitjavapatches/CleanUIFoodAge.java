@@ -15,19 +15,19 @@ import zombie.gameStates.ChooseGameInfo;
 
 /** Amend the reviewed compiler input, preserving Workshop files and the original renderer. */
 public final class CleanUIFoodAge {
-    public static final String INPUT_SHA256 = "f5992aaebc4f629fd6ebb7b049be86a3e0995ea82276b23f22cf921a18bb7cc0";
-    public static final String OUTPUT_SHA256 = "a0e001a7de8cd908c1e0e95d06e551bfb8f9cc4dac7f12ed74becfd8c2cb1a74";
+    public static final String INPUT_SHA256 = "34e7b696f17417b0e93cbb6b4d31e49b70bf5d2efa9e7975b362dd42df32ca0a";
+    public static final String OUTPUT_SHA256 = "d38245619889bc1787746a02e00c85f8618b216fc82652a94b49337a24761aba";
     public static final String TARGET = "media/lua/client/ISUI/ISInventoryPane.lua";
     public static final String VANILLA_TARGET = "media/lua/client/CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua";
-    public static final String VANILLA_INPUT_SHA256 = "a122ffd45d91e87a367cfa352385ff6092774a949f494e220dd91f62c4ae9c57";
-    public static final String VANILLA_OUTPUT_SHA256 = "89b5d3ba7383caccce32408d93fe26c51f1d7c83e6adb75feadb5c3d03a22411";
+    public static final String VANILLA_INPUT_SHA256 = "7cec73702f1635d9a02b1f0c41ddc8e0502ef7f52e5a950ebbff57451f368b21";
+    public static final String VANILLA_OUTPUT_SHA256 = "f47c291d0d54715cd611b85305f944da78ff8d5071abae542e87d838824562f3";
     private static final int MAX_SOURCE_CHARS = 1024 * 1024;
     public static final boolean SUPPORTED =
-        BytecodeSupport.supports("zombie/Lua/LuaManager.class", "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d")
+        BytecodeSupport.supports("zombie/Lua/LuaManager.class", "8613349b0e0fdb663fc16ef4397ca60ef7135925fa6116f92d958ea97d09eb32")
         && BytecodeSupport.supports("se/krka/kahlua/luaj/compiler/LuaCompiler.class", "dd2b68ac4ce7a8e65cd7c3b11a3c1672a2471b824a675d4085e7b07041d4cbad")
-        && BytecodeSupport.supports("zombie/ZomboidFileSystem.class", "c4e5a5123bc43d03f2585c40f37544c50c1e702eebceb78bec94069e410b6750")
-        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo.class", "8c4b47ba966f071120feeec090202967e414246e28b5b6fd6a622a6a266af651")
-        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo$Mod.class", "c91e48400b77015c450a696f2d7c5665fa872f1a76fc05d2c38e72ba2928dc69");
+        && BytecodeSupport.supports("zombie/ZomboidFileSystem.class", "9f902cc912c7802a08f80614f5f8d3b74f249fc5f2c0204eb759f2e74dda175e")
+        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo.class", "5b124fe4e6f8525ed431e8c1ef62238597a7981276c13c3ddaa39c1ca1cee4b0")
+        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo$Mod.class", "9f304e567f306ff43db87e85927b794be2727f5d5cb6bafbe9c6c3802de08224");
     private static final ThreadLocal<Scope> LOADING = new ThreadLocal<>();
 
     private CleanUIFoodAge() { }

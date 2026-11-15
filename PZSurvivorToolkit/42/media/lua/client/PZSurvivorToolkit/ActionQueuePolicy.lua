@@ -46,7 +46,7 @@ local spatialPrerequisites=type(editBindingCapture)=="function"and editBindingCa
     {owner=math,keys={"floor"}},{owner=string,keys={"byte","sub","gsub","match"}},
 })
 -- Updated together with the source-owned factory; a same-file callback is not its role.
-local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=939,3155442316
+local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=939,13384240
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
@@ -973,7 +973,45 @@ local function pendingPreparation(action)
         and settlement and not settlement.requiredStep(action) and not settlement.isCleanup(action)
         and nativePendingCancelHasNoEffects() and action.forceCancel == nativeForceCancel
 end
+-- A verified producer can supply stronger complete-operation facts without
+-- creating a second native Equip matcher or widening ordinary pending edits.
+local fitnessEquipment={line=633,source=2193887413,firstLine=getFirstLineOfClosure,filename=getFilenameOfClosure,
+ reader=getModFileReader,call=pcall,origin=Proof and Proof.closure,matches=Proof and Proof.matches,capture=Proof and Proof.captureBindings}
+function fitnessEquipment.inspect(action)
+ if action.Type~='ISEquipWeaponAction' or type(Proof)~='table'
+  or type(fitnessEquipment.origin)~='function' or type(fitnessEquipment.matches)~='function'
+  or type(fitnessEquipment.capture)~='function' or type(fitnessEquipment.firstLine)~='function'
+  or type(fitnessEquipment.reader)~='function' or getFirstLineOfClosure~=fitnessEquipment.firstLine
+  or getFilenameOfClosure~=fitnessEquipment.filename or getModFileReader~=fitnessEquipment.reader
+  or pcall~=fitnessEquipment.call or Proof.closure~=fitnessEquipment.origin
+  or Proof.matches~=fitnessEquipment.matches or Proof.captureBindings~=fitnessEquipment.capture then return end
+ local owner=Toolkit.ActionQueueFitness
+ if type(owner)~='table' or not editNativeMeta or not editNativeMeta(owner,nil) then return end
+ local callback=owner.nativeEquipmentContract
+ if type(callback)~='function' then return end
+ if not fitnessEquipment.owner then
+  if fitnessEquipment.attempted then return end
+  fitnessEquipment.attempted=true
+  if type(callback)~='function' or not fitnessEquipment.origin(callback,'ActionQueueFitness.lua') then return end
+  local watch=fitnessEquipment.capture({
+   {owner=_G,keys={'PZSurvivorToolkit','getFirstLineOfClosure','getFilenameOfClosure','getModFileReader','pcall'}},
+   {owner=Toolkit,keys={'ActionQueueFitness'}},{owner=owner,exact=true},
+   {owner=Proof,keys={'captureBindings','closure','matches'}},
+  })
+  if not watch then return end
+  local ok,line=fitnessEquipment.call(fitnessEquipment.firstLine,callback)
+  if not ok or line~=fitnessEquipment.line or not watch()
+   or not fitnessEquipment.matches('media/lua/client/PZSurvivorToolkit/ActionQueueFitness.lua',fitnessEquipment.source,'PZSurvivorToolkit',true)
+   or not watch() then return end
+  fitnessEquipment.owner,fitnessEquipment.callback,fitnessEquipment.watch=owner,callback,watch
+ end
+ if owner~=fitnessEquipment.owner or callback~=fitnessEquipment.callback or not fitnessEquipment.watch() then return end
+ local ok,result=fitnessEquipment.call(callback,action)
+ if ok and fitnessEquipment.watch() then return result end
+end
 local function equipmentResources(action)
+    local owned=fitnessEquipment.inspect(action)
+    if owned then return owned end
     local result=itemResources(action)
     if result then
         result.hands=action.character;result.cancelWaiting,result.preparation=false,true
@@ -1603,7 +1641,7 @@ local function wringCapacityNonIncreasing(action,contract,source,context)
         or entry.behavior~=behavior then return false end
     if wringCapacitySourceTrusted==nil then
         wringCapacitySourceTrusted=type(wringInspector)=="function" and Proof.closure(wringInspector,"ActionQueueWring.lua")
-            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",1510685525,"PZSurvivorToolkit",true)
+            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",2814327545,"PZSurvivorToolkit",true)
     end
     return wringCapacitySourceTrusted==true
 end
@@ -1627,7 +1665,7 @@ local function clothingRemovalCapability(action,contract,source,context)
         or Proof.closure~=clothingOrigin or Proof.matches~=clothingMatches then return false end
     if clothingSourceTrusted==nil then
         clothingSourceTrusted=clothingOrigin(clothingInspect,"ActionQueueClothing.lua")
-            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",950563814,"PZSurvivorToolkit",true)
+            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",66286558,"PZSurvivorToolkit",true)
     end
     return clothingSourceTrusted==true
 end
@@ -2710,7 +2748,7 @@ local function inDecision(queue, context, output, callback, ...)
     local scope={queue = queue, context = context, failures = {}, executions = {}, native = {}}
     activeDecision = scope
     local ok,result=pcall(spatialEdits.lookupDecision,scope,callback,...)
-    if ok and scope.spatialQueueWatch and result.reason==nil and result.allowed~=false then
+    if ok and spatialEdits.shape.kind(result)=="table" and scope.spatialQueueWatch and result.reason==nil and result.allowed~=false then
         local valid=spatialEdits.shapeWatch()and scope.spatialQueueWatch()
         for _,proof in spatialEdits.shape.array(scope.spatial or{})do
             if not valid then break end
@@ -2729,11 +2767,11 @@ local function inDecision(queue, context, output, callback, ...)
         end
         if result.reason==nil and scope.spatial then result.spatialValidated=true end
     end
-    if ok and scope.commonActiveEdit and result.reason==nil and result.allowed~=false then
+    if ok and spatialEdits.shape.kind(result)=="table" and scope.commonActiveEdit and result.reason==nil and result.allowed~=false then
         result.commonActiveEdit=true
         result.commonActiveEditRoute=scope.commonActiveEditRoute
     end
-    if ok and result.reason==nil and result.allowed~=false and not scope.lookup.watch()then
+    if ok and spatialEdits.shape.kind(result)=="table" and result.reason==nil and result.allowed~=false and not scope.lookup.watch()then
         result.reason,result.allowed="unavailable",false
         if result.rawResults then result.rawResults[1]="unavailable"end
     end

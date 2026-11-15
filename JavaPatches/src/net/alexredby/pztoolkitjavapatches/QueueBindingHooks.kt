@@ -12,19 +12,19 @@ internal object QueueBindingHooks {
     val SUPPORTED =
         BytecodeSupport.supports(
             "zombie/Lua/LuaManager.class",
-            "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d",
+            "8613349b0e0fdb663fc16ef4397ca60ef7135925fa6116f92d958ea97d09eb32",
         ) &&
             BytecodeSupport.supports(
                 "zombie/ZomboidFileSystem.class",
-                "c4e5a5123bc43d03f2585c40f37544c50c1e702eebceb78bec94069e410b6750",
+                "9f902cc912c7802a08f80614f5f8d3b74f249fc5f2c0204eb759f2e74dda175e",
             ) &&
             BytecodeSupport.supports(
                 "zombie/gameStates/ChooseGameInfo.class",
-                "8c4b47ba966f071120feeec090202967e414246e28b5b6fd6a622a6a266af651",
+                "5b124fe4e6f8525ed431e8c1ef62238597a7981276c13c3ddaa39c1ca1cee4b0",
             ) &&
             BytecodeSupport.supports(
                 "zombie/gameStates/ChooseGameInfo\$Mod.class",
-                "c91e48400b77015c450a696f2d7c5665fa872f1a76fc05d2c38e72ba2928dc69",
+                "9f304e567f306ff43db87e85927b794be2727f5d5cb6bafbe9c6c3802de08224",
             ) &&
             BytecodeSupport.supports(
                 "se/krka/kahlua/luaj/compiler/LuaCompiler.class",
@@ -60,7 +60,7 @@ internal object QueueBindingHooks {
             ) &&
             BytecodeSupport.supports(
                 "se/krka/kahlua/j2se/KahluaTableImpl.class",
-                "101df1481366f976f76c037094e29f5ad21c71f5026dc3d0693f25d68b1c79f7",
+                "1e79dbff83e85c8863df63f7847d3a506fddbaefa423cb676734751599db1aea",
             ) &&
             BytecodeSupport.supports(
                 "se/krka/kahlua/stdlib/TableLib.class",
@@ -76,7 +76,7 @@ internal object QueueBindingHooks {
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/Core.class",
-                "8f5c69740c8bf2181123a831ab68d1dfb047453687cca6dc62c77816d76ab360",
+                "dcf8345b049013b0b40a768f7f1501bc595e5389ad6f20e3c83879dc98588f04",
             )
 
     data class Compilation(val reader: Reader, val closure: LuaClosure?)

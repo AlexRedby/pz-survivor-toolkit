@@ -7,6 +7,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from queue_checks import pack, mod_inputs
+from tests.support.game_version import write_game_jar
 
 
 class PackLockTests(unittest.TestCase):
@@ -16,7 +17,7 @@ class PackLockTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.game = self.root / 'game'
         self.game.mkdir()
-        (self.game / 'projectzomboid.jar').write_bytes(b'game build')
+        write_game_jar(self.game)
         self.ini = self.root / 'SurvivorQoL-selected.ini'
         self.ini.write_text('Mods=First;Second\nWorkshopItems=1;2\n')
         for id in ('First', 'Second'):
@@ -42,6 +43,26 @@ class PackLockTests(unittest.TestCase):
         self.assertEqual(str(self.root / 'First'), self.validate()['First'])
         with self.assertRaises(FileExistsError):
             self.create()
+
+    def test_lock_records_engine_and_selected_layer_and_rejects_wrong_or_legacy_context(self):
+        write_game_jar(self.game, 22)
+        current = self.root / 'First/42.22'
+        current.mkdir()
+        (current / 'mod.info').write_text('id=First\nversion=2.0\n')
+        value = self.create()
+        self.assertEqual([42, 22], value['game_version'])
+        self.assertEqual('42.22', value['mods'][0]['selected_layer'])
+        self.assertEqual('2.0', value['mods'][0]['version'])
+        self.validate()
+        for change in ({'game_version': [42, 21]}, {'game_version': None}):
+            self.output.write_text(json.dumps(dict(value, **change)))
+            with self.assertRaisesRegex(ValueError, 'engine version'):
+                self.validate()
+        self.output.write_text(json.dumps(value))
+        value['mods'][0]['selected_layer'] = '42'
+        self.output.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, 'Selected mod layer'):
+            self.validate()
 
     def test_invalid_selected_ids_are_rejected_before_resolving_sources(self):
         for value in ('First;First', 'First;;Second', 'First;', 'First;../Second', 'First; Second', ''):

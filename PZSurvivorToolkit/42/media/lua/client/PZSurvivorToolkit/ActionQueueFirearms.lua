@@ -95,7 +95,7 @@ local function trusted(action)
     end
     if sourceTrusted == nil then
         sourceTrusted = Proof.matches("media/lua/shared/TimedActions/ISRackFirearm.lua", 3852187013, nil, true)
-            and Proof.matches("media/lua/shared/TimedActions/ISReloadWeaponAction.lua", 1833975495, nil, true)
+            and Proof.matches("media/lua/shared/TimedActions/ISReloadWeaponAction.lua", 2545572102, nil, true)
             and Proof.matches("media/lua/shared/TimedActions/ISBaseTimedAction.lua", 3104185167, nil, true)
     end
     if not sourceTrusted then return false, "native-source" end

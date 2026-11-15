@@ -58,7 +58,7 @@ def _peer_probe(project, output, game, jdk, locations):
     # fail preparation, rather than leaving a game run without cancellation evidence.
     preparation_process.run([str(Path(jdk) / 'bin/java'), '-Djava.awt.headless=true',
                     '-Dzomboid.steam=0', '-Djava.library.path=.', '-cp', os.pathsep.join([str(classes), classpath]),
-                    'zombie.core.EnginePeerProbeChecks'],
+                    'net.alexredby.queueengineprobechecks.EnginePeerProbeChecks'],
                    cwd=game, check=True, capture_output=True, text=True, timeout=60)
     compiled = sorted((classes / 'net/alexredby/queueengineprobe').glob('Main*.class'))
     if not compiled:
@@ -84,7 +84,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 shutil.copytree(Path(project) / 'tests/native_queue/engine' / side, lua / side, dirs_exist_ok=True)
             layer = cache / 'mods/EnginePeerProbe/42'
             (layer / 'media/java').mkdir(parents=True)
-            (layer / 'mod.info').write_text('name=Read-only queue peer probe\nid=EnginePeerProbe\nversionMin=42.21\n'
+            (layer / 'mod.info').write_text('name=Read-only queue peer probe\nid=EnginePeerProbe\nversionMin=42.22\n'
                                           'require=\\ZombieBuddy\njavaPkgName=net.alexredby.queueengineprobe\n'
                                           'javaJarFile=media/java/EnginePeerProbe.jar\n')
             shutil.copy2(probe, layer / 'media/java/EnginePeerProbe.jar')

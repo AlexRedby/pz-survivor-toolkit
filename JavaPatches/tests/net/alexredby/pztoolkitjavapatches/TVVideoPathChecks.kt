@@ -11,6 +11,13 @@ import zombie.core.textures.VideoTexture
 import zombie.gameStates.ChooseGameInfo
 
 object TVVideoPathChecks {
+    /** A failed fixture lookup must assert before the headless JVM tries to allocate a GL texture. */
+    private class Cache : HashMap<String, VideoTexture>() {
+        override fun containsKey(key: String): Boolean {
+            if (!super.containsKey(key)) throw AssertionError("Unexpected native video cache key: $key; seeded=$keys")
+            return true
+        }
+    }
     private fun verify(value: Boolean, reason: String) {
         if (!value) throw AssertionError(reason)
     }
@@ -19,7 +26,20 @@ object TVVideoPathChecks {
         type.getDeclaredField(name).apply { isAccessible = true }
 
     private fun key(filename: String?): String =
-        ZomboidFileSystem.instance.getMediaPath("videos/$filename")
+        // The reviewed fixture has one active mod and its video in the version directory.
+        // 42.22 resolves that provider before native videos and retains the path spelling as key.
+        Path.of(ChooseGameInfo.getModDetails(MOD).getVersionDir(), "media/videos/$filename")
+            .toAbsolutePath().toString()
+
+    private fun rejectedPrefix(filename: String) {
+        try {
+            VideoTexture.getOrCreate(filename, 160, 120, false)
+            throw AssertionError("native prefix guard accepted the malformed Workshop path")
+        } catch (failure: IllegalArgumentException) {
+            verify(failure.message?.startsWith("Invalid prefix found for:") == true,
+                "unrelated native video failure: $failure")
+        }
+    }
 
     private fun video(unsafe: Unsafe, filename: String): VideoTexture =
         (unsafe.allocateInstance(VideoTexture::class.java) as VideoTexture).apply {
@@ -116,9 +136,10 @@ object TVVideoPathChecks {
         )
 
         val unsafe = field(Unsafe::class.java, "theUnsafe").get(null) as Unsafe
-        val successful =
-            field(VideoTexture::class.java, "successfullyLoaded").get(null)
-                as HashMap<String, VideoTexture>
+        val cacheField = field(VideoTexture::class.java, "successfullyLoaded")
+        val successful = Cache()
+        successful.putAll(cacheField.get(null) as HashMap<String, VideoTexture>)
+        unsafe.putObjectVolatile(unsafe.staticFieldBase(cacheField), unsafe.staticFieldOffset(cacheField), successful)
         val failed = field(VideoTexture::class.java, "failedToLoad").get(null) as HashSet<String>
         val originalKey = key(input)
         val correctedKey = key(redirected)
@@ -126,10 +147,8 @@ object TVVideoPathChecks {
         val correctedVideo = video(unsafe, correctedKey)
         successful[originalKey] = originalVideo
         successful[correctedKey] = correctedVideo
-        verify(
-            VideoTexture.getOrCreate(input, 160, 120, false) === originalVideo,
-            "baseline did not use its original native cache key",
-        )
+        // The new engine checks allowed roots before even consulting this cached bad path.
+        rejectedPrefix(input)
         val originalFileMap = HashMap(fileSystem.activeFileMap)
         PatchEngine.applyPatches(
             "net.alexredby.pztoolkitjavapatches",
@@ -156,32 +175,26 @@ object TVVideoPathChecks {
         field(Texture::class.java, "destroyed").setBoolean(correctedVideo, true)
         verify(
             VideoTexture.getOrCreate(input, 160, 120, false) === correctedVideo &&
-                correctedKey !in successful,
+                successful.entries.none { it.key == correctedKey },
             "native destroyed-entry eviction changed",
         )
         successful[correctedKey] = correctedVideo
         failed.add(correctedKey)
         correctedVideo.closeAndDestroy()
         verify(
-            correctedKey !in successful &&
+            successful.entries.none { it.key == correctedKey } &&
                 correctedKey !in failed &&
                 successful[originalKey] === originalVideo,
             "native close removed inconsistent cache keys",
         )
 
         fileSystem.getModIDs().remove(MOD)
-        verify(
-            VideoTexture.getOrCreate(input, 160, 120, false) === originalVideo,
-            "inactive mod changed native lookup",
-        )
+        rejectedPrefix(input)
         fileSystem.getModIDs().add(MOD)
         val system = System.getProperty("os.name")
         try {
             System.setProperty("os.name", "non-Mac fixture")
-            verify(
-                VideoTexture.getOrCreate(input, 160, 120, false) === originalVideo,
-                "non-Mac path changed native lookup",
-            )
+            rejectedPrefix(input)
         } finally {
             System.setProperty("os.name", system)
         }
@@ -201,10 +214,7 @@ object TVVideoPathChecks {
             "woven lookup did not follow the changed mod directory",
         )
         Files.delete(moved.resolve("media/videos/Future_Video.bik"))
-        verify(
-            VideoTexture.getOrCreate(input, 160, 120, false) === originalVideo,
-            "missing active file changed native lookup",
-        )
+        rejectedPrefix(input)
         verify(
             originalFileMap == fileSystem.activeFileMap,
             "video correction changed global filesystem mappings",

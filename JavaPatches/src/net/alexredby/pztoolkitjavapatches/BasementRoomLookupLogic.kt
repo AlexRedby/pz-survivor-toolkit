@@ -11,7 +11,7 @@ internal object BasementRoomLookupLogic {
     val SUPPORTED =
         BytecodeSupport.supports(
             "zombie/basements/Basements.class",
-            "769908ad1fdab2fb667d41943fde29e91b2148d365e5993117601c07c854380c",
+            "295eebbd0c3361e6a92ca88dd5bd29727e875c4ae5e695d299b4ace0bf0d6773",
         ) &&
             BytecodeSupport.supports(
                 "zombie/iso/BuildingID.class",
@@ -23,19 +23,19 @@ internal object BasementRoomLookupLogic {
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/BuildingDef.class",
-                "b1374ab72a3b7668afb554c22e9a4374841613f028712f3f98bf7a461d10faf1",
+                "ee61c80790240e8a68ffb25bd368eb5651e6ef73c96818a8c75cfa86fc11f754",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/RoomDef.class",
-                "7cf340ad83010a27bb41a7b576d934c795b3a855118fc683ae80dfa02d8be989",
+                "762102d5004dace11705eee8b346291d239a824d6fced5d0890391ef02dd9b72",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/IsoMetaCell.class",
-                "ccf99cd2b176b079da51f31a74ae9408b45255a328f6d1ab6fe536600226cdee",
+                "27304239cf39ecb4d7e70951c6bfbc0f42f7ffd425fc2252ed98632d9e1fb750",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/IsoMetaGrid.class",
-                "cdd50bb0a393c766d25c9dcbc5f7e929d7e10a6b9c9b95e22c3bae94b3b5b1f9",
+                "1e8b016090a41b1388f6eb06c3b63aed8e866416ad15479f0cabe76967dbf824",
             )
 
     class Snapshot(val buildingID: Long) {

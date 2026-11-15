@@ -6,7 +6,7 @@ import sys
 import tempfile
 
 from . import preparation_process
-from .mod_selection import mod_layers
+from .mod_selection import mod_layers, game_version
 
 TEST = 'test_action_queue_borrowing_composition.lua'
 CHECKS = ('plain', 'singleton-guarded', 'merge-preserving', 'return-failure')
@@ -43,6 +43,7 @@ def qualify(project, game, locations):
     for path in sources(project):
         if not path.is_file():
             raise ValueError('Missing borrowing composition source: ' + str(path))
+    version = game_version(game)
     toolkit = Path(locations['PZSurvivorToolkit'])
     p4 = Path(locations['P4TidyUpMeister'])
     # An explicit content root must describe the same effective overlay as the
@@ -54,7 +55,7 @@ def qualify(project, game, locations):
     with tempfile.TemporaryDirectory(prefix='pz-borrowing-check-') as directory:
         root = Path(directory)
         for name in relative:
-            source = next((layer / name for layer in reversed(mod_layers(p4)) if (layer / name).is_file()), None)
+            source = next((layer / name for layer in reversed(mod_layers(p4, version)) if (layer / name).is_file()), None)
             if source is None:
                 raise ValueError('Missing selected P4 borrowing source: ' + name)
             target = root / 'p4' / name
@@ -62,7 +63,7 @@ def qualify(project, game, locations):
             target.write_bytes(source.read_bytes())
         output = root / 'report.json'
         command = [sys.executable, str(project / 'tools/run_tests.py'), '--test', TEST,
-                   '--native-action-root', str(game / 'media/lua'), '--p4-source', str(root / 'p4'),
+                   '--game', str(game), '--native-action-root', str(game / 'media/lua'), '--p4-source', str(root / 'p4'),
                    '--toolkit-source', str(toolkit), '--require-complete', '--report', str(output)]
         try:
             result = preparation_process.run(command, cwd=project, capture_output=True, text=True,

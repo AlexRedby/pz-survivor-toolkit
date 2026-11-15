@@ -40,10 +40,10 @@ import zombie.iso.objects.IsoWorldInventoryObject
 import zombie.iso.sprite.IsoSprite
 import zombie.network.GameClient
 import zombie.network.GameServer
-import zombie.util.list.PZArrayList
 
-/** Real native fixtures; no game client, action, item factory or native transfer is started. */
+/** Real native fixtures; no game client or timed-action executor is started. */
 object QueueLeafTransferFactsChecks {
+    private var forbiddenSquareListCalls = 0
     private val unsafe = Unsafe::class.java.getDeclaredField("theUnsafe")
         .apply { isAccessible = true }.get(null) as Unsafe
     private fun verify(value: Boolean, message: String) {
@@ -59,6 +59,18 @@ object QueueLeafTransferFactsChecks {
     }
     private class ForeignList : ArrayList<InventoryItem>() {
         override fun get(index: Int): InventoryItem = throw AssertionError("foreign list getter invoked")
+    }
+    private class ForeignSquareList : ArrayList<IsoObject>() {
+        override val size: Int get() { forbiddenSquareListCalls++;error("foreign square list size invoked") }
+        override fun get(index: Int): IsoObject { forbiddenSquareListCalls++;error("foreign square list getter invoked") }
+    }
+    private class ForeignSquareListApi : AbstractList<IsoObject>() {
+        override val size: Int get() { forbiddenSquareListCalls++;error("foreign List size invoked") }
+        override fun get(index: Int): IsoObject { forbiddenSquareListCalls++;error("foreign List getter invoked") }
+    }
+    private class ForeignContainers : ArrayList<ItemContainer>() {
+        override val size: Int get() { forbiddenSquareListCalls++;error("foreign container list size invoked") }
+        override fun get(index: Int): ItemContainer { forbiddenSquareListCalls++;error("foreign container list getter invoked") }
     }
 
     private class Fixture(world: Boolean = false, thumpable: Boolean = false) {
@@ -133,9 +145,55 @@ object QueueLeafTransferFactsChecks {
     private fun square(x: Int, y: Int): IsoGridSquare = bare(IsoGridSquare::class.java).also {
         field(IsoGridSquare::class.java, it, "x", x)
         field(IsoGridSquare::class.java, it, "y", y)
-        field(IsoGridSquare::class.java, it, "objects", PZArrayList(IsoObject::class.java, 8))
+        field(IsoGridSquare::class.java, it, "objects", ArrayList<IsoObject>(8))
         field(IsoGridSquare::class.java, it, "specialObjects", ArrayList<IsoObject>())
         field(IsoGridSquare::class.java, it, "nav", arrayOfNulls<IsoGridSquare>(8))
+    }
+
+    private fun nativeTransferControl(thread: KahluaThread) {
+        zombie.ui.UIManager.defaultthread = thread
+        val exposed = listOf(ItemContainer::class.java, InventoryItem::class.java, ComboItem::class.java,
+            IsoObject::class.java, IsoGameCharacter::class.java, IsoPlayer::class.java,
+            zombie.vehicles.BaseVehicle::class.java)
+        exposed.forEach { LuaManager.exposer.setExposed(it) }
+        exposed.forEach {
+            LuaManager.exposer.exposeLikeJava(it, LuaManager.env)
+            LuaManager.exposer.typeMap[it.simpleName] = it
+        }
+        for ((method, exported) in listOf("instof" to "instanceof", "isServer" to "isServer")) {
+            val parameters = if (method == "instof") arrayOf(Any::class.java, String::class.java) else emptyArray()
+            LuaManager.exposer.exposeGlobalClassFunction(LuaManager.env, LuaManager.GlobalObject::class.java,
+                LuaManager.GlobalObject::class.java.getMethod(method, *parameters), exported)
+        }
+        LuaManager.exposer.exposeGlobalClassFunction(LuaManager.env, LuaManager.GlobalObject::class.java,
+            LuaManager.GlobalObject::class.java.getMethod("getClassSimpleName", Any::class.java), "getClassSimpleName")
+        verify(thread.call(LuaCompiler.loadstring("return type(ItemContainer)=='table' and getmetatable(ItemContainer)==nil " +
+            "and getClassSimpleName(ItemContainer.chainContainsContainingItem)=='LuaJavaInvoker'",
+            "native-containment-binding", LuaManager.env), null) == true,
+            "native containment API no longer has its audited Lua binding")
+        val path = java.nio.file.Path.of("media/lua/shared/TimedActions/ISTransferAction.lua")
+        val source = java.nio.file.Files.readString(path).replace("\r", "")
+        val first = source.indexOf("function ISTransferAction:transferItem(")
+        verify(first >= 0, "actual native transfer body is missing")
+        // This is the actual final function in the native file, including all
+        // native Java inventory writes; no branch or effect is substituted.
+        val transfer = thread.call(LuaCompiler.loadstring("ISTransferAction={}\n" + source.substring(first) +
+            "\nreturn ISTransferAction.transferItem", path.toString(), LuaManager.env), null)
+        val control = Fixture()
+        control.root.items.remove(control.item)
+        control.destination.items.add(control.item)
+        field(InventoryItem::class.java, control.item, "container", control.destination)
+        control.root.id = control.item.id
+        verify(ItemContainer.chainContainsContainingItem(control.root, control.item.id), "native container-ID refusal missing")
+        val arguments = arrayOf(LuaManager.env.rawget("ISTransferAction"), control.actor, control.item,
+            control.destination, control.root, null)
+        verify(thread.call(transfer, arguments) === control.item && control.item.getContainer() === control.destination
+            && control.destination.items.contains(control.item) && !control.root.items.contains(control.item),
+            "actual native Lua moved an item despite destination container-ID collision")
+        control.root.id = 0
+        verify(thread.call(transfer, arguments) === control.item && control.item.getContainer() === control.root
+            && !control.destination.items.contains(control.item) && control.root.items.contains(control.item),
+            "ordinary actual native Lua transfer did not move the item")
     }
     private fun cell(vararg loaded: IsoGridSquare) {
         val cell = bare(IsoCell::class.java)
@@ -179,7 +237,7 @@ object QueueLeafTransferFactsChecks {
         rejected("foreign native list") { field(ItemContainer::class.java, it.destination, "items", ForeignList()) }
         rejected("consumed item") { field(InventoryItem::class.java, it.item, "isCraftingConsumed", true) }
         rejected("attached item") { field(InventoryItem::class.java, it.item, "attachedSlot", 0) }
-        rejected("hand item") { field(IsoGameCharacter::class.java, it.actor, "leftHandItem", it.item) }
+        rejected("hand item") { field(IsoGameCharacter::class.java, it.actor, "primaryHandItem", it.item) }
         rejected("worn item") { it.worn() }
         rejected("attached native list with stale negative slot") {
             val entry = bare(AttachedItem::class.java)
@@ -196,6 +254,12 @@ object QueueLeafTransferFactsChecks {
         rejected("world item") { field(InventoryItem::class.java, it.item, "worldItem", bare(IsoWorldInventoryObject::class.java)) }
         rejected("lit transformation") { field(InventoryItem::class.java, it.item, "type", "CandleLit") }
         rejected("root parent") { field(ItemContainer::class.java, it.root, "parent", null) }
+        rejected("foreign root-parent container list") {
+            field(IsoObject::class.java, it.actor, "secondaryContainers", ForeignContainers())
+        }
+        rejected("foreign world-parent container list", true) {
+            field(IsoObject::class.java, it.parent!!, "secondaryContainers", ForeignContainers())
+        }
         rejected("root special type") { field(ItemContainer::class.java, it.root, "type", "microwave") }
         rejected("root acceptance") { field(ItemContainer::class.java, it.root, "acceptItemFunction", "MustNeverRun") }
         rejected("destination acceptance") { field(ItemContainer::class.java, it.destination, "acceptItemFunction", "MustNeverRun") }
@@ -206,6 +270,15 @@ object QueueLeafTransferFactsChecks {
         rejected("foreign local player") { IsoPlayer.players[0] = null }
         rejected("dead actor") { field(IsoGameCharacter::class.java, it.actor, "health", 0f) }
         rejected("detached world anchor", true) { it.target.getObjects().clear() }
+        for (foreign in arrayOf(ForeignSquareList(), ForeignSquareListApi())) {
+            rejected("foreign world anchor list", true) {
+                field(IsoGridSquare::class.java, it.target, "objects", foreign)
+            }
+        }
+        rejected("oversized world anchor list", true) {
+            repeat(QueueLeafTransferFacts.MAX_ENTRIES) { _ -> it.target.getObjects().add(it.parent) }
+        }
+        verify(forbiddenSquareListCalls == 0, "foreign square list callback was invoked and swallowed")
         rejected("world parent does not own endpoint", true) { field(IsoObject::class.java, it.parent!!, "container", null) }
         rejected("wrong source square", true) { field(ItemContainer::class.java, it.destination, "sourceGrid", it.origin) }
         rejected("out of reach", true) { field(IsoGridSquare::class.java, it.target, "x", 5) }
@@ -224,6 +297,15 @@ object QueueLeafTransferFactsChecks {
         }
         val thump = Fixture(true, true)
         verify(thump.read() != null, "ordinary thumpable")
+        for (foreign in arrayOf(ForeignSquareList(), ForeignSquareListApi())) {
+            for (square in arrayOf(thump.target, thump.origin)) {
+                val nativeSpecialObjects = square.getSpecialObjects()
+                field(IsoGridSquare::class.java, square, "specialObjects", foreign)
+                verify(thump.read() == null, "foreign barricade list")
+                field(IsoGridSquare::class.java, square, "specialObjects", nativeSpecialObjects)
+            }
+        }
+        verify(forbiddenSquareListCalls == 0, "foreign barricade list callback was invoked and swallowed")
         field(IsoThumpable::class.java, thump.parent!!, "locked", true)
         verify(thump.read() == null, "locked thumpable")
         val barricaded = Fixture(true, true)
@@ -237,6 +319,15 @@ object QueueLeafTransferFactsChecks {
         field(IsoObject::class.java, back, "dir", IsoDirections.E)
         west.getSpecialObjects().add(back)
         verify(opposite.read() == null, "opposite barricade hidden by absent nav")
+        val north = Fixture(true, true)
+        field(IsoThumpable::class.java, north.parent!!, "north", true)
+        val oppositeNorth = square(north.target.getX(), north.target.getY() - 1)
+        cell(north.origin, north.target, oppositeNorth)
+        verify(north.read() != null, "native north-facing thumpable interface baseline")
+        val southBarricade = bare(IsoBarricade::class.java)
+        field(IsoObject::class.java, southBarricade, "dir", IsoDirections.S)
+        oppositeNorth.getSpecialObjects().add(southBarricade)
+        verify(north.read() == null, "north-facing opposite barricade hidden by absent nav")
     }
 
     private fun aliases() {
@@ -257,7 +348,7 @@ object QueueLeafTransferFactsChecks {
         rejected("alias consumed") { _, member -> member.also { field(InventoryItem::class.java, it, "isCraftingConsumed", true) } }
         rejected("alias attached slot") { _, member -> member.also { field(InventoryItem::class.java, it, "attachedSlot", 0) } }
         rejected("alias equip parent") { fixture, member -> member.also { field(InventoryItem::class.java, it, "equipParent", fixture.actor) } }
-        rejected("alias hand reference") { fixture, member -> member.also { field(IsoGameCharacter::class.java, fixture.actor, "leftHandItem", it) } }
+        rejected("alias hand reference") { fixture, member -> member.also { field(IsoGameCharacter::class.java, fixture.actor, "primaryHandItem", it) } }
         rejected("alias worn reference") { fixture, member -> member.also { fixture.worn(it) } }
         rejected("alias native attachment despite negative slot") { fixture, member ->
             val entry = bare(AttachedItem::class.java)
@@ -277,7 +368,7 @@ object QueueLeafTransferFactsChecks {
             // alias-only ambiguity check reads the public native ID field directly.
             val third = item(ForeignItem::class.java, 17)
             when (slot) {
-                "hand" -> field(IsoGameCharacter::class.java, fixture.actor, "rightHandItem", third)
+                "hand" -> field(IsoGameCharacter::class.java, fixture.actor, "secondaryHandItem", third)
                 "worn" -> fixture.worn(third)
                 else -> {
                     val entry = bare(AttachedItem::class.java)
@@ -326,6 +417,21 @@ object QueueLeafTransferFactsChecks {
         }
         val small = Fixture()
         val result = small.read() ?: throw AssertionError("ordinary carried return")
+        for (world in listOf(false, true)) {
+            val collision = Fixture(world)
+            collision.destination.id = collision.item.id
+            verify(ItemContainer.chainContainsContainingItem(collision.destination, collision.item.id)
+                && collision.read() == null, "destination container-ID collision granted facts")
+            collision.destination.id = 0
+            if (!world) {
+                collision.root.id = collision.item.id
+                verify(ItemContainer.chainContainsContainingItem(collision.destination, collision.item.id)
+                    && collision.read() == null, "nested root container-ID collision granted facts")
+                collision.root.id = 0
+            }
+            verify(collision.read() != null, "ordinary destination lost facts after collision cleared")
+        }
+        IsoPlayer.players[0] = small.actor
         verify(result.getMetatable() == null && result.getRewriteTable() == null && result.delegate.size == 12, "plain exact DTO")
         verify(result.delegate["schema"] == 2.0 && result.delegate["item"] === small.item
             && result.delegate["source"] === small.root && result.delegate["destination"] === small.destination
@@ -354,12 +460,12 @@ object QueueLeafTransferFactsChecks {
         verify(types.delegate[1.0] == "crate" && types.delegate[2.0] == "fridge" && types.delegate.size == 2,
             "missing complete sibling container types")
         val primaryBag = Fixture()
-        field(IsoGameCharacter::class.java, primaryBag.actor, "leftHandItem", primaryBag.bag)
+        field(IsoGameCharacter::class.java, primaryBag.actor, "primaryHandItem", primaryBag.bag)
         val held = primaryBag.read() ?: throw AssertionError("unrelated held owner evidence")
         verify(held.delegate["primaryItem"] === primaryBag.bag && held.delegate["primaryFullType"] == "Base.Leaf"
             && held.delegate["primaryItemContainerKnown"] == true
             && held.delegate["primaryItemContainer"] === primaryBag.destination, "held bag must expose internal inventory")
-        field(IsoGameCharacter::class.java, primaryBag.actor, "leftHandItem", item(ForeignItem::class.java, 44))
+        field(IsoGameCharacter::class.java, primaryBag.actor, "primaryHandItem", item(ForeignItem::class.java, 44))
         val unknownPrimary = primaryBag.read() ?: throw AssertionError("unknown primary cannot invalidate base facts")
         verify(unknownPrimary.delegate["primaryItemContainerKnown"] == false
             && !unknownPrimary.delegate.containsKey("primaryFullType")
@@ -442,6 +548,7 @@ object QueueLeafTransferFactsChecks {
         verify(foreignThreadResult == null, "alias foreign thread read")
         GameClient.client = false
         verify(fixture.item.getContainer() === fixture.root && fixture.root.items.size == 2 && fixture.destination.items.isEmpty(), "observation changed native membership")
+        nativeTransferControl(thread)
         if (measure) {
             fun measure(label: String, value: Fixture, runs: Int) {
                 IsoPlayer.players[0] = value.actor

@@ -6,21 +6,21 @@ import zombie.core.raknet.UdpConnection
 import zombie.inventory.types.Radio
 import zombie.network.GameServer
 
-/** Complete B42.21's missing inventory-radio off route using the native state decoder/relay. */
+/** Complete the native missing inventory-radio off route using the native state decoder/relay. */
 object RadioInventoryState {
     @JvmField
     val SUPPORTED =
         BytecodeSupport.supports(
             "zombie/network/GameServer.class",
-            "308ee5247dc8bba4df2283d40d753c6839497767b9342a4adeea60e7c08cfacc",
+            "efc98251a41d4d56a1d5ebd944e0c8a2bfa15270dabfd307107e59191f2ededf",
         ) &&
             BytecodeSupport.supports(
                 "zombie/radio/devices/DeviceData.class",
-                "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102",
+                "6c8825dbc39b2a7508a903dd3ef381bbb3dbd9b96f89398d9deeaddde0162bed",
             ) &&
             BytecodeSupport.supports(
                 "zombie/inventory/ItemContainer.class",
-                "a2ac7dd6235f91255dc57b91419a2c8609bdb105214cddf7fb445b70507b6f96",
+                "19ffefbabfc16ce3b40feb557189c4fbecdb752aa2c96e3daa8b8ec0542185d3",
             )
 
     @JvmStatic

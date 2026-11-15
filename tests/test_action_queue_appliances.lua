@@ -10,7 +10,7 @@ ISBaseObject = {derive = derive}
 local install
 Events = {OnServerCommand = {Add = function() end}, OnTick = {Add = function() end},
     OnGameStart = {Add = function(callback) install = callback end}}
-for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end
@@ -96,6 +96,7 @@ end
 local function project(name)
     if name == 'ActionQueue' then project('ActionQueueSettlement'); project('ActionQueueLifecycle'); project('ActionQueueAcknowledgements') end
  assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/' .. name .. '.lua'))() end
+assert(loadfile(ProjectRoot..'/tests/support/action_queue_source.lua'))()
 project('ActionQueueOperations'); project('ActionQueueDefinitions'); project('ActionQueueLabels'); project('ActionQueuePolicy'); project('ActionQueue'); project('ActionQueueWorld')
 local api, world = PZSurvivorToolkit.ActionQueue, PZSurvivorToolkit.ActionQueueWorld
 local toggleTypes = {Stove = 'PZSurvivorToolkitSetStoveState', ClothingWasher = 'ISToggleClothingWasher',

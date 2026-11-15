@@ -10,7 +10,7 @@ ISBaseObject = {derive = derive}
 local install
 Events = {OnTick = {Add = function() end}, OnServerCommand = {Add = function() end},
     OnGameStart = {Add = function(callback) install = callback end}}
-for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end

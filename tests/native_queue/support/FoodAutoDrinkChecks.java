@@ -1,4 +1,6 @@
-package zombie.characters;
+package net.alexredby.nativechecks;
+
+import zombie.characters.*;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;

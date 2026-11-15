@@ -58,8 +58,8 @@ for name,callback in pairs(class) do
   if name~='derive' then trusted=trusted and Proof.closure(callback,'ISFitnessAction.lua') end
  end
 end
-local childSources={ISEquipWeaponAction=1814269902,ISUnequipAction=229487418,ISWearClothing=762204314,
- ISInventoryTransferAction=3843678860,ISWaitWhileGettingUp=1725489935,ISDropWorldItemAction=2862163534}
+local childSources={ISEquipWeaponAction=2219994563,ISUnequipAction=1444506010,ISWearClothing=762204314,
+ ISInventoryTransferAction=3080128616,ISWaitWhileGettingUp=1725489935,ISDropWorldItemAction=2862163534}
 local function approvedChange(kind,name)
  local carts=Toolkit.ActionQueueCarts
  if kind=='ISWaitWhileGettingUp' and name=='perform' then
@@ -233,6 +233,10 @@ local function add(action,saved,stage)
  ISTimedActionQueue.add(tag(action,saved,stage))
  Settlement.track(action,stage=='preparation' and 'prepare' or stage=='cleanup' and 'cleanup' or 'body')
  if stage=='cleanup' and parent then Settlement.inheritCleanup(action,parent) end
+ if action.Type=='ISEquipWeaponAction' then
+  records[action].equipment={queue=ISTimedActionQueue.queues[saved.player],token=action.toolkitQueueOperation,
+   primary=action.primary,twoHands=action.twoHands}
+ end
  return action
 end
 local function command(player,callback,saved,stage)
@@ -621,6 +625,23 @@ local function contract(action)
  end
  return result
 end
+-- The native matcher remains the sole owner of Equip. Its inspector may ask
+-- this exact producer for the complete operation contract instead of applying
+-- the unrelated generic pending-tail cancellation rule to an owned restoration.
+local equipmentProof={policy=Toolkit.ActionQueuePolicy,native=Toolkit.ActionQueuePolicy.matchesNative,kind=type,queues=ISTimedActionQueue.queues,actor=getSpecificPlayer}
+function Fitness.nativeEquipmentContract(action)
+ if not equipmentProof.watch or not equipmentProof.watch() or equipmentProof.kind(action)~='table'
+  or action.Type~='ISEquipWeaponAction' or not equipmentProof.native(action) then return end
+ local record=validRecord(action)
+ local mode=record and record.equipment
+ local queue=mode and equipmentProof.queues[record.saved.player]
+ if not mode or equipmentProof.kind(mode.token)~='table' or action.toolkitQueueOperation~=mode.token
+  or not queue or queue~=mode.queue or queue.character~=record.saved.player
+  or equipmentProof.actor(record.saved.player:getPlayerNum())~=record.saved.player
+  or action.primary~=mode.primary or action.twoHands~=mode.twoHands
+  or not Ops.bounds(queue,action) then return end
+ return contract(action)
+end
 Definitions.registerBehavior('toolkit.fitness',{types={'ISQueueActionsAction','ISFitnessAction','ISWaitWhileGettingUp','ISWearClothing','ISDropWorldItemAction'},matches=Fitness.isManaged,inspect=contract})
 -- The native matcher owns ordinary callbacks. Only this operation's exact
 -- reviewed non-cart wrapper branch needs its own preparation/cleanup contract.
@@ -712,4 +733,10 @@ Events.OnTick.Add(function()
  end
 end)
 if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function() records,nativeRecords={},{} end) end
+equipmentProof.watch=Proof.captureBindings({
+ {owner=_G,keys={'PZSurvivorToolkit','getSpecificPlayer','ISTimedActionQueue','type'}},
+ {owner=Toolkit,keys={'ActionQueueFitness','ActionQueuePolicy','ActionQueueOperations'}},
+ {owner=Fitness,exact=true},{owner=equipmentProof.policy,keys={'matchesNative'}},
+ {owner=Ops,keys={'bounds'}},{owner=ISTimedActionQueue,keys={'queues'}},
+})
 return Fitness

@@ -31,7 +31,6 @@ import zombie.inventory.types.Radio as InventoryRadio
 import zombie.vehicles.VehiclePart
 import zombie.network.GameServer
 import zombie.pathfind.Path
-import zombie.util.list.PZArrayList
 
 /** Actual native world reads and Kahlua Java invokers; no game process or route runs. */
 object QueueSpatialFactsChecks {
@@ -44,7 +43,7 @@ object QueueSpatialFactsChecks {
     private fun square(x: Int, y: Int, z: Int = 0): IsoGridSquare = bare(IsoGridSquare::class.java).also {
         field(IsoGridSquare::class.java, it, "x", x);field(IsoGridSquare::class.java, it, "y", y);field(IsoGridSquare::class.java, it, "z", z)
         field(IsoGridSquare::class.java, it, "properties", PropertyContainer())
-        field(IsoGridSquare::class.java, it, "objects", PZArrayList(IsoObject::class.java, 8))
+        field(IsoGridSquare::class.java, it, "objects", ArrayList<IsoObject>(8))
         field(IsoGridSquare::class.java, it, "specialObjects", ArrayList<IsoObject>())
         field(IsoGridSquare::class.java, it, "nav", arrayOfNulls<IsoGridSquare>(8))
     }
@@ -88,7 +87,12 @@ object QueueSpatialFactsChecks {
         override fun getSquare(): IsoGridSquare? { forbiddenCalls++;error("foreign bound-object getter invoked") }
     }
     private class ForeignList : ArrayList<IsoObject>() {
+        override val size: Int get() { forbiddenCalls++;error("foreign world-list size invoked") }
         override fun get(index: Int): IsoObject { forbiddenCalls++;error("foreign world-list getter invoked") }
+    }
+    private class ForeignListApi : AbstractList<IsoObject>() {
+        override val size: Int get() { forbiddenCalls++;error("foreign List size invoked") }
+        override fun get(index: Int): IsoObject { forbiddenCalls++;error("foreign List getter invoked") }
     }
     private class ForeignDevice : IsoTelevision(null) {
         override fun getSquare(): IsoGridSquare? { forbiddenCalls++;error("foreign device getter invoked") }
@@ -122,6 +126,15 @@ object QueueSpatialFactsChecks {
             check(read(route = f.east) == null && read(anchor, f.east) == null) { "wrong route binding" }
             check(read(anchor, table()) == null && read(table()) == null) { "malformed route/snapshot" }
             check(read(supported = false) == null && read(owner = false) == null)
+            val nativeObjects = f.current.getObjects()
+            for (foreign in arrayOf(ForeignList(), ForeignListApi())) {
+                field(IsoGridSquare::class.java, f.current, "objects", foreign)
+                check(read() == null && read(anchor) == null) { "foreign device list must remain uncalled" }
+            }
+            field(IsoGridSquare::class.java, f.current, "objects",
+                ArrayList<IsoObject>().apply { repeat(257) { add(device) } })
+            check(read() == null && read(anchor) == null) { "oversized device list" }
+            field(IsoGridSquare::class.java, f.current, "objects", nativeObjects)
             GameServer.server = true;check(read(anchor) == null);GameServer.server = false
             // Removing unrelated objects shifts the index without losing the actual target.
             f.current.getObjects().remove(f.targetObject)
@@ -218,9 +231,22 @@ object QueueSpatialFactsChecks {
         check(!QueueSpatialFacts.read(f.actor, Any(), null, null, true, true))
         check(!QueueSpatialFacts.read(bare(ForeignPlayer::class.java), f.current, null, null, true, true))
         check(!f.read(objectValue = bare(ForeignObject::class.java)))
-        field(IsoGridSquare::class.java, f.east, "specialObjects", ForeignList())
-        check(!f.read(f.east)) { "foreign native list must remain uncalled" }
-        field(IsoGridSquare::class.java, f.east, "specialObjects", ArrayList<IsoObject>())
+        for (name in arrayOf("objects", "specialObjects")) {
+            for (foreign in arrayOf(ForeignList(), ForeignListApi())) {
+                field(IsoGridSquare::class.java, f.east, name, foreign)
+                check(!f.read(f.east)) { "foreign native $name list must remain uncalled" }
+            }
+            field(IsoGridSquare::class.java, f.east, name,
+                ArrayList<IsoObject>().apply { repeat(257) { add(f.targetObject) } })
+            check(!f.read(f.east)) { "oversized native $name list" }
+            field(IsoGridSquare::class.java, f.east, name, ArrayList<IsoObject>())
+        }
+        val currentObjects = f.current.getObjects()
+        for (foreign in arrayOf(ForeignList(), ForeignListApi())) {
+            field(IsoGridSquare::class.java, f.current, "objects", foreign)
+            check(!f.read(objectValue = f.targetObject)) { "foreign bound-object list must remain uncalled" }
+        }
+        field(IsoGridSquare::class.java, f.current, "objects", currentObjects)
         f.actor.setZ(1f);check(!f.read()) { "actor current-level mismatch" };f.actor.setZ(0f)
         f.actor.setZ(.01f);check(!f.read()) { "fractional actor level" };f.actor.setZ(0f)
         f.actor.setY(1.99f);check(!f.read()) { "actor current-row mismatch" };f.actor.setY(2.5f)
@@ -258,6 +284,12 @@ object QueueSpatialFactsChecks {
         val args = arrayOf<Any?>(f.actor, f.current, null, f.targetObject)
         check(thread.call(checker, arrayOf(helper)) == true) { "canonical helper certificate" }
         check(thread.call(helper, args) == true) { "real Kahlua native final-read crossing" }
+        val originalEnvironment = LuaManager.env as KahluaTableImpl
+        LuaManager.env = KahluaTableImpl(LinkedHashMap(originalEnvironment.delegate))
+        check(thread.call(helper, args) == false && thread.call(checker, arrayOf(helper)) == false) {
+            "copied global bindings borrowed a different native thread environment"
+        }
+        LuaManager.env = originalEnvironment
         check(!QueueSpatialFacts.noMovement(f.actor, f.current, null, null)) { "unframed Java call borrowed native Lua entry" }
         LuaManager.env.rawset("originalHelper", helper);LuaManager.env.rawset("originalChecker", checker)
         fun lua(source: String) = thread.call(LuaCompiler.loadstring(source, "spatial-check", LuaManager.env), null)

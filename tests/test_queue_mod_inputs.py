@@ -114,8 +114,8 @@ class ModInputTests(unittest.TestCase):
         self.assertEqual([self.source / '42/mod.info'], infos)
         (self.root / 'unrelated-link').symlink_to(self.root / 'missing', target_is_directory=True)
         self.assertEqual(infos, mod_inputs.infos(self.root))
-        self.assertEqual([self.source / '42/media/lua/shared/runtime.lua'], lua_sources(self.source))
-        self.assertEqual({'Artifact': self.source.resolve()}, native._locations(self.root, [], ['Artifact']))
+        self.assertEqual([self.source / '42/media/lua/shared/runtime.lua'], lua_sources(self.source, (42, 21)))
+        self.assertEqual({'Artifact': self.source.resolve()}, native._locations(self.root, [], ['Artifact'], version=(42, 21)))
 
     def test_seed_maps_require_the_current_policy_and_exact_relative_digests(self):
         row = dict(id='Artifact', input_policy=mod_inputs.POLICY, files=mod_inputs.hashes(self.source))

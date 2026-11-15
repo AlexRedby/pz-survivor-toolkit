@@ -9,6 +9,7 @@ import zombie.network.GameServer
 import zombie.network.IConnection
 import zombie.network.PZNetKahluaTableImpl
 import zombie.network.fields.character.PlayerID
+import zombie.network.fields.character.ConnectionPlayer
 import zombie.network.packets.NetTimedActionPacket
 
 object MedicalTimedActions {
@@ -92,9 +93,9 @@ object MedicalTimedActions {
                 (scope ?: throw NullPointerException()).loading !== table
         )
             return
-        val doctor = Accessor.tryGet<PlayerID>(scope.packet, "playerId", null)
+        val doctor = Accessor.tryGet<ConnectionPlayer>(scope.packet, "player", null)
         if (doctor == null || !doctor.isConsistent(connection)) return
-        // B42.21 BodyPart is PlayerID + int index; inspect a duplicate without consuming the native
+        // BodyPart still uses PlayerID + int index; inspect a duplicate without consuming the native
         // decoder's input.
         val bytes = (reader ?: throw NullPointerException()).bb
         val probe = ByteBufferReader(bytes.duplicate().order(bytes.order()))

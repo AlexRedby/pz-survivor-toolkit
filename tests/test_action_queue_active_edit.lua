@@ -168,7 +168,8 @@ do
         'source-only Host alias preparation lost its fresh binding contract')
     assert(descriptor('sourceFactorySpecs')==core and descriptor('sourceFactoryAliasSpecs')==aliasSpecs and core~=aliasSpecs,
         'Host alias rebuilt or mutated the shared source descriptions')
-    assert(#globals(core).keys==2 and #globals(aliasSpecs).keys==3 and globals(aliasSpecs).keys[3]=='createItemTransaction',
+    assert(#globals(core).keys==4 and globals(core).keys[3]=='ItemContainer'and globals(core).keys[4]=='getClassSimpleName'
+        and #globals(aliasSpecs).keys==5 and globals(aliasSpecs).keys[5]=='createItemTransaction',
         'Host transaction dependency escaped its separate immutable source description')
     for index=1,#core-1 do assert(core[index]==aliasSpecs[index],'Host alias duplicated a shared module dependency description')end
     createItemTransaction=function()error('changed transaction callback must not execute')end

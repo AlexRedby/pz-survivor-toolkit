@@ -1,14 +1,11 @@
 package net.alexredby.pztoolkitjavapatches;
 
-import java.util.HashMap;
 import me.zed_0xff.zombie_buddy.Patch;
 import zombie.characters.NetworkZombieAI;
 import zombie.characters.NetworkPlayerAI;
-import zombie.characters.animals.IsoAnimal;
 import zombie.core.BuildAction;
 import zombie.core.network.ByteBufferReader;
 import zombie.core.raknet.UdpConnection;
-import zombie.iso.objects.IsoHutch;
 import zombie.network.IConnection;
 import zombie.network.packets.EquipPacket;
 import zombie.network.GameServer;
@@ -168,9 +165,7 @@ public final class Main {
     public static final boolean VEHICLE_SUPPORTED = MainPolicy.vehicleSupported();
     public static final boolean ANIMAL_SUPPORTED = MainPolicy.animalSupported();
     public static final boolean EQUIPMENT_SUPPORTED = MainPolicy.equipmentSupported();
-    public static final boolean HUTCH_SUPPORTED = MainPolicy.hutchSupported();
     public static final boolean MEDICAL_BODY_DAMAGE_SUPPORTED = MainPolicy.medicalBodyDamageSupported();
-    public static final boolean MEDICAL_VISUALS_SUPPORTED = MainPolicy.medicalVisualsSupported();
     public static final boolean MEDICAL_TIMED_ACTION_SUPPORTED = MainPolicy.medicalTimedActionSupported();
     public static final boolean MEDIA_SUPPORTED = MainPolicy.mediaSupported();
     public static final boolean BUILD_SUPPORTED = MainPolicy.buildSupported();
@@ -277,21 +272,6 @@ public final class Main {
         }
     }
 
-    @Patch(className="zombie.characters.IsoGameCharacter$Bandages", methodName="removeBandageModel", warmUp=true, strictMatch=true)
-    public static class NativeMedicalVisualRemoval {
-        @Patch.OnEnter
-        public static void enter(@Patch.This Object models, @Patch.Argument(0) zombie.characters.IsoGameCharacter player,
-                                 @Patch.Argument(1) String type,
-                                 @Patch.Local("toolkitRemovedVisual") zombie.inventory.InventoryItem removed) {
-            removed = MedicalVisuals.before(models, player, type, Main.MEDICAL_VISUALS_SUPPORTED);
-        }
-        @Patch.OnExit
-        public static void exit(@Patch.Argument(0) zombie.characters.IsoGameCharacter player, @Patch.Argument(1) String type,
-                                @Patch.Local("toolkitRemovedVisual") zombie.inventory.InventoryItem removed) {
-            MedicalVisuals.after(player, removed);
-        }
-    }
-
     @Patch(className="zombie.network.packets.BodyDamageUpdatePacket", methodName="processClient", warmUp=true, strictMatch=true)
     public static class NativeMedicalBodyDamage {
         @Patch.OnEnter(skipOn=true)
@@ -332,24 +312,9 @@ public final class Main {
     public static class NativeMedicalBodyPart {
         @Patch.OnEnter
         public static void enter(@Patch.This zombie.network.PZNetKahluaTableImpl table, @Patch.Argument(0) ByteBufferReader reader,
-                                 @Patch.Argument(1) IConnection connection, @Patch.Argument(2) byte type) {
+                                 @Patch.Argument(1) IConnection connection, @Patch.Argument(2) byte type,
+                                 @Patch.Argument(3) int depth) {
             MedicalTimedActions.beforeValue(table, reader, connection, type);
-        }
-    }
-
-    @Patch(className="zombie.iso.objects.IsoHutch", methodName="removeFromWorld", warmUp=true, strictMatch=true)
-    public static class HutchUnloading {
-        @Patch.OnEnter
-        public static void enter(@Patch.This IsoHutch hutch,
-                                 @Patch.Local("toolkitHutchAnimals") HashMap<Integer, IsoAnimal> original) {
-            original = HutchCleanup.begin(hutch, Main.HUTCH_SUPPORTED);
-        }
-
-        @Patch.OnExit(onThrowable=Throwable.class)
-        public static void exit(@Patch.This IsoHutch hutch,
-                                @Patch.Local("toolkitHutchAnimals") HashMap<Integer, IsoAnimal> original) {
-            // Restore even when native cleanup throws; never suppress unrelated errors.
-            if (original != null) hutch.animalInside = original;
         }
     }
 

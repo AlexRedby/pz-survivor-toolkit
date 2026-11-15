@@ -13,8 +13,12 @@ from . import progress, report, worlds
 from .mod_selection import mod_ids
 
 PLAYER_DB_CLASS = 'zombie/savefile/ServerPlayerDB.class'
-# B42.21: non-Steam native lookup uses username/world/playerIndex; data stays opaque.
-PLAYER_DB_SHA256 = 'aeb328c4dfbd436c372b3c2d350ac533dcd4e692b6ee58a5f8c24807ecf31379'
+# Reviewed native lookup uses username/world/playerIndex; data stays opaque.
+# B42.22 changes only debug attributes in this complete class.
+PLAYER_DB_SHA256 = {
+    '42.21': 'aeb328c4dfbd436c372b3c2d350ac533dcd4e692b6ee58a5f8c24807ecf31379',
+    '42.22': '8f77b5853ac39301737ebb913bc01ae194698e9b3dea192617d95bdde399e803',
+}
 PLAYER_COLUMNS = ('id', 'world', 'username', 'playerIndex', 'name', 'steamid', 'x', 'y', 'z',
                   'worldversion', 'data', 'isDead', 'splitUsername')
 PLAYER_TYPES = ('INTEGER', 'TEXT', 'TEXT', 'INTEGER', 'STRING', 'STRING', 'FLOAT', 'FLOAT', 'FLOAT',
@@ -111,7 +115,7 @@ def validate_origin(value):
                 or external.get('source_mods') != base['mods'] or external.get('server_settings') != base['server_settings']
                 or external.get('sandbox_sha256') != base['sandbox_sha256']
                 or external.get('source_game_build_verified') is not False
-                or external.get('player_db_class_sha256') != PLAYER_DB_SHA256):
+                or external.get('player_db_class_sha256') not in PLAYER_DB_SHA256.values()):
             raise ValueError('Invalid external Host import provenance')
         _source_files(external['world_files'])
         players = external['players']
@@ -151,8 +155,8 @@ def verify_player_api(game):
             digest = hashlib.sha256(archive.read(PLAYER_DB_CLASS)).hexdigest()
     except (OSError, KeyError, zipfile.BadZipFile) as error:
         raise ValueError('Cannot verify native Host player database API') from error
-    if digest != PLAYER_DB_SHA256:
-        raise ValueError('External player import requires the reviewed B42.21 native database API')
+    if digest not in PLAYER_DB_SHA256.values():
+        raise ValueError('External player import requires a reviewed native database API')
     return digest
 
 

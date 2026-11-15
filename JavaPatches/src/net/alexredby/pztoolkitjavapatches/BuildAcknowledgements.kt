@@ -8,7 +8,7 @@ import zombie.core.BuildAction
 import zombie.network.GameServer
 import zombie.network.PacketTypes
 import zombie.network.TableNetworkUtils
-import zombie.network.fields.character.PlayerID
+import zombie.network.fields.character.ConnectionPlayer
 
 object BuildAcknowledgements {
     private val tokens = WeakHashMap<BuildAction?, String>()
@@ -29,14 +29,14 @@ object BuildAcknowledgements {
     }
 
     private fun send(action: BuildAction?, token: String, state: String?) {
-        val owner = Accessor.tryGet<PlayerID>(action, "playerId", null)
+        val owner = Accessor.tryGet<ConnectionPlayer>(action, "player", null)
         val transaction = Accessor.tryGet<Byte>(action, "id", null)
         if (
             owner == null || owner.player == null || transaction == null || transaction.toInt() == 0
         )
             return
         val args = LuaManager.platform.newTable()
-        args.rawset("player", owner.id.toDouble())
+        args.rawset("player", owner.player.onlineId.toDouble())
         args.rawset("transaction", transaction.toDouble())
         args.rawset("token", token)
         args.rawset("state", state)

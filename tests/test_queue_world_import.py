@@ -117,7 +117,7 @@ class WorldImportTests(unittest.TestCase):
     def test_overlay_preserves_world_rows_blob_auth_and_source_bytes(self):
         base, options = self.host()
         before = native.hashes(options['external_world']); template_before = native.hashes(self.template)
-        with patch.object(world_import, 'verify_player_api', return_value=world_import.PLAYER_DB_SHA256):
+        with patch.object(world_import, 'verify_player_api', return_value=world_import.PLAYER_DB_SHA256['42.21']):
             value = self.create(**options)
         self.assertEqual(before, native.hashes(options['external_world']))
         self.assertEqual(template_before, native.hashes(self.template))
@@ -206,7 +206,7 @@ class WorldImportTests(unittest.TestCase):
             if Path(source).parent == options['external_world']:
                 Path(source).write_bytes(b'concurrent modification')
             return result
-        with patch.object(world_import, 'verify_player_api', return_value=world_import.PLAYER_DB_SHA256), \
+        with patch.object(world_import, 'verify_player_api', return_value=world_import.PLAYER_DB_SHA256['42.21']), \
                 patch.object(world_import.shutil, 'copyfile', side_effect=changing), self.assertRaises(ValueError):
             self.create(**options)
         self.assertFalse((self.output / 'world.json').exists())

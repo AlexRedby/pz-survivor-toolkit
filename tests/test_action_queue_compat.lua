@@ -51,7 +51,7 @@ Events = setmetatable({}, {__index = function(self, name)
         Remove = function() end}
     rawset(self, name, event); return event
 end})
-for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do _G[name] = {instance = function() return {} end} end
 instanceof = function(value, kind)
     return type(value) == 'table' and (value.class == kind or (kind == 'IsoGameCharacter' and value.class == 'IsoPlayer') or (kind == 'Clothing' and value.class == 'AlarmClockClothing') or (kind == 'InventoryItem' and value.item == true))
@@ -379,7 +379,8 @@ require = function(module)
     if module == 'ISUI/WMI_WashingSubmenus' then
         source = source .. '\nWS.WMI_BuildWashMenu = function(menu, items, character, sink) return menu:addOption("Wash", character, onWashClothing3, sink, {}, items, nil, true, nil) end\nWS.WMI_TestOriginalWashCallback=onWashClothing3\nWS.WMI_TestAggregateWashCallback=WMI_OnWashAll\nWS.WMI_TestBodyWashCallback=_onWashYourselfAndClose\n'
     elseif module == 'P4TidyUpMeister' then source = source .. '\nTidyFixture = P4TidyUpMeister\n' end
-    local result = assert(loadstring(source, (module == 'Project_Cook/PJCK_Config' or module:match('^Project_Cook/EvolvedRecipePanel/') or module == 'ISUI/WMI_WashingSubmenus') and '@'..module..'.lua' or module))()
+    local result = assert(loadstring(source, (module == 'Project_Cook/PJCK_Config' or module:match('^Project_Cook/EvolvedRecipePanel/')
+        or module:match('^Project_Cook/HandCraftPanel/') or module == 'ISUI/WMI_WashingSubmenus') and '@'..module..'.lua' or module))()
     if module == 'Project_Cook/EvolvedRecipePanel/PJCK_InputPanel' then projectCookUiOriginal.canAddItem=PJCK_InputPanel.canAddItem end
     loaded[module] = result or true; return result
 end
@@ -514,6 +515,7 @@ local function item(container, id)
     return {item = true, id = id, container = container, getContainer = function(self) return self.container end,
         getID = function(self) return self.id end, getFullType = function() return 'Base.Test' end,
         getType = function() return 'Test' end, getBloodLevel = function() return 1 end, getDirtiness = function() return 1 end,
+        getUnequipSound=function()end,getEquipSound=function()end,
         getItemAfterCleaning = function() end, canBeActivated = function(self) return self.activatable or false end, isActivated = function(self) return self.activated or false end,
         setActivated=function(self,value) self.activated=value; self.activationChanges=(self.activationChanges or 0)+1 end,
         getName = function() return 'test' end, isHidden = function() return false end,

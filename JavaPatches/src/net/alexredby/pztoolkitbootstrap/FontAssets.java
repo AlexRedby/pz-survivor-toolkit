@@ -11,11 +11,11 @@ import zombie.fileSystem.TexturePackDevice;
 
 public final class FontAssets {
     public static final boolean SUPPORTED = supports("zombie/core/textures/Texture.class",
-        "2f4fba9ad6c33a9ba0763a68d16164833a682f7645e61a061f70bfdca33c1f8f")
+        "aaefaf09c5e572bf88b4d58d3a982884d206b89014f24f371558e906ad27a642")
         && supports("zombie/core/fonts/AngelCodeFont.class",
             "f8fc7fd358c97fb99280ff4987cddad17ad9b057b6bc13520bf7c104400875b1")
         && supports("zombie/GameWindow.class",
-            "c3a3583923191b6aea23a74e6b05e2b53302bbcded7f89cae930e364a409dfb2")
+            "044f9832aadb0dd23c7018e07c5e0bcc743987a23b0e0566777f11733fba65a1")
         && supports("zombie/fileSystem/FileSystemImpl.class",
             "6486a2122ff3bc51ad502bb2df0a6ad4b19f112d0c885b8b802f05096c52ae84");
 
@@ -37,7 +37,7 @@ public final class FontAssets {
             || Files.isRegularFile(Path.of(ZomboidFileSystem.instance.getString("media/mainfont2_0.png")))) return;
         if (!matches("media/mainfont.fnt", "de5192f3338de13bfc59bb095561617a7f963bea0727842c7280aa2935827dd5")
             || !matches("media/mainfont2.fnt", "c3a1f68e8c28e334947e4fb0c7f08eb96553b8db37618fbb2563fe4c081ef6c4")
-            || !matches("media/texturepacks/UI.pack", "47adb45d5c51d89d225d008c08d54eb4b118623b9dcda06e6095bd11e00a8e37")) return;
+            || !matches("media/texturepacks/UI.pack", "5602977888d065a4d73e3aa8a0ff97e78ab2dc69941ff7ea4ba9b339fba32e8d")) return;
         // Initial fonts precede initShared; LoadTexturePack itself draws text and would recurse.
         var entries = new FileSystem.TexturePackTextures();
         if (GameWindow.fileSystem.getTexturePackDevice("UI") == null) {

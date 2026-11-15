@@ -20,24 +20,24 @@ internal object BasementHallKeyLogic {
         BasementRoomLookup.SUPPORTED &&
             BytecodeSupport.supports(
                 "zombie/buildingRooms/BREBuilding.class",
-                "77d5710d7b102532e080c556a87439d3d827cf4c8a05fc5cd7e37c90175c83de",
+                "01b33c6144a3fbb3b5c1b9f388048109181eb3713c74ca2e654ed391a20423a6",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/areas/isoregion/metagrid/WorldRegionToMetaGrid.class",
-                "635174f093618dac7ec320b3884780b847d1332d03b3c07b3221f2b899728b20",
+                "44579db93d88b04291263916ea27dde88c8bd8e07224d27972ee8217c8ef341d",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/LightingJNI.class",
-                "3938fd1336a64403ae52a3a1552fcdff3a3c54f1a0360c6ee35512c2f9b7e5e7",
+                "4c9103b4d2979520b2ee5ea013f5f62870d2789d777d3a205b4b04f91830b245",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/fboRenderChunk/FBORenderCell.class",
-                "d5c46201d60cff36397ee46c56b53dbaee6e26e8733836f27bf56ad871eedf94",
+                "d12b00c73914dd6fb96c4bf18b961cc4f811c896691e823e55e79cda3e6b0244",
             )
 
     private const val HEADER = "media/maps/Muldraugh, KY/41_37.lotheader"
     private const val HEADER_HASH =
-        "05cd36a09eb5f0e999b1def16d78dfa6510bee557eca0ef1d3fe209f5b41313e"
+        "29cd9faefb134de510242c55cfceb4fb2f54101069deb1dffb8fe906202257cf"
     private const val ACCESS = "media/basement_access/ba_exterior_north_westside_13.pzby"
     private const val ACCESS_HASH =
         "706ac77ce0c3d5daa653f1932b8674313340606324f9bffd75fbd194573d5ae3"
@@ -65,16 +65,16 @@ internal object BasementHallKeyLogic {
             cell == null ||
                 cell.info == null ||
                 receiving !in cell.buildings ||
-                cell.roomList.size <= 107 ||
+                cell.roomList.size <= 106 ||
                 cell.roomByMetaId.containsKey(BasementHallKey.HALL_KEY)
         )
             return false
-        val original = cell.roomList[107]
+        val original = cell.roomList[106]
         if (
             original === access ||
                 !hall(original) ||
                 original.building !== receiving ||
-                original.id != RoomID.makeID(41, 37, 107) ||
+                original.id != RoomID.makeID(41, 37, 106) ||
                 original.metaId != BasementHallKey.ORIGINAL_KEY ||
                 original !in receiving.rooms ||
                 cell.rooms[original.id] !== original ||
@@ -93,7 +93,7 @@ internal object BasementHallKeyLogic {
         cell.roomByMetaId.put(BasementHallKey.HALL_KEY, original)
         separated.add(original)
         println(
-            "[PZToolkitJavaPatches] Basement hall key separated: original=107, key=${BasementHallKey.HALL_KEY}, accessKey=${BasementHallKey.ORIGINAL_KEY}",
+            "[PZToolkitJavaPatches] Basement hall key separated: original=106, key=${BasementHallKey.HALL_KEY}, accessKey=${BasementHallKey.ORIGINAL_KEY}",
         )
         return true
     }

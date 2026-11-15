@@ -1,6 +1,6 @@
 # Selected mod catalog
 
-Reference for the selected third-party mods, Workshop IDs, dependencies, load order, settings and known caveats. The [server INI](../SurvivorQoL-selected.ini) defines the current B42.21 selection. See [installation instructions](../MOD_INSTALL.md) for the portable server/client INI and local repository mods. Toolkit features are documented in [FEATURES](FEATURES.md); Java Patches setup is in [JavaPatches/README.md](../JavaPatches/README.md).
+Reference for the selected third-party mods, Workshop IDs, dependencies, load order, settings and known caveats. The [server INI](../SurvivorQoL-selected.ini) defines the current B42.22.2 selection. See [installation instructions](../MOD_INSTALL.md) for the portable server/client INI and local repository mods. Toolkit features are documented in [FEATURES](FEATURES.md); Java Patches setup is in [JavaPatches/README.md](../JavaPatches/README.md).
 
 
 ## Find a mod
@@ -11,7 +11,7 @@ This is the project’s selected set, not a general recommendation list. The INI
 
 **Crafting, food, farming and medicine:** [Neat Crafting](#5-neat-crafting), [Project Cook](#6-project-cook), [Research indicator: Toolkit](#18-research-indicator-toolkit), [Neat Building](#19-neat-building), [Eat Smart](#20-eat-smart), [Drink Smart](#21-drink-smart), [Washing Menus Improved](#22-washing-menus-improved), [Neat Crafting & Neat Building - XP & Mod Display](#23-neat-crafting--neat-building---xp--mod-display), [Wash Or Rot](#25-wash-or-rot), [Mini Health Plus](#27-mini-health-plus), [Planting information: Toolkit](#31-planting-information-toolkit), [Medicine Indicators: Toolkit + Moodle Framework](#34-medicine-indicators-toolkit--moodle-framework).
 
-**World, navigation and multiplayer:** [MP Fast Forward](#2-mp-fast-forward), [Moodle Descriptions Expanded](#8-moodle-descriptions-expanded), [Detailed Descriptions for Occupations and Traits](#9-detailed-descriptions-for-occupations-and-traits), [Peek a View](#10-peek-a-view), [Share Map Notes](#12-share-map-notes), [Better Generator Info](#13-better-generator-info), [Map Symbols Plus (Hand-drawn)](#14-map-symbols-plus-hand-drawn), [Rain Cleans Blood](#17-rain-cleans-blood), [Smart Radial Menu](#24-smart-radial-menu), [Gas Pump Indicator](#26-gas-pump-indicator), [Zombie Visibility Fix + Stair-O-Vision](#41-zombie-visibility-fix--stair-o-vision), [Plumbed Sink Mains Water Fix](#42-plumbed-sink-mains-water-fix), [Detailed Skill Tooltips](#49-detailed-skill-tooltips), [Foraging Tooltip Extended](#50-foraging-tooltip-extended), [Nick's Turn Off Fridges](#51-nicks-turn-off-fridges), [Climb Ladders](#55-climb-ladders), [Immersive Snow](#57-immersive-snow), [JB's Bugs In Lights](#58-jbs-bugs-in-lights).
+**World, navigation and multiplayer:** [MP Fast Forward](#2-mp-fast-forward), [Moodle Descriptions Expanded](#8-moodle-descriptions-expanded), [Detailed Descriptions for Occupations and Traits](#9-detailed-descriptions-for-occupations-and-traits), [Peek a View](#10-peek-a-view), [Share Map Notes](#12-share-map-notes), [Better Generator Info](#13-better-generator-info), [Map Symbols Plus (Hand-drawn)](#14-map-symbols-plus-hand-drawn), [Rain Cleans Blood](#17-rain-cleans-blood), [Smart Radial Menu](#24-smart-radial-menu), [Gas Pump Indicator](#26-gas-pump-indicator), [Zombie Visibility Fix + Stair-O-Vision](#41-zombie-visibility-fix--stair-o-vision), [Plumbed Sink Mains Water Fix](#42-plumbed-sink-mains-water-fix), [Detailed Skill Tooltips](#49-detailed-skill-tooltips), [Foraging Tooltip Extended](#50-foraging-tooltip-extended), [Nick's Turn Off Fridges](#51-nicks-turn-off-fridges), [Immersive Snow](#57-immersive-snow), [JB's Bugs In Lights](#58-jbs-bugs-in-lights).
 
 **Vehicles, carts and archery:** [Realistic Dashboard & Gauges](#35-realistic-dashboard--gauges), [Navigator](#36-navigator), [SaucedCarts, SaucedWheelbarrow and Wheelbarrow Craft](#40-saucedcarts-saucedwheelbarrow-and-wheelbarrow-craft), [Nepenthe's High Beams](#44-nepenthes-high-beams), [Reverse Drive Lights](#45-reverse-drive-lights), [Vanilla Vehicles Animated](#46-vanilla-vehicles-animated), [Animated Vehicle Parts Fix](#47-animated-vehicle-parts-fix), [Archery Nexus + Wilderness Progression](#48-archery-nexus--wilderness-progression), [Vehicle Aim Roof Fix](#52-vehicle-aim-roof-fix), [Vehicle Repair Overhaul](#53-vehicle-repair-overhaul), ['92 Jeep YJ Wrangler + that DAMN Library](#59-92-jeep-yj-wrangler--that-damn-library).
 
@@ -19,7 +19,7 @@ This is the project’s selected set, not a general recommendation list. The INI
 
 **Physical progression:** [Standardized Experience + MVXIVY utils](#61-standardized-experience--mvxivy-utils).
 
-**Deferred / disabled:** [Custom Light Switch](#deferred--disabled-mods).
+**Deferred / disabled:** [Custom Light Switch](#deferred--disabled-mods), [Climb Ladders: replaced by native climbing](#55-climb-ladders).
 
 
 ## 1 Show VHS Skills in Tooltip
@@ -87,6 +87,10 @@ Adds numerical effects, known recipes and foraging bonuses to occupation and tra
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3710281407) · Workshop `3710281407` · Mod `PeekAView`
 
 Fades walls and trees and reveals the upper floor while climbing stairs without changing vanilla line-of-sight rules. Requires [ZombieBuddy](https://steamcommunity.com/sharedfiles/filedetails/?id=3619862853) (`3619862853`, `ZombieBuddy`); add both to the server and complete ZombieBuddy setup on each player. Approve the PeekAView JAR at its first-launch prompt. Custom stairs and basement mods can conflict with stair visibility.
+
+**B42.22 configuration:** keep the mod for wall/doorway cutaways, on-foot tree fading and upper-floor stair view. Toolkit's first-boot client preset sets **Tree fade > Active in vehicles** (`treeFadeActiveInVehicle`) to **off** so the game chooses its new directional/reversing/distance-based driving fade, and disables the obsolete adjacency workaround described below. Other preferences, including the separate **Wall cutaway > Active in vehicles** (`cutawayActiveInVehicle`), are preserved. The preset saves through native ModOptions once per profile, verifies persistence and leaves later manual changes intact; see [installation guidance](../MOD_INSTALL.md#third-party-setup-and-troubleshooting). This is a source-based recommendation; driving/stair visual A/B has not been performed. A full vanilla control needs a launch without PeekAView because its jumbo-layer depth adjustment remains woven even with its main toggle off.
+
+Installed version `3.0.0` matches the author's [published source](https://github.com/armakupub/PeekAView/tree/e7417a705375f1a678d5c3d43149a5b0df30be49). The latest [release notes](https://steamcommunity.com/sharedfiles/filedetails/changelog/3710281407) target B42.21, and the author lists 42.21.0 as the last tested build. **Keep Fix B42 Wall-Hiding Bug (`fixB42Adjacency`) off** on B42.22: its optional adjacency branch still calls the removed `IsoGridSquare.getObjects():PZArrayList` descriptor. The current native getter returns `List`; the default-off setting avoids that branch. Other direct native references, patch descriptors and reviewed reflected fields match the target SDK, and existing startup/Host captures exercised loading; this does not establish complete visual compatibility.
 
 ## 12 Share Map Notes
 
@@ -258,7 +262,7 @@ SaucedCarts adds pushable shopping carts; SaucedWheelbarrow adds wooden/metal wh
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3814073243) · Workshop `3814073243` · Mod `ZombieVisibilityFix`
 
-Reveals qualifying zombies hidden by B42 viewcone visibility; Stair-O-Vision is included and separately configurable. No ZombieBuddy or Java patch is required. The server must include the mod although its logic runs on clients; keep files matched. Defaults leave the toggle unbound and enable sub-tile precision, stair visibility and zombie vision; Hard Mode defaults off. Compatibility with Peek a View's stair rendering has not been checked.
+Reveals qualifying zombies hidden by B42 viewcone visibility; Stair-O-Vision is included and separately configurable. No ZombieBuddy or Java patch is required. The server must include the mod although its logic runs on clients; keep files matched. Defaults leave the toggle unbound and enable sub-tile precision, stair visibility and zombie vision; Hard Mode defaults off. The author explicitly lists compatibility with Peek a View. Their stair effects use different rendering mechanisms; the shared opacity work alone does not prove a conflict. Combined full-pack stair visuals still need an in-game check.
 
 ## 42 Plumbed Sink Mains Water Fix
 
@@ -377,10 +381,9 @@ Enable both modules, with Base (`SpnOpenClothBase`) before Vanilla Items (`SpnOp
 
 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3774776279) · Workshop `3774776279` · Mod `SubirEscaleras`
 
-Adds **Climb up the ladder** and **Climb down the ladder** to world ladders, including moved ladders. Hold **E** for about half a second or use the ladder's context menu to climb up; right-click the ground near the top opening to climb down. The shortcut is configurable under Options > Key Bindings > Climb Ladders. The author declares B42.15+ and SP/MP support, with server-confirmed movement broadcast to other players.
+**Not selected for B42.22.** The game now supplies ladder ascent/descent through **E** and the ladder tile's context menu. The [native update notes](https://theindiestone.com/forums/topic/102705-4222-patch-notes/) confirm that previously moved ladders retain their position. The mod author also recommends removing Climb Ladders to avoid overlap with the vanilla mechanic.
 
-The author says the mod adds no items, recipes or tiles and does not modify the saved world. The separate Build Ladders companion adds construction recipes and is optional; it is not selected. The author describes exit checks and climb restrictions for exhaustion, an unsplinted broken leg and overloading. Existing-world/removal safety and full-pack B42.21 SP/Host ascent/descent, moved/multistorey ladders, blocked exits, Toolkit menus/queue and remote animation remain unverified. Workshop reports include a Muldraugh police-station roof ladder moving a player through a wall; verify target ladders in a disposable save before relying on them for an escape.
-
+Remove `SubirEscaleras` and Workshop `3774776279` from existing Host selections and disable the mod in existing SP saves. The selected set uses native climbing; Build Ladders remains unselected.
 
 ## 56 New Music
 

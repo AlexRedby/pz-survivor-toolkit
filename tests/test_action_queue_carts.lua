@@ -1,3 +1,5 @@
+-- Source-bound preparation uses the native derive hierarchy and constructor-owned __index.
+NativeKahluaTableLookup=true
 -- Client Lua files auto-load even when their optional mod is absent.
 do
     local previousRequire,previousMods,previousToolkit=require,getActivatedMods,PZSurvivorToolkit
@@ -661,7 +663,7 @@ for _,mode in ipairs({'valid','changed-source','foreign-helper','foreign-delegat
         character.getPrimaryHandItem=function(self) return self.primary end
         character.getSecondaryHandItem=function(self) return self.secondary end
         local bag=maskFixture.item('Base.Bag_Schoolbag');bag.class='InventoryContainer'
-        local drop=setmetatable({Type='ISDropWorldItemAction',item=bag,character=character},ISDropWorldItemAction)
+        local drop=maskFixture.action(ISDropWorldItemAction,{item=bag})
         assert(maskCarts.isNonCartDrop(drop),'actual pinned non-cart drop wrappers lost the native storage branch')
         for name,callback in pairs(dropBefore)do
             assert(maskCarts.isDropCallback(name,callback) and maskCarts.isDropCallback(name,ISDropWorldItemAction[name]),
@@ -800,8 +802,10 @@ do
   local base=ISInventoryTransferAction
   for name,callback in pairs(base) do if type(callback)=='function' and name~='derive' then fixtureOrigins[callback]=NativeActionRoot..'/client/TimedActions/ISInventoryTransferAction.lua' end end
   source('local interceptionInstalled=false\n'..classify..'\n'..interceptor:sub(hookStart,hookEnd-1)..'end\ninstallInterception()',interceptorPath)
+  local capacityProof=fixture.project('SourceProof')
   require=function(module)
-   if module=='PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua')
+   if module=='PZSurvivorToolkit/SourceProof'then return capacityProof
+   elseif module=='PZSurvivorToolkit/InventoryClasses' then return dofile(ProjectRoot..'/PZSurvivorToolkit/42/media/lua/client/'..module..'.lua')
    elseif module=='SaucedCarts/Restrictions/TransferRestrictions' then
     local hook=assert(read(restrictionPath):match('(local function initTransferActionHook%(%).-\nend)'))
     Events.OnGameStart.Add(source('local transferActionHookInitialized=false\n'..hook..'\nreturn initTransferActionHook',restrictionPath))

@@ -10,7 +10,7 @@ ISBaseObject = {derive = derive}
 local install
 Events = setmetatable({OnGameStart = {Add = function(callback) install = callback end}},
     {__index = function() return {Add = function() end} end})
-for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end
@@ -105,7 +105,7 @@ local function knife()
 end
 local function corpse(x)
     local target = {x = x or 0, getX = square.getX, getY = square.getY}
-    return {square = target, parts = true, data = {parts = true}, index = 0,
+    return {class='IsoDeadBody',square = target, parts = true, data = {parts = true}, index = 0,
         getSquare = function(self) return self.square end, getModData = function(self) return self.data end,
         hasAnimalParts = function(self) return self.parts end,
         getStaticMovingObjectIndex = function(self) return self.index end}

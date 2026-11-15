@@ -77,7 +77,7 @@ public final class VehicleSalvageSandboxChecks {
     private static void events(String helper, String handler, boolean server) throws IOException {
         // Exercise every current upstream option with distinct values, detecting key mixups too.
         StringBuilder assignments = new StringBuilder(), assertions = new StringBuilder();
-        var options = java.util.regex.Pattern.compile("recipe\\s*=\\s*\"([^\"]+)\"\\s*,\\s*var\\s*=\\s*\"VRO_(SalvageTime_[^\"]+)\"").matcher(handler);
+        var options = java.util.regex.Pattern.compile("recipe\\s*=\\s*\"([^\"]+)\"\\s*,\\s*var\\s*=\\s*\"(?:VRO|VSO)_(SalvageTime_[^\"]+)\"").matcher(handler);
         int value = 120;
         while (options.find()) {
             assignments.append("SandboxVars.VSO_").append(options.group(2)).append('=').append(value).append(';');
@@ -104,13 +104,13 @@ public final class VehicleSalvageSandboxChecks {
             assert((callbacks.server~=nil)==server)
             -- Values are deliberately assigned after registration: callbacks must read helpers dynamically.
             SandboxVars={VSO_SalvageTime_Doors=120.9,VRO_SalvageTime_Doors=999}
-            callbacks.client();assert(times['Salvage Vehicle Doors']==120)
-            assert(times['Salvage Vehicle Tires']==600)
-            SandboxVars.VSO_SalvageTime_Doors='bad';callbacks.client();assert(times['Salvage Vehicle Doors']==600)
-            SandboxVars.VSO_SalvageTime_Doors=nil;callbacks.client();assert(times['Salvage Vehicle Doors']==999)
+            callbacks.client();assert(times['SalvageVehicleDoors']==120)
+            assert(times['SalvageVehicleTires']==600)
+            SandboxVars.VSO_SalvageTime_Doors='bad';callbacks.client();assert(times['SalvageVehicleDoors']==600)
+            SandboxVars.VSO_SalvageTime_Doors=nil;callbacks.client();assert(times['SalvageVehicleDoors']==999)
             if server then
-                SandboxVars.VSO_SalvageTime_Doors=121;callbacks.server();assert(times['Salvage Vehicle Doors']==121)
-                SandboxVars.VSO_SalvageTime_Doors=false;callbacks.server();assert(times['Salvage Vehicle Doors']==600)
+                SandboxVars.VSO_SalvageTime_Doors=121;callbacks.server();assert(times['SalvageVehicleDoors']==121)
+                SandboxVars.VSO_SalvageTime_Doors=false;callbacks.server();assert(times['SalvageVehicleDoors']==600)
             end
             """ + "\nSandboxVars={}\n" + assignments + "callbacks.client();" + assertions
             + (server ? "SandboxVars={}\n" + assignments + "callbacks.server();" + assertions : ""));

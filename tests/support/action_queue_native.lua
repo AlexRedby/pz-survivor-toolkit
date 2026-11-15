@@ -65,11 +65,31 @@ ISBaseObject={derive=derive,new=function() return {} end}
 PZSurvivorToolkit={Settings={actionQueue=function() return true end},BulkActions={isGuardedTransfer=function() return false end}}
 Events={OnTick={Add=function() end},OnGameStart={Add=function() end}}
 Events.OnServerCommand = {Add = function() end}
-for _,name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState','ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
+for _,name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState','ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name]={instance=function() return {} end}
 end
 getText=function(key) return key end
 instanceof=function(value,name) return type(value)=='table' and value.class==name end
+-- Explicit Java API double for the native transfer's ancestry refusal. Native
+-- signed checks separately exercise this helper with real ItemContainers.
+local function containsTransferID(container,id)
+    if id==-1 then return false end
+    local seen={}
+    while container and not seen[container] do
+        seen[container]=true
+        if (container.id or 0)==id then return true end
+        local owner=container:getContainingItem()
+        if not owner then return false end
+        if owner:getID()==id then return true end
+        container=owner:getContainer()
+    end
+    return false
+end
+ItemContainer={chainContainsContainingItem=containsTransferID}
+getClassSimpleName=function(value)
+    if value==containsTransferID then return 'LuaJavaInvoker' end
+    return type(value)=='table'and value.class or 'KahluaClosure'
+end
 table.wipe=function(t) for k in pairs(t) do t[k]=nil end end
 native=function(path)
     local source
@@ -134,4 +154,5 @@ local function queue(...)
     local values={...};local q=setmetatable({character=player,queue=values,current=values[1]},ISTimedActionQueue)
     ISTimedActionQueue.queues[player]=q;return q
 end
-return {native=native,project=project,player=player,item=item,action=action,queue=queue}
+return {native=native,project=project,player=player,item=item,action=action,queue=queue,
+    containsTransferID=containsTransferID}

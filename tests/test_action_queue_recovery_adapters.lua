@@ -62,7 +62,10 @@ local function setup(changed,binding,loadQueue,lightSwitch)
             (kind=='InventoryItem'and(value.class=='Literature'or value.class=='ComboItem'or value.class=='InventoryContainer')
                 or kind=='IsoGameCharacter'and value.class=='IsoPlayer')
     end
-    getClassSimpleName=function(value)return value.class end
+    getClassSimpleName=function(value)
+        if value==f.containsTransferID then return 'LuaJavaInvoker' end
+        return type(value)=='table'and value.class or 'KahluaClosure'
+    end
     local function square(x)
         local s={class='IsoGridSquare',x=x or 0}
         s.getX=function(self)return self.x end;s.getY=function()return 0 end;s.getZ=function()return 0 end

@@ -42,7 +42,7 @@ function Overlay.prepare(sourceMatches, nativeClosure)
     local captures = {
         {ISPlugGenerator, "complete", "shared/TimedActions/ISPlugGenerator.lua", 4207143728, "ISPlugGenerator.lua"},
         {ISActivateGenerator, "complete", "shared/TimedActions/ISActivateGenerator.lua", 844646271, "ISActivateGenerator.lua"},
-        {ISWorldObjectContextMenu, "onActivateGenerator", "client/ISUI/ISWorldObjectContextMenu.lua", 1920579052, "ISWorldObjectContextMenu.lua"},
+        {ISWorldObjectContextMenu, "onActivateGenerator", "client/ISUI/ISWorldObjectContextMenu.lua", 3358730169, "ISWorldObjectContextMenu.lua"},
     }
     for _, saved in ipairs(captures) do
         if not sourceMatches(saved[3], saved[4]) or not nativeClosure(saved[1][saved[2]], saved[5]) then return false end

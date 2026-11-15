@@ -75,7 +75,8 @@ local function setup(changed,foreignMerge,alias,missing)
     ItemTag={SMOKABLE='smokable',SPOON='spoon',FORK='fork',ALREADY_COOKED='alreadycooked'}
     local scripts={}
     ScriptManager={instance={getItem=function(_,fullType)return scripts[fullType]end}}
-    ItemContainer={floatingPointCorrection=function(value)return math.floor(value*100+0.5)/100 end}
+    ItemContainer={floatingPointCorrection=function(value)return math.floor(value*100+0.5)/100 end,
+        chainContainsContainingItem=f.containsTransferID}
     round=function(value)return value end
     f.player.class='IsoPlayer'
     f.player.hasTrait=function()return false end;f.player.isWearingAwkwardGloves=function()return false end
@@ -96,7 +97,10 @@ local function setup(changed,foreignMerge,alias,missing)
     instanceof=function(value,kind)return baseInstanceof(value,kind)or type(value)=='table'and
         (kind=='IsoGameCharacter'and value.class=='IsoPlayer'or kind=='IsoObject'and value.class=='IsoThumpable'
         or kind=='InventoryItem'and (value.class=='Food'or value.class=='HandWeapon'or value.class=='InventoryContainer'or value.class=='ComboItem'))end
-    getClassSimpleName=function(value)return value.class end
+    getClassSimpleName=function(value)
+        if value==f.containsTransferID then return 'LuaJavaInvoker' end
+        return type(value)=='table'and value.class or 'KahluaClosure'
+    end
     local knownItems={}
     local bag
     local function container(owner)
@@ -305,6 +309,26 @@ local function setup(changed,foreignMerge,alias,missing)
         forbidProofReads=function()proofReadsForbidden=true end}
 end
 if TestReturnSourceFixtureOnly then return setup end
+for _,nested in ipairs({false,true})do
+    local s=setup()
+    if nested then s.water.container=s.root end
+    local destination=nested and s.bagInventory or s.root
+    local action=s.transfer(s.water,s.water:getContainer(),destination)
+    assert(s.adapters.transfer(action),'ordinary native transfer lost its projected contract')
+    s.root.id=s.water:getID()
+    assert(ItemContainer.chainContainsContainingItem(destination,s.water:getID()),'fixture must reproduce the native ID refusal')
+    assert(not s.adapters.transfer(action),'native destination/root container-ID refusal gained projected movement')
+    s.root.id=0
+    if nested then
+        destination.id=s.water:getID()
+        assert(not s.adapters.transfer(action),'nested destination container-ID refusal gained projected movement')
+        destination.id=0
+    end
+    assert(s.adapters.transfer(action),'cleared native ID refusal did not restore ordinary transfer')
+    local calls=0
+    ItemContainer.chainContainsContainingItem=function()calls=calls+1;error('foreign containment helper invoked')end
+    assert(not s.adapters.transfer(action)and calls==0,'changed native helper gained projected transfer permission')
+end
 local function deferredReturnFixture(changed)
     local s=setup(changed)
     local current=s.f.action(ISReadABook,{item=s.water,action={},started=true})

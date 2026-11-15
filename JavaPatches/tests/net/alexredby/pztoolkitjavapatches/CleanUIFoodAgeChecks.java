@@ -351,11 +351,11 @@ public final class CleanUIFoodAgeChecks {
         String external = System.getenv("PZ_CLEANUI_SOURCE");
         if (external != null && !external.isBlank()) {
             Path externalRoot = Path.of(external);
-            String enhancedOriginal = Files.readString(externalRoot.resolve("42.19").resolve(CleanUIFoodAge.TARGET));
+            String enhancedOriginal = Files.readString(externalRoot.resolve(CleanUIFoodAge.TARGET));
             String enhancedFixed = CleanUIFoodAge.transformSource(enhancedOriginal);
             require(enhancedFixed.contains("updateCollapsedStack = CleanUI_updateCollapsedFoodStackAge,"), "export is not the exact enhanced helper");
             for (String target : new String[] {CleanUIFoodAge.TARGET, CleanUIFoodAge.VANILLA_TARGET}) {
-                Path externalPane = externalRoot.resolve("42.19").resolve(target);
+                Path externalPane = externalRoot.resolve(target);
                 Path localPane = version.resolve(target);
                 String name = basename(target);
                 String original = Files.readString(externalPane);
@@ -386,7 +386,7 @@ public final class CleanUIFoodAgeChecks {
                 if (target.equals(CleanUIFoodAge.VANILLA_TARGET)) dispatchChecks(original, fixed);
             }
             System.out.println("CLEANUI_FOOD_AGE_REVIEWED_SOURCE_PASS (woven Reader prototype, unscoped unchanged, Workshop unchanged)");
-        } else System.out.println("CLEANUI_FOOD_AGE_REVIEWED_SOURCE_SKIP (set PZ_CLEANUI_SOURCE for installed reviewed-source prototype check)");
+        } else System.out.println("CLEANUI_FOOD_AGE_REVIEWED_SOURCE_SKIP (set PZ_CLEANUI_SOURCE to the selected version directory for installed reviewed-source prototype check)");
         String unreviewed = System.getenv("PZ_CLEANUI_UNREVIEWED_SOURCE");
         if (unreviewed != null && !unreviewed.isBlank()) {
             Path externalPane = Path.of(unreviewed).resolve("42.19").resolve(CleanUIFoodAge.TARGET);

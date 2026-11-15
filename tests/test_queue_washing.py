@@ -679,7 +679,8 @@ local state=fixture(false);state.verifiedReceipt=nil;assert(not pcall(M.cleanup,
         for role in ('client1', 'server'):
             target = root / role / 'mods/PZSurvivorToolkit/42' / washing.REPLAY_PATH
             target.parent.mkdir(parents=True, exist_ok=True);target.write_text(source)
-        return washing.replay_source(root / 'client1')
+        (root / 'runtime.json').write_text(json.dumps({'game_version': [42, 21]}))
+        return washing.replay_source(root / 'client1', (42, 21))
 
     def sync(self, data):
         _, row, _, receipt = data
@@ -735,7 +736,7 @@ local state=fixture(false);state.verifiedReceipt=nil;assert(not pcall(M.cleanup,
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp);proof = self.sealed_replay(root)
             selection = evidence(kind='mp')[0]
-            runtime = {'roles': {name: {'cache': str(root / name)} for name in ('client1', 'server')}}
+            runtime = {'game_version': [42, 21], 'roles': {name: {'cache': str(root / name)} for name in ('client1', 'server')}}
             with patch.object(washing.craft, 'stage_common'):
                 washing.stage(ROOT, root, None, None, selection, {}, runtime)
             helper = root / 'client1/mods/ActionQueueTest/42/media/lua/shared/QueueWashingReplayProof.lua'
@@ -836,6 +837,8 @@ local state=fixture(false);state.verifiedReceipt=nil;assert(not pcall(M.cleanup,
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is required for actual observer delegation check')
     def test_actual_reset_observer_preserves_queue_add_and_records_only_native_creation_provenance(self):
         script = r'''
+package.preload.QueuePreflight=function()return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end}end
+
 for _,name in ipairs({'PZSurvivorToolkit/ActionQueuePanel','TimedActions/ISReadABook','ISUI/WMI_WashingSubmenus'})do package.loaded[name]={}end
 local testKind=arg[3]or 'sp'
 package.loaded.QueueTestSelection={mode='toolkit',kind=testKind,cases={'cancel-after-pickup'}}
@@ -914,6 +917,8 @@ print('actual native reset creation observer preserves delegation and provenance
     @unittest.skipUnless(shutil.which('luajit'), 'LuaJIT is required for actual menu selection check')
     def test_actual_selector_preserves_aggregate_no_soap_and_selects_individual_soap(self):
         script = r'''
+package.preload.QueuePreflight=function()return {onGameStart=function(events,fn)events.OnGameStart.Add(fn)end,onTick=function(events,fn)events.OnTick.Add(fn)end}end
+
 for _,name in ipairs({'PZSurvivorToolkit/ActionQueuePanel','TimedActions/ISReadABook','ISUI/WMI_WashingSubmenus'})do package.loaded[name]={}end
 local config={mode='toolkit',cases={'borrowed-batch'}};package.loaded.QueueTestSelection=config
 package.loaded.QueueHealthEvents=assert(loadfile(arg[2]))()

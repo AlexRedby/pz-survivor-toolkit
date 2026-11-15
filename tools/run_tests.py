@@ -96,6 +96,8 @@ SOURCE_CHECKS = {'test_device_action_target.lua': ('source-contract',), 'test_ac
  'test_action_queue_book_controls.lua': ('source-contract',),
  'test_action_queue_carts.lua': ('source-contract',),
  'test_action_queue_compat.lua': ('source-contract',),
+ 'test_project_cook_balance.lua': ('source-contract',),
+ 'test_action_queue_current_craft_providers.lua': ('refusal-boundary',),
  'test_action_queue_craft.lua': ('source-contract',),
  'test_action_queue_denial_details.lua': ('source-contract',),
  'test_action_queue_dismantle.lua': ('source-contract',),
@@ -236,9 +238,10 @@ def configure_test_sources(lua, name, args):
     """Give every isolated runtime the same paths; read only this test's inputs."""
     inputs = mod_integrations.bind_sources(lua, name, args)
     lua.globals().ProjectRoot = str(ROOT)
-    if name == 'test_action_queue_borrowing_composition.lua':
+    if name == 'test_action_queue_borrowing_composition.lua' and (args.game or getattr(args, 'toolkit_source', None)
+            or getattr(args, 'native_action_root', None)):
         toolkit = getattr(args, 'toolkit_source', None) or ROOT / 'PZSurvivorToolkit'
-        layers = mod_integrations.mod_layers(toolkit.resolve())
+        layers = mod_integrations.mod_layers(toolkit.resolve(), mod_integrations.game_version(args.game))
         if not layers:
             raise ValueError('--toolkit-source requires a Build 42 mod root with common/version layers')
         lua.globals().ToolkitLuaRoots = lua.table_from([str(layer / 'media/lua') for layer in layers])
@@ -340,6 +343,8 @@ def test_variants(name, args):
     if name == "test_action_queue_fire.lua" and args.native_action_root and args.wishlist_workshop_root:
         flags += ["FireTestBCPreinstalled", "FireTestBCForeignPredecessor", "FireTestQMBeforeBC",
                   "FireTestQMPreloaded", "FireTestQMForeignPredecessor", "FireTestQMForeignGather"]
+    if name == "test_action_queue_fitness.lua" and args.native_action_root:
+        flags += ["FitnessTestEquipmentSourceChanged", "FitnessTestEquipmentRoleChanged", "FitnessTestEquipmentOwnerChanged"]
     if name == "test_action_queue_ownership.lua" and args.native_action_root:
         flags += ["OwnershipRadio", "OwnershipItems", "OwnershipMedia", "OwnershipRecovery",
                   "OwnershipGenerators", "OwnershipApproach", "OwnershipHealth", "OwnershipLifecycle", "OwnershipSettlement", "OwnershipGrooming", "OwnershipGroomingActive", "OwnershipGroomingPending", "OwnershipGroomingCosts", "OwnershipGroomingRecovery", "OwnershipMakeup", "OwnershipMakeupSync", "OwnershipTextBinding", "OwnershipAnimalStops"]
@@ -484,6 +489,8 @@ def main() -> None:
     parser.add_argument("--wishlist-game-root", type=Path, help="game Java directory for native wishlist menu callbacks")
     parser.add_argument("--wishlist-workshop-root", type=Path, help="Workshop content/108600 for wishlist UI source checks")
     parser.add_argument("--project-cook-picker", type=Path, help="Project Cook ItemPicker.lua for queued stove controls")
+    parser.add_argument("--project-cook-source", type=Path, help="Project Cook effective media/lua source root")
+    parser.add_argument("--neat-crafting-source", type=Path, help="Neat Crafting effective media/lua source root")
     parser.add_argument("--saucedcarts-source", type=Path, help="SaucedCarts shared module directory for server hook checks")
     parser.add_argument("--wheelbarrow-source", type=Path, help="SaucedWheelbarrow registration init.lua for spawn checks")
     args = parser.parse_args()

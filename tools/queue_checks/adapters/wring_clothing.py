@@ -5,7 +5,7 @@ import re
 import shutil
 import zlib
 
-from ..mod_selection import lua_sources
+from ..mod_selection import lua_sources, game_version
 from .tv_controls import MODS
 
 CASES = ('root', 'worn-prepared', 'wear-swap', 'worn', 'worn-bag', 'world')
@@ -70,10 +70,10 @@ def audit_native(game, profile=False):
     return result
 
 
-def audit_selected(locations):
+def audit_selected(locations, version):
     result = {}
     for identifier, (name, expected) in SELECTED_CRC.items():
-        selected = [path for path in lua_sources(Path(locations[identifier])) if path.name == name]
+        selected = [path for path in lua_sources(Path(locations[identifier]), version) if path.name == name]
         if len(selected) != 1 or zlib.crc32(selected[0].read_bytes()) != expected:
             raise ValueError('Wring selected producer/restore audit requires review: ' + identifier)
         result[identifier] = expected
@@ -83,7 +83,7 @@ def audit_selected(locations):
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     audit = audit_native(game, selection.get('options', {}).get('profile_capacity', False))
-    audit.update(audit_selected(locations))
+    audit.update(audit_selected(locations, game_version(game)))
     root = Path(project) / 'tests/native_queue'
     for role in runtime['roles'].values():
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'

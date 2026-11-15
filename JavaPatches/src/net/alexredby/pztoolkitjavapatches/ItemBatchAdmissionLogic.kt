@@ -21,13 +21,13 @@ import zombie.network.GameClient
 import zombie.network.GameServer
 import zombie.network.fields.ContainerID
 import zombie.network.fields.ContainerID.ContainerType
-import zombie.network.fields.character.PlayerID
+import zombie.network.fields.character.ConnectionPlayer
 import zombie.network.packets.ItemTransactionPacket
 
 internal object ItemBatchAdmissionLogic {
     private const val TARGET = "zombie/core/TransactionManager"
     private const val HELPER = "net/alexredby/pztoolkitjavapatches/ItemBatchAdmission"
-    private const val HASH = "4a0f649f5e55edd13eff7d6788934fbec49e0073901609e1c12731fc47d7481d"
+    private const val HASH = "fafb0528b0fa7e664a8e440a8d10a2fca40cde46c1dfd711ca36caab93cb5508"
     private const val CHECK_DESCRIPTOR =
         "(ILzombie/inventory/InventoryItem;Lzombie/inventory/ItemContainer;" +
             "Lzombie/inventory/ItemContainer;Ljava/lang/String;Lzombie/network/packets/ItemTransactionPacket;" +
@@ -35,14 +35,14 @@ internal object ItemBatchAdmissionLogic {
 
     @JvmField
     val SUPPORTED =
-        QueueManagers.ITEM_SUPPORTED &&
+        QueueManagerSupport.ITEM_SUPPORTED &&
             BytecodeSupport.supports(
                 "zombie/network/fields/ContainerID.class",
-                "d7ef29f65c423135d70f829a1381b9e32ce06d68f87ae49de1980bfcf7c0244b",
+                "3123bde915f47f58fa81fb0f49fc1768efcb4db45749fe0d97c4c52dbc731bc0",
             ) &&
             BytecodeSupport.supports(
                 "zombie/inventory/ItemContainer.class",
-                "a2ac7dd6235f91255dc57b91419a2c8609bdb105214cddf7fb445b70507b6f96",
+                "19ffefbabfc16ce3b40feb557189c4fbecdb752aa2c96e3daa8b8ec0542185d3",
             )
 
     private var installed = false
@@ -116,8 +116,8 @@ internal object ItemBatchAdmissionLogic {
     class Shadow(packet: ItemTransactionPacket?) : Transaction() {
         init {
             state = TransactionState.Request
-            val owner = Accessor.tryGet<PlayerID>(packet, "playerId", null)
-            if (owner != null && owner.getPlayer() != null) playerId.set(owner.getPlayer())
+            val owner = Accessor.tryGet<ConnectionPlayer>(packet, "player", null)
+            if (owner != null && owner.getPlayer() != null) player.set(owner.getPlayer())
         }
 
         fun append(entry: Any?) {

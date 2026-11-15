@@ -245,10 +245,10 @@ local function sourceShape(action)
  for _,slot in ipairs(enumSlots)do if slot.owner[slot.name]~=slot.value then return false end end
  if kind(stopOnWalk)~='function'or ISWearClothing.isStopOnWalk~=stopOnWalk then return false end
  if nativeSources==nil then
-  nativeSources=Proof.matches('media/lua/shared/TimedActions/ISUnequipAction.lua',2851923231,nil,true)
+  nativeSources=Proof.matches('media/lua/shared/TimedActions/ISUnequipAction.lua',3541820703,nil,true)
    and Proof.matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)
    and Proof.matches('media/lua/shared/TimedActions/ISWearClothing.lua',1104211581,nil,true)
-   and Proof.matches('media/lua/shared/TimedActions/ISEquipWeaponAction.lua',4117952124,nil,true)
+   and Proof.matches('media/lua/shared/TimedActions/ISEquipWeaponAction.lua',4004646560,nil,true)
    and Proof.closure(isForceDropHeavyItem,'ISEquipWeaponAction.lua')
    and Proof.closure(stopOnWalk,'ISWearClothing.lua')
  end
@@ -281,10 +281,10 @@ local function wearSource(action)
  for name,value in pairs(globals)do if _G[name]~=value then return false end end
  for _,slot in ipairs(enumSlots)do if slot.owner[slot.name]~=slot.value then return false end end
  if nativeSources==nil then
-  nativeSources=Proof.matches('media/lua/shared/TimedActions/ISUnequipAction.lua',2851923231,nil,true)
+  nativeSources=Proof.matches('media/lua/shared/TimedActions/ISUnequipAction.lua',3541820703,nil,true)
    and Proof.matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)
    and Proof.matches('media/lua/shared/TimedActions/ISWearClothing.lua',1104211581,nil,true)
-   and Proof.matches('media/lua/shared/TimedActions/ISEquipWeaponAction.lua',4117952124,nil,true)
+   and Proof.matches('media/lua/shared/TimedActions/ISEquipWeaponAction.lua',4004646560,nil,true)
    and Proof.closure(isForceDropHeavyItem,'ISEquipWeaponAction.lua')
    and Proof.closure(stopOnWalk,'ISWearClothing.lua')
  end

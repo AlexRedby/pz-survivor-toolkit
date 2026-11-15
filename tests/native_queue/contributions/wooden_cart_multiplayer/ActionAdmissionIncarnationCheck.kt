@@ -1,4 +1,4 @@
-package zombie.core
+package net.alexredby.cartlabchecks
 
 import java.lang.ref.WeakReference
 import java.nio.ByteBuffer
@@ -109,6 +109,11 @@ object ActionAdmissionIncarnationCheck {
 
     private fun field(type: Class<*>, name: String) = type.getDeclaredField(name).apply { isAccessible = true }
 
+    private fun nativeAction(operation: String, action: NetTimedAction) {
+        ActionManager::class.java.getDeclaredMethod(operation, Class.forName("zombie.core.Action"))
+            .apply { isAccessible = true }.invoke(null, action)
+    }
+
     private fun lua(code: String): Any? =
         LuaManager.thread.call(
             LuaCompiler.loadstring(code, "admission-incarnation", LuaManager.env), null, null, null,
@@ -172,7 +177,7 @@ object ActionAdmissionIncarnationCheck {
             as ThreadLocal<ActionAdmission.ActionAdmissionScope>
         scopes.set(scope)
         try {
-            ActionManager.start(action)
+            nativeAction("start", action)
             ensure(scope.starts.size == 1, "Actual native start advice did not create one exact observation")
             val pending = scope.starts.single()
             ensure(
@@ -245,7 +250,7 @@ object ActionAdmissionIncarnationCheck {
             assert(oldReceipt and fixtureAck.state(oldAction,oldReceipt)=='started')
             """.trimIndent(),
         )
-        if (cancel) ActionManager.stop(old.action)
+        if (cancel) nativeAction("stop", old.action)
         else {
             field(Class.forName("zombie.core.Action"), "endTime").setLong(old.action, 0L)
             ActionManager.update()
@@ -317,7 +322,7 @@ object ActionAdmissionIncarnationCheck {
             next.action.action.rawget("performed") == 0.0 && next.action.action.rawget("stopped") == 0.0,
             "Delayed old settlement executed the new action",
         )
-        ActionManager.stop(next.action)
+        nativeAction("stop", next.action)
         LuaManager.env.rawset("fixtureReceipt", connection.receipts.last())
         lua(
             """
@@ -467,7 +472,7 @@ object ActionAdmissionIncarnationCheck {
             else LeaseControl.leaseControlCallback.set(previous)
             LeaseControl.leaseControlIngresses.remove(reader)
             owner.cart = original
-            ActionManager.stop(invocation.action)
+            nativeAction("stop", invocation.action)
             GameServer.PlayerToAddressMap.remove(foreign)
             GameServer.IDToPlayerMap.remove(foreign.onlineId)
             engine.foreign = null

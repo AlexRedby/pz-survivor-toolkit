@@ -24,7 +24,7 @@ object FenceValidationLogic {
     val SUPPORTED =
         BytecodeSupport.supports(
             "zombie/iso/BrokenFences.class",
-            "4368bbe6d2ec26198062bced328c3fef349e6be8e0f7184cbb9086de4cccc015",
+            "8a72250554a8035c06b06777bdcd83cd56b5d078418ab08847fc7b1188b914c1",
         ) &&
             BytecodeSupport.supports(
                 "zombie/Lua/Event.class",
@@ -32,11 +32,11 @@ object FenceValidationLogic {
             ) &&
             BytecodeSupport.supports(
                 "zombie/Lua/LuaEventManager.class",
-                "9706f17e9b5e095a0e24230dc944de5d552fa62c997214636c4deb4957cf354b",
+                "55db330c497599c50c44f2cbb068b65a7df9806b16629ca12ee33347e0518405",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/IsoWorld.class",
-                "5b7406a70f33578a47ff417b0b6aa7a2b7a5bebfa00487a60935303f5747fb71",
+                "e17f9d3266154e7715237656612832123a9032e7bb9ff73ae7a29ecdf73374df",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/sprite/IsoSpriteManager.class",
@@ -48,7 +48,7 @@ object FenceValidationLogic {
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/properties/PropertyContainer.class",
-                "bc236f8e9e4e0da8a86b0d1fd19ad8d44a040fe4f67d1baac77401b3b148bd77",
+                "400d434ad860a39feb745f1033a63dca446d6f93d8b1a2ec4c343b166b658959",
             ) &&
             BytecodeSupport.supports(
                 "zombie/audio/parameters/ParameterFenceTypeLow\$FenceType.class",
@@ -57,7 +57,7 @@ object FenceValidationLogic {
 
     private const val TARGET = "zombie/iso/BrokenFences"
     private const val HELPER = "net/alexredby/pztoolkitjavapatches/FenceValidation"
-    private const val HASH = "4368bbe6d2ec26198062bced328c3fef349e6be8e0f7184cbb9086de4cccc015"
+    private const val HASH = "8a72250554a8035c06b06777bdcd83cd56b5d078418ab08847fc7b1188b914c1"
     private val pending = LinkedHashSet<String?>()
     private var installed = false
     private var ready = false

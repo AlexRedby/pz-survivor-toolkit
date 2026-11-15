@@ -12,7 +12,7 @@ object MedicineCooldown {
     internal val SUPPORTED =
         BytecodeSupport.supports(
             "zombie/characters/IsoGameCharacter.class",
-            "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b",
+            "1ccabc492ba130f51486bf38a8400334545852253bbac9c46fff71242ab672f6",
         )
 
     private val timerField: Field? =

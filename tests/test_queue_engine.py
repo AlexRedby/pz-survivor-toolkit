@@ -249,7 +249,7 @@ class EngineAdapterTests(unittest.TestCase):
                 classes.mkdir(parents=True)
                 for name in ('Main.class', 'Main$Cancellation.class'):
                     (classes / name).write_bytes(b'compiled fixture')
-                checks = classes.parents[2] / 'zombie/core/EnginePeerProbeChecks.class'
+                checks = classes.parents[2] / 'net/alexredby/queueengineprobechecks/EnginePeerProbeChecks.class'
                 checks.parent.mkdir(parents=True)
                 checks.write_bytes(b'compiled check')
             elif fail_check:
@@ -263,7 +263,7 @@ class EngineAdapterTests(unittest.TestCase):
     def test_peer_probe_runs_store_regression_without_shipping_check_classes(self):
         jar, calls = self.probe_preparation()
         self.assertEqual(Path(calls[1][0]).name, 'java')
-        self.assertEqual(calls[1][-1], 'zombie.core.EnginePeerProbeChecks')
+        self.assertEqual(calls[1][-1], 'net.alexredby.queueengineprobechecks.EnginePeerProbeChecks')
         with zipfile.ZipFile(jar) as archive:
             self.assertEqual(set(archive.namelist()), {'net/alexredby/queueengineprobe/Main.class',
                                                        'net/alexredby/queueengineprobe/Main$Cancellation.class'})
@@ -428,6 +428,7 @@ class EngineAdapterTests(unittest.TestCase):
             layer = self.root / role / 'mods/EnginePeerProbe/42'
             self.assertEqual((layer / 'media/java/EnginePeerProbe.jar').read_bytes(), probe.read_bytes())
             self.assertIn('javaPkgName=net.alexredby.queueengineprobe', (layer / 'mod.info').read_text())
+            self.assertIn('versionMin=42.22', (layer / 'mod.info').read_text())
         self.assertIn(ROOT / 'tests/native_queue/engine/java/Main.java', engine.sources(ROOT, self.selection))
         for key, value in [('clients', 1), ('kind', 'sp'), ('languages', ['EN']), ('cases', ['repair', 'cancel'])]:
             with self.subTest(key=key), self.assertRaises(ValueError):

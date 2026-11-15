@@ -21,11 +21,11 @@ internal object ItemStatsChargeLogic {
         if (
             !BytecodeSupport.supports(
                 "zombie/network/packets/ItemStatsPacket.class",
-                "1b2cd2f150e418d8266cdee8ab671210f8676bf9fd02f596eb5265f1389eaa8a",
+                "a553efea09930272533fb4c8155ccc464069f7c6577996b1bbde35531925c3a7",
             ) ||
                 !BytecodeSupport.supports(
                     "zombie/inventory/types/DrainableComboItem.class",
-                    "f2b9c855c4deb394c31701c1466cafc633b6155dae7c9544921d05e3b7d5414d",
+                    "d5b4926058d77e6f889339ccffb4c8996fd1a93cdd49aec3786fd631b8ba51ea",
                 )
         )
             return null

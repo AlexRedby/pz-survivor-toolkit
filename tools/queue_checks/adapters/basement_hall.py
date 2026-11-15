@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 from .. import preparation_process
+from ..mod_selection import runtime_version
 import zipfile
 from .auxiliary import _load, _path, _path_value
 
@@ -23,7 +24,7 @@ def definitions():
                             'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'],
             'cases': [{'id': case, 'producer': 'fixture', 'capability': 'effect',
                        'kinds': ['sp'], 'languages': ['EN'], 'modes': ['toolkit'],
-                       'control_reason': 'Explicit fresh native-control uses JavaPatches 0.1.17; other cases require the candidate'}
+                       'control_reason': 'Historical B42.21 native-control uses JavaPatches 0.1.17; current fresh/reload cases require the candidate'}
                       for case in ('fresh', 'reload', 'native-control')]}}
 
 
@@ -64,6 +65,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
     from ..native import _lua, _metadata
     validate(selection)
     if selection['cases'] == ['native-control']:
+        if runtime_version(runtime) != (42, 21):
+            raise ValueError('Historical basement native-control requires the preserved B42.21 engine')
         info = Path(locations['PZToolkitJavaPatches']) / '42/mod.info'
         if _metadata(info).get('version') != '0.1.17':
             raise ValueError('Basement hall native-control requires sealed JavaPatches 0.1.17')
@@ -151,12 +154,19 @@ def verify(root, selection, catalog):
     lights = []
     try:
         text = (root / 'client1-launch.log').read_text(errors='replace')
-        activation = r'\[PZToolkitJavaPatches\] Experimental B42\.21 patch:[^\r\n]*\bbasementHall=true(?:,|\s|$)'
-        separated = ('[PZToolkitJavaPatches] Basement hall key separated: original=107, key='
+        version = runtime_version(json.loads((root / 'runtime.json').read_text()))
+        if version not in ((42, 21), (42, 22)):
+            raise ValueError('Unreviewed native basement hall layout')
+        base_index = 107 if version == (42, 21) else 106
+        label = re.escape('.'.join(map(str, version)))
+        activation = r'\[PZToolkitJavaPatches\] Experimental B' + label + r'(?:\.\d+)? patch:[^\r\n]*\bbasementHall=true(?:,|\s|$)'
+        separated = ('[PZToolkitJavaPatches] Basement hall key separated: original=' + str(base_index) + ', key='
                      + str(0x505A0000000C00D3) + ', accessKey=786643')
         native_control = selection['cases'] == ['native-control']
         duplicate = 'duplicate RoomDef.metaID for room at 10707,9484,0'
         if native_control:
+            if version != (42, 21):
+                issues.append('Historical native-control cannot qualify the current engine')
             old_activation = r'\[PZToolkitJavaPatches\] Experimental B42\.21 patch:[^\r\n]*\bbasementRooms=true(?:,|\s|$)'
             if (len(re.findall(old_activation, text)) != 1 or re.search(activation, text)
                     or '[PZToolkitJavaPatches] Basement hall key separated:' in text or text.count(duplicate) != 1):
@@ -183,8 +193,8 @@ def verify(root, selection, catalog):
             issues.append('Missing ordered held active native lantern evidence')
         for match in re.finditer(re.escape(MARKER) + r'PROBE (.+)', text):
             value = json.loads(match[1])
-            if (value.get('baseIndex') != 107 or type(value.get('accessIndex')) is not int
-                    or value['accessIndex'] < 0 or value['accessIndex'] == 107
+            if (value.get('baseIndex') != base_index or type(value.get('accessIndex')) is not int
+                    or value['accessIndex'] < 0 or value['accessIndex'] == base_index
                     or value.get('nativeControl') is not native_control
                     or value.get('baseKey') != ('c00d3' if native_control else '505a0000000c00d3')
                     or value.get('accessKey') != 'c00d3'

@@ -251,8 +251,8 @@ def stage(project, output, game, jdk, selection, locations, runtime):
                 settings.setdefault('env', {}).update(
                     {name: str(value) for name, value in environment(selection, role, settings['cache']).items()})
             if selection['cases'] == ['inventory-selection']:
-                from ..mod_selection import selected_mod_version
-                _load(intake / 'stage_selection_probe.py').stage(output, runtime, selected_mod_version)
+                from ..mod_selection import selected_mod_version, game_version
+                _load(intake / 'stage_selection_probe.py').stage(output, runtime, lambda root: selected_mod_version(root, game_version(game)))
         if suite == 'storage-profile' and len(selection['cases']) > 1:
             fixture['failure_markers'].append('[QUEUE_SESSION] QUARANTINE ')
         if (suite == 'storage-profile' and selection['cases'] == ['inventory-food-age']

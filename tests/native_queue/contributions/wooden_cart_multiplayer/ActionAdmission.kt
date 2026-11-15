@@ -5,6 +5,7 @@ import java.util.ArrayList
 import java.util.LinkedHashMap
 import java.util.concurrent.atomic.AtomicLong
 import me.zed_0xff.zombie_buddy.Patch
+import net.alexredby.pztoolkitjavapatches.BytecodeSupport
 import net.alexredby.cartlab.LeaseControl.LEASE_CONTROL
 import net.alexredby.cartlab.LeaseControl.LeaseCommandIngress
 import net.alexredby.cartlab.LeaseControl.LeaseTransport
@@ -33,10 +34,20 @@ import zombie.network.PacketTypes
 import zombie.network.fields.character.PlayerID
 
 object ActionAdmission {
-    @JvmStatic fun initialize() = Unit
+    // The qualified prototype retains the legacy PlayerID wire-slot proof. ConnectionPlayer
+    // discards that slot while parsing, so a new ownership audit is required before activation.
+    @JvmField val NATIVE_SUPPORTED =
+        BytecodeSupport.supports("zombie/core/Action.class", "4a2fe6aaf0cf73235279946e930b40489ec44859aff64cc19d97976bcc75610d") &&
+        BytecodeSupport.supports("zombie/core/ActionManager.class", "3e85655f0d287837b17164d2ee4cecb7067ab419ffbe8ce1adb36bd7d54b202f")
+    private val requested = "true".equals(System.getenv("PZ_CART_ACTION_ADMISSION"))
+    @JvmStatic fun initialize() {
+        check(!requested || NATIVE_SUPPORTED) {
+            "Cart ActionAdmission prototype unsupported: native owner/connection-slot proof requires requalification"
+        }
+    }
 
     // Opt-in observation of native server cart transactions. No effects, sends, or state writes.
-    @JvmField val ACTION_ADMISSION = "true".equals(System.getenv("PZ_CART_ACTION_ADMISSION"))
+    @JvmField val ACTION_ADMISSION = requested && NATIVE_SUPPORTED
     @JvmField @Volatile var actionAdmissionFailed: Boolean = false
     private val actionAdmissionLock = Any()
     private val actionAdmissionSequence = AtomicLong()

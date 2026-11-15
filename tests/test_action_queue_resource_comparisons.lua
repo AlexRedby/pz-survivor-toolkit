@@ -1,3 +1,5 @@
+-- Source-bound preparation uses the native derive hierarchy and constructor-owned __index.
+NativeKahluaTableLookup=true
 if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','SKIP Policy resource comparisons: supply --game')end;return end
 local f=assert(loadfile(ProjectRoot..'/tests/support/action_queue_native.lua'))()
 f.project('ActionQueueOperations');f.project('ActionQueueDefinitions')
@@ -185,10 +187,25 @@ do
         if value==first and kind=='IsoObject'then trace[#trace+1]='instanceof' end
         return previousInstance(value,kind)
     end
-    local ok,decision=pcall(result,queue,moving,crossed)
+    -- Public edit lookup rejects this deliberately foreign action metatable.
+    -- Keep the comparator's callback/eager-read contract independently covered
+    -- without granting that metatable native queue-edit authority.
+    local decision=result(queue,moving,crossed)
+    assert(decision.reason=='unavailable'and #trace==0,'foreign source metatable entered authoritative comparison')
+    local function upvalue(callback,name)
+        for index=1,80 do
+            local key,value=debug.getupvalue(callback,index)
+            if not key then break end
+            if key==name then return value end
+        end
+        error('missing comparator test boundary: '..name)
+    end
+    local spatial=upvalue(policy.moveReason,'spatialEdits')
+    local compare=upvalue(spatial.reasons.move,'moveConflict')
+    local ok,reason,resource=pcall(compare,queue,moving,crossed,2,false,{contracts={},items={}})
     instanceof=previousInstance
-    assert(ok,decision)
-    assert(decision.reason=='move_dependent'and decision.resource==true)
+    assert(ok,reason)
+    assert(reason=='move_dependent'and resource==true)
     assert(table.concat(trace,',')=='world,generator,charger,object,moveProps,moveProps,moveProps.object,toolkitWorldTarget,isoObject,instanceof',
         'world callback or eager source spatial read order changed: '..table.concat(trace,','))
 end

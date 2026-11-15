@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
+from tests.support.game_version import write_game_jar
 from queue_checks import native, worlds, pack, runner, admission, report, snapshot_copy, borrowing_check, mod_inputs
 
 
@@ -41,6 +42,7 @@ class NativeSnapshotTests(unittest.TestCase):
         for relative in ("projectzomboid.jar", "stdlib.lbc", "media/lua/shared/native.lua", "media/scripts/items.txt",
                          "media/lua/shared/Translate/EN/Fixture_EN.txt"):
             self.write(self.game / relative, "native input")
+        write_game_jar(self.game)
         for name in ('java', 'javac'):
             executable = native.jdk_binary(self.jdk, name)
             self.write(executable, "fake Java executable")
@@ -641,7 +643,7 @@ class NativeSnapshotTests(unittest.TestCase):
         for sources in ([], False, {'PZSurvivorToolkit': None}, {'PZSurvivorToolkit': []},
                         {'PZSurvivorToolkit': 1}, {'PZSurvivorToolkit': 'relative/path'}):
             with self.subTest(sources=sources), self.assertRaises(ValueError):
-                native._locations(self.project, [], ['PZSurvivorToolkit'], sources)
+                native._locations(self.project, [], ['PZSurvivorToolkit'], sources, version=(42, 21))
 
     def test_empty_common_layer_has_native_animation_directories_only_in_snapshot(self):
         source = self.project / "Toolkit/common"
@@ -660,6 +662,26 @@ class NativeSnapshotTests(unittest.TestCase):
         self.assertFalse(original.exists())
         for sub in ('AnimSets', 'actiongroups'):
             self.assertTrue((output / 'client1/mods/PZSurvivorToolkit/common/media' / sub).is_dir())
+
+    def test_engine_version_selects_and_seals_current_snapshot_lua_overlay(self):
+        write_game_jar(self.game, 22)
+        source = self.project / 'Toolkit'
+        self.mod(source, 'PZSurvivorToolkit', layer='42.22')
+        self.write(source / 'common/media/lua/shared/common.lua', 'return true\n')
+        self.write(source / 'common/media/lua/shared/test.lua', 'return "common shadow"\n')
+        self.mod(source, 'PZSurvivorToolkit', layer='42.23')
+        output = self.prepare()
+        runtime = report.read_json(output / 'runtime.json')
+        self.assertEqual([42, 22], runtime['game_version'])
+        manifest = report.read_json(output / 'manifest.json')
+        self.assertEqual('42.22', manifest[0]['selected_layer'])
+        paths = native.runtime_lua_sources(runtime, self.selection)
+        root = output / 'client1/mods/PZSurvivorToolkit'
+        self.assertIn(root / '42.22/media/lua/shared/test.lua', paths)
+        self.assertIn(root / 'common/media/lua/shared/common.lua', paths)
+        self.assertNotIn(root / 'common/media/lua/shared/test.lua', paths)
+        self.assertNotIn(root / '42/media/lua/shared/test.lua', paths)
+        self.assertNotIn(root / '42.23/media/lua/shared/test.lua', paths)
 
     def test_common_only_b42_metadata_and_empty_fallback_leave_b41_files_untouched(self):
         source = self.project / 'Toolkit'
@@ -687,6 +709,26 @@ class NativeSnapshotTests(unittest.TestCase):
             target = output / role / 'mods/PZSurvivorToolkit'
             self.assertFalse((target / '42.0').exists())
             self.assertEqual('PZSurvivorToolkit', native._metadata(target / '42/mod.info')['id'])
+
+    def test_numeric_regular_file_keeps_common_content_without_becoming_a_directory(self):
+        write_game_jar(self.game, 22)
+        source = self.project / 'Toolkit'
+        self.mod(source, 'PZSurvivorToolkit', layer='common')
+        self.write(source / '42.22', 'selected alias is a regular file\n')
+        initial = native.hashes(source)
+        output = self.prepare(kind='mp', languages=['EN', 'RU'])
+        self.assertEqual(initial, native.hashes(source))
+        for role in ('server', 'client1', 'client2'):
+            target = output / role / 'mods/PZSurvivorToolkit'
+            self.assertEqual(initial, native.hashes(target))
+            self.assertTrue((target / '42.22').is_file())
+            self.assertFalse((target / '42.0').exists())
+            for sub in ('AnimSets', 'actiongroups'):
+                self.assertTrue((target / 'common/media' / sub).is_dir())
+        runtime = report.read_json(output / 'runtime.json')
+        paths = native.runtime_lua_sources(runtime, self.selection)
+        self.assertIn(output / 'client1/mods/PZSurvivorToolkit/common/media/lua/shared/test.lua', paths)
+        self.assertNotIn(output / 'client1/mods/PZSurvivorToolkit/42/media/lua/shared/test.lua', paths)
 
     def test_common_with_future_branch_gets_only_empty_default_layer_in_snapshot(self):
         source = self.project / 'Toolkit'

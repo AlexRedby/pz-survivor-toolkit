@@ -11,6 +11,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools import mod_integrations
 from tools.queue_checks import pack
+from tests.support.game_version import write_game_jar
 
 
 class ModIntegrations(unittest.TestCase):
@@ -20,7 +21,7 @@ class ModIntegrations(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.game = self.root / 'game'
         self.game.mkdir()
-        (self.game / 'projectzomboid.jar').write_bytes(b'game')
+        write_game_jar(self.game)
         (self.root / 'SurvivorQoL-selected.ini').write_text('Mods=Navigator;TVRadio_ReInvented\n')
         self.nav = self.root / 'Navigator/42.13/media/lua/client/NavigatorRadio'
         for folder, id in [('Navigator/42.13', 'Navigator'), ('TVRadio_ReInvented/common', 'TVRadio_ReInvented')]:
@@ -49,6 +50,7 @@ class ModIntegrations(unittest.TestCase):
         if full:
             for relative, text in (
                     ('ISUI/ISInventoryPageTransferHandler.lua', 'CleanUI transfer handler'),
+                    ('ISUI/ISInventoryPaneContextMenu.lua', 'CleanUI context'),
                     ('ISUI/CleanUI_ModOptions.lua', 'CleanUI options'),
                     ('ISUI/ISInventoryPage.lua', 'CleanUI page'),
                     ('CleanUI/Vanilla/CleanUI_Vanilla_ISInventoryPane.lua', 'CleanUI vanilla pane'),
@@ -173,10 +175,10 @@ class ModIntegrations(unittest.TestCase):
         common = self.root / 'Navigator/common' / relative
         self.write(common, 'common fallback')
         source.unlink()
-        self.assertEqual(common, mod_integrations.source_path(self.root / 'Navigator', relative))
+        self.assertEqual(common, mod_integrations.source_path(self.root / 'Navigator', relative, version=(42, 21)))
         self.write(self.root / 'Standalone' / relative, 'root-only mod')
         with self.assertRaisesRegex(ValueError, 'Missing upstream source'):
-            mod_integrations.source_path(self.root / 'Standalone', relative)
+            mod_integrations.source_path(self.root / 'Standalone', relative, version=(42, 21))
 
     def test_owned_quartermaster_is_not_an_upstream_integration(self):
         self.assertNotIn('Quartermaster', mod_integrations.INTEGRATIONS)
@@ -303,8 +305,12 @@ class ModIntegrations(unittest.TestCase):
         self.lock_sources()
         args, requested = self.configure(['EURY_CONTAINERS'])
         self.assertEqual({'test_bc_filter_compat.lua', 'test_smart_deposit.lua', 'test_container_configuration_menus.lua',
-                          'test_inventory_refresh.lua', 'test_bc_inventory_classes.lua', 'test_inventory_freshness.lua'}, requested)
+                          'test_inventory_refresh.lua', 'test_bc_inventory_classes.lua', 'test_inventory_freshness.lua',
+                          'test_inventory_search.lua', 'test_inventory_tags.lua'}, requested)
         self.assertEqual({'NativeBCFreshnessSource': 'BC freshness'}, self.bound(args, 'test_inventory_freshness.lua'))
+        for test in ('test_inventory_search.lua', 'test_inventory_tags.lua'):
+            self.assertEqual('inventory category', self.bound(args, test)['NativeBCInventoryCategorySource'])
+            self.assertEqual('category store', self.bound(args, test)['NativeBCCategoryStoreSource'])
         self.assertEqual({'NativeBCFilterSource': 'category filters',
                           'NativeBCInventoryCategorySource': 'inventory category',
                           'NativeBCCategoryStoreSource': 'category store',
@@ -319,7 +325,18 @@ class ModIntegrations(unittest.TestCase):
         self.assertEqual('CleanUI page', smart['CleanUIInventoryPageSource'])
         self.assertEqual('BC page customizer',
                          self.bound(args, 'test_container_configuration_menus.lua')['NativeBCPageCustomizerSource'])
-        self.assertIsNone(args.native_inventory_pane)
+        self.assertEqual(self.game / "media/lua/client/ISUI/ISInventoryPane.lua", args.native_inventory_pane)
+
+    def test_native_ui_family_binds_selected_context_without_expanding_inventory_profile(self):
+        self.cleanui(full=True)
+        self.lock_sources()
+        args, requested = self.configure(requested=['test_action_queue_generators.lua'])
+        self.assertEqual({'test_action_queue_generators.lua'}, requested)
+        bound = self.bound(args, 'test_action_queue_generators.lua')
+        self.assertEqual('CleanUI context', bound['NativeCleanUIInventoryContextSource'])
+        path = args.integration_sources['test_action_queue_generators.lua']['NativeCleanUIInventoryContextSource']
+        self.assertEqual(str(path), bound['NativeCleanUIInventoryContextSourcePath'])
+        self.assertEqual('ISInventoryPaneContextMenu.lua', path.name)
 
     def test_named_container_filter_does_not_require_unrelated_sources(self):
         self.containers()

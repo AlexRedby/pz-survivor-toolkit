@@ -30,49 +30,49 @@ import zombie.network.GameClient
 import zombie.iso.objects.IsoBarricade
 import zombie.iso.objects.IsoThumpable
 import zombie.iso.sprite.IsoSprite
-import zombie.util.list.PZArrayList
 
 /** A bounded final native read. These values grant neither admission nor execution rights. */
 object QueueLeafTransferFacts {
     @JvmField
     internal val SUPPORTED =
         arrayOf(
-            "zombie/inventory/InventoryItem.class" to "48f01be16d1ef1b76e37638fac6e25ca4eb285ad38ab2f462caa5597318c7f9d",
-            "zombie/inventory/ItemContainer.class" to "a2ac7dd6235f91255dc57b91419a2c8609bdb105214cddf7fb445b70507b6f96",
+            "zombie/inventory/InventoryItem.class" to "b45d4438636509d992aaa7b7505ef8323cd898947efc27bf1f7e762951d6643d",
+            "zombie/inventory/ItemContainer.class" to "19ffefbabfc16ce3b40feb557189c4fbecdb752aa2c96e3daa8b8ec0542185d3",
             "zombie/inventory/types/ComboItem.class" to "161277cc8fab2aa4c4bbf634a237f28cdb5a583565df36612159ef3bd4e129d1",
-            "zombie/inventory/types/DrainableComboItem.class" to "f2b9c855c4deb394c31701c1466cafc633b6155dae7c9544921d05e3b7d5414d",
-            "zombie/inventory/types/HandWeapon.class" to "2d1d3266cd03730fc8af8bfc631eea37a8e07708ceb6fe7b376d2b0e5f4174e4",
+            "zombie/inventory/types/DrainableComboItem.class" to "d5b4926058d77e6f889339ccffb4c8996fd1a93cdd49aec3786fd631b8ba51ea",
+            "zombie/inventory/types/HandWeapon.class" to "db86fba1c10ba18c1100fdc54f982f1fb5e0d04dcc765680fa1489563b28ce85",
             "zombie/inventory/types/Clothing.class" to "a32e0ffb3f15b2dca12b17556ca5dbc9d515bd02efdc83ac24ba6e31dd598f1d",
             "zombie/inventory/types/Literature.class" to "b75aa46576e99cc1986fe6e3e1aebf76e1af4878ba3672dd41f8139eea2ce862",
             "zombie/inventory/types/Key.class" to "9ae78585d42e0e13b1fa5efbd89f3d5de7eea7a1d9002a6b9629c7de475b5a1c",
-            "zombie/inventory/types/MapItem.class" to "4121112d1e4ef513ae3efd7f4702adf597157eba220bcb573b9511d6392cb1f2",
+            "zombie/inventory/types/MapItem.class" to "e4533368d49f72005bae8486576b06e7b1bcd45d545946dbb726a124eff07e3b",
             "zombie/inventory/types/WeaponPart.class" to "c378358d6449cc7b1c2e968420b456a9108c8550246bb29b99a13e7ac69a857a",
             "zombie/inventory/types/InventoryContainer.class" to "891cb2f37a7d13de869edf05909de493a55ef90aa8665368b36bff7fa6b2555e",
-            "zombie/characters/IsoGameCharacter.class" to "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b",
-            "zombie/characters/IsoPlayer.class" to "3f1c4634d3a8e7e36baf4b33f76cf7ef79d88c3351bd0eb2a6a6bb34c2d9858f",
+            "zombie/characters/IsoGameCharacter.class" to "1ccabc492ba130f51486bf38a8400334545852253bbac9c46fff71242ab672f6",
+            "zombie/characters/IsoPlayer.class" to "643585044a88ad1b29e8d5173774f66085c685c363ed10a89c0b79018de2874e",
             "zombie/characters/WornItems/WornItems.class" to "3a01a9b5b7e13d0902fcac9342ac0b42e5c2e87284d88ce9a6a01f45294409c1",
             "zombie/characters/WornItems/WornItem.class" to "84d0a8029e26abf00c07814e8dee65918ecc449c3a5aef42ed30f8dcee0863f6",
-            "zombie/characters/BodyDamage/BodyDamage.class" to "e3509531e997649a240db7a8427a4d9df67582fe2460baf436ade26aae8c638e",
-            "zombie/iso/IsoMovingObject.class" to "7e6e84fe9d3cb264e8d8e682d91e0abe919d481b7349d17b997e8a78f2293a5f",
-            "zombie/iso/IsoObject.class" to "22387ecf47c1cf9aac192466de6298067f27584160c76a72baee38c6ad36dff2",
-            "zombie/iso/IsoGridSquare.class" to "e8192f87d88da607abe0293228c84efbd822ed4ac0a331102c030bc3eeaba467",
-            "zombie/iso/objects/IsoThumpable.class" to "cc19adbef73edbda83a56fdb727b70210278e6e4bd3c2c1def881dab804f8323",
-            "zombie/iso/objects/IsoBarricade.class" to "49b181237bee661405aa94284751269091d18b37a150aab20de4fb03525595e0",
-            "zombie/iso/sprite/IsoSprite.class" to "68c01e6b1c914f662621743e09c8dd8a62c0258392ce1a75654a713e1034067f",
-            "zombie/core/properties/PropertyContainer.class" to "bc236f8e9e4e0da8a86b0d1fd19ad8d44a040fe4f67d1baac77401b3b148bd77",
+            "zombie/characters/BodyDamage/BodyDamage.class" to "b8e5d774f9bed459dbf34590ab304a12ad5ecc56c26e2a37d6600a9817bfb8e6",
+            "zombie/iso/IsoMovingObject.class" to "70c0249c3bdb7b4c4fc335e644c74bc98c37aa0e4bfdc0665a75521460ea0900",
+            "zombie/iso/IsoObject.class" to "7a99d06875c19ff132940d7192b414496537076e83474db0abc0cb38de6be70a",
+            "zombie/iso/IsoGridSquare.class" to "b8cef32a10bb76433bad174397b51f1a046be1eef47997dc1e79dd8547d726c5",
+            "zombie/iso/objects/IsoThumpable.class" to "61893a53f89547abf25dd8459aaf1fb43051bee39866f578f3aee7f074e6c47d",
+            "zombie/iso/objects/IsoBarricade.class" to "ec42e234375fc3bfa2c8548ff284416c0235304a05bee967a37a5690110ac972",
+            "zombie/iso/sprite/IsoSprite.class" to "498f94e38b171ed0eb528b3ab3b90cbf0d152cc81bfe9a3e1345825a627a04ce",
+            "zombie/core/properties/PropertyContainer.class" to "400d434ad860a39feb745f1033a63dca446d6f93d8b1a2ec4c343b166b658959",
             "zombie/iso/SpriteDetails/IsoFlagType.class" to "0c11206e0b8366e286d4d7e2aaa802d40f106463163397a59bc5d761f40a8bf9",
-            "zombie/util/list/PZArrayList.class" to "7ce79434a59558ed7c966d46d592d765ea6160949e0e87705002ccac7d4f5394",
-            "se/krka/kahlua/j2se/KahluaTableImpl.class" to "101df1481366f976f76c037094e29f5ad21c71f5026dc3d0693f25d68b1c79f7",
+            "se/krka/kahlua/j2se/KahluaTableImpl.class" to "1e79dbff83e85c8863df63f7847d3a506fddbaefa423cb676734751599db1aea",
             "se/krka/kahlua/vm/KahluaThread.class" to "25f4c0dea91800dcb3fadd3d482ed5f7d5cf17908bf167afd308b85c99856bb6",
-            "zombie/core/properties/IsoPropertyType.class" to "7e7deb55cc8a949a4cab6cf93e0cabef01090229154203730f758526c948ebd3",
-            "zombie/iso/IsoDirections.class" to "44a5f26c7f1c39bcd209996eda6533943d49b5433b63064973c96e9d64b55bc1",
+            "zombie/core/properties/IsoPropertyType.class" to "c713a1a7b47b8f0cd920742967e7a94f738fa935b57952a5ce9bcdc8f1e23217",
+            "zombie/iso/IsoDirections.class" to "5108ccc19404dcb76320fc019ae8f48831bd72e88f9afc910ae0c79a58cd769f",
             "zombie/core/TilePropertyAliasMap.class" to "05124f3536bc2026fb29d5f7369dc0d809d1a725477d4733a1e0e827911a0a80",
             "zombie/core/TilePropertyAliasMap\$TileProperty.class" to "382534b6d3d05514032091c51232659c04ef7eca8a8f42468ba24469f5cbc515",
-            "zombie/iso/IsoWorld.class" to "5b7406a70f33578a47ff417b0b6aa7a2b7a5bebfa00487a60935303f5747fb71",
-            "zombie/iso/IsoCell.class" to "5e9a88e1cd9a3f370e31ae0152c9de381d649caea7cab750ebc82a91b4e1f767",
+            "zombie/iso/IsoWorld.class" to "e17f9d3266154e7715237656612832123a9032e7bb9ff73ae7a29ecdf73374df",
+            "zombie/iso/IsoCell.class" to "6c261778f1fac0c660ba8b6167b9bf5d318e8bd126378e3c1b3667c9469910ab",
             "zombie/iso/IsoChunkMap.class" to "7a64d736a95ba700afd2916ad7a93875ce39ce9390f7b1ea14197d1e90db49e4",
-            "zombie/iso/IsoChunk.class" to "5048becc3f46f746686513d4dcadb137e6e11bfd44617075f41923b3db11650a",
-            "zombie/iso/objects/interfaces/GridSquareEdgeElement.class" to "d1bc39151da5d10670a7e556123343825ded9f0e471afac4e4c7a396c875a043",
+            "zombie/iso/IsoChunk.class" to "b069a07b79dc86d2a1133dff187fdcde904e1fe9a9d2f066b877b9ea0ea31af8",
+            "zombie/iso/objects/interfaces/GridSquareEdgeElement.class" to "3cb116b623c2115e4fe80698e34e3aa366c403c36428527fbd38d0cb91fcf9d6",
+            "zombie/iso/objects/GridSquareEdgeFacingDirection.class" to "e4b51f30b99d9e6edecf9a5e23ca376a0ea933c92d48fb12e490402ee0bfa5d5",
+            "zombie/iso/IsoGridSquare\$1.class" to "ade21832b90dfb0d6623bb81f6506dc92b5577682569bc2aee83ea9805170992",
             "zombie/characters/AttachedItems/AttachedItems.class" to "7e977f7bae8d6641871013b97776da6b428a74eb5f33d045155cf9828ce03b39",
             "zombie/characters/AttachedItems/AttachedItem.class" to "9b2fb404576628ac98417c81077d6b00604deba5969d9f5c62644662ef96d3c1",
         ).all { (path, hash) -> BytecodeSupport.supports(path, hash) }
@@ -92,7 +92,7 @@ object QueueLeafTransferFacts {
             "e3ff05f0965b36dd7b72464ee0cdd3dbd79218df2bf580cb559ad3acd50c26b5",
         ) && BytecodeSupport.supports(
             "zombie/network/fields/ContainerID.class",
-            "d7ef29f65c423135d70f829a1381b9e32ce06d68f87ae49de1980bfcf7c0244b",
+            "3123bde915f47f58fa81fb0f49fc1768efcb4db45749fe0d97c4c52dbc731bc0",
         ) }
     private val excludedContainerTypes = setOf("floor", "proximityInv", "twistInv_corpses", "TradeUI", "microwave")
     private val worldStorageTypes = setOf("crate", "shelf", "shelves", "metal_shelves")
@@ -109,10 +109,13 @@ object QueueLeafTransferFacts {
     private val wornEntries = try {
         WornItems::class.java.getDeclaredField("items").apply { isAccessible = true }
     } catch (_: Exception) { null }
+    private val secondaryContainers = try {
+        IsoObject::class.java.getDeclaredField("secondaryContainers").apply { isAccessible = true }
+    } catch (_: Exception) { null }
 
     private val metatableSupported = BytecodeSupport.supports(
         "se/krka/kahlua/j2se/KahluaTableImpl.class",
-        "101df1481366f976f76c037094e29f5ad21c71f5026dc3d0693f25d68b1c79f7",
+        "1e79dbff83e85c8863df63f7847d3a506fddbaefa423cb676734751599db1aea",
     )
 
     // Lua getmetatable honors __metatable, so it cannot attest the actual
@@ -211,13 +214,14 @@ object QueueLeafTransferFacts {
                 || item.getIsCraftingConsumed() || equipParent == null || equipParent.get(item) != null
                 || item.getAttachedSlot() >= 0 || item.getType() == "CandleLit"
                 || item.getType() == "Lantern_HurricaneLit" || !unequipped(actor, item, aliasMember)
-                || !absent(destination, item.id)) return null
+                || destination.id == item.id || !absent(destination, item.id)) return null
             val sourceTypes = parentTypes(actor) ?: return null
             val holder = destination.getContainingItem()
             val destinationTypes: List<String>
             if (holder != null) {
                 // One direct carried bag only: no recursive lookup or owner-chain snapshot.
                 if (holder.javaClass != InventoryContainer::class.java || holder === item
+                    || source.id == item.id
                     || (holder as InventoryContainer).getInventory() !== destination
                     || holder.getContainer() !== source || holder.getWorldItem() != null
                     || holder.getIsCraftingConsumed()
@@ -332,7 +336,9 @@ object QueueLeafTransferFacts {
         if (origin.getZ() != square.getZ() || kotlin.math.abs(origin.getX().toLong() - square.getX()) > 1
             || kotlin.math.abs(origin.getY().toLong() - square.getY()) > 1) return null
         val objects = square.getObjects() ?: return null
-        if (objects.javaClass != PZArrayList::class.java || objects.size > MAX_ENTRIES) return null
+        // Native square construction backs the List API with an exact ArrayList.
+        // Reject custom list callbacks before reading size or members.
+        if (objects.javaClass != ArrayList::class.java || objects.size > MAX_ENTRIES) return null
         var anchors = 0
         for (index in 0 until objects.size) if (objects[index] === parent) anchors++
         if (anchors != 1) return null
@@ -363,6 +369,12 @@ object QueueLeafTransferFacts {
     private fun parentTypes(parent: IsoObject, expected: ItemContainer? = null): List<String>? {
         if (parent.javaClass != IsoObject::class.java && parent.javaClass != IsoThumpable::class.java
             && parent.javaClass != IsoPlayer::class.java) return null
+        val field = secondaryContainers ?: return null
+        val secondary = field.get(parent)
+        // Native count/index getters dispatch through this mutable backing list.
+        // Check its exact implementation before invoking either getter.
+        if (secondary != null && (secondary.javaClass != ArrayList::class.java ||
+            (secondary as ArrayList<*>).size > MAX_CONTAINERS)) return null
         val count = parent.getContainerCount()
         if (count !in 0..MAX_CONTAINERS || expected != null && count == 0) return null
         if (count == 0) return emptyList()

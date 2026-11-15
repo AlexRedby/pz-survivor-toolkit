@@ -11,7 +11,7 @@ import zombie.characters.CharacterTimedActions.LuaTimedActionNew;
 import zombie.characters.IsoPlayer;
 import zombie.core.ActionManager;
 import zombie.core.Transaction.TransactionState;
-import zombie.network.fields.character.PlayerID;
+import zombie.network.fields.character.ConnectionPlayer;
 
 /** Optional, value-only observation of the common native validity decision. */
 public final class Main {
@@ -26,18 +26,22 @@ public final class Main {
             if (callback == null) return null;
             KahluaTable values = LuaManager.platform.newTable();
             IsoPlayer player = action.chr instanceof IsoPlayer value ? value : null;
-            PlayerID owner = Accessor.tryGet(action, "playerId", (PlayerID)null);
             Byte id = Accessor.tryGet(action, "transactionId", (Byte)null);
             int matches = 0;
+            boolean ownerMatches = false;
             String state = "missing";
             ConcurrentLinkedQueue<?> transactions = Accessor.tryGet(ActionManager.class, "actions", (ConcurrentLinkedQueue<?>)null);
-            if (transactions != null && owner != null && id != null) {
+            if (transactions != null && player != null && id != null) {
                 for (Object transaction : transactions) {
                     Byte candidate = Accessor.tryGet(transaction, "id", (Byte)null);
-                    PlayerID candidateOwner = Accessor.tryGet(transaction, "playerId", (PlayerID)null);
-                    if (candidate != null && candidate.byteValue() == id.byteValue() && candidateOwner != null
-                            && candidateOwner.getID() == owner.getID()) {
+                    ConnectionPlayer candidateOwner = Accessor.tryGet(transaction, "player", (ConnectionPlayer)null);
+                    IsoPlayer candidatePlayer = candidateOwner == null ? null : candidateOwner.getPlayer();
+                    // Native ActionManager matches online IDs. Preserve exact actor identity
+                    // separately; the ConnectionPlayer wire ID may be a local client index.
+                    if (candidate != null && candidate.byteValue() == id.byteValue() && candidatePlayer != null
+                            && candidatePlayer.getOnlineID() == player.getOnlineID()) {
                         matches++;
+                        ownerMatches = matches == 1 && candidatePlayer == player;
                         TransactionState observed = Accessor.tryGet(transaction, "state", (TransactionState)null);
                         state = matches == 1 ? String.valueOf(observed) : "multiple";
                     }
@@ -45,12 +49,13 @@ public final class Main {
             }
             values.rawset("supported", supported);
             values.rawset("originalValid", valid);
+            values.rawset("actorOnlineID", player == null ? false : (double)player.getOnlineID());
             values.rawset("nativeTransaction", id == null ? 0.0 : id.doubleValue());
             values.rawset("matchingTransactions", (double)matches);
             values.rawset("nativeState", state);
-            values.rawset("done", owner != null && id != null && ActionManager.isDone(owner, id));
-            values.rawset("rejected", owner != null && id != null && ActionManager.isRejected(owner, id));
-            values.rawset("ownerMatches", player != null && owner != null && owner.getPlayer() == player && owner.getID() == player.getOnlineID());
+            values.rawset("done", player != null && id != null && ActionManager.isDone(player, id));
+            values.rawset("rejected", player != null && id != null && ActionManager.isRejected(player, id));
+            values.rawset("ownerMatches", ownerMatches);
             values.rawset("nativeCurrent", player != null && !player.getCharacterActions().isEmpty() && player.getCharacterActions().get(0) == action);
             values.rawset("baseStarted", ((BaseAction)action).started);
             values.rawset("remoteStarted", Accessor.tryGet(action, "started", false));

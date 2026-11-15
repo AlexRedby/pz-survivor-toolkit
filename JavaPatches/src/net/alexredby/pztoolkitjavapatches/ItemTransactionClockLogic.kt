@@ -26,10 +26,10 @@ internal object ItemTransactionClockLogic {
     @Volatile private var woven = false
     @JvmField
     val SUPPORTED =
-        QueueManagers.ITEM_SUPPORTED &&
+        QueueManagerSupport.ITEM_SUPPORTED &&
             BytecodeSupport.supports(
                 "zombie/GameTime.class",
-                "ec030ac26790d8c06712c3e1d5935bb29cc816ac3b6f1ea55b06ebeccb7e7125",
+                "521cd059ae06c7f63de2ed2069f0b9bc5aaadabfbd712f01043678b49a01cf47",
             )
 
     private fun nativeField(name: String): Field? =

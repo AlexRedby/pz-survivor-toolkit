@@ -25,7 +25,7 @@ local function derive(self, name)
     return setmetatable(class, {__index = self})
 end
 ISBaseObject = {derive = derive}
-for _, name in ipairs({'ClimbThroughWindowState', 'ClimbOverFenceState', 'ClimbOverWallState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState', 'ClimbOverFenceState', 'ClimbOverWallState',
     'ClimbSheetRopeState', 'ClimbDownSheetRopeState', 'CloseWindowState', 'OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end
@@ -37,7 +37,7 @@ getTimestampMs = function() return 1 end
 isClient = function() return true end
 isShiftKeyDown = function() return false end
 isCtrlKeyDown = function() return false end
-getCore = function() return {getGameMode = function() return 'Sandbox' end,
+getCore = function() return {isTutorial = function() return false end, getGameMode = function() return 'Sandbox' end,
     getOptionTimedActionGameSpeedReset = function() return false end} end
 CharacterTrait = {DEXTROUS = 'dextrous', ALL_THUMBS = 'allthumbs'}
 local function native(path) dofile(NativeActionRoot .. '/' .. path) end

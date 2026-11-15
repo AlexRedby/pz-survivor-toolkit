@@ -11,6 +11,9 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## Selected mod set
 
+- **Removed:** Climb Ladders (`SubirEscaleras`, Workshop `3774776279`) from the B42.22 selection. Use the game's native ladder interaction; the mod author recommends removing the overlapping handlers. Open Jackets remains selected.
+- **Configuration:** Keep Peek a View for wall cutaways and stair-floor visibility, with its vehicle tree fade disabled in favor of B42.22's native driving policy. Toolkit automatically applies a one-time client preset disabling vehicle tree fade and the optional B42 adjacency workaround, whose installed JAR references an obsolete native getter. Other preferences and later manual changes are preserved; the server INI does not apply client preferences.
+
 - **Changed:** Standardized Experience setup now uses all seven features at upstream defaults. Existing profiles using the earlier Fitness/Strength-only setup should re-enable the other six features and restore default values using `MOD_INSTALL.md`; unrelated world/mod preferences are preserved.
 
 - **Added:** Standardized Experience (`STEXPERIENCE_B42`, Workshop `3792836384`) with required MVXIVY utils (`MVXIVY_UTILS`, `3630174904`), bringing the selection to 65 Mod IDs / 60 Workshop items. Use the setup in `MOD_INSTALL.md`; the INI selects mods but does not apply SP options or Host sandbox settings.
@@ -45,6 +48,14 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - **Added:** Vanilla Vehicles Animated and its ZombieBuddy-based Animated Vehicle Parts Fix to the B42.21 selection (47 Mod IDs / 44 Workshop items). Optional VVA submods and the outdated multiplayer synchronization addon remain disabled. SP visuals, lighting coexistence and Host animation synchronization are not yet verified.
 
 ## PZ Survivor Toolkit
+
+### 0.2.0
+
+- **Changed:** Start the new minor-version series for the Project Zomboid 42.22.2 migration.
+- **Fixed:** Inventory distribution controls recognize the native Tutorial game-mode object.
+- **Fixed:** Inventory search resolves the current Better Containers category names supplied through CleanUI while preserving raw-category and combined search matches.
+- **Fixed:** Cancelling a verified Fitness operation preserves its equipment restoration and unrelated queued work without applying ordinary equip-tail restrictions to that cleanup.
+- **Compatibility:** Updated Neat Crafting and Project Cook producers keep native execution and protected queue edits pending their new ingredient/return contracts. Project Cook's verified craft start/stop balance repair remains active independently.
 
 ### 0.1.361
 
@@ -1669,6 +1680,12 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.2.0
+
+- **Changed:** Start the new minor-version series for the Project Zomboid 42.22.2 migration, with the new connection-bound player and workstation decoder APIs.
+- **Removed:** Toolkit's transaction-cancellation ownership, missing-action completion, medical visual-removal synchronization and empty-hutch cleanup patches: the new game supplies those protections directly.
+- **Changed:** Keep the remaining `WindowShape` startup-property correction; ladder properties now use the game's native types.
 
 ### 0.1.98
 

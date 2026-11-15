@@ -33,6 +33,7 @@ object CraftBenchReferences {
             @Patch.Argument(0) reader: ByteBufferReader?,
             @Patch.Argument(1) connection: IConnection?,
             @Patch.Argument(2) type: Byte,
+            @Patch.Argument(3) flags: Int,
         ) {
             refresh(table, reader, type, SUPPORTED)
         }

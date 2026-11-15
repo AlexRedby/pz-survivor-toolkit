@@ -25,7 +25,7 @@ object FenceProperties {
             val name = "carpentry_02_$tile"
             val sprite = manager.namedMap[name]
             if (sprite != null && name == sprite.name && stock(sprite.getProperties(), tile)) {
-                // B42.21 omitted the level-three metadata present on both lower wooden fence
+                // Native level-three tiles omit metadata present on both lower wooden fence
                 // levels.
                 sprite.getProperties().set("FenceTypeLow", "Wood")
                 corrected++

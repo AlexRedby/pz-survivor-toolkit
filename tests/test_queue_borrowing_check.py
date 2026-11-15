@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from queue_checks import borrowing_check as check
+from tests.support.game_version import write_game_jar
 
 
 class BorrowingCheckTests(unittest.TestCase):
@@ -19,6 +20,7 @@ class BorrowingCheckTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.project, self.game = self.root / 'project', self.root / 'game'
+        write_game_jar(self.game)
         self.toolkit, self.p4 = self.root / 'candidate-toolkit', self.root / 'selected-p4'
         self.locations = {'PZSurvivorToolkit': self.toolkit, 'P4TidyUpMeister': self.p4}
         for source in check.sources(self.project):

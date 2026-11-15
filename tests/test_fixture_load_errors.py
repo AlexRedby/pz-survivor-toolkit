@@ -18,7 +18,7 @@ class FixtureLoadErrorTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        self.runtime = {'game': str(self.root / 'game'), 'fixture': {'mods': ['GeneratedFixture']},
+        self.runtime = {'game': str(self.root / 'game'), 'game_version': [42, 21], 'fixture': {'mods': ['GeneratedFixture']},
                         'roles': {'client1': {'cache': str(self.root / 'client1')},
                                   'server': {'cache': str(self.root / 'server')}}}
         self.selection = {'kind': 'mp', 'mods': ['ForeignMod', 'PZSurvivorToolkit']}

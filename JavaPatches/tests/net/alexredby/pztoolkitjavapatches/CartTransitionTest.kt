@@ -3105,8 +3105,11 @@ object CartTransitionTest {
     ) {
         val bytes = java.nio.ByteBuffer.allocate(8192)
         val writer = zombie.core.network.ByteBufferWriter(bytes)
-        writer.putShort(player.getOnlineID())
-        writer.putByte(-1)
+        // Server-to-client ConnectionPlayer carries the online ID without PlayerID's old index.
+        zombie.network.fields.character.ConnectionPlayer().apply {
+            setPlayer(player)
+            setId(player.getOnlineID())
+        }.write(writer)
         val status: Class<out Enum<*>> =
             (Class.forName("zombie.network.packets.EquipPacket\$HandStatus") as Class<out Enum<*>>)
         writeEnum(writer, java.lang.Enum.valueOf(status, "ItemExist"))
@@ -3673,7 +3676,7 @@ object CartTransitionTest {
             "net.alexredby.pztoolkitjavapatches",
             CartTransitionTest::class.java.classLoader,
         )
-        check(Main.CART_SUPPORTED, "installed B42.21 bytecode fixture unsupported")
+        check(Main.CART_SUPPORTED, "installed bytecode fixture unsupported")
         check(Main.CART_TRANSITION_SUPPORTED, "installed transition render bytecode unsupported")
         for (name in
             arrayOf(

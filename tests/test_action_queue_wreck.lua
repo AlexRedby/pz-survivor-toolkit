@@ -10,7 +10,7 @@ ISBaseObject = {derive = derive}
 local install
 Events = setmetatable({OnGameStart = {Add = function(callback) install = callback end}},
     {__index = function() return {Add = function() end} end})
-for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do
     _G[name] = {instance = function() return {} end}
 end
@@ -100,9 +100,12 @@ local function item(kind, uses, tag)
 end
 local function wreck()
     return {square = square, getSquare = function(self) return self.square end,
+        getScript = function(self) return {getName = function() return self.scriptName or 'NormalCarBurnt' end} end,
         isRemovedFromWorld = function(self) return self.removed == true end,
         permanentlyRemove = function(self) assert(not self.removed); self.removed = true end}
 end
+local ordinary = wreck(); ordinary.scriptName = 'NormalCar'
+assert(nativeWreckNew(ISRemoveBurntVehicle, player, ordinary).vehicle == nil, 'native constructor accepted an ordinary vehicle as a wreck')
 local function reset(items)
     q.queue, q.current, completed = {}, nil, {}
     player.primary, player.stops, inventory.items = nil, 0, items

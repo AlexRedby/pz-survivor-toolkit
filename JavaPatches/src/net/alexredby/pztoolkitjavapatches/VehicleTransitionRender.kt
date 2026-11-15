@@ -24,7 +24,7 @@ internal object VehicleTransitionRender {
         ) &&
             BytecodeSupport.supports(
                 "zombie/vehicles/BaseVehicle.class",
-                "e7ade19e1e6f66450bef2bd37e52b2afccc7377c4e4571d0fa39435ecdb55661",
+                "354b166db919f8de692a5327b7afd01fefdbfb8021f0c99e2b2b44a3fe606de3",
             ) &&
             BytecodeSupport.supports(
                 "zombie/core/skinnedmodel/animation/AnimationPlayer.class",

@@ -21,46 +21,46 @@ import zombie.iso.objects.*
 import zombie.iso.sprite.IsoSprite
 import zombie.network.GameServer
 import zombie.radio.devices.DeviceData
-import zombie.util.list.PZArrayList
 
 /** Callback-free final observation of the pinned native walkAdj zero-child branch. */
 object QueueSpatialFacts {
     @JvmField internal val SUPPORTED = arrayOf(
-            "zombie/characters/IsoPlayer.class" to "3f1c4634d3a8e7e36baf4b33f76cf7ef79d88c3351bd0eb2a6a6bb34c2d9858f",
-            "zombie/characters/IsoGameCharacter.class" to "29040e19c3e420499f73bc0ea0d5b86d7f7d38655acdc13d0107df736eb54c0b",
-            "zombie/characters/BodyDamage/BodyDamage.class" to "e3509531e997649a240db7a8427a4d9df67582fe2460baf436ade26aae8c638e",
-            "zombie/iso/IsoMovingObject.class" to "7e6e84fe9d3cb264e8d8e682d91e0abe919d481b7349d17b997e8a78f2293a5f",
-            "zombie/iso/IsoObject.class" to "22387ecf47c1cf9aac192466de6298067f27584160c76a72baee38c6ad36dff2",
-            "zombie/iso/IsoGridSquare.class" to "e8192f87d88da607abe0293228c84efbd822ed4ac0a331102c030bc3eeaba467",
-            "zombie/iso/IsoCell.class" to "5e9a88e1cd9a3f370e31ae0152c9de381d649caea7cab750ebc82a91b4e1f767",
-            "zombie/iso/IsoWorld.class" to "5b7406a70f33578a47ff417b0b6aa7a2b7a5bebfa00487a60935303f5747fb71",
+            "zombie/characters/IsoPlayer.class" to "643585044a88ad1b29e8d5173774f66085c685c363ed10a89c0b79018de2874e",
+            "zombie/characters/IsoGameCharacter.class" to "1ccabc492ba130f51486bf38a8400334545852253bbac9c46fff71242ab672f6",
+            "zombie/characters/BodyDamage/BodyDamage.class" to "b8e5d774f9bed459dbf34590ab304a12ad5ecc56c26e2a37d6600a9817bfb8e6",
+            "zombie/iso/IsoMovingObject.class" to "70c0249c3bdb7b4c4fc335e644c74bc98c37aa0e4bfdc0665a75521460ea0900",
+            "zombie/iso/IsoObject.class" to "7a99d06875c19ff132940d7192b414496537076e83474db0abc0cb38de6be70a",
+            "zombie/iso/IsoGridSquare.class" to "b8cef32a10bb76433bad174397b51f1a046be1eef47997dc1e79dd8547d726c5",
+            "zombie/iso/IsoCell.class" to "6c261778f1fac0c660ba8b6167b9bf5d318e8bd126378e3c1b3667c9469910ab",
+            "zombie/iso/IsoWorld.class" to "e17f9d3266154e7715237656612832123a9032e7bb9ff73ae7a29ecdf73374df",
             "zombie/iso/IsoChunkMap.class" to "7a64d736a95ba700afd2916ad7a93875ce39ce9390f7b1ea14197d1e90db49e4",
-            "zombie/iso/IsoChunk.class" to "5048becc3f46f746686513d4dcadb137e6e11bfd44617075f41923b3db11650a",
-            "zombie/core/properties/PropertyContainer.class" to "bc236f8e9e4e0da8a86b0d1fd19ad8d44a040fe4f67d1baac77401b3b148bd77",
+            "zombie/iso/IsoChunk.class" to "b069a07b79dc86d2a1133dff187fdcde904e1fe9a9d2f066b877b9ea0ea31af8",
+            "zombie/core/properties/PropertyContainer.class" to "400d434ad860a39feb745f1033a63dca446d6f93d8b1a2ec4c343b166b658959",
             "zombie/iso/SpriteDetails/IsoFlagType.class" to "0c11206e0b8366e286d4d7e2aaa802d40f106463163397a59bc5d761f40a8bf9",
-            "zombie/iso/sprite/IsoSprite.class" to "68c01e6b1c914f662621743e09c8dd8a62c0258392ce1a75654a713e1034067f",
-            "zombie/util/list/PZArrayList.class" to "7ce79434a59558ed7c966d46d592d765ea6160949e0e87705002ccac7d4f5394",
-            "zombie/iso/objects/IsoThumpable.class" to "cc19adbef73edbda83a56fdb727b70210278e6e4bd3c2c1def881dab804f8323",
-            "zombie/iso/objects/IsoDoor.class" to "024bb36ef8a724c374ebf941b2dbf6ef3ccac4c0269ab2b8c55581a74689d929",
-            "zombie/iso/objects/IsoWindow.class" to "41066d88458b7c88f25f893647cbb940af1f893315057813228932c5bafa92d9",
-            "zombie/iso/objects/IsoBarricade.class" to "49b181237bee661405aa94284751269091d18b37a150aab20de4fb03525595e0",
+            "zombie/iso/sprite/IsoSprite.class" to "498f94e38b171ed0eb528b3ab3b90cbf0d152cc81bfe9a3e1345825a627a04ce",
+            "zombie/iso/objects/IsoThumpable.class" to "61893a53f89547abf25dd8459aaf1fb43051bee39866f578f3aee7f074e6c47d",
+            "zombie/iso/objects/interfaces/GridSquareEdgeElement.class" to "3cb116b623c2115e4fe80698e34e3aa366c403c36428527fbd38d0cb91fcf9d6",
+            "zombie/iso/objects/GridSquareEdgeFacingDirection.class" to "e4b51f30b99d9e6edecf9a5e23ca376a0ea933c92d48fb12e490402ee0bfa5d5",
+            "zombie/iso/objects/IsoDoor.class" to "07bd820e06017aa831aa18706cf0f3af00cab0f046d804e4711e517e9c8d9019",
+            "zombie/iso/objects/IsoWindow.class" to "9e9c03479f8ff97b984689870daf322dbf0b5cb492676c0ac86bc11d5b21c5cf",
+            "zombie/iso/objects/IsoBarricade.class" to "ec42e234375fc3bfa2c8548ff284416c0235304a05bee967a37a5690110ac972",
             "zombie/iso/objects/IsoTelevision.class" to "58502db63f4714d60e681d801b39ff5da955c046635b04decd5ae857773c24ab",
             "zombie/iso/objects/IsoRadio.class" to "334f5b6d86b26c4ce2c5eec58a115d719f0b285223e9df9ed2aa8692685f8759",
-            "zombie/iso/objects/IsoWaveSignal.class" to "1df260ed620eb4a1e2ea159f0da0beaf743a967a3e0a7312b03dca7728606f03",
-            "zombie/iso/objects/IsoWorldInventoryObject.class" to "7be6f2d54525fa587908ce8efa7da5d26cfd3d19bd1cc02911ee12f7649857b3",
-            "zombie/iso/objects/IsoTree.class" to "48b8b8aa39dbbb534700c2e979c6b38097cdcfab2938786f1b56166e510f396a",
-            "se/krka/kahlua/j2se/KahluaTableImpl.class" to "101df1481366f976f76c037094e29f5ad21c71f5026dc3d0693f25d68b1c79f7",
+            "zombie/iso/objects/IsoWaveSignal.class" to "5d70c0d2147eaed07f91bf5b9337c4bce7ee47b91e171803ba829903d8ff1cf7",
+            "zombie/iso/objects/IsoWorldInventoryObject.class" to "1019fd27cfce76d84a8db499a71568429e87e95de504e041a202e0ba9c01ee0b",
+            "zombie/iso/objects/IsoTree.class" to "58a2f9cc749b5fba729debb43407fae12c18ec83dee3bc4125fe17968962c44c",
+            "se/krka/kahlua/j2se/KahluaTableImpl.class" to "1e79dbff83e85c8863df63f7847d3a506fddbaefa423cb676734751599db1aea",
             "se/krka/kahlua/vm/KahluaThread.class" to "25f4c0dea91800dcb3fadd3d482ed5f7d5cf17908bf167afd308b85c99856bb6",
             "se/krka/kahlua/integration/expose/LuaJavaInvoker.class" to "2c431080d2ce2b94966012e982e64b6d66cd1ae67af2eccd23e163fdfea24457",
             "se/krka/kahlua/integration/expose/MultiLuaJavaInvoker.class" to "ff446aca11076e954a84bc9a0d320d8a1939686c979d5b8ef7988842ed844155",
             "se/krka/kahlua/integration/expose/caller/MethodCaller.class" to "511ba515b1d0e6acd1671aea0195d37e3302eb7e992c73543a5844d6a5a6d098",
             "se/krka/kahlua/j2se/MathLib.class" to "8aaa15ef6da1a368a1e6b2f745a8bf88d952e9b9600e471fd8155e8486cb4a75",
             "se/krka/kahlua/j2se/J2SEPlatform.class" to "5c1ce45a49034dc05378475ee772e5d1645971fae475c57070770c8cba0af492",
-            "se/krka/kahlua/integration/expose/LuaJavaClassExposer.class" to "4c8dc24c94de2cb814741f135d7d9baf8bc09062dd821d3c56cc4b09f322c0bd",
+            "se/krka/kahlua/integration/expose/LuaJavaClassExposer.class" to "ea8bf95fab20182b62d3fe41c44ebf621b592cfdc48df89aed8795135d3c966c",
     ).all { (path, hash) -> BytecodeSupport.supports(path, hash) }
 
     @JvmField internal val DEVICE_SUPPORTED = SUPPORTED && BytecodeSupport.supports(
-        "zombie/radio/devices/DeviceData.class", "492af532cddfe49908a5f479e2749b8dc08334a6b661ab81eb81892926cdb102")
+        "zombie/radio/devices/DeviceData.class", "6c8825dbc39b2a7508a903dd3ef381bbb3dbd9b96f89398d9deeaddde0162bed")
 
     private fun field(owner: Class<*>, name: String) = if (!SUPPORTED) null else try {
         owner.getDeclaredField(name).apply { isAccessible = true }
@@ -171,6 +171,7 @@ object QueueSpatialFacts {
         val thread = LuaManager.thread ?: return false
         if (thread.debugOwnerThread !== Thread.currentThread()) return false
         val env = plain(LuaManager.env) ?: return false
+        if (thread.environment !== env) return false
         val frame = thread.currentCoroutine?.currentCallFrame() ?: return false
         if (frame.nArguments != arguments.size || !canonicalApi(frame.javaFunction, method)
             || frame.javaFunction !== env.delegate[name]) return false
@@ -247,7 +248,7 @@ object QueueSpatialFacts {
                 world?.javaClass != IsoWorld::class.java || cell?.javaClass != IsoCell::class.java ||
                 anchor != null && cell !== anchor.cell || !loaded(square, cell)) return null
             val objects = square.getObjects()
-            if (objects?.javaClass != PZArrayList::class.java || objects.size > 256) return null
+            if (objects?.javaClass != ArrayList::class.java || objects.size > 256) return null
             var member = false
             for (index in 0 until objects.size) if (objects[index] === device) { member = true; break }
             if (!member || device.getDeviceData() !== data || data.getParent() !== device) {
@@ -267,7 +268,9 @@ object QueueSpatialFacts {
         if (!properties(square)) return false
         val objects = square.getObjects() ?: return false
         val special = square.getSpecialObjects() ?: return false
-        if (objects.javaClass != PZArrayList::class.java || objects.size > 256 ||
+        // Both native List fields are constructed as exact ArrayLists. Check the
+        // implementation before size/member reads can dispatch custom callbacks.
+        if (objects.javaClass != ArrayList::class.java || objects.size > 256 ||
             special.javaClass != ArrayList::class.java || special.size > 256) return false
         fun safe(value: IsoObject?): Boolean {
             if (value == null || value.javaClass !in objectClasses) return false
@@ -314,7 +317,7 @@ object QueueSpatialFacts {
                 targetObject.javaClass != IsoTelevision::class.java) return false
             val bound = targetObject as IsoObject
             val objects = target.getObjects() ?: return false
-            if (objects.javaClass != PZArrayList::class.java || objects.size > 256) return false
+            if (objects.javaClass != ArrayList::class.java || objects.size > 256) return false
             if (bound.getSquare() !== target || bound.getObjectIndex() < 0) return false
         }
         val cell = IsoWorld.instance.currentCell ?: return false

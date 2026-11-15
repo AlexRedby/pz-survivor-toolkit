@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.support.game_version import write_game_jar
 from tools import run_tests
 from tools.queue_checks import pack
 
@@ -99,8 +100,9 @@ class LuaRunner(unittest.TestCase):
             path = candidate / layer
             path.mkdir(parents=True)
             (path / 'mod.info').write_text('id=PZSurvivorToolkit\n')
+        write_game_jar(self.root / 'game')
         self.invoke('--test', name, '--native-action-root', str(native), '--p4-source', str(p4),
-                    '--toolkit-source', str(candidate), '--require-complete')
+                    '--toolkit-source', str(candidate), '--game', str(self.root / 'game'), '--require-complete')
         self.assertEqual(1, len(self.executions))
         values = self.executions[0][1]
         self.assertEqual([str(candidate.resolve() / layer / 'media/lua') for layer in ('common', '42.20')],
@@ -134,7 +136,7 @@ class LuaRunner(unittest.TestCase):
     def locked_bc_class_inputs(self):
         game = self.root / 'game'
         game.mkdir()
-        (game / 'projectzomboid.jar').write_bytes(b'game')
+        write_game_jar(game)
         (self.root / 'SurvivorQoL-selected.ini').write_text('Mods=CleanUI;EURY_CONTAINERS\n')
         sources = {
             'CleanUI/common/mod.info': 'id=CleanUI\n',
@@ -322,7 +324,7 @@ class LuaRunner(unittest.TestCase):
         game = self.root / 'game'
         native = game / 'media/lua'
         native.mkdir(parents=True)
-        (game / 'projectzomboid.jar').write_bytes(b'game')
+        write_game_jar(game)
         sources = {
             'client/ISUI/ISInventoryPane.lua': 'game inventory',
             'shared/Vehicles/TimedActions/ISUninstallVehiclePart.lua': 'game uninstall',
@@ -359,7 +361,7 @@ class LuaRunner(unittest.TestCase):
             self.invoke('--game', str(game), '--test', 'test_ui_style')
         self.assertEqual(failure.exception.code, 2)
         self.assertEqual(self.executions, [])
-        (game / 'projectzomboid.jar').write_bytes(b'game')
+        write_game_jar(game)
         self.invoke('--game', str(game), '--test', 'test_ui_style')
         self.assertEqual([source for source, _ in self.executions], ['test_ui_style.lua'])
         self.executions.clear()
@@ -385,7 +387,7 @@ class LuaRunner(unittest.TestCase):
     def test_locked_integration_runs_only_real_navigator_source_branch(self):
         game = self.root / 'game'
         game.mkdir()
-        (game / 'projectzomboid.jar').write_bytes(b'game')
+        write_game_jar(game)
         (self.root / 'SurvivorQoL-selected.ini').write_text('Mods=Navigator\n')
         layer = self.root / 'Navigator/42'
         layer.mkdir(parents=True)
@@ -430,7 +432,7 @@ class LuaRunner(unittest.TestCase):
     def test_locked_deposit_combines_effective_files_from_both_mods(self):
         game = self.root / 'game'
         game.mkdir()
-        (game / 'projectzomboid.jar').write_bytes(b'game')
+        write_game_jar(game)
         (self.root / 'SurvivorQoL-selected.ini').write_text('Mods=CleanUI;EURY_CONTAINERS\n')
         sources = {
             'CleanUI/common/mod.info': 'id=CleanUI\n',

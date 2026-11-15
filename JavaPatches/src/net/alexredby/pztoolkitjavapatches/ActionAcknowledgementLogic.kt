@@ -6,6 +6,7 @@ import java.util.WeakHashMap
 import me.zed_0xff.zombie_buddy.Accessor
 import zombie.Lua.LuaManager
 import zombie.characters.CharacterTimedActions.LuaTimedActionNew
+import zombie.characters.IsoPlayer
 import zombie.core.BuildAction
 import zombie.core.NetTimedAction
 import zombie.core.Transaction.TransactionState
@@ -13,7 +14,7 @@ import zombie.network.GameClient
 import zombie.network.GameServer
 import zombie.network.PacketTypes
 import zombie.network.TableNetworkUtils
-import zombie.network.fields.character.PlayerID
+import zombie.network.fields.character.ConnectionPlayer
 
 /** Called under the original ActionAcknowledgements class monitor by its Java entry points. */
 internal object ActionAcknowledgementLogic {
@@ -26,11 +27,11 @@ internal object ActionAcknowledgementLogic {
             ) &&
             BytecodeSupport.supports(
                 "zombie/characters/CharacterTimedActions/LuaTimedActionNew.class",
-                "f10236f1e8be9d0822dc144ebe61c42fa1d0e8ded3279c7aa6dd0ffb7291feb0",
+                "020a9e5c22b25bdffca7f396612d420e9cea6f78f7432015ac146f19728ac1a6",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/packets/NetTimedActionPacket.class",
-                "ce367190ce6158eb88809f3215ebc471e6161896d9d526eb9ef0e73d58de847b",
+                "9cb604c83db6c649df060cf3228b475163aebb1232a8926deaf13a5b3d2394bc",
             )
     private val tokens = WeakHashMap<Any, String>()
 
@@ -70,16 +71,15 @@ internal object ActionAcknowledgementLogic {
     }
 
     @JvmStatic
-    fun removing(player: PlayerID?, id: Byte, canceled: Boolean): ArrayList<Any>? {
-        // Native server remove stops either flag; canceled only controls the client send.
+    fun removing(player: IsoPlayer?, id: Byte): ArrayList<Any>? {
         if (!supported || !GameServer.server || player == null) return null
         val result = ArrayList<Any>()
         for (action in tokens.keys) {
-            val owner = Accessor.tryGet<PlayerID>(action, "playerId", null)
+            val owner = Accessor.tryGet<ConnectionPlayer>(action, "player", null)?.getPlayer()
             val transaction = Accessor.tryGet<Byte>(action, "id", null)
             if (
                 owner != null &&
-                    owner.getID() == player.getID() &&
+                    owner.onlineId == player.onlineId &&
                     transaction != null &&
                     transaction == id
             )
@@ -89,7 +89,7 @@ internal object ActionAcknowledgementLogic {
     }
 
     private fun send(action: Any, token: String, state: String) {
-        val owner = Accessor.tryGet<PlayerID>(action, "playerId", null)
+        val owner = Accessor.tryGet<ConnectionPlayer>(action, "player", null)
         val transaction = Accessor.tryGet<Byte>(action, "id", null)
         if (
             owner == null ||
@@ -101,7 +101,7 @@ internal object ActionAcknowledgementLogic {
         val connection = GameServer.getConnectionFromPlayer(owner.getPlayer()) ?: return
         val args = LuaManager.platform.newTable()
         args.rawset("protocol", 1.0)
-        args.rawset("player", owner.getID().toDouble())
+        args.rawset("player", owner.getPlayer().onlineId.toDouble())
         args.rawset("transaction", transaction.toDouble())
         args.rawset("token", token)
         args.rawset("state", state)

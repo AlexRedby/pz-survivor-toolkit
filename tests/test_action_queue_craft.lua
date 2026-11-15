@@ -47,8 +47,8 @@ local function item()
 end
 local target, material, tool = item(), item(), item()
 local player = {getInventory = function() return {} end, isTimedActionInstant = function() return false end,
-    hasTrait = function() return false end, isWearingAwkwardGloves = function() return false end}
-local recipe = {class = 'CraftRecipe', getTimedActionScript = function() return nil end,
+    hasAwkwardHands = function() return false end, hasTrait = function() return false end, isWearingAwkwardGloves = function() return false end}
+local recipe = {class = 'CraftRecipe', getTags = function() end, getTimedActionScript = function() return nil end,
     isCanWalk = function() return false end, getTime = function() return 10 end}
 local automaticInputs = ISHandcraftAction:new(player, recipe, list(material), target, tool, false, list(material), target, 0.5, 0.25)
 assert(automaticInputs.manualInputs == nil, 'native automatic false sentinel must become absent for Java queued-item accounting')
@@ -251,7 +251,7 @@ do
     local kept={};for key,value in pairs(input) do kept[key]=value end
     local output={class='OutputScript',getResourceType=function() return ResourceType.Item end,
         getCreateToItemScript=function() end,getPossibleResultItems=function() return list(script('Base.WoodenStick2')) end}
-    local manualRecipe={class='CraftRecipe',getTimedActionScript=function() end,
+    local manualRecipe={class='CraftRecipe',getTags=function() end,getTimedActionScript=function() end,
         isCanWalk=function() return false end,getTime=function() return 30 end,
         getScriptLines=function() return list('craftRecipe QueueManual { inputs { item 1 Base.Plank, } }') end,
         getInputs=function() return list(input,kept) end,getOutputs=function() return list(output) end,

@@ -33,7 +33,10 @@ local function setup(changedSource,unusedBase,policyFirst)
  instanceof=function(value,name)
   return nativeInstanceof(value,name)or type(value)=='table'and (value.class=='Clothing'or value.class=='InventoryContainer'or value.class=='HandWeapon')and name=='InventoryItem'
  end
- getClassSimpleName=function(value)return type(value)=='table'and value.class or 'Foreign'end
+ getClassSimpleName=function(value)
+  if value==f.containsTransferID then return 'LuaJavaInvoker' end
+  return type(value)=='table'and value.class or 'Foreign'
+ end
  getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source end
  getFirstLineOfClosure=NativeFirstLineOfClosure or function(callback)return debug.getinfo(callback,'S').linedefined+1 end
  getGameFilesInput=function(path)

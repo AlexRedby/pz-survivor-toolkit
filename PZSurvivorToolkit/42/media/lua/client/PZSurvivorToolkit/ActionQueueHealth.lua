@@ -32,7 +32,7 @@ local function nativeClosure(callback, filename)
 end
 local function nativeSource(path, expected, mod)
     return Proof.matches(path or "media/lua/client/XpSystem/ISUI/ISHealthPanel.lua",
-        expected or 3948596941, mod, false, 300000)
+        expected or 3872613238, mod, false, 300000)
 end
 local kinds = {HApplyBandage = 1, HDisinfect = 1, HStitch = 2, HSplint = 2, HRemoveGlass = 1,
     HRemoveBullet = 1, HCleanBurn = 1, HRemoveBandage = 0, HRemoveStitch = 0, HRemoveSplint = 0,
@@ -573,8 +573,8 @@ end
 
 local function installInventoryProducer()
     local menu, utils, transfer = ISInventoryPaneContextMenu, luautils, ISInventoryTransferUtil
-    local cleanUI = nativeSource("media/lua/client/ISUI/ISInventoryPaneContextMenu.lua", 1953753890)
-    if not (cleanUI or nativeSource("media/lua/client/ISUI/ISInventoryPaneContextMenu.lua", 4293448388))
+    local cleanUI = nativeSource("media/lua/client/ISUI/ISInventoryPaneContextMenu.lua", 1708080922)
+    if not (cleanUI or nativeSource("media/lua/client/ISUI/ISInventoryPaneContextMenu.lua", 3980587789))
         or not nativeSource("media/lua/shared/luautils.lua", 1091751327)
         or not nativeSource("media/lua/shared/TimedActions/ISInventoryTransferUtil.lua", 1281392797)
         or type(getSpecificPlayer) ~= "function" then return end

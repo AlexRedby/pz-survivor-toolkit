@@ -193,7 +193,7 @@ class BuildChecks(unittest.TestCase):
     def test_named_selection_overrides_groups_and_deduplicates(self):
         self.run_build('--check', '--check-video', '--test', 'MediaChecks', '--test', 'AnimalChecks', '--test', 'MediaChecks')
         calls = self.java_calls()
-        self.assertEqual([call.args[0][-1] for call in calls], ['zombie.radio.devices.MediaChecks', 'zombie.characters.AnimalChecks'])
+        self.assertEqual([call.args[0][-1] for call in calls], ['net.alexredby.pztoolkitjavapatches.MediaChecks', 'net.alexredby.pztoolkitjavapatches.AnimalChecks'])
         self.assertTrue(all(call.kwargs['timeout'] == 120 for call in calls))
         self.assertTrue(all(call.kwargs['cwd'] == self.game for call in calls))
         compilation = next(call.args[0] for call in self.run.call_args_list if '-sourcepath' in call.args[0])
@@ -203,10 +203,10 @@ class BuildChecks(unittest.TestCase):
     def test_selected_source_compiles_referenced_helper_without_unrelated_checks(self):
         self.run_build('--test', 'MediaChecks')
         command = next(call.args[0] for call in self.run.call_args_list if '-sourcepath' in call.args[0])
-        package = self.root / 'tests/zombie/radio/devices'
+        package = self.root / 'tests/net/alexredby/pztoolkitjavapatches'
         package.mkdir(parents=True)
-        (package / 'MediaChecks.java').write_text('package zombie.radio.devices; public class MediaChecks { public static void main(String[] args) { System.out.println(MediaHelper.marker()); } }')
-        (package / 'MediaHelper.java').write_text('package zombie.radio.devices; class MediaHelper { static String marker() { return "MEDIA_CHECKS_PASS"; } }')
+        (package / 'MediaChecks.java').write_text('package net.alexredby.pztoolkitjavapatches; public class MediaChecks { public static void main(String[] args) { System.out.println(MediaHelper.marker()); } }')
+        (package / 'MediaHelper.java').write_text('package net.alexredby.pztoolkitjavapatches; class MediaHelper { static String marker() { return "MEDIA_CHECKS_PASS"; } }')
         (package / 'UnrelatedChecks.java').write_text('This must not be compiled.')
         for jar in self.game.glob('*.jar'):
             with zipfile.ZipFile(jar, 'w'):
@@ -215,14 +215,16 @@ class BuildChecks(unittest.TestCase):
         classes = self.root / 'probe-classes'
         command[command.index('-d') + 1] = str(classes)
         subprocess.run(command, check=True, capture_output=True, text=True, timeout=20)
-        self.assertTrue((classes / 'zombie/radio/devices/MediaHelper.class').is_file())
-        result = subprocess.run([shutil.which('java'), '-cp', str(classes), 'zombie.radio.devices.MediaChecks'], check=True, capture_output=True, text=True, timeout=10)
+        self.assertTrue((classes / 'net/alexredby/pztoolkitjavapatches/MediaHelper.class').is_file())
+        result = subprocess.run([shutil.which('java'), '-cp', str(classes), 'net.alexredby.pztoolkitjavapatches.MediaChecks'], check=True, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.stdout.strip(), 'MEDIA_CHECKS_PASS')
 
     def test_default_and_group_selection_remain_compatible(self):
         workshop = {'net.alexredby.pztoolkitjavapatches.DamnLibraryBatteryRecipeChecks',
                     'net.alexredby.pztoolkitjavapatches.WashWaterRuleChecks',
-                    'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks'}
+                    'net.alexredby.pztoolkitjavapatches.QueueOwnershipChecks',
+                    'net.alexredby.pztoolkitjavapatches.VehicleSalvageSandboxChecks',
+                    'net.alexredby.pztoolkitjavapatches.QueueHandEventFactsChecks'}
         grouped = [name for name in build.CHECKS if name not in workshop]
         ordinary = [name for name in grouped if not name.endswith('.VideoChecks')]
         video = 'net.alexredby.pztoolkitjavapatches.VideoChecks'
@@ -309,7 +311,7 @@ class BuildChecks(unittest.TestCase):
         for output in (b'MEDIA_CHECKS_PASS\npartial \xff', 'MEDIA_CHECKS_PASS\npartial', None):
             with self.subTest(output=output):
                 timeout = subprocess.TimeoutExpired(['java'], 7, output=output)
-                with self.assertRaisesRegex(RuntimeError, r'zombie.radio.devices.MediaChecks timed out after 7 seconds; output saved to .*MediaChecks.log'):
+                with self.assertRaisesRegex(RuntimeError, r'net.alexredby.pztoolkitjavapatches.MediaChecks timed out after 7 seconds; output saved to .*MediaChecks.log'):
                     self.run_build('--test', 'MediaChecks', '--test-timeout', '7', java_result=timeout)
                 expected = output if isinstance(output, bytes) else (output or '').encode()
                 self.assertEqual((self.root / 'build/MediaChecks.log').read_bytes(), expected)

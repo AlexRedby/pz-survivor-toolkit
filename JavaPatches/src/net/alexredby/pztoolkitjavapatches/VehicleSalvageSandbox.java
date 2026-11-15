@@ -18,14 +18,14 @@ public final class VehicleSalvageSandbox {
     public static final String MOD_ID = "VehicleSalvageOverhaulB42";
     public static final String TARGET = "media/lua/shared/VRO_SalvageSandbox.lua";
     public static final String INPUT_SHA256 = "60ee042c1fc032ac4274a5e4b0d62f171638a9fdfaf76a767ab25129f5b38426";
-    public static final String OUTPUT_SHA256 = "dcfdfdcf40df95ec26a43bf92ca9ee12ede21fa03376815c2f5cf6b875d1223e";
+    public static final String OUTPUT_SHA256 = "8bb5fc315d5eda1aea224819d59a22614daf43431ed6a63a163f40467baea4f3";
     private static final int MAX_SOURCE_CHARS = 128 * 1024;
     public static final boolean SUPPORTED =
-        BytecodeSupport.supports("zombie/Lua/LuaManager.class", "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d")
+        BytecodeSupport.supports("zombie/Lua/LuaManager.class", "8613349b0e0fdb663fc16ef4397ca60ef7135925fa6116f92d958ea97d09eb32")
         && BytecodeSupport.supports("se/krka/kahlua/luaj/compiler/LuaCompiler.class", "dd2b68ac4ce7a8e65cd7c3b11a3c1672a2471b824a675d4085e7b07041d4cbad")
-        && BytecodeSupport.supports("zombie/ZomboidFileSystem.class", "c4e5a5123bc43d03f2585c40f37544c50c1e702eebceb78bec94069e410b6750")
-        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo.class", "8c4b47ba966f071120feeec090202967e414246e28b5b6fd6a622a6a266af651")
-        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo$Mod.class", "c91e48400b77015c450a696f2d7c5665fa872f1a76fc05d2c38e72ba2928dc69");
+        && BytecodeSupport.supports("zombie/ZomboidFileSystem.class", "9f902cc912c7802a08f80614f5f8d3b74f249fc5f2c0204eb759f2e74dda175e")
+        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo.class", "5b124fe4e6f8525ed431e8c1ef62238597a7981276c13c3ddaa39c1ca1cee4b0")
+        && BytecodeSupport.supports("zombie/gameStates/ChooseGameInfo$Mod.class", "9f304e567f306ff43db87e85927b794be2727f5d5cb6bafbe9c6c3802de08224");
     private static final ThreadLocal<Scope> LOADING = new ThreadLocal<>();
 
     private VehicleSalvageSandbox() { }
@@ -81,6 +81,12 @@ public final class VehicleSalvageSandbox {
             "    if SandboxVars.VSO_EnableFullVehicleSalvaging ~= nil then\r\n"
             + "        return SandboxVars.VSO_EnableFullVehicleSalvaging == true\r\n"
             + "    end\r\n\r\n    -- normal (top-level) sandbox var");
+        result = replaceOnce(result,
+            "    local v = SandboxVars[varName]",
+            "    if type(varName) == \"string\" and varName:match(\"^VSO_SalvageTime_\") then\r\n"
+            + "        varName = varName:gsub(\"^VSO_\", \"VRO_\")\r\n"
+            + "    end\r\n"
+            + "    local v = SandboxVars[varName]");
         result = replaceOnce(result,
             "    local v = SandboxVars[varName]",
             "    local v\r\n"

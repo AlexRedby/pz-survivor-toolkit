@@ -1,4 +1,8 @@
-package zombie.ui;
+package net.alexredby.nativechecks;
+
+import zombie.ui.*;
+import java.lang.reflect.Field;
+import java.util.List;
 
 import com.sun.tools.attach.VirtualMachine;
 import java.lang.instrument.Instrumentation;
@@ -9,6 +13,33 @@ import java.nio.file.Path;
 public final class VehicleDoorRadialCapture {
     private static RadialMenu selected;
     private static int previous;
+    private static final Field HIGHLIGHT = field("highlight");
+    private static final Field SLICES = field("slices");
+
+    private static Field field(String name) {
+        try {
+            Field field = RadialMenu.class.getDeclaredField(name);
+            field.setAccessible(true);
+            return field;
+        } catch (ReflectiveOperationException failure) {
+            throw new ExceptionInInitializerError(failure);
+        }
+    }
+
+    private static int highlight(RadialMenu menu) {
+        try { return HIGHLIGHT.getInt(menu); }
+        catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
+    }
+
+    private static void highlight(RadialMenu menu, int value) {
+        try { HIGHLIGHT.setInt(menu, value); }
+        catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
+    }
+
+    private static int sliceCount(RadialMenu menu) {
+        try { return ((List<?>)SLICES.get(menu)).size(); }
+        catch (IllegalAccessException failure) { throw new IllegalStateException(failure); }
+    }
 
     public static void main(String[] args) throws Exception {
         VirtualMachine vm = VirtualMachine.attach(args[0]);
@@ -18,7 +49,7 @@ public final class VehicleDoorRadialCapture {
 
     private static synchronized void restore() {
         if (selected == null) return;
-        selected.highlight = previous;
+        highlight(selected, previous);
         selected = null;
         System.out.println("[VEHICLE_DOORS] RADIAL_SELECTION_RESTORED");
     }
@@ -35,11 +66,11 @@ public final class VehicleDoorRadialCapture {
                 candidate = menu;
             }
         }
-        if (candidate == null || index < 0 || index >= candidate.slices.size())
+        if (candidate == null || index < 0 || index >= sliceCount(candidate))
             throw new IllegalStateException("The requested native radial slice is unavailable");
-        previous = candidate.highlight;
+        previous = highlight(candidate);
         selected = candidate;
-        candidate.highlight = index;
+        highlight(candidate, index);
         System.out.println("[VEHICLE_DOORS] RADIAL_SELECTION index=" + (index + 1));
         Thread cleanup = new Thread(() -> {
             try {

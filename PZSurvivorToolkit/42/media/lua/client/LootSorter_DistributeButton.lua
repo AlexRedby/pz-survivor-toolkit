@@ -9,7 +9,7 @@ ISInventoryWindowControlHandler_LootSorterDistribute =
 local Handler = ISInventoryWindowControlHandler_LootSorterDistribute
 
 function Handler:shouldBeVisible()
-    if getCore():getGameMode() == "Tutorial" then return false end
+    if getCore():getGameMode() == GameMode.TUTORIAL then return false end
     return self.container ~= nil and not self.container:isEmpty()
 end
 
@@ -51,7 +51,7 @@ ISLootWindowObjectControlHandler_LootSorterDistribute =
 local LH = ISLootWindowObjectControlHandler_LootSorterDistribute
 
 function LH:shouldBeVisible()
-    if getCore():getGameMode() == "Tutorial" then return false end
+    if getCore():getGameMode() == GameMode.TUTORIAL then return false end
     return self.container ~= nil and not self.container:isEmpty()
 end
 
@@ -86,7 +86,7 @@ ISLootWindowFloorControlHandler_LootSorterDistribute =
 local FloorHandler = ISLootWindowFloorControlHandler_LootSorterDistribute
 
 function FloorHandler:shouldBeVisible()
-    if getCore():getGameMode() == "Tutorial" then return false end
+    if getCore():getGameMode() == GameMode.TUTORIAL then return false end
     return self.container ~= nil and not self.container:isEmpty()
 end
 

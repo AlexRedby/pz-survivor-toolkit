@@ -62,11 +62,11 @@ local function sourceMatches(path, expected, mod)
     return Proof.matches("media/lua/" .. path, expected, mod)
 end
 local nativeClosure = Proof.closure
-local cleanUI = sourceMatches("client/ISUI/ISInventoryPaneContextMenu.lua", 1953753890)
+local cleanUI = sourceMatches("client/ISUI/ISInventoryPaneContextMenu.lua", 1708080922)
 local trusted = sourceMatches("shared/Camping/ISCampingMenu.lua", 125174138)
     and sourceMatches("client/Map/CGlobalObject.lua", 1926494845)
     and sourceMatches("client/Camping/CCampfireGlobalObject.lua", 1516961117)
-    and (cleanUI or sourceMatches("client/ISUI/ISInventoryPaneContextMenu.lua", 4293448388))
+    and (cleanUI or sourceMatches("client/ISUI/ISInventoryPaneContextMenu.lua", 3980587789))
     and sourceMatches("client/ISUI/ISCraftingUI.lua", 722324844)
     and sourceMatches("shared/luautils.lua", 1091751327)
     and sourceMatches("shared/TimedActions/ISInventoryTransferUtil.lua", 1281392797)

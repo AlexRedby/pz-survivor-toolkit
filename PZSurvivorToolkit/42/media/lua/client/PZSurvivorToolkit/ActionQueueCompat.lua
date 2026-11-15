@@ -44,6 +44,15 @@ local projectCookActionSources = {
     {"client/Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction.lua", 222676723},
     {"shared/Project_Cook/PJCK_FrozenCooking.lua", 3756381974},
 }
+-- The current panel retains its native start/stop imbalance, independently of
+-- the evolved-recipe selection protocol. This proof grants only that repair.
+local projectCookBalanceSources = {
+    {"client/Project_Cook/HandCraftPanel/PJCK_CraftActionPanel.lua", 1237225249},
+    {"client/Project_Cook/PJCK_UIScale.lua", 3677332251},
+    {"client/Project_Cook/PJCK_Config.lua", 1755033152},
+    {"client/Project_Cook/PJCK_Viewport.lua", 2709113929},
+    projectCookActionSources[2],
+}
 -- UI transition proof is optional; an updated panel must not disable cooking/return producers.
 local projectCookFirstAdditionSources = {
     {"client/Project_Cook/EvolvedRecipePanel/PJCK_InputPanel.lua", 3323057587},
@@ -501,6 +510,25 @@ local function instanceUnchanged(target, class)
     return true
 end
 
+local function installCookBalance(class)
+    if type(class)~="table" then return false end
+    local complete,methods=class.onHandcraftActionComplete
+    if not Proof.closure(complete,"PJCK_CraftActionPanel.lua") then return false end
+    for name,callback in pairs(class)do
+        if type(callback)=="function" and name~="derive" and not Proof.closure(callback,"PJCK_CraftActionPanel.lua") then return false end
+    end
+    class.onHandcraftActionComplete=function(self,...)
+        local quantity=self.craftTimes
+        local balance=Toolkit.Settings.actionQueue() and type(quantity)=="number" and quantity>1
+            and classUnchanged(class,methods) and instanceUnchanged(self,class)
+        local result=complete(self,...)
+        if balance then self.logic:stopCraftAction() end
+        return result
+    end
+    methods=snapshot(class)
+    return true
+end
+
 local clothingSourceSafe
 local clothingMethods = {"isValid", "update", "start", "stop", "perform", "complete", "isAlreadyEquipped",
     "getDuration", "stopSound", "isStopOnWalk"}
@@ -521,7 +549,7 @@ local function nativeClothingMethods()
         or type(clothingBindings)~="function" or not clothingBindings() then return false end
     if clothingHelperSource==nil then
         clothingHelperSource=Proof.closure(clothingBindings,"ActionQueueClothing.lua")
-            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",950563814,"PZSurvivorToolkit",true)
+            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",66286558,"PZSurvivorToolkit",true)
     end
     if not clothingHelperSource then return false end
     if clothingSourceSafe == nil then
@@ -543,7 +571,7 @@ local unequipSourceSafe
 local unequipMethods = {"new", "isValid", "update", "start", "stop", "animEvent", "perform", "complete"}
 local function nativeUnequipMethods(action)
     if unequipSourceSafe == nil then
-        unequipSourceSafe = Proof.matches("media/lua/shared/TimedActions/ISUnequipAction.lua", 2851923231, nil, true)
+        unequipSourceSafe = Proof.matches("media/lua/shared/TimedActions/ISUnequipAction.lua", 3541820703, nil, true)
     end
     if not unequipSourceSafe or not nativeClothingMethods() then return false end
     local variant
@@ -569,7 +597,7 @@ end
 local hotbarSourcesSafe, hotbarHelpers
 local function nativeHotbarHelpers(hotbar)
     if hotbarSourcesSafe == nil then
-        hotbarSourcesSafe = Proof.matches("media/lua/client/Hotbar/ISHotbar.lua", 3215104203, nil, true)
+        hotbarSourcesSafe = Proof.matches("media/lua/client/Hotbar/ISHotbar.lua", 919776062, nil, true)
             and Proof.matches("media/lua/client/ISUI/PlayerData/ISPlayerData.lua", 2353448738, nil, true)
     end
     if not hotbarSourcesSafe or not ISHotbar then return false end
@@ -1585,6 +1613,11 @@ function Compat.install()
         pcall(require, "Project_Cook/PJCK_FrozenCooking")
         pcall(require, "Project_Cook/EvolvedRecipePanel/OverrideFoodRelatedAction")
     end
+    if getActivatedMods and getActivatedMods():contains("Project_Cook") and not PJCK_CraftActionPanel
+        and not verified("Project_Cook") and verified("Project_Cook",projectCookBalanceSources)
+        and pcall(require,"Project_Cook/HandCraftPanel/PJCK_CraftActionPanel") then
+        ready.Project_Cook_Balance=installCookBalance(PJCK_CraftActionPanel)
+    end
     for _, owner in ipairs({
         {"Neat_Crafting", "NC_CraftActionPanel", "Neat_Crafting/NC_CraftActionPanel"},
         {"Project_Cook", "PJCK_CraftActionPanel", "Project_Cook/HandCraftPanel/PJCK_CraftActionPanel"},
@@ -1595,17 +1628,7 @@ function Compat.install()
                 and (owner[1] ~= "Project_Cook" or captureProjectCookConfig()) and pcall(require, owner[3]) then
                 local class = _G[owner[2]]
                 if class and owner[1] == "Project_Cook" then
-                    local complete, methods = class.onHandcraftActionComplete
-                    class.onHandcraftActionComplete = function(self, ...)
-                        local quantity = self.craftTimes
-                        local balance = Toolkit.Settings.actionQueue() and type(quantity) == "number" and quantity > 1
-                            and classUnchanged(class, methods) and instanceUnchanged(self, class)
-                        local result = complete(self, ...)
-                        -- Project Cook starts every craft but only stops the last one in a batch.
-                        if balance then self.logic:stopCraftAction() end
-                        return result
-                    end
-                    methods = snapshot(class)
+                    installCookBalance(class)
                 end
                 if class then craftOwners[owner[2]] = {class = class, methods = snapshot(class)}; ready[owner[1]] = true end
                 if owner[1] == "Project_Cook" and not PJCK_EvoPanel then

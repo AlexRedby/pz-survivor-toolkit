@@ -1,3 +1,17 @@
+# Game 42.22.2 migration
+
+- [ ] Make ModOptions migration saves recoverable after a partial IO write. Native `ModOptions:save()` truncates the shared file before writing; `ModOptionsStorage.save` detects incomplete target/unrelated entries and withholds migration completion, but cannot restore lost entries. Preserve a recoverable original before replacing the file and qualify interrupted-write/retry behavior for both cart controls and the Peek a View preset.
+- [ ] Requalify current Neat Crafting queue producers before restoring their edit contracts: `NC_VanillaInputTransfer` returns, iteration reset and pending-transfer cleanup, `NC_StopCraftActionCompat`, progressive fluids and ALL/`NC_BatchInputSelection` now participate in ordinary completion/cancellation. Prove callback ownership, physical IDs/resources and earned cleanup; disabling ALL alone does not restore the old contract. Keep native execution and the current refusal boundary; retain the older positive assertions as controls.
+- [ ] Requalify current Project Cook evolved-recipe edits against `PJCK_EvoPanel` strict-instance/physical-ID versus logical-group selection and the current ingredient, first-addition and return protocol. Preserve the independently verified HandCraftPanel start/stop balance repair and native execution while the full edit gate remains closed.
+- [ ] Qualify CleanUI's new per-action MP wear `isValid` closure before admitting those clothing edits. Prove the exact body/origin, owner, root-presence and stale-item checks; retain native execution and conservative handling of unknown overrides.
+- [ ] Qualify a complete copied 42.21 world on the new engine with the selected pack and native saved identities/effects. Keep runs disposable and preserve original saves; native save-section checks alone do not qualify a complete migrated world.
+- [ ] Add an explicit native get-up producer and stage witness before claiming live Fitness cancellation during `ISWaitWhileGettingUp`. Preserve paid preparation, pending restoration and the independent tail; source-contract checks and active-exercise cancellation do not prove this separate animation stage.
+- [ ] Fix or qualify native ExtraInfo join ordering. During menu-Host `engine-peers/peer-cancel`, the new client receives its own forced ExtraInfo before ConnectedPlayer registers the actor: `receivePlayerConnect` marks it connected before the connection loop, while `sendPlayerExtraInfo` ignores its target and broadcasts. Native validation drops that update with `Player.isConsistent: player is not found`. ConnectedPlayer supplies actor mapping/role and some flags, but successful repeated ExtraInfo and complete nondefault-flag convergence still need authoritative receipts before repair or background classification.
+- [ ] Replace the basement-hall fixture's historical native control with an explicit current-engine comparison. Its old Java Patches artifact targets 42.21 and is rejected on 42.22; preserve that refusal and the existing split-key save compatibility until a current native/control pair proves room identity and persistent flags.
+- [ ] Port the test-only `base-walking-profile` capture gates to the new engine before using it for measurements. Its reviewed GameWindow/chunk/loot/render/UI and optional discovery fingerprints still target the old build; review the actual captured methods and retain exact unsupported-input refusal.
+- [ ] Review the changed native `ISWalkToCursor` producer for the Fitness storage walk-away negative fixture, then update its exact source gate and rerun its native movement/old-tail-cancellation witnesses. The old fingerprint currently rejects the new source; ordinary Fitness restoration checks do not qualify this separate walking case.
+- [ ] Port the remaining optional native diagnostics before using them on the new engine: the `queue-transfer-peers` transaction-owner observer, animal equipment-delivery reorder helper and visual-sync trace still read old `PlayerID`/`playerId` layouts. Preserve exact unsupported-source refusal and qualify native owner identity, packet copies and receipt/cleanup behavior instead of widening their fingerprints alone.
+
 # Shared queue resources and container capacity
 
 Implementation and migration are conditional on the performance gate in [the design plan](docs/design/QUEUE_RESOURCE_CAPACITY.md). Keep the native executor and existing protections until each replacement is qualified.
@@ -72,6 +86,7 @@ Group compatible visual checks around prepared vehicles. Keep speed/healing meas
 
 ### Cart motion full-pack compatibility
 
+- [ ] Port the optional cart action-admission prototype's owner/connection-slot proofs to the new connection-bound player API before enabling it on 42.22. Its legacy exact-bytecode gate deliberately rejects the new engine; migrate NativeTime, LeaseControl, observer association and invalidation together, then rerun incarnation/receipt/cleanup controls. The prototype remains outside supported runtime.
 - [ ] Resolve the remaining SP cart visual-equivalence limits during the next coordinated cart run: use matched cart/no-cart injury/healing references to assess subtle mild limp and anatomical side, and views exposing both hands to check hidden contact geometry. Reuse the reviewed 48-scene bank as historical 67-mod evidence; its sampled, single-camera review found no gross failures but did not establish exact native-animation equivalence or hidden geometry. Retain `geometryVerified=false` and `animationEquivalencePass=false` until those specific gates pass.
 - [ ] Add and qualify complete-pack menu-Host injury banks for metal/shopping carts and matched-effective-weight cart/no-cart Walk/Run/Sprint speed comparisons for all three variants. The current Host injury fixture covers the wooden variant only.
 
@@ -103,9 +118,13 @@ Prepare fixtures before launch where possible; add them to compatible inventory/
 
 - [ ] After installation is requested, check base New Music OST loot and audible playback on both cassette sides, device controls/batteries, ground-to-hand transitions, reload, UI performance and TV & Radio ReInvented coexistence in isolated full-pack macOS B42.21 SP/Host saves; verify a second player hears synchronized playback. Author claims do not establish full-pack compatibility.
 
-### Open Jackets and Climb Ladders selection
+### Open Jackets selection
 
-- [ ] After installation is requested, check clothing open/roll/restore, insulation/protection and Better Clothing Info/Tidy Up Meister interaction, plus ladder ascent/descent, occupied exits, moved ladders, reload and second-player synchronization in isolated full-pack macOS B42.21 SP/Host saves. Selection and author support claims do not establish runtime compatibility.
+- [ ] After installation is requested, check clothing open/roll/restore, insulation/protection and Better Clothing Info/Tidy Up Meister interaction, reload and second-player synchronization in isolated full-pack macOS B42.22 SP/Host saves. Selection and author support claims do not establish runtime compatibility.
+
+### Peek a View and native visibility
+
+- [ ] During the coordinated B42.22 visual run, compare native and Peek a View vehicle tree fading while driving forward and reversing past large trees; inspect wall/doorway cutaways and stairs with Zombie Visibility Fix. Keep `fixB42Adjacency` off because its installed optional branch uses a removed native API. Start with `treeFadeActiveInVehicle=false`; a fully vanilla rendering control needs a launch without PeekAView because its layer-depth hook remains active even with the master toggle off. Source/ABI review and successful loading do not establish visual equivalence or which driving presentation is better.
 
 ### Vehicle aim roof fix verification
 

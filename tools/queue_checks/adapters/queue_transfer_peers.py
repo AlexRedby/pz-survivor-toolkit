@@ -8,7 +8,7 @@ from .. import preparation_process
 import zipfile
 
 from .. import receipts
-from ..mod_selection import mod_layers
+from ..mod_selection import mod_layers, game_version
 from .book_controls import _stop_probe
 from .tv_controls import MODS
 from . import queue_peers_placement
@@ -89,11 +89,12 @@ def _probe_source_checks(probe, game, jdk, selection, runtime):
     """Reject unsupported producers/entry bindings before any native game launch."""
     if 'partial-accepted' not in selection['cases']:
         return
+    version = game_version(game)
     mods = Path(runtime['roles']['client1']['cache']) / 'mods'
 
     def effective(identifier, relative):
         root = mods / identifier
-        candidates = [layer / 'media/lua' / relative for layer in mod_layers(root)] if root.is_dir() else []
+        candidates = [layer / 'media/lua' / relative for layer in mod_layers(root, version)] if root.is_dir() else []
         selected = [path for path in candidates if path.is_file()]
         if not selected:
             raise ValueError('Queue peer preflight needs active ' + identifier + ': ' + relative)

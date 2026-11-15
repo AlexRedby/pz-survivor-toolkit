@@ -48,7 +48,7 @@ class NativeRunnerTests(unittest.TestCase):
         (self.root / "client1").mkdir()
         (self.root / "client1/options.ini").write_text("voiceEnable=false\n")
         self.selection = {"suite": "health", "kind": "sp", "mods": [], "cases": ["nativeStop"], "timeout_seconds": 10}
-        self.runtime = {"game": str(self.root), "java": "/fake/java", "glfw": {'compatibility': 'test input'}, "roles": {"client1": {"cache": str(self.root / "client1"), "classes": str(self.root / "classes")}}}
+        self.runtime = {"game": str(self.root), "game_version": [42, 22], "java": "/fake/java", "glfw": {'compatibility': 'test input'}, "roles": {"client1": {"cache": str(self.root / "client1"), "classes": str(self.root / "classes")}}}
         (self.root / "selection.json").write_text(json.dumps(self.selection))
         (self.root / "runtime.json").write_text(json.dumps(self.runtime))
         self.seal_settings()

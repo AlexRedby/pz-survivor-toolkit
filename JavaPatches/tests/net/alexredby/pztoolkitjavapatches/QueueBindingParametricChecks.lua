@@ -60,6 +60,23 @@ test('native-helper-nil-false-normalization',function(own)
  local p=policy(own);p.snapshot.helpers={missing=false,ownFalse=false};p.action.ownFalse=false;local before=Hits()
  assert(p.matches(p.action,p.snapshot));supported(own,before,1);return true
 end)
+test('native-preflight-denial-precedes-binding-and-metadata',function(own)
+ local p=policy(own);local calls=0;p.snapshot.preflight=function(action)assert(action==p.action);calls=calls+1;return false end
+ setmetatable(p.snapshot,{__index=function(_,key)error('metadata read after preflight denial: '..key)end})
+ local before=Hits();assert(not p.matches(p.action,p.snapshot));supported(own,before,0);assert(calls==1);return calls
+end)
+test('native-preflight-mutations-remain-fresh',function(own)
+ local p=policy(own,nil,{'start'});local calls=0;p.snapshot.helpers={missing=false}
+ p.snapshot.preflight=function(action)calls=calls+1;action.start=calls==1 and function()end or p.class.start;return true end
+ local before=Hits();assert(not p.matches(p.action,p.snapshot));assert(p.matches(p.action,p.snapshot));supported(own,before,1);assert(calls==2);return calls
+end)
+test('native-preflight-yields-before-checkers',function(own)
+ local p=policy(own);local calls=0;p.snapshot.helpers={missing=false}
+ p.snapshot.preflight=function()calls=calls+1;coroutine.yield('preflight-pause');return true end
+ local before=Hits();local co=coroutine.create(function()return p.matches(p.action,p.snapshot)end)
+ local ok,value=coroutine.resume(co);assert(ok and value=='preflight-pause');supported(own,before,0)
+ ok,value=coroutine.resume(co);assert(ok and value==true);supported(own,before,1);assert(calls==1);return calls
+end)
 test('native-boolEval-reference-semantics',function(own)
  local p=policy(own,{helper=NonCanonicalFalse,float=FloatNaN});p.action.helper=NonCanonicalFalse;p.action.float=FloatNaN;local before=Hits()
  assert(p.radio(p.action,true));supported(own,before,1);return true

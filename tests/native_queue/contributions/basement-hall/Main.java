@@ -31,6 +31,12 @@ public final class Main {
             "Disposable single-player QueueBasementHall world required");
     }
 
+    private static int baseIndex() {
+        int version = zombie.core.Core.getInstance().getGameVersion().getInt();
+        require(version == 42021 || version == 42022, "Unreviewed native hall layout");
+        return version == 42021 ? 107 : 106;
+    }
+
     private static boolean hall(RoomDef room) {
         if (room.userDefined || room.level != 0 || !"hall".equals(room.name) || room.rects.size() != 1) return false;
         var rect = room.rects.get(0);
@@ -42,8 +48,9 @@ public final class Main {
         disposable();
         var grid = IsoWorld.instance.metaGrid;
         var cell = grid.getCellData(41, 37);
-        require(cell != null && cell.roomList.size() > 107, "Target stock cell is not loaded");
-        RoomDef base = cell.roomList.get(107), access = null;
+        int baseIndex = baseIndex();
+        require(cell != null && cell.roomList.size() > baseIndex, "Target stock cell is not loaded");
+        RoomDef base = cell.roomList.get(baseIndex), access = null;
         require(hall(base) && base.metaId == (nativeControl ? OLD_KEY : NEW_KEY),
             "Original hall persistent key differs from the selected candidate/control");
         for (RoomDef room : cell.roomList) if (room != base && hall(room)) {
@@ -89,7 +96,7 @@ public final class Main {
                 "Actual underground room does not belong to the access staircase's basement");
         }
         require(square.getCanSee(0), "Player's actual square is not visible after the render settling interval");
-        return "{\"phase\":\"" + phase + "\",\"baseIndex\":107,\"accessIndex\":" + RoomID.getIndex(access.id)
+        return "{\"phase\":\"" + phase + "\",\"baseIndex\":" + baseIndex + ",\"accessIndex\":" + RoomID.getIndex(access.id)
             + ",\"baseKey\":\"" + Long.toHexString(base.metaId) + "\",\"accessKey\":\"" + Long.toHexString(access.metaId)
             + "\",\"ownerIndex\":16,\"stable\":true,\"x\":" + square.getX() + ",\"y\":" + square.getY()
             + ",\"z\":" + square.getZ() + ",\"squareRoomIndex\":" + RoomID.getIndex(actual.id)

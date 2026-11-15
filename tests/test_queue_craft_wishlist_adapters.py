@@ -467,7 +467,7 @@ print('PASS actual fixture remote-safe flags, exact fractions, unchanged/unrelat
                                      text=True, capture_output=True, timeout=60)
             self.assertEqual(0, compile.returncode, compile.stdout + compile.stderr)
             result = subprocess.run([str(Path(jdk) / "bin/java"), "-Djava.awt.headless=true", "-cp", directory + os.pathsep + str(jar),
-                                     "zombie.characters.CraftSkillResetChecks"], text=True, capture_output=True, timeout=60)
+                                     "net.alexredby.nativechecks.CraftSkillResetChecks"], text=True, capture_output=True, timeout=60)
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             self.assertIn("CRAFT_SKILL_RESET_CHECKS_PASS realNative=true localAndRemote=true passiveLevel5Xp0Untouched=true", result.stdout)
 

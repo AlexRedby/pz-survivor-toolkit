@@ -20,12 +20,41 @@ assert(matches('both', 'hammer', 'tool') and not matches('both', 'hammer', 'food
 assert(matches('name', '', 'ignored') and matches('category', 'ignored', ''), 'Inactive search field must be ignored')
 assert(not Search.forPane({player=0}), 'Empty query should not activate the filter')
 
+local inventoryCategory, categoryStore
+if NativeBCInventoryCategorySource and NativeBCCategoryStoreSource then
+    local storeEnv=setmetatable({require=function(name)
+        assert(name=='BetterContainers/_IO/IniWriter')
+        return {makeFeature=function()return{}end}
+    end}, {__index=_G})
+    local storeChunk=assert(loadstring(NativeBCCategoryStoreSource));setfenv(storeChunk,storeEnv)
+    categoryStore=storeChunk();categoryStore.loaded=true
+    categoryStore.setDefaults({})
+    local categoryEnv=setmetatable({require=function(name)
+        assert(name=='BetterContainers/Categorize/CategoryStore');return categoryStore
+    end}, {__index=_G})
+    local categoryChunk=assert(loadstring(NativeBCInventoryCategorySource));setfenv(categoryChunk,categoryEnv)
+    inventoryCategory=categoryChunk();inventoryCategory.setEnabled(true)
+end
+if inventoryCategory then
+    local originalRequire=require
+    require=function(name)
+        if name=='BetterContainers/Categorize/InventoryCategory'then return inventoryCategory end
+        return originalRequire(name)
+    end
+    getActivatedMods=function()return{contains=function(_,id)return id=='EURY_CONTAINERS'end}end
+end
 if CleanUIInventoryPaneSource then
     -- Compare the selected provider's actual search helpers, without loading its
     -- entire UI. Singleton groups must retain its public search behavior.
     local first = assert(CleanUIInventoryPaneSource:find('local function CleanUI_normalizeSearchText', 1, true))
     local last = assert(CleanUIInventoryPaneSource:find('function ISInventoryPane:searchContainer', first, true))
-    local source = CleanUIInventoryPaneSource:sub(first, last-1) ..
+    local helpers = ''
+    local categoryStart = CleanUIInventoryPaneSource:find('local function CleanUI_getCachedCategoryText',1,true)
+    if CleanUIInventoryPaneSource:find('local function CleanUI_getRowPresentationCategory',1,true) then
+        local categoryEnd = assert(CleanUIInventoryPaneSource:find('local function CleanUI_getCachedTruncatedText',categoryStart,true))
+        helpers = 'local CLEANUI_CATEGORY_TEXT_CACHE = {}\n' .. CleanUIInventoryPaneSource:sub(categoryStart,categoryEnd-1)
+    end
+    local source = helpers .. CleanUIInventoryPaneSource:sub(first, last-1) ..
         '\nreturn CleanUI_normalizeSearchText, CleanUI_itemMatchesNameSearch, CleanUI_itemMatchesCategorySearch'
     local chunk = assert(loadstring(source))
     setfenv(chunk, setmetatable({CleanUI_getCachedCategoryText=function(key) return getText('IGUI_ItemCat_'..key) end},
@@ -35,8 +64,37 @@ if CleanUIInventoryPaneSource then
     for _, query in ipairs({'', 'HAMMER', '[special]', '.*', 'display', 'HammerType', 'missing'}) do
         assert(matches('name',query) == nameMatches(group,normalize(query)), 'Name search differs from CleanUI: '..query)
     end
-    for _, query in ipairs({'', 'tool', 'TOOLS', 'Weapon', 'food', '.*'}) do
+    for _, query in ipairs({'', 'tool', 'TOOLS', 'food', '.*'}) do
         assert(matches('category',nil,query) == categoryMatches(group,normalize(query)), 'Category search differs from CleanUI: '..query)
+    end
+    -- Toolkit also retains base-category searches for physical items; the new
+    -- upstream presentation resolver deliberately selects only one fallback category.
+    if helpers ~= '' then
+        assert(matches('category',nil,'Weapon') and not categoryMatches(group,'weapon'),
+            'base-category search compatibility or actual new fallback contract changed')
+    end
+    if inventoryCategory then
+        categoryStore.setDefaults({['Base.Hammer']='CustomTools'})
+        categoryStore.definitions.CustomTools={displayName='Workshop implements'}
+        local custom={};for key,value in pairs(item)do custom[key]=value end
+        custom.getFullType=function()return 'Base.Hammer'end
+        local row={cat='Tool',items={custom,custom}}
+        assert(categoryMatches(row,'workshop implements'),'native BC presentation search control failed')
+        local query=Search.forPane({player=0,searchMode='category',searchCategoryText='Workshop implements'})
+        assert(Search.matches(query,custom),'physical search lost the displayed BC category label')
+        assert(Search.matches(Search.forPane({player=0,searchMode='both',searchText='hammer',
+            searchCategoryText='customtools'}),custom),'combined physical search lost canonical BC category')
+        local realGet=inventoryCategory.get
+        inventoryCategory.get=function()error('resolver failure')end
+        assert(not Search.matches(query,custom) and matches('category',nil,'Tool'),
+            'failed optional resolver blocked physical fallback or fabricated a custom match')
+        inventoryCategory.get=realGet
+        inventoryCategory.setEnabled(false)
+        assert(not Search.matches(query,custom),'physical search retained a disabled BC assignment')
+        inventoryCategory.setEnabled(true)
+        assert(Search.matches(query,custom) and custom:getDisplayCategory()=='Tool',
+            'BC presentation search mutated physical category or cached disabled state')
+        if TestCoverage then TestCoverage('bc-presentation-category','passed')end
     end
     local food = {
         getName=function() return 'Food parcel' end, getDisplayName=function() return 'Food parcel' end,

@@ -3,7 +3,7 @@ from pathlib import Path
 import re
 
 from . import report, progress, mod_inputs
-from .mod_selection import MOD_ID, mod_ids, mod_info
+from .mod_selection import MOD_ID, mod_ids, mod_info, game_version, selected_mod_version
 
 
 def create(project, output, game, workshop=(), overrides=None):
@@ -14,18 +14,19 @@ def create(project, output, game, workshop=(), overrides=None):
     ini = project / 'SurvivorQoL-selected.ini'
     settings = _metadata(ini)
     mods = mod_ids(settings.get('Mods', ''))
-    locations = _locations(project, list(map(Path, workshop)), mods, overrides)
+    version = game_version(game)
+    locations = _locations(project, list(map(Path, workshop)), mods, overrides, version=version)
     if any(output.resolve().is_relative_to(root) for root in locations.values()):
         raise ValueError('Pack lock output must be outside selected mod sources')
     rows = []
     for id, root in locations.items():
-        metadata = _metadata(mod_info(root))
+        metadata = _metadata(mod_info(root, version))
         rows.append({'id': id, 'source': str(root), 'version': metadata.get('version') or metadata.get('modversion'),
-                     'files': mod_inputs.hashes(root)})
+                     'selected_layer': selected_mod_version(root, version).name, 'files': mod_inputs.hashes(root)})
     value = {'schema_version': 2, 'input_policy': mod_inputs.POLICY,
              'selected_ini_sha256': sha256(ini), 'selected_settings': settings,
              'workshop_ids': [id for id in settings.get('WorkshopItems', '').split(';') if id],
-             'game_sha256': sha256(game / 'projectzomboid.jar'), 'mods': rows}
+             'game_sha256': sha256(game / 'projectzomboid.jar'), 'game_version': list(version), 'mods': rows}
     output.parent.mkdir(parents=True, exist_ok=True)
     report.write_json(output, value)
     return value
@@ -78,7 +79,15 @@ def validate(path, project, game, mods):
         raise ValueError('Pack lock fields differ from the actual selected INI')
     if sha256(Path(game) / 'projectzomboid.jar') != value.get('game_sha256'):
         raise ValueError('Game build differs from pack lock')
+    version = game_version(game)
+    if value.get('game_version') != list(version):
+        raise ValueError('Missing or changed engine version in pack lock; regenerate with lock-pack')
     for row in rows:
-        if not Path(row['source']).is_dir() or mod_inputs.hashes(Path(row['source'])) != row['files']:
+        root = Path(row['source'])
+        if not root.is_dir():
+            raise ValueError('Missing or changed locked mod: ' + row['id'])
+        if row.get('selected_layer') != selected_mod_version(root, version).name:
+            raise ValueError('Selected mod layer differs from pack lock; regenerate with lock-pack')
+        if mod_inputs.hashes(root) != row['files']:
             raise ValueError('Missing or changed locked mod: ' + row['id'])
     return {row['id']: row['source'] for row in rows}

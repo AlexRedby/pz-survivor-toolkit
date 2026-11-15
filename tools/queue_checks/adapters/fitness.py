@@ -109,7 +109,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         if probe:
             layer = Path(role['cache']) / 'mods/FitnessValidityProbe/42'
             (layer / 'media/java').mkdir(parents=True, exist_ok=True)
-            (layer / 'mod.info').write_text('name=Isolated Fitness validity probe\nid=FitnessValidityProbe\nversionMin=42.21\n'
+            (layer / 'mod.info').write_text('name=Isolated Fitness validity probe\nid=FitnessValidityProbe\nversionMin=42.22\n'
                                           'require=\\ZombieBuddy\njavaPkgName=net.alexredby.fitnessprobe\n'
                                           'javaJarFile=media/java/FitnessValidityProbe.jar\n')
             shutil.copy2(probe, layer / 'media/java/FitnessValidityProbe.jar')

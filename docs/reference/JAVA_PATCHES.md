@@ -20,7 +20,7 @@ For diagnosing a particular engine fix: affected behavior, bytecode guards and a
 
 ## Shared action lifecycle and outcomes
 
-Version 0.1.17 restricts incoming item-transfer cancellation to transactions owned by its connection, and prevents an absent action from being reported as completed. These corrections preserve native packet validation and effect execution.
+B42.22 restricts incoming item-transfer cancellation to transactions owned by its connection and does not report an absent action as completed. Version 0.2.0 removes Toolkit's former patches for those native behaviors; exact compatibility checks remain for their consumers. Native packet validation and effect execution stay in control.
 
 Version 0.1.44 includes earlier items from the same ordinary container-transfer Request in native capacity reservations. A batch that cannot fit receives the native Reject before any item moves; fitting batches retain native effects and batching. Floor and special transfer paths retain their native checks. Verify `itemBatchAdmission=true` in the **server** activation line and the `TransactionManager` transformation. This is admission-time validation; it does not roll back late native errors or changes made outside item transactions after acceptance.
 
@@ -58,13 +58,11 @@ Verify `equipment=true` and `zombie.network.packets.EquipPacket` transformation 
 
 ## Hutch unloading crash
 
-Version 0.1.6 guards null animal references during native `IsoHutch.removeFromWorld` cleanup in clients, single-player and servers. It preserves stored slots/counts, animal references and the original map; it creates/deletes no animals, edits no saves and does not suppress unrelated exceptions. Unsupported bytecode and custom map implementations retain native behavior. The guard does not diagnose or restore missing animals.
-
-Install the rebuilt folder on the server and **every client, including the host**, save the changed JAR approval and restart. No new Mod ID or Workshop item is needed. Check `hutch=true` and the actual `IsoHutch` transformation. This prevents this specific unload failure; it does not restore missing animals or diagnose their original loss.
+B42.22 skips null animal references in native `IsoHutch.removeFromWorld` cleanup. Version 0.2.0 removes Toolkit's former hutch patch. There is no `hutch` activation flag or Toolkit transformation to require. Native regression checks cover null and valid slots, stored identities/counts and direct/meta cleanup; this does not restore previously missing animals.
 
 ## Native string properties
 
-Version 0.1.7 prevents five startup `IsoPropertyTypeNotFoundException` exceptions for `ladderW`, `ladderN`, `ladderE`, `ladderS` and `WindowShape`. B42.21 ships these string properties in its tile definitions but uses a throwing enum lookup before returning their original names. The patch returns those same names before the throwing lookup, preserving alias IDs, values and string storage, including the cutaway shader's `WindowShape` reads. Typed aliases supplied by other mods still use native lookup.
+Version 0.2.0 retains the `WindowShape` startup correction. B42.22 registers ladder properties as native enum types, so Toolkit no longer intercepts them. The remaining fallback returns the original `WindowShape` name before the throwing lookup, preserving alias IDs, values and string storage, including cutaway reads. Typed aliases supplied by other mods still use native lookup.
 
 The mod entry point resolves the property enum before advice installation so the loader can transform it reliably. This guard requires matching `IsoPropertyType` and `TilePropertyAliasMap` bytecode. Strict enum lookup and diagnostics for every other unknown property remain native. Install the rebuilt folder on the server and every client, save the changed JAR approval and restart; verify `properties=true` and the actual `IsoPropertyType` transformation. This fix does not classify or suppress other startup errors.
 
@@ -74,9 +72,11 @@ Version 0.1.8 normalizes the two shipped `ContainerName` tokens `Large Bucket` a
 
 ## Medical updates after patient disconnect
 
-Version 0.1.15 skips only a native `BodyDamageUpdatePacket` UPDATE whose resolved patient has already disappeared on the client. B42.21 otherwise dereferences that missing player while a packet is still in flight after disconnect. Exact packet, PlayerID and packet-type class hashes guard the change. Valid updates keep native health, pain and infection parsing; START/STOP subscription packets are unchanged. This does not alter treatment effects or accept mismatched clothing synchronization packets.
+Version 0.1.15 skips only a native `BodyDamageUpdatePacket` UPDATE whose resolved patient has already disappeared on the client. B42.22 still dereferences that missing player while a packet is still in flight after disconnect. Exact packet, connection/online-player and packet-type class hashes guard the change. Valid updates keep native health, pain and infection parsing; START/STOP subscription packets are unchanged. This does not alter treatment effects or accept mismatched clothing synchronization packets.
 
 The server also rejects a new `NetTimedAction` request when a serialized BodyPart belongs to a player who has already disconnected. The guard inspects only the new request’s argument table, preserves unrelated/cached actions and lets the native transaction send Reject before any Lua constructor runs. Valid medical and nonmedical requests retain native decoding; malformed unrelated payloads retain their errors. Exact decoder, transaction, player-ID and datagram-boundary bytecode is required. Check `medicalBodyDamage=true` on clients and `medicalTimedAction=true` on the server after approving the rebuilt JAR and restarting.
+
+B42.22 removes stale bandage visuals and synchronizes the resulting clothing change during its native visual update. Version 0.2.0 removes Toolkit's former `medicalVisuals` advice and activation flag. Native regression checks retain clean/dirty bandage removal, unchanged updates and the single synchronization after a real removal.
 
 ## Native fence validation and font pages
 
@@ -115,6 +115,8 @@ Version 0.1.12 repairs the missing destination room lookup after native basement
 The exact shipped Mannequin zone at13583,1299,0 is missing its `properties` table. The patch adds an empty table after a fresh native Lua load, guarded by exact map/handler hashes, active stock map directories, target class hashes and the original row shape. It preserves sprite-derived appearance and random clothing; it does not guess a special outfit. Only the identified no-override zone receives lowest priority so overlapping custom zones registered before or after it keep their existing effect. Changed data and unrelated missing-properties diagnostics remain native.
 
 Version 0.1.18 separates the persistent keys of the exact stock hall and its basement-access overlay at `10707,9484,0`. Both native room objects, runtime IDs, geometry, ordering, building owner and spawn receipts remain native. Before the verified merge, only the original hall receives key `0x505A0000000C00D3`; the access hall keeps `786643`. Exact engine bytecode, active stock map, lot-header/access-file hashes, room identity and unoccupied-key guards restrict the correction. Only source-verified room objects are admitted. An admitted object keeps its saved key through native recalculation and editing; unrelated new/custom objects retain native calculation. Recalculation of an admitted room refuses an occupied destination key before the native caller can overwrite another room. Check `basementHall=true` and `Basement hall key separated` after a cold start with the rebuilt JAR approved on clients and server.
+
+Version 0.2.0 recognizes the verified B42.22 stock hall at room index `106`; the B42.21 header used `107`. Its assigned split key stays unchanged. A native save-section regression preserves the hall/access flags across the old `249` schema, new room reconstruction and `251` save/reload. Full saved-world gameplay remains a separate native-run gate.
 
 **Save dependency:** old duplicate-key records load through the ordinary loader with exactly the previous native result: both target the access hall and the last wins. Previously lost state is not recovered. Future native saves store two different keys. Disabling the patch or failing its guards after an update causes the native loader to skip the original hall's new key and lose that room's saved flags; an unpatched save then drops that record. This is not a downgrade-safe transition. No converter, custom trailer or restoration of the removed 0.1.13 persistence machinery is included. Keep existing save backups.
 

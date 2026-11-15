@@ -18,7 +18,7 @@ except ImportError:
     import lua_compatibility
 from .mod_selection import (
     MOD_ID, VERSION, metadata as _metadata, local_mod_infos, matching_roots,
-    mod_layers, mod_info, selected_mod_version, lua_sources,
+    mod_layers, mod_info, selected_mod_version, lua_sources, game_version, runtime_version,
 )
 from .preflight import setup_timeout
 
@@ -100,7 +100,7 @@ def _validate_overrides(identifiers, overrides):
     return overrides
 
 
-def _locations(project, workshop, identifiers, overrides=None):
+def _locations(project, workshop, identifiers, overrides=None, *, version):
     overrides = _validate_overrides(identifiers, overrides)
     local_infos = local_mod_infos(project)
     remote_infos = []
@@ -120,9 +120,9 @@ def _locations(project, workshop, identifiers, overrides=None):
         if len(found) != 1:
             raise ValueError("Mod ID must resolve exactly once: " + identifier + ": " + str(sorted(map(str, found))))
         root = next(iter(found))
-        if not mod_layers(root):
-            raise ValueError("No compatible 42.21 mod layer: " + identifier)
-        info = mod_info(root)
+        if not mod_layers(root, version):
+            raise ValueError("No compatible " + ".".join(map(str, version)) + " mod layer: " + identifier)
+        info = mod_info(root, version)
         if info is None:
             raise ValueError("Missing B42 version/common mod.info: " + identifier)
         if _metadata(info).get("id") != identifier:
@@ -247,7 +247,7 @@ def _source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=Non
         if any(id not in pinned or Path(path).resolve() != Path(pinned[id]).resolve() for id, path in overrides.items()):
             raise ValueError('Mod override differs from pack lock; regenerate the lock explicitly')
         overrides = pinned
-    locations = _locations(project, list(map(Path, workshop)), selection["mods"], overrides)
+    locations = _locations(project, list(map(Path, workshop)), selection["mods"], overrides, version=game_version(game))
     template = selection.get('options', {}).get('world_template')
     world = None
     if template:
@@ -265,6 +265,7 @@ def _source_inputs(project, game, jdk, selection, workshop=(), *, pack_cache=Non
 
 def runtime_lua_sources(runtime, selection, *, fixtures_only=False):
     """Effective owned runtime files, including generated fixtures; never offline harnesses."""
+    version = runtime_version(runtime)
     owned = {'ActionQueueTest', *runtime['fixture'].get('mods', [])}
     if not fixtures_only:
         owned.update({'PZSurvivorToolkit', 'PZToolkitJavaPatches'}.intersection(selection['mods']))
@@ -274,7 +275,7 @@ def runtime_lua_sources(runtime, selection, *, fixtures_only=False):
         for identifier in sorted(owned):
             if fixtures_only and not (cache / 'mods' / identifier).is_dir():
                 continue
-            sources.update(lua_sources(cache / 'mods' / identifier))
+            sources.update(lua_sources(cache / 'mods' / identifier, version))
         if not fixtures_only:
             sources.update((cache / 'Server').glob('*.lua'))
     return sorted(sources)
@@ -311,6 +312,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
     _validate(selection)
     selection = dict(selection, window_size=window_size(selection))
     locations, template, world = _source_inputs(project, game, jdk, selection, workshop)
+    version = game_version(game)
     borrowing_required = borrowing_check.required(selection)
     locked = selection.get('options', {}).get('pack_lock')
     adapter = adapters.get(selection['suite'])
@@ -369,7 +371,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
         for path in sources:
             source_manifest[str(path)] = sha256(path)
             progress.file(path)
-        manifest = [{"id": identifier, "source": str(source), "input_policy": mod_inputs.POLICY, "files": mod_inputs.hashes(source)}
+        manifest = [{"id": identifier, "source": str(source), "input_policy": mod_inputs.POLICY, "selected_layer": selected_mod_version(source, version).name, "files": mod_inputs.hashes(source)}
                     for identifier, source in locations.items()]
     for row in manifest:
         source_manifest.update({str(Path(row["source"]) / relative): digest for relative, digest in row["files"].items()})
@@ -384,7 +386,7 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
     fixture_bytes = copy_size(path for path in sources if path.is_relative_to(project) and path.is_file())
     world_bytes = copy_size(template / 'state' / name for name in world['files']) if world else 0
     admission.require_disk(output, len(roles), len(roles) * (mod_bytes + fixture_bytes) + world_bytes)
-    runtime = {"project": str(project), "game": str(game), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
+    runtime = {"project": str(project), "game": str(game), "game_version": list(version), "jdk": str(jdk), "kind": selection["kind"], 'fixture': {'mods': []},
                "java": str(launch_java), "server_name": "queue-smoke", "window_size": selection["window_size"], "roles": {}}
     preflight_config = {'version': 2, 'token': uuid.uuid4().hex, 'roles': adapters.roles(selection, False),
                         'setup_timeout_seconds': setup_timeout(selection)}
@@ -413,10 +415,13 @@ def _prepare(project: Path, output: Path, game: Path, jdk: Path,
                     raise RuntimeError("Mod changed while copying snapshot: " + identifier)
                 versions = [p for p in target.iterdir() if p.is_dir() and VERSION.fullmatch(p.name)]
                 layers = [target, target / 'common', *versions]
-                selected = selected_mod_version(target)
-                if selected not in layers:
+                selected = selected_mod_version(target, version)
+                if selected.name != selected_mod_version(source, version).name:
+                    raise RuntimeError("Mod layer alias order changed while copying snapshot: " + identifier)
+                if selected not in layers and not selected.exists():
                     # B42 still scans its default 42.0 layer when no branch matches,
                     # including common content alongside future-only versions.
+                    # A selected numeric regular file is not a content directory.
                     layers.append(selected)
                 for layer in layers:
                     if layer != target or (layer / "media").is_dir():

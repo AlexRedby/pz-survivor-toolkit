@@ -19,15 +19,15 @@ object MannequinZoneDataLogic {
     val SUPPORTED =
         BytecodeSupport.supports(
             "zombie/Lua/LuaManager.class",
-            "dcaad0082ca27a15550c7d0a6e14b3aeb71f634a14f32123dec620df180c646d",
+            "8613349b0e0fdb663fc16ef4397ca60ef7135925fa6116f92d958ea97d09eb32",
         ) &&
             BytecodeSupport.supports(
                 "zombie/Lua/LuaManager\$GlobalObject.class",
-                "80ecbd3bd702db2f992db6cba7cb09c32d775fa6f2a3297e0460874ff5ba20c7",
+                "675c3dad3479ec4e6bf8d0f6aa41aeb2ffcf5570df17d3ac07eab99508221059",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/IsoMetaGrid.class",
-                "cdd50bb0a393c766d25c9dcbc5f7e929d7e10a6b9c9b95e22c3bae94b3b5b1f9",
+                "1e8b016090a41b1388f6eb06c3b63aed8e866416ad15479f0cabe76967dbf824",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/zones/Zone.class",
@@ -35,15 +35,15 @@ object MannequinZoneDataLogic {
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/objects/IsoMannequin.class",
-                "158b696a5ff5ee99e7c60cbd17d7055b6d7c9afbc5c1595e34f2fbcb4feef5e1",
+                "cb7fedda40ac535f0cc7a615fb960d467e193ef3a333e7a0d2f1eeb68ab660e8",
             ) &&
             BytecodeSupport.supports(
                 "zombie/iso/objects/IsoMannequin\$MannequinZone.class",
-                "34d053c48f0522dbeb73f69daa45683c0feb1ff2181b83ef6d8dcfd53aa3848d",
+                "851d79d504b63729a371e6da1068b141a511e4c594e38e388e0f7fb0829eab9d",
             )
 
     private const val FILE = "media/maps/Muldraugh, KY/objects.lua"
-    private const val HASH = "bb2af79f1814265f9ad65bc9b55b0c723cc5a372d92ccc65aae3ffc9acf29572"
+    private const val HASH = "5b629dad9d595a5cbb3e2062414e3c64cff687880be96155a7d64f2f30d35687"
     private const val HANDLER = "media/lua/server/metazones/metazoneHandler.lua"
     private const val HANDLER_HASH =
         "c8cbc5c52a32405d2822d2601af4227afb5149937c372cd22916a7faba5ff6ba"

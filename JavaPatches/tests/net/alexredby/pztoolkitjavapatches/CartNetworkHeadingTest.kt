@@ -117,7 +117,7 @@ object CartNetworkHeadingTest {
             sampled = direction
             packet.prediction.x = 17f
             packet.prediction.y = 29f
-            packet.prediction.z = 2
+            packet.prediction.z = 2f
             packet.prediction.moveDirection = -.9f
             packet.prediction.speed = .75f
             packet.prediction.distance = 8
@@ -155,6 +155,7 @@ object CartNetworkHeadingTest {
         player.run = true
         player.accepted = .7f
         player.onlineId = 11
+        player.playerIndex = 2
         player.testInventory = ItemContainer()
         player.primary = cart(unsafe, player.testInventory)
         player.secondary = player.primary
@@ -193,7 +194,9 @@ object CartNetworkHeadingTest {
             )
             check(
                 packet.booleanVariables.toInt() == 123 &&
-                    packet.id.getID().toInt() == 11 &&
+                    packet.player.getId().toInt() == player.getIndex() &&
+                    player.getOnlineID().toInt() == 11 &&
+                    packet.player.getPlayer() === player &&
                     packet.variables.getPacketSizeBytes() == 11 &&
                     player.run &&
                     !player.sprint,

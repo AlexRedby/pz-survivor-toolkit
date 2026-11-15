@@ -1,3 +1,5 @@
+-- Source-bound preparation uses the native derive hierarchy and constructor-owned __index.
+NativeKahluaTableLookup=true
 if not NativeActionRoot then if TestCoverage then TestCoverage('source-contract','skipped','Return decision scope SKIP (pass --native-action-root).')end;return end
 -- Test-only instrumentation counts the real Policy/native-source resource path.
 -- Java actors and the two Execution/Settlement observer calls remain explicit
@@ -304,6 +306,7 @@ assert(largest.contracts==5 and largest.nativeMatches==32,
 sized(32)
 local originalSettlement=PZSurvivorToolkit.ActionQueueSettlement
 PZSurvivorToolkit.ActionQueueSettlement={requiredStep=function()return false end,
+ isCleanup=function()return false end,
  canWaivePendingReturn=function()return true end,pendingReturnWaiver=function()return {}end}
 local function cancelAllowed()
  local group=policy.evaluateCancel(queue,reader,true)

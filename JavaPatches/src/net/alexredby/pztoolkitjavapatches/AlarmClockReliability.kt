@@ -23,15 +23,15 @@ object AlarmClockReliability {
     val SUPPORTED =
         BytecodeSupport.supports(
             "zombie/inventory/types/AlarmClock.class",
-            "9193244fadff85e58581b4797e82187b5112c32e90fa0cca3e27f84f8c9a2da4",
+            "d04793dd5f25628a8600924a9c0f98c61d363a0f08b1d4121c661944a81fc57c",
         ) &&
             BytecodeSupport.supports(
                 "zombie/inventory/types/AlarmClockClothing.class",
-                "cb899fa6d4ec65440b94ff28ae83c328a4cd8422f1a88efb4df3c5a17d397568",
+                "479d35a6c8f70514ea9bacba50b4b6d705fdcd7f09b903417044e9e1b3e1ac79",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/packets/SyncPlayerAlarmClockPacket.class",
-                "112d7875262f824d1a2b0bd3f1a313258720cbbe37aeec6b5d9a092bf8f89e4a",
+                "94480fb9b75682f77b990a97263a205e0f46138e29825373a9f0ecc2e29f22b6",
             ) &&
             BytecodeSupport.supports(
                 "zombie/network/packets/SyncWorldAlarmClockPacket.class",

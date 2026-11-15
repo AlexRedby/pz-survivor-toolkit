@@ -11,17 +11,34 @@ local Tags = {enabled=function() return enabled end,
         tagReads[#tagReads+1]={item=item,context=context};return item.tags
     end,
     label=function(id) return labels[id] end}
+local inventoryCategory, categoryStore
+if NativeBCInventoryCategorySource and NativeBCCategoryStoreSource then
+    local storeEnv=setmetatable({require=function(name)
+        assert(name=='BetterContainers/_IO/IniWriter')
+        return {makeFeature=function()return{}end}
+    end}, {__index=_G})
+    local storeChunk=assert(loadstring(NativeBCCategoryStoreSource));setfenv(storeChunk,storeEnv)
+    categoryStore=storeChunk();categoryStore.loaded=true
+    categoryStore.setDefaults({})
+    local categoryEnv=setmetatable({require=function(name)
+        assert(name=='BetterContainers/Categorize/CategoryStore');return categoryStore
+    end}, {__index=_G})
+    local categoryChunk=assert(loadstring(NativeBCInventoryCategorySource));setfenv(categoryChunk,categoryEnv)
+    inventoryCategory=categoryChunk();inventoryCategory.setEnabled(true)
+end
 local foodIcon, clockIcon = {}, {}
 local styles = {Food={r=0.4,g=0.8,b=0.3,texture=foodIcon}, Cooking={r=0.5,g=0.4,b=0.2},
     Perishable={r=0.4,g=0.8,b=0.3,texture=clockIcon}}
 local neutral = {r=0.5,g=0.5,b=0.5}
 require = function(name)
+    if name == 'BetterContainers/Categorize/InventoryCategory' then return inventoryCategory end
     if name == "PZSurvivorToolkit/InventoryClasses" then
         return dofile(ProjectRoot .. "/PZSurvivorToolkit/42/media/lua/client/" .. name .. ".lua")
     end
     if name == 'PZSurvivorToolkit/ItemTags' then return Tags end
     if name == 'PZSurvivorToolkit/TagVisuals' then return {get=function(id) return styles[id] or neutral end} end
 end
+getActivatedMods=function()return{contains=function(_,id)return inventoryCategory~=nil and id=='EURY_CONTAINERS'end}end
 Events = {OnGameStart={Add=function(callback) starts[#starts+1]=callback end}}
 CleanUI_RegisterInventoryUiToggleCallback = function(callback) toggles[#toggles+1]=callback end
 getText = function(key)
@@ -65,12 +82,20 @@ CleanUI_getCachedTruncatedText = function(group, field, text, width)
     group[field] = {value=value}
     return value
 end
-local cleanBlock = assert(cleanSource:match('(local categoryKey = item:getDisplayCategory%(%) or item:getCategory%(%).-)\n%s*end'))
-local cleanCategory = assert(loadstring('return function(self,item,y) local v=self.items[y+1]; local xoff=0; local categoryAlign=self.align; local maxCategoryWidth=self.categoryRight-self.column3-self.padding; local categoryRightBoundary=self.categoryRight; local categoryTextY=y*self.itemHgt+self.headerHgt+(self.itemHgt-self.fontHgt)/2; local categoryColor={r=1,g=1,b=1,a=1}; '..cleanBlock..' end end'))()
+NeatTool={truncateText=function(text,width)return text:sub(1,math.max(0,math.floor(width/6)))end}
+local categoryHelpers = ''
+local categoryStart = cleanSource:find('local function CleanUI_getCachedCategoryText',1,true)
+if cleanSource:find('local function CleanUI_getRowPresentationCategory',1,true) then
+    local categoryEnd = assert(cleanSource:find('local function CleanUI_cacheWeightColumnMetrics',categoryStart,true))
+    categoryHelpers = 'local CLEANUI_CATEGORY_TEXT_CACHE = {}\n' .. cleanSource:sub(categoryStart,categoryEnd-1)
+end
+local cleanBlock = assert(cleanSource:match('(local categoryKey, categoryText = CleanUI_getRowPresentationCategory%(v%).-)\n%s*end')
+    or cleanSource:match('(local categoryKey = item:getDisplayCategory%(%) or item:getCategory%(%).-)\n%s*end'))
+local cleanCategory = assert(loadstring(categoryHelpers .. 'return function(self,item,y) local v=self.items[y+1]; local xoff=0; local categoryAlign=self.align; local maxCategoryWidth=self.categoryRight-self.column3-self.padding; local categoryRightBoundary=self.categoryRight; local categoryTextY=y*self.itemHgt+self.headerHgt+(self.itemHgt-self.fontHgt)/2; local categoryColor={r=1,g=1,b=1,a=1}; '..cleanBlock..' end end'))()
 
 local function item(key, itemTags)
     return {key=key, tags=itemTags, job=0, getDisplayCategory=function(self) return self.key end,
-        getCategory=function() return 'Food' end, getJobDelta=function(self) return self.job end}
+        getFullType=function(self)return self.fullType end, getCategory=function() return 'Food' end, getJobDelta=function(self) return self.job end}
 end
 local itemA = item('foodCookingPerishable', tags)
 local itemB = item('ThirdPartyExactKey', {})
@@ -260,3 +285,20 @@ assert(ISInventoryPane.renderdetails == renderers[3])
 ISInventoryPane=class(false); adapter.install()
 assert(later ~= ISInventoryPane.renderdetails)
 print('Inventory tag checks passed: native/CleanUI, exact categories, clipped chips, overflow tooltip, errors, live toggles.')
+
+if inventoryCategory then
+    categoryStore.setDefaults({['Base.TaggedParcel']='CustomPantry'})
+    categoryStore.definitions.CustomPantry={displayName='Pantry produce'}
+    itemA.fullType='Base.TaggedParcel'
+    local p=pane(enhanced,true)
+    p:renderdetails(false)
+    assert(has(p,'Food') and p.toolkitTagRows[1].drawnChips>0,
+        'BC presentation label prevented physical tag chips')
+    assert(p.items[1]._cleanUICategoryKey=='CustomPantry'
+        and p.items[1]._cleanUICategoryText=='Pantry produce'
+        and itemA:getDisplayCategory()=='foodCookingPerishable'
+        and p.items[1].cat=='foodCookingPerishable',
+        'actual row resolver failed or mutated physical/row category metadata')
+    itemA.fullType=nil
+    if TestCoverage then TestCoverage('bc-presentation-category','passed')end
+end

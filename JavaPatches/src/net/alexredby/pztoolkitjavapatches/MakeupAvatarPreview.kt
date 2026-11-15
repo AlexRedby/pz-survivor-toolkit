@@ -24,9 +24,9 @@ object MakeupAvatarPreview {
 
     private val nativeSupported =
         BytecodeSupport.supports("zombie/ui/UI3DModel.class", "c71f4d2ce3c7de6c1e36b39810e9314e94284cbc6f675f822230eb2a1297e936") &&
-            BytecodeSupport.supports("zombie/core/skinnedmodel/advancedanimation/AnimatedModel.class", "7bf82e3342c8aa7f9df5153646754339c19918f67480122b47f11a639db977d4") &&
-            BytecodeSupport.supports("zombie/core/skinnedmodel/visual/ItemVisual.class", "78af8897986c28c5948d7ad80dbf8cf372c52bd5a32dfb720586f3716e472de6") &&
-            BytecodeSupport.supports("zombie/inventory/InventoryItem.class", "48f01be16d1ef1b76e37638fac6e25ca4eb285ad38ab2f462caa5597318c7f9d")
+            BytecodeSupport.supports("zombie/core/skinnedmodel/advancedanimation/AnimatedModel.class", "dc3f94c826174f8f522b9c900efee75c62fc99519f348f644b185106bb668dd8") &&
+            BytecodeSupport.supports("zombie/core/skinnedmodel/visual/ItemVisual.class", "eeea202e9991aa5f67bd8c1ee53115a3ade92631faed7160c1b445ca8cf2dca9") &&
+            BytecodeSupport.supports("zombie/inventory/InventoryItem.class", "b45d4438636509d992aaa7b7505ef8323cd898947efc27bf1f7e762951d6643d")
     private val modelField = field(UI3DModel::class.java, "animatedModel", AnimatedModel::class.java)
     private val visualsField = field(AnimatedModel::class.java, "itemVisuals", ItemVisuals::class.java)
     private val visualField = field(InventoryItem::class.java, "visual", ItemVisual::class.java)

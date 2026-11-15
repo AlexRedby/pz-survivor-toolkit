@@ -25,7 +25,7 @@ internal object ItemStatsDefaultLogic {
         if (
             !BytecodeSupport.supports(
                 "zombie/network/packets/ItemStatsPacket.class",
-                "1b2cd2f150e418d8266cdee8ab671210f8676bf9fd02f596eb5265f1389eaa8a",
+                "a553efea09930272533fb4c8155ccc464069f7c6577996b1bbde35531925c3a7",
             )
         )
             return null

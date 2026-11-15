@@ -14,7 +14,7 @@ end
 local store,installer,owned,resolver
 local function pack(...)return {n=select('#',...),...}end
 if java(native)and java(classifier)and getActivatedMods and getActivatedMods():contains('EURY_CONTAINERS')
- and Proof.matches('media/lua/client/BetterContainers/Categorize/CategoryStore.lua',1639573053,'EURY_CONTAINERS',true)then
+ and Proof.matches('media/lua/client/BetterContainers/Categorize/CategoryStore.lua',3145870577,'EURY_CONTAINERS',true)then
  store=require 'BetterContainers/Categorize/CategoryStore'
  installer=type(store)=='table'and getmetatable(store)==nil and store.installTextResolver
  if type(installer)=='function'and Proof.closure(installer,'CategoryStore.lua')and not store._textResolverInstalled then

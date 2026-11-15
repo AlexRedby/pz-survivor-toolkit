@@ -6,7 +6,7 @@ Quality-of-life tools for **Project Zomboid Build 42**: bulk inventory actions, 
 
 Use Toolkit to spend less time managing items and repeated actions. It includes Wishlist and Quartermaster, plus integrations with the project’s [selected mod set](docs/MODPACK.md).
 
-The current target is **B42.21**, in single-player or **Host** from the game menu, on Windows and macOS. The companion Java patches are experimental and require ZombieBuddy. Feature and compatibility limits are listed beside each [feature](docs/FEATURES.md).
+The current target is **B42.22.2**, in single-player or **Host** from the game menu, on Windows and macOS. The companion Java patches are experimental and require ZombieBuddy. Feature and compatibility limits are listed beside each [feature](docs/FEATURES.md).
 
 ## Get started
 
@@ -45,6 +45,6 @@ See [features and controls](docs/FEATURES.md) for workflows, settings and suppor
 | Component | Current version | Purpose |
 |---|---|---|
 | PZ Survivor Toolkit | [mod.info](PZSurvivorToolkit/42/mod.info) | Player tools, integrated Wishlist/Quartermaster and mod compatibility. |
-| Toolkit Java Patches | [build definition](JavaPatches/build.py) | Experimental B42.21 engine fixes, loaded through ZombieBuddy 2.3.4+. |
+| Toolkit Java Patches | [build definition](JavaPatches/build.py) | Experimental B42.22.2 engine fixes, loaded through ZombieBuddy 2.3.4+. |
 
 Both local mod folders are required by the selected INI. Workshop supplies the remaining mods; some integrations still have unverified full-pack or Host behavior. Consult the [installation guide](MOD_INSTALL.md) before loading an existing save.

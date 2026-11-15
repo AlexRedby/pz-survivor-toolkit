@@ -16,7 +16,7 @@ local function pendingCarriedLocation(item,actor)
   or type(carriedLocation)~='function'or ItemAdapters.pendingCarriedItemLocation~=carriedLocation
   or not Proof.closure(carriedLocation,'ActionQueueItemEditAdapters.lua')then return end
  if carriedSourceTrusted==nil then
-  carriedSourceTrusted=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueItemEditAdapters.lua',3026232832,'PZSurvivorToolkit',true)
+  carriedSourceTrusted=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueItemEditAdapters.lua',87053534,'PZSurvivorToolkit',true)
  end
  if carriedSourceTrusted then return carriedLocation(item,actor)end
 end

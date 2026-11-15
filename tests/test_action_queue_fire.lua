@@ -25,7 +25,7 @@ ISBaseObject = {derive = derive}
 local mainMenuCleanup
 Events = {OnGameStart = {Add = function() end}, OnTick = {Add = function() end},
     OnMainMenuEnter = {Add = function(callback) mainMenuCleanup=callback end}}
-for _, name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
+for _, name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
     'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'}) do _G[name] = {instance = function() return {} end} end
 table.wipe = function(t) for key in pairs(t) do t[key] = nil end end
 local function list(items)
@@ -113,7 +113,7 @@ table.isempty = table.isempty or function(t) for _ in pairs(t) do return false e
 string.sort = function(a,b) return a < b end
 getText = function(key) return key end
 getTimestampMs = function() return 0 end
-getCore = function() return {getGameMode=function() return 'Sandbox' end} end
+getCore = function() return {isTutorial=function()return false end,getGameMode=function() return 'Sandbox' end} end
 sendRemoveItemFromContainer = function() end
 IsoObjectChange = {STATE='state'}
 ZomboidGlobals = {LightFromPetrolAmount = 0.1}
@@ -192,10 +192,10 @@ project('ActionQueueDefinitions')
 local originalBBQPetrol = ISBBQLightFromPetrol.new
 if not FireTestTrustBBQPetrol then ISBBQLightFromPetrol.new = function(...) return originalBBQPetrol(...) end end
 local cleanUIPath
-if NativeWishlistWorkshopRoot then
-    cleanUIPath=NativeWishlistWorkshopRoot .. '/3437629766/mods/CleanUI/42.19/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'
+if NativeCleanUIInventoryContextSource then
+    cleanUIPath=assert(NativeCleanUIInventoryContextSourcePath)
     resolvedSources['media/lua/client/ISUI/ISInventoryPaneContextMenu.lua']=cleanUIPath
-    local source=read(cleanUIPath)
+    local source=NativeCleanUIInventoryContextSource
     local chunks={'local CleanUI_reportedUnsafeContextTimedActions = {}'}
     for _, pattern in ipairs({'(local function CleanUI_reportUnsafeContextTimedAction.-\nend)',
         '(local function CleanUI_isContextInventoryItem.-\nend)', '(local function CleanUI_addContextInventoryTransferAction.-\nend)',
@@ -295,7 +295,8 @@ if bcControls then
         ISCampingMenu.onAddFuel(player,target(),'Base.Log',ISBBQAddFuel,20)
         local queue=ISTimedActionQueue.queues[player]
         assert(queue.queue[2].Type~='ISQueueActionsAction' and not api.isDeferredAction(queue.queue[2]))
-        print('Fire early preinstalled BC remains opaque without a verified predecessor.');return
+        print('Fire early preinstalled BC remains opaque without a verified predecessor.');
+        if TestCoverage then TestCoverage('source-contract','passed')end;return
     end
     local originalGetter=ISInventoryPaneContextMenu.getContainers
     if FireTestBCForeignPredecessor then ISInventoryPaneContextMenu.getContainers=function(...) return originalGetter(...) end end
@@ -308,7 +309,8 @@ if bcControls then
         ISCampingMenu.onAddFuel(player,target(),'Base.Log',ISBBQAddFuel,20)
         local queue=ISTimedActionQueue.queues[player]
         assert(queue.queue[2].Type~='ISQueueActionsAction' and not api.isDeferredAction(queue.queue[2]))
-        print('Fire unknown predecessor remains opaque after native BC install.');return
+        print('Fire unknown predecessor remains opaque after native BC install.');
+        if TestCoverage then TestCoverage('source-contract','passed')end;return
     end
 end
 if quartermasterStart then
@@ -316,7 +318,10 @@ if quartermasterStart then
     local valid=not FireTestQMForeignPredecessor
     assert(api.matchesContainerGetter(originalContainerGetter)==valid,'Quartermaster accepts only the observed trusted predecessor')
     assert(api.matchesContainerGetter(ISInventoryPaneContextMenu.getContainers)==valid,'Quartermaster current getter keeps the exact observed chain')
-    if not valid then print('Fire unknown Quartermaster predecessor remains opaque.');return end
+    if not valid then
+        print('Fire unknown Quartermaster predecessor remains opaque.')
+        if TestCoverage then TestCoverage('source-contract','passed')end;return
+    end
     local getter=ISInventoryPaneContextMenu.getContainers
     ISInventoryPaneContextMenu.getContainers=function(...)return getter(...)end
     assert(not api.matchesContainerGetter(originalContainerGetter),'an arbitrary late getter replacement revokes the chain')
