@@ -436,7 +436,8 @@ function Settlement.operationState(action)
     if optional then result.optionalReturnState, result.optionalReturnDetail = optional.state, optional.detail end
     for _, step in ipairs(record.steps) do
         result.steps[#result.steps + 1] = {phase = step.phase, state = step.state, started = step.started == true,
-            observedPreparation = step.preparation ~= nil, kind = step.action.Type,
+            observedPreparation = step.preparation ~= nil and not step.preparation.requireEffect,
+            observedCleanup = step.preparation ~= nil and step.preparation.requireEffect == true, kind = step.action.Type,
             plannedTransfer = step.returning ~= nil, transferDirection = step.returning and step.returning.direction,
             itemId = step.item and step.item.id, itemType = step.item and step.item.fullType}
     end
@@ -1857,7 +1858,8 @@ function Settlement.preparationAvailable()
             if watch.started then watch.failed = true; return end
             watch.started = true
             local ok, before = pcall(watch.capture, action)
-            if not ok or before ~= nil and type(before) ~= "table" then watch.failed = true; return end
+            if not ok or before ~= nil and type(before) ~= "table"
+                or before == nil and watch.requireEffect then watch.failed = true; return end
             watch.before, watch.empty = before, before == nil
         end,
         begin = function(action, phase)
@@ -1963,6 +1965,34 @@ function Settlement.observePreparation(action, specification)
         end
         step.preparation.scope = scope
     end
+    return step.handle
+end
+
+-- Required cleanup uses the same native observation/ACK gate as preparation,
+-- but must retain its existing private cleanup role and earned prerequisites.
+-- Calling observePreparation here would retag a pending cleanup as preparation.
+-- Bind children after their actual cleanup expansion: cancellation moves
+-- retained work to a fresh operation and must not revive an old effect handle.
+-- This observation grants no admission/stop/successor permission and creates
+-- neither cleanup ownership nor automatic-restoration debt.
+function Settlement.observeCleanupEffect(action, specification)
+    if type(action) ~= "table" or type(specification) ~= "table" or getmetatable(specification) ~= nil
+        or type(specification.guard) ~= "function" or type(specification.capture) ~= "function"
+        or type(specification.observed) ~= "function" then return end
+    local guard, capture, observed = specification.guard, specification.capture, specification.observed
+    local record = operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    local function pendingCleanup()
+        return record and operation(action.character, action.toolkitQueueOperation) == record
+            and record.actions[action] == step and step.phase == "cleanup" and step.kind == action.Type and not step.started
+            and not step.preparation and not step.borrowing and not step.returning
+            and action.action == nil and not action.started and action.Type ~= "ISInventoryTransferAction"
+    end
+    if not step or not pendingCleanup() or not requiredCleanup(action, false)
+        or not Settlement.preparationAvailable() or not pendingCleanup()
+        or not requiredCleanup(action, false) or not pendingCleanup() or getmetatable(specification) ~= nil
+        or specification.guard ~= guard or specification.capture ~= capture or specification.observed ~= observed then return end
+    step.preparation = {guard = guard, capture = capture, observed = observed, requireEffect = true}
     return step.handle
 end
 

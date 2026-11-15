@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.3
+
+- **Internal:** Added shared one-use hand-restoration plans and receipt-backed observation of already-owned cleanup effects. Tool restoration remains gated until native admission, successful dependency, unresolved-debt and editor-disabled restoration checks are qualified; P4 stays selected and existing restoration behavior is preserved.
+
 ### 0.2.2
 
 - **Fixed:** Client-setting migrations preserve a verified recovery copy before saving ModOptions. Interrupted or incomplete writes restore the original preferences before upstream options load; pending recovery prevents completion markers and another migration from replacing the original. Later manual changes survive a completed migration.
