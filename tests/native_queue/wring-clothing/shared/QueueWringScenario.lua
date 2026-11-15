@@ -6,6 +6,10 @@ function S.control(case)
  if case=='worn-bag-full'then return 'full'end
  if case=='worn-bag-unavailable'then return 'unavailable'end
  if case=='worn-bag-intent'then return 'intent'end
+ if case=='worn-bag-cancel'then return 'cancel'end
+ if case=='worn-bag-cancel-toggle'then return 'cancel-toggle'end
+ if case=='worn-bag-toggle-off'then return 'toggle-off'end
+ if case=='worn-bag-toggle'then return 'toggle'end
  return false
 end
 function S.baseCase(case)return S.control(case)and'worn-bag'or case end

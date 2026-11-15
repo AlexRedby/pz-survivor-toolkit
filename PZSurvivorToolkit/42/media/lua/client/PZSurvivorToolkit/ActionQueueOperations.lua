@@ -142,12 +142,15 @@ function Operations.invalidate(token)
     if type(token) == "table" then token.toolkitCancelled = true end
 end
 
-function Operations.invalidateQueue(queue)
+function Operations.invalidateQueue(queue, retireNative)
     if not queue then return end
     if not queue.queue then queue = ISTimedActionQueue.queues[queue] end
     if queue then
         queue.toolkitOperationGeneration = (queue.toolkitOperationGeneration or 0) + 1
-        for _, action in ipairs(queue.queue) do Operations.invalidate(action.toolkitQueueOperation) end
+        for _, action in ipairs(queue.queue) do
+            if retireNative then retireNative(action) end
+            Operations.invalidate(action.toolkitQueueOperation)
+        end
     end
 end
 

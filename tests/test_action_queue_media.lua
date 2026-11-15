@@ -70,6 +70,7 @@ local function setup(wrapped,changedSource,foreignCallback,queueHooks,common)
  end
  f.player.class='IsoPlayer'
  f.player.isLocalPlayer=function()return true end
+ f.player.getOnlineID=function()return 55 end
  f.player.isDraggingCorpse=function()return false end
  f.player.isRunning=function()return false end;f.player.isSprinting=function()return false end
  f.player.isAiming=function()return false end
@@ -563,8 +564,12 @@ for _,scenario in ipairs({'exact-later','effects-before-ack','adjusted-duration'
   assert(insert.maxTime==90,'real native create must apply moodle/temperature duration adjustments')
  end
  local receipt={state='started'}
+ local acknowledgements=PZSurvivorToolkit.ActionQueueAcknowledgements
  PZSurvivorToolkit.ActionQueueAcknowledgements={capture=function(action)if action==insert then return receipt end end,
-  state=function(_,record)assert(record==receipt);return receipt.state end,reset=function()end}
+  state=function(_,record)assert(record==receipt);return receipt.state end,reset=function()end,
+  bindEditorNative=acknowledgements.bindEditorNative,completeEditorNative=acknowledgements.completeEditorNative,
+  retireEditorMember=acknowledgements.retireEditorMember,invalidateEditor=acknowledgements.invalidateEditor,
+  editorNativeCompletion=acknowledgements.editorNativeCompletion,editorEnabled=acknowledgements.editorEnabled}
 
  -- Server completion consumes its separate tape once; packets have not changed
  -- the client's retained tape or DeviceData yet. No client invoke/complete replay.
@@ -728,8 +733,12 @@ for _,scenario in ipairs({'media','tape-debit','both','wrong-media','lost-tv','u
   isForceComplete=function()return false end,hasStalled=function()return false end,
   forceStop=function()forcedStop=true end}
  local receipt={state='started'}
+ local acknowledgements=PZSurvivorToolkit.ActionQueueAcknowledgements
  PZSurvivorToolkit.ActionQueueAcknowledgements={capture=function(action)if action==insert and scenario~='missing-ack'then return receipt end end,
-  state=function(_,record)assert(record==receipt);return receipt.state end,reset=function()end}
+  state=function(_,record)assert(record==receipt);return receipt.state end,reset=function()end,
+  bindEditorNative=acknowledgements.bindEditorNative,completeEditorNative=acknowledgements.completeEditorNative,
+  retireEditorMember=acknowledgements.retireEditorMember,invalidateEditor=acknowledgements.invalidateEditor,
+  editorNativeCompletion=acknowledgements.editorNativeCompletion,editorEnabled=acknowledgements.editorEnabled}
  local _,serverData,serverSquare=s.device();local serverTape=s.tape()
  local serverAction=ISDeviceMediaAction:new(f.player,false,serverTape,serverSquare)
  isClient,isServer=function()return false end,function()return true end

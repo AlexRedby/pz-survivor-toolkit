@@ -139,8 +139,6 @@ local function nativeCompletionState(action, nativeAction, waiting)
         or not character:isLocalPlayer()or getSpecificPlayer(character:getPlayerNum())~=character
         or queue.toolkitCancel or queue.toolkitStopIntent or queue.toolkitOutcomeWait
         or (queue.toolkitGroupCancel and not finishing) or queue.toolkitResume
-        or (editing and queue.toolkitOperationsInvalid and not admitted)
-        or (editing and action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled and not admitted and not finishing)
         or character:pressedCancelAction()
         or (action.stopOnWalk and (character:isPlayerMoving()or character:pressedMovement(false)))
         or (action.stopOnRun and (character:isRunning()or character:isSprinting()))
@@ -150,9 +148,12 @@ local function nativeCompletionState(action, nativeAction, waiting)
     end
     local acknowledgements=Toolkit.ActionQueueAcknowledgements
     local receipt=acknowledgements and acknowledgements.capture(action)
+    local retired=receipt and acknowledgements.editorNativeCompletion(action,receipt)
+    if editing and not admitted and not retired and (queue.toolkitOperationsInvalid
+        or not finishing and action.toolkitQueueOperation and action.toolkitQueueOperation.toolkitCancelled) then return false end
     local disabled = acknowledgements and (waiting and acknowledgements.allowsDisabledNativeCompletionWait
         or acknowledgements.allowsDisabledNativeCompletion)
-    if not editing and not admitted and not (receipt and disabled and disabled(action,receipt)) then return end
+    if not editing and not admitted and not retired and not (receipt and disabled and disabled(action,receipt)) then return end
     return receipt and acknowledgements.state(action,receipt)
 end
 function Lifecycle.allowNativeCompletion(action, nativeAction)

@@ -443,7 +443,7 @@ def check_sources(names):
 MOD_INFO = {
     'name': 'Toolkit Java Patches (Experimental)',
     'id': 'PZToolkitJavaPatches',
-    'version': '0.2.0',
+    'version': '0.2.1',
     'author': 'AlexRedby',
     'versionMin': '42.22',
     'versionMax': '42.22',

@@ -54,6 +54,13 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - **Fixed:** Client-setting migrations preserve a verified recovery copy before saving ModOptions. Interrupted or incomplete writes restore the original preferences before upstream options load; pending recovery prevents completion markers and another migration from replacing the original. Later manual changes survive a completed migration.
 - **Development:** Restored-world startup checks can require the saved character and compare nested inventory and equipment identities, rejecting character-creation fallback during migration verification.
 
+### 0.2.1
+
+- **Fixed:** Source-proven active wringing of a garment borrowed through the own restoration producer can be cancelled after pickup. Native stop preserves its unpaid wetness; the earned return drains before independent work, including after disabling the editor. Cancellation retains its admitted stop choice when operation tokens are invalidated.
+- **Fixed:** Switching the queue editor off or repeatedly back on preserves completion and authoritative acknowledgements for previously issued native work. Retired producers and optional returns remain revoked; this does not restore editing rights or replay completed effects. General P4 replacement remains incomplete.
+- **Fixed:** An authoritative required return retires the corresponding revoked optional-return notice after editor disable. Failed, unconfirmed and unrelated return debts remain visible; moving an item manually does not settle its earlier operation.
+- **Checks:** Matching macOS Build 42.22.2 SP/menu-Host native/Toolkit banks passed ordinary own wringing return, active cancellation, accepted cleanup after editor disable and repeated off/on transitions with the selected pack excluding P4. Runtime audits and source provenance are clean. These cases do not establish general P4 replacement, worn/bulk/world-storage restoration or physical UI/WAN behavior.
+
 ### 0.2.0
 
 - **Changed:** Start the new minor-version series for the Project Zomboid 42.22.2 migration.
@@ -1740,6 +1747,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.2.1
+
+- **Compatibility:** Refreshed queue ownership compiler source guards for the matching Toolkit cancellation and editor-transition contracts.
 
 ### 0.2.0
 

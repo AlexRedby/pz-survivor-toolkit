@@ -12,6 +12,7 @@ class WringSourceFixtureTests(unittest.TestCase):
         lua.execute("package.loaded.QueueEnergyPlacement={atCentered=function()return true end}")
         lua.globals().F=lua.execute((SHARED/'QueueWringClothing.lua').read_text())
         lua.execute("package.loaded.QueueWringClothing=F")
+        lua.execute('package.path = ... .. "/?.lua;" .. package.path', str(SHARED))
         lua.globals().C=lua.execute((SHARED/'QueueWringReturnControls.lua').read_text())
         lua.execute('''
 function isClient()return false end

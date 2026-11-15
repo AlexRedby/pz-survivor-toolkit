@@ -55,7 +55,10 @@ local function updateOperationState(queue)
             else Operations.invalidateQueue(queue) end
             queue.toolkitOperationsInvalid = true
         end
-    else queue.toolkitOperationsInvalid = nil end
+    else
+        queue.toolkitOperationsInvalid = nil
+        if Toolkit.ActionQueueAcknowledgements then Toolkit.ActionQueueAcknowledgements.editorEnabled(queue) end
+    end
 end
 -- Producers that capture receipts before enqueueing must share the same boundary
 -- as begin/tick, so the first native begin cannot invalidate their own receipt.
@@ -88,6 +91,7 @@ ISBaseTimedAction.begin = function(action)
     if Toolkit.ActionQueueApproach then Toolkit.ActionQueueApproach.started(action) end
     if media then media.bind(action) end
     if Toolkit.ActionQueueSettlement then Toolkit.ActionQueueSettlement.bindCancellation(action) end
+    Toolkit.ActionQueueAcknowledgements.bindEditorNative(action)
     return result
 end
 Policy.adoptBegin(begin, ISBaseTimedAction.begin)
@@ -143,12 +147,16 @@ function Queue.cancelOperation(queue, action, expected)
     decision = Policy.evaluateCancel(queue, action, true)
     if not decision.allowed then return false, decision.reason, decision end
     if decision.first ~= first or decision.last ~= last then return false, "unavailable" end
-    local request
+    local request, stopCurrent
     if first == 1 and queue.current == queue.queue[1] then
         local current = queue.current
         request = {action = current, token = current.toolkitQueueOperation}
         if not Settlement.admitCancellation(queue, request, decision) then return false, "unavailable" end
-        if not stoppable(current) then
+        -- The accepted decision may consume the producer's permission when its
+        -- token is invalidated below. Preserve its reviewed native stop choice;
+        -- never reclassify that accepted body as finish-step after revocation.
+        stopCurrent = stoppable(current)
+        if not stopCurrent then
             Toolkit.ActionQueueLifecycle.acceptFinishStepCancellation(queue, current, request, decision)
         end
     end
@@ -157,7 +165,7 @@ function Queue.cancelOperation(queue, action, expected)
     if request then
         local current = queue.current
         queue.toolkitGroupCancel = request
-        if stoppable(current) then
+        if stopCurrent then
             Toolkit.ActionQueueLifecycle.requestStop(queue, current, "cancel", "operation")
         end
         -- In-flight pickups/equipment finish natively before dropping the remaining work.
@@ -259,6 +267,7 @@ ISTimedActionQueue.onCompleted = function(queue, action)
     -- a privately owned generated return before that callback can run.
     if advanceOptionalReturns and advanceOptionalReturns(queue, action) ~= true then return end
     completed(queue, action)
+    Toolkit.ActionQueueAcknowledgements.completeEditorNative(queue, action)
     if Execution then Execution.completed(action) end
     if PickupFailure then PickupFailure.completed(action) end
 end
@@ -610,4 +619,13 @@ require "PZSurvivorToolkit/ActionQueueMedia"
 if Toolkit.ActionQueueMedia then Toolkit.ActionQueueMedia.install() end
 if Toolkit.ActionQueueDeviceTargets then Toolkit.ActionQueueDeviceTargets.install() end
 require "PZSurvivorToolkit/ActionQueueRecovery"
+-- Native removal retires exactly that editor-era member. A later reinsertion
+-- cannot bind an old pending row as a fresh native episode.
+local removeFromQueue = ISTimedActionQueue.removeFromQueue
+ISTimedActionQueue.removeFromQueue = function(queue, action)
+    local count = #queue.queue
+    local result = removeFromQueue(queue, action)
+    if #queue.queue < count then Toolkit.ActionQueueAcknowledgements.retireEditorMember(queue, action) end
+    return result
+end
 return Queue

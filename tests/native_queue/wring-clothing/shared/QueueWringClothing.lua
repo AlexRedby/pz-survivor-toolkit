@@ -304,7 +304,8 @@ function F.verify(s)
   local item=value.items[name];local cap=s.ids.items[name].cap
   local restored=(name=='target'or s.ids.source.kind=='worn-bag'and name=='cancelled')and(s.ids.source.kind=='worn-bag'or s.ids.source.kind=='world')
   if s.ids.restoration and s.ids.mode=='native'then restored=false end
-  if s.ids.returnControl and name=='target'then restored=false end
+  local stopped=s.ids.returnControl=='cancel'or s.ids.returnControl=='cancel-toggle'
+  if s.ids.returnControl and name=='target'then restored=stopped and s.ids.mode=='toolkit'end
   local expectedRoot=restored and 0 or 1
   local expectedActor=restored and s.ids.source.kind=='world'and 0 or 1
   if s.detachedSource and name=='cancelled'and s.ids.mode=='toolkit'then expectedActor=0 end
@@ -319,6 +320,8 @@ function F.verify(s)
   local minimum,maximum,above
   if s.ids.wearSwap then
    minimum=0;maximum=(name=='incoming'or name=='displaced')and s.ids.items[name].initial or cap+.01
+  elseif stopped and(name=='target'or name=='tail'and s.ids.mode=='native')then
+   minimum=80;maximum=s.ids.items[name].initial
   elseif name=='cancelled'and s.ids.wornPrepared and s.ids.mode=='toolkit'then
    -- Passive drying does not prove a paid effect; cancellation receipts do.
    minimum=0;maximum=s.ids.items[name].initial

@@ -1,15 +1,19 @@
 """Native wring UI producer, exact clothing identity and authoritative wetness caps."""
 import json
+import os
 from pathlib import Path
 import re
 import shutil
 import zlib
+import zipfile
 
+from .. import preparation_process
 from ..mod_selection import lua_sources, game_version
 from .tv_controls import MODS
 
 CASES = ('root', 'worn-prepared', 'wear-swap', 'worn', 'worn-bag', 'world')
-CONTROL_CASES = ('worn-bag-keep', 'worn-bag-full', 'worn-bag-unavailable', 'worn-bag-intent')
+CONTROL_CASES = ('worn-bag-keep', 'worn-bag-full', 'worn-bag-unavailable', 'worn-bag-intent',
+                 'worn-bag-cancel', 'worn-bag-cancel-toggle', 'worn-bag-toggle-off', 'worn-bag-toggle')
 
 
 def base_case(case):
@@ -19,30 +23,32 @@ NAMES = ('front', 'target', 'tail', 'cancelled')
 PREFIX = '[WRING_CLOTHING] '
 PRODUCER = 'native ISInventoryPaneContextMenu.onWringClothing'
 NATIVE_CRC = {
-    'media/lua/shared/TimedActions/ISEquipWeaponAction.lua': 3528902511,
+    'media/lua/shared/TimedActions/ISEquipWeaponAction.lua': 3948461313,
     'media/scripts/generated/items/clothing.txt': 3753683896,
     'media/lua/shared/NPCs/BodyLocations.lua': 2265789823,
     'media/lua/shared/TimedActions/ISWringClothing.lua': 2805730431,
-    'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua': 2574700613,
-    'media/lua/shared/TimedActions/ISUnequipAction.lua': 2061668308,
+    'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua': 3597525846,
+    'media/lua/shared/TimedActions/ISUnequipAction.lua': 1451835837,
     'media/lua/shared/TimedActions/ISWearClothing.lua': 3766730028,
-    'media/lua/client/TimedActions/ISInventoryTransferAction.lua': 3908838083,
+    'media/lua/client/TimedActions/ISInventoryTransferAction.lua': 4278128391,
 }
-PROFILE_CRC = {'media/scripts/generated/items/normal.txt': 1928498276, 'media/scripts/generated/items/container.txt': 2378263796}
-SELECTED_CRC = {'CleanUI': ('ISInventoryPaneContextMenu.lua', 2066944516),
+PROFILE_CRC = {'media/scripts/generated/items/normal.txt': 2459597436, 'media/scripts/generated/items/container.txt': 293083111}
+SELECTED_CRC = {'CleanUI': ('ISInventoryPaneContextMenu.lua', 263037846),
                 'P4TidyUpMeister': ('P4TidyUpMeister.lua', 945150908),
                 'SaucedCarts': ('ContainerRestrictions.lua', 442705836)}
 
 
 def definitions():
     checks = {case: dict(effectsVerified=True, serverAuthorityVerified=True, tailCompleted=True) for case in (*CASES, *CONTROL_CASES)}
+    for case in ('worn-bag-cancel', 'worn-bag-cancel-toggle'):
+        checks[case] = dict(effectsVerified=True, serverAuthorityVerified=True, tailSemanticsVerified=True)
     edits = {case: dict(effectsVerified=True, pendingEditsVerified=True) for case in ('root','worn-bag','worn-prepared','wear-swap',*CONTROL_CASES)}
     return {'wring-clothing': dict(status='ready', clients=1, default_mods=list(MODS),
         scenario_actions={'native-wring-clothing': dict(mods=list(MODS),
             checks={'success-queued': checks, 'server-authority': checks, 'cancel-waiting': {case:value for case,value in edits.items() if case!='wear-swap'},
                     'move-independent': edits, 'move-dependent': {'root': edits['root']}},
             toolkit_only=['cancel-waiting', 'move-independent', 'move-dependent'],
-            scope='Grouped full selected pack fresh SP/menu Host controls. Native inventory context-menu producer with root, worn, worn-bag and adjacent furniture clothing; real durations, untouched callbacks, exact identities/source counts and authoritative wetness caps with bounded passive drying. Current B42 ItemBodyLocation userdata fails the native legacy string comparison even for shoes, so real socks and shoes both cap at10; prepared and final receipts prove the exact native predicate, class and location. Selected Tidy Up Meister restores borrowed items to their exact original source; worn clothing stays unequipped. Host worn and worn-bag setup uses a real own-client native wear before a strict server canonical-identity baseline; Default SP setup is unchanged; optional capacity profiling uses a genuine native bag Wear baseline in SP as well. Independent front and tail wrings on other clothes. Queue-on root pending cancellation and independent moves; same ordinary-clothing dependency denial. Carried worn-bag uses genuine Operations.run producer groups: enabled source-owned deferred container prep/fetch/wring (disabled native fetch/wring), source-bound no-position-effect lease, real resolver with no unexpected walking children, pending full-group cancellation and fetch/body-selected whole-group move/restore, exact source->root descriptors and native/P4 return. UI Clothing.getWeight wet interpolation is observed separately from native capacity. Source-bound nonincrease traversal preserves the current native getUnequippedWeight bound and external/native admission, with no drying credit. Selectable worn-prepared uses genuine native wear of distinct cotton scarf/leather gloves before a canonical authority baseline, then Operations.run native unequip/wring groups with pending whole-group cancellation and unequip/body-selected moves. Executed items stay unworn; cancelled clothing stays worn, with exact unchanged other slots/hands, native capacity weights and server clothing-update transitions. Selectable wear-swap natively replaces fixture-owned heavier BurlapWrap gloves with light leather gloves, preserves a scarf in another slot, proves positive native load delta and exact displaced/root/incoming/worn identities, then source-owned freshness refusal or child-selected retained Unequip/Wring moves, exact saved terminal Ack at the canonical permission boundary during the real front, and final canonical physical outcome/freshness. This case has no cancellation claim; that remains worn-prepared. Optional profile_capacity on worn-bag adds exact native Nails instances and coarse idle wall-clock samples of legacy versus numeric-zero qualified capacity on the real Java-backed player inventory. No performance threshold, FPS claim or inventory-size extrapolation. Historical worn/world groups retain execution-only scope. Opt-in P4-free carried Keep and authority capacity-loss cases preserve the native body and independent tail, with explicit blocked-debt Keep after refusal. Opt-in detached-source controls retain an authority-owned unavailable bag and exact contents, wait for canonical client removal and keep the exact blocked debt. Later explicit-item controls use the native primary-hand producer while wringing runs, preserve the body/tail and retire only the debt tied to its authenticated effect. These controls require native-returns. Magazine moves remain outside this bank. No active edits, recovery or physical input coverage.')},
+            scope='Grouped full selected pack fresh SP/menu Host controls. Native inventory context-menu producer with root, worn, worn-bag and adjacent furniture clothing; real durations, untouched callbacks, exact identities/source counts and authoritative wetness caps with bounded passive drying. Current B42 ItemBodyLocation userdata fails the native legacy string comparison even for shoes, so real socks and shoes both cap at10; prepared and final receipts prove the exact native predicate, class and location. Selected Tidy Up Meister restores borrowed items to their exact original source; worn clothing stays unequipped. Host worn and worn-bag setup uses a real own-client native wear before a strict server canonical-identity baseline; Default SP setup is unchanged; optional capacity profiling uses a genuine native bag Wear baseline in SP as well. Independent front and tail wrings on other clothes. Queue-on root pending cancellation and independent moves; same ordinary-clothing dependency denial. Carried worn-bag uses genuine Operations.run producer groups: enabled source-owned deferred container prep/fetch/wring (disabled native fetch/wring), source-bound no-position-effect lease, real resolver with no unexpected walking children, pending full-group cancellation and fetch/body-selected whole-group move/restore, exact source->root descriptors and native/P4 return. UI Clothing.getWeight wet interpolation is observed separately from native capacity. Source-bound nonincrease traversal preserves the current native getUnequippedWeight bound and external/native admission, with no drying credit. Selectable worn-prepared uses genuine native wear of distinct cotton scarf/leather gloves before a canonical authority baseline, then Operations.run native unequip/wring groups with pending whole-group cancellation and unequip/body-selected moves. Executed items stay unworn; cancelled clothing stays worn, with exact unchanged other slots/hands, native capacity weights and server clothing-update transitions. Selectable wear-swap natively replaces fixture-owned heavier BurlapWrap gloves with light leather gloves, preserves a scarf in another slot, proves positive native load delta and exact displaced/root/incoming/worn identities, then source-owned freshness refusal or child-selected retained Unequip/Wring moves, exact saved terminal Ack at the canonical permission boundary during the real front, and final canonical physical outcome/freshness. This case has no cancellation claim; that remains worn-prepared. Optional profile_capacity on worn-bag adds exact native Nails instances and coarse idle wall-clock samples of legacy versus numeric-zero qualified capacity on the real Java-backed player inventory. No performance threshold, FPS claim or inventory-size extrapolation. Historical worn/world groups retain execution-only scope. Opt-in P4-free carried Keep and authority capacity-loss cases preserve the native body and independent tail, with explicit blocked-debt Keep after refusal. Opt-in detached-source controls retain an authority-owned unavailable bag and exact contents, wait for canonical client removal and keep the exact blocked debt. Later explicit-item controls use the native primary-hand producer while wringing runs, preserve the body/tail and retire only the debt tied to its authenticated effect. These controls require native-returns. Active carried cancellation uses an exact earned own loan: native stop leaves wetness unchanged, a new required return precedes the independent tail, and accepted cleanup drains across editor disable. Native stop controls reset the queue and intentionally do not complete the tail. A separate editor off/on case closes the original optional producer without reviving it. Unqualified active edits, recovery, magazine moves and physical input remain outside this bank.')},
         cases=[dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'], modes=['native', 'toolkit'], languages=['EN']) for case in (*CASES, *CONTROL_CASES)])}
 
 
@@ -69,7 +75,7 @@ def validate(selection):
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
-    return [*sorted((root / 'wring-clothing').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
+    return [*sorted(path for path in (root / 'wring-clothing').rglob('*') if path.suffix in ('.lua', '.java')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua',
             *verifier_sources(project, selection)]
 
@@ -97,12 +103,39 @@ def audit_selected(locations, version=None, provider='selected'):
     return result
 
 
+def _stop_probe(project, output, game, jdk):
+    classes = Path(output) / 'wring-stop-probe/classes'
+    classes.mkdir(parents=True)
+    classpath = os.pathsep.join(str(Path(game) / name) for name in ('projectzomboid.jar', 'ZombieBuddy.jar'))
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes),
+                            str(Path(project) / 'tests/native_queue/wring-clothing/java/Main.java')],
+                           check=True, capture_output=True, text=True, timeout=60)
+    compiled = sorted(classes.rglob('*.class'))
+    if not compiled:
+        raise ValueError('Wring stop observation probe compilation produced no classes')
+    jar = classes.parent / 'WringStopProbe.jar'
+    with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as archive:
+        for path in compiled:
+            archive.write(path, path.relative_to(classes).as_posix())
+    return jar
+
+
 def stage(project, output, game, jdk, selection, locations, runtime):
     validate(selection)
     audit = audit_native(game, selection.get('options', {}).get('profile_capacity', False))
     audit.update(audit_selected(locations, game_version(game), selection.get('options', {}).get('wring_restoration_provider', 'selected')))
     root = Path(project) / 'tests/native_queue'
+    probe = _stop_probe(project, output, game, jdk) if any(case in ('worn-bag-cancel', 'worn-bag-cancel-toggle') for case in selection['cases']) else None
+    if probe:
+        runtime.setdefault('fixture', {}).setdefault('mods', []).append('WringStopProbe')
     for role in runtime['roles'].values():
+        if probe:
+            layer = Path(role['cache']) / 'mods/WringStopProbe/42'
+            (layer / 'media/java').mkdir(parents=True, exist_ok=True)
+            (layer / 'mod.info').write_text('name=Disposable native wring stop observation\nid=WringStopProbe\nversionMin=42.22\n'
+                                          'require=\\ZombieBuddy\njavaPkgName=net.alexredby.wringstopprobe\n'
+                                          'javaJarFile=media/java/WringStopProbe.jar\n')
+            shutil.copy2(probe, layer / 'media/java/WringStopProbe.jar')
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
         for side, name in [('client', 'ZZStartup.lua'), ('server', 'ZZStartupServer.lua')]:
             shutil.copy2(root / 'startup' / side / name, lua / side / name)
@@ -120,13 +153,15 @@ def complete(selection, role, text):
 
 
 def verifier_sources(project, selection):
-    return [Path(__file__).with_name('wring_clothing_verifier.py'), Path(__file__).parents[1] / 'placement.py',
+    return [Path(__file__).with_name('wring_clothing_verifier.py'),
+            Path(__file__).with_name('wring_clothing_session.py'), Path(__file__).parents[1] / 'placement.py',
             *[Path(project) / 'tests' / name for name in ('test_queue_wring_clothing.py',
                 'test_queue_wring_fixture_diagnostics.py', 'test_queue_wring_verifier_diagnostics.py',
                 'test_queue_wring_control_fixture.py', 'test_queue_wring_return_controls.py',
                 'test_queue_wring_source_fixture.py', 'test_queue_wring_unavailable.py',
                 'test_queue_wring_intent_fixture.py', 'test_queue_wring_intent.py',
-                'test_action_queue_own_selector.py')]]
+                'test_action_queue_own_selector.py', 'test_queue_wring_cancel.py',
+                'test_queue_wring_active_fixture.py', 'test_queue_wring_partial.py')]]
 
 
 def _counts(case, name, final):
