@@ -70,6 +70,9 @@ ISBaseTimedAction.begin = function(action)
     -- Initialize disabled-mode bookkeeping before native allocation/receipts.
     -- Its first tick must not revoke a freshly captured media transaction.
     updateOperationState(ISTimedActionQueue.queues[action.character])
+    local managed, canBegin
+    if Settlement.beginCleanupContinuation then managed, canBegin = Settlement.beginCleanupContinuation(action) end
+    if managed and canBegin ~= true then return end
     local targets = Toolkit.ActionQueueDeviceTargets
     if targets then targets.admitting(action) end
     local media = Toolkit.ActionQueueMedia
@@ -194,6 +197,7 @@ end
 
 local completed = ISTimedActionQueue.onCompleted
 ISTimedActionQueue.onCompleted = function(queue, action)
+    if Settlement.deferCleanupCompletion and Settlement.deferCleanupCompletion(queue, action) then return end
     -- Enabled queue callbacks belong to their old episode, never a replacement
     -- head. Disabled controls retain the native completion/retrigger behavior.
     local protectCompletion=Toolkit.Settings.actionQueue()
@@ -266,6 +270,7 @@ ISTimedActionQueue.onCompleted = function(queue, action)
     -- Native completion validates the next action before begin(). Suppress only
     -- a privately owned generated return before that callback can run.
     if advanceOptionalReturns and advanceOptionalReturns(queue, action) ~= true then return end
+    if Settlement.advanceCleanupReturns and Settlement.advanceCleanupReturns(queue, action) ~= true then return end
     completed(queue, action)
     Toolkit.ActionQueueAcknowledgements.completeEditorNative(queue, action)
     if Execution then Execution.completed(action) end
@@ -350,6 +355,7 @@ ISBaseTimedAction.stop = function(action)
     local queue = ISTimedActionQueue.queues[action.character]
     if queue and Execution and Execution.preserveStop(action) then queue.toolkitCancel = action end
     if queue and PickupFailure and PickupFailure.preserveStop(action) then queue.toolkitCancel = action end
+    if queue and Settlement.preserveCleanupStop and Settlement.preserveCleanupStop(queue, action) then queue.toolkitCancel = action end
     local terminal = queue and Toolkit.ActionQueueLifecycle.deferStop(queue, action)
     if terminal ~= nil then
         if terminal then
@@ -455,6 +461,10 @@ local function insertResumed(queue, action, index, receipt)
 end
 
 local function completeStopped(queue, action, cleanup)
+    local disposition = Settlement.cleanupFailureState
+        and Settlement.cleanupFailureState(queue, action, action.action, "stop")
+    if disposition == "waiting" or disposition == "debt_unavailable" then return end
+    if disposition == "refused" then return queue:resetQueue() end
     if PickupFailure and PickupFailure.finish(queue, action) == false then return queue:resetQueue() end
     if not cleanup then return queue:onCompleted(action) end
     return Operations.performNativeContinuation(action, function(current)
@@ -482,6 +492,13 @@ ISTimedActionQueue.tick = function(queue)
     local completion = Toolkit.ActionQueueLifecycle.flush(queue)
     if completion == "waiting" or completion == "completed" then return end
     if completion == "failed" then queue:resetQueue(); return end
+    -- A stopped or rejected enrolled cleanup can have no normal perform frame.
+    -- Hold its ended native head until exact authority and all notices settle.
+    local failure = Settlement.pendingCleanupFailure
+        and Settlement.pendingCleanupFailure(queue, queue.current)
+    if failure == "waiting" or failure == "debt_unavailable" then return end
+    if failure == "ready" then queue:onCompleted(queue.current); return end
+    if failure == "refused" then queue:resetQueue(); return end
     updateOperationState(queue)
     if queue.toolkitResume and (not Toolkit.Settings.actionQueue()
         or (queue.toolkitCancel and queue.toolkitCancel.toolkitQueueOperation
@@ -529,6 +546,10 @@ ISTimedActionQueue.tick = function(queue)
                 Operations.invalidate(wait.operation.token)
                 queue.toolkitGroupCancel = wait.operation
             end
+            local disposition = Settlement.cleanupFailureState
+                and Settlement.cleanupFailureState(queue, action, action.action, "stop")
+            if disposition == "waiting" or disposition == "debt_unavailable" then return end
+            if disposition == "refused" then queue:resetQueue(); return end
             local permitted, cleanup = Toolkit.ActionQueueLifecycle.takeStopCleanup(queue, action)
             if not permitted then queue:resetQueue(); return end
             local resumeAfter = queue.toolkitResume
@@ -543,6 +564,10 @@ ISTimedActionQueue.tick = function(queue)
         elseif not queue.character:getCharacterActions():contains(action.action) then
             -- B42 sends the MP stop packet after Lua stop; resume only after Java removes the action.
             local stopped, resumeAfter = queue.toolkitCancelStopped, queue.toolkitResume
+            local disposition = Settlement.cleanupFailureState
+                and Settlement.cleanupFailureState(queue, action, action.action, "stop")
+            if disposition == "waiting" or disposition == "debt_unavailable" then return end
+            if disposition == "refused" then queue:resetQueue(); return end
             local permitted, cleanup = Toolkit.ActionQueueLifecycle.takeStopCleanup(queue, action)
             if not permitted then queue:resetQueue(); return end
             clearStop(queue)
@@ -570,8 +595,16 @@ ISTimedActionQueue.tick = function(queue)
         return
     end
     if holdsOptionalReturn and holdsOptionalReturn(queue, current) then return end
+    if Settlement.holdsCleanupContinuation and Settlement.holdsCleanupContinuation(queue, current) then return end
     local approach=Toolkit.ActionQueueApproach
     if approach and approach.skipUnavailable and approach.skipUnavailable(queue,current)then return end
+    if current and current.action and not current:isStarted()
+        and not queue.character:getCharacterActions():contains(current.action) and Settlement.cleanupFailureState then
+        local rejected = Settlement.cleanupFailureState(queue, current, current.action, "admission")
+        if rejected == "waiting" or rejected == "debt_unavailable" then return end
+        if rejected == "ready" then queue:onCompleted(current); return end
+        if rejected == "refused" then queue:resetQueue(); return end
+    end
     -- An admitted single earned return can fail before its native start. Its
     -- isolated admission result retains the exact item/debt, not a success.
     if Toolkit.Settings.actionQueue() and live(queue) and queue.current == current and current.action

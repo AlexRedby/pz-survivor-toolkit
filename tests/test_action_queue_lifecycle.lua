@@ -190,7 +190,7 @@ do
     end}
     local source=assert(queueSource:match('(local function updateOperationState%(queue%).-Queue.updateOperationState = updateOperationState)'))
         ..'\n'..assert(queueSource:match('(local begin = ISBaseTimedAction.begin.-\nend)\nPolicy.adoptBegin'))
-    local api=assert(loadstring('local Queue,Toolkit,Operations,live=...\n'..source..'\nreturn Queue',
+    local api=assert(loadstring('local Queue,Toolkit,Operations,live=...\nlocal Settlement=Toolkit.ActionQueueSettlement or {}\n'..source..'\nreturn Queue',
         '@PZSurvivorToolkit/ActionQueue.lua'))({},toolkit,operations,function(value)return not value.character:isDead()end)
     local function prepare(terminal,options)
         enabled,client=false,true
@@ -549,7 +549,7 @@ if NativeActionRoot then
     local update=assert(source:match('(local function updateOperationState%(queue%).-Queue.updateOperationState = updateOperationState)'))
     local completed=assert(source:match('(local completed = ISTimedActionQueue.onCompleted.-\nend)\n\nfunction Queue.move'))
     local tick=assert(source:match('(local tick = ISTimedActionQueue.tick.-\nend)\n\nQueue.label'))
-    assert(loadstring('local Toolkit=...;local Queue,Operations,Policy={},{},{skipUnavailableHygiene=function()end};local Batch;'
+    assert(loadstring('local Toolkit=...;local Settlement=Toolkit.ActionQueueSettlement or {};local Queue,Operations,Policy={},{},{skipUnavailableHygiene=function()end};local Batch;'
         ..'local function live(q)return not q.character:isDead()end;local function processPriority()end;'
         ..'local function clearStop()end;local function craft()return false end;'
         ..update..'\n'..completed..'\n'..tick))(toolkit)

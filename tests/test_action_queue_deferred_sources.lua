@@ -27,6 +27,7 @@ local function fixture(bulkGuard,transferObserver)
     -- delegates. They are inspected, never executed; lifecycle effects stay out
     -- of this source-only test, just as they stay out of the production lease.
     assert(loadstring([[local Toolkit,Policy,Operations,Queue=...
+local Settlement=Toolkit.ActionQueueSettlement or {}
         local Settlement,Batch,Execution,PickupFailure=Toolkit.ActionQueueSettlement,Toolkit.ActionQueueBatch,
             Toolkit.ActionQueueExecution,Toolkit.ActionQueuePickupFailure
         local craft,live=Policy.isCraftAction,Policy.live

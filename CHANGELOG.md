@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.6
+
+- **Internal:** Source-qualified cleanup can preserve independent queued work after a confirmed native failure or stop, retaining the exact unpaid loan and skipping its unissued return continuation. Unknown Host authority and full debt notices hold the ended head without replay; Keep waives location debt without earning hand restoration. Existing unqualified failures retain native handling. No additional automatic tool-restoration producer is enabled.
+
 ### 0.2.5
 
 - **Compatibility:** Qualify the current Immersive Snow hand callback for ordinary SP equipment edits. Verify its captured ownership helper and live empty swap state, and keep nested or unsupported attachment ownership paths protected. Native snow restoration and Host scheduling retain their normal execution.
@@ -1759,6 +1763,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.2.3
+
+- **Internal:** Refreshed the managed queue source bindings for the shared cleanup-failure guards. Native target bytecode and unsupported-source refusal remain unchanged.
 
 ### 0.2.2
 

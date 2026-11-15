@@ -433,11 +433,24 @@ function Lifecycle.flush(queue)
         pending[queue] = nil
         return "failed", action
     end
-    if state.depth > 0 or not state.perform or state.needsComplete and not state.complete
-        or queue.character:getCharacterActions():contains(state.native) then return "waiting", action end
-    if state.failed or not state.requested then
+    if state.depth > 0 or queue.character:getCharacterActions():contains(state.native) then return "waiting", action end
+    local settlement = Toolkit.ActionQueueSettlement
+    if settlement and settlement.stoppedCleanup and settlement.stoppedCleanup(queue, action, state.native) then
+        -- Only this pre-bound native stop transfers to Queue's established
+        -- stop drain, which retains receipts and authorized stop cleanup.
         pending[queue] = nil
-        return "failed", action
+        return
+    end
+    if not state.perform or state.needsComplete and not state.complete then return "waiting", action end
+    if state.failed or not state.requested then
+        local settlement = Toolkit.ActionQueueSettlement
+        local disposition = settlement and settlement.cleanupFailureState
+            and settlement.cleanupFailureState(queue, action, state.native, "callback")
+        if disposition == "waiting" or disposition == "debt_unavailable" then return "waiting", action end
+        if disposition ~= "ready" then
+            pending[queue] = nil
+            return "failed", action
+        end
     end
     local reading = Toolkit.ActionQueueReading
     local media=Toolkit.ActionQueueMedia

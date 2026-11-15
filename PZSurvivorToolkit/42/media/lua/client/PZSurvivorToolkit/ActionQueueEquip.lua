@@ -63,7 +63,7 @@ adoptBase=function(name,previous,replacement)
   or base[name]~=replacement or baseMethods[name]~=nil and baseMethods[name]~=previous
   or inherited[name]~=nil and inherited[name]~=previous
   or not closure(previous,'ISBaseTimedAction.lua')or not closure(replacement,'ActionQueue.lua')then return false end
- if queueSource==nil then queueSource=matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',2172545759,'PZSurvivorToolkit',true)end
+ if queueSource==nil then queueSource=matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',3049581907,'PZSurvivorToolkit',true)end
  if not queueSource then return false end
  if baseMethods[name]~=nil then baseMethods[name]=replacement end
  if inherited[name]~=nil then inherited[name]=replacement end
@@ -91,7 +91,7 @@ local function source(action)
  for name,value in each(class)do if kind(value)=='function'and methods[name]~=value then return false end end
  for name,value in each(baseMethods)do
   if base[name]~=value or not(closure(value,'ISBaseTimedAction.lua')and line(value)==baseRoles[name]
-   or name=='stop'and closure(value,'ActionQueue.lua')and line(value)==347)then return false end
+   or name=='stop'and closure(value,'ActionQueue.lua')and line(value)==352)then return false end
  end
  for name,value in each(inherited)do
   if (action[name]or false)~=value then return false end

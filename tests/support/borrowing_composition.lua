@@ -188,10 +188,11 @@ return function(client,options)
         end}
     containsTransferID=env.ItemContainer.chainContainsContainingItem
     env.CharacterTrait=setmetatable({}, {__index=function(_,key)return key end})
+    env.CharacterStat={BOREDOM='boredom',UNHAPPINESS='unhappiness',STRESS='stress'}
     env.ItemTag=setmetatable({}, {__index=function(_,key)return key end})
     env.ItemBodyLocation=setmetatable({}, {__index=function(_,key)return key end})
     env.MoodleType={UNHAPPY=1,DRUNK=2};env.BodyPartType={Hand_L=1,ForeArm_R=2,ToIndex=function(x)return x end,FromIndex=function(x)return x end}
-    env.Metabolics={LightWork=1};env.SkillBook={};env.SandboxVars={};env.ArrayList={new=function()return list({})end}
+    env.Metabolics={LightWork=1};env.CharacterActionAnims={Read='Read'};env.SkillBook={};env.SandboxVars={};env.ArrayList={new=function()return list({})end}
     env.ISTradingUI={GetUIForPlayer=function()end};env.getServerOptions=function()return {getInteger=function()return 0 end}end
     env.PZAPI={ModOptions={create=function()return {addTickBox=function()return {value=false}end,
         addComboBox=function()return {addItem=function()end}end}end}}
@@ -209,12 +210,13 @@ return function(client,options)
         function value:finished()return self.removed end
         function value:isForceComplete()return self.forced end
         function value:hasStalled()return false end
+        function value:getTable()return action end
         function value:getJobDelta()return 0 end
         function value:forceComplete()self.forced=true end
         function value:forceStop()self.stopped=true end
         function value:setJobDelta()end
         function value:resetJobDelta()end
-        for _,method in ipairs({'restoreWeaponType','setTime','setLoopedAction','setActionAnim','setAnimVariable','setOverrideHandModelsObject',
+        for _,method in ipairs({'restoreWeaponType','setTime','setCurrentTime','setLoopedAction','setActionAnim','setAnimVariable','setOverrideHandModelsObject',
             'stopTimedActionAnim','setWaitForFinished'})do value[method]=function()end end
         function value:reset()self.forced=false end
         allocated[#allocated+1]=value;return value
@@ -251,6 +253,7 @@ return function(client,options)
     player.getOverlaySprite=function()end
     player.getPathFindBehavior2=function()return {reset=function()end,cancel=function()end}end
     player.getAlreadyReadPages=function()return 0 end
+    player.getStats=function()return {get=function()return 0 end,set=function()end}end
     player.ReadLiterature=function(self,item)self.readItem=item;self.readCount=(self.readCount or 0)+1 end
     player.getPrimaryHandItem=function(self)return self.primary end;player.getSecondaryHandItem=function(self)return self.secondary end
     player.setPrimaryHandItem=function(self,item)self.primary=item end;player.setSecondaryHandItem=function(self,item)self.secondary=item end
@@ -378,8 +381,9 @@ return function(client,options)
         value.getLearnedRecipes=function()return list({})end
         value.setJobDelta=function()end;value.setJobType=function()end;value.setAlreadyReadPages=function()end
         value.getJobType=function()return 'Transfer'end;value.getName=function()return 'Book'end;value.getDisplayName=value.getName
-        for _,name in ipairs({'isFavorite','getIsCraftingConsumed','hasTag','isHumanCorpse','hasModData','IsClothing','canBeActivated','isOnGroundOrInsideBagOnSquare'})do value[name]=function()return false end end
-        value.getWorldItem=function()end;value.getEquipParent=function()end;value.getAttachedSlot=function()return -1 end
+        for _,name in ipairs({'isFavorite','getIsCraftingConsumed','hasTag','isHumanCorpse','hasModData','IsClothing','canBeActivated','isForceDropHeavyItem','isOnGroundOrInsideBagOnSquare'})do value[name]=function()return false end end
+        value.getWorldItem=function()end;value.getEquipParent=function()end;value.getReadType=function()end
+        value.getAttachedSlot=function()return -1 end
         value.isRequiresEquippedBothHands=function()return false end;value.IsInventoryContainer=function()return false end
         value.getEquipSound=function()end;value.getCurrentUsesFloat=function()return 1 end
         value.canBeEquipped=function()end
@@ -415,22 +419,27 @@ return function(client,options)
     local compat=env.require('PZSurvivorToolkit/ActionQueueCompat')
     assert(compat.isInstalled('P4TidyUpMeister')==p4Enabled,'selected P4 provider differs from fixture: '..tostring(env.sourceFailure))
     local queue=env.ISTimedActionQueue.getTimedActionQueue(player)
-    local function dispatch(action,phase)
+    local function phase(action,name)
         -- Model the Java LuaTimedActionNew lifecycle bridge, not its individual
         -- listeners. Queue's unchanged begin/stop wrappers still own all order.
         local lifecycle=env.PZSurvivorToolkit.ActionQueueLifecycle
-        local observed=lifecycle.begin(action,phase)
-        local result={pcall(function()if action[phase]then return action[phase](action)end end)}
-        lifecycle.finish(action,phase,result[1]and result[2]~=false)
+        local observed=lifecycle.begin(action,name)
+        local result={pcall(function()if action[name]then return action[name](action)end end)}
+        lifecycle.finish(action,name,result[1]and result[2]~=false)
         if not result[1]then error(result[2],0)end
-        if phase=='perform'then
+        return observed,result[2]~=false,result[2]
+    end
+    local function remove(action)
+        assert(action.action,'Java removal requires an actual allocated native episode')
+        action.action.removed=true
+    end
+    local function dispatch(action,name)
+        local observed=phase(action,name)
+        if name=='perform'then
             if not client then
-                lifecycle.begin(action,'complete')
-                local complete={pcall(function()if action.complete then return action:complete()end end)}
-                lifecycle.finish(action,'complete',complete[1]and complete[2]~=false)
-                if not complete[1]then error(complete[2],0)end
+                phase(action,'complete')
             end
-            action.action.removed=true
+            remove(action)
             if client and options.canonicalBodyReplacement and not options.replacedBody
                 and action.Type=='ISInventoryTransferAction'and action.destContainer==inventory then
                 options.replacedBody=true
@@ -483,13 +492,17 @@ return function(client,options)
         dispatch(action,'stop')
         -- Java removes the stopped native action; it never dispatches perform
         -- or complete for this body. Host terminal delivery is a separate event.
-        action.action.removed=true
+        remove(action)
         if client and not wait then acknowledge(action,'canceled')end
         queue:tick()
     end
     return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,garment=garment,list=list,
-        dispatch=dispatch,start=start,deliver=deliver,stop=stop,transactions=transactions,events=events,adjacent=adjacent,
+        dispatch=dispatch,phase=phase,remove=remove,start=start,deliver=deliver,stop=stop,transactions=transactions,events=events,adjacent=adjacent,
         effects=effects,engineTrace=engineTrace,bag=bag,acknowledge=acknowledge,
         setQueueEnabled=function(value)options.queue=value end,
+        advance=function(milliseconds)
+            assert(type(milliseconds)=='number'and milliseconds>=0,'clock advance must be nonnegative')
+            timestamp=timestamp+milliseconds
+        end,
         setModProbe=function(callback)options.modProbe=callback end}
 end

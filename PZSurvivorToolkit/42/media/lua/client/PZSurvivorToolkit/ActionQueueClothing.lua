@@ -209,7 +209,7 @@ adoptBase=function(name,previous,replacement)
   or ISBaseTimedAction~=base or base[name]~=replacement or baseMethods[name]~=nil and baseMethods[name]~=previous
   or inherited[name]~=nil and inherited[name]~=previous
   or not Proof.closure(previous,'ISBaseTimedAction.lua')or not Proof.closure(replacement,'ActionQueue.lua')then return false end
- if queueSourceSafe==nil then queueSourceSafe=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',2172545759,'PZSurvivorToolkit',true)end
+ if queueSourceSafe==nil then queueSourceSafe=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',3049581907,'PZSurvivorToolkit',true)end
  if not queueSourceSafe then return false end
  if baseMethods[name]~=nil then baseMethods[name]=replacement end
  if inherited[name]~=nil then inherited[name]=replacement end
@@ -632,7 +632,7 @@ installObserver=function()
  if witnessSourceTrusted==nil then
   witnessSourceTrusted=Proof.closure(registerObserver,'ActionQueueLifecycle.lua')
    and Proof.closure(captureAck,'ActionQueueAcknowledgements.lua')and Proof.closure(observeAck,'ActionQueueAcknowledgements.lua')
-   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',1796068701,'PZSurvivorToolkit',true)
+   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',705616907,'PZSurvivorToolkit',true)
    and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua',392308481,'PZSurvivorToolkit',true)
  end
  if not witnessSourceTrusted then bootstrapFailure=bootstrapFailure or 'bootstrap:source';return false end

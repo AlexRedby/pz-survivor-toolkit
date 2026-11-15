@@ -32,6 +32,7 @@ REQUIRED_INPUTS = {
     "test_action_queue_preparation_cancel.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_equip.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_hands.lua": ("native_action_root", "--game or --native-action-root"),
+    "test_action_queue_cleanup_failure.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_lookup.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_magazine.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_output_dependencies.lua": ("native_action_root", "--game or --native-action-root"),
@@ -134,6 +135,7 @@ SOURCE_CHECKS = {'test_device_action_target.lua': ('source-contract',), 'test_ac
  'test_action_queue_media.lua': ('source-contract',),
  'test_action_queue_magazine.lua': ('source-contract',),
  'test_action_queue_hands.lua': ('source-contract',),
+ 'test_action_queue_cleanup_failure.lua': ('source-contract',),
  'test_action_queue_equip.lua': ('source-contract',),
  'test_action_queue_preparation_cancel.lua': ('source-contract',),
  'test_action_queue_lookup.lua': ('source-contract',),
@@ -244,7 +246,7 @@ def configure_test_sources(lua, name, args):
     """Give every isolated runtime the same paths; read only this test's inputs."""
     inputs = mod_integrations.bind_sources(lua, name, args)
     lua.globals().ProjectRoot = str(ROOT)
-    if name in ('test_action_queue_borrowing_composition.lua', 'test_action_queue_restoration_composition.lua') and (args.game or getattr(args, 'toolkit_source', None)
+    if name in ('test_action_queue_borrowing_composition.lua', 'test_action_queue_restoration_composition.lua', 'test_action_queue_cleanup_failure.lua') and (args.game or getattr(args, 'toolkit_source', None)
             or getattr(args, 'native_action_root', None)):
         toolkit = getattr(args, 'toolkit_source', None) or ROOT / 'PZSurvivorToolkit'
         layers = mod_integrations.mod_layers(toolkit.resolve(), mod_integrations.game_version(args.game))

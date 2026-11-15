@@ -82,6 +82,10 @@ local returnFailures, failureSerial = {}, 0
 local completedReturnDebt
 local returnSuccessState, returnSuccessBlocked, keepReturnSuccess
 local returnSuccessEnrolling = {}
+local cleanupFailureIssued = false
+local cleanupWatchMarker = {} -- Negative lookup hint only; private step/frame checks grant authority.
+local cleanupContinuationMarker, cleanupContinuationsIssued = {}, false
+local bindCleanupNative, observeCleanupReceipt
 local captureOptionalEquipment
 local MAX_RETURN_FAILURES = 32
 local MAX_EXECUTION_MEMBERS, MAX_EXECUTION_BORROWING_WORK = 32, 128
@@ -142,6 +146,9 @@ function Settlement.drainingAction(action)
         and (action == state.action or state.members[action]))
 end
 function Settlement.bindCancellation(action)
+    -- Queue calls this once after the real native allocation. The independent
+    -- failure witness must never be created retrospectively at failure time.
+    if cleanupFailureIssued then pcall(bindCleanupNative, action) end
     local queue = action and ISTimedActionQueue.queues[action.character]
     local state = queue and cancellation(queue)
     local member = state and state.members[action]
@@ -1785,7 +1792,7 @@ local function preparationGuard(action)
 end
 local function preparationState(step)
     local watch = step.preparation
-    if step.state == "earned" then return "ready" end
+    if step.state == "earned" or step.failureDisposition then return "ready" end
     if watch.failed then return "failed" end
     if not watch.started or watch.empty then return "ready" end
     if not preparationGuard(step.action) then return "failed" end
@@ -1855,10 +1862,11 @@ function Settlement.preparationAvailable()
         end,
         started = function(action)
             local step = preparationStep(action)
-            if not step or not preparationGuard(action) then return end
+            if not step then return end
             local watch = step.preparation
             if watch.started then watch.failed = true; return end
             watch.started = true
+            if not preparationGuard(action) then return end
             local ok, before = pcall(watch.capture, action)
             if not ok or before ~= nil and type(before) ~= "table"
                 or before == nil and watch.requireEffect then watch.failed = true; return end
@@ -1868,6 +1876,7 @@ function Settlement.preparationAvailable()
             local step = preparationStep(action)
             if not step or step.preparation.scope or phase ~= "perform" then return false end
             local watch = step.preparation
+            if watch.nativeFailure then observeCleanupReceipt(step) end
             if watch.empty then return false end
             if not watch.started or not preparationGuard(action) or watch.begun
                 or isClient() and (action.toolkitNativeTransaction == nil or action.toolkitNativeKind == nil) then
@@ -1976,12 +1985,16 @@ end
 -- Bind children after their actual cleanup expansion: cancellation moves
 -- retained work to a fresh operation and must not revive an old effect handle.
 -- This observation grants no admission/stop/successor permission and creates
--- neither cleanup ownership nor automatic-restoration debt.
+-- neither cleanup ownership nor automatic-restoration debt. Optional sourceGuard
+-- authenticates native callbacks independently of physical preconditions; only
+-- later dependency enrollment and post-allocation binding opt into isolation.
+-- A supported stop must release local state and reach the known Base.stop.
 function Settlement.observeCleanupEffect(action, specification)
     if type(action) ~= "table" or type(specification) ~= "table" or getmetatable(specification) ~= nil
         or type(specification.guard) ~= "function" or type(specification.capture) ~= "function"
-        or type(specification.observed) ~= "function" then return end
-    local guard, capture, observed = specification.guard, specification.capture, specification.observed
+        or type(specification.observed) ~= "function"
+        or specification.sourceGuard ~= nil and type(specification.sourceGuard) ~= "function" then return end
+    local guard, capture, observed, sourceGuard = specification.guard, specification.capture, specification.observed, specification.sourceGuard
     local record = operation(action.character, action.toolkitQueueOperation)
     local step = record and record.actions[action]
     local function pendingCleanup()
@@ -1993,8 +2006,9 @@ function Settlement.observeCleanupEffect(action, specification)
     if not step or not pendingCleanup() or not requiredCleanup(action, false)
         or not Settlement.preparationAvailable() or not pendingCleanup()
         or not requiredCleanup(action, false) or not pendingCleanup() or getmetatable(specification) ~= nil
-        or specification.guard ~= guard or specification.capture ~= capture or specification.observed ~= observed then return end
-    step.preparation = {guard = guard, capture = capture, observed = observed, requireEffect = true}
+        or specification.guard ~= guard or specification.capture ~= capture or specification.observed ~= observed
+        or specification.sourceGuard ~= sourceGuard then return end
+    step.preparation = {guard = guard, capture = capture, observed = observed, sourceGuard = sourceGuard, requireEffect = true}
     return step.handle
 end
 
@@ -2054,6 +2068,11 @@ function Settlement.completionState(queue, action)
     local step = preparationStep(action)
     if step then
         local state = preparationState(step)
+        if state == "failed" then
+            local isolated = Settlement.cleanupFailureState(queue, action, action.action, "observation")
+            if isolated == "ready" then state = "ready"
+            elseif isolated == "waiting" or isolated == "debt_unavailable" then state = "waiting" end
+        end
         if state ~= "ready" then return state end
     end
     local planned = plannedReturn(action)
@@ -3266,8 +3285,12 @@ end
 -- Enroll only inside the actual, already-owned cleanup expansion. A retained
 -- cancellation command gets a fresh operation; old sibling effect handles must
 -- never be migrated into this one. This association grants no hand admission,
--- queue editing, native retry or independent editor-disabled ownership.
-function Settlement.requireBorrowedReturnSuccess(handle, prerequisites)
+-- queue editing, native retry or independent editor-disabled ownership. The
+-- optional third argument binds one exact never-issued return command as well;
+-- two-argument callers retain the return-construction gate alone.
+function Settlement.requireBorrowedReturnSuccess(...)
+    if select('#', ...) ~= 2 and select('#', ...) ~= 3 then return false end
+    local handle, prerequisites, continuation = ...
     if type(prerequisites) ~= "table" or getmetatable(prerequisites) ~= nil then return false end
     local size, previous, seen = #prerequisites, {}, {}
     if size == 0 or size > MAX_EXECUTION_MEMBERS then return false end
@@ -3312,7 +3335,21 @@ function Settlement.requireBorrowedReturnSuccess(handle, prerequisites)
                 or prerequisite.action.action or prerequisite.action.started
                 or prerequisite.action.toolkitQueueOperation ~= record.token then return false end
         end
+        local continuationStep, commandOwner, commandMatches
+        if continuation ~= nil then
+            continuationStep = record.actions[continuation]
+            commandOwner = Toolkit.ActionQueueOperations
+            commandMatches = commandOwner and commandOwner.isCommand
+            if not continuationStep or continuationStep == owner or seen[continuationStep]
+                or continuationStep.operation ~= record or continuationStep.phase ~= "cleanup"
+                or continuationStep.kind ~= "ISQueueActionsAction" or continuationStep.started
+                or continuation.action or continuation.started or continuation.toolkitQueueOperation ~= record.token
+                or type(commandMatches) ~= "function" or not commandMatches(continuation)
+                or not executionProof.closure(commandMatches, "ActionQueueOperations.lua")
+                or not requiredCleanup(continuation, true) then return false end
+        end
         local specifications = {{owner=candidate, exact=true}}
+        if continuation then specifications[#specifications+1] = {owner=continuation, exact=true} end
         for _, prerequisite in ipairs(previous) do
             specifications[#specifications+1] = {owner=prerequisite.action, exact=true}
         end
@@ -3336,9 +3373,42 @@ function Settlement.requireBorrowedReturnSuccess(handle, prerequisites)
         if not watch() or queue.current ~= parent or queue.queue[1] ~= parent
             or candidate.returnSuccess ~= returnSuccessEnrolling or candidate.phase ~= "active"
             or candidate.ambiguous or candidate.returning or candidate.plannedReturn then return false end
-        candidate.returnSuccess = {candidate = candidate, scope = scope, loan = step, record = record,
+        for _, prerequisite in ipairs(previous) do
+            if prerequisite.returnSuccessPlans and #prerequisite.returnSuccessPlans >= MAX_RETURN_FAILURES then return false end
+        end
+        local plan = {candidate = candidate, scope = scope, loan = step, record = record,
             actor = actor, queue = queue, list = queue.queue, generation = queue.toolkitOperationGeneration or 0,
             previous = previous, provider = provider, state = "pending"}
+        if continuation then
+            if continuationStep.returnContinuation then return false end
+            local entry = {action=continuation, step=continuationStep, record=record, plan=plan,
+                queue=queue, list=queue.queue, actor=actor, token=record.token,
+                generation=queue.toolkitOperationGeneration or 0, commands=commandOwner, matches=commandMatches,
+                callback=continuation.addActionsFunction, args=continuation.args}
+            entry.sourceWatch = executionProof.captureBindings({
+                {owner=continuation, keys={"character","toolkitQueueOperation","addActionsFunction","args","toolkitQueueCommand",
+                    "start","waitToStart","stop","perform","complete","onStartFunc","onCancelFunc","onCompleteFunc"}},
+                {owner=continuation.toolkitQueueCommand, exact=true},
+                {owner=commandOwner, keys={"isCommand"}}, {owner=Toolkit, keys={"ActionQueueOperations"}},
+            })
+            if not entry.sourceWatch then return false end
+            continuationStep.returnContinuation = entry
+            local capsule = {}
+            capsule[cleanupContinuationMarker] = function(challenge)
+                if challenge == cleanupContinuationMarker then return entry end
+            end
+            continuation[cleanupContinuationMarker] = capsule
+            cleanupContinuationsIssued = true
+        end
+        candidate.returnSuccess = plan
+        for _, prerequisite in ipairs(previous) do
+            prerequisite.returnSuccessPlans = prerequisite.returnSuccessPlans or {}
+            prerequisite.returnSuccessPlans[#prerequisite.returnSuccessPlans + 1] = plan
+            if prerequisite.preparation.sourceGuard then
+                prerequisite.action[cleanupWatchMarker] = true
+                cleanupFailureIssued = true
+            end
+        end
         return true
     end)
     if candidate.returnSuccess == returnSuccessEnrolling then candidate.returnSuccess = nil end
@@ -3445,6 +3515,260 @@ returnSuccessState = function(plan)
     plan.evaluating = nil
     if not ok then returnSuccessBlocked(plan, "cleanup-source"); return "blocked" end
     return state
+end
+
+local function cleanupContinuation(action)
+    if not cleanupContinuationsIssued or type(action) ~= "table"
+        or retainedBindingSource.raw(action, cleanupContinuationMarker) == nil then return end
+    local capsule = executionProof.own(action, cleanupContinuationMarker)
+    if capsule == nil then return end
+    if type(capsule) ~= "table" or getmetatable(capsule) ~= nil then return false end
+    local seal = rawget(capsule, cleanupContinuationMarker)
+    -- Uncached filename proof: SourceProof's bounded static callback cache
+    -- must not retain per-command capsules and their actor/queue references.
+    if not settlementSealTrusted(capsule, cleanupContinuationMarker, seal)
+        or executionProof.own(action, cleanupContinuationMarker) ~= capsule then return false end
+    local ok, entry = pcall(seal, cleanupContinuationMarker)
+    if not ok or type(entry) ~= "table" or entry.action ~= action then return false end
+    return entry
+end
+local function continuationSource(entry)
+    local action, record, queue = entry.action, entry.record, entry.queue
+    local function current()
+        return entry.sourceWatch() and ISTimedActionQueue.queues[entry.actor] == queue and queue.character == entry.actor
+            and queue.queue == entry.list and (queue.toolkitOperationGeneration or 0) == entry.generation
+            and action.character == entry.actor and action.toolkitQueueOperation == entry.token
+            and record.actions[action] == entry.step and entry.step.returnContinuation == entry
+            and Toolkit.ActionQueueOperations == entry.commands and entry.commands.isCommand == entry.matches
+            and action.addActionsFunction == entry.callback and action.args == entry.args
+    end
+    if not current() then return false end
+    local ok, accepted = pcall(function() return operationLive(record) and entry.matches(action) end)
+    -- The native callback and its public command record can be changed together
+    -- during a getter. Finish with the original callback-free owned bindings.
+    return ok and accepted == true and current()
+end
+function Settlement.advanceCleanupReturns(queue, current)
+    if not cleanupContinuationsIssued then return true end
+    if not queue or queue.current ~= current or queue.queue[1] ~= current then return false end
+    for _ = 1, MAX_EXECUTION_MEMBERS do
+        local action = queue.queue[2]
+        local entry = cleanupContinuation(action)
+        if entry == nil then return true end
+        if not entry or entry.queue ~= queue or entry.list ~= queue.queue or action.action or action.started then return false end
+        if not continuationSource(entry) then return false end
+        local plan = entry.plan
+        if returnSuccessState(plan) == "earned" then
+            if not continuationSource(entry) then return false end
+            return queue.current == current and queue.queue[1] == current and queue.queue[2] == action
+                and queue.queue == entry.list and not action.action and not action.started
+        end
+        local waived = plan.state == "retired" and plan.candidate.phase == "waived"
+            and plan.failure and plan.failure.plan == plan and plan.failure.candidate == plan.candidate
+        if not waived and not returnSuccessBlocked(plan, "cleanup-unresolved") then
+            local record = operation(current.character, current.toolkitQueueOperation)
+            local step = record and record.actions[current]
+            if step then step.heldCleanupAdvance = true; current[cleanupWatchMarker] = true end
+            return false
+        end
+        if not continuationSource(entry) then return false end
+        if queue.current ~= current or queue.queue[1] ~= current or queue.queue ~= entry.list
+            or queue.queue[2] ~= action or action.action or action.started then return false end
+        -- This exact never-issued command owns only the dependent continuation.
+        -- Retire it without a constructor, native allocation or user callback.
+        table.remove(queue.queue, 2)
+        Toolkit.ActionQueueAcknowledgements.retireEditorMember(queue, action)
+        entry.retired = true
+    end
+    if cleanupContinuation(queue.queue[2]) == nil then return true end
+    local record = operation(current.character, current.toolkitQueueOperation)
+    local step = record and record.actions[current]
+    if step then step.heldCleanupAdvance = true; current[cleanupWatchMarker] = true end
+    return false
+end
+function Settlement.beginCleanupContinuation(action)
+    local entry = cleanupContinuation(action)
+    if entry == nil then return false end
+    if not entry or entry.retired or action.action or action.started or not continuationSource(entry)
+        or entry.queue.current ~= action or entry.list[1] ~= action then return true, false end
+    if returnSuccessState(entry.plan) ~= "earned" then
+        returnSuccessBlocked(entry.plan, "cleanup-unresolved")
+        return true, false
+    end
+    return true, continuationSource(entry) and entry.queue.current == action and entry.list[1] == action
+end
+function Settlement.holdsCleanupContinuation(queue, action)
+    local entry = cleanupContinuation(action)
+    return entry ~= nil and queue and queue.current == action and queue.queue[1] == action and action.action == nil
+end
+
+-- The common post-allocation seam pins only an opted-in cleanup's actual
+-- native episode. No queue flags, copied loan hints or first failure can bind it.
+bindCleanupNative = function(action)
+    if type(action) ~= "table" or retainedBindingSource.raw(action, cleanupWatchMarker) ~= true then return end
+    local step = preparationStep(action)
+    local watch = step and step.preparation
+    if not step or not step.returnSuccessPlans or not watch.sourceGuard or watch.nativeFailure
+        or watch.bindingRefused or not step.started or not watch.started then return end
+    watch.bindingRefused, watch.binding = true, true
+    local ok, frame = pcall(function()
+        local record, actor = step.operation, action.character
+        local queue = record.queue
+        if step.phase ~= "cleanup" or action.toolkitQueueOperation ~= record.token or not operationLive(record)
+            or ISTimedActionQueue.queues[actor] ~= queue or queue.character ~= actor
+            or queue.current ~= action or queue.queue[1] ~= action or not action.action then return end
+        local native = action.action
+        if type(native.getTable) ~= "function" or native:getTable() ~= action then return end
+        local allowed = watch.sourceGuard(action)
+        if allowed ~= true or action.action ~= native or queue.current ~= action or queue.queue[1] ~= action
+            or ISTimedActionQueue.queues[actor] ~= queue or record.actions[action] ~= step
+            or action.toolkitQueueOperation ~= record.token or not operationLive(record) then return end
+        local acknowledgements, lifecycle = Toolkit.ActionQueueAcknowledgements, Toolkit.ActionQueueLifecycle
+        local clock = getTimestampMs
+        if type(clock) ~= "function" or type(lifecycle) ~= "table" or type(lifecycle.current) ~= "function"
+            or isClient() and (type(acknowledgements) ~= "table" or type(acknowledgements.capture) ~= "function"
+                or type(acknowledgements.observe) ~= "function") then return end
+        local now = clock()
+        if type(now) ~= "number" or now ~= now or now <= -math.huge or now >= math.huge then return end
+        return {step=step, watch=watch, actor=actor, queue=queue, list=queue.queue,
+            token=record.token, generation=queue.toolkitOperationGeneration or 0, native=native,
+            kind=action.Type, stop=action.stop, baseStop=ISBaseTimedAction.stop, source=watch.sourceGuard,
+            client=isClient(), acknowledgements=acknowledgements,
+            capture=acknowledgements and acknowledgements.capture, observe=acknowledgements and acknowledgements.observe,
+            lifecycle=lifecycle, current=lifecycle.current, clock=clock, deadline=now+30000}
+    end)
+    watch.binding = nil
+    if ok and frame then watch.nativeFailure = frame end
+end
+local function cleanupEpisode(queue, action, native)
+    if type(action) ~= "table" or retainedBindingSource.raw(action, cleanupWatchMarker) ~= true then return end
+    local step = preparationStep(action)
+    local frame = step and step.preparation.nativeFailure
+    if not frame or frame.step ~= step or frame.watch ~= step.preparation or step.phase ~= "cleanup"
+        or not step.returnSuccessPlans or action.action ~= native or native ~= frame.native
+        or action.character ~= frame.actor or action.toolkitQueueOperation ~= frame.token
+        or action.Type ~= frame.kind or queue ~= frame.queue or queue.queue ~= frame.list
+        or queue.current ~= action or queue.queue[1] ~= action or queue.character ~= frame.actor
+        or ISTimedActionQueue.queues[frame.actor] ~= queue or (queue.toolkitOperationGeneration or 0) ~= frame.generation
+        or Toolkit.ActionQueueLifecycle ~= frame.lifecycle or frame.lifecycle.current ~= frame.current
+        or getTimestampMs ~= frame.clock or isClient() ~= frame.client then return end
+    return step, frame
+end
+observeCleanupReceipt = function(step)
+    local frame = step.preparation.nativeFailure
+    if not frame or not frame.client or frame.receipt or frame.expired then return end
+    if Toolkit.ActionQueueAcknowledgements ~= frame.acknowledgements
+        or frame.acknowledgements.capture ~= frame.capture or frame.acknowledgements.observe ~= frame.observe then return end
+    local receipt = frame.capture(step.action)
+    if receipt then
+        frame.receipt, frame.transaction, frame.nativeKind = receipt, step.action.toolkitNativeTransaction, step.action.toolkitNativeKind
+    end
+end
+-- Called only at Base.stop. This is local stop preservation, not terminal
+-- permission: actual removal and the exact Host terminal are still mandatory.
+function Settlement.preserveCleanupStop(queue, action)
+    if not cleanupFailureIssued then return false end
+    local step, frame = cleanupEpisode(queue, action, action.action)
+    if not frame or frame.stopping or frame.finished or action.stop ~= frame.stop or ISBaseTimedAction.stop ~= frame.baseStop then return false end
+    frame.stopping = true
+    local ok, allowed = pcall(frame.source, action)
+    if ok and allowed == true then
+        observeCleanupReceipt(step)
+        local again, current = cleanupEpisode(queue, action, frame.native)
+        if again == step and current == frame then frame.stopped = true end
+    end
+    frame.stopping = nil
+    return frame.stopped == true
+end
+
+function Settlement.deferCleanupCompletion(queue, action)
+    if not cleanupFailureIssued or type(action) ~= "table"
+        or retainedBindingSource.raw(action, cleanupWatchMarker) ~= true then return false end
+    local step = preparationStep(action)
+    local watch = step and step.preparation
+    local frame = watch and watch.nativeFailure
+    return not not (step and step.returnSuccessPlans and watch.sourceGuard
+        and step.operation.queue == queue and queue.current == action and queue.queue[1] == action
+        and (watch.binding or frame and (frame.reading or frame.stopping)))
+end
+function Settlement.stoppedCleanup(queue, action, native)
+    if not cleanupFailureIssued then return false end
+    local _, frame = cleanupEpisode(queue, action, native)
+    return not not (frame and frame.stopped and queue.toolkitCancel == action
+        and queue.toolkitCancelStopped and not frame.reading)
+end
+function Settlement.pendingCleanupFailure(queue, action)
+    if not cleanupFailureIssued and not cleanupContinuationsIssued then return end
+    if type(action) ~= "table" or retainedBindingSource.raw(action, cleanupWatchMarker) ~= true then return end
+    local record = action and operation(action.character, action.toolkitQueueOperation)
+    local held = record and record.actions[action]
+    if held and held.heldCleanupAdvance then
+        if Settlement.advanceCleanupReturns(queue, action) then held.heldCleanupAdvance = nil; return "ready" end
+        return "debt_unavailable"
+    end
+    local step, frame = cleanupEpisode(queue, action, action and action.action)
+    if frame and frame.pending and queue.toolkitCancel ~= action then
+        return Settlement.cleanupFailureState(queue, action, frame.native, frame.reason)
+    end
+end
+
+-- A ready disposition is explicitly UNEARNED. It only permits native removal
+-- after all dependent debts are visible; it never executes/retries a callback.
+function Settlement.cleanupFailureState(queue, action, native, reason)
+    if not cleanupFailureIssued then return end
+    if reason ~= "callback" and reason ~= "observation" and reason ~= "stop" and reason ~= "admission" then return end
+    local step, frame = cleanupEpisode(queue, action, native)
+    if not frame then return end
+    if frame.reading then return "waiting" end
+    if reason == "stop" and not frame.stopped and not step.failureDisposition then return "refused" end
+    if reason == "admission" and native:isStarted() then return "refused" end
+    frame.reading, frame.pending, frame.reason = true, true, reason
+    local ok, status = pcall(function()
+        if frame.actor:isDead() or getSpecificPlayer(frame.actor:getPlayerNum()) ~= frame.actor
+            or not operationLive(step.operation) or not frame.source(action)
+            or frame.current(frame.actor) ~= nil then return "refused" end
+        local again, current = cleanupEpisode(queue, action, native)
+        if again ~= step or current ~= frame then return "refused" end
+        if frame.actor:getCharacterActions():contains(native) then return "waiting" end
+        if step.failureDisposition then return "ready" end
+        -- The caller's reason selects a boundary, never the failure evidence.
+        if step.state == "earned" then return end
+        if reason == "callback" and not frame.watch.failed then return end
+        if reason == "observation" and preparationState(step) ~= "failed" then return end
+        local terminal = not frame.client
+        if frame.client then
+            if Toolkit.ActionQueueAcknowledgements ~= frame.acknowledgements
+                or frame.acknowledgements.capture ~= frame.capture or frame.acknowledgements.observe ~= frame.observe then return "refused" end
+            observeCleanupReceipt(step)
+            if frame.receipt and (action.toolkitNativeTransaction ~= frame.transaction or action.toolkitNativeKind ~= frame.nativeKind) then return "refused" end
+            local state = not frame.expired and frame.receipt and frame.observe(action, frame.receipt)
+            terminal = state == "completed" or state == "canceled" or state == "rejected"
+            if not terminal and frame.clock() >= frame.deadline then frame.expired = true end
+        end
+        local published = true
+        for _, plan in ipairs(step.returnSuccessPlans) do
+            if plan.record ~= step.operation or plan.actor ~= frame.actor or plan.queue ~= queue
+                or plan.list ~= frame.list or plan.generation ~= frame.generation
+                or plan.candidate.returnSuccess ~= plan then return "refused" end
+            local waived = plan.state == "retired" and plan.candidate.phase == "waived"
+                and plan.failure and plan.failure.plan == plan and plan.failure.candidate == plan.candidate
+            if not waived and not returnSuccessBlocked(plan, terminal and "cleanup-outcome" or "cleanup-unresolved") then published = false end
+        end
+        if not published then return "debt_unavailable" end
+        if not terminal then return "waiting" end
+        again, current = cleanupEpisode(queue, action, native)
+        if again ~= step or current ~= frame or not operationLive(step.operation) then return "refused" end
+        -- No getter/foreign callback follows the final owner check.
+        if queue.current ~= action or queue.queue[1] ~= action or queue.queue ~= frame.list
+            or action.action ~= native or action.toolkitQueueOperation ~= frame.token
+            or (queue.toolkitOperationGeneration or 0) ~= frame.generation then return "refused" end
+        step.failureDisposition, frame.finished, frame.pending = true, true, nil
+        return "ready"
+    end)
+    frame.reading = nil
+    if not ok then return "refused" end
+    if status == nil then frame.pending = nil end
+    return status
 end
 
 local function enqueueBorrowedReturn(step)
