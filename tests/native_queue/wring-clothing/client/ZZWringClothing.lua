@@ -73,13 +73,16 @@ local function diagnostic(reason,force)
  waits[phase]=true
  local body=groups.target and groups.target[#groups.target]
  raw(force and'FAILED_STATE'or'PREPARED_WAIT',{phase=phase,reason=reason,
-  state=profile.diagnostics.capture(getPlayer(),ids,state,queue(),body,state and state.tailAction,profile.observation)})
+  state=profile.diagnostics.capture(getPlayer(),ids,state,queue(),body,state and state.tailAction,profile.observation),
+  control=profile.controlEvidence or false})
 end
 local function fail(e)if done then return end;done=true;diagnostic(tostring(e),true);print('[QUEUE_TEST] FAIL wring-clothing '..tostring(e));emit({event='case',id=config.cases[index],status='failed',phase=phase,reason=tostring(e)})end
 local function request(command)
  local args={case=config.cases[index]};if command=='Prepare'then args.placement=placement;args.clientPlacement=proof end
  if isClient()then sendClientCommand('WringClothingTest',command,args);return end
  if command=='Prepare'then authority=F.prepare(getPlayer(),args.case,config.mode,placement,proof,previous,config.options and config.options.profile_capacity,config.options and config.options.wring_restoration_provider=='native-returns');previous=nil;ids=authority.ids;raw('PREPARED',ids)
+ elseif command=='SourceLost'then
+  local value=F.sourceLost(authority);raw('SOURCE_LOST',value);profile.controls.sourceAccepted(profile,state,value)
  elseif command=='CapacityLost'then
   local value=F.capacityLost(authority);raw('CAPACITY_LOST',value);profile.controls.capacityAccepted(profile,state,value)
  elseif command=='ProfileCleanup'then
@@ -90,7 +93,7 @@ end
 Events.OnServerCommand.Add(function(module,command,args)
  if done or module~='WringClothingTest'then return end
  if command=='Failed'then fail(args.error)
- elseif args and args.case==config.cases[index]then if command=='CapacityLost'then raw('CAPACITY_LOST',args);profile.controls.capacityAccepted(profile,state,args)elseif command=='Prepared'then ids=args elseif command=='Verified'then receipt=args elseif command=='WearBaselined'then wearReceipt=args elseif command=='ProfileCleaned'then profile.cleanupReceipt=args end end
+ elseif args and args.case==config.cases[index]then if command=='SourceLost'then raw('SOURCE_LOST',args);profile.controls.sourceAccepted(profile,state,args)elseif command=='CapacityLost'then raw('CAPACITY_LOST',args);profile.controls.capacityAccepted(profile,state,args)elseif command=='Prepared'then ids=args elseif command=='Verified'then receipt=args elseif command=='WearBaselined'then wearReceipt=args elseif command=='ProfileCleaned'then profile.cleanupReceipt=args end end
 end)
 local function token(action)
  local value=assert(action.toolkitQueueOperation,'native producer operation missing')
@@ -201,6 +204,7 @@ local function prepEvent(action,row,boundary,phase,succeeded)
 end
 assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('prepared-carried-wring-return',{
  started=function(action)
+  if state then profile.controls.intentStarted(profile,state,queue(),action)end
   local tracked=tracks[action]
   if profile.restoration and tracked and tracked.name=='target' and action.Type=='ISWringClothing' then profile.sample('body') end
   if tracked and tracked.preparation then tracked.admitted=true end
@@ -212,6 +216,7 @@ assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('prepared-carried
   returns[#returns+1]=row;returnTracks[action]=row
  end,
  begin=function(action,phase)
+  if state and profile.controls.intentBoundary(profile,state,action,'begin',phase)then return true end
   local tracked=tracks[action]
   if tracked and tracked.name and ids and F.observesClothing(ids)and(phase=='perform'or phase=='complete')then wornEvent(action,tracked,'begin',phase,false);return true end
   if tracked and tracked.preparation then prepEvent(action,tracked,'begin',phase,false);return true end
@@ -223,6 +228,7 @@ assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('prepared-carried
   if profile.restoration and groups.target and action==groups.target[#groups.target]then profile.bodySettled=true end
  end,
  finish=function(action,phase,succeeded)
+  if state then profile.controls.intentBoundary(profile,state,action,'finish',phase,succeeded)end
   local tracked=tracks[action]
   if tracked and tracked.name and ids and F.observesClothing(ids)and(phase=='perform'or phase=='complete')then wornEvent(action,tracked,'finish',phase,succeeded);return end
   if tracked and tracked.preparation and(phase=='perform'or phase=='complete')then prepEvent(action,tracked,'finish',phase,succeeded);return end
@@ -329,6 +335,8 @@ function profile.run()
  profile.evidence.callbacksUntouched=true;raw('CAPACITY_PROFILE',profile.evidence)
 end
 local function observe()
+ if state and not profile.controls.poll(profile,state)then return end
+ if state then profile.controls.observeIntent(profile,state,queue())end
  for action,row in pairs(tracks)do
   if queue().current==action and action:isStarted()then
    if not row.started then
@@ -543,6 +551,7 @@ require('QueuePreflight').onTick(Events,function()
    if not case()then emit({event='complete',cases=config.cases,performed=index-1,failed=0,skipped=0});raw('COMPLETE',{cases=config.cases});done=true;return end
    state,authority,ids,receipt,placement,placementState,proof,quiet=nil,nil,nil,nil,nil,nil,nil,nil
    profile.observation,profile.controlEvidence,profile.drainedDiagnostic,profile.bodySettled,profile.pendingReturn=nil,nil,nil,nil,nil
+   profile.controlBody,profile.intentAction,profile.intentCallbacks=nil,nil,nil
    if profile.restoration then profile.restorationEvidence={provider='native-returns',samples={}}end
    profile.evidence,profile.final,profile.cleanupReceipt,profile.cleanupRequested=nil,nil,nil,nil;wearSetup,wearReceipt,wearIndex,profile.setupActions=nil,nil,nil,nil;wornEvidence,swapEvidence,swapAction,swapTail=nil,nil,nil,nil;waits={};waitingSince=now()
    tracks,commands,groups,tokens,returns,returnTracks={}, {}, {}, {}, {}, {};preparedEvidence=nil;prepCallbacks={};edits={cancelled=false,reordered=false,repeatDenied=false,untouched=true};phase='prepare';since=now()

@@ -79,6 +79,96 @@ local sourceMatches = Proof.matches
 local nativeOperations = Toolkit.ActionQueueOperations
 local nativeProducer = nativeOperations and nativeOperations.producer
 local nativeProducerVerified
+local ownIntentInstalled
+local selectorOwn,selectorMeta,selectorRaw,selectorEqual=Proof.own,toolkitLuaMetatableMatches,rawget,rawequal
+local function installOwnIntent(saved)
+    if ownIntentInstalled then return end
+    local intent, menu = Toolkit.ActionQueueTidyIntent, ISInventoryPaneContextMenu
+    local install,poll = intent and intent.install,intent and intent.pollOwn
+    local pane,panel,element,object=ISInventoryPane,ISPanel,ISUIElement,ISBaseObject
+    if not selectorEqual(Proof.own,selectorOwn)or not selectorEqual(toolkitLuaMetatableMatches,selectorMeta)
+        or not selectorEqual(rawget,selectorRaw)or not selectorEqual(rawequal,selectorEqual)
+        or type(selectorOwn)~='function'or type(selectorMeta)~='function'then return end
+    local actual=selectorOwn(pane,'getActualItems') -- One own-field read at installation only.
+    local utils,foodAge=ISInventoryTransferUtil,CleanUI_ToolkitFoodAge
+    if type(install) ~= "function" or type(poll) ~= "function" or type(menu) ~= "table" or getmetatable(menu) ~= nil
+        or type(pane) ~= "table" or type(actual) ~= "function"or type(utils)~='table'
+        or not selectorMeta(utils,nil)or foodAge~=nil and(type(foodAge)~='table'or not selectorMeta(foodAge,nil))then return end
+    -- Use the same exact selected context source already qualified by the own
+    -- producer. CleanUI's public callbacks retain native equipment execution.
+    local cleanContext=nativeReadRole==3255
+    local callbacks = {OnPrimaryWeapon = {menu.OnPrimaryWeapon,cleanContext and 4140 or 3650},
+        OnSecondWeapon = {menu.OnSecondWeapon,cleanContext and 4207 or 3716},
+        OnTwoHandsEquip = {menu.OnTwoHandsEquip,cleanContext and 4185 or 3694},
+        equipWeapon = {menu.equipWeapon,cleanContext and 4223 or 3732},
+        transferIfNeeded = {menu.transferIfNeeded,cleanContext and 2263 or 1911}}
+    if cleanContext then
+        callbacks.cleanUIResetStaleTimedActionRetrigger={menu.cleanUIResetStaleTimedActionRetrigger,4038}
+        callbacks.cleanUILogTimedActionFix={menu.cleanUILogTimedActionFix,4032}
+    end
+    local bindings={{owner = _G, keys = {"PZSurvivorToolkit","P4TidyUpMeister","ISInventoryPaneContextMenu","ISEquipWeaponAction",
+            "ISInventoryTransferAction","ISInventoryPane","ISPanel","ISUIElement","ISBaseObject","ISInventoryTransferUtil",
+            "CleanUI_ToolkitFoodAge","toolkitLuaMetatableMatches","rawget","rawequal","getActivatedMods","getFirstLineOfClosure","getFilenameOfClosure"}},
+        {owner = Toolkit, keys = {"ActionQueueRestoration","ActionQueueTidyIntent","ActionQueuePolicy","Settings"}},
+        {owner = Proof, keys = {"closure","matches","captureBindings","own"}},
+        {owner = menu, keys = {"cleanUIResetStaleTimedActionRetrigger","cleanUILogTimedActionFix"}},
+        {owner = utils, keys = {"newInventoryTransferAction"}},
+        {owner = intent, keys = {"install","pollOwn"}}, {owner = saved.policy, keys = {"matchesNative"}},
+        {owner = saved.settings, keys = {"actionQueue"}}}
+    if foodAge then bindings[#bindings+1]={owner=foodAge,keys={'protocol','enhancedSourceSha256','updateCollapsedStack'}}end
+    local watch=capture(bindings)
+    local function selectorBinding()
+        if not watch or not watch()then return false end
+        -- Native UI ancestry is fixed depth. Prove roots and __index before
+        -- inherited rawget, then prove this selector cannot come from a parent.
+        return type(object)=='table'and type(element)=='table'and type(panel)=='table'
+            and selectorMeta(object,nil)and selectorEqual(selectorRaw(object,'__index'),object)
+            and selectorMeta(element,object)and selectorEqual(selectorRaw(element,'__index'),element)
+            and selectorMeta(panel,element)and selectorEqual(selectorRaw(panel,'__index'),panel)
+            and selectorMeta(pane,panel)and selectorRaw(panel,'getActualItems')==nil
+            and selectorEqual(selectorRaw(pane,'getActualItems'),actual)
+    end
+    local function selectedSelector()
+        local line=firstLine(actual)
+        if line==913 then return sourceMatches('media/lua/client/ISUI/ISInventoryPane.lua',3400657123,nil,true)end
+        if not sourceMatches('media/lua/client/ISUI/ISInventoryPane.lua',3716736911,'CleanUI',true)then return false end
+        if line==3773 then return foodAge==nil end
+        -- Exact reviewed Java compiler output (a0e001a7...), not a line range.
+        local update=foodAge and foodAge.updateCollapsedStack
+        return line==3775 and foodAge and foodAge.protocol==1
+            and foodAge.enhancedSourceSha256=='f5992aaebc4f629fd6ebb7b049be86a3e0995ea82276b23f22cf921a18bb7cc0'
+            and type(update)=='function'and origin(update,'ISInventoryPane.lua')and firstLine(update)==867
+    end
+    if not watch or not origin(install,"ActionQueueTidyIntent.lua") or not origin(poll,"ActionQueueTidyIntent.lua")
+        or firstLine(install) ~= 572 or firstLine(poll) ~= 444
+        or not sourceMatches("media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua",442162072,"PZSurvivorToolkit",true)
+        or not selectorBinding()or not origin(actual,"ISInventoryPane.lua")or not selectedSelector()
+        or not sourceMatches("media/lua/client/ISUI/ISInventoryPaneContextMenu.lua",cleanContext and 1953753890 or 4293448388) then return end
+    for name, entry in pairs(callbacks) do
+        if type(entry[1]) ~= "function" or not origin(entry[1],"ISInventoryPaneContextMenu.lua")
+            or firstLine(entry[1]) ~= entry[2] or not selectorBinding()
+            or not selectorEqual(selectorRaw(menu,name),entry[1]) then return end
+    end
+    for name, entry in pairs(callbacks) do if not selectorEqual(selectorRaw(menu,name),entry[1]) then return end end
+    local function valid(action)
+        if not selectorBinding() or P4TidyUpMeister ~= nil or saved.enabled() ~= true then return false end
+        local ok,mods = pcall(activatedMods)
+        if not ok or not mods or type(mods.contains) ~= "function" then return false end
+        local checked,selected = pcall(mods.contains,mods,"P4TidyUpMeister")
+        if not checked or selected ~= false or not selectorBinding() then return false end
+        -- This installs observation, never queue/edit authority. Other explicit
+        -- intent kinds remain outside the own optional-equipment slice.
+        local accepted=action==nil or(selectorEqual(getmetatable(action),ISEquipWeaponAction)
+            or selectorEqual(getmetatable(action),ISInventoryTransferAction))and saved.matches(action)
+        return accepted and selectorBinding()
+    end
+    if not valid() then return end
+    if install(valid,nil,nil,true)~=true then return end
+    Events.OnPlayerUpdate.Add(function(player)
+        poll(player) -- Captured authenticated callback clears its private state on guard loss.
+    end)
+    ownIntentInstalled = true
+end
 local function nativeDependencies()
     local policy, definitions, settings, operations = Toolkit.ActionQueuePolicy, Toolkit.ActionQueueDefinitions,
         Toolkit.Settings, Toolkit.ActionQueueOperations
@@ -174,6 +264,7 @@ observeNative = function(action)
         nativeReadRole = role
     end
     if line ~= (method == "readItem" and nativeReadRole or nativeWringRole) or not watch() then return false end
+    installOwnIntent(saved)
     if method ~= "onWringClothing" or action.Type ~= "ISWringClothing" then remember(action, saved.inspect) end
     if method == "onWringClothing" and action.Type == "ISWringClothing" then
         local wring, item, actor = Toolkit.ActionQueueWring, action.item, action.character

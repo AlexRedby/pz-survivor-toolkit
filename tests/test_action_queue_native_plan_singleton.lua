@@ -1053,10 +1053,10 @@ end
 -- pickup/effect receipts and private records are produced by real Settlement
 -- APIs; this does not claim native actor, transport or getter provenance.
 local function retainedFixture(waiting)
-    local role={source=true,line=145,calls=0}
+    local role={source=true,line=176,calls=0}
     local s=preparedFixture(true,function(proof)
         proof.matches=function(path,adler,mod,fresh)
-            check(path=='media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'and adler==1153211821
+            check(path=='media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'and adler==442162072
                 and mod=='PZSurvivorToolkit'and fresh==true,'explicit getter source role loosened')
             return role.source
         end

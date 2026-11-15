@@ -215,11 +215,24 @@ end
 -- The native wring producer has no return. This exercises the shared own
 -- producer and pre-native admission through real queue/lifecycle/ledger modules.
 local WringScenario=dofile(ProjectRoot..'/tests/native_queue/wring-clothing/shared/QueueWringScenario.lua')
-local function wringLoan(client)
-    local f=create(client,{p4=false,carried=true,canonicalBodyReplacement=client})
+local function wringLoan(client,foreignRole,cleanUISelector,cleanUIContext,compiledSelector)
+    local f=create(client,{p4=false,carried=true,canonicalBodyReplacement=client,
+        primaryProducer=foreignRole and 'OnSecondWeapon'or nil,
+        cleanUISelectorSource=cleanUISelector and CleanUIInventoryPaneSource or nil,
+        cleanUISelectorCompiledSource=compiledSelector and CleanUIInventoryPaneCompiledSource or nil,
+        cleanUIContextSource=cleanUIContext and CleanUIInventoryContextMenuSource or nil})
     local e,t,q=f.env,f.env.PZSurvivorToolkit,f.queue
+    if cleanUISelector then
+        local count=0;for _ in pairs(e.ISInventoryPane)do count=count+1 end
+        assert(count>128 and getmetatable(e.ISInventoryPane)==e.ISPanel,
+            'selected source fixture lost its real large derived pane class: '..tostring(count))
+    end
     local item=f.garment(701)
     e.ISInventoryPaneContextMenu.onWringClothing({item},0)
+    if cleanUISelector then
+        local installed,reason=t.ActionQueueTidyIntent.status()
+        assert(installed,'selected derived UI did not install own intent: '..tostring(reason))
+    end
     WringScenario.checkProducer(q.queue,'toolkit','target')
     local approach,pickup,body=unpack(q.queue)
     assert(body.Type=='ISWringClothing'and body.item==item)
@@ -275,7 +288,217 @@ local function wringKeep(client)
     assert(#f.queue.queue==0 and f.borrowed.container==f.inventory and #f.effects==1,
         'pending Keep replayed/returned the item or cancelled its wring body')
 end
+local function laterEquipment(client,mode)
+    local selectedContext=mode:find('^cleanui%-')~=nil
+    local f=wringLoan(client,mode=='source-role',mode=='cleanui'or selectedContext,selectedContext,mode=='cleanui-compiled')
+    local e,t,q=f.env,f.env.PZSurvivorToolkit,f.queue
+    f.start(f.wringBody)
+    f.wringBody.action.getJobDelta=function()return .5 end -- Java progress model.
+    local native,token=f.wringBody.action,f.wringBody.toolkitQueueOperation
+    local selected=mode=='unrelated'and f.garment(709,f.inventory)or f.borrowed
+    local function ownUpdate()
+        for _,callback in ipairs(f.events.OnPlayerUpdate or {})do callback(f.player)end
+    end
+    local late=mode=='late-ack'or mode=='late-rejected'or mode=='late-provider-loss'
+        or mode=='late-generation'or mode=='late-death'
+    if mode=='cleanui-helper-loss'then
+        e.ISInventoryPaneContextMenu.cleanUIResetStaleTimedActionRetrigger=function()return false end
+    end
+    local foreignGetters=0
+    if mode=='cleanui-parent-selector'then
+        e.ISPanel.getActualItems=e.ISInventoryPane.getActualItems;e.ISInventoryPane.getActualItems=nil
+    elseif mode=='cleanui-parent-index'then
+        e.ISPanel.__index=function()foreignGetters=foreignGetters+1;error('foreign UI lookup')end
+    elseif mode=='cleanui-util-index'then
+        e.ISInventoryTransferUtil.newInventoryTransferAction=nil
+        setmetatable(e.ISInventoryTransferUtil,{__index=function()foreignGetters=foreignGetters+1;error('foreign transfer helper lookup')end})
+    elseif mode=='cleanui-no-parent'then
+        setmetatable(e.ISInventoryPane,nil)
+    elseif mode=='cleanui-class-equality'then
+        e.ISBaseObject.__eq=function()foreignGetters=foreignGetters+1;error('foreign class equality')end
+        e.ISUIElement.__index=setmetatable({},e.ISBaseObject)
+        assert(not t.ActionQueueTidyIntent.status()and foreignGetters==0,'ancestry proof invoked __eq')
+        e.ISBaseObject.__eq=nil;e.ISUIElement.__index=e.ISUIElement
+    elseif mode=='cleanui-reentrant'then
+        f.setModProbe(function()
+            f.setModProbe(nil)
+            e.ISPanel.__index=function()foreignGetters=foreignGetters+1;error('reentrant UI lookup')end
+        end)
+        assert(not t.ActionQueueTidyIntent.status()and foreignGetters==0,
+            'mod metadata reentry invalidated ancestry after its last proof')
+        e.ISPanel.__index=e.ISPanel
+    end
+    if mode=='cleanui-parent-selector'or mode=='cleanui-parent-index'or mode=='cleanui-util-index'or mode=='cleanui-no-parent'then
+        assert(not t.ActionQueueTidyIntent.status()and foreignGetters==0,
+            'changed own helper lookup executed a getter or kept its source proof')
+    end
+    t.ActionQueueOperations.run(e.ISInventoryPaneContextMenu.OnPrimaryWeapon,{selected},0)
+    local equip=q.queue[#q.queue]
+    if mode=='cleanui-no-pane-scan'then
+        local each=e.pairs
+        e.pairs=function(value)assert(value~=e.ISInventoryPane,'own event scanned the UI class');return each(value)end
+    end
+    assert(equip.Type=='ISEquipWeaponAction'and equip.item==selected and equip.toolkitQueueOperation~=token
+        and q.current==f.wringBody and f.wringBody.action==native and not native.stopped,
+        'later real equipment command disturbed the progressed wring prefix')
+    assert(t.ActionQueueSettlement.operationState(f.wringBody).borrowings[1].state=='active',
+        'queued intent alone waived an earned loan')
+    if mode=='cancelled'then q:removeFromQueue(equip)end -- Native pending removal, without an effect.
+    if mode=='unrelated'or mode=='cancelled'then f.source.room=false end
+    wringComplete(f,client)
+    if mode=='unrelated'or mode=='cancelled'then
+        -- Produce real debt independently of the later command. A successful
+        -- effect on another same-type garment must leave that exact debt alone.
+        if q.current==f.returned then
+            assert(not f.returned:isValid());f.returned.action.removed=true;q:tick()
+        end
+    else
+        assert(not f.returned.action,'dependent optional return allocated native work')
+    end
+    assert(q.current==f.tail and f.borrowed.container==f.inventory,
+        'later exact equipment must retain the existing safe unallocated-return fence')
+    if client then assert(f.tail:complete())end
+    f.dispatch(f.tail,'perform')
+    if mode=='cancelled'then
+        ownUpdate() -- Idle pruning owns only our removed, unfinished observations.
+        f.player:setPrimaryHandItem(selected);ownUpdate()
+        local debts=t.ActionQueueExecution.blockedReturns(f.player)
+        assert(#q.queue==0 and #debts==1
+            and t.ActionQueueSettlement.operationState(f.wringBody).borrowings[1].state=='active',
+            'cancelled queued intent waived an earned loan')
+        return
+    end
+    assert(q.current==equip and equip:isValid())
+    if mode=='failed'or mode=='late-rejected'then
+        -- Native no-effect completion: already held equipment returns false.
+        f.player:setPrimaryHandItem(selected)
+    end
+    f.start(equip)
+    if mode=='unmarked'then equip.toolkitNativeTransaction,equip.toolkitNativeKind=nil,nil end
+    if client then
+        local result=equip:complete();assert(result==(mode~='failed'and mode~='late-rejected'))
+        if mode~='unmarked'and not late then f.acknowledge(equip,result and 'completed'or 'rejected')end
+        if mode=='late-replication'then f.player:setPrimaryHandItem(nil)end
+    end
+    f.dispatch(equip,'perform')
+    if late then
+        assert(#t.ActionQueueExecution.blockedReturns(f.player)==1,
+            'pending native outcome cleared the old debt before its receipt')
+        if mode=='late-provider-loss'then e.P4TidyUpMeister={};ownUpdate();e.P4TidyUpMeister=nil end
+        if mode=='late-generation'then
+            local generation=q.toolkitOperationGeneration
+            q.toolkitOperationGeneration=(generation or 0)+1;ownUpdate();q.toolkitOperationGeneration=generation
+        end
+        if mode=='late-death'then
+            local alive=f.player.isDead
+            f.player.isDead=function()return true end;ownUpdate();f.player.isDead=alive
+        end
+        f.acknowledge(equip,mode=='late-rejected'and 'rejected'or 'completed')
+        ownUpdate()
+    end
+    if mode=='late-replication'then
+        ownUpdate()
+        assert(#t.ActionQueueExecution.blockedReturns(f.player)==1,
+            'completed receipt alone waived debt before the exact equipment effect replicated')
+        f.player:setPrimaryHandItem(selected);ownUpdate()
+    end
+    local state=t.ActionQueueSettlement.operationState(f.wringBody)
+    local debts=t.ActionQueueExecution.blockedReturns(f.player)
+    if mode=='failed'or mode=='unrelated'or mode=='source-role'or mode=='unmarked'
+        or mode=='late-rejected'or mode=='late-provider-loss'or mode=='late-generation'or mode=='late-death'
+        or mode=='cleanui-helper-loss'or mode=='cleanui-parent-selector'or mode=='cleanui-parent-index'
+        or mode=='cleanui-util-index'or mode=='cleanui-no-parent'then
+        assert((not state or state.borrowings[1].state=='active')and #debts==1,
+            'failed native equipment, hand mutation or unrelated effect waived an earned loan')
+    else
+        assert(f.player:getPrimaryHandItem()==f.borrowed and state.borrowings[1].state=='waived'and #debts==0,
+            'successful later exact native equipment left stale owned restoration debt')
+        assert(#f.effects==1 and f.borrowed:getWetness()==10 and #q.queue==0,
+            'later equipment replayed the pickup, return, wring or independent tail')
+        -- With no private pending receipts the own event has no item/queue lookup.
+        f.player.getInventory=function()error('empty own poll inspected inventory')end
+        q.indexOf=function()error('empty own poll scanned queue')end
+        ownUpdate()
+    end
+end
+local function equipmentBeforeReborrow(mode)
+    local f=create(true,{p4=false,carried=true});local e,t,q=f.env,f.env.PZSurvivorToolkit,f.queue
+    local item=f.garment(711,f.inventory)
+    -- A root-only native producer installs own observation without earning a loan.
+    e.ISInventoryPaneContextMenu.onWringClothing({item},0)
+    local rootBody=q.current;assert(#q.queue==1)
+    f.start(rootBody);assert(rootBody:complete());f.dispatch(rootBody,'perform')
+    t.ActionQueueOperations.run(e.ISInventoryPaneContextMenu.OnPrimaryWeapon,{item},0)
+    local earlier=q.current
+    if mode=='rejected'then f.player:setPrimaryHandItem(item)end
+    f.start(earlier)
+    assert(earlier:complete()==(mode~='rejected'))
+    f.dispatch(earlier,'perform') -- The old native receipt is still pending.
+    f.player:setPrimaryHandItem(nil)
+    if mode=='outbound'then
+        t.ActionQueueOperations.run(function()
+            e.ISTimedActionQueue.add(e.ISInventoryTransferUtil.newInventoryTransferAction(
+                f.player,item,f.inventory,f.source))
+        end)
+        local moved=q.current;f.start(moved);f.deliver(moved);f.dispatch(moved,'perform')
+    else
+        -- Authoritative server relocation can precede client action/hand delivery.
+        -- No client transfer callback is invented for that engine-boundary effect.
+        f.inventory:DoRemoveItem(item);f.source:AddItem(item)
+    end
+    item:setWetness(80)
+    e.ISInventoryPaneContextMenu.onWringClothing({item},0)
+    local approach,pickup,body=unpack(q.queue)
+    e.ISInventoryPaneContextMenu.onWringClothing({f.garment(712,f.inventory)},0)
+    local tail=q.queue[#q.queue]
+    f.start(approach);f.dispatch(approach,'perform')
+    f.start(pickup);f.deliver(pickup);f.dispatch(pickup,'perform')
+    local returned=q.queue[2]
+    t.ActionQueueOperations.run(e.ISInventoryPaneContextMenu.OnPrimaryWeapon,{item},0)
+    local cancelled=q.queue[#q.queue]
+    f.start(body);assert(body:complete());f.dispatch(body,'perform')
+    assert(q.current==tail and not returned.action and q:indexOf(returned)==-1)
+    q:removeFromQueue(cancelled) -- This newer command never earns an equipment effect.
+    assert(tail:complete());f.dispatch(tail,'perform')
+    assert(t.ActionQueueSettlement.operationState(body).borrowings[1].state=='active')
+    -- Late replication of the earlier hand state is not a new equipment command.
+    f.player:setPrimaryHandItem(item)
+    f.acknowledge(earlier,mode=='rejected'and 'rejected'or 'completed')
+    for _,callback in ipairs(f.events.OnPlayerUpdate or {})do callback(f.player)end
+    assert(t.ActionQueueSettlement.operationState(body).borrowings[1].state=='active'
+        and #t.ActionQueueExecution.blockedReturns(f.player)==1,
+        'old equipment receipt waived a later borrowing episode: '..mode)
+end
+local function ownInstallReentry()
+    local f=create(false,{p4=false,carried=true,cleanUISelectorSource=CleanUIInventoryPaneSource,
+        cleanUIContextSource=CleanUIInventoryContextMenuSource})
+    local e,t=f.env,f.env.PZSurvivorToolkit
+    local adapters=t.ActionQueueItemEditAdapters
+    local register=adapters.registerSourceFactory
+    local calls=0
+    adapters.registerSourceFactory=function(...)
+        e.ISInventoryTransferUtil.newInventoryTransferAction=nil
+        setmetatable(e.ISInventoryTransferUtil,{__index=function()calls=calls+1;error('initial helper capture invoked foreign lookup')end})
+        return register(...)
+    end
+    e.ISInventoryPaneContextMenu.onWringClothing({f.garment(713,f.inventory)},0)
+    assert(not t.ActionQueueTidyIntent.status()and calls==0,
+        'own installation captured helpers after a source-registration reentry')
+end
 local function wringRefusal(client)
+    for _,mode in ipairs({'success','failed','cancelled','unrelated','source-role'})do laterEquipment(client,mode)end
+    if client then
+        for _,mode in ipairs({'unmarked','late-ack','late-rejected','late-provider-loss','late-generation','late-death','late-replication'})do laterEquipment(client,mode)end
+        for _,mode in ipairs({'remote','outbound','rejected'})do equipmentBeforeReborrow(mode)end
+    end
+    if CleanUIInventoryPaneSource then laterEquipment(client,'cleanui')end
+    if CleanUIInventoryContextMenuSource then
+        assert(CleanUIInventoryPaneSource,'selected CleanUI context needs its actual selector')
+        for _,mode in ipairs({'cleanui-context','cleanui-helper-loss','cleanui-parent-selector','cleanui-parent-index',
+            'cleanui-util-index','cleanui-no-parent','cleanui-class-equality','cleanui-reentrant','cleanui-no-pane-scan'})do laterEquipment(client,mode)end
+        if CleanUIInventoryPaneCompiledSource then laterEquipment(client,'cleanui-compiled')end
+        if not client then ownInstallReentry()end
+    end
     if client then
         local f=create(true,{p4=false,carried=true,canonicalBodyReplacement=true,guardLostAtReplacement=true})
         local e,t=f.env,f.env.PZSurvivorToolkit;local item=f.garment(707)

@@ -100,8 +100,18 @@ function F.swapPhysical(s)
 end
 function F.snapshot(s)
  local root=s.player:getInventory();local source,bag,shelf=sourceFor(s.player,s.ids)
+ if s.detachedSource then
+  -- Forensic fixture storage is deliberately outside actor ownership. It is
+  -- never supplied as a live destination or used to authorize game execution.
+  assert(s.ids.returnControl=='unavailable'and source==nil and bag==nil and shelf==nil
+   and s.shelf==nil and s.bag and s.bag:getID()==s.ids.source.bag and s.bag:getFullType()=='Base.Bag_Military'
+   and root:getItemById(s.ids.source.bag)==nil and not s.player:getWornItems():getItemById(s.ids.source.bag)
+   and s.bag:getItemContainer()==s.source,'detached fixture source is not proven unavailable')
+  source,bag=s.source,s.bag
+ end
  assert(source==s.source and bag==s.bag and shelf==s.shelf,'wring source identity changed')
  local out={case=s.ids.case,source=s.ids.source,items={}}
+ if s.ids.returnControl=='unavailable'then out.sourceDetached=s.detachedSource==true end
  for _,name in ipairs(F.namesFor(s.ids))do
   local spec=s.ids.items[name];local counts={actor=0,root=0,source=0};local canonical,found=nil,0
   local function count(container,actor)
@@ -117,7 +127,7 @@ function F.snapshot(s)
     if instanceof(value,'InventoryContainer')then count(value:getItemContainer(),actor)end
    end
   end
-  count(root,true);if shelf then count(source,false)end
+  count(root,true);if shelf or s.detachedSource then count(source,false)end
   -- Native Host transfer replaces handles; only the unique owned ID/type may rebind.
   assert(found==1,'missing or duplicate exact clothing identity');local item=canonical;s.items[name]=item
   local native=F.nativeWetnessContract(item)
@@ -132,6 +142,7 @@ function F.snapshot(s)
   if s.ids.preparedGroups then out.items[name].wetWeight=item:getWeight();out.items[name].capacityWeight=item:getUnequippedWeight()end
  end
  if F.observesClothing(s.ids)then out.equipment=F.equipment(s.player);out.inventoryWeight=s.player:getInventoryWeight()end
+ if s.ids.returnControl=='intent'then out.equipment=F.equipment(s.player)end
  if s.ids.capacityProfile then out.capacityPayload=capacityModule().snapshot(s)end
  return out
 end
@@ -287,6 +298,7 @@ function F.verify(s)
   issues[#issues+1]={name=name,field=field,actual=actual,expected=expected}
  end
  if s.ids.nativeWearSetup and not s.wearBaseline then mismatch('setup','wearBaseline',false,true)end
+ if s.ids.returnControl=='unavailable'and not s.detachedSource then mismatch('setup','sourceDetached',false,true)end
  local value=F.snapshot(s)
  for _,name in ipairs(F.namesFor(s.ids))do
   local item=value.items[name];local cap=s.ids.items[name].cap
@@ -295,6 +307,7 @@ function F.verify(s)
   if s.ids.returnControl and name=='target'then restored=false end
   local expectedRoot=restored and 0 or 1
   local expectedActor=restored and s.ids.source.kind=='world'and 0 or 1
+  if s.detachedSource and name=='cancelled'and s.ids.mode=='toolkit'then expectedActor=0 end
   local expectedSource=(s.ids.source.kind=='root'or s.ids.source.kind=='worn'or s.ids.source.kind=='worn-prepared'or restored)and 1 or 0
   local expectedWorn=s.ids.wornPrepared and name=='cancelled'and s.ids.mode=='toolkit'or false
   if s.ids.wearSwap then expectedRoot=1;expectedActor=1;expectedSource=1;expectedWorn=name=='incoming'end
@@ -315,12 +328,46 @@ function F.verify(s)
    mismatch(name,'wetness',item.wetness,above and{moreThan=above}or{minimum=minimum,maximum=maximum})
   end
  end
+ if s.ids.returnControl=='intent'then
+  local initial=s.input or s.wearBaseline;local baseline=initial and initial.equipment
+  if not baseline then mismatch('setup','equipmentBaseline',false,true)
+  else
+   local item=s.items.target;local expected={worn=baseline.worn,primary={id=item:getID(),type=item:getFullType()},secondary=baseline.secondary}
+   if s.player:getPrimaryHandItem()~=item or not F.equipmentMatches(s.player,expected)then mismatch('target','explicitEquipment',value.equipment,expected)end
+  end
+ end
  if F.observesClothing(s.ids)then value.unequipTransitions=s.unequipTransitions or{}end
  if s.ids.wearSwap then
   if not s.swapTransition then mismatch('setup','swapTransition',false,true)else value.swapTransition=s.swapTransition end
  end
  if #issues==0 then return value,issues,value end
  return nil,issues,value
+end
+local function sourceContents(source)
+ local result={};local values=source:getItems()
+ for index=0,values:size()-1 do local item=values:get(index)
+  assert(item:getContainer()==source,'detached fixture contents changed owner')
+  result[#result+1]={id=item:getID(),type=item:getFullType()}
+ end
+ table.sort(result,function(left,right)return left.id<right.id end);return result
+end
+function F.sourceLost(s)
+ assert(not isClient()and s.ids.returnControl=='unavailable'and not s.detachedSource,'source loss requires selected authority')
+ local before=F.snapshot(s);local root=s.player:getInventory();local bag=s.bag;local item=s.items.target
+ assert(before.items.target.counts.root==1 and item:getWetness()>10 and root:getItemById(s.ids.source.bag)==bag
+  and s.player:getWornItems():getItemById(s.ids.source.bag)==bag,'source loss missed active earned item or canonical bag')
+ local contents=sourceContents(s.source)
+ s.player:removeWornItem(bag,false)
+ if isServer()then sendClothing(s.player,bag:canBeEquipped(),nil)end
+ root:Remove(bag)
+ if isServer()then sendRemoveItemFromContainer(root,bag)end
+ s.detachedSource=true
+ local receipt={case=s.ids.case,itemId=item:getID(),itemType=item:getFullType(),bagId=bag:getID(),bagType=bag:getFullType(),
+  bagRootBefore=true,bagWornBefore=true,bagRootAfter=root:getItemById(bag:getID())~=nil,
+  bagWornAfter=s.player:getWornItems():getItemById(bag:getID())~=nil,contentsBefore=contents,contentsAfter=sourceContents(s.source),
+  root=root:getItemById(item:getID())==item and item:getContainer()==root,authority=true,at=getTimestampMs(),scope='detached-retained-fixture-bag'}
+ assert(not receipt.bagRootAfter and not receipt.bagWornAfter and receipt.root,'fixture source removal did not preserve root target')
+ return receipt
 end
 function F.capacityLost(s)
  assert(not isClient()and s.ids.returnControl=='full','capacity intervention requires selected authority')
@@ -337,6 +384,12 @@ end
 function F.dispose(s)
  assert(F.verify(s),'wring fixture must verify before cleanup');local root=s.player:getInventory()
  if s.controlCapacityBefore then s.source:setCapacity(s.controlCapacityBefore);s.controlCapacityBefore=nil end
+ if s.ids.returnControl=='intent'then
+  local initial=s.input or s.wearBaseline;local prior=assert(initial and initial.equipment).primary
+  local restored=prior and root:getItemById(prior.id)or nil
+  assert(not prior or restored and restored:getFullType()==prior.type and restored:getContainer()==root,'original fixture hand item disappeared')
+  s.player:setPrimaryHandItem(restored);if isServer()then sendEquip(s.player)end
+ end
  if s.original then
   local item=s.items.target;assert(not s.player:getWornItems():contains(item));s.player:setWornItem(item:getBodyLocation(),s.original)
   if isServer()then sendClothing(s.player,item:getBodyLocation(),s.original)end
@@ -347,9 +400,9 @@ function F.dispose(s)
  if s.bag then s.player:removeWornItem(s.bag,false);if isServer()then sendClothing(s.player,s.bag:canBeEquipped(),nil)end end
  for _,name in ipairs(F.namesFor(s.ids))do local item=s.items[name];local owner=item:getContainer()
   assert(owner==root or owner==s.source,'verified fixture cleanup escaped its owned containers')
-  assert(item:getContainer()==owner);owner:Remove(item);if isServer()then sendRemoveItemFromContainer(owner,item)end
+  assert(item:getContainer()==owner);owner:Remove(item);if isServer()and not(s.detachedSource and owner==s.source)then sendRemoveItemFromContainer(owner,item)end
  end
- if s.bag then root:Remove(s.bag);if isServer()then sendRemoveItemFromContainer(root,s.bag)end end
+ if s.bag and not s.detachedSource then root:Remove(s.bag);if isServer()then sendRemoveItemFromContainer(root,s.bag)end end
  if s.shelf then s.shelf:getSquare():transmitRemoveItemFromSquare(s.shelf)end
 end
 return F

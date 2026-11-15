@@ -79,6 +79,7 @@ sourceEvidence = function(action, expected)
     return false
 end
 local returnFailures, failureSerial = {}, 0
+local captureOptionalEquipment
 local MAX_RETURN_FAILURES = 32
 local MAX_EXECUTION_MEMBERS, MAX_EXECUTION_BORROWING_WORK = 32, 128
 local cleanupMarker = {}
@@ -674,6 +675,9 @@ function Settlement.captureEffect(action)
         transaction = action.toolkitNativeTransaction, kind = action.toolkitNativeKind,
         acknowledgements = acknowledgements, capture = acknowledgements and acknowledgements.capture,
         observe = acknowledgements and acknowledgements.observe, deadline = now and now + 30000}
+    -- Snapshot the earlier private loan now. An absent/ambiguous loan is a
+    -- permanent negative for this effect, never permission to select future debt.
+    proof.optionalEquipment = captureOptionalEquipment and captureOptionalEquipment(action,queue) or false
     handle[effectMarker] = function(candidate) if candidate == handle then return proof end end
     if required and type(proof.capture) == "function" then proof.receipt = proof.capture(action) end
     return handle
@@ -4314,7 +4318,7 @@ function Settlement.discardUnstartedPickups(queue,token,members)
     return true
 end
 
-local explicitEquipmentRole={adler=1153211821,line=145}
+local explicitEquipmentRole={adler=442162072,line=176}
 local explicitEquipmentMatches=executionProof and executionProof.matches
 local retainingExplicitEquipment=false
 local function explicitPickupCapture(candidate,capture)
@@ -4333,6 +4337,87 @@ local function explicitPickupCapture(candidate,capture)
         for _,attempt in api.pairs(proof.attempts)do
             if not nativePlanData(attempt,capture)or not nativePlanData(attempt.members,capture,32)then return false end
         end
+    end
+    return true
+end
+-- A later explicit command has its own operation. Only the private failed,
+-- never-allocated optional plan may relinquish the earlier earned loan. The
+-- caller has already authenticated the real native equipment effect receipt.
+captureOptionalEquipment=function(action,queue)
+    if getmetatable(action)~=ISEquipWeaponAction then return false end
+    local actor,item=action.character,action.item
+    local bucket=returnFailures[actor]
+    if not item or not bucket or bucket.queue~=queue or bucket.activeQueue~=queue
+        or bucket.activeGeneration~=(queue.toolkitOperationGeneration or 0)or bucket.activeCount==0 then return false end
+    local selected,plan
+    for _,failure in ipairs(bucket.entries)do
+        if failure.kind=='optional-unallocated'and failure.state=='blocked'and failure.item==item then
+            if selected then return false end
+            selected,plan=failure,failure.plan
+        end
+    end
+    if not selected or not plan or plan.failure~=selected or plan.item~=item or plan.actor~=actor
+        or plan.queue~=queue or plan.generation~=(queue.toolkitOperationGeneration or 0)
+        or plan.state~='blocked'or not plan.bodySettled or not plan.action or plan.action.action or plan.action.started
+        or optionalGenerated[plan.action]~=plan then return false end
+    return {failure=selected,plan=plan,item=item,queue=queue,generation=plan.generation,
+        candidate=plan.candidate,record=plan.record,scope=plan.scope,action=plan.action}
+end
+local function retainEarlierOptionalEquipment(action,facts,state,capture,unchanged,effect)
+    local api=nativePlanReads
+    local actor,item=state.actor,nativePlanOwn(action,'item')
+    local prior=effect.optionalEquipment
+    if not nativePlanData(prior,capture)or prior.item~=item or prior.queue~=state.queue
+        or prior.generation~=state.generation then return false end
+    local root=actor:getInventory()
+    local primary,twoHands=nativePlanOwn(action,'primary'),nativePlanOwn(action,'twoHands')
+    if item==nil or(primary~=true and primary~=false)or(twoHands~=true and twoHands~=false)
+        or actor:isDead()or getSpecificPlayer(actor:getPlayerNum())~=actor
+        or root:getItemById(facts.id)~=item or item:getContainer()~=root or item:getIsCraftingConsumed()
+        or (primary and actor:getPrimaryHandItem()or not primary and actor:getSecondaryHandItem())~=item
+        or twoHands and(actor:getPrimaryHandItem()~=item or actor:getSecondaryHandItem()~=item)
+        or not unchanged()then return false end
+    capture(returnFailures,{actor})
+    local bucket=api.raw(returnFailures,actor)
+    if not bucket then return unchanged()end
+    if not nativePlanData(bucket,capture)or bucket.queue~=state.queue
+        or not nativePlanData(bucket.entries,capture,MAX_RETURN_FAILURES)then return false end
+    local selected,plan,index
+    for position,failure in api.pairs(bucket.entries)do
+        if not nativePlanData(failure,capture)then return false end
+        if failure.kind=='optional-unallocated'and failure.state=='blocked'and failure.item==item then
+            if selected then return false end
+            selected,plan,index=failure,failure.plan,position
+        end
+    end
+    if not selected or selected~=prior.failure or plan~=prior.plan or plan.candidate~=prior.candidate
+        or plan.record~=prior.record or plan.scope~=prior.scope or plan.action~=prior.action then return false end
+    if not nativePlanData(plan,capture)or plan.failure~=selected or plan.state~='blocked'
+        or not plan.bodySettled or plan.actor~=actor or plan.queue~=state.queue or plan.generation~=state.generation
+        or selected.queue~=state.queue or selected.generation~=state.generation
+        or selected.record~=plan.record or selected.scope~=plan.scope or selected.candidate~=plan.candidate
+        or selected.action~=plan.action or selected.source~=root or selected.destination~=plan.destination
+        or plan.item~=item or plan.root~=root or plan.id~=facts.id or plan.fullType~=facts.fullType
+        or selected.itemId~=facts.id or selected.itemType~=facts.fullType
+        or not plan.action or not capture(plan.action)or not capture(optionalGenerated,{plan.action})
+        or api.raw(optionalGenerated,plan.action)~=plan
+        or plan.action.action~=nil or plan.action.started or state.queue:indexOf(plan.action)~=-1
+        or plan.action.item~=item or plan.action.srcContainer~=root or plan.action.destContainer~=plan.destination
+        or plan.action.toolkitQueueOperation~=plan.token or plan.token==action.toolkitQueueOperation
+        or not nativePlanRecordCapture(plan.record,capture)or not nativePlanData(plan.scope,capture)
+        or not explicitPickupCapture(plan.candidate,capture)
+        or not optionalQueue(plan)or not operationLive(plan.record)or not borrowingLive(plan.scope)
+        or not optionalEarned(plan)or optionalItem(plan)~=item or plan.candidate.owner~=plan.token
+        or plan.candidate.destination~=root or plan.candidate.source~=plan.destination
+        or plan.candidate.id~=facts.id or plan.candidate.fullType~=facts.fullType
+        or plan.destination:getItemById(facts.id)~=nil or isClient()~=plan.candidate.proof.client
+        or root:getItemById(facts.id)~=item or item:getContainer()~=root or not unchanged()then return false end
+    plan.candidate.phase,plan.candidate.waiverReason='waived','explicit-equipment-intent'
+    plan.state='retired';optionalGenerated[plan.action]=nil
+    table.remove(bucket.entries,index)
+    bucket.count,bucket.revision=bucket.count-1,bucket.revision+1
+    if bucket.activeQueue==state.queue and bucket.activeGeneration==state.generation then
+        bucket.activeCount=math.max(0,bucket.activeCount-1)
     end
     return true
 end
@@ -4355,11 +4440,13 @@ local function retainExplicitEquipment(action,receipt)
         or not nativePlanPlain(record.actions)or not nativePlanPlain(record.borrowings)then return false end
     local step=api.raw(record.actions,action)
     if not nativePlanPlain(step)or not api.equal(step.operation,record)or not api.equal(step.action,action)then return false end
-    -- Root equipment pays only its real private membership lookup. This true
-    -- means no own loan needs bookkeeping; it grants no effect/edit authority.
     local borrowed=false
     for _ in api.pairs(record.borrowings)do borrowed=true;break end
-    if not borrowed then return unchanged()end
+    if not borrowed then
+        local bucket=api.raw(returnFailures,actor)
+        if not bucket or bucket.activeQueue~=record.queue or bucket.activeGeneration~=record.generation
+            or bucket.activeCount==0 then return unchanged()end
+    end
     local state=nativePlanContext(record.queue,action)
     if not state or not api.equal(record.queue,state.queue)or record.generation~=state.generation
         or record.settlement~=nil or record.preparationScope~=nil or not nativePlanCommon(state)
@@ -4399,6 +4486,10 @@ local function retainExplicitEquipment(action,receipt)
     local requested=nativePlanOwn(action,'item')
     if requested==nil or requested:getID()~=facts.id or requested:getFullType()~=facts.fullType
         or not unchanged()then return false end
+    if not borrowed then
+        if isClient() and effect.required~=true then return false end
+        return retainEarlierOptionalEquipment(action,facts,state,capture,unchanged,effect)
+    end
     local found,binding
     for _,entry in api.pairs(record.borrowings)do
         local candidate=entry.candidate

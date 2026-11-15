@@ -50,7 +50,12 @@ return function(client,options)
     for _,entry in pairs(p4)do
         if not entry[1]and NativeP4TidySource then entry[1]=text(NativeP4TidySource..'/media/lua/'..entry[2])end
     end
-    env.getGameFilesInput=function(path)return reader(text(NativeActionRoot..'/'..path:gsub('^media/lua/','')))end
+    env.getGameFilesInput=function(path)
+        if options.cleanUIContextSource and path=='media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'then
+            return reader(options.cleanUIContextSource)
+        end
+        return reader(text(NativeActionRoot..'/'..path:gsub('^media/lua/','')))
+    end
     env.getModFileReader=function(id,path)
         if id=='P4TidyUpMeister'then
             for _,entry in pairs(p4)do if path=='media/lua/'..entry[2]then return reader(assert(entry[1]))end end
@@ -58,6 +63,10 @@ return function(client,options)
             local module=path:match('^media/lua/[^/]+/(.*)%.lua$')
             local actual=module and toolkitPath(module)
             if actual then return reader(text(actual))end
+        elseif id=='CleanUI'and options.cleanUISelectorSource and path=='media/lua/client/ISUI/ISInventoryPane.lua'then
+            return reader(options.cleanUISelectorSource)
+        elseif id=='CleanUI'and options.cleanUIContextSource and path=='media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'then
+            return reader(options.cleanUIContextSource)
         end
     end
     env.require=function(module)
@@ -90,9 +99,9 @@ return function(client,options)
         local module=path:match('^[^/]+/(.*)%.lua$');loaded[module]=result or true
         return result
     end
-    local function nativeFunction(path,signature)
-        local actual=NativeActionRoot..'/'..path
-        local source=text(actual)
+    local function nativeFunction(path,signature,inputSource)
+        local actual=inputSource and 'media/lua/'..path or NativeActionRoot..'/'..path
+        local source=inputSource or text(actual)
         local first=assert(source:find(signature,1,true),'missing native producer '..signature)
         local last=assert(source:find('\nend',first,true),'unterminated native producer '..signature)
         local _,lines=source:sub(1,first-1):gsub('\n','\n')
@@ -145,12 +154,15 @@ return function(client,options)
     env.LootSorter={}
     env.getText=function(value)return value end;env.getTextOrNull=env.getText
     env.isClient=function()return client==true end;env.isServer=function()return false end;env.isMultiplayer=env.isClient
-    env.getActivatedMods=function()return {contains=function(_,id)return p4Selected and id=='P4TidyUpMeister'end}end
+    env.getActivatedMods=function()
+        if options.modProbe then options.modProbe(env)end
+        return {contains=function(_,id)return p4Selected and id=='P4TidyUpMeister'end}
+    end
     env.getGameVersion=function()return '42.21'end
     local timestamp=100
     env.getTimestampMs=function()return timestamp end;env.getTimestamp=function()return timestamp end
     env.getGameTime=function()return {getMinutesPerDay=function()return 60 end,getMultiplier=function()return 1 end}end
-    env.getCore=function()return {getGameMode=function()return 'Sandbox'end}end
+    env.getCore=function()return {getGameMode=function()return 'Sandbox'end,getGoodHighlitedColor=function()return {}end}end
     env.getSandboxOptions=function()return {getOptionByName=function()return {getValue=function()return 0.1 end}end}end
     env.getDebug=function()return false end;env.isDebugEnabled=env.getDebug
     env.ISLogSystem={logAction=function()end};env.DebugType={Action={warn=function(_,message)error(message)end}}
@@ -182,7 +194,7 @@ return function(client,options)
         function value:forceStop()self.stopped=true end
         function value:setJobDelta()end
         function value:resetJobDelta()end
-        for _,method in ipairs({'setTime','setLoopedAction','setActionAnim','setAnimVariable','setOverrideHandModelsObject',
+        for _,method in ipairs({'restoreWeaponType','setTime','setLoopedAction','setActionAnim','setAnimVariable','setOverrideHandModelsObject',
             'stopTimedActionAnim','setWaitForFinished'})do value[method]=function()end end
         function value:reset()self.forced=false end
         allocated[#allocated+1]=value;return value
@@ -220,7 +232,10 @@ return function(client,options)
     player.getPathFindBehavior2=function()return {reset=function()end,cancel=function()end}end
     player.getAlreadyReadPages=function()return 0 end
     player.ReadLiterature=function(self,item)self.readItem=item;self.readCount=(self.readCount or 0)+1 end
-    player.getPrimaryHandItem=function()end;player.getSecondaryHandItem=function()end;player.getWornItems=function()return {getItem=function()end,size=function()return 0 end}end
+    player.getPrimaryHandItem=function(self)return self.primary end;player.getSecondaryHandItem=function(self)return self.secondary end
+    player.setPrimaryHandItem=function(self,item)self.primary=item end;player.setSecondaryHandItem=function(self,item)self.secondary=item end
+    player.getClothingItem_Back=function()end
+    player.getWornItems=function()return {getItem=function()end,size=function()return 0 end}end
     player.getAttachedItems=function()return {getItem=function()end,size=function()return 0 end}end
     player.getModData=function()return {P4TidyUpMeister={doNotReequip=false}}end
     player.getMoodles=function()return {getMoodleLevel=function()return 0 end}end
@@ -278,7 +293,8 @@ return function(client,options)
     env.getCell=function()return {getGridSquare=function(_,x)if x==0 then return origin elseif x==4 then return target elseif x==3 then return adjacent end end}end
     env.AdjacentFreeTileFinder={Find=function()return adjacent end}
     env.getPlayerLoot=function()return {selectButtonForContainer=function()end,setForceSelectedContainer=function()end}end
-    env.getPlayerInventory=function()return {inventory=inventory}end
+    env.getPlayerInventory=function()return {inventory=inventory,refreshBackpacks=function()end}end
+    env.getPlayerHotbar=function()end
     env.ItemPicker={updateOverlaySprite=function()end}
     env.sendServerCommand=function()end;env.sendSyncPlayerFields=function()end;env.syncItemFields=function()end
     env.round=function(value)return value end
@@ -297,13 +313,36 @@ return function(client,options)
     end
     native('client/TimedActions/ISDetachItemHotbar.lua')
     native('client/TimedActions/WalkToTimedAction.lua')
-    nativeFunction('client/ISUI/ISInventoryPane.lua','function ISInventoryPane.getActualItems(')
+    -- Keep real UI ancestry even for the native fallback. A one-function plain
+    -- table would hide binding failures and incorrectly allow ancestry removal.
+    env.getTextManager=function()return {getFontHeight=function()return 14 end}end
+    env.UIFont={Small=1}
+    native('client/ISUI/ISUIElement.lua');native('client/ISUI/ISPanel.lua')
+    if options.cleanUISelectorSource then
+        execute(options.cleanUISelectorCompiledSource or options.cleanUISelectorSource,'media/lua/client/ISUI/ISInventoryPane.lua')
+        -- UI extensions may add unrelated own metadata. Cross the generic
+        -- binding budget while retaining every real method and native ancestor.
+        local count=0;for _ in pairs(env.ISInventoryPane)do count=count+1 end
+        for index=count+1,129 do env.ISInventoryPane['fixtureBindingField'..index]=index end
+    else
+        native('client/ISUI/ISInventoryPane.lua')
+    end
     nativeFunction('shared/luautils.lua','function luautils.walkToContainer(')
     nativeFunction('shared/luautils.lua','function luautils.haveToBeTransfered(')
-    for _,signature in ipairs({'function ISInventoryPaneContextMenu.transferIfNeeded(',
-        'ISInventoryPaneContextMenu.onLiteratureItems = function(', 'ISInventoryPaneContextMenu.readItem = function(',
-        'ISInventoryPaneContextMenu.onWringClothing = function('})do
-        nativeFunction('client/ISUI/ISInventoryPaneContextMenu.lua',signature)
+    if options.cleanUIContextSource then
+        -- Execute the actual complete selected chunk to retain its private
+        -- transfer helpers. Its tooltip declarations need only these UI doubles.
+        env.getTextManager=function()return {getFontHeight=function()return 14 end}end
+        env.UIFont={Small=1};env.ISToolTip=env.ISBaseObject
+        execute(options.cleanUIContextSource,'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua')
+    else
+        for _,signature in ipairs({'function ISInventoryPaneContextMenu.transferIfNeeded(',
+            'ISInventoryPaneContextMenu.onLiteratureItems = function(', 'ISInventoryPaneContextMenu.readItem = function(',
+            'ISInventoryPaneContextMenu.onWringClothing = function(', 'ISInventoryPaneContextMenu.OnPrimaryWeapon = function(',
+            'ISInventoryPaneContextMenu.OnSecondWeapon = function(', 'ISInventoryPaneContextMenu.OnTwoHandsEquip = function(',
+            'ISInventoryPaneContextMenu.equipWeapon = function('})do
+            nativeFunction('client/ISUI/ISInventoryPaneContextMenu.lua',signature)
+        end
     end
     for _,signature in ipairs({'function ISCraftingUI.ReturnItemToOriginalContainer(', 'function ISCraftingUI.ReturnItemToContainer('})do
         nativeFunction('client/ISUI/ISCraftingUI.lua',signature)
@@ -321,6 +360,8 @@ return function(client,options)
         value.getJobType=function()return 'Transfer'end;value.getName=function()return 'Book'end;value.getDisplayName=value.getName
         for _,name in ipairs({'isFavorite','getIsCraftingConsumed','hasTag','isHumanCorpse','hasModData','IsClothing','canBeActivated','isOnGroundOrInsideBagOnSquare'})do value[name]=function()return false end end
         value.getWorldItem=function()end;value.getEquipParent=function()end;value.getAttachedSlot=function()return -1 end
+        value.isRequiresEquippedBothHands=function()return false end;value.IsInventoryContainer=function()return false end
+        value.getEquipSound=function()end;value.getCurrentUsesFloat=function()return 1 end
         value.canBeEquipped=function()end
         allItems[#allItems+1]=value;return value
     end
@@ -341,6 +382,10 @@ return function(client,options)
         -- Preserve the real same-file native closure while changing its role
         -- before Operations captures the existing producer wrapper.
         env.ISInventoryPaneContextMenu.readItem=env.ISInventoryPaneContextMenu.transferIfNeeded
+    end
+    if options.primaryProducer=='OnSecondWeapon'then
+        -- Genuine same-file closure, incorrect public callback role.
+        env.ISInventoryPaneContextMenu.OnPrimaryWeapon=env.ISInventoryPaneContextMenu.OnSecondWeapon
     end
     env.require('PZSurvivorToolkit/ActionQueueOperations')
     env.require('PZSurvivorToolkit/ActionQueueDefinitions')
@@ -385,8 +430,22 @@ return function(client,options)
         end
         return observed
     end
+    local function acknowledge(action,state)
+        assert(client and action.toolkitNativeTransaction and action.toolkitNativeKind)
+        for _,callback in ipairs(events.OnServerCommand or {})do
+            callback('PZSurvivorToolkitActions','State',{protocol=1,player=player:getOnlineID(),
+                transaction=action.toolkitNativeTransaction,kind=action.toolkitNativeKind,
+                token='00000000-0000-0000-0000-000000000001',state=state})
+        end
+    end
     local function start(action)
         action.action.started=true
+        if client and action.Type=='ISEquipWeaponAction'then
+            -- Model the Java acknowledgement bridge, without replacing the
+            -- native equip callbacks or the actual Lua receipt consumer.
+            action.toolkitNativeTransaction,action.toolkitNativeKind=91,action.Type
+            acknowledge(action,'started')
+        end
         action:start()
     end
     local function deliver(action)
@@ -398,5 +457,6 @@ return function(client,options)
     end
     return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,garment=garment,list=list,
         dispatch=dispatch,start=start,deliver=deliver,transactions=transactions,events=events,adjacent=adjacent,
-        effects=effects,engineTrace=engineTrace,bag=bag}
+        effects=effects,engineTrace=engineTrace,bag=bag,acknowledge=acknowledge,
+        setModProbe=function(callback)options.modProbe=callback end}
 end

@@ -109,6 +109,24 @@ class LuaRunner(unittest.TestCase):
         self.assertEqual(paths[1], values['P4RestoreSource'])
         self.assertEqual(paths[2], values['P4RestoreFloorSource'])
 
+        # Optional selected UI sources must not become a requirement of the
+        # native composition, including --require-complete.
+        self.executions.clear()
+        arguments = ('--test', 'test_action_queue_restoration_composition',
+                     '--native-action-root', str(native), '--p4-source', str(p4),
+                     '--toolkit-source', str(candidate), '--require-complete')
+        self.invoke(*arguments)
+        self.assertNotIn('CleanUIInventoryPaneSource', self.executions[0][1])
+        clean = self.root / 'clean/media/lua/client/ISUI'
+        clean.mkdir(parents=True)
+        (clean / 'ISInventoryPane.lua').write_text('actual selected pane')
+        (clean / 'ISInventoryPaneContextMenu.lua').write_text('actual complete selected context')
+        self.executions.clear()
+        self.invoke(*arguments, '--cleanui-inventory-pane', str(clean / 'ISInventoryPane.lua'))
+        values = self.executions[0][1]
+        self.assertEqual('actual selected pane', values['CleanUIInventoryPaneSource'])
+        self.assertEqual('actual complete selected context', values['CleanUIInventoryContextMenuSource'])
+
     def test_bc_class_check_requires_both_integrations_and_binds_actual_hooks(self):
         clean = self.root / 'clean/media/lua/client'
         bc = self.root / 'bc/media/lua/client/BetterContainers'

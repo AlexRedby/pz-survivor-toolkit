@@ -46,6 +46,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.1.373
+
+- **Fixed:** With P4 absent, completing a native explicit equipment request now retires the matching earlier optional-return debt for a garment borrowed for wringing, including through the selected CleanUI menu. Delayed Host acknowledgements cannot retire a newer loan; unconfirmed or rejected requests retain the debt. Keep, full/unavailable source bags and later equipment passed paired macOS SP/menu-Host checks with clean runtime audits. Native execution and capacity remain authoritative; general P4 replacement remains incomplete.
+
 ### 0.1.372
 
 - **Added:** Source-proven optional return planning for a single unworn garment borrowed from a carried bag for native wringing when P4 is absent. Returns use earned pickup receipts, shared native admission and exact outcomes; pending Keep preserves the body, while failed qualification retains visible debt without falling back to a native transfer. Existing native returns and the selected P4 provider retain their paths. Normal returns and queue-off controls passed paired macOS SP/menu-Host full-pack-minus-P4 checks with clean runtime audits; live Keep and unavailable-source extensions remain separate coverage.
