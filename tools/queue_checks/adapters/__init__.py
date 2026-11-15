@@ -6,7 +6,7 @@ MODULES = {'magazine-unload': 'magazine_unload', 'wring-clothing': 'wring_clothi
            'craft-ui': 'craft_ui', 'washing': 'washing', 'fluid': 'fluid', 'food': 'food', 'inventory-grab': 'inventory_grab', 'inventory-transfer': 'inventory_transfer', 'forge': 'forge',
            'container-configuration': 'container_configuration', 'warehouse-manifest': 'warehouse_manifest', 'warehouse-workload': 'warehouse_workload', 'warehouse-walking': 'warehouse_walking',
            'item-retention': 'item_retention', 'torch-refill': 'torch_refill', 'plastic-battery': 'plastic_battery', 'food-cooling': 'food_cooling', 'custom-tags': 'custom_tags',
-           'classification-baseline': 'classification_baseline', 'vro-settings': 'vro_settings',
+           'classification-baseline': 'classification_baseline', 'vro-settings': 'vro_settings', 'vro-gameplay': 'vro_gameplay',
            'item-catalog': 'item_catalog',
            'smart-deposit': 'auxiliary',
            'storage-profile': 'auxiliary',

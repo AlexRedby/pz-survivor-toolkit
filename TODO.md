@@ -107,10 +107,6 @@ Prepare fixtures before launch where possible; add them to compatible inventory/
 
 - [ ] After installation is requested, check clothing open/roll/restore, insulation/protection and Better Clothing Info/Tidy Up Meister interaction, plus ladder ascent/descent, occupied exits, moved ladders, reload and second-player synchronization in isolated full-pack macOS B42.21 SP/Host saves. Selection and author support claims do not establish runtime compatibility.
 
-### Vehicle Repair Overhaul verification
-
-- [ ] Use both VRO modules from the current complete source lock to check repairs and whole-vehicle salvage in isolated full-pack macOS B42.21 SP/Host saves. Verify Toolkit/VVA menus, actual materials/XP and 10-use fuel drain, cancellation, reload and second-player state. Empty test containers and remove occupants/animals before removal. Whole-vehicle duration is independent of the part-recipe time settings. Settings initialization checks do not establish these gameplay effects or their multiplayer outcomes.
-
 ### Vehicle aim roof fix verification
 
 - [ ] Use CarRoofFix from the current complete source lock to verify RMB look-around, release, seat switching and armed aiming in isolated macOS B42.21 SP/Host with the full selected pack, including a second player's view. Check the unmodified heavy/spear/chainsaw aim nodes separately; metadata/XML and selection checks do not establish gameplay compatibility.
