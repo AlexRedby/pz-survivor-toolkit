@@ -49,9 +49,17 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
-### 0.2.3
+### 0.2.5
 
 - **Compatibility:** Qualify the current Immersive Snow hand callback for ordinary SP equipment edits. Verify its captured ownership helper and live empty swap state, and keep nested or unsupported attachment ownership paths protected. Native snow restoration and Host scheduling retain their normal execution.
+
+### 0.2.4
+
+- **Internal:** Borrowed returns can require confirmed success of exact owned cleanup effects before constructing a native transfer. Cancellation honors the same dependency; unresolved attempts retain exact loan notices and cannot retry after late outcomes. Explicit Keep waives location debt without claiming a hand-restoration effect. Metadata reentry cannot enroll or issue the same return twice. No additional tool producer is enabled; native failure isolation and editor-disabled restoration remain qualification gates.
+
+### 0.2.3
+
+- **Internal:** Added shared one-use hand-restoration plans and receipt-backed observation of already-owned cleanup effects. Tool restoration remains gated until native admission, successful dependency, unresolved-debt and editor-disabled restoration checks are qualified; P4 stays selected and existing restoration behavior is preserved.
 
 ### 0.2.2
 

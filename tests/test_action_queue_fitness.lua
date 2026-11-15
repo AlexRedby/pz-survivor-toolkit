@@ -277,7 +277,12 @@ f.project('ActionQueueOperations');f.project('ActionQueueNativeContinuation');f.
 local policy=f.project('ActionQueuePolicy')
 ISInventoryPaneContextMenu.getContainers=function()return list({})end
 local receipt,preparationReceipts=nil,{}
-PZSurvivorToolkit.ActionQueueAcknowledgements={capture=function(action)return preparationReceipts[action] or receipt end,
+PZSurvivorToolkit.ActionQueueAcknowledgements={
+    -- This fixture models effect receipts, not private editor retirement; the
+    -- real retirement protocol has separate lifecycle/settlement regressions.
+    completeEditorNative=function()end,
+    invalidateEditor=function()return false end,
+    capture=function(action)return preparationReceipts[action] or receipt end,
     state=function(action,captured)
         if captured==preparationReceipts[action] or captured==receipt then return captured.state end
     end,

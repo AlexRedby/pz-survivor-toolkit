@@ -80,6 +80,8 @@ sourceEvidence = function(action, expected)
 end
 local returnFailures, failureSerial = {}, 0
 local completedReturnDebt
+local returnSuccessState, returnSuccessBlocked, keepReturnSuccess
+local returnSuccessEnrolling = {}
 local captureOptionalEquipment
 local MAX_RETURN_FAILURES = 32
 local MAX_EXECUTION_MEMBERS, MAX_EXECUTION_BORROWING_WORK = 32, 128
@@ -436,7 +438,8 @@ function Settlement.operationState(action)
     if optional then result.optionalReturnState, result.optionalReturnDetail = optional.state, optional.detail end
     for _, step in ipairs(record.steps) do
         result.steps[#result.steps + 1] = {phase = step.phase, state = step.state, started = step.started == true,
-            observedPreparation = step.preparation ~= nil, kind = step.action.Type,
+            observedPreparation = step.preparation ~= nil and not step.preparation.requireEffect,
+            observedCleanup = step.preparation ~= nil and step.preparation.requireEffect == true, kind = step.action.Type,
             plannedTransfer = step.returning ~= nil, transferDirection = step.returning and step.returning.direction,
             itemId = step.item and step.item.id, itemType = step.item and step.item.fullType}
     end
@@ -1857,7 +1860,8 @@ function Settlement.preparationAvailable()
             if watch.started then watch.failed = true; return end
             watch.started = true
             local ok, before = pcall(watch.capture, action)
-            if not ok or before ~= nil and type(before) ~= "table" then watch.failed = true; return end
+            if not ok or before ~= nil and type(before) ~= "table"
+                or before == nil and watch.requireEffect then watch.failed = true; return end
             watch.before, watch.empty = before, before == nil
         end,
         begin = function(action, phase)
@@ -1963,6 +1967,34 @@ function Settlement.observePreparation(action, specification)
         end
         step.preparation.scope = scope
     end
+    return step.handle
+end
+
+-- Required cleanup uses the same native observation/ACK gate as preparation,
+-- but must retain its existing private cleanup role and earned prerequisites.
+-- Calling observePreparation here would retag a pending cleanup as preparation.
+-- Bind children after their actual cleanup expansion: cancellation moves
+-- retained work to a fresh operation and must not revive an old effect handle.
+-- This observation grants no admission/stop/successor permission and creates
+-- neither cleanup ownership nor automatic-restoration debt.
+function Settlement.observeCleanupEffect(action, specification)
+    if type(action) ~= "table" or type(specification) ~= "table" or getmetatable(specification) ~= nil
+        or type(specification.guard) ~= "function" or type(specification.capture) ~= "function"
+        or type(specification.observed) ~= "function" then return end
+    local guard, capture, observed = specification.guard, specification.capture, specification.observed
+    local record = operation(action.character, action.toolkitQueueOperation)
+    local step = record and record.actions[action]
+    local function pendingCleanup()
+        return record and operation(action.character, action.toolkitQueueOperation) == record
+            and record.actions[action] == step and step.phase == "cleanup" and step.kind == action.Type and not step.started
+            and not step.preparation and not step.borrowing and not step.returning
+            and action.action == nil and not action.started and action.Type ~= "ISInventoryTransferAction"
+    end
+    if not step or not pendingCleanup() or not requiredCleanup(action, false)
+        or not Settlement.preparationAvailable() or not pendingCleanup()
+        or not requiredCleanup(action, false) or not pendingCleanup() or getmetatable(specification) ~= nil
+        or specification.guard ~= guard or specification.capture ~= capture or specification.observed ~= observed then return end
+    step.preparation = {guard = guard, capture = capture, observed = observed, requireEffect = true}
     return step.handle
 end
 
@@ -2110,8 +2142,11 @@ local function resolveReturn(queue, id, expected, containers, observation)
     return item, inventory, destination
 end
 local function makeReturn(queue, id, expected, containers)
+    local dependency = expected.borrowed and expected.borrowed.returnSuccess
+    if dependency and returnSuccessState(dependency) ~= "earned" then return end
     local item, inventory, destination = resolveReturn(queue, id, expected, containers)
     if not item then return end
+    if dependency and (expected.borrowed.returnSuccess ~= dependency or returnSuccessState(dependency) ~= "earned") then return end
     local action = ISInventoryTransferUtil.newInventoryTransferAction(queue.character, item, inventory, destination)
     if action.Type ~= "ISInventoryTransferAction"
         and (isClient() or not Toolkit.ActionQueueCarts or not Toolkit.ActionQueueCarts.isTransfer(action)) then return end
@@ -3037,7 +3072,15 @@ function Settlement.returnRestorationBlocked(action)
     local root = character:getInventory()
     if action.srcContainer ~= root or action.destContainer == root or not instanceof(action.item, "InventoryItem") then return false end
     for _, failure in ipairs(bucket.entries) do
-        if failure.kind == "optional-unallocated" then
+        if failure.kind == "cleanup-unallocated" then
+            local plan = failure.plan
+            if plan and plan.failure == failure and failure.state == "blocked" and plan.state == "blocked"
+                and plan.queue == queue and plan.generation == (queue.toolkitOperationGeneration or 0)
+                and sameMember(action.item, plan.candidate) and root:getItemById(plan.candidate.id) == action.item
+                and action.item:getContainer() == root and failure.destination == action.destContainer
+                and plan.candidate.phase == "active" and borrowingLive(plan.scope)
+                and operationLive(plan.record) and exactReturnOwner(failure, root) then return true end
+        elseif failure.kind == "optional-unallocated" then
             local plan = failure.plan
             if plan and plan.failure == failure and failure.state == "blocked" and optionalQueue(plan)
                 and optionalItem(plan) == action.item and action.destContainer == plan.destination
@@ -3110,6 +3153,7 @@ function Settlement.keepReturn(character, id)
     if not bucket or character:isDead() or getSpecificPlayer(character:getPlayerNum()) ~= character then return false, "unavailable" end
     for index, failure in ipairs(bucket.entries) do
         if failure.id == id then
+            if failure.keeping then return false, "unavailable" end
             if failure.state == "revoked" then
                 -- Explicitly forget historical UI information. No old receipt,
                 -- item lookup, retention intent or execution right is revived.
@@ -3121,7 +3165,9 @@ function Settlement.keepReturn(character, id)
             end
             local candidate = failure.candidate
             if not candidate or candidate.phase ~= "active" then return false, "unavailable" end
-            if failure.kind == "optional-unallocated" then
+            if failure.kind == "cleanup-unallocated" then
+                if not keepReturnSuccess(character, bucket, index, failure) then return false, "unavailable" end
+            elseif failure.kind == "optional-unallocated" then
                 if not keepOptionalFailure(failure, character) then return false, "unavailable" end
             else
             local root = character:getInventory()
@@ -3217,8 +3263,191 @@ function Settlement.observeCleanupTransfer(action, parent)
     return true
 end
 
-function Settlement.enqueueBorrowedReturn(handle)
+-- Enroll only inside the actual, already-owned cleanup expansion. A retained
+-- cancellation command gets a fresh operation; old sibling effect handles must
+-- never be migrated into this one. This association grants no hand admission,
+-- queue editing, native retry or independent editor-disabled ownership.
+function Settlement.requireBorrowedReturnSuccess(handle, prerequisites)
+    if type(prerequisites) ~= "table" or getmetatable(prerequisites) ~= nil then return false end
+    local size, previous, seen = #prerequisites, {}, {}
+    if size == 0 or size > MAX_EXECUTION_MEMBERS then return false end
+    for key in pairs(prerequisites) do
+        if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > size then return false end
+    end
+    for index = 1, size do
+        local prerequisite = stepProof(prerequisites[index])
+        if not prerequisite or seen[prerequisite] then return false end
+        seen[prerequisite], previous[index] = true, prerequisite
+    end
     local step = stepProof(handle)
+    local binding = step and step.borrowing
+    local candidate, scope = binding and binding.candidate, binding and binding.scope
+    if not candidate or candidate.returnSuccess then return false end
+    candidate.returnSuccess = returnSuccessEnrolling
+    local ok, accepted = pcall(function()
+        if not operationLive(step.operation) or not borrowingLive(scope) or candidate.phase ~= "active" or candidate.ambiguous
+            or candidate.returning or candidate.plannedReturn then return false end
+        local queue, actor = scope.queue, scope.character
+        local parent = queue and queue.current
+        local record = parent and operation(actor, parent.toolkitQueueOperation)
+        local owner = record and record.actions[parent]
+        if not owner or queue.queue[1] ~= parent or parent.character ~= actor
+            or parent.Type ~= "ISQueueActionsAction" or not requiredCleanup(parent, true) then return false end
+        local authorized = false
+        for _, prerequisite in ipairs(owner.prerequisites or {}) do if prerequisite == step then authorized = true end end
+        if not authorized then return false end
+        local getter = getActivatedMods
+        if type(getter) ~= "function" then return false end
+        local function provider()
+            if P4TidyUpMeister ~= nil or getActivatedMods ~= getter then return false end
+            local ok, mods = pcall(getter)
+            if not ok or not mods or type(mods.contains) ~= "function" then return false end
+            local checked, selected = pcall(mods.contains, mods, "P4TidyUpMeister")
+            return checked and selected == false and getActivatedMods == getter and P4TidyUpMeister == nil
+        end
+        for _, prerequisite in ipairs(previous) do
+            if prerequisite == owner or prerequisite.operation ~= record or prerequisite.phase ~= "cleanup"
+                or not prerequisite.preparation or not prerequisite.preparation.requireEffect
+                or prerequisite.borrowing or prerequisite.returning or prerequisite.started
+                or prerequisite.action.action or prerequisite.action.started
+                or prerequisite.action.toolkitQueueOperation ~= record.token then return false end
+        end
+        local specifications = {{owner=candidate, exact=true}}
+        for _, prerequisite in ipairs(previous) do
+            specifications[#specifications+1] = {owner=prerequisite.action, exact=true}
+        end
+        local watch = executionProof.captureBindings(specifications)
+        if not watch then return false end
+        if not provider() or queue.current ~= parent or queue.queue[1] ~= parent
+            or operation(actor, parent.toolkitQueueOperation) ~= record or not requiredCleanup(parent, true)
+            or candidate.returnSuccess ~= returnSuccessEnrolling or candidate.phase ~= "active" or candidate.returning or candidate.plannedReturn then return false end
+        -- Metadata callbacks may mutate public action fields or the caller array;
+        -- only the frozen private steps above can become this exact loan's gate.
+        for _, prerequisite in ipairs(previous) do
+            if record.actions[prerequisite.action] ~= prerequisite or prerequisite.operation ~= record
+                or prerequisite.phase ~= "cleanup" or prerequisite.started or prerequisite.action.action
+                or prerequisite.action.started or prerequisite.action.toolkitQueueOperation ~= record.token
+                or not prerequisite.preparation or not prerequisite.preparation.requireEffect
+                or not preparationGuard(prerequisite.action) then return false end
+        end
+        if not provider() or queue.current ~= parent or queue.queue[1] ~= parent
+            or operation(actor, parent.toolkitQueueOperation) ~= record or not operationLive(step.operation)
+            or not borrowingLive(scope) or candidate.returnSuccess ~= returnSuccessEnrolling then return false end
+        if not watch() or queue.current ~= parent or queue.queue[1] ~= parent
+            or candidate.returnSuccess ~= returnSuccessEnrolling or candidate.phase ~= "active"
+            or candidate.ambiguous or candidate.returning or candidate.plannedReturn then return false end
+        candidate.returnSuccess = {candidate = candidate, scope = scope, loan = step, record = record,
+            actor = actor, queue = queue, list = queue.queue, generation = queue.toolkitOperationGeneration or 0,
+            previous = previous, provider = provider, state = "pending"}
+        return true
+    end)
+    if candidate.returnSuccess == returnSuccessEnrolling then candidate.returnSuccess = nil end
+    return ok and accepted == true
+end
+returnSuccessBlocked = function(plan, reason)
+    if plan.state == "retired" then return false end
+    if plan.failure then plan.state = "blocked"; return true end
+    plan.state = "blocked"
+    local liveOwner = ISTimedActionQueue.queues[plan.actor] == plan.queue
+        and plan.queue.queue == plan.list and (plan.queue.toolkitOperationGeneration or 0) == plan.generation
+        and operationLive(plan.record) and operationLive(plan.loan.operation) and borrowingLive(plan.scope)
+    liveOwner = liveOwner and ISTimedActionQueue.queues[plan.actor] == plan.queue
+        and plan.queue.queue == plan.list and (plan.queue.toolkitOperationGeneration or 0) == plan.generation
+    -- Fetch the current bucket AFTER callback-bearing owner checks. A reset
+    -- during validation must not publish into a detached historical bucket.
+    local bucket = returnFailures[plan.actor]
+    if not bucket then bucket = {count = 0, revision = 0, entries = {}, queue = plan.queue}; returnFailures[plan.actor] = bucket end
+    if bucket.count >= MAX_RETURN_FAILURES then return false end
+    -- Historical unpaid identity survives missing/moved replicas. This notice
+    -- grants no effect or Keep authority; Keep resolves the current exact item.
+    failureSerial = failureSerial + 1
+    local failure = {kind = "cleanup-unallocated", id = failureSerial, plan = plan,
+        candidate = plan.candidate, scope = plan.scope, record = plan.record,
+        queue = plan.queue, generation = plan.generation, itemId = plan.candidate.id,
+        itemType = plan.candidate.fullType, source = plan.candidate.destination,
+        destination = plan.candidate.source, title = plan.candidate.fullType, reason = reason, state = liveOwner and "blocked" or "revoked"}
+    plan.state, plan.failure = "blocked", failure
+    bucket.entries[#bucket.entries + 1] = failure
+    if liveOwner then
+        if bucket.activeQueue ~= plan.queue or bucket.activeGeneration ~= plan.generation then
+            bucket.activeQueue, bucket.activeGeneration, bucket.activeCount = plan.queue, plan.generation, 0
+        end
+        bucket.activeCount = bucket.activeCount + 1
+    end
+    bucket.count, bucket.revision = bucket.count + 1, bucket.revision + 1
+    return true
+end
+local function inspectReturnSuccess(plan)
+    if plan.state == "blocked" or plan.state == "retired" then return "blocked" end
+    local function current()
+        return plan.candidate.returnSuccess == plan and ISTimedActionQueue.queues[plan.actor] == plan.queue
+            and plan.queue.character == plan.actor and plan.queue.queue == plan.list
+            and (plan.queue.toolkitOperationGeneration or 0) == plan.generation
+            and operationLive(plan.record) and operationLive(plan.loan.operation) and borrowingLive(plan.scope)
+            and plan.candidate.phase == "active" and not plan.candidate.ambiguous and plan.provider()
+    end
+    if not current() then returnSuccessBlocked(plan, "cleanup-owner"); return "blocked" end
+    local waiting = false
+    for _, prerequisite in ipairs(plan.previous) do
+        if prerequisite.operation ~= plan.record or plan.record.actions[prerequisite.action] ~= prerequisite
+            or prerequisite.action.toolkitQueueOperation ~= plan.record.token or prerequisite.phase ~= "cleanup"
+            or not prerequisite.preparation or not prerequisite.preparation.requireEffect
+            or not preparationGuard(prerequisite.action) then
+            returnSuccessBlocked(plan, "cleanup-source"); return "blocked"
+        end
+        local state = preparationState(prerequisite)
+        if prerequisite.state ~= "earned" then
+            local native = prerequisite.action.action
+            local stopped = prerequisite.started and native and not plan.actor:getCharacterActions():contains(native)
+                and not prerequisite.preparation.finished
+            if state == "failed" or state == "ready" and prerequisite.started or stopped then
+                returnSuccessBlocked(plan, "cleanup-outcome"); return "blocked"
+            end
+            waiting = true
+        end
+    end
+    if not current() then returnSuccessBlocked(plan, "cleanup-owner"); return "blocked" end
+    return waiting and "waiting" or "earned"
+end
+
+keepReturnSuccess = function(character, bucket, index, failure)
+    if failure.keeping then return false end
+    failure.keeping = true
+    local ok, accepted = pcall(function()
+        local plan, candidate = failure.plan, failure.candidate
+        local function current()
+            return plan and plan.failure == failure and plan.state == "blocked" and failure.state == "blocked"
+                and candidate == plan.candidate and candidate.returnSuccess == plan and candidate.phase == "active"
+                and not candidate.returning and not candidate.plannedReturn and not candidate.ambiguous
+                and returnFailures[character] == bucket and bucket.entries[index] == failure
+                and ISTimedActionQueue.queues[character] == plan.queue and plan.queue.character == character
+                and plan.queue.queue == plan.list and (plan.queue.toolkitOperationGeneration or 0) == plan.generation
+        end
+        if not current() or not plan.provider() or not operationLive(plan.record) or not borrowingLive(plan.scope) then return false end
+        local root = character:getInventory()
+        local item = root:getItemById(failure.itemId)
+        if not sameMember(item, candidate) or item:getContainer() ~= root
+            or root ~= candidate.destination or sharedBorrowing(plan.scope, candidate, {remaining=MAX_EXECUTION_BORROWING_WORK}) then return false end
+        if not operationLive(plan.record) or not borrowingLive(plan.scope) or not plan.provider() then return false end
+        -- No callback or item getter follows this final private identity check.
+        if not current() then return false end
+        candidate.phase, plan.state = "waived", "retired"
+        return true
+    end)
+    failure.keeping = nil
+    return ok and accepted == true
+end
+
+returnSuccessState = function(plan)
+    if plan == returnSuccessEnrolling or plan.evaluating then return "busy" end
+    plan.evaluating = true
+    local ok, state = pcall(inspectReturnSuccess, plan)
+    plan.evaluating = nil
+    if not ok then returnSuccessBlocked(plan, "cleanup-source"); return "blocked" end
+    return state
+end
+
+local function enqueueBorrowedReturn(step)
     local binding = step and step.borrowing
     if not binding or not operationLive(step.operation) then return end
     local scope, candidate = binding.scope, binding.candidate
@@ -3235,15 +3464,45 @@ function Settlement.enqueueBorrowedReturn(handle)
         if prerequisite == step then authorized = true; break end
     end
     if not authorized then return end
+    local dependency = candidate.returnSuccess
+    if dependency and returnSuccessState(dependency) ~= "earned" then
+        -- This is the actual one-shot cleanup expansion, not a waiting query.
+        -- No scheduler will revisit a command that completes without children.
+        if not returnSuccessBlocked(dependency, "cleanup-unresolved") then return nil, "debt_unavailable" end
+        return nil, "cleanup_dependency"
+    end
     local action = makeReturn(queue, candidate.id, {fullType = candidate.fullType, destination = candidate.source, borrowed = candidate},
         ISInventoryPaneContextMenu.getContainers(queue.character))
-    if not action or action.Type ~= "ISInventoryTransferAction" then return end
+    if not action or action.Type ~= "ISInventoryTransferAction" then
+        if dependency and not returnSuccessBlocked(dependency, "cleanup-return") then return nil, "debt_unavailable" end
+        return
+    end
+    if dependency and (candidate.returnSuccess ~= dependency or returnSuccessState(dependency) ~= "earned"
+        or queue.current ~= parent or queue.queue[1] ~= parent) then return end
     action.toolkitQueueOperation = parent.toolkitQueueOperation
     -- Bind before enqueue: even an immediate native start must see its owner.
     if not Settlement.inheritCleanup(action, parent) then return end
+    if dependency and (candidate.returnSuccess ~= dependency or returnSuccessState(dependency) ~= "earned"
+        or queue.current ~= parent or queue.queue[1] ~= parent) then return end
     bindPlannedReturn(action, scope, candidate)
     ISTimedActionQueue.add(action)
     return action
+end
+
+function Settlement.enqueueBorrowedReturn(handle)
+    local step = stepProof(handle)
+    local candidate = step and step.borrowing and step.borrowing.candidate
+    local plan = candidate and candidate.returnSuccess
+    if not plan then return enqueueBorrowedReturn(step) end
+    if plan == returnSuccessEnrolling or plan.issuing or plan.evaluating then return nil, "cleanup_busy" end
+    plan.issuing = true
+    local ok, action, reason = pcall(enqueueBorrowedReturn, step)
+    plan.issuing = nil
+    if not ok then
+        if not returnSuccessBlocked(plan, "cleanup-source") then return nil, "debt_unavailable" end
+        return nil, "cleanup_dependency"
+    end
+    return action, reason
 end
 
 -- Called only after the current native step/Host receipt has settled. Pickup
@@ -3255,6 +3514,10 @@ function Settlement.finish(queue, request, discard)
         or current.character ~= queue.character or current.toolkitQueueOperation ~= token then return false end
     local record = operation(current.character, token, true)
     if not record or record.settlement then return false end
+    for _, binding in ipairs(record.borrowings) do
+        local plan = binding.candidate.returnSuccess
+        if plan and (plan == returnSuccessEnrolling or plan.evaluating or plan.issuing) then return false end
+    end
     local state = {phase = "body", obligations = {}, discarded = 0}
     record.settlement, record.phase = state, "body"
     request.settlement = state
@@ -3272,9 +3535,19 @@ function Settlement.finish(queue, request, discard)
         observed[candidate.id] = true
         if borrowingLive(scope) and candidate.phase == "active" and not candidate.ambiguous
             and not candidate.returning and not candidate.plannedReturn and not sharedBorrowing(scope, candidate) then
+            if candidate.returnSuccess then
+                -- Cancellation cannot manufacture a return around the bound
+                -- cleanup's exact success outcome, even after its rows retire.
+                if returnSuccessState(candidate.returnSuccess) ~= "earned" then
+                    returnSuccessBlocked(candidate.returnSuccess, "cleanup-canceled")
+                else
+                    returns[candidate.id] = {fullType = candidate.fullType, destination = candidate.source, borrowed = candidate, scope = scope}
+                end
+            else
             local previous = returns[candidate.id]
             if previous then previous.ambiguous = true
             else returns[candidate.id] = {fullType = candidate.fullType, destination = candidate.source, borrowed = candidate, scope = scope} end
+            end
         end
     end
     local function rememberReturn(item, destination)

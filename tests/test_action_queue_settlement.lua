@@ -2370,6 +2370,150 @@ do
     assert(s.settlement.completionState(s.queue, action) == 'ready' and s.settlement.earned(handle))
 end
 
+-- Cleanup observation must keep its earned cleanup ownership. Merely queueing
+-- a native restore, its callback, a terminal ACK or replicated hands alone cannot
+-- release the following return/tail. No producer is enabled by this API.
+local function cleanupEffectFixture(client)
+    local s = setup(client)
+    PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+    local preparation = s.action(); preparation.Type, preparation.action = 'ISUnequipAction', {}
+    s.queue.current, s.queue.queue = preparation, {preparation, s.tail}
+    if client then
+        preparation.toolkitNativeTransaction, preparation.toolkitNativeKind = 81, preparation.Type
+        s.receipt(preparation, 'started')
+    end
+    local paid = s.settlement.track(preparation, 'prepare')
+    local proof = s.settlement.captureEffect(preparation)
+    assert(s.settlement.bindEffect(paid, proof))
+    if client then s.receipt(preparation, 'completed') end
+    assert(s.settlement.earn(paid, proof, true))
+    local action = s.action(); action.Type = 'ISEquipWeaponAction'
+    assert(s.settlement.cleanupAfter(action, {paid}))
+    local observer
+    PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
+    PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function() end}
+    local state = {effect = false, guard = true, captures = 0}
+    local specification = {
+        guard = function(value) return value == action and state.guard end,
+        capture = function() state.captures = state.captures + 1; if not state.empty then return {original = true} end end,
+        observed = function(_, before) assert(before.original); return state.effect end,
+    }
+    s.queue.current, s.queue.queue = action, {action, s.tail}
+    return s, action, state, specification, function() return observer end
+end
+for _, client in ipairs({false, true}) do
+    for _, outcome in ipairs({'completed', 'rejected', 'missing-start', 'callback-failure', 'changed-guard', 'empty', 'reset'}) do
+        local s, action, state, specification, observed = cleanupEffectFixture(client)
+        local handle = assert(s.settlement.observeCleanupEffect(action, specification))
+        assert(handle == s.settlement.track(action, 'body'), 'cleanup observer replaced its private step')
+        assert(not s.settlement.observeCleanupEffect(action, specification), 'cleanup observer registered twice')
+        local steps = s.settlement.operationState(action).steps
+        assert(steps[2].phase == 'cleanup' and steps[2].observedCleanup and not steps[2].observedPreparation,
+            'cleanup observation demoted its role or erased prerequisites')
+        action.action = {}
+        state.empty = outcome == 'empty'
+        local observer = observed()
+        if outcome ~= 'missing-start' then s.settlement.started(action); observer.started(action) end
+        if client then
+            action.toolkitNativeTransaction, action.toolkitNativeKind = 82, action.Type
+            s.receipt(action, 'started')
+        end
+        observer.begin(action, 'perform')
+        state.effect = true
+        if outcome == 'changed-guard' then state.guard = false end
+        observer.finish(action, 'perform', outcome ~= 'callback-failure')
+        if not client then observer.finish(action, 'complete', outcome ~= 'callback-failure') end
+        if client then s.receipt(action, outcome == 'rejected' and 'rejected' or 'completed') end
+        if outcome == 'reset' then s.queue.toolkitOperationGeneration = 1 end
+        local expected = (outcome == 'completed' or outcome == 'rejected') and 'ready' or 'failed'
+        -- A reset retires the private operation, so normal lookup makes no
+        -- claim. It must never leave an earned handle for a new generation.
+        if outcome ~= 'reset' then
+            assert(s.settlement.completionState(s.queue, action) == expected, outcome .. ': cleanup completion gate')
+        end
+        assert(s.settlement.earned(handle) == (outcome == 'completed' or not client and outcome == 'rejected'),
+            outcome .. ': cleanup earned without its exact native effect and outcome')
+        assert(state.captures == (outcome == 'missing-start' and 0 or 1))
+    end
+end
+-- Cancellation retains required cleanup under a FRESH operation. Observation
+-- handles bound to the retired owner cannot authorize that new execution. A
+-- future producer must enroll its children at their actual cleanup boundary.
+do
+    local s, action, _, specification = cleanupEffectFixture(false)
+    local old = assert(s.settlement.observeCleanupEffect(action, specification))
+    s.queue.current, s.queue.queue = s.current, {s.current, action, s.tail}
+    assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
+    assert(s.queue.queue[2] == action and s.settlement.requiredStep(action)
+        and not s.settlement.earned(old), 'cancellation lost cleanup or revived its old effect handle')
+    local state = s.settlement.operationState(action)
+    assert(state.steps[1].phase == 'cleanup' and not state.steps[1].observedCleanup)
+    local fresh = assert(s.settlement.observeCleanupEffect(action, specification))
+    assert(fresh ~= old and not s.settlement.earned(fresh), 'fresh cleanup borrowed retired observation authority')
+end
+-- Host completion may arrive before hand replication, or the physical hand
+-- write may precede authority. Both halves must meet at this same exact step.
+for _, first in ipairs({'receipt', 'effect'}) do
+    local s, action, state, specification, observed = cleanupEffectFixture(true)
+    local handle = assert(s.settlement.observeCleanupEffect(action, specification))
+    action.action = {}; s.settlement.started(action); observed().started(action)
+    action.toolkitNativeTransaction, action.toolkitNativeKind = 83, action.Type
+    s.receipt(action, 'started'); observed().begin(action, 'perform'); observed().finish(action, 'perform', true)
+    if first == 'receipt' then s.receipt(action, 'completed') else state.effect = true end
+    assert(s.settlement.completionState(s.queue, action) == 'waiting' and not s.settlement.earned(handle),
+        first .. ': only half the restore outcome released continuation')
+    if first == 'effect' then s.receipt(action, 'completed') else state.effect = true end
+    assert(s.settlement.completionState(s.queue, action) == 'ready' and s.settlement.earned(handle))
+end
+-- A native stop is not a completed hand restoration. This API grants no
+-- successor permission when native stopped-action advancement takes its own
+-- path; a future producer needs a separate owned failure/dependency barrier.
+for _, client in ipairs({false, true}) do
+    local s, action, _, specification, observed = cleanupEffectFixture(client)
+    local handle = assert(s.settlement.observeCleanupEffect(action, specification))
+    action.action = {}; s.settlement.started(action); observed().started(action)
+    if client then
+        action.toolkitNativeTransaction, action.toolkitNativeKind = 84, action.Type
+        s.receipt(action, 'started')
+    end
+    assert(not observed().begin(action, 'stop'))
+    observed().finish(action, 'stop', true)
+    if client then s.receipt(action, 'canceled') end
+    assert(not s.settlement.earned(handle), 'native stop was mistaken for restored hands')
+end
+-- Installing the common observer may invoke metadata/registration callbacks.
+-- They cannot replace the admitted action, private role or source specification
+-- between the first ownership check and publishing the observation.
+for _, mutation in ipairs({'kind', 'role', 'owner', 'source', 'specification', 'specification-meta'}) do
+    local s, action, _, specification = cleanupEffectFixture(false)
+    local original = PZSurvivorToolkit.ActionQueueLifecycle.registerObserver
+    PZSurvivorToolkit.ActionQueueLifecycle.registerObserver = function(...)
+        local result = original(...)
+        if mutation == 'kind' then action.Type = 'ISUnequipAction'
+        elseif mutation == 'role' then s.settlement.track(action, 'prepare')
+        elseif mutation == 'owner' then action.toolkitQueueOperation = {}
+        elseif mutation == 'source' then PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return nil end
+        elseif mutation == 'specification-meta' then
+            specification.guard = nil
+            setmetatable(specification, {__index = function() error('replacement specification getter executed') end})
+        else specification.guard = function() return true end end
+        return result
+    end
+    assert(not s.settlement.observeCleanupEffect(action, specification), mutation .. ': registration reentry bound stale cleanup')
+end
+for _, invalid in ipairs({'body', 'unearned', 'transfer', 'allocated', 'started', 'changed-kind'}) do
+    local s, action, _, specification = cleanupEffectFixture(false)
+    if invalid == 'body' then action = s.action(); action.Type = 'ISEquipWeaponAction'
+    elseif invalid == 'unearned' then
+        action = s.action(); action.Type = 'ISEquipWeaponAction'
+        assert(s.settlement.cleanupAfter(action, {}))
+    elseif invalid == 'transfer' then action.Type = 'ISInventoryTransferAction'
+    elseif invalid == 'allocated' then action.action = {}
+    elseif invalid == 'started' then s.settlement.started(action)
+    else action.Type = 'ISUnequipAction' end
+    assert(not s.settlement.observeCleanupEffect(action, specification), invalid .. ': manufactured cleanup observation')
+end
+
 -- Normal and cancelled cleanup consume the same private borrowing episode.
 -- Scheduling a return is not payment and cannot schedule it a second time.
 for _, client in ipairs({false, true}) do
@@ -4088,3 +4232,8 @@ do
     end
 end
 print('Optional producer: earned-only staging, one-use native insertion, pending Keep, preallocation disposition and unallocated debts passed.')
+
+-- Shared private-ledger fixtures for the focused return-success vectors.
+if ReturnSuccessVectors then
+    ReturnSuccessVectors({setup=setup,ownedBatchFixture=ownedBatchFixture,cleanupEffectFixture=cleanupEffectFixture,ownReturns=ownReturns})
+end
