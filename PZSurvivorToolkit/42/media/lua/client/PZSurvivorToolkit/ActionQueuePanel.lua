@@ -244,7 +244,7 @@ function Panel:updateBlockedReturns()
     self.keepReturnButton:setTitle(getText("UI_PZSurvivorToolkit_queue_return_" .. (revoked and "forget" or "keep"), title, self.returnIndex or 1, info.count))
     self.keepReturnButton:setEnable(entry ~= nil and (entry.state == "blocked" or revoked))
     local reason = revoked and "revoked" or entry and entry.reason
-    if reason ~= "revoked" and reason ~= "admission" and reason ~= "server" and reason ~= "unmoved" then reason = "unavailable" end
+    if reason ~= "revoked" and reason ~= "admission" and reason ~= "server" and reason ~= "unmoved" and reason ~= "producer" then reason = "unavailable" end
     local tooltip = getText("UI_PZSurvivorToolkit_queue_return_" .. reason)
     if self.returnRejected and reason ~= "unavailable" then tooltip = tooltip .. " <LINE> " .. getText("UI_PZSurvivorToolkit_queue_return_unavailable") end
     self.keepReturnButton:setTooltip(tooltip)

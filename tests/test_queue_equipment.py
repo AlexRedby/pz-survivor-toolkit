@@ -1393,8 +1393,8 @@ local function run(kind,fault)
  toolkit.ActionQueueOperations={perform=function()end,deferCompletion=lifecycle.deferCompletion}
  toolkit.ActionQueueDefinitions={inspect=function(value)if value.srcContainer==inventory then return {},'compat.tidy-transfers' end;return {} end}
  local callback
- toolkit.ActionQueueTidyIntent={status=function()return true end,begin=function()end,finish=function()end,
-  observeTransfers=function(value)callback=value end}
+ toolkit.ActionQueueTidyIntent={status=function()return true end,begin=function()end,finish=function()end}
+ toolkit.ActionQueueTransfers={observeTransfers=function(value)callback=value end}
  toolkit.ActionQueueCarts=nil
  toolkit.ActionQueueCompat={isInstalled=function()return false end,verifySources=function()return false end}
  toolkit.ActionQueueAcknowledgements={}

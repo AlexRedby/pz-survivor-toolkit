@@ -3,20 +3,45 @@ require "PZSurvivorToolkit/ActionQueueAcknowledgements"
 local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
 local Proof = require "PZSurvivorToolkit/SourceProof"
 local proofClosure = Proof and Proof.closure
+local Transfers = require "PZSurvivorToolkit/ActionQueueTransfers"
 local Intent = {}
 PZSurvivorToolkit.ActionQueueTidyIntent = Intent
 local states, watching = setmetatable({}, {__mode='k'}), setmetatable({}, {__mode='k'})
 local transfers=setmetatable({}, {__mode='k'})
-local mergeOriginal,mergeObserver
-local mergeListeners={}
-local transferEvent
 local scope, guard, wrappedUI, installed
 local serial=0
+local ownProvider=false
+local ownWaiting={}
+local ownPending={}
+local awaitOwn
+local function forgetOwn(record)
+    local bucket=ownWaiting[record.player]
+    if bucket and bucket.records[record.action]==record then
+        bucket.records[record.action]=nil;bucket.count=bucket.count-1
+        if bucket.count==0 then ownWaiting[record.player]=nil end
+    end
+    local pending=ownPending[record.player]
+    if pending and pending.records[record.action]==record then
+        pending.records[record.action]=nil;pending.count=pending.count-1
+        if pending.count==0 then ownPending[record.player]=nil end
+    end
+    if ownProvider and not ownPending[record.player]then states[record.player]=nil end
+end
+local function rememberOwn(record)
+    if not ownProvider or record.kind~='equip'then return end
+    local bucket=ownPending[record.player]
+    if not bucket then
+        local queue=ISTimedActionQueue.queues[record.player]
+        bucket={records={},count=0,queue=queue,generation=queue and(queue.toolkitOperationGeneration or 0)}
+        ownPending[record.player]=bucket
+    end
+    if not bucket.records[record.action]then bucket.records[record.action]=record;bucket.count=bucket.count+1 end
+end
 local bindingCapture=Proof and Proof.captureBindings
 local bindingType,bindingMeta,bindingRaw,bindingPairs,bindingEach,bindingEqual=type,getmetatable,rawget,pairs,ipairs,rawequal
 local bindingGlobals,bindingToolkit,bindingFilename=_G,PZSurvivorToolkit,getFilenameOfClosure
 local bindingState,guardBinding={revision=0},nil
-local queueObserverFactory
+local transferListenerFactory
 local function bindingOwn(owner,key)
     if bindingType(owner)~='table'then return nil end
     if bindingMeta(owner)==nil then local value=bindingRaw(owner,key);return value end
@@ -41,11 +66,14 @@ local function clear(player)
     if value then for action in pairs(value.pending) do watching[action]=nil end end
     for action in pairs(transfers) do if action.character==player then transfers[action]=nil end end
     states[player]=nil
+    ownWaiting[player]=nil
+    ownPending[player]=nil
 end
-local function state(player)
+local function state(player,record)
     local queue=ISTimedActionQueue.getTimedActionQueue(player)
     local value=states[player]
     if not value or value.queue~=queue then clear(player);value={queue=queue,pending={},pickups={},returnIntents={},hands={},worn={},attached={},activation={},versions={},idle=0};states[player]=value end
+    if record then rememberOwn(record)end
     return value
 end
 -- A committed return waiver is deliberate inventory intent. Its publication
@@ -78,6 +106,7 @@ function Intent.keepReturn(action,handle)
         or inventory:getItemById(retained.item:getID())~=retained.item then return false end
     local owner=retained.owner
     if owner and (type(owner.id)~='number' or type(owner.fullType)~='string') then return false end
+    if ownProvider then return true end -- No external provider can re-create this waived return.
     local value=state(player)
     value.returnIntents[retained.item:getID()]={item=identity(retained.item),source=inventory,destination=retained.destination,
         generation=retained.generation,owner=owner and {id=owner.id,kind=owner.fullType} or nil}
@@ -141,11 +170,26 @@ local function consumeKeptReturns(value,consumed)
     end
     return count
 end
+-- Only the live private observer can publish a confirmed explicit equipment
+-- intent. This DTO describes identity; Settlement independently proves pickup.
+function Intent.confirmedEquipmentIntent(action,receipt)
+    local record=watching[action]
+    if not record or not guard or not guard(record.executor or action) then return end
+    if watching[action]~=record or record.action~=action or record.kind~='equip'
+        or not record.accepted or not record.finished or not record.effect
+        or not record.nativeConfirmed or record.confirmedProof~=receipt or record.proof~=receipt then return end
+    return {id=record.item.id,fullType=record.item.kind}
+end
 local function confirm(record)
+    if ownProvider then awaitOwn(record)end
     local action,player=record.executor or record.action,record.player
     if not record.accepted or not record.finished or not record.effect or not guard(action) then return end
     local item=resolve(player,record.item)
-    if not item or not Settlement.confirmEffect(record.proof, true) then return end
+    if not item then return end
+    if not record.nativeConfirmed then
+        if not Settlement.confirmEffect(record.proof,true) then return end
+        record.nativeConfirmed,record.confirmedProof=true,record.proof
+    elseif record.confirmedProof~=record.proof then return end
     local value=state(player)
     local function remember(group,slot,ref)
         local key=group..':'..tostring(slot)
@@ -172,7 +216,15 @@ local function confirm(record)
         remember('attached',action.slot,record.item)
     end
     if record.kind=='equip' and item:canBeActivated() then value.activation[record.item.id]={item=record.item,activated=record.activated} end
+    if record.kind=='equip' and type(Settlement.retainExplicitEquipment)=='function' then
+        local ok,retained=pcall(Settlement.retainExplicitEquipment,record.action,record.proof)
+        -- Native equipment may be visible before its pickup receipt. Keep the
+        -- original private observation; never consume its effect proof twice.
+        if ok and retained==nil then return false end
+    end
     value.pending[record.action],watching[record.action]=nil,nil
+    forgetOwn(record)
+    return true
 end
 local function captureBefore(action,record)
     local primary,secondary=action.character:getPrimaryHandItem(),action.character:getSecondaryHandItem()
@@ -205,83 +257,57 @@ local function transfer(action)
     if not batch then batch={records={}};transfers[action]=batch end
     return batch
 end
--- Observe the native merge before table.wipe destroys the child action's identity.
-function Intent.observeTransfers(onMerged, canObserve, callbacks, sourceFactory)
-    if type(onMerged)=='function' then
-        local present=false
-        for _,listener in ipairs(mergeListeners) do if listener.callback==onMerged then present=true;break end end
-        if not present then
-            mergeListeners[#mergeListeners+1]={callback=onMerged,canObserve=canObserve,events=callbacks,sourceFactory=sourceFactory}
-            bindingState.revision=bindingState.revision+1
+-- Explicit grab candidates stay private and live only across one native merge.
+local function canObserveTransfers(action)
+    return guard and guard(action) or false
+end
+local transferCallbacks={}
+function transferCallbacks.merging(action)
+    if not guard or not guard(action) then return end
+    local queue=ISTimedActionQueue.getTimedActionQueue(action.character)
+    local candidates={}
+    for _,child in ipairs(queue.queue)do
+        local record=watching[child]
+        if child~=action and record and record.kind=='grab' and guard(child)
+            and child.srcContainer==action.srcContainer and child.destContainer==action.destContainer then
+            candidates[#candidates+1]=record
         end
     end
-    if mergeObserver or type(ISInventoryTransferAction.checkQueueList)~='function' then return end
-    mergeOriginal=ISInventoryTransferAction.checkQueueList
-    mergeObserver=function(action,...)
-        local original = guard and guard(action)
-        local observation = original
-        if not observation then
-            for _,listener in ipairs(mergeListeners) do
-                if not listener.failed and type(listener.canObserve)=='function' then
-                    local ok,accepted=pcall(listener.canObserve,action)
-                    if not ok then listener.failed=true
-                    elseif accepted==true then observation=true end
+    return candidates
+end
+local function transferMerged(action,candidates)
+    local queue=ISTimedActionQueue.getTimedActionQueue(action.character)
+    for _,record in ipairs(candidates or {})do
+        if queue:indexOf(record.action)==-1 then
+            for _,group in ipairs(action.queueList or {})do for _,item in ipairs(group.items)do
+                if same(item,record.item)then
+                    record.executor=action;record.enqueued=true
+                    transfer(action).records[record.item.id]=record
                 end
-            end
+            end end
         end
-        if not observation then return mergeOriginal(action,...) end
-        local queue=ISTimedActionQueue.getTimedActionQueue(action.character)
-        local candidates={}
-        for _,child in ipairs(queue.queue) do
-            local record=watching[child]
-            if original and child~=action and record and record.kind=='grab' and guard(child)
-                and child.srcContainer==action.srcContainer and child.destContainer==action.destContainer then
-                candidates[#candidates+1]=record
-            end
-        end
-        transferEvent('merging',action)
-        local result=pack(mergeOriginal(action,...))
-        -- Observation cannot abort native perform and cause the same transfer to
-        -- be retried. Quarantine a failed listener; never revive its proof here.
-        for _,listener in ipairs(mergeListeners) do
-            if not listener.failed then listener.failed=not pcall(listener.callback,action) end
-        end
-        for _,record in ipairs(candidates) do
-            if queue:indexOf(record.action)==-1 then
-                for _,group in ipairs(action.queueList or {}) do for _,item in ipairs(group.items) do
-                    if same(item,record.item) then
-                        record.executor=action;record.enqueued=true
-                        transfer(action).records[record.item.id]=record
-                    end
-                end end
-            end
-        end
-        local batch=transfers[action]
-        -- MP calls this again AFTER consuming its group; retain that group's receipt.
-        if original and batch and batch.attempted and not isClient() then batch.attempted=groupItems(action) end
-        return unpack(result,1,result.n)
     end
-    ISInventoryTransferAction.checkQueueList=mergeObserver
+    local batch=transfers[action]
+    -- Host merges AFTER consuming its group; SP refreshes the attempted members.
+    if candidates and batch and batch.attempted and not isClient()then batch.attempted=groupItems(action)end
 end
-function Intent.isQueueObserver(previous,replacement)
-    return previous==mergeOriginal and replacement==mergeObserver and replacement~=nil
-end
--- Every listener is vouched for by its source owner's exact private record.
--- The dispatcher authenticates factory identities before any factory is called;
--- the returned composition invokes only the owners' prepared pure leases.
-queueObserverFactory=function(previous,replacement,action,trustedFactory)
+-- Authenticate this listener's private state and nested guard owner separately
+-- from the generic dispatch registry. No private record escapes this factory.
+transferListenerFactory=function(action,callback,canObserve,events,trustedFactory)
     if bindingType(action)~='table'or bindingType(trustedFactory)~='function'
-        or not bindingEqual(previous,mergeOriginal)or not bindingEqual(replacement,mergeObserver)or replacement==nil
+        or not bindingEqual(callback,transferMerged)or not bindingEqual(canObserve,canObserveTransfers)
+        or not bindingEqual(events,transferCallbacks)or not guardBinding
         or bindingType(bindingCapture)~='function'or bindingMeta(bindingGlobals)~=nil or bindingMeta(bindingToolkit)~=nil
         or bindingMeta(Intent)~=nil or bindingMeta(Proof)~=nil
         or not bindingEqual(bindingOwn(bindingGlobals,'PZSurvivorToolkit'),bindingToolkit)
         or not bindingEqual(bindingOwn(bindingGlobals,'getFilenameOfClosure'),bindingFilename)
         or not bindingEqual(bindingOwn(bindingToolkit,'ActionQueueTidyIntent'),Intent)
-        or not bindingEqual(bindingOwn(Intent,'queueObserverBinding'),queueObserverFactory)
+        or not bindingEqual(bindingOwn(Intent,'transferListenerBinding'),transferListenerFactory)
         or not bindingEqual(bindingOwn(Proof,'captureBindings'),bindingCapture)then return nil end
     local specifications={{owner=bindingGlobals,keys={'PZSurvivorToolkit','getFilenameOfClosure'}},
-        {owner=bindingToolkit,keys={'ActionQueueTidyIntent'}},{owner=Intent,keys={'queueObserverBinding'}},
-        {owner=Proof,keys={'captureBindings'}},{owner=bindingState,keys={'revision'}},{owner=mergeListeners,exact=true},
+        {owner=bindingToolkit,keys={'ActionQueueTidyIntent'}},{owner=Intent,keys={'transferListenerBinding'}},
+        {owner=Proof,keys={'captureBindings'}},{owner=bindingState,keys={'revision'}},
+        {owner=transferCallbacks,exact=true},
         {owner=watching,keys={action}},{owner=transfers,keys={action}}}
     local leases,pendingFactories={},{}
     if guard then
@@ -301,13 +327,6 @@ queueObserverFactory=function(previous,replacement,action,trustedFactory)
         end
         pendingFactories[#pendingFactories+1]={factory=guardBinding.sourceFactory,second=guardBinding.valid,third=guardBinding.wrapper}
     end
-    for _,listener in bindingEach(mergeListeners)do
-        if bindingType(listener.sourceFactory)~='function'then return nil end
-        specifications[#specifications+1]={owner=listener,exact=true}
-        if listener.events then specifications[#specifications+1]={owner=listener.events,exact=true}end
-        pendingFactories[#pendingFactories+1]={factory=listener.sourceFactory,second=listener.callback,
-            third=listener.canObserve,fourth=listener.events}
-    end
     local record=watching[action]
     local batch=transfers[action]
     if record then specifications[#specifications+1]={owner=record,exact=true}end
@@ -322,8 +341,8 @@ queueObserverFactory=function(previous,replacement,action,trustedFactory)
     if not watch then return nil end
     -- Freeze our own dispatch fields before any owner factory can reenter.
     for _,entry in bindingEach(pendingFactories)do
-        if not trustedFactory(entry.factory)then return nil end
-        local lease=entry.factory(action,entry.second,entry.third,entry.fourth)
+        if not trustedFactory(entry.factory)or not watch()then return nil end
+        local lease=entry.factory(action,entry.second,entry.third,entry.fourth,trustedFactory)
         if bindingType(lease)~='function'then return nil end
         leases[#leases+1]=lease
     end
@@ -331,26 +350,28 @@ queueObserverFactory=function(previous,replacement,action,trustedFactory)
     return function(facts)
         if not watch()then return false end
         for _,lease in bindingEach(leases)do if not lease(facts)then return false end end
-        return true
+        return watch()
     end
 end
-Intent.queueObserverBinding=queueObserverFactory
-transferEvent=function(event,action,...)
-    local observed=false
-    for _,listener in ipairs(mergeListeners) do
-        local callback=listener.events and listener.events[event]
-        if not listener.failed and type(callback)=='function' then
-            local ok,result=pcall(callback,action,...)
-            if not ok then listener.failed=true
-            elseif result==true then observed=true end
+Intent.transferListenerBinding=transferListenerFactory
+function Intent.begin(action,phase)
+    local record=watching[action]
+    local waiting=ownProvider and ownWaiting[action.character]
+    if waiting and phase=='perform'and getmetatable(action)==ISInventoryTransferAction and guard(action)
+        and action.srcContainer==action.character:getInventory()and action.destContainer~=action.srcContainer then
+        -- A newer exact outbound request conservatively retires old finished
+        -- equipment observations. No transfer effect or return waiver is inferred.
+        local value=states[action.character]
+        for _,ref in ipairs(groupItems(action))do
+            for pending,previous in pairs(waiting.records)do
+                if previous.item.id==ref.id and previous.item.kind==ref.kind then
+                    watching[pending]=nil;if value then value.pending[pending]=nil end
+                    forgetOwn(previous)
+                end
+            end
         end
     end
-    return observed
-end
-function Intent.begin(action,phase)
-    local observing=phase=='perform' and transferEvent('begin',action) or false
-    local record=watching[action]
-    if phase=='perform' and getmetatable(action)==ISInventoryTransferAction and guard and guard(action)
+    if not ownProvider and phase=='perform' and getmetatable(action)==ISInventoryTransferAction and guard and guard(action)
         and (record or states[action.character] or transfers[action]) then
         local batch=transfer(action)
         if record and record.kind=='grab' then batch.records[record.item.id]=record end
@@ -361,7 +382,13 @@ function Intent.begin(action,phase)
         end
         return true
     end
-    if not record then return observing end
+    if ownProvider and record and not guard(action)then
+        local value=states[record.player]
+        if value then value.pending[action]=nil end
+        watching[action]=nil;forgetOwn(record)
+        return false
+    end
+    if not record then return false end
     if phase=='perform' and not record.proof then record.proof=Settlement.captureEffect(action) end
     if (phase=='complete' or isClient() and phase=='perform') and not (isClient() and record.started) then
         captureBefore(action,record)
@@ -389,8 +416,56 @@ local function observeEffect(record)
     end
     if record.kind=='equip' and item and item:canBeActivated() then record.activated=item:isActivated() end
 end
+local function pollFinished(record,value)
+    local executor=record.executor or record.action
+    if record.accepted and record.finished and not record.failed and guard(executor)
+        and (not record.effect or resolve(record.player,record.item)) then
+        local status=Settlement.effectState(record.proof,record.effect==true)
+        if status=='waiting'and not record.effect then
+            observeEffect(record);status=Settlement.effectState(record.proof,record.effect==true)
+        end
+        if status=='completed'then return confirm(record)==false
+        elseif status=='waiting'then return true end
+    end
+    value.pending[record.action],watching[record.action]=nil,nil
+    forgetOwn(record)
+    return false
+end
+awaitOwn=function(record)
+    if not ownProvider or record.kind~='equip'or watching[record.action]~=record
+        or not record.accepted or not record.finished or record.failed or not record.proof then return end
+    local bucket=ownWaiting[record.player]
+    if not bucket then bucket={records={},count=0};ownWaiting[record.player]=bucket end
+    if not bucket.records[record.action]then bucket.records[record.action]=record;bucket.count=bucket.count+1 end
+end
+-- Own restoration has no P4 idle driver. Retry only finished, accepted native
+-- equipment receipts; queued rows and the rest of the queue are never scanned.
+function Intent.pollOwn(player)
+    local bucket=ownProvider and ownWaiting[player]
+    local pending=ownProvider and ownPending[player]
+    if not bucket and not pending then return false end
+    local value=states[player]
+    if not value or player:isDead()or ISTimedActionQueue.queues[player]~=value.queue
+        or pending and(pending.queue~=value.queue or pending.generation~=(value.queue.toolkitOperationGeneration or 0))
+        or not guard()then
+        clear(player);return false
+    end
+    if bucket then for action,record in pairs(bucket.records)do
+        if watching[action]==record then pollFinished(record,value)else forgetOwn(record)end
+    end end
+    -- Native/editor removals need no queue membership sweep. Once idle, prune
+    -- only our accumulated unfinished observations, preserving late receipts.
+    if pending and #value.queue.queue==0 then
+        for action,record in pairs(pending.records)do
+            if not record.finished then
+                value.pending[action],watching[action]=nil,nil;forgetOwn(record)
+            end
+        end
+    end
+    if not ownPending[player]then states[player]=nil end
+    return true
+end
 function Intent.finish(action,phase,succeeded)
-    if phase=='perform' then transferEvent('finish',action,succeeded) end
     -- Inventory transfers apply their effects in perform(), including in SP.
     if phase~='complete' and not (phase=='perform' and (isClient() or getmetatable(action)==ISInventoryTransferAction)) then return end
     local player=action.character
@@ -446,6 +521,11 @@ function Intent.finish(action,phase,succeeded)
     record.proof=record.proof or Settlement.captureEffect(action)
     if succeeded then observeEffect(record) else record.failed=true end
     confirm(record)
+    if ownProvider and record.failed then
+        local value=states[player]
+        if value then value.pending[action]=nil end
+        watching[action]=nil;forgetOwn(record)
+    end
 end
 local function capture(action)
     if not scope or action.character~=scope.player or not guard(action) or watching[action]
@@ -473,7 +553,7 @@ local function wrap(owner,name,kind,hotbar)
         for i,record in ipairs(current.records) do
             if result[1] and record.enqueued and (kind~='equip' or i==#current.records) then
                 local action=record.action;record.accepted=true
-                state(record.player).pending[action]=record
+                state(record.player,record).pending[action]=record
                 if record.finished then confirm(record) end
             else watching[record.action]=nil end
         end
@@ -482,9 +562,18 @@ local function wrap(owner,name,kind,hotbar)
     end
     owner[name]=replacement
 end
-function Intent.install(valid,approvedWrapper,sourceFactory)
+local function registerTransferListener()
+    local sourceAdapters=bindingToolkit.ActionQueueItemEditAdapters
+    if sourceAdapters and type(sourceAdapters.registerSourceFactory)=='function'then
+        sourceAdapters.registerSourceFactory(Intent,'transferListenerBinding',transferListenerFactory)
+    end
+end
+function Intent.install(valid,approvedWrapper,sourceFactory,own)
+    registerTransferListener()
     if installed then return end
+    if own==true and(type(valid)~='function'or valid()~=true)then return false end
     installed=true
+    ownProvider=own==true
     wrappedUI=approvedWrapper
     local helpers={}
     for _,entry in ipairs({{ISInventoryPaneContextMenu,'equipWeapon'},{ISInventoryPaneContextMenu,'transferIfNeeded'},{ISInventoryPaneContextMenu,'unequipItem'},
@@ -492,16 +581,22 @@ function Intent.install(valid,approvedWrapper,sourceFactory)
         if entry[1] then helpers[#helpers+1]={owner=entry[1],name=entry[2],callback=entry[1][entry[2]]} end
     end
     guard=function(action)
+        -- Own helper owners may be inherited UI classes. Refuse changed lookup
+        -- ancestry before any ordinary helper field access can invoke a getter.
+        if ownProvider and valid(action)~=true then return false,'own_source_changed'end
         for _,entry in ipairs(helpers) do if entry.owner[entry.name]~=entry.callback then return false,'helper_changed',entry.name end end
-        return valid(action)
+        return ownProvider or valid(action)
     end
     guardBinding={guard=guard,valid=valid,wrapper=approvedWrapper,helpers=helpers,sourceFactory=sourceFactory}
     bindingState.revision=bindingState.revision+1
+    if not ownProvider then Transfers.observeTransfers(transferMerged,canObserveTransfers,transferCallbacks,transferListenerFactory)end
     for _,name in ipairs({'OnPrimaryWeapon','OnSecondWeapon','OnTwoHandsEquip'}) do wrap(ISInventoryPaneContextMenu,name,'equip') end
-    for _,name in ipairs({'onGrabItems','onGrabOneItems','onGrabHalfItems'}) do wrap(ISInventoryPaneContextMenu,name,'grab') end
-    wrap(ISInventoryPaneContextMenu,'onWearItems','wear')
-    wrap(ISInventoryPaneContextMenu,'onUnEquip','unequip')
-    wrap(ISHotbar,'attachItem','attach',true)
+    if not ownProvider then
+        for _,name in ipairs({'onGrabItems','onGrabOneItems','onGrabHalfItems'}) do wrap(ISInventoryPaneContextMenu,name,'grab') end
+        wrap(ISInventoryPaneContextMenu,'onWearItems','wear')
+        wrap(ISInventoryPaneContextMenu,'onUnEquip','unequip')
+        wrap(ISHotbar,'attachItem','attach',true)
+    end
     local function enqueue(action,callback,...)
         capture(action)
         local results=pack(callback(...))
@@ -524,7 +619,9 @@ function Intent.install(valid,approvedWrapper,sourceFactory)
     if Events.OnMainMenuEnter then Events.OnMainMenuEnter.Add(function()
         bindingState.revision=bindingState.revision+1
         states=setmetatable({}, {__mode='k'});watching=setmetatable({}, {__mode='k'});transfers=setmetatable({}, {__mode='k'})
+        ownWaiting,ownPending={},{}
     end) end
+    return true
 end
 function Intent.update(player,callback,...)
     local activeBlocked=mayHaveBlockedReturn(player)
@@ -543,14 +640,7 @@ function Intent.update(player,callback,...)
             and (not record.effect or resolve(player,record.item)) then
             -- Only marked network work can wait for late replication. A native
             -- no-effect callback cannot acquire intent from a later unrelated item.
-            local status=Settlement.effectState(record.proof, record.effect==true)
-            if status=="waiting" and not record.effect then
-                observeEffect(record)
-                status=Settlement.effectState(record.proof, record.effect==true)
-            end
-            if status=="completed" then confirm(record)
-            elseif status=="waiting" then waiting=true
-            else value.pending[action],watching[action]=nil,nil end
+            if pollFinished(record,value)then waiting=true end
         elseif record.finished or value.queue:indexOf(executor)==-1 then
             value.pending[action],watching[action]=nil,nil
         end
@@ -705,8 +795,5 @@ function Intent.update(player,callback,...)
     value.restoring,value.idle=true,0
     return unpack(results,2,results.n)
 end
-local sourceAdapters=bindingToolkit.ActionQueueItemEditAdapters
-if sourceAdapters and type(sourceAdapters.registerSourceFactory)=='function'then
-    sourceAdapters.registerSourceFactory(Intent,'queueObserverBinding',queueObserverFactory)
-end
+registerTransferListener()
 return Intent

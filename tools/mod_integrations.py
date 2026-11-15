@@ -63,13 +63,19 @@ INTEGRATIONS = {
     'P4TidyUpMeister': {
         'owners': ['client/PZSurvivorToolkit/ActionQueueCompat.lua',
                    'client/PZSurvivorToolkit/ActionQueueTidyIntent.lua',
-                   'client/PZSurvivorToolkit/ActionQueueSettlement.lua'],
+                   'client/PZSurvivorToolkit/ActionQueueSettlement.lua',
+                   'client/PZSurvivorToolkit/ActionQueueRestoration.lua'],
         'option': 'p4_source', 'root': '.',
         'tests': {'test_action_queue_borrowing_composition.lua': (
             Source('P4TidySource', 'media/lua/client/P4TidyUpMeister.lua'),
             Source('P4RestoreSource', 'media/lua/shared/TimedActions/P4RestoreAction.lua'),
+            Source('P4RestoreFloorSource', 'media/lua/shared/TimedActions/P4RestoreFloorAction.lua')),
+            'test_action_queue_restoration_composition.lua': (
+            Source('P4TidySource', 'media/lua/client/P4TidyUpMeister.lua'),
+            Source('P4RestoreSource', 'media/lua/shared/TimedActions/P4RestoreAction.lua'),
             Source('P4RestoreFloorSource', 'media/lua/shared/TimedActions/P4RestoreFloorAction.lua'))},
-        'game_inputs': {'test_action_queue_borrowing_composition.lua': ('native_action_root',)},
+        'game_inputs': {'test_action_queue_borrowing_composition.lua': ('native_action_root',),
+                        'test_action_queue_restoration_composition.lua': ('native_action_root',)},
     },
     'VehicleRepairOverhaul': {
         'owners': ['shared/PZSurvivorToolkit/VehicleGlass.lua',
@@ -89,6 +95,7 @@ INTEGRATIONS = {
                    'client/PZSurvivorToolkit/InventoryLayout.lua', 'client/PZSurvivorToolkit/InventoryInteraction.lua',
                    'client/PZSurvivorToolkit/InventoryTags.lua',
                    'client/PZSurvivorToolkit/ActionQueueOperations.lua',
+                   'client/PZSurvivorToolkit/ActionQueueRestoration.lua',
                    'client/PZSurvivorToolkit/ContainerConfigurationMenus.lua',
                    'client/PZSurvivorToolkit/SmartDeposit.lua'],
         'option': 'cleanui_inventory_pane', 'root': 'media/lua/client', 'argument': 'ISUI/ISInventoryPane.lua',
@@ -100,6 +107,9 @@ INTEGRATIONS = {
             'test_action_queue_fire.lua': (CLEAN_CONTEXT,),
             'test_action_queue_generators.lua': (CLEAN_CONTEXT,),
             'test_action_queue_health.lua': (CLEAN_CONTEXT,),
+            'test_action_queue_restoration_composition.lua': (
+                Source('CleanUIInventoryPaneSource', 'ISUI/ISInventoryPane.lua', optional=True),
+                Source('CleanUIInventoryContextMenuSource', 'ISUI/ISInventoryPaneContextMenu.lua', optional=True)),
             'test_inventory_tags.lua': (CLEAN_PANE,),
             'test_inventory_filter.lua': (CLEAN_PANE, Source('CleanUIInventoryTransferHandlerSource',
                                                           'ISUI/ISInventoryPageTransferHandler.lua', optional=True)),
@@ -238,10 +248,11 @@ def has_required_input(name, option, args):
     """An explicit anchor or every required locked file satisfies one source option."""
     if getattr(args, option, None):
         return True
-    required = [source for spec in INTEGRATIONS.values() if spec['option'] == option
-                for source in spec['tests'].get(name, ()) if not source.optional]
+    declared = [source for spec in INTEGRATIONS.values() if spec['option'] == option
+                for source in spec['tests'].get(name, ())]
+    required = [source for source in declared if not source.optional]
     locked = getattr(args, 'integration_sources', {}).get(name, {})
-    return bool(required) and all(locked.get(source.variable) is not None for source in required)
+    return bool(declared) and all(locked.get(source.variable) is not None for source in required)
 
 
 def bind_sources(lua, name, args):
@@ -272,8 +283,10 @@ def bind_sources(lua, name, args):
 def configure(args, project, requested):
     checks = set(requested)
     for id in args.integration:
-        checks.update(test for test in INTEGRATIONS[id]['tests']
-                      if test not in INTEGRATIONS[id].get('explicit_tests', ()))
+        # Optional sources enrich requested consumers without broadening a profile.
+        checks.update(test for test, sources in INTEGRATIONS[id]['tests'].items()
+                      if any(not source.optional for source in sources)
+                      and test not in INTEGRATIONS[id].get('explicit_tests', ()))
     selected = set(args.integration)
     if args.pack_lock:
         selected.update(id for id, spec in INTEGRATIONS.items() if checks.intersection(spec['tests']))
@@ -284,7 +297,7 @@ def configure(args, project, requested):
     identifiers = native._metadata(project / 'SurvivorQoL-selected.ini')['Mods'].split(';')
     locations = pack.validate(args.pack_lock.resolve(), project, args.game.resolve(), identifiers)
     version = game_version(args.game)
-    if 'test_action_queue_borrowing_composition.lua' in checks:
+    if checks.intersection({'test_action_queue_borrowing_composition.lua', 'test_action_queue_restoration_composition.lua'}):
         if 'PZSurvivorToolkit' not in locations:
             raise ValueError('Borrowing composition requires PZSurvivorToolkit in the locked pack')
         toolkit = Path(locations['PZSurvivorToolkit']).resolve()
@@ -294,9 +307,12 @@ def configure(args, project, requested):
         args.toolkit_source = toolkit
     args.integration_sources = {}
     for id in sorted(selected):
-        if id not in locations:
-            raise ValueError('Integration mod is absent from the locked pack: ' + id)
         spec = INTEGRATIONS[id]
+        if id not in locations:
+            requested_sources = [source for test in checks.intersection(spec['tests']) for source in spec['tests'][test]]
+            if id not in args.integration and requested_sources and all(source.optional for source in requested_sources):
+                continue
+            raise ValueError('Integration mod is absent from the locked pack: ' + id)
         for test in sorted(checks.intersection(spec['tests'])):
             resolved = args.integration_sources.setdefault(test, {})
             for source in spec['tests'][test]:

@@ -77,6 +77,7 @@ local function fixture(options)
         elseif module == 'PZSurvivorToolkit/QuartermasterCraftContainers'
             or module == 'PZSurvivorToolkit/ActionQueueSettlement'
             or module == 'PZSurvivorToolkit/ActionQueueTidyIntent'
+            or module == 'PZSurvivorToolkit/ActionQueueTransfers'
             or module == 'PZSurvivorToolkit/ActionQueueMembership' then
             loaded[module] = run(read(base .. module .. '.lua'), base .. module .. '.lua', env)
             return loaded[module]

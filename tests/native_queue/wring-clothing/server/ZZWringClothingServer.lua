@@ -1,6 +1,7 @@
 if not isServer()then return end
 local P=require 'QueueEnergyPlacement'
 local F=require 'QueueWringClothing'
+local Diagnostics=require 'QueueWringDiagnostics'
 local Capacity=require 'QueueWringCapacityProfile'
 local JSON=require 'QueueHealthEvents'
 local config=require 'QueueTestSelection'
@@ -23,6 +24,12 @@ Events.OnClientCommand.Add(function(module,command,player,args)
    local target=P.target(args.placement)
    assert(type(args.clientPlacement)=='table'and args.clientPlacement.mode=='local'and args.clientPlacement.centered==true and args.clientPlacement.centers==1,'wring local placement proof missing')
    pending={command=command,player=player,target=target,case=args.case,arrival=P.observeCentered(player,target),since=getTimestampMs()}
+  elseif command=='SourceLost'then
+   assert(state and state.player==player and not pending and state.ids.returnControl=='unavailable','unexpected source intervention')
+   local receipt=F.sourceLost(state);raw('SOURCE_LOST',receipt);sendServerCommand(player,'WringClothingTest','SourceLost',receipt)
+  elseif command=='CapacityLost'then
+   assert(state and state.player==player and not pending and state.ids.returnControl=='full','unexpected capacity intervention')
+   local receipt=F.capacityLost(state);raw('CAPACITY_LOST',receipt);sendServerCommand(player,'WringClothingTest','CapacityLost',receipt)
   else
    assert((command=='ProfileCleanup'and state and state.profileVerified or command=='Verify'or command=='WearBaseline'and state and state.ids.nativeWearSetup)
     and state and state.player==player and not pending,'unexpected wring authority request')
@@ -39,7 +46,7 @@ Events.OnTick.Add(function()
   local ok,error=pcall(function()
    local proof=P.poll(pending.arrival);if not proof then return end
    assert(P.atCentered(player,pending.target),'wring replica left settled placement')
-   state=F.prepare(player,pending.case,config.mode,pending.target,proof,previous,config.options and config.options.profile_capacity);previous=nil
+   state=F.prepare(player,pending.case,config.mode,pending.target,proof,previous,config.options and config.options.profile_capacity,config.options and config.options.wring_restoration_provider=='native-returns');previous=nil
    raw('PREPARED',state.ids);sendServerCommand(player,'WringClothingTest','Prepared',state.ids);pending=nil
   end)
   if not ok then fail(player,error)end
@@ -57,9 +64,9 @@ Events.OnTick.Add(function()
    pending=nil
    if not baseline then if state.ids.capacityProfile then state.profileVerified=true else previous=state;state=nil;index=index+1 end end
   elseif not ok or getTimestampMs()-pending.since>20000 then
-   fail(state.player,ok and JSON.encode(F.preparedDiagnostic(state.player,state.ids))or receipt)
+   fail(state.player,ok and JSON.encode(Diagnostics.capture(state.player,state.ids,state))or receipt)
   elseif not pending.diagnosed and getTimestampMs()-pending.since>2000 then
-   pending.diagnosed=true;raw('AUTHORITY_WAIT',{command=pending.command,state=F.preparedDiagnostic(state.player,state.ids)})
+   pending.diagnosed=true;raw('AUTHORITY_WAIT',{command=pending.command,state=Diagnostics.capture(state.player,state.ids,state)})
   end
  end
 end)

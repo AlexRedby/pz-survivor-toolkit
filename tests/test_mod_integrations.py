@@ -119,6 +119,31 @@ class ModIntegrations(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'toolkit-source differs'):
             self.configure(requested=[name], toolkit_source=self.root / 'other-candidate')
 
+    def test_restoration_composition_keeps_cleanui_optional_and_binds_its_actual_context(self):
+        self.select('P4TidyUpMeister', 'P4/42.20')
+        self.select('PZSurvivorToolkit', 'Toolkit/42')
+        for relative in ('media/lua/client/P4TidyUpMeister.lua',
+                         'media/lua/shared/TimedActions/P4RestoreAction.lua',
+                         'media/lua/shared/TimedActions/P4RestoreFloorAction.lua'):
+            self.write(self.root / 'P4/42.20' / relative, relative)
+        name = 'test_action_queue_restoration_composition.lua'
+        self.lock_sources()
+        args, _ = self.configure(requested=[name])
+        self.assertNotIn('CleanUIInventoryPaneSource', self.bound(args, name))
+        self.assertTrue(mod_integrations.has_required_input(name, 'cleanui_inventory_pane', args))
+        self.assertFalse(mod_integrations.has_required_input(name, 'undeclared_option', args))
+
+        clean = self.cleanui()
+        context = self.write(clean / 'ISUI/ISInventoryPaneContextMenu.lua', 'selected complete context')
+        self.write(self.root / 'CleanUI/common/media/lua/client/ISUI/ISInventoryPaneContextMenu.lua', 'common context')
+        self.lock.unlink()
+        self.lock_sources()
+        args, _ = self.configure(requested=[name], cleanui_inventory_pane=clean / 'ISUI/ISInventoryPane.lua')
+        values = self.bound(args, name)
+        self.assertEqual('CleanUI pane', values['CleanUIInventoryPaneSource'])
+        self.assertEqual('selected complete context', values['CleanUIInventoryContextMenuSource'])
+        self.assertEqual(context, args.integration_sources[name]['CleanUIInventoryContextMenuSource'])
+
     def test_one_profile_selects_its_exact_checks_and_source_layer(self):
         self.write(self.root / 'Navigator/43/media/lua/client/NavigatorRadio/MonitorRender.lua', 'unsupported')
         self.write(self.root / 'Navigator/common/media/lua/client/NavigatorRadio/MonitorRender.lua', 'common')
@@ -131,6 +156,21 @@ class ModIntegrations(unittest.TestCase):
         self.assertEqual(self.nav / 'MonitorRender.lua', args.integration_sources['test_navigator.lua']['NativeNavigatorRender'])
         self.assertIsNone(args.native_action_root)
         self.assertEqual({}, self.bound(args, 'test_tv_videos.lua'))
+
+    def test_profile_uses_engine_minor_for_newest_layer_and_common_fallback(self):
+        write_game_jar(self.game, minor=22)
+        current = self.root / 'Navigator/42.22/media/lua/client/NavigatorRadio'
+        self.write(self.root / 'Navigator/42.22/mod.info', 'id=Navigator\n')
+        self.write(current / 'MonitorRender.lua', '42.22 render')
+        self.write(self.root / 'Navigator/42.23/media/lua/client/NavigatorRadio/MonitorRender.lua', 'future render')
+        common = self.write(self.root / 'Navigator/common/media/lua/client/NavigatorRadio/MonitorConfig.lua', 'common config')
+        self.write(self.root / 'Navigator/common/media/lua/client/NavigatorRadio/NavigatorMonitorDrag.lua', 'common drag')
+        self.lock_sources()
+        args, requested = self.configure(['Navigator'])
+        self.assertEqual({'test_navigator.lua'}, requested)
+        self.assertEqual({'NativeNavigatorConfig': 'common config', 'NativeNavigatorRender': '42.22 render',
+                          'NativeNavigatorDrag': 'common drag'}, self.bound(args, 'test_navigator.lua'))
+        self.assertEqual(common, args.integration_sources['test_navigator.lua']['NativeNavigatorConfig'])
 
     def test_locked_source_binding_accepts_only_v2_policy_and_ignores_git_metadata_drift(self):
         git = self.root / 'Navigator/.git'
@@ -330,13 +370,15 @@ class ModIntegrations(unittest.TestCase):
     def test_native_ui_family_binds_selected_context_without_expanding_inventory_profile(self):
         self.cleanui(full=True)
         self.lock_sources()
-        args, requested = self.configure(requested=['test_action_queue_generators.lua'])
-        self.assertEqual({'test_action_queue_generators.lua'}, requested)
-        bound = self.bound(args, 'test_action_queue_generators.lua')
-        self.assertEqual('CleanUI context', bound['NativeCleanUIInventoryContextSource'])
-        path = args.integration_sources['test_action_queue_generators.lua']['NativeCleanUIInventoryContextSource']
-        self.assertEqual(str(path), bound['NativeCleanUIInventoryContextSourcePath'])
-        self.assertEqual('ISInventoryPaneContextMenu.lua', path.name)
+        for name in ('test_action_queue_fire.lua', 'test_action_queue_generators.lua', 'test_action_queue_health.lua'):
+            with self.subTest(test=name):
+                args, requested = self.configure(requested=[name])
+                self.assertEqual({name}, requested)
+                bound = self.bound(args, name)
+                self.assertEqual('CleanUI context', bound['NativeCleanUIInventoryContextSource'])
+                path = args.integration_sources[name]['NativeCleanUIInventoryContextSource']
+                self.assertEqual(str(path), bound['NativeCleanUIInventoryContextSourcePath'])
+                self.assertEqual('ISInventoryPaneContextMenu.lua', path.name)
 
     def test_named_container_filter_does_not_require_unrelated_sources(self):
         self.containers()

@@ -28,7 +28,7 @@ local function fixture()
         'finishPickup','refreshReturn','returnMatches','beginReturn','finishReturn','stopReturn'})do settlement[name]=native end
     local policy={matchesNative=native,isOrdinaryTransfer=native,adoptTransferMethods=function(_,_,guard)callbacks[#callbacks+1]=guard;return true end,
         adoptTransferHooks=function(_,_,guard)callbacks[#callbacks+1]=guard;return true end}
-    toolkit.ActionQueueOperations,toolkit.ActionQueueSettlement,toolkit.ActionQueueTidyIntent,toolkit.ActionQueuePolicy=operations,settlement,{},policy
+    toolkit.ActionQueueOperations,toolkit.ActionQueueSettlement,toolkit.ActionQueueTidyIntent,toolkit.ActionQueueTransfers,toolkit.ActionQueuePolicy=operations,settlement,{},{},policy
     PZSurvivorToolkit=toolkit
     ISInventoryTransferAction={}
     for _,name in ipairs({'new','isValid','start','perform','stop','transferItem'})do
@@ -64,7 +64,7 @@ local function fixture()
         return previousRequire(name)
     end
     getActivatedMods=function()return {contains=function()return true end}end
-    local build=assert(loadstring([[return function(Toolkit,Operations,Settlement,TidyIntent,Proof)
+    local build=assert(loadstring([[return function(Toolkit,Operations,Settlement,TidyIntent,Transfers,Proof)
         local Compat={};Toolkit.ActionQueueCompat=Compat
         local ready,records,sessions={},{},{}
         local containerHelpersUnchanged,reviewedTransferPerform,transferPerformGuard
@@ -77,7 +77,7 @@ local function fixture()
                 transferBindingRecords[guard]={kind='p4',id='P4TidyUpMeister',owner=owner,
                     ownerMethods={registerActionPolicy=owner.registerActionPolicy,registerWornItemReplacement=owner.registerWornItemReplacement}}
             end}
-    end]],'@fixture/ActionQueueCompat.lua'))()(toolkit,operations,settlement,toolkit.ActionQueueTidyIntent,proof)
+    end]],'@fixture/ActionQueueCompat.lua'))()(toolkit,operations,settlement,toolkit.ActionQueueTidyIntent,toolkit.ActionQueueTransfers,proof)
     build.proof,build.callbacks,build.proximity,build.toolkit=proof,callbacks,proximity,toolkit
     build.freeze=function()frozen=true end
     build.bc()
@@ -150,7 +150,7 @@ do
     action.stop=function()error('unknown outer stop invoked')end
     assert(not compatLease(),'unknown later stop layer must invalidate the source lease')
 end
-local function tidyFixture()
+local function transfersFixture(withIntent)
     getFilenameOfClosure=function()return 'fixture.lua'end
     local proof=assert(loadfile(root..'/PZSurvivorToolkit/42/media/lua/shared/PZSurvivorToolkit/SourceProof.lua'))()
     PZSurvivorToolkit={}
@@ -163,11 +163,21 @@ local function tidyFixture()
         if name=='Hotbar/ISHotbar'or name=='PZSurvivorToolkit/ActionQueueAcknowledgements'then return true end
         return oldRequire(name)
     end
-    local intent=assert(loadfile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'))()
-    return intent,previous,proof
+    local transfers=assert(loadfile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTransfers.lua'))()
+    local intent
+    if withIntent then
+        local requireTransfers=require
+        require=function(name)
+            if name=='PZSurvivorToolkit/ActionQueueTransfers'then return transfers end
+            return requireTransfers(name)
+        end
+        intent=assert(loadfile(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua'))()
+    end
+    require=oldRequire
+    return transfers,previous,proof,intent
 end
 do
-    local intent,previous=tidyFixture();local calls=0
+    local transfers,previous=transfersFixture();local calls=0
     local callback=function()error('listener executed while inspecting')end
     local canObserve=function()error('listener guard executed while inspecting')end
     local events={begin=function()error('listener event executed while inspecting')end}
@@ -175,40 +185,48 @@ do
         calls=calls+1;assert(observedCallback==callback and observedGuard==canObserve and observedEvents==events)
         return function()return true end
     end
-    intent.observeTransfers(callback,canObserve,events,factory)
+    transfers.observeTransfers(callback,canObserve,events,factory)
     local action={character={}}
     local replacement=ISInventoryTransferAction.checkQueueList
-    assert(intent.queueObserverBinding(previous,replacement,action,function()return false end)==nil and calls==0,
+    assert(transfers.queueObserverBinding(previous,replacement,action,function()return false end)==nil and calls==0,
         'untrusted owner factory must not execute')
-    local lease=assert(intent.queueObserverBinding(previous,replacement,action,function(value)return value==factory end))
+    local lease=assert(transfers.queueObserverBinding(previous,replacement,action,function(value)return value==factory end))
     assert(calls==1 and lease({})and calls==1,'final lease must not re-run owner preparation')
     events.begin=function()end;assert(not lease(),'listener event mutation must invalidate the lease')
-    intent.observeTransfers(function()end,function()return false end,{})
-    assert(intent.queueObserverBinding(previous,replacement,action,function()return true end)==nil,'unattested listener stays unknown')
+    transfers.observeTransfers(function()end,function()return false end,{})
+    assert(transfers.queueObserverBinding(previous,replacement,action,function()return true end)==nil,'unattested listener stays unknown')
 end
 do
-    local intent,previous=tidyFixture();local events={}
+    local transfers,previous=transfersFixture();local events={}
     local factory=function()events.begin=function()end;return function()return true end end
-    intent.observeTransfers(function()end,function()return false end,events,factory)
-    assert(intent.queueObserverBinding(previous,ISInventoryTransferAction.checkQueueList,{character={}},function()return true end)==nil,
+    transfers.observeTransfers(function()end,function()return false end,events,factory)
+    assert(transfers.queueObserverBinding(previous,ISInventoryTransferAction.checkQueueList,{character={}},function()return true end)==nil,
         'owner preparation reentry must not replace a previously frozen dispatch field')
 end
 do
-    local intent,previous=tidyFixture()
+    local transfers,previous,_,intent=transfersFixture(true)
     local function forbidden()error('old Tidy source guard/helper executed')end
     ISInventoryPaneContextMenu={equipWeapon=forbidden,transferIfNeeded=forbidden,unequipItem=forbidden}
     ISInventoryPane={getActualItems=forbidden};ISInventoryTransferUtil={newInventoryTransferAction=forbidden}
     ISTimedActionQueue={add=forbidden,addAfter=forbidden,addToQueue=forbidden};Events={}
     local wrapper=function()error('UI wrapper checker executed')end
     local prepared=0
-    local factory=function(action,valid,approvedWrapper)
-        assert(valid==forbidden and approvedWrapper==wrapper);prepared=prepared+1
+    local trustedFactory
+    local factory=function(action,valid,approvedWrapper,events,trust)
+        assert(valid==forbidden and approvedWrapper==wrapper and events==nil and trust==trustedFactory);prepared=prepared+1
         return function()return true end
     end
     intent.install(forbidden,wrapper,factory)
-    intent.observeTransfers(nil)
-    local lease=assert(intent.queueObserverBinding(previous,ISInventoryTransferAction.checkQueueList,{character={}},
-        function(candidate)return candidate==factory end))
+    assert(transfers.queueObserverBinding(previous,ISInventoryTransferAction.checkQueueList,{character={}},
+        function(candidate)return candidate==factory end)==nil and prepared==0,
+        'untrusted explicit listener factory must not prepare its nested guard')
+    assert(transfers.queueObserverBinding(previous,ISInventoryTransferAction.checkQueueList,{character={}},
+        function(candidate)return candidate==intent.transferListenerBinding end)==nil and prepared==0,
+        'untrusted nested guard factory must not prepare or execute its guard')
+    trustedFactory=function(candidate)
+        return candidate==intent.transferListenerBinding or candidate==factory
+    end
+    local lease=assert(transfers.queueObserverBinding(previous,ISInventoryTransferAction.checkQueueList,{character={}},trustedFactory))
     assert(lease()and prepared==1,'installed guard needs exact owner preparation without executing the old guard')
     ISInventoryPaneContextMenu.transferIfNeeded=function()end
     assert(not lease(),'one owner with several fixed helper slots must preserve every slot')

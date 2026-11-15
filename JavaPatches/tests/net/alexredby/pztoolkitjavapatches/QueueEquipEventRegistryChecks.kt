@@ -82,6 +82,11 @@ object QueueEquipEventRegistryChecks {
             "Snapshot exposed a mutable native callback list"
         }
         check(snap()!==observed)
+        primary.name="renamed"
+        check(read()==null && snap()==null) { "Mutable Event.name bypassed hand-dispatch classification" }
+        primary.name="OnEquipPrimary"
+        check(read()==true)
+
 
         for (bad in listOf(null,false,a,table().apply { delegate[1.0]=a;delegate[3.0]=b },
                 table().apply { delegate["1"]=a },table().apply { delegate[1]=a },

@@ -953,6 +953,7 @@
   "UI_PZSurvivorToolkit_queue_return_admission": "The item could not be returned because its storage is no longer available or has no room. Keep it with you to dismiss this return.",
   "UI_PZSurvivorToolkit_queue_return_server": "The server did not complete this return. The item remains with you. Keep it to dismiss this return.",
   "UI_PZSurvivorToolkit_queue_return_unmoved": "The item was not moved to its original storage. Keep it with you to dismiss this return.",
+  "UI_PZSurvivorToolkit_queue_return_producer": "Automatic return could not be confirmed. The item stays with you. Choose Keep to dismiss this return.",
   "UI_PZSurvivorToolkit_queue_return_unavailable": "This return changed or can no longer be dismissed. Its current state has been refreshed.",
   "UI_PZSurvivorToolkit_queue_recovery_restore": "Restore (%1)",
   "UI_PZSurvivorToolkit_queue_recovery_forget": "Forget this cancelled queue",

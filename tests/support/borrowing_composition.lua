@@ -1,6 +1,10 @@
 -- Offline engine boundary for the source-backed composition test. All Toolkit
 -- policy, receipt, observer and begin/stop implementations are loaded unchanged.
-return function(client)
+return function(client,options)
+    options=options or {}
+    local p4Enabled=options.p4~=false
+    local p4Selected=options.p4Selected
+    if p4Selected==nil then p4Selected=p4Enabled end
     -- Native Kahlua globals are a plain table. A fallback __index would make
     -- the real SourceProof binding watcher reject this modeled environment.
     local env={}
@@ -46,7 +50,12 @@ return function(client)
     for _,entry in pairs(p4)do
         if not entry[1]and NativeP4TidySource then entry[1]=text(NativeP4TidySource..'/media/lua/'..entry[2])end
     end
-    env.getGameFilesInput=function(path)return reader(text(NativeActionRoot..'/'..path:gsub('^media/lua/','')))end
+    env.getGameFilesInput=function(path)
+        if options.cleanUIContextSource and path=='media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'then
+            return reader(options.cleanUIContextSource)
+        end
+        return reader(text(NativeActionRoot..'/'..path:gsub('^media/lua/','')))
+    end
     env.getModFileReader=function(id,path)
         if id=='P4TidyUpMeister'then
             for _,entry in pairs(p4)do if path=='media/lua/'..entry[2]then return reader(assert(entry[1]))end end
@@ -54,6 +63,10 @@ return function(client)
             local module=path:match('^media/lua/[^/]+/(.*)%.lua$')
             local actual=module and toolkitPath(module)
             if actual then return reader(text(actual))end
+        elseif id=='CleanUI'and options.cleanUISelectorSource and path=='media/lua/client/ISUI/ISInventoryPane.lua'then
+            return reader(options.cleanUISelectorSource)
+        elseif id=='CleanUI'and options.cleanUIContextSource and path=='media/lua/client/ISUI/ISInventoryPaneContextMenu.lua'then
+            return reader(options.cleanUIContextSource)
         end
     end
     env.require=function(module)
@@ -63,6 +76,7 @@ return function(client)
         if unrelated[module:match('^PZSurvivorToolkit/(.*)$')]then return end
         local path=module:match('^PZSurvivorToolkit/')and toolkitPath(module)
         local selected=p4[module]
+        if selected and not p4Enabled then error('fixture module unavailable: '..module,0)end
         if not path and not selected and (module:match('^TimedActions/')or module:match('^Fluids/')or module=='RadioCom/ISRadioAction')then
             for _,branch in ipairs({'shared','client'})do
                 local candidate=NativeActionRoot..'/'..branch..'/'..module..'.lua'
@@ -85,12 +99,13 @@ return function(client)
         local module=path:match('^[^/]+/(.*)%.lua$');loaded[module]=result or true
         return result
     end
-    local function nativeFunction(path,signature)
-        local actual=NativeActionRoot..'/'..path
-        local source=text(actual)
+    local function nativeFunction(path,signature,inputSource)
+        local actual=inputSource and 'media/lua/'..path or NativeActionRoot..'/'..path
+        local source=inputSource or text(actual)
         local first=assert(source:find(signature,1,true),'missing native producer '..signature)
         local last=assert(source:find('\nend',first,true),'unterminated native producer '..signature)
-        execute(source:sub(first,last+3),actual)
+        local _,lines=source:sub(1,first-1):gsub('\n','\n')
+        execute(string.rep('\n',lines)..source:sub(first,last+3),actual)
     end
     local function list(values)
         return {class='ArrayList',values=values,size=function()return #values end,
@@ -102,16 +117,34 @@ return function(client)
         return setmetatable(class,{__index=self})
     end
     env.ISBaseObject={derive=derive}
-    env.PZSurvivorToolkit={Settings={actionQueue=function()return true end}}
+    env.PZSurvivorToolkit={Settings={actionQueue=function()return options.queue~=false end}}
     loaded['PZSurvivorToolkit/Settings']=env.PZSurvivorToolkit.Settings
     env.toolkitLuaMetatableMatches=assert(loadfile(ProjectRoot..'/tests/support/source_binding.lua'))()
-    env.getFilenameOfClosure=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
-    env.getFirstLineOfClosure=NativeFirstLineOfClosure or function(callback)return debug.getinfo(callback,'S').linedefined end
+    local nativeFilename=NativeFilenameOfClosure or function(callback)return debug.getinfo(callback,'S').source:gsub('^@','')end
+    env.getFilenameOfClosure=function(callback)
+        if options.metadataHook then options.metadataHook(env,callback)end
+        return nativeFilename(callback)
+    end
+    env.getFirstLineOfClosure=NativeFirstLineOfClosure or function(callback)
+        -- Native Kahlua reports the first instruction, rather than the function
+        -- declaration. Lua debug active lines provide that same source role.
+        local first
+        for line in pairs(debug.getinfo(callback,'L').activelines or {})do
+            if not first or line<first then first=line end
+        end
+        return first or debug.getinfo(callback,'S').linedefined
+    end
     env.instanceof=function(value,kind)
         return type(value)=='table'and (value.class==kind or kind=='InventoryItem'and value.item==true
             or kind=='IsoGameCharacter'and value.class=='IsoPlayer')
     end
-    env.getClassSimpleName=function(value)return value.class end
+    local containsTransferID
+    env.getClassSimpleName=function(value)
+        -- Retain the canonical native containment seam when the fixture installs
+        -- its actor/item class labels. Ordinary Lua callbacks stay distinct.
+        if value==containsTransferID then return 'LuaJavaInvoker' end
+        return type(value)=='table'and value.class or 'KahluaClosure'
+    end
     env.table=setmetatable({wipe=function(value)for key in pairs(value)do value[key]=nil end end},{__index=table})
     env.Events={};local events={}
     setmetatable(env.Events,{__index=function(owner,name)
@@ -122,17 +155,20 @@ return function(client)
     env.Hook=setmetatable({}, {__index=function()return {Add=function()end}end})
     for _,name in ipairs({'ClimbState', 'ClimbDownState', 'ForceOpenState', 'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState','ClimbSheetRopeState',
         'ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'})do env[name]={instance=function()return {}end}end
-    env.ISInventoryPage={};env.ISInventoryPaneContextMenu={};env.ISInventoryPane={getActualUniqueItems=function(items)return items end}
+    env.ISInventoryPage={};env.ISInventoryPaneContextMenu={};env.ISInventoryPane={getActualUniqueItems=function(items)return items end,getActualItems=function(items)return items end}
     env.ISContextMenu={};env.ISButton={};env.ISCraftingUI={};env.ISWorldObjectContextMenu={}
     env.LootSorter={}
     env.getText=function(value)return value end;env.getTextOrNull=env.getText
     env.isClient=function()return client==true end;env.isServer=function()return false end;env.isMultiplayer=env.isClient
-    env.getActivatedMods=function()return {contains=function(_,id)return id=='P4TidyUpMeister'end}end
+    env.getActivatedMods=function()
+        if options.modProbe then options.modProbe(env)end
+        return {contains=function(_,id)return p4Selected and id=='P4TidyUpMeister'end}
+    end
     env.getGameVersion=function()return '42.21'end
     local timestamp=100
     env.getTimestampMs=function()return timestamp end;env.getTimestamp=function()return timestamp end
     env.getGameTime=function()return {getMinutesPerDay=function()return 60 end,getMultiplier=function()return 1 end}end
-    env.getCore=function()return {getGameMode=function()return 'Sandbox'end}end
+    env.getCore=function()return {getGameMode=function()return 'Sandbox'end,getGoodHighlitedColor=function()return {}end}end
     env.getSandboxOptions=function()return {getOptionByName=function()return {getValue=function()return 0.1 end}end}end
     env.getDebug=function()return false end;env.isDebugEnabled=env.getDebug
     env.ISLogSystem={logAction=function()end};env.DebugType={Action={warn=function(_,message)error(message)end}}
@@ -150,6 +186,7 @@ return function(client)
             end
             return false
         end}
+    containsTransferID=env.ItemContainer.chainContainsContainingItem
     env.CharacterTrait=setmetatable({}, {__index=function(_,key)return key end})
     env.ItemTag=setmetatable({}, {__index=function(_,key)return key end})
     env.ItemBodyLocation=setmetatable({}, {__index=function(_,key)return key end})
@@ -177,7 +214,7 @@ return function(client)
         function value:forceStop()self.stopped=true end
         function value:setJobDelta()end
         function value:resetJobDelta()end
-        for _,method in ipairs({'setTime','setLoopedAction','setActionAnim','setAnimVariable','setOverrideHandModelsObject',
+        for _,method in ipairs({'restoreWeaponType','setTime','setLoopedAction','setActionAnim','setAnimVariable','setOverrideHandModelsObject',
             'stopTimedActionAnim','setWaitForFinished'})do value[method]=function()end end
         function value:reset()self.forced=false end
         allocated[#allocated+1]=value;return value
@@ -215,7 +252,10 @@ return function(client)
     player.getPathFindBehavior2=function()return {reset=function()end,cancel=function()end}end
     player.getAlreadyReadPages=function()return 0 end
     player.ReadLiterature=function(self,item)self.readItem=item;self.readCount=(self.readCount or 0)+1 end
-    player.getPrimaryHandItem=function()end;player.getSecondaryHandItem=function()end;player.getWornItems=function()return {getItem=function()end,size=function()return 0 end}end
+    player.getPrimaryHandItem=function(self)return self.primary end;player.getSecondaryHandItem=function(self)return self.secondary end
+    player.setPrimaryHandItem=function(self,item)self.primary=item end;player.setSecondaryHandItem=function(self,item)self.secondary=item end
+    player.getClothingItem_Back=function()end
+    player.getWornItems=function()return {getItem=function()end,size=function()return 0 end}end
     player.getAttachedItems=function()return {getItem=function()end,size=function()return 0 end}end
     player.getModData=function()return {P4TidyUpMeister={doNotReequip=false}}end
     player.getMoodles=function()return {getMoodleLevel=function()return 0 end}end
@@ -237,8 +277,9 @@ return function(client)
         value.contains=function(self,item)return item.container==self end
         value.containsID=function(self,id)for _,item in ipairs(allItems)do if item.id==id and item.container==self then return true end end;return false end
         value.getItemById=function(self,id)for _,item in ipairs(allItems)do if item.id==id and item.container==self then return item end end end
+        value.getItemWithID=value.getItemById
         value.getItems=function(self)local items={};for _,item in ipairs(allItems)do if item.container==self then items[#items+1]=item end end;return list(items)end
-        value.getOutermostContainer=function(self)return self end
+        value.getOutermostContainer=function(self)return self.owner and self.owner.container:getOutermostContainer()or self end
         for _,name in ipairs({'getAcceptItemFunction','getOnlyAcceptCategory','getVehiclePart','getOpenSound','getTakeSound','getPutSound','getContainerPosition','getFreezerPosition'})do value[name]=function()end end
         for _,name in ipairs({'isRemoveItemAllowed','isItemAllowed'})do value[name]=function()return true end end
         value.hasRoomFor=function(self)return self.room end
@@ -255,19 +296,35 @@ return function(client)
     end
     local inventory=container('none',player);player.inventory=inventory
     local world={class='IsoObject',getSquare=function()return target end,getObjectIndex=function()return 0 end,getOverlaySprite=function()end}
-    local source=container('shelves',world)
+    local source=container(options.carried and 'bag'or 'shelves',world)
+    if options.carried then source.parent=nil end
+    local bag
+    if options.carried then
+        bag={class='InventoryContainer',item=true,id=9001,container=inventory}
+        bag.getID=function(self)return self.id end;bag.getFullType=function()return 'Base.Bag_Schoolbag'end
+        bag.getContainer=function(self)return self.container end;bag.getInventory=function()return source end
+        bag.getItemContainer=bag.getInventory;bag.getWeight=function()return 1 end
+        bag.getActualWeight=bag.getWeight;bag.getUnequippedWeight=bag.getWeight
+        bag.getWeightReduction=function()return 0 end;bag.isEquipped=function()return false end
+        bag.getName=function()return 'Carried test bag'end;bag.getDisplayName=bag.getName
+        bag.getIsCraftingConsumed=function()return false end;bag.getWorldItem=function()end
+        source.owner=bag;allItems[#allItems+1]=bag
+    end
     env.getCell=function()return {getGridSquare=function(_,x)if x==0 then return origin elseif x==4 then return target elseif x==3 then return adjacent end end}end
     env.AdjacentFreeTileFinder={Find=function()return adjacent end}
     env.getPlayerLoot=function()return {selectButtonForContainer=function()end,setForceSelectedContainer=function()end}end
-    env.getPlayerInventory=function()return {inventory=inventory}end
+    env.getPlayerInventory=function()return {inventory=inventory,refreshBackpacks=function()end}end
+    env.getPlayerHotbar=function()end
     env.ItemPicker={updateOverlaySprite=function()end}
     env.sendServerCommand=function()end;env.sendSyncPlayerFields=function()end;env.syncItemFields=function()end
     env.round=function(value)return value end
     env.luautils={}
+    native('shared/ISBaseObject.lua')
     native('shared/TimedActions/ISBaseTimedAction.lua')
     native('client/TimedActions/ISTimedActionQueue.lua')
     native('client/TimedActions/ISQueueActionsAction.lua')
     native('shared/TimedActions/ISReadABook.lua')
+    native('shared/TimedActions/ISWringClothing.lua')
     native('client/TimedActions/ISInventoryTransferAction.lua')
     native('shared/TimedActions/ISInventoryTransferUtil.lua')
     native('shared/TimedActions/ISTransferAction.lua')
@@ -276,11 +333,36 @@ return function(client)
     end
     native('client/TimedActions/ISDetachItemHotbar.lua')
     native('client/TimedActions/WalkToTimedAction.lua')
+    -- Keep real UI ancestry even for the native fallback. A one-function plain
+    -- table would hide binding failures and incorrectly allow ancestry removal.
+    env.getTextManager=function()return {getFontHeight=function()return 14 end}end
+    env.UIFont={Small=1}
+    native('client/ISUI/ISUIElement.lua');native('client/ISUI/ISPanel.lua')
+    if options.cleanUISelectorSource then
+        execute(options.cleanUISelectorCompiledSource or options.cleanUISelectorSource,'media/lua/client/ISUI/ISInventoryPane.lua')
+        -- UI extensions may add unrelated own metadata. Cross the generic
+        -- binding budget while retaining every real method and native ancestor.
+        local count=0;for _ in pairs(env.ISInventoryPane)do count=count+1 end
+        for index=count+1,129 do env.ISInventoryPane['fixtureBindingField'..index]=index end
+    else
+        native('client/ISUI/ISInventoryPane.lua')
+    end
     nativeFunction('shared/luautils.lua','function luautils.walkToContainer(')
     nativeFunction('shared/luautils.lua','function luautils.haveToBeTransfered(')
-    for _,signature in ipairs({'function ISInventoryPaneContextMenu.transferIfNeeded(',
-        'ISInventoryPaneContextMenu.onLiteratureItems = function(', 'ISInventoryPaneContextMenu.readItem = function('})do
-        nativeFunction('client/ISUI/ISInventoryPaneContextMenu.lua',signature)
+    if options.cleanUIContextSource then
+        -- Execute the actual complete selected chunk to retain its private
+        -- transfer helpers. Its tooltip declarations need only these UI doubles.
+        env.getTextManager=function()return {getFontHeight=function()return 14 end}end
+        env.UIFont={Small=1};env.ISToolTip=env.ISBaseObject
+        execute(options.cleanUIContextSource,'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua')
+    else
+        for _,signature in ipairs({'function ISInventoryPaneContextMenu.transferIfNeeded(',
+            'ISInventoryPaneContextMenu.onLiteratureItems = function(', 'ISInventoryPaneContextMenu.readItem = function(',
+            'ISInventoryPaneContextMenu.onWringClothing = function(', 'ISInventoryPaneContextMenu.OnPrimaryWeapon = function(',
+            'ISInventoryPaneContextMenu.OnSecondWeapon = function(', 'ISInventoryPaneContextMenu.OnTwoHandsEquip = function(',
+            'ISInventoryPaneContextMenu.equipWeapon = function('})do
+            nativeFunction('client/ISUI/ISInventoryPaneContextMenu.lua',signature)
+        end
     end
     for _,signature in ipairs({'function ISCraftingUI.ReturnItemToOriginalContainer(', 'function ISCraftingUI.ReturnItemToContainer('})do
         nativeFunction('client/ISUI/ISCraftingUI.lua',signature)
@@ -298,15 +380,39 @@ return function(client)
         value.getJobType=function()return 'Transfer'end;value.getName=function()return 'Book'end;value.getDisplayName=value.getName
         for _,name in ipairs({'isFavorite','getIsCraftingConsumed','hasTag','isHumanCorpse','hasModData','IsClothing','canBeActivated','isOnGroundOrInsideBagOnSquare'})do value[name]=function()return false end end
         value.getWorldItem=function()end;value.getEquipParent=function()end;value.getAttachedSlot=function()return -1 end
+        value.isRequiresEquippedBothHands=function()return false end;value.IsInventoryContainer=function()return false end
+        value.getEquipSound=function()end;value.getCurrentUsesFloat=function()return 1 end
         value.canBeEquipped=function()end
         allItems[#allItems+1]=value;return value
+    end
+    local function garment(id, location)
+        local value=book(id, location)
+        value.class,value.wetness='Clothing',80
+        value.getFullType=function()return 'Base.Shirt_Denim'end
+        value.getType=function()return 'Shirt_Denim'end
+        value.getCategory=function()return 'Clothing'end
+        value.IsClothing=function()return true end
+        value.getWetness=function(self)return self.wetness end
+        value.setWetness=function(self,wetness)self.wetness=wetness end
+        value.getBodyLocation=function()return 'Torso'end
+        value.getClothingItem=function()return {}end
+        return value
+    end
+    if options.readProducer=='transferIfNeeded' then
+        -- Preserve the real same-file native closure while changing its role
+        -- before Operations captures the existing producer wrapper.
+        env.ISInventoryPaneContextMenu.readItem=env.ISInventoryPaneContextMenu.transferIfNeeded
+    end
+    if options.primaryProducer=='OnSecondWeapon'then
+        -- Genuine same-file closure, incorrect public callback role.
+        env.ISInventoryPaneContextMenu.OnPrimaryWeapon=env.ISInventoryPaneContextMenu.OnSecondWeapon
     end
     env.require('PZSurvivorToolkit/ActionQueueOperations')
     env.require('PZSurvivorToolkit/ActionQueueDefinitions')
     env.require('PZSurvivorToolkit/ActionQueuePolicy')
     env.require('PZSurvivorToolkit/ActionQueue')
     local compat=env.require('PZSurvivorToolkit/ActionQueueCompat')
-    assert(compat.isInstalled('P4TidyUpMeister'),'selected actual P4 source was not accepted by Compat: '..tostring(env.sourceFailure))
+    assert(compat.isInstalled('P4TidyUpMeister')==p4Enabled,'selected P4 provider differs from fixture: '..tostring(env.sourceFailure))
     local queue=env.ISTimedActionQueue.getTimedActionQueue(player)
     local function dispatch(action,phase)
         -- Model the Java LuaTimedActionNew lifecycle bridge, not its individual
@@ -323,12 +429,43 @@ return function(client)
                 lifecycle.finish(action,'complete',complete[1]and complete[2]~=false)
                 if not complete[1]then error(complete[2],0)end
             end
-            action.action.removed=true;queue:tick()
+            action.action.removed=true
+            if client and options.canonicalBodyReplacement and not options.replacedBody
+                and action.Type=='ISInventoryTransferAction'and action.destContainer==inventory then
+                options.replacedBody=true
+                local old=action.item;local canonical={}
+                for key,value in pairs(old)do canonical[key]=value end
+                assert(old.container==inventory,'server replacement requires an earned physical root item')
+                old.container=nil;canonical.container=inventory;allItems[#allItems+1]=canonical
+                action.item=canonical
+                for _,body in ipairs(queue.queue)do
+                    if body.Type=='ISWringClothing'and body.item==old then body.item=canonical end
+                end
+                engineTrace[#engineTrace+1]={event='server-canonical-replacement',id=canonical.id}
+                if options.guardLostAtReplacement then
+                    env.PZSurvivorToolkit.ActionQueueRestoration.observeNative=function()return false end
+                end
+            end
+            queue:tick()
         end
         return observed
     end
+    local function acknowledge(action,state)
+        assert(client and action.toolkitNativeTransaction and action.toolkitNativeKind)
+        for _,callback in ipairs(events.OnServerCommand or {})do
+            callback('PZSurvivorToolkitActions','State',{protocol=1,player=player:getOnlineID(),
+                transaction=action.toolkitNativeTransaction,kind=action.toolkitNativeKind,
+                token='00000000-0000-0000-0000-000000000001',state=state})
+        end
+    end
     local function start(action)
         action.action.started=true
+        if client and action.Type=='ISEquipWeaponAction'then
+            -- Model the Java acknowledgement bridge, without replacing the
+            -- native equip callbacks or the actual Lua receipt consumer.
+            action.toolkitNativeTransaction,action.toolkitNativeKind=91,action.Type
+            acknowledge(action,'started')
+        end
         action:start()
     end
     local function deliver(action)
@@ -338,7 +475,8 @@ return function(client)
         assert(request.status=='pending');request.status='done'
         for _,item in ipairs(request.items)do request.source:DoRemoveItem(item);request.destination:AddItem(item)end
     end
-    return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,list=list,
+    return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,garment=garment,list=list,
         dispatch=dispatch,start=start,deliver=deliver,transactions=transactions,events=events,adjacent=adjacent,
-        effects=effects,engineTrace=engineTrace}
+        effects=effects,engineTrace=engineTrace,bag=bag,acknowledge=acknowledge,
+        setModProbe=function(callback)options.modProbe=callback end}
 end

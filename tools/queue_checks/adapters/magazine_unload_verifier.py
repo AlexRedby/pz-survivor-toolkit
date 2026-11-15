@@ -292,7 +292,7 @@ def verify(root, selection, catalog):
         authority = (root / 'server-launch.log').read_text(errors='replace') if selection['kind'] == 'mp' else text
         events = [value for value in report.events(text) if value.get('suite') == 'magazine-unload']
         setups = [value for value in events if value.get('event') == 'setup']; ends = [value for value in events if value.get('event') == 'complete']
-        rows = [value for value in events if value.get('event') == 'case']; cases = list(CASES)
+        rows = [value for value in events if value.get('event') == 'case']; cases = list(selection.get('cases', CASES))
         prepared, verified = (_raw(authority, marker) for marker in ('PREPARED', 'VERIFIED')); placements = _raw(text, 'CLIENT_PLACEMENT')
         require(len(setups) == 1 and len(ends) == 1 and [value.get('id') for value in rows] == cases
                 and all([value.get('case') for value in group] == cases for group in (prepared, verified, placements)), 'missing/duplicate/ordered grouped case receipts')

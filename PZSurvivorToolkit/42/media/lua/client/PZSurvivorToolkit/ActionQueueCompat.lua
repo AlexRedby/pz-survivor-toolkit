@@ -7,6 +7,7 @@ local Toolkit = PZSurvivorToolkit
 local Operations = Toolkit.ActionQueueOperations
 local expandCommand = Operations.expandCommand
 local Settlement = require "PZSurvivorToolkit/ActionQueueSettlement"
+local Transfers = require "PZSurvivorToolkit/ActionQueueTransfers"
 local TidyIntent = require "PZSurvivorToolkit/ActionQueueTidyIntent"
 local WashWaterRule = require "PZSurvivorToolkit/WashWaterRule"
 local washWaterMatches = WashWaterRule and WashWaterRule.matchesComplete
@@ -167,6 +168,7 @@ local function bindingBase()
         or not bindingEqual(bindingOwn(Toolkit,"ActionQueueCompat"),Compat)
         or not bindingEqual(bindingOwn(Toolkit,"ActionQueueSettlement"),Settlement)
         or not bindingEqual(bindingOwn(Toolkit,"ActionQueueTidyIntent"),TidyIntent)
+        or not bindingEqual(bindingOwn(Toolkit,"ActionQueueTransfers"),Transfers)
         or not bindingEqual(bindingOwn(Toolkit,"ActionQueueOperations"),Operations)
         or not bindingEqual(bindingOwn(Proof,"captureBindings"),bindingCapture)
         or not bindingEqual(bindingOwn(Proof,"closure"),bindingOrigin) or not bindingEqual(bindingOwn(Proof,"own"),bindingSourceOwn)
@@ -174,7 +176,7 @@ local function bindingBase()
         or not bindingEqual(bindingOwn(Compat,"transferListenerBinding"),transferListenerFactory)
         or not bindingEqual(bindingOwn(Compat,"tidyBinding"),tidyBindingFactory) then return nil end
     return {{owner=bindingGlobals,keys={"PZSurvivorToolkit","getFilenameOfClosure","EURY_CONTAINERS","P4TidyUpMeister","TurnOffFridges"}},
-        {owner=Toolkit,keys={"ActionQueueCompat","ActionQueueSettlement","ActionQueueTidyIntent","ActionQueueOperations","ActionQueuePolicy","ActionQueueCarts","Settings"}},
+        {owner=Toolkit,keys={"ActionQueueCompat","ActionQueueSettlement","ActionQueueTidyIntent","ActionQueueTransfers","ActionQueueOperations","ActionQueuePolicy","ActionQueueCarts","Settings"}},
         {owner=Compat,keys={"transferBinding","transferListenerBinding","tidyBinding"}},
         {owner=Proof,keys={"captureBindings","closure","own"}},{owner=bindingState,keys={"revision"}}}
 end
@@ -549,7 +551,7 @@ local function nativeClothingMethods()
         or type(clothingBindings)~="function" or not clothingBindings() then return false end
     if clothingHelperSource==nil then
         clothingHelperSource=Proof.closure(clothingBindings,"ActionQueueClothing.lua")
-            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",66286558,"PZSurvivorToolkit",true)
+            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",1719038923,"PZSurvivorToolkit",true)
     end
     if not clothingHelperSource then return false end
     if clothingSourceSafe == nil then
@@ -1828,7 +1830,7 @@ function Compat.install()
         }
         transferListenerRecord={callback=onMerged,canObserve=canObserve,events=events,dependencies=bindingDependencies()}
         bindingState.revision=bindingState.revision+1
-        TidyIntent.observeTransfers(onMerged,canObserve,events,transferListenerFactory)
+        Transfers.observeTransfers(onMerged,canObserve,events,transferListenerFactory)
         local policy=Toolkit.ActionQueuePolicy
         if policy and policy.adoptTransferQueueObserver then policy.adoptTransferQueueObserver(previous,ISInventoryTransferAction.checkQueueList) end
         Settlement.observePlannedReturns()

@@ -1,5 +1,8 @@
 """Grouped native root-magazine unload controls with exact ammo identity receipts."""
 import json
+import os
+import zipfile
+from .. import preparation_process
 from pathlib import Path
 import re
 import shutil
@@ -9,6 +12,18 @@ from ..mod_selection import lua_sources, game_version
 from .tv_controls import MODS
 
 CASES = ('direct', 'bulk')
+EQUIP_CASES = ('equip-edit',)
+EQUIP_NATIVE_CRC = {
+    'media/lua/shared/TimedActions/ISEquipWeaponAction.lua': 3528902511,
+    'media/lua/shared/TimedActions/ISReadABook.lua': 916973327,
+    'media/lua/client/TimedActions/ISInventoryTransferAction.lua': 3908838083,
+}
+EQUIP_PREPARED_NATIVE_CRC = {
+    'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua': 2574700613,
+    'media/lua/client/TimedActions/ISQueueActionsAction.lua': 733678136,
+    'media/lua/shared/luautils.lua': 3574606238,
+    'media/lua/shared/TimedActions/ISInventoryTransferUtil.lua': 1929797533,
+}
 NAMES = ('front', 'target', 'cancelled', 'tail', 'unrelated', 'gun-tail')
 LOADS = dict(front=5, target=3, cancelled=4, tail=2, unrelated=6, **{'gun-tail': 2})
 AMMO = 'Base.Bullets9mm'
@@ -35,29 +50,58 @@ def definitions():
         scenario_actions={'native-magazine-unload': dict(mods=list(MODS),
             checks={'success-queued': effects, 'server-authority': effects, 'cancel-waiting': edits, 'move-independent': edits},
             toolkit_only=['cancel-waiting', 'move-independent'],
-            scope='Grouped full selected pack fresh SP/menu Host direct native inventory callback and public BulkFirearms unloadEntries/queueUnload controls. Plain exact root magazines and alternating Base.Shotgun A,B,A,B unloads submitted loaded/unheld behind the real front, native own-equip hand protection and final P4 hand restoration, exact unchanged live chamber/spent/magazine fields, classified vanilla empty-start jobDelta NaN with final native finite0 reset. ShotgunShells and Bullets9mm each have exact currentUses output accounting. Pack-captured callbacks including pinned non-bow WPANC delegations are preserved. Natural -1-duration native animation/server loops, untouched native callbacks and only the exact owned bulk start guard. Queue-on cancels a waiting loaded magazine and moves independent tail before target while front is active. Separately requested same-front repeats constructed while loaded must enter native start at zero, finish native perform without extra debit/output, and preserve the independent tail; read-only Lifecycle receipts identify actual native episodes (SP complete, Host perform plus server authority). Native starts and partial loaded-count progress for nonempty commands, final canonical magazine identities, authoritative new ammo IDs and per-output uses1, exact loose-plus-loaded round conservation, unchanged baseline/unrelated inputs and independent tail. Loose round units use getCurrentUses; getCount is factory metadata and is never multiplied into output credit. No active edits, recovery, group fetch, future output capacity authority or physical-input coverage.')},
-        cases=[dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'], modes=['native', 'toolkit'], languages=['EN']) for case in CASES])}
+            scope='Grouped full selected pack fresh SP/menu Host direct native inventory callback and public BulkFirearms unloadEntries/queueUnload controls. Plain exact root magazines and alternating Base.Shotgun A,B,A,B unloads submitted loaded/unheld behind the real front, native own-equip hand protection and final P4 hand restoration, exact unchanged live chamber/spent/magazine fields, classified vanilla empty-start jobDelta NaN with final native finite0 reset. ShotgunShells and Bullets9mm each have exact currentUses output accounting. Pack-captured callbacks including pinned non-bow WPANC delegations are preserved. Natural -1-duration native animation/server loops, untouched native callbacks and only the exact owned bulk start guard. Queue-on cancels a waiting loaded magazine and moves independent tail before target while front is active. Separately requested same-front repeats constructed while loaded must enter native start at zero, finish native perform without extra debit/output, and preserve the independent tail; read-only Lifecycle receipts identify actual native episodes (SP complete, Host perform plus server authority). Native starts and partial loaded-count progress for nonempty commands, final canonical magazine identities, authoritative new ammo IDs and per-output uses1, exact loose-plus-loaded round conservation, unchanged baseline/unrelated inputs and independent tail. Loose round units use getCurrentUses; getCount is factory metadata and is never multiplied into output credit. No active edits, recovery, group fetch, future output capacity authority or physical-input coverage.'),
+            'native-equip-edit': dict(mods=list(MODS),
+                checks={'success-queued': {'equip-edit': dict(effectsVerified=True, tailCompleted=True)},
+                        'server-authority': {'equip-edit': dict(serverAuthorityVerified=True)},
+                        'cancel-waiting': {'equip-edit': dict(pendingEditsVerified=True)},
+                        'move-independent': {'equip-edit': dict(pendingEditsVerified=True)},
+                        'move-dependent': {'equip-edit': dict(pendingProtectionVerified=True)}},
+                toolkit_only=['cancel-waiting', 'move-independent', 'move-dependent'],
+                scope='Grouped full selected pack native explicit pending Equip actions: SP/menu Host reorder-two/reorder-three/cancel, inert worn backpack, unavailable nested input, container-transfer coupling and Hammer Script+Attributes component eligibility protected; Host edits only unsubmitted native order in a private-ledger-qualified singleton root cohort; callbacks, validity and effects stay native, with no forecast credit. Unchanged native source-order queue-off controls, paid native front/tail readers, canonical final hands and full inventory multiset/count, original native delegates/durations, attested source-owned transfer stop guard, native lifecycle receipts and P4 quiescence. Programmatic constructors; no active edit, physical input or future capacity credit.')},
+        cases=[dict(id=case, producer='fixture', capability='effect', kinds=['sp', 'mp'], modes=['native', 'toolkit'], languages=['EN']) for case in (*CASES, *EQUIP_CASES)])}
 
 
 def validate(selection):
-    if (selection.get('cases') != list(CASES) or selection.get('kind') not in ('sp', 'mp')
+    prepared = selection.get('options', {}).get('equip_prepared', False)
+    if type(prepared) is not bool or prepared and selection.get('cases') != list(EQUIP_CASES):
+        raise ValueError('equip_prepared requires boolean true with equip-edit alone')
+    observation = selection.get('options', {}).get('equip_host_observation', False)
+    if type(observation) is not bool or observation and (selection.get('kind') != 'mp' or selection.get('cases') != list(EQUIP_CASES)):
+        raise ValueError('equip_host_observation requires menu Host equip-edit alone')
+    workload = selection.get('options', {}).get('equip_workload', False)
+    if type(workload) is not bool or workload and selection.get('cases') != list(EQUIP_CASES):
+        raise ValueError('equip_workload requires boolean true with equip-edit alone')
+    if workload and selection.get('kind') != 'sp':
+        raise ValueError('The Equip UI work profile qualifies the SP permission slice only')
+    baseline = selection.get('options', {}).get('equip_workload_baseline', False)
+    if type(baseline) is not bool or baseline and not workload:
+        raise ValueError('equip_workload_baseline requires the explicit work profile')
+    if prepared and workload:
+        raise ValueError('Prepared Equip functional qualification and the archived UI work profile are separate selections')
+    cases = selection.get('cases')
+    ordered = type(cases) is list and bool(cases) and (cases == list(EQUIP_CASES) or cases == [case for case in CASES if case in cases])
+    if (not ordered or selection.get('kind') not in ('sp', 'mp')
         or selection.get('mode') not in ('native', 'toolkit') or selection.get('languages') != ['EN']
         or type(selection.get('clients')) is not int or selection['clients'] != 1 or selection.get('mods') != MODS
         or selection.get('options', {}).get('world_template')
         or selection['kind'] == 'mp' and selection.get('options', {}).get('mp_host') is not True):
-        raise ValueError('Magazine unload requires ordered direct/bulk cases, fresh full-selected-pack SP/menu Host and one EN client')
+        raise ValueError('Magazine unload requires an ordered unload subset or equip-edit alone, fresh full-selected-pack SP/menu Host and one EN client')
 
 
 def sources(project, selection):
     root = Path(project) / 'tests/native_queue'
     return [*sorted((root / 'magazine-unload').rglob('*.lua')), *sorted((root / 'startup').rglob('*.lua')),
             root / 'health/shared/QueueHealthEvents.lua', root / 'support/QueueEnergyPlacement.lua',
-            *verifier_sources(project, selection)]
+            *sorted((root / 'magazine-unload/java').glob('*.java')), *verifier_sources(project, selection)]
 
 
-def audit_native(game):
+def audit_native(game, selection=None):
     result = {}
-    for relative, expected in NATIVE_CRC.items():
+    selected = EQUIP_NATIVE_CRC if selection and selection.get('cases') == list(EQUIP_CASES) else NATIVE_CRC
+    if selection and selection.get('options', {}).get('equip_prepared'):
+        selected = {**selected, **EQUIP_PREPARED_NATIVE_CRC}
+    for relative, expected in selected.items():
         actual = zlib.crc32((Path(game) / relative).read_bytes())
         if actual != expected: raise ValueError('Magazine native source audit requires review: ' + relative)
         result[relative] = actual
@@ -74,9 +118,135 @@ def audit_selected(locations, version):
     return result
 
 
+def _reviewed_equip_pins(text, baseline=False, prepared=False):
+    """Read only the fixture's closed literal table and explicit baseline branch."""
+    code = re.sub(r'(?m)^\s*--[^\n]*', '', text)
+    tables = re.findall(r'(?ms)^local sources=\{(.*?)^\}', code)
+    loops = re.findall(r'(?ms)^ for _,source in ipairs\(sources\)do\n(.*?)^ end\n(?= assert\(publicCurrent\(\))', code)
+    if len(tables) != 1 or len(loops) != 1 or len(re.findall(r'\bsources\b', code)) != 2:
+        raise ValueError('Equip reviewed-source fixture layout requires review: literal sources/table loop')
+    def compact(value):
+        # Whitespace inside a literal belongs to its filename/message.
+        return ''.join(part if index % 2 else re.sub(r'\s+', '', part)
+                       for index, part in enumerate(re.split(r"('[^'\\\r\n]*')", value)))
+    name = r'[A-Za-z][A-Za-z0-9_]*\.lua'
+    entry = r"\{'(client|shared|server)','(" + name + r")',([0-9]+)\},"
+    table = compact(tables[0])
+    rows = re.findall(entry, table)
+    if not rows or re.sub(entry, '', table) or len({row[1] for row in rows}) != len(rows):
+        raise ValueError('Equip reviewed-source fixture requires unique literal source pins')
+    prefix = ("localadler=source[3]ifconfig.optionsandconfig.options.equip_workload_baseline==truethen"
+              "assert(config.options.equip_workload==true,'baseline callback proof requires work profile')")
+    suffix = ("endassert(matches('media/lua/'..source[1]..'/PZSurvivorToolkit/'..source[2],adler,"
+              "'PZSurvivorToolkit',true)==true,'callback observation source bytes changed '..source[2])")
+    loop = compact(loops[0])
+    if not loop.startswith(prefix) or not loop.endswith(suffix):
+        raise ValueError('Equip reviewed-source fixture layout requires review: exact baseline/source check')
+    choices = loop[len(prefix):-len(suffix)]
+    choice = r"source\[2\]=='(" + name + r")'thenadler=([0-9]+)"
+    if not re.fullmatch('if' + choice + '(?:elseif' + choice + ')*end', choices):
+        raise ValueError('Equip reviewed-source baseline requires explicit literal overrides')
+    overrides = re.findall(choice, choices)
+    names = {row[1] for row in rows}
+    if (len({row[0] for row in overrides}) != len(overrides) or any(row[0] not in names for row in overrides)
+            or len(re.findall(r'\badler\s*=', code)) != 1 + len(overrides)
+            or any(not 0 <= int(value) <= 0xffffffff for value in [row[2] for row in rows] + [row[1] for row in overrides])):
+        raise ValueError('Equip reviewed-source pins/overrides require review')
+    if prepared:
+        prepared_tables = re.findall(r'(?ms)^local preparedSources=\{(.*?)^\}', code)
+        prepared_loops = re.findall(r'(?ms)^  for _,entry in ipairs\(preparedSources\)do\n(.*?)^  end', code)
+        expected = ("assert(matches('media/lua/'..entry[1]..'/PZSurvivorToolkit/'..entry[2],entry[3],"
+                    "'PZSurvivorToolkit',true)==true,'prepared callback observation source bytes changed '..entry[2])")
+        if (len(prepared_tables) != 1 or len(prepared_loops) != 1 or compact(prepared_loops[0]) != expected
+                or len(re.findall(r'\bpreparedSources\b', code)) != 2
+                or len(re.findall(r'\bprepared\s*=', code)) != 1
+                or "localprepared=config.optionsandconfig.options.equip_prepared==true" not in compact(code)
+                or not re.search(r'(?m)^ if prepared then\n  for _,entry in ipairs\(preparedSources\)do$', code)):
+            raise ValueError('Equip prepared reviewed-source fixture layout requires review')
+        table = compact(prepared_tables[0]); extra = re.findall(entry, table)
+        if (not extra or re.sub(entry, '', table) or len({row[1] for row in rows + extra}) != len(rows + extra)
+                or any(not 0 <= int(row[2]) <= 0xffffffff for row in extra)):
+            raise ValueError('Equip prepared sources require unique literal pins')
+        rows += extra
+    selected = dict(overrides) if baseline else {}
+    return {side + '/PZSurvivorToolkit/' + filename: int(selected.get(filename, pin)) for side, filename, pin in rows}
+
+
+def _source_adler(data):
+    """BufferedReader UTF8 text -> UTF16 units, one LF per CR/LF/CRLF record.
+
+    Preserve BOM and Unicode separators as data. Reject malformed UTF8 before
+    launch rather than guessing the JVM decoder's replacement grouping.
+    """
+    try: text = data.decode('utf-8')
+    except UnicodeDecodeError as error: raise ValueError('Equip reviewed source is not valid UTF8') from error
+    records = re.split(r'\r\n|\r|\n', text) if text else []
+    if text.endswith(('\r', '\n')): records.pop()
+    a, b = 1, 0
+    for record in records:
+        units = (record + '\n').encode('utf-16-le')
+        for index in range(0, len(units), 2):
+            a = (a + units[index] + 256 * units[index + 1]) % 65521
+            b = (b + a) % 65521
+    return b * 65536 + a
+
+
+def audit_equip_sources(project, selection, locations, version=None):
+    """Reject stale fixture pins against effective candidate Lua before staging."""
+    if selection.get('cases') != list(EQUIP_CASES): return {}
+    options = selection.get('options', {})
+    baseline = options.get('equip_workload_baseline', False)
+    if type(baseline) is not bool or baseline and options.get('equip_workload') is not True:
+        raise ValueError('Equip reviewed-source baseline requires the explicit work profile')
+    fixture = Path(project) / 'tests/native_queue/magazine-unload/client/QueueEquipCallbackObservation.lua'
+    prepared = options.get('equip_prepared', False)
+    if type(prepared) is not bool or prepared and baseline:
+        raise ValueError('Equip prepared reviewed-source selection requires current functional profile')
+    try:
+        pins = _reviewed_equip_pins(fixture.read_text(encoding='utf-8'), baseline, prepared)
+        if 'PZSurvivorToolkit' not in locations: raise ValueError('Equip reviewed-source preflight needs the candidate Toolkit location')
+        candidates = lua_sources(Path(locations['PZSurvivorToolkit']), version)
+        result = {}
+        for relative, expected in pins.items():
+            files = [path for path in candidates if path.as_posix().endswith('/media/lua/' + relative)]
+            if len(files) != 1: raise ValueError('Equip reviewed-source preflight needs one effective Toolkit source: ' + relative)
+            actual = _source_adler(files[0].read_bytes())
+            if actual != expected:
+                raise ValueError('Equip reviewed-source preflight requires review: ' + relative
+                                 + ' expected ' + str(expected) + ', candidate ' + str(actual))
+            result[relative] = actual
+        return result
+    except OSError as error:
+        raise ValueError('Equip reviewed-source preflight cannot read candidate inputs: ' + str(error)) from error
+
+
+def _work_probe(project, output, game, jdk, locations, runtime):
+    source = Path(project) / 'tests/native_queue/magazine-unload/java/EquipWorkProbe.java'
+    classes = Path(output) / 'equip-work-probe/classes'; classes.mkdir(parents=True)
+    patches = Path(locations['PZToolkitJavaPatches']) / '42/media/java/PZToolkitJavaPatches.jar'
+    classpath = os.pathsep.join(map(str, [Path(game) / 'projectzomboid.jar', Path(game) / 'ZombieBuddy.jar', patches]))
+    preparation_process.run([str(Path(jdk) / 'bin/javac'), '--release', '25', '-cp', classpath, '-d', str(classes), str(source)],
+                            check=True, capture_output=True, text=True, timeout=60)
+    compiled = sorted(classes.rglob('*.class'))
+    if not compiled: raise ValueError('Equip work probe compilation produced no classes')
+    jar = classes.parent / 'EquipWorkProbe.jar'
+    with zipfile.ZipFile(jar, 'x', zipfile.ZIP_DEFLATED) as archive:
+        for path in compiled: archive.write(path, path.relative_to(classes).as_posix())
+    runtime.setdefault('fixture', {}).setdefault('mods', []).append('EquipWorkProbe')
+    for role in runtime['roles'].values():
+        layer = Path(role['cache']) / 'mods/EquipWorkProbe/42'
+        (layer / 'media/java').mkdir(parents=True)
+        (layer / 'mod.info').write_text('name=Disposable queue work probe\nid=EquipWorkProbe\nversionMin=42.21\nrequire=\\ZombieBuddy\njavaPkgName=net.alexredby.equipworkprobe\njavaJarFile=media/java/EquipWorkProbe.jar\n')
+        shutil.copy2(jar, layer / 'media/java/EquipWorkProbe.jar')
+
+
 def stage(project, output, game, jdk, selection, locations, runtime):
-    validate(selection); audit = audit_native(game); audit.update(audit_selected(locations, game_version(game)))
+    validate(selection)
+    reviewed = audit_equip_sources(project, selection, locations, game_version(game))
+    audit = audit_native(game, selection); audit.update(audit_selected(locations, game_version(game)))
     root = Path(project) / 'tests/native_queue'
+    if selection.get('options', {}).get('equip_workload'):
+        _work_probe(project, output, game, jdk, locations, runtime)
     for role in runtime['roles'].values():
         lua = Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua'
         for side, name in [('client', 'ZZStartup.lua'), ('server', 'ZZStartupServer.lua')]:
@@ -84,6 +254,7 @@ def stage(project, output, game, jdk, selection, locations, runtime):
         shutil.copy2(root / 'health/shared/QueueHealthEvents.lua', lua / 'shared')
     runtime.setdefault('fixture', {}).update(server_ready='[STARTUP_TEST] SERVER_READY',
         failure_markers=['[QUEUE_TEST] FAIL magazine-unload'], native_magazine_audit=audit, sandbox={'Zombies': 6})
+    if reviewed: runtime['fixture']['equip_reviewed_source_audit'] = reviewed
 
 
 def _raw(text, marker):
@@ -91,12 +262,12 @@ def _raw(text, marker):
 
 
 def complete(selection, role, text):
-    return role == 'client1' and _raw(text, 'COMPLETE') == [dict(cases=list(CASES))]
+    return role == 'client1' and _raw(text, 'COMPLETE') == [dict(cases=list(selection.get('cases', CASES)))]
 
 
 def verifier_sources(project, selection):
-    return [Path(__file__).with_name('magazine_unload_verifier.py'), Path(__file__).parents[1] / 'placement.py',
-            Path(project) / 'tests/test_queue_magazine_unload.py']
+    return [Path(__file__).with_name('magazine_unload_verifier.py'), Path(__file__).with_name('magazine_unload_equip_verifier.py'), Path(__file__).parents[1] / 'placement.py',
+            Path(project) / 'tests/test_queue_magazine_unload.py', Path(project) / 'tests/test_queue_magazine_unload_equip.py', Path(project) / 'tests/test_queue_equip_work.py']
 
 
 def check_case(row, selection, prepared, verified):
@@ -106,4 +277,5 @@ def check_case(row, selection, prepared, verified):
 
 def verify(root, selection, catalog):
     from ..provenance import run_verifier
-    return run_verifier(Path(__file__).with_name('magazine_unload_verifier.py'), __package__, root, selection, catalog)
+    module = 'magazine_unload_equip_verifier.py' if selection.get('cases') == list(EQUIP_CASES) else 'magazine_unload_verifier.py'
+    return run_verifier(Path(__file__).with_name(module), __package__, root, selection, catalog)

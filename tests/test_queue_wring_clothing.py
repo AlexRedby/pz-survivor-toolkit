@@ -1,4 +1,5 @@
 import copy
+from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,16 @@ from queue_checks.adapters import wring_clothing as a
 from tests.test_queue_tv_controls_adapter import placement_proof as tile_placement_proof
 
 PROJECT = Path(__file__).resolve().parents[1]
+
+
+@lru_cache(maxsize=2)
+def carried_plan(mode):
+    # The live fixture and source composition load this same pure Lua recipe.
+    from lupa.lua51 import LuaRuntime
+    lua = LuaRuntime(unpack_returned_tuples=True)
+    scenario = lua.execute((PROJECT / 'tests/native_queue/wring-clothing/shared/QueueWringScenario.lua').read_text())
+    plan = scenario.plan(mode)
+    return tuple((plan[index]['name'], plan[index]['type']) for index in range(1, len(plan) + 1))
 
 
 def placement_proof(target, mode='local'):
@@ -81,7 +92,7 @@ def evidence(kind='mp', mode='toolkit', case='root'):
         specs[name] = dict(id=10 + index, type='Base.Shoes_FlipFlop' if shoes else 'Base.Socks_Ankle',
                            cap=10, nativeShoe=False, bodyLocationClass='ItemBodyLocation',
                            bodyLocation='base:shoes' if shoes else 'base:socks', initial=100, weight=.1)
-    ids = dict(case=case, mode=mode, source=source, origin=origin, items=specs,
+    ids = dict(case=case, mode=mode, restoration=False, source=source, origin=origin, items=specs,
                placementProof=placement_proof(origin, 'replica' if kind == 'mp' else 'local'))
     carried = case == 'worn-bag'
     if carried:
@@ -96,16 +107,16 @@ def evidence(kind='mp', mode='toolkit', case='root'):
                        weight=.1, worn=not final and case == 'worn' and name == 'target', counts=a._counts(case, name, final))
             for name, spec in specs.items()})
     editing = mode == 'toolkit' and case == 'root'
-    plan = [('front', 'ISWringClothing')]
     if carried:
-        plan += ([('cancelled', 'ISQueueActionsAction')] if mode == 'toolkit' else []) + [('cancelled', 'ISInventoryTransferAction'), ('cancelled', 'ISWringClothing')]
-    elif editing: plan += [('cancelled', 'ISWringClothing')]
-    if case == 'worn': plan += [('target', 'ISUnequipAction')]
-    if carried and mode == 'toolkit': plan += [('target', 'ISQueueActionsAction')]
-    if case in ('worn-bag', 'world'): plan += [('target', 'ISInventoryTransferAction')]
-    plan += [('target', 'ISWringClothing')]
-    if editing: plan += [('repeat', 'ISWringClothing')]
-    plan += [('tail', 'ISWringClothing')]
+        plan = carried_plan(mode)
+    else:
+        plan = [('front', 'ISWringClothing')]
+        if editing: plan += [('cancelled', 'ISWringClothing')]
+        if case == 'worn': plan += [('target', 'ISUnequipAction')]
+        if case == 'world': plan += [('target', 'ISInventoryTransferAction')]
+        plan += [('target', 'ISWringClothing')]
+        if editing: plan += [('repeat', 'ISWringClothing')]
+        plan += [('tail', 'ISWringClothing')]
     commands = []
     for index, (name, type_) in enumerate(plan):
         cancelled = editing and name in ('cancelled', 'repeat') or carried and mode == 'toolkit' and name == 'cancelled'
@@ -307,6 +318,72 @@ def capacity_profile_evidence(kind='mp',mode='toolkit'):
     cleanup=dict(case='worn-bag',bag=ids['source']['bag'],ids=[item['id']for item in rows],actorInstances=0,bagReachable=False,bagWorn=False,bagWorld=False,scope='removed from actor inventory; no object-destruction claim')
     row['capacityProfile']=dict(measurement=measurement,cleanupClient=copy.deepcopy(cleanup),cleanupServer=copy.deepcopy(cleanup))
     return row,selection,ids,final
+
+
+class WringClothingRestorationProfileTests(unittest.TestCase):
+    def test_native_returns_skips_only_p4_with_current_selected_layer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for layer, content in [('common', b'common producer'), ('42.21', b'old producer'),
+                                   ('42.22', b'current producer'), ('42.23', b'future producer')]:
+                source = root / layer / 'media/lua/client/Producer.lua'
+                source.parent.mkdir(parents=True)
+                source.write_bytes(content)
+            expected = zlib.crc32(b'current producer')
+            pins = {'Selected': ('Producer.lua', expected), 'P4TidyUpMeister': ('P4RestoreAction.lua', 0)}
+            with patch.object(a, 'SELECTED_CRC', pins):
+                self.assertEqual({'Selected': expected}, a.audit_selected({'Selected': root}, (42, 22), 'native-returns'))
+                with self.assertRaisesRegex(ValueError, 'producer/restore audit requires review'):
+                    a.audit_selected({'Selected': root}, (42, 21), 'native-returns')
+
+    def selection(self, mode='toolkit'):
+        return dict(kind='sp', mode=mode, mods=[mod for mod in a.MODS if mod != 'P4TidyUpMeister'],
+                    languages=['EN'], clients=1, cases=['worn-bag'],
+                    options=dict(wring_restoration_provider='native-returns'))
+
+    def sample(self, mode):
+        result = list(evidence('sp', mode, 'worn-bag')); row, selection, ids, final = result
+        selection.update(self.selection(mode)); spec = ids['items']['target']; enabled = mode == 'toolkit'
+        ids['restoration'] = True; row['ids']['restoration'] = True
+        samples = [dict(case='worn-bag', point=point, loaded=False, selected=False, itemId=spec['id'], itemType=spec['type'],
+                        state=state if enabled else False, candidates=1 if enabled else 0,
+                        observedPreparation=enabled, plannedTransfers=planned if enabled else 0)
+                   for point, state, planned in (('queued', 'prepare', 0), ('body', 'active', 0), ('final', 'completed', 1))]
+        samples[1].update(bodyIndex=1, returnIndex=2 if enabled else False, tailIndex=3 if enabled else 2,
+                          returnRef='native-return' if enabled else False)
+        row['restoration'] = dict(provider='native-returns', samples=samples)
+        if enabled:
+            row['prepared']['returns'][0]['bodySettled'] = True
+            row['prepared']['returns'][0]['allowMissing'] = True
+        else:
+            row['prepared']['returns'] = []
+            for snapshot in (row['client'], row['server'], final):
+                for name in ('target', 'cancelled'): snapshot['items'][name]['counts'] = dict(actor=1, root=1, source=0)
+        return result
+
+    def test_profile_requires_exact_mods_and_case(self):
+        selection = self.selection(); a.validate(selection)
+        for changed in (dict(mods=a.MODS), dict(mods=list(reversed(selection['mods']))), dict(cases=['root']),
+                        dict(options=dict(wring_restoration_provider='other')),
+                        dict(options=dict(wring_restoration_provider=False))):
+            with self.assertRaises(ValueError): a.validate(dict(selection, **changed))
+
+    def test_real_loan_receipts_and_queue_off_root(self):
+        for mode in ('toolkit', 'native'):
+            result = self.sample(mode); self.assertEqual([], a.check_case(*result))
+            for field, value in (('loaded', True), ('selected', True), ('itemId', -1), ('candidates', 9), ('plannedTransfers', 1)):
+                changed = copy.deepcopy(result); changed[0]['restoration']['samples'][0][field] = value
+                self.assertTrue(a.check_case(*changed), field)
+            changed = copy.deepcopy(result); changed[0]['restoration']['samples'][1]['state'] = 'waived'
+            self.assertTrue(a.check_case(*changed))
+        result = self.sample('native'); result[0]['prepared']['returns'] = [dict()]
+        self.assertTrue(a.check_case(*result))
+        result = self.sample('native'); result[0]['client']['items']['target']['counts'] = dict(actor=1, root=0, source=1)
+        self.assertTrue(a.check_case(*result))
+        result = self.sample('toolkit'); result[0]['prepared']['returns'][0]['bodySettled'] = False
+        self.assertTrue(a.check_case(*result))
+        result = self.sample('toolkit'); result[0]['prepared']['returns'] = []
+        self.assertTrue(a.check_case(*result))
 
 
 class WringClothingEvidenceTests(unittest.TestCase):
@@ -665,6 +742,7 @@ rootItems[2]=first;assert(not pcall(C.cleanupProof,state),'cleanup overlooked ex
         from lupa.lua51 import LuaRuntime
         lua=LuaRuntime(unpack_returned_tuples=True)
         lua.globals().serverSource=str(PROJECT/'tests/native_queue/wring-clothing/server/ZZWringClothingServer.lua')
+        lua.globals().diagnosticSource=str(PROJECT/'tests/native_queue/wring-clothing/shared/QueueWringDiagnostics.lua')
         lua.execute(r'''
 function isServer()return true end
 function getTimestampMs()return 0 end
@@ -681,6 +759,7 @@ package.loaded.QueueWringClothing={observesClothing=function()return false end,
   assert(player==actor and case=='worn-bag'and mode=='toolkit'and previous==nil and enabled==true,'Host option did not reach actual authority Prepare')
   profile={player=actor,ids={case=case,capacityProfile={},nativeWearSetup=true}};return profile
  end,wearBaseline=function()return receipt end,verify=function()return receipt end,dispose=function(state)assert(state==profile and state.profileVerified);disposed=true end}
+package.loaded.QueueWringDiagnostics=dofile(diagnosticSource)
 dofile(serverSource)
 command('WringClothingTest','Prepare',actor,{case='worn-bag',placement={},clientPlacement={mode='local',centered=true,centers=1}});tick();assert(sent[#sent]=='Prepared')
 command('WringClothingTest','WearBaseline',actor,{case='worn-bag'});tick();assert(sent[#sent]=='WearBaselined')

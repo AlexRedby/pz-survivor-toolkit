@@ -30,6 +30,7 @@ NATIVE_TAG_TESTS = (
 # source-dependent tests retain their own optional-input SKIP/fallback behavior.
 REQUIRED_INPUTS = {
     "test_action_queue_preparation_cancel.lua": ("native_action_root", "--game or --native-action-root"),
+    "test_action_queue_equip.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_hands.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_lookup.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_magazine.lua": ("native_action_root", "--game or --native-action-root"),
@@ -45,6 +46,8 @@ REQUIRED_INPUTS = {
     "test_action_queue_spatial_edit_policy.lua": ("native_action_root", "--game or --native-action-root"),
     'test_action_queue_borrowing_composition.lua': (('native_action_root', 'p4_source'),
                                                   '--game and --p4-source (or a complete --pack-lock)'),
+    'test_action_queue_restoration_composition.lua': (('native_action_root', 'p4_source'),
+                                                    '--game and --p4-source (or a complete --pack-lock)'),
     "test_bulk_transfer_binding.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_deferred_sources.lua": ("native_action_root", "--game or --native-action-root"),
     "test_action_queue_cart_transfer_binding.lua": (("native_action_root", "saucedcarts_source"),
@@ -84,6 +87,8 @@ SOURCE_CHECKS = {'test_device_action_target.lua': ('source-contract',), 'test_ac
  'test_action_queue_spatial_edit_policy.lua': ('source-contract',),
  'test_action_queue.lua': ('source-contract',),
  'test_action_queue_borrowing_composition.lua': ('plain', 'singleton-guarded', 'merge-preserving', 'return-failure'),
+ 'test_action_queue_restoration_composition.lua': ('native-return', 'pending-keep', 'return-failure', 'provider-controls',
+                                                     'wring-return', 'wring-keep', 'wring-refusal', 'wring-provider-controls'),
  'test_bulk_transfer_binding.lua': ('source-contract',),
  'test_action_queue_deferred_sources.lua': ('source-contract',),
  'test_action_queue_cart_transfer_binding.lua': ('native-branch-contract',),
@@ -129,6 +134,7 @@ SOURCE_CHECKS = {'test_device_action_target.lua': ('source-contract',), 'test_ac
  'test_action_queue_media.lua': ('source-contract',),
  'test_action_queue_magazine.lua': ('source-contract',),
  'test_action_queue_hands.lua': ('source-contract',),
+ 'test_action_queue_equip.lua': ('source-contract',),
  'test_action_queue_preparation_cancel.lua': ('source-contract',),
  'test_action_queue_lookup.lua': ('source-contract',),
  'test_action_queue_output_dependencies.lua': ('source-contract',),
@@ -238,7 +244,7 @@ def configure_test_sources(lua, name, args):
     """Give every isolated runtime the same paths; read only this test's inputs."""
     inputs = mod_integrations.bind_sources(lua, name, args)
     lua.globals().ProjectRoot = str(ROOT)
-    if name == 'test_action_queue_borrowing_composition.lua' and (args.game or getattr(args, 'toolkit_source', None)
+    if name in ('test_action_queue_borrowing_composition.lua', 'test_action_queue_restoration_composition.lua') and (args.game or getattr(args, 'toolkit_source', None)
             or getattr(args, 'native_action_root', None)):
         toolkit = getattr(args, 'toolkit_source', None) or ROOT / 'PZSurvivorToolkit'
         layers = mod_integrations.mod_layers(toolkit.resolve(), mod_integrations.game_version(args.game))

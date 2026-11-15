@@ -57,6 +57,61 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 - **Fixed:** Cancelling a verified Fitness operation preserves its equipment restoration and unrelated queued work without applying ordinary equip-tail restrictions to that cleanup.
 - **Compatibility:** Updated Neat Crafting and Project Cook producers keep native execution and protected queue edits pending their new ingredient/return contracts. Project Cook's verified craft start/stop balance repair remains active independently.
 
+### 0.1.373
+
+- **Fixed:** With P4 absent, completing a native explicit equipment request now retires the matching earlier optional-return debt for a garment borrowed for wringing, including through the selected CleanUI menu. Delayed Host acknowledgements cannot retire a newer loan; unconfirmed or rejected requests retain the debt. Keep, full/unavailable source bags and later equipment passed paired macOS SP/menu-Host checks with clean runtime audits. Native execution and capacity remain authoritative; general P4 replacement remains incomplete.
+
+### 0.1.372
+
+- **Added:** Source-proven optional return planning for a single unworn garment borrowed from a carried bag for native wringing when P4 is absent. Returns use earned pickup receipts, shared native admission and exact outcomes; pending Keep preserves the body, while failed qualification retains visible debt without falling back to a native transfer. Existing native returns and the selected P4 provider retain their paths. Normal returns and queue-off controls passed paired macOS SP/menu-Host full-pack-minus-P4 checks with clean runtime audits; live Keep and unavailable-source extensions remain separate coverage.
+
+### 0.1.371
+
+- **Fixed:** Distinguished read-only item-location dependencies from actual item use in queue editing. Equipping an unrelated item no longer blocks keeping a borrowed book, completing its native return or handling a full source container in single-player. Actual bag moves and shared-item conflicts remain protected. Native carried-book return, Keep and rejection of returns to full containers were verified in macOS SP/menu-Host with the selected pack excluding P4; the general restoration migration remains incomplete.
+
+### 0.1.370
+
+- **Changed:** With P4 absent from both loaded and selected mods, queue-enabled native reading from carried containers now records exact pickup loans before native allocation and keeps the game's existing optional return. Keep and failed-return handling use the shared ledger without adding a second return or marking it required. Direct inventory moves and other same-file callbacks do not acquire reading-loan authority; P4-selected and queue-disabled behavior stays with the existing producers. This is a limited migration path, not a complete P4 replacement.
+
+### 0.1.369
+
+- **Changed:** Fitness borrowed-item returns now use the shared Toolkit restoration producer while retaining their existing earned-loan checks, native transfers and recovery/equipment/return order. Batches retain their original handles through caller mutations, suppress duplicate scheduling and stop on changed producer bindings. Already-admitted cleanup remains available after disabling queue editing. P4 remains the general restoration provider during migration.
+
+### 0.1.368
+
+- **Changed:** Native transfer merging and receipt observation now have one shared owner independent of the automatic-restoration provider. Preparation, fitness and explicit grabs retain their native execution and source-bound observation; the current restoration provider remains active during migration.
+- **Fixed:** Generic transfer lifecycle notifications also run when the legacy explicit-intent controller is absent. Listener failures remain isolated, and later source mutations invalidate prepared observation leases.
+
+### 0.1.367
+
+- **Fixed:** Pending ordinary equipment requested from a carried bag can move or cancel as a complete fetch/equip operation behind an active reader in SP and Host. Original native capacity, input checks and execution remain authoritative; shared inputs, started work and return-bearing groups retain their protections.
+- **Fixed:** Whole-operation cancellation uses the validated operation span. Unstarted cancelled pickups and confirmed explicit equipment that keeps its item no longer leave stale P4 borrowing obligations; delayed pickup evidence does not consume an equipment confirmation twice.
+
+### 0.1.366
+
+- **Changed:** Pending Host equipment edits capture the shared queue structure and operation-token ownership once per decision. Private per-operation history and the final freshness checks remain enforced; supported edits and native execution are unchanged. The standalone ledger queries reuse the same validation helpers.
+
+### 0.1.365
+
+- **Fixed:** Behind an active reader, ordinary unstarted equipment actions from the main inventory can be reordered and cancelled in Host within a singleton root-item queue. The reader stays active; retained commands run through their original native checks and callbacks without predicting hand effects or spending future capacity. Borrowed/prepared groups, shared items, started commands and unsupported components remain protected.
+- **Fixed:** Pending native schedule edits recheck callback fields and private operation/cleanup facts after metadata work and immediately before mutation. Operation lookup rejects replaced or copied seals before invocation, without retaining operation seals in the source-metadata cache. Plain-table field checks avoid enumerating global/module namespaces; inherited tables keep their own-field checks.
+
+### 0.1.364
+
+- **Development:** Equip fixtures validate their reviewed source pins against the selected candidate during preparation, so stale pins fail before launching a game. Explicit archived comparison profiles retain their own reviewed pins.
+
+- **Changed:** Shared source verification hashes normalized text in one Lua loop, avoiding a nested Lua call for every code unit. Existing Adler/DJB checksums, reader dispatch, Unicode limits and read/close failures are preserved; no file-result cache or startup scan is added.
+
+### 0.1.363
+
+- **Changed:** Pending equipment checks avoid rebuilding discarded item dependencies and reuse private recipe data within each decision, while still rechecking current bindings, captures and item facts.
+
+- **Changed:** Source-qualified pending native Equip actions in SP use the common hand/item projection for reordering and cancellation before a surviving queue suffix. Ordinary unchanged backpacks remain supported. Pickup dependencies, container capacity, active actions, items with additional native components, heavy/worn/activated items and unreviewed mod handlers keep their existing guards. Host reordering remains unavailable pending correlated native execution support.
+
+### 0.1.362
+
+- **Added:** Source-owned data recipes and opt-in planning observations for Snow, NeatUI, Carts and Fishing hand-event state, composed with exact current registry checks. Unknown callbacks remain partial; state predicates explicitly do not certify complete handler effects or grant new queue-edit permissions. Repeated handlers share work only inside one synchronous observation.
+
 ### 0.1.361
 
 - **Added:** Read-only snapshots and exact ordered revalidation of the currently registered primary/secondary hand-event callbacks, including private mod handlers. Snapshots copy list storage; this observation does not grant queue-edit permissions or prove callback effects, queued dispatch or multiplayer freshness.
@@ -1686,6 +1741,42 @@ The older README associates medicine indicators with this label, but no separate
 - **Changed:** Start the new minor-version series for the Project Zomboid 42.22.2 migration, with the new connection-bound player and workstation decoder APIs.
 - **Removed:** Toolkit's transaction-cancellation ownership, missing-action completion, medical visual-removal synchronization and empty-hutch cleanup patches: the new game supplies those protections directly.
 - **Changed:** Keep the remaining `WindowShape` startup-property correction; ladder properties now use the game's native types.
+
+### 0.1.107
+
+- **Changed:** Updated reviewed queue-policy bindings for the prepared wring contract and refreshed Queue wrapper provenance.
+
+### 0.1.106
+
+- **Changed:** Updated the reviewed queue-policy compiler input for typed item-location reads. Unsupported inputs retain their original Lua implementation.
+
+### 0.1.105
+
+- **Changed:** Updated the reviewed queue compiler inputs for shared transfer-observer ownership. Unknown inputs retain their original Lua implementation.
+
+### 0.1.104
+
+- **Changed:** Added a read-only native eligibility check for ordinary equipment still inside a carried container, without running gameplay callbacks or granting admission. Updated the reviewed queue compiler source bindings.
+
+### 0.1.103
+
+- **Changed:** Updated the reviewed queue-policy compiler input for shared native cohort validation. Unsupported inputs retain the original Lua implementation.
+
+### 0.1.102
+
+- **Changed:** Updated the reviewed queue-policy compiler input for the native-unsubmitted Host scheduling path. Unsupported inputs retain the original Lua implementation.
+
+### 0.1.101
+
+- **Added:** A read-only server hand-state diagnostic bound to an existing active native action token. It invokes no item getters and grants no equipment-edit permission or packet-order guarantee. An opt-in menu Host fixture correlates its result with the current client action and the raw server log.
+
+### 0.1.100
+
+- **Changed:** Added read-only SP Equip dispatch/quiet-item facts and source capture relationships, including shared live cells and nested closure bodies. Event observation preserves native callbacks and reuses warmed per-thread slots without retaining completed events.
+
+### 0.1.99
+
+- **Added:** A shared read-only capture-predicate interpreter for verified Lua function shapes, with current nested captures, opaque identity, empty/absent table predicates and own-field traversal. It validates complete recipes, preserves unknown-state precedence and exposes no captured tables. Capture-field and schema reads preserve access-ordered maps without invoking foreign key methods.
 
 ### 0.1.98
 

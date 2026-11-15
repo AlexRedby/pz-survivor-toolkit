@@ -63,6 +63,152 @@ if string.byte('洗') == 230 then
         assert(not Proof.matches(path, (naive * 33 + 10) % 4294967296), 'reject malformed UTF8 even at its raw-byte pin')
     end
 end
+-- These pins describe the reader's returned content, not a second newline or
+-- Unicode normalization pass. Native real-reader transport is checked separately.
+do
+    local function reader(values)
+        local index = 0
+        return {readLine = function() index = index + 1; return values[index] end}
+    end
+    for _, case in ipairs({{{'A'}, 5862064, 9306188}, {{'A\r\nB'}, 211717353, 36307109},
+        {{'A', 'B'}, 2088822588, 28573848}, {{string.char(0)}, 5859919, 786443},
+        {{'', ''}, 5860249, 2097173}, {{'\r'}, 5860348, 2490392}}) do
+        assert(Proof.checksum(reader(case[1]), false) == case[2], 'literal reader-content DJB pin changed')
+        assert(Proof.checksum(reader(case[1]), true) == case[3], 'literal reader-content Adler pin changed')
+    end
+    for _, case in ipairs({{expected=5862064}, {adler=false, expected=5862064},
+        {adler=0, expected=9306188}, {adler='false', expected=9306188}, {adler={}, expected=9306188}}) do
+        assert(Proof.checksum(reader({'A'}), case.adler) == case.expected, 'checksum changed Lua algorithm truthiness')
+    end
+    for _, limit in ipairs({2, 2.5, math.huge, 0/0, false}) do
+        assert(Proof.checksum(reader({'A'}), false, limit) == 5862064, 'accepted limit semantics changed')
+    end
+    for _, limit in ipairs({0, 1, 1.5, -1, -math.huge}) do
+        assert(Proof.checksum(reader({'A'}), false, limit) == nil, 'character/LF limit boundary changed')
+    end
+    for _, limit in ipairs({0, -1, -math.huge, {}, 'invalid'}) do
+        assert(Proof.checksum(reader({}), false, limit) == 5381, 'empty input unexpectedly validated an unused limit')
+    end
+    assert(Proof.checksum(reader({''}), false, 0) == nil, 'blank reader record lost its synthetic LF')
+    assert(Proof.checksum(reader({''}), false, 1) == 177583)
+    assert(not pcall(Proof.checksum, reader({'A'}), false, {}), 'direct checksum swallowed a limit comparison error')
+    local closeCalls = 0
+    assert(not pcall(Proof.checksum, {readLine=function() error('direct read failure') end,
+        close=function() closeCalls=closeCalls+1 end}, false), 'direct checksum swallowed a reader error')
+    assert(closeCalls == 0, 'checksum assumed matches ownership of reader close')
+end
+
+-- Supplementary characters consume two UTF16 units, then the synthetic LF.
+-- The native harness supplies Unicode strings intact; the offline UTF8 branch
+-- builds the same character without relying on its byte/character index layout.
+do
+    local utf8 = string.byte('洗') == 230
+    local supplementary = utf8 and string.char(240, 159, 152, 128) or string.sub(unicodeA, 3, 4)
+    local function reader()
+        local first = true
+        return {readLine=function() if first then first=false; return supplementary end end}
+    end
+    for _, limit in ipairs({0, 1, 2, 2.5}) do
+        assert(Proof.checksum(reader(), false, limit) == nil, 'surrogate/LF boundary gained a unit')
+    end
+    assert(Proof.checksum(reader(), false, 3) == 255536236, 'supplementary DJB pin changed')
+    assert(Proof.checksum(reader(), true, 3) == 1157674583, 'supplementary Adler pin changed')
+    local floor, floorCalls = math.floor, 0
+    math.floor = function(value) floorCalls=floorCalls+1; return floor(value) end
+    local ok, value = pcall(Proof.checksum, reader(), false, 0)
+    math.floor = floor
+    assert(ok and value == nil and floorCalls == (utf8 and 1 or 0),
+        'UTF8 high-unit argument was not evaluated before the exhausted limit')
+end
+
+-- A live byte replacement may supply continuation units beyond the returned
+-- string. The decoder still owes one LF after its logical character, even when
+-- its byte cursor jumps beyond the physical string and the limit stops at LF.
+if string.byte('洗') == 230 then
+    local line, byte = string.char(240), string.byte
+    for _, case in ipairs({{adler=false, expected=255536236}, {adler=true, expected=1157674583}}) do
+        for _, limit in ipairs({1, 2, 3}) do
+            local indexes, reads = {}, 0
+            string.byte = function(value, index)
+                assert(value == line and index >= 1 and index <= 4)
+                indexes[#indexes+1] = index
+                if index == 1 then return byte(value, index) end
+                return ({159, 152, 128})[index-1]
+            end
+            local ok, actual = pcall(Proof.checksum, {readLine=function()
+                reads=reads+1; if reads == 1 then return line end
+            end}, case.adler, limit)
+            string.byte = byte
+            local expected = limit == 3 and case.expected or nil
+            assert(ok and actual == expected, 'replaced byte cursor skipped the mandatory LF/limit')
+            assert(table.concat(indexes, ',') == '1,2,3,4', 'replacement byte lookup order changed or included synthetic LF')
+            assert(reads == (limit == 3 and 2 or 1), 'limit rejection read past the current logical character/LF')
+        end
+    end
+end
+
+-- Method/global bindings remain live across reader reentry. The synthetic LF
+-- never causes an extra string.byte lookup, and matches closes the current method.
+do
+    local byte, trace = string.byte, {}
+    local replacementOpens = 0
+    local function secondByte(value, index)
+        trace[#trace+1]='byte-second:'..index; assert(index == 2)
+        return byte(value, index)
+    end
+    local function firstByte(value, index)
+        trace[#trace+1]='byte-first:'..index; assert(index == 1)
+        string.byte=secondByte
+        return byte(value, index)
+    end
+    getGameFilesInput = function(request)
+        assert(request == path)
+        getGameFilesInput = function() replacementOpens=replacementOpens+1; error('replacement opener') end
+        local reader
+        reader = {close=function() error('stale close method') end, readLine=function(self)
+            trace[#trace+1]='read-first'
+            local once = true
+            assert(Proof.checksum({readLine=function() if once then once=false; return 'C' end end}, false) == 5862130,
+                'nested checksum corrupted its parent state')
+            self.readLine = function(current)
+                trace[#trace+1]='read-next'
+                current.close=function() trace[#trace+1]='close-current' end
+            end
+            string.byte=firstByte
+            return 'AB'
+        end}
+        return reader
+    end
+    local ok, matched = pcall(Proof.matches, path, 193449970)
+    string.byte = byte
+    local replaced = Proof.matches(path, 193449970)
+    getGameFilesInput = input
+    assert(ok and matched and not replaced and replacementOpens == 1, 'opener capture/replacement semantics changed')
+    assert(table.concat(trace, ',') == 'read-first,byte-first:1,byte-second:2,read-next,close-current',
+        'reader/byte/current-close observation order changed')
+end
+
+do
+    local trace = {}
+    getGameFilesInput = function()
+        return {readLine=function() trace[#trace+1]='read'; return 'A' end,
+            close=function() trace[#trace+1]='close' end}
+    end
+    local accepted = Proof.matches(path, 5862064, nil, false, 1)
+    getGameFilesInput = input
+    assert(not accepted and table.concat(trace, ',') == 'read,close', 'limit rejection read past the current line or skipped close')
+    trace = {}
+    getGameFilesInput = function()
+        return {readLine=function(self)
+            trace[#trace+1]='read-error'; self.close=function() trace[#trace+1]='close-after-error' end
+            error('reentrant read failure')
+        end, close=function() error('stale error close') end}
+    end
+    accepted = Proof.matches(path, 5381)
+    getGameFilesInput = input
+    assert(not accepted and table.concat(trace, ',') == 'read-error,close-after-error', 'read failure lost current close/reentry order')
+end
+
 local callback = function() end
 local otherCallback = function() end
 local filenameCalls = 0

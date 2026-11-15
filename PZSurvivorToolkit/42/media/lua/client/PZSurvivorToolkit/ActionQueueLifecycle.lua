@@ -2,6 +2,8 @@ PZSurvivorToolkit = PZSurvivorToolkit or {}
 require "TimedActions/ISQueueActionsAction"
 require "PZSurvivorToolkit/ActionQueueOperations"
 local Toolkit = PZSurvivorToolkit
+local Transfers = require "PZSurvivorToolkit/ActionQueueTransfers"
+local dispatchTransfers = Transfers and Transfers.dispatch
 local Lifecycle = {}
 Toolkit.ActionQueueLifecycle = Lifecycle
 
@@ -335,6 +337,7 @@ end
 function Lifecycle.begin(action, phase)
     if phase ~= "perform" and phase ~= "complete" then return false end
     local observing = observe("begin", action, phase)
+    if phase == "perform" and dispatchTransfers and dispatchTransfers("begin", action) then observing = true end
     local intent=Toolkit.ActionQueueTidyIntent
     if intent and intent.begin(action,phase) then observing = true end
     local queue = action and ISTimedActionQueue.queues[action.character]
@@ -364,6 +367,7 @@ function Lifecycle.finish(action, phase, succeeded)
         if #entries == 0 then phaseEntries[action] = nil end
     else entry = nil end
     observe("finish", action, phase, succeeded)
+    if phase == "perform" and dispatchTransfers then dispatchTransfers("finish", action, succeeded) end
     local intent=Toolkit.ActionQueueTidyIntent
     if intent then intent.finish(action,phase,succeeded) end
     local queue = action and ISTimedActionQueue.queues[action.character]

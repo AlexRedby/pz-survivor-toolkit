@@ -137,6 +137,20 @@ def evidence(kind='mp', mode='toolkit', case='direct', lifecycle_mode=None):
 
 
 class MagazineUnloadTests(unittest.TestCase):
+    def test_selected_audit_uses_engine_layer_without_future_or_common_shadow(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for layer, content in [('common', b'common producer'), ('42.21', b'old producer'),
+                                   ('42.22', b'current producer'), ('42.23', b'future producer')]:
+                source = root / layer / 'media/lua/client/Producer.lua'
+                source.parent.mkdir(parents=True)
+                source.write_bytes(content)
+            expected = zlib.crc32(b'current producer')
+            with patch.object(a, 'SELECTED_CRC', {'Selected': ('Producer.lua', expected)}):
+                self.assertEqual({'Selected': expected}, a.audit_selected({'Selected': root}, (42, 22)))
+                with self.assertRaisesRegex(ValueError, 'producer audit requires review'):
+                    a.audit_selected({'Selected': root}, (42, 21))
+
     def test_grouped_full_pack_and_sp_menu_host_modes(self):
         for kind in ('sp', 'mp'):
             for mode in ('native', 'toolkit'):

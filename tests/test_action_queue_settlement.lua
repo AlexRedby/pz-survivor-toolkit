@@ -54,6 +54,7 @@ local function setup(client, outcomeOverride, delayedMetadata)
     getFilenameOfClosure = metadataAccessor
     if delayedMetadata then getFilenameOfClosure = nil end
     require = function(name)
+        if name == 'PZSurvivorToolkit/ActionQueueSettlement' then return PZSurvivorToolkit.ActionQueueSettlement end
         if name == 'PZSurvivorToolkit/ActionQueueTransferRequests' then
             return PZSurvivorToolkit.ActionQueueTransferRequests or assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/' .. name .. '.lua'))()
         end
@@ -106,6 +107,23 @@ local function setup(client, outcomeOverride, delayedMetadata)
         counts = function() return constructions, guards, #discards, releases end}
 end
 
+-- Load the real coordinator against this fixture's real private loan ledger.
+local function ownReturns(s, handles, onEnqueued)
+    if not s.restoration then
+        s.restoration = assert(loadfile(ProjectRoot .. '/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueRestoration.lua'))()
+    end
+    return s.restoration.borrowedReturns(handles, onEnqueued)
+end
+
+-- Invalid typed maps cannot silently erase a later owner's read dependency.
+for _,reads in ipairs({false,1,'unknown',setmetatable({[181]=true},{}),{[181]=false},{[181]='yes'},{[math.huge]=true}})do
+    local s=setup()
+    local scope=s.settlement.deferred(s.player,s.token)
+    local action=s.action()
+    s.settlement.remember(scope,action,{knownInputs=true,items={},locationReads=reads})
+    assert(scope.tasks[s.token].unknownInputs,'invalid location-read map acquired independent ownership')
+end
+
 -- Deferred native producers retain historical ownership even after their source
 -- actions have left the queue. They do not inherit permission to replay effects.
 do
@@ -118,14 +136,14 @@ do
     assert(scope.character == s.player and scope.token == s.token and scope.queue == s.queue
         and scope.generation == 0 and scope.phase == 'prepare' and not scope.mixed)
     local original = s.action()
-    local contract = {knownInputs = true, items = {[21] = true}, containerOwners = {[91] = true}}
+    local contract = {knownInputs = true, items = {[21] = true}, containerOwners = {[91] = true}, locationReads = {[71] = true}}
     s.settlement.remember(scope, original, contract)
     -- A repeated accepted action cannot gain new claims from later mutation.
-    contract.items[22], contract.containerOwners[92] = true, true
+    contract.items[22], contract.containerOwners[92], contract.locationReads[72] = true, true, true
     s.token.toolkitPickups[first] = {}
     s.settlement.remember(scope, original, contract)
-    assert(scope.tasks[s.token].items[21] and scope.tasks[s.token].items[91]
-        and not scope.tasks[s.token].items[22] and not scope.tasks[s.token].items[92],
+    assert(scope.tasks[s.token].items[21] and scope.tasks[s.token].items[91] and scope.tasks[s.token].items[71]
+        and not scope.tasks[s.token].items[22] and not scope.tasks[s.token].items[92] and not scope.tasks[s.token].items[72],
         'remember must snapshot claims once per accepted source action')
     local following = {character = s.player, toolkitQueueOperation = other}
     s.settlement.remember(scope, following, {knownInputs = true, items = {[22] = true}})
@@ -575,9 +593,10 @@ do
     assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
         and s.settlement.returnState(s.obligation) == nil,
         'missing closure metadata must neither bind nor capture a return')
-    local metadataCalls = 0
+    local metadataCalls, outcomeCallbacks = 0, {}
+    for _, name in ipairs(outcomeExports) do outcomeCallbacks[s.outcome[name]] = true end
     getFilenameOfClosure = function(callback)
-        metadataCalls = metadataCalls + 1
+        if outcomeCallbacks[callback] then metadataCalls = metadataCalls + 1 end
         return s.metadataAccessor(callback)
     end
     assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 5,
@@ -602,14 +621,17 @@ do
         actual.observer = delegate(actual.observer, factoryCalls, 'observer')
         return actual
     end, true)
-    local metadataCalls = 0
+    local metadataCalls, outcomeCallbacks = 0, {}
+    for _, name in ipairs(outcomeExports) do outcomeCallbacks[s.outcome[name]] = true end
     getFilenameOfClosure = function(callback)
-        metadataCalls = metadataCalls + 1
-        assert(factoryCalls.authority == 0 and factoryCalls.observer == 0,
-            'all source checks must finish before factories receive private arguments')
-        assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
-            and s.settlement.returnState(s.obligation) == nil,
-            'metadata reentry must not expose a partially bound private attempt')
+        if outcomeCallbacks[callback] then
+            metadataCalls = metadataCalls + 1
+            assert(factoryCalls.authority == 0 and factoryCalls.observer == 0,
+                'all source checks must finish before factories receive private arguments')
+            assert(not s.settlement.beginReturn(s.current, s.obligation, s.guard)
+                and s.settlement.returnState(s.obligation) == nil,
+                'metadata reentry must not expose a partially bound private attempt')
+        end
         return s.metadataAccessor(callback)
     end
     assert(s.settlement.beginReturn(s.current, s.obligation, s.guard) and metadataCalls == 5)
@@ -632,12 +654,15 @@ do
         return actual
     end, true)
     local realClosure = s.sourceProof.closure
-    local metadataCalls = 0
+    local metadataCalls, outcomeCallbacks = 0, {}
+    for _, name in ipairs(outcomeExports) do outcomeCallbacks[s.outcome[name]] = true end
     getFilenameOfClosure = function(callback)
         local filename = s.metadataAccessor(callback)
-        metadataCalls = metadataCalls + 1
-        if metadataCalls == 1 then
-            s.sourceProof.closure = function() fakeChecks = fakeChecks + 1; return true end
+        if outcomeCallbacks[callback] then
+            metadataCalls = metadataCalls + 1
+            if metadataCalls == 1 then
+                s.sourceProof.closure = function() fakeChecks = fakeChecks + 1; return true end
+            end
         end
         return filename
     end
@@ -1909,12 +1934,13 @@ end
 -- Equipment readers retain exact current items and the proven queued writers;
 -- unrelated borrowed items stay exclusive. Actor read scopes cannot create effects.
 for _, client in ipairs({false, true}) do
-    for _, mode in ipairs({'unrelated', 'future-gear', 'reader-first', 'other-actor', 'same-owner-reader'}) do
+    for _, mode in ipairs({'unrelated', 'future-gear', 'reader-first', 'other-actor', 'same-owner-reader', 'location-reader'}) do
         local s = pickupFixture(client)
         local readerOwner = mode=='same-owner-reader' and s.token or {}
         local reader = {character=s.player,toolkitQueueOperation=readerOwner}
         local writer = {character=s.player,toolkitQueueOperation=s.token}
         local readerContract = {items={[999]=true}, equipment=mode=='other-actor' and {} or s.player}
+        if mode=='location-reader' then readerContract.locationReads={[181]=true} end
         local writerContract = {items={[mode=='unrelated' and 998 or 181]=true},hands=s.player}
         if mode=='reader-first' then
             s.settlement.remember(s.scope,reader,readerContract)
@@ -1926,7 +1952,7 @@ for _, client in ipairs({false, true}) do
         -- Mutating an accepted read/write descriptor cannot widen later claims.
         readerContract.equipment=nil;writerContract.items[777]=true
         assert(not s.scope.equipmentItems[777])
-        local shared=mode=='future-gear' or mode=='reader-first'
+        local shared=mode=='future-gear' or mode=='reader-first' or mode=='location-reader'
         assert((s.settlement.owner(s.scope,181,'Base.Test',s.source)==nil)==shared,
             'legacy cleanup ownership lost equipment read/write scope: '..mode)
         assert(s.settlement.beginPickup(s.scope,s.pickup,s.guard))
@@ -2277,7 +2303,7 @@ for _, client in ipairs({false, true}) do
         local s = setup(client)
         local observer, transfers
         PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(_, _, value) transfers = value end}
+        PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function(_, _, value) transfers = value end}
         PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
         local action = s.action(); action.Type, action.action = 'ISUnequipAction', {}
         s.queue.current, s.queue.queue = action, {action, s.tail}
@@ -2328,7 +2354,7 @@ do
     local s = setup(true)
     local observer
     PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-    PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+    PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function() end}
     local action = s.action(); action.Type, action.action = 'ISUnequipAction', {}
     s.queue.current, s.queue.queue = action, {action, s.tail}
     local observed = false
@@ -2352,7 +2378,7 @@ for _, client in ipairs({false, true}) do
         s.root.isExistYet = function() return true end
         local observer, events
         PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(_, _, value) events = value end}
+        PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function(_, _, value) events = value end}
         PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
         ISTimedActionQueue.add = function(action) table.insert(s.queue.queue, 2, action) end
         local value = s.item(191, s.source); s.source.items[191] = value
@@ -2378,7 +2404,7 @@ for _, client in ipairs({false, true}) do
             assert(s.settlement.finish(s.queue, {action = s.current, token = s.token}, s.discard))
             assert(s.queue.queue[2] == restoration and s.queue.queue[3].Type == 'ISInventoryTransferAction')
             s.queue.current = restoration; table.remove(s.queue.queue, 1)
-            assert(not s.settlement.enqueueBorrowedReturn(handle), 'retained command must not duplicate a planned return')
+            assert(ownReturns(s, {handle}) == 0, 'retained command must not duplicate a planned return')
         else
             s.queue.current, s.queue.queue = restoration, {restoration, s.tail}
             local foreign = {character = s.player, toolkitQueueOperation = {}, Type = 'ISQueueActionsAction'}
@@ -2394,17 +2420,158 @@ for _, client in ipairs({false, true}) do
             assert(s.settlement.earn(foreignHandle, receipt, true))
             assert(s.settlement.cleanup(foreign, foreignHandle))
             s.queue.current, s.queue.queue = foreign, {foreign, s.tail}
-            assert(not s.settlement.enqueueBorrowedReturn(handle), 'an unrelated required command cannot consume another operation borrowing')
+            assert(ownReturns(s, {handle}) == 0, 'an unrelated required command cannot consume another operation borrowing')
             s.queue.current, s.queue.queue = restoration, {restoration, s.tail}
-            local action = s.settlement.enqueueBorrowedReturn(handle)
+            local action
+            assert(ownReturns(s, {handle, handle}, function(value) action = value end) == 1)
             assert(action and s.settlement.requiredStep(action) and action.toolkitQueueOperation == s.token)
-            assert(not s.settlement.enqueueBorrowedReturn(handle))
+            assert(ownReturns(s, {handle}) == 0)
         end
         assert(s.counts() == 1 and value.container == s.root,
             'return scheduling must not synthesize item transfer or spend a confirmed borrowing')
         assert(s.settlement.operationState(pickup).borrowings[1].state == 'active')
     end
 end
+
+-- A producer consumes opaque earned handles, not item hints or inventory diffs.
+local function ownedBatchFixture(client)
+    local s = setup(client)
+    s.root.isExistYet = function() return true end
+    s.source.carried = true
+    local bag = s.item(201, s.root)
+    bag.fullType = 'Base.Bag_Schoolbag'
+    bag.getInventory = function() return s.source end
+    s.root.items[201] = bag
+    s.source.getContainingItem = function() return bag end
+    local scope = s.settlement.deferred(s.player, s.token)
+    local handles, items = {}, {}
+    for index = 1, 2 do
+        local value = s.item(201 + index, s.source)
+        s.source.items[value.id], items[index] = value, value
+        local pickup = s.action()
+        pickup.Type, pickup.action, pickup.item = 'ISInventoryTransferAction', {}, value
+        pickup.srcContainer, pickup.destContainer = s.source, s.root
+        pickup.queueList, pickup.transactionId = {{items = {value}}}, 21 + index
+        s.queue.current, s.queue.queue = pickup, {pickup, s.current, s.tail}
+        assert(s.settlement.remember(scope, pickup, {knownInputs = true, items = {[value.id] = true}}))
+        assert(s.settlement.preparePickup(scope, pickup))
+        handles[index] = s.settlement.track(pickup, 'prepare')
+        assert(s.settlement.beginPickup(scope, pickup, function() return true end))
+        s.source.items[value.id], s.root.items[value.id], value.container = nil, value, s.root
+        pickup.queueList, pickup.transactionId = {}, 0
+        assert(s.settlement.finishPickup(scope, pickup, true) and s.settlement.earned(handles[index]))
+    end
+    local parent = s.action(); parent.Type = 'ISQueueActionsAction'
+    PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
+    assert(s.settlement.cleanupAfter(parent, handles))
+    s.queue.current, s.queue.queue = parent, {parent, s.tail}
+    local enqueued = {}
+    ISTimedActionQueue.add = function(action)
+        enqueued[#enqueued + 1] = action
+        table.insert(s.queue.queue, #enqueued + 1, action)
+    end
+    s.handles, s.items, s.bag, s.scope, s.parent, s.enqueued = handles, items, bag, scope, parent, enqueued
+    return s
+end
+
+for _, client in ipairs({false, true}) do
+    for _, mode in ipairs({'normal', 'caller-mutation', 'reentry', 'source-lost', 'destination-lost', 'callback-error', 'cancel-editor-off'}) do
+        local s = ownedBatchFixture(client)
+        local handles = {s.handles[1], s.handles[1], s.handles[2]}
+        if mode == 'cancel-editor-off' then
+            -- Cancellation cannot preplan a return while its carried owner is
+            -- temporarily missing. The admitted cleanup later recovers it.
+            s.root.items[201] = nil
+            s.queue.current, s.queue.queue = s.current, {s.current, s.parent, s.tail}
+            PZSurvivorToolkit.ActionQueuePolicy.editUnchanged = function(q, snapshot) return q == s.queue and snapshot == q end
+            PZSurvivorToolkit.ActionQueueOperations.invalidateQueue = function(q)
+                q.toolkitOperationGeneration = (q.toolkitOperationGeneration or 0) + 1
+                for _, action in ipairs(q.queue) do action.toolkitQueueOperation.toolkitCancelled = true end
+            end
+            local request = {action = s.current, token = s.token}
+            assert(s.settlement.admitCancellation(s.queue, request, {allowed = true, first = 1, snapshot = s.queue}))
+            s.queue.toolkitGroupCancel, s.token.toolkitCancelled = request, true
+            assert(s.settlement.finish(s.queue, request, s.discard))
+            assert(s.counts() == 0 and s.queue.queue[2] == s.parent)
+            s.root.items[201] = s.bag
+            s.settlement.completeCancellation(s.queue, s.current)
+            s.queue.current = s.parent; table.remove(s.queue.queue, 1)
+            s.queue.toolkitGroupCancel = nil
+            s.settlement.bindCancellation(s.parent)
+            s.player.queueEnabled = false
+            s.settlement.invalidateEditor(s.queue)
+        end
+        local sourceMethod = s.settlement.enqueueBorrowedReturn
+        local callbacks = 0
+        local function annotate(action)
+            callbacks = callbacks + 1
+            assert(s.enqueued[callbacks] == action and s.settlement.requiredStep(action),
+                'family annotation lost its existing after-enqueue, already-bound boundary')
+            assert(action.item == s.items[callbacks], 'borrowed returns changed preparation order')
+            if callbacks ~= 1 then return end
+            if mode == 'caller-mutation' then handles[2], handles[3], handles[4] = {}, nil, {}
+            elseif mode == 'reentry' then assert(ownReturns(s, {s.handles[1]}) == 0)
+            elseif mode == 'source-lost' then s.settlement.enqueueBorrowedReturn = function() error('foreign producer executed') end
+            elseif mode == 'destination-lost' then s.root.items[201] = nil
+            elseif mode == 'callback-error' then error('annotation failed') end
+        end
+        if mode == 'callback-error' then
+            local ok, message = pcall(ownReturns, s, handles, annotate)
+            assert(not ok and tostring(message):find('annotation failed', 1, true))
+            assert(s.counts() == 1 and ownReturns(s, {s.handles[1]}) == 0,
+                'an annotation error must not replay the already-enqueued native return')
+        else
+            local count, reason = ownReturns(s, handles, annotate)
+            local partial = mode == 'source-lost' or mode == 'destination-lost'
+            assert(count == (partial and 1 or 2) and callbacks == count, mode .. ': producer batch changed')
+            assert(reason == (mode == 'source-lost' and 'source_changed' or nil))
+            assert(s.counts() == count, 'a duplicate handle constructed another native action')
+        end
+        s.settlement.enqueueBorrowedReturn = sourceMethod
+        for _, item in ipairs(s.items) do
+            assert(item.container == s.root and s.root.items[item.id] == item and s.source.items[item.id] == nil,
+                'scheduling a return paid or replayed its native transfer')
+        end
+    end
+end
+
+for _, mode in ipairs({'sparse', 'named', 'batch-meta', 'handle-meta', 'bad-element', 'bad-callback',
+    'global-owner', 'settlement-owner', 'export', 'proof-export', 'producer-owner', 'producer-export', 'forged'}) do
+    local s = ownedBatchFixture(false)
+    ownReturns(s, {}) -- load real coordinator before changing dependencies
+    local handles, callback = {s.handles[1]}, nil
+    local toolkit, original, restore = PZSurvivorToolkit
+    if mode == 'sparse' then handles = {[2] = s.handles[1]}
+    elseif mode == 'named' then handles.extra = true
+    elseif mode == 'batch-meta' then setmetatable(handles, {})
+    elseif mode == 'handle-meta' then handles = {setmetatable({}, {})}
+    elseif mode == 'bad-element' then handles = {false}
+    elseif mode == 'bad-callback' then callback = {}
+    elseif mode == 'global-owner' then PZSurvivorToolkit = {}; restore = function() PZSurvivorToolkit = toolkit end
+    elseif mode == 'settlement-owner' then toolkit.ActionQueueSettlement = {}; restore = function() toolkit.ActionQueueSettlement = s.settlement end
+    elseif mode == 'export' then
+        original = s.settlement.enqueueBorrowedReturn
+        s.settlement.enqueueBorrowedReturn = function() error('foreign return producer executed') end
+        restore = function() s.settlement.enqueueBorrowedReturn = original end
+    elseif mode == 'proof-export' then
+        original = s.sourceProof.closure
+        s.sourceProof.closure = function() error('foreign source checker executed') end
+        restore = function() s.sourceProof.closure = original end
+    elseif mode == 'producer-owner' then toolkit.ActionQueueRestoration = {}; restore = function() toolkit.ActionQueueRestoration = s.restoration end
+    elseif mode == 'producer-export' then
+        original = s.restoration.borrowedReturns
+        s.restoration.borrowedReturns = function() error('foreign coordinator executed') end
+        restore = function() s.restoration.borrowedReturns = original end
+    else handles = {{}} end
+    -- Keep the originally captured entrypoint even when its public export changes.
+    local entry = mode == 'producer-export' and original or s.restoration.borrowedReturns
+    local count, reason = entry(handles, callback)
+    if restore then restore() end
+    assert(mode == 'forged' and count == 0 or mode ~= 'forged' and count == nil and reason,
+        mode .. ': invalid source/batch gained producer authority')
+    assert(s.counts() == 0 and #s.enqueued == 0, mode .. ': rejected batch performed partial work')
+end
+print('Owned restoration batches: private earned loans, native order, mutation/reentry, source loss and admitted editor-off cleanup passed.')
 
 -- P4 sees synchronous enqueue first. Family preparation must reuse its exact
 -- borrowing episode, including P4's foreign-task claims and transaction history.
@@ -2415,7 +2582,7 @@ for _, client in ipairs({false, true}) do
         ISInventoryTransferAction = {}
         setmetatable(s.pickup, ISInventoryTransferAction)
         PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function(callback, canObserve, events)
+        PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function(callback, canObserve, events)
             listeners[#listeners + 1] = {callback = callback, events = events}
         end}
         PZSurvivorToolkit.ActionQueuePolicy.inspect = function() return {} end
@@ -2487,7 +2654,7 @@ end
 for _, changed in ipairs({'source', 'generation', 'retired'}) do
     local s = pickupFixture(false)
     PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function() return true end}
-    PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+    PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function() end}
     if changed == 'source' then s.pickup.srcContainer = {}
     elseif changed == 'generation' then s.scope.generation = s.scope.generation + 1
     else s.settlement.close(s.scope) end
@@ -2507,7 +2674,7 @@ for _, client in ipairs({false, true}) do
         s.source.getType = function() return 'floor' end
         local observer
         PZSurvivorToolkit.ActionQueueLifecycle = {registerObserver = function(_, value) observer = value; return true end}
-        PZSurvivorToolkit.ActionQueueTidyIntent = {observeTransfers = function() end}
+        PZSurvivorToolkit.ActionQueueTransfers = {observeTransfers = function() end}
         local value = s.item(211, s.root);s.root.items[211] = value
         local world, square = {}, {}
         world.getItem = function() return value end
@@ -2622,8 +2789,9 @@ for _, client in ipairs({false,true}) do
             assert(not s.settlement.enqueueBorrowedReturn(handle),'an unproved new-token claim remains shared')
             assert(s.settlement.inheritCleanup(child,parent))
         end
-        local action=s.settlement.enqueueBorrowedReturn(handle)
-        assert((action~=nil)==(ownerState=='replaced'),ownerState..': source owner proof must remain exact and carried')
+        local action
+        local scheduled=ownReturns(s,{handle},function(value)action=value end)
+        assert(scheduled==(ownerState=='replaced' and 1 or 0),ownerState..': source owner proof must remain exact and carried')
         if action then
             assert(action.destContainer==fresh and action.destContainer~=s.source)
             s.queue.current,s.queue.queue=action,{action,s.tail}
@@ -3745,3 +3913,178 @@ for _, mode in ipairs({'policy', 'adapters', 'toolkit'}) do
     assert(result.status == 'unhandled' and calls == 0, mode .. ': final freshness dispatched a removed own field')
 end
 print('Joint return composition: final native boundary, source lease, private reentry and conservative fallback passed.')
+
+-- The native engine/queue seams are explicit doubles here; the private loan,
+-- insertion capability, pending waiver and failure ledger are the real owner.
+do
+    local function source(code, name, state)
+        return assert(loadstring('return function(s) '..code..' end', '@/fixture/'..name))()(state)
+    end
+    local function fixture(client)
+        local s=setup(client);s.live=true;s.executable=true;s.beginAllowed=true;s.beginCalls=0
+        s.root.isExistYet=function()return true end
+        ISInventoryTransferAction={}
+        s.value=s.item(181,s.source);s.source.items[181]=s.value
+        s.pickup={Type='ISInventoryTransferAction',character=s.player,toolkitQueueOperation=s.token,
+            item=s.value,srcContainer=s.source,destContainer=s.root,action={},transactionId=17,
+            queueList={{items={s.value}}}}
+        s.body={Type='ISWringClothing',character=s.player,toolkitQueueOperation=s.token,item=s.value}
+        setmetatable(s.pickup,ISInventoryTransferAction)
+        s.queue.current,s.queue.queue=s.pickup,{s.pickup,s.body,s.tail}
+        s.queue.indexOf=function(self,action)for index,value in ipairs(self.queue)do if value==action then return index end end;return -1 end
+        s.player.getCharacterActions=function()return {contains=function()return false end}end
+        local listeners={}
+        PZSurvivorToolkit.ActionQueueLifecycle={registerObserver=function(_,observer)s.observer=observer;return true end}
+        PZSurvivorToolkit.ActionQueueTransfers={observeTransfers=function(callback,canObserve,events)
+            listeners[#listeners+1]={events=events}
+        end}
+        PZSurvivorToolkit.ActionQueuePolicy.matchesNative=function()return true end
+        PZSurvivorToolkit.ActionQueuePolicy.isOrdinaryTransfer=function()return true end
+        PZSurvivorToolkit.ActionQueueExecution=source([[return {
+            inspect=function()if s.executable then return {}end end,
+            begin=function()s.beginCalls=s.beginCalls+1;if s.beginCallback then s.beginCallback()end;return s.beginAllowed end,
+        }]],'ActionQueueExecution.lua',s)
+        PZSurvivorToolkit.ActionQueueOperations.insertOptionalReturn=source([[return function(body,action,lease)
+            if not lease()then return end
+            if s.insertCallback then s.insertCallback(action)end
+            if not lease()then return end
+            table.insert(s.queue.queue,3,action);s.settlement.track(action,'body')
+            if lease()then return action end
+        end]],'ActionQueueOperations.lua',s)
+        local constructor=ISInventoryTransferUtil.newInventoryTransferAction
+        ISInventoryTransferUtil.newInventoryTransferAction=function(...)
+            if s.constructorCallback then s.constructorCallback()end
+            local action=constructor(...);action.transactionId=0;action.queueList={{items={action.item}}}
+            return setmetatable(action,ISInventoryTransferAction)
+        end
+        local function event(name,...)
+            for _,listener in ipairs(listeners)do if listener.events[name]then listener.events[name](s.pickup,...)end end
+        end
+        s.guard=function()return s.live end
+        s.handle=assert(s.settlement.observePreparation(s.pickup,{guard=s.guard,
+            capture=function()return {source=s.source}end,observed=function()return false end}))
+        s.settlement.track(s.body,'body')
+        s.lease=source([[return function(pickup,body,phase)
+            if s.leaseCallback then s.leaseCallback(phase)end
+            return s.live and pickup==s.pickup and body==s.body
+        end]],'ActionQueueRestoration.lua',s)
+        s.earn=function()
+            s.settlement.started(s.pickup);s.observer.started(s.pickup);event('begin')
+            s.source.items[181],s.root.items[181],s.value.container=nil,s.value,s.root
+            s.pickup.queueList,s.pickup.transactionId={},0;event('finish',true)
+            assert(s.settlement.completionState(s.queue,s.pickup)=='ready')
+        end
+        s.schedule=function()
+            s.observer.settled(s.pickup)
+            local action=s.queue.queue[3]
+            return action and action.Type=='ISInventoryTransferAction'and action or nil
+        end
+        s.bodyDone=function()
+            table.remove(s.queue.queue,1);s.queue.current=s.body;s.observer.settled(s.body)
+        end
+        return s
+    end
+    for _,client in ipairs({false,true})do
+        local s=fixture(client)
+        assert(s.settlement.planOptionalReturn(s.body,s.lease))
+        assert(not s.settlement.planOptionalReturn(s.body,s.lease),'duplicate plan accepted')
+        assert(s.counts()==0 and #s.queue.queue==3,'plan eagerly constructed or queued a return')
+        s.earn();local returned=assert(s.schedule(),'earned pickup did not stage its optional return')
+        s.observer.settled(s.pickup)
+        assert(s.counts()==1 and s.queue.queue[2]==s.body and s.queue.queue[3]==returned and s.queue.queue[4]==s.tail)
+        local state=s.settlement.operationState(s.body)
+        assert(not s.settlement.requiredStep(returned)and not s.settlement.isCleanup(returned))
+        for _,step in ipairs(state.steps)do assert(not step.plannedTransfer,'optional planning prebound execution authority')end
+        table.remove(s.queue.queue,1);s.queue.current=s.body;s.body.action={}
+        assert(s.settlement.canWaivePendingReturn(returned,s.guard),'generated return lost ordinary pending Keep')
+        local waiver=assert(s.settlement.pendingReturnWaiver(returned,s.guard))
+        assert(s.settlement.waivePendingReturn(waiver,returned,s.guard))
+        assert(s.settlement.operationState(s.body).borrowings[1].state=='waived'and s.queue.current==s.body)
+    end
+    for _,change in ipairs({'guard','owner','body','source','shared','reset','constructor-reentry','insert-failure'})do
+        local s=fixture(false);assert(s.settlement.planOptionalReturn(s.body,s.lease));s.earn()
+        if change=='guard'then s.live=false
+        elseif change=='owner'then s.body.toolkitQueueOperation={}
+        elseif change=='body'then s.body.action={}
+        elseif change=='source'then s.value.container=s.source;s.root.items[181]=nil
+        elseif change=='shared'then
+            local foreign={character=s.player,toolkitQueueOperation={}}
+            -- Same-operation extra queued work is also outside the singleton slice.
+            foreign.toolkitQueueOperation=s.token;table.insert(s.queue.queue,3,foreign)
+        elseif change=='reset'then s.queue.toolkitOperationGeneration=1
+        elseif change=='constructor-reentry'then s.constructorCallback=function()s.observer.settled(s.pickup)end
+        else s.insertCallback=function()s.live=false end end
+        local returned=s.schedule()
+        assert(change=='constructor-reentry'and returned and s.counts()==1 or change~='constructor-reentry'and not returned,
+            change..': invalid or repeated plan emitted native work')
+    end
+    do
+        local s=fixture(false)
+        local inspector=source([[return function()return {knownInputs=false}end]],'ActionQueueDefinitions.lua',s)
+        assert(s.settlement.rememberPreparation(s.body,inspector))
+        assert(not s.settlement.planOptionalReturn(s.body,s.lease),'known body claims erased an earlier unknown-input fence')
+    end
+    do
+        local s=fixture(false);local nested
+        s.leaseCallback=function(phase)
+            if phase=='plan'and nested==nil then
+                nested=false;nested=s.settlement.planOptionalReturn(s.body,s.lease)
+            end
+        end
+        assert(s.settlement.planOptionalReturn(s.body,s.lease)and nested==false,'registration callback minted a second plan')
+    end
+    do
+        local s=fixture(false);s.pickup.action=nil;assert(s.settlement.planOptionalReturn(s.body,s.lease))
+        table.remove(s.queue.queue,2);table.remove(s.queue.queue,1);s.queue.current=s.tail
+        s.token.toolkitCancelled=true
+        s.settlement.discardUnstartedPickups(s.queue,s.token,{s.pickup,s.body})
+        assert(s.settlement.operationState(s.body).optionalReturnState=='revoked',
+            'removed unstarted group retained its optional plan without a queue reset')
+        assert(not s.schedule(),'removed unearned group scheduled restoration')
+    end
+    do
+        local s=fixture(false)
+        assert(s.settlement.advanceOptionalReturns(s.queue,{}),'unused optional provider intercepted a native completion')
+        assert(s.settlement.planOptionalReturn(s.body,s.lease));s.earn();assert(s.schedule())
+        assert(s.settlement.advanceOptionalReturns(s.queue,{}),'unmanaged next body inherited a private return episode fence')
+    end
+    for _,change in ipairs({'none','guard','shared-consumer','begin-failure','begin-reentry','reset','fields','copied'})do
+        local s=fixture(false);assert(s.settlement.planOptionalReturn(s.body,s.lease));s.earn()
+        local returned=assert(s.schedule());s.bodyDone()
+        if change=='guard'then s.live=false
+        elseif change=='shared-consumer'then s.executable=false
+        elseif change=='begin-failure'then s.beginAllowed=false
+        elseif change=='begin-reentry'then s.beginCallback=function()s.live=false end
+        elseif change=='reset'then s.settlement.resetReturnFailures(s.queue);s.queue.toolkitOperationGeneration=1
+        elseif change=='fields'then returned.character={};returned.toolkitQueueOperation={}
+        elseif change=='copied'then
+            local copy={};for key,value in pairs(returned)do copy[key]=value end;setmetatable(copy,ISInventoryTransferAction)
+            s.queue.queue[2]=copy
+            assert(not s.settlement.advanceOptionalReturns(s.queue,s.body),'copied seal acquired the original action capability')
+            s.queue.queue[2]=returned
+        end
+        if change=='begin-failure'or change=='begin-reentry'then
+            assert(s.settlement.advanceOptionalReturns(s.queue,s.body))
+            table.remove(s.queue.queue,1);s.queue.current=returned
+            local handled,allowed=s.settlement.beginOptionalReturn(returned)
+            assert(handled and not allowed and s.settlement.holdsOptionalReturn(s.queue,returned),'failed begin fell through to native allocation')
+            assert(not s.settlement.releaseHeldOptionalReturn(s.queue,returned),'unpaid held debt was silently retired')
+            local debt=s.settlement.blockedReturns(s.player);assert(#debt==1)
+            assert(s.settlement.keepReturn(s.player,debt[1].id),'held debt Keep unavailable')
+            assert(s.settlement.releaseHeldOptionalReturn(s.queue,returned),'Keep did not release the exact held native-less request')
+        else
+            assert(s.settlement.advanceOptionalReturns(s.queue,s.body))
+            if change=='none'or change=='copied'then
+                assert(s.queue.queue[2]==returned)
+                table.remove(s.queue.queue,1);s.queue.current=returned
+                local handled,allowed=s.settlement.beginOptionalReturn(returned)
+                assert(handled and allowed and s.beginCalls==1,'managed begin failed or dispatched twice')
+            else
+                assert(s.queue.queue[2]==s.tail and returned.action==nil,'unproved return or independent tail was executed/erased')
+                local debts=s.settlement.blockedReturns(s.player);assert(#debts==1,'unallocated debt disappeared')
+                if change~='reset'then assert(s.settlement.keepReturn(s.player,debts[1].id),'exact unallocated debt cannot be explicitly kept')end
+            end
+        end
+    end
+end
+print('Optional producer: earned-only staging, one-use native insertion, pending Keep, preallocation disposition and unallocated debts passed.')

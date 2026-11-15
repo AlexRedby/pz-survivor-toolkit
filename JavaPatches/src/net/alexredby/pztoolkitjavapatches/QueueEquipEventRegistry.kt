@@ -47,8 +47,8 @@ object QueueEquipEventRegistry {
             val map = eventMap?.get(null)
             if (map?.javaClass != HashMap::class.java) null else synchronized(map) {
                 val registry = map as HashMap<*, *>
-                val p = copy(registry["OnEquipPrimary"])
-                val s = copy(registry["OnEquipSecondary"])
+                val p = copy(registry["OnEquipPrimary"], "OnEquipPrimary")
+                val s = copy(registry["OnEquipSecondary"], "OnEquipSecondary")
                 if (p == null || s == null) null else KahluaTableImpl(LinkedHashMap<Any, Any?>()).apply {
                     delegate["primary"] = p
                     delegate["secondary"] = s
@@ -57,9 +57,10 @@ object QueueEquipEventRegistry {
         }
     } catch (_: Exception) { null } catch (_: AssertionError) { null }
 
-    private fun copy(value: Any?): KahluaTableImpl? {
+    private fun copy(value: Any?, name: String): KahluaTableImpl? {
         if (value?.javaClass != Event::class.java) return null
-        val callbacks = (value as Event).callbacks
+        if ((value as Event).name != name) return null
+        val callbacks = value.callbacks
         if (callbacks.javaClass != ArrayList::class.java) return null
         val result = KahluaTableImpl(LinkedHashMap<Any, Any?>())
         for (index in callbacks.indices) {
@@ -83,8 +84,8 @@ object QueueEquipEventRegistry {
                 // walks that Event's callbacks in order. EventList is not dispatch authority.
                 // Read the live map each call, without checkEvent/AddEvent or copying all events.
                 val registry = map as HashMap<*, *>
-                val pm = matches(registry["OnEquipPrimary"], p)
-                val sm = matches(registry["OnEquipSecondary"], s)
+                val pm = matches(registry["OnEquipPrimary"], p, "OnEquipPrimary")
+                val sm = matches(registry["OnEquipSecondary"], s, "OnEquipSecondary")
                 if (pm == null || sm == null) null else pm && sm
                 // Off-thread triggerEvent queues an Event identity, which can outlive a map
                 // replacement. This observation says nothing about already queued or active
@@ -104,9 +105,10 @@ object QueueEquipEventRegistry {
         }
         return table
     }
-    private fun matches(value: Any?, supplied: KahluaTableImpl): Boolean? {
+    private fun matches(value: Any?, supplied: KahluaTableImpl, name: String): Boolean? {
         if (value?.javaClass != Event::class.java) return null
-        val callbacks = (value as Event).callbacks
+        if ((value as Event).name != name) return null
+        val callbacks = value.callbacks
         if (callbacks.javaClass != ArrayList::class.java) return null
         var equal = callbacks.size == supplied.delegate.size
         for (index in callbacks.indices) {

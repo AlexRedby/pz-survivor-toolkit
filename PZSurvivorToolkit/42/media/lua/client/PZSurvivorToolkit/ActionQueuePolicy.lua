@@ -46,12 +46,16 @@ local spatialPrerequisites=type(editBindingCapture)=="function"and editBindingCa
     {owner=math,keys={"floor"}},{owner=string,keys={"byte","sub","gsub","match"}},
 })
 -- Updated together with the source-owned factory; a same-file callback is not its role.
-local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=939,13384240
+local SPATIAL_PREPARE_LINE,SPATIAL_SOURCE_ADLER=939,2792897172
 local EditModel = require "PZSurvivorToolkit/ActionQueueEditModel"
 local EditTransition = require "PZSurvivorToolkit/ActionQueueEditTransition"
 local EditAdapters = require "PZSurvivorToolkit/ActionQueueEditAdapters"
 local ItemEditAdapters = require "PZSurvivorToolkit/ActionQueueItemEditAdapters"
 local Clothing = require "PZSurvivorToolkit/ActionQueueClothing"
+local equipOwner={module=require 'PZSurvivorToolkit/ActionQueueEquip'}
+equipOwner.inspect=equipOwner.module and equipOwner.module.inspect
+equipOwner.schedule=equipOwner.module and equipOwner.module.inspectSchedule
+equipOwner.adopt=equipOwner.module and equipOwner.module.adoptBase
 local clothingInspect=Clothing and Clothing.inspect
 local clothingWeight=Clothing and Clothing.removalWeight
 local clothingBindings=Clothing and Clothing.bindingsTrusted
@@ -236,10 +240,26 @@ local function itemKey(item)
     return instanceof(item, "InventoryItem") and item:getID() or item
 end
 local operationItems
+local function validLocationReads(contract)
+    local reads = contract and contract.locationReads
+    if reads == nil then return true end
+    if type(reads) ~= "table" or getmetatable(reads) ~= nil then return false end
+    for id, value in pairs(reads) do
+        if type(id) ~= "number" or id ~= id or id <= -math.huge or id >= math.huge
+            or id % 1 ~= 0 or value ~= true then return false end
+    end
+    return true
+end
 local function sharedItem(a, b, context)
     local left, right = operationItems(a, context), operationItems(b, context)
     for item in pairs(left) do if right[item] then return item end end
     local leftContract, rightContract = inspect(a, context), inspect(b, context)
+    -- Reading an owner's root location commutes with moving a distinct child
+    -- into its container. Moving the owner itself still invalidates that read.
+    local reads = leftContract and leftContract.locationReads
+    if reads then for item in pairs(reads) do if right[item] then return item end end end
+    reads = rightContract and rightContract.locationReads
+    if reads then for item in pairs(reads) do if left[item] then return item end end end
     local owners = leftContract and leftContract.containerOwners
     if owners then for item in pairs(owners) do if right[item] then return item end end end
     owners = rightContract and rightContract.containerOwners
@@ -701,15 +721,15 @@ end
 
 function Policy.adoptTransferQueueObserver(previous,replacement)
     local snapshot=snapshots[ISInventoryTransferAction]
-    local intent=Toolkit.ActionQueueTidyIntent
+    local observer=Toolkit.ActionQueueTransfers
     if not snapshot or snapshot.helpers.checkQueueList~=previous or ISInventoryTransferAction.checkQueueList~=replacement
-        or not intent or not intent.isQueueObserver(previous,replacement) then return false end
+        or not observer or not observer.isQueueObserver(previous,replacement) then return false end
     snapshot.helpers.checkQueueList=replacement
     if ItemEditAdapters then
-        local guard=function()return intent.isQueueObserver(previous,replacement)end
-        deferredTransferGuards[guard]={kind="observer",previous=previous,replacement=replacement,intent=intent}
+        local guard=function()return observer.isQueueObserver(previous,replacement)end
+        deferredTransferGuards[guard]={kind="observer",previous=previous,replacement=replacement,observer=observer}
         if ItemEditAdapters.registerSourceFactory then
-            ItemEditAdapters.registerSourceFactory(intent,"queueObserverBinding",intent.queueObserverBinding)
+            ItemEditAdapters.registerSourceFactory(observer,"queueObserverBinding",observer.queueObserverBinding)
         end
         ItemEditAdapters.adoptMethods(ISInventoryTransferAction,{checkQueueList=previous},{checkQueueList=replacement},guard)
     end
@@ -763,7 +783,7 @@ function Policy.transferBinding(guard,action,trustedFactory)
     if nativeClass[key]~=record.replacement then return end
     local watch=Proof.captureBindings({
         {owner=deferredTransferGuards,keys={guard}}, {owner=record,exact=true},
-        {owner=nativeClass,keys={key}}, {owner=Toolkit,keys={"ActionQueuePolicy","ActionQueueTidyIntent"}},
+        {owner=nativeClass,keys={key}}, {owner=Toolkit,keys={"ActionQueuePolicy","ActionQueueTransfers"}},
         {owner=_G,keys={"ISInventoryTransferAction"}},
         {owner=Policy,keys={"transferBinding"}}, {owner=Proof,keys={"captureBindings"}},
     })
@@ -772,9 +792,9 @@ function Policy.transferBinding(guard,action,trustedFactory)
         if not Proof.closure(record.previous,"ISInventoryTransferAction.lua") then return end
         return function(facts)return watch() and valueType(facts)=="table" and valueMeta(facts)==nil and facts.schema==2 end
     end
-    local intent=record.intent
-    local factory=intent and intent.queueObserverBinding
-    if Toolkit.ActionQueueTidyIntent~=intent or type(trustedFactory)~="function" or not trustedFactory(factory) then return end
+    local observer=record.observer
+    local factory=observer and observer.queueObserverBinding
+    if Toolkit.ActionQueueTransfers~=observer or type(trustedFactory)~="function" or not trustedFactory(factory) then return end
     local lease=factory(record.previous,record.replacement,action,trustedFactory)
     if type(lease)~="function" or not watch() then return end
     return function(facts)return watch() and lease(facts) end
@@ -975,7 +995,7 @@ local function pendingPreparation(action)
 end
 -- A verified producer can supply stronger complete-operation facts without
 -- creating a second native Equip matcher or widening ordinary pending edits.
-local fitnessEquipment={line=633,source=2193887413,firstLine=getFirstLineOfClosure,filename=getFilenameOfClosure,
+local fitnessEquipment={line=635,source=3400284972,firstLine=getFirstLineOfClosure,filename=getFilenameOfClosure,
  reader=getModFileReader,call=pcall,origin=Proof and Proof.closure,matches=Proof and Proof.matches,capture=Proof and Proof.captureBindings}
 function fitnessEquipment.inspect(action)
  if action.Type~='ISEquipWeaponAction' or type(Proof)~='table'
@@ -1009,6 +1029,262 @@ function fitnessEquipment.inspect(action)
  local ok,result=fitnessEquipment.call(callback,action)
  if ok and fitnessEquipment.watch() then return result end
 end
+-- Scheduling an unsubmitted native command is separate from forecasting its
+-- effects. This first cohort contains only singleton native root inputs and
+-- root equipment commands. Every retained step still admits itself natively;
+-- nothing here promises an outcome or credits space/items from future effects.
+local nativePlan={settlement=Toolkit.ActionQueueSettlement,marker={},raw=rawget,equal=rawequal,call=pcall}
+nativePlan.cohort=nativePlan.settlement and nativePlan.settlement.nativePlanCohort
+function nativePlan.member(queue,member,active,context,seen)
+    local contract=inspect(member,context)
+    if not contract or (contract.nativeSchedule~="unsubmitted" and contract.nativeSchedule~="native-input")
+        or contract.edit~=nil or member.character~=queue.character
+        or (active and contract.nativeSchedule~="native-input") then return false end
+    local snapshot=snapshots[getmetatable(member)]
+    if not snapshot or not nativeMatches(member,snapshot) then return false end
+    if member.onStartFunc or member.onCompleteFunc or member.onCancelFunc or member.onFailFunc
+        or member.additionalTest or member.additionalContext or member.retriggerLastAction
+        or member.toolkitQueueLinked or member.toolkitQueueReturn~=nil then return false end
+    if not active and (not nativePendingCancelHasNoEffects() or member.forceCancel~=nativeForceCancel) then return false end
+    local actor,item=queue.character,member.item
+    local root=actor:getInventory()
+    if not instanceof(item,"InventoryItem") or not instanceof(root,"ItemContainer")
+        or root:getParent()~=actor or root:getContainingItem()~=nil or item:getContainer()~=root then return false end
+    local id=item:getID()
+    if type(id)~="number" or id~=id or id%1~=0 or id==-1 or seen[id]
+        or root:getItemWithID(id)~=item or member.item~=item or member.character~=actor
+        or item:getContainer()~=root or item:getID()~=id or actor:getInventory()~=root then return false end
+    if not activeDecision.nativeMembers[member]then return false end
+    seen[id]=true
+    return true
+end
+-- Classify only the public shape before any source/item metadata. Complete
+-- private ownership is captured below; these declarations grant no permission.
+function nativePlan.groups(scope,list)
+    local read=scope.lookup.read
+    local groups,roles,found={},{},false
+    local index=1
+    while index<=#list do
+        local member=list[index];local kind=read(member,"Type")
+        if index==1 and kind~="ISReadABook"then return end
+        if kind=="ISReadABook"or kind=="ISEquipWeaponAction"then index=index+1
+        elseif index>1 and kind=="ISQueueActionsAction"and read(member,"toolkitQueueApproach")==true then
+            local fetch,body=list[index+1],list[index+2]
+            local token=read(member,"toolkitQueueOperation")
+            if type(fetch)~="table"or type(body)~="table"or type(token)~="table"
+                or read(fetch,"Type")~="ISInventoryTransferAction"or read(body,"Type")~="ISEquipWeaponAction"
+                or not rawequal(read(fetch,"toolkitQueueOperation"),token)
+                or not rawequal(read(body,"toolkitQueueOperation"),token)or groups[token]then return end
+            local group={approach=member,fetch=fetch,body=body,source=read(fetch,"srcContainer"),
+                destination=read(fetch,"destContainer"),item=read(fetch,"item")}
+            if not rawequal(read(body,"item"),group.item)then return end
+            groups[token]=group;roles[member]={group=group,role="approach"}
+            roles[fetch]={group=group,role="fetch"};roles[body]={group=group,role="body"}
+            found=true;index=index+3
+        else return end
+    end
+    return groups,roles,found
+end
+function nativePlan.capture(scope,action,target,after)
+    if type(isClient)~="function"or type(isServer)~="function"or isServer()then return end
+    local list=scope.lookup.read(scope.queue,"queue")
+    if type(list)~="table"or getmetatable(list)~=nil or #list>32 or type(action)~="table"then return end
+    local current=scope.lookup.read(scope.queue,"current")
+    -- Existing active/preempting and mixed contexts retain their earlier path.
+    if rawequal(action,current)or rawequal(target,current)and after~=true then return end
+    local groups,roles,prepared=nativePlan.groups(scope,list)
+    if not groups or not isClient()and not prepared then return end
+    if scope.lookup.read(action,"Type")~="ISEquipWeaponAction"and not roles[action]then return end
+    local first,last
+    for index,member in ipairs(list)do
+        if rawequal(member,action)then first=index end
+        if rawequal(member,target)then last=index end
+    end
+    if not first then return end
+    if not prepared then
+        if last then
+            local writes=0
+            for index=math.min(first,last),math.max(first,last)do
+                if scope.lookup.read(list[index],"Type")=="ISEquipWeaponAction"then writes=writes+1 end
+            end
+            if writes<2 then return end
+        elseif first==#list then return end
+    end
+    local watches={}
+    for _,owner in ipairs(scope.lookup.records.owners)do
+        local watch=Proof.captureBindings({{owner=owner,exact=true}})
+        if not watch then return end
+        watches[#watches+1]=watch
+    end
+    local globals=Proof.captureBindings({
+        {owner=_G,keys={"PZSurvivorToolkit","ISTimedActionQueue","type","getmetatable","pairs","ipairs","pcall","rawget","getSpecificPlayer",
+            "isClient","isServer","getClassSimpleName","instanceof","getFilenameOfClosure","toolkitLuaMetatableMatches","table"}},
+        {owner=Toolkit,keys={"Settings","ActionQueueOperations","ActionQueueSettlement","ActionQueueEquip","ActionQueuePolicy","ActionQueueDefinitions"}},
+        {owner=Proof,keys={"captureBindings","closure","matches","own"}},
+        {owner=Toolkit.Settings,keys={"actionQueue"}},
+        {owner=Operations,keys={"bounds","invalidate","isContinuationPending"}},
+        {owner=Policy,keys={"evaluateMove","evaluateCancel","editUnchanged","record"}},
+        {owner=table,keys={"insert","remove"}},
+    })
+    if not globals or Toolkit.ActionQueueSettlement~=nativePlan.settlement
+        or nativePlan.settlement.nativePlanCohort~=nativePlan.cohort or type(nativePlan.cohort)~="function"
+        or not Proof.closure(nativePlan.cohort,"ActionQueueSettlement.lua")then return end
+    scope.nativeWatch=function()
+        if not globals()then return false end
+        for _,watch in ipairs(watches)do if not watch()then return false end end
+        return true
+    end
+    local check,inputs
+    if prepared then check,inputs=nativePlan.cohort(scope.queue,groups)
+    else check=nativePlan.cohort(scope.queue)end
+    if type(check)~="function"or prepared and type(inputs)~="table"
+        or not scope.nativeWatch()or not check()then return end
+    local members,equipmentTokens={},{}
+    for _,member in ipairs(list)do
+        members[member]=true
+        if scope.lookup.read(member,"Type")=="ISEquipWeaponAction"then
+            equipmentTokens[scope.lookup.read(member,"toolkitQueueOperation")]=true
+        end
+    end
+    scope.nativeEquipmentTokens=equipmentTokens
+    scope.nativeCheck,scope.nativeMembers,scope.nativeMode=check,members,true
+    scope.nativeGroups,scope.nativeRoles,scope.nativeInputs,scope.nativePrepared=groups,roles,inputs,prepared
+end
+function nativePlan.check(snapshot)
+    local check=nativePlan.raw(snapshot,nativePlan.marker)
+    return check==nil or check(snapshot)==true
+end
+-- Recheck the original physical scope after Settings/source callbacks, without
+-- repeating contracts or renewing the private ledger baseline. Each carried
+-- route lease is one-use, including the initial lease captured during inspect.
+function nativePlan.physical(scope)
+    local rows=scope.nativePhysical
+    if not rows then return true end
+    local checks={}
+    for _,row in ipairs(rows)do
+        local group=row.group
+        local check,edit=row.check,row.edit
+        row.check,row.edit=nil,nil
+        if not check then check,edit=spatialEdits.prepare(group.approach,group.source,true)end
+        if type(check)~="function"or not edit or edit.complete~=true or edit.capacity~="unchanged"
+            or group.body.item~=group.item or group.fetch.item~=group.item
+            or group.fetch.srcContainer~=group.source or group.fetch.destContainer~=row.root
+            or scope.queue.character~=row.actor or row.actor:getInventory()~=row.root
+            or group.item:getContainer()~=group.source or group.item:getID()~=row.id
+            or group.item:getFullType()~=row.fullType or group.source:getItemWithID(row.id)~=group.item
+            or row.root:getItemWithID(row.id)~=nil then return false end
+        local seen,count={},0
+        for _,resource in ipairs(edit.resources or {})do
+            local original=row.owners[resource.key]
+            if resource.domain~="item"or not original or seen[resource.key]
+                or not resource.facts or resource.facts.item~=original.item
+                or resource.facts.location~=original.location
+                or resource.facts.item:getFullType()~=original.fullType then return false end
+            seen[resource.key]=true;count=count+1
+        end
+        if count~=row.ownerCount then return false end
+        checks[#checks+1]=check
+    end
+    -- All callback-bearing factories and input reads precede route consumption.
+    for _,check in ipairs(checks)do if not check()then return false end end
+    return true
+end
+function nativePlan.group(queue,group,context,seen,checks)
+    local scope=activeDecision
+    local actor,item=queue.character,group.item
+    local root=actor:getInventory()
+    if group.destination~=root or group.source==root or group.body.item~=item or group.fetch.item~=item
+        or not instanceof(item,"InventoryItem")or not instanceof(group.source,"ItemContainer")
+        or item:getContainer()~=group.source or not ordinaryTransfer(group.fetch)
+        or group.fetch.srcContainer~=group.source or group.fetch.destContainer~=root then return false end
+    local id,fullType=item:getID(),item:getFullType()
+    if type(id)~="number"or id~=id or id%1~=0 or id==-1 or seen[id]
+        or type(fullType)~="string"or group.source:getItemWithID(id)~=item
+        or root:getItemWithID(id)~=nil then return false end
+    local token=group.body.toolkitQueueOperation
+    local input=scope.nativeInputs[token]
+    if type(input)~="table"or type(input.hasBorrowing)~="boolean"then return false end
+    if input.hasBorrowing then
+        local readers=input.equipmentReaders
+        if readers~=nil then
+            if type(readers)~="table"or getmetatable(readers)~=nil then return false end
+            for reader,value in pairs(readers)do
+                if value~=true or not scope.nativeEquipmentTokens[reader]then return false end
+            end
+        end
+        local owner=group.source:getContainingItem()
+        if input.id~=id or input.fullType~=fullType or type(input.sourceOwner)~="table"
+            or not instanceof(owner,"InventoryContainer")or owner:getInventory()~=group.source
+            or owner:getID()~=input.sourceOwner.id or owner:getFullType()~=input.sourceOwner.fullType then return false end
+    end
+    for _,member in ipairs({group.approach,group.fetch,group.body})do
+        local contract,source=inspect(member,context)
+        if not scope.nativeMembers[member]or not contract or contract.edit~=nil
+            or member.character~=actor or member.toolkitQueueOperation~=token or member.action
+            or member.onStartFunc or member.onCompleteFunc or member.onCancelFunc or member.onFailFunc
+            or member.additionalTest or member.additionalContext or member.retriggerLastAction
+            or member.forceCancel~=nativeForceCancel or not nativePendingCancelHasNoEffects()then return false end
+        if member==group.approach then
+            if source~="toolkit.approach"or contract.nativeSchedule~="native-prepare"then return false end
+        elseif member==group.fetch then
+            local snapshot=snapshots[getmetatable(member)]
+            if source~="native.ISInventoryTransferAction"or contract.nativeSchedule~="native-prepare"
+                or not snapshot or not nativeMatches(member,snapshot)then return false end
+        elseif contract.nativeSchedule~="unsubmitted"then return false end
+    end
+    local check,edit=spatialEdits.prepare(group.approach,group.source,true)
+    if type(check)~="function"or not edit or edit.complete~=true or edit.capacity~="unchanged"then return false end
+    local owners,count={},0
+    for _,resource in ipairs(edit.resources or {})do
+        if resource.domain~="item"or owners[resource.key]or not resource.facts then return false end
+        owners[resource.key]={item=resource.facts.item,location=resource.facts.location,
+            fullType=resource.facts.item:getFullType()};count=count+1
+    end
+    if count<1 then return false end
+    checks[#checks+1]={group=group,actor=actor,root=root,id=id,fullType=fullType,
+        owners=owners,ownerCount=count,check=check,edit=edit};seen[id]=true
+    return item:getContainer()==group.source and group.source:getItemWithID(id)==item
+        and group.body.item==item and group.fetch.item==item and actor:getInventory()==root
+end
+function nativePlan.edit(queue,first,last,to,context)
+    local scope=activeDecision
+    if not scope or not scope.nativeMode then return end
+    local denied={status="denied",reason="edit_unknown",blocker=queue.queue[first]}
+    if first<=1 or to==1 or #queue.queue>32 then return denied end
+    if first~=last then
+        local role=scope.nativeRoles[queue.queue[first]]
+        if not role or role.role~="approach"or role.group.body~=queue.queue[last]or last~=first+2 then return denied end
+    end
+    if to and to<=#queue.queue then
+        local role=scope.nativeRoles[queue.queue[to]]
+        if role and role.role~="approach"then return denied end
+    end
+    local low=math.min(first,to or first)
+    local high=math.min(#queue.queue,math.max(last,(to or first)-1))
+    local selected=false
+    for index=low,high do
+        local contract=inspect(queue.queue[index],context)
+        selected=selected or contract and contract.nativeSchedule=="unsubmitted"
+    end
+    if not selected or not scope.nativeWatch or not scope.nativeWatch()then return denied end
+    local seen,groups,checks={},{},{}
+    for index=1,#queue.queue do
+        local member=queue.queue[index];local role=scope.nativeRoles[member]
+        local valid
+        if role then
+            if groups[role.group]then valid=true
+            else valid=nativePlan.group(queue,role.group,context,seen,checks);groups[role.group]=valid end
+        else valid=nativePlan.member(queue,member,index==1,context,seen)end
+        if not valid then denied.blocker=member;return denied end
+    end
+    -- Defer one-use route consumption until the final decision freshness pass,
+    -- after Settings and any remaining source/item callbacks.
+    scope.nativePhysical=checks
+    if not scope.nativeCheck()then return denied end
+    scope.nativeSchedule=true
+    return {status="allowed",nativeSchedule=true,externalCapacity=true,
+        nativeAdmission=scope.nativePrepared and "unsubmitted-carried-fetch"or nil}
+end
 local function equipmentResources(action)
     local owned=fitnessEquipment.inspect(action)
     if owned then return owned end
@@ -1017,9 +1293,26 @@ local function equipmentResources(action)
         result.hands=action.character;result.cancelWaiting,result.preparation=false,true
         local snapshot=snapshots[getmetatable(action)]
         if snapshot and snapshot.binding then result.preparationFinish=true end
-        -- Heavy, worn and producer-owned restoration keep their own contracts.
-        -- This does not grant a move, active stop or hand-state projection.
-        if action.Type == "ISEquipWeaponAction" and pendingPreparation(action) then
+        -- Heavy, worn and producer-owned restoration retain their own contracts.
+        -- Only a complete owner below can extend the pending cancellation fallback.
+        local nativeMode=activeDecision and activeDecision.nativeMode
+        if action.Type == "ISEquipWeaponAction" and (nativeMode or pendingPreparation(action)) then
+            if (not isClient()or nativeMode)and type(equipOwner.module)=="table" and editNativeMeta(equipOwner.module,nil)
+                and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect
+                and type(equipOwner.inspect)=="function" then
+                if equipOwner.trusted==nil then equipOwner.trusted=Proof.closure(equipOwner.inspect,"ActionQueueEquip.lua")
+                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",1709699337,"PZSurvivorToolkit",true)end
+                if equipOwner.trusted and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect then
+                    local contract
+                    if nativeMode and activeDecision.nativePrepared then
+                        local role=activeDecision.nativeRoles[action]
+                        if equipOwner.module.inspectSchedule==equipOwner.schedule and type(equipOwner.schedule)=="function"then
+                            contract=equipOwner.schedule(action,role and role.group.source or nil)
+                        end
+                    else contract=equipOwner.inspect(action)end
+                    if contract then return contract end
+                end
+            end
             result.cancelWaiting, result.cancelTailOnly = true, true
         end
     end
@@ -1086,7 +1379,10 @@ function Policy.installContracts()
     end, {"setOverrideHandModels"})
     registerNative("ISReadABook", function(action)
         local result = itemResources(action)
-        if result then result.interrupt = "audited-resume" end
+        if result then
+            result.interrupt = "audited-resume"
+            if activeDecision and activeDecision.nativeMode then result.nativeSchedule = "native-input" end
+        end
         return result
     end)
     registerNative("ISMoveablesAction", function(action)
@@ -1199,16 +1495,29 @@ end})
 
 inspect = function(action, context)
     local override = context and context.failureOverrides and context.failureOverrides[action]
-    if override then return unpack(override, 1, 3) end
+    if override then if validLocationReads(override[1]) then return unpack(override, 1, 3) end; return end
     local cached = context and context.contracts[action]
-    if cached then return unpack(cached, 1, 3) end
+    if cached then if validLocationReads(cached[1]) then return unpack(cached, 1, 3) end; return end
     if action._isAddingActions or (Operations.isContinuationPending and Operations.isContinuationPending(action.toolkitQueueOperation)) then
         if context then context.contracts[action] = {inFlight = true} end
         return
     end
     local result = {Definitions.inspect(action, context)}
+    if not validLocationReads(result[1]) then result[1] = nil end
+    local role=activeDecision and activeDecision.nativeMode and activeDecision.nativeRoles and activeDecision.nativeRoles[action]
+    if role and result[1]and(role.role=="approach"and result[2]=="toolkit.approach"
+        or role.role=="fetch"and result[2]=="native.ISInventoryTransferAction"
+            and result[1].edit and result[1].edit.complete==true)then
+        local contract={};for key,value in pairs(result[1])do contract[key]=value end
+        contract.edit=nil;contract.nativeSchedule="native-prepare";contract.unknownOutputs=true
+        contract.cancelWaiting,contract.cancelOperation,contract.preparation,contract.callbacksSafe=true,true,true,true
+        result[1]=contract
+    end
     local settlement = Toolkit.ActionQueueSettlement
-    if result[1] and settlement and settlement.requiredStep(action) then
+    -- The selected native cohort already owns an earlier private no-debt
+    -- lease; metadata changes are rejected by its final data-only validator.
+    local nativeMode=activeDecision and activeDecision.nativeMode and activeDecision.nativeMembers[action]
+    if result[1] and not nativeMode and settlement and settlement.requiredStep(action) then
         local contract = {}
         for key, value in pairs(result[1]) do contract[key] = value end
         contract.cancelOperation, contract.cancelWaiting = false, false
@@ -1264,6 +1573,9 @@ local function plainItemFootprint(action, context, connectivity)
     if connectivity then
         if contract.containerOwners ~= nil and (type(contract.containerOwners) ~= "table" or getmetatable(contract.containerOwners)) then return end
     elseif not emptyResourceMap(contract.containerOwners) then return end
+    -- Typed readers retain the ordered pair fallback; an item-only aggregate
+    -- cannot preserve the direction of their dependency on actual item use.
+    if not emptyResourceMap(contract.locationReads) then return end
     for _, name in ipairs(pairResourceMaps) do if not emptyResourceMap(contract[name]) then return end end
     for _, name in ipairs(spatialFields) do if action[name] ~= nil then return end end
     return operationItems(action, context)
@@ -1498,6 +1810,8 @@ local function evaluateComponent(projection, entries)
 end
 
 local function proposedEdit(queue, first, last, to, context, projectionRequired)
+    local native=nativePlan.edit(queue,first,last,to,context)
+    if native then return native end
     local needsSpatial=false
     if #queue.queue<=spatialEdits.maxMembers and (type(spatialEdits.carriedFactory)=='function'
         or type(toolkitQueueSpatialNoMovement)=='function'and type(toolkitQueueSpatialApiMatches)=='function')then
@@ -1641,7 +1955,7 @@ local function wringCapacityNonIncreasing(action,contract,source,context)
         or entry.behavior~=behavior then return false end
     if wringCapacitySourceTrusted==nil then
         wringCapacitySourceTrusted=type(wringInspector)=="function" and Proof.closure(wringInspector,"ActionQueueWring.lua")
-            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",2814327545,"PZSurvivorToolkit",true)
+            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",4201491129,"PZSurvivorToolkit",true)
     end
     return wringCapacitySourceTrusted==true
 end
@@ -1665,7 +1979,7 @@ local function clothingRemovalCapability(action,contract,source,context)
         or Proof.closure~=clothingOrigin or Proof.matches~=clothingMatches then return false end
     if clothingSourceTrusted==nil then
         clothingSourceTrusted=clothingOrigin(clothingInspect,"ActionQueueClothing.lua")
-            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",66286558,"PZSurvivorToolkit",true)
+            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",1719038923,"PZSurvivorToolkit",true)
     end
     return clothingSourceTrusted==true
 end
@@ -1869,6 +2183,12 @@ local function transferCapacityConflict(queue, a, b, last, check, context, compa
 end
 
 local function editCapacityConflict(queue, edit, first, last, to, context)
+    if edit.nativeSchedule and edit.nativeAdmission=="unsubmitted-carried-fetch"
+        and activeDecision and activeDecision.nativeMode and activeDecision.nativePrepared then
+        -- All retained transfers are untouched owned native commands. No
+        -- forecast is spent: original live admission may reject them at start.
+        return
+    end
     if not edit.externalCapacity then return end
     -- The item projection proves locations/amounts, not available weight. Even a
     -- successful projection must scan every later transfer at full current
@@ -2006,7 +2326,7 @@ function Policy.cancelOperationReason(queue, action, context)
     end
     local active = first == 1 and queue.current == queue.queue[1]
     if type(token) == "table" and token.toolkitStarted and not active then return "operation_active" end
-    local main, output, inputs, scrapOnly = false, false, {}, true
+    local main, output, inputs, locationReads, scrapOnly = false, false, {}, {}, true
     local pendingRemovalOnly = not active and nativePendingCancelHasNoEffects()
     local tailCancellation = false
     for i = first, last do
@@ -2048,6 +2368,7 @@ function Policy.cancelOperationReason(queue, action, context)
         output = output or member.toolkitIndependentBulk or auditedCraft or (world and member.toolkitWorldDismantle) or plannedCraft
             or (member.Type == "ISMoveablesAction" and member.mode == "scrap")
         for item in pairs(operationItems(member, context)) do inputs[item] = true end
+        for item in pairs(contract and contract.locationReads or {}) do locationReads[item] = true end
     end
     -- Check the complete operation before the model's allowed shortcut. A
     -- removed pending prefix cannot invalidate earlier work, but an unknown
@@ -2091,6 +2412,10 @@ function Policy.cancelOperationReason(queue, action, context)
                 return unknownDenial(context, "operation_dependent", other), nil, nil, other
             end
             for item in pairs(operationItems(other, comparison)) do
+                if inputs[item] or locationReads[item] then return "operation_shared_item", nil, nil, other, item end
+            end
+            local otherContract = inspect(other, comparison)
+            for item in pairs(otherContract and otherContract.locationReads or {}) do
                 if inputs[item] then return "operation_shared_item", nil, nil, other, item end
             end
             if mayShareGroupResource(groupItems, other, comparison) then
@@ -2142,6 +2467,7 @@ function spatialEdits.deviceOnly(contract)
         or contract.knownInputs==false or contract.unknownOutputs
         or contract.hands or contract.equipment or contract.cancelOperation==false
         or not emptyResourceMap(contract.items)or not emptyResourceMap(contract.containerOwners)
+        or not emptyResourceMap(contract.locationReads)
         or not emptyResourceMap(contract.positions)or not emptyResourceMap(contract.dynamicInputs)
         or not emptyResourceMap(contract.dynamicInputsByType)or not emptyResourceMap(contract.outputTypes)
         or type(edit)~="table"or getmetatable(edit)~=nil or edit.version~=1 or edit.complete~=true
@@ -2340,14 +2666,17 @@ local function returnFailureIndependent(queue, action, scope)
     for i = index + 1, #queue.queue do
         local other = queue.queue[i]
         local approach = other.Type == "ISQueueActionsAction" and returnFailureApproach(other)
-        if not returnFailureSuffix[other.Type] and not approach
+        if not returnFailureSuffix[other.Type] and not approach and other.Type ~= "ISWringClothing"
             or other.Type == "ISRadioAction" and not deviceSetterModes[other.mode] then
             return false, "unsupported_tail_kind"
         end
         if other._isAddingActions or other.action then return false end
         local snapshot = snapshots[getmetatable(other)]
-        if not approach and (not snapshot or not nativeMatches(other, snapshot)) then return false, "unsupported_tail_binding" end
-        if scope and not approach then scope.native[other] = snapshot end
+        local wringing = other.Type == "ISWringClothing"
+        -- Wring owns its exact native class/callback proof in its registered
+        -- effect contract; it is not a legacy snapshot registration.
+        if not approach and not wringing and (not snapshot or not nativeMatches(other, snapshot)) then return false, "unsupported_tail_binding" end
+        if scope and not approach and not wringing then scope.native[other] = snapshot end
         if other.Type == "ISRadioAction" and radioProjectionIndependent and not context.contracts[other] then
             local behavior, source = Definitions.behavior(other)
             if behavior and source == "native.ISRadioAction" and behavior.inspect == radioResources then
@@ -2357,6 +2686,11 @@ local function returnFailureIndependent(queue, action, scope)
             end
         end
         local contract, source = inspect(other, context)
+        -- Reuse the source-owned effect certificate. Merely naming a wring
+        -- action or copying a nonincrease flag grants no failure-isolation right.
+        if other.Type == "ISWringClothing" and (not wringCapacityNonIncreasing(other,contract,source,context)
+            or contract.moveRequiresProjection or not contract.edit or contract.edit.version ~= 1
+            or contract.edit.complete ~= true) then return false, "unsupported_tail_effects" end
         if approach and (source ~= "toolkit.approach" or not contract or not contract.deferred
             or not contract.preparation or contract.capacityNonIncreasing ~= true) then
             return false, "unsupported_tail_binding"
@@ -2385,6 +2719,10 @@ function Policy.returnFailureIndependent(queue, action)
 end
 
 function Policy.replaceStop(previous, replacement)
+    if type(equipOwner.adopt)=="function" and type(equipOwner.module)=="table" and type(editNativeMeta)=="function"
+        and editNativeMeta(equipOwner.module,nil) and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.adoptBase==equipOwner.adopt then
+        equipOwner.adopt("stop",previous,replacement)
+    end
     if type(clothingAdoptBase)=="function" and type(Clothing)=="table" and type(editNativeMeta)=="function"
         and editNativeMeta(Clothing,nil) and Toolkit.ActionQueueClothing==Clothing and Clothing.adoptBase==clothingAdoptBase then
         clothingAdoptBase("stop",previous,replacement)
@@ -2404,6 +2742,10 @@ function Policy.replaceStop(previous, replacement)
 end
 
 function Policy.adoptBegin(previous, replacement)
+    if type(equipOwner.adopt)=="function" and type(equipOwner.module)=="table" and type(editNativeMeta)=="function"
+        and editNativeMeta(equipOwner.module,nil) and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.adoptBase==equipOwner.adopt then
+        equipOwner.adopt("begin",previous,replacement)
+    end
     if type(clothingAdoptBase)=="function" and type(Clothing)=="table" and type(editNativeMeta)=="function"
         and editNativeMeta(Clothing,nil) and Toolkit.ActionQueueClothing==Clothing and Clothing.adoptBase==clothingAdoptBase then
         clothingAdoptBase("begin",previous,replacement)
@@ -2581,7 +2923,7 @@ function Policy.editUnchanged(queue, snapshot)
             or (type(token) == "table" and (read(token,"toolkitStarted") ~= record.started
                 or read(token,"toolkitCancelled") ~= record.cancelled)) then return false end
     end
-    return true
+    return nativePlan.check(snapshot)
 end
 
 -- A structural plan only: the caller must prove an exact rejected native
@@ -2741,6 +3083,7 @@ end
 function spatialEdits.lookupDecision(scope,callback,...)
     scope.lookup=spatialEdits.lookup(scope.queue,select(2,...),select(3,...))
     if not scope.lookup then return {allowed=false,reason="unavailable",rawResults={n=1,"unavailable"}}end
+    nativePlan.capture(scope,select(2,...),select(3,...),select(4,...))
     return callback(...)
 end
 local function inDecision(queue, context, output, callback, ...)
@@ -2767,6 +3110,7 @@ local function inDecision(queue, context, output, callback, ...)
         end
         if result.reason==nil and scope.spatial then result.spatialValidated=true end
     end
+    if ok and spatialEdits.shape.kind(result)=="table" and scope.nativeSchedule and result.reason==nil and result.allowed~=false then result.nativeSchedule=true end
     if ok and spatialEdits.shape.kind(result)=="table" and scope.commonActiveEdit and result.reason==nil and result.allowed~=false then
         result.commonActiveEdit=true
         result.commonActiveEditRoute=scope.commonActiveEditRoute
@@ -2778,6 +3122,23 @@ local function inDecision(queue, context, output, callback, ...)
     -- A provisional no-movement contract is not a reusable public inspection
     -- fact. The decision alone survives; callers receive the ordinary cache.
     if scope.spatial then spatialEdits.rollback(scope,0)end
+    if ok and scope.nativeMode and result.reason==nil and result.allowed~=false then
+        local watch,check=scope.nativeWatch,scope.nativeCheck
+        local function fresh()
+            if scope.nativeChecking or watch==nil or check==nil or not watch()or not check()then return false end
+            scope.nativeChecking=true
+            local ok,current=nativePlan.call(nativePlan.physical,scope)
+            scope.nativeChecking=nil
+            return ok and current==true and watch()and check()
+        end
+        if not fresh()then
+            result.reason,result.allowed="unavailable",false
+            if result.rawResults then result.rawResults[1]="unavailable"end
+        elseif result.snapshot then
+            local snapshot=result.snapshot
+            snapshot[nativePlan.marker]=function(candidate)return nativePlan.equal(candidate,snapshot)and fresh()end
+        end
+    end
     activeDecision = previous
     if output then for _, name in spatialEdits.shape.array(decisionContextFields) do output[name] = context[name] end end
     if not ok then error(result, 0) end
@@ -2818,7 +3179,7 @@ function spatialEdits.reasonDecision(queue,context,callback,...)
     end
     local result=inDecision(queue,fresh,output,function()
         return collect(callback(unpack(arguments,1,arguments.n)))
-    end)
+    end,unpack(arguments,1,arguments.n))
     return unpack(result.rawResults,1,result.rawResults.n)
 end
 function Policy.moveReason(queue,action,target,after,context)
@@ -3163,6 +3524,7 @@ function Policy.record(command, action, decision)
     local keys = {}
     for key in pairs(contract and contract.items or {}) do keys[#keys + 1] = tostring(key) end
     for key in pairs(contract and contract.containerOwners or {}) do keys[#keys + 1] = "container:" .. tostring(key) end
+    for key in pairs(contract and contract.locationReads or {}) do keys[#keys + 1] = "location-read:" .. tostring(key) end
     for key in pairs(contract and contract.dynamicInputs or {}) do keys[#keys + 1] = "type:" .. tostring(key) end
     for key in pairs(contract and contract.dynamicInputsByType or {}) do keys[#keys + 1] = "short-type:" .. tostring(key) end
     if #diagnostics == 64 then table.remove(diagnostics, 1) end

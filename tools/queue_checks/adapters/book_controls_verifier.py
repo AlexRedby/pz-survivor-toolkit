@@ -556,6 +556,42 @@ def waiver_identity_errors(value, ids, boundary, retired):
     return errors
 
 
+def restoration_errors(row, case, selection, admissions):
+    """Qualify passive scalar loan observations without granting a capability."""
+    receipt = row.get('restoration', False)
+    if selection.get('options', {}).get('book_restoration_provider', 'selected') != 'native-returns':
+        return [] if receipt is False else ['Unrequested native-return restoration receipt']
+    errors = []
+    enabled = selection['mode'] == 'toolkit'
+    lost = case in CAPACITY_CASES
+    final = 'waived' if lost or base_control(case.split('.', 1)[1]) == 'return-child-cancel' else 'completed'
+    points = [('admission', 'prepare'), ('boundary', 'active')]
+    if enabled and lost:
+        points.append(('blocked', 'active'))
+    points.append(('final', final))
+    book = row.get('ids', {}).get('front', {})
+    expected = [dict(case=case, point=point, loaded=False, selected=False,
+                     itemId=book.get('id'), itemType=book.get('type'), state=state if enabled else False,
+                     candidates=1 if enabled else 0, observedPreparation=enabled) for point, state in points]
+    wanted = dict(provider='native-returns', samples=expected)
+    if not _exact(receipt, wanted):
+        errors.append('Missing or inexact P4-free restoration provider, identity, preparation or loan-state evidence')
+    admission = admissions[0].get('queue', []) if len(admissions) == 1 else []
+    for role in ('pickup', 'return'):
+        records = [record for record in row.get('records', []) if record.get('role') == role]
+        original = [record for record in admission if record.get('role') == role]
+        if (len(records) != 1 or len(original) != 1
+                or not _exact(records[0].get('item'), book.get('id'))
+                or records[0].get('type') != 'ISInventoryTransferAction'
+                or not _exact(records[0].get('sequence'), original[0].get('sequence'))
+                or not _same_action(records[0].get('actionRef'), original[0].get('actionRef'))):
+            errors.append('Restoration requires its unique exact original native ' + role)
+    if sum(record.get('type') == 'ISInventoryTransferAction' and record.get('item') == book.get('id')
+           for record in row.get('records', [])) != 2:
+        errors.append('Restoration acquired an extra or missing exact-book native transfer')
+    return errors
+
+
 def check_case(row, case, selection, prepared, authority_baseline, authority_final, admissions, boundaries, drains, acks, capacity_authority=None, stops=None):
     errors = []
     try:
@@ -571,6 +607,7 @@ def check_case(row, case, selection, prepared, authority_baseline, authority_fin
         errors.extend(_nonfinite_case_errors(row, ids, enabled))
         errors.extend(native_request_errors(row, case, selection, ids))
         errors.extend(native_transfer_stop_errors(row, case, selection, ids))
+        errors.extend(restoration_errors(row, case, selection, admissions))
         errors.extend(performance_errors(row.get('performance'), case, enabled, precise=selection.get('options', {}).get('precise_timing') is True))
         errors.extend(handler_timing_errors(boundary.get('ui'), selection.get('options', {}).get('precise_timing') is True, enabled))
         if isinstance(row.get('performance'), dict) and row['performance'].get('queueCount') != len(boundary.get('queue', [])):
@@ -1379,6 +1416,16 @@ def verify(root, selection, catalog):
                 or len(final) != 1 or final[0].get('cases') != cases or final[0].get('performed') != len(cases)
                 or final[0].get('failed') != 0 or final[0].get('skipped') != 0 or any(r.get('event') == 'fatal' for r in events)):
             issues.append('Missing complete ordered book-controls qualification bank or functional denials remain')
+        restoration = selection.get('options', {}).get('book_restoration_provider', 'selected') == 'native-returns'
+        restoration_samples = []
+        if restoration:
+            for row in rows:
+                receipt = row.get('restoration')
+                samples = receipt.get('samples') if isinstance(receipt, dict) else None
+                if isinstance(samples, list):
+                    restoration_samples.extend(samples)
+        if not _exact(raw(text, 'RESTORATION'), restoration_samples):
+            issues.append('Raw restoration receipts missing, duplicated, foreign, reordered or different from exact case samples')
         active = selection.get('options', {}).get('active_edit_observation', False)
         if len(setup) != 1 or setup[0].get('activeEditObserved', False) is not active:
             issues.append('Active-edit observation setup differs from selected option')
@@ -1474,6 +1521,7 @@ def verify(root, selection, catalog):
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         issues.append('Book controls verifier ' + type(error).__name__ + ': ' + str(error))
     return dict(issues=issues, outcomes=outcomes, evidence={'performance': performance_observations(rows),
+        'restoration': [r['restoration'] for r in rows if isinstance(r.get('restoration'), dict)],
         'activeEditObservation': [r['activeEditObservation'] for r in rows if isinstance(r.get('activeEditObservation'), dict)], 'limits': [
         'Programmatic real widget hit tests and handlers with an injected drag-threshold state; no physical pointer or rendering claim.',
         'Policy timings cover isolated calls; panelUpdate excludes hover rebuilds. Durations and 20-sample quantiles are diagnostic observations, not design acceptance criteria or complete input/frame cost.',

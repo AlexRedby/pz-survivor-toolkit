@@ -9,6 +9,8 @@ Choose a suite with `python3 tools/check_action_queue.py matrix`, then read its 
 - [Registered contribution suites](#registered-contribution-suites)
 - [Medical disconnect](#medical-disconnect)
 - [Radio settings](#radio-settings)
+- [P4-free carried book returns](#p4-free-carried-book-returns)
+- [P4-free wringing returns](#p4-free-wringing-returns)
 - [Crafting and borrowed tools](#crafting-and-borrowed-tools)
 - [Craft UI callbacks](#craft-ui-callbacks)
 - [Fire and fuel](#fire-and-fuel)
@@ -80,6 +82,24 @@ The minimal MP disconnect smoke can report a late native `BodyDamageUpdatePacket
 ## Radio settings
 
 Radio settings use `--suite radio-settings --cases reorder,cancel,barrier --mods selected`, or an ordered subset, in one fresh SP/Host session. Native RWM callbacks enqueue unchanged-duration actions on two adjacent powered world radios. `reorder` moves repeated volume and independent microphone/channel setters; `cancel` removes pending volume/microphone commands; `barrier` rejects moving a channel setter after native power-off, then restores power and mutes in the original sequence. Queue-disabled controls execute the original order. Receipts require exact world identities, observed starts/progress, no effects from pending edits and completion of an unrelated tail. Host verifies volume/channel on the server; the native world-radio microphone setter changes only client-local state. The scenario matrix maps this bounded scope as `world-radio-settings`. These callback checks do not establish physical input, rendering, portable/vehicle radio behavior, active interruption or multi-client contention.
+
+## P4-free carried book returns
+
+`book-controls` supports the opt-in config `{"book_controls":true,"book_restoration_provider":"native-returns","require_native_requests":true}`. Select the ordered subset `worn-bag.move-volume,worn-bag.return-child-cancel,worn-bag.move-volume-capacity-lost`; all selected cases run in one game lifecycle. Use fresh SP and menu-Host native/toolkit pairs, adding `"mp_host":true` for Host.
+
+Pass the current selected Mod IDs in their original order through `--mods` (or a batch plan's `mods` list), omitting only `P4TidyUpMeister`. Keep the repository INI unchanged. The profile rejects other removals, additions and case families; `--mods selected` and a full-selection pack lock describe a different set. Normal preparation still resolves, seals and checks every effective selected source; use identical explicit source overrides for each control/candidate pair.
+
+The fixture verifies both loaded and selected P4 absence, exact original pickup/return identities, private loan preparation/earning/payment, pending-return Keep and blocked debt followed by the actual footer Keep. Queue-off controls require no owned loan. Existing independent server snapshots, native durations, progressed reading, real Panel handlers, native drain and full runtime auditing remain required. The capacity case lowers the owned container's native capacity after pickup; it does not claim physical filler-item coverage. These are edited carried-reading checks with an independent Pen/TV/book tail, not a complete restoration-provider replacement or physical-input qualification.
+
+## P4-free wringing returns
+
+Select suite `wring-clothing`, an ordered subset of `worn-bag,worn-bag-keep,worn-bag-full,worn-bag-unavailable,worn-bag-intent`, with `options.wring_restoration_provider="native-returns"` and the exact ordered selected Mod IDs excluding only `P4TidyUpMeister`. The normal selected INI and default suite remain unchanged. Use fresh SP/menu-Host queue-off/on pairs with identical candidate sources and settings; a different selection cannot use the full-selection pack lock.
+
+The native producer supplies approach/fetch/wring. Toolkit inserts one optional return only after its exact pickup is earned. Receipts prove provider absence, prepare/active/completed loan states, a single generated return identity, untouched native durations, exact source/root counts, server wetness and completion before the independent wring tail. P4-free queue-off controls deliberately retain the native no-return result. Single actual-item and ordinary singleton UI-row inputs qualify; bulk input is not partially enrolled.
+
+`worn-bag-keep` cancels only the generated pending return through the public queue command after the native wring body has started and progressed. `worn-bag-full` lowers the owned source container's real native capacity on the authority after pickup, requires the completed wring and independent tail with the exact garment retained, then uses the public footer Keep on the blocked debt. The authority receipt is independently bound to the client observation. Capacity is lowered to zero without adding filler items; this does not establish physical filler-item or shared-contention coverage. `worn-bag-unavailable` detaches only the fixture-owned source bag on the authority after an earned pickup, retains its exact contents, waits for canonical client removal and keeps the blocked debt through the public footer. `worn-bag-intent` uses the native primary-hand equip menu while wringing runs; it requires the original body and independent tail to complete, the exact garment to be held, and only the matching earlier debt to retire after the authenticated native effect. It never calls Keep. These cases retain native durations and callbacks and use fresh items in the same game lifecycle. Action labels reuse captured references bound to the exact objects, since native Kahlua table strings change after action allocation.
+
+Live active-body cancellation, detached/unavailable sources, newer explicit intent, editor toggles, P4-present cutover, worn/activation restoration, physical UI/WAN and independent queue-off restoration need their separate gates. Source-backed composition checks cover the private admission/Keep/refusal machinery and explicit Host canonical replacement; they are not live transport evidence.
 
 ## Crafting and borrowed tools
 

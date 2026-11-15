@@ -392,9 +392,9 @@ end
 local multiMergeObserved=false
 local function observeMultiMerge()
  if not multiCase(case())or multiMergeObserved then return end
- local intent=assert(T.ActionQueueTidyIntent,'native transfer observation unavailable')
+ local transfers=assert(T.ActionQueueTransfers,'native transfer observation unavailable')
  local previous=ISInventoryTransferAction.checkQueueList
- intent.observeTransfers(function(action)
+ transfers.observeTransfers(function(action)
   if state and multiCase(case())and action.character==state.player then
    F.multiStart(state,action,'ISInventoryTransferAction.checkQueueList')
   end

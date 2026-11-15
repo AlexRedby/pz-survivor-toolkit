@@ -10,6 +10,7 @@ public final class ActionAcknowledgements {
     public static final boolean SUPPORTED = ActionAcknowledgementLogic.supported;
 
     public static synchronized void started(Object action) { ActionAcknowledgementLogic.started(action); }
+    public static synchronized String token(Object action) { return ActionAcknowledgementLogic.token(action); }
     public static synchronized ArrayList<Object> pending() { return ActionAcknowledgementLogic.pending(); }
     public static synchronized void settled(ArrayList<Object> before, boolean removed) {
         ActionAcknowledgementLogic.settled(before, removed);

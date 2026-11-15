@@ -1,3 +1,5 @@
+local selectedEquipEdit=require 'QueueTestSelection'
+if selectedEquipEdit.cases[1]=='equip-edit'then require 'QueueEquipEditClient';return end
 require 'PZSurvivorToolkit/ActionQueuePanel'
 require 'PZSurvivorToolkit/BulkFirearms'
 require 'ISUI/ISInventoryPaneContextMenu'

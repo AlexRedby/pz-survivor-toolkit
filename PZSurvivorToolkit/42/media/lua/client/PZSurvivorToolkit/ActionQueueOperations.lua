@@ -14,6 +14,7 @@ local Operations = {}
 PZSurvivorToolkit.ActionQueueOperations = Operations
 local scope
 local titleScope
+local producerScope
 local completionScope
 local continuationScope
 local continuationMarker = {}
@@ -118,23 +119,23 @@ local function pack(...)
     return {n = select("#", ...), ...}
 end
 
-local function run(token, callback, ...)
-    local previous, previousTitle = scope, titleScope
-    scope = token
+local function run(token, producer, callback, ...)
+    local previous, previousTitle, previousProducer = scope, titleScope, producerScope
+    scope, producerScope = token, producer
     titleScope = titleScope or {}
     local results = pack(pcall(callback, ...))
-    scope, titleScope = previous, previousTitle
+    scope, titleScope, producerScope = previous, previousTitle, previousProducer
     if not results[1] then error(results[2], 0) end
     return unpack(results, 2, results.n)
 end
 
 function Operations.run(callback, ...)
-    return run(scope or {}, callback, ...)
+    return run(scope or {}, nil, callback, ...)
 end
 
 function Operations.runWith(token, callback, ...)
     -- Native completion and cleanup must still execute after cancellation; async adapters use runContinuation.
-    return run(token or scope or {}, callback, ...)
+    return run(token or scope or {}, nil, callback, ...)
 end
 
 function Operations.invalidate(token)
@@ -185,7 +186,7 @@ function Operations.runContinuation(continuation, callback, ...)
     if not continuationValid(continuation) then Operations.finishContinuation(continuation); return end
     local previous = continuationScope
     continuationScope, continuation.running = continuation, true
-    local results = pack(pcall(run, continuation.token, callback, ...))
+    local results = pack(pcall(run, continuation.token, nil, callback, ...))
     continuationScope, continuation.running = previous, nil
     Operations.finishContinuation(continuation)
     if not results[1] then error(results[2], 0) end
@@ -377,6 +378,18 @@ function Operations.preparationScope(character)
     return scope
 end
 
+-- A query-local receipt for the existing synchronous UI producer. No copied
+-- action flag or callback from a nested continuation can acquire its identity.
+function Operations.producer(action)
+    local producer = producerScope
+    if not producer or not scope or completionScope or continuationScope
+        or not action or action.toolkitQueueOperation ~= scope
+        or producer.owner[producer.method] ~= producer.wrapper then return end
+    local lifecycle = PZSurvivorToolkit.ActionQueueLifecycle
+    if lifecycle and lifecycle.current(action.character) then return end
+    return producer.callback, producer.owner, producer.method
+end
+
 local function stamp(action, token)
     if not action.toolkitQueueOperation then
         local queue = ISTimedActionQueue.queues[action.character]
@@ -395,6 +408,8 @@ local function stamp(action, token)
     end
     local settlement = PZSurvivorToolkit.ActionQueueSettlement
     if settlement then settlement.track(action, "body") end
+    local restoration = PZSurvivorToolkit.ActionQueueRestoration
+    if restoration and restoration.observeNative then restoration.observeNative(action) end
     local execution = PZSurvivorToolkit.ActionQueueExecution
     if execution then execution.enqueued(action) end
     local targets = PZSurvivorToolkit.ActionQueueDeviceTargets
@@ -521,6 +536,52 @@ ISTimedActionQueue.addAfter = function(previous, action)
     return queue, added
 end
 
+
+-- Own optional returns are ordered behind a proved pending body, not linked
+-- user actions. The public addAfter wrapper intentionally links its endpoints;
+-- use the captured native insertion only for a fresh private Settlement lease.
+local optionalQueueClass = ISTimedActionQueue
+local optionalInsertionProof, optionalInsertionTrusted
+function Operations.insertOptionalReturn(body, action, lease)
+    if type(lease) ~= "function" or type(body) ~= "table" or type(action) ~= "table"
+        or ISTimedActionQueue ~= optionalQueueClass or action.character ~= body.character
+        or action.toolkitQueueOperation ~= body.toolkitQueueOperation or not body.toolkitQueueOperation
+        or action.action or action.started or body.action or body.started
+        or body.toolkitQueueLinked or action.toolkitQueueLinked then return end
+    optionalInsertionProof = optionalInsertionProof or require "PZSurvivorToolkit/SourceProof"
+    local proof = optionalInsertionProof
+    if not proof.closure(lease, "ActionQueueSettlement.lua") then return end
+    if optionalInsertionTrusted == nil then
+        local ok, line = pcall(getFirstLineOfClosure, addAfter)
+        optionalInsertionTrusted = proof.closure(addAfter, "ISTimedActionQueue.lua")
+            and proof.matches("media/lua/client/TimedActions/ISTimedActionQueue.lua", 2963993548, nil, true)
+            and ok and line == 204
+    end
+    if not optionalInsertionTrusted then return end
+    local queue = optionalQueueClass.queues[body.character]
+    local current, list = queue and queue.current, queue and queue.queue
+    local index = queue and queue:indexOf(body)
+    if not current or list[1] ~= current or not index or index <= 1
+        or queue:indexOf(action) ~= -1 or not nativeReturn(action) or not nativeAdditionAllowed(action)
+        or lease() ~= true then return end
+    local function unchanged()
+        return ISTimedActionQueue == optionalQueueClass and optionalQueueClass.queues[body.character] == queue
+            and queue.queue == list and queue.current == current and list[1] == current and list[index] == body
+            and action.character == body.character and action.toolkitQueueOperation == body.toolkitQueueOperation
+            and not body.action and not body.started and not action.action and not action.started
+    end
+    if not unchanged() then return end
+    stamp(action, body.toolkitQueueOperation)
+    if not unchanged() or lease() ~= true or not unchanged() then return end
+    local count = #list
+    local owner, added = addAfter(body, action)
+    if owner ~= queue or added ~= action or not unchanged() or #list ~= count + 1
+        or list[index + 1] ~= action then return end
+    if titleScope then titleScope[queue] = nil end
+    rememberTitle(action, queue, index + 1, count)
+    return action
+end
+
 function Operations.bounds(queue, action)
     local index = queue:indexOf(action)
     if index == -1 then return end
@@ -548,13 +609,14 @@ function Operations.transferMergeDelegate(callback)
     if callback == operationCanMerge and ISInventoryTransferAction.canMergeAction == operationCanMerge then return canMerge end
 end
 
-local function wrap(class, method, fresh)
+local function wrap(class, method, fresh, eligible)
     local callback = class and class[method]
     if not callback then return end
-    class[method] = function(...)
-        if fresh then return run({}, callback, ...) end
-        return Operations.run(callback, ...)
+    local producer = {owner = class, method = method, callback = callback}
+    local wrapper = function(...)
+        return run(fresh and {} or scope or {}, (not eligible or eligible(...)) and producer or nil, callback, ...)
     end
+    producer.wrapper, class[method] = wrapper, wrapper
 end
 
 -- UI callbacks enqueue preparation, the operation and native returns synchronously.
@@ -569,6 +631,22 @@ wrap(ISButton, "onJoypadDown")
 wrap(ISInventoryPane, "onMouseUp")
 wrap(ISInventoryPane, "onMouseDoubleClick")
 wrap(ISInventoryPaneContextMenu, "readItem", true)
+-- The first own-return slice accepts a literal singleton item selection.
+-- Native bulk/virtual-row producers retain their existing behavior and do not
+-- partially enroll loans that this slice cannot restore.
+local function singletonWring(items)
+    if type(items)~="table" or getmetatable(items)~=nil or #items~=1 then return false end
+    for key in pairs(items) do if key~=1 then return false end end
+    local item=items[1]
+    if instanceof(item,"InventoryItem") then return true end
+    if type(item)~="table" or getmetatable(item)~=nil then return false end
+    local group=item.items
+    if type(group)~="table" or getmetatable(group)~=nil or (#group~=1 and #group~=2) then return false end
+    for key in pairs(group) do if key~=1 and key~=2 then return false end end
+    return instanceof(group[1],"InventoryItem") and (#group==1 or group[1]==group[2])
+end
+
+wrap(ISInventoryPaneContextMenu, "onWringClothing", true, singletonWring)
 
 -- The native volume bar commits directly, or later from update() after a
 -- joypad/+/- change. Scope the real producer rather than the earlier UI click.
@@ -634,5 +712,8 @@ if approach then
     approach.install()
     Events.OnGameStart.Add(approach.install)
 end
+
+-- Shared observation belongs to queue intake, independently of family modules.
+require "PZSurvivorToolkit/ActionQueueRestoration"
 
 return Operations
