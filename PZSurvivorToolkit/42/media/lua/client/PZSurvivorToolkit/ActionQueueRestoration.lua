@@ -277,7 +277,7 @@ observeNative = function(action)
             {owner = wring, keys = {"callbacksTrusted", "inspectPrepared", "matchesPrepared"}}, {owner = owner, keys = {method}}})
         if not bodyWatch or not origin(matches, "ActionQueueWring.lua")
             or not origin(inspector, "ActionQueueWring.lua") or not origin(binding, "ActionQueueWring.lua")
-            or not sourceMatches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",4201491129,"PZSurvivorToolkit",true)
+            or not sourceMatches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",2590770586,"PZSurvivorToolkit",true)
             or not bodyWatch() or not watch() then return false end
         local contract = inspector(action)
         if not contract or not contract.edit or contract.edit.complete ~= true

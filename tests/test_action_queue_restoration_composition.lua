@@ -269,7 +269,21 @@ end
 local function wringComplete(f,client)
     -- Server delivery is modeled explicitly; the actual native complete body
     -- caps the same garment. No client queue callback supplies that authority.
-    if client then assert(f.wringBody:complete())end
+    if not f.wringBody:isStarted()then f.start(f.wringBody)end
+    if client then
+        local lifecycle=f.env.PZSurvivorToolkit.ActionQueueLifecycle
+        assert(lifecycle.allowNativeCompletionWait(f.wringBody,f.wringBody.action),
+            'native Host completion wait lost its admitted current body')
+        assert(f.wringBody:complete())
+        f.acknowledge(f.wringBody,'completed')
+        assert(lifecycle.allowNativeCompletion(f.wringBody,f.wringBody.action),
+            'native Host completion gate rejected its exact completed body')
+    else
+        local lifecycle=f.env.PZSurvivorToolkit.ActionQueueLifecycle
+        assert(not lifecycle.allowNativeCompletionWait(f.wringBody,f.wringBody.action)
+            and not lifecycle.allowNativeCompletion(f.wringBody,f.wringBody.action),
+            'SP acquired a server-receipt completion bypass')
+    end
     f.dispatch(f.wringBody,'perform')
     assert(f.borrowed:getWetness()==10,'native wring lost its exact wetness effect')
 end
@@ -293,6 +307,278 @@ local function wringKeep(client)
     f.dispatch(f.tail,'perform')
     assert(#f.queue.queue==0 and f.borrowed.container==f.inventory and #f.effects==1,
         'pending Keep replayed/returned the item or cancelled its wring body')
+end
+local function wringCancellation(client,disabled)
+    local f=wringLoan(client);local t,q=f.env.PZSurvivorToolkit,f.queue
+    f.start(f.wringBody)
+    local native=f.wringBody.action
+    local tailToken=f.tail.toolkitQueueOperation
+    local settlement=t.ActionQueueSettlement
+    local before=settlement.operationState(f.wringBody)
+    f.setModProbe(function()
+        f.setModProbe(nil)
+        assert(not settlement.activeOptionalCancellation(f.wringBody),
+            'nested producer metadata reconstructed active cancellation authority')
+    end)
+    assert(settlement.activeOptionalCancellation(f.wringBody),
+        'exact earned optional plan lost its read-only active cancellation proof')
+    local after=settlement.operationState(f.wringBody)
+    assert(after.optionalReturnState==before.optionalReturnState
+        and after.optionalReturnDetail==before.optionalReturnDetail and f.wringBody.action==native,
+        'active cancellation inspection changed plan diagnostics or the native episode')
+    local equipped=f.player.isEquipped
+    f.player.isEquipped=function(_,item)return item==f.borrowed end
+    assert(not t.ActionQueuePolicy.evaluateCancel(q,f.wringBody,true).allowed,
+        'active equipped clothing acquired ordinary wring cancellation')
+    f.player.isEquipped=equipped
+    local allowed,reason=t.ActionQueue.cancelOperation(q,f.wringBody)
+    assert(allowed,'source-proven active native wring cancellation unavailable: '..tostring(reason))
+    assert(native.stopped and q.current==f.wringBody and f.borrowed:getWetness()==80,
+        'cancellation must request native stop without performing or drying the body')
+    if disabled then f.setQueueEnabled(false);q:tick()end
+    f.stop(f.wringBody,client)
+    if client then
+        assert(q.current==f.wringBody and #f.effects==1,
+            'Host stop advanced before its terminal native receipt')
+        f.acknowledge(f.wringBody,'canceled');q:tick()
+    end
+    local returned=q.current
+    assert(returned and returned~=f.returned and returned.Type=='ISInventoryTransferAction'
+        and t.ActionQueueSettlement.requiredStep(returned)and t.ActionQueueSettlement.isCleanup(returned)
+        and returned.item==f.borrowed and returned.srcContainer==f.inventory and returned.destContainer==f.source
+        and q.queue[2]==f.tail and #q.queue==2 and not f.returned.action,
+        'active cancellation must replace optional work with exact required earned cleanup before the tail')
+    assert(f.borrowed:getWetness()==80 and #f.effects==1,
+        'native stop replayed the paid pickup or dispatched wring complete')
+    if disabled then
+        local failures=t.ActionQueueExecution.blockedReturns(f.player)
+        assert(#failures==1 and failures[1].itemId==f.borrowed:getID()and failures[1].state=='revoked',
+            'editor invalidation hid the earned debt before required cleanup had an authoritative outcome')
+    end
+    f.start(returned);f.deliver(returned);f.dispatch(returned,'perform')
+    assert(q.current==f.tail and f.borrowed.container==f.source and #f.effects==2,
+        'accepted cancellation lost or duplicated its required return')
+    if not disabled then
+        assert(not tailToken.toolkitCancelled
+            and t.ActionQueueSettlement.operationState(f.wringBody).borrowings[1].state=='completed',
+            'cancellation invalidated independent work or left its earned loan unpaid')
+    else
+        assert(t.ActionQueueSettlement.operationState(f.wringBody)==nil,
+            'completed cancellation cleanup retained an obsolete editor generation')
+        assert(#t.ActionQueueExecution.blockedReturns(f.player)==0,
+            'authoritative required cleanup left a stale revoked optional return debt')
+    end
+    if client then assert(f.tail:complete())end
+    f.dispatch(f.tail,'perform')
+    assert(#q.queue==0 and f.borrowed:getWetness()==80 and #f.effects==2,
+        'cancellation replayed native body/cleanup or lost its independent tail')
+end
+local function unsettledCancellationDebt(client)
+    local f=wringLoan(client);local e,t,q=f.env,f.env.PZSurvivorToolkit,f.queue
+    local original=f.borrowed;local originalId=original:getID()
+    f.start(f.wringBody);assert(t.ActionQueue.cancelOperation(q,f.wringBody))
+    f.setQueueEnabled(false);q:tick();f.stop(f.wringBody,client)
+    if client then f.acknowledge(f.wringBody,'canceled');q:tick()end
+    local required=q.current;assert(t.ActionQueueSettlement.requiredStep(required))
+    f.source.room=false
+    assert(not required:isValid(),'failed-cleanup control did not exercise native source capacity')
+    required.action.removed=true -- Java rejects without starting/moving the item.
+    local warn,expectedWarning=e.DebugType.Action.warn,false
+    e.DebugType.Action.warn=function(_,message,kind)
+        assert(message=='ISTimedActionQueue:tick: bugged action %s, cleared queue'and kind==required.Type,
+            'failed-cleanup control encountered a different native warning')
+        expectedWarning=true
+    end
+    q:tick()
+    e.DebugType.Action.warn=warn
+    assert(expectedWarning and #q.queue==0 and original.container==f.inventory and #f.effects==1)
+    f.setQueueEnabled(true);q:tick();f.source.room=true
+    local function retained()
+        local failures=t.ActionQueueExecution.blockedReturns(f.player)
+        assert(#failures==1 and failures[1].itemId==originalId and failures[1].state=='revoked',
+            'unresolved original cleanup was settled by an unrelated return outcome')
+    end
+    retained()
+    local function completeLoan(item)
+        e.ISInventoryPaneContextMenu.onWringClothing({item},0)
+        local approach,pickup,body=unpack(q.queue)
+        f.start(approach);f.dispatch(approach,'perform')
+        f.start(pickup);f.deliver(pickup);f.dispatch(pickup,'perform')
+        local returned=q.queue[2]
+        f.wringBody,f.borrowed=body,assert(f.inventory:getItemById(item:getID()))
+        wringComplete(f,client)
+        f.start(returned);f.deliver(returned);f.dispatch(returned,'perform')
+        assert(#q.queue==0 and item.container==f.source)
+        retained()
+    end
+    completeLoan(f.garment(731)) -- Different private candidate and item.
+    t.ActionQueueOperations.run(function()
+        e.ISTimedActionQueue.add(e.ISInventoryTransferUtil.newInventoryTransferAction(f.player,original,f.inventory,f.source))
+    end)
+    local manual=q.current;f.start(manual);f.deliver(manual);f.dispatch(manual,'perform')
+    retained() -- Physical position alone cannot erase a revoked loan notice.
+    completeLoan(original) -- Same ID/endpoints, but a distinct later borrowing scope.
+end
+local function wringToggle(client,stayDisabled,lateStarted,repeated)
+    local f=wringLoan(client);local t,q=f.env.PZSurvivorToolkit,f.queue
+    f.start(f.wringBody,lateStarted)
+    local native=f.wringBody.action
+    f.setQueueEnabled(false);q:tick()
+    if repeated or not stayDisabled then f.setQueueEnabled(true);q:tick()end
+    if repeated then
+        f.setQueueEnabled(false);q:tick()
+        if not stayDisabled then f.setQueueEnabled(true);q:tick()end
+    end
+    if client and lateStarted then
+        assert(not t.ActionQueueAcknowledgements.editorNativeCompletion(f.wringBody,nil)
+            and not t.ActionQueueLifecycle.allowNativeCompletionWait(f.wringBody,native),
+            'pre-Started query acquired a receipt')
+        f.acknowledge(f.wringBody,'started')
+    end
+    assert(q.current==f.wringBody and f.wringBody.action==native and not native.stopped,
+        'editor toggle stopped or replaced the native wring body')
+    wringComplete(f,client)
+    assert(q.current==f.tail and not f.returned.action and f.borrowed.container==f.inventory
+        and #f.effects==1,'re-enabling editor revived its revoked optional return')
+    f.start(f.tail)
+    if client then
+        local lifecycle=t.ActionQueueLifecycle
+        assert(lifecycle.allowNativeCompletionWait(f.tail,f.tail.action),'pending native tail lost its real Host wait gate')
+        assert(f.tail:complete());f.acknowledge(f.tail,'completed')
+        assert(lifecycle.allowNativeCompletion(f.tail,f.tail.action),'pending native tail lost its real Host completion gate')
+    else
+        assert(not t.ActionQueueLifecycle.allowNativeCompletionWait(f.tail,f.tail.action)
+            and not t.ActionQueueLifecycle.allowNativeCompletion(f.tail,f.tail.action),
+            'SP tail acquired a server-receipt completion bypass')
+    end
+    f.dispatch(f.tail,'perform')
+    assert(#q.queue==0 and #f.effects==1 and f.borrowed:getWetness()==10,
+        'editor toggle replayed paid work or discarded native continuation')
+end
+local function editorBridgeControls()
+    do
+        local f=wringLoan(true);local t,q=f.env.PZSurvivorToolkit,f.queue
+        f.start(f.wringBody);f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        wringComplete(f,true);assert(q.current==f.tail);f.start(f.tail)
+        f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        assert(t.ActionQueueLifecycle.allowNativeCompletionWait(f.tail,f.tail.action),
+            'second editor transition lost a native tail admitted in the previous editor generation')
+        assert(f.tail:complete());f.acknowledge(f.tail,'completed')
+        assert(t.ActionQueueLifecycle.allowNativeCompletion(f.tail,f.tail.action))
+        f.dispatch(f.tail,'perform')
+        assert(#q.queue==0 and not f.returned.action and #f.effects==1,
+            'retiring the admitted tail revived the old optional producer')
+    end
+    for _,field in ipairs({'action','toolkitQueueOperation'})do
+        local f=wringLoan(true);local t,q=f.env.PZSurvivorToolkit,f.queue
+        f.start(f.wringBody);f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        local original=f.wringBody[field];f.wringBody[field]={}
+        f.setQueueEnabled(false);t.ActionQueue.updateOperationState(q)
+        f.setQueueEnabled(true);t.ActionQueue.updateOperationState(q)
+        f.wringBody[field]=original
+        assert(not t.ActionQueueLifecycle.allowNativeCompletionWait(f.wringBody,f.wringBody.action),
+            'second editor retirement enrolled a replaced native/token as fresh work: '..field)
+    end
+    for _,client in ipairs({false,true})do
+        local f=create(client,{p4=false,carried=true});local t,q=f.env.PZSurvivorToolkit,f.queue
+        if client then f.player.class='IsoAnimal'end
+        f.player.getPlayerNum=function()error('ineligible retirement queried player slot')end
+        f.player.getOnlineID=function()error('ineligible retirement queried online id')end
+        f.setQueueEnabled(false)
+        local generation=q.toolkitOperationGeneration or 0
+        assert(t.ActionQueueAcknowledgements.invalidateEditor(q)
+            and q.toolkitOperationGeneration==generation+1,
+            'ineligible native queue lost ordinary editor invalidation')
+    end
+    do
+        local f=create(true,{p4=false,carried=true})
+        local e,t,q=f.env,f.env.PZSurvivorToolkit,f.queue
+        e.ISInventoryPaneContextMenu.onWringClothing({f.garment(721,f.inventory),f.garment(722,f.inventory),f.garment(723,f.inventory)},0)
+        local members={unpack(q.queue)};local token=members[1].toolkitQueueOperation
+        for _,body in ipairs(members)do assert(body.toolkitQueueOperation==token)end
+        f.start(members[1]);f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        for index,body in ipairs(members)do
+            assert(q.current==body)
+            if index>1 then f.start(body)end
+            assert(t.ActionQueueLifecycle.allowNativeCompletionWait(body,body.action),
+                'shared-token native tail lost editor retirement after its first member')
+            assert(body:complete());f.acknowledge(body,'completed')
+            assert(t.ActionQueueLifecycle.allowNativeCompletion(body,body.action))
+            f.dispatch(body,'perform')
+        end
+        assert(#q.queue==0)
+    end
+    do
+        local f=wringLoan(true);local t,q=f.env.PZSurvivorToolkit,f.queue
+        f.start(f.wringBody);f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        q:removeFromQueue(f.tail)
+        table.insert(q.queue,2,f.tail)
+        f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        wringComplete(f,true);assert(q.current==f.tail)
+        f.start(f.tail)
+        assert(not t.ActionQueueLifecycle.allowNativeCompletionWait(f.tail,f.tail.action),
+            'removed and reinserted pending row revived its old editor retirement authority')
+    end
+    do
+        local f=create(true,{p4=false,carried=true,ackFirst=true})
+        local e,t,q=f.env,f.env.PZSurvivorToolkit,f.queue
+        f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        e.ISInventoryPaneContextMenu.onWringClothing({f.garment(720,f.inventory)},0)
+        local body=q.current;f.start(body)
+        assert(not t.ActionQueuePolicy.evaluateCancel(q,body,true).allowed,
+            'root-only body acquired own borrowed-wring cancellation')
+        f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        assert(t.ActionQueueLifecycle.allowNativeCompletionWait(body,body.action),
+            'Ack-first real module bootstrap lost the actual editor retirement bridge')
+        assert(body:complete());f.acknowledge(body,'completed')
+        assert(t.ActionQueueLifecycle.allowNativeCompletion(body,body.action))
+        f.dispatch(body,'perform');assert(#q.queue==0)
+    end
+    for _,mode in ipairs({'native','list','generation','reset','token','slot','online','already-cancelled','malformed-cancelled','reentry'})do
+        local f=wringLoan(true);local t,q=f.env.PZSurvivorToolkit,f.queue
+        f.start(f.wringBody)
+        local body,native=f.wringBody,f.wringBody.action
+        if mode=='already-cancelled'then body.toolkitQueueOperation.toolkitCancelled=true end
+        if mode=='malformed-cancelled'then body.toolkitQueueOperation.toolkitCancelled='cancelled'end
+        if mode=='reentry'then
+            local getter=f.player.getPlayerNum
+            f.player.getPlayerNum=function(actor)
+                f.player.getPlayerNum=getter
+                t.ActionQueueAcknowledgements.invalidateEditor(q)
+                return getter(actor)
+            end
+        end
+        f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        local restore=function()end
+        if mode=='native'then body.action={};restore=function()body.action=native end
+        elseif mode=='list'then local list=q.queue;q.queue={unpack(list)};restore=function()q.queue=list end
+        elseif mode=='generation'then local generation=q.toolkitOperationGeneration;q.toolkitOperationGeneration=generation+1;restore=function()q.toolkitOperationGeneration=generation end
+        elseif mode=='reset'then q:resetQueue()
+        elseif mode=='token'then body.toolkitQueueOperation.toolkitCancelled=nil;restore=function()body.toolkitQueueOperation.toolkitCancelled=true end
+        elseif mode=='slot'then local getter=f.player.getPlayerNum;f.player.getPlayerNum=function()return 1 end;restore=function()f.player.getPlayerNum=getter end
+        elseif mode=='online'then local getter=f.player.getOnlineID;f.player.getOnlineID=function()return 9 end;restore=function()f.player.getOnlineID=getter end end
+        assert(not t.ActionQueueLifecycle.allowNativeCompletionWait(body,body.action),
+            'editor bridge retained invalid native episode: '..mode)
+        restore()
+        assert(not t.ActionQueueLifecycle.allowNativeCompletionWait(body,body.action),
+            'editor bridge revived a revoked episode: '..mode)
+        f.acknowledge(body,'completed')
+        assert(not t.ActionQueueLifecycle.allowNativeCompletion(body,body.action),
+            'late receipt revived revoked editor work: '..mode)
+    end
+    do
+        local f=wringLoan(true);local t,q=f.env.PZSurvivorToolkit,f.queue
+        f.start(f.wringBody)
+        local receipt=assert(t.ActionQueueAcknowledgements.capture(f.wringBody))
+        f.setQueueEnabled(false);q:tick();f.setQueueEnabled(true);q:tick()
+        -- Native Done may advance before its following sealed terminal packet.
+        assert(f.wringBody:complete());f.dispatch(f.wringBody,'perform')
+        assert(q.current==f.tail and t.ActionQueueAcknowledgements.observe(f.wringBody,receipt)=='started')
+        f.acknowledge(f.wringBody,'completed')
+        assert(t.ActionQueueAcknowledgements.observe(f.wringBody,receipt)=='completed'
+            and not t.ActionQueueLifecycle.allowNativeCompletion(f.wringBody,f.wringBody.action),
+            'late paid receipt lost observation or acquired old-body completion rights')
+    end
 end
 local function laterEquipment(client,mode)
     local selectedContext=mode:find('^cleanui%-')~=nil
@@ -492,6 +778,16 @@ local function ownInstallReentry()
         'own installation captured helpers after a source-registration reentry')
 end
 local function wringRefusal(client)
+    wringCancellation(client,false)
+    wringCancellation(client,true)
+    unsettledCancellationDebt(client)
+    for _,disabled in ipairs({false,true})do
+        wringToggle(client,disabled,false)
+        if client then wringToggle(client,disabled,true)end
+        wringToggle(client,disabled,false,true)
+        if client then wringToggle(client,disabled,true,true)end
+    end
+    if client then editorBridgeControls()end
     for _,mode in ipairs({'success','failed','cancelled','unrelated','source-role'})do laterEquipment(client,mode)end
     if client then
         for _,mode in ipairs({'unmarked','late-ack','late-rejected','late-provider-loss','late-generation','late-death','late-replication'})do laterEquipment(client,mode)end

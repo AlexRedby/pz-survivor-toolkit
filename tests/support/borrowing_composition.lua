@@ -242,7 +242,7 @@ return function(client,options)
     local player={class='IsoPlayer',square=origin}
     for _,name in ipairs({'isDead','isAsleep','isPlayerMoving','pressedMovement','pressedCancelAction','isDraggingCorpse','isFarming',
         'hasTimedActions','hasTrait','isSitting','isWearingAwkwardGloves','isTimedActionInstant','isEquipped','isEquippedClothing',
-        'shouldBeTurning','isSittingOnFurniture'})do player[name]=function()return false end end
+        'shouldBeTurning','isSittingOnFurniture','isRunning','isSprinting','isAiming'})do player[name]=function()return false end end
     player.isLocalPlayer=function()return true end;player.getPlayerNum=function()return 0 end
     player.getOnlineID=function()return 1 end
     player.getInventory=function(self)return self.inventory end;player.getCurrentSquare=function(self)return self.square end;player.getSquare=player.getCurrentSquare
@@ -407,6 +407,7 @@ return function(client,options)
         -- Genuine same-file closure, incorrect public callback role.
         env.ISInventoryPaneContextMenu.OnPrimaryWeapon=env.ISInventoryPaneContextMenu.OnSecondWeapon
     end
+    if options.ackFirst then env.require('PZSurvivorToolkit/ActionQueueAcknowledgements')end
     env.require('PZSurvivorToolkit/ActionQueueOperations')
     env.require('PZSurvivorToolkit/ActionQueueDefinitions')
     env.require('PZSurvivorToolkit/ActionQueuePolicy')
@@ -458,13 +459,15 @@ return function(client,options)
                 token='00000000-0000-0000-0000-000000000001',state=state})
         end
     end
-    local function start(action)
+    local nativeTransaction=90
+    local function start(action,lateStarted)
         action.action.started=true
-        if client and action.Type=='ISEquipWeaponAction'then
+        if client and (action.Type=='ISEquipWeaponAction'or action.Type=='ISWringClothing')then
             -- Model the Java acknowledgement bridge, without replacing the
             -- native equip callbacks or the actual Lua receipt consumer.
-            action.toolkitNativeTransaction,action.toolkitNativeKind=91,action.Type
-            acknowledge(action,'started')
+            nativeTransaction=nativeTransaction+1
+            action.toolkitNativeTransaction,action.toolkitNativeKind=nativeTransaction,action.Type
+            if not lateStarted then acknowledge(action,'started')end
         end
         action:start()
     end
@@ -475,8 +478,18 @@ return function(client,options)
         assert(request.status=='pending');request.status='done'
         for _,item in ipairs(request.items)do request.source:DoRemoveItem(item);request.destination:AddItem(item)end
     end
+    local function stop(action,wait)
+        assert(action.action.stopped,'native stop delivery requires an actual forceStop request')
+        dispatch(action,'stop')
+        -- Java removes the stopped native action; it never dispatches perform
+        -- or complete for this body. Host terminal delivery is a separate event.
+        action.action.removed=true
+        if client and not wait then acknowledge(action,'canceled')end
+        queue:tick()
+    end
     return {env=env,player=player,queue=queue,source=source,inventory=inventory,book=book,garment=garment,list=list,
-        dispatch=dispatch,start=start,deliver=deliver,transactions=transactions,events=events,adjacent=adjacent,
+        dispatch=dispatch,start=start,deliver=deliver,stop=stop,transactions=transactions,events=events,adjacent=adjacent,
         effects=effects,engineTrace=engineTrace,bag=bag,acknowledge=acknowledge,
+        setQueueEnabled=function(value)options.queue=value end,
         setModProbe=function(callback)options.modProbe=callback end}
 end

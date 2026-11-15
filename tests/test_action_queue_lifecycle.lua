@@ -181,7 +181,7 @@ do
     local operationSource=read(root..'/PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/ActionQueueOperations.lua')
     local operations=assert(loadstring('local Operations={};\n'
         ..assert(operationSource:match('(function Operations.invalidate%(token%).-\nend)'))..'\n'
-        ..assert(operationSource:match('(function Operations.invalidateQueue%(queue%).-\nend)'))
+        ..assert(operationSource:match('(function Operations.invalidateQueue%(queue, retireNative%).-\nend)'))
         ..'\nreturn Operations','@PZSurvivorToolkit/ActionQueueOperations.lua'))()
     local previousBase=ISBaseTimedAction
     ISBaseTimedAction={begin=function(value)
@@ -538,6 +538,9 @@ if NativeActionRoot then
     DebugType={Action={warn=function()end}}
     local toolkit=PZSurvivorToolkit
     local lifecycle=f.project('ActionQueueLifecycle')
+    -- This native advancement model has no receipt/retirement implementation;
+    -- source-backed restoration composition exercises the real module instead.
+    toolkit.ActionQueueAcknowledgements={completeEditorNative=function()end,editorEnabled=function()end}
     local function read(path)
         if NativeReadText then return NativeReadText(path)end
         local file=assert(io.open(path));local source=file:read('*a');file:close();return source

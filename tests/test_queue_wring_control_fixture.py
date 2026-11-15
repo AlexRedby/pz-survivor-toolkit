@@ -29,6 +29,7 @@ PZSurvivorToolkit={ActionQueuePolicy={evaluateCancel=function(q,a)assert(q==queu
  ActionQueue={cancel=function(q,a)assert(q==queue and a==returned and not a.action);table.remove(q.queue,2);return true end},
  ActionQueueExecution={blockedReturns=function(p)assert(p==player);return{failure}end,keepReturn=function(p,id)assert(p==player and id==81,'Keep must use failure identity, not item identity');return true end}}
 ''')
+        lua.execute('package.path = ... .. "/?.lua;" .. package.path', str(SHARED))
         lua.globals().C=lua.execute((SHARED/'QueueWringReturnControls.lua').read_text())
         return lua
 

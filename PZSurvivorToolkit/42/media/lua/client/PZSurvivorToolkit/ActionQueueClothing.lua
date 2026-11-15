@@ -209,7 +209,7 @@ adoptBase=function(name,previous,replacement)
   or ISBaseTimedAction~=base or base[name]~=replacement or baseMethods[name]~=nil and baseMethods[name]~=previous
   or inherited[name]~=nil and inherited[name]~=previous
   or not Proof.closure(previous,'ISBaseTimedAction.lua')or not Proof.closure(replacement,'ActionQueue.lua')then return false end
- if queueSourceSafe==nil then queueSourceSafe=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',1474627160,'PZSurvivorToolkit',true)end
+ if queueSourceSafe==nil then queueSourceSafe=Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueue.lua',2172545759,'PZSurvivorToolkit',true)end
  if not queueSourceSafe then return false end
  if baseMethods[name]~=nil then baseMethods[name]=replacement end
  if inherited[name]~=nil then inherited[name]=replacement end
@@ -617,13 +617,13 @@ installObserver=function()
  if kind(firstLine)~='function'or getFirstLineOfClosure~=firstLine then bootstrapFailure=bootstrapFailure or 'bootstrap:metadata';return false end
  local roles={{lifecycle.registerObserver,39,'ActionQueueLifecycle.lua','registerObserver'},
   {lifecycle.started,60,'ActionQueueLifecycle.lua','started'},
-  {lifecycle.begin,338,'ActionQueueLifecycle.lua','begin'},
-  {lifecycle.finish,363,'ActionQueueLifecycle.lua','finish'},
-  {lifecycle.flush,424,'ActionQueueLifecycle.lua','flush'},
-  {lifecycle.reset,401,'ActionQueueLifecycle.lua','reset'},
-  {acks.capture,120,'ActionQueueAcknowledgements.lua','ack-capture'},
-  {acks.observe,159,'ActionQueueAcknowledgements.lua','ack-observe'},
-  {acks.reset,108,'ActionQueueAcknowledgements.lua','ack-reset'}}
+  {lifecycle.begin,339,'ActionQueueLifecycle.lua','begin'},
+  {lifecycle.finish,364,'ActionQueueLifecycle.lua','finish'},
+  {lifecycle.flush,425,'ActionQueueLifecycle.lua','flush'},
+  {lifecycle.reset,402,'ActionQueueLifecycle.lua','reset'},
+  {acks.capture,316,'ActionQueueAcknowledgements.lua','ack-capture'},
+  {acks.observe,358,'ActionQueueAcknowledgements.lua','ack-observe'},
+  {acks.reset,302,'ActionQueueAcknowledgements.lua','ack-reset'}}
  for _,role in ipairs(roles)do
   if kind(role[1])~='function'or not Proof.closure(role[1],role[3])then bootstrapFailure=bootstrapFailure or 'bootstrap:role:'..role[4];return false end
   local ok,line=protectedCall(firstLine,role[1])
@@ -632,8 +632,8 @@ installObserver=function()
  if witnessSourceTrusted==nil then
   witnessSourceTrusted=Proof.closure(registerObserver,'ActionQueueLifecycle.lua')
    and Proof.closure(captureAck,'ActionQueueAcknowledgements.lua')and Proof.closure(observeAck,'ActionQueueAcknowledgements.lua')
-   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',573091080,'PZSurvivorToolkit',true)
-   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua',4157001195,'PZSurvivorToolkit',true)
+   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueLifecycle.lua',1796068701,'PZSurvivorToolkit',true)
+   and Proof.matches('media/lua/client/PZSurvivorToolkit/ActionQueueAcknowledgements.lua',392308481,'PZSurvivorToolkit',true)
  end
  if not witnessSourceTrusted then bootstrapFailure=bootstrapFailure or 'bootstrap:source';return false end
  if not witnessBindings()then bootstrapFailure=bootstrapFailure or 'bootstrap:bindings';return false end

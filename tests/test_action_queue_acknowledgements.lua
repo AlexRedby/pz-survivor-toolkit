@@ -1,5 +1,7 @@
 require = function() end
 PZSurvivorToolkit = {}
+local fallbackInvalidations=0
+PZSurvivorToolkit.ActionQueueOperations={invalidateQueue=function()fallbackInvalidations=fallbackInvalidations+1 end}
 ISTimedActionQueue = {queues = {}}
 local receive, client = nil, true
 Events = {OnServerCommand = {Add = function(callback) receive = callback end}}
@@ -16,6 +18,8 @@ source, seams = source:gsub('\nreturn Acknowledgements', '\nAcknowledgements.fix
 assert(seams == 1, 'receipt retention fixture must expose only its private current registry')
 local acknowledgements = assert(loadstring(source))()
 assert(type(receive) == 'function')
+assert(acknowledgements.invalidateEditor({})and fallbackInvalidations==1,
+    'published Operations namespace was lost when the standalone require double returned nil')
 
 local serial = 0
 local function token()

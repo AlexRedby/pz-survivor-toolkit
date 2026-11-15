@@ -1301,7 +1301,7 @@ local function equipmentResources(action)
                 and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect
                 and type(equipOwner.inspect)=="function" then
                 if equipOwner.trusted==nil then equipOwner.trusted=Proof.closure(equipOwner.inspect,"ActionQueueEquip.lua")
-                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",1709699337,"PZSurvivorToolkit",true)end
+                    and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueEquip.lua",3735810325,"PZSurvivorToolkit",true)end
                 if equipOwner.trusted and Toolkit.ActionQueueEquip==equipOwner.module and equipOwner.module.inspect==equipOwner.inspect then
                     local contract
                     if nativeMode and activeDecision.nativePrepared then
@@ -1955,7 +1955,7 @@ local function wringCapacityNonIncreasing(action,contract,source,context)
         or entry.behavior~=behavior then return false end
     if wringCapacitySourceTrusted==nil then
         wringCapacitySourceTrusted=type(wringInspector)=="function" and Proof.closure(wringInspector,"ActionQueueWring.lua")
-            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",4201491129,"PZSurvivorToolkit",true)
+            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueWring.lua",2590770586,"PZSurvivorToolkit",true)
     end
     return wringCapacitySourceTrusted==true
 end
@@ -1979,7 +1979,7 @@ local function clothingRemovalCapability(action,contract,source,context)
         or Proof.closure~=clothingOrigin or Proof.matches~=clothingMatches then return false end
     if clothingSourceTrusted==nil then
         clothingSourceTrusted=clothingOrigin(clothingInspect,"ActionQueueClothing.lua")
-            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",1719038923,"PZSurvivorToolkit",true)
+            and clothingMatches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",2893575149,"PZSurvivorToolkit",true)
     end
     return clothingSourceTrusted==true
 end

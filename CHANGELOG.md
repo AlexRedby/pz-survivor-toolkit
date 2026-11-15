@@ -49,6 +49,13 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.1
+
+- **Fixed:** Source-proven active wringing of a garment borrowed through the own restoration producer can be cancelled after pickup. Native stop preserves its unpaid wetness; the earned return drains before independent work, including after disabling the editor. Cancellation retains its admitted stop choice when operation tokens are invalidated.
+- **Fixed:** Switching the queue editor off or repeatedly back on preserves completion and authoritative acknowledgements for previously issued native work. Retired producers and optional returns remain revoked; this does not restore editing rights or replay completed effects. General P4 replacement remains incomplete.
+- **Fixed:** An authoritative required return retires the corresponding revoked optional-return notice after editor disable. Failed, unconfirmed and unrelated return debts remain visible; moving an item manually does not settle its earlier operation.
+- **Checks:** Source/Kahlua/Java regressions and affected macOS SP cases passed on Build 42.21. Host observations match the expected effects, but final acceptance remains open: the installed game changed to 42.22 during reporting. The rebased Build 42.22.2 source bindings and paired native qualification remain pending.
+
 ### 0.2.0
 
 - **Changed:** Start the new minor-version series for the Project Zomboid 42.22.2 migration.
@@ -1735,6 +1742,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.2.1
+
+- **Compatibility:** Refreshed queue ownership compiler source guards for the matching Toolkit cancellation and editor-transition contracts.
 
 ### 0.2.0
 

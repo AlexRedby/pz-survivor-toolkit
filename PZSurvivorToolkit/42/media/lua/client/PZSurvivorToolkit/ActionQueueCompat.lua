@@ -551,7 +551,7 @@ local function nativeClothingMethods()
         or type(clothingBindings)~="function" or not clothingBindings() then return false end
     if clothingHelperSource==nil then
         clothingHelperSource=Proof.closure(clothingBindings,"ActionQueueClothing.lua")
-            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",1719038923,"PZSurvivorToolkit",true)
+            and Proof.matches("media/lua/client/PZSurvivorToolkit/ActionQueueClothing.lua",2893575149,"PZSurvivorToolkit",true)
     end
     if not clothingHelperSource then return false end
     if clothingSourceSafe == nil then

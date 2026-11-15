@@ -2,6 +2,8 @@ require 'TimedActions/ISWringClothing'
 require 'PZSurvivorToolkit/ActionQueueDefinitions'
 local Proof=require 'PZSurvivorToolkit/SourceProof'
 local ItemAdapters=require 'PZSurvivorToolkit/ActionQueueItemEditAdapters'
+local Settlement=require 'PZSurvivorToolkit/ActionQueueSettlement'
+local optionalCancellation=Settlement and Settlement.activeOptionalCancellation
 local Toolkit=PZSurvivorToolkit
 local Wring={}
 Toolkit.ActionQueueWring=Wring
@@ -115,9 +117,20 @@ local function inspectBody(action,preparing)
   for ownerID,ownerType in pairs(owners)do result.containerOwners[ownerID]=true;result.itemTypes[ownerType]=true end
  end
  if action.action then
-  -- An in-flight action has a known footprint, not a forecast or edit right.
-  -- Do not read current wetness while the native authority may be changing it.
+  -- The exact native stop clears only sound/job progress; wetness is paid by
+  -- complete, never stop. Shared cancellation owns any already-earned return
+  -- and waits for native removal/Host outcome before advancing independent work.
+  -- Equipped garments and their preparation remain outside this active slice.
+  -- Do not read wetness or grant a completion forecast while it is in flight.
   result.cancelWaiting,result.cancelOperation=false,false
+  if not actor:isEquipped(item)and type(Settlement)=='table'and actualMeta(Settlement,nil)
+   and Toolkit.ActionQueueSettlement==Settlement
+   and Settlement.activeOptionalCancellation==optionalCancellation
+   and from(optionalCancellation,'ActionQueueSettlement.lua')then
+   result.cancelOperation=optionalCancellation(action)==true and actualMeta(Settlement,nil)
+    and Toolkit.ActionQueueSettlement==Settlement and Settlement.activeOptionalCancellation==optionalCancellation
+  end
+  if result.cancelOperation then result.interrupt='audited-stop' end
   return result
  end
  local wetness=item:getWetness()

@@ -34,6 +34,15 @@ local function case()return profile.scenario.baseCase(config.cases[index])end
 local function queue()return ISTimedActionQueue.getTimedActionQueue(getPlayer())end
 local function empty()return #queue().queue==0 and not getPlayer():hasTimedActions()end
 local function raw(event,value)print('[WRING_CLOTHING] '..event..' '..JSON.encode(value))end
+-- Disposable JVM observation never substitutes the native Lua stop callback.
+function wringControlsNativeStop(action,nativeAction,boundary,succeeded,details)
+ if state then
+  for name,callback in pairs(callbacks)do
+   assert(action[name]==callback and ISWringClothing[name]==callback,'native wring callback changed at stop '..name)
+  end
+  profile.controls.active.nativeStop(profile,state,action,nativeAction,boundary,succeeded,details)
+ end
+end
 local function emit(v)v.suite='wring-clothing';v.actor='client1';v.kind=config.kind;v.mode=config.mode;JSON.emit(v)end
 Witness.configure(function(value)raw('HOST_WITNESS',value)end,function()return case(),phase end)
 assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('wring-host-witness-diagnostics',{started=function(action)Witness.started(action,tracks[action]~=nil)end,begin=Witness.begin,finish=Witness.finish}))
@@ -204,8 +213,9 @@ local function prepEvent(action,row,boundary,phase,succeeded)
 end
 assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('prepared-carried-wring-return',{
  started=function(action)
-  if state then profile.controls.intentStarted(profile,state,queue(),action)end
+  if state then profile.controls.active.started(profile,state,queue(),action);profile.controls.intentStarted(profile,state,queue(),action)end
   local tracked=tracks[action]
+  if tracked then tracked.nativeStarted=true end
   if profile.restoration and tracked and tracked.name=='target' and action.Type=='ISWringClothing' then profile.sample('body') end
   if tracked and tracked.preparation then tracked.admitted=true end
   if tracked and tracked.name and ids and F.observesClothing(ids)and(tracked.type=='ISUnequipAction'or tracked.type=='ISWringClothing')then tracked.admission=F.unequipSnapshot(state,tracked.name)end
@@ -213,9 +223,15 @@ assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('prepared-carried
   local members=F.returnMembers(action,{})
   local row={actionRef=profile.controls.returnRef(profile,action),type=action.Type,from='root',toBag=ids.source.bag,duration=action.maxTime,allowMissing=action.allowMissingItems==true,items=members,events={}}
   if profile.restoration then row.bodySettled=profile.bodySettled==true end
+  if profile.controls.active.applies(state)then
+   row.bodyStopped=profile.controlEvidence and profile.controlEvidence.stopped==true
+   row.tailStarted=profile.activeTailRow and profile.activeTailRow.nativeStarted==true or false
+   row.tailRef=profile.controlTailRef
+  end
   returns[#returns+1]=row;returnTracks[action]=row
  end,
  begin=function(action,phase)
+  if state and profile.controls.active.lifecycle(profile,state,action,'begin',phase)then return true end
   if state and profile.controls.intentBoundary(profile,state,action,'begin',phase)then return true end
   local tracked=tracks[action]
   if tracked and tracked.name and ids and F.observesClothing(ids)and(phase=='perform'or phase=='complete')then wornEvent(action,tracked,'begin',phase,false);return true end
@@ -228,6 +244,7 @@ assert(PZSurvivorToolkit.ActionQueueLifecycle.registerObserver('prepared-carried
   if profile.restoration and groups.target and action==groups.target[#groups.target]then profile.bodySettled=true end
  end,
  finish=function(action,phase,succeeded)
+  if state then profile.controls.active.lifecycle(profile,state,action,'finish',phase,succeeded)end
   if state then profile.controls.intentBoundary(profile,state,action,'finish',phase,succeeded)end
   local tracked=tracks[action]
   if tracked and tracked.name and ids and F.observesClothing(ids)and(phase=='perform'or phase=='complete')then wornEvent(action,tracked,'finish',phase,succeeded);return end
@@ -336,7 +353,7 @@ function profile.run()
 end
 local function observe()
  if state and not profile.controls.poll(profile,state)then return end
- if state then profile.controls.observeIntent(profile,state,queue())end
+ if state then profile.controls.active.tick(profile,state,queue(),native);profile.controls.observeIntent(profile,state,queue())end
  for action,row in pairs(tracks)do
   if queue().current==action and action:isStarted()then
    if not row.started then
@@ -344,7 +361,7 @@ local function observe()
     if ids and ids.preparedGroups and action.Type=='ISWringClothing'then row.rootAtStart=F.snapshot(state).items[row.name]end
    end
    if action:getJobDelta()>0 then row.progress=true end
-   if row.name=='target'and action.Type=='ISWringClothing'and row.progress then profile.controls.begin(profile,state,queue(),action,native,request,row.actionRef)end
+   if row.name=='target'and action.Type=='ISWringClothing'and row.progress then profile.activeTailRow=assert(tracks[state.tailAction]);profile.controlTailRef=profile.activeTailRow.actionRef;profile.activeBodyRow=row;profile.controls.begin(profile,state,queue(),action,native,request,row.actionRef)end
   end
  end
 end
@@ -373,7 +390,7 @@ require('QueuePreflight').onTick(Events,function()
   end
   assert(now()-since<120000,'wring fixture timeout '..phase);observe();Witness.poll()
   if phase=='prepare'then
-   assert(empty());if not placementState then placement=P.choose(p);placementState=P.beginCentered(p,placement)end
+   assert(empty());PZAPI.ModOptions:getOptions('PZSurvivorToolkit'):getOption('ActionQueue'):setValue(not native);PZSurvivorToolkit.ActionQueue.updateOperationState(queue());if not placementState then placement=P.choose(p);placementState=P.beginCentered(p,placement)end
    proof=P.poll(placementState);if not proof then return end
    raw('CLIENT_PLACEMENT',{case=config.cases[index],proof=proof});phase='prepared';waitingSince=now();request('Prepare')
   elseif phase=='prepared'and ids then
@@ -526,7 +543,11 @@ require('QueuePreflight').onTick(Events,function()
     else wornEvidence.capacityFresh=true end
    end
    for _,row in ipairs(commands)do
-    if row.type=='ISWringClothing'then assert(row.cancelled and not row.started and not row.progress or not row.cancelled and row.started and row.progress,'native wring progress/cancellation evidence missing')end
+    if row.type=='ISWringClothing'then
+     if native and(ids.returnControl=='cancel'or ids.returnControl=='cancel-toggle')and row.name=='tail'then
+      assert(not row.started and not row.progress,'native stop did not discard its independent tail')
+     else assert(row.cancelled and not row.started and not row.progress or not row.cancelled and row.started and row.progress,'native wring progress/cancellation evidence missing')end
+    end
    end
    local cleanupClient
    if ids.capacityProfile then
@@ -552,6 +573,7 @@ require('QueuePreflight').onTick(Events,function()
    state,authority,ids,receipt,placement,placementState,proof,quiet=nil,nil,nil,nil,nil,nil,nil,nil
    profile.observation,profile.controlEvidence,profile.drainedDiagnostic,profile.bodySettled,profile.pendingReturn=nil,nil,nil,nil,nil
    profile.controlBody,profile.intentAction,profile.intentCallbacks=nil,nil,nil
+   profile.activeControl,profile.activeRequired,profile.controlTailRef,profile.activeBodyRow,profile.activeTailRow=nil,nil,nil,nil,nil
    if profile.restoration then profile.restorationEvidence={provider='native-returns',samples={}}end
    profile.evidence,profile.final,profile.cleanupReceipt,profile.cleanupRequested=nil,nil,nil,nil;wearSetup,wearReceipt,wearIndex,profile.setupActions=nil,nil,nil,nil;wornEvidence,swapEvidence,swapAction,swapTail=nil,nil,nil,nil;waits={};waitingSince=now()
    tracks,commands,groups,tokens,returns,returnTracks={}, {}, {}, {}, {}, {};preparedEvidence=nil;prepCallbacks={};edits={cancelled=false,reordered=false,repeatDenied=false,untouched=true};phase='prepare';since=now()

@@ -2,6 +2,8 @@
 -- capacity. No native validity/callback/outcome is substituted.
 local F=require 'QueueWringClothing'
 local C={}
+local Active=require 'QueueWringActiveControls'
+C.active=Active
 local function generated(state,queue)
  local found
  for _,action in ipairs(queue.queue)do
@@ -14,6 +16,7 @@ local function generated(state,queue)
 end
 -- Captured DTO labels are immutable; actual objects remain the liveness proof.
 function C.returnRef(profile,action)
+ local required=Active.returnRef(profile,action);if required then return required end
  local pending=profile.pendingReturn
  if pending and pending.action==action then return pending.ref end
  return tostring(action)
@@ -115,6 +118,7 @@ function C.intentBoundary(profile,state,action,boundary,phase,succeeded)
  return true -- Lifecycle sends matching finish notifications only for an enrolled observer.
 end
 function C.begin(profile,state,queue,body,native,request,bodyRef)
+ if Active.applies(state)then return Active.begin(profile,state,queue,body,native,bodyRef)end
  if not state.ids.returnControl or profile.controlEvidence then return end
  assert(queue.current==body and body.action and body:isStarted()and body:getJobDelta()>0,'control requires actual native body progress')
  local returned=generated(state,queue);assert(native and not returned or not native and returned and not returned.action,'control generated return ownership differs')
@@ -175,6 +179,7 @@ function C.capacityAccepted(profile,state,receipt)
  evidence.authority=receipt;evidence.accepted=true
 end
 function C.ready(profile,state,queue,native)
+ if Active.applies(state)then return Active.ready(profile,state,queue,native)end
  if not state.ids.returnControl then return true end
  local evidence=profile.controlEvidence
  if not evidence or(evidence.kind=='full'or evidence.kind=='unavailable')and not evidence.authority then return false end

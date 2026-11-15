@@ -79,6 +79,7 @@ sourceEvidence = function(action, expected)
     return false
 end
 local returnFailures, failureSerial = {}, 0
+local completedReturnDebt
 local captureOptionalEquipment
 local MAX_RETURN_FAILURES = 32
 local MAX_EXECUTION_MEMBERS, MAX_EXECUTION_BORROWING_WORK = 32, 128
@@ -158,10 +159,13 @@ end
 -- Reset/death/replaced queues and arbitrary generation changes never do.
 function Settlement.invalidateEditor(queue)
     local state = cancellation(queue)
+    local acknowledgements = Toolkit.ActionQueueAcknowledgements
     -- Explicit editor invalidation revokes optional UI debt; admitted native
     -- cancellation receipts retain their separate generation bridge below.
     Settlement.resetReturnFailures(queue)
-    Toolkit.ActionQueueOperations.invalidateQueue(queue)
+    if not acknowledgements or acknowledgements.invalidateEditor(queue) ~= true then
+        Toolkit.ActionQueueOperations.invalidateQueue(queue)
+    end
     if state and not Toolkit.Settings.actionQueue()
         and (queue.toolkitOperationGeneration or 0) == state.generation + 1 then
         state.generation = queue.toolkitOperationGeneration
@@ -999,6 +1003,7 @@ bindTransferOutcomes = function()
             if proof.direction ~= "pickup" and candidate and not candidate.ambiguous then
                 value.shared = value.shared or sharedBorrowing(proof.scope, candidate)
                 candidate.phase = "completed"
+                if completedReturnDebt then completedReturnDebt(proof, value, candidate) end
             end
         end)
         if type(readAuthority) == "function" and type(observe) == "function" then
@@ -2118,6 +2123,34 @@ end
 -- Plans belong to exact live native episodes. The generated action also keeps
 -- an opaque tombstone so retiring a map entry cannot make its replay unmanaged.
 local optionalPlans, optionalBodies, optionalGenerated = {}, {}, {}
+-- A revoked producer can leave a historical notice while admitted required
+-- cleanup still owns the same earned loan. Only its exact authoritative return
+-- outcome retires that notice; position, queue disappearance or another loan of
+-- the same item cannot settle it.
+completedReturnDebt = function(proof, member, candidate)
+    local bucket = returnFailures[proof.character]
+    if not bucket then return end
+    for index = #bucket.entries, 1, -1 do
+        local failure = bucket.entries[index]
+        if failure.candidate == candidate and failure.scope == proof.scope and failure.queue == proof.queue
+            and failure.source == proof.source and failure.destination == proof.destination
+            and failure.itemId == member.id and failure.itemType == member.fullType then
+            table.remove(bucket.entries, index)
+            local plan = failure.plan
+            if plan and plan.failure == failure then
+                plan.failure, plan.state = nil, "retired"
+                if optionalGenerated[failure.action] == plan then optionalGenerated[failure.action] = nil end
+                if optionalBodies[plan.body] == plan then optionalBodies[plan.body] = nil end
+                if optionalPlans[plan.pickup] == plan then optionalPlans[plan.pickup] = nil end
+            end
+            if failure.state == "blocked" and bucket.activeQueue == failure.queue
+                and bucket.activeGeneration == failure.generation then
+                bucket.activeCount = math.max(0, bucket.activeCount - 1)
+            end
+            bucket.count, bucket.revision = bucket.count - 1, bucket.revision + 1
+        end
+    end
+end
 local optionalMarker, optionalIssued = {}, false
 local function optionalPlan(action)
     local plan = optionalGenerated[action]
@@ -2163,6 +2196,32 @@ local function optionalItem(plan)
     local root, item = plan.actor:getInventory(), plan.actor:getInventory():getItemById(plan.id)
     return root == plan.root and sameMember(item, {id = plan.id, fullType = plan.fullType})
         and item:getContainer() == root and not item:getIsCraftingConsumed() and item or nil
+end
+-- Inspection can only consume a live own producer's already-earned singleton
+-- plan. No public row flag or reconstructed queue history creates this proof.
+local optionalCancellationBusy
+local function activeOptionalCancellation(plan, body, native)
+    if plan.body ~= body or plan.state ~= "queued"
+        or plan.bodySettled or not body.action or plan.queue.current ~= body or plan.list[1] ~= body
+        or plan.list[2] ~= plan.action or plan.action.action or plan.action.started
+        or not optionalQueue(plan) or not optionalEarned(plan) or optionalItem(plan) ~= body.item then return false end
+    -- Invoke the producer lease directly: optionalGuard's diagnostic writes do
+    -- not belong in read-only inspection. Its Wring binding uses callback/shape
+    -- proof only, so nested inspection is refused instead of recursing.
+    local valid = plan.guard(plan.pickup, body, "cancel")
+    return valid == true and optionalBodies[body] == plan and plan.state == "queued"
+        and not plan.bodySettled and body.action == native and optionalQueue(plan) and optionalEarned(plan)
+        and optionalItem(plan) == body.item and plan.queue.current == body
+        and plan.list[1] == body and plan.list[2] == plan.action
+        and not plan.action.action and not plan.action.started
+end
+function Settlement.activeOptionalCancellation(body)
+    local plan = optionalBodies[body]
+    if not plan or optionalCancellationBusy then return false end
+    optionalCancellationBusy = true
+    local ok, valid = pcall(activeOptionalCancellation, plan, body, body.action)
+    optionalCancellationBusy = nil
+    return ok and valid == true
 end
 local function optionalDebt(plan, reason, revoked)
     if plan.failure then return true end
@@ -2351,6 +2410,7 @@ function Settlement.advanceOptionalReturns(queue, current)
         if not terminal and not optionalDebt(plan, "producer") then return false end
         -- No native forceCancel or user callback is needed for our unallocated row.
         table.remove(queue.queue, 2)
+        Toolkit.ActionQueueAcknowledgements.retireEditorMember(queue, action)
         plan.state = terminal and "retired" or "blocked"
         if terminal then optionalGenerated[action] = nil end
     end

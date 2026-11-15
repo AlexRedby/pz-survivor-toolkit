@@ -10,6 +10,16 @@ from .. import report
 from ..placement import validate as validate_placement
 from .wring_clothing import CASES, CONTROL_CASES, NAMES, PREFIX, PRODUCER, _raw, base_case, complete
 
+ACTIVE_CONTROLS = ('cancel', 'cancel-toggle', 'toggle-off', 'toggle')
+
+
+def _stopping(row):
+    return row['ids'].get('returnControl') in ('cancel', 'cancel-toggle')
+
+
+def _native_tail_stopped(row, selection, command):
+    return _stopping(row) and selection['mode'] == 'native' and command['name'] == 'tail'
+
 
 def _number(value):
     return type(value) in (int, float) and math.isfinite(value)
@@ -74,6 +84,10 @@ def _prepared(row, selection):
     elif value['moves'] != [] or value['finalOrder'] != refs or any(key in value['cancelled'] for key in ('selected', 'accepted', 'afterOrder')):
         raise ValueError('disabled control changed native groups')
     for command in commands:
+        if _native_tail_stopped(row, selection, command):
+            if 'rootAtStart' in command or command.get('events') or command.get('lifecycleEvents'):
+                raise ValueError('native reset admitted its independent tail')
+            continue
         if command['type'] == 'ISQueueActionsAction':
             if command['preparation'] != dict(container=value['sourceBag'], owned=True, callbacksUntouched=True) or command['preparation']['owned'] is not True or command['preparation']['callbacksUntouched'] is not True:
                 raise ValueError('source-owned carried-container preparation identity')
@@ -112,7 +126,7 @@ def _prepared(row, selection):
     returned = set(); returns = value['returns']
     native_returns = selection.get('options', {}).get('wring_restoration_provider') == 'native-returns'
     control = row['ids'].get('returnControl')
-    if control in ('unavailable', 'intent'):
+    if control in ('unavailable', 'intent', 'toggle-off', 'toggle'):
         if returns != []: raise ValueError('fenced unallocated return unexpectedly executed')
         return
     if control == 'keep' and editing:
@@ -129,8 +143,15 @@ def _prepared(row, selection):
     if type(returns) is not list or not returns: raise ValueError('native return observation missing')
     if native_returns and len(returns) != 1: raise ValueError('native restoration requires exactly one generated return')
     for receipt in returns:
-        if native_returns and receipt.get('bodySettled') is not True:
-            raise ValueError('generated return started before exact wring body settled')
+        if native_returns:
+            if _stopping(row):
+                if (receipt.get('bodyStopped') is not True or receipt.get('bodySettled', False) is not False
+                    or receipt.get('tailStarted') is not False or receipt.get('tailRef') != commands[-1]['actionRef']):
+                    raise ValueError('required return started without exact native body stop')
+            elif receipt.get('bodySettled') is not True:
+                raise ValueError('generated return started before exact wring body settled')
+        if control in ('cancel', 'cancel-toggle') and receipt.get('actionRef') != row['returnControl']['requiredRef']:
+            raise ValueError('required cancellation return identity differs')
         if (type(receipt['actionRef']) is not str or not receipt['actionRef'] or receipt['type'] != 'ISInventoryTransferAction'
             or receipt['from'] != 'root' or receipt['toBag'] != value['sourceBag'] or receipt['allowMissing'] is not native_returns
             or not _number(receipt['duration']) or (receipt['duration'] != -1 if selection['kind'] == 'mp' else receipt['duration'] <= 0)):
@@ -154,7 +175,27 @@ def _prepared(row, selection):
                 finished = finished or event['phase'] == 'perform'
             else: raise ValueError('unsuccessful/unpaired native P4 return callback')
         if opened or not finished: raise ValueError('native P4 return perform did not finish')
+        if control in ('cancel', 'cancel-toggle'):
+            _required_callbacks(receipt['events'])
     if returned != set(wanted): raise ValueError('native P4 return omitted exact borrowed identity')
+
+
+def _required_callbacks(events):
+    """A fresh required transfer has one native episode and no replayed phase."""
+    native = None; opened = None; finished = set()
+    for event in events:
+        phase, boundary, episode = event['phase'], event['boundary'], event['nativeRef']
+        if native is not None and episode != native:
+            raise ValueError('required return native episode changed')
+        native = episode
+        if boundary == 'begin' and opened is None and phase not in finished and event.get('succeeded', False) is False:
+            opened = phase
+        elif boundary == 'finish' and opened == phase and event.get('succeeded') is True:
+            opened = None; finished.add(phase)
+        else:
+            raise ValueError('required return replayed, overlapping or incomplete callback')
+    if opened is not None or 'perform' not in finished:
+        raise ValueError('required return never finished native perform')
 
 
 def _restoration(row, selection):
@@ -169,14 +210,22 @@ def _restoration(row, selection):
     if len(samples) != 3: raise ValueError('missing P4-free loan transitions')
     returned = row['prepared']['returns']; control = row['ids'].get('returnControl')
     for sample, (point, state, planned) in zip(samples, (('queued', 'prepare', 0), ('body', 'active', 0), ('final', 'completed', 1))):
-        if point == 'final' and control:
+        if point == 'final' and control and control not in ACTIVE_CONTROLS:
             state = 'waived'
             planned = sample.get('plannedTransfers') if control == 'full' else 0
             if toolkit and (type(planned) is not int or planned not in (0, 1)):
                 raise ValueError('controlled final planned transfer count')
+        if point == 'final' and control in ('toggle-off', 'toggle', 'cancel-toggle'):
+            state, planned = False, 0
+        if point == 'final' and control == 'cancel':
+            # Required cleanup owns a fresh token/record. This sample reads
+            # the original body's steps, whose optional return never ran.
+            planned = 0
         wanted = dict(case=row['ids']['case'], point=point, loaded=False, selected=False, itemId=spec['id'], itemType=spec['type'],
                       state=state if toolkit else False, candidates=1 if toolkit else 0,
                       observedPreparation=toolkit, plannedTransfers=planned if toolkit else 0)
+        if point == 'final' and control in ('toggle-off', 'toggle', 'cancel-toggle'):
+            wanted.update(candidates=0, observedPreparation=False)
         if point == 'body':
             if toolkit:
                 body_index, return_index, tail_index = (sample.get(k) for k in ('bodyIndex', 'returnIndex', 'tailIndex'))
@@ -229,6 +278,9 @@ def _return_control(row, selection):
             raise ValueError('unrequested return control')
         return
     kind = case.removeprefix('worn-bag-'); enabled = selection['mode'] == 'toolkit'
+    if kind in ACTIVE_CONTROLS:
+        _active_control(row, selection)
+        return
     if (kind not in ('keep', 'full', 'unavailable', 'intent') or declared != kind or ids.get('restoration') is not True
         or selection.get('options', {}).get('wring_restoration_provider') != 'native-returns'):
         raise ValueError('return control alias/provider/authority declaration')
@@ -281,6 +333,126 @@ def _return_control(row, selection):
             raise ValueError('exact blocked optional return and explicit footer Keep')
     elif value['blocked'] is not False or value['kept'] is not False:
         raise ValueError('queue-off full-source control fabricated debt or Keep')
+
+
+def _active_control(row, selection):
+    """Cancellation earns only its admitted cleanup; a toggle earns none."""
+    ids = row['ids']; value = row['returnControl']; kind = ids['returnControl']
+    enabled = selection['mode'] == 'toolkit'; stopping = kind in ('cancel', 'cancel-toggle')
+    commands = row['commands']; bodies = [command for command in commands if command['actionRef'] == row['prepared']['target']['body']]
+    if len(bodies) != 1:
+        raise ValueError('active body captured reference missing or duplicated')
+    body = bodies[0]
+    tail = commands[-1]; generated = value['generatedRef']; required = value['requiredRef']
+    if (kind not in ACTIVE_CONTROLS or ids['case'] != 'worn-bag-' + kind or ids.get('restoration') is not True
+        or selection.get('options', {}).get('wring_restoration_provider') != 'native-returns'
+        or value['kind'] != kind or value['enabled'] is not enabled or value['bodyRef'] != body['actionRef']
+        or type(value['bodyNative']) is not str or not value['bodyNative']
+        or value['accepted'] is not True or value['bodyUnchanged'] is not True
+        or value['policyMode'] != ('active' if enabled and stopping else False)
+        or type(value['policyMode']) is not (str if enabled and stopping else bool)
+        or value['stopped'] is not stopping or value['tailPreserved'] is not (enabled or not stopping)
+        or value['tailRef'] != tail['actionRef']
+        or kind == 'toggle' and value['reenabledDuringBody'] is not True
+        or kind == 'toggle-off' and value['reenabledDuringBody'] is not False
+        or value['kept'] is not False):
+        raise ValueError('active native body/cancellation identity or scope')
+    if enabled and not stopping:
+        notice = value['blocked']; spec = ids['items']['target']
+        if (type(notice) is not dict or not _positive(notice.get('id'))
+            or notice != dict(id=notice['id'], itemId=spec['id'], itemType=spec['type'], title=spec['type'],
+                              reason='producer', state='revoked')):
+            raise ValueError('exact unpaid revoked producer notice missing or changed')
+    elif value['blocked'] is not False:
+        raise ValueError('native stop or paid cancellation fabricated unresolved return debt')
+    refs = {command['actionRef'] for command in commands}
+    if enabled:
+        if (type(generated) is not str or not generated or generated in refs
+            or value['originalReturn'] != dict(actionRef=generated, allocated=False, events=[])
+            or value['originalReturn']['allocated'] is not False):
+            raise ValueError('original optional return allocated, ran or changed identity')
+    elif generated is not False or value['originalReturn'] is not False:
+        raise ValueError('queue-off control fabricated optional return')
+    if enabled and stopping:
+        if type(required) is not str or not required or required in refs or required == generated:
+            raise ValueError('cancellation lacked a fresh exact required return')
+    elif required is not False:
+        raise ValueError('unadmitted cleanup appeared after editor toggle/native stop')
+
+    if value['before'] != value['after']:
+        raise ValueError('active command request changed physical clothing effects')
+    snapshot = value['before']
+    if snapshot['case'] != ids['case'] or snapshot['source'] != ids['source'] or set(snapshot['items']) != set(NAMES):
+        raise ValueError('active control physical source identity')
+    for name, item in snapshot['items'].items():
+        spec = ids['items'][name]
+        counts = dict(actor=1, root=0, source=1) if enabled and name == 'cancelled' else dict(actor=1, root=1, source=0)
+        if (item['id'] != spec['id'] or item['type'] != spec['type'] or item['counts'] != counts
+            or item['native'] != {key: spec[key] for key in ('bodyLocation', 'bodyLocationClass', 'nativeShoe', 'cap')}
+            or item['worn'] is not False or item['weight'] != spec['weight']
+            or not _number(item['wetness']) or not _number(item['wetWeight'])
+            or not spec['weight'] <= item['wetWeight'] <= spec['wetWeight'] + .01
+            or item['capacityWeight'] != spec['capacityWeight']):
+            raise ValueError('active control exact earned root pickup/native garment')
+        low, high = (0, 10.01) if name == 'front' or name == 'cancelled' and not enabled else (80, 100)
+        if not low < item['wetness'] <= high:
+            raise ValueError('active control paid prefix/body/tail wetness')
+
+    events = body['lifecycleEvents']; stops = value['stopEvents']
+    if type(events) is not list or type(stops) is not list or value['lifecycleEvents'] != events:
+        raise ValueError('missing actual native body lifecycle')
+    if stopping:
+        if events != []:
+            raise ValueError('stopped native wring unexpectedly performed/completed')
+        if len(stops) != 2:
+            raise ValueError('missing or duplicate genuine JVM stop boundary')
+        for event, boundary in zip(stops, ('entry', 'returned')):
+            returned = boundary == 'returned'
+            wanted = dict(boundary=boundary, phase='stop', succeeded=returned, nativeRef=value['bodyNative'],
+                          source='disposable-jvm-stop', probeClass='net.alexredby.wringstopprobe.Main',
+                          nativeClass='zombie.characters.CharacterTimedActions.LuaTimedActionNew',
+                          callbackObserved=returned, callbackSucceeded=returned, callbackUnchanged=True)
+            if event != wanted or any(event[key] is not wanted[key] for key in
+                                     ('succeeded', 'callbackObserved', 'callbackSucceeded', 'callbackUnchanged')):
+                raise ValueError('exact JVM stop/Lua callback return evidence differs')
+    elif stops != []:
+        raise ValueError('unrequested native stop after editor toggle')
+    phases = set(); opened = None
+    for event in events:
+        phase, boundary = event['phase'], event['boundary']
+        if (phase not in ('perform', 'complete')
+            or boundary not in ('begin', 'finish') or event['nativeRef'] != value['bodyNative']
+            or event['succeeded'] is not (boundary == 'finish')):
+            raise ValueError('native stop/completion episode or effect differs')
+        if boundary == 'begin' and opened is None and phase not in phases:
+            opened = phase
+        elif boundary == 'finish' and opened == phase:
+            opened = None; phases.add(phase)
+        else:
+            raise ValueError('native body callback missing, duplicated or overlapping')
+    wanted = set() if stopping else {'perform', 'complete'} if selection['kind'] == 'sp' else {'perform'}
+    if opened is not None or not wanted <= phases:
+        raise ValueError('native body never reached its actual terminal callback')
+
+    settings = value['settings']
+    labels = [] if kind == 'cancel' else ['disable', 're-enable' if enabled else 're-enable-control'] * 2 if kind == 'toggle' else ['disable']
+    if type(settings) is not list or [setting['label'] for setting in settings] != labels:
+        raise ValueError('actual editor setting transition sequence')
+    previous = enabled; generation = None
+    for index, setting in enumerate(settings):
+        requested = enabled and index % 2 == 1
+        before_generation, after_generation = setting['generationBefore'], setting['generationAfter']
+        if (setting['requested'] is not requested or setting['before'] is not previous or setting['after'] is not requested
+            or type(before_generation) is not int or before_generation < 0 or type(after_generation) is not int
+            or after_generation != before_generation + (1 if previous and not requested else 0)
+            or generation is not None and before_generation != generation
+            or setting['tailRetained'] is not True
+            or setting['requestRetained'] is not (enabled and stopping)
+            or setting['bodySame'] is not True or setting['nativeSame'] is not True):
+            raise ValueError('editor transition bypassed generation/body/admitted cleanup boundary')
+        if type(setting['bodySame']) is not bool or type(setting['nativeSame']) is not bool:
+            raise ValueError('editor transition body/native identity witness')
+        previous, generation = requested, after_generation
 
 
 def _unavailable_source(row, selection):
@@ -880,7 +1052,7 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
                 expected_counts = _counts(case, name, final)
                 if final and ids.get('returnControl') == 'unavailable' and group_editing and name == 'cancelled':
                     expected_counts = dict(actor=0, root=0, source=1)
-                if final and ids.get('returnControl') and name == 'target':
+                if final and ids.get('returnControl') and name == 'target' and not (_stopping(row) and group_editing):
                     expected_counts = dict(actor=1, root=1, source=0)
                 if (final and case == 'worn-bag' and name in ('target', 'cancelled') and selection['mode'] == 'native'
                         and selection.get('options', {}).get('wring_restoration_provider') == 'native-returns'):
@@ -896,7 +1068,8 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
                         or not _number(item['wetWeight']) or not spec['weight'] <= item['wetWeight'] <= spec['wetWeight'] + .01
                         or type(item['capacityWeight']) not in (int, float) or item['capacityWeight'] != spec['capacityWeight']):
                         raise ValueError('current wet/native capacity weight bounds')
-                untouched = name == 'cancelled' and not((carried or worn_prepared) and selection['mode'] == 'native')
+                untouched = (name == 'cancelled' and not((carried or worn_prepared) and selection['mode'] == 'native')
+                             or _stopping(row) and (name == 'target' or name == 'tail' and selection['mode'] == 'native'))
                 if final and worn_prepared and group_editing and name == 'cancelled':
                     # Native worn wetness remains live even when no queued child is admitted.
                     if not 0 <= item['wetness'] <= spec['initial']:
@@ -940,6 +1113,9 @@ def check_case(row, selection, prepared, verified, wear_baseline=None):
             if cancelled:
                 if command['started'] is not False or command['progress'] is not False or 'startedAt' in command:
                     raise ValueError('cancelled action started')
+            elif _native_tail_stopped(row, selection, command):
+                if command['started'] is not False or command['progress'] is not False or 'startedAt' in command:
+                    raise ValueError('native reset independent tail started')
             elif command['type'] == 'ISWringClothing':
                 if command['started'] is not True or command['progress'] is not True or not _number(command.get('startedAt')):
                     raise ValueError('native wring progress')
@@ -1068,12 +1244,14 @@ def verify(root, selection, catalog):
             baseline = next((value for value in wear_baselines if value['case'] == case), None)
             errors = check_case(row, selection, prepared[index], verified[index], baseline); issues += errors
             outcomes.append(dict(actor='client1', case=case, status='failed' if errors else 'passed', reason='; '.join(errors),
-                outcome=dict(effectsVerified=not errors, serverAuthorityVerified=not errors, tailCompleted=not errors,
+                outcome=dict(effectsVerified=not errors, serverAuthorityVerified=not errors,
+                             tailCompleted=not errors and not (_stopping(row) and selection['mode'] == 'native'),
+                             tailSemanticsVerified=not errors,
                              pendingEditsVerified=not errors and selection['mode'] == 'toolkit' and base_case(case) in ('root', 'worn-bag', 'worn-prepared', 'wear-swap'))))
         if not complete(selection, 'client1', text): issues.append('Missing completion marker')
     except (OSError, ValueError, KeyError, TypeError) as error:
         issues.append(str(error))
     return dict(issues=issues, outcomes=outcomes, evidence={'diagnostics': diagnostics, 'adapterInstalled': setups[0].get('adapterInstalled') if len(setups) == 1 else None, 'limits': [
-        'Programmatic native inventory UI callbacks and genuine carried producer groups; no physical input, active edits, missing storage recovery or future drying/capacity credit; optional-return Keep and real full-source refusal apply only to selected controls.',
+        'Programmatic native inventory UI callbacks and genuine carried producer groups; selected active carried wring cancellation and editor toggles require exact stop/setting/required-cleanup receipts. Native stop clears its unstarted tail; scoped editor cancellation preserves independent work. No physical input, missing storage recovery or future drying/capacity credit.',
         'Optional capacity samples are coarse synchronous idle wall-clock measurements including Lua loop/validation overhead; no timing threshold, FPS qualification or inventory-size extrapolation.',
         'Wetness caps allow bounded natural drying after native completion; rain disabled only in the disposable fixture world.']})
