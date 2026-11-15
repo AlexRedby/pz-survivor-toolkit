@@ -25,6 +25,12 @@ end
 
 local function settings()
     if mode then return mode end
+    -- require() can reach this reader before the shared recovery bootstrap.
+    -- Never load partial settings or cache a failed recovery as a final mode.
+    if getFileReader and not (isServer and isServer()) then
+        local storage = require 'PZSurvivorToolkit/ModOptionsStorage'
+        if not storage.recover() then return {invalid=true} end
+    end
     mode = {perSave=false, sessionOnly=false, vanilla=false}
     local lines = readLines('ModOptions.ini', 2097152, 20000)
     if not lines then mode.invalid=true;return mode end

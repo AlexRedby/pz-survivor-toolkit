@@ -141,6 +141,24 @@ class WorldImportTests(unittest.TestCase):
             invalid = dict(selected, **{key: list(reversed(selected[key])) if len(selected[key]) > 1 else ['unselected']})
             with self.assertRaises(ValueError): worlds.validate(self.output, invalid, self.fixture.game)
 
+    def test_overlay_reuses_an_exact_selected_player_and_restores_its_sealed_provenance(self):
+        _, options = self.host()
+        source_db = options['external_world'] / 'players.db'
+        with sqlite3.connect(source_db) as connection:
+            connection.execute("UPDATE networkPlayers SET world='queue-smoke', username='client1', "
+                               "playerIndex=0, steamid='', splitUsername='client1' WHERE id=7")
+        before = native.hashes(options['external_world'])
+        with patch.object(world_import, 'verify_player_api', return_value=world_import.PLAYER_DB_SHA256['42.21']):
+            value = self.create(**options)
+        self.assertEqual(before, native.hashes(options['external_world']))
+        receipt, = value['origin']['external']['players']
+        self.assertEqual(('client1', 7, 7), (receipt['role'], receipt['source_id'], receipt['target_id']))
+        copied_db = self.output / 'state/client1/Saves/Multiplayer/queue-smoke/players.db'
+        self.assertEqual(source_db.read_bytes(), copied_db.read_bytes())
+        self.assertEqual(before['players.db'], value['origin']['external']['players_db_sha256'])
+        worlds.validate(self.output, dict(self.fixture.selection, mods=value['mods']), self.fixture.game)
+        worlds.restore(self.output, value, self.root / 'restored', self.fixture.runtime)
+
     def test_overlay_requires_matching_original_mods_and_exact_settings(self):
         base, options = self.host()
         settings = options['server_settings']; original = settings.read_text()

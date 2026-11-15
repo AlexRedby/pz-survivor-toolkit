@@ -1,5 +1,6 @@
 local mods = getActivatedMods and getActivatedMods()
 if not mods or not (mods:contains("PeekAView") or mods:contains("\\PeekAView")) then return end
+require "0000ToolkitModOptionsRecovery"
 require "PZAPI/ModOptions"
 -- Register upstream's load-and-sync callback first, regardless of file order.
 require "PeekAView_Options"

@@ -1,4 +1,4 @@
-"""Opaque native player cloning stays confined to a disposable database copy."""
+"""Opaque native player imports stay confined to a disposable database copy."""
 from contextlib import closing
 import hashlib
 from pathlib import Path
@@ -67,6 +67,64 @@ class PlayerImportTests(unittest.TestCase):
             self.assertGreater(target[0], max(row[0] for row in before))
             self.assertEqual(dict(role=role, source_id=source[0], target_id=target[0],
                                   blob_sha256=hashlib.sha256(source[10]).hexdigest()), receipt)
+        self.assert_closed_copy()
+
+    def normalize_first_route(self, steamid=None):
+        with closing(sqlite3.connect(self.database)) as connection, connection:
+            connection.execute("UPDATE networkPlayers SET world='queue-smoke', username='client1', "
+                               "playerIndex=0, steamid=?, splitUsername='client1' WHERE id=7", (steamid,))
+
+    def test_exact_existing_selected_route_is_reused_without_changing_database_rows_or_bytes(self):
+        for steamid in (None, ''):
+            with self.subTest(steamid=steamid):
+                self.make_database()
+                self.normalize_first_route(steamid)
+                before, before_bytes = self.rows(), self.database.read_bytes()
+                receipts = self.clone()
+                self.assertEqual([dict(role='client1', source_id=7, target_id=7,
+                                       blob_sha256=hashlib.sha256(before[0][10]).hexdigest())], receipts)
+                self.assertEqual(before, self.rows())
+                self.assertEqual(before_bytes, self.database.read_bytes())
+                self.assert_closed_copy()
+
+    def test_reused_route_and_a_distinct_clone_preserve_all_original_rows(self):
+        self.normalize_first_route()
+        before = self.rows()
+        receipts = self.clone(('client1', 'client2'), {'client1': 7, 'client2': 19})
+        rows = self.rows()
+        self.assertEqual(before, rows[:2])
+        self.assertEqual(3, len(rows))
+        self.assertEqual((7, 7), (receipts[0]['source_id'], receipts[0]['target_id']))
+        self.assertEqual((19, rows[-1][0]), (receipts[1]['source_id'], receipts[1]['target_id']))
+        self.assertEqual(('queue-smoke', 'client2', 0), rows[-1][1:4])
+        self.assertEqual(before[1][10], rows[-1][10])
+        self.assert_closed_copy()
+
+    def test_selected_existing_route_with_incomplete_or_mismatched_steam_split_identity_is_refused(self):
+        for column, value in (('steamid', ' '), ('steamid', '\t'), ('steamid', 'steam-one'),
+                              ('splitUsername', None), ('splitUsername', ''),
+                              ('splitUsername', 'client2'), ('splitUsername', 'client1 ')):
+            self.make_database()
+            self.normalize_first_route()
+            with closing(sqlite3.connect(self.database)) as connection, connection:
+                connection.execute('UPDATE networkPlayers SET ' + column + '=? WHERE id=7', (value,))
+            before, before_bytes = self.rows(), self.database.read_bytes()
+            with self.subTest(column=column, value=value), self.assertRaisesRegex(ValueError, 'already exists'):
+                self.clone()
+            self.assertEqual(before, self.rows())
+            self.assertEqual(before_bytes, self.database.read_bytes())
+            self.assert_closed_copy()
+
+    def test_another_row_sharing_the_exact_selected_route_is_refused(self):
+        self.normalize_first_route()
+        with closing(sqlite3.connect(self.database)) as connection, connection:
+            connection.execute("UPDATE networkPlayers SET world='queue-smoke', username='client1', "
+                               "playerIndex=0, steamid=NULL, splitUsername='client1' WHERE id=19")
+        before, before_bytes = self.rows(), self.database.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'already exists'):
+            self.clone()
+        self.assertEqual(before, self.rows())
+        self.assertEqual(before_bytes, self.database.read_bytes())
         self.assert_closed_copy()
 
     def test_requires_complete_distinct_explicit_actor_mappings(self):

@@ -194,15 +194,28 @@ def _clone_players(path, roles, mappings, server_name):
                         or any(type(row[key]) not in (int, float) or not math.isfinite(row[key]) for key in ('x', 'y', 'z'))
                         or type(row['worldversion']) is not int or row['worldversion'] <= 0):
                     raise ValueError('Selected source player must be a living native character with an opaque blob')
-                if connection.execute('SELECT id FROM networkPlayers WHERE world=? AND username=? AND playerIndex=0',
-                                      (server_name, role)).fetchone():
-                    raise ValueError('Imported fixture player identity already exists; refusing to overwrite it')
-                data = dict(row)
-                data.update(world=server_name, username=role, playerIndex=0, steamid=None, splitUsername=role)
-                columns = PLAYER_COLUMNS[1:]
-                cursor = connection.execute('INSERT INTO networkPlayers (' + ','.join(columns) + ') VALUES ('
-                                            + ','.join('?' for _ in columns) + ')', [data[key] for key in columns])
-                receipts.append(dict(role=role, source_id=row['id'], target_id=cursor.lastrowid,
+                route = dict(world=server_name, username=role, playerIndex=0, steamid=None, splitUsername=role)
+                collisions = connection.execute(
+                    'SELECT id FROM networkPlayers WHERE world=? AND username=? AND playerIndex=0',
+                    (server_name, role)).fetchall()
+                if collisions:
+                    # Native NetworkCharacterData writes an empty Steam ID without
+                    # Steam; native conversion also treats NULL and '' as absent.
+                    # Reuse only that exact NoSteam route without rewriting either
+                    # representation, and never share a route with another row.
+                    if (len(collisions) != 1 or collisions[0]['id'] != row['id']
+                            or row['steamid'] not in (None, '')
+                            or any(row[key] != expected for key, expected in route.items() if key != 'steamid')):
+                        raise ValueError('Imported fixture player identity already exists; refusing to overwrite it')
+                    target_id = row['id']
+                else:
+                    data = dict(row)
+                    data.update(route)
+                    columns = PLAYER_COLUMNS[1:]
+                    cursor = connection.execute('INSERT INTO networkPlayers (' + ','.join(columns) + ') VALUES ('
+                                                + ','.join('?' for _ in columns) + ')', [data[key] for key in columns])
+                    target_id = cursor.lastrowid
+                receipts.append(dict(role=role, source_id=row['id'], target_id=target_id,
                                      blob_sha256=hashlib.sha256(row['data']).hexdigest()))
             for row in original:
                 if tuple(connection.execute('SELECT * FROM networkPlayers WHERE id=?', (row[0],)).fetchone()) != row:

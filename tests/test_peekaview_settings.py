@@ -12,6 +12,7 @@ from lupa.lua51 import LuaRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
 CLIENT = ROOT / 'PZSurvivorToolkit/42/media/lua/client'
+SHARED = ROOT / 'PZSurvivorToolkit/42/media/lua/shared'
 GAME = Path(os.environ.get('PZ_GAME', str(Path.home() / 'Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java')))
 UPSTREAM = Path(os.environ.get('PZ_PEEKAVIEW_SOURCE', str(Path.home() / 'Library/Application Support/Steam/steamapps/workshop/content/108600/3710281407/mods/PeekAView')))
 NATIVE = GAME / 'media/lua/client/PZAPI/ModOptions.lua'
@@ -27,8 +28,10 @@ class PeekAViewSettingsTests(unittest.TestCase):
         sources = {
             'PZAPI/ModOptions': NATIVE,
             'PeekAView_Options': OPTIONS,
+            '0000ToolkitModOptionsRecovery': SHARED / '0000ToolkitModOptionsRecovery.lua',
+            'PZSurvivorToolkit/ModOptionsStorage': SHARED / 'PZSurvivorToolkit/ModOptionsStorage.lua',
             **{'PZSurvivorToolkit/' + name: CLIENT / 'PZSurvivorToolkit' / (name + '.lua')
-               for name in ('PeekAViewSettings', 'ModOptionsStorage')},
+               for name in ('PeekAViewSettings',)},
         }
         lua.globals().loadSource = lambda name: sources[name].read_text()
         lua.globals().active = active

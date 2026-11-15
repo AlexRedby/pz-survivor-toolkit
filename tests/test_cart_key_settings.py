@@ -1,4 +1,4 @@
-"""Cart key migration against the installed native ModOptions serializer."""
+"""Cart key migration against native ModOptions; file IO is an offline double."""
 import os
 from pathlib import Path
 import unittest
@@ -11,7 +11,8 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "PZSurvivorToolkit/42/media/lua/client/PZSurvivorToolkit/CartKeySettings.lua"
-STORAGE = HELPER.with_name("ModOptionsStorage.lua")
+SHARED = ROOT / "PZSurvivorToolkit/42/media/lua/shared"
+STORAGE = SHARED / "PZSurvivorToolkit/ModOptionsStorage.lua"
 GAME = Path(os.environ.get("PZ_GAME", str(Path.home() / "Library/Application Support/Steam/steamapps/common/ProjectZomboid/Project Zomboid.app/Contents/Java")))
 NATIVE = GAME / "media/lua/client/PZAPI/ModOptions.lua"
 MARKER = "PZSurvivorToolkitCartControls.ini"
@@ -19,7 +20,7 @@ MARKER = "PZSurvivorToolkitCartControls.ini"
 
 @unittest.skipUnless(LuaRuntime is not None and NATIVE.is_file(), "Requires Lupa and native B42 ModOptions (PZ_GAME)")
 class CartKeySettingsTests(unittest.TestCase):
-    def boot(self, files=None):
+    def boot(self, files=None, recovery_failure=False):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute(r'''
             files = {}; writes = {}; fail = {}; silent = {}; closeFail = {}; truncate = {}
@@ -71,6 +72,9 @@ class CartKeySettingsTests(unittest.TestCase):
         ''')
         lua.globals().storage = lua.execute(STORAGE.read_text())
         lua.execute("package.preload['PZSurvivorToolkit/ModOptionsStorage'] = function() return storage end")
+        if recovery_failure:
+            lua.execute("fail['ModOptions.ini']='open'")
+        lua.execute((SHARED / '0000ToolkitModOptionsRecovery.lua').read_text())
         lua.globals().settings = lua.execute(HELPER.read_text())
         lua.execute('settings.configureDefault(binding); PZAPI.ModOptions:load()')
         return lua
@@ -182,6 +186,23 @@ class CartKeySettingsTests(unittest.TestCase):
         self.assertEqual(lua.eval('settings.migrate(binding)'), (False, 'binding_save'))
         self.assertEqual(lua.eval('binding:getValue()'), 47)
         self.assertIsNone(lua.globals().writes[MARKER])
+
+    def test_late_recovery_reloads_legacy_binding_before_once_only_decision(self):
+        original = 'keybind|SaucedCarts|PushCart|47\r\nkeybind|Absent|Keep|29\r\n'
+        seed = self.boot({'ModOptions.ini': original})
+        seed.execute('binding:setValue(18)')
+        seed.globals().truncate['ModOptions.ini'] = len('keybind|SaucedCarts|PushCart|18\r\n')
+        self.assertFalse(seed.globals().storage.save(seed.table_from({'keybind|SaucedCarts|PushCart|': '18'})))
+        image = dict(seed.globals().files.items())
+        # Model the native-write crash boundary; the serializer/IO doubles above
+        # have already exercised and retained the same sealed before-image.
+        image['ModOptions.ini'] = 'keybind|SaucedCarts|PushCart|18\r\n'
+        restarted = self.boot(image, recovery_failure=True)
+        self.assertEqual(18, restarted.eval('binding:getValue()'), 'upstream loaded the interrupted file')
+        restarted.execute("fail['ModOptions.ini']=nil")
+        self.assertEqual((True, 'migrated'), restarted.eval('settings.migrate(binding)'))
+        self.assertIn('keybind|Absent|Keep|29', restarted.globals().files['ModOptions.ini'])
+        self.assertEqual(18, restarted.eval('binding:getValue()'))
 
 
 if __name__ == '__main__':

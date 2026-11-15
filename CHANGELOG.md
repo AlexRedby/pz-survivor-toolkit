@@ -49,6 +49,11 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.2
+
+- **Fixed:** Client-setting migrations preserve a verified recovery copy before saving ModOptions. Interrupted or incomplete writes restore the original preferences before upstream options load; pending recovery prevents completion markers and another migration from replacing the original. Later manual changes survive a completed migration.
+- **Development:** Restored-world startup checks can require the saved character and compare nested inventory and equipment identities, rejecting character-creation fallback during migration verification.
+
 ### 0.2.0
 
 - **Changed:** Start the new minor-version series for the Project Zomboid 42.22.2 migration.

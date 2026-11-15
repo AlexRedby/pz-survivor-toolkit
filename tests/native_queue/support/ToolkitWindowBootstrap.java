@@ -14,14 +14,18 @@ import java.security.ProtectionDomain;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Set;
 import org.lwjgl.glfw.GLFW;
 
 /** Fixture-only agent. The installed game and its class resources stay unchanged. */
 public final class ToolkitWindowBootstrap {
     private static final String DISPLAY = "org/lwjglx/opengl/Display";
-    // Audited 42.22 Display; executable instructions match the previous reviewed target.
-    // Reject unknown engine updates before starting any native UI.
-    private static final String DISPLAY_SHA256 = "3b49c8639b52dcfe11daa70c3d397ea8b55c22fb09b9ede2f7b523fee3b7b525";
+    // Reviewed 42.21 and 42.22 Display resources differ only in debug metadata;
+    // all fields, executable methods and GLFW call descriptors are identical.
+    // Keep historical-world controls isolated while rejecting every unknown resource.
+    private static final Set<String> DISPLAY_SHA256 = Set.of(
+        "15a0c0a3646d4340cd96c47d143a5605bfbae7543410ddaa018e83f45ae1a578",
+        "3b49c8639b52dcfe11daa70c3d397ea8b55c22fb09b9ede2f7b523fee3b7b525");
     private static final Map<String, Integer> EXPECTED = Map.of(
         "glfwDefaultWindowHints", 1, "glfwShowWindow", 2, "glfwFocusWindow", 1,
         "glfwSetWindowPos", 1, "glfwSetWindowMonitor", 1, "glfwDestroyWindow", 2,
@@ -40,7 +44,7 @@ public final class ToolkitWindowBootstrap {
         if (!enabled()) throw new IllegalStateException("Window isolation agent requires a macOS routing gate");
         gatePath();
         try (var stream = ToolkitWindowBootstrap.class.getClassLoader().getResourceAsStream(DISPLAY + ".class")) {
-            if (stream == null || !DISPLAY_SHA256.equals(sha256(stream.readAllBytes()))) {
+            if (stream == null || !DISPLAY_SHA256.contains(sha256(stream.readAllBytes()))) {
                 throw new IllegalStateException("Unsupported Display resource for native window isolation");
             }
         }
@@ -70,7 +74,7 @@ public final class ToolkitWindowBootstrap {
 
     /** Pure bytecode operation, also used by preparation checks without starting native UI. */
     static byte[] patchDisplay(byte[] original) throws Exception {
-        if (!DISPLAY_SHA256.equals(sha256(original))) {
+        if (!DISPLAY_SHA256.contains(sha256(original))) {
             throw new IllegalStateException("Unsupported Display bytecode: " + sha256(original));
         }
         var calls = new HashMap<String, Integer>();

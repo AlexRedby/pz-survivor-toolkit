@@ -60,6 +60,11 @@ Events.OnPreUIDraw.Add(function()
   if (not connecting and not isClient()) or advanced or isIngameState() then return end
   if not MainScreen.instance or not MainScreen.instance.charCreationProfession or not MapSpawnSelect.instance then return end
   if MainScreen.instance.charCreationProfession:getIsVisible() or MapSpawnSelect.instance:getIsVisible() then
+   if config.options and config.options.startup_world then
+    advanced=true
+    print('[QUEUE_TEST] FAIL startup saved character unavailable; refusing creation fallback')
+    return
+   end
    advanced=true;MapSpawnSelect.instance:useDefaultSpawnRegion();MapSpawnSelect.instance:setVisible(false)
    MainScreen.instance.charCreationProfession:onOptionMouseDown({internal='NEXT'})
    MainScreen.instance.charCreationMain:onOptionMouseDown({internal='NEXT'})
@@ -76,8 +81,14 @@ require('QueuePreflight').onTick(Events,function()
  local player=getPlayer()
  if not player or player:isDead() or not player:getSquare() then return end
  if config.kind=='mp' and (not isClient() or player:getOnlineID()<0) then return end
+ done=true
  local square=player:getSquare()
  print('[STARTUP_TEST] PLAYER_READY square='..square:getX()..','..square:getY()..','..square:getZ()..' tick=true')
- done=true
+ if config.options and config.options.startup_world then
+  local witness=require('QueueStartupWorld').capture(player)
+  assert(witness.name==config.options.startup_world.name,'loaded character differs from the saved identity')
+  print('[STARTUP_TEST] WORLD_WITNESS '..require('QueueHealthEvents').encode(witness))
+ end
+ if config.options and config.options.startup_recovery_probe then require('QueueStartupRecovery').verify()end
  print('[STARTUP_TEST] COMPLETE case=loaded')
 end)
