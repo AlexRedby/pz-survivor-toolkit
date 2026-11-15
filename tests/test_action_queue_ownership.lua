@@ -39,6 +39,7 @@ local cases={
     OwnershipAnimalStops="test_action_queue_animal_stops.lua",
     OwnershipHands="test_action_queue_hands.lua",
     OwnershipHandRestoration="test_action_queue_hand_restoration.lua",
+    OwnershipReturnSuccess="test_action_queue_return_success.lua",
     OwnershipEquip="test_action_queue_equip.lua",
     OwnershipHandEffects="test_action_queue_hand_effects.lua",
     OwnershipPreparationCancel="test_action_queue_preparation_cancel.lua",

@@ -57,7 +57,8 @@ borrowedReturns = function(handles, onEnqueued)
         if not watch() then return count, "source_changed" end
         -- Rechecks the exact native loan, current cleanup parent/dependencies,
         -- source identity/accessibility and prior planned return for every item.
-        local action = enqueue(handle)
+        local action, reason = enqueue(handle)
+        if reason ~= nil then return count, reason end
         if action then
             count = count + 1
             if onEnqueued then onEnqueued(action) end

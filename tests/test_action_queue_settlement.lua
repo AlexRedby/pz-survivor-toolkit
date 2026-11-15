@@ -4232,3 +4232,8 @@ do
     end
 end
 print('Optional producer: earned-only staging, one-use native insertion, pending Keep, preallocation disposition and unallocated debts passed.')
+
+-- Shared private-ledger fixtures for the focused return-success vectors.
+if ReturnSuccessVectors then
+    ReturnSuccessVectors({setup=setup,ownedBatchFixture=ownedBatchFixture,cleanupEffectFixture=cleanupEffectFixture,ownReturns=ownReturns})
+end
