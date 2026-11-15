@@ -4,11 +4,14 @@ import java.util.ArrayList
 import sun.misc.Unsafe
 import zombie.characters.IsoPlayer
 import zombie.characters.IsoGameCharacter
+import zombie.characters.AttachedItems.AttachedItems
+import zombie.characters.AttachedItems.AttachedItem
 import zombie.inventory.ItemContainer
 import zombie.inventory.InventoryItem
 import zombie.inventory.types.ComboItem
 import zombie.inventory.types.HandWeapon
 import zombie.inventory.types.InventoryContainer
+import zombie.iso.objects.IsoWorldInventoryObject
 import zombie.entity.Engine
 import zombie.entity.EntityBucketManager
 import zombie.entity.GameEntityManager
@@ -76,7 +79,7 @@ object EquipEventDispatchChecks {
         // Match the final registration step of native Exposer.exposeAll.
         // Manual alias registration previously hid isType versus instof.
         LuaManager.exposer.exposeGlobalFunctions(LuaManager.GlobalObject())
-        checkLua("return toolkitEquipEventDispatchApiMatches(toolkitEquipEventDispatchIdle) and toolkitEquipEventDispatchApiMatches(toolkitEquipGlobalsTrusted) and toolkitEquipEventDispatchApiMatches(toolkitEquipNativeQuiet) and toolkitEquipEventDispatchApiMatches(toolkitEquipNativePreparedQuiet)")
+        checkLua("return toolkitEquipEventDispatchApiMatches(toolkitEquipEventDispatchIdle) and toolkitEquipEventDispatchApiMatches(toolkitEquipGlobalsTrusted) and toolkitEquipEventDispatchApiMatches(toolkitEquipNativeQuiet) and toolkitEquipEventDispatchApiMatches(toolkitEquipNativePreparedQuiet) and toolkitEquipEventDispatchApiMatches(toolkitEquipHandOwnershipQuiet)")
         checkLua("return toolkitEquipGlobalsTrusted() and toolkitEquipEventDispatchIdle(1)==nil and toolkitEquipGlobalsTrusted(1)==false")
         checkLua("return toolkitEquipEventDispatchIdle()==nil")
         // A native call before patching must not arm the observer.
@@ -193,6 +196,7 @@ object EquipEventDispatchChecks {
         LuaManager.env=savedEnv
         checkLua("return toolkitEquipEventDispatchIdle()==true and toolkitEquipGlobalsTrusted()==true and calls==5")
         nativeQuietChecks(env,thread)
+        handOwnershipChecks(env,thread)
         val fresh=LuaManager.platform.newEnvironment() as KahluaTableImpl
         fresh.delegate.putAll(env.delegate)
         LuaManager.env=fresh
@@ -200,7 +204,7 @@ object EquipEventDispatchChecks {
         checkLua("return toolkitEquipEventDispatchIdle()==nil")
         check(!startup.trigger(fresh,LuaManager.caller,args))
         checkLua("return toolkitEquipEventDispatchIdle()==true")
-        println("EQUIP_EVENT_DISPATCH_CHECKS_PASS woven_native=true nested=true throwable_exit=true queued_old_event=true globals_metadata_only=true")
+        println("EQUIP_EVENT_DISPATCH_CHECKS_PASS woven_native=true nested=true throwable_exit=true queued_old_event=true globals_metadata_only=true hand_ownership_reads=true")
     }
     private fun reusableDispatchSlots(env: KahluaTableImpl) {
         val stateField=EquipEventDispatchLogic::class.java.getDeclaredField("states").apply { isAccessible=true }
@@ -337,6 +341,98 @@ object EquipEventDispatchChecks {
         for(item in arrayOf(one,two))set(InventoryItem::class.java,"container",item,root)
         check(value()==true)
         } finally { engineField.set(null,previousEngine) }
+    }
+
+    private class ForeignOwnershipItem : InventoryItem("", "", "", "") {
+        override fun getContainer(): ItemContainer = error("Foreign container getter executed")
+        override fun getWorldItem(): IsoWorldInventoryObject = error("Foreign world getter executed")
+    }
+
+    private fun handOwnershipChecks(env: KahluaTableImpl, thread: KahluaThread) {
+        val unsafe=Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible=true }.get(null) as Unsafe
+        fun set(type: Class<*>, key: String, owner: Any, value: Any?) = type.getDeclaredField(key).apply { isAccessible=true }.set(owner,value)
+        val actor=unsafe.allocateInstance(IsoPlayer::class.java) as IsoPlayer
+        val root=unsafe.allocateInstance(ItemContainer::class.java) as ItemContainer
+        root.parent=actor
+        set(IsoGameCharacter::class.java,"inventory",actor,root)
+        val one=unsafe.allocateInstance(ComboItem::class.java) as ComboItem
+        val two=unsafe.allocateInstance(HandWeapon::class.java) as HandWeapon
+        set(InventoryItem::class.java,"container",one,root)
+        set(InventoryItem::class.java,"container",two,root)
+        val attached=unsafe.allocateInstance(AttachedItems::class.java) as AttachedItems
+        val entries=ArrayList<Any?>()
+        set(AttachedItems::class.java,"items",attached,entries)
+        fun entry(item: InventoryItem?): AttachedItem = (unsafe.allocateInstance(AttachedItem::class.java) as AttachedItem).also {
+            set(AttachedItem::class.java,"item",it,item)
+        }
+        val api=env.delegate["toolkitEquipHandOwnershipQuiet"]
+        fun value(owner: Any?=actor): Any? = thread.call(api,arrayOf(owner))
+        check(value()==true) { "Absent hands and attached list should not require ownership traversal" }
+        set(IsoGameCharacter::class.java,"primaryHandItem",actor,one)
+        set(IsoGameCharacter::class.java,"secondaryHandItem",actor,two)
+        set(IsoGameCharacter::class.java,"attachedItems",actor,attached)
+        entries.add(entry(one));entries.add(entry(null))
+        check(value()==true) { "Direct-root attachment was rejected" }
+        check(EquipEventDispatchLogic.handOwnershipQuiet(actor)==null) { "Direct JVM call gained API authority" }
+        val extra=runCatching { thread.call(api,arrayOf(actor,actor)) }
+        check(extra.exceptionOrNull()?.message?.contains("expected 1 argument, got 2") == true) {
+            "Extra API arguments did not retain the native invoker's arity rejection"
+        }
+        check(value(env)==null && value(null)==null)
+        val location=unsafe.allocateInstance(ItemContainer::class.java) as ItemContainer
+        set(InventoryItem::class.java,"container",one,location)
+        check(value()==false) { "Live hand/attachment container change was cached" }
+        set(InventoryItem::class.java,"container",one,null);check(value()==true)
+        set(InventoryItem::class.java,"container",one,root);check(value()==true)
+        set(IsoGameCharacter::class.java,"primaryHandItem",actor,null)
+        entries.clear();check(value()==true)
+        entries.add(null);check(value()==null);entries.clear()
+        entries.add("not an attachment");check(value()==null);entries.clear()
+        val foreign=unsafe.allocateInstance(ForeignOwnershipItem::class.java) as ForeignOwnershipItem
+        entries.add(entry(foreign));check(value()==null);entries.clear()
+        set(IsoGameCharacter::class.java,"primaryHandItem",actor,foreign)
+        check(value()==null);set(IsoGameCharacter::class.java,"primaryHandItem",actor,null)
+        set(AttachedItems::class.java,"items",attached,object:ArrayList<Any?>() {
+            override val size: Int get()=error("Foreign attachment list executed")
+            override fun iterator(): MutableIterator<Any?> = error("Foreign attachment iterator executed")
+        })
+        check(value()==null)
+        val fresh=ArrayList<Any?>();set(AttachedItems::class.java,"items",attached,fresh)
+        entries.add(entry(foreign));check(value()==true) { "Detached attachment list retained authority" }
+        fresh.add(entry(one));check(value()==true)
+        set(InventoryItem::class.java,"container",one,location)
+        check(value()==false) { "Rebound attached entries were not observed" }
+        val world=unsafe.allocateInstance(IsoWorldInventoryObject::class.java) as IsoWorldInventoryObject
+        set(InventoryItem::class.java,"worldItem",one,world)
+        check(value()==true) { "World ownership read should return before the nested-container branch" }
+        set(InventoryItem::class.java,"worldItem",one,null)
+        // Actual native negative control: nested ownership enters contains,
+        // whose findItem removes a malformed null root inventory entry.
+        val rootRows=ArrayList<InventoryItem?>();rootRows.add(null)
+        set(ItemContainer::class.java,"items",root,rootRows)
+        location.containingItem=two
+        check(value()==false && rootRows.size==1 && rootRows[0]==null) { "Observation invoked mutating native ownership traversal" }
+        check(location.isInCharacterInventory(actor) && rootRows.isEmpty()) { "Native contains null-cleanup control did not execute" }
+        rootRows.add(null)
+        check(value()==false && rootRows.size==1 && rootRows[0]==null)
+        set(InventoryItem::class.java,"container",one,root)
+        check(value()==true && rootRows.size==1 && rootRows[0]==null) { "Direct-root observation traversed malformed inventory" }
+        val saved=env.delegate["toolkitEquipHandOwnershipQuiet"]
+        env.delegate["toolkitEquipHandOwnershipQuiet"]=JavaFunction { _,_->error("Foreign API executed") }
+        check(value()==null)
+        env.delegate["copiedOwnership"]=saved
+        checkLua("return toolkitEquipEventDispatchApiMatches(copiedOwnership)==false")
+        env.delegate["toolkitEquipHandOwnershipQuiet"]=saved
+        env.delegate.remove("copiedOwnership")
+        env.metatable=KahluaTableImpl(LinkedHashMap<Any,Any?>());check(value()==null);env.metatable=null
+        thread.debugOwnerThread=Thread("foreign ownership observer");check(value()==null);thread.debugOwnerThread=Thread.currentThread()
+        val savedEnv=LuaManager.env
+        LuaManager.env=KahluaTableImpl(LinkedHashMap<Any,Any?>());check(value()==null);LuaManager.env=savedEnv
+        check(value()==true)
+        root.parent=null;check(value()==null);root.parent=actor
+        root.containingItem=two;check(value()==null);root.containingItem=null
+        set(IsoGameCharacter::class.java,"inventory",actor,location);check(value()==null)
+        set(IsoGameCharacter::class.java,"inventory",actor,root);check(value()==true)
     }
 
 }

@@ -6,7 +6,7 @@ local sources = {
     fishing = {path="media/lua/client/Fishing/FishingHandler.lua",
         filename="FishingHandler.lua", adler=1284884840},
     snow = {mod="ImmersiveSnow", path="media/lua/client/ImmersiveSnow/ISnow_CharSnow.lua",
-        filename="ISnow_CharSnow.lua", adler=301478472},
+        filename="ISnow_CharSnow.lua", adler=3900976085},
     neat = {mod="NeatUI_Equipment", path="media/lua/client/NeatEquipment/Patches/NEQ_HideEquipped.lua",
         filename="NEQ_HideEquipped.lua", adler=4065712833},
     neatState = {mod="NeatUI_Equipment", path="media/lua/client/NeatEquipment/NEQ_State.lua",
@@ -50,11 +50,14 @@ local function recipe(fingerprint, parameters, upvalues, captures)
 end
 
 function Recipes.snow()
-    -- Full-source native compiler: onEquipChange slot 0 -> root register 98
-    -- (releaseItems); releaseItems slot 0 -> root register 54 (swapped).
+    -- Full-source native compiler: onEquipChange slot 0 -> root register 99
+    -- (releaseItems); releaseItems slot 0 -> register 97 (withCharacter),
+    -- slot 1 -> register 54 (swapped). Ownership is checked before swapped
+    -- is read, so its helper body must be proved even when swapped is empty.
     -- Empty globally is deliberately conservative: no per-item registry scan.
-    local release = recipe("d6117398b9fb03d2b18c7ffd3596b50e9bb59d824972ec31f2593b508c55af9d", 2, 3,
-        {{slot=0, test="empty-table"}})
+    local withCharacter = recipe("4cd2f3047dd4165c92ea39df63f7b50b47237a047d1fea7966a7af2356f4e4e6", 2, 0)
+    local release = recipe("cac779f5f69fc6a7289dc40f6b2e921ae173693d1aad4ff6a161febbf137f1b9", 2, 4,
+        {{slot=0, test="closure", recipe=withCharacter}, {slot=1, test="empty-table"}})
     return recipe("74e468f1ffcf7773ac40550ed9ae0c70029ffc47d137bab2d6bbc0b4691eec1b", 1, 1,
         {{slot=0, test="closure", recipe=release}})
 end

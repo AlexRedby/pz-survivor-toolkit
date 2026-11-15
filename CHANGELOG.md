@@ -49,6 +49,10 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ## PZ Survivor Toolkit
 
+### 0.2.3
+
+- **Compatibility:** Qualify the current Immersive Snow hand callback for ordinary SP equipment edits. Verify its captured ownership helper and live empty swap state, and keep nested or unsupported attachment ownership paths protected. Native snow restoration and Host scheduling retain their normal execution.
+
 ### 0.2.2
 
 - **Fixed:** Client-setting migrations preserve a verified recovery copy before saving ModOptions. Interrupted or incomplete writes restore the original preferences before upstream options load; pending recovery prevents completion markers and another migration from replacing the original. Later manual changes survive a completed migration.
@@ -1747,6 +1751,10 @@ The older README associates medicine indicators with this label, but no separate
 - **Fixed:** Prevented the standalone Wishlist sidebar icon from blocking the native Cooking flyout's clicks, and kept the icon aligned with sidebar visibility and scaling.
 
 ## Toolkit Java Patches
+
+### 0.2.2
+
+- **Compatibility:** Expose a read-only native hand/attachment ownership check for SP effect certificates. Reject ownership paths that can enter recursive inventory repair without invoking item or container getters.
 
 ### 0.2.1
 

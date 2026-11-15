@@ -75,7 +75,7 @@ object HandEventRecipeSourceChecks {
     }
 
     @JvmStatic fun main(args: Array<String>) {
-        val snowSource = source("PZ_TEST_SNOW_SOURCE", "8176c7cb67d3a59304f4a2170c883a3038f723faf59ff174078f8c424a8e38c3")
+        val snowSource = source("PZ_TEST_SNOW_SOURCE", "062e6b872f64c1fd2201dd3e088c586f4676f5ee667f241462b4a539f962e86f")
         val neatSource = source("PZ_TEST_NEAT_EQUIPPED_SOURCE", "8d9415b491d408315eaa6d82077e9b30d477da73fa97e244e4d97f9d4dc18bea")
         val cartsSource = source("PZ_TEST_CART_HOLDER_SOURCE", "d46ea39f3d4aee569bb87d3241d464eb77552faae505e3adfb742f4991117fe7")
         val fishingSource = sourcePath(Path.of("media/lua/client/Fishing/FishingHandler.lua"),
@@ -122,9 +122,11 @@ object HandEventRecipeSourceChecks {
         val archeryContract = compile(archeryContractSource, "WPANC_ArcheryContract.lua")
         val equipWeapon = compile(equipWeaponSource, "ISEquipWeaponAction.lua")
         // Native compiler creation instructions prove the slot interpretation.
-        // Snow: root r54=swapped, r98=releaseItems, r149=onEquipChange.
-        closureSite(snow, 477, 52, 98, intArrayOf(54, 56, 70))
-        closureSite(snow, 729, 80, 149, intArrayOf(98))
+        // Snow: root r97=withCharacter, r54=swapped, r99=releaseItems,
+        // r152=onEquipChange. Ownership checks run even with no swapped items.
+        closureSite(snow, 469, 51, 97, intArrayOf())
+        closureSite(snow, 479, 53, 99, intArrayOf(97, 54, 56, 70))
+        closureSite(snow, 736, 81, 152, intArrayOf(99))
         // Neat: root r0=State, r2=H, r3=characterPane.
         closureSite(neat, 20, 0, 3, intArrayOf())
         closureSite(neat, 21, 1, 4, intArrayOf(0, 3))
@@ -189,8 +191,9 @@ object HandEventRecipeSourceChecks {
         check(factory("source", "unknown") == null)
 
         val swapped = table()
-        val release = captured(snow.prototypes[52], swapped, table(), "unused setItemStage capture")
-        val onSnow = captured(snow.prototypes[80], release)
+        val withCharacter = captured(snow.prototypes[51])
+        val release = captured(snow.prototypes[53], withCharacter, swapped, table(), "unused setItemStage capture")
+        val onSnow = captured(snow.prototypes[81], release)
         val snowRecipe = factory("snow")
         check(match(onSnow, snowRecipe) == true)
         swapped.delegate[table()] = false
@@ -198,7 +201,7 @@ object HandEventRecipeSourceChecks {
         swapped.delegate.clear()
         val detached = swapped
         val fresh = table()
-        release.upvalues[0].setValue(fresh)
+        release.upvalues[1].setValue(fresh)
         detached.delegate[table()] = true
         check(match(onSnow, snowRecipe) == true) { "Detached swapped retained authority" }
         fresh.delegate[table()] = true
@@ -209,6 +212,91 @@ object HandEventRecipeSourceChecks {
         check(match(onSnow, snowRecipe) != true) { "Nested releaseItems fingerprint was cached" }
         release.prototype.code[0] = releaseWord
         check(match(onSnow, snowRecipe) == true)
+        release.upvalues[0].setValue(captured(compile("return false", "ISnow_CharSnow.lua")))
+        check(match(onSnow, snowRecipe) == null) { "Foreign ownership helper passed an empty swapped table" }
+        fresh.delegate[table()] = true
+        check(match(onSnow, snowRecipe) == null) { "Nonempty state hid an unknown ownership helper" }
+        fresh.delegate.clear()
+        release.upvalues[0].setValue(withCharacter)
+        val helperWord = withCharacter.prototype.code[0]
+        withCharacter.prototype.code[0] = helperWord xor 64
+        check(match(onSnow, snowRecipe) == null) { "Ownership helper fingerprint was cached" }
+        withCharacter.prototype.code[0] = helperWord
+        val helperEnvironment = withCharacter.env
+        withCharacter.env = table()
+        check(match(onSnow, snowRecipe) == null) { "Foreign ownership helper environment passed" }
+        withCharacter.env = helperEnvironment
+        check(match(onSnow, snowRecipe) == true)
+
+        // Execute the selected native-compiled callback/helper bodies with
+        // explicit actor/item doubles. Nonempty state is never certified;
+        // the restore double records only the selected source's delegation.
+        run("snowSwapped={}; snowOwners={}; snowRestored={}")
+        val behaviorSwapped = LuaManager.env.rawget("snowSwapped")
+        val behaviorOwners = LuaManager.env.rawget("snowOwners")
+        val restore = run("""
+            return function(item, stage)
+                assert(stage == nil)
+                snowRestored[item] = (snowRestored[item] or 0) + 1
+                snowSwapped[item] = nil
+            end
+        """.trimIndent())
+        val behaviorRelease = captured(snow.prototypes[53], withCharacter, behaviorSwapped, behaviorOwners, restore)
+        val behaviorCallback = captured(snow.prototypes[81], behaviorRelease)
+        LuaManager.env.rawset("snowRelease", behaviorRelease)
+        LuaManager.env.rawset("snowOnEquip", behaviorCallback)
+        run("""
+            local function actor(localPlayer)
+                return {isLocalPlayer=function() return localPlayer end,
+                    getPrimaryHandItem=function(self) return self.primary end,
+                    getSecondaryHandItem=function(self) return self.secondary end,
+                    getAttachedItems=function(self) return self.attached end}
+            end
+            local function item(owner, world)
+                return {getWorldItem=function() return world end,
+                    getContainer=function() return owner end}
+            end
+            local chr, other = actor(true), actor(false)
+            local root = {isInCharacterInventory=function(_, who) return who == chr end}
+            local outside = {isInCharacterInventory=function() return false end}
+            local held, attached, loose = item(root), item(root), item(nil)
+            local dropped, moved = item(root, {}), item(outside)
+            local released, foreign = item(root), item(root)
+            chr.primary, chr.secondary = held, loose
+            local entries={attached, dropped, moved}
+            chr.attached={size=function() return #entries end,
+                get=function(_, index) return {getItem=function() return entries[index+1] end} end}
+            for _, value in ipairs({held, attached, loose, dropped, moved, released, foreign}) do
+                snowSwapped[value] = 's1'; snowOwners[value] = chr
+            end
+            snowOwners[foreign] = other
+            snowOnEquip(chr)
+            assert(snowRestored[dropped] == 1 and snowRestored[moved] == 1 and snowRestored[released] == 1)
+            assert(snowRestored[held] == nil and snowRestored[attached] == nil and snowRestored[loose] == nil
+                and snowRestored[foreign] == nil)
+            -- A cancelled equip returns the former item to the hand; only the
+            -- item that actually left equipped state is released on the event.
+            snowSwapped[released] = 's1'; chr.primary = released
+            snowOnEquip(chr)
+            assert(snowRestored[held] == 1 and snowRestored[released] == 1 and snowSwapped[released] == 's1')
+            assert(snowRelease(chr, true) == 3)
+            assert(snowRestored[released] == 2 and snowRestored[attached] == 1 and snowRestored[loose] == 1)
+            assert(snowSwapped[foreign] == 's1')
+            -- Remote actors tolerate containers absent from this client, but
+            -- a world item is still released. Other actors' records survive.
+            local remoteHeld, remoteWorld = item(outside), item(outside, {})
+            other.primary = remoteHeld
+            other.attached={size=function() return 1 end,
+                get=function() return {getItem=function() return remoteWorld end} end}
+            snowSwapped[remoteHeld], snowSwapped[remoteWorld] = 's2', 's2'
+            snowOwners[remoteHeld], snowOwners[remoteWorld] = other, other
+            snowOnEquip(other)
+            assert(snowSwapped[remoteHeld] == 's2' and snowRestored[remoteWorld] == 1
+                and snowRestored[foreign] == 1)
+            snowOnEquip(nil)
+        """.trimIndent())
+        check(match(behaviorCallback, snowRecipe) == false) { "Executed nonempty Snow state gained edit authority" }
+        println("SNOW_RELEASE_SOURCE_CHECKS_PASS native_compile=true actor_item_doubles=true ownership_keep_release=true cancellation_transition=true")
 
         val state = table()
         val hide = table()
@@ -471,7 +559,7 @@ object HandEventRecipeSourceChecks {
         val changed = checkNotNull(observe())
         check(fact(changed, "snow", "swappedEmpty") == false && fact(changed, "carts", "holderQueryTableEmpty") == false)
         check(fact(changed, "fishing", "managerTableEmpty") == false && fact(changed, "neat", "hideEquipped") == true)
-        release.upvalues[0].setValue(table())
+        release.upvalues[1].setValue(table())
         check(fact(checkNotNull(observe()), "snow", "swappedEmpty") == true)
         val unknown = run("return function() error('Unknown callback executed') end") as LuaClosure
         unknown.prototype.filename = "UnreviewedHandHandler.lua"
@@ -493,6 +581,6 @@ object HandEventRecipeSourceChecks {
         check(opens == closes) { "End-to-end source reader leaked" }
         // No gameplay callbacks are executed by these checks or by matching.
         run("assert(toolkitLuaCaptureFactsApiMatches(toolkitLuaCaptureFactsMatch))")
-        println("HAND_EVENT_RECIPE_SOURCE_CHECKS_PASS selected_sources=true native_compile=true root_capture_bindings=true capture_cell_fixtures=true opt_in_composition=true native_registry=true third_party_startup_executed=false fishing_declarations=true gameplay_callbacks_executed=false")
+        println("HAND_EVENT_RECIPE_SOURCE_CHECKS_PASS selected_sources=true native_compile=true root_capture_bindings=true capture_cell_fixtures=true opt_in_composition=true native_registry=true third_party_startup_executed=false fishing_declarations=true snow_callback_with_doubles=true")
     }
 }

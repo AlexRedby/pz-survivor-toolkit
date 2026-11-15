@@ -79,7 +79,7 @@ local function source(action)
   nativeSources=matches('media/lua/shared/TimedActions/ISEquipWeaponAction.lua',4004646560,nil,true)
    and matches('media/lua/shared/TimedActions/ISBaseTimedAction.lua',3104185167,nil,true)
    and matches('media/lua/client/PZSurvivorToolkit/ActionQueueHands.lua',430503623,'PZSurvivorToolkit',true)
-   and matches('media/lua/client/PZSurvivorToolkit/ActionQueueHandEffects.lua',3576760793,'PZSurvivorToolkit',true)
+   and matches('media/lua/client/PZSurvivorToolkit/ActionQueueHandEffects.lua',3395471094,'PZSurvivorToolkit',true)
    and closure(handResource,'ActionQueueHands.lua')and closure(certify,'ActionQueueHandEffects.lua')
  end
  if not nativeSources then return false end

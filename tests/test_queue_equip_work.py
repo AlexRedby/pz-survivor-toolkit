@@ -9,6 +9,7 @@ from unittest import mock
 import zlib
 
 from tests.test_queue_magazine_unload_equip import evidence
+from tests.support.game_version import write_game_jar
 from queue_checks.adapters import magazine_unload_equip_verifier as verifier
 from queue_checks.adapters import magazine_unload as adapter
 
@@ -217,6 +218,7 @@ class EquipWorkTests(unittest.TestCase):
 class EquipReviewedSourcePreflightTests(unittest.TestCase):
     fixture_relative = Path('tests/native_queue/magazine-unload/client/QueueEquipCallbackObservation.lua')
     project = Path(__file__).resolve().parents[1]
+    version = (42, 22)
 
     def candidate(self, directory):
         project = Path(directory) / 'project'; toolkit = Path(directory) / 'candidate'
@@ -235,7 +237,7 @@ class EquipReviewedSourcePreflightTests(unittest.TestCase):
     def test_current_reviewed_sources_use_effective_candidate_layers(self):
         real = dict(PZSurvivorToolkit=self.project / 'PZSurvivorToolkit')
         pins = adapter._reviewed_equip_pins((self.project / self.fixture_relative).read_text())
-        self.assertEqual(pins, adapter.audit_equip_sources(self.project, self.selection(), real))
+        self.assertEqual(pins, adapter.audit_equip_sources(self.project, self.selection(), real, self.version))
         with tempfile.TemporaryDirectory() as temporary:
             project, toolkit, pins = self.candidate(temporary)
             for relative in pins:
@@ -244,7 +246,7 @@ class EquipReviewedSourcePreflightTests(unittest.TestCase):
             # The selected version overrides common; an unrelated legacy root is inactive.
             legacy = toolkit / 'media/lua/shared/PZSurvivorToolkit/SourceProof.lua'; legacy.parent.mkdir(parents=True)
             legacy.write_bytes(b'inactive legacy source\n')
-            self.assertEqual(pins, adapter.audit_equip_sources(project, self.selection(), dict(PZSurvivorToolkit=toolkit)))
+            self.assertEqual(pins, adapter.audit_equip_sources(project, self.selection(), dict(PZSurvivorToolkit=toolkit), self.version))
             self.assertEqual({}, adapter.audit_equip_sources(project / 'absent', dict(cases=['direct']), {}))
 
     def test_source_or_fixture_pin_drift_fails_before_probe_or_staging_writes(self):
@@ -260,10 +262,12 @@ class EquipReviewedSourcePreflightTests(unittest.TestCase):
                     fixture.write_text(re.sub(r"('shared','SourceProof\.lua',)[0-9]+",
                         lambda match: match[1] + str(pins[relative] + 1), fixture.read_text(), count=1))
                 output = Path(temporary) / 'not-staged'
+                game = Path(temporary) / 'game'
+                write_game_jar(game, minor=self.version[1])
                 with mock.patch.object(adapter, 'audit_native', return_value={}), mock.patch.object(adapter, 'audit_selected', return_value={}), \
                         mock.patch.object(adapter, '_work_probe') as probe, mock.patch.object(adapter.shutil, 'copy2') as copy_file:
                     with self.assertRaisesRegex(ValueError, 'SourceProof.lua'):
-                        adapter.stage(project, output, Path(temporary) / 'game', Path(temporary) / 'jdk', self.selection(),
+                        adapter.stage(project, output, game, Path(temporary) / 'jdk', self.selection(),
                                       dict(PZSurvivorToolkit=toolkit), dict(roles={}))
                     probe.assert_not_called(); copy_file.assert_not_called()
                 self.assertFalse(output.exists(), 'source mismatch created staging/probe artifacts')
@@ -287,13 +291,13 @@ class EquipReviewedSourcePreflightTests(unittest.TestCase):
             fixture.write_text(text)
             locations = dict(PZSurvivorToolkit=toolkit)
             expected = {relative: zlib.adler32(data) for relative, data in archived.items()}
-            self.assertEqual(expected, adapter.audit_equip_sources(project, self.selection(True), locations))
-            with self.assertRaises(ValueError): adapter.audit_equip_sources(project, self.selection(False), locations)
-            with self.assertRaises(ValueError): adapter.audit_equip_sources(project, dict(cases=['equip-edit'], options=dict(equip_workload_baseline=True)), locations)
+            self.assertEqual(expected, adapter.audit_equip_sources(project, self.selection(True), locations, self.version))
+            with self.assertRaises(ValueError): adapter.audit_equip_sources(project, self.selection(False), locations, self.version)
+            with self.assertRaises(ValueError): adapter.audit_equip_sources(project, dict(cases=['equip-edit'], options=dict(equip_workload_baseline=True)), locations, self.version)
             for relative, data in current.items(): (toolkit / '42/media/lua' / relative).write_bytes(data)
             self.assertEqual({relative: zlib.adler32(data) for relative, data in current.items()},
-                             adapter.audit_equip_sources(project, self.selection(False), locations))
-            with self.assertRaises(ValueError): adapter.audit_equip_sources(project, self.selection(True), locations)
+                             adapter.audit_equip_sources(project, self.selection(False), locations, self.version))
+            with self.assertRaises(ValueError): adapter.audit_equip_sources(project, self.selection(True), locations, self.version)
 
     def test_closed_fixture_parser_rejects_dynamic_or_unrecognized_source_checks(self):
         text = (self.project / self.fixture_relative).read_text()

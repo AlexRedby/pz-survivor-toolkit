@@ -825,7 +825,7 @@ assert(observer.read(tracks));observer.reset();assert(observer.read(tracks)==nil
                 self.assertTrue(adapter.verify(root, selection, {})['issues'])
 
     def test_source_audit_adds_native_read_transfer_and_equip_without_weaker_unload_pins(self):
-        self.assertEqual(3528902511, adapter.EQUIP_NATIVE_CRC['media/lua/shared/TimedActions/ISEquipWeaponAction.lua'])
+        self.assertEqual(3948461313, adapter.EQUIP_NATIVE_CRC['media/lua/shared/TimedActions/ISEquipWeaponAction.lua'])
         self.assertIn('media/lua/shared/TimedActions/ISUnloadBulletsFromMagazine.lua', adapter.NATIVE_CRC)
         declared = adapter.verifier_sources(PROJECT, dict(cases=['equip-edit']))
         self.assertIn(Path(verifier.__file__), declared)

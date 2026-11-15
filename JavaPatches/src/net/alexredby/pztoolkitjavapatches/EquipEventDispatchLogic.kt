@@ -5,6 +5,8 @@ import java.util.HashMap
 import java.util.IdentityHashMap
 import zombie.characters.IsoPlayer
 import zombie.characters.IsoGameCharacter
+import zombie.characters.AttachedItems.AttachedItems
+import zombie.characters.AttachedItems.AttachedItem
 import zombie.inventory.InventoryItem
 import zombie.inventory.ItemContainer
 import zombie.inventory.types.ComboItem
@@ -60,6 +62,11 @@ object EquipEventDispatchLogic {
         "zombie/scripting/objects/ItemTag.class" to "16ec98846e63b4172353ce41e2f83e539fed0e262c0a9b63795ecfc5b5c27659",
         "zombie/entity/util/Array.class" to "dd0eb48298dcc0c01fd6729fb489fe8c0353b4ccd1005ca489211d0c4e28e67a",
     ).all { (path, hash) -> BytecodeSupport.supports(path, hash) }
+    // This additional SP observation must not change native/Host admission.
+    private val HAND_OWNERSHIP_SUPPORTED = SUPPORTED && arrayOf(
+        "zombie/characters/AttachedItems/AttachedItems.class" to "7e977f7bae8d6641871013b97776da6b428a74eb5f33d045155cf9828ce03b39",
+        "zombie/characters/AttachedItems/AttachedItem.class" to "9b2fb404576628ac98417c81077d6b00604deba5969d9f5c62644662ef96d3c1",
+    ).all { (path, hash) -> BytecodeSupport.supports(path, hash) }
     private fun field(type: Class<*>, name: String) = if (!SUPPORTED) null else try {
         type.getDeclaredField(name).apply { isAccessible = true }
     } catch (_: Exception) { null }
@@ -69,6 +76,7 @@ object EquipEventDispatchLogic {
     private val globalsMethod = EquipEventDispatchLogic::class.java.getMethod("globalsTrusted")
     private val quietMethod = EquipEventDispatchLogic::class.java.getMethod("nativeQuiet", Any::class.java, Any::class.java)
     private val preparedQuietMethod = EquipEventDispatchLogic::class.java.getMethod("nativePreparedQuiet", Any::class.java, Any::class.java, Any::class.java)
+    private val handOwnershipMethod = EquipEventDispatchLogic::class.java.getMethod("handOwnershipQuiet", Any::class.java)
     private val checkMethod = EquipEventDispatchLogic::class.java.getMethod("apiMatches", Any::class.java)
     private class State(var thread: KahluaThread? = null, var env: KahluaTableImpl? = null,
                         var depth: Int = 0, var broken: Boolean = false, var level: Int = 0) {
@@ -214,6 +222,12 @@ object EquipEventDispatchLogic {
     private val animalList = field(IsoPlayer::class.java,"attachedAnimals")
     private val inventory = field(IsoGameCharacter::class.java,"inventory")
     private val container = field(InventoryItem::class.java,"container")
+    private val worldItem = field(InventoryItem::class.java,"worldItem")
+    private val primaryHand = field(IsoGameCharacter::class.java,"primaryHandItem")
+    private val secondaryHand = field(IsoGameCharacter::class.java,"secondaryHandItem")
+    private val attachedItems = field(IsoGameCharacter::class.java,"attachedItems")
+    private val attachedEntries = field(AttachedItems::class.java,"items")
+    private val attachedItem = field(AttachedItem::class.java,"item")
     private val scriptItem = field(InventoryItem::class.java,"scriptItem")
     private val itemTags = field(Item::class.java,"itemTags")
     private val managed = field(GameEntity::class.java,"addedToEntityManager")
@@ -311,12 +325,55 @@ object EquipEventDispatchLogic {
         else quietItems(actor,items,source as ItemContainer)
     } catch (_: Exception) { null } catch (_: AssertionError) { null }
 
+    /** Prove only the native ownership reads used before a hand callback's
+     * private-state branch. Nested isInCharacterInventory calls contains,
+     * whose findItem may remove malformed null inventory entries. Observe raw
+     * fields and allow only branches that return before that traversal.
+     * No actor, item, container or attachment method is invoked or retained. */
+    @JvmStatic @LuaMethod(name="toolkitEquipHandOwnershipQuiet",global=true)
+    fun handOwnershipQuiet(actor: Any?): Boolean? = try {
+        if (!HAND_OWNERSHIP_SUPPORTED || !LuaFactApi.entry("toolkitEquipHandOwnershipQuiet",handOwnershipMethod,arrayOf(actor))
+            || actor?.javaClass != IsoPlayer::class.java || inventory == null || container == null || worldItem == null
+            || primaryHand == null || secondaryHand == null || attachedItems == null || attachedEntries == null || attachedItem == null) null
+        else {
+            val root=inventory.get(actor)
+            if (root?.javaClass != ItemContainer::class.java || (root as ItemContainer).parent !== actor || root.containingItem != null) null
+            else {
+                fun safe(item: Any?): Boolean? {
+                    if (item == null) return true
+                    if (item.javaClass != ComboItem::class.java && item.javaClass != HandWeapon::class.java) return null
+                    if (worldItem.get(item) != null) return true
+                    val location=container.get(item)
+                    return location == null || location === root
+                }
+                val primary=safe(primaryHand.get(actor))
+                val secondary=safe(secondaryHand.get(actor))
+                val attached=attachedItems.get(actor)
+                var result: Boolean? = if (primary == null || secondary == null) null else primary && secondary
+                if (attached != null) {
+                    if (attached.javaClass != AttachedItems::class.java) result=null
+                    else {
+                        val entries=attachedEntries.get(attached)
+                        if (entries?.javaClass != ArrayList::class.java) result=null
+                        else for (entry in entries as ArrayList<*>) {
+                            val value=if (entry?.javaClass == AttachedItem::class.java) safe(attachedItem.get(entry)) else null
+                            if (value == null) result=null
+                            else if (!value && result != null) result=false
+                        }
+                    }
+                }
+                result
+            }
+        }
+    } catch (_: Exception) { null } catch (_: AssertionError) { null }
+
     @JvmStatic @LuaMethod(name="toolkitEquipEventDispatchApiMatches", global=true)
     fun apiMatches(function: Any?): Boolean = try {
         SUPPORTED && LuaFactApi.entry("toolkitEquipEventDispatchApiMatches",checkMethod,arrayOf(function))
             && ((LuaFactApi.canonical(function,idleMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipEventDispatchIdle") === function)
             || (LuaFactApi.canonical(function,globalsMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipGlobalsTrusted") === function)
             || (LuaFactApi.canonical(function,quietMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipNativeQuiet") === function)
+            || (LuaFactApi.canonical(function,handOwnershipMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipHandOwnershipQuiet") === function)
             || (LuaFactApi.canonical(function,preparedQuietMethod) && LuaFactApi.plain(LuaManager.env)?.delegate?.get("toolkitEquipNativePreparedQuiet") === function))
     } catch (_: Exception) { false } catch (_: AssertionError) { false }
 }

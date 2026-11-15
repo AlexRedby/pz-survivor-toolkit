@@ -12,6 +12,7 @@ local meta=toolkitLuaMetatableMatches
 local facts,factsAPI=toolkitLuaCaptureFactsMatch,toolkitLuaCaptureFactsApiMatches
 local idle,globals,dispatchAPI=toolkitEquipEventDispatchIdle,toolkitEquipGlobalsTrusted,toolkitEquipEventDispatchApiMatches
 local quiet=toolkitEquipNativeQuiet
+local ownership=toolkitEquipHandOwnershipQuiet
 local capture,closure,matches=Proof.captureBindings,Proof.closure,Proof.matches
 local registered,revalidate,archery=Events.registeredCallbacks,Events.registeredCallbacksMatch,Events.archeryTrackingAbsent
 local certify
@@ -38,19 +39,21 @@ local function bootstrap()
   or Events.archeryTrackingAbsent~=archery or Proof.captureBindings~=capture or Proof.closure~=closure or Proof.matches~=matches
   or toolkitLuaMetatableMatches~=meta or toolkitLuaCaptureFactsMatch~=facts or toolkitLuaCaptureFactsApiMatches~=factsAPI
   or toolkitEquipEventDispatchIdle~=idle or toolkitEquipGlobalsTrusted~=globals or toolkitEquipEventDispatchApiMatches~=dispatchAPI
-  or toolkitEquipNativeQuiet~=quiet or kind(factsAPI)~='function'or not factsAPI(facts)
+  or toolkitEquipNativeQuiet~=quiet or toolkitEquipHandOwnershipQuiet~=ownership
+  or kind(factsAPI)~='function'or not factsAPI(facts)
   or kind(dispatchAPI)~='function'or not dispatchAPI(idle)or not dispatchAPI(globals)or not dispatchAPI(quiet)
+  or not dispatchAPI(ownership)
   or globals()~=true or idle()~=true then return end
  return capture({{owner=_G,keys={'PZSurvivorToolkit','type','rawequal','pcall','pairs','ipairs','select','tostring','instanceof','getPlayer',
   'isClient','isServer','isMultiplayer','toolkitLuaMetatableMatches','toolkitLuaCaptureFactsMatch','toolkitLuaCaptureFactsApiMatches',
-  'toolkitEquipEventDispatchIdle','toolkitEquipGlobalsTrusted','toolkitEquipEventDispatchApiMatches','toolkitEquipNativeQuiet',
+  'toolkitEquipEventDispatchIdle','toolkitEquipGlobalsTrusted','toolkitEquipEventDispatchApiMatches','toolkitEquipNativeQuiet','toolkitEquipHandOwnershipQuiet',
   'SaucedCarts','Fishing','NEQ_State','NEQ_HideEquipped','WPANC','ISRadioWindow','ItemTag','isForceDropHeavyItem','forceDropHeavyItems'}},
   {owner=Toolkit,keys={'ActionQueueHandEffects','ActionQueueHandEvents'}},{owner=Effects,exact=true},{owner=Recipes,exact=true},
   {owner=Proof,keys={'captureBindings','closure','matches'}},{owner=Events,keys={'registeredCallbacks','registeredCallbacksMatch','archeryTrackingAbsent'}}})
 end
 local function inspect(actor,items)
  if trusted.helpers==nil then
-  if not matches('media/lua/client/PZSurvivorToolkit/ActionQueueHandEventRecipes.lua',4139555772,'PZSurvivorToolkit',true)then return end
+  if not matches('media/lua/client/PZSurvivorToolkit/ActionQueueHandEventRecipes.lua',3233218525,'PZSurvivorToolkit',true)then return end
   if not matches('media/lua/client/PZSurvivorToolkit/ActionQueueHandEvents.lua',2531317592,'PZSurvivorToolkit',true)then return end
   trusted.helpers=true
  end
@@ -165,6 +168,10 @@ local function inspect(actor,items)
  local function check()
   if not recipesUnchanged()or not watch()or not input()or not publicWatch()or globals()~=true or idle()~=true
    or revalidate(snapshot)~=true or isClient()or isServer()or isMultiplayer()or quiet(actor,items)~=true then return false end
+  -- Snow's ownership helper can otherwise enter native recursive containment,
+  -- which may repair inventory contents. Keep that path outside this effect
+  -- certificate; ordinary native callbacks still execute without modification.
+  if prepared.snow and ownership(actor)~=true then return false end
   if not shape(isForceDropHeavyItem,recipes.isForceDropHeavyItem)then return false end
   if carts~=nil then
    if not plain(carts.CartTypes)or not shape(carts.isCart,recipes.cartsIsCart)
@@ -214,6 +221,7 @@ local function inspect(actor,items)
    end
   end
   return watch()and input()and publicWatch()and revalidate(snapshot)==true and idle()==true
+   and(not prepared.snow or ownership(actor)==true)
  end
  if check()then return check end
 end

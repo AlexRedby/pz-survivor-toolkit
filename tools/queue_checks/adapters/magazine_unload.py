@@ -14,9 +14,11 @@ from .tv_controls import MODS
 CASES = ('direct', 'bulk')
 EQUIP_CASES = ('equip-edit',)
 EQUIP_NATIVE_CRC = {
-    'media/lua/shared/TimedActions/ISEquipWeaponAction.lua': 3528902511,
+    # 42.22 moves ordinary equip sound to perform; hand writes and completion
+    # are unchanged. Transfer removes only the LastStand duration multiplier.
+    'media/lua/shared/TimedActions/ISEquipWeaponAction.lua': 3948461313,
     'media/lua/shared/TimedActions/ISReadABook.lua': 916973327,
-    'media/lua/client/TimedActions/ISInventoryTransferAction.lua': 3908838083,
+    'media/lua/client/TimedActions/ISInventoryTransferAction.lua': 4278128391,
 }
 EQUIP_PREPARED_NATIVE_CRC = {
     'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua': 2574700613,
@@ -38,7 +40,9 @@ NATIVE_CRC = {
     'media/lua/shared/TimedActions/ISReloadWeaponAction.lua': 547021931,
     'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua': 2574700613,
 }
-SELECTED_CRC = {'CleanUI': ('ISInventoryPaneContextMenu.lua', 2066944516),
+# Current CleanUI keeps equip/unload/transfer helpers unchanged. Its new
+# per-action wear guard is outside this direct-constructor equipment bank.
+SELECTED_CRC = {'CleanUI': ('ISInventoryPaneContextMenu.lua', 263037846),
                 'P4TidyUpMeister': ('P4TidyUpMeister.lua', 945150908),
                 'WildernessProgressionArcheryNexusCompanion': ('WPANC_BowReload.lua', 1505744173)}
 

@@ -1,6 +1,5 @@
 # Game 42.22.2 migration
 
-- [ ] Requalify the selected Immersive Snow hand-event recipe: `releaseItems` now captures `withCharacter` and filters kept equipment through current world/container ownership. The old exact capture recipe is invalid for this source; retain native execution and the protected SP equipment projection until the new closure/effect contract is reviewed and qualified. Historical source checks do not establish current-pack compatibility.
 - [ ] Requalify current Neat Crafting queue producers before restoring their edit contracts: `NC_VanillaInputTransfer` returns, iteration reset and pending-transfer cleanup, `NC_StopCraftActionCompat`, progressive fluids and ALL/`NC_BatchInputSelection` now participate in ordinary completion/cancellation. Prove callback ownership, physical IDs/resources and earned cleanup; disabling ALL alone does not restore the old contract. Keep native execution and the current refusal boundary; retain the older positive assertions as controls.
 - [ ] Requalify current Project Cook evolved-recipe edits against `PJCK_EvoPanel` strict-instance/physical-ID versus logical-group selection and the current ingredient, first-addition and return protocol. Preserve the independently verified HandCraftPanel start/stop balance repair and native execution while the full edit gate remains closed.
 - [ ] Qualify CleanUI's new per-action MP wear `isValid` closure before admitting those clothing edits. Prove the exact body/origin, owner, root-presence and stale-item checks; retain native execution and conservative handling of unknown overrides.
@@ -11,6 +10,10 @@
 - [ ] Port the test-only `base-walking-profile` capture gates to the new engine before using it for measurements. Its reviewed GameWindow/chunk/loot/render/UI and optional discovery fingerprints still target the old build; review the actual captured methods and retain exact unsupported-input refusal.
 - [ ] Review the changed native `ISWalkToCursor` producer for the Fitness storage walk-away negative fixture, then update its exact source gate and rerun its native movement/old-tail-cancellation witnesses. The old fingerprint currently rejects the new source; ordinary Fitness restoration checks do not qualify this separate walking case.
 - [ ] Port the remaining optional native diagnostics before using them on the new engine: the `queue-transfer-peers` transaction-owner observer, animal equipment-delivery reorder helper and visual-sync trace still read old `PlayerID`/`playerId` layouts. Preserve exact unsupported-source refusal and qualify native owner identity, packet copies and receipt/cleanup behavior instead of widening their fingerprints alone.
+
+# Build checks
+
+- [ ] Replace deprecated `Unsafe.objectFieldOffset`/`putObject` in `EquipEventDispatchChecks`' counterfeit enum fixture while retaining the same-name/different-identity negative control. Focused native builds currently emit Kotlin deprecation warnings for that fixture; verify a warning-free supported construction without weakening enum identity checks.
 
 # Automatic restoration migration
 

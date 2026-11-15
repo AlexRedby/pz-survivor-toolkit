@@ -8,6 +8,7 @@ local function setup(sourceOverrides)
  env.toolkitLuaMetatableMatches=function(value,expected)return type(value)=='table'and getmetatable(value)==expected end
  local origins={};local factsByCallback={};local predicates=0;local readers=0
  local sourceOK,registryOK,idleOK,globalsOK,quietOK,tracking=true,true,true,true,true,true
+ local ownershipOK=true
  local readerHook,predicateHook,quietHook,recipeHook
  local factoryCalls={}
  local function callback(filename)
@@ -55,9 +56,11 @@ local function setup(sourceOverrides)
  end
  local idle=function()return idleOK end;local globals=function()return globalsOK end
  local quiet=function()if quietHook then quietHook()end;return quietOK end
+ local ownership=function()return ownershipOK end
  env.toolkitLuaCaptureFactsMatch=native;env.toolkitLuaCaptureFactsApiMatches=function(value)return value==native end
  env.toolkitEquipEventDispatchIdle=idle;env.toolkitEquipGlobalsTrusted=globals;env.toolkitEquipNativeQuiet=quiet
- env.toolkitEquipEventDispatchApiMatches=function(value)return value==idle or value==globals or value==quiet end
+ env.toolkitEquipHandOwnershipQuiet=ownership
+ env.toolkitEquipEventDispatchApiMatches=function(value)return value==idle or value==globals or value==quiet or value==ownership end
  env.isClient=function()return false end;env.isServer=function()return false end;env.isMultiplayer=function()return false end
  env.instanceof=function(value,class)return type(value)=='table'and(class=='InventoryItem'and value.item==true or value.class==class)end
  env.PZSurvivorToolkit.ActionQueueHandEvents=events
@@ -73,6 +76,7 @@ local function setup(sourceOverrides)
   facts=factsByCallback,snow=snow,neat=neat,carts=carts,fishing=fishing,presentation=presentation,primary=primary,secondary=secondary,
   callback=callback,source=function(value)sourceOK=value end,registry=function(value)registryOK=value end,
   idle=function(value)idleOK=value end,globals=function(value)globalsOK=value end,quiet=function(value)quietOK=value end,
+  ownership=function(value)ownershipOK=value end,
   tracking=function(value)tracking=value end,readerHook=function(value)readerHook=value end,predicateHook=function(value)predicateHook=value end,
   quietHook=function(value)quietHook=value end,recipeHook=function(value)recipeHook=value end,factoryCalls=factoryCalls,counts=function()return predicates,readers end}
 end
@@ -89,6 +93,8 @@ f.env.SaucedCarts.CartTypes['Base.Hammer']={};assert(not check(),'live cart clas
 f.env.SaucedCarts.CartTypes['Base.Hammer']=nil;assert(check())
 f.facts[f.snow]=false;assert(not check(),'nonempty Snow capture retained quiet effects')
 f.facts[f.snow]=true;assert(check())
+f.ownership(false);assert(not check(),'live nested ownership path retained quiet effects')
+f.ownership(true);assert(check())
 f.tracking(false);assert(not check(),'live prior bow tracking retained authority')
 f.tracking(true);assert(check())
 f.env.Fishing.ManagerInstances[0]={};assert(not check(),'live fishing manager effects were ignored')
@@ -118,11 +124,15 @@ for index,change in ipairs({
  function(c)c.recipes.snow=function()return {}end end,
  function(c)c.events.registeredCallbacksMatch=function()return true end end,
  function(c)c.env.toolkitEquipNativeQuiet=function()return true end end,
+ function(c)c.env.toolkitEquipHandOwnershipQuiet=function()return true end end,
+ function(c)c.ownership(false)end,
+ function(c)c.ownership(nil)end,
  function(c)c.env.isClient=function()return true end end,
  function(c)c.items[2]=c.items[1];c.items[1]=nil end,
  function(c)c.readerHook(function()c.registry(false)end)end,
  function(c)c.readerHook(function()c.env.NEQ_State={}end)end,
  function(c)c.predicateHook(function()c.env.SaucedCarts={}end)end,
+ function(c)c.predicateHook(function()c.ownership(false)end)end,
  function(c)c.predicateHook(function()c.items[1]={}end)end,
  function(c)c.quietHook(function()c.env.Fishing={}end)end,
 })do rejected(change,index)end
