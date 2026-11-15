@@ -54,10 +54,10 @@ local function installationFacts()
  end
  local hashes={
   {'intent','media/lua/client/PZSurvivorToolkit/ActionQueueTidyIntent.lua',442162072,'PZSurvivorToolkit',true},
-  {'nativePane','media/lua/client/ISUI/ISInventoryPane.lua',3400657123,false,true},
-  {'cleanPane','media/lua/client/ISUI/ISInventoryPane.lua',3716736911,'CleanUI',true},
-  {'nativeContext','media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',4293448388},
-  {'cleanContext','media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',1953753890}}
+  {'nativePane','media/lua/client/ISUI/ISInventoryPane.lua',3828276359,false,true},
+  {'cleanPane','media/lua/client/ISUI/ISInventoryPane.lua',2870025445,'CleanUI',true},
+  {'nativeContext','media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',2366291360},
+  {'cleanContext','media/lua/client/ISUI/ISInventoryPaneContextMenu.lua',3631519015}}
  facts.sources={}
  for _,entry in ipairs(hashes)do local ok,value=pcall(proof.matches,entry[2],entry[3],entry[4]or nil,entry[5]);facts.sources[entry[1]]=ok and value==true end
  return facts

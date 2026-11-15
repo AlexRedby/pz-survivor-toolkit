@@ -23,17 +23,17 @@ NAMES = ('front', 'target', 'tail', 'cancelled')
 PREFIX = '[WRING_CLOTHING] '
 PRODUCER = 'native ISInventoryPaneContextMenu.onWringClothing'
 NATIVE_CRC = {
-    'media/lua/shared/TimedActions/ISEquipWeaponAction.lua': 3528902511,
+    'media/lua/shared/TimedActions/ISEquipWeaponAction.lua': 3948461313,
     'media/scripts/generated/items/clothing.txt': 3753683896,
     'media/lua/shared/NPCs/BodyLocations.lua': 2265789823,
     'media/lua/shared/TimedActions/ISWringClothing.lua': 2805730431,
-    'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua': 2574700613,
-    'media/lua/shared/TimedActions/ISUnequipAction.lua': 2061668308,
+    'media/lua/client/ISUI/ISInventoryPaneContextMenu.lua': 3597525846,
+    'media/lua/shared/TimedActions/ISUnequipAction.lua': 1451835837,
     'media/lua/shared/TimedActions/ISWearClothing.lua': 3766730028,
-    'media/lua/client/TimedActions/ISInventoryTransferAction.lua': 3908838083,
+    'media/lua/client/TimedActions/ISInventoryTransferAction.lua': 4278128391,
 }
-PROFILE_CRC = {'media/scripts/generated/items/normal.txt': 1928498276, 'media/scripts/generated/items/container.txt': 2378263796}
-SELECTED_CRC = {'CleanUI': ('ISInventoryPaneContextMenu.lua', 2066944516),
+PROFILE_CRC = {'media/scripts/generated/items/normal.txt': 2459597436, 'media/scripts/generated/items/container.txt': 293083111}
+SELECTED_CRC = {'CleanUI': ('ISInventoryPaneContextMenu.lua', 263037846),
                 'P4TidyUpMeister': ('P4TidyUpMeister.lua', 945150908),
                 'SaucedCarts': ('ContainerRestrictions.lua', 442705836)}
 

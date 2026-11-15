@@ -295,7 +295,7 @@ ISBaseObject={derive=function(self,name)
 end}
 function table.wipe(value)for key in pairs(value)do value[key]=nil end end
 for _,name in ipairs({'ClimbThroughWindowState','ClimbOverFenceState','ClimbOverWallState',
- 'ClimbSheetRopeState','ClimbDownSheetRopeState','CloseWindowState','OpenWindowState'})do
+ 'ClimbState','ClimbDownState','CloseWindowState','OpenWindowState','ForceOpenState'})do
  _G[name]={instance=function()return {}end}
 end
 Events={OnTick={Add=function()end}}
@@ -347,8 +347,11 @@ class WringStopProbeStagingTests(unittest.TestCase):
                         (Path(role['cache']) / 'mods/ActionQueueTest/42/media/lua' / side).mkdir(parents=True)
                 selection = dict(cases=[case], options={})
                 with patch.object(a, 'validate'), patch.object(a, 'audit_native', return_value={}), \
-                     patch.object(a, 'audit_selected', return_value={}), patch.object(a, '_stop_probe', return_value=jar) as compile_probe:
+                     patch.object(a, 'game_version', return_value=(42, 22)), \
+                     patch.object(a, 'audit_selected', return_value={}) as audit_selected, \
+                     patch.object(a, '_stop_probe', return_value=jar) as compile_probe:
                     a.stage(project, root / 'output', Path('game'), Path('jdk'), selection, {}, runtime)
+                audit_selected.assert_called_once_with({}, (42, 22), 'selected')
                 enabled = case in ('worn-bag-cancel', 'worn-bag-cancel-toggle')
                 self.assertEqual(enabled, compile_probe.called)
                 self.assertEqual(['WringStopProbe'] if enabled else [], runtime['fixture'].get('mods', []))
