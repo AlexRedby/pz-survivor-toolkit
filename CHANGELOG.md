@@ -63,7 +63,8 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.2.10
 
-- **Fix:** In the opt-in tool restoration, a full bag after restoring the previous hand item could clear unrelated queued actions. The blocked tool now stays in inventory with an explicit Keep option.
+- Realistic Dashboard waits for wear textures to become ready before reading their dimensions. Inventory research indicators share the player index and recipe-list reference within each render while tracking recipe changes and expiry.
+- Build the headlight tooltip when the pointer is over the dashboard control. It picks up beam, dashboard and language changes on hover.
 
 ### 0.2.9
 
@@ -71,8 +72,7 @@ Version labels come from component metadata. Parallel branches sometimes reused 
 
 ### 0.2.8
 
-- Realistic Dashboard waits for wear textures to become ready before reading their dimensions. Inventory research indicators share the player index and recipe-list reference within each render while tracking recipe changes and expiry.
-- Build the headlight tooltip when the pointer is over the dashboard control. It picks up beam, dashboard and language changes on hover.
+- **Fix:** When Host confirms that an interrupted restoration failed, the queue updates the existing item-return notice with the confirmed outcome.
 
 ### 0.2.7
 
